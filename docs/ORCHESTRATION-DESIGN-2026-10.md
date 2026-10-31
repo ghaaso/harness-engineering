@@ -124,10 +124,14 @@ inertia, and keeps the G1 reading load bounded by schema, not by prose.
    which are the only live destructive paths now (§1). It is **not** the release condition.
    Phones are released to sync only by the drain protocol (O-10), never by "a backend answers".
 2. **Old hostname control.** In the Railway dashboard: does the project/service still exist and
-   can the generated subdomain be bound (or regenerated with the same name) to a stub that
-   answers **503** to everything? A 503 is transient to the phones, so queued writes stay
-   queued. If the hostname cannot be controlled, say so — the drain protocol then relies on
-   the APK update alone.
+   can the generated subdomain be bound (or regenerated with the same name)? If yes, the only
+   safe things that hostname may ever do are **hang** (accept the connection, send nothing for
+   more than 15 s, then close: the phones' client aborts as a connectivity error and keeps
+   everything) or **proxy** to the recovered backend. **Not a 503**: every 5xx counts toward
+   the phones' five-attempt poison cap and parks the item (W2 O10-F3). **Never a 2xx or 204**:
+   the phones treat any OK answer as "landed" and delete the queued item (O10-F4). If the
+   hostname cannot be controlled, say so — the drain protocol then relies on the APK update
+   alone.
 3. **APK update compatibility.** From EAS: the keystore fingerprint used for the installed
    build, and whether that credential set is still in the project (`eas credentials`). From
    one phone: `adb shell dumpsys package com.fixflow.technician` → `versionCode`,
@@ -687,6 +691,10 @@ docker network create fixflow-w1 2>/dev/null; docker rm -f fixflow-w1-restore 2>
 docker run -d --name fixflow-w1-restore --network fixflow-w1 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fixflow_restore postgres:17-alpine
 n=0; until docker exec fixflow-w1-restore pg_isready -U postgres -q; do n=$((n+1)); [ "$n" -ge 60 ] && { echo "RESTORE[db] TIMEOUT"; exit 2; }; sleep 1; done
 docker cp "$D" fixflow-w1-restore:/tmp/prod.dump
+# The documented dumps carry the public schema, so a restore into a fresh database raises one benign
+# "schema public already exists" error (W2 O08-F06). Drop the empty schema first so --exit-on-error
+# only stops on real failures.
+docker exec fixflow-w1-restore psql -U postgres -d fixflow_restore -c 'DROP SCHEMA public CASCADE'
 docker exec fixflow-w1-restore pg_restore -U postgres -d fixflow_restore --no-owner --no-privileges --exit-on-error /tmp/prod.dump \
   > "$ARGS_LOGDIR/restore.log" 2>&1; echo "RESTORE EXIT=$?"      # non-zero = incomplete; the dump facts are then labelled partial
 docker cp "$ARGS_LOGDIR/appendix-b.sql" fixflow-w1-restore:/tmp/b.sql
