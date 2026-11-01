@@ -1154,7 +1154,7 @@ edges redrawn from the Entry lines (V3R-9, CON3-19); the money-chain Done-whens 
 (RC-NT14-token); `MSYS_NO_PATHCONV`, exported AWS variables and the laptop copy mount in P0a
 (RC-NT1-msys); STOP only on cert mismatch / incompatible update / downgrade (RC-NT11-vc); the
 mixed-fleet host mode and the network-cut lift rule (CON3-04); deep-health exposing the values
-phases read back plus `FIXFLOW_IMAGE_DIGEST` (CON3-05); retired rows, the "last re-open"
+phases read back plus an image identifier (CON3-05; renamed `FIXFLOW_GIT_SHA` in v5); retired rows, the "last re-open"
 definition and P4r's APK (CON3-06); H=no pilot network timing (CON3-16); rule 5 reworded
 (RC-NT8-rule5, CON3-17); the hold notice committed as sent in P0a (RC-NT20-notice, CON3-15); the
 "R" prefix convention (CON3-20); the event-names JSON shared by both runtimes (CON3-22); USB
