@@ -679,7 +679,7 @@ UNION ALL SELECT 'job_event', max(created_at) FROM job_event;                   
 SELECT confirmed, width_bucket(accuracy_m, 0, 200, 10) AS acc_bucket, count(*) FROM attendance_presence_event GROUP BY 1, 2 ORDER BY 1, 2;
 SELECT count(*) AS payments, coalesce(sum(amount_paisa) FILTER (WHERE NOT voided), 0) AS non_voided_paisa FROM job_payment;   -- O-08 §3 baseline: Rs 34,400 non-voided at the 2026-08-02 drill
 SELECT (SELECT count(*) FROM staff_ledger) AS ledger_rows, (SELECT count(*) FROM staff_ledger_chain) AS chain_rows, (SELECT max(seq) FROM staff_ledger_chain) AS chain_head_seq;
-SELECT max(token_seq) FROM job;   -- compare with job_token_seq below (ADR-0001 A1.4)
+SELECT max(token) FROM job;   -- compare with job_token_seq below (ADR-0001 A1.4); column is job.token (jobs/models.py)
 SELECT consumer, last_seq FROM dispatch_cursor;
 SELECT sequencename, last_value FROM pg_sequences WHERE schemaname = 'public';        -- the three standalone sequences (ADR-0001 A1.4) must sit at or above their tables' max
 SELECT version_num FROM alembic_version;
