@@ -29,7 +29,7 @@ judge. The implementation breaks them:
 | Debounce stamp written before the crossing is recorded | `geofence.ts:164-176` | `O01-F10` |
 | Geofence error swallowed, no re-register, no provider check | `useAttendanceBackground.ts`; G1 §1 item 3 | `O01-F03` |
 | Sampler loses its foreground service after any restart; `isRunning()` never repairs it | `pingTracker.ts:185` | `O01-F01` |
-| **New:** both location tasks share one `LocationTaskService`; ending a travel leg calls `stopForeground(true)` + `stopSelf()` on it, stripping the on-duty sampler's foreground state for the rest of the shift | `LocationTaskService.kt:49-52`; `LocationTaskConsumer.kt:62-64,226-228`; `travelTracker.ts:214-220` | **`O01-F20`**, code-confirmed by two refuters, device-unverified |
+| **New:** both location tasks share one `LocationTaskService`; ending a travel leg calls `stopForeground(true)` + `stopSelf()` on it, stripping the on-duty sampler's foreground state for the rest of the shift | `LocationTaskService.kt:49-52`; `LocationTaskConsumer.kt:62-64,226-228`; `travelTracker.ts:214-220` | **`O01-F20`**, code-level (four refuter verdicts could not refute it), device-unverified |
 | Workshop Wi-Fi BSSID is captured on every crossing and punch but never feeds the verdict; a redacted BSSID would be stored as a miss | `service.py:1005-1006,1032-1033`; `wifi.ts:18-31` | **`O04-F18`** |
 | Presence and ping queues have no drain trigger; a parked punch stops the sampler | G1 §1 item 4; `O3-F2` | confirmed |
 
@@ -50,7 +50,7 @@ README is silent) nudges every Grep/Read of every parallel agent, the graph goes
 release branches, and the package (`graphifyy`, version 0.9.100 released today, issues past
 #4900) fails the program's own two-weeks-old rule. The one gap it exposed is real: **mobile has no
 boundary enforcement**, so the invariant "never fetch a write outside the outbox" is prose. That
-becomes a dependency-cruiser rule in CI (P5b).
+becomes a dependency-cruiser import rule in CI (P5b-2).
 
 **Q4. The clinic tasks folder.** It is the record of a month spent building and measuring an
 agentic-coding harness in the owner's other repository. Its useful transfer to FixFlow is
@@ -128,7 +128,7 @@ asymmetry is large (a swap after v2 is fleet-wide costs 4–6 sessions plus anot
 and the spike is one session; declined, the patched-Expo path stands as planned. The licence
 cost is not verified here and is the owner's to check.
 
-### HR-A1c — two more presence signals (change now, P6a + P5b, premises checked in P0a)
+### HR-A1c — two more presence signals (change now, P6a + P5b-2, premises checked in P0a)
 
 Panel: both judges "change_now". Refuters: `expo-notifications` 0.29.14 WEEKLY triggers on
 AlarmManager with boot re-arm and no new native config **survived**; "fleet phones join the
@@ -178,7 +178,7 @@ SSH"; second uplink defaults to none); "a Mumbai/Singapore/EU VPS meets p95 < 80
 candidate; "the owner can pay a foreign recurring bill" is an **assumption** the current design
 already rests on (R2, Cloudflare, Sentry).
 **Ruling.** The host-agnostic decisions of G2-D2 stand (owned domain, portable compose, R2
-off-box, co-located DB). The default primary from P3b through P5d-2 is a **2 vCPU / 4 GB VPS**
+off-box, co-located DB). The default host from P3b until the P13e move is a **2 vCPU / 4 GB VPS**
 (Mumbai measured first in P3c, then Singapore), because after a landed write the phone deletes
 its copy and the drain host is forward-only (O-10 R2), so the host that receives the drain must
 be the most reliable one available, not the one with the best latency. The home box becomes
@@ -211,15 +211,16 @@ question** the owner's own notes lean toward. Seven refuter runs on A4b/A4c did 
 r2, "P9b never shows drift" ×2, "no second money writer" ×2): those claims stay owner questions,
 not findings, and ruling (4) below rests on design judgment, not on refuters.
 **Ruling.** (1) P7a makes the closed-job guards atomic (`O07-F16`): a conditional UPDATE with
-the status predicate or `SELECT … FOR UPDATE` in the same transaction, with a race test. (2) Two
+the status predicate (preferred) or `SELECT … FOR UPDATE` with `populate_existing()` in the same
+transaction, with a two-session race test. (2) Two
 new phases gate P9a-1: **P9-0a** (a small Opus PR: the week-export script, run against an
 Appendix C restore, pseudonymised unless the owner allows real rows into the Odoo trial, refusing
 an empty week) and **P9-0b** (the owner and accountant answer the G1 Odoo questions, open an Odoo
 test company on the Pakistani chart, import the week twice, and choose granularity, approval
 unit, basis and custody — or the owner signs the defaults as answers); P9a-1 also waits for
 P5d-2 **done** (verdict recorded, not passed) so the accounting chain never competes with the
-fleet work. (3) If P0a item 15
-confirms that technicians hold field cash or online receipts, O-07 gains a manager-recorded
+fleet work. (3) If P9-0b's recorded
+custody answer is yes (P0a item 15 informs it; the owner may sign the default), O-07 gains a manager-recorded
 `cash_remittance` source with `cash_with_staff[tech]` and `receipts_clearing` accounts
 (`O07-F17`), built in P9a-1 (source) and P9b (form); the invoice kind waits for a basis decision.
 (4) P8b routes every `job.bill_*` write through one service function that appends
@@ -234,12 +235,12 @@ live push or the parked connector product ever matters.
 
 | Id | Sev | Status | Claim | Owner |
 | --- | --- | --- | --- | --- |
-| `O01-F20` | P1 | V (4 refuter verdicts over 2 phrasings, code-level; device-unverified) | Ending a job-travel leg strips the shared `LocationTaskService` of foreground state; the on-duty ping sampler then runs throttled until the next foreground | P5a fix, P5c check |
+| `O01-F20` | P1 | V (4 refuter verdicts over 2 phrasings, code-level; device-unverified) | Ending a job-travel leg strips the shared `LocationTaskService` of foreground state; the on-duty ping sampler then runs throttled for the rest of the shift (until P5a's re-arm) | P5a fix, P5c check |
 | `O04-F18` | P2 | C | `wifi_match` is computed on every punch, crossing and ping but never feeds `inside`; a redacted BSSID would be stored as a miss | P6a |
 | `O3-F22` | P2 | C | The pending-media queue keeps a private error ladder (413 special case, park by forcing `attempts`) outside the shared classifier | P2a |
 | `O10-F17` | P3 | C | The drain manifest records no storage size; the 6 MB AsyncStorage cap is unmeasured on every phone | P2b-1 |
 | `O07-F16` | P2 | S (narrowed: the window is a negotiate or void overlapping a close) | `negotiate_bill` (and `void_payment`) is check-then-set with no row lock: a call that loaded before a concurrent close commits still writes onto the closed job; the missing closed checks on `log_payment`/`void_payment` are `O04-F16`/`O07-F5` | P7a |
-| `O07-F17` | P1 | G | No record of field-cash custody or hand-over; O-07 books tech-collected cash straight into the till account | P9-0, O-07 |
+| `O07-F17` | P1 | G | No record of field-cash custody or hand-over; O-07 books tech-collected cash straight into the till account | P9-0b (decision), P9a-1 (source), P9b (form), P9a-2 (staging) |
 
 Severities in this table are the main session's assignment; the panel assigned none.
 `O01-F05` is narrowed: the 15 s timer releases the job's wakelock without stopping the JS; the
@@ -259,12 +260,12 @@ the human-view design and the upstream disposition, then argued opposite cases. 
 | A "Decisions / ruled out / owner corrections (this phase)" list in the draft PR body, appended when they occur | **adopt** | plan §0 Resume |
 | Reviewer verdict bound to the PR head SHA; fail-before/pass-after named per register id; changed expectations, removed assertions and new skips listed | **adopt** | plan §0 Routing |
 | Phase-closing message answers six questions (goal, fit, choice, before/after, evidence incl. skipped counts, remaining) | **adopt** (as a message format, not a file) | plan §0 Resume |
-| Skip-aware gates: `pytest -rs --junitxml`, fail when integration tests were skipped (`backend/tests/conftest.py:65-69` skips them all when `FIXFLOW_TEST_DATABASE_URL` is unset); mobile CI drops `--passWithNoTests` | **adopt** | P1 deliverables, design Appendix A |
-| CI check that CLAUDE.md's Alembic head equals the `down_revision` chain head and every path CLAUDE.md names exists | **adopt** | P1 deliverables |
+| Skip-aware gates: `pytest -rs --junitxml`, fail when integration tests were skipped (`backend/tests/conftest.py:65-72` skips them all when `FIXFLOW_TEST_DATABASE_URL` is unset); mobile CI drops `--passWithNoTests` | **adopt** | P1 deliverables, design Appendix A |
+| CI check that CLAUDE.md's Alembic head equals the `down_revision` chain head (fatal) and that the paths CLAUDE.md names resolve (a warning until P13c; an allow-list for the two files it names as non-existent) | **adopt** | P1 deliverables |
 | Commit the W1/W2 raw outputs that the register cites (they lived only in a %TEMP% scratchpad) | **adopt** | `docs/program/evidence/` with a sha256 manifest |
 | Memory file as a pointer, not a state restatement (it carried a stale next step) | **adopt** | memory rewritten |
 | One-page owner view with a diagram, derived from the plan, refreshed at phase close | **adopt** (the overhead-skeptic dissented: a standing page is one more projection that can drift; accepted because the owner asked for exactly this, with the refresh tied to the phase-close routine) | `docs/program/OWNER-VIEW.md` |
-| Fresh-agent cold-resume trial: a Sonnet agent given only the repository must recover ten frozen facts about P1 | **trial once**, before P1 (the cheapest test of "resumes from the repository alone") | P1 Entry; `docs/program/evidence/resume-trial-P1/` |
+| Fresh-agent cold-resume trial: a Sonnet agent given only the repository must recover ten frozen facts about P1 | **trial once**, as P1's first act (the session writes the facts, dispatches the agent, judges the miss) | P1; `docs/program/evidence/resume-trial-P1/` |
 | A "Compact Instructions" section for the summarizer | skip | native support unverified; per-agent overhead |
 | `docs/tasks/<id>/task.md` state-owner tree; context.md projections; evidence JSON with before/after hashes; preservation manifests | skip | FixFlow already has one owner per kind of state (plan, PR body, W0-results, git) |
 | Python checkpoint hashing and `resume` freshness | skip (git version adopted above) | — |
@@ -298,9 +299,10 @@ Q3 above. Trial design, should the owner still want evidence: a throwaway clone 
 pipx-isolated, a version at least 14 days old, code-only, no `graphify install` and no git hook;
 ten fixed questions answered by a Sonnet agent with grep/ast-grep as ground truth; keep it only if
 it finds a caller grep missed. Better alternative, adopted: **dependency-cruiser** in
-`technician-app` with rules mirroring the backend import-linter contracts plus "no raw write
-`fetch` outside `lib/outbox*`, `features/*/sync*` and `pendingMedia`", run in CI beside the
-mobile job (P5b-2).
+`technician-app` with rules mirroring the backend import-linter contracts, written as import
+rules (screens and components may not import the write functions of `lib/*Api`; only
+`lib/outbox*`, `features/*/sync*` and `pendingMedia` may; raw `fetch` confined to `lib/api.ts` and
+`lib/outboxSync.ts`), run in CI beside the mobile job (P5b-2).
 
 ---
 
@@ -353,7 +355,8 @@ carry dated amendment sections; their original text is untouched.
 Three Opus critics (one-session fit and coherence; adjudication fidelity against the raw panel
 outputs; invariants and rulings) read the v6 delta; Sonnet re-located every blocker and major
 citation (all confirmed, two line drifts). Outcome: 1 blocker, 20 major, 20 minor, 7 notes, all
-folded into v7 of the plan and this record. The blocker: v6's "enqueue before the fix resolves"
+folded into v7 of the plan and this record, and a one-critic check of that fold-in (23 findings,
+plan §6.7) into v8. The blocker: v6's "enqueue before the fix resolves"
 would have stripped every crossing of its coordinates (the server judges from the payload at
 ingest). The majors, grouped: the hosting ruling applied unevenly (no phase owned the VPS → box
 move, three timing statements, a weaker gate for the box as the drain host than for the later

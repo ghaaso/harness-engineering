@@ -111,9 +111,9 @@ GET /api/postings/reconciliation?from&to (manager), per kind, over accounting_da
    the accountant choose granularity (per-payment vs daily close per method), the approval unit,
    the basis and the custody design — or the owner signs the plan's defaults as answers. P9a-1
    waits for P9-0b and for P5d-2 done. The `cash_remittance` source is built in P9a-1 and its
-   manager form in P9b when P9-0b chose custody. If there is no Odoo and no
-   accountant, P9a/P9b ship the approval boundary, reconciliation and an accountant-ready journal
-   CSV; P10a's Odoo specifics and P11 are dropped.
+   manager form in P9b when P9-0b's recorded custody answer is yes. If there is no Odoo and no
+   accountant, P9a/P9b ship the approval boundary and reconciliation, P10a ships the journal CSV
+   export as written, and only the Odoo import runbook, P10b and P11 are dropped.
 2. **Cash custody (`O07-F17`).** If P0a item 15 confirms that technicians hold field cash or
    receive online payments into personal wallets before remitting, the posting model gains a
    manager-recorded `cash_remittance` source: tech-recorded cash debits `cash_with_staff[tech]`,

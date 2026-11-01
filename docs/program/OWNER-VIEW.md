@@ -1,6 +1,6 @@
 # FixFlow ship program — the one-page owner view
 
-_Derived from `SHIP-PLAN-2026-11.md` (v7) and refreshed at the close of every phase. This page
+_Derived from `SHIP-PLAN-2026-11.md` (v8) and refreshed at the close of every phase. This page
 explains; the plan decides. Status words: **done**, **in progress**, **next**, **waiting on you**,
 **not started**. Last refresh: 2026-11-01, before P0a._
 
@@ -25,7 +25,8 @@ dead, the phones hold months of unsynced data, and the next step is yours.
 4. Archive the R2 backups, then take the Supabase dump and verify it. Same day.
 5. The phone roster, each phone's build facts, and the airplane-mode photos of what is stuck.
 6. Answer the decisions table (plan §4) or accept the defaults. New rows since v5: the host
-   (default: a small VPS until the box passes a 14-day reliability gate), the commercial-SDK
+   (default: a small VPS; the home box only after it passes a 14-day reliability probe, or never
+   if you decide not to buy one), the commercial-SDK
    spike (default: run it), the shift-start reminder (default: yes), the workshop Wi-Fi facts,
    whether technicians hold cash before handing it over, and the books basis (no default: you
    answer it in P9-0b, with the accountant if there is one).

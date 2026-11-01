@@ -109,8 +109,10 @@ Rollback: the source of truth stays untouched (Supabase project, R2 dumps) until
    and dumps unchanged. Region measured in P3c: Mumbai first, then Singapore (ADR-0001's Karachi
    measurements put Singapore and the EU above the 805 ms budget via Railway's ingress). The home
    box joins as the off-provider dump puller and restore-drill host and becomes primary only
-   through phase **P13e** (runbook R9: route to the 503 responder, final dump + sha256, Appendix
-   C restore, Appendix B counts equal the source, tunnel move, old host read-only for 14 days) —
+   through phase **P13e** (runbook R9: route to the 503 responder, the VPS backend stopped and its
+   crons disabled, `/etc/fixflow` copied, final dump + sha256, the O-08 §3 production restore,
+   Appendix B counts equal the source, tunnel move, crons re-installed on the home box, the old
+   host a read-only DB container for 14 days, then destroyed; skipped when there is no home box) —
    not before the later of P5d-2 done and the last re-open, and only after the one **box gate**:
    a 14-day heartbeat from its site at ≥ 99.5 % reachability, or a second uplink. The owner may
    invert the default at P3b only if the box already passes that gate. From `T_open` on, any

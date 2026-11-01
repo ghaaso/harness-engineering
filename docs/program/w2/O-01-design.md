@@ -123,7 +123,7 @@ REFUTED or NARROWED CANDIDATES:
    (`getLastKnownPositionAsync` max age 2 min and accuracy ≤ 100 m, else `getCurrentPositionAsync`
    under an 8 s timeout, else null coordinates); the presence row is enqueued after the bounded fix
    returns, carrying its coordinates (null only on timeout); the debounce stamp is written after
-   the enqueue; a fix older than the geofence event never suppresses; the 20 s `DWELL_RECHECK_MS` path
+   the enqueue; a fix older than the handler's start time never suppresses; the 20 s `DWELL_RECHECK_MS` path
    and the second fix are removed. The phone applies the R1 rule to that single fix only to
    suppress the prompt on a definitive outside; the server recomputes every row.
 2. **New finding `O01-F20` (P1).** Both location tasks share one `LocationTaskService`

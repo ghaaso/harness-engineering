@@ -317,3 +317,143 @@ transcript directory.
   fix: Prefer a conditional UPDATE with the status predicate for negotiate. For log_payment and void_payment, if FOR UPDATE is used, require populate_existing(), and make the race test run two sessions so it catches a stale read.
   ev: CLAUDE.md:The job lifecycle ; docs/program/SHIP-PLAN-2026-11.md:890-893
 
+
+---
+
+
+
+## Part 2 — the v7 final check (run `wf_51eaeaeb-189`, one Opus critic)
+
+
+
+Checked that v7 folded in part 1 and introduced no new contradiction. 10 major, 12 minor, 1 note;
+
+adjudicated into v8 (plan §6.7).
+
+
+SUMMARY: v7 fully addresses I-1, F-2, F-3, F-4, F-5, F-8, F-9, F-10, F-11, F-13, F-14, A-1, I-4, I-9 and I-13. F-1/I-2 are mostly addressed. F-6/I-8, F-12, A-2, I-3, I-5 and I-7 are only partly addressed. The I-1 fix is sound: enqueue-after-fix is safe because TaskService.java:196-218 tears down only 2 s after the JS task finishes. For the seven new phases (P5-spike, P5b-1, P5b-2, P9-0a, P9-0b, P13e, P14-log), the Entry lines, the §2 graph and the §3 checklist agree, except that P14-log rides P14-fleet with no matching edge. New problems from the fold-in, all major: - P5c's backgrounded cross-stop check needs a debug-only control that no phase builds and the fleet release APK cannot contain. - P13e/runbook R9 leaves the VPS backend, scheduler and crons running, so stale dumps land beside the new primary's under the same R2 prefixes and the VPS heartbeat can hide an outage on the home box. R9 also omits the /etc/fixflow secrets transfer and never defines 'read-only'. - The box gate's 14-day heartbeat has no mechanism or owner. - There is no branch for a shop without a home box, so the self-hosting milestone can never close. - P1's Entry requires expected.json, which does not exist and which nothing produces. - The no-Odoo branch's journal CSV is assigned to P9a/P9b, which build none. - P13b promises to encrypt provider snapshots, which cannot be done. - The replay-manifest location is misstated. - P5b-1's native patches have no compile gate. - §6.6 and HR §8 claim a complete fold-in wi
+
+UNADDRESSED FROM PART 1: 
+- A-2 (partial): the 'when foregrounded' qualifier is restored (plan 787-791, HR 118-122, O-01 amendment 2), but the duration statement is still split: 'for the rest of the shift' (HR:32, O-01 amendment 2) vs 'until the next foreground' (HR §3:237). P5c's background case also depends on a 'debug-only forced travel stop' (864) that no phase builds and that the fleet release build cannot contain.
+- I-7 (partial): the stale-fix rule and its Jest vector are added (776-777, 805), but the requested P5d-2 metric and §4 threshold for the notify_suppressed rate on arrivals later confirmed by a clock-in are missing (893-896, 1261).
+- I-3 (partial): 'any restore from T_open on is an O-10 R2 restore' is in the P3a runbook (541-544) and HR-A3, but the off-host manifest location is misstated as 'in its W0-results row' (the row holds only a receipt id, 694); the real off-host copy (post-drain dump / app_event) is not named.
+- F-12 (partial): the no-accountant branch now signs the defaults as answers and the tax row blocks P9-0b, but the branch's 'accountant-ready journal CSV' is assigned to P9a/P9b, which build no export (P10a does), and the §1 milestone 'end of P9b' (124, 1103) precedes any CSV.
+- F-6 / I-8 (partial): P1 now only warns, but turning the check fatal in P13c (1209-1210) has no allow-list for the two names CLAUDE.md lists as non-existent files, and the resolver roots omit backend/app/features/; HR §4:263 still says every path must exist.
+- I-5 (partial): the hourly cron now uses run_db_backup, and P13b and §4 name all three backup kinds, but 'provider backups moved under the encrypted put-only path' (1200-1201) cannot be done, so the provider-snapshot plaintext deviation (which includes /etc/fixflow) has no real bound.
+- F-1 / I-2 (mostly addressed by P13e + runbook R9): R9 omits stopping the VPS backend, scheduler and host crons before the final dump; it never defines 'read-only'; it does not transfer the /etc/fixflow secrets; and the 14-day destroy has no owner. The box gate's heartbeat has no defined mechanism (P0b 308-309, P3a 512-516).
+
+[MAJOR] V7-01 @ SHIP-PLAN P5c cross-stop check (863-866) vs P5a scope (798-803) and P5b-2 v2 build (847)
+  claim: The background half of the O01-F20 check cannot be run as written. P5c ends the leg 'with the app backgrounded (the Diagnostics screen's debug-only forced travel stop)'. No phase builds a forced travel stop: P5a adds only a 'hidden Diagnostics screen'. P5c also installs the fleet v2 release build (`eas build --profile fleet`, rule 1), and a release build has no debug-only controls. A button on a screen also cannot be pressed while the app is in the background.
+  fix: In P5a, add a hidden Diagnostics action that ships in the release build and schedules a travel stop N seconds later, so the tester can background the app first. Alternatively, drive one of the real headless paths (the signed-out branch, or a backgrounded arrival punch). Name the test in P5a's Deliverables.
+  ev: docs/program/SHIP-PLAN-2026-11.md:863-866 ; docs/program/SHIP-PLAN-2026-11.md:798-803 ; docs/program/SHIP-PLAN-2026-11.md:847, 857
+
+[MAJOR] V7-02 @ SHIP-PLAN P3a runbook R9 (539-541) and P13e (1220-1230)
+  claim: The host-move procedure leaves the VPS active. Routing api. to 503 stops phone writes, but the VPS backend's scheduler keeps running (nightly backup to `backups/db-selfhost/`, ops rollup, media-orphan-sweep, payroll export). Its host crons also keep running: the hourly `run_db_backup` to `backups/db-hourly/` and the heartbeat to the dead-man service. 'Read-only for 14 days' is never defined. During those 14 days the frozen VPS writes dumps under the same R2 prefixes as the new primary, and its pruner deletes them. A later 'restore the newest dump' can therefore pick a stale VPS dump. The VPS heartbeat also keeps the dead-man green while the home box is down. R9 has no step that carries `/etc/fixflow` (JWT secret, ops token, R2, FCM, SMTP, age key) to the box. A new JWT secret would 401 every phone. 'Appendix C restore' names the scratch verify procedure, not the production restore (O-08 
+  fix: Add to R9: before the final dump, stop the VPS backend container and disable its host crons (hourly dump, heartbeat). Copy `/etc/fixflow` to the box byte-for-byte, keeping the same JWT secret. Restore with the O-08 §3 production commands, then Appendix B. Install the heartbeat and hourly crons on the box (or drop the hourly one per §4 RPO). Define read-only as 'DB container only, `default_transaction_read_only=on`, no backend, no crons'. Add a dated P13e-close row for the destroy.
+  ev: docs/program/SHIP-PLAN-2026-11.md:539-541 ; docs/program/SHIP-PLAN-2026-11.md:1225-1229 ; docs/program/SHIP-PLAN-2026-11.md:504, 512-513, 533-535 ; backend/app/core/backup.py:106-134
+
+[MAJOR] V7-03 @ SHIP-PLAN §4 host row (1256), P0b (302-309), P13e Entry (1222-1224)
+  claim: Nothing defines how the box gate is measured. The 14-day heartbeat 'from its site at ≥ 99.5 % reachability' has no probe, monitoring service or owner. The only heartbeat the plan builds (P3a) is a host cron on the primary calling `/api/ops/health`. The home box publishes no ports and has no tunnel hostname. P0b's Done-when records only a 'heartbeat start date'. As written, neither the P3b inversion nor P13e's Entry can be evaluated.
+  fix: In the P3a runbook home-box section, define the probe. For example: a cron on the home box pings a second dead-man check every 5 minutes, the 99.5 % is read from that service's 14-day history, and P0b starts it. Record the read-out in P13e's step table.
+  ev: docs/program/SHIP-PLAN-2026-11.md:512-513 ; docs/program/SHIP-PLAN-2026-11.md:308-309 ; docs/program/SHIP-PLAN-2026-11.md:516
+
+[MAJOR] V7-04 @ SHIP-PLAN §1 self-hosting row (125), P0b Done-when (309), P13e Entry (1222-1224)
+  claim: The plan has no branch for a shop without a home box. P0b allows 'the home box, if any', yet the 'Self-hosting durable' milestone ends only at P13e. P13e cannot start without a box that passes the gate. If the owner never buys a box, the milestone can never be reached, and P13e stays an open checklist row forever.
+  fix: Mark P13e conditional. With no home box (recorded in W0-results), the VPS stays primary, the milestone ends at P13c/P13d, and P13e becomes 'skipped (no box)'.
+  ev: docs/program/SHIP-PLAN-2026-11.md:125 ; docs/program/SHIP-PLAN-2026-11.md:308-309 ; docs/program/SHIP-PLAN-2026-11.md:212
+
+[MAJOR] V7-05 @ SHIP-PLAN P1 Entry (317-321)
+  claim: P1's Entry requires a cold-resume trial against ten facts 'frozen beforehand in docs/program/evidence/resume-trial-P1/expected.json'. The file does not exist; `docs/program/evidence` holds only README.md, manifest.sha256, w1 and w2. No P0a item, phase or checklist row produces it. This item is new in v7 (from A-11), so P1 has an Entry precondition that nothing creates.
+  fix: Add a step that produces the file. For example, P0a item 10b: the main session writes and commits the ten facts and the brief to expected.json. Or make it P1's first act, with the trial agent dispatched afterwards. Say who judges a miss.
+  ev: docs/program/SHIP-PLAN-2026-11.md:317-321 ; docs/program/evidence/:ls ; docs/program/HARNESS-REVIEW-2026-11-01.md:267
+
+[MAJOR] V7-06 @ SHIP-PLAN P9-0b Done-when (1101-1103), §1 accounting row (124) vs P9a-1/P9a-2/P9b/P10a scopes
+  claim: In the no-Odoo, no-accountant branch, no phase builds the journal CSV. That branch has 'P9a/P9b ship ... an accountant-ready journal CSV' and the milestone 'ends at P9b' (§1: 'end of P9b plus the journal CSV'). But P9a-1, P9a-2 and P9b contain no CSV export; `run_posting_export` and `CsvExportTransport` are P10a's scope. Read literally, the milestone is declared reached before any CSV exists. This only partly closes F-12.
+  fix: In that branch, keep P10a's CSV export, transport seam and exports page, and drop only RUNBOOK-ODOO-IMPORT, P10b and P11. The milestone then ends at P10a. Update §1 and the O-07 amendment 1 to match.
+  ev: docs/program/SHIP-PLAN-2026-11.md:1101-1103 ; docs/program/SHIP-PLAN-2026-11.md:1111-1119, 1130-1135, 1142-1145 ; docs/program/SHIP-PLAN-2026-11.md:1154-1159
+
+[MAJOR] V7-07 @ SHIP-PLAN P13b scope (1200-1201), §4 plaintext row (1268)
+  claim: P13b cannot do what it says for provider backups. It moves 'the hourly cron and provider backups ... under the same encrypted put-only path', and §4 says 'P13b closes it for all three'. VPS provider backups are disk snapshots held by the provider. They contain the plaintext `/etc/fixflow` secrets and cannot be age-encrypted into an R2 put-only prefix. So the deviation's bound for provider backups is never actually closed.
+  fix: Make P13b switch provider backups off, since the hourly and nightly encrypted dumps replace them. Or state that the provider-backup deviation lasts until the VPS is destroyed after P13e. Record the choice in §4.
+  ev: docs/program/SHIP-PLAN-2026-11.md:1200-1201 ; docs/program/SHIP-PLAN-2026-11.md:1268 ; docs/program/SHIP-PLAN-2026-11.md:299-300, 573
+
+[MAJOR] V7-08 @ SHIP-PLAN P3a runbook (541-544) vs P4b row (694-695) and O-10 D4/R2
+  claim: I-3 is only partly addressed: the plan misstates where the replay source lives. The new rule says the manifest needed for an O-10 R2 restore 'lives on the phone and in its W0-results row'. The P4b row records only a 'manifest receipt id or photo set'. The manifest's content (the D4 full record list with payloads) is held off the phone only in `app_event`, inside the database being restored, and in the post-drain dumps. The plan names neither of those as the archive.
+  fix: Say the off-host archive is the post-drain dump in `archive/post-drain/`, which contains that phone's `drain_manifest` app_event. Better still, add a per-row step that exports the manifest's props JSON to `archive/manifests/<tech>-<versionCode>.json`, with its key recorded in the row.
+  ev: docs/program/SHIP-PLAN-2026-11.md:541-544 ; docs/program/SHIP-PLAN-2026-11.md:694-695 ; docs/program/w2/O-10-design.md:48-55, 105
+
+[MAJOR] V7-09 @ SHIP-PLAN P5b-1 Done-when (826) vs scope (821-822), §6.2 (1357-1358)
+  claim: The split leaves P5b-1's four native patch-package patches with no native compile. P5b-1 lands patches for O01-F09, F12, F14 and F17 and is done at 'Mobile gates and CI green; merged'. The first Gradle compile is P5b-2's v2 build. CLAUDE.md records that `expo export` does not catch native or Gradle breaks, and §6.2 promises compile gates at the end of P5a and P5b. A broken P5b-1 patch would surface inside P5b-2's session.
+  fix: Give P5b-1 the same Done-when item as P5a: `eas build --profile fleet` compiles (id recorded, not installed).
+  ev: docs/program/SHIP-PLAN-2026-11.md:821-822, 826 ; docs/program/SHIP-PLAN-2026-11.md:807-808 ; CLAUDE.md:Build & deploy traps
+
+[MAJOR] V7-10 @ SHIP-PLAN §6.6 (1491-1495); HARNESS-REVIEW §8 (355-356)
+  claim: Both records say critique-5 was folded in completely ('all folded into v7 of the plan and this record'), and neither gives the accepted/narrowed/rejected list that §6.1–§6.4 keep. Several items remain open: I-7's P5d-2 notify_suppressed metric, A-2's single duration statement, F-25's citation (HR:262 still says conftest 65-69), A-5 (HR:32 still says 'code-confirmed by two refuters'), F-21 (HR §5:301-302 still states the unwritable raw-fetch rule) and F-6 (HR:263 still says every path must exist, while P1 only warns).
+  fix: Add a '§6.7 critique-5' record with Accepted, Narrowed (I-7 metric deferred, if intended) and Rejected lines. Fix the stale HR lines, or say why they stand.
+  ev: docs/program/HARNESS-REVIEW-2026-11-01.md:355-356 ; docs/program/HARNESS-REVIEW-2026-11-01.md:32, 262, 263, 301-302 ; docs/program/SHIP-PLAN-2026-11.md:893-896
+
+[MINOR] V7-11 @ SHIP-PLAN P7b-1 (1004-1005)
+  claim: P7b-1 says 'the mobile side is P5b-2'. Typed-id login is in P5b-1 (823-824), and P2b-1 (438) and ruling R3 (1440) both say P5b-1.
+  fix: Change it to 'the mobile side is P5b-1'.
+  ev: docs/program/SHIP-PLAN-2026-11.md:1005 ; docs/program/SHIP-PLAN-2026-11.md:823-824, 438, 1440
+
+[MINOR] V7-12 @ HARNESS-REVIEW 53, 131, 242; SHIP-PLAN 1320
+  claim: Some references still use the pre-split ids. HR Q3 says the dependency-cruiser rule lands in '(P5b)', and the HR-A1c heading says 'P6a + P5b'; v7 defines P5b-2. The HR §3 owner for O07-F17 is 'P9-0, O-07'; v7 has P9-0b, P9a-1, P9b and P9a-2. Plan §5 maps `O01-F07`..`F18` to 'P5a/P5b'. HR 345 and 362-363 are historical and fine.
+  fix: Replace them with P5b-2 (HR 53, 131), 'P9-0b, P9a-1, P9b, P9a-2' (HR 242), and P5a/P5b-1 (plan 1320).
+  ev: docs/program/HARNESS-REVIEW-2026-11-01.md:53, 131, 242 ; docs/program/SHIP-PLAN-2026-11.md:1320
+
+[MINOR] V7-13 @ SHIP-PLAN §0 (61-64) vs P0b 305-306, R9 540, P13e 1223-1224, §4 1256, §6.6 1484
+  claim: §0 says 'where older text says "the box" it means the host'. v7's own new text uses 'the box' for the home box: the P0b gate, R9's 'restore on the box', 'the box's site' in P13e, the §4 'box gate' and §6.6. Under §0's rule, 'the box's site at ≥ 99.5 %' reads as the VPS. F-19 and I-18 asked for exactly two terms.
+  fix: Write 'home box' in those six places, and keep 'box gate' as a named term defined in §4.
+  ev: docs/program/SHIP-PLAN-2026-11.md:63-64 ; docs/program/SHIP-PLAN-2026-11.md:305-306, 540, 1223-1224, 1256, 1484
+
+[MINOR] V7-14 @ HARNESS-REVIEW 32; w2/O-01-design.md amendment 2; HARNESS-REVIEW 237
+  claim: A-2 asked for one duration statement, and the documents still give two. HR Q1 and the O-01 amendment say the sampler runs throttled 'for the rest of the shift'. The HR §3 register row says 'until the next foreground'. For today's code, the first is correct, because `isRunning()` blocks any repair (O01-F01).
+  fix: Use 'for the rest of the shift (until P5a's re-arm)' everywhere, and say 'code-level' rather than 'confirmed by two refuters' in HR:32.
+  ev: docs/program/HARNESS-REVIEW-2026-11-01.md:32, 237 ; docs/program/w2/O-01-design.md:~133
+
+[MINOR] V7-15 @ SHIP-PLAN P3a (536-537), O-08 amendment 2
+  claim: The post-drain dump is 'the same call, prefix=archive/post-drain/' with no retention named. `run_db_backup` prunes keys under its prefix that match `fixflow-db-<stamp>.dump` and are older than `backup_retention_days` (default 30). A P4r more than 30 days after P4a would therefore delete the earlier 'archive' dumps.
+  fix: State 'retention: none (no prune) for archive/post-drain/' and add that mode to the P3a parameter change, with a test.
+  ev: docs/program/SHIP-PLAN-2026-11.md:536-537 ; backend/app/core/backup.py:37, 125-131 ; backend/app/core/config.py:201
+
+[MINOR] V7-16 @ SHIP-PLAN P1 (358-362), P13c (1209-1210)
+  claim: F-6 and I-8 are only partly addressed. P1 now only warns, but P13c turns the check fatal 'after CLAUDE.md is normalised' with no allow-list for the two names CLAUDE.md mentions in order to deny them (`core/railway.py`, `core/sentry_api.py`). Normalising cannot make those resolve, so P13c's check fails on its first run. The resolver roots also omit `backend/app/features/`, which `jobs/service.py` needs.
+  fix: Add an explicit allow-list file for negative mentions, read by the check, plus the features root (or require repo-relative paths after P13c).
+  ev: docs/program/SHIP-PLAN-2026-11.md:358-362 ; docs/program/SHIP-PLAN-2026-11.md:1209-1210 ; CLAUDE.md:Ops console section
+
+[MINOR] V7-17 @ HARNESS-REVIEW HR-A4 (3) (221-224); SHIP-PLAN P9a-1 (1117), P9a-2 (1132-1133), P9-0b (1087-1088, 1095-1098), §4 (1265)
+  claim: The custody trigger is stated three ways. HR-A4 says 'if P0a item 15 confirms', P9a-1 says 'when P9-0b chose custody', and P9a-2 says 'the §4 default when P0a item 15 is unknown'. P9-0b turns unknowns into answers, so P9a-2's fallback can never apply. Where it does apply, it could stage `cash_remittance` rows from a source P9a-1 never built. P9-0b's list of signed defaults also leaves out custody.
+  fix: Use one trigger, 'P9-0b's recorded custody answer (the owner may sign the §4 default yes)', in HR-A4, P9a-1 and P9a-2. Add custody to P9-0b's signed-defaults list.
+  ev: docs/program/SHIP-PLAN-2026-11.md:1117, 1132-1133 ; docs/program/SHIP-PLAN-2026-11.md:1095-1098 ; docs/program/HARNESS-REVIEW-2026-11-01.md:221-224
+
+[MINOR] V7-18 @ SHIP-PLAN P9a-2 Entry (1129-1130) vs §4 (1271)
+  claim: P9a-2's Entry still reads 'basis, start date, reason codes (§4; defaults ship; ...)', but the §4 basis row now says 'no default — P9-0b must answer'.
+  fix: Change it to 'basis and start date as answered in P9-0b; reason-code defaults ship; idle without a start date'.
+  ev: docs/program/SHIP-PLAN-2026-11.md:1129-1130 ; docs/program/SHIP-PLAN-2026-11.md:1271
+
+[MINOR] V7-19 @ HARNESS-REVIEW HR-A3 (181)
+  claim: The ruling text still says 'the default primary from P3b through P5d-2 is a VPS', the dual-timing wording F-2 flagged. Everywhere else, including the next sentence of the same ruling, it is 'until P13e', and P13e can only follow P5d-2, the last re-open, P13b and the gate.
+  fix: Change it to 'from P3b until P13e'.
+  ev: docs/program/HARNESS-REVIEW-2026-11-01.md:181, 185-188 ; docs/program/SHIP-PLAN-2026-11.md:62-63
+
+[MINOR] V7-20 @ SHIP-PLAN header (3, 10-11) vs §6.6 Status (1498-1503)
+  claim: The header says 'revised six times', and its git list of earlier versions stops at v4 (762a63f, 79b94c7, 9748453, 46c5d98), leaving out v5 (7a6dbfa) and v6 (3fb8f9c). The §6.6 Status paragraph says 'Five passes have run' and lists five finding counts, although critique-5 (48 findings) is a sixth pass that the paragraph itself mentions.
+  fix: Add 7a6dbfa (v5) and 3fb8f9c (v6) to the list. Change the Status paragraph to 'Six passes have run (138 + 141 + 52 + 47, 45 claims / 83 refuter verdicts, then 48)'.
+  ev: docs/program/SHIP-PLAN-2026-11.md:3, 10-11 ; docs/program/SHIP-PLAN-2026-11.md:1498-1503 ; git log:7a6dbfa, 3fb8f9c
+
+[MINOR] V7-21 @ SHIP-PLAN P14-log (1243-1247), §2 (143); P14-n Entry (1234)
+  claim: P14-log 'rides a P14-fleet install round', but its Entry and graph edge require only P5d-2 done; the P14-n build dependency is missing. P14-n's Entry is still 'P5d-2 passed' while P5e is undefined (899). The F-13 failure mode therefore survives for SDK upgrades, and through them for P14-log.
+  fix: Make P14-log's Entry 'P5d-2 done and a P14-n build', and redraw the edge. Decide whether P14-n needs 'passed' or 'done (P5e scoped)'.
+  ev: docs/program/SHIP-PLAN-2026-11.md:1234, 1245-1247 ; docs/program/SHIP-PLAN-2026-11.md:143, 897-899
+
+[MINOR] V7-22 @ HARNESS-REVIEW HR-A4 ruling (1) (213-214)
+  claim: Ruling (1) still offers `SELECT … FOR UPDATE` without the `populate_existing()` requirement that plan P7a (977-978) and the O-07 amendment 3 now carry (I-16), so the ruling and the plan disagree.
+  fix: Add 'with populate_existing(); conditional UPDATE preferred; two-session race test'.
+  ev: docs/program/HARNESS-REVIEW-2026-11-01.md:213-214 ; docs/program/SHIP-PLAN-2026-11.md:976-979
+
+[NOTE] V7-23 @ SHIP-PLAN P5a step 1 (772-778)
+  claim: I-1's adopted option, enqueue after the bounded fix, is sound. TaskService schedules the headless invalidation only 2 s after the JS task reports finished, so a ≤ 8 s awaited fix finishes before teardown. One wording gap: Expo geofencing task data carries no event timestamp, so 'older than the geofence event' has to mean the handler's start time.
+  fix: Write 'older than the handler's start time (minus a small margin)'.
+  ev: technician-app/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java:196-218 ; technician-app/src/features/attendance/geofence.ts:183-211
+
