@@ -103,15 +103,22 @@ Rollback: the source of truth stays untouched (Supabase project, R2 dumps) until
 
 ## Amendments (2026-11-01, harness review — `../HARNESS-REVIEW-2026-11-01.md` HR-A3)
 
-1. **The default primary for the drain window is a VPS, not the home box.** From P3b through
-   P5d-2 the identical `docker-compose.prod.yml` runs on a 2 vCPU / 4 GB VPS behind the same
-   cloudflared tunnel and `api.<domain>`; R2 media and dumps unchanged. Region measured in P3c:
-   Mumbai first, then Singapore (ADR-0001's Karachi measurements put Singapore and the EU above
-   the 805 ms budget via Railway's ingress). The home box joins as the off-provider dump puller
-   and restore-drill host and becomes primary by a tunnel move after `T_close`, once a 14-day
-   heartbeat shows ≥ 99.5 % reachability or a second uplink exists. The owner may invert the
-   default at P3b if a box with a UPS covering box, ONT and router already exists. Reason: after
+1. **The default host from P3b until the P13e move is a VPS, not the home box.** The identical
+   `docker-compose.prod.yml` runs on a 2 vCPU / 4 GB VPS (provider backups on, provider firewall
+   deny-all-inbound-except-SSH) behind the same cloudflared tunnel and `api.<domain>`; R2 media
+   and dumps unchanged. Region measured in P3c: Mumbai first, then Singapore (ADR-0001's Karachi
+   measurements put Singapore and the EU above the 805 ms budget via Railway's ingress). The home
+   box joins as the off-provider dump puller and restore-drill host and becomes primary only
+   through phase **P13e** (runbook R9: route to the 503 responder, final dump + sha256, Appendix
+   C restore, Appendix B counts equal the source, tunnel move, old host read-only for 14 days) —
+   not before the later of P5d-2 done and the last re-open, and only after the one **box gate**:
+   a 14-day heartbeat from its site at ≥ 99.5 % reachability, or a second uplink. The owner may
+   invert the default at P3b only if the box already passes that gate. From `T_open` on, any
+   restore — provider snapshot, hourly dump, nightly dump — is an O-10 R2 restore. Reason: after
    a landed write the phone deletes its copy, and the drain host is forward-only (O-10 R2), so
    the host that receives the drain must be the most reliable available during load-shedding.
-2. **Backups during and after the drain:** an hourly `pg_dump` to R2 from the first drain on,
-   plus a manual dump after every phone's P4b row; the nightly 02:30 dump stays.
+2. **Backups during and after the drain:** an hourly dump through the app's own `run_db_backup`
+   with `prefix=backups/db-hourly/` and a 72 h retention (P3a adds the parameters; installed in
+   P3c), a post-drain dump (`prefix=archive/post-drain/`) after every P4a/P4b/P4r row, the nightly
+   02:30 dump unchanged; all plaintext under the `O6-F06` deviation until P13b moves them under the
+   encrypted put-only path.

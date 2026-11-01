@@ -305,6 +305,7 @@ The fifth pass (`HARNESS-REVIEW-2026-11-01.md`) reviewed the architecture behind
 rather than the plan text. It adds six rows (numbering continues; `O01-F20`, `O04-F18`,
 `O3-F22`, `O10-F17`, `O07-F16`, `O07-F17`; table in that file §3), narrows `O01-F05` (the 15 s
 `jobFinished` timer releases the wakelock without stopping the JS; the loss path is the 2 s
-teardown plus untimed GPS reads), and changes one default of G2-D2: the primary host for the
-drain window is a VPS, the home box afterwards (HR-A3). D1 and D3 stand; D3 gains a decide-
-before-build phase (P9-0) and the cash-custody source.
+teardown plus untimed GPS reads), and amends D1's destination clause and D2's "a Linux box on a UPS": the host for the drain
+window and until P13e is a VPS, the home box afterwards through P13e (HR-A3); P3a's ADR-0001
+text names that. D3 stands and gains a decide-before-build pair (P9-0a/P9-0b) and the
+cash-custody source. `O07-F16` is P2 (the race only; the missing guards are `O04-F16`/`O07-F5`).

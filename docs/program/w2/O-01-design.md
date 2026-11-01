@@ -121,8 +121,9 @@ REFUTED or NARROWED CANDIDATES:
 
 1. **The dwell is deleted, not bounded.** FIX ORDER 1 becomes: one bounded fix per crossing
    (`getLastKnownPositionAsync` max age 2 min and accuracy ≤ 100 m, else `getCurrentPositionAsync`
-   under an 8 s timeout, else null coordinates); the presence row is enqueued before the fix
-   resolves; the debounce stamp is written after the enqueue; the 20 s `DWELL_RECHECK_MS` path
+   under an 8 s timeout, else null coordinates); the presence row is enqueued after the bounded fix
+   returns, carrying its coordinates (null only on timeout); the debounce stamp is written after
+   the enqueue; a fix older than the geofence event never suppresses; the 20 s `DWELL_RECHECK_MS` path
    and the second fix are removed. The phone applies the R1 rule to that single fix only to
    suppress the prompt on a definitive outside; the server recomputes every row.
 2. **New finding `O01-F20` (P1).** Both location tasks share one `LocationTaskService`
@@ -130,14 +131,18 @@ REFUTED or NARROWED CANDIDATES:
    226-228`). `stopJobTravel` calls `stopLocationUpdatesAsync(TRAVEL_TASK)`, which runs
    `stopForeground(true)` + `stopSelf()` on the instance the on-duty ping task also uses; the
    sampler then runs throttled for the rest of the shift and `ensurePingTracking` never re-arms.
-   Fix (P5a): after a travel leg ends while on duty, re-register PING_TASK with its foreground
-   option (or consolidate both into one mode-switching task). Check (P5c): `adb shell dumpsys
-   activity services` shows `isForeground=true` after a travel leg ends.
-3. **Shift-start reminder** (P5b, §4 decision default yes): `expo-notifications` WEEKLY triggers
+   Fix (P5a): a `dutyStatus`-gated `reassertPingForeground` — on duty and foregrounded → a forced
+   re-register with the foreground option (Expo refuses a foreground service from the background);
+   expired → `autoStopExpiredDuty`; a leg ended in the background is repaired on the next
+   `active` (or consolidate both into one mode-switching task). Check (P5c): `adb shell dumpsys
+   activity services` shows `isForeground=true` after a travel leg ends from the foreground, and
+   after the next foreground when it ended in the background.
+3. **Shift-start reminder** (P5b-2, §4 decision default yes): `expo-notifications` WEEKLY triggers
    at shift start + grace on working days from the cached shift, cancelled by the clock-in punch,
    rescheduled on foreground and login; a pure scheduling function with Jest tests. It is the
    location-free backstop for the arrival prompt.
-4. **Commercial SDK spike** (§4 decision): a one-session debug build of
-   `react-native-background-geolocation` on the spare phone during the P4a waits, decided at P5b
-   entry. Not a replacement of this note; the patched-Expo path stands unless the spike and the
+4. **Commercial SDK spike** (phase P5-spike, §4 decision): a one-session debug build of
+   `react-native-background-geolocation` under a separate applicationId on the spare phone,
+   never signed in to `api.<domain>` during the drain window, decided at P5a's entry; a
+   favourable result proves compatibility only (standing rule 2). Not a replacement of this note; the patched-Expo path stands unless the spike and the
    owner say otherwise.

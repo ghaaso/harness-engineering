@@ -103,11 +103,15 @@ GET /api/postings/reconciliation?from&to (manager), per kind, over accounting_da
 
 ## Amendments (2026-11-01, harness review — `../HARNESS-REVIEW-2026-11-01.md` HR-A4)
 
-1. **Decide before building.** Parts 1–3 and 5 are no longer "build regardless". A new owner
-   phase **P9-0** (plan) answers the G1 Odoo questions, opens an Odoo test company on the
-   Pakistani chart, exports one real week into this note's CSV shape with a half-session script,
-   imports it twice, and lets the accountant choose granularity (per-payment vs daily close per
-   method) and the approval unit. P9a-1 waits for P9-0 and for P5d-2. If there is no Odoo and no
+1. **Decide before building.** Parts 1–3 and 5 are no longer "build regardless". Two new
+   phases (plan) gate P9a-1: **P9-0a**, a small Opus PR with the week-export script (read-only,
+   run against an Appendix C restore, pseudonymised unless the owner allows real rows into the
+   Odoo trial, refusing an empty week); and **P9-0b**, the owner session that answers the G1 Odoo
+   questions, opens an Odoo test company on the Pakistani chart, imports the week twice, and lets
+   the accountant choose granularity (per-payment vs daily close per method), the approval unit,
+   the basis and the custody design — or the owner signs the plan's defaults as answers. P9a-1
+   waits for P9-0b and for P5d-2 done. The `cash_remittance` source is built in P9a-1 and its
+   manager form in P9b when P9-0b chose custody. If there is no Odoo and no
    accountant, P9a/P9b ship the approval boundary, reconciliation and an accountant-ready journal
    CSV; P10a's Odoo specifics and P11 are dropped.
 2. **Cash custody (`O07-F17`).** If P0a item 15 confirms that technicians hold field cash or
@@ -117,9 +121,10 @@ GET /api/postings/reconciliation?from&to (manager), per kind, over accounting_da
    `cash_in_hand` with the variance to the staff ledger or cash over/short. The accrual-only
    invoice kind waits for a basis decision (P0a item 16) and is then sourced from
    `job_bill_revision` only.
-3. **Atomic closed-job guards (`O07-F16`, P7a).** `negotiate_bill`, `log_payment` and
-   `void_payment` refuse a closed job by a conditional UPDATE with the status predicate or a
-   `SELECT … FOR UPDATE` in the same transaction, with a race test against a concurrent close.
+3. **Atomic closed-job guards (`O07-F16`, P2, P7a).** `negotiate_bill`, `log_payment` and
+   `void_payment` refuse a closed job by a conditional UPDATE with the status predicate
+   (preferred) or a `SELECT … FOR UPDATE` with `populate_existing()` in the same transaction,
+   with a two-session race test against a concurrent close.
 4. **Hosting and transport unchanged:** Odoo Online + window-keyed CSV by default. Self-hosted
    Odoo Community 19 ships the JSON-2/RPC API free (`addons/rpc`, LGPL-3) but lacks the Enterprise
    accounting reports and would add a second stateful app to one developer's host; it is the
