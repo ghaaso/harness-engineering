@@ -673,10 +673,13 @@ SELECT shop_id, name, center_lat, center_lng, radius_m, is_active FROM attendanc
 SELECT string_agg(format('SELECT %L AS t, count(*) AS n FROM %I', relname, relname), ' UNION ALL ' ORDER BY relname)
 FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace \gexec
 SELECT 'attendance_event', max(server_time) FROM attendance_event
-UNION ALL SELECT 'attendance_presence', max(server_time) FROM attendance_presence     -- adjust names to models.py
+UNION ALL SELECT 'attendance_presence_event', max(server_time) FROM attendance_presence_event
 UNION ALL SELECT 'attendance_ping', max(received_at) FROM attendance_ping
 UNION ALL SELECT 'job_event', max(created_at) FROM job_event;                        -- when the fleet last synced
-SELECT confirmed, width_bucket(accuracy_m, 0, 200, 10) AS acc_bucket, count(*) FROM attendance_presence GROUP BY 1, 2 ORDER BY 1, 2;
+SELECT confirmed, width_bucket(accuracy_m, 0, 200, 10) AS acc_bucket, count(*) FROM attendance_presence_event GROUP BY 1, 2 ORDER BY 1, 2;
+SELECT count(*) AS payments, coalesce(sum(amount_paisa) FILTER (WHERE NOT voided), 0) AS non_voided_paisa FROM job_payment;   -- O-08 §3 baseline: Rs 34,400 non-voided at the 2026-08-02 drill
+SELECT (SELECT count(*) FROM staff_ledger) AS ledger_rows, (SELECT count(*) FROM staff_ledger_chain) AS chain_rows, (SELECT max(seq) FROM staff_ledger_chain) AS chain_head_seq;
+SELECT max(token_seq) FROM job;   -- compare with job_token_seq below (ADR-0001 A1.4)
 SELECT consumer, last_seq FROM dispatch_cursor;
 SELECT sequencename, last_value FROM pg_sequences WHERE schemaname = 'public';        -- the three standalone sequences (ADR-0001 A1.4) must sit at or above their tables' max
 SELECT version_num FROM alembic_version;
