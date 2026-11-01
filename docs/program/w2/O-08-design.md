@@ -98,3 +98,20 @@ Rollback: the source of truth stays untouched (Supabase project, R2 dumps) until
  P12 who is on call for the box, and the maintenance window (outside 02:00-04:00).
  P13 disk encryption vs unattended boot; physical security of customer data.
  P14 Odoo co-location is out of scope for this draft; the stack leaves a place for a second consumer but dispatch_cursor has no erp row (S16).
+
+---
+
+## Amendments (2026-11-01, harness review — `../HARNESS-REVIEW-2026-11-01.md` HR-A3)
+
+1. **The default primary for the drain window is a VPS, not the home box.** From P3b through
+   P5d-2 the identical `docker-compose.prod.yml` runs on a 2 vCPU / 4 GB VPS behind the same
+   cloudflared tunnel and `api.<domain>`; R2 media and dumps unchanged. Region measured in P3c:
+   Mumbai first, then Singapore (ADR-0001's Karachi measurements put Singapore and the EU above
+   the 805 ms budget via Railway's ingress). The home box joins as the off-provider dump puller
+   and restore-drill host and becomes primary by a tunnel move after `T_close`, once a 14-day
+   heartbeat shows ≥ 99.5 % reachability or a second uplink exists. The owner may invert the
+   default at P3b if a box with a UPS covering box, ONT and router already exists. Reason: after
+   a landed write the phone deletes its copy, and the drain host is forward-only (O-10 R2), so
+   the host that receives the drain must be the most reliable available during load-shedding.
+2. **Backups during and after the drain:** an hourly `pg_dump` to R2 from the first drain on,
+   plus a manual dump after every phone's P4b row; the nightly 02:30 dump stays.

@@ -1,0 +1,242 @@
+# O-05 — O-05 security-external-attacker: backend (FastAPI JWT/PIN auth, authorization model, media, webhook), ops console BFF, web manager SPA, phones; today (prod gone) and on a self-hosted box behind Cloudflare Tunnel
+findings=18 backlog=11 challenges=0 citations=17 verdicts=0 skipped(no skeptic)=9
+
+## Hypothesis ranking
+- H5-tech-token-equals-shop-wide-data-and-money-writes supported p=0.9 apk=no
+    test: With a t2 token call GET /api/jobs (expect every job with customer_phone/address/lat/lng), POST /api/jobs/{job assigned to t3}/bill/negotiate {amount_paisa:0} and POST /api/jobs/{closed job}/payments; 200s confirm
+- H3-unauth-lock-DoS-all-accounts supported p=0.8 apk=no
+    test: Against a staging DB, send one wrong PIN per roster id every 15 min from one IP for 2 h; then try the correct PIN for m1: expect 429 every time
+- H1-fresh-selfhost-owned-by-defaults supported p=0.6 apk=no
+    test: On the self-host box, boot the backend with the documented .env.example (FIXFLOW_JWT_SECRET= blank, no FIXFLOW_ENVIRONMENT) and confirm it starts; then call GET /api/auth/me with an HS256 token {sub:'m1',ver:0} signed with the committed DEV_JWT_SECRET (or with '') and with POST /api/auth/login {tech_id:'m1',pin:'1234'}; either returning 200 = owned
+- H2-online-PIN-bruteforce-in-weeks supported p=0.5 apk=no
+    test: Unit-simulate service.login with the throttle constants: count successful verify_pin calls per account per 24 h when the attacker retries exactly at locked_until (expect ~96/day after the 10th failure, i.e. 10^4 space exhausted in ~104 days, not years)
+- H11-ops-console-password-bruteforce supported p=0.4 apk=no
+    test: Fire 10k POST /api/ops/login in a minute at a staging ops-server; any 429 or slowdown refutes; strength of OPS_PASSWORD (W0 unknown) sets real risk
+- H9-dead-railway-subdomain-takeover-captures-phones untestable p=0.35 apk=unknown
+    test: W0: check whether the Railway project/service that owned efficient-tenderness-production-2d09.up.railway.app still exists and whether Railway lets another account claim that exact generated subdomain; and read EXPO_PUBLIC_API_URL out of the field APK bundle
+- H10-committed-maps-firebase-sentry-values-are-a-secret-leak weakened p=0.3 apk=yes
+    test: In Google Cloud console check the AIza keys from app.json:20 and google-services.json:18 for Android-app restriction (package com.fixflow.technician + release SHA-1) and API restriction; in Sentry check spike protection/rate limits on the project behind eas.json:22
+- H8-mobile-advisories-runtime-reachable weakened p=0.15 apk=unknown
+    test: Inspect the field APK JS bundle for query-string/decode-uri-component/nanoid and check app.json for a linking scheme (none configured on main); build-tool advisories (tar, glob, minimatch, cacache, @xmldom, postcss, undici, compression, shell-quote, node-forge, js-yaml, image-size, ajv via expo-dev-client) do not ship in a release APK
+- H7-react-router-open-redirect-exploitable weakened p=0.1 apk=no
+    test: Grep every <Link to>/navigate() in src: all targets are literal prefixes ('/jobs/', '/technicians/', '/attendance/') plus server ids, none begins with an attacker-chosen string, so the backslash bypass needs a path the attacker cannot inject
+- H6-shared-secret-gates-bypassable killed p=0.05 apk=no
+    test: Send X-Ops-Proxy-Token / hub.verify_token / X-Hub-Signature-256 with non-ASCII and empty values with the secret unset and set: compare_secret returns False for empty expected and never raises (core/security.py:21-33)
+- H4-unauthenticated-PII-read killed p=0.05 apk=no
+    test: Call every route in H-01 without a token: only /api/health, /api/technicians (id/name/specialty/avatar/role/active), /api/auth/login and the webhook answer non-401; no customer data without a token
+
+## Findings
+
+### O05-01 [P0/risk/INV] JWT boot guard is fail-open off Railway: committed dev secret or a blank secret lets anyone forge a manager token
+cite=MOVED | skeptic=NO VERDICT | conf=0.85 effort=S apk=no
+CLAIM: A self-hosted backend started without FIXFLOW_ENVIRONMENT=production (and without RAILWAY_ENVIRONMENT) skips the only secret check, so with the committed DEV_JWT_SECRET default (or the blank FIXFLOW_JWT_SECRET= copied from .env.example, which the guard never tests) an unauthenticated attacker can sign {sub:'m1',ver:0} and get full manager access.
+WHEN: Home-server deploy whose env omits FIXFLOW_ENVIRONMENT=production and leaves FIXFLOW_JWT_SECRET unset or blank (the .env.example template has the blank line and no ENVIRONMENT line); attacker sends Authorization: Bearer <HS256 token signed with the repo's DEV_JWT_SECRET or ''>.
+    - backend/app/core/config.py:17 — DEV_JWT_SECRET = "dev-insecure-secret-change-me-in-production-32b" (committed)
+    - backend/app/core/config.py:151 — jwt_secret: str = DEV_JWT_SECRET
+    - backend/app/core/config.py:221 — return self.environment.lower() == "production" or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+    - backend/app/core/config.py:228 — if self.is_production and self.jwt_secret == DEV_JWT_SECRET: (blank secret never rejected, no length check)
+IMPACT: Total compromise of the self-hosted system from the internet: payroll, staff ledger writes, all customer PII, PIN resets for every account.
+FIX: Invert the guard: refuse to boot unless environment is explicitly 'dev'/'test' OR jwt_secret is not the dev default AND len(jwt_secret) >= 32; treat an empty value as unset-and-fatal; add FIXFLOW_ENVIRONMENT=production and a generated secret to the self-host compose/runbook; unit-test the guard for blank, short and default secrets with RAILWAY_ENVIRONMENT absent.
+
+### O05-02 [P0/risk/INV] Seeded manager m1 / PIN 1234 plus a public roster gives a manager token in one request on any fresh or seed-restored DB
+cite=LOCATED | skeptic=NO VERDICT | conf=0.8 effort=M apk=no
+CLAIM: On a database built by alembic upgrade head, POST /api/auth/login {tech_id:'m1',pin:'1234'} returns a manager JWT, because migration 0012 seeds m1 with PIN 1234, the 6-digit manager policy is enforced only in set_pin (never at login), and GET /api/technicians tells an unauthenticated caller which id is the manager.
+WHEN: Self-host rebuilt from migrations (or a restored prod DB where the owner never ran set_pin on m1/t1..t5) exposed to the internet before every seeded PIN is rotated.
+    - backend/alembic/versions/0012_dedicated_manager_account.py:30-31 — _MANAGER_ID = "m1"; _DEFAULT_PIN = "1234"
+    - backend/alembic/versions/0012_dedicated_manager_account.py:58-59 — "role": "manager", "pin_hash": hash_pin(_DEFAULT_PIN)
+    - backend/app/features/identity/service.py:31-32 — MIN_PIN_DIGITS_MANAGER = 6 (used only by _check_pin_policy)
+    - backend/app/features/identity/service.py:160-165 — _check_pin_policy called from set_pin only; login (63-116) verifies against whatever hash exists
+IMPACT: Immediate manager takeover by anyone who reads the public repo or guesses the most common PIN; same for every technician seed (S14).
+FIX: Ship a must_rotate flag (migration 0047) set on every seeded account and refuse to mint a token for a flagged account until set_pin succeeds via a one-time bootstrap path (e.g. backend/scripts/set_pin.py run on the box); alternatively seed with no usable hash and require the script. Add a pre-exposure checklist step 'rotate all PINs' to the self-host runbook.
+
+### O05-03 [P1/defect/INV] Unauthenticated attacker keeps every account (including the only manager) locked indefinitely
+cite=MOVED | skeptic=NO VERDICT | conf=0.85 effort=M apk=no
+CLAIM: Sending one wrong PIN per roster id each time its lock lapses (every <=15 min, ~24 requests/hour for six accounts from one IP, well under the 20/60s IP cap) keeps all accounts locked, and the correct PIN is refused while locked, so no technician or manager can log in.
+WHEN: API reachable from the internet (Railway before, Cloudflare Tunnel hostname on self-host) and the attacker uses the public roster ids; escalation never decays because the attacker never stays quiet for DECAY_AFTER_SECONDS.
+    - backend/app/features/identity/service.py:87-89 — escalation_has_decayed resets only after a quiet hour
+    - backend/app/features/identity/service.py:94-95 — if is_locked(...): raise AccountLockedError (before verify_pin, correct PIN refused)
+    - backend/app/features/identity/service.py:97-103 — a wrong PIN after the lock lapses bumps failed_attempts and re-arms next_lock_until
+    - backend/app/features/identity/throttle.py:204 — MAX_LOCK_SECONDS = 15 * 60
+IMPACT: Field-wide login outage: phones that lose their token (401, S8) cannot re-login, the manager web is unusable; unlock_account.py is re-locked by the next attacker request.
+FIX: Do not let a correct PIN through (CLAUDE.md invariant). Instead make the lock cost the attacker, not the account: key the escalating lock on (account, client IP or device id) with a much slower shop-wide per-account ceiling; let a known device (token-bound device id from /api/devices) bypass a lock it did not cause; put the login route behind a Cloudflare WAF rate rule; stop publishing the roster pre-auth (or require an app/Access header for it).
+
+### O05-04 [P1/risk/INV] Per-account lock allows ~96 online guesses per account per day: a 4-digit tech PIN falls in weeks, not years
+cite=MOVED | skeptic=NO VERDICT | conf=0.75 effort=M apk=no
+CLAIM: After the 10th consecutive failure each further guess costs only one 900 s lock, so an attacker retrying at every lapse gets ~96 guesses per account per day (10^4 space exhausted in ~104 days, ~29% chance per tech per 30 days, ~87% that at least one of six accounts falls in 30 days for uniform PINs, far faster for 1234/0000-style PINs), contradicting the module's 'brute force takes years' claim.
+WHEN: Internet-reachable /api/auth/login, tech PINs of 4 digits (MIN_PIN_DIGITS_TECH = 4), attacker spreading across the six public roster ids; IP limiter irrelevant at 4 req/hour/account.
+    - backend/app/features/identity/throttle.py:184-186 — 'with the lock throttling, brute force takes years'
+    - backend/app/features/identity/throttle.py:200-204 — LOCK_THRESHOLD = 5, BASE_LOCK_SECONDS = 30, MAX_LOCK_SECONDS = 15 * 60
+    - backend/app/features/identity/throttle.py:233-239 — 30 << (n-5) capped at 900 s (cap reached at n=10)
+    - backend/app/features/identity/service.py:31 — MIN_PIN_DIGITS_TECH = 4
+IMPACT: A cracked tech PIN yields a 30-day token with shop-wide reads and money writes (O05-05/O05-06).
+FIX: Raise the post-threshold floor (e.g. MAX_LOCK to hours with per-(account,IP) keying so the owner is not locked by it), require 6 digits for techs on next set_pin, add Cloudflare rate-limiting on /api/auth/login, alert (telemetry/ops) on failed_attempts >= threshold, and fix the docstring arithmetic.
+
+### O05-05 [P1/defect/INV] Any technician token can renegotiate any job's bill to zero, log payments on any job (closed included) and trigger/freeze customer bill sends
+cite=LOCATED | skeptic=NO VERDICT | conf=0.9 effort=M apk=no
+CLAIM: negotiate_bill, log_payment, whatsapp/send and whatsapp/send-log check only that the caller holds a valid token, never that the caller is the assigned technician or a manager, so a low-privilege token can set bill_negotiated_paisa=0 on another tech's open job, append payments to closed jobs, and stamp bill_sent_at (freezing the bill) on any job.
+WHEN: Caller authenticated as tech t2 posts to /api/jobs/{job assigned to t3}/bill/negotiate {amount_paisa:0}, or /api/jobs/{closed job}/payments {amount_paisa:N, client_id:<new uuid>}, or /api/messaging/jobs/{id}/whatsapp/send-log {kind:'bill'}.
+    - backend/app/features/jobs/router.py:304-330 — negotiate_bill: principal: CurrentPrincipal, no require_manager, no assignment check
+    - backend/app/features/jobs/service.py:1384-1393 — only checks status != closed and bill_original_paisa set, then overwrites bill_negotiated_paisa
+    - backend/app/features/jobs/schemas.py:146 — amount_paisa: int = Field(..., ge=0) (zero allowed, no ceiling vs original)
+    - backend/app/features/jobs/router.py:333-357 — log_payment open to any principal
+IMPACT: Insider or cracked-PIN fraud on the revenue ledger that would flow into the manager-approved 'pakka khata' / Odoo; a malicious tech can freeze a colleague's bill or send a customer message at will.
+FIX: Add a service-layer authorization helper (assigned tech of the job or manager) and call it from negotiate_bill, log_payment, log_customer_message, send_cloud_message, completion and transition; refuse log_payment on closed jobs for non-managers; require manager approval (or a bounded discount %) for a negotiated amount below the original; record actor on every money event and add a manager review queue before Odoo export.
+
+### O05-06 [P1/risk] A technician token reads the whole customer base, every job's GPS and every job's media
+cite=LOCATED | skeptic=NO VERDICT | conf=0.85 effort=M apk=no
+CLAIM: GET /api/jobs returns every job of the shop, unpaginated, with customer_name, customer_phone, customer_address and customer_lat/lng to any authenticated caller, and GET /api/jobs/{id}/media returns 1-hour signed playback URLs for any job, so one stolen or cracked tech token dumps all customer PII, home locations and evidence photos/videos.
+WHEN: Attacker holds any valid tech token (O05-04 crack, a lost phone's AsyncStorage, a 30-day token from logs) and calls GET /api/jobs then GET /api/jobs/{id}/media for each id; /api/customers/lookup additionally maps any phone number to a customer name.
+    - backend/app/features/jobs/router.py:75-86 — list_jobs takes _principal: CurrentPrincipal, no role/assignment filter
+    - backend/app/features/jobs/service.py:787-798 — passes filters straight to the repo, no limit
+    - backend/app/features/jobs/schemas.py:399-404 — Job exposes customer_name, customer_phone, customer_address, customer_lat, customer_lng
+    - backend/app/features/media/router.py:119-125 — list_media has only the router-level token check
+IMPACT: Customer PII and household GPS breach from a single low-privilege credential; no audit or rate limit on bulk reads.
+FIX: Scope tech reads to assigned jobs plus the open claim pool with PII minimised (no phone/address until claimed); paginate list_jobs; scope media list/playback to assigned tech or manager; add a per-token request budget and an ops alert on bulk reads.
+
+### O05-07 [P1/risk/INV] Field phones are hard-wired to a dead Railway hostname that a third party might claim
+cite=LOCATED | skeptic=NO VERDICT | conf=0.4 effort=S apk=unknown
+CLAIM: If anyone can bind efficient-tenderness-production-2d09.up.railway.app (which now answers Railway's edge 404, i.e. unbound), every field APK built from the preview profile would send PINs, bearer tokens, punches, GPS pings, job creates with customer PII and media to that party, accept its 2xx as success (removing queued items), and open whatever wa_me_url it returns.
+WHEN: The owning Railway project/service was deleted (W0 unknown) and Railway allows another account to choose that exact generated subdomain; phones then reach a live attacker server instead of a 404.
+    - technician-app/eas.json:21 — "EXPO_PUBLIC_API_URL": "https://efficient-tenderness-production-2d09.up.railway.app" (preview profile, internal APK)
+    - technician-app/src/lib/config.ts:14 — const apiUrl = process.env.EXPO_PUBLIC_API_URL ?? ... (baked at build)
+    - technician-app/src/features/jobs/JobDetailScreen.tsx:432 — await Linking.openURL(preview.wa_me_url) (server-supplied URL opened by the phone)
+    - technician-app/src/lib/auth.ts:26-27 — token persisted in AsyncStorage and attached to every request
+IMPACT: Credential harvest (a 401 from the impostor makes techs re-enter PINs that are valid on the restored DB), silent loss of queued writes, PII exfiltration, phishing via openURL.
+FIX: W0: confirm whether the Railway project still exists and keep (or re-create) a service holding that domain that answers 410/maintenance until all phones are replaced; ship the next APK against an owner-controlled domain (Cloudflare zone) and never a platform-generated subdomain; whitelist the wa.me host before Linking.openURL.
+
+### O05-08 [P1/risk/INV] Self-host templates publish the API and Postgres on all interfaces and the login limiter trusts the last X-Forwarded-For
+cite=LOCATED | skeptic=NO VERDICT | conf=0.7 effort=S apk=no
+CLAIM: Reusing start.sh / docker-compose.yml on the home box binds uvicorn on 0.0.0.0:8000 and Postgres on 5432 with postgres/postgres via Docker published ports (which bypass ufw), so a LAN or port-forwarded attacker reaches the API around Cloudflare Access and can rotate the X-Forwarded-For value the IP limiter keys on, defeating it entirely.
+WHEN: Box deployed with -p 8000:8000 / ports: "5432:5432" (as in the dev compose) and any route from attacker to the host; attacker sends X-Forwarded-For: <random> per request.
+    - backend/start.sh:12 — exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+    - docker-compose.yml:12-16 — POSTGRES_USER/PASSWORD postgres, ports: - "5432:5432"
+    - docker-compose.yml:32-33 — ports: - "8000:8000"
+    - backend/app/features/identity/router.py:57-64 — _client_ip returns forwarded.split(",")[-1] with no trusted-proxy check
+IMPACT: Direct DB access with default credentials, Access bypass, unlimited login spraying (O05-03/O05-04 accelerated).
+FIX: Self-host compose: no published ports for backend/postgres (internal docker network only; cloudflared joins it), strong generated DB password, host firewall at the router; in _client_ip trust CF-Connecting-IP/XFF only when request.client.host is the cloudflared container/loopback, otherwise use the socket peer.
+
+### O05-09 [P2/risk] Ops console login has no throttle, reads unbounded bodies, and issues unrevocable 12 h tokens
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=S apk=no
+CLAIM: POST /api/ops/login compares a single shared OPS_PASSWORD with no attempt counter or delay and buffers the entire request body before parsing, so an internet attacker can guess the password at line rate and push arbitrarily large bodies into memory, and any issued token stays valid for 12 h with no revocation short of rotating OPS_SESSION_SECRET.
+WHEN: ops service reachable publicly (Railway before, a tunnel hostname on self-host) with a guessable OPS_PASSWORD; or a multi-hundred-MB POST to /api/ops/login.
+    - ops-server.mjs:39-41 — OPS_PASSWORD shared secret; SESSION_SECRET falls back to random per boot; TOKEN_TTL_MS = 12h
+    - ops-server.mjs:446-456 — readBody concatenates all chunks with no size cap
+    - ops-server.mjs:499-505 — login: passwordValid then issueToken, no rate limit
+    - ops-server.mjs:93-107 — stateless HMAC token over exp only (no session id, no revocation list)
+IMPACT: Read access to deploy logs/metrics, Sentry issues and backend deep-health (which may echo config state); memory exhaustion of the ops process.
+FIX: Put the whole ops hostname behind Cloudflare Access (humans only, no phone dependency); additionally add an in-process per-IP backoff and a 16 KB body cap on /api/ops/login, and require OPS_SESSION_SECRET to be set.
+
+### O05-10 [P2/risk/INV] 30-day bearer JWT with no server-side logout; a token holder can silently take over the account via set_pin
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=M apk=no
+CLAIM: A copied JWT stays valid for 30 days through web logout and PIN changes (only a manager's revoke-sessions bumps token_version), and because PUT /api/technicians/{id}/pin needs no current PIN, the holder of a tech token can set that tech's PIN and lock the owner out, while a manager token can reset every PIN including m1's.
+WHEN: Token exfiltrated from a lost phone (AsyncStorage), a shared PC's localStorage after 'Logout', or an XSS; attacker calls PUT /api/technicians/<own id>/pin {pin:'9999'}.
+    - backend/app/core/config.py:154 — jwt_expire_minutes: int = 60 * 24 * 30
+    - backend/app/features/identity/deps.py:52-53 — revocation only via ver != token_version
+    - src/app/providers/AuthContext.jsx:51-54 — logout only clears local token, no server call
+    - backend/app/features/identity/service.py:122-138 — set_pin: no old-PIN check and deliberately no token_version bump
+IMPACT: Persistent account takeover and lockout from one leaked token; the manager console has no session hygiene.
+FIX: Require current_pin on self-service set_pin (manager reset of another account stays exempt); add POST /api/auth/logout that bumps token_version for web sessions (or a per-session jti table); shorten manager tokens (e.g. 12 h) while keeping long tech tokens until the v2 outbox is fleet-wide.
+
+### O05-11 [P2/risk] Manager web is served with no security headers while the manager JWT lives in localStorage
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=S apk=no
+CLAIM: The web image runs 'serve -s dist' with no serve.json, so responses carry no Content-Security-Policy, frame-ancestors/X-Frame-Options, HSTS or nosniff, and any script that executes on the origin (dependency compromise, future XSS sink, the third-party Google Fonts CSS) can read the 30-day manager token from localStorage.
+WHEN: Any script injection on the web origin, or framing of the manager UI on an attacker page (clickjacking).
+    - Dockerfile.web:47 — CMD ["sh", "-c", "serve -s dist -l ${PORT:-8080}"] (no serve.json in repo root or public/)
+    - src/shared/lib/api.js:15 — const TOKEN_KEY = "fixflow_token"
+    - src/shared/lib/api.js:25-34 — token read/written via localStorage
+    - index.html:7-12 — third-party stylesheet from fonts.googleapis.com
+IMPACT: Manager-token theft has full blast radius (O05-10); no defence-in-depth today. No dangerouslySetInnerHTML/innerHTML sink was found in src, so this is a hardening gap, not a live XSS.
+FIX: Serve the SPA via Caddy/nginx (or a serve.json) with CSP default-src 'self'; connect-src <api origin>; frame-ancestors 'none'; HSTS; nosniff; Referrer-Policy no-referrer; self-host the font; optionally move the web to the API origin and use an HttpOnly SameSite=Strict cookie.
+
+### O05-12 [P2/defect] Any tech token can mint unlimited, size-uncapped R2 upload URLs that are never reaped; the 413 path leaves phantom pending rows
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=M apk=no
+CLAIM: POST /api/jobs/{job}/media creates a pending row and a 10-minute presigned PUT whose signature binds only Content-Type (no length), the 64 MB ceiling is enforced only in complete_upload, stale pending rows/objects are never swept, and when complete_upload does reject an oversized object it deletes the R2 object but its row delete is rolled back with the 413.
+WHEN: A tech token loops request_upload on any real job and PUTs multi-GB bodies without finalizing (storage growth billed past the 10 GB free tier); or finalizes an oversized object, leaving a pending row whose bytes are gone.
+    - backend/app/features/media/router.py:58-90 — any principal, only job-exists and closed checks
+    - backend/app/core/storage.py:102-110 — presign params Bucket, Key, ContentType only; ExpiresIn=DEFAULT_UPLOAD_TTL
+    - backend/app/features/media/service.py:126-136 — storage.delete, repo.delete, raise MediaTooLargeError
+    - backend/app/features/media/router.py:111-115 — raises HTTP 413 before await session.commit()
+IMPACT: Storage-cost DoS from a low-privilege account; phantom pending 'closing' rows count toward the close gate (pending rows count by design).
+FIX: Cap pending reservations per tech/job; presign with a content-length-range (S3 POST policy) or a ContentLength param; commit the row delete before raising 413 (or delete in a fresh transaction); extend the orphan sweep to stale pending rows older than N hours.
+
+### O05-13 [P3/defect] complete_upload has no job-status or ownership guard (T44-media-3 confirmed)
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=no
+CLAIM: Any authenticated caller can finalize any pending media row of any job, including after the job closed, because complete_upload loads by (job_id, media_id) only, unlike delete which checks manager/owner/job-open.
+WHEN: Tech t2 calls POST /api/jobs/{closed job}/media/{pending id of t3}/complete after the bytes exist in R2.
+    - backend/app/features/media/router.py:98-104 — complete_upload has no principal or jobs dependency
+    - backend/app/features/media/service.py:112 — media = await self._load(job_id, media_id) then mark_uploaded
+    - backend/app/features/media/service.py:169-173 — delete checks is_manager, job_open and created_by
+IMPACT: Low: evidence can be flipped to uploaded on a closed job by someone else; no byte injection (HEAD must succeed).
+FIX: Pass principal and job status into complete_upload; allow creator or manager, and only while the job is open (manager exempt).
+
+### O05-14 [P3/risk] WhatsApp webhook buffers an unbounded unauthenticated body before checking the signature
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.7 effort=S apk=no
+CLAIM: POST /api/webhooks/whatsapp awaits request.body() before verify_webhook_signature and uvicorn sets no body limit, so an unauthenticated attacker can make the backend hold large bodies (up to Cloudflare's per-request cap behind the tunnel) in memory concurrently.
+WHEN: Parallel ~100 MB POSTs to /api/webhooks/whatsapp on a small home server.
+    - backend/app/features/customer_messaging/router.py:169-173 — raw = await request.body(); signature check after
+    - backend/start.sh:12 — uvicorn launched with no limit options
+    - backend/app/features/customer_messaging/service.py:152-158 — signature check itself is fail-closed and total (compare_secret)
+IMPACT: Memory pressure / OOM on the single API process shared with phones.
+FIX: Reject Content-Length > 1 MB before reading (middleware), and block the webhook path at Cloudflare unless WhatsApp Cloud is enabled.
+
+### O05-15 [P3/defect] Manual Cloud API send holds its claim only as a flush across the Meta call (45-5 confirmed) and is open to any tech
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.75 effort=S apk=no
+CLAIM: The /whatsapp/send route calls send_cloud_message without commit_claim, so the 'claimed before send' row is only flushed inside the request transaction; a rollback after Meta accepted erases the claim and a retry sends the customer a duplicate, contradicting the module's 'can never double-send' docstring.
+WHEN: WhatsApp Cloud configured; the request fails after the Meta call (e.g. DB error in log_customer_message or connection drop before commit) and the client retries.
+    - backend/app/features/customer_messaging/router.py:127 — service.send_cloud_message(job, kind=body.kind, opt_in_at=opt_in_at) (no commit_claim)
+    - backend/app/features/customer_messaging/service.py:338-339 — if commit_claim is not None: await commit_claim()
+    - backend/app/features/customer_messaging/service.py:20-23 — docstring: claimed BEFORE the API call ... can never double-send
+IMPACT: Duplicate billing text to a customer; only when Cloud API sending is enabled (default off).
+FIX: Pass commit_claim=session.commit from the router, and gate the route to the assigned tech or manager (O05-05).
+
+### O05-16 [P3/gap] Interactive API docs and the OpenAPI schema are public
+cite=- | skeptic=n/a (gap/design) | conf=0.9 effort=S apk=no
+CLAIM: create_app builds FastAPI with default docs_url/redoc_url/openapi_url, so /docs, /redoc and /openapi.json publish the full route and schema surface to unauthenticated callers in production.
+WHEN: GET /openapi.json on the public API hostname.
+    - backend/app/main.py:275-280 — FastAPI(title=..., version=..., description=..., lifespan=_lifespan) with no docs_url/openapi_url overrides
+IMPACT: Reconnaissance aid only.
+FIX: Set docs_url/redoc_url/openapi_url to None when is_production, or block those paths at Cloudflare.
+
+### O05-17 [P3/risk] Committed Google Maps key, Firebase api_key and Sentry DSN are acceptable only with restrictions nobody has verified
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.6 effort=S apk=yes
+CLAIM: The AIza keys in app.json:20 and google-services.json:18 and the Sentry DSN in eas.json:22,32 are client identifiers that ship inside every APK anyway, so committing them is acceptable, but without Android-app (package + release SHA-1) and API restrictions the Maps key can be billed by anyone and the DSN can flood the Sentry quota and hide real field crashes.
+WHEN: Key unrestricted in Google Cloud console, or Sentry project without spike protection/rate limit; attacker extracts values from the repo or the APK.
+    - technician-app/app.json:18-21 — android.config.googleMaps.apiKey (AIza value, redacted on read)
+    - technician-app/eas.json:22 and :32 — EXPO_PUBLIC_SENTRY_DSN same DSN in preview and production profiles
+    - S-08 committed values: google-services.json:18 google_api_key fp=77b7f2782359 (map fact, file not read)
+IMPACT: Billing abuse on the owner's Google account; loss of crash visibility.
+FIX: W0 checklist: restrict the Maps key to Maps SDK for Android + com.fixflow.technician + release/EAS SHA-1; restrict the Firebase key to FCM/Installations APIs; enable Sentry spike protection and a per-key rate limit; rotate the DSN if abuse is seen.
+
+### O05-18 [P3/risk] react-router open-redirect advisory is present but not reachable from current code
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.7 effort=S apk=no
+CLAIM: react-router-dom ^7.17.0 carries the backslash open-redirect advisory, but every <Link to>/navigate target in src starts with a literal internal prefix followed by a server-issued id, so no attacker-chosen path reaches the vulnerable branch today.
+WHEN: A future change passes a query parameter (e.g. ?next=) or other user-controlled string as the first segment of a Link/navigate target.
+    - package.json:27 — "react-router-dom": "^7.17.0"
+    - src/features/jobs/components/JobCard.jsx:25 — <Link to={`/jobs/${job.id}`}>
+    - src/features/technicians/pages/Technicians.jsx:17 — to={`/technicians/${t.id}`}
+    - src/features/attendance/pages/Attendance.jsx:443-445 — to={`/attendance/${row.tech_id}`}
+IMPACT: None today; trivial to regress.
+FIX: Bump to the patched 7.x (fix available, non-major) in the next web PR.
+
+## Backlog
+- [P1] completion/transition/claim/notes/followups/customer-pin open to any tech for any job (same flat-authz shape as O05-05; not read this pass) (backend/app/features/jobs/router.py:194-300)
+- [P3] Login runs synchronous PBKDF2 (120k iters) on the event loop; bounded by the lock today but blocks all requests while it runs (backend/app/features/identity/security.py:33-44)
+- [P2] No minimum length/entropy check on FIXFLOW_JWT_SECRET; confirm PyJWT behaviour with an empty HMAC key (backend/app/core/config.py:223-231)
+- [P3] Mobile JWT persisted in plain AsyncStorage; Android auto-backup may copy it to a new device (allowBackup not set in app.json) (technician-app/src/lib/auth.ts:24-28)
+- [P3] shop_id taken from the query string on ~32 routes while Principal has no shop_id (T44-identity-2 confirmed); harmless single-tenant, an IDOR the day a second shop exists (backend/app/features/identity/schemas.py:41-46)
+- [P3] ops-server /api/ops/railway/logs limit is caller-controlled with no ceiling (ops-server.mjs:520-528)
+- [P3] POST /api/events and /api/devices accept unbounded volume from any tech token (telemetry spam / DB growth) (backend/app/features/telemetry/router.py:27)
+- [P3] Web 'manager-only' is enforced only client-side; the API treats tech tokens as able to call every non-require_manager route (src/app/providers/AuthContext.jsx:36-46)
+- [P3] Web and ops share localStorage key fixflow_token; same-origin self-host layout would make the ops token overwrite the manager JWT (src/shared/lib/api.js:15)
+- [P2] job_event.seq drawn at flush, visible at commit: dispatcher can skip a lower seq forever (T44-messaging-1 confirmed by code) (backend/app/features/jobs/models.py:56)
+- [P3] Evidence close gate counts pending rows, so a reservation with no bytes satisfies it (offline tolerance by design; needs a reconciliation alert) (backend/app/features/media/service.py:198-202)
+
+## Open questions
+ ? The brief's G1 gate record C:/Users/User/Documents/projects/EMS_workshop1/docs/program/G1-discovery-gate-2026-11-01.md does not exist (no docs/program/ directory); this pass relied on the settled facts in the task text.
+ ? Can another Railway account claim efficient-tenderness-production-2d09.up.railway.app now that it answers the edge 404 (does the original project still exist)? Which EXPO_PUBLIC_API_URL is baked into the field APK? (W0)
+ ? Were the seeded PINs (m1 and t1..t5 = 1234) ever rotated in the prod DB that will be restored? (W0, needs DB access)
+ ? Does the installed PyJWT (>=2.9,<3.0) sign and verify with an empty HMAC key? No Python was available locally to test; this decides whether a blank FIXFLOW_JWT_SECRET is forgeable or only crash-looping.
+ ? Are the Google Maps and Firebase AIza keys restricted (Android app + SHA-1, API list) in the owner's Google Cloud project, and does the Sentry project have spike protection?
+ ? What were the prod FIXFLOW_CORS_ORIGINS, OPS_PASSWORD strength and OPS_SESSION_SECRET settings? Not in the repo.
+ ? Do the self-host plans reuse docker-compose.yml/start.sh as-is? If so O05-08 applies directly.
+ ? Extra files read beyond the brief (one hop): backend/app/core/storage.py, backend/app/core/db.py, backend/app/features/jobs/router.py, backend/app/features/jobs/service.py, backend/app/features/jobs/schemas.py, backend/app/features/jobs/models.py, backend/app/features/attendance/router.py, backend/app/features/customers/router.py, backend/app/features/health/router.py, backend/app/features/customer_messaging/service.py, backend/app/features/identity/schemas.py, backend/alembic/versions/0012_dedicated_manager_account.py, backend/start.sh, backend/.env.example, docker-compose.yml, index.html, package.json, technician-app/src/lib/auth.ts, technician-app/src/lib/config.ts, technician-app/src/features/jobs/JobDetailScreen.tsx, technician-app/package.json, src/features/jobs/components/JobCard.jsx, src/features/technicians/pages/Technicians.jsx, src/features/attendance/pages/Attendance.jsx, src/features/dashboard/pages/Dashboard.jsx.

@@ -1,0 +1,426 @@
+{
+ "area": "Expo Android native layer: expo-location 18.0.10, expo-task-manager 12.0.6, expo-notifications 0.29.14, expo-modules-core 2.2.3",
+ "summary": "Read from pinned sources under C:/Users/User/.fixflow-cache/expo-src. TM = expo-task-manager-12.0.6/package/android/src/main/java/expo/modules/taskManager; LOC = expo-location-18.0.10/package/android/src/main/java/expo/modules/location; CORE = expo-modules-core-2.2.3/package/android/src/main/java/expo/modules. Geofence path: PendingIntent broadcast -> TaskBroadcastReceiver -> TaskService.handleIntent -> GeofencingTaskConsumer.didReceiveBroadcast -> scheduleJob (JobScheduler, 60 s override deadline) -> TaskJobService -> didExecuteJob -> TaskService.executeTask -> headless loader if no task manager. Boot/replace restore runs inside the TaskService constructor when the static task map is null. Q8: pinned changelogs end at 18.0.10 / 12.0.6; later versions cannot be listed offline (no network fetch done).",
+ "facts": [
+  {
+   "id": "F1",
+   "fact": "Q1 task-manager manifest: receiver .TaskBroadcastReceiver (exported=false) with actions expo.modules.taskManager.TaskBroadcastReceiver.INTENT_ACTION, BOOT_COMPLETED, MY_PACKAGE_REPLACED; service .TaskJobService with permission BIND_JOB_SERVICE; no uses-permission.",
+   "evidence": [
+    "expo-task-manager-12.0.6/package/android/src/main/AndroidManifest.xml:3-16 — receiver TaskBroadcastReceiver exported=false; actions INTENT_ACTION, BOOT_COMPLETED, MY_PACKAGE_REPLACED",
+    "expo-task-manager-12.0.6/package/android/src/main/AndroidManifest.xml:12-16 — service .TaskJobService permission android.permission.BIND_JOB_SERVICE"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F2",
+   "fact": "Q1 location manifest: uses-permission ACCESS_COARSE_LOCATION and ACCESS_FINE_LOCATION only; one service .services.LocationTaskService exported=false foregroundServiceType=location. No receivers. Background-location and FOREGROUND_SERVICE permissions come only from the config plugin.",
+   "evidence": [
+    "expo-location-18.0.10/package/android/src/main/AndroidManifest.xml:2-3 — ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION",
+    "expo-location-18.0.10/package/android/src/main/AndroidManifest.xml:6-9 — LocationTaskService foregroundServiceType=\"location\""
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F3",
+   "fact": "Q1 withLocation plugin adds ACCESS_BACKGROUND_LOCATION only if isAndroidBackgroundLocationEnabled, and FOREGROUND_SERVICE + FOREGROUND_SERVICE_LOCATION if isAndroidForegroundServiceEnabled (default = isAndroidBackgroundLocationEnabled). withTaskManager plugin only edits iOS Info.plist (UIBackgroundModes fetch).",
+   "evidence": [
+    "expo-location-18.0.10/package/plugin/build/withLocation.js:31-40 — isAndroidBackgroundLocationEnabled && 'android.permission.ACCESS_BACKGROUND_LOCATION'; FOREGROUND_SERVICE(_LOCATION)",
+    "expo-location-18.0.10/package/plugin/build/withLocation.js:25-27 — enableAndroidForegroundService defaults to isAndroidBackgroundLocationEnabled",
+    "expo-task-manager-12.0.6/package/plugin/build/withTaskManager.js:6-12 — withInfoPlist UIBackgroundModes 'fetch' only"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F4",
+   "fact": "Q1 notifications manifest: uses-permission RECEIVE_BOOT_COMPLETED and POST_NOTIFICATIONS; service ExpoFirebaseMessagingService (MESSAGING_EVENT); receiver NotificationsService with NOTIFICATION_EVENT, BOOT_COMPLETED, REBOOT, QUICKBOOT_POWERON (android + htc), MY_PACKAGE_REPLACED; activity NotificationForwarderActivity.",
+   "evidence": [
+    "expo-notifications-0.29.14/package/android/src/main/AndroidManifest.xml:2-3 — RECEIVE_BOOT_COMPLETED, POST_NOTIFICATIONS",
+    "expo-notifications-0.29.14/package/android/src/main/AndroidManifest.xml:14-27 — receiver NotificationsService actions incl. BOOT_COMPLETED, REBOOT, QUICKBOOT_POWERON, MY_PACKAGE_REPLACED"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F5",
+   "fact": "Q1 task-manager manifest also declares meta-data expo.modules.taskManager.oneAppId=true.",
+   "evidence": [
+    "expo-task-manager-12.0.6/package/android/src/main/AndroidManifest.xml:18 — meta-data expo.modules.taskManager.oneAppId value=\"true\""
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F6",
+   "fact": "Q2 TaskBroadcastReceiver.onReceive builds a new TaskService(applicationContext) and calls handleIntent(intent) synchronously; no goAsync, no foreground service, no wakelock in this class.",
+   "evidence": [
+    "TM/TaskBroadcastReceiver.java:11-15 — new TaskService(appContext); taskService.handleIntent(intent)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F7",
+   "fact": "Q2 restoreTasks() is invoked from the TaskService constructor only when the repository's static task map does not yet exist (tasksExist() is sTasks != null), i.e. first TaskService in a fresh process.",
+   "evidence": [
+    "TM/TaskService.java:75-79 — if (!mTasksAndEventsRepository.tasksExist()) { createTasks(); restoreTasks(); }",
+    "TM/repository/ManagedTasksAndEventsRepository.java:58-65 — tasksExist() return sTasks != null; createTasks() sTasks = new HashMap<>()"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F8",
+   "fact": "Q2 persisted state: SharedPreferences file 'TaskManagerModule'; one key per appScopeKey holding a JSON string {appUrl, tasks:{<name>:{name, consumerClass, consumerVersion, options}}}. readPersistedTasks skips entries lacking appUrl or non-empty tasks.",
+   "evidence": [
+    "TM/TaskService.java:51 — SHARED_PREFERENCES_NAME = \"TaskManagerModule\"",
+    "TM/repository/TasksPersistence.java:27-52 — appConfig.put(\"appUrl\"...), put(\"tasks\"...), putString(appScopeKey, JSON)",
+    "TM/Utils.java:26-29 — map.put consumerClass, consumerVersion, options"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F9",
+   "fact": "Q2 restoreTasks per task: Class.forName(consumerClass); registers via internalRegisterTask only if currentConsumerVersion == saved consumerVersion; otherwise logs a warning and skips; ClassNotFound/NPE skipped; then persists the app's surviving tasks (dropping unrestorable ones). getConsumerVersion reads a static field VERSION, returns 0 if absent; TaskConsumer.VERSION = 0.",
+   "evidence": [
+    "TM/TaskService.java:556-561 — currentConsumerVersion == previousConsumerVersion -> internalRegisterTask",
+    "TM/TaskService.java:569-571 — Log.w 'has version ... not compatible with the saved version'",
+    "TM/TaskService.java:581 — persistTasksForAppScopeKey after loop ('unregister tasks that couldn't be restored')",
+    "TM/Utils.java:64-71 — getDeclaredField(\"VERSION\") ... return 0",
+    "CORE/interfaces/taskManager/TaskConsumer.java:19 — public static int VERSION = 0;"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F10",
+   "fact": "Q2 internalRegisterTask constructs the consumer and calls consumer.didRegister(task); for the geofencing consumer didRegister calls startGeofencing (addGeofences to Play services), for the location consumer startLocationUpdates then maybeStartForegroundService. So on BOOT/REPLACED the geofence is re-added and location updates re-requested in the receiver's process; no JS runs at this point.",
+   "evidence": [
+    "TM/TaskService.java:455-469 — consumer = newInstance(context, utils); new Task(...); consumer.didRegister(task)",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:40-43 — didRegister: mTask = task; startGeofencing()",
+    "LOC/taskConsumers/LocationTaskConsumer.kt:56-60 — didRegister: startLocationUpdates(); maybeStartForegroundService()"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F11",
+   "fact": "Q2 handleIntent for non-INTENT_ACTION broadcasts (BOOT_COMPLETED etc.) only iterates consumers and calls didReceiveBroadcast where canReceiveCustomBroadcast(action) is true; default is false and neither location consumer overrides it (no override found in expo-location android). So the boot broadcast's useful effect is the TaskService construction/restoreTasks, not a consumer callback.",
+   "evidence": [
+    "TM/TaskService.java:274-290 — if (!INTENT_ACTION.equals(action)) { ... consumer.canReceiveCustomBroadcast(action) -> didReceiveBroadcast }",
+    "CORE/interfaces/taskManager/TaskConsumer.java:55-58 — canReceiveCustomBroadcast returns false by default",
+    "grep canReceiveCustomBroadcast in expo-location-18.0.10/package/android — no matches"
+   ],
+   "source_kind": "command"
+  },
+  {
+   "id": "F12",
+   "fact": "Q2 handleIntent for INTENT_ACTION reads appId/taskName from the intent data URI; if the consumer is not found it logs 'Task or consumer not found.' and cancels the pending intent for that task; data URI null returns silently.",
+   "evidence": [
+    "TM/TaskService.java:292-318 — dataUri.getQueryParameter(\"appId\"/\"taskName\"); consumer == null -> cancelTaskIntent; return",
+    "TM/TaskService.java:278-280 — if (dataUri == null) return;"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F13",
+   "fact": "Q3 PendingIntent: getBroadcast(requestCode 5055, Intent(INTENT_ACTION, TaskBroadcastReceiver) with data URI ?appId=<scopeKey>&taskName=<name>, flags UPDATE_CURRENT | FLAG_MUTABLE on API>=31).",
+   "evidence": [
+    "TM/TaskManagerUtils.java:35 — PENDING_INTENT_REQUEST_CODE = 5055",
+    "TM/TaskManagerUtils.java:185-202 — appendQueryParameter appId/taskName; PendingIntent.getBroadcast(... flags | mutableFlag)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F14",
+   "fact": "Q3 scheduleJob -> updateOrScheduleJob: lowest unused job id; if a pending job already belongs to the task, merges the new data into it (createJobInfoByAddingData) else creates a new JobInfo; every JobInfo is setMinimumLatency(0) and setOverrideDeadline(60 000 ms) with no constraints (no network/idle/charging set).",
+   "evidence": [
+    "TM/TaskManagerUtils.java:41 — DEFAULT_OVERRIDE_DEADLINE = 60 * 1000; // 1 minute",
+    "TM/TaskManagerUtils.java:212-218 — JobInfo.Builder(...).setExtras().setMinimumLatency(0).setOverrideDeadline(DEFAULT_OVERRIDE_DEADLINE)",
+    "TM/TaskManagerUtils.java:139-151 — isJobInfoRelatedToTask -> createJobInfoByAddingData -> jobScheduler.schedule"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F15",
+   "fact": "Q3 TaskJobService.onStartJob builds TaskService and returns handleJob; onStopJob returns cancelJob. handleJob returns consumer.didExecuteJob(...) (async=true for both location consumers); if async it posts finishJobAfterTimeout(15000) on a new Handler. If consumer not found it returns false (job ends).",
+   "evidence": [
+    "TM/TaskJobService.java:7-17 — onStartJob -> taskService.handleJob(this, params)",
+    "TM/TaskService.java:318-343 — isAsyncJob = consumer.didExecuteJob(...); finishJobAfterTimeout(jobService, params, MAX_TASK_EXECUTION_TIME_MS)",
+    "TM/TaskService.java:52 — MAX_TASK_EXECUTION_TIME_MS = 15000; // 15 seconds"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F16",
+   "fact": "Q3 finishJobAfterTimeout only posts a Runnable that calls jobService.jobFinished(params,false) after the timeout. It does not cancel the pending task callback, does not stop/destroy the React instance, does not stop the JS task. The headless app teardown is separate: when notifyTaskFinished removes the last event for the app it posts invalidateAppRecord after 2000 ms.",
+   "evidence": [
+    "TM/TaskService.java:612-619 — handler.postDelayed(... jobService.jobFinished(params, false) ..., timeout)",
+    "TM/TaskService.java:206-221 — appEvents.size()==0 -> sEvents.remove; postDelayed 2000 -> invalidateAppRecord",
+    "TM/TaskService.java:603-610 — invalidateAppRecord -> appLoader.invalidateApp; sHeadlessTaskManagers.remove"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F17",
+   "fact": "Q3 TaskService.executeTask: builds event body (eventId); registers the callback in static sTaskCallbacks; if a TaskManager for the appScopeKey exists (non-headless map first, then headless map) it calls taskManager.executeTaskWithBody immediately; otherwise it queues the body in the repository events and calls getAppLoader().loadApp(context, Params(appScopeKey, task.getAppUrl()), alreadyRunning no-op, callback).",
+   "evidence": [
+    "TM/TaskService.java:372-410 — taskManager != null -> executeTaskWithBody; else putEventForAppScopeKey + loadApp(...)",
+    "TM/TaskService.java:360-381 — getTaskManager picks sTaskManagers (foreground) before sHeadlessTaskManagers (see getTaskManager at ~line 553-562)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F18",
+   "fact": "Q3 loader failure handling: if loadApp callback reports success=false, events are removed and unregisterAllTasksForAppScopeKey is called ('Host unreachable? Unregister all tasks'); AppConfigurationError unregisters that task and removes events.",
+   "evidence": [
+    "TM/TaskService.java:412-420 — if (!success) { sEvents.remove; removeEvents; unregisterAllTasksForAppScopeKey }",
+    "TM/TaskService.java:422-431 — catch (AppConfigurationError ignored) { unregisterTask(...); removeEvents }"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F19",
+   "fact": "Q3 RNHeadlessAppLoader.loadApp: only if appRecords (its own static map keyed by appScopeKey, filled only when its own listener fires) lacks the key does it register a ReactInstanceEventListener and post reactHost.start() (new arch) or createReactContextInBackground() (old arch) on the main looper; if the key is present it runs alreadyRunning and does nothing else. It does not consult whether an Activity-hosted instance exists; it throws IllegalStateException if the Application is not a ReactApplication. The callback(true) fires from onReactContextInitialized; no failure callback path exists in this class.",
+   "evidence": [
+    "CORE/adapters/react/apploader/RNHeadlessAppLoader.kt:26-66 — if (!appRecords.containsKey(...)) { addReactInstanceEventListener; Handler(mainLooper).post { reactHost.start() | createReactContextInBackground() } } else alreadyRunning?.run()",
+    "CORE/adapters/react/apploader/RNHeadlessAppLoader.kt:34-39 — onReactContextInitialized -> notifyAppLoaded; appRecords[...] = context; callback?.apply(true)",
+    "CORE/adapters/react/apploader/RNHeadlessAppLoader.kt:67-69 — throw IllegalStateException(\"Your application must implement ReactApplication\")"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F20",
+   "fact": "Q3 invalidateApp destroys the React instance/host only if lifecycleState == BEFORE_CREATE (not bound to an Activity), then notifies destroyed and removes the appRecord; if an Activity owns it, it is not destroyed but the appRecord is still removed. isRunning is true if an appRecord exists (new arch).",
+   "evidence": [
+    "CORE/adapters/react/apploader/RNHeadlessAppLoader.kt:79-88 — if (reactHost.lifecycleState == BEFORE_CREATE) reactHost.destroy(...); notifyAppDestroyed; appRecords.remove",
+    "CORE/adapters/react/apploader/RNHeadlessAppLoader.kt:112-118 — isRunning: appRecords[key] ?: return false; new arch return true"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F21",
+   "fact": "Q3 queued events are delivered when JS's TaskManager observes: TaskManagerInternalModule keeps mEventsQueue until flushQueuedEvents; events queued in the repository are replayed in setTaskManager. Events are in-memory (static) only.",
+   "evidence": [
+    "TM/TaskManagerInternalModule.java:83-91 — executeTaskWithBody queues in mEventsQueue if startObserving not yet called, else emitEvent",
+    "TM/TaskService.java:238-252 — setTaskManager replays getEvents(appScopeKey) then removeEvents"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F22",
+   "fact": "Q3 executeTask quirk: for a second event while sEvents already has the app key, appEvents is a fresh local list containing the eventId that is never stored in sEvents (only the first-event branch stores it).",
+   "evidence": [
+    "TM/TaskService.java:383-392 — if (sEvents.get(appScopeKey)==null) { appEvents=new...; sEvents.put } else { appEvents = new ArrayList<>(); appEvents.add(eventId); }"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F23",
+   "fact": "Q4 geofence request: INITIAL_TRIGGER_ENTER | INITIAL_TRIGGER_EXIT; each geofence setExpirationDuration(NEVER_EXPIRE); transition types = ENTER if notifyOnEnter (default true) | EXIT if notifyOnExit (default true); no loitering delay or DWELL is requested; requestId = region identifier or random UUID.",
+   "evidence": [
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:166-171 — setInitialTrigger(INITIAL_TRIGGER_ENTER or INITIAL_TRIGGER_EXIT)",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:193-201 — notifyOnEnter/notifyOnExit defaults true; setExpirationDuration(Geofence.NEVER_EXPIRE); setTransitionTypes"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F24",
+   "fact": "Q4 on event.hasError() the consumer maps the code (NOT_AVAILABLE -> 'Geofencing not available.', TOO_MANY_GEOFENCES, TOO_MANY_PENDING_INTENTS, else 'Unknown geofencing error.') and calls mTask?.execute(null, error) directly, which goes TaskService.executeTask -> JS (loading the headless app if needed); it does NOT go through scheduleJob/JobService, does not re-add geofences, and does not call startGeofencing again. A null GeofencingEvent is logged and ignored.",
+   "evidence": [
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:61-71 — fromIntent null -> return; hasError -> getErrorString; mTask?.execute(null, error); return",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:236-242 — getErrorString GEOFENCE_NOT_AVAILABLE -> \"Geofencing not available.\"",
+    "TM/Task.java:49-51 — execute(data, error, callback) -> mService.executeTask(this, data, error, callback)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F25",
+   "fact": "Q4 transition handling: state INSIDE for ENTER/DWELL, OUTSIDE for EXIT; for each triggering geofence found in the in-memory mRegions map, one scheduleJob(context, mTask, [data]) call is made (data = eventType + region bundle). If triggeringGeofences is null it returns; geofences whose requestId is not in mRegions are skipped silently. mRegions is rebuilt only in startGeofencing.",
+   "evidence": [
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:74-90 — regionStateForTransitionType; triggeringGeofences ?: return; mRegions[geofence.requestId]?.let { scheduleJob(...) }",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:124-137 — mRegions = HashMap(); populated per region in startGeofencing"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F26",
+   "fact": "Q4 didExecuteJob (geofencing): for each queued item calls task.execute(bundle,null){ jobService.jobFinished(params,false) } and returns true; the callback is created per item, so the first item to finish calls jobFinished for the whole job. mTask null returns false.",
+   "evidence": [
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:93-110 — for (item in data) { task.execute(bundle, null) { jobService.jobFinished(params, false) } } return true",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:94 — val task = mTask ?: return false"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F27",
+   "fact": "Q4 startGeofencing returns silently (no throw, no JS event) if no location provider (GPS or NETWORK) is enabled; it swallows SecurityException from addGeofences with a log; it does not attach success/failure listeners to addGeofences, so an async addGeofences failure is not observed. A bad region field throws GeofencingException.",
+   "evidence": [
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:120-123 — if (!isAnyProviderAvailable(context)) { Log.w(...); return }",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:148-156 — mGeofencingClient?.addGeofences(request, pendingIntent) inside try/catch SecurityException (no listeners)",
+    "LOC/LocationHelpers.kt:173-177 — isProviderEnabled(GPS) || isProviderEnabled(NETWORK)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F28",
+   "fact": "Q4 GeofencingTaskConsumer defines no VERSION field and overrides setOptions to stopGeofencing() then startGeofencing(). LocationTaskConsumer also defines no VERSION field (inherits TaskConsumer.VERSION=0 via getDeclaredField miss -> 0).",
+   "evidence": [
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:54-58 — setOptions: super; stopGeofencing(); startGeofencing()",
+    "grep VERSION LOC/taskConsumers/*.kt — only Build.VERSION.SDK_INT at LocationTaskConsumer.kt:165"
+   ],
+   "source_kind": "command"
+  },
+  {
+   "id": "F29",
+   "fact": "Q5 option mapping: LocationRequest built from accuracy-derived default interval/distance, overridden by timeInterval (ms) and distanceInterval (m); minUpdateInterval and maxUpdateDelay are both set to the interval; priority from accuracy (BestForNavigation/Highest/High -> HIGH_ACCURACY; Balanced/Low -> BALANCED_POWER_ACCURACY; Lowest -> LOW_POWER). Accuracy defaults: Lowest 3000 m/10000 ms; Low 1000/5000; Balanced 100/3000; High 50/2000; Highest 25/1000; BestForNavigation 0/500.",
+   "evidence": [
+    "LOC/LocationHelpers.kt:48-57 — Builder(interval).setMinUpdateIntervalMillis(interval).setMaxUpdateDelayMillis(interval).setMinUpdateDistanceMeters(distance).setPriority(...)",
+    "LOC/LocationHelpers.kt:111-123 — timeInterval -> setInterval; distanceInterval -> setDistance",
+    "LOC/LocationHelpers.kt:134-166 — per-accuracy distance/interval table (High: 50f, 2000)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F30",
+   "fact": "Q5 LocationOptions Android fields read for the task consumer: accuracy, distanceInterval, timeInterval, mayShowUserSettingsDialog. LocationTaskOptions fields: deferredUpdatesDistance, deferredUpdatesInterval, deferredUpdatesTimeout, foregroundService. No Kotlin field exists for pausesUpdatesAutomatically, showsBackgroundLocationIndicator or activityType in these records; deferredUpdatesTimeout is declared but not read by LocationTaskConsumer.",
+   "evidence": [
+    "LOC/records/LocationArguments.kt:21-25 — LocationOptions: accuracy, distanceInterval, mayShowUserSettingsDialog, timeInterval",
+    "LOC/records/LocationArguments.kt:42-46 — LocationTaskOptions: deferredUpdatesDistance, deferredUpdatesInterval, deferredUpdatesTimeout, foregroundService",
+    "grep pausesUpdatesAutomatically|showsBackgroundLocationIndicator in LOC — no matches"
+   ],
+   "source_kind": "command"
+  },
+  {
+   "id": "F31",
+   "fact": "Q5 deferral logic: while the host is resumed (mIsHostPaused=false) every location is reported immediately; while paused, locations are buffered and reported only when (newest.time - oldest.time) >= deferredUpdatesInterval AND accumulated distance >= deferredUpdatesDistance (both read via options). mIsHostPaused starts true. Reporting calls scheduleJob (not direct JS). A static sLastTimestamp drops locations with time <= last scheduled.",
+   "evidence": [
+    "LOC/taskConsumers/LocationTaskConsumer.kt:46 — private var mIsHostPaused = true",
+    "LOC/taskConsumers/LocationTaskConsumer.kt:270-285 — if (!mIsHostPaused) return true; ... interval && distance",
+    "LOC/taskConsumers/LocationTaskConsumer.kt:251-266 — timestamp > sLastTimestamp; taskManagerUtils.scheduleJob(context, mTask, data)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F32",
+   "fact": "Q5 foreground-service start: maybeStartForegroundService returns without starting (log warning 'cannot be started while the app is in the background!') if SDK<O or !AppForegroundedSingleton.isForegrounded; it also returns if mTask is null, if option 'foregroundService' is absent, and otherwise startForegroundService + bindService(BIND_AUTO_CREATE); if mService already exists it re-calls startForeground with new options; if mService exists but option removed it stops the service. location updates (requestLocationUpdates) are started independently of the foreground-service check in didRegister/setOptions.",
+   "evidence": [
+    "LOC/taskConsumers/LocationTaskConsumer.kt:163-171 — SDK_INT < O return; !AppForegroundedSingleton.isForegrounded -> Log.w(...); return",
+    "LOC/taskConsumers/LocationTaskConsumer.kt:180-223 — mService != null && !useForegroundService -> stop; mService == null -> startForegroundService/bindService; else startForeground(options)",
+    "LOC/taskConsumers/LocationTaskConsumer.kt:56-60 — didRegister: startLocationUpdates(); maybeStartForegroundService()"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F33",
+   "fact": "Q5 AppForegroundedSingleton.isForegrounded is set true in LocationModule OnActivityEntersForeground and false in OnActivityEntersBackground (static in-process flag). LocationTaskService.onStartCommand returns START_REDELIVER_INTENT; killServiceOnDestroy (default false) is passed as extra 'killService' and, only when true, onTaskRemoved calls stop(); the service notification channel (appId:taskName) is created IMPORTANCE_LOW if missing. startForeground(...) is only called from the ServiceConnection after bind.",
+   "evidence": [
+    "LOC/LocationModule.kt:313-319 — OnActivityEntersForeground { isForegrounded = true }; OnActivityEntersBackground { = false }",
+    "LOC/services/LocationTaskService.kt:34-41 — mKillService = extras.getBoolean(\"killService\", false); return START_REDELIVER_INTENT",
+    "LOC/services/LocationTaskService.kt:54-59 — onTaskRemoved: if (mKillService) { super; stop() }",
+    "LOC/services/LocationTaskService.kt:102-105 — NotificationChannel(id, appName, IMPORTANCE_LOW)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F34",
+   "fact": "Q5 hasStartedLocationUpdatesAsync returns mTaskManager.taskHasConsumerOfClass(taskName, LocationTaskConsumer) i.e. task registered with that consumer class (task != null && consumer instanceOf); returns false if mTaskService == null. It does not test the foreground service or the Play-services request. hasStartedGeofencingAsync additionally throws LocationBackgroundUnauthorizedException when background permission is missing.",
+   "evidence": [
+    "LOC/LocationModule.kt:284-286 — hasStartedLocationUpdatesAsync -> taskHasConsumerOfClass(taskName, LocationTaskConsumer::class.java)",
+    "TM/TaskService.java:149-153 — task != null && unversionedConsumerClass.isInstance(task.getConsumer())",
+    "LOC/LocationModule.kt:297-303 — hasStartedGeofencingAsync checks isMissingBackgroundPermissions first"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F35",
+   "fact": "Q6 second start on a registered task: TaskService.registerTask, if a task with that name exists and its consumer is an instance of the requested class, only updates task options and calls task.getConsumer().setOptions(options) (no new consumer); then persists. For LocationTaskConsumer setOptions = stopLocationUpdates(); startLocationUpdates(); maybeStartForegroundService() (so the foreground-service foregrounded check runs again). For GeofencingTaskConsumer setOptions = stopGeofencing(); startGeofencing(). Otherwise internalRegisterTask creates a new consumer.",
+   "evidence": [
+    "TM/TaskService.java:93-106 — task already exists: task.setOptions; task.getConsumer().setOptions(options); else internalRegisterTask; persist",
+    "LOC/taskConsumers/LocationTaskConsumer.kt:70-79 — setOptions: stopLocationUpdates(); startLocationUpdates(); maybeStartForegroundService()",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:54-58 — setOptions: stopGeofencing(); startGeofencing()"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F36",
+   "fact": "Q6 stopLocationUpdates/stopGeofencing remove the Play-services registration using the saved mPendingIntent and cancel it; after a process restart mPendingIntent is null until didRegister/startX creates it, so the stop uses the fields of the current consumer instance only.",
+   "evidence": [
+    "LOC/taskConsumers/LocationTaskConsumer.kt:156-161 — mPendingIntent?.let { removeLocationUpdates(it); it.cancel() }",
+    "LOC/taskConsumers/GeofencingTaskConsumer.kt:159-164 — mPendingIntent?.let { removeGeofences(it); it.cancel() }"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F37",
+   "fact": "Q7 LocationModule.startLocationUpdatesAsync (lines 255-277): shouldUseForegroundService = options.foregroundService != null; (1) if isMissingForegroundPermissions() (neither FINE nor COARSE granted) throw LocationBackgroundUnauthorizedException; (2) if !shouldUseForegroundService && isMissingBackgroundPermissions() (SDK>=Q and no ACCESS_BACKGROUND_LOCATION) throw LocationBackgroundUnauthorizedException; (3) if !AppForegroundedSingleton.isForegrounded && foregroundService != null throw ForegroundServiceStartNotAllowedException; (4) if !hasForegroundServicePermissions() throw ForegroundServicePermissionsException; then registerTask(taskName, LocationTaskConsumer, options.toMutableMap()). hasForegroundServicePermissions: API>=34 needs FOREGROUND_SERVICE and FOREGROUND_SERVICE_LOCATION granted; API>=28 needs FOREGROUND_SERVICE; else true; it is evaluated even when no foregroundService option was passed.",
+   "evidence": [
+    "LOC/LocationModule.kt:255-277 — AsyncFunction(\"startLocationUpdatesAsync\") ... four checks then mTaskManager.registerTask",
+    "LOC/LocationModule.kt:720-733 — hasForegroundServicePermissions UPSIDE_DOWN_CAKE / P branches",
+    "LOC/LocationModule.kt:738-743 — isMissingBackgroundPermissions: SDK>=Q && !hasGrantedPermissions(ACCESS_BACKGROUND_LOCATION)",
+    "LOC/LocationExceptions.kt:56-60 — ForegroundServiceStartNotAllowedException / ForegroundServicePermissionsException messages"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F38",
+   "fact": "Q7 startGeofencingAsync checks only isMissingBackgroundPermissions() (throw LocationBackgroundUnauthorizedException) then registerTask(taskName, GeofencingTaskConsumer, options.toMap()); no foreground-permission, provider-enabled or foreground-state check. Exception messages: 'Not authorized to use background location services'; 'Couldn't start the foreground service. Foreground service cannot be started when the application is in the background'; '...Foreground service permissions were not found in the manifest'.",
+   "evidence": [
+    "LOC/LocationModule.kt:288-295 — startGeofencingAsync: if (isMissingBackgroundPermissions()) throw ...; registerTask(... GeofencingTaskConsumer ...)",
+    "LOC/LocationExceptions.kt:11-12 — LocationBackgroundUnauthorizedException message",
+    "LOC/LocationExceptions.kt:56-60 — foreground service exception messages"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F39",
+   "fact": "Q8 expo-location CHANGELOG entries (Android-relevant, within pinned file): 18.0.7 (2025-02-19) 'On Android, remove dependency on smart-location-lib' and 'Started using expo modules gradle plugin'; 16.5.4 (2024-02-27) 'Make foreground service permission opt-in with isAndroidForegroundServiceEnabled' and 'Enable foreground service by default when background location is enabled'; 16.5.5-era line 130 'On Android, prevent location service from starting when permission is not in the manifest' (#27355); 16.5.2 (2024-01-10) 'Fix the module requiring expo-task-manager for methods that don't use it'; Unpublished (older section) 'Add an option to whether kill or keep the foreground service when app is killed on Android' (#15633); 14.0.0 (2021-12-03) 'Call jobService.jobFinished for the finished geofencing jobs' (#14786).",
+   "evidence": [
+    "expo-location-18.0.10/package/CHANGELOG.md:35-37 — 18.0.7: remove smart-location-lib; expo modules gradle plugin",
+    "expo-location-18.0.10/package/CHANGELOG.md:122-123 — 16.5.4: isAndroidForegroundServiceEnabled opt-in; enabled by default with background location",
+    "expo-location-18.0.10/package/CHANGELOG.md:130 — prevent location service from starting when permission is not in the manifest (#27355)",
+    "expo-location-18.0.10/package/CHANGELOG.md:276 — add option to kill or keep the foreground service when app is killed",
+    "expo-location-18.0.10/package/CHANGELOG.md:301 — 14.0.0: Call jobService.jobFinished for the finished geofencing jobs"
+   ],
+   "source_kind": "doc"
+  },
+  {
+   "id": "F40",
+   "fact": "Q8 more expo-location entries: 12.0.3 'Add support for user-initiated background tracking without background permission' (#12456); 11.0.0 'Fixed background location permission check on Android'; 10.0.0 'Make background location an opt-in permission on Android'; 8.3.0 'Added some safety checks to prevent NullPointerExceptions in background location on Android'; 17.x line 249 'Fixed Android 12+ runtime crash caused by PendingIntent misconfiguration' (#17333); 380 'Remove sticky notification on service stop on Android'. expo-task-manager CHANGELOG: 12.0.5 (2025-01-27) 'Added callback parameter to new executeTask method after adding package expo-background-task'; 12.0.3 (2024-11-13) 'Added implementation of executeTask method in TaskManagerUtils'; 12.0.1 (2024-10-31) 'look up TaskService instance from expo-modules-core'; 11.8.2 (2024-05-29) '[Android] Fix the task manager events not being sent to the JS side'; 8.3.0 (2020-05-29) 'Upgrading an application does not cause BackgroundFetch tasks to unregister'. No entries newer than 18.0.10 / 12.0.6 exist in the pinned files; the 'Unpublished' section of the location changelog is empty.",
+   "evidence": [
+    "expo-location-18.0.10/package/CHANGELOG.md:353 — 12.0.3 user-initiated background tracking without background permission",
+    "expo-location-18.0.10/package/CHANGELOG.md:249 — Fixed Android 12+ runtime crash caused by PendingIntent misconfiguration",
+    "expo-task-manager-12.0.6/package/CHANGELOG.md:66 — 11.8.2 Fix the task manager events not being sent to the JS side",
+    "expo-task-manager-12.0.6/package/CHANGELOG.md:23 — 12.0.5 callback parameter to executeTask",
+    "expo-location-18.0.10/package/CHANGELOG.md:3-10 — Unpublished section has empty headings"
+   ],
+   "source_kind": "doc"
+  }
+ ],
+ "anomalies": [
+  "TaskService.executeTask else-branch creates a fresh local appEvents list for the second concurrent event and never stores it in sEvents (TM/TaskService.java:383-392).",
+  "Geofence error path mTask.execute(null, error) bypasses scheduleJob/JobService so there is no JobScheduler job, no 15 s timer and no jobFinished on that path (LOC/taskConsumers/GeofencingTaskConsumer.kt:66-71).",
+  "GeofencingTaskConsumer.didExecuteJob calls jobFinished from the per-item callback inside a loop, so the first finished item finishes the job for all items (GeofencingTaskConsumer.kt:97-105).",
+  "addGeofences is called without success/failure listeners; startGeofencing returns silently when no GPS/NETWORK provider is enabled (GeofencingTaskConsumer.kt:120-123, 148-156).",
+  "RNHeadlessAppLoader.loadApp decides by its own appRecords map, not by whether an Activity-hosted React instance is running (RNHeadlessAppLoader.kt:27, 64-66).",
+  "hasForegroundServicePermissions is checked in startLocationUpdatesAsync even when no foregroundService option is passed (LocationModule.kt:268-270, 720-733).",
+  "Pinned changelogs contain nothing past expo-location 18.0.10 / expo-task-manager 12.0.6, so Q8 'later than pinned' entries could not be listed offline."
+ ],
+ "questions_for_deep_dive": [
+  "Which expo-location / expo-task-manager releases after 18.0.10 / 12.0.6 changed Android geofencing, headless-job, boot-restore or foreground-service behaviour (requires a network changelog fetch)?",
+  "When BOOT_COMPLETED fires and the process starts cold, does LocationTaskConsumer.didRegister at restoreTasks time ever start the foreground service, given AppForegroundedSingleton.isForegrounded is false in a fresh process?",
+  "What does the JS side of expo-task-manager (TaskManager.defineTask executor) do with the error object passed on a GEOFENCE_NOT_AVAILABLE event, and does the app's task handler ever re-register the geofence?",
+  "How does the Play-services geofence registration (not persisted by Play services across reboot/app update/location-setting toggle) interact with restoreTasks only running when the static task map is null?"
+ ],
+ "files_or_urls": [
+  "C:/Users/User/.fixflow-cache/expo-src/expo-task-manager-12.0.6/package/android/src/main/java/expo/modules/taskManager/TaskService.java",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-task-manager-12.0.6/package/android/src/main/java/expo/modules/taskManager/TaskManagerUtils.java",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-task-manager-12.0.6/package/android/src/main/java/expo/modules/taskManager/TaskBroadcastReceiver.java",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-task-manager-12.0.6/package/android/src/main/java/expo/modules/taskManager/TaskJobService.java",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-task-manager-12.0.6/package/android/src/main/AndroidManifest.xml",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/android/src/main/java/expo/modules/location/LocationModule.kt",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/android/src/main/java/expo/modules/location/LocationHelpers.kt",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/android/src/main/java/expo/modules/location/taskConsumers/GeofencingTaskConsumer.kt",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/android/src/main/java/expo/modules/location/services/LocationTaskService.kt",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/android/src/main/AndroidManifest.xml",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/plugin/build/withLocation.js",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-location-18.0.10/package/CHANGELOG.md",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-task-manager-12.0.6/package/CHANGELOG.md",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-notifications-0.29.14/package/android/src/main/AndroidManifest.xml",
+  "C:/Users/User/.fixflow-cache/expo-src/expo-modules-core-2.2.3/package/android/src/main/java/expo/modules/adapters/react/apploader/RNHeadlessAppLoader.kt"
+ ]
+}

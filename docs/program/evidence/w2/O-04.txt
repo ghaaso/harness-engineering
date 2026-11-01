@@ -1,0 +1,282 @@
+# O-04 — O-04 backend-location-truth: how the server and the manager web show attendance, presence, pings and travel built from what the phones send, and what would reveal a dead sampler
+findings=17 backlog=11 challenges=0 citations=15 verdicts=4 skipped(no skeptic)=11
+
+## Hypothesis ranking
+- H12 supported p=0.85 apk=unknown
+    test: Integration test against real Postgres: POST /api/attendance/punches clock_in with device_time = now-25h and clock_out with device_time = now-16h. Then GET /board for both days and GET /today. Expect: yesterday ABSENT with flagged_order, today a clock_in at receipt time, /today clocked_in=true. On a device: put a phone in airplane mode across one shift and reconnect more than 24 h after clock-in. (Label inferred from the brief; the G1 record was not at the given path.)
+- H18 supported p=0.8 apk=unknown
+    test: Unit test service._duty_breakdown with (a) day_pings=[] and a closed window, and (b) pings plus last_out=None. Both return all-None, so the variance page shows a dash and the tech page shows no AwayStrip. A fully-inside day also gives an empty away list, so the two read the same in AttendanceTechDetail. (Label inferred from the brief.)
+- H7 supported p=0.8 apk=unknown
+    test: Grep ops/telemetry/health/attendance for a last-ping or heartbeat query (S-03 F26 found none). BoardRow (schemas.py:253) has no ping-derived field. A tech who clocks in and whose sampler never fires looks identical on the board to a healthy tech. (Label inferred.)
+- H3 supported p=0.7 apk=unknown
+    test: Set the shop fence inactive (the migration seed state), POST 20 pings 5 min apart around a closed clock-in/out window, then GET /variance. Expect coverage 100, outside 0 and no away flag, although nothing was judged. (Label inferred: honest server representation.)
+
+## Findings
+
+### O04-F1 [P1/defect/INV] Punch older than 24h is re-bucketed to the sync instant: its real day reads absent and today gains a phantom open shift
+cite=LOCATED | skeptic=CONFIRMED -> P2 | conf=0.92 effort=S apk=unknown
+CLAIM: A clock_in whose device_time is more than attendance_device_time_backdate_ceiling_hours (24) before receipt is stored with effective_time=server_now. Every rollup buckets on effective_time, so the real day loses the punch and the sync day gains it.
+WHEN: A tech clocks in Mon 09:00 and out Mon 18:00 while offline, and the phone reconnects Tue 10:00. The clock_in (25h old) gets effective_time Tue 10:00; the clock_out (16h old) keeps Mon 18:00. The Mon board/grid/payroll row is ABSENT with flagged_order=True. The Tue row is PRESENT and late with no clock-out, and GET /today reports clocked_in=true from 10:00 while the phone believes it is off duty.
+    - backend/app/features/attendance/service.py:1827 — if backdate_limit <= dt <= future_limit: return dt
+    - backend/app/features/attendance/service.py:1829 — return server_now
+    - backend/app/features/attendance/service.py:330 — effective = self._effective(body.device_time, server_now) (record_punch)
+    - backend/app/features/attendance/service.py:1230 — bucket[e.tech_id][local_day].append(e) with local_day from effective_time
+IMPACT: Attendance and payroll rows are wrong on two days for any offline stretch over 24 h, which is exactly when the offline queue matters. The only trace is flagged_drift on the wrong day. A manager cannot correct the absent day by removing the phantom (see O04-F6).
+FIX: Never re-bucket a punch whose device_time is plausible. Keep device_time as effective_time up to a wide ceiling (for example 14 days), and add a computed late_sync flag (server_time - effective_time > 24h) to DayFlags/BoardRow/GridCell/PayrollDay. Reserve the server_now fallback for future timestamps or device_time missing. No migration: both columns are already stored.
+SKEPTIC: I traced the server path end to end, and it does what the claim says. record_punch (service.py:330) sets effective = self._effective(body.device_time, server_now). That calls _effective_time (service.py:1804-1829) with backdate_ceiling_hours set from settings.attendance_device_time_backdate_ceiling_hours=24 (config.py:69, wired in router.py:94; the default constant is also 24 at service.py:117). When device_time is older than server_now-24h, it returns server_now (line 1829). repository.list_events (repository.py:137-149) filters and orders on effective_time. _window (service.py:1229-1230) buckets on effective_time.astimezone(tz).date(). Board, grid, tech-history, export and payroll all call _window and then classify_day (lines 654/691/731/786/831). So in the scenario, a Mon 09:00 clock_in synced Tue 10:00 (25h old) is stored at Tue 10:00, while the Mon 18:00 clock_out (16h old) keeps Mon 18:00. classify_day (derive.py:119-121) then rolls Mon up as ABSENT with order_violation=True, which reaches the rows as flagged_order. Tue has a clock_in and no clock_out, so worked_minutes is None. Tue is PRESENT (or FIELD if the fence verdict was outside) and late against a 09:00 shift. today_status (service.py:626-631) returns clocked_in=true because last_in exists with no later out. Nothing I found prevents this, and none of the commits in gitLog.txt since 906b990 touch the attendance slice. test_service.py:507 (test_stale_backdated_device_time_falls_back_to_server_time) shows the re-bucketing is the intended D8 anti-spoof design, but the downstream damage the claim describes still happens. One part of the failing condition is imprecise: "the phone believes it is off duty". On mobile, useAttendance.clockedIn uses server truth once nothing is pending (useAttendance.ts:190-196), so after sync the ClockScreen flips to "On duty". Only the pingTracker's local duty record (written clockedIn:false at clock-out, pingTracker.ts:206) and the tech's own understanding stay "off duty". geofence.isClockedIn reads the server value, so exit prompts will treat the tech as on duty. Even so, the phone and server disagree, which makes the outcome arguably worse, not a refutation. I rate it P2 rather than P1 for three reasons. The trigger is narrow: no sync at all for more than 24h after a punch. The drift is surfaced: drift_seconds of about 90000 trips the drift flag on the punch. A manager can correct it through adjustments. Still, until someone corrects it, the real day reads absent and a phantom open shift appears.
+CORRECTED: The server re-buckets a punch whose device_time is more than 24h before receipt to server_now, and every attendance rollup buckets on effective_time. So if the phone does not sync for more than 24h after a clock_in, the real day reads ABSENT with flagged_order, and the sync day gains a late, open clock_in. GET /today then reports clocked_in=true. After sync the phone's ClockScreen also shows On duty (server truth), which contradicts the tech's actual clock-out and the pingTracker's local off-duty state. The punch's drift flag makes this visible, and a manager adjustment can fix it.
+SETTLE: An integration test: POST /api/attendance/punch with clock_in device_time = now-25h, then clock_out device_time = now-16h. Assert that the board for the clock_in's local day shows status=absent with flagged_order=true, that today's row is present/late with no last_out, and that GET /today returns clocked_in=true.
+
+### O04-F2 [P1/defect/INV] 24h punch window vs 48h ping window: a 24-48h-old day keeps its pings but loses its punches, so the pings are never shown
+cite=LOCATED | skeptic=CONFIRMED -> P2 | conf=0.88 effort=S apk=unknown
+CLAIM: Pings 24 to 48 h old are accepted on their real captured_at, while the punches for the same shift are moved to the sync day. The real day has no clock_in and _duty_breakdown returns nothing, so its stored pings never appear on any page.
+WHEN: A shift Mon 09:00-18:00 syncs Tue 10:30 (clock_in 25.5h old, pings 16.5-25.5h old). The pings are stored under Mon by captured_at, but Mon has first_in=None, so tech_days and variance give no coverage and no away intervals. On Tue the pings are outside the phantom window and are ignored.
+    - backend/app/core/config.py:69 — attendance_device_time_backdate_ceiling_hours: int = 24
+    - backend/app/core/config.py:77 — attendance_ping_backdate_ceiling_hours: int = 48
+    - backend/app/features/attendance/service.py:1083-1084 — pings bucketed by captured_at local day
+    - backend/app/features/attendance/service.py:1100 — if first_in is None or last_out is None or last_out <= first_in or not day_pings: return None, None, None, None, []
+IMPACT: The evidence that would prove presence on the absent day is stored but hidden. The manager sees a blank absent day and has no prompt to correct it.
+FIX: Use one trust window for every location and attendance axis, with punches at or beyond the ping ceiling. The O04-F1 fix (no re-bucketing within a wide window) removes the asymmetry. Also surface 'pings exist but no clock_in' as a flag beside arrived_not_clocked_in.
+SKEPTIC: I traced the scenario through the code. Shift is Mon 09:00-18:00, synced Tue 10:30. The clock_in device_time is 25.5h old. That is outside the 24h punch window, so _effective_time sets effective_time to server_now (Tue 10:30), and _window buckets it under Tue. The clock_out is 16.5h old, so it stays at Mon 18:00. The pings are 16.5-25.5h old, all inside the 48h window, so they are stored on their real captured_at and _pings_by_tech buckets them under Mon.
+
+For Mon, classify_day sees no clock_in and returns first_in=None, which makes _duty_breakdown return nothing (service.py:1100). For Tue, the Mon pings are in a different date bucket, so they never reach Tue's duty_intervals at all; even if they did, derive.py:227 would drop them as outside the window. tech_days and variance are the only consumers of stored pings, so nothing shows them.
+
+Nothing in the code prevents this, and no attendance change has landed since 906b990. The working tree only modifies jobs/service.py.
+
+Small inaccuracies, none of which change the outcome. Only punches more than 24h old move; the clock_out here stays on Mon. The trigger is the clock_in's age, not the pings' age. On Tue the pings are not even in the day bucket, rather than being dropped by the window.
+
+Severity: payroll does not use ping coverage, so the harm is a lost review signal (coverage and away intervals) for one edge-case day, a phone offline for more than 24h after clock_in. The larger harm in this scenario is the punch moving to the sync day, which is the existing D8 design. I rate the ping-specific defect P2, not P1.
+CORRECTED: When a shift's clock_in punch reaches the server more than 24h after capture (but its pings arrive within 48h), the clock_in's effective_time falls back to server_now (the sync day). The pings are stored on their real captured_at day, which now has no clock_in, so classify_day returns first_in=None and _duty_breakdown returns nothing. Those pings are only ever read by _duty_breakdown (via _pings_by_tech in tech_days and variance), so they never appear anywhere. The trigger is the clock_in's age, not the pings' age, so pings 16.5-24h old are orphaned the same way. A clock_out younger than 24h stays on the real day, which then shows as absent with an order violation.
+SETTLE: An integration test: post a clock_in with device_time = now-25.5h, a clock_out with device_time = now-16.5h, and a ping batch with captured_at spread across that range. Then call tech_days for both local days. The bug is confirmed if both days show coverage_pct=None and away_intervals=[] while list_pings returns the stored rows.
+
+### O04-F3 [P1/defect] With no active fence or only coarse fixes, every ping verdict is None and the derivation reports 100% inside
+cite=LOCATED | skeptic=CONFIRMED -> P2 | conf=0.9 effort=S apk=unknown
+CLAIM: duty_intervals turns an all-None verdict list into INSIDE (first_known defaults to INSIDE). A day with no judgeable ping (no active fence, or every accuracy above 200 m) therefore reads as full inside coverage, with 0 outside minutes and no away flag.
+WHEN: The fence is inactive (the migration seed is the inactive (0,0) placeholder, so this is the state of a freshly rebuilt DB until a manager sets it) or the phone reports only network fixes with accuracy over 200 m. The tech then clocks in and out with pings every 5 min. GET /variance shows coverage_pct=100, outside_minutes=0, flagged_away=false. The punches have inside_geofence=None, so the day is never 'field' and flagged_outside never fires.
+    - backend/app/features/attendance/derive.py:244 — first_known = next((r for r in resolved_raw if r is not None), INSIDE)
+    - backend/app/features/attendance/derive.py:245 — resolved = [r if r is not None else first_known ...]
+    - backend/app/features/attendance/service.py:1019-1020 — _evaluate_ping: if geofence is None: return inside(None), distance, wifi_match
+    - backend/app/features/attendance/service.py:1003 — if accuracy_m is None or accuracy_m > self._accuracy_ceiling_m: inside = None
+IMPACT: After the self-hosted rebuild, every day reads as a clean on-site day until the fence row is set. 'Uncertain' is reported as 'inside', the opposite of the module's own policy that a false verdict is worse than an honest unknown.
+FIX: Add an UNKNOWN interval kind (or count all-None runs as no_data) and drop the INSIDE default. Report judged_minutes separately from coverage. Add a board/variance banner when get_active_geofence is None. Pure code, no migration.
+SKEPTIC: I traced the whole path and the claim holds. The ping ingest (service.py:486-489) fetches the active fence once, through get_active_geofence, which filters on is_active true (repository.py:334-343), and stores _evaluate_ping's verdict as inside_geofence. _evaluate_ping returns inside=None in two cases: when the fence is None (service.py:1019-1020), and when accuracy_m is None or above the ceiling (service.py:1030; the ceiling is DEFAULT_ACCURACY_CEILING_M = 200.0 at service.py:112).
+
+The mobile ping sampler only checks that the tech is on duty. It starts on clock_in (punch.ts:55), and handlePingUpdate checks dutyStatus only, so pings still flow when there is no fence.
+
+On the variance side, _duty_breakdown (service.py:1102-1107) feeds those verdicts unchanged into duty_intervals. With every sample None, resolved_raw is all None, so first_known falls back to INSIDE (derive.py:244). Every segment then resolves to INSIDE (derive.py:245), unless a gap is longer than 2x the cadence. duty_summary then reports inside equal to the full window, outside=0 and coverage 100.
+
+flagged_away (service.py:858-862) needs outside_m >= AWAY_FLAG_MINUTES, so it stays false. classify_day marks a day 'field' only when the first punch has inside_geofence is False (derive.py:136), and _day_flags.outside likewise needs `is False` (service.py:1196), so neither fires on None.
+
+The seed is confirmed: migration 0002 inserts the placeholder (0, 0, 150, false), so the fence is inactive. No commit since 906b990 touches backend/app/features/attendance/ (git log is empty), and the working tree only changes jobs/service.py. The existing tests cover a None sample only between known verdicts, never an all-None day.
+
+Why I lowered the severity from P1 to P2:
+- In the coarse-fix case, the punches are usually coarse too. _location_unreliable then raises flagged_no_location on the board rows (service.py:1182-1199), so the manager gets a signal on a different surface. The variance row itself still claims 100% inside.
+- In the no-fence case, away detection is off because of configuration. The real defect is that the report shows a confident "inside" instead of an unknown.
+- The more serious variant is an Android tech granting only approximate location, which turns every fix into None and reads as fully inside. Even then, the punch-level no_location flag partly offsets it.
+
+This is a misleading-report and integrity gap, not data loss.
+SETTLE: Two tests would show it directly. First, a pure test: duty_intervals([_s(9,2,None), _s(9,7,None), _s(9,12,None)], _t(9), _t(9,15), 5) returns a single 'inside' interval, and duty_summary gives coverage 100.0 with outside 0. Second, an integration test against real Postgres with the fence left inactive as seeded: clock in, POST pings every 5 min, clock out, then GET /variance. Expect coverage_pct=100, outside_minutes=0, flagged_away=false and status 'present'.
+
+### O04-F4 [P1/gap] A dead sampler is invisible: zero-ping days and open shifts produce no coverage, and the board has no ping signal
+cite=- | skeptic=n/a (gap/design) | conf=0.9 effort=M apk=unknown
+CLAIM: No manager surface tells apart a tech whose sampler never produced a ping from a healthy all-inside day. Coverage is computed only for a closed clock window with at least one ping, the board carries no ping-derived field, and AwayStrip renders nothing in both cases.
+WHEN: (a) A tech is clocked in today and the sampler died at 10:00: the board row looks identical to a healthy tech's, and tech_days/variance give no breakdown until a clock-out exists. (b) On a closed day with zero pings, AttendanceTechDetail renders no AwayStrip, the same as a 100%-inside day, and AttendanceVariance shows a dash, the same as an open shift. (c) If every ping of a day is rejected by the 48h window, the day reads as having nothing to report, although _ping_in_window's docstring promises that rejection degrades to an honest no_data gap.
+    - backend/app/features/attendance/service.py:1100 — returns None when last_out is None or not day_pings
+    - backend/app/features/attendance/service.py:657-686 — BoardRow built from punches/presence only, no pings
+    - src/features/attendance/pages/AttendanceTechDetail.jsx:144 — if (!intervals || intervals.length === 0) return null;
+    - backend/app/features/attendance/service.py:1112-1116 — away list excludes kind=='inside', so a healthy day is also empty
+IMPACT: The program's main field-reliability failure (geofence or sampler death) cannot be detected from the server or the web, today or afterwards. A manager cannot tell a broken phone from a compliant tech.
+FIX: See design: add last_ping_captured_at, last_ping_received_at, pings_today and sampler_state to BoardRow from one indexed DISTINCT ON query. Compute today's breakdown with window_end = min(now, first_in + maxDutyHours) when last_out is None. Report a closed zero-ping day as coverage 0 with a no_pings flag, not null.
+
+### O04-F5 [P1/risk/INV] A drain of months-old queued data collapses every punch and crossing onto the drain day
+cite=LOCATED | skeptic=PARTIALLY -> P2 | conf=0.75 effort=M apk=unknown
+CLAIM: If the phones' parked punch and presence items are replayed months later to a rebuilt server (same seeded tech ids t1..t5/m1 and shop 'default', so the FKs accept them), each row is stored with effective_time = the receipt instant. Pings and travel samples older than 48 h are rejected and pruned.
+WHEN: A fresh DB is reachable and a phone retries its failed list holding 3 months of punches. Effects by table:
+- attendance_event: N clock_in/clock_out rows land seconds apart on today. first_in is the earliest replayed clock_in and last_out the latest replayed clock_out, so worked is about 0 minutes and the day reads HALF, late and drift-flagged. /today's clocked_in depends on which kind arrived last. Every original day stays ABSENT.
+- attendance_presence_event: all crossings land on today, so arrived_not_clocked_in and variance first_arrive move to the drain instant.
+- attendance_ping and job_travel_sample: rejected (201 with rejected=N, phone prunes, nothing stored, one log line).
+- job_location: re-bucketed to now, but the job ids do not exist in a fresh DB, so 404 and the item is parked.
+- Selfie upload URLs are minted for every replayed punch.
+    - backend/app/features/attendance/service.py:1829 — return server_now
+    - backend/app/features/attendance/service.py:408 — presence effective = self._effective(...)
+    - backend/app/features/attendance/service.py:461-470 — fresh filter on _ping_in_window
+    - backend/app/features/attendance/models.py:104 — tech_id ForeignKey('technician.id') (satisfied by the seeded ids)
+IMPACT: One retry tap corrupts today's attendance for every tech and leaves months of absences with no evidence attached. If that day falls in a payroll week that has not been exported yet, the phantom day enters the frozen weekly CSV.
+FIX: Before any phone points at a new server, set the drain-mode settings in design and add the late_sync flag. Better: an explicit import mode that stores out-of-window punches at device_time, flagged late_sync and excluded from payroll until a manager accepts them.
+SKEPTIC: I traced each cited line myself.
+
+**Punches and presence: the core mechanism holds.**
+- record_punch (service.py:330) and record_presence (:408) both call self._effective, which goes to _effective_time (:1804-1829). That returns server_now whenever device_time falls outside [now-24h, now+120s] (DEFAULT_DEVICE_TIME_BACKDATE_CEILING_HOURS=24; config attendance_device_time_backdate_ceiling_hours=24).
+- The schemas place no bound on device_time.
+- The FKs (models.py:103-104) are satisfied by the seeds: 0004 bulk-inserts the technician rows and 0020 seeds the shop.
+- repository.list_events and list_presence both window and order on effective_time.
+- So every replayed punch and crossing lands on the drain day.
+
+**Day rollup.** classify_day (derive.py:99) takes first_in = min clock_in and last_out = max clock_out, and computes worked = last_out - first_in, which is about 0. The status is FIELD only if first.inside_geofence is False. 0002 seeds the geofence with is_active=false, which leaves inside NULL, so on a fresh DB the day is HALF. late depends on the wall-clock time of the drain, and a non-working day returns HOLIDAY. drift is flagged because drift_seconds is months. today_status uses _latest by effective_time.
+
+**Mobile side.** queue.ts has no age cap, sync.ts drains pending items, and retryPunch / retryPresence let a tech re-arm failed ones. So the replay is reachable, after a re-login (a 401 pauses the queue but keeps it).
+
+**Pings.** These are filtered by _ping_in_window (:461-470) and the batch returns rejected=N.
+
+**Correction 1: travel samples.** record_travel_samples calls self._load(job_id) BEFORE the window filter at :1679. Job.id is gen_random_uuid(), and the seeded jobs in 0005 get random UUIDs too, so on a fresh DB that call 404s. travelSync drops the batch on a definitive 4xx. The net effect is the same (nothing stored), but the mechanism is a 404, not the "201 rejected=N" response the claim describes. job_location 404s through the same _load call and is parked, as the claim says.
+
+**Correction 2: HALF and late are conditional.** As described in the day-rollup paragraph above.
+
+**No fix in history.** git log 906b990..HEAD on attendance/ shows no fix. The jobs/service.py changes in da988e2 and 3810e42 touch the dispatch code and tech-metrics, not the cited lines.
+
+**Severity: P2, not P1.**
+- The behaviour is the documented D8 design (re-bucket, never reject).
+- The raw device_time and drift_seconds are kept, and the drift flag surfaces every replayed row to the manager.
+- The original days being ABSENT comes from the DB rebuild, not from this code.
+- The harm is a misleading drain day that a backfill script could repair, under a disaster-recovery precondition.
+CORRECTED: If parked punch and presence items months old are replayed to a rebuilt server, the FKs accept them because 0004 seeds the tech ids and 0020 seeds shop 'default'. Because they are older than the 24 h D8 ceiling, each row is stored with effective_time = receipt time. drift_seconds and device_time are still stored raw, so nothing is lost and the original timing can be recovered.
+- Punches: list_events windows on effective_time, so all replayed punches land on the drain day. classify_day sets first_in to the first replayed clock_in and last_out to the last replayed clock_out, so worked minutes come out near 0. The day reads HALF when the first clock_in has no fence verdict; 0002 seeds the geofence inactive, so that is the default. It reads FIELD if an operator has turned on a fence the punch falls outside, and HOLIDAY on a non-working day. late is true only if the drain happens after shift start + grace. drift is always flagged. today_status.clocked_in depends on whichever kind's latest replayed effective_time is later.
+- Presence: crossings also collapse onto the drain day, which moves first_arrive in the variance view and the arrived_not_clocked_in flag there.
+- Pings: filtered by _ping_in_window and returned as rejected; the phone prunes them.
+- Job data: job ids are gen_random_uuid(), so none of the phone's job ids exist in a fresh DB. Both job_location and travel-sample uploads hit _load first and get a 404, before any time-window logic runs. The location item is parked in the jobs failed list. The travel batch is dropped as a definitive 4xx; it is not the "201 rejected=N" path.
+- Selfies: a signed selfie PUT URL is minted for each replayed punch that still holds a local selfie file.
+SETTLE: An integration test against real Postgres would settle it:
+1. On a freshly migrated DB, POST /api/attendance/punches for tech t1 with a clock_in and then a clock_out, both with device_time 90 days ago.
+2. Assert that both rows have effective_time ≈ now and that GET /techs/t1/days for today shows status 'half', worked_minutes 0 and drift flagged.
+3. POST /api/jobs/{random uuid}/travel-samples with 90-day-old samples and assert the response is 404, not 201 with rejected=N.
+
+### O04-F6 [P2/defect] Manager corrections can only add punches; the original is never superseded, so a day can only lengthen (A5 confirmed)
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.93 effort=M apk=no
+CLAIM: create_adjustment appends a manual event and never excludes original_event_id. classify_day takes the minimum clock_in and the maximum clock_out, so a correction cannot shorten a day, remove a mistaken clock_in, or clear the flags on the original punch.
+WHEN: A tech's mobile clock_out at 23:40 (forgot to clock out) is corrected to 18:00: last_out stays 23:40. A replayed phantom clock_in (O04-F1) cannot be removed, so the day cannot be made ABSENT. A mock or outside flag on the original punch stays because _day_flags folds over all events. The web CorrectionForm never sends original_event_id.
+    - backend/app/features/attendance/service.py:552-591 — create_adjustment appends; original only existence-checked
+    - backend/app/features/attendance/derive.py:123-125 — first = clock_ins[0]; last_out = clock_outs[-1].local_dt
+    - backend/app/features/attendance/service.py:1194-1201 — mock/outside/drift computed over all events incl. originals
+    - src/features/attendance/pages/AttendanceTechDetail.jsx:225-231 — createAdjustment({tech_id, kind, server_time, reason, manager_id}) with no original_event_id
+IMPACT: Payroll over-counts after a forgotten clock-out and cannot be fixed in the app. The 'manager-approved pakka khata' cannot express a downward correction.
+FIX: Add attendance_adjustment.action in ('add','replace','void') (migration 0047). Before classify_day and _day_flags, drop events referenced by a replace/void adjustment. Have the web pass original_event_id from the punch row it corrects.
+
+### O04-F7 [P2/defect/INV] Adjustment audit attribution comes from the request body, not the principal
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.93 effort=S apk=no
+CLAIM: POST /api/attendance/adjustments writes created_by and attendance_adjustment.manager_id from body.manager_id and never reads the authenticated principal. Any manager token can therefore record a correction attributed to any technician id.
+WHEN: A manager sends {manager_id:'t3', ...}. The audit trail shows 'by t3'. If the web's user.tech_id is unset, the fallback manager_id 'manager' violates the technician FK and the request returns 500.
+    - backend/app/features/attendance/router.py:360-375 — create_adjustment(body, service, session) with no CurrentPrincipal parameter
+    - backend/app/features/attendance/service.py:580 — created_by=body.manager_id
+    - backend/app/features/attendance/service.py:585 — manager_id=body.manager_id
+    - backend/app/features/attendance/schemas.py:484 — manager_id: str = Field(..., min_length=1, max_length=128)
+IMPACT: The correction audit (the approval record behind the pakka khata) can be forged. Today the effect is limited because there is a single manager, m1.
+FIX: Inject CurrentManager in the router, set manager_id=principal.tech_id, and drop the field from AdjustmentRequest (or ignore it). Add a client_id for idempotency (O04-F13).
+
+### O04-F8 [P2/defect] An invalid shift timezone 500s every attendance read, including the phone's /today and the weekly export (B4 confirmed)
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=no
+CLAIM: ShiftUpdate.timezone accepts any string up to 64 characters. _tz_from_shifts calls ZoneInfo(shifts[0].timezone) without a fallback, list_shifts has no ORDER BY, and no exception handler catches ZoneInfoNotFoundError.
+WHEN: A manager sends PUT /api/attendance/shifts/t2 with timezone 'PKT' (or 'Asia/Karachi '). From then on, whenever that row comes first in the unordered list_shifts result, /board, /grid, /techs/{id}/days, /payroll, /variance and the tech-facing /today return 500, and run_weekly_export raises. When the shifts' timezones differ, the shop timezone used for day bucketing is nondeterministic.
+    - backend/app/features/attendance/schemas.py:450 — timezone: str = Field(default='Asia/Karachi', max_length=64)
+    - backend/app/features/attendance/service.py:1864-1865 — name = shifts[0].timezone ...; return ZoneInfo(name)
+    - backend/app/features/attendance/repository.py:299-306 — list_shifts select with no order_by
+    - backend/app/features/attendance/service.py:621 — today_status: tz = await self._shop_tz(shop_id)
+IMPACT: One typo takes down the attendance module and the phones' clock-screen status. Mixed timezones silently shift day boundaries.
+FIX: Add a field_validator that resolves ZoneInfo(value) and raises a 422 on failure. Make the shop timezone a shop_setting (or the tenancy shop row) instead of shifts[0]. Fall back to DEFAULT_TIMEZONE with a log line on a bad stored value. No migration needed; an audit script can find bad rows.
+
+### O04-F9 [P2/design] The server's inside rule is far looser than the phone's: a raw point up to radius+200 m reads inside
+cite=- | skeptic=n/a (gap/design) | conf=0.85 effort=S apk=unknown
+CLAIM: The server marks a fix inside when distance - accuracy_m <= radius_m for any accuracy up to 200 m. The phone judges the raw point with accuracy <= 100 m (S6). The same fix can therefore be 'contradicted/outside' on the phone and inside_geofence=True on the server.
+WHEN: With an 80 m fence, a ping 270 m from centre with accuracy 195 m is stored inside=True (270-195=75<=80), and a fix at 150 m with accuracy 90 m is outside on the phone but inside on the server. Away minutes and flagged_outside under-count. A presence row can carry confirmed=False next to inside_geofence=True. Job punches use a third rule: raw distance <= 250 m with a 100 m ceiling.
+    - backend/app/features/attendance/derive.py:95 — return distance - accuracy_m <= radius_m, distance
+    - backend/app/features/attendance/service.py:1003 — if accuracy_m is None or accuracy_m > self._accuracy_ceiling_m: inside = None
+    - backend/app/core/config.py:54 — attendance_location_accuracy_ceiling_m: float = 200.0
+    - backend/app/features/jobs/service.py:417-424 — judgeable = ... accuracy_m <= jobs_punch_accuracy_ceiling_m; distance <= radius_m
+IMPACT: Away time is systematically biased toward 'inside'. Manager-visible verdicts disagree with what the tech saw on the phone.
+FIX: Use a three-state verdict on the server: inside if distance + acc <= r, outside if distance - acc > r, else None. Lower the attendance ceiling to 100 m to match CONFIRM_ACCURACY_MAX_M. Version the rule (only new rows), since stored inside_geofence is not recomputed.
+
+### O04-F10 [P2/defect] The tech-detail page shows receipt time (server_time) for punches and crossings, not effective_time
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=no
+CLAIM: PunchRow and PresenceTimeline render fmtClock(p.server_time), although PunchItem and PresenceItem carry effective_time and the day header (first_in/last_out) is computed from effective_time.
+WHEN: An offline clock-in at 09:02 that syncs at 13:40 shows 'Clock In 13:40' in the punch list while the day header reads 09:02 -> ... The manager sees an apparently late punch and may 'correct' a time that was right.
+    - src/features/attendance/pages/AttendanceTechDetail.jsx:73 — {fmtClock(p.server_time)}
+    - src/features/attendance/pages/AttendanceTechDetail.jsx:122 — {fmtClock(p.server_time)} (presence)
+    - backend/app/features/attendance/schemas.py:91-94 — PunchItem.server_time + effective_time ('the analytical time the rollups bucket on')
+IMPACT: The manager view contradicts itself for exactly the offline-synced punches, and can prompt wrong corrections.
+FIX: Render effective_time, and show 'synced HH:MM' only when server_time - effective_time exceeds a few minutes.
+
+### O04-F11 [P2/defect] The weekly payroll export freezes before late syncs and corrections arrive
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=M apk=no
+CLAIM: run_weekly_export returns the existing record for (shop, window) and offers no regenerate path. A punch synced within its 24 h trust window after the Sunday run, or any later manager correction, never reaches that week's CSV.
+WHEN: A Saturday shift syncs Sunday 10:00 after the scheduled export ran, or a manager adds a correction on Monday. The stored CSV still shows the day ABSENT or uncorrected, and re-running is a no-op.
+    - backend/app/features/attendance/service.py:1249-1253 — existing = get_export_for_window(...); if existing is not None: return existing
+    - backend/app/features/attendance/models.py:372 — UniqueConstraint('shop_id','from_date','to_date', name='payroll_export_window_key')
+IMPACT: The artefact meant to feed payroll and Odoo diverges from the live board.
+FIX: Add a manager 'regenerate' that writes a new versioned record (needs a version column and a changed unique key, migration). Or delay the export by more than the trust ceiling and mark rows with late_sync.
+
+### O04-F12 [P2/defect/INV] The ping ceiling (48h) is shorter than the phone's own queue span, so legitimately queued pings are rejected
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=unknown
+CLAIM: The config comment justifies the ping ceiling by a phone queue of about 3.5 days (1000 pings at 5 min), but the ceiling is 48 h. Pings are sampled only while clocked in, so 1000 pings span roughly 9 working days. Any ping captured more than 48 h before sync is dropped.
+WHEN: A tech works 3 days offline (about 324 pings) and syncs on day 4. Every ping older than 48 h comes back as rejected and is pruned. Those days have closed punch windows but zero pings, so per O04-F4 they show no coverage at all.
+    - backend/app/core/config.py:70-77 — comment: 'the phone legitimately queues ≈3.5 days of pings offline ... attendance_ping_backdate_ceiling_hours: int = 48'
+    - backend/app/features/attendance/models.py:225-227 — pings sampled 'only while clocked in'
+    - backend/app/features/attendance/service.py:480-485 — if not fresh: return PingBatchResponse(accepted=0, ...)
+IMPACT: The designed offline capacity is thrown away on the server. T44-attendance-3 confirmed.
+FIX: Set FIXFLOW_ATTENDANCE_PING_BACKDATE_CEILING_HOURS to at least 240 and the code default to match. Record rejected counts per tech in an app_event so the loss is visible.
+
+### O04-F13 [P3/defect] Split shifts report the deliberately unsampled off-duty break as 'No location data'
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=S apk=unknown
+CLAIM: The duty window runs from the earliest clock_in to the latest clock_out, but the phone stops sampling at each clock-out. A mid-day clock-out/clock-in break therefore becomes a no_data run, labelled 'the phone stopped reporting'.
+WHEN: A tech clocks out 13:00 and back in 14:00 for lunch: variance and tech_days show a 60-minute no_data interval and lower coverage_pct.
+    - backend/app/features/attendance/derive.py:123-125 — first_in = min clock_in, last_out = max clock_out
+    - backend/app/features/attendance/service.py:1106 — intervals = duty_intervals(samples, first_in, last_out, ...)
+    - src/features/attendance/pages/AttendanceTechDetail.jsx:175-180 — 'No location data means the phone stopped reporting'
+IMPACT: False sampler-failure signals, which would also pollute a dead-sampler alert.
+FIX: Build the duty window as the union of clock_in to next clock_out sessions and run duty_intervals per session.
+
+### O04-F14 [P3/defect] Overnight shift is accepted but unrepresentable (T44-attendance-2 confirmed)
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.88 effort=S apk=no
+CLAIM: ShiftUpdate has no validator. classify_day buckets by local calendar day, so a 22:00-06:00 shift splits into a no-clock-out day and an ABSENT, order-violation day. start == end yields a 1440-minute shift.
+WHEN: PUT shift start 22:00 end 06:00, then a clock_in Mon 22:00 and clock_out Tue 06:00: Mon is PRESENT with worked=None, and Tue is ABSENT with flagged_order.
+    - backend/app/features/attendance/derive.py:154-158 — minutes if > 0 else minutes + 24*60
+    - backend/app/features/attendance/derive.py:116-125 — per-day clock_in/clock_out folding
+IMPACT: Night or late jobs corrupt two days.
+FIX: Reject end <= start in a model_validator until overnight shifts are designed.
+
+### O04-F15 [P3/defect] Adjustments carry no client_id: a retried POST creates duplicate manual events and audit rows (L5 confirmed for attendance)
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=no
+CLAIM: AdjustmentRequest has no client_id and the service mints uuid4() for each request. A retried POST therefore appends a second manual event and a second adjustment row.
+WHEN: The web resubmits after a timeout: two identical manual clock_out events and two audit rows. The rollup is unaffected (min/max), but the audit is duplicated.
+    - backend/app/features/attendance/schemas.py:476-486 — AdjustmentRequest fields: no client_id
+    - backend/app/features/attendance/service.py:561 — client_id=uuid4()
+IMPACT: Noisy audit, and double-counting once the replace/void semantics from O04-F6 exist.
+FIX: Add an optional client_id to AdjustmentRequest and attendance_adjustment (partial unique), deduping as punches do (migration 0047).
+
+### O04-F16 [P2/defect/INV] log_payment accepts a payment against a closed job (L6 confirmed)
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=unknown
+CLAIM: JobService.log_payment loads the job and appends a JobPayment with no status check. submit_completion and negotiate_bill both refuse a closed job.
+WHEN: A queued cash payment replays after the job closed, or a client calls POST payment on a closed job: the payment is stored and the settled bill's paid total changes.
+    - backend/app/features/jobs/service.py:1437-1468 — log_payment: row = await self._load(...); add_payment(...) with no row.status check
+IMPACT: A settled, billed job's money changes after close, which undermines the bill freeze and the Odoo hand-off.
+FIX: Refuse with a 409 whose detail ends '(current status: closed)', keeping the client_id replay an idempotent success.
+
+### O04-F17 [P3/risk] Pings, punches and crossings are judged against the fence active at receipt, not at capture
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=M apk=unknown
+CLAIM: record_pings fetches get_active_geofence at ingest and stores inside_geofence permanently. A late batch is therefore judged against whatever fence is active at sync time, and judged against none if the fence was deactivated in between.
+WHEN: The fence is moved or resized on Wednesday and a phone syncs Monday's pings on Wednesday: Monday's verdicts use Wednesday's fence. Syncing into a fresh DB before the fence is set gives inside=None forever, which then reads as inside (O04-F3).
+    - backend/app/features/attendance/service.py:486 — geofence = await self._repo.get_active_geofence(shop_id=fresh[0].shop_id)
+    - backend/app/features/attendance/service.py:993 — _evaluate_geofence fetches the active fence at ingest
+IMPACT: Historic verdicts depend on the order of operations during cut-over.
+FIX: Store raw coordinates (already stored) and recompute verdicts on read against a fence history table, or at least provide a recompute script for a time range. During cut-over, set the fence before any phone syncs.
+
+## Backlog
+- [P3] payroll/variance default end date uses the UTC date, not the shop date (00:00-05:00 PKT omits today) (backend/app/features/attendance/router.py:306,326)
+- [P3] no_data gap uses the CURRENT ping_interval setting for historic days; a cadence change rewrites past coverage (backend/app/features/attendance/service.py:1106)
+- [P3] duty_summary docstring claims an unreported day reads 0%; _duty_breakdown returns None (backend/app/features/attendance/derive.py:272-274)
+- [P3] grid month '2026-13' passes the regex and 500s in date() (backend/app/features/attendance/service.py:1925-1928)
+- [P3] tech_days/variance accept an unbounded date range (latency, manager-only) (backend/app/features/attendance/router.py:277-290)
+- [P3] No unique constraint for one active fence per shop; newest row silently wins (backend/app/features/attendance/repository.py:334-343)
+- [P3] record_location on a closed job still appends a GPS timeline event at receipt time (backend/app/features/jobs/service.py:1552-1590)
+- [P3] A punch window straddling the 48h jobs GPS ceiling reorders depart after arrive (outbound window lo>hi, so an estimate) (backend/app/features/jobs/service.py:256-260)
+- [P3] An open past day (no clock-out) reads PRESENT with worked_minutes None in payroll; no flag (backend/app/features/attendance/derive.py:130-142)
+- [P3] Manual earlier clock_in (inside None) flips a 'field' day to present (backend/app/features/attendance/derive.py:137)
+- [P3] Web board/grid roster is still the mock tech id list; a new tech is not shown (src/features/attendance/data/attendanceApi.js:1-6)
+
+## Open questions
+ ? The G1 gate record at C:/Users/User/Documents/projects/EMS_workshop1/docs/program/G1-discovery-gate-2026-11-01.md does not exist (no docs/program/ directory), so the hypothesis labels H3/H7/H12/H18 were inferred from the brief's tags and S-03. Please confirm the mapping.
+ ? Can a technician retry items in the punch/presence 'failed' list (parked on the Railway edge 404) against a new server URL, and does that replay them unchanged? This decides whether the O04-F5 months-old drain is reachable. Mobile track: technician-app/src/features/attendance/{queue,sync}.ts, not read here.
+ ? Which FIXFLOW_ATTENDANCE_* / FIXFLOW_JOBS_GPS_* values were overridden on the dead Railway service? This needs W0 env export; the code defaults were assumed.
+ ? What were the real fence row's radius_m, is_active and wifi_bssids in prod? The radius sets the size of the O04-F9 overlap bias, and its absence triggers O04-F3. This is DB-only.
+ ? Does the web's useAuth user carry tech_id for the manager (m1)? If not, every correction posts manager_id='manager' and 500s on the technician FK (O04-F7).
+ ? Extra files read one hop beyond the brief: backend/app/features/telemetry/models.py (app_event indexes), backend/app/features/telemetry/schemas.py (batch limits), technician-app/src/features/attendance/pingTracker.ts (grep only, confirms clock-out stops pings), src/features/attendance/data/attendanceApi.js:1-45, backend/app/features/jobs/service.py:1437-1475 (log_payment).
+ ? Is a split shift (clock-out for lunch, then back in) actually used in the field? If not, O04-F13 drops to cosmetic.
+ ? Should late_sync days be excluded from payroll by default (manager acceptance) or only flagged? This is an owner decision for the pakka-khata flow.

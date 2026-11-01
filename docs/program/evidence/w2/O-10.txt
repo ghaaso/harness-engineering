@@ -1,0 +1,217 @@
+# O-10 — O-10 fleet-drain-protocol: the ordered, verifiable procedure for getting every technician phone's queued data into a recovered backend without loss, plus how to prove that nothing was lost
+findings=16 backlog=7 challenges=3 citations=13 verdicts=0 skipped(no skeptic)=7
+
+## Hypothesis ranking
+- H15 baked URL (preview APK points at the dead Railway host) supported p=0.95 apk=yes
+    test: Pull base.apk from a phone (adb shell pm path; adb pull) and grep the JS bundle for efficient-tenderness-production-2d09. eas.json:21 is the preview value.
+- H7 edge 404 (parks punches/presence/jobs, drops pings/travel) supported p=0.9 apk=unknown
+    test: On one phone after the update (before drain), the Drain Report manifest shows parked rows whose reason is exactly 'rejected (404)' and zero unsent pings older than the last 404 contact. The field APK cannot show this today.
+- H5 session expiry / headless 401 strand supported p=0.85 apk=unknown
+    test: After a JWT-secret rotation, the first contact from each phone is a 401 in the server access log. The manifest records whether fixflow_token was absent while fixflow_tech was present at bundle load.
+- H14 APK != main (v2 outbox, ping cap, failsafes present?) untestable p=0.5 apk=unknown
+    test: Look up the EAS build commit for the installed versionCode (W0). Or grep the pulled bundle for 'jobs.outbox.v2' and 'MAX_UNSENT_PINGS'. If v2 is absent, a 401 drops queued job writes (identity/service.py:125-128).
+- H6 unreachable period (when prod died) untestable p=0.5 apk=unknown
+    test: Railway deploy/billing history (W0), or the earliest failed_at with reason 'rejected (404)' across the fleet manifests. That date sets the backdate ceiling W and decides whether any 30-day token is still valid.
+
+## Findings
+
+### O10-F1 [P1/gap] The field APK cannot produce the per-phone BEFORE counts the proof needs
+cite=- | skeptic=n/a (gap/design) | conf=0.85 effort=M apk=unknown
+CLAIM: On the field APK, the only queue state a person can read is parked punches/crossings (ClockScreen) and the jobs-outbox queued/failed totals (banner, across all techs). Unsent pings, unsent travel samples, pending media and pending-but-unparked crossings have no UI consumer, so the BEFORE manifest for step 6 cannot be taken without a new build.
+WHEN: Any phone running the field APK, before the update; for example, a phone holding queued pings from an airplane-mode stretch and an unparked crossing.
+    - technician-app/src/features/attendance/useAttendance.ts:86 — const [fp, fpr] = await Promise.all([failedPunches(), failedPresence()]); (the only attendance counts rendered)
+    - technician-app/src/lib/useOutboxSync.ts:24 — setCounts(await outboxCounts());
+    - technician-app/src/lib/outbox.ts:234-240 — outboxCounts counts queued/failed with no techId filter
+    - technician-app/src/features/attendance/pingQueue.ts:97-99 and technician-app/src/features/jobs/travelQueue.ts:273-275 — pendingPings/pendingTravelSamples; grep finds no consumer outside pingSync.ts/travelSync.ts
+IMPACT: Without app support, 'nothing was lost' cannot be proven for four queues. For a K=no phone, the BEFORE record is reduced to photographs of two screens.
+FIX: In the update, write a manifest snapshot at bundle load (counts plus the full record list per queue per tech, no media bytes), show it on a Drain Report screen, and upload it as the first authenticated call through the existing POST /api/events (name 'drain_manifest'; EventIn.props is an unbounded dict). Every sync awaits the snapshot gate.
+
+### O10-F2 [P1/defect/INV] Rows parked during the outage stay parked after any classifier fix; recovery is per-row Retry only
+cite=LOCATED | skeptic=NO VERDICT | conf=0.9 effort=S apk=unknown
+CLAIM: Each sync skips parked rows (pendingPunches/pendingPresence filter on failed_reason; the flush skips status 'failed'). Only per-id retryPunch/retryPresence/retryItem un-park them. So an update that only reclassifies the edge 404 as transient drains none of the months of 'rejected (404)' rows, and each would need a manual tap, which also lands at server_now under the 24 h ceiling.
+WHEN: Update installed with origin-aware classification but no un-park migration; the phone holds punches/crossings/outbox items parked as 'rejected (404)'.
+    - technician-app/src/features/attendance/queue.ts:100-101 — filter((i) => !i.done && i.failed_reason === undefined)
+    - technician-app/src/features/attendance/presenceQueue.ts:88-89 — same filter for crossings
+    - technician-app/src/lib/outboxSync.ts:202 — if (item.status !== "queued") continue; // failed items wait for the user
+    - technician-app/src/features/attendance/queue.ts:128-135, presenceQueue.ts:121-128, outbox.ts:214-221 — retry is by single id
+IMPACT: The drain stalls on exactly the outage data it exists to recover. A tech mass-tapping Retry before the ceiling is widened stamps months of punches into today (O3-F4).
+FIX: Run a one-time migration at first launch of the new versionCode, before any sync and after the manifest snapshot. It resets to queued every punch/presence/outbox row whose reason matches /^rejected \(\d{3}\)$/ (no app detail), or /^gave up after \d+ attempts \(server 5\d\d\)$/ with failed_at inside the outage window, and resets parked pending-media attempts. Rows with an app detail stay parked. Pin it with unpark.test.ts.
+
+### O10-F3 [P1/risk/INV] A 503 stub on the old hostname parks every queued item after five flushes
+cite=MOVED | skeptic=NO VERDICT | conf=0.9 effort=S apk=unknown
+CLAIM: Every non-OK response becomes an ApiError, and each 5xx ApiError bumps attempts and parks the item at MAX_ATTEMPTS=5. With the 4 s to 60 s outbox backoff and the 3 s to 60 s punch backoff, a '503 maintenance' stub parks queued job writes and punches one by one within minutes, while a 503 batch of pings/travel is kept. So the 503 stub the brief proposes is not safe.
+WHEN: The old hostname is reclaimed and made to answer 503 to everything while field APKs with queued items are online.
+    - technician-app/src/lib/api.ts:153-157 — if (!response.ok) { ... throw new ApiError(method, path, response.status, text); }
+    - technician-app/src/lib/outboxSync.ts:226-231 — if (e instanceof ApiError) { const attempts = await bumpAttempts(item.id); if (attempts >= MAX_ATTEMPTS) { await markFailed(...)
+    - technician-app/src/features/attendance/sync.ts:206-213 — same bump/park for punches
+    - technician-app/src/features/attendance/presenceSync.ts:209-216 — same bump/park for crossings
+IMPACT: The stub turns 'kept and retried' into 'parked, waiting for a manual tap' for the whole fleet. It does exactly the harm it was meant to prevent.
+FIX: If the old host is controlled, use a hang stub: accept, send no bytes for at least 20 s, then close. The client's 15 s abort becomes a non-ApiError ('timed out'), which every queue treats as connectivity, with no count. Or proxy the host to the recovered backend only in the K=no branch.
+
+### O10-F4 [P1/risk/INV] Any 2xx JSON or 204 from the old hostname deletes queued items as 'landed'
+cite=MOVED | skeptic=NO VERDICT | conf=0.9 effort=S apk=unknown
+CLAIM: request() treats any OK response as success: 204 returns undefined, and any parseable JSON body returns as the result. The jobs flush then removes the item, presence/ping/travel mark it done and prune it, and nothing checks that the body is the expected row. A placeholder or health stub answering 200 {} or 204 on every path silently erases the fleet's queues.
+WHEN: The old hostname is pointed at any service that answers 2xx with a JSON body, or 204, for unknown paths (for example a generic health stub, or a catch-all route).
+    - technician-app/src/lib/api.ts:158-159 — if (response.status === 204) return undefined as T; return (await response.json()) as T;
+    - technician-app/src/lib/outboxSync.ts:210-211 — await reconcile(await send(item)); await removeItem(item.id);
+    - technician-app/src/features/attendance/presenceSync.ts:185-200 — await attendanceApi.recordPresence(...); await markPresenceDone(...); settled.push
+    - technician-app/src/features/attendance/pingSync.ts:141-157 — recordPings then markPingsDone(ids)
+IMPACT: Irreversible, silent loss of every queue on every phone that reaches the stub, including cash records in the outbox.
+FIX: Protocol rule: the old host may only hang (timeout) or proxy to the real backend; never 2xx/204 from anything else. In the update, require the app-origin marker header on a 2xx before treating a write as landed.
+
+### O10-F5 [P1/risk/INV] A self-hosted backend without FIXFLOW_ENVIRONMENT=production boots with the public dev JWT secret
+cite=LOCATED | skeptic=NO VERDICT | conf=0.9 effort=S apk=no
+CLAIM: is_production is true only when FIXFLOW_ENVIRONMENT=production or RAILWAY_ENVIRONMENT is set. On the home server with neither set, the boot guard passes and the backend signs and accepts tokens with DEV_JWT_SECRET, which is committed in the repo. Anyone can then forge a manager token.
+WHEN: Recovered backend started on the home box (no RAILWAY_ENVIRONMENT) with FIXFLOW_ENVIRONMENT and FIXFLOW_JWT_SECRET unset.
+    - backend/app/core/config.py:16 — DEV_JWT_SECRET = "dev-insecure-secret-change-me-in-production-32b"
+    - backend/app/core/config.py:151 — jwt_secret: str = DEV_JWT_SECRET
+    - backend/app/core/config.py:221 — return self.environment.lower() == "production" or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+    - backend/app/core/config.py:228 — if self.is_production and self.jwt_secret == DEV_JWT_SECRET: raise
+IMPACT: The drain would open a security hole on the very first phone contact.
+FIX: Protocol step B2 sets FIXFLOW_ENVIRONMENT=production and a fresh FIXFLOW_JWT_SECRET. Code: fail closed when environment != 'dev' explicitly, or when the DB host is not localhost while the secret is still the dev default.
+
+### O10-F6 [P1/risk/INV] A fresh database (recovery case 'nothing') gives every technician and the manager PIN 1234
+cite=LOCATED | skeptic=NO VERDICT | conf=0.85 effort=S apk=no
+CLAIM: Migrations 0004 and 0012 seed t1..t5 and manager m1 with the hash of the literal '1234'. A recovered-from-nothing backend exposed through the tunnel therefore accepts a manager login with a publicly known PIN until each PIN is changed.
+WHEN: Recovery case 'nothing'; alembic upgrade head on an empty DB; the tunnel route opened before set_pin has been run for every id.
+    - backend/alembic/versions/0004_create_technicians.py:28 — _DEFAULT_PIN = "1234"
+    - backend/alembic/versions/0004_create_technicians.py:31-37 — t1..t5 seed rows
+    - backend/alembic/versions/0012_dedicated_manager_account.py:31 — _DEFAULT_PIN = "1234"
+    - backend/alembic/versions/0012_dedicated_manager_account.py:59 — "pin_hash": hash_pin(_DEFAULT_PIN)
+IMPACT: Full manager access (payments, ledger, PIN resets) for anyone on the internet during the drain window.
+FIX: B3: set every PIN with set_pin (manager PIN to policy length) over a local, untunnelled connection before the tunnel route opens. Tell techs their new PIN in person.
+
+### O10-F7 [P1/risk] The dispatcher's stale-event guard keys on server insert time, so drained months-old writes count as fresh
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.6 effort=S apk=no
+CLAIM: run_dispatch_once skips an event only when now - event.created_at > 2 days. created_at is set when the drained write lands, so job events created by a months-old completion, ready transition or payment replayed during the drain pass the guard. If the dispatcher is on during or after the drain without a cursor re-seed, customers get messages about old jobs.
+WHEN: FIXFLOW_ENABLE_DISPATCHER=true with WhatsApp configured, while (or after) phones drain queued completion/transition writes whose events land after the cursor.
+    - backend/app/features/customer_messaging/service.py:443-445 — if max_event_age is not None and event.created_at is not None: ... if age > max_event_age:
+    - backend/app/main.py:94 — _MAX_DISPATCH_EVENT_AGE = timedelta(days=2)
+    - backend/app/core/config.py:188 — enable_dispatcher: bool = False
+IMPACT: A permanent, customer-visible incident: per CLAUDE.md, uq_customer_message_job_kind makes the first decision terminal.
+FIX: Keep the dispatcher off for the whole drain window. Before ever enabling it, re-seed dispatch_cursor('whatsapp') at max(job_event.seq). Longer term, age-check on the domain time (device/effective time), not created_at.
+
+### O10-F8 [P2/defect/INV] A thrown selfie upload stops the punch drain for every later punch
+cite=MOVED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.75 effort=S apk=unknown
+CLAIM: syncOne awaits FileSystem.uploadAsync to the signed R2 URL without a local catch. A thrown upload (for example the R2 host unresolvable because FIXFLOW_R2_ACCOUNT_ID is empty or wrong on the recovered box) is a non-ApiError, so syncNow 'break's. The punch is already recorded, but every later punch in the queue is never sent.
+WHEN: Recovered backend with missing or wrong R2 settings; a phone drains punches that carry selfies.
+    - technician-app/src/features/attendance/sync.ts:296-301 — if (!selfieDone && item.selfie_uri && resp.selfie) { const put = await FileSystem.uploadAsync(resp.selfie.signed_url, ...
+    - technician-app/src/features/attendance/sync.ts:217 — break; // pure connectivity failure — never counts; stop and retry later
+    - backend/app/core/storage.py:180-182 — endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com" (lazy client, validates nothing)
+IMPACT: The punch drain stalls at the first selfie, so the AFTER check fails for every punch behind it.
+FIX: Protocol B2 verifies a selfie PUT end to end before any phone. Code: catch the upload leg separately (the punch is recorded), leave selfie_done false, and continue to the next item.
+
+### O10-F9 [P2/risk/INV] Restoring the DB to a pre-drain snapshot after a phone has drained loses that phone's data permanently
+cite=MOVED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=unknown
+CLAIM: Every queue deletes or prunes an item as soon as the server accepts it. So once a phone drains, the recovered DB is the only copy, and rolling it back to the pre-drain snapshot erases those records with no second copy anywhere.
+WHEN: Abort after one or more phones drained, followed by a DB restore to the snapshot taken before the window opened.
+    - technician-app/src/lib/outboxSync.ts:211 — await removeItem(item.id);
+    - technician-app/src/features/attendance/sync.ts:220 and 236-249 — pruneSettled removes done punches and deletes selfie files
+    - technician-app/src/features/attendance/presenceSync.ts:223 — await removePresence(settled);
+    - technician-app/src/features/attendance/pingSync.ts:177 — await removePings(settled);
+IMPACT: The standard 'restore the backup' rollback reflex is the data-loss path here.
+FIX: Rollback rule R2: forward-only corrections after the first drain. The manifest archive (full records uploaded before draining) makes a replay possible if a restore is ever unavoidable.
+
+### O10-F10 [P2/gap] A phone's queues drain only under the session of the tech who queued them
+cite=- | skeptic=n/a (gap/design) | conf=0.9 effort=S apk=unknown
+CLAIM: Every sync skips items whose tech_id differs from the signed-in tech. A phone whose owner has left, forgotten their PIN, or has an id missing from the recovered DB never drains, and a manager login on that phone flushes nothing.
+WHEN: Shared phone, a departed tech, or a non-seed tech id that a fresh DB lacks.
+    - technician-app/src/features/attendance/sync.ts:189 — if (item.tech_id !== techId) continue;
+    - technician-app/src/features/attendance/presenceSync.ts:183 — if (item.tech_id !== techId) continue;
+    - technician-app/src/features/attendance/pingSync.ts:136 — filter((p) => p.tech_id === techId)
+    - technician-app/src/features/jobs/travelSync.ts:310 — filter((s) => s.tech_id === techId)
+IMPACT: Silent residue: the AFTER check fails for those ids unless the protocol names every tech id per phone.
+FIX: The manifest lists record owners per phone. The Drain Report says 'records for <name> (tN) wait for <name> to sign in'. The manager resets that tech's PIN (set_pin) for a supervised sign-in. In a fresh DB, any non-seed id is recreated with the same slug before draining.
+
+### O10-F11 [P2/risk] Only the preview profile yields a sideloadable APK, and its URL is the dead Railway host
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=yes
+CLAIM: The production profile builds an app-bundle (not installable by sideload) with EXPO_PUBLIC_API_URL=https://api.fixflow.example. Only 'preview' builds an APK, and it bakes the dead Railway host. The update must therefore come from a preview-derived profile with the owned domain substituted.
+WHEN: Someone builds the update with 'eas build --profile production' or with an unchanged preview profile.
+    - technician-app/eas.json:14-23 — preview: extends production, buildType apk, EXPO_PUBLIC_API_URL https://efficient-tenderness-production-2d09.up.railway.app
+    - technician-app/eas.json:25-30 — production: autoIncrement true, buildType app-bundle, EXPO_PUBLIC_API_URL https://api.fixflow.example
+IMPACT: Either an AAB that cannot be installed over the field APK, or an APK that keeps talking to the 404 edge.
+FIX: Add a 'fleet' profile (extends production, buildType apk, the owned-domain URL, the real DSN) and verify the URL in the built bundle before distribution.
+
+### O10-F12 [P2/risk] The field build cannot be identified from the phone, and a rebuilt EAS project may fail as a downgrade
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.55 effort=S apk=yes
+CLAIM: versionName is the static '0.1.0', and versionCode is EAS-remote with autoIncrement (inherited by preview). The phone UI cannot tell which build is installed. If the EAS project or account is not the original, the remote counter can restart below the field versionCode, and Android refuses the in-place update.
+WHEN: Update built from a re-created EAS project, or with appVersionSource lost.
+    - technician-app/app.json:8 — "version": "0.1.0"
+    - technician-app/eas.json:4 — "appVersionSource": "remote"
+    - technician-app/eas.json:25 — "autoIncrement": true (production; preview extends it at eas.json:15)
+IMPACT: An install refusal invites the 'uninstall and reinstall' reflex, which wipes every queue.
+FIX: Pre-flight: read the field versionCode (adb shell dumpsys package com.fixflow.technician) and signing cert (pull base.apk; apksigner verify --print-certs). Set the remote version above it (eas build:version:set) and compare cert SHA-256 with eas credentials.
+
+### O10-F13 [P2/risk/INV] Outage-era pings and travel breadcrumbs are already gone and cannot be recovered
+cite=MOVED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=unknown
+CLAIM: A definitive rejection (the edge 404 included) marks a ping or travel batch done and removes it. Every ping or breadcrumb that met the 404 during the outage was deleted on the phone; only rows queued fully offline survive (pings capped at 1000 unsent).
+WHEN: Any phone online during the outage while on duty or travelling.
+    - technician-app/src/features/attendance/pingSync.ts:162-170 — if (isDefinitiveRejection(e)) { ... await markPingsDone(ids); settled.push(...ids); continue; }
+    - technician-app/src/features/attendance/pingSync.ts:177 — await removePings(settled);
+    - technician-app/src/features/jobs/travelSync.ts:342-348 — definitive -> markTravelSamplesDone(ids)
+    - technician-app/src/lib/syncClassification.ts:18 — DEFINITIVE_4XX includes 404
+IMPACT: The drain proof must declare outage coverage and fuel paths lost, not 'missing'. Widening the ping ceiling recovers little.
+FIX: Record it in the gate as accepted loss. Ship origin-aware classification so it cannot recur. Keep the ping ceiling at 48 h unless a manifest shows surviving older pings.
+
+### O10-F14 [P2/risk] On a fresh DB, the first phone contact turns geofencing off
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=unknown
+CLAIM: ensureGeofenceMonitoring fetches the active fence and calls stopGeofencing when the server answers null. A fresh DB holds only the inactive placeholder, so every updated phone disarms arrival/exit monitoring on first contact unless the real fence row is inserted first.
+WHEN: Recovery case 'nothing' (or a restored DB without an active fence); the phone foregrounds against the recovered backend.
+    - technician-app/src/features/attendance/geofence.ts:317 — const fence = await fetchActiveFence();
+    - technician-app/src/features/attendance/geofence.ts:319 — await stopGeofencing();
+    - technician-app/src/features/attendance/geofence.ts:277 — AsyncStorage.setItem(FENCE_CACHE_KEY, JSON.stringify(fence)); // cache (incl. null)
+IMPACT: No crossings are recorded after recovery, and punch/presence verdicts come back NULL (service.py:992-993 judges only against an active fence).
+FIX: Step B3: insert or verify the active fence row (real centre, 80 m) before the tunnel route opens.
+
+### O10-F15 [P1/risk/INV] In the old-APK drain branch, a pre-v2 outbox may drop queued job writes on the first 401
+cite=LOCATED | skeptic=NO VERDICT | conf=0.45 effort=M apk=unknown
+CLAIM: The server code itself records that until the Phase 3 APK is installed, the outbox DROPS queued writes on 401. If the field APK predates the v2 outbox, pointing it at the recovered backend (K=no, H=yes) loses every queued job write, cash included, on the first flush with an expired or rotated token.
+WHEN: K=no and H=yes; the old hostname is proxied to the recovered backend; the phone's token is expired (30 days) or signed with another secret; the field APK lacks jobs.outbox.v2.
+    - backend/app/features/identity/service.py:125-128 — Deliberately does NOT bump token_version: rotating a PIN must not 401 the holder's phone — the installed APK's outbox drops queued writes on 401
+    - backend/app/features/identity/service.py:143-146 — Until the Phase 3 APK is on a phone, its outbox DROPS queued writes when it hits 401
+    - technician-app/src/lib/outbox.ts:12-16 — v2 (the data-loss fix)
+    - backend/app/core/config.py:154 — jwt_expire_minutes: int = 60 * 24 * 30
+IMPACT: The only drain path in the K=no branch can destroy the most valuable queue.
+FIX: Before proxying, decide whether the field APK has v2 (grep the pulled bundle for 'jobs.outbox.v2'). If not: photograph the outbox items first, and either accept the loss or, under explicit owner sign-off, accept expired tokens signed with the old secret on write endpoints for a bounded window (auth exception, logged).
+
+### O10-F16 [P3/design] Widened-ceiling backfill has no dedicated late-sync marker; only the generic drift flag shows it
+cite=- | skeptic=n/a (gap/design) | conf=0.8 effort=M apk=no
+CLAIM: With the backdate ceiling widened, a months-old punch or crossing lands at its device_time. The only marker is drift_seconds and the day-level drift flag (>120 s), which reads as 'clock disagreement', not 'synced late'. A manager cannot tell a back-filled day from a phone with a wrong clock.
+WHEN: The drain window is open with FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS widened; outage punches land.
+    - backend/app/features/attendance/service.py:328-330 — server_now; drift = _compute_drift(server_now, body.device_time); effective = self._effective(body.device_time, server_now)
+    - backend/app/features/attendance/service.py:1167-1168 — _drift_flagged: abs(drift_seconds) > self._drift_flag_seconds
+    - backend/app/features/attendance/service.py:1198 — drift=any(self._drift_flagged(e.drift_seconds) for e in events)
+IMPACT: The audit is honest only through a SQL query on server_time - device_time; the UI does not show it.
+FIX: Interim: the audit query in step F. Later: a late_sync boolean (server_time - device_time > default ceiling) shown in day flags; needs migration 0047.
+
+## Backlog
+- [P1] backend/scripts/drain_audit.py: compare an uploaded drain_manifest with the server rows, per queue and per tech, dry-run, read-only (backend/app/features/telemetry/schemas.py:18-28)
+- [P2] Pending-media drain: confirm non-ApiError handling and add retry/discard (O3-F5) before the drain (technician-app/src/features/media/pendingMedia.ts)
+- [P2] Payroll weekly export vs back-filled punches in past weeks (idempotent on shop+window; may already be stale) (backend/app/main.py (payroll-weekly-export registration))
+- [P2] AuthContext.restore mounts the authed stack with tech present and token absent; the flush runs before login (technician-app/src/features/auth/AuthContext.tsx:66-95)
+- [P2] Location punches on closed/billed jobs after a widened jobs_gps ceiling: confirm the server refuses or ignores them for fuel (backend/app/features/jobs/service.py:1543-1570)
+- [P3] Recreating a non-seed technician id with the same slug in a fresh DB (no known API path) (backend/app/features/identity/service.py:150-155)
+- [P2] A 2xx without the app marker should not count as landed (hardening against O10-F4) (technician-app/src/lib/api.ts:153-159)
+
+## Challenges to settled facts
+- O3-F8 (failing_condition): set_pin does NOT bump token_version, so a PIN reset never 401s a phone. Only revoke_sessions does. The failing condition 'token_version bump via set_pin' is wrong; the live-tap 401 loss still holds for expired tokens and revoke_sessions.
+    - backend/app/features/identity/service.py:125-128 — Deliberately does NOT bump token_version
+    - backend/app/features/identity/service.py:149 — tech.token_version = (tech.token_version or 0) + 1 (revoke_sessions only)
+- O3 design ('every token expired (30 days)'): Token expiry after revival depends on the unknown outage start (H6). A token issued less than 30 days before revival stays valid if the old JWT secret is reused, and a fresh DB has the same ids at token_version 0. Rotating FIXFLOW_JWT_SECRET is what makes re-login deterministic for every phone, and in the update branch it also keeps headless tasks from draining before the manifest snapshot.
+    - backend/app/core/config.py:154 — jwt_expire_minutes: int = 60 * 24 * 30
+    - backend/app/features/identity/service.py:110-115 — create_access_token(tech_id=..., token_version=tech.token_version or 0)
+- Brief step (1) '503 stub': A 503 stub is not safe. Every 5xx ApiError counts toward MAX_ATTEMPTS and parks the item after 5 flushes. The safe old-host behaviours are a hang longer than 15 s (a client timeout, i.e. connectivity) or a proxy to the real backend. Any 2xx/204 deletes items.
+    - technician-app/src/lib/outboxSync.ts:226-231
+    - technician-app/src/features/attendance/sync.ts:206-213
+
+## Open questions
+ ? Extra files read beyond the brief (one hop each): technician-app/src/lib/useOutboxSync.ts; technician-app/src/features/attendance/useAttendance.ts:60-130; technician-app/src/features/attendance/geofence.ts (grep of awaits, 317-319); technician-app/src/features/jobs/create-job/CreateJobWizard.tsx:150-175; backend/app/features/attendance/service.py:300-440,973-1003,1127-1200; backend/app/features/identity/service.py:100-165; backend/app/core/storage.py:80-120,165-188; backend/app/features/customer_messaging/service.py:443-445 (grep); backend/app/main.py:92-128; backend/app/features/telemetry/schemas.py; backend/alembic/versions/0004_create_technicians.py:24-37; backend/alembic/versions/0012_dedicated_manager_account.py (grep).
+ ? Does the field APK contain the v2 outbox (jobs.outbox.v2)? If not, a 401 drops queued job writes (identity/service.py:125-128), which decides the K=no/H=yes branch.
+ ? What are the field versionCode and the signing cert SHA-256, and is the EAS project's remote versionCode above it?
+ ? Does drainPendingMedia treat a non-ApiError (timeout from a hang stub) as connectivity, and how do its parked entries record the failure reason the un-park step must match?
+ ? Does a late-landing completion, ready transition or payment create a job_event the whatsapp consumer would message on (O10-F7 confidence 0.6)?
+ ? Did production hold technician ids beyond the seeded t1..t5/m1, and is there an API path to recreate one with the same slug in a fresh DB?
+ ? How does the Sunday payroll-weekly-export behave when punches are back-filled into weeks already exported (idempotent on shop+window)?
+ ? Does AuthContext.restore mount the authed stack (and so useOutboxSync's flush) when fixflow_tech is present but fixflow_token is absent, which could drain before login on a reused secret?
+ ? Can a Railway service hold a request for at least 20 s without its edge answering a 5xx first (hang-stub feasibility), or must the stub be a TCP-level black hole?
+ ? When did production die (H6)? It sets W, and decides whether any 30-day token is still valid if the old secret were reused.

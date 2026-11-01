@@ -1,0 +1,759 @@
+{
+ "items": [
+  {
+   "id": "S3-1",
+   "source": "HANDOFF §3 branch item 1 (CI-red test pinned consent leak)",
+   "title": "test_messaging_integration asserted the wa.me link right after consent False",
+   "status": "FIXED",
+   "evidence": [
+    "backend/tests/test_messaging_integration.py:177 — test_preview_withholds_the_wa_link_without_consent",
+    "backend/tests/test_messaging_integration.py:204 — test_preview_builds_the_wa_link_with_consent",
+    "backend/app/features/customer_messaging/service.py:230 — wa_me_url=wa_chat_url(phone, body) if phone and opt_in_at is not None else None"
+   ],
+   "note": "Landed in da988e2 (#170); server-side consent gate added in the same commit."
+  },
+  {
+   "id": "S3-2",
+   "source": "HANDOFF §3 branch item 2 (dead-letter guard aimed at a statement that cannot raise)",
+   "title": "run_dispatch_once commit unguarded; poisoned txn wedges consumer",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/jobs/service.py:551 — stale = True (rollback happens before the dead-letter write)",
+    "backend/app/features/jobs/service.py:597 — await session.commit() inside a try that rolls back and breaks the batch",
+    "backend/tests/test_dispatch_integration.py:101 — test_dead_letter_survives_a_handler_that_poisons_the_transaction"
+   ],
+   "note": "da988e2. The sibling test the handoff flagged (test_dispatch_integration.py:79-88) still raises RuntimeError, which does not poison a txn; its docstring at :106 now says so."
+  },
+  {
+   "id": "S3-3",
+   "source": "HANDOFF §3 branch item 3 (claim that never resolves; resume-vs-double-send undecided)",
+   "title": "Stuck pending customer_message row is only logged, never resolved",
+   "status": "PARTIAL",
+   "evidence": [
+    "backend/app/features/customer_messaging/service.py:270 — A claim that never resolved: the `pending` row was committed, Meta was called",
+    "backend/app/features/customer_messaging/service.py:285 — logger.warning(... stuck pending, not auto-resent; needs an operator decision)"
+   ],
+   "note": "Observability landed in da988e2. Remaining: the resume-vs-double-send design decision is still explicitly open (service.py comment: Deliberately NOT auto-resumed); recovery is a manual operator DB action; bill_sent_at stays NULL for such a job."
+  },
+  {
+   "id": "S3-4",
+   "source": "HANDOFF §3 branch item 4 (0046 downgrade wrongly conditional)",
+   "title": "0046 downgrade deleted a cursor in active use",
+   "status": "FIXED",
+   "evidence": [
+    "backend/alembic/versions/0046_seed_dispatch_cursor.py:64 — def downgrade() -> None: # DELIBERATE NO-OP.",
+    "backend/alembic/versions/0046_seed_dispatch_cursor.py:~90 — pass (body is a bare no-op)"
+   ],
+   "note": "da988e2. Head is 0046 (down_revision 0045)."
+  },
+  {
+   "id": "S3-5",
+   "source": "HANDOFF §3 PR #164 follow-up (audit pre-fix phantom media rows)",
+   "title": "Prod rows status='uploaded' with size_bytes IS NULL not audited",
+   "status": "UNCLEAR",
+   "evidence": [
+    "docs/HANDOFF-2026-07-28-open-work.md:~212 — Follow-up this PR does NOT do: pre-fix phantom rows are still in prod",
+    "backend/scripts — no audit/cleanup script for phantom job_media rows (listing: audit_tech_orphans, backfill_*, mine_brands, reset_whatsapp_consent, unlock_account)"
+   ],
+   "note": "This is a prod-data operation; no repo artifact or later commit references it and prod is unreachable (404). Could not establish whether it was run."
+  },
+  {
+   "id": "A1",
+   "source": "HANDOFF §4.1 A1",
+   "title": "Ops console dies on one unauthenticated POST (null body / multibyte password)",
+   "status": "FIXED",
+   "evidence": [
+    "ops-server.mjs:461 — if (parsed === null || typeof parsed !== \"object\" || Array.isArray(parsed)) return {};",
+    "ops-server.mjs:122 — function passwordValid(candidate) (sha256 digests, total compare)",
+    "ops-server.mjs:566 — handleRequest(req, res).catch(...) ; :576 process.on(\"unhandledRejection\")"
+   ],
+   "note": "2fe77f5 (#168); tests/ops-server.test.mjs added."
+  },
+  {
+   "id": "A2",
+   "source": "HANDOFF §4.1 A2",
+   "title": "Unauthenticated attacker can hold every account locked indefinitely",
+   "status": "PARTIAL",
+   "evidence": [
+    "backend/app/features/identity/throttle.py:~10 — The lock deliberately blocks a correct PIN too, and that is load-bearing.",
+    "backend/app/features/identity/service.py:87 — escalation_has_decayed(...) resets after a quiet hour",
+    "backend/scripts/unlock_account.py:5 — python -m scripts.unlock_account (dry-run default)",
+    "backend/app/features/identity/router.py:67 — GET /technicians still unauthenticated"
+   ],
+   "note": "1c546a3 (#169) chose a different fix than the register: lock still refuses a correct PIN, lock check still precedes verify_pin and counter is not bumped while locked, so one wrong PIN per expired window can still re-arm the lock; added out-of-band recovery (unlock script, manager set_pin) and a 1h escalation decay (documented as not a security control)."
+  },
+  {
+   "id": "A3",
+   "source": "HANDOFF §4.1 A3",
+   "title": "Dashboard Revenue This Week is a structural Rs 0",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "src/features/dashboard/pages/Dashboard.jsx:87 — (j.timeline || []).find((e) => e.kind === \"payment\") (no src/ path appears in changedFiles)"
+   ],
+   "note": "Web manager app untouched in the 10 commits."
+  },
+  {
+   "id": "A4",
+   "source": "HANDOFF §4.1 A4",
+   "title": "Payment idempotency key minted per HTTP attempt",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "src/app/providers/AppContext.jsx:319 — crypto.randomUUID() still evaluated inside the callback"
+   ],
+   "note": "Web manager app untouched."
+  },
+  {
+   "id": "A5",
+   "source": "HANDOFF §4.1 A5",
+   "title": "Manager corrections can only lengthen a day",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/derive.py:123 — first = clock_ins[0] (min of clock-ins)",
+    "backend/app/features/attendance/derive.py:125 — last_out = clock_outs[-1].local_dt (max of clock-outs)",
+    "src/features/attendance/pages/AttendanceTechDetail.jsx:303 — original_event_id only displayed; form does not send it",
+    "no migration beyond 0046 (no superseded_by_event_id)"
+   ],
+   "note": "One-hop intersection was only main.py/jobs service (unrelated dispatcher hunks); code re-read, defect unchanged."
+  },
+  {
+   "id": "A6",
+   "source": "HANDOFF §4.1 A6",
+   "title": "metrics route table unbounded from unauthenticated traffic",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/core/metrics.py:162 — def _route_template(request) maps endpoint -> path_format",
+    "backend/app/core/metrics.py:209 — template = _route_template(request) (label no longer built from request.url.path)",
+    "backend/app/core/metrics.py:38,112 — _MAX_ROUTES = 500 cap -> <overflow>"
+   ],
+   "note": "2fe77f5 (#168). Handoff suggested scope['route']; fix notes there is no scope['route'] and maps endpoint->template instead. Job tokens no longer reach labels."
+  },
+  {
+   "id": "A7",
+   "source": "HANDOFF §4.1 A7",
+   "title": "Nightly media-orphan sweep re-alarms every orphan every night",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/telemetry/service.py:81 — client_id=uuid4() in record_media_orphan (per-emission random id)",
+    "backend/app/main.py:219 — name=\"media-orphan-sweep\" still scheduled daily",
+    "backend/app/core/scheduler.py:53 — only change: name=name added to job registration"
+   ],
+   "note": "scheduler.py/config.py hunks re-read: unrelated to idempotency."
+  },
+  {
+   "id": "B1",
+   "source": "HANDOFF §4.2 B1",
+   "title": "Enabling the dispatcher replays all job_event history to customers",
+   "status": "FIXED",
+   "evidence": [
+    "backend/alembic/versions/0046_seed_dispatch_cursor.py:~56 — SELECT 'whatsapp', COALESCE(MAX(seq), 0), now() FROM job_event ON CONFLICT DO NOTHING",
+    "backend/app/main.py:94 — _MAX_DISPATCH_EVENT_AGE = timedelta(days=2)",
+    "backend/app/features/customer_messaging/service.py:443 — if max_event_age is not None ... skipping stale"
+   ],
+   "note": "da988e2. Effective only once 0046 has run on the target DB; prod state unknown. Dispatcher still default OFF."
+  },
+  {
+   "id": "B2",
+   "source": "HANDOFF §4.2 B2",
+   "title": "Automated Cloud API bill send never stamps bill_sent_at",
+   "status": "PARTIAL",
+   "evidence": [
+    "backend/app/features/customer_messaging/service.py:467 — if sent_now:",
+    "backend/app/features/customer_messaging/service.py:479 — await jobs_service.log_customer_message(... channel=\"cloud_api\", actor=None)",
+    "backend/app/features/customer_messaging/service.py:270 — stuck-pending path returns (existing, False) and is not resolved"
+   ],
+   "note": "Main defect fixed in da988e2. Residual (register says so explicitly): if the txn carrying status=sent + log_customer_message rolls back after Meta accepted, row stays pending forever and bill_sent_at is never stamped (see S3-3)."
+  },
+  {
+   "id": "B3",
+   "source": "HANDOFF §4.2 B3",
+   "title": "Dispatcher claim-before-send not durable; batch commits once",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/jobs/service.py:505 — await session.commit() for a new cursor before the loop",
+    "backend/app/features/jobs/service.py:597 — per-event commit (handler rows + cursor move) with guarded failure",
+    "backend/app/main.py:118 — _commit_claim passed as commit_claim; service.py:338 awaits it before _post_cloud_api"
+   ],
+   "note": "da988e2. Applies to the scheduler path only; the manual /whatsapp/send path still flushes the claim only (see 45-5)."
+  },
+  {
+   "id": "B4",
+   "source": "HANDOFF §4.2 B4",
+   "title": "Bad timezone string 500s the attendance module",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/schemas.py:450 — timezone: str = Field(default=\"Asia/Karachi\", max_length=64) (no validator)",
+    "backend/app/features/attendance/service.py:1863 — def _tz_from_shifts: return ZoneInfo(name) with no fallback"
+   ],
+   "note": "No field_validator in attendance/schemas.py."
+  },
+  {
+   "id": "B5",
+   "source": "HANDOFF §4.2 B5",
+   "title": "verify_chain never detects an un-void flip",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/chain.py:288 — if row.voided: (void reconciliation gated here)",
+    "backend/app/features/attendance/chain.py:327 — for key, event in creates.items(): (orphan sweep covers creates only)"
+   ],
+   "note": "No intersection with changedFiles (one hop checked); code re-read and unchanged."
+  },
+  {
+   "id": "C1",
+   "source": "HANDOFF §4.3 C1",
+   "title": "Correct-the-completion silently replaces a queued completion with a blank one",
+   "status": "FIXED",
+   "evidence": [
+    "technician-app/src/features/jobs/arrival-job/ArrivalAlreadyDoneScreen.tsx:~76 — correction CTA only when state === \"done\"",
+    "technician-app/src/features/jobs/completionPrefill.ts:~91 — queued completion => {state:\"blocked\", reason:\"queued\"}; no server+no cache => blocked/\"unknown\"",
+    "technician-app/src/features/jobs/CompleteJobScreen.tsx:95 — itemsForJob(id) + loadJobDetail cache fallback"
+   ],
+   "note": "da988e2 (incl. completionPrefill.test.ts, 207 lines). Not in the field APK if APK predates it (APK commit unknown)."
+  },
+  {
+   "id": "C2",
+   "source": "HANDOFF §4.3 C2",
+   "title": "Rejected completion leaves wizard saying still syncing forever",
+   "status": "FIXED",
+   "evidence": [
+    "technician-app/src/features/jobs/arrival-job/wizardState.ts:~62 — if (mine.some((i) => i.status === \"failed\")) return \"failed\"",
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:~146 — onOutboxChange(() => void derive()) + onOutboxItemLanded",
+    "technician-app/src/features/jobs/JobDetailScreen.tsx:~74 — discardCompletionAware clears the arrival draft"
+   ],
+   "note": "da988e2 (+wizardState.test.ts, 127 lines). Monotonic latch implemented as CLAUDE.md describes."
+  },
+  {
+   "id": "C3",
+   "source": "HANDOFF §4.3 C3",
+   "title": "Arrival anchor has no staleness bound",
+   "status": "OPEN",
+   "evidence": [
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:125 — job?.locations.find((l) => l.kind === \"arrive_customer\") (first punch)",
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:127 — route.params.arrivalTime ?? ... only when next.arrivalAtMs == null",
+    "technician-app/src/features/jobs/arrival-job/arrivalDraft.ts:108 — loadArrivalAnchor returns a bare epoch, no expiry"
+   ],
+   "note": "ArrivalJobWizard.tsx changed in da988e2 but the anchor logic is untouched. Server le=1440 cap remains the only bound."
+  },
+  {
+   "id": "C4",
+   "source": "HANDOFF §4.3 C4",
+   "title": "After-video / voice gate has no server-evidence fallback",
+   "status": "OPEN",
+   "evidence": [
+    "technician-app/src/features/jobs/arrival-job/arrivalDraft.ts:94-97 — evidenceSatisfiesCaptures: return evidence.before >= 2 && evidence.condition >= 2;",
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:134 — only serverCaptures is derived; no after/remark equivalent"
+   ],
+   "note": "arrivalDraft.ts is not in changedFiles."
+  },
+  {
+   "id": "C5",
+   "source": "HANDOFF §4.3 C5",
+   "title": "CompleteJobScreen reports freeze 409s as check your connection",
+   "status": "FIXED",
+   "evidence": [
+    "technician-app/src/features/jobs/CompleteJobScreen.tsx:227 — catch (e) { ... e instanceof ApiError ? failureReason(e)",
+    "technician-app/src/lib/syncClassification.ts:35 — export function failureReason(e: ApiError)"
+   ],
+   "note": "da988e2. The dedupe part is incomplete: the raw regex /\"detail\".../ is still copied in ArrivalJobBillScreen.tsx:380, ArrivalJobWizard.tsx:244, closeJobWithVideo.ts:37, CreateJobWizard.tsx:169, JobDetailScreen.tsx:60."
+  },
+  {
+   "id": "T44-identity-1",
+   "source": "HANDOFF §4.4 identity row 1",
+   "title": "Lockout counter is read-modify-write with no row lock",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/identity/repository.py:18 — async def get_for_update ... with_for_update=True",
+    "backend/app/features/identity/service.py:78 — tech = await self._repo.get_for_update(tech_id)"
+   ],
+   "note": "1c546a3. Ordinal n is per-slice, in table order."
+  },
+  {
+   "id": "T44-identity-2",
+   "source": "HANDOFF §4.4 identity row 2",
+   "title": "Principal carries no shop_id while 32 routes take it from query string",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/identity/schemas.py:41-45 — class Principal: tech_id, role, name (no shop_id)",
+    "backend/app/features/*/router.py — 32 handler params typed `shop_id: ` (grep count)"
+   ],
+   "note": "One-hop intersection was identity/service.py (throttle hunks) only."
+  },
+  {
+   "id": "T44-media-1",
+   "source": "HANDOFF §4.4 media row 1",
+   "title": "413 path deletes R2 object but rolls back the row delete",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/media/service.py:126-136 — storage.delete(...), await self._repo.delete(media), raise MediaTooLargeError",
+    "backend/app/features/media/router.py:111-115 — except MediaTooLargeError -> HTTPException(413) raised before await session.commit()"
+   ],
+   "note": "get_session (core/db.py:36) does not commit on exit, so the row delete is discarded."
+  },
+  {
+   "id": "T44-media-2",
+   "source": "HANDOFF §4.4 media row 2",
+   "title": "Orphan sweep covers 1 of 4 orphan classes; stale pending never reaped",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/jobs/service.py:682-709 — run_media_orphan_sweep only checks job_completion.remarks_audio_media_id",
+    "backend/app/main.py:216-219 — single media-orphan-sweep job registered"
+   ],
+   "note": "jobs/service.py hunks (run_dispatch_once) are unrelated."
+  },
+  {
+   "id": "T44-media-3",
+   "source": "HANDOFF §4.4 media row 3",
+   "title": "complete_upload has no job-status or ownership guard",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/media/service.py:100-112 — complete_upload(job_id, media_id, size_bytes) -> self._load(job_id, media_id) only"
+   ],
+   "note": "Compare delete() at :148-175 which does check is_manager/job_open."
+  },
+  {
+   "id": "T44-messaging-1",
+   "source": "HANDOFF §4.4 messaging row 1",
+   "title": "job_event.seq assigned at flush, visible at commit; lower seq can be skipped forever",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/jobs/models.py:56 — job_event_seq = Sequence(\"job_event_seq\", ...) used as client-side default",
+    "backend/app/features/jobs/models.py:229 — still documents seq as gap-free"
+   ],
+   "note": "Needs a migration; none after 0046. Per-event commit (B3) does not change the skip window."
+  },
+  {
+   "id": "T44-messaging-2",
+   "source": "HANDOFF §4.4 messaging row 2",
+   "title": "Lost-race path rolls back the caller's whole session",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/customer_messaging/service.py:317 — async with self._repo.savepoint(): await self._repo.add(row)",
+    "backend/app/features/customer_messaging/repository.py:38 — def savepoint() -> begin_nested()"
+   ],
+   "note": "da988e2."
+  },
+  {
+   "id": "T44-messaging-3",
+   "source": "HANDOFF §4.4 messaging row 3",
+   "title": "Non-ASCII verify token / signature header -> unauthenticated 500",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/customer_messaging/router.py:157 — and compare_secret(token, configured)",
+    "backend/app/features/customer_messaging/service.py:158 — return compare_secret(header.removeprefix(\"sha256=\"), expected)",
+    "backend/app/core/security.py:22 — def compare_secret"
+   ],
+   "note": "2fe77f5."
+  },
+  {
+   "id": "T44-messaging-4",
+   "source": "HANDOFF §4.4 messaging row 4",
+   "title": "Preview hands out wa.me link after consent withdrawal",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/customer_messaging/service.py:230 — wa_me_url ... if phone and opt_in_at is not None else None"
+   ],
+   "note": "da988e2. Mobile call sites still bail on !consent first (JobDetailScreen.tsx:424)."
+  },
+  {
+   "id": "T44-ops-1",
+   "source": "HANDOFF §4.4 ops row",
+   "title": "Non-ASCII X-Ops-Proxy-Token -> 500 instead of 401",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/ops/deps.py:44 — if not compare_secret(x_ops_proxy_token, expected):",
+    "backend/app/core/security.py:22 — compare_secret hashes both sides first"
+   ],
+   "note": "2fe77f5; backend/app/features/ops/tests/test_router.py extended."
+  },
+  {
+   "id": "T44-attendance-1",
+   "source": "HANDOFF §4.4 attendance row 1",
+   "title": "Payroll CSV frozen forever on (shop, window), no regenerate",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/models.py:372 — UniqueConstraint(\"shop_id\",\"from_date\",\"to_date\", name=\"payroll_export_window_key\")",
+    "backend/app/features/attendance/service.py — no regenerate/force path (grep)"
+   ],
+   "note": "One-hop hit is main.py/jobs service only; unrelated."
+  },
+  {
+   "id": "T44-attendance-2",
+   "source": "HANDOFF §4.4 attendance row 2",
+   "title": "Overnight shift accepted but unrepresentable; start==end -> 1440 min",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/schemas.py:438-439,446-447 — start_local: time / end_local: time with no model/field validator",
+    "backend/app/features/attendance/schemas.py — grep finds no field_validator/model_validator"
+   ],
+   "note": "No intersection beyond incidental main.py."
+  },
+  {
+   "id": "T44-attendance-3",
+   "source": "HANDOFF §4.4 attendance row 3",
+   "title": "Ping backdate ceiling 48h vs a phone queue spanning ~6 days",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/core/config.py:77 — attendance_ping_backdate_ceiling_hours: int = 48",
+    "backend/app/core/config.py:234-252 — the only config.py change since handoff is the database_url prefix validator"
+   ],
+   "note": "Fix is env-only; Railway env value not readable from the repo (prod unreachable), so the default is what main ships."
+  },
+  {
+   "id": "T44-web-1",
+   "source": "HANDOFF §4.4 web row 1",
+   "title": "9 of 13 mutators swallow serverReason; Haul offered on ready visit",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "git log 906b990..HEAD -- src : no commits touch src/"
+   ],
+   "note": ""
+  },
+  {
+   "id": "T44-web-2",
+   "source": "HANDOFF §4.4 web row 2",
+   "title": "Completion voice note recorded, played back, silently discarded",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "src/features/jobs/components/CompletionForm.jsx, AudioRecorder.jsx absent from changedFiles"
+   ],
+   "note": ""
+  },
+  {
+   "id": "T44-web-3",
+   "source": "HANDOFF §4.4 web row 3",
+   "title": "Bill preview hardcoded Rs 1,200/hr instead of shop_setting",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "src/shared/lib/job.js, src/features/jobs/data/mapJob.js absent from changedFiles"
+   ],
+   "note": ""
+  },
+  {
+   "id": "T44-web-4",
+   "source": "HANDOFF §4.4 web row 4",
+   "title": "Troubleshooting Add Part toasts success before the request runs",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "src/features/troubleshooting/components/TroubleshootGuide.jsx absent from changedFiles"
+   ],
+   "note": ""
+  },
+  {
+   "id": "T44-jobs-1",
+   "source": "HANDOFF §4.4 jobs row",
+   "title": "Manager correction of a frozen bill leaves no record of replaced figure",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/jobs/service.py:1284-1298 — complete event text uses the new total; payload keys are only fuel_paisa/fuel_basis/fuel_distance_m/outbound_m/return_m"
+   ],
+   "note": "Only run_dispatch_once changed in jobs/service.py."
+  },
+  {
+   "id": "T44-mobile-1",
+   "source": "HANDOFF §4.4 mobile row 1",
+   "title": "Architecture guard only scans src/features and single-line jobsApi.<method>(",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "technician-app/src/lib/architecture.test.ts absent from changedFiles"
+   ],
+   "note": ""
+  },
+  {
+   "id": "T44-mobile-2",
+   "source": "HANDOFF §4.4 mobile row 2",
+   "title": "Jobs list ignores reconciliation when painted from cache; reconcile writes full JobDetail into list cache",
+   "status": "OPEN",
+   "evidence": [
+    "technician-app/src/lib/jobsCache.ts:71 — data[idx] = { ...data[idx], ...row } (full JobDetail spread into list row)",
+    "technician-app/src/features/jobs/JobsListScreen.tsx:146-149 — onJobsReconciled repaints only from peekJobsList(); cache-painted path (:119-122) not updated"
+   ],
+   "note": "One-hop hit was CompleteJobScreen/JobDetailScreen now importing jobsCache (read-only); cited jobsCache/jobsReconcile/JobsListScreen files unchanged."
+  },
+  {
+   "id": "45-1",
+   "source": "HANDOFF §4.5 item 1",
+   "title": "CLAUDE.md claims every scheduler job is idempotent; false for media-orphan sweep",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/telemetry/service.py:81 — client_id=uuid4() per emission (A7 still open)",
+    "CLAUDE.md scheduler section still states each job is idempotent so a duplicate run is harmless"
+   ],
+   "note": "Depends on A7."
+  },
+  {
+   "id": "45-2",
+   "source": "HANDOFF §4.5 item 2",
+   "title": "Replay-is-idempotent claim broken client-side by web payment path",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "src/app/providers/AppContext.jsx:319 — crypto.randomUUID() inside callback (A4)"
+   ],
+   "note": ""
+  },
+  {
+   "id": "45-3",
+   "source": "HANDOFF §4.5 item 3",
+   "title": "jobs/models.py docstring claims gap-free seq",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/jobs/models.py:229 — ``seq`` is a gap-free global ordering key consumers drain in order"
+   ],
+   "note": "File not changed; only incidental one-hop hits."
+  },
+  {
+   "id": "45-4",
+   "source": "HANDOFF §4.5 item 4",
+   "title": "Server-side outbox violates its own contract via lost-race rollback",
+   "status": "FIXED",
+   "evidence": [
+    "backend/app/features/customer_messaging/service.py:317 — claim insert wrapped in repo.savepoint(); no session.rollback() on duplicate",
+    "backend/app/features/jobs/service.py:597 — dispatch progress committed per event"
+   ],
+   "note": "da988e2 (same change as T44-messaging-2 and B3)."
+  },
+  {
+   "id": "45-5",
+   "source": "HANDOFF §4.5 item 5",
+   "title": "service.py claim-before-send promise is flush-only, not durable",
+   "status": "PARTIAL",
+   "evidence": [
+    "backend/app/features/customer_messaging/service.py:338-339 — if commit_claim is not None: await commit_claim() (scheduler path durable)",
+    "backend/app/features/customer_messaging/router.py:127 — send_cloud_message(job, kind=..., opt_in_at=...) with no commit_claim; commit at end of request"
+   ],
+   "note": "Manual /whatsapp/send request path still holds the claim in one open txn across the Meta call; module docstring (service.py:20-23) still says can never double-send."
+  },
+  {
+   "id": "52-1",
+   "source": "HANDOFF §5.2 bullet 1",
+   "title": "actor=\"auto\" is a live FK violation (no system technician seeded)",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/service.py:1593 — await self._disburse_advance(saved, actor=\"auto\", now=now)",
+    "backend/alembic/versions — no migration inserting a 'system' technician (grep)",
+    "backend/tests/test_attendance_integration.py:465 — auto_threshold helper exists, default 0"
+   ],
+   "note": "Unit test test_auto_approve_disburses_within_threshold (test_advances.py:391) uses mocked repo, so the FK is not exercised."
+  },
+  {
+   "id": "52-2",
+   "source": "HANDOFF §5.2 bullet 2",
+   "title": "Voided advance still blocks cooldown and is invisible",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/repository.py:576-583 — last_disbursed_advance_at selects max(decided_at) where status == \"disbursed\", no join to staff_ledger.voided",
+    "backend/app/features/attendance/schemas.py — AdvanceOut has no voided field (only ledger rows, :542, do)"
+   ],
+   "note": ""
+  },
+  {
+   "id": "52-3",
+   "source": "HANDOFF §5.2 bullet 3",
+   "title": "reject_advance accepts a failed request",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/attendance/service.py:1669-1673 — only status == \"disbursed\" raises and \"rejected\" returns; \"failed\" falls through to req.status = \"rejected\""
+   ],
+   "note": ""
+  },
+  {
+   "id": "52-4",
+   "source": "HANDOFF §5.2 bullet 4",
+   "title": "Missing advance tests: lock-ordering, non-DisbursementError rail, void-after-disburse",
+   "status": "PARTIAL",
+   "evidence": [
+    "backend/app/features/attendance/tests/test_advances.py:507 — test_reject_takes_the_ledger_lock_before_reading_the_status (lock-ordering exists; added in 4a40423, before handoff)",
+    "backend/app/features/attendance/tests/test_advances.py:51 — only DisbursementError(\"provider down\") rail failure; no non-DisbursementError or void-after-disburse test found"
+   ],
+   "note": "Handoff's lock-ordering claim was already stale at writing."
+  },
+  {
+   "id": "L1",
+   "source": "lifecycle-audit item 1",
+   "title": "Travel tracker and TravelScreen disagree about whether tech is driving",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "travelTracker.ts, TravelScreen.tsx, useAttendance.ts absent from changedFiles"
+   ],
+   "note": "Directly relevant to the field-tracking goal; no commit has touched it."
+  },
+  {
+   "id": "L2",
+   "source": "lifecycle-audit item 2",
+   "title": "WhatsApp send-log can be lost after message has gone",
+   "status": "OPEN",
+   "evidence": [
+    "technician-app/src/features/jobs/JobDetailScreen.tsx:432-433 — await Linking.openURL(...); setJob(await messagingApi.logSend(id, kind))",
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobBillScreen.tsx:370-371 — same pair, outside the outbox",
+    "backend/app/features/customer_messaging/router.py:76-96 — send-log has no client_id/dedupe"
+   ],
+   "note": "JobDetailScreen/messaging router were touched by other hunks; the send-log path is unchanged."
+  },
+  {
+   "id": "L3",
+   "source": "lifecycle-audit item 3",
+   "title": "Manager board never sees what the phone did (jobs fetched once)",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "src/app/providers/AppContext.jsx:90 — fetchJobs() on isAuthenticated only"
+   ],
+   "note": ""
+  },
+  {
+   "id": "L4",
+   "source": "lifecycle-audit item 4",
+   "title": "Consent has no ordering guard",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/customers/service.py:96-128 — record_consent appends unconditionally and overwrites whatsapp_opt_in_at last-write-wins; no client_id/timestamp compare",
+    "backend/scripts/reset_whatsapp_consent.py:94 — new caller of record_consent(kind=\"withdrawn\")"
+   ],
+   "note": "Latent as before; c1adf54 adds a dry-run-default withdrawal script (whether it was run on prod is unknown). Mobile intake toggle now defaults OFF (24184b2)."
+  },
+  {
+   "id": "L5",
+   "source": "lifecycle-audit item 5",
+   "title": "Idempotency tracks money, not durability (notes/followups/negotiate/void/assign/adjustments/media)",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/jobs/schemas.py:108,112,145,162 — NoteRequest, AssignRequest, NegotiateRequest, VoidRequest have no client_id",
+    "backend/app/features/attendance/schemas.py:476-486 — AdjustmentRequest has no client_id",
+    "backend/app/features/media/schemas.py:29-35 — MediaUploadRequest has no client_id"
+   ],
+   "note": "Only jobs/service.py run_dispatch_once hunks changed."
+  },
+  {
+   "id": "L6",
+   "source": "lifecycle-audit item 6",
+   "title": "log_payment accepts cash against a closed job",
+   "status": "OPEN",
+   "evidence": [
+    "backend/app/features/jobs/service.py:1155,1385 — submit_completion/negotiate_bill check row.status == \"closed\"",
+    "backend/app/features/jobs/service.py:1437 — log_payment has no closed check"
+   ],
+   "note": ""
+  },
+  {
+   "id": "L7",
+   "source": "lifecycle-audit item 7",
+   "title": "sendPunch collapses landed/queued/failed into a boolean",
+   "status": "UNCHANGED_SINCE_HANDOFF",
+   "evidence": [
+    "no intersection with changedFiles (one hop checked)",
+    "technician-app/src/features/jobs/TravelScreen.tsx absent from changedFiles"
+   ],
+   "note": ""
+  },
+  {
+   "id": "L8",
+   "source": "lifecycle-audit item 8",
+   "title": "Wizard upload-state map loses entries (stale draftRef spread)",
+   "status": "OPEN",
+   "evidence": [
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:66 — draftRef.current = draft; (assigned in render body)",
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:187 — update({ uploads: { ...current.uploads, [slot]: state } })"
+   ],
+   "note": "File changed in da988e2 but this code untouched."
+  },
+  {
+   "id": "L9",
+   "source": "lifecycle-audit item 9",
+   "title": "Duplicated rules (isVisitType, closed literal, arrival radius, PUNCH_LABELS)",
+   "status": "OPEN",
+   "evidence": [
+    "technician-app/src/features/jobs/JobDetailScreen.tsx:470 — const isVisit = job.job_type !== \"carry-in\";",
+    "technician-app/src/features/jobs/travelPrompt.ts:52 — job.job_type !== \"carry-in\"",
+    "technician-app/src/features/jobs/arrivalGate.ts:23 — ARRIVE_RADIUS_M = 250 mirrored by comment only"
+   ],
+   "note": "isVisitType still has one importer (JobsListScreen.tsx:27)."
+  },
+  {
+   "id": "L10",
+   "source": "lifecycle-audit item 10",
+   "title": "Failed offline job-create unreachable in the UI",
+   "status": "OPEN",
+   "evidence": [
+    "technician-app/src/features/jobs/create-job/CreateJobWizard.tsx:161 — makeItem({ id: `create:${clientId}`, kind: \"create\", jobId: clientId ...",
+    "technician-app/src/lib/outbox.ts:243 — itemsForJob keys on jobId; no failed-intake screen exists (grep)"
+   ],
+   "note": "CreateJobWizard changed in 24184b2 only for consent default."
+  },
+  {
+   "id": "LT-1",
+   "source": "lifecycle-audit Test-layer gaps",
+   "title": "No test crosses flushOutbox and drainPendingMedia together; placeholder voice string",
+   "status": "PARTIAL",
+   "evidence": [
+    "technician-app/src/features/jobs/arrival-job/wizardState.test.ts (127 lines) and completionPrefill.test.ts (207 lines) added in da988e2",
+    "technician-app/src/features/jobs/arrival-job/completionFromWizard.ts:28 — remarkBits.push(\"[voice summary pending upload]\")",
+    "technician-app/src/features/media/pendingMedia.test.ts:85 — drain tested alone"
+   ],
+   "note": "New tests are pure-module; the two-drain ordering gap remains. Test file count now 39 (was 37)."
+  },
+  {
+   "id": "ADR-1",
+   "source": "ADR-0001 follow-through bullet 1",
+   "title": "Amend section 3 with measured post-cutover database.latency_ms",
+   "status": "OPEN",
+   "evidence": [
+    "docs/adr/0001-database-region-topology.md:248 — Amend §3 with the measured post-cutover `database.latency_ms`.",
+    "docs/adr/0001-database-region-topology.md:284 — A1.2 Execution is DEFERRED: the fleet was never rolled out."
+   ],
+   "note": "No cutover has happened, so no measurement can exist; prod is also unreachable."
+  },
+  {
+   "id": "ADR-2",
+   "source": "ADR-0001 follow-through bullet 2",
+   "title": "RUNBOOK-BACKUPS: host, 42-table drill log, explicit RPO/RTO",
+   "status": "PARTIAL",
+   "evidence": [
+    "docs/RUNBOOK-BACKUPS.md:128 — 2026-08-02 drill row: 42-table PASS, RTO(data) ≈ 6 s, RPO ≤24 h (added in 5acd4cc)",
+    "docs/RUNBOOK-BACKUPS.md:106 — host ap-south-1 session pooler already named"
+   ],
+   "note": "RPO/RTO appear only inside the drill-log table row; no standalone RPO/RTO statement found by grep (real RTO = detection + ~1 h not stated)."
+  },
+  {
+   "id": "ADR-3",
+   "source": "ADR-0001 follow-through bullet 3",
+   "title": "Update CLAUDE.md stack table if DB host string appears there",
+   "status": "FIXED",
+   "evidence": [
+    "CLAUDE.md:30 — Database row says only 'Supabase = managed Postgres ONLY, via the IPv4 session pooler'; grep for ap-south/pooler.supabase finds no host string"
+   ],
+   "note": "Vacuously satisfied: the conditional trigger (host string present) is false."
+  },
+  {
+   "id": "ADR-4",
+   "source": "ADR-0001 follow-through bullet 4",
+   "title": "Record in CLAUDE.md that downgrade() bodies are not a rollback tool",
+   "status": "OPEN",
+   "evidence": [
+    "CLAUDE.md — grep -i downgrade returns no match (file was rewritten in da988e2)",
+    "docs/HANDOFF-2026-07-28-open-work.md:~71 — the never-run-alembic-downgrade rule lives only in the handoff"
+   ],
+   "note": "CLAUDE.md migration-invariants section covers NOT VALID/VALIDATE and seeds but not downgrade."
+  }
+ ],
+ "apk_to_main_diff": [
+  "INSTALLED APK COMMIT IS UNKNOWN (W0 owner pre-flight not done). The list below is every technician-app/ path in changedFiles.txt (11 paths, 932 insertions / 69 deletions) with what changed per gitLog.txt; any of these may or may not be in the field build.",
+  "technician-app/eas.json — a31924a (#176): adds EXPO_PUBLIC_SENTRY_DSN with a real value to the preview and production env blocks. EXPO_PUBLIC_API_URL lines are unchanged (preview still points at the efficient-tenderness Railway URL; production is the api.fixflow.example placeholder).",
+  "technician-app/src/features/jobs/CompleteJobScreen.tsx — da988e2 (#170): completion form resolves prefill before typing (blocked on queued or unknown, cache fallback with stale banner), splits machine remarks from free text, carries fault/action/audio ids, shows the server's own failure reason instead of 'check your connection'.",
+  "technician-app/src/features/jobs/completionPrefill.ts (new) + completionPrefill.test.ts (new) — da988e2: pure prefill/freeze decision logic and its Jest tests.",
+  "technician-app/src/features/jobs/arrival-job/wizardState.ts (new) + wizardState.test.ts (new) — da988e2: monotonic run/pending/failed/done state derived from outbox and server truth, with tests.",
+  "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx — da988e2: uses wizardState via derive(), listens to onOutboxChange and onOutboxItemLanded, adds a failed state; capture-flow anchor/evidence logic unchanged.",
+  "technician-app/src/features/jobs/arrival-job/ArrivalAlreadyDoneScreen.tsx — da988e2: adds a 'failed' state with the server reason; correction CTA offered only for done or failed, not while pending.",
+  "technician-app/src/features/jobs/JobDetailScreen.tsx — da988e2: discarding a failed completion now also clears the arrival draft (discardCompletionAware).",
+  "technician-app/src/features/jobs/create-job/CreateJobWizard.tsx — 24184b2 (#173): WhatsApp consent state defaults to false (was true).",
+  "technician-app/src/features/jobs/create-job/CreateJobStep4.tsx — 24184b2 (#173): consent toggle copy renamed to 'WhatsApp updates / Customer agreed to receive job updates from us on WhatsApp'.",
+  "NOT changed since the handoff (no path in changedFiles): technician-app/src/features/attendance/* (geofence, punch, presence, ping queues and syncs), travelTracker/travelQueue/travelSync, lib/outbox.ts, lib/outboxSync.ts, lib/syncClassification.ts, lib/api.ts, lib/jobsCache.ts, lib/jobsReconcile.ts, features/media/*, app.json, package.json. So the geofence, location-tracking and offline-queue behaviour on main is identical to the handoff baseline."
+ ],
+ "summary": "66 register items classified against main (0578773; last code commit a31924a). Counts: FIXED 17, PARTIAL 7, OPEN 30, UNCHANGED_SINCE_HANDOFF 11, UNCLEAR 1 (sum 66). FIXED: S3-1, S3-2, S3-4, A1, A6, B1, B3, C1, C2, C5, T44-identity-1, T44-messaging-2, T44-messaging-3, T44-messaging-4, T44-ops-1, 45-4, ADR-3. PARTIAL: S3-3, A2, B2, 45-5, 52-4, LT-1, ADR-2. UNCLEAR: S3-5, a prod-data audit. UNCHANGED (no intersection with changedFiles, one hop checked): A3, A4, T44-web-1..4, T44-mobile-1, 45-2, L1, L3, L7. Everything else is OPEN: code re-read where the one-hop check hit a changed file (usually only main.py or jobs/service.py dispatcher hunks) and the cited defect is still present. Id note: T44 ids use a per-slice ordinal in table order (T44-identity-1, T44-media-3, etc.). Fixes since the handoff cluster in WhatsApp dispatcher hardening (B1-B3, 0046), unauthenticated-availability holes (A1, A6, non-ASCII secrets), login-lock recovery, and mobile completion guards (C1, C2, C5). No commit touched attendance, geofence, location-tracking or the offline queue/sync engine. Production is unreachable, so the installed APK commit and prod state (0045 vs 0046) are unestablished. Judgement of severity or ordering is left to a later stage."
+}

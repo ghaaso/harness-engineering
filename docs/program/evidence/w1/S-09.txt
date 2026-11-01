@@ -1,0 +1,164 @@
+# S-09 — Q5 latency-facts (S-09): ADR 0001 numbers, serial query counts, pool settings, ops-metric capability, client caching, cutover-condition evidence
+tool_status=n/a facts=39 anomalies=8 questions=6
+
+SUMMARY: Facts only, no decision. The ADR's measured numbers (2026-08-01/02, Mumbai DB / California Railway) are single snapshots of ~250 requests. The 'after' figures are DERIVED, never measured. Code shows no pool settings beyond pool_pre_ping. _detail is 7 to 9 serial statements, so job detail is 9 to 11 with auth and load, matching the ADR. The in-app metrics are per-route, reset on deploy, and persisted at 5-minute granularity with percentiles copied from a live reservoir. Client caching is a 15 s jobs list memo plus a 60 s web TTL cache on two reads. Of the five listed cutover conditions, only the 2026-08-02 42-table drill row and the backend Sentry DSN have repo or ADR evidence. The region-move runbook file does not exist in the repo.
+
+[F01] (doc) MEASURED: database deep-health probe (one SELECT 1 including pool checkout) = 478 ms from inside the prod container; r2_storage probe = 741 ms.
+    - docs/adr/0001-database-region-topology.md:32 — "`database` deep-health probe — one `SELECT 1` **including pool checkout** | **478 ms**"
+    - docs/adr/0001-database-region-topology.md:34 — "`r2_storage` probe | 741 ms | same"
+[F02] (doc) DERIVED: implied Railway-Supabase RTT ~239 ms = probe/2 on the assumption pool_pre_ping adds a second round trip; ADR says it agrees with an 'independently stated ~230 ms'.
+    - docs/adr/0001-database-region-topology.md:33 — "Implied Railway↔Supabase RTT (probe ÷ 2, since `pool_pre_ping=True` costs a second round trip) | **~239 ms** | derived"
+[F03] (doc) MEASURED server-side latency over 4.1 days via /api/ops/metrics: GET p50 450 / p95 1028 / max 2180 ms; POST p50 795 / p95 1786 ms; total volume ~250 requests.
+    - docs/adr/0001-database-region-topology.md:35 — "Server-side GET | p50 **450 ms**, p95 **1028 ms**, max 2180 ms | `/api/ops/metrics`, 4.1 days"
+    - docs/adr/0001-database-region-topology.md:36-37 — "POST | p50 **795 ms**, p95 **1786 ms**"; "~250 requests / 4.1 days"
+[F04] (doc) MEASURED client legs: warm client RTT Karachi to Railway ingress ~675 ms; 2026-07-18 controlled experiment by Railway region: sfo 0.69 s, eu-west 1.03 s, southeast-asia 1.20 s.
+    - docs/adr/0001-database-region-topology.md:38 — "Warm client RTT, Karachi → Railway ingress | **~675 ms** | measured from Karachi"
+    - docs/adr/0001-database-region-topology.md:39 — "sfo **0.69 s**, eu-west 1.03 s, southeast-asia 1.20 s | controlled experiment"
+[F05] (doc) ADR-stated serial DB round trips per request, 'counted from code': jobs list 3, job detail 11, POST /payments 17, POST /completion 22. Pool utilisation 'pool 5+10=15, demand ~0.35 req/s, rho ~5%' is labelled DERIVED.
+    - docs/adr/0001-database-region-topology.md:40 — "jobs list 3, job detail 11, POST /payments 17, POST /completion 22 | counted from code"
+    - docs/adr/0001-database-region-topology.md:41 — "pool 5+10=15, demand ~0.35 req/s, ρ ≈ **5%** | derived"
+[F06] (doc) DERIVED (not measured) post-move projections: per-DB round trip ~1-5 ms (could be 5-15); server floor 2-10 ms; _detail 10-45 ms; GET p95 est. 40-120 ms; POST p95 end-to-end 2461 -> ~805 ms. The ADR itself says post-move figures are 'DERIVED, not measured'.
+    - docs/adr/0001-database-region-topology.md:74 — "~1–5 ms (DERIVED — cross-provider same-metro; could be 5–15 ms)"
+    - docs/adr/0001-database-region-topology.md:78 — "End-to-end POST p95 (server + 675 ms client leg) | **2461 ms** | **~805 ms (3.1×)**"
+    - docs/adr/0001-database-region-topology.md:232 — "the post-move figures in this ADR are DERIVED, not measured"
+[F07] (doc) Amendment 1 retracts the 6.4x headline for 3.06x because the model implied 4,080 ms server-side on POST /payments against a measured server-side max of 2,180 ms; table lists end-to-end today/after: GET p50 1125->715, GET p95 1703->765, POST p50 1470->735, POST p95 2461->805.
+    - docs/adr/0001-database-region-topology.md:269 — "That model implies **4,080 ms of server-side time**, but the **measured server-side maximum ... was 2,180 ms**"
+    - docs/adr/0001-database-region-topology.md:279 — "| **POST p95** | **2,461 ms** | **805 ms** | **3.06×** |"
+[F08] (doc) ADR per-job figure: ~23 blocking requests per home-visit job counted from client code; 30.7 s -> 16.7 s; 15.5 s (93%) of remaining is client leg. Fleet-use volume cited: attendance_event 9 lifetime, job_token_seq 1057 vs floor 1051 (6 tokens ever), 6 payments in 48 days; '6 jobs x 14 s = 84 seconds saved'.
+    - docs/adr/0001-database-region-topology.md:281-282 — "Per home-visit job (~23 blocking requests, counted from client code): **30.7 s → 16.7 s**"
+    - docs/adr/0001-database-region-topology.md:288-293 — "`attendance_event` = **9, lifetime.**"; "**6 job tokens issued, ever.**"
+    - docs/adr/0001-database-region-topology.md:296 — "6 jobs × 14 s = **84 seconds saved, total, ever.**"
+[F09] (doc) ADR open questions still unresolved in-document: plan tier of the prod Supabase project; the backend's actual Railway region id (ADR says 'sfo' is not a Railway id; legacy us-west1 is Oregon); actual intra-region RTT.
+    - docs/adr/0001-database-region-topology.md:221-224 — "The Supabase plan tier of the production project. Not discoverable from the repo."
+    - docs/adr/0001-database-region-topology.md:325-333 — "`sfo` is not a Railway region id." ... "`us-west1` (Oregon) | **`us-west-2` (Oregon)**"
+[F10] {Defaults assumed 5+10 per ADR line 41; not verified against SQLAlchemy source here} (code) Engine has pool_pre_ping=True and NO pool_size, max_overflow, pool_recycle, pool_timeout or statement_cache_size set anywhere in backend app code (grep over backend for those names returned only db.py:22). Pool sizes are therefore library defaults; the ADR's '5+10=15' is not stated in code.
+    - backend/app/core/db.py:22 — "engine = create_async_engine(settings.database_url, pool_pre_ping=True, future=True)"
+    - backend/app/core/db.py:21 — "`pool_pre_ping` avoids stale connections after Supabase / Postgres restarts."
+[F11] (code) One engine only; each request gets its own AsyncSession via get_session; SessionLocal expire_on_commit=False. get_session is used by both CurrentPrincipal and the jobs service factory in the same request (FastAPI dependency caching gives one session per request).
+    - backend/app/core/db.py:24-28 — "SessionLocal = async_sessionmaker( bind=engine, expire_on_commit=False, class_=AsyncSession,"
+    - backend/app/core/db.py:36-39 — "async def get_session() -> AsyncIterator[AsyncSession]: ... async with SessionLocal() as session: yield session"
+    - backend/app/features/identity/deps.py:37 — "session: Annotated[AsyncSession, Depends(get_session)],"
+[F12] (code) Every authenticated request pays one DB read before the handler: get_current_principal does IdentityRepository.get (session.get on Technician) to check active and token_version.
+    - backend/app/features/identity/deps.py:46 — "tech = await IdentityRepository(session).get(str(claims[\"sub\"]))"
+    - backend/app/features/identity/repository.py:16 — "return await self._session.get(Technician, tech_id)"
+[F13] (code) _detail(row) is defined at service.py:1897 (ADR cites :1843, drifted). Awaited repo/session calls inside it: list_events (1), media.counts_by_phase (1, only if self._media is not None), get_completion (1), list_materials (1, only if completion exists), list_payments (1), list_locations (1), list_travel_samples (1, only if an arrive_customer location exists), _fuel_rate (1), _workshop (1). Unconditional=7 with media wired; max=9.
+    - backend/app/features/jobs/service.py:1898 — "events = await self._repo.list_events(row.id)"
+    - backend/app/features/jobs/service.py:1909 — "counts = await self._media.counts_by_phase(job_id=str(row.token))"
+    - backend/app/features/jobs/service.py:1917-1919 — "completion = await self._repo.get_completion(row.id) ... materials = await self._repo.list_materials(completion.id)"
+[F14] (code) Each repository method _detail uses issues exactly one SELECT (no joins/loops): list_events, get_completion, list_materials, list_payments, list_locations, list_travel_samples, media counts_by_phase (a single GROUP BY, comment says 'not five count_phase round-trips').
+    - backend/app/features/jobs/repository.py:170-173 — "stmt = select(JobEvent).where(JobEvent.job_id == job_id)... result = await self._session.execute(stmt)"
+    - backend/app/features/media/repository.py:68-78 — "Every phase's row count for ONE job, in a single GROUP BY (not five ``count_phase`` round-trips)."
+[F15] (code) _fuel_rate and _workshop each add one query: _fuel_rate -> effective_int -> _latest_rows (one DISTINCT ON select on shop_setting); _workshop -> workshop_circle -> get_active_geofence (one select). Neither is cached in-process; _workshop wraps failures and returns None.
+    - backend/app/features/tenancy/service.py:70-85 — "_latest_rows ... select(ShopSetting).where(...).distinct(ShopSetting.key)" then "(await session.execute(stmt))"
+    - backend/app/features/attendance/repository.py:334-343 — "get_active_geofence ... result = await self._session.execute(stmt); return result.scalars().first()"
+    - backend/app/features/jobs/service.py:915-919 — "try: return await workshop_circle(...) except Exception: ... return None"
+[F16] (code) GET /api/jobs/{id} serial statements counted from code: auth 1 + _load (JobRepository.get = session.get Job) 1 + _detail 7 (minimum, media wired) to 9 = 9 to 11. ADR states 'job detail 11'. Comment at service.py:1906 says the list endpoint does not call _detail.
+    - backend/app/features/jobs/router.py:145-153 — "async def get_job(... _principal: CurrentPrincipal ...): return await service.get_job(job_id=job_id, shop_id=shop_id)"
+    - backend/app/features/jobs/service.py:800-802 — "row = await self._load(job_id, shop_id); return await self._detail(row)"
+    - backend/app/features/jobs/service.py:1906-1907 — "`_detail` is always single-row (the list endpoint does not call it)"
+[F17] (code) GET /api/jobs (list) counted: auth 1 + one SELECT on Job (ORDER BY token desc, optional ilike search across 5 columns, no LIMIT or pagination in the repository) = 2 statements; ADR says 3. Response is list[Job] with no per-row detail.
+    - backend/app/features/jobs/router.py:76-83 — "@router.get(\"\", response_model=list[Job] ... service: ServiceDep, _principal: CurrentPrincipal"
+    - backend/app/features/jobs/repository.py:121-140 — "stmt = select(Job).where(Job.shop_id == shop_id) ... order_by(Job.token.desc()) ... await self._session.execute(stmt)"
+    - backend/app/features/jobs/service.py:795-798 — "rows = await self._repo.list_jobs(...); return [Job.model_validate(r) for r in rows]"
+[F18] {Transaction BEGIN and COMMIT round trips (asyncpg/SQLAlchemy) not counted; not verified in this pass} (code) POST /api/jobs/{id}/transition counted statements: auth 1 + _load 1 + optional get_event_by_client_id 1 (when client_id sent) + try_transition UPDATE 1 + refresh 1 + add_event (flush INSERT + refresh SELECT) 2 + _detail 7-9 + commit. Close action adds media.count_phase 1 and get_completion 1 before the UPDATE. Idempotent-replay paths skip to _detail directly (auth+load+[client_id lookup]+_detail).
+    - backend/app/features/jobs/service.py:1051-1061 — "row = await self._load(...) ... if await self._repo.get_event_by_client_id(body.client_id) is not None: return await self._detail(row)"
+    - backend/app/features/jobs/service.py:1099-1106 — "closing = await media.count_phase(...)"; "if await self._repo.get_completion(row.id) is None"
+    - backend/app/features/jobs/service.py:1125-1139 — "try_transition(...)"; "await self._repo.refresh(row)"; "await self._repo.add_event(...)"; "return await self._detail(row)"
+[F19] (code) _detail is invoked from 18 service-level call sites (`return await self._detail(row)`) in service.py: lines 802, 981, 995, 1024, 1061, 1077, 1139, 1207, 1343, 1401, 1434, 1477, 1487, 1506, 1518, 1591, 1615, 1637. ADR says '18 endpoints'; this is a count of call sites, not routes.
+    - backend/app/features/jobs/service.py:802 — "return await self._detail(row)"
+    - backend/app/features/jobs/service.py:1637 — "return await self._detail(row)"
+    - docs/adr/0001-database-region-topology.md:75 — "`_detail()` — 7–9 serial queries, returned by 18 endpoints"
+[F20] (code) /api/health does not touch the database (sync def returning a static dict); ADR calls this the load-bearing fact that DB-free requests drag GET p50 down. The deep-health database probe is the only code that times a SELECT 1.
+    - backend/app/features/health/router.py:12 — "Liveness probe. Returns ok without touching the database."
+    - backend/app/features/ops/health.py:33-40 — "start = time.perf_counter(); await session.execute(text(\"SELECT 1\")) ... latency_ms=_elapsed_ms(start)"
+[F21] (code) In-app metrics record per-route (label 'METHOD /template' from route path_format; unmatched collapse to '<unmatched>', cap 500 routes then '<overflow>'): count, 4xx count, 5xx count, p50/p95/p99/max from a 1000-sample per-route reservoir, plus uptime, in_flight, total, 5xx error_rate. Timing is wall-clock around call_next in a BaseHTTPMiddleware.
+    - backend/app/core/metrics.py:34 — "_RESERVOIR = 1000"
+    - backend/app/core/metrics.py:46-54 — "RouteMetrics: route, count, errors_4xx, errors_5xx, p50_ms, p95_ms, p99_ms, max_ms"
+    - backend/app/core/metrics.py:210-212 — "if template is None: return f\"{method} <unmatched>\"; return f\"{method} {template}\""
+[F22] (code) What the in-app metrics cannot do: in-memory per process, reset on restart, per-uvicorn-worker counters, percentiles only over the last 1000 samples per route (not all-time), no per-query/DB-time breakdown, no client-leg or network time, no per-user split. Declared limits in the module docstring.
+    - backend/app/core/metrics.py:9-13 — "**In-memory, per-process.** Resets on every deploy/restart, and each uvicorn worker keeps its own counters."
+    - backend/app/core/metrics.py:12-13 — "Latency is a bounded reservoir (last ``_RESERVOIR`` samples per route), so percentiles describe recent traffic, not all-time history."
+    - CLAUDE.md:?? — "In-app metrics come from `core/metrics.py` and are **in-memory, per-replica, reset on deploy**. Not APM."
+[F23] (code) Ops surface exposes only GET /health (deep health) and GET /metrics (metrics_snapshot) on the backend; both gated by the ops proxy token. Health report runs check_database (SELECT 1, latency_ms) and check_r2 (list_keys in threadpool, latency_ms).
+    - backend/app/features/ops/router.py:21 — "@router.get(\"/health\")"
+    - backend/app/features/ops/router.py:28-31 — "@router.get(\"/metrics\") ... return service.metrics_snapshot()"
+    - backend/app/features/ops/service.py:35-45 — "async def health_report ... await health.check_r2(self._storage) ... status=health.rollup(components)"
+[F24] (code) Persisted history: MetricRollup.tick runs every 300 s (ops-metric-rollup job), writes per-route delta rows to ops_metric_rollup (count, error_count, p50/p95/p99) using the LIVE reservoir's percentiles as-is (code calls this 'a documented approximation'), skips idle routes, first tick after boot writes nothing, and the '_all' total row is written with p50/p95/p99 left at column default 0.
+    - backend/app/features/telemetry/service.py:26 — "_ROLLUP_WINDOW_SECONDS = 300"
+    - backend/app/features/telemetry/service.py:100-101 — "Percentiles are the live reservoir's, recorded as-is: they describe recent traffic, not strictly this window"
+    - backend/app/features/telemetry/service.py:148-156 — "route=\"_all\", method=\"\", count=total_count, error_count=total_err," (no p50/p95/p99 passed)
+[F25] (code) The deep-health 'database' latency_ms is a separate probe from request metrics; the ADR names it as the post-cutover re-measure ('Re-measure via database.latency_ms in /api/ops/health').
+    - docs/adr/0001-database-region-topology.md:233-234 — "Re-measure via `database.latency_ms` in `/api/ops/health` immediately after cutover"
+    - backend/app/features/ops/health.py:40 — "ComponentStatus(name=\"database\", status=\"ok\", latency_ms=_elapsed_ms(start))"
+[F26] (code) Mobile API client: single request() with 15,000 ms AbortController timeout, no retry, no response cache, no coalescing inside api.ts; any 401 calls setToken(null) and onUnauthorized. Bearer token attached from getToken().
+    - technician-app/src/lib/api.ts:85 — "const REQUEST_TIMEOUT_MS = 15_000;"
+    - technician-app/src/lib/api.ts:90 — "const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);"
+    - technician-app/src/lib/api.ts:111-113 — "if (response.status === 401) { await setToken(null); onUnauthorized?.(); }"
+[F27] (code) Mobile jobsMemo.ts: in-memory freshness layer over jobsApi.list() with FRESH_MS = 15,000; within that window the last copy is returned without a network call; concurrent callers share one in-flight promise; opts.force bypasses; successful fetch writes through to AsyncStorage (saveJobsList); patchJobsListRow patches a landed row in place keeping the freshness stamp. Comment: '~1s per hop on our network'.
+    - technician-app/src/lib/jobsMemo.ts:14 — "const FRESH_MS = 15_000;"
+    - technician-app/src/lib/jobsMemo.ts:49-52 — "if (!opts.force && last && Date.now() - last.fetchedAt < FRESH_MS) { return last.data; } if (inflight) return inflight;"
+    - technician-app/src/lib/jobsMemo.ts:4 — "refetch the full list every time (~1s per hop on our network)"
+[F28] (code) Mobile jobsCache.ts: AsyncStorage offline read cache with NO TTL; keys 'jobs.cache.list.v1' and 'jobs.cache.detail.v1:<id>'; every copy carries a savedAt stamp; details pruned to ids in the last saved list; patchCachedJobsListRow patches a landed row keeping the original savedAt. Detail cache saved via saveJobDetail, read by loadJobDetail.
+    - technician-app/src/lib/jobsCache.ts:18-19 — "const LIST_KEY = \"jobs.cache.list.v1\"; const DETAIL_PREFIX = \"jobs.cache.detail.v1:\""
+    - technician-app/src/lib/jobsCache.ts:56 — "The persistent cache has no TTL, so before this a write left it stale indefinitely"
+    - technician-app/src/lib/jobsCache.ts:93-101 — "pruneDetails ... keys.filter(k.startsWith(DETAIL_PREFIX) && !liveIds.has(...))"
+[F29] (code) Mobile coalesce.ts is a trailing-edge debounce (setTimeout/clearTimeout) for outbox change listeners so N queue mutations cause one reload; it caches nothing and has no in-flight dedupe.
+    - technician-app/src/lib/coalesce.ts:1-7 — "Trailing-edge debounce for event listeners ... collapses a burst into one call after `ms` of quiet."
+    - technician-app/src/lib/coalesce.ts:15-20 — "if (timer) clearTimeout(timer); timer = setTimeout(() => { timer = null; fn(); }, ms);"
+[F30] (code) Web manager requestCache.js: TTL + in-flight-dedupe Map cache; failures never cached; header states reads cost '~0.7s per round trip on our network'. Call sites with ttl: attendanceApi.js:68-71 (ttlMs 60_000) and jobsApi.js:24-25 'jobs.evidence-gaps' (ttlMs 60_000). Only these two call sites found in src/.
+    - src/shared/lib/requestCache.js:1-7 — "Tiny TTL + in-flight-dedupe cache ... (~0.7s per round trip on our network)."
+    - src/shared/lib/requestCache.js:14-16 — "if (hit && Date.now() - hit.at < ttlMs) return Promise.resolve(hit.value); const pending = inflight.get(key); if (pending) return pending;"
+    - src/features/jobs/data/jobsApi.js:24-25 — "return cached(\"jobs.evidence-gaps\", () => apiGet(\"/api/jobs/evidence-gaps\"), { ttlMs: 60_000,"
+[F31] (doc) HANDOFF section 5.5 latency paragraph: model T = R_c + n*R_d with R_c ~675 ms, R_d ~230 ms gives POST /payments (n=17) ~4.6 s and a 6.3x gain from moving the DB; claims 'calibrated to 4%' against requestCache.js:6; says remaining query-collapse worth '<60 ms' after the move and the next lever is Cloudflare fronting. Written 2026-08-01/02 and superseded in magnitude by ADR Amendment 1 (3.06x, POST /payments path never ran).
+    - docs/HANDOFF-2026-07-28-open-work.md:542-546 — "calibrated to 4% against the team's own measured ~0.7 s at `src/shared/lib/requestCache.js:6`" ... "`T = R_c + n·R_d`"
+    - docs/HANDOFF-2026-07-28-open-work.md:547-548 — "puts `POST /payments` (n=17) at **≈4.6 s**. ... takes it to **≈0.73 s (6.3×)**"
+    - docs/HANDOFF-2026-07-28-open-work.md:553-554 — "worth **<60 ms** ... the next real lever is Cloudflare fronting."
+[F32] (doc) Cutover Condition 1 (stage-2 restore rehearsal logged as a new drill row covering 42 tables): drill-log row dated 2026-08-02 exists in RUNBOOK-BACKUPS.md claiming PASS for 42 app tables (43 public incl. alembic_version), 3,268 rows, restored head 0045 (not 0046), money reconciled (job_payment 9 rows Rs 39,400 / 34,400 non-voided), staff_ledger and staff_ledger_chain both empty, sequences job_event_seq=90 and job_token_seq=1057. The row's source is a nightly dump taken before the 0046 deploy; chain head hash trivially unverifiable at 0 rows; dispatch_cursor listed only as drift (+1, the 0046 seed).
+    - docs/RUNBOOK-BACKUPS.md:128 — "✅ **PASS — 42-table drill, gates the DB region move.** All 43 public tables restored (42 app + `alembic_version`), 3,268 rows"
+    - docs/RUNBOOK-BACKUPS.md:128 — "Restored head **0045** (backup predates that day's 0046 deploy — expected)."
+    - docs/RUNBOOK-BACKUPS.md:128 — "`staff_ledger` + `staff_ledger_chain` both empty (chain linkage check passed trivially, 0 rows). Sequences valid (`job_event_seq`=90, `job_token_seq`=1057)."
+[F33] (doc) Cutover Condition 1 wording requires 'the two standalone sequences' and 'Alembic head'; Amendment 1 says there are three standalone sequences. Drill row names two sequences and head 0045. ADR also says the restore target is a plain container, not Supabase, so the drill 'does not prove it loads into Supabase' (A1.3 #2).
+    - docs/adr/0001-database-region-topology.md:133-136 — "verified with row counts across all 42 tables, money digests, the `staff_ledger_chain` head hash, the two standalone sequences, `dispatch_cursor`, and the Alembic head"
+    - docs/adr/0001-database-region-topology.md:341-342 — "this ADR says *two* standalone sequences; there are **three**."
+    - docs/adr/0001-database-region-topology.md:315-316 — "the drill target 'is a plain container, not a Supabase clone.' ... does not prove it *loads into Supabase*"
+[F34] (command) Cutover Condition 3 (docs/RUNBOOK-DB-REGION-MOVE.md in repo): the file does not exist. The only docs/RUNBOOK* file is RUNBOOK-BACKUPS.md, and the only repo mention of the missing runbook name is the ADR itself.
+    - docs/adr/0001-database-region-topology.md:141-142 — "The cutover runbook lives in the repo (`docs/RUNBOOK-DB-REGION-MOVE.md`), not in a chat transcript"
+    - Glob docs/RUNBOOK* — returned only docs/RUNBOOK-BACKUPS.md; Grep RUNBOOK-DB-REGION-MOVE — only docs/adr/0001-database-region-topology.md
+[F35] (doc) Cutover Condition 5 detection: ADR Amendment 1 records backend Sentry DSN 'done 2026-08-03, ingestion proven' and an uptime monitor still listed as a to-do; git history shows a mobile Sentry DSN commit (a31924a). No uptime-monitor configuration or latency-baseline capture exists in docs/ (grep for 'uptime monitor|UptimeRobot|uptime check|latency baseline|curl loop' hit only the ADR).
+    - docs/adr/0001-database-region-topology.md:297-298 — "(1) backend Sentry DSN — *done 2026-08-03, ingestion proven*; (2) an uptime monitor; (3) ship the pending APK"
+    - docs/adr/0001-database-region-topology.md:143-146 — "A latency baseline exists — captured externally with a timed curl loop ... Detection exists — an external uptime check on `GET /api/health` and a configured Sentry DSN."
+    - git log (task context) — "a31924a chore(mobile): wire the Sentry DSN so field crashes stop being invisible (#176)"
+[F36] (doc) Cutover Condition 2 (no schema change ships with cutover) is a process rule, not evidenced by repo state; CLAUDE.md states Alembic head 0046 and next free slot 0047. ADR list has five numbered conditions, while Amendment 1 refers to 'Conditions 1-6' (count mismatch inside the ADR).
+    - docs/adr/0001-database-region-topology.md:139-140 — "**No schema change ships with the cutover.** The identical code revision must be deployed on both sides of the swap"
+    - docs/adr/0001-database-region-topology.md:341-342 — "the non-negotiable rules ... and Conditions 1–6."
+    - CLAUDE.md:?? — "Head is **0046**; the next free slot is **0047**."
+[F37] (code) ADR cites repo line anchors that have drifted: _detail at service.py:1843 (actual 1897), _ensure_async_driver at config.py:244 (actual 236). Other cited anchors still match: core/db.py:22, config.py:30, alembic/env.py:28, backup.py:112 (backup.py actual use is line 114), Dockerfile:25 postgresql-client-17.
+    - docs/adr/0001-database-region-topology.md:80 — "`_detail()` (`backend/app/features/jobs/service.py:1843`)"
+    - backend/app/features/jobs/service.py:1897 — "async def _detail(self, row: JobRow) -> JobDetail:"
+    - backend/app/core/config.py:236 — "def _ensure_async_driver(cls, v: str) -> str:"
+[F38] (doc) Home-server / self-hosting relevance recorded in the ADR itself: it names Supabase and Railway region as the DB-leg cost; 'RUNBOOK-BACKUPS.md' drill restores into a plain local PostgreSQL 17 container and records RTO(data) ~6 s for a 302 KB dump; the whole DB dumps to 302 KB.
+    - docs/RUNBOOK-BACKUPS.md:128 — "RTO(data) ≈ **6 s** (1.5 s R2 download + 4 s `pg_restore` for a 302 KB dump)"
+    - docs/adr/0001-database-region-topology.md:303-304 — "the whole DB dumps to 302 KB, and measured RTO(data) is 6 s"
+[F39] (doc) ADR rejected options with their stated latency rationale: dropping pool_pre_ping saves one round trip (~230 ms today) at the cost of a hard 500 on a reaped connection (kept as fallback); transaction-mode pooler 6543 rejected because asyncpg prepared statements are not disabled (statement_cache_size unset in db.py:22); read replicas rejected on replication-lag grounds; Singapore backend refuted by F04 numbers.
+    - docs/adr/0001-database-region-topology.md:92-94 — "Removes one round trip per request: **~230 ms off every request today** ... The trade is a hard 500 when a connection is reaped"
+    - docs/adr/0001-database-region-topology.md:113-116 — "Transaction mode forbids prepared statements, which asyncpg uses by default and which `core/db.py:22` does not disable"
+
+ANOMALIES:
+ * ADR says jobs list = 3 serial round trips; code read counts 2 statements (auth + one SELECT Job) for GET /api/jobs (F17). Possible difference is transaction BEGIN or a dependency not read here; not resolved.
+ * ADR says 18 endpoints return _detail; code has 18 service-level `return await self._detail(row)` call sites, which is not the same as a count of routes (F19).
+ * ADR Amendment 1 refers to 'Conditions 1-6' but the ADR body lists five numbered conditions (F36).
+ * ADR says two standalone sequences in the body and three in Amendment 1; the drill row records only two (F33).
+ * The ops_metric_rollup '_all' rows carry p50/p95/p99 = 0 (defaults) and per-route rows carry the live-reservoir percentile rather than the window's, so ADR condition 4 ('baseline from ops_metric_rollup') depends on per-route rows only (F24).
+ * ADR cites service.py:1843 and config.py:244, which have drifted (F37).
+ * HANDOFF section 5.5 still reports the superseded 6.3x / 4.6 s figures; ADR Amendment 1 corrects to 3.06x (F07, F31).
+ * CLAUDE.md: line numbers are not available in this pass for the two CLAUDE.md quotes in evidence strings (marked ':??'); content was taken from the injected CLAUDE.md text.
+
+QUESTIONS:
+ ? Does SQLAlchemy asyncpg issue a separate BEGIN round trip per transaction and a separate round trip for pool_pre_ping on each checkout? This decides whether the ADR's 'pre_ping costs a second round trip' and the 'jobs list = 3' count are right.
+ ? What are the actual SQLAlchemy default pool_size / max_overflow / pool_timeout in the installed version (pool settings are unset in code)?
+ ? Is ops_metric_rollup in prod populated with per-route rows (not only _all) for the 4.1-day window, and are the ADR's GET/POST p50/p95 figures reproducible from them?
+ ? Are there other endpoints (attendance, ping batch, customers, travel samples) with serial query fan-outs comparable to _detail that the field geofence/ping hot path uses?
+ ? Does the mobile app call GET /api/jobs/{id} (the 9-11 statement path) on every job open, and how often is jobsApi.detail saved to jobsCache?
+ ? Is the production backend currently running at all (CLAUDE context says Railway URLs 404), making the ADR's measurements unreproducible until recovery?
+
+FILES/URLS: C:/Users/User/Documents/projects/EMS_workshop1/docs/adr/0001-database-region-topology.md | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/core/db.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/jobs/service.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/jobs/repository.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/jobs/router.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/identity/deps.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/tenancy/service.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/attendance/repository.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/media/repository.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/core/metrics.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/ops/router.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/ops/service.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/ops/health.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/telemetry/service.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/telemetry/models.py | C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/health/router.py | C:/Users/User/Documents/projects/EMS_workshop1/src/shared/lib/requestCache.js | C:/Users/User/Documents/projects/EMS_workshop1/technician-app/src/lib/coalesce.ts | C:/Users/User/Documents/projects/EMS_workshop1/technician-app/src/lib/jobsMemo.ts | C:/Users/User/Documents/projects/EMS_workshop1/technician-app/src/lib/jobsCache.ts | C:/Users/User/Documents/projects/EMS_workshop1/technician-app/src/lib/api.ts | C:/Users/User/Documents/projects/EMS_workshop1/docs/HANDOFF-2026-07-28-open-work.md | C:/Users/User/Documents/projects/EMS_workshop1/docs/RUNBOOK-BACKUPS.md

@@ -1,0 +1,45 @@
+# R-02 — R-02 research-odoo-api: Odoo Online versions, external APIs, plan gating, external IDs, invoice payloads, rate limits
+tool_status=web_partial facts=13 anomalies=3 questions=5
+
+SUMMARY: 
+
+[F1] {A new Online database likely lands on the newest SaaS/major; confirm at signup.} (web, fetched=true) Odoo support-policy page lists Odoo 20.0 (Sept 2026, Online/Odoo.sh/on-premise) as latest, SaaS 19.1 (Jan 2026), 19.2 (Mar 2026), 19.3 (May 2026), 19.4 (Jul 2026) as Online-only, and Odoo 19.0 (Sept 2025) as the last listed major. SaaS versions are not eligible for extended support. Which exact version a new Odoo Online database gets was not stated.
+    - https://www.odoo.com/documentation/master/administration/standard_extended_support.html
+[F2] (web, fetched=true) JSON-2 API: 'Post a JSON object at the /json/2/<model>/<method> URL'; Authorization header is 'bearer' followed by an API key; X-Odoo-Database is optional but required when one server hosts multiple databases and dbfilter does not use the Host header.
+    - https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_api.rst
+[F3] (web, fetched=true) Manual API key creation: Preferences > Account Security > New API Key, with a description and a duration; 'not possible to create keys that last for more than three months'; docs recommend short duration (typically one day) for interactive use; key shown only once.
+    - https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_api.rst
+[F4] (web, fetched=true) Programmatic keys via res.users.apikeys.generate (key, scope, name, expiration_date ISO 8601); default restricted to users with Settings administration right, others need system parameter base.enable_programmatic_api_keys=True; expiry checked against max duration allowed by user roles; scope 'rpc' covers auth='bearer' controllers; default limit 10 keys per user (base.programmatic_api_keys_limit), exceeding gives HTTP 422; res.users.apikeys.revoke revokes immediately (HTTP 403 on invalid request).
+    - https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_api.rst
+[F5] (web, fetched=true) JSON-2 follows standard Odoo security (access rights, record rules, field access); docs recommend dedicated bot users with minimal permissions. Each call runs in its own SQL transaction (commit on success, discard on error); chaining calls in one transaction is not possible, use a single method for related operations.
+    - https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_api.rst
+[F6] (web, fetched=true) Legacy endpoints /xmlrpc, /xmlrpc/2, /jsonrpc are marked deprecated 19.0. The db service was removed in Odoo 20 (fall 2026) and Online 19.1; common and object services are 'scheduled for removal in Odoo 22 (fall 2028)' (Online 21.1, winter 2027). /xmlrpc/2/common serves version/authenticate; /xmlrpc/2/object serves execute_kw. An API key can replace the password in scripts with the same login.
+    - https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_rpc_api.rst
+[F7] (web, fetched=true) Plan gating: 'Access to data via the external API is only available on Custom Odoo pricing plans'; One App Free and Standard do not include it (stated on both the JSON-2 and RPC doc pages).
+    - https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_api.rst
+[F8] {Creating ir.model.fields over the API therefore needs Custom (API gate); this was not verified for ir.model.fields specifically on Online.} (web, fetched=true) Pricing page: Custom plan lists Odoo Studio, External API and Multi-Company; Standard lists neither Studio nor External API; One App Free: Studio can be chosen as the one free app but installing Studio moves you to Custom. Page says calls initiated from inside Odoo are NOT 'External API'. Pricing page does not mention custom fields explicitly; Custom is described as customizable 'through Odoo Studio, agentic AI, custom developments or through the API'.
+    - https://www.odoo.com/pricing-plan
+[F9] (web, fetched=true) The RPC doc page covers the ir.model and ir.model.fields meta-models for creating custom models and fields over RPC (per the fetch summary of the page; exact text not captured). Odoo Online page states Online 'is incompatible with custom modules or modules from the Odoo Apps Store'.
+    - https://www.odoo.com/documentation/master/administration/odoo_online.html
+[F10] (web, fetched=true) CSV importer: if a file has an External ID or Database ID column, existing records are modified instead of created; changing/removing an ID 'may add a duplicate record'; External ID 'must be unique across all records of all objects'; docs advise prefixing IDs with the source app/table (e.g. company_1).
+    - https://raw.githubusercontent.com/odoo/documentation/master/content/applications/essentials/export_import_data.rst
+[F11] {A 1 call/s serial budget is a design constraint for the sync worker; batch via create with lists or load().} (web, fetched=true) Acceptable use policy: prohibits 'Unthrottled RPC/API calls'; mentions 'batch APIs for imports'; rate-limited requests are generally allowed at about one per second, no parallel requests (per the fetch summary, not verbatim quoted); Odoo.sh/dedicated hosting suggested to lift the restriction. Tag Q6.
+    - https://www.odoo.com/acceptable-use
+[F12] (web, fetched=false) Third-party sources (not primary) say Odoo publishes no per-endpoint quota or documented 429 threshold and that Online API should not be called more than once per second.
+    - https://wavect.io/blog/odoo-erp-api-integration-limits-2026/
+[F13] (web, fetched=false) Invoice creation pattern (forum v15 example and Apideck guide): create on account.move with move_type 'out_invoice', partner_id, and invoice_line_ids as [0,0,{name, account/price_unit, quantity}] tuples; then call action_post on the id to post. Payment example used account.payment create directly; account.payment.register wizard not found in any source. Version is old (v15); field names for 19/20 not verified.
+    - https://radar.apideck.com/blog/how-to-integrate-with-the-odoo-api
+
+ANOMALIES:
+ * WebFetch summaries of the official HTML doc pages were truncated at 100000 chars with no body text; the .rst raw GitHub sources worked and are the basis for F2-F7.
+ * Pricing page and AUP statements come from a small-model summary of the page, not verbatim quotes.
+ * Support-policy table was truncated after Odoo 18.0 and shows no SaaS end-of-support dates.
+
+QUESTIONS:
+ ? Q4: confirm ir.model.data idempotency mechanics (load() with 'id' column upsert, _update_xmlids, naming module/__import__ prefix) from odoo source or ORM docs; not found.
+ ? Q5: confirm minimal account.move out_invoice payload and the account.payment.register wizard flow (context active_model/active_ids, create_payments) for Odoo 19/20; prerequisites (journal, income account, tax, company) not verified.
+ ? Q7: cash-basis accounting / cash journal guidance not researched.
+ ? Verify against Odoo docs whether ir.model.fields creation is allowed on Odoo Online (x_ fields) and whether Studio is required.
+ ? Confirm which version a newly created Odoo Online database receives in late 2026 (20.0 vs SaaS 19.4).
+
+FILES/URLS: https://www.odoo.com/documentation/19.0/developer/reference/external_api.html | https://www.odoo.com/documentation/master/developer/reference/external_api.html | https://www.odoo.com/documentation/19.0/developer/reference/external_rpc_api.html | https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_api.rst | https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/external_rpc_api.rst | https://www.odoo.com/pricing-plan | https://www.odoo.com/documentation/master/administration/standard_extended_support.html | https://raw.githubusercontent.com/odoo/documentation/master/content/applications/essentials/export_import_data.rst | https://www.odoo.com/acceptable-use | https://www.odoo.com/documentation/master/administration/odoo_online.html | https://raw.githubusercontent.com/odoo/documentation/master/content/developer/reference/backend/orm.rst

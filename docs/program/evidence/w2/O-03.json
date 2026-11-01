@@ -1,0 +1,721 @@
+{
+ "id": "O-03",
+ "result": {
+  "area": "O-03 offline-sync-correctness (technician-app offline engine under a dead or reviving backend)",
+  "hypothesis_ranking": [
+   {
+    "id": "H-O3-1 404-as-definitive turned the Railway outage into refused, parked and dropped writes on every queue",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.9,
+    "in_field_apk": "unknown",
+    "discriminating_test": "On a field phone (W0), read the AsyncStorage keys attendance.queue.v1, attendance.presence.queue.v1, jobs.outbox.v2 and media.pending.v1 through adb or a debug build. Prediction: entries with failed_reason/failedReason 'rejected (404)' dated after prod died, attendance.pings.queue.v1 holding almost nothing from the outage, and no queued create from an online tap."
+   },
+   {
+    "id": "H-O3-2 Parked punches make dutyStatus kill on-duty pings for every shift after revival",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.8,
+    "in_field_apk": "unknown",
+    "discriminating_test": "Jest, pingTracker.test: seed one parked clock_out (failed_reason set, done false), a duty cache {clockedIn:true, startedAt:now} and no pending punch, then call handlePingUpdate. Today's code stops the sampler and records nothing."
+   },
+   {
+    "id": "H-O3-3 The S7 missing presence/ping drain triggers contributed materially to outage data loss",
+    "verdict": "weakened",
+    "likelihood_for_this_fleet": 0.25,
+    "in_field_apk": "unknown",
+    "discriminating_test": "During the outage the phones were online, so recordCrossing synced at capture and parked on the 404, and pings dropped on it. The missing triggers only matter for items queued with no network. Count presence entries with failed_reason undefined and done false on a field phone: the prediction is near zero."
+   },
+   {
+    "id": "H-O3-4 The headless-401 strand (S8) happened during the outage",
+    "verdict": "killed",
+    "likelihood_for_this_fleet": 0.05,
+    "in_field_apk": "unknown",
+    "discriminating_test": "The Railway edge answers 404 to every request, never 401, so request() never cleared the token. Check: fixflow_token is still present on a field phone that was never logged out."
+   },
+   {
+    "id": "H-O3-5 The headless-401 strand will hit the first contact after revival",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.7,
+    "in_field_apk": "unknown",
+    "discriminating_test": "jwt_expire_minutes is 30 days (config.py:154) and login was impossible during the outage, so every field token has expired. Point a test build at a backend with any stale token and trigger a geofence crossing before opening the app. Then fixflow_token is gone, fixflow_tech is still there, and the next handlePingUpdate records anyway."
+   },
+   {
+    "id": "H-O3-6 The outbox 'never delete a write' contract held during the outage",
+    "verdict": "weakened",
+    "likelihood_for_this_fleet": 0.3,
+    "in_field_apk": "unknown",
+    "discriminating_test": "Already-queued items were kept (parked). But a write tapped online was never enqueued (sendOrQueue rethrows 404/401). The Discard dialog also told techs 'The server rejected it', which invited them to delete records the server never saw. Ask the techs or the owner whether rows were discarded, and compare queue contents with the punch history on the old prod DB if it is ever recovered."
+   }
+  ],
+  "findings": [
+   {
+    "id": "O3-F1",
+    "title": "Online job writes against the dead edge were refused at tap time, never queued",
+    "severity": "P1",
+    "category": "defect",
+    "claim": "When NetInfo reports connected and the API answers a non-FastAPI 404, sendOrQueue rethrows instead of enqueuing. So every job write tapped online during the outage (create, depart/arrive punch, customer pin, completion, payment) existed only on screen.",
+    "failing_condition": "Phone online; config.apiUrl answers Railway's edge 404 (both documented URLs since prod died); the tech taps Create job / START TRAVEL / ARRIVE / Save pin.",
+    "evidence": [
+     "technician-app/src/lib/outboxSync.ts:267-271 — only isConnected === false enqueues without trying",
+     "technician-app/src/lib/outboxSync.ts:287 — if (isDefinitiveRejection(e) || isAuthFailure(e)) throw e;",
+     "technician-app/src/lib/syncClassification.ts:18 — DEFINITIVE_4XX = new Set([400, 403, 404, 409, 422])",
+     "technician-app/src/features/jobs/create-job/CreateJobWizard.tsx:164-171 — Alert 'Couldn't create the job' then return (nothing persisted, voice notes not queued)",
+     "technician-app/src/features/jobs/TravelScreen.tsx:182-185 — 'Couldn't record the punch — try again.' return false, so startJobTravel/arrival never run",
+     "technician-app/eas.json:21 — preview APK bakes the Railway URL"
+    ],
+    "impact": "For months the offline-first engine behaved as online-only for jobs. No intake, travel, arrival or bill could be recorded unless the phone was in airplane mode, and even then the flush parks it (F14). A self-hosted backend behind Cloudflare or a captive portal returning 403/404 HTML will cause the same failure.",
+    "fix_sketch": "Classify by origin (design step 1): a 4xx without the app marker is connectivity, so sendOrQueue enqueues it. A 401 on a live tap also enqueues (F8).",
+    "effort": "S",
+    "confidence": 0.9,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F2",
+    "title": "Parked punches make dutyStatus stop on-duty pings after every landed clock-in",
+    "severity": "P1",
+    "category": "defect",
+    "claim": "dutyStatus picks the latest of ALL the tech's local punches, parked ones included, and pruneSettled removes only done punches. Once a fresh clock_in lands and is pruned, a months-old parked punch becomes the 'latest': a clock_out makes the tech off duty, a clock_in makes the session expired. Either way the sampler stops, and coverage stays dead every shift until the tech discards every parked punch.",
+    "failing_condition": "Tech has at least one parked punch (every tech who punched during the outage), clocks in against a live backend, the punch syncs and is pruned, and the next location fix arrives.",
+    "evidence": [
+     "technician-app/src/features/attendance/pingTracker.ts:118-124 — mine = (await loadQueue()).filter(tech) — no done/failed filter; latest by device_time decides; kind != clock_in -> off duty; aged -> expired",
+     "technician-app/src/features/attendance/sync.ts:236-249 — pruneSettled removes only i.done",
+     "technician-app/src/features/attendance/queue.ts:100-112 — parked = failed_reason set, never done",
+     "technician-app/src/features/attendance/pingTracker.ts:271-282 — expired -> autoStopExpiredDuty; !onDuty -> stopDutyPings",
+     "technician-app/src/features/attendance/pingTracker.test.ts:105-246 — no case seeds a failed or done punch"
+    ],
+    "impact": "After revival the field APK records no on-duty pings, so coverage reads no_data (S12, nothing alerts on it). Techs with a parked clock_in get a 'duty auto-stopped' notification every day. The fix the tech is offered (Retry) corrupts attendance days (O3-F4).",
+    "fix_sketch": "In dutyStatus, consider only punches that are !done && failed_reason === undefined; otherwise fall to the duty cache. Share one pure 'latestLivePunch' helper with useAttendance's clockedIn.",
+    "effort": "S",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F3",
+    "title": "Clock screen and background sampler disagree about duty while a punch is parked",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "ClockScreen's clockedIn ignores parked punches but dutyStatus counts them. During the outage a parked clock_in showed 'not clocked in' with a DID NOT SYNC card, while the sampler recorded location for up to 14 h and dropped every batch on the 404.",
+    "failing_condition": "Backend answers 404; the tech clocks in; the punch parks at once; the screen offers Clock In again while the FGS notification 'on duty' keeps running.",
+    "evidence": [
+     "technician-app/src/features/attendance/useAttendance.ts:155-164 — localPending excludes failed_reason !== undefined",
+     "technician-app/src/features/attendance/useAttendance.ts:189-195 — clockedIn from localPending else serverClockedIn ?? false",
+     "technician-app/src/features/attendance/punch.ts:366-372 — enqueue, then startDutyPings on clock_in regardless of sync outcome",
+     "technician-app/src/features/attendance/pingSync.ts:162-170 — definitive rejection: markPingsDone (dropped)"
+    ],
+    "impact": "Location was collected with no purpose, against a UI that said the tech was off duty. Repeated Clock In taps pile up more parked rows.",
+    "fix_sketch": "Same helper as O3-F2, so both answers come from one pure function. When the latest live punch is parked, stop the sampler and show 'not recorded'.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F4",
+    "title": "Retrying a stale parked punch or crossing lands it on today's attendance day",
+    "severity": "P1",
+    "category": "risk",
+    "claim": "A punch or presence older than the 24 h backdate ceiling gets effective_time = server_now. Pressing Retry after revival on months of parked rows records a burst of clock_in/clock_out/arrive/depart at the moment of the tap.",
+    "failing_condition": "Revived backend; a tech taps Retry on the DID NOT SYNC rows created during the outage (device_time months old).",
+    "evidence": [
+     "backend/app/features/attendance/service.py:1823-1826 — if backdate_limit <= dt <= future_limit: return dt; return server_now",
+     "backend/app/features/attendance/service.py:330 — record_punch effective = self._effective(...)",
+     "backend/app/features/attendance/service.py:408 — record_presence effective = self._effective(...)",
+     "technician-app/src/features/attendance/useAttendance.ts:251-258 — retryFailed clears the failed flag and syncs",
+     "technician-app/src/features/attendance/ClockScreen.tsx:156-158 — Retry button per row, no age warning"
+    ],
+    "impact": "Today's derived day gains phantom first_in/last_out (A5: corrections can only lengthen a day), which feeds payroll. The original days stay empty.",
+    "fix_sketch": "Client: a pure retryAdvice(item, now, ceilingH) makes rows older than the ceiling 'late' and asks for confirmation. Server: for punch/presence past the ceiling, store with a late_sync flag and keep device_time for review instead of re-bucketing into today.",
+    "effort": "M",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O3-F5",
+    "title": "Pending media parked by one 404 is stuck forever with no UI and no retry",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "A definitive rejection (edge 404 included) or five 5xx errors set attempts to MAX_ATTEMPTS, the drain skips such entries, nothing lists them or resets them, and only re-capturing the same slot clears them. Arrival evidence uploaded during the outage never uploads, even after revival.",
+    "failing_condition": "An arrival photo or video is queued with jobToken during the outage; drainPendingMedia calls uploadMedia, which gets a 404.",
+    "evidence": [
+     "technician-app/src/features/media/pendingMedia.ts:103-112 — recordFailure park ? MAX_ATTEMPTS : attempts+1",
+     "technician-app/src/features/media/pendingMedia.ts:140 — if (item.attempts >= MAX_ATTEMPTS) continue; // parked — visible via list",
+     "technician-app/src/features/media/pendingMedia.ts:159-168 — definitive or 413 parks immediately",
+     "grep: listPendingMedia/pendingMediaCount have no importer outside pendingMedia.ts (only ArrivalJobWizard/CreateJobWizard enqueue, usePendingMediaDrain drains)"
+    ],
+    "impact": "Evidence is held but invisible: the 'visible failed list' half of the contract is missing for this queue. The close gate may later demand evidence the phone still holds.",
+    "fix_sketch": "Add retryPendingMedia/discardPendingMedia, surface failed media in a global 'needs attention' list, and with origin classification an edge 404 never parks.",
+    "effort": "M",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F6",
+    "title": "Proxy 5xx during a home-server outage counts toward the poison cap and parks real writes",
+    "severity": "P2",
+    "category": "risk",
+    "claim": "Every ApiError 5xx, including Cloudflare's 502/530 for an unreachable origin, bumps attempts. Over a multi-hour origin outage each queue parks its items one by one as 'gave up after 5 attempts', and they then wait for a manual Retry.",
+    "failing_condition": "Self-hosted origin down (power cut, reboot) while the tunnel edge answers 502/530; the outbox backoff (4 s doubling to 60 s) fires 5+ flushes per item.",
+    "evidence": [
+     "technician-app/src/lib/outboxSync.ts:226-233 — e instanceof ApiError -> bumpAttempts; >= MAX_ATTEMPTS -> markFailed, continue",
+     "technician-app/src/lib/syncClassification.ts:20-24 — MAX_ATTEMPTS = 5, 'A real deploy blip clears well before this'",
+     "technician-app/src/features/attendance/sync.ts:206-215 and presenceSync.ts:209-218 — same counting",
+     "technician-app/src/lib/useOutboxSync.ts:18-19,51-75 — BASE_MS 4000, MAX_MS 60000 backoff while queued > 0"
+    ],
+    "impact": "On the target deployment (a home server in Karachi, load-shedding) ordinary outages turn into manual triage of the failed lists.",
+    "fix_sketch": "Count only 5xx that carry the app marker. A non-app 5xx is connectivity: break with no bump.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "no",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F7",
+    "title": "Headless 401 clears the token but leaves the tech 'signed in' to the privacy gates",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "In a headless context with no AuthProvider, a 401 removes fixflow_token and leaves fixflow_tech. The ping and geofence gates key only on fixflow_tech, so location sampling (to the 14 h cap) and crossing recording (no bound, presence queue uncapped) continue for a signed-out tech, and every later headless sync goes out unauthenticated.",
+    "failing_condition": "First post-revival request from a headless task with an expired token (30-day JWT, months since last login).",
+    "evidence": [
+     "technician-app/src/lib/api.ts:149-152 — 401: await setToken(null); onUnauthorized?.()",
+     "technician-app/src/features/auth/AuthContext.tsx:176-186 — the only remover of TECH_KEY and caller of stopDutyPings is registered by the mounted provider",
+     "technician-app/src/features/attendance/pingTracker.ts:59-66,271-275 — getSignedInTechId reads TECH_KEY only; 'nobody signed in' stop never triggers",
+     "technician-app/src/features/attendance/geofence.ts:136-145,235-236 — same gate for crossings",
+     "technician-app/src/features/auth/AuthContext.tsx:153-166 — restore with token null but tech present keeps the tech and still calls setOutboxPrincipal/resumeOutbox",
+     "backend/app/core/config.py:154 — jwt_expire_minutes = 60*24*30"
+    ],
+    "impact": "A location-privacy layer is bypassed after the session ends, and presence grows without bound until re-login.",
+    "fix_sketch": "Move auth-loss into lib/auth: clearSession() removes token and tech together and is called from request() on every 401, whether or not a handler is registered. The privacy gates require a token as well as a tech. Restore drops a tech that has no token.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F8",
+    "title": "A 401 on a live tap discards the write instead of pausing it",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "sendOrQueue rethrows a 401 without enqueuing, and the 401 handler unmounts the authed stack. A cash, completion or punch write tapped with an expired token is lost, even though the flush path preserves queued items across re-login.",
+    "failing_condition": "Online, expired or revoked token (token_version bump via set_pin, or any phone after revival); the tech taps a job write.",
+    "evidence": [
+     "technician-app/src/lib/outboxSync.ts:283-287 — 'A 401 means the session just ended — surface that too'; throw e",
+     "technician-app/src/lib/outboxSync.ts:214-216 — flush path pauses and keeps items",
+     "technician-app/App.tsx:151 — isAuthenticated ? <AuthedApp/> : <LoginScreen/>",
+     "technician-app/src/features/auth/AuthContext.tsx:177-180 — handler clears tech, so the screen unmounts"
+    ],
+    "impact": "The '401 → pause' contract holds for queued writes only, not for the one the tech just made. At revival this hits the very first write on every phone.",
+    "fix_sketch": "On a 401 in sendOrQueue, enqueue (tagged with the current techId) then return {status:'queued'} or throw a typed AuthPaused, so the write survives re-login.",
+    "effort": "S",
+    "confidence": 0.75,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F9",
+    "title": "Presence, ping and offline-punch queues lack app-wide drain triggers",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "Pending crossings drain only on the next crossing or a Retry tap, pings only on the next on-duty fix, and queued punches only while ClockScreen is mounted or on the next punch. An item queued without network before a weekend reaches the server after the 24 h (punch/presence) or 48 h (ping) window: punches and crossings land on the wrong day and pings are rejected and pruned.",
+    "failing_condition": "No network at Friday clock-out or depart; the next crossing, ClockScreen visit or shift is Monday.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:211 — void syncPresence(techId) only after recordCrossing",
+     "technician-app/src/features/attendance/useAttendance.ts:255-258 — syncPresence otherwise only inside retryFailed",
+     "technician-app/src/features/attendance/pingTracker.ts:304 — syncPings only from handlePingUpdate",
+     "technician-app/src/features/attendance/ClockScreen.tsx:36 — sole caller of useAttendance(), so syncNow's NetInfo/AppState/backoff triggers exist only while ClockScreen is mounted",
+     "technician-app/App.tsx:65-75 — AuthedStack drains travel only",
+     "backend/app/features/attendance/service.py:1823-1826 — stale punch/presence re-bucketed to server_now"
+    ],
+    "impact": "Ranked contribution: about zero to the Railway outage (phones were online, so items parked or dropped at capture), moderate for real no-signal days and for revival. It turns a late delivery into a wrong-day record or lost pings.",
+    "fix_sketch": "One pure drainAll(techId) run on AuthedStack mount, AppState active, NetInfo connected and after login. It calls flushOutbox, drainPendingMedia, syncNow, syncPresence, syncPings and syncTravelSamples in a fixed order.",
+    "effort": "S",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F10",
+    "title": "Stable location outbox id deletes an unsent punch from an earlier trip",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "Location punches are queued under id location:<kind>:<jobId>, and enqueue replaces by id. A second trip's depart or arrive made before the first trip's punch synced silently overwrites the first, and that first punch was never sent.",
+    "failing_condition": "Two visits to the same job (reschedule, part pickup) while offline or with the backend unreachable.",
+    "evidence": [
+     "technician-app/src/features/jobs/TravelScreen.tsx:171-177 — makeItem({ id: `location:${kind}:${id}`, kind: 'location', ... body with fresh client_id })",
+     "technician-app/src/lib/outbox.ts:155-161 — enqueue: idx !== -1 -> items[idx] = item"
+    ],
+    "impact": "Trip 1 disappears from derive_route and the fuel line. This breaks the never-delete rule for a kind the server already dedupes by client_id.",
+    "fix_sketch": "Key location items by body.client_id (unique per tap). Server client_id dedupe keeps replays safe.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F11",
+    "title": "L1 confirmed and refined: a queued depart hides ARRIVE; a re-tap replaces the depart and moves it in time",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "inTransit counts server job.locations, and a queued depart only sets an info line; TravelScreen never re-reads on reconcile. Offline, the ARRIVE button is never offered, a second START TRAVEL replaces the queued depart with a later device_time (it does not add a duplicate, which corrects the audit text), and the breadcrumb sampler runs until MAX_TRAVEL_MS.",
+    "failing_condition": "Depart punch queued (no network); the tech stays on TravelScreen or returns to it.",
+    "evidence": [
+     "technician-app/src/features/jobs/TravelScreen.tsx:113-117 — inTransit = departs > arrives from job.locations",
+     "technician-app/src/features/jobs/TravelScreen.tsx:180-181 — queued: setInfo only, job not updated",
+     "technician-app/src/features/jobs/TravelScreen.tsx:448-466 — !inTransit renders START TRAVEL; ARRIVE only in the else branch",
+     "technician-app/src/features/jobs/TravelScreen.tsx:198-205 — startJobTravel on ok=true (queued counts)",
+     "technician-app/src/lib/outbox.ts:155-161 — same-id enqueue replaces"
+    ],
+    "impact": "No arrival punch can be made offline from the travel flow, so arrival evidence, the anchor and the fuel record are distorted. Duplicates only arise through the known flush/live race.",
+    "fix_sketch": "Derive inTransit from server locations merged with the queued location items for this job (pure helper like useAttendance's merge) and subscribe to onJobsReconciled.",
+    "effort": "M",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F12",
+    "title": "L10 confirmed: a failed offline create, and its voice notes, cannot be reached",
+    "severity": "P2",
+    "category": "gap",
+    "claim": "A queued create is keyed jobId=clientId and no screen is mounted with a client UUID, so a create parked by the flush (for example on the edge 404) is visible only as the banner's 'need attention (see the job)' count. Its voice notes sit in pendingMedia forever because the roster join never resolves.",
+    "failing_condition": "Job created in airplane mode during the outage; reconnect; the flush gets a 404 and calls markFailed.",
+    "evidence": [
+     "technician-app/src/features/jobs/create-job/CreateJobWizard.tsx:160-162 — makeItem({ id: `create:${clientId}`, kind: 'create', jobId: clientId, ... })",
+     "technician-app/src/lib/outbox.ts:243-245 — itemsForJob filters on jobId",
+     "technician-app/App.tsx:44-45 — banner '…need attention (see the job)'",
+     "technician-app/src/features/media/pendingMedia.ts:141-142 — no token, continue (forever)",
+     "grep: JobsListScreen imports no outbox API"
+    ],
+    "impact": "An intake (customer, appliance, problem) is held but unrecoverable without adb.",
+    "fix_sketch": "Add a global Needs-attention screen from a pure selector over loadOutbox() plus pending media, with Retry/Discard, reachable from the banner.",
+    "effort": "M",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F13",
+    "title": "Discard copy tells the tech the server rejected an edge-404 record",
+    "severity": "P2",
+    "category": "risk",
+    "claim": "failureReason falls back to 'rejected (404)' when the body has no FastAPI detail, and the Discard dialog says 'The server rejected it: rejected (404)'. That invites permanent deletion of punches and crossings the app server never saw.",
+    "failing_condition": "Any row parked during the outage; the tech opens Discard.",
+    "evidence": [
+     "technician-app/src/lib/syncClassification.ts:35-38 — detail ?? `rejected (${e.status})`",
+     "technician-app/src/features/attendance/ClockScreen.tsx:160-166 — 'will be permanently removed. The server rejected it: ${f.reason}.'",
+     "technician-app/src/features/jobs/JobDetailScreen.tsx:733 — same wording for outbox items"
+    ],
+    "impact": "Months of outage rows with one-by-one Discard is the likeliest way the fleet actually lost records.",
+    "fix_sketch": "Record whether the rejection came from the app. Non-app rows say 'could not reach the FixFlow server' and offer no Discard until an app-origin answer exists.",
+    "effort": "S",
+    "confidence": 0.75,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F14",
+    "title": "Paused or unauthenticated queues are never shown as such",
+    "severity": "P3",
+    "category": "gap",
+    "claim": "isOutboxPaused has no consumer, and the punch, presence, ping and travel syncs keep no pause flag. The only states a tech can see are the login screen or the amber 'saved offline — syncing when reconnected' banner, which also shows when the network is fine and the server is the problem.",
+    "failing_condition": "Token dead or server unreachable while network is up.",
+    "evidence": [
+     "technician-app/src/lib/outboxSync.ts:172-174 — isOutboxPaused exported; grep finds no importer",
+     "technician-app/App.tsx:44-46 — banner text keyed only on queued/failed counts",
+     "technician-app/src/features/attendance/presenceSync.ts:202 — 401 break, no flag"
+    ],
+    "impact": "Nobody, tech or owner, could tell that the backend was gone rather than the signal.",
+    "fix_sketch": "Keep one engine-wide status ('ok' | 'offline' | 'server-unreachable' | 'signed-out') set by the classifier and render it in the banner.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O3-F15",
+    "title": "The two drains are unordered; the uploaded voice id is never written back to the completion",
+    "severity": "P3",
+    "category": "defect",
+    "claim": "A completion queued with a pending voice clip flushes with the placeholder '[voice summary pending upload]', and the media id from the later upload is never patched in. drainPendingMedia's in-flight guard also drops a trigger that arrives mid-drain without re-running, so a create that lands during a drain leaves its voice notes waiting for the next foreground or reconnect.",
+    "failing_condition": "Completion and remark voice note both queued; the network returns; flushOutbox lands the completion first.",
+    "evidence": [
+     "technician-app/src/features/jobs/arrival-job/completionFromWizard.ts:25-30,36 — placeholder when voiceUri && !remarkMediaId",
+     "technician-app/src/features/media/pendingMedia.ts:121-126,153 — draining guard returns; success only removeEntryIfUri (no back-fill)",
+     "technician-app/src/lib/outboxSync.ts:210-212 — removeItem fires onOutboxChange which triggers drainPendingMedia, with no ordering",
+     "technician-app/src/features/media/usePendingMediaDrain.ts:24 — onOutboxChange(() => void drainPendingMedia())",
+     "LT-1: only src/features/media/pendingMedia.test.ts references drainPendingMedia; flushOutbox only in outboxSync.test.ts and wizardState.test.ts"
+    ],
+    "impact": "The bill reviewer never gets the audio link, and voice notes upload late.",
+    "fix_sketch": "After a remark clip lands, enqueue a completion patch, or let the server link media by phase. Give the drain a rerun-requested flag.",
+    "effort": "M",
+    "confidence": 0.75,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F16",
+    "title": "T44-mobile-2 confirmed: an offline-painted job list never repaints on reconcile",
+    "severity": "P3",
+    "category": "defect",
+    "claim": "When the list is painted from the persistent cache, the memo is null, so reconcile's memo patch is a no-op and the onJobsReconciled repaint finds nothing. Meanwhile patchCachedJobsListRow spreads a full JobDetail into the cached list row.",
+    "failing_condition": "Cold start with the backend unreachable; a queued write then lands.",
+    "evidence": [
+     "technician-app/src/lib/jobsCache.ts:71 — data[idx] = { ...data[idx], ...row }",
+     "technician-app/src/lib/jobsMemo.ts:39-40 — if (!last) return;",
+     "technician-app/src/features/jobs/JobsListScreen.tsx:119-122 — cache-painted path; 146-149 repaint only from peekJobsList()"
+    ],
+    "impact": "Stale roster until refocus; the list cache grows events and payments.",
+    "fix_sketch": "On reconcile, re-read loadJobsList when the memo is empty, and patch only Job fields.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O3-F17",
+    "title": "A corrupt v2 outbox or attendance queue is overwritten with [] on the next write",
+    "severity": "P3",
+    "category": "risk",
+    "claim": "A JSON parse failure reads as an empty queue, and the next mutate saves that empty array over the bytes. Only the legacy v1 outbox store is preserved on corruption.",
+    "failing_condition": "The KEY_V2 or attendance.queue.v1 value is unparseable (partial write or manual edit), then any enqueue or mark runs.",
+    "evidence": [
+     "technician-app/src/lib/outbox.ts:104-109 — catch { items = []; }",
+     "technician-app/src/lib/outbox.ts:146-149 — mutate saves fn(load())",
+     "technician-app/src/lib/outbox.ts:123-126 — v1 corrupt bytes preserved (contrast)",
+     "technician-app/src/features/attendance/queue.ts:54-58,66-70 — same pattern"
+    ],
+    "impact": "Silent loss of queued cash or punches. Low likelihood on SQLite-backed AsyncStorage.",
+    "fix_sketch": "On a parse failure, copy the raw bytes to <key>.corrupt.<ts> before any save, as v1 does.",
+    "effort": "S",
+    "confidence": 0.6,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O3-F18",
+    "title": "L7 confirmed: sendPunch reports a queued arrival as 'Arrival recorded'",
+    "severity": "P3",
+    "category": "defect",
+    "claim": "sendPunch returns true for both sent and queued, so arrive() stops travel, shows 'Arrival recorded' and opens the wizard on a punch that has not landed.",
+    "failing_condition": "Arrive punch queued (no network or 5xx).",
+    "evidence": [
+     "technician-app/src/features/jobs/TravelScreen.tsx:158-188 — 'True = landed or queued'",
+     "technician-app/src/features/jobs/TravelScreen.tsx:233-252 — stopJobTravel then Alert 'Arrival recorded'"
+    ],
+    "impact": "Misleading confirmation. Stopping travel on a queued arrival is arguably right.",
+    "fix_sketch": "Return the SendOutcome and word the alert as 'Arrival saved — will sync'.",
+    "effort": "S",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O3-F19",
+    "title": "C3 confirmed with a narrower trigger: the arrival anchor is the first-ever arrive punch",
+    "severity": "P3",
+    "category": "defect",
+    "claim": "With no nav param and no saved anchor, the on-site clock starts at the FIRST arrive_customer punch of the job, which for a re-visit can be days old. TravelScreen does pass arrivalTime: Date.now(), so the stale anchor appears only when the wizard opens from elsewhere.",
+    "failing_condition": "Re-visit job; the wizard is opened from JobDetail after the draft was cleared.",
+    "evidence": [
+     "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:123-127 — job?.locations.find(l => l.kind === 'arrive_customer')",
+     "technician-app/src/features/jobs/TravelScreen.tsx:248 — arrivalTime: Date.now() on the travel path"
+    ],
+    "impact": "Inflated labour time on a re-visit bill, bounded only by the server cap.",
+    "fix_sketch": "Use the latest arrive punch and bound its age.",
+    "effort": "S",
+    "confidence": 0.75,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O3-F20",
+    "title": "C4 confirmed: no server-evidence fallback for after-video or remark",
+    "severity": "P3",
+    "category": "gap",
+    "claim": "Only the before/condition captures can be satisfied from server evidence. A lost draft therefore re-demands the after-video and remark even when the server holds them.",
+    "failing_condition": "Draft lost after the after-video uploaded.",
+    "evidence": [
+     "technician-app/src/features/jobs/arrival-job/arrivalDraft.ts:94-97 — return evidence.before >= 2 && evidence.condition >= 2",
+     "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:134-136 — only serverCaptures is derived"
+    ],
+    "impact": "Needless reshoot; resume-from-server-truth is incomplete.",
+    "fix_sketch": "Add after/remark counts to the evidence predicate.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O3-F21",
+    "title": "The offline banner counts other technicians' items",
+    "severity": "P3",
+    "category": "defect",
+    "claim": "outboxCounts does not filter by tech, so on a shared phone the banner shows items this login can neither see nor flush.",
+    "failing_condition": "Shared device; tech A has failed items; tech B logs in.",
+    "evidence": [
+     "technician-app/src/lib/outbox.ts:234-240 — counts over all items",
+     "technician-app/App.tsx:58 — banner uses useOutboxSync counts"
+    ],
+    "impact": "A permanent 'needs attention' badge that cannot be cleared.",
+    "fix_sketch": "Filter counts by getOutboxPrincipal().",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   }
+  ],
+  "backlog": [
+   {
+    "title": "A missing selfie file makes uploadAsync throw a non-ApiError, which counts as connectivity and blocks all later punches forever",
+    "file_line": "technician-app/src/features/attendance/sync.ts:217,298",
+    "severity": "P3"
+   },
+   {
+    "title": "Presence queue has no cap; with the headless-401 strand it grows without bound",
+    "file_line": "technician-app/src/features/attendance/presenceQueue.ts:67-73",
+    "severity": "P3"
+   },
+   {
+    "title": "Revival against a fresh (non-restored) DB: every queued job write 404s with a FastAPI detail and parks legitimately; needs an owner decision, not code",
+    "file_line": "technician-app/src/lib/outboxSync.ts:218-221",
+    "severity": "P2"
+   },
+   {
+    "title": "Stale JWTs may validate against a fresh DB that has the same seed ids and token_version (if the same secret is reused); verify in the identity deps",
+    "file_line": "backend/app/core/config.py:154",
+    "severity": "P2"
+   },
+   {
+    "title": "No bulk Retry/Discard; months of outage rows have to be handled one by one",
+    "file_line": "technician-app/src/features/attendance/ClockScreen.tsx:147-166",
+    "severity": "P3"
+   },
+   {
+    "title": "Ping queue drained while off duty only at the next on-duty fix; the 1000-row cap evicts silently",
+    "file_line": "technician-app/src/features/attendance/pingQueue.ts:62-79",
+    "severity": "P3"
+   },
+   {
+    "title": "AuthProvider restore sets the outbox principal and resumes it for a tech with no token",
+    "file_line": "technician-app/src/features/auth/AuthContext.tsx:164-165",
+    "severity": "P3"
+   }
+  ],
+  "challenges_settled": [
+   {
+    "settled_id": "S7",
+    "claim": "'Punch sync and travel sync do have triggers' holds for travel (App-wide in AuthedStack), but punch-sync triggers exist only while ClockScreen is mounted. Its only consumer is useAttendance(); outside it, syncNow runs only from punch() itself. A clock-out queued with no network drains at the next ClockScreen visit or the next punch.",
+    "evidence": [
+     "technician-app/src/features/attendance/ClockScreen.tsx:36 — const att = useAttendance(); (sole call site, grep)",
+     "technician-app/src/features/attendance/punch.ts:372 — void syncNow(input.techId)",
+     "technician-app/App.tsx:65-75 — AuthedStack drains travel only"
+    ]
+   },
+   {
+    "settled_id": "S9",
+    "claim": "The S9 line 'punch/presence/jobs syncs park the item' is true for already-queued items only. A job write tapped while online is never parked on a definitive status (404 included): sendOrQueue rethrows and the write is not persisted. Pending media also parks with no visible list and no retry.",
+    "evidence": [
+     "technician-app/src/lib/outboxSync.ts:287",
+     "technician-app/src/features/media/pendingMedia.ts:140,159-168"
+    ]
+   },
+   {
+    "settled_id": "S8",
+    "claim": "Extension, not refutation: the headless strand also leaves the ping and geofence privacy gates open, because both key on fixflow_tech alone. It could not happen during the outage (the edge never 401s), but it is likely at revival because JWTs live 30 days.",
+    "evidence": [
+     "technician-app/src/features/attendance/pingTracker.ts:59-66,271-275",
+     "technician-app/src/features/attendance/geofence.ts:136-145,235-236",
+     "backend/app/core/config.py:154"
+    ]
+   }
+  ],
+  "design": "WHAT THE FLEET EXPERIENCED, QUEUE BY QUEUE (code on main; field APK unconfirmed). Phones were online and the API answered Railway's edge 404 with no FastAPI detail.\n(1) Jobs outbox: items queued before the outage parked as 'rejected (404)' on the first flush, with a red banner 'need attention (see the job)'. Every new job write tapped online was refused with an error and never queued. Only airplane-mode writes queued, and those then parked on reconnect.\n(2) Punches: kept, but parked at capture. The ClockScreen showed 'DID NOT SYNC — rejected (404)' with Retry/Discard and 'not clocked in', while the sampler ran on the parked clock_in for up to 14 h.\n(3) Presence: kept, parked at capture, adding 2-4 more DID NOT SYNC rows per day; the queue has no cap.\n(4) Pings: dropped. Every batch was marked done on the 404, so nothing from the outage survives.\n(5) Travel: none recorded. The depart punch was refused, so the sampler never armed. Any samples already queued were dropped on the 404.\n(6) Pending media: parked forever with no UI.\n(7) Read caches: lists and details served the 'offline copy' stamp. Login was impossible.\nAfter revival, the same APK would see: on-duty pings killed by the parked punches (O3-F2), Retry stamping months-old punches at server_now (O3-F4), and every token expired (30 days), so 401s with the headless strand (O3-F7) and live-tap loss (O3-F8). The URL is baked into the preview APK, so nothing drains until a new APK is installed as an in-place update (same keystore, W0) or the Railway hostname is reclaimed. An uninstall wipes every queue.\n\nMINIMAL HONEST-ENGINE CHANGES, ORDERED BY VALUE, each with the pure-module Jest test that pins it.\n1. Origin-aware classification. Backend: in RequestIdMiddleware (core/request_id.py:41-49), also stamp an app-only header (e.g. X-FixFlow-Api: 1) on every response, including unknown-route 404s. Do not reuse X-Request-ID: it echoes an inbound proxy value. Client: ApiError keeps fromApp = header present, or, for older backends, a JSON object body with a 'detail' key. isDefinitiveRejection and the MAX_ATTEMPTS bump require fromApp; any non-app status, 4xx or 5xx (edge 404, Cloudflare 403/502/530, a captive-portal page), is connectivity: break, no park, no drop, no count. Tests: new syncClassification.test.ts (404 without marker is not definitive; with marker it is; a 530 without marker does not count as an attempt); per-queue cases in outboxSync.test, sync.test, presenceSync.test, pingSync.test, travelSync.test and pendingMedia.test asserting an edge 404 leaves the item queued and unchanged. No existing test pins 404 (grep), so nothing breaks.\n2. sendOrQueue keeps the write on non-app errors and on 401: enqueue tagged with the tech, return queued (or a typed AuthPaused). Test (outboxSync.test): a live 404 without marker yields status 'queued' and the item is stored; a live 401 stores the item and leaves the flush paused.\n3. Duty truth from live punches only: one pure latestLivePunch(queue, techId) (excluding done and parked) used by both dutyStatus and useAttendance.clockedIn. Tests (pingTracker.test): a parked clock_out plus a clockedIn cache still records the ping; a parked clock_in alone yields off duty without the 'expired' notification; plus a pure helper test of the clockedIn derivation.\n4. Session loss is total: clearSession() in lib/auth removes token and tech on every 401 whether or not a handler is registered; the privacy gates require a token; restore drops a tech that has no token. Tests: auth.test (401 path clears both keys); pingTracker.test and geofence.test (tech present, token absent: nothing recorded and the sampler stops).\n5. One drainAll(techId) orchestrator run on mount, AppState active, NetInfo connected and after login, in the order flushOutbox, drainPendingMedia (with rerun-if-requested), syncNow, syncPresence, syncPings, syncTravelSamples. Test: drainAll.test with mocked syncs asserts every queue is called, in order, and is skipped without a tech.\n6. Stale-replay honesty: a pure retryAdvice(item, now, ceilingH) marks rows past the server ceiling as 'late' and the UI asks before retrying. Server: store late punches/presence with device_time and a late_sync flag excluded from derive, instead of re-bucketing them into today (pytest against real Postgres). Client test: retryAdvice boundaries at 24 h and 48 h.\n7. Recovery surfaces: retryPendingMedia/discardPendingMedia, and a global Needs-attention selector over outbox items whose job is unreachable (failed creates) plus parked media. Discard copy distinguishes 'server refused' from 'could not reach the server'. Tests: pendingMedia.test (a parked item is retried after reset); a pure selector test that a failed create is listed.\n8. Location outbox id per tap (body.client_id) so trips never overwrite each other, and a pure travel-state merge of server locations with queued location items for inTransit. Tests: outbox.test (two departs for one job both kept); a merge test (a queued depart reads as inTransit).\n9. Corrupt-store preservation for v2 and attendance queues (copy the raw bytes aside before save). Test: queue.test and outbox.test (an unparseable value survives under the .corrupt key after an enqueue).\n10. Engine status (offline / server-unreachable / signed-out) driving the banner text. Test: a pure reducer test from classification outcomes to status.",
+  "open_questions": [
+   "The G1 gate record does not exist at docs/program/G1-discovery-gate-2026-11-01.md (no docs/program/ directory); this pass relied on the settled facts as given.",
+   "Exact shape of Railway's edge 404 (body JSON fields, any X-Railway-* fallback header). Fix step 1 does not depend on it, but a stopgap in-APK heuristic would.",
+   "Does an expired JWT produce 401 in identity deps (not read)? O3-F7 and O3-F8 likelihood at revival assume it does.",
+   "Was the field APK built from the preview profile (Railway URL in eas.json:21)? Can it be updated in place (same keystore, W0) so AsyncStorage queues survive the fixed APK?",
+   "Will the revived DB be a restore of old prod (job ids and tokens valid) or fresh (every queued job write legitimately 404s with a detail)?",
+   "How does fetchActiveFence/ensureGeofenceMonitoring react to a 404 (keep the cached fence or stop geofencing)? geofence.ts was read only at 132-150 and 180-256.",
+   "Does NetInfo.addEventListener fire once immediately on subscribe in the pinned netinfo version? This decides whether useAttendance's mount effect actually syncs.",
+   "Files read beyond the brief (one hop): technician-app/App.tsx, src/lib/useOutboxSync.ts, src/features/media/usePendingMediaDrain.ts, src/features/attendance/useAttendance.ts, ClockScreen.tsx, todayCache.ts, pingTracker.ts (ranges), geofence.ts (ranges), src/features/jobs/JobsListScreen.tsx (range), src/lib/jobsMemo.ts (range), arrival-job/ArrivalJobWizard.tsx (ranges), arrivalDraft.ts (range), completionFromWizard.ts (range), technician-app/eas.json, src/lib/config.ts (grep), backend/app/features/attendance/service.py (1160-1185, 1800-1845, grep), backend/app/core/request_id.py, backend/app/core/config.py (grep), backend/app/main.py (grep), docs/lifecycle-audit-followups-2026-07.md (sections 1, 7, 10, test gaps)."
+  ]
+ },
+ "citations": {
+  "rows": [
+   {
+    "finding_id": "O3-F1",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "All quotes found at or within 1-2 lines. a31924a only added the Sentry DSN to eas.json (Railway URL line still present). 24184b2 changed only the consent default in CreateJobWizard.tsx; the 'Couldn't create the job' alert and return are unchanged."
+   },
+   {
+    "finding_id": "O3-F2",
+    "status": "MOVED",
+    "fixed_by": "",
+    "note": "pruneSettled is at technician-app/src/features/attendance/sync.ts:100-113, not 236-249; it still removes only i.done. pingTracker.ts dutyStatus is at 119-124, queue.ts parked/done at 101-111, pingTracker.ts stop paths at 272-283. The test file has no failed/done case (257 lines). No commit changed these files."
+   },
+   {
+    "finding_id": "O3-F3",
+    "status": "MOVED",
+    "fixed_by": "",
+    "note": "punch.ts enqueue then startDutyPings is at lines 51-56, not 366-372. pingSync.ts markPingsDone on a definitive rejection is at 63-71, not 162-170. useAttendance.ts localPending is at 157-163 and clockedIn at 189-196."
+   },
+   {
+    "finding_id": "O3-F4",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "_effective is at backend/app/features/attendance/service.py:1815-1829 (the backdate_limit check is at 1827-1829). Call sites are at 330 and 408. useAttendance.ts retryFailed is at 251-263 and the ClockScreen.tsx Retry button at 157-158."
+   },
+   {
+    "finding_id": "O3-F5",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "pendingMedia.ts recordFailure is at 103-108, the MAX_ATTEMPTS skip at 140, and the definitive/413 park at 155-168. listPendingMedia is referenced only in pendingMedia.test.ts outside pendingMedia.ts; pendingMediaCount has no importer."
+   },
+   {
+    "finding_id": "O3-F6",
+    "status": "MOVED",
+    "fixed_by": "",
+    "note": "The attendance counting is at attendance/sync.ts:70-76 (not 206-215) and presenceSync.ts:75-81 (not 209-218). outboxSync.ts 226-233 and syncClassification.ts 19-24 are correct. useOutboxSync.ts BASE_MS/MAX_MS are at 18-19 and the backoff doubling at 66."
+   },
+   {
+    "finding_id": "O3-F7",
+    "status": "MOVED",
+    "fixed_by": "",
+    "note": "api.ts 401 handling (setToken(null); onUnauthorized?.()) is at 112-113, not 149-152. The AuthContext.tsx handler registration is at 66-74 (not 176-186) and restore is at 46-54 (not 153-166). pingTracker.ts getSignedInTechId (59-66) and geofence.ts (136-145, 235-236) are as cited. config.py:154 jwt_expire_minutes is correct."
+   },
+   {
+    "finding_id": "O3-F8",
+    "status": "MOVED",
+    "fixed_by": "",
+    "note": "outboxSync.ts 283-287 and 214-216 and App.tsx:151 are correct. The AuthContext.tsx 401 handler that clears the tech is at 66-71, not 177-180."
+   },
+   {
+    "finding_id": "O3-F9",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "geofence.ts:211, pingTracker.ts:304, useAttendance.ts:255-258, ClockScreen.tsx:36 (the only useAttendance() caller), App.tsx:64-73 (travel only) and service.py:1827-1829 all found."
+   },
+   {
+    "finding_id": "O3-F10",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "TravelScreen.tsx:171-178 (id `location:${kind}:${id}`) and outbox.ts:155-161 (same-id replace) are as cited."
+   },
+   {
+    "finding_id": "O3-F11",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "inTransit is at TravelScreen.tsx:117, the queued setInfo at 180, startJobTravel at 203, and the !inTransit branch at 448 with START TRAVEL at 461. The enqueue replace is at outbox.ts:155-161."
+   },
+   {
+    "finding_id": "O3-F13",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "failureReason is at syncClassification.ts:35-38 and the ClockScreen.tsx discard text is at 164. JobDetailScreen.tsx:733 exists but its wording is 'It was rejected: ${i.failedReason ?? \"unknown reason\"}', not identical to the ClockScreen text. da988e2 touched that file but not that line."
+   },
+   {
+    "finding_id": "O3-F15",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "The placeholder is at completionFromWizard.ts:25-30. The pendingMedia.ts draining guard is at 114-123 and removeEntryIfUri at 153. outboxSync.ts removeItem then landedListeners is at 209-211. usePendingMediaDrain.ts onOutboxChange is at about line 24. drainPendingMedia is referenced only in pendingMedia.test.ts, pendingMedia.ts and usePendingMediaDrain.ts."
+   },
+   {
+    "finding_id": "O3-F16",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "jobsCache.ts patchCachedJobsListRow is at about 70, jobsMemo.ts `if (!last) return;` is at 39-40, and JobsListScreen.tsx cache-paint is at about 119-125 with the repaint from peekJobsList() at about 146-149."
+   },
+   {
+    "finding_id": "O3-F17",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "outbox.ts catch { items = []; } is at 104-109, mutate at about 143-147, v1 corrupt-bytes preservation at about 123-126. attendance/queue.ts loadQueue catch return [] is at 54-58 and mutate at 66-70."
+   },
+   {
+    "finding_id": "O3-F18",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "TravelScreen.tsx sendPunch ('True = landed or queued') is at 158-188 and the stopJobTravel then 'Arrival recorded' alert at 233-252."
+   },
+   {
+    "finding_id": "O3-F19",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "ArrivalJobWizard.tsx arrive_customer lookup is at 123-127 (changed by da988e2 but not these lines). TravelScreen.tsx:247 passes arrivalTime: Date.now()."
+   },
+   {
+    "finding_id": "O3-F21",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "outbox.ts outboxCounts is at about 235-240 with no tech filter, and App.tsx:58 uses useOutboxSync counts."
+   }
+  ]
+ },
+ "verdicts": [
+  {
+   "finding_id": "O3-F1",
+   "verdict": "CONFIRMED",
+   "already_fixed_by": "",
+   "corrected_severity": "P2",
+   "reasoning": "I traced the path myself and it holds. In technician-app/src/lib/api.ts:115-118, request() throws ApiError(status) for every non-OK response. Nothing checks whether a 404 came from FastAPI (a JSON body with a `detail` key) or from Railway's edge. In outboxSync.ts:267-271, sendOrQueue only queues without trying when NetInfo says isConnected === false. Otherwise it calls send(), and at :287 it rethrows any isDefinitiveRejection error. syncClassification.ts:18 puts 404 in DEFINITIVE_4XX, so an edge 404 is rethrown and enqueue (:290) never runs. I checked every caller of sendOrQueue: CreateJobWizard:164-171 (Alert, then return before queueVoiceNotes), TravelScreen sendPunch:182-185 (returns false, so startJobTravel never runs), TravelScreen savePin:277-278, CompleteJobScreen:227-237, ArrivalJobWizard:242-248, ArrivalJobBillScreen negotiate/payment catches, JobDetailScreen note/ready/transition/void, and closeJobWithVideo:121. All of them catch and show an error. None of them queues. I probed the preview URL baked into eas.json:21 live. Both POST /api/jobs and GET /api/health return HTTP 404 with body {\"status\":\"error\",\"code\":404,\"message\":\"Application not found\"}. That body has no `detail` key, so the tech sees \"rejected (404)\". No commit since 906b990 touches this path: a31924a only changed eas.json env, 24184b2 only the consent default, and da988e2 the completion guards. One scoping note: the production profile's URL (api.fixflow.example) fails at DNS with a TypeError, not an ApiError, so those writes would queue. That URL is outside the stated failing condition, which needs the URL to answer a 404, so this does not narrow the claim. I rated it P2, not P1, for two reasons. First, the failure is loud, not silent: every site shows an Alert or error text, and ArrivalJobWizard keeps its AsyncStorage draft on the throw path. Second, queuing alone would not have saved these writes. flushOutbox (outboxSync.ts:218-221) treats the same edge 404 as definitive and parks the item as failed at the first flush, so a fix has to tell the two kinds of 404 apart in both paths. The real harm is that taps made during the outage leave no durable record, and punches and their timestamps are lost unless the tech taps again later.",
+   "what_would_settle_it": "Already settled by code trace plus live probe. To reproduce: write a Jest test in outboxSync.test that mocks NetInfo.fetch to {isConnected:true} and jobsApi.create to reject with new ApiError('POST','/api/jobs',404,'{\"status\":\"error\",\"code\":404,\"message\":\"Application not found\"}'). Assert that sendOrQueue rejects and that loadOutbox() stays empty.",
+   "evidence": [
+    "technician-app/src/lib/api.ts:115-118 — every !response.ok throws ApiError(method,path,response.status,text); 404s are not split by origin (FastAPI vs edge)",
+    "technician-app/src/lib/outboxSync.ts:268-271 — only net.isConnected === false enqueues without trying",
+    "technician-app/src/lib/outboxSync.ts:287 — if (isDefinitiveRejection(e) || isAuthFailure(e)) throw e; (enqueue at :290 is skipped)",
+    "technician-app/src/lib/syncClassification.ts:18 — DEFINITIVE_4XX = new Set([400, 403, 404, 409, 422])",
+    "technician-app/src/features/jobs/create-job/CreateJobWizard.tsx:164-171 — Alert 'Couldn't create the job' then return, before queueVoiceNotes at :175",
+    "technician-app/src/features/jobs/TravelScreen.tsx:182-185 — catch sets 'Couldn't record the punch — try again.' and returns false; startTravel at :202-205 only calls startJobTravel if ok",
+    "technician-app/src/features/jobs/TravelScreen.tsx:277-278 — savePin catch: 'Couldn't save the pin — try again.' (not queued)",
+    "CompleteJobScreen.tsx:227-237, ArrivalJobWizard.tsx:242-248, ArrivalJobBillScreen.tsx:183/264, JobDetailScreen.tsx:239/264/335/371/404, closeJobWithVideo.ts:121 — every sendOrQueue caller surfaces the throw; none enqueues",
+    "technician-app/eas.json:21 — preview EXPO_PUBLIC_API_URL = https://efficient-tenderness-production-2d09.up.railway.app; config.ts:14 reads it",
+    "Live probe 2026-11-01: POST /api/jobs and GET /api/health on that URL both return HTTP 404 {\"status\":\"error\",\"code\":404,\"message\":\"Application not found\"}",
+    "technician-app/src/lib/outboxSync.ts:218-221 — flushOutbox would also markFailed the same 404, so queuing alone would park rather than land these writes",
+    "git log 906b990..HEAD on technician-app/src/lib, features/jobs, eas.json: only a31924a (Sentry DSN env), 24184b2 (consent default), da988e2 (completion guards) — none touches this path"
+   ]
+  },
+  {
+   "finding_id": "O3-F2",
+   "verdict": "CONFIRMED",
+   "already_fixed_by": "",
+   "corrected_severity": "P1",
+   "corrected_claim": "The claim holds as written, with two refinements. (1) A parked clock_in less than maxDutyHours (14h) old does not stop the sampler straight away. It ends the session early instead, 14h after the parked punch's device_time. A parked clock_out of any age, or a parked clock_in older than 14h, stops the sampler after every landed clock-in. (2) Recovery means clearing every parked punch, either by discarding it or by retrying it successfully, since a landed retry is marked done and pruned. In the clock_in case there is also a side effect: the \"forgot to clock out\" notification fires again every shift, because startDutyPings clears autoStopNotifiedAt whenever a new session starts.",
+   "evidence": [
+    "pingTracker.ts:119-124: `mine = (await loadQueue()).filter((p) => p.tech_id === techId)` keeps all of the tech's punches, with no done or failed_reason filter. The punch with the latest device_time decides. `latest.kind !== \"clock_in\"` returns {onDuty:false}, and an aged device_time returns {expired:true}. The duty cache (line 129) is only consulted when the tech has no queued punches.",
+    "queue.ts:100-112: pendingPunches excludes failed_reason, but loadQueue (used by dutyStatus) does not. markPunchFailed sets failed_reason and leaves done false.",
+    "sync.ts:100-113: pruneSettled filters `i.done` only, so a landed clock_in (done at line 177) is removed and the parked punches stay.",
+    "sync.ts:64-66 + syncClassification.ts:18: a 404/400/403/409/422 on the punch POST parks the punch at once. 5xx parks it after MAX_ATTEMPTS=5. This is how outage punches end up parked.",
+    "removePunches is called only from pruneSettled (done) and discardPunch (user action). retryPunch is called only from useAttendance.ts:254 (user action). Nothing clears parked punches automatically.",
+    "punch.ts:55-57: clock_in calls startDutyPings and then fires syncNow. Once the punch lands and is pruned, the next fix goes to handlePingUpdate (pingTracker.ts:277-284). There, dutyStatus sees the old parked punch as latest and either calls autoStopExpiredDuty or calls stopDutyPings and discards the fix.",
+    "pingTracker.ts:257-262: ensurePingTracking on launch or foreground reads the same dutyStatus, so it will not re-arm the sampler. It also stops a running one.",
+    "pingTracker.ts:174-183: on a new session (cache clockedIn=false) startDutyPings sets autoStopNotifiedAt to undefined, so autoStopExpiredDuty (232-238) calls notifyDutyAutoStopped again every shift when the parked punch is a clock_in older than 14h.",
+    "pingTracker.test.ts: none of the 12 cases (lines 105-246) seeds a punch with failed_reason or done set.",
+    "`git log 906b990..HEAD -- technician-app/src/features/attendance/` is empty, so no commit has touched these paths."
+   ],
+   "reasoning": "I followed the path from clock-in to the next location fix. punch() enqueues a fresh clock_in with device_time=now, starts duty pings and calls syncNow. syncOne marks the punch done once the server records it and its selfie has settled. pruneSettled then removes it, because it removes only done items. After that, the tech's queue holds only parked punches: failed_reason set, done false, device_time older than the fresh punch.\n\ndutyStatus loads the whole queue with loadQueue(), not pendingPunches(), and filters only by tech_id. So the latest parked punch decides. If it is a clock_out, the result is off duty and handlePingUpdate calls stopDutyPings and drops the fix. If it is a clock_in older than 14h, the session is expired and autoStopExpiredDuty runs. Either way the sampler stops. ensurePingTracking reads the same dutyStatus, so it will not re-arm on foreground or launch.\n\nParked punches are only removed when the tech acts (discardPunch, or retryPunch followed by a successful sync), so this happens again every shift. The only gap I found is the edge case where every remaining parked punch is a clock_in younger than 14h. In that case the session runs and then ends early at 14h after that punch, so the failure does not trigger immediately. Remediation is by discard or a successful retry, not by discard alone.\n\nSeverity stays P1. It fails closed on privacy, but ping coverage is silently lost for every shift of every tech whose punches were parked during an outage. A 404 outage parks every punch on the first attempt. Those techs also get a spurious \"forgot to clock out\" notification every shift.",
+   "what_would_settle_it": "Add a Jest case to pingTracker.test.ts. Seed loadQueue with one punch for the signed-in tech: {kind:\"clock_out\", device_time: 90 days ago, failed_reason:\"rejected (404)\", done:false}. Seed the duty cache as {clockedIn:true, startedAt: now}. Call handlePingUpdate([fix]). Expect stopLocationUpdatesAsync to be called and enqueuePing not to be called. Run it again with a parked clock_in 90 days old and expect notifyDutyAutoStopped to be called."
+  }
+ ],
+ "skipped": [
+  "O3-F3",
+  "O3-F4",
+  "O3-F5",
+  "O3-F6",
+  "O3-F7",
+  "O3-F8",
+  "O3-F9",
+  "O3-F10",
+  "O3-F11",
+  "O3-F13",
+  "O3-F15",
+  "O3-F16",
+  "O3-F17",
+  "O3-F18",
+  "O3-F19",
+  "O3-F21"
+ ]
+}

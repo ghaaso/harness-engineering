@@ -1,0 +1,330 @@
+{
+ "area": "S-05 map-web-and-ops",
+ "summary": "Manager web is a Vite SPA (Bearer JWT in localStorage, 401 clears token) served by `serve -s` on $PORT with VITE_API_URL baked at build; fetches are load-once on auth plus a 60 s attendance board poll and 60 s TTL caches. Ops console is a separate zero-dep Node BFF (ops-server.mjs) with a shared-password HMAC session, calling Railway GraphQL, Sentry REST, arbitrary health URLs and the backend /api/ops/* via X-Ops-Proxy-Token. CI has 3 jobs on push/PR to main.",
+ "facts": [
+  {
+   "id": "F1",
+   "fact": "Web auth: JWT kept in localStorage key fixflow_token, attached as Bearer on every request; any 401 clears the token and fires the registered handler (AuthProvider sets user null -> Login). apiUrl defaults to http://localhost:8000 when VITE_API_URL unset. No request timeout and no retry in the web client.",
+   "evidence": [
+    "src/shared/lib/api.js:15 — export const apiUrl = import.meta.env.VITE_API_URL ?? \"http://localhost:8000\"",
+    "src/shared/lib/api.js:17 — const TOKEN_KEY = \"fixflow_token\"",
+    "src/shared/lib/api.js:52-55 — if (res.status === 401) { setToken(null); onUnauthorized?.(); }",
+    "src/shared/lib/api.js:67 — const res = await fetch(`${apiUrl}${path}`, { headers: { ...authHeaders() } })"
+   ],
+   "source_kind": "code",
+   "hypotheses": [
+    "Q4: if apiUrl points at a dead host the web gets a non-401 error and keeps the token"
+   ]
+  },
+  {
+   "id": "F2",
+   "fact": "On mount AuthProvider rehydrates by calling me() when a token exists; a non-manager role token is cleared; any me() error (including network/5xx, not only 401) clears the token and logs out.",
+   "evidence": [
+    "src/app/providers/AuthContext.jsx:19 — const check = getToken() ? me() : Promise.resolve(null);",
+    "src/app/providers/AuthContext.jsx:23-26 — if (principal && principal.role !== \"manager\") { setToken(null); setUser(null);",
+    "src/app/providers/AuthContext.jsx:31-34 — .catch(() => { setToken(null); setUser(null); })"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F3",
+   "fact": "Web login: manager-only enforced client-side after apiLogin (non-manager login throws not-a-manager and token cleared). Logout just clears local token (no server call in AuthProvider).",
+   "evidence": [
+    "src/app/providers/AuthContext.jsx:40-45 — if (tech.role !== \"manager\") { setToken(null); throw new Error(\"not-a-manager\");",
+    "src/app/providers/AuthContext.jsx:51-54 — const logout = useCallback(() => { setToken(null); setUser(null); }"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F4",
+   "fact": "Router: BrowserRouter with basename=BASE_URL; routes are index(Dashboard), technicians, technicians/:id, jobs, jobs/:id, attendance, attendance/variance, attendance/:techId, schedule, troubleshooting, settings. Unauthenticated renders Login (no route).",
+   "evidence": [
+    "src/app/App.jsx:27 — <BrowserRouter basename={import.meta.env.BASE_URL}>",
+    "src/app/App.jsx:30-41 — Route index Dashboard ... settings Settings",
+    "src/app/App.jsx:23 — if (!isAuthenticated) return <Login />;"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F5",
+   "fact": "Fetch on auth (AppContext): once isAuthenticated, fetchJobs() (all jobs) runs once; separately fetchTechnicians() then fetchBoard(ids) runs once. Job-list failure is swallowed (empty state); roster failure toasts 'refresh to retry'. No refetch on focus/visibilitychange found in src.",
+   "evidence": [
+    "src/app/providers/AppContext.jsx:87-91 — if (!isAuthenticated) return undefined; ... fetchJobs().then((rows) => { setJobs(rows.map(mapApiJob))",
+    "src/app/providers/AppContext.jsx:183-196 — fetchTechnicians().then(... fetchBoard(rows.map((t) => t.id))",
+    "src/app/providers/AppContext.jsx:198 — addToast(\"Couldn't load the technician roster — refresh to retry\", \"danger\")"
+   ],
+   "source_kind": "code",
+   "hypotheses": [
+    "Grep for visibilitychange/addEventListener focus in src returned only attendance hook and api files matching setInterval/cached; no focus listener found"
+   ]
+  },
+  {
+   "id": "F6",
+   "fact": "refreshBoard({maxAgeMs}) skips the fetch when the copy is younger than maxAgeMs, dedupes concurrent calls via an in-flight promise, and resolves null when the roster is empty. Attendance page uses BOARD_MAX_AGE_MS=30_000 on open and a setInterval of BOARD_REFRESH_MS=60_000 (silent failures). Interval is only mounted while the attendance hook is mounted.",
+   "evidence": [
+    "src/app/providers/AppContext.jsx:156-164 — if (maxAgeMs > 0 && Date.now() - boardFetchedAtRef.current < maxAgeMs) return Promise.resolve(null);",
+    "src/features/attendance/hooks/useAttendanceData.js:15-16 — const BOARD_REFRESH_MS = 60_000; const BOARD_MAX_AGE_MS = 30_000;",
+    "src/features/attendance/hooks/useAttendanceData.js:49-51 — const id = setInterval(() => { refreshBoard().catch(() => {}); }, BOARD_REFRESH_MS);"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F7",
+   "fact": "requestCache.cached(): TTL + in-flight dedupe, failures never cached. Used for selfie-gaps (attendance, ttl 60_000) and jobs evidence-gaps (ttl 60_000); Dashboard calls both on mount (effect at Dashboard.jsx:54-61). Only three cached/interval sites exist outside ops.",
+   "evidence": [
+    "src/shared/lib/requestCache.js:10-30 — export function cached(key, fn, { ttlMs }) ... failures are never cached",
+    "src/features/attendance/data/attendanceApi.js:68-72 — \"attendance.selfie-gaps\" ... { ttlMs: 60_000 }",
+    "src/features/jobs/data/jobsApi.js:24-26 — cached(\"jobs.evidence-gaps\", ... { ttlMs: 60_000 })",
+    "src/features/dashboard/pages/Dashboard.jsx:56-61 — fetchEvidenceGaps() ... fetchSelfieGaps()"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F8",
+   "fact": "Attendance page also fetches the monthly grid (fetchGrid(month, techIds)) in the same effect on techIds/month change; error from either shows in the error state.",
+   "evidence": [
+    "src/features/attendance/hooks/useAttendanceData.js:29 — Promise.all([refreshBoard({ maxAgeMs: BOARD_MAX_AGE_MS }), fetchGrid(month, techIds)])"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F9",
+   "fact": "Job detail: loadJobDetail fetches one job (uuid or token) and merges it with the timeline; the timeline exists only on this response.",
+   "evidence": [
+    "src/app/providers/AppContext.jsx:116-124 — const detail = await fetchJob(known?.id || idOrToken); return replaceFromDetail(detail);"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F10",
+   "fact": "Demo surfaces and labels: Schedule is labelled 'design preview on sample data' using a local schedule data module; Settings integrations all carry status 'Demo' with text 'Demo — workshop profile editing isn't wired up in this prototype' and 'no live data is exchanged in this prototype'. CLAUDE.md names schedule and workshop-profile form as demo.",
+   "evidence": [
+    "src/features/schedule/pages/Schedule.jsx:19 — Preview — sample data. Visit scheduling isn’t live yet",
+    "src/features/schedule/pages/Schedule.jsx:6 — import { weekDays, assignmentsFor } from \"@features/schedule/data/schedule\"",
+    "src/features/settings/pages/Settings.jsx:12 — status: \"Demo\"",
+    "src/features/settings/pages/Settings.jsx:58 — Demo — workshop profile editing isn’t wired up in this prototype.",
+    "src/features/settings/pages/Settings.jsx:96 — These are demonstration placeholders — no live data is exchanged in this prototype."
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F11",
+   "fact": "Dockerfile.web: two-stage, node:20-alpine build then node:20-alpine serve; installs global `serve@14` and runs `serve -s dist -l ${PORT:-8080}` (SPA fallback). ENV PORT=8080, EXPOSE 8080. Build ARGs VITE_API_URL, VITE_SENTRY_DSN are baked at build; ARG REBUILD=2026-06-16a is the cache-bust. Build image is Node 20 while CI uses Node 22 and package engines per CLAUDE.md are >=22.",
+   "evidence": [
+    "Dockerfile.web:12 — FROM node:20-alpine AS build",
+    "Dockerfile.web:23 — ARG REBUILD=2026-06-16a",
+    "Dockerfile.web:31-34 — ARG VITE_API_URL ... ENV VITE_API_URL=$VITE_API_URL",
+    "Dockerfile.web:41 — RUN npm install -g serve@14",
+    "Dockerfile.web:47 — CMD [\"sh\", \"-c\", \"serve -s dist -l ${PORT:-8080}\"]"
+   ],
+   "source_kind": "code",
+   "hypotheses": [
+    "Q7: serve@14 is installed from npm at image build time (network needed at build, not runtime)"
+   ]
+  },
+  {
+   "id": "F12",
+   "fact": "Backend CORS: CORSMiddleware with allow_origins=settings.cors_origins; default list holds only localhost:5173, localhost:5174, localhost:8081 (no production origins in code defaults); settings use env_prefix FIXFLOW_, so production origins come from env FIXFLOW_CORS_ORIGINS (not verified in repo).",
+   "evidence": [
+    "backend/app/core/config.py:205-209 — cors_origins: list[str] = [\"http://localhost:5173\", \"http://localhost:5174\", \"http://localhost:8081\"]",
+    "backend/app/main.py:288-289 — CORSMiddleware, allow_origins=settings.cors_origins",
+    "backend/app/core/config.py:24 — env_prefix=\"FIXFLOW_\""
+   ],
+   "source_kind": "code",
+   "hypotheses": [
+    "Q7: a self-hosted web origin must be added to cors_origins; ops console is same-origin to its own BFF so needs no backend CORS"
+   ]
+  },
+  {
+   "id": "F13",
+   "fact": "Dockerfile.ops: build stage runs `npm run build:ops` (vite.ops.config.js, entry ops.html, outDir dist-ops) with VITE_API_URL=\"\" (relative URLs); serve stage copies dist-ops and ops-server.mjs and runs `node ops-server.mjs` on PORT 8080 (node:20-alpine, zero npm deps at runtime). ARG REBUILD=2026-06-30a.",
+   "evidence": [
+    "Dockerfile.ops:23 — ARG REBUILD=2026-06-30a",
+    "Dockerfile.ops:28 — ENV VITE_API_URL=\"\"",
+    "Dockerfile.ops:31 — RUN npm run build:ops",
+    "Dockerfile.ops:36-37 — ENV PORT=8080 ... CMD [\"node\", \"ops-server.mjs\"]",
+    "vite.ops.config.js:24-27 — outDir: \"dist-ops\", input: ops.html"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F14",
+   "fact": "ops-server console auth: shared password OPS_PASSWORD -> POST /api/ops/login returns a stateless HMAC session token (12h TTL, secret OPS_SESSION_SECRET or random per boot so redeploy invalidates); all other /api/* routes require that Bearer token; login returns 500 if OPS_PASSWORD unset; passwordValid uses timingSafeEqual after normalising length. No rate limit on login seen in the lines read.",
+   "evidence": [
+    "ops-server.mjs:39-41 — OPS_PASSWORD ... SESSION_SECRET = process.env.OPS_SESSION_SECRET || crypto.randomBytes(32) ... TOKEN_TTL_MS = 12 * 60 * 60 * 1000",
+    "ops-server.mjs:499-505 — /api/ops/login ... if (!OPS_PASSWORD) return sendJson(res, 500 ... wrong password",
+    "ops-server.mjs:508 — if (!tokenValid(bearer(req))) return sendJson(res, 401, { error: \"unauthorized\" });"
+   ],
+   "source_kind": "code",
+   "hypotheses": [
+    "Q4: whether login attempts are throttled was not read; Grep of ops-server.mjs for rate/attempt not run"
+   ]
+  },
+  {
+   "id": "F15",
+   "fact": "ops console client stores its session token via the same shared api.js (localStorage key fixflow_token) and shares the 401 handler; same key as the manager web (different origin on Railway so separate storage).",
+   "evidence": [
+    "src/ops/providers/OpsAuthContext.jsx:2 — import { getToken, setToken, setUnauthorizedHandler } from \"@shared/lib/api\";",
+    "src/ops/providers/OpsAuthContext.jsx:16 — useState(() => Boolean(getToken()))",
+    "src/ops/providers/OpsAuthContext.jsx:24 — setToken(token);"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F16",
+   "fact": "External APIs called by ops-server: Railway GraphQL at https://backboard.railway.com/graphql/v2 (queries: services, deployments, environmentLogs, deploymentLogs, metrics with CPU_USAGE, MEMORY_USAGE_GB, NETWORK_RX_GB, NETWORK_TX_GB); Sentry REST https://sentry.io/api/0/projects/{org}/{slug}/issues/?query=is:unresolved&limit=25&statsPeriod=14d with Bearer token; arbitrary OPS_HEALTH_TARGETS URLs (8 s abort, ok when status<500, redirect manual); the backend /api/ops/health and /api/ops/metrics.",
+   "evidence": [
+    "ops-server.mjs:50 — const RAILWAY_ENDPOINT = \"https://backboard.railway.com/graphql/v2\";",
+    "ops-server.mjs:163 — MEASUREMENTS = [\"CPU_USAGE\", \"MEMORY_USAGE_GB\", \"NETWORK_RX_GB\", \"NETWORK_TX_GB\"]",
+    "ops-server.mjs:272 — https://sentry.io/api/0/projects/${SENTRY_ORG}/${slug}/issues/?query=is:unresolved&limit=25&statsPeriod=14d",
+    "ops-server.mjs:300-304 — fetch(url, { signal: ctrl.signal, redirect: \"manual\" }); ok = res.status > 0 && res.status < 500"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F17",
+   "fact": "ops-server env var names: OPS_PASSWORD, OPS_SESSION_SECRET, OPS_RAILWAY_TOKEN (or RAILWAY_API_TOKEN), OPS_RAILWAY_PROJECT_ID (or RAILWAY_PROJECT_ID), OPS_RAILWAY_ENV_ID (or RAILWAY_ENVIRONMENT_ID), OPS_HEALTH_TARGETS (name|url comma list), OPS_BACKEND_URL, OPS_PROXY_TOKEN (must equal backend FIXFLOW_OPS_PROXY_TOKEN), SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECTS, PORT.",
+   "evidence": [
+    "ops-server.mjs:46-49 — OPS_RAILWAY_TOKEN || RAILWAY_API_TOKEN ... RAILWAY_ENVIRONMENT_ID",
+    "ops-server.mjs:53-55 — SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECTS",
+    "ops-server.mjs:70-72 — OPS_BACKEND_URL ... OPS_PROXY_TOKEN ... BACKEND_PROXY_CONFIGURED",
+    "ops-server.mjs:21 — OPS_PROXY_TOKEN shared secret sent to the backend as X-Ops-Proxy-Token (must equal FIXFLOW_OPS_PROXY_TOKEN)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F18",
+   "fact": "Backend health polling by ops-server: backendOps() fetches `${OPS_BACKEND_URL}${pathname}` with header X-Ops-Proxy-Token; healthReport() runs HEALTH_TARGETS pings in parallel with backend /api/ops/health components, then adds 'railway api' and 'sentry' rows that only reflect whether tokens are configured (not live reachability). Unconfigured or unreachable backend deep-health yields status 'degraded', not 'down'. Metrics proxied from /api/ops/metrics with 20 s cache (CACHE_TTL_MS).",
+   "evidence": [
+    "ops-server.mjs:323-324 — fetch(`${OPS_BACKEND_URL}${pathname}`, { headers: { \"X-Ops-Proxy-Token\": OPS_PROXY_TOKEN }",
+    "ops-server.mjs:348-361 — backendOps(\"/api/ops/health\") ... \"backend deep-health\", status: \"degraded\", detail: `unreachable",
+    "ops-server.mjs:375-380 — name: \"railway api\", status: RAILWAY_CONFIGURED ? \"ok\" : \"degraded\", detail: ... \"token configured\"",
+    "ops-server.mjs:130 — const CACHE_TTL_MS = 20_000;"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F19",
+   "fact": "Backend side of the proxy token: require_ops_proxy_token reads header X-Ops-Proxy-Token, blank configured token must never mean open to all, compares with compare_secret; setting ops_proxy_token defaults to empty string.",
+   "evidence": [
+    "backend/app/features/ops/deps.py:32 — x_ops_proxy_token: Annotated[str | None, Header(alias=\"X-Ops-Proxy-Token\")] = None",
+    "backend/app/features/ops/deps.py:44 — if not compare_secret(x_ops_proxy_token, expected):",
+    "backend/app/core/config.py:173 — ops_proxy_token: str = \"\""
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F20",
+   "fact": "What depends on Railway existing: Railway services/deployments/logs/metrics routes go through railwayEnvelope and return configured:true available:false with the error text if the Railway API call fails, or configured:false if token/project/env IDs are missing. The Railway-independent parts are the HEALTH_TARGETS pings, backend proxy, Sentry, password login and static serving. Railway ids default from Railway-injected env (RAILWAY_PROJECT_ID, RAILWAY_ENVIRONMENT_ID) so off-Railway they must be set explicitly or the 'railway' pages are unconfigured.",
+   "evidence": [
+    "ops-server.mjs:415-421 — async function railwayEnvelope(extraKey, fn) { if (!RAILWAY_CONFIGURED) return unconfigured(extraKey); try {...} catch (e) { return { configured: true, available: false, detail",
+    "ops-server.mjs:51 — RAILWAY_CONFIGURED = Boolean(RAILWAY_TOKEN && RAILWAY_PROJECT_ID && RAILWAY_ENV_ID)",
+    "ops-server.mjs:512-532 — /api/ops/railway/services|deployments|logs|metrics routes"
+   ],
+   "source_kind": "code",
+   "hypotheses": [
+    "Q7: self-host replacement for logs/deploys/metrics has no hook in ops-server; only the backend /api/ops/metrics and health targets are Railway-independent"
+   ]
+  },
+  {
+   "id": "F21",
+   "fact": "Ops console features/pages: Overview, Health, ApiMetrics, RailwayDeployments, RailwayLogs, RailwayMetrics, SentryIssues, plus OpsLogin; the client polls via usePolling (default 15000 ms setTimeout loop). It is read-only (GET proxies plus login POST).",
+   "evidence": [
+    "src/features/ops/index.js:4-10 — exports Overview, Health, ApiMetrics, RailwayDeployments, RailwayLogs, RailwayMetrics, SentryIssues",
+    "src/features/ops/hooks/usePolling.js:13 — export function usePolling(fetcher, intervalMs = 15000)",
+    "src/ops/pages/OpsLogin.jsx — (file present)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F22",
+   "fact": "ops-server process hardening: handleRequest rejections caught in createServer, and process-level unhandledRejection/uncaughtException handlers log and keep serving. Startup log reports auth=OFF(no password!) when OPS_PASSWORD empty.",
+   "evidence": [
+    "ops-server.mjs:560-568 — handleRequest(req, res).catch((e) => { console.error(\"unhandled error in request handler:\"",
+    "ops-server.mjs:575-580 — process.on(\"unhandledRejection\" ... process.on(\"uncaughtException\"",
+    "ops-server.mjs:586 — auth=${OPS_PASSWORD ? \"on\" : \"OFF(no password!)\"}"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F23",
+   "fact": "CI triggers on push to main and pull_request to main with per-ref concurrency cancel. Three jobs: frontend (Node 22: npm ci, lint, format:check, test, build), mobile (Node 22: typecheck, jest --ci --passWithNoTests, expo export --platform android), backend (postgres:16-alpine service, Python 3.12: ruff format --check, ruff check, mypy app, lint-imports, alembic upgrade head, alembic check, pytest). Frontend job builds only the manager bundle (npm run build), not build:ops; no job runs Docker builds or ops-server.mjs.",
+   "evidence": [
+    "ci.yml:4-8 — push: branches: [main]; pull_request: branches: [main]",
+    "ci.yml:18-44 — frontend: node-version: 22 ... run: npm run lint/format:check/test/build",
+    "ci.yml:47-77 — mobile: typecheck, npm test -- --ci --passWithNoTests, npx expo export --platform android",
+    "ci.yml:80-138 — backend: image: postgres:16-alpine, python-version \"3.12\", ruff, mypy, lint-imports, alembic upgrade head, alembic check, pytest"
+   ],
+   "source_kind": "code",
+   "hypotheses": [
+    "Q7: ops-server.mjs and Dockerfile.* are not exercised by CI; ops console tests (src/features/ops/data/opsApi.test.js) run in the frontend vitest job"
+   ]
+  },
+  {
+   "id": "F24",
+   "fact": "Root package.json scripts: dev (vite), dev:ops (vite --config vite.ops.config.js, port 5174), build, build:ops, preview, lint (eslint .), test (vitest run with NODE_OPTIONS=--experimental-require-module), format, format:check. There is no start script for ops-server.mjs.",
+   "evidence": [
+    "package.json:10-19 — dev, dev:ops, build, build:ops, preview, lint, test, test:watch, format, format:check",
+    "vite.ops.config.js:30 — server: { port: 5174 }"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F25",
+   "fact": "vite.config.js (manager): base from VITE_BASE or '/', aliases @app @ops @shared @features, plugins react + tailwind; no dev proxy configured, so browser calls the API cross-origin using VITE_API_URL.",
+   "evidence": [
+    "vite.config.js:13 — base: process.env.VITE_BASE || \"/\",",
+    "vite.config.js:16 — server: { watch: { ignored: [\"**/.claude/**\"] } },",
+    "vite.config.js:18 — plugins: [react(), tailwindcss()]"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F26",
+   "fact": "Web build/bundle error reporting via VITE_SENTRY_DSN is optional (shared/lib/sentry.js); web CORS fetches carry Authorization header, so cross-origin preflights depend on backend CORS config.",
+   "evidence": [
+    "Dockerfile.web:29-30 — VITE_SENTRY_DSN is optional — absent, the web app simply runs without error reporting",
+    "src/shared/lib/api.js:40 — return token ? { Authorization: `Bearer ${token}` } : {};"
+   ],
+   "source_kind": "code"
+  }
+ ],
+ "anomalies": [
+  "Dockerfile.web and Dockerfile.ops use node:20-alpine while CI runs Node 22 and CLAUDE.md states Node >= 22 (S13 context); the production image is not what CI tests.",
+  "AuthProvider clears the token on ANY me() failure, including network error/5xx, not only 401 (AuthContext.jsx:31-34).",
+  "Web api client has no request timeout and no retry (api.js:67), unlike the mobile client's 15 s abort (S7).",
+  "ops-server 'railway api' and 'sentry' health rows report only 'token configured', not live reachability (ops-server.mjs:375-385).",
+  "CI never builds the ops bundle (build:ops) or the Dockerfiles; ops-server.mjs has no test file located in this pass.",
+  "Backend CORS code defaults contain only localhost origins; the production origins live in an env var not visible in the repo."
+ ],
+ "questions_for_deep_dive": [
+  "Q4: is there any login throttle/rate limit on POST /api/ops/login in ops-server.mjs (not grepped here)?",
+  "Q4: what are the production FIXFLOW_CORS_ORIGINS values and does the web token in localStorage have any XSS-hardening (CSP) from `serve` (no headers config seen)?",
+  "Q7: what is the minimum set of changes for a home-server deploy: replace `serve@14` + Railway ops pages, set CORS origins, VITE_API_URL rebuild, TLS termination?",
+  "Q7: does ops-server.mjs have tests anywhere (find ops-server*.test*)?",
+  "Q4: does the web Dashboard or any page poll or refetch on focus beyond attendance (only Dashboard.jsx:54-61 read)?",
+  "Does the 401 from a dead backend (edge 404 is not 401) leave the web logged in with empty jobs silently (AppContext.jsx:92-94 swallows fetchJobs failure)?"
+ ],
+ "files_or_urls": [
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/shared/lib/api.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/app/providers/AuthContext.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/app/providers/AppContext.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/shared/lib/requestCache.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/app/App.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/attendance/hooks/useAttendanceData.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/settings/pages/Settings.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/schedule/pages/Schedule.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/Dockerfile.web",
+  "C:/Users/User/Documents/projects/EMS_workshop1/Dockerfile.ops",
+  "C:/Users/User/Documents/projects/EMS_workshop1/ops-server.mjs",
+  "C:/Users/User/Documents/projects/EMS_workshop1/vite.config.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/vite.ops.config.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/.github/workflows/ci.yml",
+  "C:/Users/User/Documents/projects/EMS_workshop1/package.json",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/core/config.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/ops/deps.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/ops/index.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/ops/hooks/usePolling.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/ops/providers/OpsAuthContext.jsx"
+ ]
+}

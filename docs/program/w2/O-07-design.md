@@ -98,3 +98,29 @@ GET /api/postings/reconciliation?from&to (manager), per kind, over accounting_da
 - Part 5: no decision needed; build now.
 - Part 6: the 0048 audits need real data. Production is gone: a fresh self-hosted DB is trivially clean, but a restored backup must be audited first.
 - Independent fixes worth doing first (cheap, and they stop under-reporting from being the easy path): stamp voided_at/voided_by; manager-gate or require a reason for negotiation below original and for abandoning a billed job; capture an offline payment time; reject payment client_id reuse across jobs or amounts.
+
+---
+
+## Amendments (2026-11-01, harness review — `../HARNESS-REVIEW-2026-11-01.md` HR-A4)
+
+1. **Decide before building.** Parts 1–3 and 5 are no longer "build regardless". A new owner
+   phase **P9-0** (plan) answers the G1 Odoo questions, opens an Odoo test company on the
+   Pakistani chart, exports one real week into this note's CSV shape with a half-session script,
+   imports it twice, and lets the accountant choose granularity (per-payment vs daily close per
+   method) and the approval unit. P9a-1 waits for P9-0 and for P5d-2. If there is no Odoo and no
+   accountant, P9a/P9b ship the approval boundary, reconciliation and an accountant-ready journal
+   CSV; P10a's Odoo specifics and P11 are dropped.
+2. **Cash custody (`O07-F17`).** If P0a item 15 confirms that technicians hold field cash or
+   receive online payments into personal wallets before remitting, the posting model gains a
+   manager-recorded `cash_remittance` source: tech-recorded cash debits `cash_with_staff[tech]`,
+   card and online receipts debit `receipts_clearing`, and a remittance moves the money to
+   `cash_in_hand` with the variance to the staff ledger or cash over/short. The accrual-only
+   invoice kind waits for a basis decision (P0a item 16) and is then sourced from
+   `job_bill_revision` only.
+3. **Atomic closed-job guards (`O07-F16`, P7a).** `negotiate_bill`, `log_payment` and
+   `void_payment` refuse a closed job by a conditional UPDATE with the status predicate or a
+   `SELECT … FOR UPDATE` in the same transaction, with a race test against a concurrent close.
+4. **Hosting and transport unchanged:** Odoo Online + window-keyed CSV by default. Self-hosted
+   Odoo Community 19 ships the JSON-2/RPC API free (`addons/rpc`, LGPL-3) but lacks the Enterprise
+   accounting reports and would add a second stateful app to one developer's host; it is the
+   option if a live push or the parked connector product ever matters.

@@ -1,0 +1,676 @@
+{
+ "id": "O-01",
+ "result": {
+  "area": "O-01 geofence-end-to-end: technician-app geofence, on-duty pings and travel breadcrumbs (JS in features/attendance, features/jobs/travelTracker, features/onboarding) through the Expo SDK 52 native layer (expo-location 18.0.10, expo-task-manager 12.0.6, expo-modules-core 2.2.3), plus the server inside-rule it is compared with (attendance/derive.py, attendance/service.py)",
+  "hypothesis_ranking": [
+   {
+    "id": "H1",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.75,
+    "in_field_apk": "unknown",
+    "discriminating_test": "On one Xiaomi/Oppo/Vivo phone: run `adb shell dumpsys activity exit-info com.fixflow.technician` and look for kills during working hours. Then swipe the app away while the tech is on duty. Within 60 s the process is gone (`pidof` is empty, a new exit-info entry appears) and logcat shows no 'Handling intent/Handling job ... fixflow-attendance-pings' for 10 min. After a reboot there is no 'Handling intent with action android.intent.action.BOOT_COMPLETED' from TaskService. Turn OEM autostart ON and repeat: deliveries resume. That confirms H1 and separates it from H10, where deliveries keep arriving but the foreground service is missing. main has no autostart code; whether the field APK predates any change is unknown (H14)."
+   },
+   {
+    "id": "H10",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.65,
+    "in_field_apk": "unknown",
+    "discriminating_test": "After a kill or reboot while on duty, logcat shows pings still arriving ('Handling job with task name fixflow-attendance-pings') next to 'LocationTaskConsumer: Foreground location task cannot be started while the app is in the background!'. `dumpsys activity services com.fixflow.technician` shows no LocationTaskService (expected when healthy: isForeground=true foregroundId=481756 types=0x00000008). Open the app: the service is still absent 15 s later. That confirms (b) and (c). If it returns, restoreTasks ran while the app was foregrounded and (c) is refuted for the open-after-kill path. Files unchanged since 906b990; APK commit unknown."
+   },
+   {
+    "id": "H16",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.45,
+    "in_field_apk": "unknown",
+    "discriminating_test": "With the app backgrounded but alive, turn Location off for 60 s and back on. Logcat shows 'TaskService: Handling intent with task name fixflow-attendance-geofence' with no 'Handling job' after it: that is the GEOFENCE_NOT_AVAILABLE error path. Then do a real walk out (>=150 m) and back: no geofence job arrives until the app is opened, and opening it fires an immediate initial-trigger job. If a job arrives without opening the app, Play services kept the fence and H16 is weakened for that ROM."
+   },
+   {
+    "id": "H3",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.45,
+    "in_field_apk": "unknown",
+    "discriminating_test": "Dump test: `SELECT kind, confirmed, inside_geofence, width_bucket(accuracy_m,0,200,8), count(*) FROM attendance_presence_event GROUP BY 1,2,3,4`. Many kind='arrive' rows with confirmed=false AND inside_geofence=true at accuracy 20-100 m confirm the rule conflict. Field test: indoor arrivals whose 'Handling job' to 'Finished task' gap is over 20 s, which means the contradicted dwell ran. Severity depends on the real fence radius and centre (H4, owner)."
+   },
+   {
+    "id": "H11",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.45,
+    "in_field_apk": "unknown",
+    "discriminating_test": "Per-mechanism repros on one phone. (a) #50060 shape: open the Activity within 2 s of a headless 'Finished task'; later 'Handling job' lines never get a 'Finished task'. (b) #49424: without background permission on Android 14+, tap Start travel and lock the phone at once; exit-info shows REASON_CRASH 'Starting FGS with type location'. (c) Shared sLastTimestamp: count ping 'Handling job' lines during a travel leg against the off-travel cadence. (d) #33433 shape: every app open produces a geofence job. Classification of the six issues is in design."
+   },
+   {
+    "id": "H2",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.35,
+    "in_field_apk": "unknown",
+    "discriminating_test": "Off duty (no FGS), app backgrounded, indoor arrival. In logcat the gap between 'Handling job with task name fixflow-attendance-geofence' and 'Finished task' is over 15 s, followed by an exit-info kill or a much later 'Finished task'. With the diagnostics ring, compare geofence job count to recorded presence count. Losses that happen only on the dwell path, and only without an FGS, confirm H2 and its coupling to H3."
+   },
+   {
+    "id": "H9",
+    "verdict": "supported",
+    "likelihood_for_this_fleet": 0.35,
+    "in_field_apk": "unknown",
+    "discriminating_test": "`adb shell dumpsys package com.fixflow.technician | grep -E 'ACCESS_(FINE|COARSE|BACKGROUND)_LOCATION'` and `adb shell cmd app_hibernation get-state com.fixflow.technician` (Android 12+). BACKGROUND granted=false, FINE false with COARSE true, or hibernated=true confirms H9 for that phone. Compare phones opened recently with phones untouched since production died (about 3 months, near the reset threshold). The no-re-ask part is settled from code."
+   },
+   {
+    "id": "H17",
+    "verdict": "weakened",
+    "likelihood_for_this_fleet": 0.15,
+    "discriminating_test": "`adb shell dumpsys netpolicy` blocked reasons for the app uid (DATA_SAVER, RESTRICT_BACKGROUND, APP_BACKGROUND) plus the OEM per-app background-data toggle. In the diagnostics ring, headless syncs failing as network errors while foreground syncs succeed confirms H17. The code shows the impact is latency plus a missing clock-out reminder, not loss: network errors are kept, and an arrival still notifies when isClockedIn is null.",
+    "in_field_apk": "unknown"
+   }
+  ],
+  "findings": [
+   {
+    "id": "O01-F01",
+    "title": "On-duty/travel sampler comes back without its foreground service after any restart, and nothing repairs it",
+    "severity": "P1",
+    "category": "defect",
+    "claim": "After a process restart while on duty or travelling (reboot restore, OEM kill, crash), restoreTasks re-registers the ping/travel task without starting LocationTaskService because the app is not foregrounded. Opening the app does not start it either, because startDutyPings/startJobTravel return on isRunning() before startLocationUpdatesAsync is ever reached.",
+    "failing_condition": "Tech is clocked in or on a travel leg. A reboot or OEM kill happens, the OS restores the task, and logcat shows 'Foreground location task cannot be started while the app is in the background!'. The tech then opens the app, and `dumpsys activity services com.fixflow.technician` still lists no LocationTaskService while hasStartedLocationUpdatesAsync returns true.",
+    "evidence": [
+     "technician-app/src/features/attendance/pingTracker.ts:185 — if (await isRunning()) return;  (startLocationUpdatesAsync only at :187)",
+     "technician-app/src/features/jobs/travelTracker.ts:193 — if (await isRunning()) return;",
+     "technician-app/src/features/attendance/pingTracker.ts:261 — if (onDuty && !running) await startDutyPings(techId); (no onDuty && running branch)",
+     "expo-location-18.0.10 LocationModule.kt:284-286 — hasStartedLocationUpdatesAsync -> taskHasConsumerOfClass (registration only)",
+     "expo-location-18.0.10 LocationTaskConsumer.kt:56-60 — didRegister: startLocationUpdates(); maybeStartForegroundService(); :168-171 returns when !AppForegroundedSingleton.isForegrounded",
+     "expo-task-manager-12.0.6 TaskService.java:76-79 — restoreTasks in the first TaskService of a fresh process; :99-102 — re-register of an existing task calls consumer.setOptions (LocationTaskConsumer.kt:70-79 -> maybeStartForegroundService)",
+     "technician-app/src/features/attendance/pingTracker.ts:16 — 'A persistent foreground-service notification makes the recording visible'"
+    ],
+    "impact": "For the rest of the shift, pings and breadcrumbs drop to the background location rate ('a few times each hour', R-01), so coverage reads as no_data. The location that is still sampled is recorded with no visible notification, which breaks the visibility layer of the privacy design. The 14 h and 4 h bounds still hold, because handlePingUpdate and handleTravelUpdate check them on every batch.",
+    "fix_sketch": "1. In ensurePingTracking/ensureTravelTracking, run only on AppState 'active' and only after dutyStatus says onDuty && !expired (14 h) or travel !expired (4 h).\n2. In that case always call startLocationUpdatesAsync again, dropping the isRunning early return. TaskService.registerTask then goes through setOptions and maybeStartForegroundService, which starts or rebinds the FGS. startLocationUpdatesAsync throws when not foregrounded (LocationModule.kt:267-269), so never call it headless.\n3. patch-package expo-location: the #49424 guard (startService plus a catch in onServiceConnected) and the #52230 stop fallback (context.stopService when mService is null).\n4. Headless 'sampler gap' check in handlePingUpdate: if the previous ping is older than 3x the interval, post one debounced notification ('Tracking was interrupted — open FixFlow') and log a telemetry event.\n5. Native follow-up: start the FGS in the BOOT_COMPLETED restore path, which S4 exempts, so post-boot sampling is visible.\nNo new sampling path; bounds unchanged.",
+    "effort": "M",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O01-F02",
+    "title": "No OEM autostart, app-battery-saver or lock-in-recents handling on MIUI/ColorOS/FuntouchOS",
+    "severity": "P1",
+    "category": "gap",
+    "claim": "The app requests only the AOSP battery-optimization exemption and never sends the tech to the OEM autostart, app battery saver or lock-in-recents controls. On default Xiaomi/Oppo/Vivo settings, a swipe-away or screen-off kill therefore leaves no process that the OEM lets receive geofence or FLP broadcasts or BOOT_COMPLETED, until the tech opens the app.",
+    "failing_condition": "OEM autostart is OFF (the sideload default per dontkillmyapp). The tech swipes FixFlow from recents or reboots. exit-info shows a kill, and logcat shows no 'Handling intent'/'Handling job' for any fixflow task until the app is opened by hand.",
+    "evidence": [
+     "technician-app/src/features/onboarding/battery.ts:47-67 — only REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, then IGNORE_BATTERY_OPTIMIZATION_SETTINGS",
+     "technician-app/src/features/onboarding/battery.ts:33-39 — exemption probe is Battery.isBatteryOptimizationEnabledAsync (AOSP whitelist only; MIUI's own App battery saver is not visible to it)",
+     "technician-app/src/features/onboarding/permissions.ts:65-69 — battery exemption is the only background-survival step",
+     "grep -i 'autostart|miui|securitycenter|getUnusedAppRestrictions' technician-app/src — no matches",
+     "R-01 [H11] dontkillmyapp.com/xiaomi, /oppo, /vivo — autostart + app battery saver 'No restriction' + lock in recents needed (context)"
+    ],
+    "impact": "Arrival prompts, the boot restore and on-duty sampling all depend on a process the OEM may refuse to start. On a default ROM they stop silently, while the ClockScreen battery banner, which uses the AOSP probe, can show 'fine'.",
+    "fix_sketch": "1. Add a manufacturer-specific onboarding step, re-offered from ClockScreen. Read expo-device Device.manufacturer and use IntentLauncher to open the autostart screen from a component list (MIUI com.miui.securitycenter/com.miui.permcenter.autostart.AutoStartManagementActivity; ColorOS com.coloros.safecenter/.startupapp.StartupAppListActivity; Vivo com.vivo.permissionmanager/.activity.BgStartUpManagerActivity), falling back to ACTION_APPLICATION_DETAILS_SETTINGS.\n2. Walk the tech through the app battery saver ('No restrictions') and an illustrated lock-in-recents step.\n3. Request the unused-app (hibernation) exemption.\n4. Record each step as a self-attested checklist in telemetry, and re-offer when a sampler gap is detected.\n5. Owner side: add the same items to the fleet phone-setup checklist.\nNo change to sampling or queues.",
+    "effort": "M",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F03",
+    "title": "A location toggle drops the fence; the error is swallowed, nothing re-registers it, and providers are never checked",
+    "severity": "P1",
+    "category": "defect",
+    "claim": "When the tech turns Location or the network provider off, Play services removes the fence and delivers GEOFENCE_NOT_AVAILABLE. The task body discards it ('if (error) return'), and no code re-adds the fence until the next app foreground. That re-add also registers nothing (silently) if providers are still off.",
+    "failing_condition": "Location is off overnight and turned on in the morning, and the tech rides to the workshop without opening FixFlow. No geofence job appears in logcat, no presence row is queued, and no arrival prompt fires. Opening the app at the workshop then fires an immediate ENTER from the re-add.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:267-268 — TaskManager.defineTask(GEOFENCE_TASK, async ({ data, error }) => { if (error) return;",
+     "expo-location-18.0.10 GeofencingTaskConsumer.kt:66-71 — event.hasError() -> mTask?.execute(null, error); return (no re-add)",
+     "GeofencingTaskConsumer.kt:120-123 — startGeofencing returns with Log.w when !isAnyProviderAvailable",
+     "GeofencingTaskConsumer.kt:148-156 — addGeofences with no success/failure listeners",
+     "technician-app/src/features/attendance/geofence.ts:307-335 — ensureGeofenceMonitoring checks permissions + fence only; called only from useAttendanceBackground.ts:53,64-69 (mount / AppState active)",
+     "expo-location-18.0.10 LocationModule.kt:252 — hasServicesEnabledAsync exists; grep finds no caller in technician-app/src",
+     "R-01 [H8] developer.android.com geofencing — GEOFENCE_NOT_AVAILABLE after NLP disabled; app must re-register (context)"
+    ],
+    "impact": "Arrival evidence and prompts are lost for every crossing between a provider toggle and the next app open. The failure is invisible to the tech, the manager and telemetry.",
+    "fix_sketch": "1. In the GEOFENCE_TASK error branch, persist geofenceLostAt, write a diagnostics entry, and post a debounced local notification ('Location is off — arrival reminders are paused').\n2. In the same branch, when hasServicesEnabledAsync() is true, call startGeofencingAsync. This works headless: LocationModule.kt:288-295 has no foreground gate.\n3. Add a periodic headless check (expo-background-task, about 15 min) that re-adds the fence only while geofenceLostAt is set and providers are back.\n4. Make ensureGeofenceMonitoring check providers and show a banner when they are off.\nGeofencing samples no location, so the time bounds are unaffected.",
+    "effort": "M",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F04",
+    "title": "Phone and server judge 'inside the fence' differently; real indoor arrivals are suppressed",
+    "severity": "P1",
+    "category": "defect",
+    "claim": "For an arrival fix with accuracy a <= 100 m and raw distance d where r < d <= r + a, the phone rules 'contradicted' and, after a 20 s dwell, suppresses the prompt. For the same fix the server stores inside_geofence=true, so one presence row carries both confirmed=false and inside_geofence=true.",
+    "failing_condition": "80 m fence. The tech is indoors 40 m from the centre, but a 60 m-accuracy Wi-Fi fix puts the raw point 95 m out, twice in a row. No arrival notification fires, and the server row has confirmed=false, inside_geofence=true, distance_m about 95, accuracy_m 60.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:94-105 — arrive verdict is distance <= fence.radius_m on the raw point; accuracy only gates 'unknown' at > 100 (:51, :99)",
+     "technician-app/src/features/attendance/geofence.ts:108-112 — depart threshold max(1.5r, r+40) = 120 m for r = 80",
+     "technician-app/src/features/attendance/geofence.ts:128-133, :244 — contradicted -> 20 s dwell -> second fix; notification only when verdict !== 'contradicted'",
+     "backend/app/features/attendance/derive.py:94-95 — return distance - accuracy_m <= radius_m, distance",
+     "backend/app/features/attendance/service.py:1003-1004 + backend/app/core/config.py:54 — ceiling attendance_location_accuracy_ceiling_m = 200.0",
+     "backend/app/features/attendance/service.py:409-435 — presence row stores both inside_geofence (server rule) and confirmed (phone verdict)",
+     "R-01 [H8] geofencing doc — minimum radius 100-150 m; assume ~50 m accuracy indoors (context)"
+    ],
+    "impact": "Real indoor arrivals lose their prompt in exactly the 20-60 m Wi-Fi-accuracy band. Slow real departures (walking to 80-120 m) lose the clock-out reminder and the travel prompt. The manager sees evidence rows that contradict themselves.",
+    "fix_sketch": "1. Use one shared verdict function equal to the server's overlap rule:\n- arrive: contradicted only if d - a > r; confirmed if d - a <= r;\n- depart: confirmed if d - a > r; contradicted only if d + a <= r;\n- anything else is 'unknown' (trust the OS).\n2. Pin test vectors against derive.geofence_flags.\n3. Owner raises the fence to >= 100 m (DB row, H4).\nThe dwell then becomes rare. Every crossing is still enqueued, so the outbox contract is unchanged.",
+    "effort": "S",
+    "confidence": 0.85,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F05",
+    "title": "The contradicted-path handler outlives Expo's 15 s job, and the crossing is recorded only after the dwell",
+    "severity": "P1",
+    "category": "risk",
+    "claim": "On the contradicted path the geofence body spends GPS fix 1, then 20 s, then GPS fix 2 (no timeout on either) before recordCrossing enqueues anything. For an off-duty arrival (no FGS) that work continues after Expo's 15 s jobFinished, in a process holding no job and no service. An OEM kill or freeze at that point loses the crossing; a freeze can instead record it, and fire its notification, much later with a late device_time.",
+    "failing_condition": "Tech is not clocked in, the app is not in the foreground, and the first fix is contradicted (F04 conditions). Logcat shows 'Handling job with task name fixflow-attendance-geofence' with no 'Finished task' within 30 s, plus an exit-info kill or a much later 'Finished task'. No presence row is queued.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:126-133 — getLocation(); delay(DWELL_RECHECK_MS); getLocation()",
+     "technician-app/src/features/attendance/geofence.ts:56-58 — comment assumes a '~30s headless budget' for the 20 s dwell",
+     "technician-app/src/features/attendance/geofence.ts:241-242 — recordCrossing runs only after confirmCrossing resolves",
+     "technician-app/src/features/attendance/location.ts:31-33 — getCurrentPositionAsync({ accuracy: High }) with no timeout",
+     "expo-task-manager-12.0.6 TaskService.java:336-339, 612-619 — jobFinished posted after 15000 ms regardless of JS",
+     "expo-location-18.0.10 GeofencingTaskConsumer.kt:104 — jobFinished otherwise only when the JS event completes",
+     "expo #52544 body — after the job ends 'Android may freeze a background process' (context)"
+    ],
+    "impact": "It loses the morning-arrival evidence the feature exists for, and it stacks on F04: the arrivals that need the dwell are the ones whose handling overruns 15 s.",
+    "fix_sketch": "1. Record first: enqueue the presence item right after fix 1, with confirmed set to the first verdict or null; decide the notification afterwards.\n2. Bound each GPS read: 8 s, then getLastKnownPositionAsync with maxAge <= 120 s.\n3. In the headless path, replace the network isClockedIn with the local dutyStatus/isOnDuty.\n4. Drop the dwell, or cut it to <= 5 s; keep the whole handler under 12 s.\n5. Write the debounce stamp after the enqueue.\nThe local write comes first, so the outbox contract holds.",
+    "effort": "S",
+    "confidence": 0.7,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F06",
+    "title": "Background or precise location is never re-requested after onboarding, and unused-app hibernation is not handled",
+    "severity": "P1",
+    "category": "gap",
+    "claim": "If 'Allow all the time' is revoked (by the user, the Android background-location reminder, or the unused-app permission reset after months without use), ensureGeofenceMonitoring silently stops geofencing at the next foreground. No screen, banner or prompt ever asks again.",
+    "failing_condition": "FixFlow has gone unused for about 3 months (production down since Aug 2026). `dumpsys package` shows ACCESS_BACKGROUND_LOCATION granted=false, or `cmd app_hibernation get-state` returns true. On open, the geofence task is unregistered and the UI gives no hint.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:309-316 — if (!fg.granted || !bg.granted) { await stopGeofencing(); return; }",
+     "technician-app/src/features/onboarding/permissions.ts:41-72 — the only request path (called from OnboardingScreen.finish per S-01a F14, context)",
+     "technician-app/src/features/attendance/pingTracker.ts:184-200 and technician-app/src/features/jobs/travelTracker.ts:192-208 — no permission check; start failures swallowed",
+     "grep 'getUnusedAppRestrictions|AUTO_REVOKE' technician-app/src — no matches",
+     "R-01 [H10] developer.android.com/topic/performance/app-hibernation — runtime permissions reset after 'a few months' unused (context)"
+    ],
+    "impact": "Arrival prompts and presence evidence end silently, one phone at a time. During recovery this is a fleet-wide risk.",
+    "fix_sketch": "1. On every foreground compute {fg, bg, accuracy}.\n2. If bg is missing or accuracy is coarse, show a persistent Clock/Dashboard banner with a one-tap requestBackgroundPermissionsAsync, or requestForegroundPermissionsAsync for precise location.\n3. Request the unused-app exemption on API 30+.\n4. Send a telemetry event.\n5. Add a permission check before and after the in-place update to the O-10 drain protocol.\nNo sampling change.",
+    "effort": "S",
+    "confidence": 0.75,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F07",
+    "title": "An 'Approximate' grant passes every gate but geofencing never registers",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "A tech who picks 'Approximate' in the Android 12+ dialog passes every app gate, because Expo counts COARSE as granted. Play services geofencing needs ACCESS_FINE_LOCATION, so addGeofences fails unobserved: the phone never receives a crossing while onboarding reports success.",
+    "failing_condition": "`dumpsys package` shows ACCESS_COARSE_LOCATION granted=true, ACCESS_FINE_LOCATION granted=false and ACCESS_BACKGROUND_LOCATION granted=true. Walking in or out produces no geofence job; logcat may show 'GeofencingTaskConsumer: Geofencing request has been rejected.'",
+    "evidence": [
+     "technician-app/src/features/onboarding/permissions.ts:50-53 — foreground = (...).granted (accuracy ignored)",
+     "expo-location-18.0.10 LocationModule.kt:323-341 — granted from COARSE; android.accuracy 'coarse'|'fine' reported but unused by the app",
+     "expo-location-18.0.10 LocationModule.kt:712-717 — isMissingForegroundPermissions is false with COARSE alone",
+     "technician-app/src/features/attendance/geofence.ts:309-316 — gate is fg.granted && bg.granted only",
+     "GeofencingTaskConsumer.kt:148-156 — SecurityException swallowed; no addGeofences failure listener",
+     "grep for an accuracy/'fine' check in technician-app/src — no matches"
+    ],
+    "impact": "The whole feature is dead on that phone. Pings and travel samples get km-scale fixes, which the server ceilings (200 m attendance, 50 m travel, config.py:54,101) mark untrusted.",
+    "fix_sketch": "Treat permission.android.accuracy !== 'fine' as not granted in onboarding and in ensure*. Show the precise-location banner from F06 and log telemetry.",
+    "effort": "S",
+    "confidence": 0.65,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F08",
+    "title": "Fire-and-forget syncs in headless task bodies are aborted when the instance is torn down 2 s later",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "Every task body starts its sync with 'void' and resolves immediately, so in a headless instance the React context is destroyed 2 s after the body resolves and any POST still in flight is aborted. Because pings have no AppState or NetInfo drain (S7), they then drain only when a ping tick happens while the app is open.",
+    "failing_condition": "The process was restarted headless (after an OEM kill or reboot) and mobile data is slow (POST takes over 2 s). Logcat shows 'Finished task fixflow-attendance-pings' and the headless teardown with no server ack, and the ping queue grows across the shift.",
+    "evidence": [
+     "technician-app/src/features/attendance/pingTracker.ts:303-305 — await enqueuePing(item); void syncPings(techId);",
+     "technician-app/src/features/jobs/travelTracker.ts:287 — void syncTravelSamples(techId);",
+     "technician-app/src/features/attendance/geofence.ts:210-211 — await enqueuePresence(item); void syncPresence(techId);",
+     "expo-task-manager-12.0.6 TaskService.java:203-218 — last tracked event finished -> postDelayed 2000 -> invalidateAppRecord",
+     "expo-modules-core-2.2.3 RNHeadlessAppLoader.kt:94-100 — destroys the instance when not Activity-bound",
+     "S7 (settled) — syncPings is called only from handlePingUpdate"
+    ],
+    "impact": "Background drains of pings and presence fail on slow networks. The ping queue climbs toward the 1000 cap and then evicts the oldest (S9), so data is lost after days and delayed throughout.",
+    "fix_sketch": "1. Await the sync inside the task body with a bounded timeout (<= 10 s, under the 15 s job cap), so the event stays tracked.\n2. Add AppState 'active' and NetInfo drains for pings and presence, mirroring syncTravelSamples in App.tsx.\n3. Leave classification unchanged: drop only on a definitive 4xx; keep network errors.",
+    "effort": "S",
+    "confidence": 0.65,
+    "in_field_apk": "unknown",
+    "touches_invariant": true
+   },
+   {
+    "id": "O01-F09",
+    "title": "A second concurrent task event is untracked and dies when the first finishes (flapping crossings lost)",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "A second task event delivered while another is in flight in a headless instance is never added to sEvents. The instance is therefore destroyed 2 s after the first event finishes, even if the second is still running (a geofence ENTER mid-dwell, or the EXIT half of a flap merged into the same job), and that crossing is lost.",
+    "failing_condition": "The process is headless, and either a geofence job arrives while a ping or travel job is in flight, or a deferred job carries both ENTER and EXIT (TaskManagerUtils merges pending data). Logcat shows two 'Handling' deliveries but one 'Finished task', and one presence row is missing.",
+    "evidence": [
+     "expo-task-manager-12.0.6 TaskService.java:389-397 — else branch: appEvents = new ArrayList<>(); appEvents.add(eventId) (never stored in sEvents)",
+     "TaskService.java:203-218 — teardown scheduled when the stored list empties",
+     "expo-location-18.0.10 GeofencingTaskConsumer.kt:97-105 — job items executed concurrently; first completion calls jobFinished",
+     "expo-task-manager-12.0.6 TaskManagerUtils.java:137-156 — new data merged into a pending job of the same task",
+     "technician-app/src/features/attendance/geofence.ts:164-176 — both events race on LAST_CROSSING_KEY"
+    ],
+    "impact": "Flapping crossings, and crossings on headless on-duty phones, are lost or recorded out of order. ClockScreen's 'on site' state can show the wrong side.",
+    "fix_sketch": "1. patch-package TaskService.executeTask so the else branch appends to the stored list (appEvents = sEvents.get(appScopeKey); appEvents.add(eventId)).\n2. In JS, serialize geofence handling with a module-level promise chain so ENTER and EXIT apply in delivery order.",
+    "effort": "S",
+    "confidence": 0.75,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F10",
+    "title": "isDuplicate writes the debounce stamp before the crossing is confirmed or recorded",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "isDuplicate writes the 3-minute debounce stamp before confirmation and before recordCrossing. A crossing that is contradicted, killed (F05) or torn down (F09) therefore still suppresses any same-kind re-delivery for 3 minutes, including the INITIAL_TRIGGER re-delivery from restoreTasks or the next foreground re-add, and it still drives ClockScreen's 'on site' banner.",
+    "failing_condition": "An ENTER at t0 is killed mid-dwell. The process restarts and the restore re-add fires ENTER at t0+90 s, which returns at isDuplicate. No presence row is ever recorded for the arrival.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:174 — AsyncStorage.setItem(LAST_CROSSING_KEY, ...) before return false",
+     "technician-app/src/features/attendance/geofence.ts:239-242, 253-255 — isDuplicate precedes confirmCrossing and recordCrossing",
+     "technician-app/src/features/attendance/ClockScreen.tsx:51 — getLastCrossingKind().then((k) => setOnSite(k === 'arrive'))"
+    ],
+    "impact": "Losses that could have recovered become permanent within the 3-minute window, and ClockScreen shows 'at the workshop' after a contradicted flap.",
+    "fix_sketch": "Write the stamp only after enqueuePresence succeeds. Keep a separate 'last recorded' key for ClockScreen, set from confirmed or unknown verdicts only.",
+    "effort": "S",
+    "confidence": 0.8,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F11",
+    "title": "Every app foreground re-adds the fence with initial triggers, creating fake crossings and nag prompts",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "ensureGeofenceMonitoring calls startGeofencingAsync on every AppState 'active', which removes and re-adds the fence with INITIAL_TRIGGER_ENTER|EXIT. Each app open more than 3 minutes after the last same-kind crossing therefore creates an 'arrive' (inside) or 'depart' (outside) presence row, and can post 'clock in' or, on duty away from the workshop, 'clock out?' notifications.",
+    "failing_condition": "A clocked-in tech at a customer opens FixFlow twice, 30 minutes apart, with the API reachable: two depart presence rows and two notifyLeaving prompts. At the workshop with the API unreachable, each open gives an arrive row and a 'clock in' prompt.",
+    "evidence": [
+     "technician-app/src/features/attendance/useAttendanceBackground.ts:64-69 — AppState 'active' -> ensureGeofenceMonitoring()",
+     "technician-app/src/features/attendance/geofence.ts:322-331 — startGeofencingAsync with no hasStartedGeofencingAsync guard",
+     "expo-task-manager-12.0.6 TaskService.java:99-102 — existing task -> consumer.setOptions(options)",
+     "expo-location-18.0.10 GeofencingTaskConsumer.kt:54-58 — setOptions: stopGeofencing(); startGeofencing(); :166-170 — INITIAL_TRIGGER_ENTER or INITIAL_TRIGGER_EXIT",
+     "technician-app/src/features/attendance/geofence.ts:244-261 — notifyArrived when isClockedIn !== true; notifyLeaving when === true; maybePromptTravel",
+     "R-01 [H17] expo #33433 'geofencing runs each time app is opened' (title only, context)"
+    ],
+    "impact": "Presence evidence fills with fake crossings at app-open times. The nagging trains techs to ignore or disable notifications (H8).",
+    "fix_sketch": "1. Re-add only when the fence parameters differ from the persisted registered options, or when geofenceLostAt is set (F03).\n2. Rely on Expo's restoreTasks for fresh processes.\n3. Tag deliveries that arrive within about 10 s of a re-add as source='reregister', and post no notifications for them.",
+    "effort": "S",
+    "confidence": 0.65,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F12",
+    "title": "Expo's shared static timestamp drops on-duty pings while a travel leg is sampling",
+    "severity": "P2",
+    "category": "risk",
+    "claim": "Expo's de-duplication timestamp is a static shared by every LocationTaskConsumer. While a travel leg reports a fix every 20 s, any ping fix that is not newer than the latest travel-reported fix is dropped natively before it reaches JS. When all of a batch is dropped, the ping consumer's deferred buffer is not cleared either.",
+    "failing_condition": "The tech is on duty and on a travel leg, so both tasks are registered. During the leg, 'Handling job ... fixflow-attendance-pings' lines are far rarer than one per interval, and the server shows ping gaps exactly during travel.",
+    "evidence": [
+     "expo-location-18.0.10 LocationTaskConsumer.kt:248-258 — if (timestamp > sLastTimestamp) { data.add; sLastTimestamp = timestamp }",
+     "LocationTaskConsumer.kt:259-267 — mDeferredLocations cleared only when data.size > 0",
+     "LocationTaskConsumer.kt:317 — companion object { private var sLastTimestamp: Long = 0 }",
+     "LocationTaskConsumer.kt:279-284 + expo-modules-core-2.2.3 MapHelper.java:69-80 — travel sets no deferredUpdatesInterval (getLong default 0) so it reports every fix immediately",
+     "technician-app/src/features/attendance/pingTracker.ts:187-191; technician-app/src/features/jobs/travelTracker.ts:194-205"
+    ],
+    "impact": "Duty coverage is under-reported during job travel, so the manager sees gaps at exactly the moments the tech is out.",
+    "fix_sketch": "patch-package LocationTaskConsumer to keep the timestamp per instance instead of static. Alternatively, derive duty coverage server-side from pings plus travel samples (O-04).",
+    "effort": "S",
+    "confidence": 0.55,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F13",
+    "title": "The ping task keeps only the last fix of a batched delivery",
+    "severity": "P2",
+    "category": "defect",
+    "claim": "handlePingUpdate stores only the last location of each delivery, although Expo batches deferred fixes while the host is paused (deferredUpdatesInterval = interval). Any delivery carrying two or more fixes records a single ping.",
+    "failing_condition": "The app is in the background and a fix arrives less than one interval after the last reported one. Expo defers it and delivers it with the next fix, so one ping is stored per two fixes (an effective 10-minute cadence).",
+    "evidence": [
+     "technician-app/src/features/attendance/pingTracker.ts:286 — const fix = locations[locations.length - 1]; // the freshest sample",
+     "technician-app/src/features/attendance/pingTracker.ts:187-191 — timeInterval: interval, deferredUpdatesInterval: interval",
+     "expo-location-18.0.10 LocationTaskConsumer.kt:270-285 — while paused, report only when newest.time - oldest.time >= deferredUpdatesInterval; :248-266 all deferred fixes go in one job"
+    ],
+    "impact": "Coverage is thinner than designed, and worse when the OS batches background deliveries (no FGS).",
+    "fix_sketch": "Enqueue every fix in locations[], as travelTracker.ts:261-276 already does, or drop deferredUpdatesInterval for pings. The server dedupes by client_id, and the 14 h bound is already checked per batch.",
+    "effort": "S",
+    "confidence": 0.6,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F14",
+    "title": "Opening the app while a headless task instance is alive can drop the task manager for the rest of the process (#50060 shape)",
+    "severity": "P2",
+    "category": "risk",
+    "claim": "If the Activity opens while a headless instance from a background task is alive (or within its 2 s teardown window), Expo removes the only TaskManager registration, which was made once as headless in onCreate, without destroying the now Activity-bound instance. From then on every ping, travel and geofence event is queued to a loader that never reports back, and nothing reaches JS until the process dies.",
+    "failing_condition": "The process is headless (after a kill or reboot) and the tech opens FixFlow within about 2 s of a 'Finished task' line. Later 'Handling job' lines are never followed by 'Finished task', and no new pings or presence rows appear until a force-stop or reboot.",
+    "evidence": [
+     "expo-task-manager-12.0.6 TaskManagerInternalModule.java:50-56 — onCreate -> mTaskService.setTaskManager(this, ...) (only registration point)",
+     "expo-task-manager-12.0.6 TaskService.java:603-610 — invalidateAppRecord removes sHeadlessTaskManagers entry when invalidateApp returns true",
+     "TaskService.java:399-421 — null task manager -> putEventForAppScopeKey + loadApp",
+     "expo-modules-core-2.2.3 RNHeadlessAppLoader.kt:89-103 — old-arch branch spares an Activity-bound ReactInstanceManager but removes the app record",
+     "expo #50060 body — reproduced on bridgeless SDK 57; patch proposed (context)"
+    ],
+    "impact": "Background tracking stops completely and silently for the rest of the process lifetime.",
+    "fix_sketch": "1. Patch TaskService.invalidateAppRecord as #50060 proposes: keep the surviving headless TaskManager by moving it into sTaskManagers.\n2. Add a JS heartbeat: on foreground, if on duty and no ping has been enqueued for 3x the interval, stop and restart the ping task (only within the 14 h window).",
+    "effort": "M",
+    "confidence": 0.45,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F15",
+    "title": "A race while binding the location foreground service can crash the app on Android 14+ (#49424)",
+    "severity": "P2",
+    "category": "risk",
+    "claim": "expo-location 18.0.10 starts the location FGS with startForegroundService and calls startForeground later, in onServiceConnected, with no catch. On Android 14+, a tech holding only 'while using' location who locks the phone right after Start travel or clock-in can crash the app with an uncatchable SecurityException.",
+    "failing_condition": "Android 14+ without ACCESS_BACKGROUND_LOCATION: the tech taps Start travel and locks the screen immediately. The process dies, and exit-info shows REASON_CRASH with 'Starting FGS with type location'.",
+    "evidence": [
+     "expo-location-18.0.10 LocationTaskConsumer.kt:191-219 — startForegroundService + bindService; it.startForeground(serviceOptions) inside onServiceConnected, no try/catch",
+     "expo-location-18.0.10 LocationModule.kt:264 — FGS path allowed without background permission",
+     "technician-app/src/features/jobs/travelTracker.ts:194-205 and technician-app/src/features/attendance/punch.ts:55 — call sites right after a user action",
+     "expo #49424 body — open; code unchanged through SDK 58 canary (context)"
+    ],
+    "impact": "The crash leaves the sampler to come back without its FGS (F01), and Sentry may be missing from the field APK.",
+    "fix_sketch": "patch-package per #49424: start the service with startService, catch in onServiceConnected, and stop and unbind on rejection. F06 makes 'all the time' the normal state, which removes the precondition.",
+    "effort": "S",
+    "confidence": 0.5,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F16",
+    "title": "No timeout on any GPS read in the geofence or punch paths",
+    "severity": "P2",
+    "category": "risk",
+    "claim": "Every getLocation call awaits getCurrentPositionAsync(High) with no timeout. A fix that never resolves blocks the geofence handler before recordCrossing and blocks punch() before the punch is enqueued.",
+    "failing_condition": "Indoors with a weak signal, or the upstream 'never responds' case (expo #10756, open): no presence row is queued, and the clock-in screen never completes.",
+    "evidence": [
+     "technician-app/src/features/attendance/location.ts:24-43 — requestForegroundPermissionsAsync then getCurrentPositionAsync with no timeout",
+     "technician-app/src/features/attendance/geofence.ts:126, 132, 241 — handler awaits getLocation before recordCrossing",
+     "technician-app/src/features/attendance/punch.ts:26-27, 51 — getLocation awaited before enqueue",
+     "expo-location-18.0.10 LocationHelpers.kt:60-89 — CurrentLocationRequest without a duration; the promise settles only on success, failure or cancel"
+    ],
+    "impact": "Crossings are lost and clock-ins can hang.",
+    "fix_sketch": "Wrap the read in Promise.race with an 8 s timeout. On timeout, try getLastKnownPositionAsync({ maxAge: 120000 }); if that fails, return EMPTY and log a gps_timeout diagnostics entry.",
+    "effort": "S",
+    "confidence": 0.5,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F17",
+    "title": "Task jobs declare no network need; on Android 15+ background syncs can fail outright (#52544)",
+    "severity": "P3",
+    "category": "risk",
+    "claim": "expo-task-manager 12.0.6 schedules every task delivery as a JobScheduler job with no network requirement. On Android 15+, a task running in a process that is alive in the background without the FGS can have no network, and every sync it starts fails as a network error.",
+    "failing_condition": "Android 15 phone, off duty, app backgrounded but not killed, geofence ENTER fires. `dumpsys netpolicy` shows APP_BACKGROUND for the uid; presence stays queued; isClockedIn returns null, so the arrival prompt still fires but EXIT gives no clock-out prompt.",
+    "evidence": [
+     "expo-task-manager-12.0.6 TaskManagerUtils.java:212-218 — JobInfo.Builder(...).setExtras().setMinimumLatency(0).setOverrideDeadline(60000).build() (no setRequiredNetworkType)",
+     "technician-app/src/features/attendance/geofence.ts:216-226, 247, 258 — network failure -> null -> arrive notifies, depart does not",
+     "expo #52544 body — SDK 55 emulator, closed for missing repro, not fixed (context)"
+    ],
+    "impact": "Background drains fail on Android 15 until the next foreground or FGS run. Data is kept (network errors are retried), but the departure reminder is lost.",
+    "fix_sketch": "Patch createJobInfo to add setRequiredNetworkType(NETWORK_TYPE_ANY) for these tasks, or rely on the F08 foreground drains. Take the network out of the geofence decision path (F05).",
+    "effort": "S",
+    "confidence": 0.45,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F18",
+    "title": "A crossing's device_time is the handler's enqueue time, not the transition time",
+    "severity": "P3",
+    "category": "defect",
+    "claim": "A crossing's device_time is the moment the handler enqueues it, not the OS transition. JobScheduler deferral (regular job, 60 s override deadline; Doze and standby defer further) plus the 20 s dwell make presence timestamps late by seconds to minutes.",
+    "failing_condition": "Screen-off arrival under light Doze: the presence device_time is minutes after the actual entry, and the fix used as evidence is the dwell's second fix.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:193-199 — const now = new Date().toISOString(); device_time: now (inside recordCrossing, after confirmation)",
+     "expo-location-18.0.10 GeofencingTaskConsumer.kt:81-88 — payload carries eventType + region only (no transition time)",
+     "expo-task-manager-12.0.6 TaskManagerUtils.java:212-218 — regular job, override deadline 60 s"
+    ],
+    "impact": "Arrival and departure evidence is skewed late against punches and pings.",
+    "fix_sketch": "Capture Date.now() at task entry, before any GPS read or dwell, and send it as device_time. Record handler_delay_ms in the diagnostics ring.",
+    "effort": "S",
+    "confidence": 0.7,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   },
+   {
+    "id": "O01-F19",
+    "title": "Permission request from the geofence path is a status read headless, but its behaviour with a backgrounded Activity is unverified",
+    "severity": "P3",
+    "category": "risk",
+    "claim": "In a truly headless context, getLocation's requestForegroundPermissionsAsync is effectively a status read: Expo answers the request DENIED without UI, then returns the real status. When the main Activity is alive in the background and location is not fully granted, the request is handed to that stopped Activity, and what the handler then does (deferred dialog, queued behind another request, or hang) is unverified.",
+    "failing_condition": "Precise location was downgraded and the app is backgrounded but alive when a geofence fires: the handler is stuck at getLocation, or a permission dialog appears when the tech next opens the app.",
+    "evidence": [
+     "technician-app/src/features/attendance/location.ts:26 — await Location.requestForegroundPermissionsAsync()",
+     "expo-location-18.0.10 LocationModule.kt:131-137 — request result ignored; returns getForegroundPermissionsAsync()",
+     "expo-modules-core-2.2.3 PermissionsService.kt:255-271 — no PermissionAwareActivity -> all DENIED without UI; otherwise currentActivity.requestPermissions or queued in mPendingPermissionCalls (:260-263)"
+    ],
+    "impact": "The brief's candidate is refuted as a defect for the pure headless case. The residual is a possible hang or stray dialog in the background-alive case.",
+    "fix_sketch": "Give getLocation a mode flag: background callers use getForegroundPermissionsAsync, and only the UI flows (punch, TravelScreen) request.",
+    "effort": "S",
+    "confidence": 0.5,
+    "in_field_apk": "unknown",
+    "touches_invariant": false
+   }
+  ],
+  "backlog": [
+   {
+    "title": "#47595 shape: MY_PACKAGE_REPLACED restore leaves tracking frozen until a force-close. Check this before the O-10 in-place APK update while techs are on duty",
+    "file_line": "expo-location-18.0.10 LocationTaskConsumer.kt:168-171",
+    "severity": "P2"
+   },
+   {
+    "title": "An app in the RARE/RESTRICTED standby bucket (likely after months unused) throttles Expo's regular jobs, and every geofence or location delivery is a job; needs field data from `am get-standby-bucket`",
+    "file_line": "expo-task-manager-12.0.6 TaskManagerUtils.java:212-218",
+    "severity": "P2"
+   },
+   {
+    "title": "Travel tracker and TravelScreen disagree on whether the tech is driving (S-06 L1, unchanged since handoff; not re-read here)",
+    "file_line": "technician-app/src/features/jobs/travelTracker.ts + TravelScreen.tsx (S-06 L1)",
+    "severity": "P2"
+   },
+   {
+    "title": "#52230 shape: after an OS restart LocationTaskService runs unbound; onStartCommand never calls startForeground and stop uses mService only, so after clock-out the 'on duty' notification may linger or be missing",
+    "file_line": "expo-location-18.0.10 LocationTaskService.kt:34-41; LocationTaskConsumer.kt:226-228",
+    "severity": "P3"
+   },
+   {
+    "title": "stopGeofencing swallows the throw from hasStartedGeofencingAsync when background permission is missing, so the geofence task stays persisted and every fresh process re-adds it with a swallowed SecurityException",
+    "file_line": "technician-app/src/features/attendance/geofence.ts:291-299; expo-location-18.0.10 LocationModule.kt:297-303",
+    "severity": "P3"
+   },
+   {
+    "title": "Clock-in FGS start may race the camera Activity's return (isForegrounded flips on onResume); usually masked by the GPS read delay",
+    "file_line": "technician-app/src/features/attendance/punch.ts:26,55",
+    "severity": "P3"
+   },
+   {
+    "title": "dutyStatus's queue branch counts parked (failed) punches when deciding on-duty state; bounded by the 14 h cap",
+    "file_line": "technician-app/src/features/attendance/pingTracker.ts:119-125",
+    "severity": "P3"
+   },
+   {
+    "title": "FGS notification channel is created at IMPORTANCE_LOW per task (appId:taskName); OEM shades may minimize it, weakening visibility",
+    "file_line": "expo-location-18.0.10 LocationTaskService.kt:96-107",
+    "severity": "P3"
+   },
+   {
+    "title": "sendPunch collapses landed/queued/failed into a boolean (S-06 L7, unchanged)",
+    "file_line": "technician-app/src/features/jobs/TravelScreen.tsx (S-06 L7)",
+    "severity": "P3"
+   }
+  ],
+  "challenges_settled": [
+   {
+    "settled_id": "S1",
+    "claim": "Refinement, not reversal: the 2 s teardown and the untracked-second-event loss apply only on the headless-loader path. While the main React instance holds a TaskManager (Activity alive, even backgrounded), events run there right away and are never torn down, and teardown also spares an Activity-bound instance. So H2's teardown losses need a process the OS restarted (after an OEM kill or reboot). The post-15 s freeze/kill risk applies whenever no FGS is running.",
+    "evidence": [
+     "expo-task-manager-12.0.6 TaskService.java:593-601 — getTaskManager prefers sTaskManagers over sHeadlessTaskManagers",
+     "TaskService.java:399-402 — taskManager != null -> executeTaskWithBody(body); return (no loader)",
+     "expo-modules-core-2.2.3 RNHeadlessAppLoader.kt:94-100 — destroy only if lifecycleState == BEFORE_CREATE"
+    ]
+   },
+   {
+    "settled_id": "S3",
+    "claim": "Extension: the app cannot repair the FGS from a background or headless JS context either. startLocationUpdatesAsync with a foregroundService option throws ForegroundServiceStartNotAllowedException when the app is not foregrounded, so any repair must run on AppState 'active', and a headless self-heal is impossible without a native patch.",
+    "evidence": [
+     "expo-location-18.0.10 LocationModule.kt:267-269 — if (!AppForegroundedSingleton.isForegrounded && options.foregroundService != null) throw ForegroundServiceStartNotAllowedException()"
+    ]
+   },
+   {
+    "settled_id": "S6",
+    "claim": "Clarification: the phone's depart rule is not the radius. It needs the raw point at or beyond max(1.5r, r+40), which is 120 m for an 80 m fence, so slow walking departures between 80 and 120 m are 'contradicted' on the phone as well.",
+    "evidence": [
+     "technician-app/src/features/attendance/geofence.ts:108-112 — exitThreshold = Math.max(radius*EXIT_HYSTERESIS_FACTOR, radius + EXIT_HYSTERESIS_MIN_M)",
+     "technician-app/src/features/attendance/geofence.ts:54-55 — EXIT_HYSTERESIS_FACTOR = 1.5; EXIT_HYSTERESIS_MIN_M = 40"
+    ]
+   }
+  ],
+  "design": "ANSWER IN ONE PARAGRAPH. On these phones the three behaviours mostly fail for the same reason: they depend on a process the OEM is allowed to keep or restart, and on a foreground service the app never restores.\n- H1: there is no autostart or lock-in-recents handling, so kills are silent and boot restore can be blocked.\n- H10: after any restart, the sampler comes back without its foreground service, and isRunning() stops the app from repairing it. Tracking degrades to a few fixes per hour and is invisible.\n- H16: a Location toggle silently removes the fence until the next app open.\n- H3 and H2 then suppress or lose many of the crossings that do arrive: the phone's raw-point rule disagrees with the server's overlap rule, and the dwell path runs past Expo's 15 s job.\nCode-level contributors: F08-F13 (fire-and-forget syncs cut by the 2 s teardown, the untracked second event, the debounce stamped before confirmation, the re-add on every foreground with initial triggers, Expo's shared static timestamp, last-fix-only pings).\n\nFIELD PROTOCOL (one technician phone, about 55 min, laptop with adb, during the tech's shift at the workshop). Ground rules:\n- Never uninstall, clear data or tap Discard.\n- Use no mock locations (they flag rows and do not drive Play geofencing reliably).\n- Avoid `am force-stop` until the end.\n- Test crossings are real presence rows in this phone's queue; log the time window for O-10.\n\nStep 0, guard (3 min). Before opening FixFlow, turn OFF its Wi-Fi and mobile data in the OEM per-app data settings, so every sync fails as a kept network error instead of the dead host's 404 (dropped or parked, S9). Write down the clock time.\n\nStep 1, static state (7 min). Each check's expected output tells you what it rules in:\na) `adb shell dumpsys package com.fixflow.technician | grep -E 'versionCode|versionName|firstInstallTime|lastUpdateTime|targetSdk|userId'`. Feeds H14; gives the uid.\nb) `... | grep -E 'ACCESS_(FINE|COARSE|BACKGROUND)_LOCATION|POST_NOTIFICATIONS'`. Expect granted=true for all.\n- BACKGROUND false: H9 on this phone. Geofencing is stopped and steps 3-4 only measure the FGS path.\n- FINE false with COARSE true: approximate grant; geofencing is dead (F07).\nc) `adb shell appops get com.fixflow.technician`.\n- RUN_ANY_IN_BACKGROUND: ignore means the AOSP background restriction is on (H1 precondition).\n- Note any OEM autostart op if the ROM prints one.\nd) `adb shell dumpsys deviceidle whitelist | grep fixflow`. Absent means not battery-exempt, so Doze and standby apply.\ne) `adb shell am get-standby-bucket com.fixflow.technician`.\n- 40 RARE or 45 RESTRICTED: Expo's jobs (every delivery is one) are deferred; an H1-class throttle.\nf) `adb shell cmd app_hibernation get-state com.fixflow.technician` (Android 12+). true means H9 by hibernation.\ng) `adb shell settings get secure location_mode` (0 = off, H16 live now) and `adb shell dumpsys location | grep -iE 'enabled|provider'`.\nh) `adb shell dumpsys netpolicy | grep -A2 <uid>`. Blocked reasons beyond the step-0 cut (DATA_SAVER, RESTRICT_BACKGROUND, APP_BACKGROUND) point to H17 / #52544.\ni) On the device, record: OEM autostart for FixFlow, the app battery saver setting, and whether the app is locked in recents. adb cannot read these reliably.\n\nStep 2, forensics before touching the app (5 min):\na) `adb shell dumpsys activity exit-info com.fixflow.technician`. Gives recent deaths with reason and timestamp. Read it as:\n- USER_REQUESTED or OTHER/SIGNALED with OEM text during shifts: H1, with frequency per day.\n- CRASH with 'Starting FGS with type location': #49424 (F15).\n- PERMISSION_CHANGE: H9.\n- LOW_MEMORY: memory pressure.\nb) `adb logcat -b all -d -v time > before.txt`, then grep for fixflow, TaskService, LocationTaskConsumer, GeofencingTaskConsumer, am_proc_start, am_kill.\n- 'Handling intent with action android.intent.action.BOOT_COMPLETED' after the last boot (`adb shell uptime`): boot restore was delivered.\n- No such line after a boot: OEM blocked it (H1).\n- 'Foreground location task cannot be started while the app is in the background!': H10(b) happened.\n- 'There is no location provider available': H16 at registration.\nc) If the tech is clocked in: `adb shell dumpsys activity services com.fixflow.technician`.\n- Healthy: 'LocationTaskService ... isForeground=true foregroundId=481756 types=0x00000008'.\n- No ServiceRecord: H1 or H10 already struck this shift; exit-info says which.\n\nStep 3, separating H1 from H10 (15 min, tech on duty, FGS present):\na) Start a live capture: `adb logcat -v time -s TaskService:* LocationTaskConsumer:* GeofencingTaskConsumer:* ReactNativeJS:*` plus `adb logcat -b events | grep -i fixflow`.\nb) Swipe FixFlow from recents, wait 60 s, then run `adb shell pidof com.fixflow.technician` and `dumpsys activity services`.\n- Process and FGS alive: swipe-kill is ruled out on this ROM.\n- Process gone with a new exit-info entry: the OEM kills on swipe (H1).\nc) Screen off, wait 10 min (two ping intervals).\n- 'Handling intent/Handling job ... fixflow-attendance-pings' lines with am_proc_start 'broadcast' and no ServiceRecord: the process restarts but the sampler has no FGS (H10b). One or two deliveries in 10 min confirms background throttling.\n- No deliveries and no process start: the OEM blocks restart (H1).\nd) Open FixFlow and run `dumpsys activity services` within 15 s.\n- LocationTaskService is back: H10(c) refuted on this path (restore ran while foregrounded).\n- Still absent while on duty: H10(c) confirmed (pingTracker.ts:185).\n\nStep 4, H16 plus H3/H2 timing (20 min, app open then Home, screen off):\na) Walk to 150 m or more from the fence centre. Within about 6 min expect 'Handling job with task name fixflow-attendance-geofence' then 'Finished task'. A gap over 15 s means the dwell ran (H3/H2).\nb) Location OFF for 60 s, then ON. Expect 'Handling intent with task name fixflow-attendance-geofence' with no 'Handling job' after it: the GEOFENCE_NOT_AVAILABLE delivery.\nc) Walk back within 40 m of the centre and wait 6 min.\n- No job: H16 confirmed.\n- A job: Play services kept the fence on this ROM (H16 weakened).\nd) Open the app. A geofence job within 1-2 min confirms the foreground-only recovery and the re-add noise (F11).\n\nStep 5, close-out (2 min): exit-info again; `adb logcat -d > after.txt`. Restore the app's network only when O-10 says so.\n\nSeparation:\n- H1: exit-info deaths, plus no deliveries while killed, plus no boot broadcast.\n- H10: deliveries arrive without the FGS, and the FGS is still absent after opening the app.\n- H16: no crossings after a toggle until the app is opened.\n- Step 1b/1f gates H9 first.\n\nIN-APP LOGGING SO THE NEXT FIELD REPORT IS DECISIVE (ships in the fix APK):\n- Store: a bounded diagnostics ring in AsyncStorage key diag.bg.v1, mutex-guarded, at most 500 entries, pruned at 7 days.\n- Privacy: no coordinates beyond what presence rows already carry. Geofence verdict entries may hold accuracy_m and a signed distance-to-edge rounded to 10 m.\n- Transport: shipped as droppable telemetry batches to POST /api/events, plus a hidden Diagnostics screen with Share.\nEntries:\n- proc/bundle start: timestamp, AppState at load, headless yes/no.\n- task_begin / task_end per task: delivery-to-handler delay, duration, outcome.\n- geofence_error: message.\n- gps_fix: ms_to_fix, accuracy, per-fix verdict; plus dwell_started.\n- crossing_recorded; notify_shown or notify_suppressed with reason.\n- On every foreground: {fg, bg, accuracy fine|coarse, hasServicesEnabledAsync, getProviderStatusAsync, batteryOptimized, fence active and radius, hasStartedGeofencingAsync, ping/travel registered, re-arm performed}.\n- sync_result per queue: HTTP status or network-error class, plus queue depth.\n- headless_401.\n- sampler_gap: previous ping older than 3x the interval while on duty.\nServer side (O-04/H18): a per-tech, per-day sampler-health view built from these events.\n\nFIX ORDER (each respects the 14 h / 4 h bounds and the outbox contract):\n1. F05 + F10: record first, bound every GPS read, local duty check, stamp after enqueue.\n2. F04: shared verdict rule; owner raises the fence to >= 100 m.\n3. F01: re-arm the FGS on 'active' within bounds; patch #49424/#52230; sampler_gap notice.\n4. F03: error-branch re-register, provider banner, periodic re-check.\n5. F06/F07: permission and accuracy banner, hibernation exemption.\n6. F02: OEM onboarding.\n7. F08: awaited syncs and foreground drains for pings and presence.\n8. F09/F12/F14: patch-package fixes in expo-task-manager / expo-location.\n9. F11/F13/F18: cleanups.\n\nH11 ISSUE CLASSIFICATION against expo-location 18.0.10 / expo-task-manager 12.0.6 on Android 13-15:\n- #52544: APPLICABLE, conditional. 12.0.6's JobInfo has no network constraint (TaskManagerUtils.java:212-218), but the symptom needs Android 15+ and a process alive in the background without the FGS. Effect is a network error, so data is kept and only the depart reminder is lost. Its note on the 15 s cap leading to a frozen process supports H2. The reporter was on an SDK 55 emulator; the issue was closed for a missing repro, not fixed.\n- #49424: APPLICABLE, conditional. The same unguarded startForegroundService, bind, then startForeground in onServiceConnected (LocationTaskConsumer.kt:191-219). Needs Android 14+, targetSdk 34 (the SDK 52 default) and only a while-in-use grant; with 'all the time' the location FGS is not foreground-only. Our trigger: Start travel, then lock immediately.\n- #46505: UNKNOWN, likely applicable in effect. Its symptom (updates never resume after a user stop from the location indicator) matches H10(c)/(d) in our app regardless of the Expo root cause, which the issue does not identify. The reporter, on SDK 56, says older versions are worse.\n- #52230: APPLICABLE. Same early return (LocationTaskConsumer.kt:168-171) and mService-only stop (226-228). Our LocationTaskService.onStartCommand never calls startForeground (LocationTaskService.kt:34-41), so the device outcome after an OS restart (no notification, a lingering one, or an ANR-type kill) is unknown. First seen on OPPO ColorOS 13, the same class of phone as the fleet. It cites #47595 (an app update freezes tracking), which matters for O-10.\n- #50060: LIKELY APPLICABLE. Same once-only setTaskManager (TaskManagerInternalModule.java:50-56) and invalidateAppRecord removal (TaskService.java:603-610). The old-arch invalidateApp branch also spares an Activity-bound instance (RNHeadlessAppLoader.kt:89-103). Our build is presumably old architecture (no newArchEnabled in app.json; unverified), and the outcome after the drop is unverified.\n- #47023: NOT APPLICABLE as described. 12.0.6's TaskJobService.onStartJob only calls taskService.handleJob (TaskJobService.java:9-14), with no mJobParams or thread pattern. Our cadence (5 min pings, 20 s travel) is far below the reporter's continuous GPS.\nMechanisms not in that list but present in this version: the shared static timestamp (F12) and the initial-trigger re-add (F11, title of #33433).\n\nREFUTED or NARROWED CANDIDATES:\n- requestForegroundPermissionsAsync from a headless context: a status read in the pure headless case (F19 residual only).\n- 'jobFinished stops the JS': no (S1).\n- The FGS-less sampler still obeys the 14 h / 4 h bounds, because handlePingUpdate and handleTravelUpdate check them per batch; the privacy breach is visibility, not duration.",
+  "open_questions": [
+   "The G1 gate record named in the brief (C:/Users/User/Documents/projects/EMS_workshop1/docs/program/G1-discovery-gate-2026-11-01.md) does not exist. The hypothesis definitions were taken from C:/Users/User/Documents/projects/EMS_workshop1/docs/ORCHESTRATION-DESIGN-2026-10.md lines 61-82 instead.",
+   "Extra files read beyond the brief (one hop each).\nFixFlow repo:\n- backend/app/features/attendance/derive.py:80-110\n- backend/app/features/attendance/service.py:400-445 and 985-1020\n- backend/app/core/config.py (grep: accuracy ceilings)\n- backend/app/features/attendance/models.py (grep: table names, confirmed)\n- technician-app/src/features/attendance/ClockScreen.tsx:51 and useAttendance.ts:258 (grep)\n- technician-app/package.json and app.json (grep)\nPinned Expo sources (C:/Users/User/.fixflow-cache/expo-src):\n- expo-location 18.0.10: LocationTaskConsumer.kt; GeofencingTaskConsumer.kt; services/LocationTaskService.kt; LocationModule.kt (96-140, 252-342, 385-418, 706-745); LocationHelpers.kt (60-110, 195-215)\n- expo-task-manager 12.0.6: TaskService.java (60-120, 190-440, 541-622); TaskManagerUtils.java (120-230); TaskJobService.java; TaskManagerInternalModule.java (grep)\n- expo-modules-core 2.2.3: RNHeadlessAppLoader.kt; PermissionsService.kt (120-300); MapHelper.java\nSix expo/expo issues via gh: #52544, #49424, #46505, #52230, #50060, #47023.",
+   "F07 relies on Play services geofencing requiring ACCESS_FINE_LOCATION, and on how an approximate-only addGeofences fails (synchronous SecurityException or async status 1004). This comes from the GeofencingClient reference, which W1 did not fetch. Verify it on a device or fetch the reference.",
+   "F12 depends on whether the fused location provider hands the same fix (same timestamp) to concurrent ping and travel requests. Measure it with ping delivery counts during a travel leg.",
+   "F16: does FusedLocationProviderClient.getCurrentLocation with no duration ever time out internally on the fleet's Play services builds? expo #10756 suggests it may not.",
+   "F14: in this build (presumably old architecture, since app.json has no newArchEnabled under SDK 52), what happens after the task manager is dropped? Silent loss, or an assertion when createReactContextInBackground runs on a started ReactInstanceManager? Needs an RN 0.76 source read or a device test.",
+   "H10(c) on open-after-kill: does the fresh process's TaskService (and so restoreTasks) get built before or after AppForegroundedSingleton.isForegrounded turns true? Step 3d of the protocol decides it per phone.",
+   "H3 severity depends on the live fence's radius and centre relative to where techs park and work (H4, owner). Presence rows with confirmed=false and inside_geofence=true in a dump would size it.",
+   "Does the server's duty coverage use only attendance_ping, or also job-travel samples? This decides F12's impact; it belongs to O-04.",
+   "Do the fleet ROMs (HyperOS, ColorOS 14/15, FuntouchOS/OriginOS) expose `cmd app_hibernation get-state`, an OEM autostart appop, and Android 15's APP_BACKGROUND network block (#52544)? Each step-1 command needs a fallback per ROM.",
+   "Which field APK commit is installed (H14/W0)? Every in_field_apk label stays 'unknown' until it is known, although all files cited here are unchanged since 906b990 (S13).",
+   "For O-10: per #47595, an in-place APK update (MY_PACKAGE_REPLACED) while a tech is on duty may leave tracking frozen until a force-close. Should the drain protocol require clock-out, or an app open and a check of the FGS, after the update?"
+  ]
+ },
+ "citations": {
+  "rows": [
+   {
+    "finding_id": "O01-F01",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "All repo and node_modules quotes found within ~1-2 lines of the cited positions. pingTracker.ts isRunning at :185, startLocationUpdatesAsync :187, onDuty branch :261, comment :16. travelTracker.ts isRunning at :193. Expo LocationTaskConsumer.kt didRegister :56-60 and :168-171; TaskService restoreTasks :76-79 and :99-102; LocationModule.kt :284-286. None of the 10 commits since the handoff touch these files."
+   },
+   {
+    "finding_id": "O01-F03",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "geofence.ts :268 'if (error) return' and ensureGeofenceMonitoring :307-335 found. GeofencingTaskConsumer.kt :66-71, :120-123, :148-156 found. LocationModule.kt :251-253 hasServicesEnabledAsync found, and a grep of technician-app/src finds no caller. useAttendanceBackground.ts calls ensureGeofenceMonitoring at :53 and :65-66. R-01 [H8] is external context and not checkable in the repo."
+   },
+   {
+    "finding_id": "O01-F04",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "geofence.ts: arrive verdict :105, accuracy gate :51 and :99 (CONFIRM_ACCURACY_MAX_M = 100), depart threshold :108-112, contradicted/dwell :128-133 and :244. derive.py :94-95 matches. config.py:54 is 200.0 and service.py :1003-1004 matches. service.py stores inside_geofence and confirmed at :429-435. R-01 [H8] is external context."
+   },
+   {
+    "finding_id": "O01-F05",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "geofence.ts :126-133, :56-58 ('~30s headless budget' at :57) and :241-242 found. location.ts getCurrentPositionAsync at :31-33 (cited 31-33 is about right) with no timeout. TaskService.java :336-339 and :612-619 (15000 ms timeout) found. GeofencingTaskConsumer.kt :104 found. expo #52544 is external context."
+   },
+   {
+    "finding_id": "O01-F07",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "permissions.ts foreground = (...).granted is at about :48-51, close to the cited :50-53. LocationModule.kt :323-341, :712-717 found. geofence.ts :309-316 gate is fg.granted && bg.granted (actual :313). GeofencingTaskConsumer.kt :148-156 found. Grep for accuracy 'fine'/'coarse' checks in technician-app/src finds only comments and tests, no permission-accuracy check."
+   },
+   {
+    "finding_id": "O01-F08",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "pingTracker.ts :303-304 (cited :303-305), travelTracker.ts :287, geofence.ts :210-211 found. TaskService.java :203-218 (2000 ms postDelayed then invalidateAppRecord) found. RNHeadlessAppLoader.kt destroy logic at :80-103 found. syncPings has one non-test caller, pingTracker.ts:304. S7 is internal context."
+   },
+   {
+    "finding_id": "O01-F09",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "TaskService.java :389-397 else branch creates a new appEvents list that is never stored in sEvents. :203-218 found. GeofencingTaskConsumer.kt :97-105 found. TaskManagerUtils.java :137-156 merge into a pending job found. geofence.ts LAST_CROSSING_KEY used at :154-174. The cited geofence.ts range 164-176 sits slightly after :162-174."
+   },
+   {
+    "finding_id": "O01-F10",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "geofence.ts :174 setItem before 'return false', :239-242 and :253-255 ordering, ClockScreen.tsx:51 getLastCrossingKind found exactly."
+   },
+   {
+    "finding_id": "O01-F11",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "useAttendanceBackground.ts :65-66 (cited :64-69) calls ensureGeofenceMonitoring on 'active'. geofence.ts :322 startGeofencingAsync has no hasStartedGeofencingAsync guard. TaskService.java :99-102, GeofencingTaskConsumer.kt :54-58 and :166-170 found. geofence.ts :244-261 found. expo #33433 is external context."
+   },
+   {
+    "finding_id": "O01-F12",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "LocationTaskConsumer.kt: timestamp filter at :253-257 (cited :248-258), clear only when data.size > 0 at :259-263, sLastTimestamp static at :317, deferred logic :279-284. MapHelper.java getLong default 0 at :69-80. pingTracker.ts :187-191 sets deferredUpdatesInterval. travelTracker.ts :194-205 sets none."
+   },
+   {
+    "finding_id": "O01-F13",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "pingTracker.ts :286 'const fix = locations[locations.length - 1]; // the freshest sample' and :187-191 timeInterval/deferredUpdatesInterval found. LocationTaskConsumer.kt :270-285 and the single scheduled job at :248-266 found."
+   },
+   {
+    "finding_id": "O01-F14",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "TaskManagerInternalModule.java :55-56 setTaskManager in onCreate. TaskService.java :603-610 and :399-421 found. RNHeadlessAppLoader.kt :89-103 old-arch branch found, with appRecords.remove at :102. expo #50060 is external context."
+   },
+   {
+    "finding_id": "O01-F15",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "LocationTaskConsumer.kt :190-219 startForegroundService + bindService with startForeground in onServiceConnected, no try/catch. LocationModule.kt :261-266 (cited :264) FGS path skips the background-permission check. travelTracker.ts :194-205 and punch.ts:55 (startDutyPings after clock_in) found. expo #49424 is external context."
+   },
+   {
+    "finding_id": "O01-F16",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "location.ts :24-43 requestForegroundPermissionsAsync then getCurrentPositionAsync with no timeout. geofence.ts :126, :132, :190 getLocation calls found (cited :241 is the confirmCrossing call). punch.ts :27 getLocation and :51 enqueue found. LocationHelpers.kt :59-89 has CurrentLocationRequest with no duration and success/failure/cancel handlers."
+   },
+   {
+    "finding_id": "O01-F17",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "TaskManagerUtils.java :212-218 JobInfo.Builder with setMinimumLatency(0) and setOverrideDeadline(DEFAULT_OVERRIDE_DEADLINE), no setRequiredNetworkType. The 60000 ms value was not checked, only the constant name. geofence.ts :216-226 isClockedIn returns null on failure, with :247 and :258 branches found. expo #52544 is external context."
+   },
+   {
+    "finding_id": "O01-F18",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "geofence.ts :193 'const now = new Date().toISOString()' and :199 'device_time: now' found. GeofencingTaskConsumer.kt :81-88 payload has eventType and region only. TaskManagerUtils.java :212-218 found."
+   },
+   {
+    "finding_id": "O01-F19",
+    "status": "LOCATED",
+    "fixed_by": "",
+    "note": "location.ts:26 found. LocationModule.kt :131-137 found (result ignored, returns getForegroundPermissionsAsync). PermissionsService.kt :255-271 found: DENIED without UI when the activity is not PermissionAwareActivity, otherwise requestPermissions or queued in mPendingPermissionCalls at :261-262."
+   }
+  ]
+ },
+ "verdicts": [],
+ "skipped": [
+  "O01-F03",
+  "O01-F04",
+  "O01-F07",
+  "O01-F08",
+  "O01-F09",
+  "O01-F10",
+  "O01-F11",
+  "O01-F12",
+  "O01-F13",
+  "O01-F14",
+  "O01-F15",
+  "O01-F16",
+  "O01-F17",
+  "O01-F18",
+  "O01-F19"
+ ]
+}

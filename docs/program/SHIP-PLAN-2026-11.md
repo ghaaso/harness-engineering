@@ -1,9 +1,11 @@
-# FixFlow ship plan — phases sized to one session each (v5, 2026-11-01)
+# FixFlow ship plan — phases sized to one session each (v6, 2026-11-01)
 
-**Status: v5 — revised four times; ready for P0a.** v1 was critiqued by five Opus lenses (138
+**Status: v6 — revised five times; ready for P0a.** v1 was critiqued by five Opus lenses (138
 findings, `SHIP-PLAN-2026-11-critique.md`); v2 reflected them and was verified by eight lenses
 (141, `SHIP-PLAN-2026-11-critique-2.md`); v3 by four lenses (52, `SHIP-PLAN-2026-11-critique-3.md`);
-v4 by a three-lens delta check (47, `SHIP-PLAN-2026-11-critique-4.md`). §6 records every
+v4 by a three-lens delta check (47, `SHIP-PLAN-2026-11-critique-4.md`); v5 by the harness and
+architecture review (`HARNESS-REVIEW-2026-11-01.md`: four Opus architects, two judges, 45 claims
+each attacked by two refuters; rulings **HR-…**, §6.6). §6 records every
 adjudication and the rulings. Earlier versions are in git history (762a63f, 79b94c7, 9748453,
 46c5d98). Still awaiting: the owner's P0a answers (§4). No further critic pass is scheduled;
 the next session is **P0a**.
@@ -28,20 +30,32 @@ from the drain design, "runbook R5" is a RUNBOOK-SELFHOST operation, "ruling R5"
   checkbox list, ticked as items land; resume = `gh pr view <branch>`, first unticked box. An
   operations phase's **first act commits its numbered step table** (copied from its Scope) to
   `docs/program/W0-results.md`, ticked as executed; resume = first unticked row. Builds in flight
-  resume from `eas build:list`.
+  resume from `eas build:list`. The draft PR body's **first line is `Plan @ <sha>`** (the commit
+  of this file and the cited design note at phase start); on resume run
+  `git diff --stat <sha>..origin/main -- docs/program/` and re-read any changed section before
+  ticking the next box. Under the checklist the body keeps a short **"Decisions / ruled out /
+  owner corrections (this phase)"** list, appended the moment one occurs (`gh pr edit
+  --body-file`), so mid-phase state survives a context compaction (HR-C2). A phase's closing
+  message answers six questions in a few lines: goal, where it fits, why this choice,
+  before/after, what evidence ran (incl. skipped counts), what remains; it then refreshes
+  `OWNER-VIEW.md`.
 - **Routing (design doc §3).** Opus owns anything touching the outbox contract, drain tooling
   and its matching rules, the job lifecycle, ledger/chain and all posting/money code, auth, PIN,
   JWT, migrations, native patches, and the location-privacy time bounds. Sonnet implements
   well-specified screens, read models, infra files, docs and tests from a design's test list.
   Haiku extracts. Every PR gets an Opus reviewer with a refute-by-default brief naming the
-  register ids it must try to break. The main session (Fable) briefs, gates and judges; it never
+  register ids it must try to break; the verdict names the **PR head SHA it read**, and a push
+  after review needs a re-read of the diff since that SHA before merge. For each register id
+  fixed the reviewer names the test that fails on the base commit and passes on head, and lists
+  every changed expected value, removed assertion and new skip or xfail with its reason. The main session (Fable) briefs, gates and judges; it never
   implements.
 - **Gates.** Backend gates run in Docker (Appendix A on `postgres:17-alpine` from P3a on; the
   owner starts Docker Desktop and confirms with `docker info`). Web and mobile gates run
   natively (green today on Node 24). A code phase is not done until gates are green locally
   **and** CI is green on the PR.
 - **Merge is not deploy — the drain image and the deploy train.** From P3 on, production is the
-  self-hosted box. Until the drain window closes (`T_close`, P4c) the box runs the git tag
+  **primary host** (this plan says "the box" for it; by ruling HR-A3 that is a VPS by default
+  until after P5d-2 and the home box afterwards). Until the drain window closes (`T_close`, P4c) the box runs the git tag
   **`drain-image`**, cut from the branch **`release/drain`** = a branch at P1's squash commit
   with the P2b-2 and P3a squash commits applied **by `git cherry-pick` only — never `git merge`**
   (the repo squash-merges; merging would pull in whatever else reached `main`). After the cut
@@ -101,7 +115,7 @@ from the drain design, "runbook R5" is a RUNBOOK-SELFHOST operation, "ruling R5"
 | Geofencing, pings and travel behave as designed in the field (thresholds in §4) | end of P5d-2, thresholds passing | P6a, P5a, P5b, P5c, P5d-1a (×n), P5d-1b (×n), P5d-2, P6b-1, P6b-2 |
 | Security holes closed for a shipped system | boot/edge set at P3c; the rest at the later of P7b-1 and P7b-2; insider evidence at P8b, P13a | P1, P3c, P7a, P7b-1, P7b-2, P8a, P8b, P12, P13a, P13b |
 | Latency acceptable (threshold in §4) | measured in P3c before the route opens | P3c |
-| Kacha khata → manager-approved pakka khata → Odoo | end of P10b (P11 only on a Custom plan) | P7a, P8a, P8b, P9a-1, P9a-2, P9b, P10a, P10b, P11 |
+| Kacha khata → manager-approved pakka khata → Odoo | end of P10b (P11 only on a Custom plan) | P7a, P8a, P8b, P9-0, P9a-1, P9a-2, P9b, P10a, P10b, P11 |
 | Self-hosting durable, not just running | end of P13c (incl. P13d's second PR) | P13a, P13b, P13c, P13d |
 
 ## 2. Dependency order
@@ -118,7 +132,7 @@ P6a (merge after P1; deployed by P4c) ─┐
 P2b-1, P4a ────────────────────────────┴─► P5a ─► P5b ─► P5c (after P4c) ─► P5d-1a×n ─► P5d-1b×n ─► P5d-2
 P4c ─► P6b-1 ─► P6b-2 (needs P5a merged) ─► P5d-1a
 P1 ─► P7a ─► P7b-1 (needs P3c XFF record, every phone P4b/P4r/retired + on v2) ; P3c ─► P7b-2
-P7a ─► P8a ─► P8b ─► P9a-1 ─► P9a-2 ─► P9b ─► P10b ; P9a-2 ─► P10a ─► P10b ; P10a ─► P11 (optional)
+P7a ─► P8a ─► P8b ─► P9a-1 ─► P9a-2 ─► P9b ─► P10b ; P8a ─► P9-0 (owner) ─► P9a-1 ; P5d-2 ─► P9a-1 ; P9a-2 ─► P10a ─► P10b ; P10a ─► P11 (optional)
 P3c ─► P12 ; P4c, P7b-2 ─► P13a ─► P13b, P13c (+P13d as a second PR, needs the P6b-2 audit re-run clean, P8a)
 P5d-2 ─► P14-n ─► P14-fleet×n
 ```
@@ -154,7 +168,7 @@ keystore cert; H = the owner controls the old Railway hostname; v2 = the field b
 - [ ] P2b-2 — Drain audit script (backend code) [+ drain-image tag if last]
 - [ ] P2c — Fleet APK v1: build, signature, install proof (both K branches)
 - [ ] P3a — Self-host repository changes [P3a-2 if the hatch is taken] [+ drain-image tag if last]
-- [ ] P3b — Box ready, restore, PIN rotation (owner session)
+- [ ] P3b — Host ready (VPS by default), restore, PIN rotation (owner session)
 - [ ] P3c — Pre-cutover verification (preflight host; route stays closed)
 - [ ] P12a — Web payment idempotency fix (A4), before P4a
 - [ ] P4a — Pilot drain: field protocol, B4–B6, E1–E6 on one phone
@@ -175,6 +189,7 @@ keystore cert; H = the owner controls the old Railway hostname; v2 = the field b
 - [ ] P7b-2 — Ops console, media, web dependencies, Cloudflare rules
 - [ ] P8a — Money integrity 1: void attribution, payloads, captured_at, FK NOT VALID
 - [ ] P8b — Money integrity 2: bill revisions, chain over payments (+ backfill), daily verify, mailer + anchor [P8b-2 if the hatch is taken]
+- [ ] P9-0 — Odoo and books rehearsal (owner + accountant; the decide-before-build gate)
 - [ ] P9a-1 — Accounting slice 1: posting tables, triggers, decision API
 - [ ] P9a-2 — Accounting slice 2: stager
 - [ ] P9b — Approval and reconciliation UI
@@ -242,13 +257,24 @@ because …" except where marked MUST. Commands are Git Bash; start the shell wi
     dashboard logins for Railway, Supabase, Cloudflare, Sentry, Firebase, Expo; **USB debugging
     on every roster phone** (item 6 needs it); a cable; a spare Android phone for P2c.
 11. **Decisions** (§4): every row answered or left to its default; incl. the chain-anchor address
-    and SMTP relay credentials (or "unanchored"), the geofence thresholds, the Odoo plan and
+    and SMTP relay credentials (or "unanchored"), the geofence thresholds, the drain-window host (VPS by
+    default, HR-A3), the SDK spike and the shift reminder (HR-A1b/c), the Odoo plan and
     version, and — when K=no & H=yes & v2=no — the `O10-F15` old-secret decision.
 12. **Network cut, every phone**: FixFlow's per-app Wi-Fi and mobile data off (system settings),
     or "background data off + Wi-Fi blocked by <method>", or airplane mode when nothing else is
     available; method and date recorded per phone. It lifts only per the §2 branch box.
 13. **Committed keys**: the Maps/Firebase/Sentry client keys restricted in each console (package
     name + SHA-1); done per key (`O05-17`).
+14. **Workshop Wi-Fi** (HR-A1c): does the workshop have Wi-Fi that technicians' phones join during
+    shifts? SSID and the BSSID(s) of its access point(s) (a phone's Wi-Fi details or the router);
+    which roster phones join it. "No Wi-Fi" is a valid answer and disables the `O04-F18` rule.
+15. **Field cash custody** (HR-A4, `O07-F17`): do technicians hold cash collected at customers, or
+    receive "online" payments into personal wallets, before handing them to the shop? For how
+    long, and who counts the hand-over today? "Never — every rupee reaches the manager the same
+    day" is a valid answer and drops the remittance source.
+16. **Books basis**: is the shop registered for sales tax (SRB/FBR)? Are the books on a cash
+    basis? Is there an accountant, and does that person want per-transaction entries or periodic
+    totals? Unknowns here block P9-0, not P0a.
 **Done when.** Items 1–4, 6 (every roster phone), 10 and 12 have values; the rest have values or
 a dated "unknown, because".
 **Workflow.** None; a Sonnet chat can help read a dashboard. **Resume.** The file.
@@ -258,11 +284,16 @@ a dated "unknown, because".
 **Goal.** What P2b-1, P2c and P3 cannot start without, with a date and a fallback.
 **Entry.** P0a.
 **Scope.** The **domain** (Cloudflare DNS, multi-year, auto-renew) — the name is enough for
-P2b-1; DNS for P2c/P3a. The **box** (Linux, UPS, location, CGNAT test once online) **or**, by
-the target date, the G2-D1 fallback: a small VPS running the identical compose behind the same
-`api.<domain>` (VPS → box later is a DNS change). ISP facts. Target date = when the drain must
+P2b-1; DNS for P2c/P3a. The **drain-window host** (ruling HR-A3): by default a **small VPS**
+(2 vCPU / 4 GB, provider backups on; Mumbai measured first in P3c, then Singapore) running the
+identical compose behind the same `api.<domain>`, primary from P3b through P5d-2. The **home
+box** (Linux, a UPS covering box, ONT and router, location, CGNAT test once online) is the
+restore-drill host and becomes primary by a tunnel move after `T_close`, once a 14-day heartbeat
+from its site shows ≥ 99.5 % reachability or a second uplink exists; the owner may invert the
+default at P3b if such a box already exists (§4). ISP facts. Target date = when the drain must
 start (P4a), set by the Supabase deadline and the techs' hibernation clock.
-**Done when.** `api.<domain>` exists in Cloudflare DNS and a Linux host with SSH exists.
+**Done when.** `api.<domain>` exists in Cloudflare DNS and the drain-window host (VPS by default)
+exists with SSH; the box, if any, has its site facts recorded.
 **Resume.** The W0-results section.
 
 ## P1 — Backend first-boot gate, PIN policy, origin marker, deep-health exposure, legacy verifier (backend; one PR; migration-free)
@@ -302,8 +333,14 @@ said no"; the owner can read from deep-health everything later phases need to re
 - Ping backdate ceiling default 48 → 240 h (`O04-F12`, G2 §5); drain-mode knobs
   (`FIXFLOW_ATTENDANCE_*`, `FIXFLOW_JOBS_GPS_*`) documented; `/api/ops/health` documented as the
   healthcheck target with its `X-Ops-Proxy-Token` requirement (`O08-F07`).
-**Deliverables.** Code + tests per bullet (incl. forced-500 marker test, no-env fails-closed
-test, `1234` login → 403 in production); `set_pin.py`; CLAUDE.md security section **and** the
+**Deliverables.** Code + tests per bullet (incl. forced-500 marker test, the no-env fails-closed
+test run in a **cleaned environment** with no inherited `backend/.env` or compose env, `1234`
+login → 403 in production); `set_pin.py`; the **skip-aware gate** (harness rule, HR §4): pytest
+runs with `-rs --junitxml`, and the gate **fails when any `@integration` test was skipped**
+(`backend/tests/conftest.py:65-69` skips them all when `FIXFLOW_TEST_DATABASE_URL` is unset) —
+the same assertion added to `ci.yml` after pytest, the mobile job's `--passWithNoTests` removed,
+and design Appendix A updated; a CI step that fails when CLAUDE.md's Alembic head differs from
+the `down_revision` chain head or a path CLAUDE.md names does not exist; CLAUDE.md security section **and** the
 Location-and-privacy trust-window line (240 h) updated. If P1 merges last of P1/P2b-2/P3a: the
 `release/drain` branch and `drain-image` tag cut.
 **Done when.** Backend gates green in Docker and CI; `curl -i` on an unknown path shows the
@@ -323,7 +360,11 @@ client-IP echo) moves to P3a. **Resume.** Branch `fix/backend-first-boot-gate`.
 - **Step 1** origin-aware classification: a response without the marker (edge 404, Cloudflare
   403/502/530, captive pages) is **connectivity** — no park, no drop, no attempt count; 5xx
   counts toward the poison cap only with the marker (`O3-F6`). **No** JSON-`detail` fallback
-  (ruling R8). Test: a `{"detail": …}` body without the marker is not definitive.
+  (ruling R8). Test: a `{"detail": …}` body without the marker is not definitive. Classification
+  is **one pure `classify(error, kind)`** returning an outcome (landed / pause-auth / park /
+  count-and-retry / free-retry / drop) from a per-kind policy table that **every** loop calls, the
+  pending-media queue included (`O3-F22`; its 413 branch becomes a policy row) — no queue keeps a
+  private ladder (HR-A2; O-03 amendments).
 - **Step 2** `sendOrQueue` keeps the write on non-app errors and on 401 (`O3-F1`, `O3-F8`).
 - **Step 3** duty truth from live punches only (`O3-F2`, `O3-F3`).
 - **Step 4** `clearSession()` on every 401 incl. headless; privacy gates read the cleared state
@@ -355,7 +396,8 @@ for every roster phone (the fleet versionCode must exceed the fleet maximum).
 - D1: the `fleet` EAS profile (APK, `EXPO_PUBLIC_API_URL=https://api.<domain>`, real Sentry DSN,
   versionCode above the fleet maximum). `preview` and `production` profiles **repointed to the
   owned domain or removed** (`O08-F05`/`O08-F14`); every later build names `fleet`.
-- D4 then D3: the manifest snapshot at bundle load, **written once per versionCode**; a sync gate
+- D4 then D3: the manifest snapshot at bundle load, **written once per versionCode** and carrying
+  the phone's **total AsyncStorage bytes** (`O10-F17`; the Android cap is 6 MB); a sync gate
   every queue awaits that opens **only on a 2xx manifest receipt**; the one-time un-park
   migration keyed on edge reasons (`O10-F2`) runs **after** the snapshot is written.
 - D5: the gate calls `drainAll` (P2a). D6/E4: login banner with per-tech record counts; the
@@ -481,7 +523,7 @@ backend image); P3c's Entry then adds "P3a-2 merged".
 **Resume.** Branch `feat/selfhost-stack`.
 **Backlog in these files.** `O08-F09` (P7b-2), `O08-F10` (P13c).
 
-## P3b — Box ready, restore, PIN rotation (owner session at the box)
+## P3b — Host ready, restore, PIN rotation (owner session at the host: VPS by default, HR-A3)
 
 **Goal.** The recovered database on the box, verified, with no account on a default or short
 PIN, the backend and web booting against it — reachable from the box only.
@@ -489,7 +531,8 @@ PIN, the backend and web booting against it — reachable from the box only.
 copy done; the recovery case decided (§4: no default); the `O10-F15` decision recorded if it
 applies.
 **Scope** (runbook steps, table committed to W0-results first):
-1. Box-ready checklist, every command's output recorded.
+1. Host-ready checklist (VPS or box per P0b), every command's output recorded; on a VPS also:
+   provider firewall closed, provider backups on, swap, unattended upgrades.
 2. Secrets into `/etc/fixflow`: generated JWT secret; **only on a §4 "yes" (K=no & H=yes &
    v2=no): the sealed old secret as `FIXFLOW_LEGACY_JWT_SECRET` with `EXPIRES_AT` = the planned
    `T_close`** (P4c extends it with the window); `FIXFLOW_OPS_PROXY_TOKEN`; R2 keys; FCM service
@@ -530,8 +573,9 @@ with `api.<domain>` answering 503 to the world until P4a opens it.
 3. **Latency** (§4 threshold) from the owner's phone on Pakistani mobile data (Termux `curl -w`
    with the service-token headers): 20 × GET `/api/health`; one manager login with a slip PIN,
    then 20 × GET `/api/jobs` and 20 × POST `/api/events`; record `cf-ray` PoP, p50/p95. Fail →
-   G2-D1 VPS: re-run P3b and P3c on the VPS from the same dump with the same slips, discard the
-   box DB (O-10 R1), P0b records the VPS date.
+   re-run P3b and P3c on the next candidate (the next VPS region — Mumbai first, then Singapore,
+   HR-A3 — or the box if it passes the P0b gate) from the same dump with the same slips,
+   discarding the failed host's DB (O-10 R1); P0b records the date.
 4. **Old hostname** per rule 5: H=yes & K=yes → hang stub deployed on Railway and verified (no
    bytes 20 s); H=yes & K=no (or mixed fleet) → the stub deployed, **in hang mode** until B6 (or
    until every K=yes phone has its P4b row), its proxy mode verified with the tunnel stopped (it
@@ -542,7 +586,8 @@ with `api.<domain>` answering 503 to the world until P4a opens it.
    once).
 7. Backups: `backup_prefix=backups/db-selfhost/` read back from deep-health; the manual backup
    run; the new key listed in R2; restored once with Appendix C; then `BACKUP_ENABLED=true`
-   (read back). Note in W0-results: backups are plaintext under the app credential until P13b
+   (read back); the **hourly `pg_dump` cron to R2** (HR-A3) installed and its first key listed;
+   from P4a on, a manual dump after every phone's P4b row. Note in W0-results: backups are plaintext under the app credential until P13b
    (`O6-F06`, G2-D2 deviation accepted in §4).
 8. `preflight-api.` and its service token **deleted**; deletion recorded.
 **Done when.** Every test has a result; latency passes or the VPS path is taken; `api.` still
@@ -662,13 +707,20 @@ when the app comes back, a lost fence repairs itself.
 **Entry.** P2b-1 merged (fleet profile); **P6a merged** (shared verdict rule + fixture, ruling R1);
 P4a done (protocol findings in W0-results).
 **Scope** — `w2/O-01-design.md` FIX ORDER 1–4 and 7, IN-APP LOGGING:
-1. Record-first: bounded GPS reads (`O01-F16`), local duty check, debounce stamp **after** enqueue
-   (`O01-F05`, `O01-F10`, `O01-F18`).
-2. The verdict rule from the P6a fixture (three-state; 100 m accuracy ceiling): inside and
-   unknown both **prompt** (unknown with softer copy), outside suppresses (`O01-F04`).
+1. Record-first with **one bounded fix** (HR-A1a): `getLastKnownPositionAsync` (max age 2 min,
+   accuracy ≤ 100 m), else `getCurrentPositionAsync` under an 8 s timeout, else null coordinates;
+   the presence row is enqueued before the fix resolves; local duty check; debounce stamp
+   **after** enqueue; **the 20 s dwell re-check and the second fix are deleted** (`O01-F05`,
+   `O01-F10`, `O01-F16`, `O01-F18`).
+2. The verdict rule from the P6a fixture (three-state; 100 m accuracy ceiling) applied to that
+   single fix **only to suppress**: inside and unknown both **prompt** (unknown with softer
+   copy), a definitive outside suppresses; the server recomputes every row (`O01-F04`).
 3. FGS re-arm on `active` within the 14 h / 4 h bounds (drop the `isRunning()` early return,
    `O01-F01`) **with the #49424 guard and #52230 stop fallback** as patch-package patches
-   (`patches/` + `postinstall`; `O01-F15`); sampler-gap notice.
+   (`patches/` + `postinstall`; `O01-F15`); sampler-gap notice. Also the **FGS cross-stop**
+   (`O01-F20`, HR-A1b): after `stopJobTravel` while on duty, re-register PING_TASK with its
+   foreground option so the shared `LocationTaskService` regains foreground state (consolidating
+   both tasks into one mode-switching sampler is allowed, not required).
 4. Error-branch re-register, provider banner, periodic re-check every 15 min (O-01 FIX ORDER 4;
    the interval the §4 re-registration threshold assumes) (`O01-F03`).
 7. Awaited syncs and foreground drains for pings and presence (`O01-F08`); every fix of a
@@ -703,6 +755,15 @@ not installed — the native patches' first compile).
 - Job list and detail **render minimised unclaimed rows** (no phone/address until claimed) so
   P7b-1 can turn the PII setting on.
 - Anything deferred from P5a.
+- **Shift-start reminder** (HR-A1c; §4 default yes): `expo-notifications` WEEKLY triggers at
+  shift start + grace on working days from the cached shift, cancelled by the clock-in punch,
+  rescheduled on foreground and login; a pure scheduling function with Jest tests.
+- **Mobile boundary enforcement** (HR-G): `dependency-cruiser` as a devDependency with rules
+  mirroring the backend import-linter contracts plus "no raw write `fetch` outside `lib/outbox*`,
+  `features/*/sync*` and `pendingMedia`", run in CI beside the mobile job.
+- **Entry decision point:** the §4 row "commercial background-location SDK spike" is answered
+  before this phase starts (HR-A1b); a "yes" with a favourable spike reopens P5a/P5b scope before
+  the v2 build; a "no" leaves this phase as written.
 **Done when.** Mobile gates and CI green; **fleet v2 build submitted and finished green**
 (`eas build:list`), bundle grep and cert check recorded.
 **Workflow.** Opus for native patches and login; Sonnet for screens; Opus reviewer.
@@ -717,8 +778,10 @@ the workshop.
 (foreground service back within 15 s of opening after an OS kill); 4b–4d (a location toggle
 re-registers the fence without opening the app, or the 15-min re-check catches it); the indoor
 test (~40 m from the centre on a Wi-Fi fix: prompt fires, server verdict inside or unknown);
-device items `O01-F14`, `O01-F12`, `O01-F16` recorded. 3b/3c are P5d-1b.
-**Done when.** 3d, 4b–4d and the indoor test pass; device items recorded (W0-results "v2 pilot").
+device items `O01-F14`, `O01-F12`, `O01-F16` recorded. 3b/3c are P5d-1b. The **cross-stop
+check** (`O01-F20`): start and end a travel leg while on duty; `adb shell dumpsys activity
+services` then shows `LocationTaskService` with `isForeground=true`.
+**Done when.** 3d, 4b–4d, the indoor test and the cross-stop check pass; device items recorded (W0-results "v2 pilot").
 **Owner inputs.** Pilot tech, adb laptop. **Resume.** The section.
 
 ## P5d-1a (×n) — Fleet install of v2, one session per workshop visit
@@ -763,6 +826,10 @@ thresholds pass**; otherwise the follow-ups become a P5e scope.
   the backend tests by repo-relative path): inside if d + a ≤ r, outside if d − a > r, else
   unknown; 100 m accuracy ceiling; versioned; the job-punch rule unified with it (`O04-F9`,
   `O01-F04`).
+- **Wi-Fi presence input** (`O04-F18`, HR-A1c): after the GPS rule, `wifi_match=true` against the
+  fence's existing `wifi_bssids` column promotes a punch or crossing to inside; a redacted BSSID
+  (`02:00:00:00:00:00`) is stored as null, never a miss; inert until P0a item 14 records the
+  BSSIDs.
 - `sampler_state`, `last_ping_at`, `pings_today` on BoardRow (one `DISTINCT ON` query, `O04-F4`);
   open-shift breakdown with `window_end = min(now, first_in + 14 h)`; closed zero-ping day →
   coverage 0 `no_pings`; UNKNOWN interval for all-`None` runs (`O04-F3`).
@@ -820,6 +887,10 @@ its output recorded. **Workflow.** Opus. **Size.** Medium. **Resume.** Branch `f
   APK opens unclaimed detail before claiming) (`O05-06`).
 - `log_payment`/`void_payment` refuse a closed job with the `(current status: closed)` detail
   (`O04-F16`, `O6-F03`, `O07-F5`); payment `client_id` reuse across job/amount → 409 (`O07-F15`).
+  The closed-job guards on negotiate, `log_payment` and `void_payment` are **atomic** (`O07-F16`,
+  HR-A4): a conditional UPDATE with the status predicate (the `try_transition` pattern) or
+  `SELECT … FOR UPDATE` on the job in the same transaction, with a race test against a
+  concurrent close under READ COMMITTED; today `negotiate_bill` is check-then-set with no lock.
 - Negotiation below original by the assigned tech is **accepted and flagged** in the negotiate
   `job_event` payload (reason = the optional note; a missing note is flagged, never refused); a
   per-shop cap setting, when set, requires a manager beyond it (`O07-F4`). The persisted reason
@@ -889,7 +960,9 @@ recorded).
 **Scope** — `w2/O-06-design.md` items 2, 5:
 - Append-only `job_bill_revision` on every **real** completion upsert, negotiate and bill send
   (an idempotent byte-identical replay writes **no** revision; CLAUDE.md bill freeze); reason
-  required on manager override and on post-send negotiate from the web (`O6-F09`).
+  required on manager override and on post-send negotiate from the web (`O6-F09`). Every write to
+  `job.bill_*` goes through **one service function** that appends the revision in the same
+  transaction (HR-A4); P9a-2 stages invoice-kind postings from the revision only.
 - `attendance/chain.py` generalised: one per-shop chain over `staff_ledger`, `job_payment`
   create/void and `job_bill_revision` (`O6-F07`, `O6-F08`); the migration **backfills** chain
   entries for existing payments with the pinned serialisation (0041 precedent); the verify test
@@ -907,9 +980,32 @@ merged; deploy-train row added or deployed after `T_close`) — P8b's own Done-w
 that check, and **P9a-2's Entry adds "P8b-2 merged"** (the stager calls verify first).
 **Resume.** Branch `feat/money-integrity-2`.
 
+## P9-0 — Odoo and books rehearsal (owner + accountant session; the decide-before-build gate)
+
+**Goal.** Know the consumer before building the posting engine: whether Odoo exists and on which
+plan, what the accountant wants, at what granularity, on what basis, and how field cash reaches
+the shop (HR-A4).
+**Entry.** P8a merged (payments carry `voided_at`); P0a items 15–16 answered or dated unknown.
+**Scope** (table first): 1. The G1 §5 Odoo questions 1–3 answered. 2. An Odoo test company on the
+Pakistani chart (`l10n_pk`; an Odoo Online trial or One App Free with Invoicing is enough).
+3. A half-session script (`backend/scripts/export_week_csv.py`, dry-run default, read-only)
+exporting one real week — non-voided payments, voids, staff-ledger rows — from the restored
+database into the O-07 CSV column shape with UUID External IDs. 4. The owner (with the accountant
+if there is one) imports it **twice**: update-not-duplicate confirmed by hand. 5. The accountant
+chooses granularity (per payment, or one daily-close move per method) and the approval unit;
+the basis (cash or accrual) and the custody design (O-07 amendment 2) are decided.
+**Done when.** The §4 rows "pakka record set, basis, start date", "approver, unit and export
+cadence" and "tax regime and chart" hold answers, not defaults, in W0-results; the chosen
+granularity and custody design are recorded as a dated amendment to `w2/O-07-design.md`. If
+there is no Odoo and no accountant: P9a/P9b ship the approval boundary, reconciliation and an
+accountant-ready journal CSV; P10a's Odoo specifics and P11 are dropped (recorded here).
+**Owner inputs.** Odoo access, the accountant's time. **Workflow.** Sonnet writes the script; the
+session guides. **Size.** One owner session plus half a developer session. **Resume.** The table.
+
 ## P9a-1 — Accounting slice 1: posting tables, triggers, decision API (backend; one PR; one migration)
 
-**Entry.** P8b merged. **Scope** — `w2/O-07-design.md` parts 1, 2 (decision step), 6: `posting`,
+**Entry.** P8b merged; **P9-0 done** (its §4 rows answered, not defaulted); **P5d-2 passed**
+(HR-A4: the accounting chain never competes with the fleet work). **Scope** — `w2/O-07-design.md` parts 1, 2 (decision step), 6: `posting`,
 `posting_decision`, `posting_attempt`, `posting_export` with immutability triggers; gapless
 commit-ordered `posting.seq` under `pg_advisory_xact_lock`; UUID External IDs (`O07-F11`); the
 `accounting` slice and import-linter edges; decision API: approve / reject (typed reason) / bulk
@@ -927,7 +1023,9 @@ Sonnet tests; Opus reviewer with BACKEND-REQUIREMENTS §3.15. **Size.** Medium-l
 
 **Entry.** P9a-1 merged (and P8b-2 if opened); basis, start date, reason codes (§4; defaults
 ship; idle without a start date). **Scope** — part 2: the state-based stager (anti-join;
-`O07-F1`, `O07-F2`) for all five kinds; calls `verify_ledger_chain` first and refuses to stage on
+`O07-F1`, `O07-F2`) for the kinds P9-0 selected (the invoice kind only on an accrual
+basis decision, HR-A4; the cash-custody rows of O-07 amendment 2 when P0a item 15 says techs
+hold cash); calls `verify_ledger_chain` first and refuses to stage on
 failure; poison-row skipping; `restage` → new posting at `source_rev + 1`; reversal on void;
 accrual close stages an invoice. **Done when.** Gates and CI green; in a test with a start date,
 payments and ledger rows stage, a void stages a reversal, an unmapped role refuses approval;
@@ -1029,19 +1127,24 @@ without regression; every roster phone on the new versionCode or retired.
 | Decision | Blocks | Default if undecided |
 | --- | --- | --- |
 | Domain (Cloudflare DNS, multi-year, auto-renew) | P2b-1 (name), P2c, P3a | nothing can ship to phones |
-| Destination: box (location, OS, UPS, ISP) or VPS by the target date | P3b | **G2-D1 fallback: small VPS, identical compose, same `api.<domain>`**, by the P4a target date |
+| Drain-window host: VPS (default) or the home box | P0b, P3b | **VPS primary from P3b through P5d-2** (HR-A3; 2 vCPU / 4 GB, Mumbai measured first); the box becomes primary after `T_close` once a 14-day heartbeat shows ≥ 99.5 % reachability or a second uplink exists; invert only if a box with a UPS covering box, ONT and router already exists at P3b |
 | Recovery case a / b / c | P3b | **none** — P3b blocks until P0a item 4 is answered; (a) wins when restorable |
 | Highest job ticket number printed for a customer (case c) | P3b | — |
 | Fence coordinates and radius (≥ 100 m) | P3b, P5a | P3b blocks |
 | `O10-F15`: accept old-secret tokens for the window (K=no & H=yes & v2=no only) | P3b, P4a (the verifier itself is always built in P1, default OFF) | **no**: photograph, retry by hand, declare the loss |
 | Geofence thresholds (P5d-2) | P5d-2 verdict | `sampler_gap` < 1 per on-duty hour per phone; ≥ 90 % of real arrivals `crossing_recorded`; ≥ 95 % of `geofence_error` re-registered within 15 min; kill rate < 5 % per OEM |
+| Commercial background-location SDK spike (one session, debug build, spare phone, during the P4a waits) | P5b entry | **run it** (HR-A1b; the licence cost is the owner's to check); declined → patched Expo as planned |
+| Shift-start clock-in reminder (working days, cancelled by clock-in) | P5b | **yes** (HR-A1c) |
+| Workshop Wi-Fi: SSID/BSSIDs and which phones join | P6a rule (inert without); P0a item 14 | record in P0a; "no Wi-Fi" disables the rule |
+| Field cash custody: do techs hold cash or online receipts before remitting | P9-0; O-07 amendment 2 | assume **yes**: `cash_remittance` source, `cash_with_staff[tech]`, `receipts_clearing` |
+| Books basis (cash/accrual) and sales-tax registration | P9-0; P9a-2 invoice kind | cash basis; invoice kind deferred |
 | Latency threshold (P3c) | P3c | POST p95 < 805 ms (ADR projection) from a field phone; target 150–400 ms |
 | Jobs GPS backdate ceiling during the drain | P4a | widened to W like device_time (ruling R2) with the per-job fuel-distance before/after check; back to 48 h at `T_close` |
 | Plaintext backups under the app credential until P13b | P3c step 7 | accepted (G2-D2 deviation, `O6-F06`) |
 | Odoo plan (external API needs Custom) | P11 only | CSV path (P10) |
 | Odoo version | P10a labels, P10b | draft with the current release's labels |
-| Pakka record set, basis (cash/accrual), start date, reason codes | P9a-2 going live | stager idle |
-| Approver, unit and export cadence | P9a-1 / P10a | the manager; per posting; weekly export |
+| Pakka record set, basis (cash/accrual), start date, reason codes | P9-0 → P9a-2 going live | stager idle; P9-0 answers the basis |
+| Approver, unit and export cadence | P9-0 → P9a-1 / P10a | the manager; per posting; weekly export — defaults P9-0 must replace with answers |
 | Full-fidelity or selective postings | P9a-2 | full-fidelity |
 | Tax regime and chart of accounts / journals | P10b | — (P10b blocks) |
 | Customer → Odoo partner mapping | P10a | one walk-in partner, no customer PII exported |
@@ -1234,8 +1337,32 @@ coverage limited to the stager's start date (DV4-RB-6).
   unconditionally removes a P0a dependency from P1; whether it is ever switched on is the §4
   `O10-F15` decision, and it is never on outside a supervised window.
 
-**Status of verification.** Four passes have run (138 + 141 + 52 + 47 findings); each pass
-found mainly second-order effects of the previous pass's fixes, and the fourth found one
-blocker (the mixed-fleet proxy guard in P4r), now closed. No further pass is scheduled: the
-remaining risk is in execution, which P0a starts. A phase session that finds the plan wrong
+### 6.6 The harness and architecture review (2026-11-01; `HARNESS-REVIEW-2026-11-01.md`)
+
+Four Opus architects (Android background execution, offline sync, self-hosting operations, ERP
+and bookkeeping) reviewed the design behind the register against named alternatives; two Opus
+judges merged them; 45 falsifiable claims were each attacked by two refuters (7 refuter runs were
+lost to a usage limit; the affected claims stay owner questions). Verdict: no wrong foundation;
+every change fits inside existing waits and none delays the drain. Rulings, binding from v6
+(full text in that file §2): **HR-A1a** delete the phone dwell, one bounded fix, the server
+judges (P5a, P6a; R1 unchanged); **HR-A1b** keep Expo, fix the register-absent FGS cross-stop
+`O01-F20` (P5a, P5c), the commercial-SDK spike is a §4 decision at P5b entry; **HR-A1c** Wi-Fi
+BSSID input server-side (P6a) and a shift-start reminder (P5b), premises asked in P0a;
+**HR-A2** keep the hand-rolled engine, one `classify()` outcome incl. pending media (P2a),
+storage bytes in the manifest (P2b-1), one command log after P5d-2 riding P14-fleet; **HR-A3**
+VPS primary for the drain window, the box after a readiness gate, hourly dumps (P0b, P3b, P3c,
+§4); **HR-A4** atomic closed-job guards (P7a), the P9-0 rehearsal gating P9a-1, cash custody in
+O-07, one bill-write function (P8b), Odoo Online + CSV kept. Harness rules adopted into §0:
+`Plan @ <sha>` and the resume diff, the in-PR decisions list, SHA-bound reviews with
+fail-before evidence, the six-question phase close; skip-aware gates and the CLAUDE.md head check
+land in P1; raw W1/W2 outputs are committed under `docs/program/evidence/`; graphify is skipped
+in favour of dependency-cruiser on mobile (P5b). Compaction audit: nothing lost that hurt; one
+phase per new session is the defence (HR-C1–C5).
+
+**Status of verification.** Five passes have run (138 + 141 + 52 + 47 findings, then the
+harness and architecture review: 45 claims, 83 refuter verdicts); each critique found mainly
+second-order effects of the previous pass's fixes, the fourth found one blocker (the mixed-fleet
+proxy guard in P4r), now closed, and the fifth found no wrong foundation, one register-absent P1
+(`O01-F20`) and one default worth inverting (the drain-window host). No further pass is
+scheduled: the remaining risk is in execution, which P0a starts **in a new session**. A phase session that finds the plan wrong
 records the finding in its W0-results step table and amends this file in the same PR.

@@ -1,0 +1,194 @@
+# O-08 — O-08 selfhost-architecture-draft: self-hosted FixFlow stack on an owner-controlled home box, and the cutover from "production is gone" to it without losing the fleet's queued data (draft for the Stage-3 Opus critic; box location, domain, ISP, OS and recovery case are explicit variables)
+findings=14 backlog=7 challenges=0 citations=8 verdicts=2 skipped(no skeptic)=6
+
+## Hypothesis ranking
+- SH6-single-box-capacity-sufficient supported p=0.9 apk=no
+    test: ADR 0001 measured about 250 requests in 4.1 days (about 0.35 req/s derived) and a 302 KB DB. Test: after cutover read /api/ops/metrics and docker stats for a week.
+- SH7-selfhost-boot-guard-fails-closed-like-railway killed p=0.9 apk=no
+    test: With FIXFLOW_ENVIRONMENT unset and no RAILWAY_ENVIRONMENT, start the backend with the default jwt_secret. If it boots, the guard is open (config.py:218-231). Likelihood is that the guard is OPEN unless the compose sets FIXFLOW_ENVIRONMENT=production.
+- SH1-tunnel-viable-behind-cgnat supported p=0.85 apk=unknown
+    test: From the box run a cloudflared tunnel to a stub that echoes headers; curl it from a phone on mobile data. Pass = 200 plus a cf-ray header. Also compare router WAN IP with the public IP (R-03 F18). Source: R-03 F1/F2 (outbound-only on 7844, needs a domain on Cloudflare DNS).
+- SH2-client-leg-under-250ms untestable p=0.6 apk=unknown
+    test: From a field phone's network run curl -w with time_connect, time_appconnect and time_starttransfer against the stub hostname, 30 requests, and read the cf-ray suffix (PoP airport code). A KHI/LHE/ISB suffix with p50 under 250 ms supports it. A European or Gulf PoP suffix kills it. The 675 ms to Railway was routing-bound (ADR 0001), so geography alone does not predict this.
+- SH8-caddy-in-the-api-path-keeps-the-per-ip-login-limiter-correct weakened p=0.3 apk=no
+    test: Through the real tunnel, send curl -H 'X-Forwarded-For: 9.9.9.9' to a debug echo of the backend's _client_ip. Pass only if the last XFF entry is the caller's real public IP (identity/router.py:61-64 takes the last entry). Fails if a second proxy rewrites or appends XFF. cloudflared XFF behaviour is not documented on the config page I fetched.
+- SH4-old-railway-hostnames-can-be-made-safe-from-the-selfhost-side killed p=0.1 apk=yes
+    test: The old hosts are *.up.railway.app (eas.json:21); the owner cannot CNAME them. Only W0 item 2 (regain the Railway service and bind a 503 stub or a pass-through proxy) can satisfy constraint 4 for the installed APK. Test: dig/curl the hostname from a laptop and log in to Railway.
+- SH3-selfhosted-object-store-replaces-r2-without-code killed p=0.05 apk=no
+    test: grep for an endpoint-override setting: none exists. storage.py:182 hardcodes https://{r2_account_id}.r2.cloudflarestorage.com, and MinIO community is archived (R-03 F11). Signed PUT URLs would also have to point phones at a second public hostname and push video through the home uplink.
+- SH5-postgres-16-acceptable-for-the-box killed p=0.05 apk=no
+    test: The prod dump comes from a PG17 server via pg_dump 17 (RUNBOOK-BACKUPS.md drill log). Loading it into 16 is not guaranteed (R-03 F7). Test: restore the newest R2 dump into postgres:16 and postgres:17 and compare the error counts.
+
+## Findings
+
+### O08-F01 [P1/risk/INV] Boot guard against the dev JWT secret is Railway-only; off Railway it is open unless FIXFLOW_ENVIRONMENT=production is set
+cite=LOCATED | skeptic=CONFIRMED | conf=0.9 effort=S apk=no
+CLAIM: On any host without the RAILWAY_ENVIRONMENT variable and without FIXFLOW_ENVIRONMENT=production, the backend boots and serves with the public repo default jwt_secret, so anyone can forge a manager bearer token.
+WHEN: Self-hosted compose omits FIXFLOW_ENVIRONMENT=production (default is 'dev') and omits FIXFLOW_JWT_SECRET: assert_safe_for_production() is a no-op and ops config_presence reports status 'ok' (it degrades only when is_production). Forge an HS256 token with sub=m1, ver=0 (token_version default 0, a seeded manager id per S14) signed with the dev secret; get_current_principal then accepts it because it checks only the live row (deps.py:46-57).
+    - backend/app/core/config.py:218-221 — is_production = environment.lower()=="production" or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+    - backend/app/core/config.py:223-231 — guard raises only if is_production and jwt_secret == DEV_JWT_SECRET
+    - backend/app/core/config.py:151 and :15 — jwt_secret default DEV_JWT_SECRET, a literal in the repo
+    - backend/app/features/ops/health.py:121 — config component is 'degraded' only when settings.is_production and the secret is not overridden
+IMPACT: Full manager takeover of an internet-facing API (payments, payroll, staff ledger, PIN reset) on the first self-hosted deploy that forgets one env var. Fail-open on exactly the platform change this program makes.
+FIX: (1) compose: FIXFLOW_ENVIRONMENT=production and FIXFLOW_JWT_SECRET: ${FIXFLOW_JWT_SECRET:?required} so compose refuses to start if empty. (2) code, small PR: make the guard also trip when jwt_secret is the dev default and the database host is not localhost, or invert so the guard is on unless FIXFLOW_ENVIRONMENT=dev. (3) make the deploy smoke test assert /api/ops/health config component says jwt_secret_overridden.
+SKEPTIC: I traced the path myself and it holds. In config.py, DEV_JWT_SECRET is a repo literal (line 17), jwt_secret defaults to it (151) and environment defaults to "dev" (160). is_production (218-221) is true only when environment.lower()=="production" or RAILWAY_ENVIRONMENT is set. assert_safe_for_production (223-232) raises only when is_production is true AND the secret is the dev default. Its only caller is main.py:251 in create_app(), so on a host with neither variable the app boots silently. health.config_presence (health.py:120-122) returns "degraded" only when settings.is_production is true; otherwise it returns "ok" even though the detail string lists jwt_secret_overridden as unset. decode_access_token (identity/security.py) is a plain jwt.decode(token, settings.jwt_secret, algorithms=["HS256"]). get_current_principal (deps.py:35-61) checks only that the row exists and is active and that ver == token_version, and it takes role from the live row. Migration 0012 seeds id "m1" with role manager and active True, and models.py:65-67 defaults token_version to 0. A fresh self-hosted DB therefore accepts HS256 {sub:"m1", ver:0} signed with the public literal as a full manager, and require_manager passes. No migration deactivates or re-keys m1. In the git log, the config.py change in da988e2 predates the cited lines and does not touch the guard. The only shipped compose file (docker-compose.yml) sets only FIXFLOW_DATABASE_URL and is labelled a local dev stack. An operator who reuses it for the planned home-server self-host (docs/ORCHESTRATION-DESIGN-2026-10.md Q4/Q7) gets exactly the failing condition. The Dockerfile comment also names Render/Fly as targets, where the Railway auto-detect does not apply. On the narrower reading, the claim needs both omissions (no FIXFLOW_ENVIRONMENT=production and no FIXFLOW_JWT_SECRET), and current production on Railway is protected by the RAILWAY_ENVIRONMENT auto-detect. I keep P1 because the impact is total (forged manager) and the stated next deployment target falls outside the auto-detect. A related gap I found but did not test: backend/.env.example ships `FIXFLOW_JWT_SECRET=` empty. pydantic-settings keeps empty strings by default (env_ignore_empty=False), so a copied .env would give jwt_secret="", which is != DEV_JWT_SECRET. That would pass the guard and show as "overridden" in health even on Railway. I could not confirm this because no Python interpreter is available here.
+SETTLE: Run a dynamic test from backend/: unset RAILWAY_ENVIRONMENT, FIXFLOW_ENVIRONMENT and FIXFLOW_JWT_SECRET, then call `python -c "from app.main import create_app; create_app()"`. It should return without raising. Next, against a DB migrated to head, send GET to a manager-only endpoint with Authorization: Bearer jwt.encode({'sub':'m1','ver':0}, 'dev-insecure-secret-change-me-in-production-32b', algorithm='HS256'). Expect 200, and expect GET /api/ops/health to report config status "ok". To check the empty-secret gap, set FIXFLOW_JWT_SECRET= (empty) with FIXFLOW_ENVIRONMENT=production and confirm create_app() does not raise.
+
+### O08-F02 [P1/risk/INV] First successful nightly backup on the new stack prunes every pre-death dump older than 30 days, including the dump just restored from
+cite=LOCATED | skeptic=PARTIALLY | conf=0.9 effort=S apk=no
+CLAIM: The first run of run_db_backup on a self-hosted backend that shares the old bucket and the default backup_prefix deletes every fixflow-db-*.dump whose filename timestamp is older than 30 days, which is every dump from before the outage.
+WHEN: Recovery case (a) or (b): the new backend is pointed at the same R2 bucket with FIXFLOW_BACKUP_PREFIX=backups/db/ (the default). Production died more than 30 days ago (last commit 2026-08-03, today 2026-11-01), so the newest old dump is older than the cutoff. At 02:30 Asia/Karachi the job uploads a fresh dump, then lists the prefix and deletes all stale keys. If the restore had a defect that is found later, the original dump is gone.
+    - backend/app/core/backup.py:67-76 — keys_to_prune returns keys whose stamp is older than now - retention_days
+    - backend/app/core/backup.py:125-132 — after upload, stale = keys_to_prune(list_keys(settings.backup_prefix)) and each stale key is store.delete()d
+    - backend/app/core/config.py:197-202 — backup_enabled default True, retention 30, prefix backups/db/
+    - docs/RUNBOOK-BACKUPS.md:128 — the newest pre-death dump known in the repo is fixflow-db-20260802T023008Z.dump, already older than 30 days
+IMPACT: The only off-box copy of the pre-outage ledger, payroll history and the staff_ledger_chain evidence can be destroyed by the new stack's own housekeeping the first night, before the restore has been verified in use.
+FIX: Before the first scheduler run: copy all backups/db/ objects to a prefix the pruner never lists (e.g. archive/pre-selfhost/), AND set FIXFLOW_BACKUP_PREFIX to a new prefix (backups/db-selfhost/) or FIXFLOW_BACKUP_ENABLED=false until the restore is signed off. Optionally download the dumps to the owner's laptop and a second provider.
+SKEPTIC: I traced the path from the cited lines. The lifespan registers run_db_backup daily at 02:30 by default. run_db_backup uploads, then lists the whole backups/db/ prefix (paginated) and deletes every key whose filename stamp is older than now-30d. No positive counter-evidence exists. There is no keep-latest-N rule, no guard against dumps from another deployment, no dry-run, and no commit since 906b990 changed the behaviour (da988e2 only threadpooled the calls). So the code behaviour in the claim is confirmed. One premise is not: that "every dump from before the outage" is older than the cutoff on the first run. The claim rests on "Production died more than 30 days ago (last commit 2026-08-03)". A last-commit date is not the date the old Railway scheduler stopped taking nightlies. The G1 record lists the unreachable period (H6) as open with W0. The runbook's 20260802 dump is only the newest one written into the repo. If the old backend ran into October, some old dumps survive the first run, but the same code removes them over the next nights. The irreversible loss of the original prod dump therefore holds in every case, within at most 30 days of the old backend's last run. I am narrowing the claim from "on the first run" to "on the first run if the old nightlies stopped more than 30 days earlier, otherwise over the following nights". I keep P1 because in recovery case (b) that dump is the only original copy. The new nightly backs up the restored DB, not the original, so a restore defect found later (a pg_restore error that looked benign, or a 17 to 16 load problem) could not be recovered from.
+CORRECTED: The prune mechanism is real and nothing guards it. A new backend with default settings (enable_scheduler=True, backup_enabled=True, retention 30, prefix backups/db/, bucket job-media) runs at 02:30 Asia/Karachi. It uploads a fresh dump, lists backups/db/, and permanently deletes (R2 delete_object) every fixflow-db-<stamp>.dump stamped more than 30 days ago. There is no keep-at-least-N floor and no check for a foreign or old-stack dump. Nothing on the new stack keeps the old dumps. Whether the FIRST run deletes ALL of them depends on when the old Railway backend last ran its nightly job, and that is not established: H6, the unreachable period, is still with W0. The last commit date (2026-08-03) is not that date. If the old backend's last nightly ran more than 30 days before the new first run, every pre-outage dump is gone on night one, including the one restored from. If it ran more recently, the old dumps go one by one over the following nights, and all are gone 30 days after the old backend's last run. Either way, in recovery case (b) the original prod dump, the only copy, is deleted inside a short window. The restored state does survive as the new dump. What is lost is the ability to re-restore from the original if a restore defect turns up later.
+SETTLE: Run `list_objects_v2(Bucket='job-media', Prefix='backups/db/')` read-only against the R2 bucket and take the newest fixflow-db-*.dump stamp. If it is older than the planned first 02:30 run minus 30 days, the first run deletes every old dump. If not, they go over the following nights. A unit test that calls keys_to_prune(['backups/db/fixflow-db-20260802T023008Z.dump'], now=datetime(2026,11,2,tzinfo=UTC), retention_days=30) and gets that key back confirms the mechanism.
+
+### O08-F03 [P2/risk/INV] Per-IP login limiter reads the LAST X-Forwarded-For entry, which is only the real client when exactly one proxy hop appends it
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.7 effort=S apk=no
+CLAIM: With two proxy hops between Cloudflare and uvicorn (for example Caddy in the API path), _client_ip returns the inner proxy's address for every caller, so all logins share one 20-per-60-second bucket.
+WHEN: cloudflared -> Caddy -> backend, where Caddy replaces or appends X-Forwarded-For with the cloudflared container address. Any 21 login attempts in 60 s from any callers (one attacker spraying, or a morning when six techs log in and retry) make every further login return 429 for the window. Conversely, with no XFF-setting hop the header is client-forgeable but the last entry is still the one Cloudflare appended.
+    - backend/app/features/identity/router.py:56-64 — _client_ip splits X-Forwarded-For and returns the last entry, with a docstring assuming Railway is the single trusted proxy
+    - backend/app/features/identity/throttle.py:107-123 — IpRateLimiter max_attempts=20, window 60 s, in-memory
+    - backend/app/features/identity/router.py:75-81 — 429 returned when the limiter denies
+IMPACT: Login denial of service for the whole fleet from one source, or the roster-wide spray defence silently ineffective. The per-account lockout remains the real defence (CLAUDE.md), so it is availability, not a PIN-guessing bypass.
+FIX: Route api.<domain> from cloudflared straight to backend:8000 (no Caddy in the API path), and prove with the XFF echo test in SH8. If a second hop is required, make the limiter take the Nth-from-last entry via a setting (FIXFLOW_TRUSTED_PROXY_HOPS), default 1.
+
+### O08-F04 [P2/risk] The repo's docker-compose.yml is a dev file that publishes Postgres 5432 with postgres/postgres and runs uvicorn --reload on a bind mount
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.95 effort=S apk=no
+CLAIM: Using docker-compose.yml on the home server exposes a PG16 database with the default password on every host interface, and Docker's published-port rules bypass ufw.
+WHEN: docker compose up on the box: 0.0.0.0:5432 answers on the LAN (and on the internet if the router forwards or has UPnP), authenticating as postgres/postgres; the backend also runs with --reload against ./backend mounted into the container and without FIXFLOW_ENVIRONMENT or a JWT secret.
+    - docker-compose.yml:9 — image postgres:16-alpine
+    - docker-compose.yml:12-13,30 — POSTGRES_PASSWORD postgres and a FIXFLOW_DATABASE_URL with postgres:postgres
+    - docker-compose.yml:15-16 — ports "5432:5432"
+    - docker-compose.yml:28,39 — uvicorn --reload and ./backend:/code bind mount
+IMPACT: Anyone on the home LAN (or the internet if forwarded) gets full read/write on the cash ledger.
+FIX: Ship a separate docker-compose.prod.yml (see design): postgres:17, no ports on postgres, internal network, secrets from a root-owned env file. Add a banner to the dev compose.
+
+### O08-F05 [P1/gap] Both EAS profiles bake an API host the owner does not control or that does not exist
+cite=- | skeptic=n/a (gap/design) | conf=0.95 effort=S apk=unknown
+CLAIM: A technician APK built from either existing eas.json profile cannot reach a self-hosted backend: preview points at the dead Railway hostname and production at the placeholder api.fixflow.example; with neither set, config.ts defaults to the emulator address.
+WHEN: eas build --profile preview (Railway URL) or --profile production (api.fixflow.example) or a build with EXPO_PUBLIC_API_URL unset (http://10.0.2.2:8000): every request goes to a host that is not the self-hosted API, and the 15 s client treats the Railway edge 404 as a definitive rejection.
+    - technician-app/eas.json:21 — preview EXPO_PUBLIC_API_URL = https://efficient-tenderness-production-2d09.up.railway.app
+    - technician-app/eas.json:29 — production EXPO_PUBLIC_API_URL = https://api.fixflow.example
+    - technician-app/src/lib/config.ts:14 — apiUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://10.0.2.2:8000"
+    - technician-app/src/lib/api.ts:93 — fetch(`${config.apiUrl}${path}`): the URL is concatenated at call time, so queued items hold paths only and survive a host change
+IMPACT: The APK update is the only drain path if the Railway hostname cannot be regained; it cannot be built until the owner's domain is chosen. The hostname is the single value that must never change again.
+FIX: Decide the domain first (parameter P1), edit both profiles to https://api.<domain>, keep the Sentry DSN key non-empty (CLAUDE.md build trap), keep package com.fixflow.technician and the original keystore (W0 item 3), and treat api.<domain> as permanent with DNS as the only indirection.
+
+### O08-F06 [P2/defect] Appendix C restore recipe uses --exit-on-error although the documented dumps always raise one benign 'schema public already exists' error
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.7 effort=S apk=no
+CLAIM: pg_restore --exit-on-error against the project's own --schema=public dumps stops at the first error, which the runbook says is the benign duplicate-public-schema error, leaving an incomplete restore.
+WHEN: Run the Appendix C command (postgres:17-alpine, fresh database, pg_restore --no-owner --no-privileges --exit-on-error) on a nightly dump from R2: the recorded drills (2026-06-15, 2026-08-02) show one expected error and exit 1 without the flag; with the flag the restore halts there. I could not execute this (no Docker permitted), so the exact stop point is unverified.
+    - docs/ORCHESTRATION-DESIGN-2026-10.md:690 — pg_restore ... --no-owner --no-privileges --exit-on-error /tmp/prod.dump
+    - docs/RUNBOOK-BACKUPS.md:94-97 — expected benign warning: schema "public" already exists, restore exits 1, suppress by dropping public in the new DB first
+    - docs/RUNBOOK-BACKUPS.md:128 — 2026-08-02 drill confirms this is still the only restore error
+IMPACT: Cutover and the S-07b dump-facts step either abort or report 'partial' on a good dump. The restore procedure in this design uses DROP SCHEMA public CASCADE on the empty target first, then --exit-on-error.
+FIX: In the empty target run psql -c 'DROP SCHEMA public CASCADE' before pg_restore --exit-on-error (the runbook's own tip), or drop the flag and assert on the error count. Amend Appendix C and RUNBOOK-BACKUPS.md.
+
+### O08-F07 [P2/risk] /api/health never touches the database, so a container healthcheck or uptime probe on it stays green over an empty or dead database
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.95 effort=S apk=no
+CLAIM: A compose healthcheck, Docker restart policy, external uptime monitor or Cloudflare health check keyed to GET /api/health reports healthy when Postgres is empty, missing or unreachable.
+WHEN: Backend booted against a fresh empty volume (start.sh runs alembic upgrade head and builds 42 tables at head 0046 with zero jobs), or against a stopped Postgres after boot: /api/health returns 200.
+    - backend/app/features/health/router.py:12 — 'Liveness probe. Returns ok without touching the database.'
+    - docs/adr/0001-database-region-topology.md A1.3 #1 — 200 OK over an empty database
+    - backend/start.sh:9-12 — migrations at every boot then serve
+IMPACT: Most likely silent failure mode of a self-hosted restore: a forgotten or failed restore looks healthy while technicians' jobs are gone.
+FIX: Healthcheck and external monitor use /api/ops/health with X-Ops-Proxy-Token, plus a host script asserting job and attendance_event row counts at or above the last known; restore gate refuses to admit traffic on a count mismatch.
+
+### O08-F08 [P2/risk] ops-server login has no attempt limit and its listener binds all interfaces
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=S apk=no
+CLAIM: POST /api/ops/login accepts unlimited password guesses against a single shared OPS_PASSWORD with no delay or lockout.
+WHEN: The ops console is published on a public hostname: a script can guess the shared password at network speed; success yields a 12 h bearer that unlocks health, metrics, logs, deploy and Sentry data. Grep of ops-server.mjs finds no 429, attempt counter, lockout or throttle.
+    - ops-server.mjs:498-503 — login path: passwordValid then issueToken, no counter
+    - ops-server.mjs:39-41 — shared OPS_PASSWORD, 12 h token TTL
+    - ops-server.mjs:583 — server.listen(PORT) with no host argument
+IMPACT: Low blast radius if read-only, but it is the only Cloudflare-published surface that is not behind the app's own PIN lockout. Self-host default must keep it off the public internet or behind Cloudflare Access.
+FIX: Do not publish ops.<domain> without Cloudflare Access (free tier, R-03 F4 unverified at 50 seats) or reach it only over LAN/VPN; add a per-IP throttle in ops-server.mjs.
+
+### O08-F09 [P3/gap] Ops console overall health is permanently 'degraded' off Railway
+cite=- | skeptic=n/a (gap/design) | conf=0.9 effort=S apk=no
+CLAIM: healthReport() always appends a 'railway api' row with status degraded when the Railway token is unset, and a 'sentry' row degraded when its token is unset, so the rollup can never be 'ok' on a self-hosted ops console.
+WHEN: Self-hosted ops service with OPS_RAILWAY_* unset (the intended configuration): Overview and /api/ops/health show 'degraded' even when every real component is ok, teaching operators to ignore it.
+    - ops-server.mjs:375-379 — name 'railway api', status RAILWAY_CONFIGURED ? 'ok' : 'degraded'
+    - ops-server.mjs:380-384 — same for 'sentry'
+    - ops-server.mjs:385-389 — any degraded component makes the rollup 'degraded'
+IMPACT: Alert fatigue; an external monitor keyed to the rollup is useless.
+FIX: Report unconfigured integrations as 'ok' with detail 'not configured', or gate the rows on an OPS_RAILWAY_ENABLED flag.
+
+### O08-F10 [P3/design] R2 endpoint is hard-coded, so the object store cannot be swapped by configuration
+cite=- | skeptic=n/a (gap/design) | conf=0.95 effort=S apk=no
+CLAIM: get_storage() builds the S3 client with endpoint https://{r2_account_id}.r2.cloudflarestorage.com and no override setting exists, so any non-R2 store needs a code change.
+WHEN: An owner decision to run MinIO/Garage/SeaweedFS on the box: no FIXFLOW_* variable can redirect the client, and signed PUT URLs would point phones at a second public hostname through the home uplink.
+    - backend/app/core/storage.py:182 — endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com"
+    - backend/app/core/config.py:34-37 — only account id, keys, bucket settings exist
+    - R-03 F11 — MinIO community repo archived 2026-04-25
+IMPACT: Not blocking: this design keeps R2. Recorded so the critic knows the lock-in is real.
+FIX: If ever needed: add FIXFLOW_R2_ENDPOINT_URL (S) and a public-endpoint setting for presigned hosts; otherwise leave.
+
+### O08-F11 [P3/gap] Web and ops images build on node:20 (CI uses 22) and install serve@14 unpinned from npm; backend image resolves open dependency ranges
+cite=- | skeptic=n/a (gap/design) | conf=0.8 effort=M apk=no
+CLAIM: Dockerfile.web and Dockerfile.ops use node:20-alpine while CI and package engines use Node 22, Dockerfile.web runs npm install -g serve@14 at build, and the backend installs with pip install . against ranges with no lockfile.
+WHEN: A rebuild on the home box today produces images whose Node major and transitive Python and npm versions differ from both CI and anything that ever ran in production.
+    - Dockerfile.web:10,37,39 — node:20-alpine twice and npm install -g serve@14
+    - Dockerfile.ops:9,30 — node:20-alpine
+    - backend/Dockerfile (pip install . after COPY pyproject.toml) and backend/pyproject.toml:10-33 — open ranges; no lock file in backend/
+    - S-05 anomaly — CI runs Node 22
+IMPACT: Unreproducible deploys; an old runtime on the public edge. The design drops serve in favour of Caddy static and builds with node:22.
+FIX: Move build stages to node:22-alpine, serve dist from Caddy, generate a Python lock (pip-compile or uv) at first build, record image digests in the deploy log.
+
+### O08-F12 [P3/gap] CI and the repo dev compose run Postgres 16 although the production dump and pg_dump client are 17
+cite=- | skeptic=n/a (gap/design) | conf=0.8 effort=S apk=no
+CLAIM: Migrations and the integration tests are exercised on postgres:16 only, while the recovered data and the nightly pg_dump client are PG 17, so the self-hosted server major (17) has never been run through the gates.
+WHEN: A migration or query that behaves differently on 17 than 16 passes CI and fails only on the home box.
+    - .github/workflows/ci.yml:87-88 — postgres:16-alpine service
+    - docker-compose.yml:9 — postgres:16-alpine
+    - backend/Dockerfile — installs postgresql-client-17 'to match Supabase's server major'
+IMPACT: Small, but this is the first time prod DB major is chosen by the owner rather than Supabase.
+FIX: Run the backend gates against postgres:17 once (S-07b recipe with a 17 image) before cutover and bump CI to 17.
+
+### O08-F13 [P3/risk/INV] Web manager logs the manager out on any me() failure including network or 5xx, which a home origin will cause more often
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=no
+CLAIM: AuthProvider clears the stored JWT when the rehydration me() call fails for any reason, not only 401.
+WHEN: The home box or ISP is down for a few minutes and the manager reloads the page: me() rejects, setToken(null) runs and the manager must log in again after recovery.
+    - src/app/providers/AuthContext.jsx:19 — getToken() ? me() : Promise.resolve(null)
+    - src/app/providers/AuthContext.jsx:31-34 — .catch(() => { setToken(null); setUser(null); })
+IMPACT: Minor friction. The web has no outbox, so unsaved manager edits in an outage are lost regardless (ADR 0001 Worse #7).
+FIX: Clear the token only on an ApiError 401; on network or 5xx keep it and show a retry banner.
+
+### O08-F14 [P1/gap/INV] Constraint 4 cannot be met for the installed APK from the self-host side: the baked hostname is a Railway subdomain
+cite=- | skeptic=n/a (gap/design) | conf=0.9 effort=M apk=yes
+CLAIM: The installed APK calls a *.up.railway.app host that only Railway can answer, and that host currently answers 404, which the shared classification treats as definitive.
+WHEN: The old APK is opened or its background sync fires while the Railway edge answers 404: jobs/punch/presence items are parked in the failed list and ping/travel batches are dropped (S9); nothing on the home server can change the answer.
+    - technician-app/eas.json:21 — baked Railway hostname
+    - technician-app/src/lib/syncClassification.ts:15 — DEFINITIVE_4XX = {400,403,404,409,422}
+    - technician-app/src/lib/api.ts:93 — URL is config.apiUrl + path, so only an APK with a new URL, or the old host answering something transient, avoids the park
+IMPACT: The drain protocol (O-10) has two possible roads: regain the Railway hostname and answer 503, or ship the APK update. This design makes the new hostname permanent and 4xx-safe, but cannot fix the old one.
+FIX: W0 item 2: regain the Railway service and bind a stub that returns 503 with Retry-After (or a pass-through proxy to https://api.<domain> that never invents a 4xx). Otherwise rely on the APK update and keep phones off the old build.
+
+## Backlog
+- [P3] Google Maps API key committed in technician-app/app.json; restrict it by package name and signing SHA in the Google console (technician-app/app.json:20)
+- [P3] Backend Dockerfile fetches the PGDG apt key and repo at build time; the self-host build needs outbound network and a mirror fallback (backend/Dockerfile:15-28)
+- [P3] Backend db-backup job holds the whole dump in memory and uploads in one put_bytes; revisit if DB grows past tens of MB (backend/app/core/backup.py:86-104)
+- [P3] start.sh runs a single uvicorn process; do not add --workers because the scheduler, IpRateLimiter and metrics are per-process (backend/start.sh:12)
+- [P3] No endpoint to read DB row-count manifest for restore gate; add a manager-only counts endpoint or use a host psql script (backend/app/features/ops/router.py:21-31)
+- [P3] ops-server.mjs hardcodes sentry.io for issues, so GlitchTip would need a base-URL setting (ops-server.mjs:272)
+- [P3] Web index.html and ops.html load Google Fonts from fonts.googleapis.com, which a strict CSP must allow or the fonts must be self-hosted (index.html:7-10)
+
+## Open questions
+ ? Extra files read beyond the brief, one hop each: backend/app/core/config.py (settings, boot guard), backend/app/main.py:163-260 (lifespan, orphan sweep), backend/app/features/identity/{router,throttle,deps}.py (XFF, limiter, JWT checks), backend/app/features/ops/health.py, backend/app/features/health/router.py, backend/alembic/versions/0046_seed_dispatch_cursor.py and a grep of alembic for sequences/extensions, technician-app/{eas.json,app.json,src/lib/config.ts,src/lib/api.ts,src/lib/syncClassification.ts}, ops-server.mjs lines 335-412 and 495-510 plus grep, src/app/providers/AuthContext.jsx, docs/adr/0001-database-region-topology.md (read), .github/workflows/ci.yml:87-102 grep, .env.example.
+ ? G1 gate record docs/program/G1-discovery-gate-2026-11-01.md does not exist in the repo (docs/program/ is absent); I relied on the brief's PROJECT CONTEXT.
+ ? Does cloudflared forward or modify X-Forwarded-For? The config page I fetched does not say; SH8 and O08-F03 depend on it. Test with an echo through the real tunnel.
+ ? Does a stopped cloudflared yield an HTTP 530 (Cloudflare error 1033) to clients? Docs fetched say 530 is origin-unreachable but did not mention tunnels. Test by stopping the connector.
+ ? Which Cloudflare PoP serves a Karachi/Islamabad mobile phone and what is the real R_c? Needs cf-ray and curl timing from a field phone; this decides the whole latency section.
+ ? Real Supabase restore deadline: docs fetched say a 1-year window while a caption says 90 days remaining; the dashboard is authoritative (W0 item 4).
+ ? Does Cloudflare R2 require a payment method on file even for the free tier, and are R2 keys re-mintable if the original token owner is the old account? Not researched.
+ ? Do queued outbox items carry the author, or does the item drain under whichever tech logs in on the phone (O-10 question)? I did not read outbox.ts.
+ ? Does GlitchTip's API satisfy ops-server's Sentry issues call, and is there any value in moving DSNs now given the APK bakes the DSN? Not researched beyond R-03 F12.
+ ? Cloudflare Tunnel terms for API (JSON) traffic and the free Zero Trust seat count are still unverified (R-03 Q2/F4).
+ ? Windows Docker Desktop as the home server was assessed from general knowledge, not from a fetched source; confirm the owner's OS before relying on the Linux recommendation.
+ ? Whether the Railway service can be regained (W0 item 2) decides whether the pass-through/503 stub road exists; nothing in the self-host design can substitute for it.

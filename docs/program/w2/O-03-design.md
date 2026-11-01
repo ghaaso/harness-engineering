@@ -21,3 +21,18 @@ MINIMAL HONEST-ENGINE CHANGES, ORDERED BY VALUE, each with the pure-module Jest 
 8. Location outbox id per tap (body.client_id) so trips never overwrite each other, and a pure travel-state merge of server locations with queued location items for inTransit. Tests: outbox.test (two departs for one job both kept); a merge test (a queued depart reads as inTransit).
 9. Corrupt-store preservation for v2 and attendance queues (copy the raw bytes aside before save). Test: queue.test and outbox.test (an unparseable value survives under the .corrupt key after an enqueue).
 10. Engine status (offline / server-unreachable / signed-out) driving the banner text. Test: a pure reducer test from classification outcomes to status.
+
+---
+
+## Amendments (2026-11-01, harness review — `../HARNESS-REVIEW-2026-11-01.md` HR-A2)
+
+1. **Step 1 is one function, not six predicates.** `classify(error, kind)` returns one outcome
+   (`landed` / `pause_auth` / `park` / `count_and_retry` / `free_retry` / `drop`) from a per-kind
+   policy table; every loop calls it, the pending-media queue included (`O3-F22`: its 413 branch
+   and "park by forcing attempts" become policy rows). No queue keeps a private ladder.
+2. **Storage size in the manifest** (`O10-F17`, lands in P2b-1): the D4 manifest records the
+   phone's total AsyncStorage bytes; the Android cap is 6 MB and nothing has measured it.
+3. **After ship (P14-fleet):** the six queues collapse into one durable command log
+   (expo-sqlite) with one dispatcher, single-flight per stable id shared by live sends and
+   replays (closing CLAUDE.md's known outbox defect), one classifier, a per-kind park/drop policy
+   and one trigger set. Never before the drain: it would invalidate the drain tooling.

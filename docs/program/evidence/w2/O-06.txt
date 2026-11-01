@@ -1,0 +1,271 @@
+# O-06 — O-06 security: insider (technician, manager) and operator threat model, including a home server exposed through Cloudflare Tunnel
+findings=19 backlog=7 challenges=1 citations=12 verdicts=4 skipped(no skeptic)=8
+
+## Hypothesis ranking
+- H-O6b: a technician can move the cash payable on any job without a manager approving or being alerted supported p=0.7 apk=yes
+    test: As tech t2, POST /api/jobs/{t3's job}/bill/negotiate with amount_paisa=0 after bill_sent_at is set and a payment exists. Expect 200 and bill_status=negotiated. The only trace is a timeline text line naming t2.
+- H-O6a: a technician can create attendance/location evidence the manager cannot tell apart from a genuine punch supported p=0.6 apk=yes
+    test: With a tech's own PIN-derived JWT, POST /api/attendance/punch from a laptop with workshop lat/lng, accuracy_m=5, is_mock_location=false, device_time=now, and upload any photo to the minted selfie URL. Then check that the board shows status present with no mock/outside/drift/no_selfie flag. Code says it will. The only remaining signal is wifi_match, if the fence has BSSIDs, and that is forgeable too.
+- H-O6c: a manager can rewrite money history so that only free-text timeline lines remain supported p=0.5 apk=no
+    test: As a manager: resubmit the completion on a paid, unclosed job with fewer materials, void the payment, log a smaller one. Then query job_material (the old lines are gone), job.bill_original_paisa (overwritten) and job_payment (no voided_by/voided_at). Only job_event text remains, in whole rupees.
+- H-O6d: whoever operates the DB host can change money rows with nothing detecting it supported p=0.4 apk=no
+    test: On a restored copy: UPDATE job_payment SET amount_paisa=... (no chain covers it), and rewrite one staff_ledger row and recompute every staff_ledger_chain row_hash with chain.compute_row_hash. GET /api/attendance/ledger/verify then returns ok=true.
+- H-O6f: a technician on a shared phone can destroy another technician's unsynced job writes supported p=0.35 apk=unknown
+    test: On one device: tech A queues a payment on job J and it fails (with prod gone, any 404 does this, S9). Log out, log in as B, open J. Expect A's item to appear under NEEDS ATTENTION with an enabled Discard.
+- H-O6e: Cloudflare Tunnel by itself makes the home box safe to expose weakened p=0.3 apk=no
+    test: List every hostname in the tunnel's ingress config and check which ones sit behind Cloudflare Access. Run `docker ps --format '{{.Ports}}'` for any 0.0.0.0 publish (Docker bypasses ufw, R-03 F16). Run `env | grep FIXFLOW_ENVIRONMENT` in the API container. Any of these being open defeats the tunnel's no-inbound-port property.
+
+## Findings
+
+### O6-F01 [P0/risk/INV] Booting the backend on a non-Railway host without FIXFLOW_ENVIRONMENT=production signs JWTs with the public dev secret
+cite=LOCATED | skeptic=CONFIRMED -> P1 | conf=0.9 effort=S apk=no
+CLAIM: The production JWT boot guard only fires when FIXFLOW_ENVIRONMENT=production or RAILWAY_ENVIRONMENT is set. A home-server backend started without that variable therefore serves HS256 tokens signed with DEV_JWT_SECRET, a constant committed in the repo, and anyone can mint a manager token.
+WHEN: Self-hosted deploy (no RAILWAY_ENVIRONMENT in the env) where FIXFLOW_ENVIRONMENT is unset or not 'production' and FIXFLOW_JWT_SECRET is unset. The API hostname is reachable through the tunnel.
+    - backend/app/core/config.py:17 — DEV_JWT_SECRET = "dev-insecure-secret-change-me-in-production-32b"
+    - backend/app/core/config.py:151 — jwt_secret: str = DEV_JWT_SECRET
+    - backend/app/core/config.py:160 — environment: str = "dev"
+    - backend/app/core/config.py:221 — return self.environment.lower() == "production" or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+IMPACT: Complete authentication bypass from the internet: forged manager tokens give every money, ledger, attendance and media endpoint. The guard was correct on Railway only because Railway injected RAILWAY_ENVIRONMENT. The migration removes that crutch silently.
+FIX: Fail closed. Refuse to boot with DEV_JWT_SECRET unless FIXFLOW_ENVIRONMENT is explicitly 'dev' AND the database host is localhost/127.0.0.1, or default environment to 'production' and require dev to opt in. Also enforce a minimum jwt_secret length. Add a deep-health check that reports 'dev secret in use'.
+SKEPTIC: I traced the path myself and the failing condition holds. config.py:160 defaults `environment` to "dev". config.py:221 sets `is_production` true only when environment=="production" or RAILWAY_ENVIRONMENT is present. config.py:228 makes the boot guard (called first thing in create_app, main.py:251) raise only when is_production is true AND jwt_secret == DEV_JWT_SECRET. On a self-hosted box with neither variable set, is_production is False, the guard does nothing, and jwt_secret keeps its default from config.py:151, which is the constant committed at config.py:17. security.py:62/67 then signs and verifies HS256 tokens with that public string.
+
+Forging a manager token works in practice. In identity/deps.py:42-60, get_current_principal decodes the token, loads the row by `sub`, and checks only `active` and `ver == token_version`. The role comes from the DB row, so an attacker needs a manager id and its token_version. Migration 0012 seeds the manager id 'm1' in the public repo (tech ids are slugs t1..t5, per models.py:3). A missing `ver` claim counts as 0, the column default, and it is a small integer anyone can guess if it was ever bumped. So {sub:'m1', exp:...} signed with the dev secret gives a manager principal.
+
+Nothing else blocks this. backend/Dockerfile and start.sh never set FIXFLOW_ENVIRONMENT, docker-compose.yml does not either, and backend/.env.example has no FIXFLOW_ENVIRONMENT line, so an operator copying it gets no prompt to set one. ops/health.py:121 reports 'degraded' only when is_production is true, so the deep-health check stays silent in this case too. Commits since 906b990: da988e2 changed config.py only in the database_url validator, and none of the listed commits touch the guard.
+
+Adjacent issue I noticed but did not run: .env.example ships `FIXFLOW_JWT_SECRET=` blank. pydantic-settings does not ignore empty env values by default (no env_ignore_empty in model_config), so a .env copied verbatim would make jwt_secret "". That differs from DEV_JWT_SECRET, so the guard would pass even WITH FIXFLOW_ENVIRONMENT=production.
+
+Why P1 and not P0: if the condition occurs, the impact is full auth bypass (P0-class). But the self-hosted deploy does not exist yet (the docs/ORCHESTRATION-DESIGN-2026-10.md and G1 gate describe it as planned), and the bug needs an operator to leave the variable out. The fix is cheap: fail closed when not explicitly 'dev', or reject any secret shorter than N bytes or equal to the default, regardless of environment.
+SETTLE: Run in backend/ with RAILWAY_ENVIRONMENT and FIXFLOW_ENVIRONMENT unset and no FIXFLOW_JWT_SECRET: `python -c "from app.main import create_app; create_app(); from app.core.config import settings, DEV_JWT_SECRET; print(settings.is_production, settings.jwt_secret == DEV_JWT_SECRET)"`. Expect it to boot and print `False True`. Then sign a token with `jwt.encode({'sub':'m1','exp':<future>}, DEV_JWT_SECRET, 'HS256')` and call a CurrentManager endpoint against a migrated DB. Expect 200.
+
+### O6-F02 [P1/defect/INV] Any authenticated technician can renegotiate any job's bill to any amount, including after the customer saw or paid it
+cite=LOCATED | skeptic=CONFIRMED -> P2 | conf=0.9 effort=M apk=yes
+CLAIM: negotiate_bill checks only that the job is not closed and has a bill. Every authenticated principal can reach it. It does not check the assigned tech, bill_sent_at, existing payments or any lower bound. So a technician can set bill_negotiated_paisa to Rs 0 on another technician's already-sent, already-paid job, and no manager approves or is alerted.
+WHEN: Tech JWT; POST /api/jobs/{any non-closed job with a bill}/bill/negotiate {amount_paisa: 0}, including when job.bill_sent_at is set or a non-voided payment exists.
+    - backend/app/features/jobs/router.py:309-323 — negotiate_bill takes principal: CurrentPrincipal, no Depends(require_manager)
+    - backend/app/features/jobs/service.py:1385-1388 — the only guards are status == 'closed' and bill_original_paisa is None
+    - backend/app/features/jobs/service.py:1392-1393 — row.bill_negotiated_paisa = amount_paisa; row.bill_status = 'negotiated'
+    - backend/app/features/jobs/schemas.py:146 — amount_paisa: int = Field(..., ge=0) (no upper/lower bound relative to original)
+IMPACT: This is the classic cash-skim path. The customer pays the sent figure, the tech records a lower negotiated amount and logs matching cash, and the difference disappears. It also undercuts the CLAUDE.md claim that a bill the customer has seen is frozen. The only trace is a 'Bill negotiated Rs a → Rs b' text line on the job timeline.
+FIX: Server-side: a non-manager negotiate requires the caller to be the assigned tech. After bill_sent_at or the first payment, a tech negotiate becomes a pending request that a manager approves. Add a per-shop shop_setting cap on tech discounts (percent or absolute) above which approval is required. Record the negotiate in a bill-revision table with a payload (from, to, actor). Deployed APKs keep working: below the cap it is unchanged; above it they get a 409 the outbox parks with the reason.
+SKEPTIC: I traced the path myself. router.py:308-335: POST /jobs/{job_id}/bill/negotiate takes `principal: CurrentPrincipal` and has no `dependencies=[Depends(require_manager)]`, while other routes in the same file do have it (lines 111, 128, 233, 369, 450). The router is mounted with a plain `app.include_router(jobs_router, prefix="/api")` (main.py:300), so no router-level role gate is added. identity/deps.py:64 shows CurrentPrincipal accepts any valid token of any role. service.py:1381-1402: negotiate_bill loads the row with `_load`, which only checks that the job exists and shop_id matches (service.py:1910-1914), with no assignment scoping. The only guards are `status == "closed"` (409) and `bill_original_paisa is None` (400). After those it sets bill_negotiated_paisa = amount_paisa and bill_status = "negotiated" unconditionally. It never reads assigned_tech_id, bill_sent_at, payments, or the original amount. schemas.py:145-147: NegotiateRequest.amount_paisa is `Field(..., ge=0)`, so 0 is accepted and there is no bound relative to the original. Compare the customer-pin action at service.py:1612, which has `if not actor_is_manager and row.assigned_tech_id != actor: raise JobForbiddenError`; negotiate has no equivalent check. The negotiated figure really does change what the customer owes: _detail (service.py:1955-1962) uses bill_negotiated_paisa as `payable` when it is set, so balance_paisa = payable - received. Setting it to 0 after a payment leaves a zero or negative balance. The bill freeze (bill_sent_at, negotiated, or non-voided payment) only guards completion resubmits; log_customer_message's own comment (service.py:1427-1431) says so. No notification is raised; the call only adds a `bill` timeline event. The uncommitted working-tree diff only touches tech_metrics, and no commit since 906b990 in gitLog.txt changes negotiate_bill. So the failing condition holds: a tech JWT can POST {amount_paisa: 0} to any non-closed job that has a bill, whoever it is assigned to, whether or not the bill was sent or paid. Why I rated it P2 rather than P1: (1) tech access to negotiate is intended. The mobile app's outbox has a "negotiate" kind (technician-app/src/lib/outbox.ts:28, JobDetailScreen.tsx:89) because haggling happens on site, often after the customer has seen the bill. So the real gaps are the missing assigned-tech check and the missing freeze once a payment exists, not tech access as such. (2) It needs an authenticated staff member, so it is an insider risk. (3) Every renegotiation is logged with actor=principal.tech_id and the prior and new amounts in the event text, so it can be detected after the fact. There is no approval step or real-time alert, though.
+SETTLE: An integration test against real Postgres: seed tech A and tech B and a non-closed job assigned to A with bill_original_paisa=500000, bill_sent_at set and one non-voided payment. As tech B, POST /api/jobs/{id}/bill/negotiate {"amount_paisa": 0}. Expect 200, bill_negotiated_paisa=0 and balance_paisa=-received. This test would confirm the gap; it is not needed to refute anything, since the code path is unambiguous.
+
+### O6-F03 [P2/defect/INV] Payments can be logged by any technician on any job, closed jobs included, and a manager can void a payment on a closed job
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=yes
+CLAIM: log_payment and void_payment check neither job status nor assignment. So a payment row can be added to, or voided on, a job that is already closed. The web UI hides Void on closed jobs, but the API does not refuse it.
+WHEN: Tech JWT: POST /api/jobs/{closed job}/payments → 200 and a new job_payment row. Manager JWT: POST /api/jobs/{closed job}/payments/{id}/void → 200, received total changes after settlement.
+    - backend/app/features/jobs/router.py:339-353 — log_payment takes CurrentPrincipal only
+    - backend/app/features/jobs/service.py:1456-1468 — _load then add_payment with no status or assigned_tech check
+    - backend/app/features/jobs/service.py:1501-1508 — void_payment loads and flips voided with no closed-job guard
+    - backend/app/features/jobs/service.py:1155-1156 — contrast: submit_completion refuses a closed job
+IMPACT: A settled, closed job's cash can be rewritten after the fact. A manager voiding cash on a closed job is invisible to anyone who trusts 'closed is terminal'. A future Odoo export keyed on closed jobs would export figures that later change.
+FIX: Refuse log_payment and void_payment when status == 'closed' (409 with the plain-text '(current status: closed)' suffix the clients already regex). Require the assigned tech or a manager for log_payment. Post-close corrections become an explicit manager 'reopen-for-correction' or reversal record.
+
+### O6-F04 [P2/defect/INV] Any technician can submit the first completion, which generates the bill, on a job assigned to someone else
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=S apk=yes
+CLAIM: submit_completion has no assigned-tech check. Any authenticated technician can create the first completion, and so set bill_original_paisa, fuel and labour, on another technician's job. They can also resubmit it freely until a bill send, negotiation or payment freezes it.
+WHEN: Tech t2 POSTs /api/jobs/{job assigned to t3}/completion before t3 does (or before any freeze trigger).
+    - backend/app/features/jobs/router.py:279-295 — CurrentPrincipal; only is_manager is derived from the role
+    - backend/app/features/jobs/service.py:1153-1159 — closed check, then the freeze only `if completion is not None and not is_manager`
+    - backend/app/features/jobs/service.py:1269 — completion.submitted_by = actor (recorded, not checked)
+IMPACT: Bills can be authored or zeroed by a technician who did not do the work. Labour and fuel attribution in reports is then wrong.
+FIX: Require principal.tech_id == row.assigned_tech_id or a manager, matching the existing check at service.py:1612. Test this against the deployed APK's reassignment flow first.
+
+### O6-F05 [P1/risk/INV] A fresh database seeds every account, including the manager, with PIN 1234 and never forces a change
+cite=LOCATED | skeptic=CONFIRMED | conf=0.85 effort=M apk=no
+CLAIM: Migrations 0004 and 0012 seed t1–t5 and manager m1 with a PIN hash of the literal '1234', and nothing forces a change at first login. So a home-server database built with `alembic upgrade head` and exposed through the tunnel accepts a manager login with a publicly known PIN until someone changes it.
+WHEN: Fresh DB (W0 unknown: no restorable dump) and the tunnel published before PINs are rotated. POST login as m1 with PIN 1234.
+    - backend/alembic/versions/0004_create_technicians.py:28 — _DEFAULT_PIN = "1234"
+    - backend/alembic/versions/0004_create_technicians.py:70 — "pin_hash": hash_pin(_DEFAULT_PIN)
+    - backend/alembic/versions/0012_dedicated_manager_account.py:31 — _DEFAULT_PIN = "1234"
+    - Grep of backend/app/features/identity for must_change/pin_changed/default_pin: no match
+IMPACT: Full manager takeover without guessing. The per-account lockout (CLAUDE.md) is irrelevant because the first attempt succeeds.
+FIX: Add a must_change_pin flag set by the seed and cleared by set_pin, and refuse all non-identity endpoints for a must_change principal. Or seed with a random PIN printed once by a bootstrap script. Add a deep-health 'default PIN still active' warning. W0 checklist: rotate PINs before the tunnel goes up.
+SKEPTIC: I traced it from the seed to the login path. 0004:28 sets _DEFAULT_PIN = "1234" and :70 bulk-inserts t1–t5 with hash_pin("1234"). 0012:31 does the same for m1 (role 'manager', active True) at :59. No later migration changes these rows: a grep for pin_hash, 1234 and _DEFAULT_PIN across alembic/versions, with 0004 and 0012 left out, finds nothing. The only other technician UPDATE/DELETE statements are in 0012 itself (demote t1, and the downgrade). start.sh runs `alembic upgrade head` on every boot, so a fresh DB comes up with these seeds already in place. On login, POST /api/auth/login takes {tech_id, pin} (router.py:72-83; LoginRequest accepts pin lengths 3–12). IdentityService.login (service.py:63-116) loads the row, checks active and the lock, calls verify_pin, and mints a JWT. Nothing in that path checks whether the PIN is a default, carries a must-change flag, or tracks PIN age. The Technician model has no such column either: it holds only pin_hash, active, throttle columns and token_version. The 6+ digit manager PIN policy (_check_pin_policy) runs only in set_pin (service.py:133), so the seeded 4-digit m1 PIN gets around it. The only production boot guard (config.py:223-232, assert_safe_for_production) checks the dev JWT secret and nothing about default PINs. The account id is easy to find: GET /api/technicians is a public roster, and docs/HANDOFF.md:24 publishes "m1, PIN 1234". The per-account lockout does not help, because 1234 works on the first try. Nothing in the git log since 906b990 touches the seeds: 1c546a3 changed lockout recovery only, and 0a40416 (with the boot guard) predates the window and covers only the JWT secret. The failing condition holds whenever a fresh DB is built with migrations and reachable before someone rotates the PINs with set_pin.
+SETTLE: Already settled by code trace. For empirical confirmation: on an empty Postgres run `alembic upgrade head`, start the app, then `curl -X POST /api/auth/login -d '{"tech_id":"m1","pin":"1234"}'`. A 200 response with a JWT whose role claim is 'manager' confirms the claim.
+
+### O6-F06 [P1/risk/INV] Nightly DB dumps are unencrypted, stored in the media bucket, and deletable with the same credential the API holds
+cite=LOCATED | skeptic=CONFIRMED -> P2 | conf=0.85 effort=M apk=no
+CLAIM: run_db_backup uploads a plaintext pg_dump (customer PII, cash, staff ledger, PIN hashes) into the single r2_bucket used for media. It uses the same R2 key that also lists and deletes backups. So anyone holding the backend's env, or code execution in the API, can read every dump and delete every backup.
+WHEN: Leak of FIXFLOW_R2_ACCESS_KEY_ID/SECRET (env file on the home box, a container compromise, a backup of the env), or a buggy prune.
+    - backend/app/core/backup.py:87-96 — pg_dump --format=custom ... no encryption step
+    - backend/app/core/backup.py:122 — store.put_bytes(key, data, 'application/octet-stream')
+    - backend/app/core/backup.py:125-131 — list_keys + store.delete(old) with the same client
+    - backend/app/core/storage.py:148-149 — delete_object on self._bucket
+IMPACT: Confidentiality: the whole business dataset leaks in one object read. Availability: the 'separate provider' backup is one credential away from deletion, and that same deletion removes the external anchor chain.py relies on for tail-truncation detection.
+FIX: Encrypt before upload with age/gpg to a public key whose private key the owner holds offline. Use a separate backups bucket and a separate token scoped to PutObject only, with no List/Delete. Move retention to a bucket lifecycle rule plus a bucket lock/retention policy (check that R2 supports it) instead of app-side delete. On the home box, also keep a second copy off-box.
+SKEPTIC: I traced the path myself. run_db_backup takes the default get_storage() R2Storage, which is the single boto3 client keyed with settings.r2_access_key_id/secret and bound to settings.r2_bucket (default and documented prod value: job-media). The dump bytes from pg_dump go to put_object unmodified, with no application-level encryption. The same client then lists the backups/db/ prefix and calls delete_object on stale keys. A credential that can PUT, LIST and DELETE in that bucket can therefore read and delete every dump, and the code has no line that narrows the credential, the bucket or the delete scope. The runbook confirms the shared bucket and shared credential in prod and lists them as an open known limit, so the claim holds.
+
+I lowered the severity from P1 to P2 for three reasons:
+(1) The failing condition needs the backend env or code execution in the API. That same env carries DATABASE_URL, so reading the dumps adds little beyond direct DB access. The incremental harm is the attacker destroying both the DB and every backup, a total-loss scenario for a single-tenant shop.
+(2) The "buggy prune" path is bounded in the current code. keys_to_prune only deletes keys matching fixflow-db-<stamp>.dump under the prefix that are older than retention_days, so a bug would need a code change.
+(3) Bucket-side controls such as an R2 bucket lock, versioning or a scoped token cannot be seen from the repo and might mitigate deletion. Nothing in the repo or runbook says they exist, so I did not count them.
+CORRECTED: The mechanics are as claimed. The confidentiality impact is mostly not new, though: the same env that holds the R2 key also holds FIXFLOW_DATABASE_URL, which gives live read/write on the DB. The real gap is availability and integrity. Whoever can wipe the DB with that env can also delete every backup with the same R2 key, so the backups do not survive the compromise they most need to survive. "Plaintext" means no application-level encryption. R2's provider-side at-rest encryption does nothing against someone holding the key.
+SETTLE: Two account-side checks would settle the severity:
+- Cloudflare R2 bucket job-media: look for a bucket-lock / retention rule on backups/db/ and check whether versioning is on. A lock would block deletion inside the retention window.
+- R2 API token behind FIXFLOW_R2_ACCESS_KEY_ID: check whether it is scoped to Object Read & Write on job-media (it can delete) or is narrower.
+
+A practical test: with the prod token, run `railway run python -c "from app.core.storage import get_storage; s=get_storage(); s.put_bytes('backups/db/probe.txt', b'x', 'text/plain'); s.delete('backups/db/probe.txt')"`. If the delete succeeds, the deletion path is live.
+
+### O6-F07 [P1/design/INV] The staff-ledger hash chain is unkeyed, unanchored and never verified automatically
+cite=- | skeptic=n/a (gap/design) | conf=0.85 effort=M apk=no
+CLAIM: row_hash is a plain sha256 over a canonical form published in chain.py. Verification runs only when a manager calls GET /ledger/verify, and no web screen or scheduler calls it. So anyone with DB write access can rewrite staff_ledger rows, recompute the whole chain so verify returns ok, or truncate its tail, and nothing raises an alarm.
+WHEN: An operator or attacker with write access to the Postgres database (home-box superuser, the app role, or a restored dump edited and reloaded).
+    - backend/app/features/attendance/chain.py:20 — row_hash = sha256(version ‖ payload ‖ prev_hash)
+    - backend/app/features/attendance/chain.py:128-132 — compute_row_hash uses hashlib.sha256, no key
+    - backend/app/features/attendance/chain.py:38-44 — 'cannot ... detect truncation of the whole tail ... The external anchor for that is the nightly DB backup'
+    - backend/app/features/attendance/router.py:532-546 — verify is an on-demand manager GET
+IMPACT: The chain detects only clumsy tampering and only if someone remembers to look. Against the home-box operator, the actor this task is about, it gives no protection.
+FIX: (1) Schedule a daily verify that writes ok/head_hash to app_event and alerts the owner on failure. (2) Anchor the daily head_hash outside the operator's control: a WhatsApp or email to the owner, or a write-once object in a locked bucket under a different account. (3) Optionally HMAC the chain with a key held outside the DB, for example in an env that only the API process reads. That still does not stop an operator who has both.
+
+### O6-F08 [P1/design/INV] Customer cash (job_payment) has no tamper evidence, and its void is not attributable to the voided row
+cite=- | skeptic=n/a (gap/design) | conf=0.85 effort=M apk=no
+CLAIM: job_payment has no voided_by/voided_at and no hash chain. The void's job_event carries neither the payment id nor the amount in its payload. So a direct-DB edit of amount_paisa or voided goes undetected, and when a job has two voids nothing links a void event to the row it voided.
+WHEN: DB write access (operator), or two payments voided on the same job with similar reasons.
+    - backend/app/features/jobs/models.py:481-495 — columns id, job_id, client_id, amount_paisa, method, recorded_by, recorded_at, voided, void_reason only
+    - backend/app/features/jobs/service.py:1507-1515 — payment.voided = True; job_event text 'Payment voided — {reason}' with no payload
+    - backend/app/features/jobs/service.py:1478-1484 — payment event text 'Payment Rs {amount // 100}' (whole rupees, no payment id, no payload)
+IMPACT: The money table most exposed to skimming is less protected than the staff ledger. Forensics can only rebuild 'who voided which payment when' by matching free text, and a future Odoo pakka-khata export cannot prove its inputs were unaltered.
+FIX: Add voided_by/voided_at (migration 0047, nullable, backfill none). Emit payment and void events with payload {payment_id, amount_paisa, method}. Generalise chain.py to a money chain covering job_payment create/void and bill revisions, with the same advisory-lock append.
+
+### O6-F09 [P2/design/INV] A manager's completion override rewrites the bill and deletes the prior material lines, with no snapshot kept
+cite=- | skeptic=n/a (gap/design) | conf=0.85 effort=M apk=no
+CLAIM: When a manager resubmits a frozen completion, clear_materials deletes the existing job_material rows and bill_original_paisa is overwritten. No reason is required. The only history is a 'Work completed — bill Rs N' text event in whole rupees, so the bill the customer actually saw cannot be reconstructed.
+WHEN: Manager POST /api/jobs/{id}/completion on a job with bill_sent_at set or a non-voided payment, before close.
+    - backend/app/features/jobs/router.py:294 — is_manager=principal.role == 'manager'
+    - backend/app/features/jobs/service.py:1159 — the freeze is skipped when is_manager
+    - backend/app/features/jobs/service.py:1225 — await self._repo.clear_materials(completion.id)
+    - backend/app/features/jobs/service.py:1281-1289 — row.bill_original_paisa = original; event text uses original // 100
+IMPACT: A manager can lower a paid bill, void the cash and log less, and leave only text lines. Disputes with customers ('you charged me X') cannot be settled from data.
+FIX: Add an append-only job_bill_revision table (job_id, rev, kind completion|override|negotiate, original_paisa, negotiated_paisa, materials JSONB snapshot, labour/fuel, actor, reason, created_at) written on every change. Require a reason on a manager override.
+
+### O6-F10 [P2/defect/INV] Attendance adjustments take the 'manager_id' audit actor from the request body
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=no
+CLAIM: create_adjustment records manager_id and created_by from the client-supplied body, not the authenticated principal. So any manager can file a correction attributed to another manager or to a technician id, as long as the FK resolves.
+WHEN: Manager JWT for m1; POST /api/attendance/adjustments with manager_id='t1' (or another manager's id).
+    - backend/app/features/attendance/schemas.py:484 — manager_id: str = Field(..., min_length=1, max_length=128)
+    - backend/app/features/attendance/router.py:367-371 — create_adjustment(body, service, session) with no principal parameter
+    - backend/app/features/attendance/service.py:580-586 — created_by=body.manager_id; create_adjustment(manager_id=body.manager_id, ...)
+    - backend/app/features/attendance/models.py:356-357 — manager_id FK technician.id (any existing tech id passes)
+IMPACT: The audit row meant to answer 'who corrected this attendance day' is caller-asserted, which defeats it as evidence in a pay dispute.
+FIX: Inject CurrentManager in the router and pass principal.tech_id. Ignore or reject a body manager_id that differs. Keep the field optional for compatibility.
+
+### O6-F11 [P2/gap] Manager attendance corrections can only lengthen a day, never shorten it
+cite=- | skeptic=n/a (gap/design) | conf=0.8 effort=M apk=no
+CLAIM: classify_day uses the earliest clock_in and the latest clock_out, and adjustments only append events whose original_event_id is ignored by the derivation. So a manager cannot correct a padded day: an early remote clock-in or a late or forgotten clock-out stays in worked_minutes.
+WHEN: A tech clocks in from home at 07:00 (or via a direct API call) or clocks out at 23:00. The manager files an adjustment clock_in 09:30 / clock_out 18:00 with original_event_id set. worked_minutes is unchanged.
+    - backend/app/features/attendance/derive.py:116-125 — clock_ins sorted; first_in = clock_ins[0]; last_out = clock_outs[-1]
+    - backend/app/features/attendance/service.py:560-581 — adjustment appends a new manual event; the original is not edited, voided or excluded
+    - backend/app/features/attendance/service.py:582-587 — original_event_id stored only on the audit row
+IMPACT: Inflated hours flow into payroll and into the accrued balance that advances are capped against, and the manager's correction, though recorded, does not take effect.
+FIX: Make an adjustment with original_event_id supersede that event in derive. Exclude superseded events in _window/classify_day while keeping both rows. That is append-only and needs no schema change beyond reading attendance_adjustment.
+
+### O6-F12 [P2/risk] Mock-location is a client-asserted flag that never affects the verdict, so a direct API punch is indistinguishable from a genuine one
+cite=MOVED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=M apk=yes
+CLAIM: is_mock_location, lat/lng, accuracy_m, device_time and wifi_bssid all come from the request body, and the server's inside verdict ignores is_mock. So a technician calling the API with their own token, or a fake-GPS app that clears the mocked bit, gets status 'present' with no flag. A flagged mock punch inside the fence still counts as present with full worked minutes.
+WHEN: Tech POSTs /api/attendance/punch with workshop coordinates, accuracy_m=5, is_mock_location=false. Or a mocked fix (pos.mocked=true) inside the fence, which then shows only an icon.
+    - backend/app/features/attendance/schemas.py:36-45 — tech_id, device_time, lat, accuracy_m, is_mock_location: bool = False, wifi_bssid all from body
+    - backend/app/features/attendance/service.py:332-338 — _evaluate_geofence(lat, lng, accuracy_m, wifi_bssid): is_mock not an input
+    - backend/app/features/attendance/service.py:973-1007 — inside depends only on distance/accuracy
+    - backend/app/features/attendance/service.py:1196 — mock=any(e.is_mock_location ...) feeds only DayFlags
+IMPACT: What the manager sees for an honest-looking spoof: nothing. For a flagged spoof: a small icon on the board row and payroll CSV flag_mock_gps (S-03 F7), while the status, hours and pay stay unaffected. Flag-never-block is an owner decision, but the flag is only as strong as the client's honesty.
+FIX: Keep flag-never-block, but (a) demote a mock first clock-in's inside verdict to None so the status is not 'present by fence', (b) add an 'uncorroborated' day flag when there is no wifi match and no uploaded selfie, (c) consider Play Integrity attestation on punch (needs an app update and a native module), (d) surface a per-tech mock-day count to the owner.
+
+### O6-F13 [P2/defect] A mocked or fabricated arrive_customer punch sets the billed fuel distance
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.75 effort=S apk=yes
+CLAIM: derive_route takes the latest arrive_customer job_location as the outbound endpoint whether or not it is mocked. Only travel samples are filtered for is_mock, and the ladder prefers the larger of path-sum and straight-line × circuity. So a mocked arrive point far from the customer inflates the fuel on the bill.
+WHEN: A tech records arrive_customer with is_mock=true (or forged coordinates via the API) several km from the real pin, then submits the completion without fuel_paisa.
+    - backend/app/features/jobs/service.py:124-135 — _trusted_samples drops is_mock samples only
+    - backend/app/features/jobs/service.py:101-103 — _latest_location picks the latest punch of a kind, with no is_mock filter
+    - backend/app/features/jobs/service.py:236 — arrive = _latest_location(locations, 'arrive_customer')
+    - backend/app/features/jobs/service.py:264-266 — _leg_ladder(origin, (arrive.lat, arrive.lng), samples, ...)
+IMPACT: The customer is overcharged for fuel, and any fuel reimbursement to the technician is inflated. The arrive punch's MOCK/OFF-PIN badge is visible on JobDetail only if the manager opens that job.
+FIX: In derive_route, ignore an arrive punch that is mocked or has verified=False, and fall back to the customer pin as the endpoint. Record the basis as 'pin' so the bill shows why.
+
+### O6-F14 [P2/defect/INV] On a shared phone, the job screen shows another technician's failed outbox items and lets the current user Discard them
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=S apk=unknown
+CLAIM: useJobOutbox filters outbox items by jobId only, and JobDetailScreen gives every failed item Retry and Discard. So tech B on a shared device can permanently delete tech A's rejected or 404-parked payments and completions for that job. The flush and attendance paths do filter by techId.
+WHEN: Shared device; A's write on job J parked as failed (any definitive 4xx, including the 404 the dead Railway host returns, S9). B signs in, opens J, taps Discard.
+    - technician-app/src/lib/outbox.ts:243-244 — itemsForJob: filter((i) => i.jobId === jobId)
+    - technician-app/src/lib/useJobOutbox.ts:23-27 — queued/failed from itemsForJob with no techId filter
+    - technician-app/src/features/jobs/JobDetailScreen.tsx:717-739 — every outboxView.failed item gets Discard → discardCompletionAware
+    - technician-app/src/lib/outboxSync.ts:205 — contrast: flush skips item.techId !== me
+IMPACT: Breaks the outbox's 'never deletes a write without its owner's decision' contract. Cash records and completions can vanish, with no server-side trace (see O6-F15).
+FIX: Filter itemsForJob or useJobOutbox to techId === me || techId === null, and show other technicians' items read-only with their name. Needs an app update.
+
+### O6-F15 [P2/gap/INV] Discarding a failed punch, crossing or job write leaves no trace on the server
+cite=- | skeptic=n/a (gap/design) | conf=0.75 effort=M apk=yes
+CLAIM: discardPunch, discardPresence and discardItem remove the record locally, with the punch selfie, and send nothing to the server. Grep finds no telemetry emitter in the technician app other than travelSync and Sentry. With production returning 404, every punch and job write is sitting in a failed list, so a technician can erase an inconvenient record and the manager never learns it existed.
+WHEN: Any parked item (definitive 4xx; today every write, because the edge 404s) and the tech taps Discard.
+    - technician-app/src/features/attendance/sync.ts:122-131 — deletes selfie file, removePunches([clientId])
+    - technician-app/src/lib/outbox.ts:224-227 — discardItem → removeItem(id)
+    - Grep technician-app/src for 'api/events'|'telemetry': only features/jobs/travelSync.ts and lib/sentry.ts
+IMPACT: The evidence a manager would use (a late clock-in, a cash payment that bounced) can be destroyed silently. In aggregate, a technician who never clocks a late arrival looks punctual.
+FIX: On discard, enqueue a droppable 'discarded' telemetry record (kind, client_id, job_id, failedReason, the original payload's time and amount) to POST /api/events, and surface a per-tech discard count to the manager. Or for punches, send the record with a 'withdrawn' marker instead of deleting it.
+
+### O6-F16 [P2/gap/INV] A manager can credit their own staff ledger and approve their own advance
+cite=- | skeptic=n/a (gap/design) | conf=0.85 effort=M apk=no
+CLAIM: add_ledger_entry accepts any body.tech_id, including the caller's, and approve_advance never compares req.tech_id with the approving actor. Only two roles exist (tech, manager). So a manager can write an earning or adjustment_credit to themselves or a favoured tech and then disburse against it, with no second person involved.
+WHEN: Manager m1 POSTs /api/attendance/ledger {tech_id: 'm1', kind: 'earning', ...}, or approves an advance_request whose tech_id is m1 (once the advance policy is switched on).
+    - backend/app/features/attendance/router.py:463-470 — add_ledger_entry(body=body, actor=principal.tech_id) with no tech_id vs actor check
+    - backend/app/features/attendance/schemas.py:513-519 — LedgerEntryRequest.tech_id free
+    - backend/app/features/attendance/service.py:1301-1309 — StaffLedger(tech_id=body.tech_id, recorded_by=actor)
+    - backend/app/features/attendance/service.py:1629-1644 — approve_advance: no req.tech_id != actor check
+IMPACT: Wage money moves on one person's say-so. The chain records recorded_by, but nothing flags self-dealing and nobody runs verify (O6-F07).
+FIX: Refuse rows where body.tech_id == actor and self-approval of advances. Add an 'owner' role (or an owner-review queue) for manager-on-manager money, and a daily digest to the owner of all ledger writes and voids.
+
+### O6-F17 [P2/risk/INV] The ops console login is a shared password with no attempt throttling
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.75 effort=S apk=no
+CLAIM: ops-server.mjs checks a single OPS_PASSWORD on POST /api/ops/login with no attempt counter or delay. So once the ops hostname is published through the tunnel without Cloudflare Access, it can be brute-forced at line rate, and it holds the platform and Sentry tokens and the backend proxy token.
+WHEN: Ops hostname in the tunnel ingress without an Access policy, and a guessable OPS_PASSWORD.
+    - ops-server.mjs:39-40 — OPS_PASSWORD from env; SESSION_SECRET random per boot if unset
+    - ops-server.mjs:122-126 — passwordValid: sha256 + timingSafeEqual, no counter
+    - ops-server.mjs:501-502 — login returns 401 'wrong password' with no lockout
+    - Grep ops-server.mjs for attempt/rate: only a TTL cache comment (line 129) and an error_rate metric
+IMPACT: Read access to logs (which may carry PII), deploy metadata and deep health, plus possession of OPS_PROXY_TOKEN.
+FIX: Put the ops hostname behind Cloudflare Access (owner email OTP), add a per-IP attempt limiter, or bind ops to the LAN/tailnet only and never publish it.
+
+### O6-F18 [P2/design/INV] The backend's runtime DB role is the migration/owner role, so the API process can rewrite or drop any table
+cite=- | skeptic=n/a (gap/design) | conf=0.8 effort=M apk=no
+CLAIM: start.sh runs `alembic upgrade head` and then uvicorn from the same environment, so one DATABASE_URL serves both DDL and requests. pg_dump uses it too. No migration creates a role or GRANT. So the role every request runs under can UPDATE append-only tables (job_event, staff_ledger_chain, attendance_event) and TRUNCATE or DROP them.
+WHEN: Any SQL-capable compromise of the API process, or any person holding the env file.
+    - backend/start.sh:9-12 — alembic upgrade head; exec uvicorn ... (same env)
+    - backend/app/core/backup.py:114 — dump_database(libpq_dsn(settings.database_url))
+    - Grep backend/alembic/versions for GRANT|CREATE ROLE: no match
+    - docs/PLAYBOOK.md:51 — DATABASE_URL uses postgres.<ref> via the session pooler
+IMPACT: Append-only is a convention in code, not a DB-enforced property. One credential spans read-all, write-all and schema.
+FIX: Split three roles: fixflow_migrator (owner, used only by a deploy step via FIXFLOW_MIGRATION_DATABASE_URL), fixflow_app (DML only, with no UPDATE/DELETE on job_event, staff_ledger_chain, attendance_event, attendance_adjustment or shop_setting, column-level UPDATE on the void columns only, no TRUNCATE) and fixflow_backup (pg_read_all_data). Ship it in migration 0047 plus a start.sh change.
+
+### O6-F19 [P3/risk] The FastAPI interactive docs and OpenAPI schema are served unauthenticated
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=no
+CLAIM: FastAPI() is constructed without docs_url/openapi_url overrides, so /docs and /openapi.json publish the full endpoint and schema map to anyone who can reach the API hostname through the tunnel.
+WHEN: GET https://<api host>/openapi.json from the internet.
+    - backend/app/main.py:275-280 — FastAPI(title=..., version=..., description=..., lifespan=_lifespan) with no docs_url/openapi_url
+IMPACT: Reconnaissance aid. It lists every money endpoint and its body shape.
+FIX: Set docs_url/openapi_url to None when is_production (after O6-F01's fix), or gate them behind the ops proxy token.
+
+## Backlog
+- [P3] Any technician can list every job (GET /api/jobs takes _principal only); verify whether Job carries customer phone/address, which would expose PII roster-wide (backend/app/features/jobs/router.py:76-87)
+- [P3] Signed playback URLs (1 h) and payroll CSV download_url are bearer links; a forwarded link exposes selfies and payroll to anyone for the TTL (backend/app/core/storage.py:67)
+- [P3] JWT lifetime 30 days with HS256 and a single secret; rotating after a home-box env leak logs out the whole fleet, and there is no kid for overlap (backend/app/core/config.py:154)
+- [P2] Auto-approve advance path writes recorded_by='auto' / SYSTEM_ACTOR_ID that is never assigned (S-04 F21); FK failure when the policy is switched on (backend/app/features/attendance/service.py:1695)
+- [P3] Adjustment server_time is unbounded (any past or future instant), so a manager can create events on closed payroll weeks without a lock (backend/app/features/attendance/schemas.py:482)
+- [P3] payroll_export has no checksum or totals (S-04 F22); a CSV replaced in R2 after export is undetectable (backend/app/features/attendance/service.py:1282)
+- [P3] Cloudflare terminates TLS on the tunnel, so PINs and JWTs are plaintext to Cloudflare; document it as an accepted third party in the trust path (docs/ (no code; R-03 F1/F2))
+
+## Challenges to settled facts
+- S16: Refinement, not contradiction. Beyond 'negotiate_bill and log_payment accept any authenticated principal': negotiate_bill also ignores bill_sent_at and existing payments, so it bypasses the bill freeze that CLAUDE.md says protects a bill the customer has seen. Neither log_payment nor void_payment has a closed-job guard. submit_completion also has no assigned-tech check.
+    - backend/app/features/jobs/service.py:1385-1393
+    - backend/app/features/jobs/service.py:1456-1468
+
+## Open questions
+ ? The G1 gate record named in the brief (docs/program/G1-discovery-gate-2026-11-01.md) does not exist in the repo (ls docs/ shows no program/ folder); I proceeded on the settled facts in the brief.
+ ? Is the 'manager' (Person A / m1) the owner or a hired person? The severity of O6-F09/O6-F16 and the need for an owner role depend on it.
+ ? Does any report or screen show original vs negotiated totals per technician (a discount report)? If one exists, O6-F02 is partly visible after the fact; I did not find or read one.
+ ? Does the technician app expose negotiate on jobs not assigned to the tech, or only the server allows it? (Read technician-app ArrivalJobBillScreen only via grep.)
+ ? Is the job_location punch endpoint (record_location) restricted to the assigned tech? S-03 F18 says travel samples are; punches were not read.
+ ? Does the deployed APK send is_mock on job_location punches (jobs/schemas.py:223 default False)? If not, O6-F13 needs no mock at all — just a far punch.
+ ? Extra files read beyond the brief (one hop): backend/app/features/jobs/router.py, backend/app/features/jobs/schemas.py, backend/app/features/jobs/models.py (JobPayment range), backend/app/features/attendance/router.py (ledger/adjustment ranges), backend/app/features/attendance/schemas.py (AdjustmentRequest, LedgerEntryRequest, PunchRequest ranges), backend/app/features/attendance/models.py (adjustment range), backend/app/features/attendance/derive.py:99-145, backend/app/core/config.py:145-240, backend/start.sh, backend/app/main.py:270-300, backend/app/features/ops/deps.py:31-43, backend/alembic/versions/0004 and 0012 (grep), ops-server.mjs (grep), technician-app/src/lib/outbox.ts:195-245, technician-app/src/lib/outboxSync.ts:160-215, technician-app/src/lib/useJobOutbox.ts, technician-app/src/features/jobs/JobDetailScreen.tsx:205-225,715-750, technician-app/src/features/attendance/sync.ts:100-139, technician-app/src/features/attendance/useAttendance.ts:225-285, src/features/attendance/pages/AttendanceTechDetail.jsx (grep).
+ ? Cloudflare Tunnel token semantics (a holder can run a connector replica and receive traffic) and R2 bucket-lock/retention support were not in W1 fetched sources; verify before the design relies on them.
+ ? Does the production env (when W0 recovers it) set FIXFLOW_ENVIRONMENT=production explicitly, or did it rely on RAILWAY_ENVIRONMENT? That decides whether O6-F01 bites on the first home-box boot.

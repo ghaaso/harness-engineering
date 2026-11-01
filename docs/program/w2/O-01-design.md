@@ -114,3 +114,30 @@ REFUTED or NARROWED CANDIDATES:
 - requestForegroundPermissionsAsync from a headless context: a status read in the pure headless case (F19 residual only).
 - 'jobFinished stops the JS': no (S1).
 - The FGS-less sampler still obeys the 14 h / 4 h bounds, because handlePingUpdate and handleTravelUpdate check them per batch; the privacy breach is visibility, not duration.
+
+---
+
+## Amendments (2026-11-01, harness review — `../HARNESS-REVIEW-2026-11-01.md` HR-A1a/A1b/A1c)
+
+1. **The dwell is deleted, not bounded.** FIX ORDER 1 becomes: one bounded fix per crossing
+   (`getLastKnownPositionAsync` max age 2 min and accuracy ≤ 100 m, else `getCurrentPositionAsync`
+   under an 8 s timeout, else null coordinates); the presence row is enqueued before the fix
+   resolves; the debounce stamp is written after the enqueue; the 20 s `DWELL_RECHECK_MS` path
+   and the second fix are removed. The phone applies the R1 rule to that single fix only to
+   suppress the prompt on a definitive outside; the server recomputes every row.
+2. **New finding `O01-F20` (P1).** Both location tasks share one `LocationTaskService`
+   (`expo-location` 18.0.10, `LocationTaskService.kt:49-52`, `LocationTaskConsumer.kt:62-64,
+   226-228`). `stopJobTravel` calls `stopLocationUpdatesAsync(TRAVEL_TASK)`, which runs
+   `stopForeground(true)` + `stopSelf()` on the instance the on-duty ping task also uses; the
+   sampler then runs throttled for the rest of the shift and `ensurePingTracking` never re-arms.
+   Fix (P5a): after a travel leg ends while on duty, re-register PING_TASK with its foreground
+   option (or consolidate both into one mode-switching task). Check (P5c): `adb shell dumpsys
+   activity services` shows `isForeground=true` after a travel leg ends.
+3. **Shift-start reminder** (P5b, §4 decision default yes): `expo-notifications` WEEKLY triggers
+   at shift start + grace on working days from the cached shift, cancelled by the clock-in punch,
+   rescheduled on foreground and login; a pure scheduling function with Jest tests. It is the
+   location-free backstop for the arrival prompt.
+4. **Commercial SDK spike** (§4 decision): a one-session debug build of
+   `react-native-background-geolocation` on the spare phone during the P4a waits, decided at P5b
+   entry. Not a replacement of this note; the patched-Expo path stands unless the spike and the
+   owner say otherwise.

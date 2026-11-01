@@ -1,0 +1,429 @@
+{
+ "area": "S-03 map-backend-location-truth",
+ "summary": "Backend ingest and manager-web rendering of phone location data. Punches and presence crossings are re-bucketed to server time when the device clock is outside the window and are never rejected. Pings and travel samples outside the window are rejected, counted and the batch still succeeds. Day flags are computed in one place (_day_flags). no_data comes from a 2x-cadence gap rule in derive.duty_intervals. Fuel falls back from the breadcrumb path-sum to straight-line x circuity. No server-side view of a dead sampler was found. The active fence is served with a server-tunable ping_interval_minutes.",
+ "facts": [
+  {
+   "id": "F1",
+   "fact": "Punch and presence trust window (_effective_time): device_time is used as effective_time only if inside [server_now - backdate_ceiling, server_now + future_tolerance]; otherwise (or if absent) effective_time = server_now. The record is always stored and never rejected. Defaults 24 h back, 120 s forward. Tags: H3, H12.",
+   "evidence": [
+    "backend/app/features/attendance/service.py:1804 — def _effective_time(device_time, server_now, *, future_tolerance_seconds, backdate_ceiling_hours)",
+    "service.py:1823 — if backdate_limit <= dt <= future_limit: return dt",
+    "service.py:1825 — return server_now",
+    "backend/app/core/config.py:64 — attendance_device_time_future_tolerance_seconds: int = 120",
+    "config.py:69 — attendance_device_time_backdate_ceiling_hours: int = 24",
+    "service.py:336 — effective = self._effective(body.device_time, server_now)",
+    "service.py:406 — presence uses the same self._effective(...)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F2",
+   "fact": "Ping trust window (_ping_in_window): same bounds but with a 48 h backdate default. record_pings filters out-of-window pings, logs a warning listing the techs, and returns HTTP 201 with rejected=N (accepted=0 if none fresh). Nothing is stored for rejected pings and no 4xx is raised. Docstring states the phone must prune rejected pings. Tags: H3, H12.",
+   "evidence": [
+    "service.py:1832 — def _ping_in_window(captured_at, server_now, *, future_tolerance_seconds, backdate_ceiling_hours) -> bool",
+    "service.py:463 — if _ping_in_window( p.captured_at, server_now, ...)",
+    "service.py:474 — logger.warning( 'rejected %d ping(s) outside the captured_at trust window ...'",
+    "service.py:480 — return PingBatchResponse(accepted=0, deduped=0, rejected=rejected, ...)",
+    "service.py:457-458 — Rejection never fails the batch — the phone must prune these, not retry them forever.",
+    "config.py:77 — attendance_ping_backdate_ceiling_hours: int = 48",
+    "backend/app/features/attendance/router.py:160 — status_code=status.HTTP_201_CREATED (pings route)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F3",
+   "fact": "Ping batch contract: max 100 pings per call (more is a 422). Each distinct tech_id in the batch must be the caller or the caller must be a manager. The fence is fetched once per batch. Insert is ON CONFLICT (client_id) DO NOTHING and returns the newly inserted count. The response echoes ping_interval_minutes. Tags: H3, H7.",
+   "evidence": [
+    "schemas.py:225 — pings: list[PingRequest] = Field(..., max_length=100)",
+    "router.py:171-172 — for tech_id in {p.tech_id for p in body.pings}: _require_self_or_manager(principal, tech_id)",
+    "repository.py:258 — .on_conflict_do_nothing(index_elements=['client_id'])",
+    "service.py:487 — geofence = await self._repo.get_active_geofence(shop_id=fresh[0].shop_id)",
+    "service.py:508-512 — PingBatchResponse(accepted=..., deduped=..., rejected=rejected, ping_interval_minutes=...)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F4",
+   "fact": "Job GPS punch window: _effective_capture_time re-buckets (uses device_time if inside the window, else server now; device_time kept raw). Travel samples use _sample_in_window and are rejected, with a logged warning and rejected=N in the response. Window comes from the jobs_gps_* settings (48 h back, 120 s forward), separate from the attendance ones. Tags: H3, H18.",
+   "evidence": [
+    "backend/app/features/jobs/service.py:351 — def _effective_capture_time(device_time, server_now) ... Punch semantics — re-bucket, never reject",
+    "jobs/service.py:365 — def _sample_in_window(captured_at, server_now) -> bool",
+    "jobs/service.py:1679 — fresh = [s for s in body.samples if _sample_in_window(s.captured_at, now)]",
+    "jobs/service.py:1683 — logger.warning('travel samples: rejected %d of %d for job %s ...')",
+    "config.py:107-108 — jobs_gps_backdate_ceiling_hours: int = 48 / jobs_gps_future_tolerance_seconds: int = 120"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F5",
+   "fact": "Punch geofence verdict (_evaluate_geofence) is shared by punches and presence. inside is computed by geofence_flags as distance - accuracy_m <= radius_m (fix-overlap). It is then forced to None if accuracy_m is None or exceeds attendance_location_accuracy_ceiling_m (200 m). inside/distance are None when there are no coords and no BSSID, or no active fence. wifi_match is computed only when the fence has wifi_bssids. Tags: H3, H7.",
+   "evidence": [
+    "derive.py:95 — return distance - accuracy_m <= radius_m, distance",
+    "service.py:1003 — if accuracy_m is None or accuracy_m > self._accuracy_ceiling_m: inside = None",
+    "config.py:54 — attendance_location_accuracy_ceiling_m: float = 200.0",
+    "service.py:1006 — wifi_match = _wifi_match(wifi_bssid, geofence.wifi_bssids)",
+    "service.py:1030 — pings: if ping.accuracy_m is None or ping.accuracy_m > self._accuracy_ceiling_m: inside = None"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F6",
+   "fact": "DayFlags computed in one place (_day_flags): mock = any event is_mock_location (all sources); outside = any inside_geofence is False; drift = any abs(drift_seconds) > attendance_drift_flag_seconds (120); no_location and no_selfie evaluated only over source=='mobile' events; no_location = lat/lng/accuracy None or accuracy > 200; no_selfie = selfie_status != 'uploaded'; wifi_match aggregated (any True / all False / None). Tags: H3, H12.",
+   "evidence": [
+    "service.py:196 — class DayFlags: mock, outside, drift, no_location, no_selfie, wifi_match",
+    "service.py:1194 — mobile = [e for e in events if e.source == 'mobile']",
+    "service.py:1196-1201 — mock=any(e.is_mock_location for e in events), outside=any(e.inside_geofence is False ...), no_location=any(self._location_unreliable(e) for e in mobile), no_selfie=any(e.selfie_status != 'uploaded' for e in mobile)",
+    "service.py:1167-1168 — return drift_seconds is not None and abs(drift_seconds) > self._drift_flag_seconds",
+    "config.py:49 — attendance_drift_flag_seconds: int = 120",
+    "service.py:1179-1188 — _location_unreliable: lat None or lng None or accuracy_m None or > ceiling"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F7",
+   "fact": "Where flags appear. board (BoardRow) and payroll rows carry mock/outside/drift/no_location/no_selfie/order flags. BoardRow also carries wifi_match and flagged_arrived_not_clocked_in; GridCell has the same minus wifi_match and arrived_not_clocked_in. The web renders them as icons on the Attendance page (row and cell tooltips) and exports them in the payroll CSV. The per-tech page shows per-punch Mock/Outside/wifi badges. Tags: H3, H12.",
+   "evidence": [
+    "service.py:670-682 — BoardRow(... flagged_mock=flags.mock, flagged_outside=..., flagged_drift=..., flagged_no_location=..., flagged_no_selfie=..., flagged_arrived_not_clocked_in=arrived_not_in, flagged_order=...)",
+    "service.py:700-711 — GridCell(... flagged_*)",
+    "service.py:804-810 — PayrollDay(... flagged_*)",
+    "src/features/attendance/pages/Attendance.jsx:52 — {row.flagged_mock && <ShieldAlert ... aria-label='Mock GPS' />}",
+    "Attendance.jsx:79-83 — if (c.flagged_mock) out.push('mock GPS'); ... 'outside geofence' 'clock drift' 'no location' 'no selfie'",
+    "Attendance.jsx:176-180 — flag(r.flagged_mock), flag(r.flagged_outside) ... (CSV export)",
+    "src/features/attendance/pages/AttendanceTechDetail.jsx:77 — p.is_mock_location && (  ; :87 p.inside_geofence === false &&"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F8",
+   "fact": "Presence/pings are NOT part of _day_flags. The arrived-not-clocked-in flag comes from presence 'arrive' rows with no clock_in event that day. Away flag exists only in the variance report: outside_minutes >= AWAY_FLAG_MINUTES (30) and status != 'field'. Tags: H3, H12.",
+   "evidence": [
+    "service.py:125-126 — AWAY_FLAG_MINUTES = 30",
+    "service.py:858-862 — flagged_away = (outside_m is not None and outside_m >= AWAY_FLAG_MINUTES and roll.status != 'field')",
+    "service.py:665-667 — arrived_not_in = any(p.kind == 'arrive' for p in day_presence) and not any(e.kind == 'clock_in' for e in events)",
+    "src/features/attendance/pages/AttendanceVariance.jsx:48 — {row.flagged_away && ("
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F9",
+   "fact": "no_data / outside / inside from pings: duty_intervals partitions the clocked window. A gap between consecutive samples (including window start to first ping and last ping to window end) longer than 2 x ping_interval_minutes is no_data. Otherwise the earlier sample's inside verdict governs. A None verdict carries the last known verdict forward (leading Nones backfilled from the first known, else inside). Zero pings in the window gives one no_data interval. Samples outside [first_in, last_out] are dropped. Tags: H3, H7.",
+   "evidence": [
+    "derive.py:225 — gap = timedelta(minutes=2 * interval_minutes)",
+    "derive.py:244-247 — add(a, b, covered_kind): NO_DATA if (b - a) > gap else covered_kind",
+    "derive.py:230-231 — if not pts: return [DutyInterval(window_start, window_end, NO_DATA)]",
+    "derive.py:236-244 — resolved_raw / first_known = next(..., INSIDE)",
+    "derive.py:252-255 — add(window_start, pts[0].local_dt, resolved[0]); ... add(pts[-1].local_dt, window_end, resolved[-1])",
+    "derive.py:271-282 — duty_summary: coverage = round((inside + outside) / total * 100, 1)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F10",
+   "fact": "_duty_breakdown returns all-None / empty list (no coverage figure) when first_in or last_out is missing, last_out <= first_in, or the day has zero pings. A zero-ping day therefore reports no no_data minutes. The window is the day's classify_day first_in/last_out, so an open shift (no clock-out) yields no breakdown. ping_interval_minutes used here is the server setting (attendance_ping_interval_minutes, default 5). Tags: H3, H7.",
+   "evidence": [
+    "service.py:1099-1103 — if first_in is None or last_out is None or last_out <= first_in or not day_pings: return None, None, None, None, []",
+    "service.py:1106 — intervals = duty_intervals(samples, first_in, last_out, self._ping_interval_minutes)",
+    "service.py:1096-1099 docstring — a day with zero pings has nothing to report, not '0% coverage' noise",
+    "config.py:82 — attendance_ping_interval_minutes: int = 5",
+    "router.py:96 — ping_interval_minutes=settings.attendance_ping_interval_minutes"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F11",
+   "fact": "Pings are bucketed to a local day by captured_at in shop timezone and queried over [start, end) for tech_days (one tech) and variance (all). Presence is bucketed by effective_time. Punches are bucketed by effective_time. Tags: H3.",
+   "evidence": [
+    "service.py:1083-1084 — bucket[p.tech_id][p.captured_at.astimezone(tz).date()].append(p)",
+    "repository.py:274 — Pings in [start, end) on captured_at (the analytical axis)",
+    "service.py:1064-1065 — presence bucketed on p.effective_time.astimezone(tz).date()",
+    "service.py:1233 — local_day = e.effective_time.astimezone(tz).date()"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F12",
+   "fact": "Manager correction: create_adjustment appends a NEW attendance_event (source='manual', client_id=uuid4(), effective_time = body.server_time, device_time/lat/lng/inside_geofence all None, selfie_status 'pending') plus an adjustment audit row with original_event_id (optional; only checked to exist in the same shop). The original event is never edited, voided or excluded. Router: manager-only, 404 if original missing. Tags: H3, H12.",
+   "evidence": [
+    "service.py:552-553 — async def create_adjustment ... Manager correction: append a NEW manual event + an audit row. The log is never edited.",
+    "service.py:567-573 — source='manual', server_time=body.server_time, effective_time=body.server_time, device_time=None",
+    "service.py:577-582 — create_adjustment(original_event_id=body.original_event_id, new_event_id=event.id, manager_id=..., reason=...)",
+    "router.py:363 — dependencies=[Depends(require_manager)] on POST /adjustments",
+    "service.py:556-559 — if original is None or original.shop_id != body.shop_id: raise AttendanceNotFoundError"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F13",
+   "fact": "classify_day takes first_in = earliest clock_in and last_out = latest clock_out (both sorted by local_dt). The adjustment's original_event_id is not used in derive or the day rollup (derive.py contains no adjustment reference). So a manual clock_out added later becomes last_out only if it is the latest; a manual clock_in replaces first_in only if it is earlier than every mobile clock_in. worked_minutes = max(minutes, 0); order_violation set when last_out < first_in. Tags: H3, H12.",
+   "evidence": [
+    "derive.py:119-125 — clock_ins = sorted(...CLOCK_IN...); clock_outs = sorted(...CLOCK_OUT...); first = clock_ins[0]; last_out = clock_outs[-1].local_dt if clock_outs else None",
+    "derive.py:134-135 — worked_minutes = max(minutes, 0); order_violation = last_out < first_in",
+    "derive.py:137 — if first.inside_geofence is False: status = FIELD",
+    "service.py:1119-1124 — _local_punches builds LocalPunch from e.effective_time for ALL events incl. manual"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F14",
+   "fact": "Day status: first clock-in's inside_geofence False gives 'field'; worked < half shift gives 'half'; else 'present'; no clock-in gives 'absent'; non-working day gives 'holiday'. A first clock-in with inside_geofence None (coarse or no fix) is not 'field' and is treated as present/half. A manual first clock-in has inside_geofence None. Tags: H3, H12.",
+   "evidence": [
+    "derive.py:137-142 — if first.inside_geofence is False: status = FIELD elif worked_minutes is not None and worked_minutes < _shift_length_minutes(shift) / 2: HALF else PRESENT",
+    "service.py:573 — manual events: inside_geofence=None",
+    "service.py:1122 — LocalPunch(... inside_geofence=e.inside_geofence)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F15",
+   "fact": "Read endpoints (prefix /api/attendance), all manager-gated except /today, /punches and /geofence/active. board GET /board -> Board (default day = today in shop tz). grid GET /grid?month=YYYY-MM. tech_days GET /techs/{tech_id}/days?start&end (only endpoint that adds pings, presence and away_intervals; to_date clamped to today). payroll GET /payroll. variance GET /variance. selfie_gaps GET /selfie-gaps (14 day lookback, 24 h grace). Tags: H3, H7.",
+   "evidence": [
+    "router.py:247-258 — @router.get('/board', response_model=Board, dependencies=[Depends(require_manager)])",
+    "router.py:262-273 — '/grid' with month pattern ^\\d{4}-\\d{2}$",
+    "router.py:277-290 — '/techs/{tech_id}/days' manager-only",
+    "router.py:293-312 — '/payroll'; :313-330 '/variance'; :333-343 '/selfie-gaps'",
+    "router.py:222-244 — '/today' and '/punches' (self-or-manager)",
+    "service.py:127 — SELFIE_GAP_LOOKBACK_DAYS = 14",
+    "service.py:722-770 — tech_days builds inside_minutes/outside_minutes/no_data_minutes/coverage_pct/away_intervals"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F16",
+   "fact": "Web mapping. fetchBoard -> AppContext board (refresh max age 30 s) -> Attendance page board rows. fetchGrid -> Attendance page month cells (MonthDots). fetchTechDays + fetchAdjustments -> AttendanceTechDetail (PunchRow, AwayStrip, ArrivedNotClockedInBanner, createAdjustment form). fetchVariance -> AttendanceVariance (Coverage, Away, flagged_away, CSV incl. coverage_pct/no_data_minutes). fetchPayroll/fetchPayrollExports/fetchSelfieGaps -> Attendance page; fetchSelfieGaps also in Dashboard. Routes: /attendance, /attendance/variance, /attendance/:techId. Tags: H3, H7, H12.",
+   "evidence": [
+    "src/features/attendance/data/attendanceApi.js:21 — apiGet(`/api/attendance/board?...`)",
+    "src/features/attendance/hooks/useAttendanceData.js:16 — const BOARD_MAX_AGE_MS = 30_000;",
+    "src/features/attendance/hooks/useTechDetail.js:25 — Promise.all([fetchTechDays(techId, start, end), fetchAdjustments(techId)])",
+    "src/features/attendance/pages/AttendanceTechDetail.jsx:407 — <AwayStrip intervals={day.away_intervals} status={day.status} />",
+    "src/features/attendance/pages/AttendanceVariance.jsx:273 — <Coverage pct={r.coverage_pct} />",
+    "src/app/App.jsx:36-37 — attendance/variance ; attendance/:techId",
+    "src/features/dashboard/pages/Dashboard.jsx:21 — import { fetchSelfieGaps }"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F17",
+   "fact": "Web AwayStrip renders no_data intervals as a neutral 'No location data' row (WifiOff icon) and outside intervals amber 'Outside fence' (or neutral 'Off-site' on a field day). It returns null when the intervals list is empty, so a day with no pings shows nothing. Tags: H3, H7.",
+   "evidence": [
+    "AttendanceTechDetail.jsx:144 — if (!intervals || intervals.length === 0) return null;",
+    "AttendanceTechDetail.jsx:155-158 — const noData = iv.kind === 'no_data'; amber = iv.kind === 'outside' && !field; label = noData ? 'No location data' : field ? 'Off-site' : 'Outside fence'",
+    "AttendanceTechDetail.jsx:137-139 comment — missing coverage is always neutral (a gap, not an accusation)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F18",
+   "fact": "Travel sample ingest guards: batch max 100 (422); caller must be the job's assigned tech or a manager (403 JobForbiddenError); out-of-window samples rejected with a count; insert idempotent on client_id; no job_event written; response carries accepted/deduped/rejected plus the refreshed derived route. Schema bounds: lat -90..90, lng -180..180, accuracy_m >= 0, leg in outbound/return/delivery. Tags: H18, H3.",
+   "evidence": [
+    "jobs/schemas.py:304 — samples: list[TravelSampleIn] = Field(..., max_length=100)",
+    "jobs/service.py:1675-1677 — if not actor_is_manager and row.assigned_tech_id != actor: raise JobForbiddenError",
+    "jobs/service.py:1658-1659 docstring — Deliberately no job_event — breadcrumbs are telemetry",
+    "jobs/service.py:1707-1716 — derive_route(...) returned in TravelSampleBatchResponse(route=route)",
+    "jobs/schemas.py:307-315 — class TravelSampleBatchResponse: accepted, deduped, rejected=0, route",
+    "jobs/models.py:438 — UniqueConstraint('client_id', name='uq_job_travel_sample_client_id')"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F19",
+   "fact": "Trusted-sample filter for money: a sample counts only if not is_mock, accuracy_m is not None and <= travel_sample_accuracy_ceiling_m (50 m). path_sum_m returns None with fewer than 5 trusted samples. Segments are skipped if dt <= 0, < 10 m, or implied speed > 35 m/s. A long time gap at sane speed counts in full. Tags: H18.",
+   "evidence": [
+    "jobs/service.py:134 — and s.accuracy_m <= settings.travel_sample_accuracy_ceiling_m",
+    "config.py:~110 — travel_sample_accuracy_ceiling_m: float = 50.0",
+    "jobs/service.py:118-121 — _TRAVEL_MIN_TRUSTED_SAMPLES = 5; _TRAVEL_MAX_SPEED_MPS = 35.0; _TRAVEL_MIN_SEGMENT_M = 10.0; _TRAVEL_WINDOW_SLACK = timedelta(seconds=120)",
+    "jobs/service.py:156-159 — if dt <= 0: continue ... if dist < _TRAVEL_MIN_SEGMENT_M or dist / dt > _TRAVEL_MAX_SPEED_MPS: continue"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F20",
+   "fact": "derive_route inputs and ladder. Inputs: job_location punches, job_travel_sample rows, the fuel rate, the circuity factor (1.35), the workshop fence circle and the customer pin. It returns None unless an arrive_customer punch exists. Per leg (_leg_ladder): breadcrumb path-sum over samples with matching leg inside the punch window (+/-120 s) if path >= straight-line distance, else straight-line x fuel_route_circuity_factor ('estimate'). Origin fallbacks: no depart_workshop punch -> fence centre (and breadcrumbs ineligible); depart punch farther than max(2*radius, 500 m) from the fence -> fence centre. Return leg only if arrive_workshop postdates arrive_customer; depart_customer farther than 500 m from the pin -> pin. Round trip = outbound + return, or outbound x 2 if no return. Tags: H18.",
+   "evidence": [
+    "jobs/service.py:193 — def derive_route(locations, samples, *, rate_paisa_per_km, circuity_factor, workshop=None, customer=None)",
+    "jobs/service.py:188-190 — if path is not None and path >= straight_m: return path, 'breadcrumbs', ...; return straight_m * circuity_factor, 'estimate', ...",
+    "jobs/service.py:248 — if gap_m > max(2 * radius_m, 500.0):",
+    "jobs/service.py:293 — if gap_m > 500.0:",
+    "jobs/service.py:313 — round_trip = distance + (return_distance if return_distance is not None else distance)",
+    "config.py:~100 — fuel_route_circuity_factor: float = 1.35",
+    "jobs/service.py:96-98 — route_fuel_paisa: round(distance_m / 1000 * rate_paisa_per_km)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F21",
+   "fact": "Fuel on completion: if body.fuel_paisa is provided the basis is 'manual'; otherwise derive_route is called and round_trip_fuel_paisa / round_trip_basis / round_trip_distance_m are used. The derivation is skipped (samples not queried) when no arrive_customer punch exists (_route_possible). Tags: H18.",
+   "evidence": [
+    "jobs/service.py:1237-1239 — if body.fuel_paisa is not None: fuel_paisa, fuel_basis, fuel_distance_m = body.fuel_paisa, 'manual', None",
+    "jobs/service.py:1244-1257 — route = derive_route(...); fuel_paisa = route.round_trip_fuel_paisa; fuel_basis = route.round_trip_basis",
+    "jobs/service.py:105-112 — _route_possible: _latest_location(locations, 'arrive_customer') is not None"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F22",
+   "fact": "Job punch verdict (punch_verdict): returns (distance_m, verified). distance is stored whenever a reference exists. verified is None if no reference, or is_mock, or accuracy None, or accuracy > jobs_punch_accuracy_ceiling_m (100 m); else distance <= radius. Reference: customer-side kinds (arrive_customer, depart_customer, arrive_customer_delivery) use the job's customer pin with radius jobs_arrival_radius_m (250 m), or None if the job has no pin; workshop-side kinds use the attendance fence with radius max(fence radius, 250). Flag-never-block: the punch is always stored and judged at replay time against the pin as it is then. Tags: H18, H3.",
+   "evidence": [
+    "jobs/service.py:393-424 — def punch_verdict(...) judgeable = (not is_mock and accuracy_m is not None and accuracy_m <= settings.jobs_punch_accuracy_ceiling_m)",
+    "jobs/service.py:1530 — return row.customer_lat, row.customer_lng, settings.jobs_arrival_radius_m",
+    "jobs/service.py:1538 — return center_lat, center_lng, max(float(radius_m), settings.jobs_arrival_radius_m)",
+    "config.py:114 — jobs_arrival_radius_m: float = 250.0",
+    "config.py:118 — jobs_punch_accuracy_ceiling_m: float = 100.0",
+    "jobs/service.py:1553-1556 docstring — an offline punch replayed hours later is judged against the pin at replay time"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F23",
+   "fact": "Punch timeline text comes from _LOCATION_EVENT_LABELS (6 kinds). 'GPS — <label>' plus ' (mock location)' if is_mock, plus ' — off-pin (X away)' when verified is False. record_location is idempotent on client_id (existing row returns the detail and writes nothing). Web mirrors the labels in PUNCH_LABELS. Tags: H18.",
+   "evidence": [
+    "jobs/service.py:378-385 — _LOCATION_EVENT_LABELS = {'depart_workshop': 'left workshop', ... 'arrive_customer_delivery': 'arrived at customer (delivery)'}",
+    "jobs/service.py:1584-1586 — text=f'GPS — {label}{mock}{off_pin}'",
+    "src/features/jobs/data/mapJob.js:70 — const PUNCH_LABELS = {depart_workshop: 'Left workshop', ...}"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F24",
+   "fact": "Web rendering of travel/verdict: mapJob maps verified (nullable) onto locations; JobDetail shows OFF-PIN (with distance), VERIFIED and MOCK badges per punch; verified null shows no badge. TravelMapCard fetches the manager-only GET /api/jobs/{id}/travel-samples trail (decimated server-side) plus the geofence and plots the outbound (solid) and return (dashed) legs, with punch popups showing 'MOCK LOCATION' and 'OFF-PIN'. Tags: H18, H7.",
+   "evidence": [
+    "src/features/jobs/data/mapJob.js:116 — verified: l.verified ?? null",
+    "src/features/jobs/pages/JobDetail.jsx:429-445 — loc.verified === false -> 'OFF-PIN'; loc.verified === true -> 'VERIFIED'",
+    "src/features/jobs/data/jobsApi.js:39 — apiGet(`/api/jobs/${...}/travel-samples...`)",
+    "src/features/jobs/components/TravelMapCard.jsx:72 — Promise.allSettled([fetchTravelSamples(job.id), fetchGeofence()])",
+    "src/features/jobs/components/TravelMapCard.jsx:54-57 — OFF-PIN — ${away} away",
+    "backend/app/features/jobs/router.py:443-448 — GET /{job_id}/travel-samples (get_travel_trail)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F25",
+   "fact": "Trail read: travel_trail loads all samples for the job, optionally filters by leg, and decimate_trail thins to max_points (uniform stride per leg, endpoints kept). It returns total vs returned counts. Manager read only; billing never reads through it. Tags: H18.",
+   "evidence": [
+    "jobs/service.py:1636-1650 — async def travel_trail(...): samples = await self._repo.list_travel_samples(row.id); kept = decimate_trail(samples, max_points)",
+    "jobs/schemas.py:332-337 — class TravelTrailOut: samples, total, returned"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F26",
+   "fact": "Server-side visibility of a phone whose sampler died: no dedicated view, endpoint, alert or telemetry found. The only per-day signals are derived on read: no_data intervals / coverage_pct (only when a closed clock-in/out window exists and at least one ping exists) and the variance report. Grep of ops, telemetry and health slices finds no reference to attendance pings. No last-ping-per-tech query or 'stale' logic was found in the attendance slice (the only 'stale' hits are comments). Tags: H7, H3, H12.",
+   "evidence": [
+    "Grep 'attendance' in backend/app/features/{ops,telemetry,health}/**/*.py — no files matched",
+    "Grep 'last_seen|last_ping|heartbeat|stale' in backend/app/features/{attendance,ops,telemetry} — only comment hits at attendance/service.py:1818,1842 and ops/tests/test_health.py:61 (DB head)",
+    "service.py:1099-1103 — _duty_breakdown returns None when no pings / no closed window"
+   ],
+   "source_kind": "command"
+  },
+  {
+   "id": "F27",
+   "fact": "The only server-side signals for rejected or dropped location data are a logger.warning line per rejected ping or travel batch and the rejected count in the response. Rejected pings are not persisted anywhere. Tags: H7, H12.",
+   "evidence": [
+    "service.py:474-478 — logger.warning('rejected %d ping(s) outside the captured_at trust window (techs: %s)', ...)",
+    "jobs/service.py:1683 — logger.warning('travel samples: rejected %d of %d for job %s ...')",
+    "service.py:480-485 — if not fresh: return PingBatchResponse(accepted=0, ...) with no insert"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F28",
+   "fact": "attendance_geofence holds: id, shop_id (FK shop), name (default 'Workshop'), center_lat, center_lng (float, NOT NULL), radius_m (int, default 150), is_active (default true), wifi_bssids (CSV up to 512 chars), deleted_at, created_at, updated_at. get_active_geofence selects shop_id match AND is_active AND deleted_at IS NULL, ORDER BY created_at DESC, first row. There is no unique constraint making only one active row. Tags: H12, H3.",
+   "evidence": [
+    "models.py:312-337 — class AttendanceGeofence(Base): __tablename__ = 'attendance_geofence' ... radius_m server_default 150, is_active server_default true, wifi_bssids String(512)",
+    "repository.py:334-343 — .where(is_active.is_(True)).where(deleted_at.is_(None)).order_by(created_at.desc()) ... scalars().first()",
+    "models.py:316 — __table_args__ = (Index('ix_attendance_geofence_shop_id', 'shop_id'),)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F29",
+   "fact": "Migration seed row is inactive: ('default', 'Workshop (PLACEHOLDER — set real coords)', 0, 0, 150, false). With is_active false get_active_geofence returns None for an unconfigured shop. Server consequence of no active fence: _evaluate_geofence returns inside=None/distance=None, pings get inside=None, and workshop_circle returns None so the jobs fuel origin fallback is unavailable. Tags: H12, H3, H18.",
+   "evidence": [
+    "backend/alembic/versions/0002_create_attendance.py:195-198 — INSERT INTO attendance_geofence ... ('default', 'Workshop (PLACEHOLDER — set real coords)', 0, 0, 150, false)",
+    "service.py:980 — if geofence is not None: (inside stays None otherwise)",
+    "service.py:1020-1021 — _evaluate_ping: if geofence is None: return inside, distance, wifi_match",
+    "service.py:132-146 — workshop_circle(...) None when no active fence"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F30",
+   "fact": "Active fence served to the phone by GET /api/attendance/geofence/active (any authenticated caller, not manager-gated) returning ActiveGeofence {name, center_lat, center_lng, radius_m, is_active, ping_interval_minutes} or null (JSON null, HTTP 200). ping_interval_minutes comes from the server setting attendance_ping_interval_minutes (default 5), is echoed in every ping batch response, and is the same value used for the 2x no_data math. The BSSID list is not exposed. Manager config is GET/PUT /geofence. Tags: H12, H7.",
+   "evidence": [
+    "router.py:179-191 — @router.get('/geofence/active', response_model=ActiveGeofence | None) ... Deliberately NOT manager-gated",
+    "service.py:945-958 — active_geofence(...): returns None if row is None; ActiveGeofence(... ping_interval_minutes=self._ping_interval_minutes)",
+    "schemas.py:187-200 — class ActiveGeofence ... ping_interval_minutes: int",
+    "router.py:430-456 — get_geofence / put_geofence (manager config)",
+    "service.py:960-971 — upsert_geofence"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F31",
+   "fact": "Presence (arrive/depart) is stored in a separate log, never feeds worked-minutes, and is surfaced in tech_days (presence list) and variance (first_arrive, last_depart, delta_in_minutes = first_clock_in - first_arrive, delta_out_minutes = last_depart - last_clock_out). Variance omits holiday rows. A presence row carries inside_geofence evaluated at ingest with the same rules as punches. Tags: H3, H12.",
+   "evidence": [
+    "service.py:396-402 — writes to the separate presence log — it is evidence of where the phone was, never a clock-in, and never feeds worked-minutes",
+    "service.py:866-878 — first_arrive = min(arrivals); last_depart = max(departures); delta_in_minutes=_delta_minutes(roll.first_in, first_arrive); delta_out_minutes=_delta_minutes(last_depart, roll.last_out)",
+    "service.py:852-853 — if roll.status == 'holiday': continue"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F32",
+   "fact": "Punch ingest also stores drift_seconds (server_now - device_time) as a flag independent of the trust window, and server_time/device_time/effective_time are all persisted. Punch is idempotent on client_id (existing row returned with deduped=True and selfie re-mint). Out-of-window device clocks do not produce a 4xx. Auth: tech may punch only as themselves unless a manager. Tags: H3, H12.",
+   "evidence": [
+    "service.py:1797-1801 — _compute_drift returns int((server_now - device_time).total_seconds())",
+    "service.py:326-336 — drift = _compute_drift(server_now, body.device_time); effective = self._effective(...)",
+    "service.py:317-319 — Idempotent on client_id so offline retries are safe",
+    "router.py:128-130 — _require_self_or_manager(principal, body.tech_id)",
+    "service.py:337-348 — create_event(... server_time, device_time, effective_time, drift_seconds ...)"
+   ],
+   "source_kind": "code"
+  },
+  {
+   "id": "F33",
+   "fact": "Roster and window for board/grid/payroll/variance: events are loaded by effective_time window; roster = explicit tech_ids, else (techs with events in the window) union (techs with a configured shift). Board, grid, payroll and variance all call _window; tech_days and variance clamp to_date to today, and grid clamps via _month_bounds. Web passes the mock technician ids as tech_ids. Tags: H3, H7.",
+   "evidence": [
+    "service.py:1212-1242 — _window: roster = list(tech_ids) if tech_ids is not None else sorted(set(bucket.keys()) | shift_techs)",
+    "src/features/attendance/data/attendanceApi.js:3-4 header — The technician roster is still mock — we pass the known tech ids as tech_ids",
+    "service.py:1189-1201 _month_bounds clamp — if last > today: last = today (lines ~1893-1900)"
+   ],
+   "source_kind": "code"
+  }
+ ],
+ "anomalies": [
+  "jobs_arrival_radius_m (250 m) and jobs_punch_accuracy_ceiling_m (100 m) are tighter or looser than the attendance accuracy ceiling (200 m); the same fix can be inside=None for attendance and verified=False/True for jobs. Values only, no judgement.",
+  "Attendance rejects out-of-window pings at 48 h while punches re-bucket at 24 h. record_pings uses attendance_device_time_future_tolerance_seconds but attendance_ping_backdate_ceiling_hours.",
+  "The web roster for attendance board/grid is still mock tech ids (attendanceApi.js header comment), while the server defaults to events-union-shifts.",
+  "The F6 mock/outside/drift flags use all events, including source='manual' ones; only no_location/no_selfie are mobile-only. Manual events have inside_geofence None and is_mock_location False.",
+  "Line refs for config.py travel_sample_accuracy_ceiling_m and fuel_route_circuity_factor are approximate (~100-110); values are quoted from the read config block lines 40-120.",
+  "Two get_active_geofence outcomes (inactive/no row) both yield JSON null from /geofence/active with HTTP 200."
+ ],
+ "questions_for_deep_dive": [
+  "Does the phone treat a null ActiveGeofence or the placeholder fence as 'stop monitoring', and what happens to queued pings then (H12)?",
+  "How does the phone use PingBatchResponse.rejected and ping_interval_minutes to prune and re-pace (H3/H7)?",
+  "Which attendance.* settings are overridden by env on the deployed service, and is the live fence row's radius/is_active/wifi_bssids sane (H12, DB-only)?",
+  "Is there any consumer of the ops rollup or app_event ingest that records tracker start/stop events from the phone (telemetry slice), which would give a dead-sampler signal (H7)?",
+  "Are indexes ix_attendance_ping_tech_time / shop_time sufficient for variance's all-tech list_pings over a long range (latency)?",
+  "How does AppContext map the board's flagged_* to the Dashboard/Technicians views, and does anything beyond Attendance.jsx render flagged_no_location (H3)?"
+ ],
+ "files_or_urls": [
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/attendance/service.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/attendance/derive.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/attendance/router.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/attendance/repository.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/attendance/schemas.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/attendance/models.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/jobs/service.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/jobs/schemas.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/features/jobs/router.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/app/core/config.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/backend/alembic/versions/0002_create_attendance.py",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/attendance/pages/Attendance.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/attendance/pages/AttendanceTechDetail.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/attendance/pages/AttendanceVariance.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/attendance/data/attendanceApi.js",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/jobs/components/TravelMapCard.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/jobs/pages/JobDetail.jsx",
+  "C:/Users/User/Documents/projects/EMS_workshop1/src/features/jobs/data/mapJob.js"
+ ]
+}

@@ -1,0 +1,187 @@
+# O-07 — O-07 odoo-pakka-khata-design: getting manager-approved formal postings out of the app (kacha khata) into Odoo (pakka khata), correctly and idempotently, without assuming a Custom plan
+findings=15 backlog=9 challenges=0 citations=9 verdicts=0 skipped(no skeptic)=9
+
+## Hypothesis ranking
+- H1-csv-importer-is-a-sufficient-default-transport supported p=0.85 apk=no
+    test: In the owner's Odoo test company (any plan), import a 2-move journal-entry CSV with External IDs twice, and confirm the second import updates the draft moves rather than duplicating them (R-02 F10: the importer modifies a record when the External ID already exists). Then post one move and re-import, and confirm the import refuses with an error instead of creating a duplicate.
+- H5-approval-boundary-can-be-added-without-touching-write-paths supported p=0.8 apk=no
+    test: A set-difference stager reads job_payment / closed jobs / staff_ledger through the jobs and attendance service.py and anti-joins against posting (source_kind, source_id, rev). The only write-path change is void_payment stamping the new voided_at/voided_by columns. Check that lint-imports passes with one new accounting→jobs and accounting→attendance service edge and no reverse edge.
+- H4-operational-tables-hold-enough-history-to-derive-postings-later weakened p=0.5 apk=no
+    test: bill_original_paisa is overwritten on resubmit (service.py:1282) and a payment void stores no time (models.py:494-496). Invoices are safe only at close, because negotiate (1385) and completion (1155) refuse closed jobs and closed is terminal. Payments and ledger rows can be derived, but void dates cannot. Check whether any non-closed bill figure can be reconstructed from job_event alone: it cannot (text in whole rupees only).
+- H3-run_weekly_export-can-be-cloned-verbatim weakened p=0.3 apk=no
+    test: After the window's export record exists, add a staff_ledger row with occurred_on inside an already-exported window (a back-entry the model explicitly allows, attendance/models.py:433-436) and re-run. The clone returns the existing record (attendance/service.py:1249-1253), so the row appears in no export, ever.
+- H2-job_event-cursor-can-drive-erp-postings killed p=0.1 apk=no
+    test: Payment and negotiate events carry no payload (service.py:1478-1484, 1400; S16), so the event stream cannot rebuild a paisa-exact posting. On top of that, seq comes from a Sequence at flush (models.py:56,271) while the drain reads seq > last_seq (service.py:509-516). Test: open two transactions, flush an event in T1 (lower seq), commit T2 (higher seq), run run_dispatch_once, then commit T1. T1's event is never delivered.
+
+## Findings
+
+### O07-F1 [P1/gap/INV] No approval boundary or record of what reached the formal books
+cite=- | skeptic=n/a (gap/design) | conf=0.9 effort=L apk=no
+CLAIM: No table or column records which money facts were sent to formal books or their state when sent, and the sources change in place, so re-exporting a window after a payment void yields a different file than the one already imported, with nothing to show what changed.
+WHEN: A payment is exported, then a manager voids it: job_payment.voided flips in place (no new row), so a regenerated export silently drops the original and no reversal is ever produced.
+    - backend/app/features/jobs/models.py:465-497 — JobPayment has no external_ref/posted_at/export id; voided and void_reason are in-place columns
+    - backend/app/features/jobs/service.py:1507-1508 — payment.voided = True / payment.void_reason = reason
+    - backend/app/features/jobs/service.py:1282 — row.bill_original_paisa = original (overwritten on every permitted resubmit)
+    - backend/app/features/attendance/models.py:365-387 — the only export record (payroll_export) has no per-row ids, totals or checksum
+IMPACT: The owner's 'total accounting, nothing missing' requirement cannot be met or audited: the formal books cannot be reconciled with the operational cash system, and a void after export leaves Odoo overstated with no trace.
+FIX: Migration 0047 adds an immutable posting snapshot table (source_kind, source_id, rev, external_id UNIQUE, snapshot + sha256, amount_minor > 0, lines), an append-only posting_decision and posting_attempt, and posting_export with a manifest. A void becomes a reversal posting, never an edit (see design).
+
+### O07-F2 [P1/design/INV] Cloning run_weekly_export's return-existing-window shape drops late facts
+cite=- | skeptic=n/a (gap/design) | conf=0.85 effort=S apk=no
+CLAIM: run_weekly_export returns the existing record untouched once a (shop, window) export exists, so a posting export keyed by the facts' own dates would never include a fact that arrives after its window was exported: a back-dated staff_ledger row, a later void, or a late-synced offline payment.
+WHEN: On Monday a manager records Friday's advance (occurred_on = last week) after Sunday's export ran. A re-run returns the existing record and the advance is in no export.
+    - backend/app/features/attendance/service.py:1249-1253 — existing = await self._repo.get_export_for_window(...); if existing is not None: return existing
+    - backend/app/features/attendance/models.py:433-436 — occurred_on differs from created_at 'whenever a manager back-enters Friday's advance on Monday'
+    - docs/requirements-2026-07-gap-analysis.md:107-113 — Phase 1 says clone run_weekly_export, window-keyed
+IMPACT: Under-reporting by construction: every correction or late fact lands in no formal export. The reconciliation delta would grow without an owner.
+FIX: Key the export window on posting decided_at (approval time), not on the fact date. Each approved posting is claimed by exactly one export (UPDATE ... SET export_id WHERE export_id IS NULL), and the accounting_date column carries the fact's own date. A late fact goes into the next export.
+
+### O07-F3 [P2/risk/INV] Abandon is an ungated one-tap exit for a billed, paid job
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=S apk=unknown
+CLAIM: Any authenticated principal can abandon an open, waiting or ready job through the ungated /transition route, which closes it with abandoned=True even when it carries a bill and payments. A posting rule that excludes abandoned jobs from invoicing would make under-reporting a single tap.
+WHEN: A tech completes a job (bill generated), collects cash, then POSTs /api/jobs/{id}/transition {action:'abandon', reason:'x'}. The job closes abandoned and an invoice rule like 'closed AND NOT abandoned' never stages it.
+    - backend/app/features/jobs/router.py:194-198 — '/{job_id}/transition' has no dependencies=[Depends(require_manager)]
+    - backend/app/features/jobs/service.py:757 — "abandon": ("open", "waiting", "ready")
+    - backend/app/features/jobs/service.py:1110-1116 — values = {status: closed, closed_at: now, abandoned: True, abandon_reason}
+IMPACT: Revenue can leave the formal books through a lifecycle action that needs no manager and no bill reversal.
+FIX: The stager stages an invoice for every closed job with a bill, abandoned or not, flagged 'abandoned'. Keeping it out of the books needs a typed manager rejection that shows in the reconciliation delta. Separately, consider manager-gating abandon when bill_original_paisa is set or a non-voided payment exists.
+
+### O07-F4 [P2/risk/INV] Any principal can negotiate a bill down to zero
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=unknown
+CLAIM: NegotiateRequest accepts amount_paisa >= 0 and the negotiate route has no manager gate, so any technician can set the payable figure an accrual invoice would post to Rs 0 before close.
+WHEN: A tech POSTs /api/jobs/{id}/bill/negotiate {amount_paisa: 0} on a Rs 5,000 bill. bill_negotiated_paisa = 0 takes precedence in _payable_paisa, and the invoice posts Rs 0 with no approval.
+    - backend/app/features/jobs/schemas.py:145-147 — amount_paisa: int = Field(..., ge=0)
+    - backend/app/features/jobs/router.py:304-331 — negotiate route takes CurrentPrincipal, no require_manager
+    - backend/app/features/jobs/service.py:1385-1392 — only refuses a closed job or a missing bill
+    - backend/app/features/customer_messaging/service.py:78-83 — negotiated wins over original
+IMPACT: The cheapest path to a smaller formal-books figure is a technician-side action with no reason required.
+FIX: The invoice posting always carries the gross original lines plus an explicit sales_discount line (original − payable), flagged negotiated_below_original. Reconciliation itemises discounts by actor. Owner decision: require a manager (or a reason) for negotiations below a threshold.
+
+### O07-F5 [P2/risk/INV] A payment void has no timestamp, and the server allows it after close
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.9 effort=S apk=no
+CLAIM: void_payment never checks the job's status and stores no voided_at or voided_by, so a void made weeks after close cannot be dated to its accounting period except by fuzzy-matching job_event text.
+WHEN: A manager voids a payment on a job closed last month via POST /payments/{id}/void (the web UI hides the button on closed jobs, but the API accepts it). The reversal has no void date on any row.
+    - backend/app/features/jobs/service.py:1489-1520 — no row.status check; payment.voided = True / payment.void_reason = reason
+    - backend/app/features/jobs/models.py:494-496 — voided and void_reason only; no voided_at/voided_by
+    - backend/app/features/jobs/service.py:1509-1515 — the void event text carries the reason but no payment id or amount
+IMPACT: Reversal postings land in the wrong period, or carry an unknown date, once the period is locked in Odoo.
+FIX: 0047 adds job_payment.voided_at timestamptz NULL and voided_by varchar(64) NULL (FK technician, NOT VALID + VALIDATE in the same migration because the new column is all NULL), and void_payment stamps both. Historical rows get a dry-run-default backfill script in backend/scripts/ that matches a job's single 'Payment voided — ' event. Otherwise the reversal is dated at staging and flagged void_date_unknown.
+
+### O07-F6 [P2/risk/INV] The job_event seq cursor can permanently skip a late-committing event
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.7 effort=S apk=no
+CLAIM: job_event.seq is drawn from a Postgres sequence at flush and run_dispatch_once reads only seq > cursor.last_seq, so an event whose transaction commits after a higher-seq event has been drained is skipped permanently. An erp consumer built on this cursor would silently lose postings.
+WHEN: Request A flushes its event (seq 101) and stalls before commit, request B commits seq 102, the dispatcher drains to last_seq = 102, then A commits. seq 101 is never selected.
+    - backend/app/features/jobs/models.py:56 — job_event_seq = Sequence("job_event_seq", ...)
+    - backend/app/features/jobs/models.py:269-271 — the sequence is the client-side default for seq
+    - backend/app/features/jobs/service.py:509-516 — select(JobEvent).where(JobEvent.seq > cursor.last_seq).order_by(JobEvent.seq)
+    - backend/app/features/jobs/models.py:229-230 — docstring claims 'gap-free global ordering key'
+IMPACT: A WhatsApp nudge is missed today (dispatcher default OFF). For a journal feed it would be an unnoticed missing entry.
+FIX: Do not build the ERP feed on job_event. The stager is a state-based anti-join (source rows without a posting), which is immune to commit order. posting.seq is assigned under a per-shop pg_advisory_xact_lock held to commit (the staff_ledger_chain pattern), so it is gapless and commit-ordered. Do not seed an 'erp' dispatch_cursor row.
+
+### O07-F7 [P3/risk/INV] Offline-queued payments are dated at sync time, not collection time
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.8 effort=M apk=unknown
+CLAIM: PaymentRequest carries no capture timestamp and job_payment.recorded_at is the server's now(), so a payment the phone's outbox replays after a month boundary is dated, and would be posted, in the wrong accounting period.
+WHEN: A tech logs cash offline at 23:30 on the 31st and the outbox syncs on the 1st: recorded_at (and so the posting's accounting_date) is the 1st.
+    - backend/app/features/jobs/schemas.py:153-159 — PaymentRequest has amount_paisa, method, client_id only
+    - backend/app/features/jobs/models.py:491-493 — recorded_at server_default now()
+    - technician-app/src/lib/outboxSync.ts:115-117 — case "payment": jobsApi.logPayment(item.jobId, p.amountPaisa, p.method, p.clientId)
+IMPACT: Period misstatement at month and year end. Small amounts, but a known source of reconciliation noise.
+FIX: Add an optional captured_at to PaymentRequest, trust-windowed like pings (about 48 h back / 2 min forward), stored as job_payment.captured_at. accounting_date = captured_at when present, else recorded_at, flagged offline_dated. Deployed APKs keep the fallback.
+
+### O07-F8 [P3/risk/INV] The job_payment amount CHECK is still NOT VALID; history may hold amounts <= 0
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.85 effort=S apk=no
+CLAIM: The job_payment_amount_positive CHECK from 0038 was never validated (the VALIDATE exists only as a docstring follow-up), so historical payment rows may hold amount_paisa <= 0, and staging them would violate a posting table's amount_minor > 0 CHECK.
+WHEN: A pre-0038 row with amount_paisa = 0 (or negative) exists. The stager's INSERT into posting fails and, if unhandled, wedges every later staging run.
+    - backend/alembic/versions/0038_job_payment_amount_guard.py:15-28 — 'Created NOT VALID deliberately' ... follow-up 'VALIDATE CONSTRAINT' in the docstring
+    - backend/alembic/versions/0038_job_payment_amount_guard.py:51 — CHECK (amount_paisa > 0) NOT VALID
+    - grep: VALIDATE CONSTRAINT job_payment_amount_positive appears only in 0038's docstring
+IMPACT: A poison row stops the stager, or gets dropped silently if handled carelessly.
+FIX: The stager skips source rows that violate posting CHECKs, writes an app_event alarm, and counts them in reconciliation's 'unpostable' bucket. 0048 (separate deploy, after the audit SELECT) VALIDATEs the constraint.
+
+### O07-F9 [P3/risk/INV] A manager correction of a negotiated bill leaves the payable figure stale
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.7 effort=S apk=no
+CLAIM: A manager completion resubmit on a negotiated bill rewrites bill_original_paisa but leaves bill_negotiated_paisa unchanged, so the payable figure ignores the correction and original − payable can go negative.
+WHEN: Bill Rs 5,000 negotiated to Rs 4,500, then a manager resubmits adding a forgotten Rs 2,000 part. Original becomes Rs 7,000 while payable stays Rs 4,500, and the correction has no effect on what is billed or posted.
+    - backend/app/features/jobs/service.py:1158-1159 — the freeze applies only when not is_manager
+    - backend/app/features/jobs/service.py:1282-1283 — bill_original_paisa = original; bill_status stays 'negotiated' when bill_negotiated_paisa is not None
+    - backend/app/features/customer_messaging/service.py:81-83 — negotiated wins
+IMPACT: The invoice posting must handle a discount line of either sign. The manager may believe a correction took effect when it did not.
+FIX: The posting lines compute discount = original − payable and put it on the debit side if positive or the credit side if negative, flagged negotiated_stale. Separately, surface 'negotiated figure predates the last correction' in the bill UI, or clear the negotiation on a manager correction (owner call).
+
+### O07-F10 [P3/risk] The export record is check-then-insert, with the object written before the record
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.75 effort=S apk=no
+CLAIM: run_weekly_export does a read-then-insert with no lock, and add_export has no IntegrityError recovery, so two concurrent runs both write the storage object and the loser surfaces a unique-violation 500. A crash between put_bytes and commit leaves an object without a record.
+WHEN: The Sunday scheduler run overlaps an on-demand run for the same window.
+    - backend/app/features/attendance/service.py:1249-1270 — get_export_for_window ... self._storage.put_bytes(...) ... add_export(...)
+    - backend/app/features/attendance/repository.py:439-457 — add_export: session.add + flush, no IntegrityError handling
+    - backend/app/features/attendance/models.py:371-373 — UNIQUE(shop_id, from_date, to_date)
+IMPACT: Harmless for payroll. For a posting export it could produce two different downloadable byte sets for one window.
+FIX: The posting exporter takes pg_advisory_xact_lock(shop, 'posting_export') and inserts the record first (ON CONFLICT DO NOTHING RETURNING). It builds deterministic bytes (postings ordered by seq) at a deterministic path, stores the sha256 on the record, and commits. A retry regenerates identical bytes.
+
+### O07-F11 [P2/design] External IDs must not derive from seqs, tokens or seeded slugs
+cite=- | skeptic=n/a (gap/design) | conf=0.8 effort=S apk=no
+CLAIM: Odoo's importer updates whatever record already holds an External ID. Any ID built from a per-database counter (posting seq, job token, chain seq) or a seeded slug collides after a fresh database rebuild, where sequences restart at 1 and t1..t5/m1 recur (S14), and the next import silently overwrites previously imported moves.
+WHEN: Production is gone and a fresh self-hosted DB starts at chain/posting seq 1. A CSV with External ID 'fixflow_posting_1' re-imports over last year's move with that ID.
+    - backend/app/features/attendance/service.py:1370-1373 — seq = head[0] + 1 if head is not None else 1 (restarts on an empty DB)
+    - backend/app/features/jobs/models.py:118 — job.token is unique only within this database
+    - R-02 F10 — the importer modifies existing records on a matching External ID, and External IDs are unique across all objects
+IMPACT: Silent corruption of the formal books from a routine rebuild.
+FIX: external_id = 'fixflow_<kind>_<source_uuid hex32>[_rev<n>|_x<n>]', where the source UUID comes from gen_random_uuid (job_payment.id, job.id, staff_ledger.id). Line IDs are '<move_xid>_l<n>'. Partners use customer UUIDs, and techs use '<shop>_<tech_id>' only after the owner confirms that tech-id reuse means the same person.
+
+### O07-F12 [P3/design] The manifest cannot be a row inside the import CSV
+cite=- | skeptic=n/a (gap/design) | conf=0.6 effort=S apk=no
+CLAIM: The gap analysis puts a manifest line carrying count and sum inside the batch CSV, but Odoo's importer would treat any extra row as a record (or reject the file), so the manifest must be a separate file.
+WHEN: The manager uploads the export CSV with a trailing 'MANIFEST,count,sum' row into Odoo's journal-entry import.
+    - docs/requirements-2026-07-gap-analysis.md:111-112 — 'a manifest line carries count + sum for eyeball reconciliation'
+    - R-02 F10 — import semantics are per-row record create/update
+IMPACT: Either the import fails, or a junk record or line is created in the formal books.
+FIX: Write manifest.json plus manifest.csv beside the import CSV in the export folder. The posting_export record stores the counts, Σdebit, Σcredit, the CSV sha256 and the rejected/pending sums for the same window.
+
+### O07-F13 [P3/design] The PaymentRail Protocol is synchronous; an Odoo transport must not copy that
+cite=- | skeptic=n/a (gap/design) | conf=0.75 effort=S apk=no
+CLAIM: PaymentRail.disburse is a plain def called inside async service code, so an HTTP-backed Odoo transport cloned from it would block the event loop for the length of each one-call-per-second Odoo request.
+WHEN: An OdooJson2Transport.push implemented as a sync httpx call inside the scheduler's async job stalls every API request served by that replica for each call.
+    - backend/app/core/payment_rail.py:47-52 — def disburse(self, *, amount_minor, currency, idempotency_key) -> DisbursementResult (sync)
+    - backend/app/features/attendance/service.py:1700-1707 — result = self._rail.disburse(...) called without await inside an async method
+IMPACT: Latency spikes on the API while ERP pushes run.
+FIX: core/posting_transport.py defines an async Protocol (async def find(xid), async def push(snapshot)) with typed DefinitiveTransportError, AmbiguousTransportError and TransportAuthError. It mirrors PaymentRail's narrow-surface and idempotency_key=external_id contract, not its sync signature.
+
+### O07-F14 [P3/gap] No settings keys exist for posting, the account map or ERP
+cite=- | skeptic=n/a (gap/design) | conf=0.9 effort=S apk=no
+CLAIM: The shop_setting registry has only the two money rates and the five advance keys, so there is nowhere to record the posting start date, cash-vs-accrual basis, account-code mapping, journals, lag threshold or API-key expiry. Nothing may write an unregistered key.
+WHEN: Any attempt to configure the export through PUT /api/shop/settings with an unregistered key is refused.
+    - backend/app/features/tenancy/specs.py:3-6 — 'nothing may write a key that is not registered here'
+    - backend/app/features/tenancy/specs.py:30-38 — registered keys: labour/fuel rates + five advance keys
+IMPACT: Policy would get hard-coded or put in env by default. That is the 'placeholder becomes policy' failure the working agreement forbids.
+FIX: Register (all defaulting to unset or off): posting_start_date, posting_basis, account_code_<role> for each role, journal_code_<sales|cash|payroll>, posting_lag_alert_hours, odoo_api_key_expires_on. Approval is refused while any role used by a posting is unmapped. Secrets stay in env.
+
+### O07-F15 [P3/risk/INV] Payment dedupe ignores job and amount
+cite=LOCATED | skeptic=no skeptic (P2/P3 or non-invariant P1) | conf=0.7 effort=S apk=unknown
+CLAIM: log_payment dedupes on client_id alone, so a request that reuses an existing client_id with a different job or amount returns success without writing anything, and the operational total diverges from what the caller believes it logged.
+WHEN: A client bug reuses a client_id from job A on job B. The response is a 200 JobDetail for B with no new payment row.
+    - backend/app/features/jobs/service.py:1457-1459 — existing = await self._repo.get_payment_by_client(client_id); if existing is None: ...
+    - backend/app/features/jobs/service.py:1486-1487 — falls through to return the detail with no mismatch check
+IMPACT: A low-probability silent loss of a cash entry. Postings stay consistent with the table but the table is wrong.
+FIX: When existing.job_id != row.id or existing.amount_paisa != amount_paisa, raise a 409 (a definitive 4xx, so the phone parks it as visible-failed rather than dropping it).
+
+## Backlog
+- [P2] Advance auto-approve passes actor='auto' into staff_ledger.recorded_by (FK technician): an auto-disbursed advance cannot write its ledger row, so it never reaches postings (backend/app/features/attendance/service.py:1695 / ~1590 / 1733)
+- [P3] Advance disbursement hardcodes currency='PKR'; the posting snapshot must take shop.currency instead (backend/app/features/attendance/service.py:1700-1707)
+- [P2] Payroll CSV re-run returns the existing record, so attendance adjustments made after Sunday's export never reach any payroll export (same shape as O07-F2, current defect; adjustments code not read) (backend/app/features/attendance/service.py:1249-1253)
+- [P3] job_payment has no shop_id; the posting stager has to join via job.shop_id (add column NOT VALID FK in 0048) (backend/app/features/jobs/models.py:465-497)
+- [P3] job_payment.recorded_by has no FK to technician (populated human data → NOT VALID in 0048, VALIDATE 0049 after orphan audit) (backend/app/features/jobs/models.py:489-490)
+- [P3] Gap-analysis R2 says the erp cursor row already exists; it does not (0046 seeds only whatsapp). Correct the doc and record that the posting design needs no cursor row (docs/requirements-2026-07-gap-analysis.md:88)
+- [P3] JobEvent docstring claims seq is gap-free; it is sequence-allocated and not commit-ordered (backend/app/features/jobs/models.py:229-230)
+- [P3] Four-eyes approval (recorder != approver) is impossible with a single manager (m1); posting approval is self-approval until a second manager exists (backend/alembic/versions/0012_dedicated_manager_account.py:30)
+- [P3] Payment logging is allowed on a closed job (log_payment has no status check), so postings must accept payments dated after the invoice (backend/app/features/jobs/service.py:1437-1487)
+
+## Open questions
+ ? The G1 gate record named in the brief (C:/Users/User/Documents/projects/EMS_workshop1/docs/program/G1-discovery-gate-2026-11-01.md) does not exist, and no file matching *G1*gate* was found in the repo or the session scratchpad. This design relied on the settled facts given in the brief.
+ ? Extra files read one hop beyond the brief: backend/app/features/jobs/router.py (294-370 and the route list), backend/app/features/jobs/schemas.py:145-176, backend/app/features/attendance/repository.py:439-465, backend/app/features/customer_messaging/service.py:78-83, backend/alembic/versions/0038_job_payment_amount_guard.py:1-51, backend/alembic/versions/0027_events_outbox.py (grep only), technician-app/src/lib/outbox.ts and outboxSync.ts (grep only).
+ ? Unverified against Odoo 20.0 / SaaS 19.x (R-02 Q4/Q5): the exact account.move journal-entry import column labels; whether one2many lines without their own External IDs are appended on a re-import of a draft move; whether re-importing a posted move errors rather than creating; whether account.move/load over JSON-2 gives importer-identical xid upsert in one transaction.
+ ? Does the owner want cash-basis books (payments only, customer_receipts mapped to revenue) or accrual (invoice at close plus receivable)? This decides whether invoice staging is on.
+ ? Can a technician id be reassigned to a different person after a DB rebuild? This decides whether tech partner External IDs may embed tech_id.
+ ? Who may abandon a job? The transition route is ungated, but transition() may check assignment further down; the ownership checks in service.py:1026-1060 were not read in full.
+ ? Does the ops deep-health surface (backend/app/features/ops/) have a hook for custom degraded checks such as posting lag or key expiry? Not read.
+ ? Attendance adjustments after a payroll export: is payroll() recomputed from adjusted events (so a re-run would differ) or is the export frozen by design? Only run_weekly_export was read; the backlog item depends on this.
+ ? What in-flight transaction length makes the job_event seq skip (O07-F6) practically observable on this fleet? No device or DB evidence; it is code-shape only.
