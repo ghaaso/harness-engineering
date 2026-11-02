@@ -1,0 +1,44 @@
+# refute:KS-C15:ops
+
+```json
+{
+ "claim_id": "KS-C15",
+ "lens": "ops",
+ "verdict": "REFUTED",
+ "counter_evidence": "The claim's own falsifier is met: the Node 22 that ci.yml actually gets bundles SQLite at or above 3.51.3.\n(1) ci.yml pins node-version: 22 at lines 28 and 60, on both the worktree and main. It runs on ubuntu-latest with no check-latest. The setup-node docs say that with check-latest at its default of false, \"the action will first check the local cache for a semver match\", so `22` resolves to the newest 22.x cached on the runner.\n(2) The runner-images README maps ubuntu-latest to Ubuntu 24.04. Ubuntu2404-Readme.md (Image Version 20261026.354.1) lists cached Node.js 22.23.4 and 24.22.1, and gives the Node.js language runtime as 22.23.4.\n(3) The tag file nodejs/node v22.23.4 deps/sqlite/sqlite3.h has `#define SQLITE_VERSION \"3.53.4\"`, SQLITE_VERSION_NUMBER 3053004, source id 2026-07-24 bf7c7f30... This is the same version as the dev box. Local check: `node -e` printed v24.22.1 3.53.4 3.53.4.\n(4) The bracketing tags show where the fix arrived. v22.22.2 sqlite3.h is \"3.51.2\"; v22.22.3 sqlite3.h is \"3.51.3\" (source id 2026-03-13 737ae4a3...). So every Node 22 from 22.22.3 (2026-05-13) on carries the WAL-reset fix. CHANGELOG_V22.md lists \"deps: update sqlite to 3.51.3\" under 22.22.3 and updates through 3.53.4 under 22.23.4. It also files a 3.52.0 bump under 22.22.3, which does not match the 3.51.3 tag header, but both versions are at or above the fix.\n(5) node:sqlite is not behind a flag on Node 22. The v22.23.4 docs history row reads \"v22.13.0: SQLite is no longer behind --experimental-sqlite but still experimental\". It is Stability 1.1, and backup() exists since v22.16.0.\n(6) The threshold is also too strict against the register itself. T-06.F4 and X-01.F02 (recheck quote) record backports in 3.44.6 and 3.50.7, so \"refuse anything below 3.51.3\" also refuses builds that already have the fix.\nJudge 3 flagged the premise as \"very likely predates 3.51.3 (inferred, not in the register)\". The primary sources above show that inference was wrong.",
+ "trace": "n/a (REFUTED)",
+ "narrowed_claim": "Part of the claim survives, but for different reasons. A runtime check of sqlite_version() (not process.versions.sqlite) is still worth having when the CLI opens the index. It is cheap insurance for three cases: a Node 22 older than 22.22.3, a distro or shared-sqlite Node on the VPS, and a stale runner image. It should accept 3.51.3 and later, plus 3.50.7+ on the 3.50 line and 3.44.6+ on the 3.44 line (T-06.F4 / X-01.F02), or else document that it is deliberately stricter than the fix. Moving the store's tests off ci.yml is not required by SQLite. CI's current Node 22 (22.23.4, SQLite 3.53.4) passes the gate. A separate path-filtered workflow is still defensible for path isolation or for testing on the same runtime the CLI uses (Node 24, where node:sqlite is Stability 1.2, versus 1.1 on Node 22). That choice belongs to the owner and is not a forced requirement.",
+ "what_would_settle_it": "Already settled by primary sources: the tag headers v22.22.2/v22.22.3/v22.23.4 and the ubuntu-24.04 image readme. A belt-and-braces confirmation would be one CI log line: node -e \"console.log(process.version, new (require('node:sqlite').DatabaseSync)(':memory:').prepare('select sqlite_version() v').get().v)\" under the existing setup-node `22` step. That needs an owner-approved CI run, which is not read-only.",
+ "design_consequence": "Remove \"ci.yml runs Node 22, which cannot pass the 3.51.3 version gate\" from the design and the adjudication (Judge 3's recommendation, and its claim that \"only A routes its tests through a Node 24 workflow\" as a safety advantage). Re-justify a separate workflow, or drop it, on its own merits: path filtering, runtime parity with the dev box's Node 24, keeping ci.yml unchanged. If the store's tests run on Node 22, pin a floor of node-version '>=22.22.3', or let the gate's own startup assertion fail the job. Keep the gate on sqlite_version() at open time, because a Node built with shared SQLite (a possible VPS distro package, unverified) reports the system library. Encode the backport exceptions (3.50.7+, 3.44.6+), or state explicitly that the gate is conservative. Re-check the VPS Node source and its sqlite_version() at install time (X-01 open question).",
+ "commands_run": [
+  "grep -n -i \"node|setup-node|runs-on|paths|on:\" .github/workflows/ci.yml; ls .github/workflows; cat .nvmrc; grep engines package.json technician-app/package.json",
+  "node -e \"const s=require('node:sqlite');const d=new s.DatabaseSync(':memory:');console.log(process.version, process.versions.sqlite, d.prepare('select sqlite_version() v').get().v)\"  -> v24.22.1 3.53.4 3.53.4",
+  "grep register.md for T-06/X-01/3.51.3/version gate",
+  "grep docs/program/evidence/knowledge-store/panel/judge-3.md for Node 22 / 3.51.3",
+  "grep sweep/lane-T-06.md recheck-T-06.md lane-X-01.md recheck-X-01.md for 3.51/3.44/backport/version gate",
+  "ls for nvm/fnm/volta/nvs (none); which -a node -> C:/Program Files/nodejs/node",
+  "sed -n 1,32p and 55,62p .github/workflows/ci.yml; git log -1 -- .github/workflows/ci.yml; git show main:.github/workflows/ci.yml | grep node-version|check-latest -> lines 28,60 node-version: 22, no check-latest",
+  "WebFetch raw.githubusercontent.com/nodejs/node/{v22.x,v22.23.4,v22.22.3,v22.22.2}/deps/sqlite/sqlite3.h",
+  "WebFetch nodejs/node v22.x doc/changelogs/CHANGELOG_V22.md",
+  "WebFetch nodejs.org/docs/latest-v22.x/api/sqlite.html",
+  "WebFetch actions/runner-images README.md and images/ubuntu/Ubuntu2404-Readme.md",
+  "WebFetch actions/setup-node docs/advanced-usage.md"
+ ],
+ "sources": [
+  "C:/Users/User/Documents/projects/EMS_workshop1/.claude/worktrees/knowledge-store-research-9c609c/.github/workflows/ci.yml (lines 20, 25-29, 57-61)",
+  "C:/Users/User/AppData/Local/Temp/claude/C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-knowledge-store-research-9c609c/f3bbe503-2a20-4258-976b-7d457d3bf63a/scratchpad/sections/register.md (T-06 line 17; X-01 line 63)",
+  "C:/Users/User/Documents/projects/EMS_workshop1/.claude/worktrees/knowledge-store-research-9c609c/docs/program/evidence/knowledge-store/sweep/lane-T-06.md (F4 line 67, F5 line 69, F8 line 75)",
+  "C:/Users/User/Documents/projects/EMS_workshop1/.claude/worktrees/knowledge-store-research-9c609c/docs/program/evidence/knowledge-store/sweep/recheck-T-06.md line 12 (backports 3.44.6, 3.50.7)",
+  "C:/Users/User/Documents/projects/EMS_workshop1/.claude/worktrees/knowledge-store-research-9c609c/docs/program/evidence/knowledge-store/sweep/lane-X-01.md (F02 line 62, F09 line 76, line 47)",
+  "C:/Users/User/Documents/projects/EMS_workshop1/.claude/worktrees/knowledge-store-research-9c609c/docs/program/evidence/knowledge-store/panel/judge-3.md (lines 68, 304, 329, 336, 339)",
+  "https://raw.githubusercontent.com/nodejs/node/v22.23.4/deps/sqlite/sqlite3.h (SQLITE_VERSION 3.53.4)",
+  "https://raw.githubusercontent.com/nodejs/node/v22.22.3/deps/sqlite/sqlite3.h (SQLITE_VERSION 3.51.3)",
+  "https://raw.githubusercontent.com/nodejs/node/v22.22.2/deps/sqlite/sqlite3.h (SQLITE_VERSION 3.51.2)",
+  "https://raw.githubusercontent.com/nodejs/node/v22.x/doc/changelogs/CHANGELOG_V22.md (22.22.3 2026-05-13 sqlite 3.51.3; 22.23.4 2026-10-21 sqlite 3.53.4)",
+  "https://nodejs.org/docs/latest-v22.x/api/sqlite.html (v22.23.4; unflagged v22.13.0; Stability 1.1; backup v22.16.0)",
+  "https://raw.githubusercontent.com/actions/runner-images/main/README.md (ubuntu-latest = ubuntu-24.04)",
+  "https://raw.githubusercontent.com/actions/runner-images/main/images/ubuntu/Ubuntu2404-Readme.md (image 20261026.354.1; cached Node 22.23.4, 24.22.1)",
+  "https://raw.githubusercontent.com/actions/setup-node/main/docs/advanced-usage.md (check-latest default false; local cache semver match first)"
+ ]
+}
+```
