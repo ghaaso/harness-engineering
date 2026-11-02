@@ -1,0 +1,612 @@
+{
+ "shape": "C, a hybrid of record (OLTP), search and analytics (OLAP), built in stages. Three roles sit behind separate interfaces: the RECORD (entries, immutable revisions, an append-only event log, the lookup log), a SEARCH tier (an exact-handle map plus a fuzzy BM25 index) and an ANALYTICS tier (outcome views). Lineage is served by the record (an edge table plus a recursive CTE). Every non-record tier is a projection that can be rebuilt from the event log. At this scale all three roles live in ONE SQLite file (node:sqlite, FTS5, SQL views). A role moves to its own engine only when a named, measured trigger fires. The plain verdict: a multi-engine hybrid is NOT justified at tens to hundreds of entries [E-04, E-05, E-08, KS-R6]. The smallest hybrid that is justified is SQLite plus a git journal of immutable event files, and it is needed only once a second host writes [KS-R1, X-01]. Meilisearch (search) and DuckDB (analytics) are pre-wired slots with numeric triggers, not components.",
+ "name": "kb: a staged-hybrid knowledge store (record, derived search and views in one SQLite file; engines split by trigger)",
+ "summary": "Plain verdict: a multi-engine hybrid is not justified at tens to hundreds of entries. Each extra engine (Meilisearch, DuckDB, a graph store) adds a daemon, a key, an upgrade path or a telemetry switch. None of them adds retrieval or analytics this store needs at this size [E-04, E-05, E-08, KS-R6]. What the shape does contribute is a discipline: the record (entries plus an append-only event log) is kept apart from everything derived from it. The exact-handle map, the symptom search index and the outcome views are projections, rebuilt from the log whenever the canonicalisation recipe changes. All three live in one SQLite file outside every worktree, opened by Node 24's built-in driver, so nothing is installed. The smallest justified hybrid adds one substrate, a git journal of immutable event files, once a second host writes [KS-R1, X-01]. Meilisearch earns a place only if logged lookups show misses that typo tolerance would fix. DuckDB earns one only if an analytic query takes over a second. Every hit must pass an executable gate before anyone acts on it, and the fix text stays hidden until it does. Today I ran control pairs for six of the eight worked examples against git history.",
+ "data_model": {
+  "entry_fields": [
+   {
+    "name": "entry_id",
+    "type": "TEXT ULID minted by the writer",
+    "why": "Stable identity across revisions and hosts with no coordination. The content changes through revisions; the id never does.",
+    "prior_art": "Immutable identity plus an event stream [T-02.F01]; the KEDB record id [T-05.F15]"
+   },
+   {
+    "name": "kind",
+    "type": "enum defect | trap | do_not_apply | invariant_rationale",
+    "why": "The gate semantics differ by kind. A do_not_apply entry's check is a protective test that must keep passing on a proposed change (R-02 ex6).",
+    "prior_art": "KS-R9 (do-not-apply entries are first-class); the ITIL known-error type [T-05.F15]"
+   },
+   {
+    "name": "status (folded from events)",
+    "type": "enum wip | not_validated | unverified_seed | validated | known_error_open | conflict | archived | withdrawn | superseded",
+    "why": "The lifecycle is a fold over events. Entries are retired, never deleted. unverified_seed is never returned as a lead.",
+    "prior_art": "KCS v6 WIP -> Not Validated -> Validated -> Archived [X-04.F17-F21]; ITIL retire-by-status [T-05.F15]; Smyth & Keane on safe deletion [T-05.F6,F7]"
+   },
+   {
+    "name": "title",
+    "type": "TEXT, symptom-first",
+    "why": "A cheap agent judges relevance from one line. The title states what was seen, not the cause.",
+    "prior_art": "KEDB symptom-first title [T-05.F15]"
+   },
+   {
+    "name": "root_cause_id",
+    "type": "FK -> root_cause(id, statement, family)",
+    "why": "Two entries can share a cause with different manifestations (ex1 Python TypeError and Node RangeError). The cause is a row, not pairwise edges.",
+    "prior_art": "Root cause as a row [E-08.f26]; case = problem + solution + outcome [T-05.F3]"
+   },
+   {
+    "name": "manifestation_conditions",
+    "type": "JSON list in entry_rev.body",
+    "why": "A single root cause is a hindsight artefact. What reuse needs is the cause plus the conditions under which it shows (for example, the start.sh boot-time upgrade under set -e).",
+    "prior_art": "Cook [T-05.F21]"
+   },
+   {
+    "name": "applies_while",
+    "type": "JSON predicate in entry_rev.body: fix_commits (mainline), dependency ranges, platform",
+    "why": "Validity is a predicate over code state, never a date.",
+    "prior_art": "OSV GIT ranges, git merge-base --is-ancestor [T-02.F13-F16]; Linux Fixes: tag, Sentry resolved-in-release [M-03.F24]"
+   },
+   {
+    "name": "diagnosis_path",
+    "type": "JSON ordered steps {observation, hypothesis, check, result, tier}",
+    "why": "This is the expensive thing to save: the path that found the cause, including where the session escalated.",
+    "prior_art": "CBR derivation annotations [T-05.F3]; SRE postmortem detection method [T-05.F17]"
+   },
+   {
+    "name": "negative_results",
+    "type": "child table negative_result",
+    "why": "Approaches that failed, and why, each with a failure-cause class and a scope. Shown as leads, never as prohibitions.",
+    "prior_art": "ReasoningBank distilled failures [M-02.26; M-01.F24]; RFC 2308/8767 negative caching [T-01.F11,F12,F14]; KS-R2"
+   },
+   {
+    "name": "fix_permanent / workaround",
+    "type": "TEXT pair in entry_rev.body",
+    "why": "ex3 has neither yet (it is open), but it has a dangerous naive fix. The two must be separable.",
+    "prior_art": "ITIL workaround vs permanent fix [T-05.F15]"
+   },
+   {
+    "name": "fix_commits",
+    "type": "JSON list of mainline SHAs",
+    "why": "PR-branch SHAs vanish under squash merges. I checked today: 9b98c88, c731e66, 8dafcec, 37821f5, a6f9048 and f3dfa6f are not ancestors of origin/main, while their squashes 2fe77f5, da988e2, 6928828 and 1c546a3 are. The write gate refuses non-mainline SHAs.",
+    "prior_art": "T-02.F20"
+   },
+   {
+    "name": "check_id",
+    "type": "FK -> check_spec",
+    "why": "Every lead must pass a discriminating check that reproduces the root cause on current code. A check without a control pair cannot validate an entry.",
+    "prior_art": "Getafix re-runs the signalling tool [M-03.F01,F02]; X-02 control pair; KS-R9"
+   },
+   {
+    "name": "footprint",
+    "type": "child table footprint_item",
+    "why": "What the entry depends on: files, symbols, config key paths, dependency versions, environment, remote resolvers. Changes to these drive invalidation.",
+    "prior_art": "Verifying trace [T-01.F01,F02]; X-03 three captures with provenance tiers"
+   },
+   {
+    "name": "handles",
+    "type": "child table handle",
+    "why": "Several fuzzy keys of different granularity per entry, each with a known failure mode.",
+    "prior_art": "Chromium's three signatures, Crashlytics issue/variant [T-04.F15,F16]; exact-handle tier [E-06.F21]"
+   },
+   {
+    "name": "cost_evidence",
+    "type": "JSON {tiers_used[], model_ids[], tokens_in, tokens_out, wall_minutes, commits, pr} with NULL for unknown",
+    "why": "Lets the owner see what a reuse saved. R-02 found cost recorded nowhere. Unknown is NULL, never 0.",
+    "prior_art": "X-05 prospective log fields; C-01 RT-06"
+   },
+   {
+    "name": "doc_pointers",
+    "type": "JSON list of repo-relative anchors (for example docs/HANDOFF-2026-07-28-open-work.md#A2, docs/program/SHIP-PLAN-2026-11.md#P12a)",
+    "why": "The store links to the plan, PRs, git and the register, and never restates them.",
+    "prior_art": "KS-R7; C-01 F39"
+   },
+   {
+    "name": "incident links",
+    "type": "table incident_link(entry_rev, ref, kind resolved|referenced|refuted|co_occurred)",
+    "why": "ex8's second incident had two independent causes. One incident can link to two entries, and one entry can carry several incidents (extend, never sibling).",
+    "prior_art": "KCS typed many-to-many links [X-04.F17-F21]; ITIL extend-never-sibling [T-05.F15]"
+   },
+   {
+    "name": "supersedes / revision_of",
+    "type": "lineage_edge plus entry_rev.prev_rev",
+    "why": "Corrections are new revisions or superseding entries, never edits in place.",
+    "prior_art": "PROV wasRevisionOf/wasInvalidatedBy [T-02.F07]"
+   },
+   {
+    "name": "version",
+    "type": "INTEGER, compare-and-set (CAS) on the folded header",
+    "why": "The few mutable header fields change only by a conditional UPDATE. This is the repository's own try_claim/try_transition idiom.",
+    "prior_art": "Per-entry optimistic concurrency [T-06.F26; T-02]"
+   },
+   {
+    "name": "schema_version / recipe_version",
+    "type": "INTEGER on revisions, handles and projections",
+    "why": "Derived keys change when the canonicaliser changes. Raw evidence is kept and keys are re-derived.",
+    "prior_art": "WER re-bucketing, Socorro's 2,044-signature migration [T-04.F12,F13; M-03.F13,F16]"
+   }
+  ],
+  "handle_types": [
+   {
+    "kind": "error_template",
+    "how_built": "The scrubbed raw text goes through the recipe-versioned mask pipeline and a tool adapter. The template is prefixed with its context tuple and hashed: sha256(recipe ‖ context ‖ template).",
+    "how_matched": "Exact hash in the exact_handle projection (tier 1); FTS5 porter and trigram substring match (tier 2).",
+    "failure_mode": "Same text, different cause: one alembic CommandError for different targets; a `railway up --ci` timeout that is benign [T-04.F25,F26]. It is never a lead without its context tuple. A recipe change orphans hashes, which is handled by re-deriving from raw."
+   },
+   {
+    "kind": "tool_phase_signature",
+    "how_built": "(tool, phase, normalised command, exit class), for example 'eas build | Run gradlew | eas build -p android --profile <s> | failed'.",
+    "how_matched": "Exact tuple match. Also used as a facet in the prefilter.",
+    "failure_mode": "Too coarse: every Gradle failure shares it. It only narrows and never makes a lead alone."
+   },
+   {
+    "kind": "http_signature",
+    "how_built": "(method, route template, observed status, expected status), for example 'GET /api/ops/* 500 (expected 401)' or 'POST /api/auth/login 429 (correct PIN)'.",
+    "how_matched": "Exact match.",
+    "failure_mode": "Status codes are shared by countless causes. It is weak alone and must co-occur with a template or symbol hit."
+   },
+   {
+    "kind": "stack_signature",
+    "how_built": "The top three in-app frames as module::function, with no line numbers [T-04.F08,F09].",
+    "how_matched": "Exact match on the ordered top-3; frame-set overlap as a fuzzy fallback.",
+    "failure_mode": "A refactor renames functions, so it is recomputed from the stored raw text. A framework-only stack has no in-app frames."
+   },
+   {
+    "kind": "config_key_path",
+    "how_built": "file#json-path with wildcards, for example 'technician-app/eas.json#build.*.env.*' or 'technician-app/app.json#expo.plugins'.",
+    "how_matched": "Exact match, plus prefix match on the file part.",
+    "failure_mode": "A key is moved or renamed. Footprint invalidation flags it."
+   },
+   {
+    "kind": "file_path",
+    "how_built": "A repo-relative POSIX path, normalised from Windows forms (C-01 RT-07/09).",
+    "how_matched": "Exact and directory-prefix match.",
+    "failure_mode": "Over-broad: AppContext.jsx is touched by many entries. A weak type that can reach CANDIDATE only."
+   },
+   {
+    "kind": "symbol",
+    "how_built": "A qualified name (logPayment, run_dispatch_once, compare_digest) taken from the fix diff and the check's anchor.",
+    "how_matched": "Exact match and FTS5 token match.",
+    "failure_mode": "Renames and common names. A weak type."
+   },
+   {
+    "kind": "dependency",
+    "how_built": "name@resolved-version from the lockfile at the verified SHA (alembic 1.18.5, expo SDK 52, Starlette 0.49.3).",
+    "how_matched": "Exact on name, range test on version.",
+    "failure_mode": "Transitive resolution differs per host, and a remote resolver (the EAS image) is invisible to the lockfile [X-03.F20,F29]."
+   },
+   {
+    "kind": "symptom_text",
+    "how_built": "Free-text descriptions by the solver, plus write-time doc2query expansions (other phrasings the solver expects) [E-07.F07].",
+    "how_matched": "FTS5 BM25 with column weights.",
+    "failure_mode": "Vocabulary mismatch: my local probe showed 'android build broke' sharing only 'build' with ex7 and ex8. Agents also copy near-matches [M-02.28]. It never makes a lead alone."
+   },
+   {
+    "kind": "prescription_text",
+    "how_built": "The wording of a refuted prescription plus its doc_pointer (ex6: 'gate the lock on the failure path so a correct PIN clears it', HANDOFF A2).",
+    "how_matched": "FTS5 match via `kb lookup --prescription`; exact match on the doc_pointer anchor.",
+    "failure_mode": "The prose doc is reworded or moved and the pointer drifts. The anchor id is used, never a line number."
+   }
+  ],
+  "history_model": "Event sourcing [T-02.F01,F03]. entry_event is append-only, and its ids are sha256 hashes of canonical JSON, so a replayed write is a no-op success (KS-R8; hash chain deferred). Everything else (entry header, revisions index, handles, footprint, projections) is a deterministic fold over events. The bitemporal split is re-anchored [T-02.F09]. Record time is the event's time. Validity is a predicate over git, evaluated lazily at a code state and cached in a validity table that is always recomputable. Corrections are new events: revised, superseded, withdrawn, reaffirmed. Withdrawn entries keep a tombstone, so a replayed old draft cannot resurrect them [T-01]. A near-duplicate of a withdrawn entry is refused unless it explicitly supersedes it. Two revisions with the same prev_rev, which can only happen across hosts, fold to status 'conflict' and both are shown as labelled candidates until a reviewer supersedes them. Mainline SHAs only [T-02.F20].",
+  "provenance_model": "Every event carries the following. actor: {model_id, tier, role solver|reviewer|reader, session_id, agent_id}. It is required on every write, because subagent hooks fire with the main session id (C-01). code_state: {sha, on_mainline, dirty:false}. evidence: {kind, artifact_sha256, artifact_path, runner_version, recipe_version}. derived_from: a lookup id or prior event id. The mapping to PROV is wasGeneratedBy=event, wasAssociatedWith=actor, wasDerivedFrom=evidence, wasInvalidatedBy=the footprint item named in an invalidated event, wasRevisionOf=prev_rev [T-02.F07]. Entries are untrusted until their gate passes, because memory poisoning is documented [M-01.F26]. The fold rejects reviewer-only events (reviewed_confirmed, handle_accepted, discriminator_accepted, revised, superseded, withdrawn) whose actor tier is not opus, or whose session equals the recorded author's (X-02: the verifier is never the author). The model id is self-reported, so this is policy and audit, not cryptography (see limits).",
+  "negative_results_model": "Two levels. (1) Approach-level: negative_result(entry_rev, approach, why_failed, failure_class wrong_premise | incomplete | worse_side_effect | false_proof | not_reproducible | env_specific, proof executed | argued | reported, scope_digest, evidence_ref). These are distilled and condition-scoped lessons [M-02.26], shown as 'tried in a similar case: X failed because Y', which is a lead and not a prohibition [T-01.F14]. Their life is bounded by the footprint they were observed on: when that footprint changes, they display as 'unverified on current code' (KS-R2). (2) Entry-level: a refuted event scoped to the footprint digest suppresses that entry for that footprint only, and makes it re-eligible as 'needs re-verify' when the footprint changes (KS-R2). The narrowest key is the (entry, footprint_digest) pair [T-01.F11]. The strongest negatives are do_not_apply entries (ex6), whose check is a protective test, so the negative itself is executable. Examples: ex3's 'useState in PaymentModal' is worse_side_effect/argued; ex2's 'target an older revision' is wrong_premise/executed against alembic 1.18.5; ex5's 're-queue is last-write-wins' is wrong_premise/argued with a doc_pointer to the CLAUDE.md known defect, not a copy of it.",
+  "footprint_model": "footprint_item(entry, kind, locator, hash, verified_sha, tier). Kinds and hashes: file = git blob OID at verified_sha; symbol = sha256 of the normalised definition block (v1 uses indentation/brace block extraction; later the TypeScript compiler API from technician-app's existing typescript devDependency, and Python ast if the owner rules the interpreter in); config_key = sha256 of the canonical JSON subtree at the key path; dependency = the resolved version from the lockfile; env = probe values (node, npm, python, expo, eas-cli versions; lockfile, Dockerfile and eas.json hashes); remote_resolver = a captured tool-reported line such as the EAS build image or Railpack provider [X-03.F20,F29]. Provenance tiers come from X-03: causal (coverage of the check, phase 2 and needing the owner's coverage dev-dependency decision), declared (the solver's diff and the check's scope paths), cognitive (files read or edited, from the session transcript or hook log; it over-captures) and env_probe. The verifying trace is the set of (item, hash) at the last applies or control verdict, and footprint_digest = sha256(sorted trace) [T-01.F01]. Over-capture only costs a re-verify, while under-capture risks a false positive, so items are pruned only on evidence (X-03). Whole-file OIDs over-invalidate (C-01 warning), which the early-cutoff re-stamp absorbs cheaply for probe checks.",
+  "ddl_or_schema_sketch": "-- one file: %LOCALAPPDATA%/fixflow-kb/kb.sqlite (KB_HOME overrides); runtime asserts sqlite_version() >= 3.51.3\nPRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;\nCREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL); -- schema_version, min_cli_version, store_id, thresholds JSON, recipe_version\nCREATE TABLE root_cause(id TEXT PRIMARY KEY, statement TEXT NOT NULL, family TEXT, created_event TEXT NOT NULL);\nCREATE TABLE check_spec(\n  id TEXT PRIMARY KEY,                       -- sha256(canonical spec JSON)\n  kind TEXT NOT NULL CHECK(kind IN('structural_probe','library_probe','test_id','scripted')),\n  spec JSON NOT NULL,                        -- paths, pattern, anchor, test ids, image, timeout\n  polarity TEXT NOT NULL CHECK(polarity IN('signal_means_present','absence_means_present','test_fail_means_present','protective_must_pass')),\n  control TEXT NOT NULL CHECK(control IN('historical','synthetic','none')),\n  fails_at TEXT, passes_at TEXT,             -- mainline SHAs, or 'fixture:<sha256>' / 'mutant:<sha256>' blobs\n  approved_by TEXT, approved_spec_sha TEXT); -- scripted only; approver != author\nCREATE TABLE entry(\n  id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN('defect','trap','do_not_apply','invariant_rationale')),\n  status TEXT NOT NULL CHECK(status IN('wip','not_validated','unverified_seed','validated','known_error_open','conflict','archived','withdrawn','superseded')),\n  title TEXT NOT NULL, root_cause_id TEXT REFERENCES root_cause(id), current_rev TEXT NOT NULL,\n  check_id TEXT REFERENCES check_spec(id), author JSON NOT NULL,\n  version INTEGER NOT NULL DEFAULT 1, last_seq INTEGER NOT NULL);  -- folded header; CAS on version\nCREATE TABLE entry_rev(id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES entry(id), prev_rev TEXT REFERENCES entry_rev(id),\n  schema_version INTEGER NOT NULL, body JSON NOT NULL); -- manifestation_conditions, applies_while, diagnosis_path, fix_permanent, workaround, fix_commits, cost_evidence, doc_pointers\nCREATE TABLE negative_result(id TEXT PRIMARY KEY, entry_rev TEXT NOT NULL REFERENCES entry_rev(id), approach TEXT NOT NULL, why_failed TEXT NOT NULL,\n  failure_class TEXT NOT NULL CHECK(failure_class IN('wrong_premise','incomplete','worse_side_effect','false_proof','not_reproducible','env_specific')),\n  proof TEXT NOT NULL CHECK(proof IN('executed','argued','reported')), scope_digest TEXT, evidence_ref TEXT);\nCREATE TABLE handle(id INTEGER PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES entry(id), type TEXT NOT NULL,\n  raw_scrubbed TEXT NOT NULL, canonical TEXT NOT NULL, canonical_hash TEXT NOT NULL, recipe_version INTEGER NOT NULL,\n  state TEXT NOT NULL CHECK(state IN('active','proposed','retired')), source_event TEXT NOT NULL, UNIQUE(entry_id,type,canonical_hash));\nCREATE TABLE footprint_item(entry_id TEXT NOT NULL REFERENCES entry(id),\n  kind TEXT NOT NULL CHECK(kind IN('file','symbol','config_key','dependency','env','remote_resolver')),\n  locator TEXT NOT NULL, hash TEXT, verified_sha TEXT NOT NULL,\n  tier TEXT NOT NULL CHECK(tier IN('causal','declared','cognitive','env_probe')), PRIMARY KEY(entry_id,kind,locator));\nCREATE TABLE entry_event(\n  seq INTEGER PRIMARY KEY AUTOINCREMENT,      -- local order only\n  id TEXT NOT NULL UNIQUE,                    -- sha256(canonical JSON): idempotency + journal file name\n  entry_id TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN('recorded','control_verified','reviewed_confirmed','confirmed','refuted','suspect','reaffirmed','invalidated','revised','superseded','withdrawn','archived','handle_proposed','handle_accepted','discriminator_proposed','discriminator_accepted','incident_linked')),\n  at TEXT NOT NULL, actor JSON NOT NULL, code_sha TEXT, on_mainline INTEGER, footprint_digest TEXT,\n  verdict TEXT CHECK(verdict IN('applies','not_applies','inconclusive')), evidence JSON, payload JSON);\nCREATE INDEX ev_entry ON entry_event(entry_id, seq);\nCREATE TABLE incident_link(entry_rev TEXT NOT NULL, ref TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN('resolved','referenced','refuted','co_occurred')), event_id TEXT NOT NULL, PRIMARY KEY(entry_rev,ref,kind));\nCREATE TABLE lineage_edge(src TEXT NOT NULL, dst TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN('supersedes','revision_of','sibling_of')), PRIMARY KEY(src,dst,kind));\nCREATE TABLE lookup(id TEXT PRIMARY KEY, at TEXT NOT NULL, actor JSON NOT NULL, code_sha TEXT, tool TEXT, phase TEXT,\n  query_scrubbed TEXT NOT NULL, canonical JSON NOT NULL, recipe_version INTEGER NOT NULL, engine TEXT NOT NULL, index_lag INTEGER NOT NULL,\n  result TEXT NOT NULL CHECK(result IN('miss','candidate','lead')), shown JSON, features JSON, depth INTEGER,\n  tokens_in INTEGER, tokens_out INTEGER, wall_ms INTEGER,   -- NULL = unknown, never 0\n  outcome TEXT CHECK(outcome IN('applies','not_applies','inconclusive','missed_existing')), outcome_event TEXT);\nCREATE TABLE claim(claim_seq INTEGER PRIMARY KEY AUTOINCREMENT, signature TEXT NOT NULL, holder JSON NOT NULL, at TEXT NOT NULL,\n  lease_until TEXT, released_at TEXT, entry_id TEXT);      -- lease policy deferred (KS-R5)\nCREATE UNIQUE INDEX one_open_claim ON claim(signature) WHERE released_at IS NULL;\n-- SEARCH ROLE: projections, written only by the projector, rebuildable from entry_event\nCREATE TABLE projection_state(name TEXT PRIMARY KEY, engine TEXT NOT NULL, recipe_version INTEGER NOT NULL, last_seq INTEGER NOT NULL, built_at TEXT NOT NULL, content_hash TEXT);\nCREATE TABLE exact_handle(type TEXT NOT NULL, canonical_hash TEXT NOT NULL, entry_id TEXT NOT NULL, PRIMARY KEY(type,canonical_hash,entry_id)) WITHOUT ROWID;\nCREATE TABLE search_doc(rowid INTEGER PRIMARY KEY, entry_id TEXT NOT NULL UNIQUE, title TEXT, templates TEXT, signatures TEXT, symptoms TEXT, anchors TEXT, diagnosis TEXT, ruled_out TEXT, facets JSON);\nCREATE VIRTUAL TABLE search_fts USING fts5(title, templates, signatures, symptoms, anchors, diagnosis, ruled_out, content='search_doc', content_rowid='rowid', tokenize='porter unicode61');\nCREATE VIRTUAL TABLE search_tri USING fts5(templates, symptoms, content='search_doc', content_rowid='rowid', tokenize='trigram');\nCREATE VIRTUAL TABLE search_vocab USING fts5vocab(search_fts, 'row');   -- df(term), N for IDF coverage\nCREATE TABLE validity(entry_id TEXT NOT NULL, code_sha TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN('valid','suspect','stale','unknown')), reason JSON, computed_at TEXT NOT NULL, PRIMARY KEY(entry_id,code_sha)); -- cache of a recomputable query\n-- ANALYTICS ROLE: views in the same engine (KS-R6)\nCREATE VIEW v_entry_outcomes AS SELECT entry_id, sum(type='confirmed') confirmed, sum(type='refuted') refuted, sum(type='reaffirmed') reaffirmed, sum(type='invalidated') invalidated, max(at) last_event FROM entry_event GROUP BY entry_id;\nCREATE VIEW v_lead_precision AS SELECT count(*) leads, sum(outcome='applies') applied, sum(outcome='not_applies') false_leads, sum(outcome IS NULL OR outcome='inconclusive') unresolved FROM lookup WHERE result='lead';\nCREATE VIEW v_missed_existing AS SELECT * FROM lookup WHERE outcome='missed_existing';\nCREATE VIEW v_supersede_closure AS WITH RECURSIVE up(src,dst) AS (SELECT src,dst FROM lineage_edge WHERE kind='supersedes' UNION SELECT u.src,e.dst FROM up u JOIN lineage_edge e ON e.src=u.dst AND e.kind='supersedes') SELECT * FROM up;  -- no depth column in the UNION key (20x slower, E-08.f16)\n-- entries citing changed files: SELECT DISTINCT entry_id FROM footprint_item WHERE kind='file' AND locator IN (<git diff --name-only>);\n-- failed approaches for similar symptoms: lookup candidates JOIN entry USING root_cause_id JOIN entry_rev JOIN negative_result."
+ },
+ "retrieval": {
+  "canonicalisation": "The canonicaliser is code, not a learned miner. It is an ordered, deterministic mask pipeline versioned by recipe_version, with per-tool adapters that prefer structured output: pytest --junitxml, jest/vitest --json, alembic, eas-cli, gradle, railway, HTTP access lines, and Node and Python stack traces [T-04.F01,F05,F10]. Order: (1) scrub (secrets and PII become typed placeholders, X-06). (2) Normalise paths: backslash to '/'; the worktree or repo root to '<repo>'; drive letters and user folders to '<home>' (C-01 RT-07/09). (3) Mask volatile tokens: hex of 7+ chars and SHAs to '<hex>', UUIDs to '<uuid>', timestamps and durations to '<ts>', ports, pids and line:col to '<n>', quoted user values to '<str>'. Discriminating literals are KEPT: HTTP statuses, exception class names, codes such as EAS_BUILD_UNKNOWN_GRADLE_ERROR, alembic subcommands, env-var names such as EXPO_PUBLIC_SENTRY_DSN. (4) Stack traces reduce to the top three in-app module::function frames, never line numbers [T-04.F08,F09]. (5) Every template is prefixed with its context tuple (tool, phase, normalised command), because the same text means different things in different contexts [T-04.F25,F26]. (6) hash = sha256(recipe_version ‖ context ‖ template). The scrubbed raw text is stored beside the template. A recipe change triggers `kb rebuild`, which re-derives every handle and both indexes from raw without touching the record. That is WER/Socorro re-bucketing done as a projection rebuild [T-04.F12,F13,F16; M-03.F13]. Golden fixtures are the eight worked examples' raw symptom strings, plus every new entry's raw text. The pipeline biases toward splitting [T-04].",
+  "prefilter": "Tier 1 is an exact lookup of (type, canonical_hash) in the exact_handle projection, for every handle the query yields: template, tool_phase, http_signature, config_key, file, symbol, dependency [E-06.F21]. Facet filters apply to all tiers. Runtime and tool come from the query's context. For a LEAD the status must be validated or known_error_open; unverified_seed and not_validated may appear only as a labelled CANDIDATE (KS-R9). Entries suppressed for the current footprint digest by a refute are dropped (KS-R2). Withdrawn and archived entries are dropped, and a superseded entry resolves to its successor through v_supersede_closure.",
+  "ranking": "The candidate set has an internal depth of 20 (KS-R4). It is the union of: exact-handle hits; the FTS5 porter BM25 top 20 over search_fts, with column weights templates 5, signatures 4, title 3, symptoms 3, anchors 2, diagnosis 1, ruled_out 1 (proposals); and trigram matches on templates and symptoms for substrings of at least 3 chars [E-01.F04; T-03.F04,F24]. Order: number of distinct discriminating handle types hit (descending), then OOV-aware coverage (descending), then BM25 rank. BM25 values are used as ranks only, never as thresholds, and RRF is never treated as confidence [T-03.F02,F05,F08,F25]. If a second fuzzy engine is ever added (KS8), its list is merged by RRF for ORDER only. The exact-handle tier always stays in the record engine.",
+  "abstention": "The features are score-free and computed by the CLI from the record engine's own vocabulary (search_vocab), so swapping the search engine does not change them [T-03.F26]. (a) Exact hits by handle type. (b) OOV-aware IDF coverage = sum idf(matched query terms) / sum idf(all query terms), where a query term absent from the corpus counts at the maximum idf instead of being dropped. (c) Margin = coverage(top1) - coverage(top2). (d) Validity at HEAD. Why (b) must be OOV-aware: I ran a local node:sqlite FTS5 experiment over the eight examples (not in the register). 'android build broke' matched only 'build', and coverage counted over in-corpus terms came out 1.0 for both ex8 and ex7: a confident false tie. Counting 'android' and 'broke' at max idf drops it below every threshold. The output has three values (Chow's reject option made three-way [T-03.F18]). LEAD requires: at least one exact hit on a discriminating type (template, tool_phase with template, config_key, http_signature with symbol); coverage >= tau_lead; margin >= mu; status validated or known_error_open; validity valid. CANDIDATE requires coverage >= tau_cand and margin >= mu/2, or an exact hit on a weak type (file, symbol, dependency). Anything else is a MISS, which is cheap and safe. A suspect entry is demoted from lead to candidate with the label 'footprint changed since <sha>'. At most one LEAD and one CANDIDATE are shown (KS-R4). The lookup output carries the title, matched handles, ruled-out approach titles and the exact gate command, and never the fix.",
+  "gate": "Every LEAD or CANDIDATE is a hypothesis. `kb verify <id>` runs the entry's discriminating check (see gate_runner) at the current HEAD, or at HEAD plus the agent's patch for do_not_apply entries. It returns applies, not_applies or inconclusive. Only applies unlocks the fix and workaround text. `kb show <id> --section fix` exits 3 unless an applies verdict for this entry at this HEAD is in the event log, because agents copy near-matching records, wrong ones included [M-02.28; T-05.F23]. not_applies is appended as a refute scoped to the footprint digest. inconclusive is recorded and treated as a miss. The check reproduces the root cause, not merely the absence of the symptom, and test-pass alone is a weak gate [M-03.F01,F02,F07]. For do_not_apply entries the lookup shows the warning immediately, because acting on it only pauses a change. The protective check then confirms it against the agent's patch.",
+  "thresholds": "Proposals and owner parameters (KS-R10): tau_lead = 0.6, tau_cand = 0.35, mu = 0.2, internal depth 20. Illustration only, not calibration: in my eight-example probe the right entry had coverage 0.64 to 1.0 with margins 0.37 to 0.75 for paraphrased queries ('manager retried payment and it was charged twice' gave ex3 0.73 vs 0.27). The typo query 'easbuild faild gradel' returned nothing. Calibration happens in KS3 by leave-one-handle-out over the seeded entries plus at least 40 hard-negative and stale probes. The ex7/ex8 pair is the canonical hard negative: same tool, overlapping words, different cause [T-03.F23]. The thresholds chosen are those giving 0 false leads, and recall is then reported. 0 FP in 40 bounds the false-lead rate at 7.5%, and 0 in 60 at 5% (rule of three) [T-03.F19,F20; X-05.F17,F24]. Thresholds are stored in meta with the eval id, and re-calibrated whenever the recipe, the column weights or the search engine changes.",
+  "feedback": "Every outcome is retained (the CBR revise/retain half [T-05.F1]). A not_applies verify appends `refuted` with the footprint digest: the entry is suppressed for that footprint and becomes re-eligible ('needs re-verify') once the footprint changes (KS-R2; a negative is a lead [T-01.F14]). A cheap agent may append two kinds of proposal. `discriminator_proposed` names the query handles that caused the wrong match ('not when X'). `handle_proposed` follows an applies verify on a query whose handles the entry lacked (document-side Rocchio [T-03.F16]). Both become active only after an Opus `kb accept`, or a second independent confirmation from a different session (KS-R3). Helpful and harmful counts are views over events, never mutable counters [M-02.29]. Rejected: pseudo-relevance feedback (drift), LLM rewriting of entries, and LLM-judged contradiction [M-01.F02,F12,F13; M-02.30].",
+  "measurements": "Everything is measured inside the store (KS-R7; the HR skip of a separate pipeline stands). Each lookup row records: scrubbed query, handles, recipe, engine, index_lag, features, result, shown ids, actor model and tier, tokens and wall time (NULL for unknown, never 0, RT-06). Its later outcome is one of applies, not_applies, inconclusive or missed_existing. missed_existing is set when a newly recorded entry's exact handles, or a handle-token Jaccard of at least 0.6, match an earlier MISS. Exact pairwise Jaccard is enough; MinHash is not needed at this size [T-03.F14,F15]. Views: v_lead_precision, v_missed_existing, v_entry_outcomes, stale hits, and reuse by tier (did a Haiku/Sonnet agent finish without escalating after an applies). The pilot follows X-05: Step 0 free recurrence audit (KS0); Step 1 blind replay with raw original symptoms and a grep arm (KS6); Step 2 prospective log with a checkpoint at 20 encounters or 8 weeks and a kill criterion. The engine trigger is measured by `kb eval --replay-misses`. It replays every missed_existing lookup and classifies the cause as typo/morphology (edit distance of 2 or less to an entry term), vocabulary mismatch, or handle gap. Only typo/morphology misses count toward the Meilisearch trigger.",
+  "embeddings_position": "Not now [E-07]. At 200 entries or fewer, lexical BM25 with exact handles is the robust baseline. Dense retrieval fails on identifiers and entities [T-03.F09-F11; E-07.F01,F03]. Write-time handle expansion captures most of the vocabulary-mismatch benefit [E-07.F07]. The trigger is an owner parameter (KS-R10; E-07's inferred ~5% 'missed, entry existed' over 50 lookups, or more than ~1,000 entries), and only misses classified as vocabulary mismatch count toward it. Embeddings would belong to the SEARCH role, never the record: sqlite-vec in the same file (pre-v1, optional [E-01.F13]), or a Meilisearch userProvided embedder if KS8 exists. Vectors would come from a pinned local int8 bge-small via transformers.js with allowRemoteModels=false, with a model and revision stamp on every vector because of embedding drift [E-07.F19,F24,F28]. They would be fused by RRF for order only. Abstention stays on handles and lexical coverage, and the gate is unchanged. Hosted embedding APIs and Ollama are rejected."
+ },
+ "invalidation": {
+  "triggers": "Events, never time. (1) A footprint item's hash differs at the target SHA from the stored trace: a file blob OID, a symbol block hash, a config key-path subtree hash. (2) A dependency's resolved version leaves the entry's applies_while range (lockfile at the target SHA) [T-02.F13]. (3) An env probe changes (Node, Expo SDK, eas-cli, Python, alembic). (4) Fix presence changes: `git merge-base --is-ancestor <fix_sha> <target>` flips. Because the ship plan builds release/drain by cherry-pick only, ancestry is false there even when the fix's content is present, so `git patch-id` is the secondary predicate and the gate is the arbiter (my inference, not in the register). (5) A refuted event on this footprint. (6) A recipe_version or runner_version change. This rebuilds projections and re-runs historical control pairs; it does not invalidate entries by itself.",
+  "mechanism": "A recomputable query, not notifications: LISTEN/NOTIFY-style push is lossy for short-lived CLI agents [E-03.F12]. validity(entry, sha) is computed on demand: for the at most two entries a lookup shows, and as a batch sweep with `kb validity --since <sha>`. The sweep selects entries whose footprint intersects `git diff --name-only <since>..HEAD`, then compares hashes. It is cached in the validity table (entry, code_sha) and can always be recomputed. States: valid (unchanged trace); suspect (an item changed, re-verify not yet run); stale (anchor missing, or check repeatedly inconclusive: the check no longer points at the code); unknown (could not evaluate). Early cutoff [T-01.F02]: a suspect entry's check is re-run at HEAD. Its anchor must still be found, and for a synthetic control the stored mutant is re-applied to HEAD and must flip the verdict. If both hold, a `reaffirmed` event re-stamps the trace with the new hashes (backdating) instead of discarding the entry. A drifted entry is shown only as a labelled candidate (serve-stale inverted [T-01]). Mass invalidation by dirty bits and TTLs are rejected [T-01].",
+  "who_repairs": "Read repair by the reader, restricted to mechanical events [T-01.F18; KS-R3]. Any Haiku or Sonnet agent that hits a suspect entry runs `kb verify` and appends reaffirmed, invalidated or refuted with the runner's artifact hash. The phase-close sweep re-verifies the suspects in batch. Repairs that change content (a new revision of the check because the code moved, a new anchor, a superseding entry) go to an Opus reviewer, never the author of the original, via `kb revise` or `kb supersede`. A stale entry stays out of leads until then. There is no scheduled review sweep: review happens at hit time [X-04].",
+  "what_cannot_be_detected": "The untracked dependencies [T-01.F03]. Remote resolvers that git cannot see: the EAS cloud build image, Railpack's provider detection, and Railway env vars. Captured log lines narrow this but do not close it [X-03.F20,F29]. Production data state: ex2's job_event.kind vocabulary, ex4's dispatch_cursor contents. External API behaviour: Meta WhatsApp, Sentry, Supabase pooler. Callers outside the footprint that start passing different data. Semantic changes that leave the anchor and signal lines intact. Flakiness and non-determinism in test_id checks. Prose documents that drift into contradiction (R-01a found four). Changes in the agents' own behaviour. Cherry-picked fixes make ancestry predicates wrong in both directions; only the gate settles them. Footprints captured without the causal tier (all of v1) can miss a file the cause truly depends on, and under-capture is the false-positive side."
+ },
+ "gate_runner": {
+  "check_kinds": "Allow-listed, four kinds [X-02]. (1) structural_probe: `git grep -E` against a COMMIT OBJECT (no checkout, no execution of repo code), scoped to named paths. The pattern must exclude comment lines, and a mandatory ANCHOR pattern proves the probe is looking at the right code. If the anchor is missing the result is inconclusive, never applies or not_applies. Later, ast-grep for comment-aware structure, an install decision [M-03]. (2) library_probe: parameters for runner-owned functions; no stored code. v1 library: json_empty_string_values(file, glob), json_path_matches(file, path, regex), alembic_duplicate_revisions(dir), line_present(file, regex). All read via `git show <sha>:<path>`. (3) test_id: named tests at a pinned SHA, run in Docker. Verdict from junit XML or jest/vitest --json. Supports `--change <patch>` for do_not_apply entries, and transplant mode (test source from passes_at, code from the target). (4) scripted: only with an Opus approval bound to the spec's sha256, by a verifier who is not the author. Example: ex2b's rollback crash-loop needs a scratch Postgres and two code states. Probes run in under 2 s natively, which is why six of the eight examples are gateable before Docker is involved.",
+  "isolation": "Probes need no isolation beyond read-only git object access. git runs with `-c core.fsmonitor=false -c core.hooksPath=<empty>` so repository config cannot execute anything (my hardening, not in the register). test_id: `git archive <sha>` into a temp dir outside every worktree, applying `--change` explicitly. Dependencies are prepared in a separate trusted step keyed by lockfile hash [X-02]. The container runs with `--network none`, or for backend tests an `--internal` network with a throwaway postgres:16-alpine, because backend/tests/conftest.py TRUNCATEs every table on whatever URL it gets and Settings defaults to localhost:5432 [X-02.F13,F14]. It gets a read-only source mount, tmpfs scratch, an allow-listed env (no FIXFLOW_* secrets, no .env), a redirected HOME, CPU, memory and time caps, and the container-name prefix `kb-gate-`, never the ship plan's fixed Appendix A names. Fail closed: Docker off, image missing or timeout gives inconclusive. Claude Code's own sandbox does nothing on native Windows, and Windows Sandbox has no headless I/O [X-02.F03], so Docker (WSL2 backend now, the same image on the VPS) is the only isolation.",
+  "verdict_derivation": "The verdict is derived from a runner-owned artifact, never the child's exit code. git bisect run treats 1 to 127 as bad, 127 is command-not-found, Python and Node crashes exit 1, and pytest exits 5 when no tests were collected [X-02.F01,F12]. Probes: the runner writes a JSON artifact {sha, paths, anchor_hits, signal_hits, runner_version} and hashes it. Polarity maps the hits to a verdict. test_id: parse the junit or json report. The named test must be COLLECTED and must fail by an assertion, not an import or collection error, to count as root-cause-present. Skipped, uncollected, errored, crashed or missing reports are inconclusive (the HR skip-aware-gates ruling applies here too). Tri-state: applies, not_applies, inconclusive. 'Could not run' never equals not_applies. Flaky policy: rerun only on disagreement, and applies requires unanimity [X-02]. protective_must_pass: applies (meaning DO NOT APPLY) when any protective test fails with the agent's patch while passing on HEAD.",
+  "approval": "structural_probe and library_probe need schema validation only, since no code executes. test_id needs the test id to exist at a mainline SHA, so it was reviewed in a merged PR; transplant and mutant patches are stored blobs reviewed at `kb confirm`. scripted needs `approved_by` = an Opus reviewer distinct from the author and `approved_spec_sha` = the spec hash; any edit to the spec voids the approval. Every entry, whatever the kind, becomes validated only through `kb confirm` by an Opus reviewer who re-runs the control pair independently.",
+  "control_pair": "Required for validation (KS-R9; X-02). There are two kinds. HISTORICAL: fails_at and passes_at are mainline SHAs where the cause is present and absent. SYNTHETIC: a stored fixture or mutant patch that reintroduces the cause on passes_at, used when the hazard never reached main (ex2a) or when the check did not exist before the fix (ex5). The runner rejects a check that gives the same verdict at both ends (no vacuous gate). It re-runs historical pairs whenever runner_version or recipe_version changes, and re-applies synthetic mutants at HEAD during early-cutoff re-stamps. Measured today against this repository: ex1 3 matches at 2fe77f5^ vs 0 at 2fe77f5; ex4 seed INSERT 0 vs 1 and max_event_age 0 vs 5 at da988e2^ vs da988e2; ex7 FAIL at 140428c vs OK at 79a8dd4; ex8 FAIL at 60c026d vs OK at 6928828; Dependabot ignore 0 at 6928828^ vs 1 at 6928828; ex2a 0 duplicate revisions at HEAD. Two naive probes FAILED their pairs. A whole-repo grep for compare_digest matched comments (4 before, 9 after), and a `catch { return; }` grep found 0 at 37821f5 (multi-line form) and 1 at 8dafcec (a comment quoting it). The write gate exists to catch exactly these."
+ },
+ "concurrency": {
+  "write_path": "Every write is one `BEGIN IMMEDIATE` transaction on the single WAL file (busy_timeout 5000 ms) [T-06.F1; E-01.F10]. Steps: (1) INSERT OR IGNORE the event(s) by content-hash id, so a replayed write is a no-op success (the repository's client_id idiom). (2) Re-fold the touched entry and apply it with `UPDATE entry SET ..., version = version + 1 WHERE id = ? AND version = ?`. Zero rows means re-read and re-fold, never overwrite blindly (the try_claim/try_transition idiom). (3) The projector updates exact_handle, search_doc, search_fts and search_tri, and sets projection_state.last_seq, in the SAME transaction, with explicit statements rather than triggers so it is testable. FTS5 external content needs that discipline or a 'rebuild' [E-05.F24]. (4) COMMIT. The record-to-search lag on a host is therefore 0. Gate runs happen OUTSIDE the transaction, since they take seconds to minutes. Their result is appended afterwards as an event carrying the SHA and footprint digest it ran on, so a slow verify never holds the write lock. Read commands open the file with node:sqlite `readOnly: true`, which the engine enforces (verified today: 'attempt to write a readonly database'). Every runtime that opens the file must have SQLite 3.51.3 or later, for the WAL-reset corruption fix; `kb doctor` and every open assert it [T-06.F4-F6].",
+  "stampede_control": "KS-R5. One `claim` table with a partial unique index on open claims per signature. The signature is the miss's template hash, or the tool_phase tuple when there is no template. After a MISS, the agent about to escalate runs `kb claim <signature>`, a non-blocking INSERT. If a claim is already open, the CLI prints holder, worktree, age and claim_seq, records a concurrent miss, and the agent proceeds anyway. This is advisory: a dead leader blocks nobody [T-06.F13,F30]. claim_seq is the fencing token, and `kb record --claim <seq>` releases it. A second record for the same signature is caught by the write-time near-duplicate check (exact Jaccard) and routed to 'extend, don't sibling' review instead of racing [T-05.F15]. No lease expiry or renewal policy until the log shows concurrent misses (KS-R5). Claims are host-local and never journaled.",
+  "worktree_story": "The database lives outside every worktree. The default is %LOCALAPPDATA%/fixflow-kb/kb.sqlite, or ~/.local/share/fixflow-kb on Linux, with KB_HOME as the override. Every worktree, subagent and parallel session therefore sees one store with no sync [T-06.F2]. It is never inside a worktree, a Docker bind mount, a network share or a synced folder [T-06.F23]. The default avoids Documents, which may be OneDrive-redirected on this box (unverified). The CLI is versioned in the code repo (tools/kb/), and the DB records min_cli_version. An older CLI from a stale worktree opens read-only and says so. Code state is per worktree. Each verify records that worktree's HEAD SHA and on_mainline (`git merge-base --is-ancestor HEAD origin/main`). Branch-only observations are kept as events but never re-stamp an entry's mainline trace (no Frankenbuild splicing [T-01.F04]). A dirty working tree makes a verify inconclusive unless `--change` is given, so verdicts reflect committed bytes, not working-tree bytes (C-01 RT-04). Events never live on a code branch, so an abandoned branch cannot lose them [X-01.F22].",
+  "two_host_story": "Ranked per X-01. Stage 0, now: the single SQLite file on the dev box is the store. `kb backup` takes a `VACUUM INTO` snapshot, checks it with integrity_check and copies it one-way to the VPS over SSH once the VPS exists. `kb export-journal` also writes immutable event files, so the journal exists before it is needed (KS-R1, stage 0 allowance). Stage 1, triggered when a second host will write (KS7): the journal becomes authoritative. Each event is a file events/<2 hex>/<sha256>.json (canonical JSON) in a dedicated store repo inside KB_HOME, outside the code repo. It syncs over SSH to a bare repo on the owner's VPS: never GitHub, and no third-party control plane such as Tailscale (Headscale or plain SSH instead) [X-01.F10,F17,F20; E-09.F05,F07]. `kb sync` does: git pull (event files are pure adds, which X-01 tested to merge cleanly) -> ingest unknown ids -> refold the touched entries -> push. Each host's SQLite is a per-host projection, rebuildable with `kb rebuild --from-journal`. The fold is deterministic over the event SET (causal prev pointers, then time, then id), so both hosts converge. Conflicting revisions surface as status 'conflict', never as last-writer-wins [T-06.F26]. Cross-host lag = time between syncs, run at phase start and close. The Linux host must run Node with SQLite 3.51.3 or later, and the distro's sqlite3 CLI is never pointed at the file. Search-engine and analytics projections are never synced; they rebuild per host."
+ },
+ "engines": [
+  {
+   "role": "RECORD (OLTP): entries, revisions, events, lookups, claims",
+   "engine": "SQLite via node:sqlite",
+   "version_or_status": "SQLite 3.53.4 bundled in Node 24.22.1 (FTS5 and JSON compiled in; checked today). node:sqlite is Stability 1.2, release candidate. Runtime gate: SQLite 3.51.3 or later.",
+   "why": "Embedded and built in. Serialised writers, non-blocking readers and atomic conditional UPDATEs in one file. A 4-writer WAL test showed no SQLITE_BUSY [E-01.F01,F02,F10; T-06.F1-F6].",
+   "egress": "None [E-10.F21]",
+   "ops_cost": "One file and one backup command. No service to start, no key, no port.",
+   "install_needed": "None. better-sqlite3 (npm) is the fallback driver only if node:sqlite's API changes."
+  },
+  {
+   "role": "SEARCH, stage 0-1: exact-handle tier plus fuzzy symptom tier",
+   "engine": "SQLite FTS5 (porter+unicode61 table, trigram table, fts5vocab) and a WITHOUT ROWID exact_handle table, all projections in the same file",
+   "version_or_status": "Same build as the record",
+   "why": "BM25 with per-column weights, trigram substring matching for error text, and a vocabulary for IDF coverage. At this size a search server adds only typo tolerance and built-in hybrid vectors [E-04.F22,F25; T-03.F04,F24]. Being in the same transaction as the record gives zero record-to-index lag.",
+   "egress": "None",
+   "ops_cost": "None beyond the record; `kb rebuild` takes seconds at hundreds of rows",
+   "install_needed": "None"
+  },
+  {
+   "role": "ANALYTICS (OLAP): outcome, precision and staleness views",
+   "engine": "SQL views in the record file",
+   "version_or_status": "Same build",
+   "why": "About 10^3-10^4 rows against practitioner thresholds of 10^7-10^8 for a second analytical engine [E-05.F22,F26 reported/inferred]; KS-R6.",
+   "egress": "None",
+   "ops_cost": "None",
+   "install_needed": "None"
+  },
+  {
+   "role": "LINEAGE (graph)",
+   "engine": "lineage_edge table plus a recursive CTE (no depth in the UNION key), root cause as an FK row",
+   "version_or_status": "Same build",
+   "why": "All four lineage queries are a join or one CTE. Measured 0.07-95 ms on a dense 300-node/3000-edge worst case [E-08.f16,f19,f26]. Neo4j, Memgraph, Kùzu and the rest are rejected for telemetry, licence or abandonment [E-08.f1-f18; E-02.F11].",
+   "egress": "None",
+   "ops_cost": "None",
+   "install_needed": "None"
+  },
+  {
+   "role": "JOURNAL and TRANSPORT (stage 1 only; trigger: a second host writes)",
+   "engine": "git: a local store repo in KB_HOME plus a bare repo on the owner's VPS over SSH",
+   "version_or_status": "git 2.56 is installed; the VPS comes from the ship plan (P3b)",
+   "why": "Immutable per-event files merge as pure adds, the index stays a cache, and it is mandated by KS-R1 [E-09.F05,F07; X-01.F20]. Dolt is the heavier upgrade path, with CLI telemetry on by default [X-01.F17].",
+   "egress": "SSH to the owner's own host only; never GitHub",
+   "ops_cost": "`kb sync` at phase start and close; one more repo to back up (it is the backup)",
+   "install_needed": "None on the dev box; Node and git on the VPS as part of its build"
+  },
+  {
+   "role": "GATE ISOLATION for test_id checks",
+   "engine": "Docker Desktop (WSL2) with postgres:16-alpine and a Node image matching the repo",
+   "version_or_status": "Installed, AutoStart off. postgres:16-alpine is already used locally and in CI [E-03.F21,F22].",
+   "why": "The only isolation that works headless on native Windows and is identical on the VPS [X-02.F03,F13,F14]",
+   "egress": "Image pulls are downloads only. Containers run with --network none or --internal.",
+   "ops_cost": "The owner starts Docker before a test_id verify; when it is off the verdict is inconclusive, never a wrong answer. The kb-gate-* names avoid the ship plan's fixed container names.",
+   "install_needed": "Image pulls are an owner decision; Docker itself is already present"
+  },
+  {
+   "role": "SEARCH, stage 2 (TRIGGER ONLY, KS8)",
+   "engine": "Meilisearch Community Edition (MIT). Alternatives recorded: Redis 8 Query Engine (AGPLv3) only if Redis already runs on the host; Tantivy rejected (needs a Rust toolchain [E-04.F15]).",
+   "version_or_status": "Pin at adoption. v1.56.0 was latest on 2026-10-26, on a roughly two-week cadence. Choose the community asset explicitly, not 'enterprise' [E-04.F02].",
+   "why": "The only credible optional search daemon. Built-in typo tolerance (1 typo at 5+ chars, 2 at 9+), local-only hybrid via userProvided embedders, a Windows exe and a ~106 MB image [E-04.F02,F03,F07,F08]. Earns a place only when the typo/morphology miss trigger fires. Redis 8 has BM25STD and Levenshtein up to 3 but is RAM-resident with no native Windows build [E-06.F01,F03,F05].",
+   "egress": "Segment/Amplitude telemetry is on by default. Deployment invariant: `MEILI_NO_ANALYTICS=true` and `--no-analytics`, proven by an egress-blocked smoke test. Embedders are restricted to userProvided; openAi and rest are disqualified [E-04.F01,F07]. Its experimental /mcp route is not exposed, because it would bypass the gate [E-04.F06].",
+   "ops_cost": "A resident daemon, a master key, asynchronous writes (a task queue; not searchable until the task succeeds [E-04.F05]), dumps across upgrades, ~353 MB exe (reported) or a container, and 256 MB minimum RAM [E-04.F03,F04]. Never backed up: rebuilt from the record. The FTS5 tier stays as the fallback whenever its lastAppliedSeq lags.",
+   "install_needed": "Yes, an owner decision; run on the always-on host, not the dev box"
+  },
+  {
+   "role": "ANALYTICS reserve (TRIGGER ONLY)",
+   "engine": "DuckDB 2.0.x LTS (CLI or @duckdb/node-api 2.0.0-r.1) reading a VACUUM INTO snapshot, never the live file",
+   "version_or_status": "2.0.0 LTS announced 2026-10-21; wait for the first patch release [E-02.F01,F06]",
+   "why": "Only if an analytic view takes over a second or the owner wants joins with external exports (CI history, git log). Reading a snapshot sidesteps the unverified SQLite-scanner READ_ONLY attach (KS-R6) and DuckDB's single-writer rule [E-02.F05,F07; E-05.F17,F18].",
+   "egress": "Extension autoinstall and autoload must be off, with extensions pre-placed; allow_community_extensions=false, lock_configuration=true [E-05.F19; E-02.F09]",
+   "ops_cost": "A second SQL dialect for views; lag = snapshot age, printed on every result",
+   "install_needed": "Yes, an owner decision"
+  },
+  {
+   "role": "SCRUBBING second pass (optional)",
+   "engine": "secretlint (MIT library) and gitleaks (MIT binary, stdin, fail closed)",
+   "version_or_status": "Not installed",
+   "why": "Built-in regexes plus exact-value redaction cover the known token shapes. These add measured recall (gitleaks 86-88% at 46% precision) [X-06.c]. trufflehog is rejected (AGPL, live verification by default).",
+   "egress": "None when run offline",
+   "ops_cost": "Two tools to pin",
+   "install_needed": "Yes, an owner decision; v1 runs without them"
+  }
+ ],
+ "abstraction_layer": {
+  "interface_ops": [
+   "RecordStore.append(events[]) -> per event inserted | duplicate (idempotent by content-hash id)",
+   "RecordStore.casHeader(entryId, expectedVersion, patch) -> ok | conflict; RecordStore.fold(entryId)",
+   "RecordStore.get(entryId, {rev?, sections[]}) and RecordStore.eventsSince(seq)",
+   "RecordStore.logLookup(row), RecordStore.setOutcome(lookupId, outcome, eventId)",
+   "RecordStore.claim(signature, holder) -> {claimSeq, existing?}; RecordStore.release(signature, claimSeq)",
+   "RecordStore.snapshot(path) (VACUUM INTO, then integrity_check)",
+   "ExactHandleIndex.put(type, canonicalHash, entryId); ExactHandleIndex.get(type, canonicalHash) -> entryIds",
+   "SearchIndex.apply(docs[], uptoSeq, recipeVersion) -> ticket; SearchIndex.awaitVisible(ticket, timeoutMs) -> bool",
+   "SearchIndex.query(canonicalQuery, facets, depth <= 20) -> ranked entryIds only (no engine scores cross the boundary)",
+   "SearchIndex.lastAppliedSeq(); SearchIndex.rebuild(fromEvents)",
+   "Vocabulary.df(term), Vocabulary.N() (always served by the record engine, so abstention is engine-independent)",
+   "Analytics.view(name, params) -> {rows, asOfSeq, asOfTime}",
+   "Journal.export(sinceSeq); Journal.ingest(dir); Journal.sync(remote) (stage 1)",
+   "GateRunner.verify(checkSpec, target: sha | sha+patch | fixture) -> {verdict, anchorFound, artifactSha256, artifactPath, runnerVersion}",
+   "Canonicaliser.canonicalise(tool, phase, cmd, rawText) -> {template, hash, tokens, recipeVersion}",
+   "Scrubber.scrub(text, mode write | return) -> {text, findings, refuse}"
+  ],
+  "swap_story": "Search, FTS5 to Meilisearch (KS8): implement SearchIndex over its HTTP API. apply() maps to a documents task; awaitVisible() polls the task until succeeded. Add a projection_state row (engine='meili') and run `kb rebuild --projection search --engine meili`. The record, the exact-handle tier, the vocabulary and therefore the abstention features are untouched. Only the candidate order changes, so thresholds are re-calibrated on the same probe set. The CLI reads Meili only when lastAppliedSeq equals the record's max seq, and otherwise falls back to FTS5, recording engine and lag in the lookup row. Record, SQLite to Postgres (E-03's swap target, if multi-host server-side writers are ever needed instead of the journal): a RecordStore adapter on asyncpg-free node-postgres (an install). SearchIndex becomes tsvector plus pg_trgm, noting that ts_rank has no IDF [T-03.F06], which matters little because coverage comes from Vocabulary. Read-only is enforced by a DB role, not the wrapper [E-03.F14]. Analytics to DuckDB: Analytics.view() runs the same view names over a snapshot file; the views are rewritten in DuckDB SQL. Journal: none to Git (KS7) needs no change to any other interface, because the record is already a fold of content-hashed events.",
+  "what_leaks": "(1) Consistency: FTS5 is updated in the writer's transaction and Meilisearch is asynchronous. awaitVisible() and the lag fallback exist because this leaks, and a caller can observe 'recorded but not yet searchable' in another engine. (2) Ranking semantics: BM25 and Meilisearch's bucket-sort cascade (words, typo, proximity, attribute, exactness [E-04.F08]) produce different candidate sets, so thresholds are per engine. (3) Tokenisation: the trigram minimum of 3 chars, porter stemming, and Meili's typo rules differ, so golden-fixture recall must be re-measured. (4) Atomicity: there is no cross-engine transaction, so the projector is at-least-once and idempotent, and an index can be briefly behind. (5) Dialect: the views use SQLite json_extract and partial indexes, which a DuckDB or Postgres swap rewrites. (6) File semantics: WAL location rules, the SQLite 3.51.3 version gate and SQLITE_BUSY exist only for the SQLite record. (7) Read-only enforcement is an engine property (node:sqlite readOnly, a Postgres role), not an interface property. (8) Gate verdicts depend on Docker and git object access, which no store abstraction hides."
+ },
+ "access": {
+  "how": "A zero-dependency Node CLI, `node tools/kb/kb.mjs` (written kb below), using node:sqlite and called through Bash or PowerShell. That is the one path every main session, subagent and workflow agent has with no configuration or approval prompt [E-10.F16]. A skill, .claude/skills/kb/SKILL.md, carries the procedure (lookup -> verify -> show fix -> record), with a description of 1,536 chars or less that is always listed and a body loaded on demand [E-10.F17]. CLAUDE.md gains one pointer line. Nothing is always loaded [M-02 verdict]. Every write needs `--actor <model-id>/<role>/<session-or-agent-id>` or KB_ACTOR; without it the write is refused (C-01: writer identity explicit). The Haiku/Sonnet/Opus split is enforced by command class, not by separate binaries.",
+  "cli_commands": [
+   "kb lookup --tool eas --phase build --cmd 'eas build -p android --profile preview' --stdin < build.log   # MISS | CANDIDATE <id> | LEAD <id>, at most one of each, plus the exact verify command; logs a lookup row",
+   "kb lookup --text 'ops endpoint returns 500 when the token has an accented character' --files backend/app/features/ops/deps.py",
+   "kb lookup --prescription 'gate the lock on the failure path so a correct PIN clears it' --doc docs/HANDOFF-2026-07-28-open-work.md#A2",
+   "kb show <id> --section symptoms|diagnosis|ruled-out|conditions|links [--max-chars 8000]",
+   "kb show <id> --section fix   # exit 3 unless an applies verdict for this entry at the current HEAD is in the log",
+   "kb verify <id> [--at HEAD|<sha>] [--change patch.diff]   # applies | not_applies | inconclusive + artifact path; appends the mechanical event",
+   "kb claim '<signature>'  /  kb release '<signature>' --seq <n>",
+   "kb record --draft entry.json [--claim <seq>]   # write gate: scrub, schema, mainline SHAs, canonicalise, near-dup, negative-corpus check, control pair -> not_validated | unverified_seed",
+   "kb confirm <id>   # reviewer only: Opus actor, not the author; re-runs the control pair -> validated | known_error_open",
+   "kb propose handle <id> --from-lookup <lookup-id>  /  kb propose not-when <id> --from-lookup <lookup-id>",
+   "kb accept <proposal-event-id>   # reviewer only",
+   "kb revise <id> --draft rev.json  /  kb supersede <old> --by <new>  /  kb withdraw <id> --reason '...'   # reviewer only",
+   "kb validity --since <sha> [--entry <id>]",
+   "kb stats precision|outcomes|stale|misses|cost   # at most 50 rows",
+   "kb eval --probes probes.jsonl [--engine fts5|meili] [--replay-misses]",
+   "kb rebuild [--projection all|search|exact] [--from-journal <dir>]",
+   "kb backup [--to <path>]  /  kb export-journal  /  kb sync   # sync only from stage 1",
+   "kb doctor   # SQLite version gate, store path not synced/networked, projection lag, CLI vs min_cli_version, telemetry flags of any adopted engine"
+  ],
+  "mcp": "None in v1. Optional later: a stdio server in the same codebase exposing ONLY kb_lookup and kb_show. It opens the DB with node:sqlite `readOnly: true`, so read-only is enforced by the engine (verified today), because the archived reference Postgres MCP's read-only mode was bypassable in the wrapper [E-03.F14; E-10.F2]. verify, record and every reviewer command stay CLI-only. A .mcp.json server needs an approval prompt in interactive sessions; subagents inherit MCP tools; tool search defers schemas [E-10.F16,F17]. If KS8 lands, Meilisearch's experimental /mcp is never exposed, because it would hand agents raw hits that skip abstention, the gate and the fix-withholding rule [E-04.F06].",
+  "output_bounding": "lookup output is 4,000 chars or less: a lead and a candidate of at most 1,500 chars each, plus the gate command. show is 8,000 chars or less per section unless --max-chars says otherwise. stats is 50 rows or less. --json emits fixed fields. No agent-facing command dumps the corpus; export-journal writes files and prints counts. These sit well under the Bash 30k-char read-back and the MCP 10k-token warning and 25k cap [E-10.F18]. Every returned string passes the return-path scrubber [X-06].",
+  "read_write_separation": "Three classes. READ (lookup's query part, show, stats, validity --dry-run, doctor) opens the DB readOnly, enforced by the engine; lookup then writes its own log row through a separate short write connection. MECHANICAL APPEND (lookup log, verify results, claim and release, propose handle and not-when, record as not_validated): any tier with --actor, events only, never header content (KS-R3). CURATED (confirm, accept, revise, supersede, withdraw, approving a scripted check): Opus reviewer only, and the actor session must differ from the entry's author. The fold also rejects curated events that break this, so a bypassed CLI check still cannot change what lookups return. The limit: identity is self-reported, so this is policy plus an audit trail, not cryptography."
+ },
+ "workflow": {
+  "write_when": "Write-through at solving time, never write-back [T-01.F17]. An entry is drafted before the phase closes, and only if the phase fixed a defect or trap AND at least one of these holds: the work needed a tier escalation; two or more approaches failed; it was a build, deploy or migration trap; or a prescription in a prose source was refuted (do_not_apply). The draft is built from what already exists. The ruled-out approaches come from the phase's 'Decisions / ruled out / owner corrections' journal in the PR body. Fix commits are the squash SHA on main. The check is the reviewer's fail-on-base/pass-on-head test or a probe. Trivial fixes are not recorded; swamping is not the threat at this scale, but noise is [T-05.F6,F7]. Retain on failure too: a refuted reuse is recorded on the entry [T-05.F1].",
+  "who_confirms": "The phase's Opus reviewer, refuting by default and never the author [X-02; ship plan §0 Routing]. The reviewer re-runs the control pair with `kb verify --at <fails_at>` and `--at <passes_at>` (or the stored mutant), then runs `kb confirm`. An entry without a runnable control pair stays unverified_seed and is never a lead. A second independent confirmation, from a different session that got applies on a fresh lookup, can activate a proposed handle or discriminator (KS-R3) but never validates a new entry.",
+  "read_when": "Step zero. (1) Before any tier escalation (Haiku to Sonnet, Sonnet to Opus, or an Opus session starting a from-scratch diagnosis). (2) Before diagnosing a failed build, deploy, migration or test whose cause is not clear after one attempt. (3) Before applying a fix that a prose source prescribes (HANDOFF, G2 register, follow-ups), with `kb lookup --prescription`. (4) When `kb validity` lists a suspect entry in a phase's area. Pull-only: no hook fires lookups automatically in v1. The AGENTS.md finding (>20% cost, no general gain) and the owner's own no-gain record argue against anything always-on [X-05.F12,F21; M-02.32]. A PostToolUseFailure hook stays an owner option after KS6 [M-02.04].",
+  "plan_hook_text": "Add to §0, as a new bullet after the 'Resume' bullet: '**Knowledge store (tooling track; never a gate).** Step zero before any tier escalation, and before diagnosing a failed build, deploy, migration or test whose cause is not clear after one attempt: run `node tools/kb/kb.mjs lookup` with the raw error text, the tool and the phase, and put the lookup id in this phase's journal. A `LEAD` or `CANDIDATE` is acted on only after `kb verify <id>` prints `applies` at the current HEAD; `MISS`, `not_applies` and `inconclusive` all mean: carry on as if the store did not exist. Before applying a fix that a prose document prescribes, run `kb lookup --prescription` on its wording; a `do_not_apply` entry that verifies stops the change until the phase's Opus reviewer rules.' Add to the 'Routing' bullet, after the reviewer sentences: 'When a phase fixes a defect or trap that needed a tier escalation, two or more failed approaches, or the refutation of a prescribed fix, the solving agent records it with `kb record --draft` before the phase closes, copying the ruled-out approaches from the phase journal; the phase's Opus reviewer, never the author, runs its control pair and `kb confirm`. Haiku and Sonnet append only mechanical events (lookups, verify results, proposed handles). At phase close the session runs `kb validity --since <Plan sha>` and names any entry that became suspect or stale in the closing message. An unavailable store or an unverified entry never blocks a phase's Done-when.' Proposed only. It lands as a plan PR in KS4, after the gate exists, with the owner's approval.",
+  "phase_cost": "Standing context: the skill's description line (1,536 chars or less) and one CLAUDE.md pointer line; nothing else is always loaded. Per lookup: 4,000 chars or less of output (about 1k tokens, inferred) and under 1 s for the query; 0 to 3 lookups per phase. Per verify: probes under 2 s natively; Jest test_id about 1-3 min; backend test_id with throwaway Postgres about 2-5 min, Docker running (estimates, measured in KS4). Per recorded entry: about 15-30 min of the solving session, drafting from the PR journal, plus about 10 min of the Opus reviewer (inferred); expected 0 to 1 per phase. Phase close: a `kb validity` sweep under 1 min, plus re-verifies of suspects only. Over the 40 ship phases that is roughly 0-120 lookups and 10-30 entries. All figures are owner parameters until KS6 measures them (KS-R10). The track runs in sessions parallel to the ship program and never on P0a-P4c's critical path. KS4 never runs while a ship backend phase holds the Docker gates.",
+  "scrubbing": "Twice, both local [X-06]: at write (`kb record`, on every free-text field and every handle's raw text) and at every return (lookup and show output). Order: (1) exact-value redaction of the live secret values, read at runtime by NAME from the process env and the repo's .env files; values are never stored. (2) Built-in patterns: postgresql(+asyncpg) URLs with credentials, Authorization and Bearer headers, three-part JWTs, Railway/Supabase/R2/Sentry/Meta token shapes, X-Ops-Proxy-Token values, Pakistani phone numbers (+92 and 03xx forms) and the 5-7-1-digit CNIC form, all replaced by typed placeholders such as <secret:jwt> and <pii:phone>. (3) Optional second pass (owner install decision): secretlint as a library, then gitleaks on stdin, fail closed. (4) A structural rule: raw production-data output (SQL result rows, customer names or addresses, message bodies, drain dumps) is never stored, only templates with typed placeholders, because names and addresses cannot be detected locally. Text tripping a credential-shaped pattern the scrubber cannot classify is REFUSED, not stored redacted. Provider egress cannot be scrubbed away: whatever kb prints enters model context and reaches Anthropic (retention depends on account type; ZDR is Enterprise-only). The return-path scrub is the last line of defence, and the owner rules the scope [X-06.F01-F07; E-10.F31]."
+ },
+ "migration": {
+  "seed_sources": "R-01a (121 rows): CLAUDE.md (4 traps, 16 invariants, 9 solved, 1 open); HANDOFF-2026-07-28 §2/§4/§5.5/§6 (13 traps, 4 invariants, 10 solved, 36 open); lifecycle-audit-followups (11 open, 1 trap). R-01b (149 rows): the G2 §2 register (74 open, 1 solved, 7 negatives); HR §3/§4 (6 open, 4 invariants, 3 traps); W2 notes (52 ruled-out statements; their file:line citations are tied to expo-location 18.0.10 and expo-task-manager 12.0.6, which become footprint dependencies). R-02: the eight worked examples. Open defects are NOT seeded: they are the register's and the plan's state, so the store links to them (KS-R7). The one exception is an open defect whose naive fix is itself the trap (ex3), seeded as known_error_open. Invariants stay in CLAUDE.md as rules; their 'paid for' stories become invariant_rationale entries only where a check exists. Estimate after dedup (CLAUDE.md and HANDOFF overlap): about 25-35 seedable entries plus about 50 negative_result rows attached to them (inferred).",
+  "how": "Per entry through the write gate; never a bulk import of prose (KS-R9). One KS5 session per source. Haiku extracts candidate rows with file:line. Sonnet drafts each entry JSON with doc_pointers to the source anchor (not copied prose), mainline SHAs (the gate refuses PR-branch SHAs and suggests the squash), and a proposed check with a control pair. `kb record` runs scrub, schema, canonicalisation, near-dup and the control pair. With a passing pair the entry is not_validated until an Opus `kb confirm`; without one it is unverified_seed and never a lead. Every contradiction found becomes a correction to the prose source in one docs PR per session, not a second truth in the store. Corrections already known from R-01a: HANDOFF A2 prescribes the fix ex6 refutes (annotate it with the entry id); 0045 is 'a free slot' in the follow-ups but merged in HANDOFF; C1/C2 'do not ship' vs the recorded merge; HANDOFF §4.4 lists as open what CLAUDE.md says is fixed.",
+  "claude_md_effect": "CLAUDE.md is 390 lines today (checked), past the ~200 lines where adherence falls [M-02.01]. It keeps every imperative RULE, because the store is pull-only and an agent that never looks up must still see the rule. It loses the narratives once (and only once) the matching entry is validated: the 'Build & deploy traps' stories (eas.json empty string, the Sentry plugin, expo export not compiling, deploy from backend/); the 'Before this...' and measured-incident paragraphs (36 messages, the 4-digit PIN arithmetic, the bill-wipe history, the arrival-wizard render race); and the 'tried and refuted' clauses. Each becomes a one-line rule ending in `(kb:<id>)`. One pointer line is added: 'Hard defect or build trap: `node tools/kb/kb.mjs lookup` before escalating (skill: kb).' Inferred shrink: about 60-90 lines, done in the KS6 PR. The KNOWN DEFECT outbox race stays as a rule, with its evidence moved into ex5's ruled-out list.",
+  "first_eight_entries_fit": "ex1 (non-ASCII compare_digest 500): HOLDS. Two defect entries share root_cause 'constant-time compare is not total over its inputs' (Python TypeError; the Node timingSafeEqual RangeError sibling), linked sibling_of. Handles: error_template, http_signature (ops and webhook routes), symbols. Five negative results (typeof-null guard wrong_premise; String.length guard incomplete; scope['route'].path wrong_premise; OOM severity wrong_premise; unit-test-as-proof false_proof). fix_commits 2fe77f5 (9b98c88 is off mainline, checked). Check: structural_probe, a non-comment `hmac.compare_digest(` in ops/deps.py and customer_messaging/{router,service}.py, with the gate functions as the anchor. Historical pair 2fe77f5^ = 3 matches (applies) vs 2fe77f5 = 0, RUN TODAY. Deeper test_id: backend/tests/test_security.py::test_non_ascii_candidate_returns_false_and_does_not_raise. ex2 (0045 duplicate revision and rollback crash-loop): HOLDS as two trap entries. (a) Duplicate revision ids: library_probe alembic_duplicate_revisions; synthetic pair (a fixture with two files sharing a revision, since the hazard never reached main) vs HEAD = 0 duplicates, RUN TODAY. (b) Rollback crash-loop: needs a scratch Postgres and two code states, so it is a scripted check awaiting Opus approval; unverified_seed until then. Five negatives, one executed (targeting head, 0045 or 0044 raises the same CommandError on alembic 1.18.5, a dependency footprint item). ADR-0001 is a doc_pointer. ex3 (payment key per attempt, OPEN): HOLDS as known_error_open, with no fix and a doc_pointer to ship phase P12a (not restated). Its value is the worse_side_effect negative (useState in an always-mounted PaymentModal swallows a real second payment). Check: structural_probe, `crypto.randomUUID()` inside the `logPayment = useCallback(` block of AppContext.jsx (anchor: that declaration); it gives applies at HEAD (read today, lines 312-327). Synthetic pair until P12a merges, then re-anchored historical, with P12a's Vitest test added as a test_id. ex4 (unseeded dispatcher cursor): HOLDS as a resolved defect. Check: structural_probe, absence polarity: no non-comment `INSERT INTO dispatch_cursor` in alembic/versions and no `max_event_age` in backend/app means present; anchor `DispatchCursor(`. Historical pair da988e2^ (0 and 0) vs da988e2 (1 and 5), RUN TODAY (c731e66 is off mainline). Deeper test_id: test_dispatch_integration.py in Docker with throwaway Postgres. Five negatives. ex5 (completion form blank against a real bill): HOLDS as one entry with three symptom_text variants and five negatives. The 'last-write-wins' negative points to the CLAUDE.md known defect. Check: test_id `npx jest completionPrefill.test.ts -t 'BLOCKS as unknown when the fetch failed and there is no cache at all'` plus the wizardState tests, verdict from jest --json. Control is SYNTHETIC (a mutant making resolvePrefill return 'new' on fetch failure must fail by assertion), because the test file is absent before da988e2 and a transplant fails at import, which is inconclusive by rule. A `catch { return; }` text probe was tried today and inverted (0 at 37821f5, 1 at 8dafcec via a comment), so the gate would refuse it. Runnable in KS4. ex6 (login lock must keep blocking a correct PIN): HOLDS as do_not_apply. Handles: prescription_text and doc_pointer HANDOFF A2, http_signature 'POST /api/auth/login 429 (correct PIN)'. Check: test_id, protective_must_pass: identity/tests/test_service.py::test_failed_logins_bump_counter_then_lock and backend/tests/test_identity_integration.py::test_five_failures_lock_the_account_even_for_the_right_pin (present at 1c546a3^, checked; needs Postgres), run on HEAD plus the agent's --change. Control: HEAD passes; a stored mutant implementing the prescribed failure-path gate fails. fix_commits 1c546a3 (f3dfa6f off mainline). Runnable in KS4. ex7 (eas.json empty env value): HOLDS as a trap. Handles: tool_phase 'eas build | profile validation', a partial error_template (the full CLI text is not recorded), config_key technician-app/eas.json#build.*.env.*. Check: library_probe json_empty_string_values. Historical pair 140428c = FAIL (preview and production) vs 79a8dd4 = OK, HEAD OK, RUN TODAY. ex8 (Sentry Expo plugin breaks Gradle, hit twice): HOLDS as one trap entry with two incident links (extend, never sibling). The second, independent cause of incident 2 (Dependabot bumping Expo native modules) is its own trap entry, linked co_occurred to the same incident. Handles: tool_phase 'eas build | Run gradlew', EAS_BUILD_UNKNOWN_GRADLE_ERROR, config_key technician-app/app.json#expo.plugins. Check: library_probe json_path_matches(/sentry/i). Historical pair 60c026d = FAIL vs 6928828 = OK (a6f9048 is off mainline, so not used), RUN TODAY. Dependabot entry: line probe for `dependency-name: expo-*` in .github/dependabot.yml, absence polarity, anchor `ignore:`. Pair 6928828^ = 0 vs 6928828 = 1, RUN TODAY. Totals: probes runnable now (no Docker) for ex1, ex2a, ex3, ex4, ex7, ex8 (with a historical or synthetic pair each); test_id in Docker for ex5, ex6 and the deeper ex1/ex4 checks; ex2b waits on a scripted-check approval."
+ },
+ "backup_story": "Stage 0: `kb backup` runs at every phase close and on demand. It takes `VACUUM INTO <KB_HOME>/backups/kb-<UTC>.sqlite` (never a raw copy of a live WAL file [E-01.F11]), runs `PRAGMA integrity_check` on the copy, keeps the last 10, and from P3b on copies the newest to the owner's VPS over SSH, one-way (tested by X-01 under 4 writers: integrity ok, restore then write ok). `kb export-journal` also writes every event as an immutable file into the store repo in KB_HOME, committed locally. That gives two independent recovery paths: the snapshot (fast restore) and the journal (truth, rebuilt by `kb rebuild --from-journal`). Restore: stop writers, replace the file, run `kb doctor` (version gate, integrity, projection hashes). KS1 proves this once: a restore that then accepts a write. Stage 1: the journal is authoritative and pushed to a bare repo on the VPS, never GitHub. Each host's SQLite can be rebuilt from it. Derived engines (Meilisearch, a DuckDB snapshot) are never backed up; they are rebuilt from the record. Nothing lives in the FixFlow code repo, and none of it touches the production backup chain (docs/RUNBOOK-BACKUPS.md is not involved).",
+ "implementation_phases": [
+  {
+   "id": "KS0",
+   "title": "Owner rulings and the free recurrence audit (owner + one Sonnet session)",
+   "entry": "Any time after P0a; never on the ship plan's critical path.",
+   "scope": "(1) The owner answers the owner decisions below (KS-R7 acknowledgement, store location, provider-egress scope, installs, CLI location) in a decision table committed under docs/program/evidence/knowledge-store/. (2) X-05 Step 0: a Sonnet session classifies each of the 48 fix-prefixed commits as a recurrence (same root cause or same trap) or not, with dates and mainline SHAs; unknown is recorded as unknown. (3) Fable reads the table against the kill criterion.",
+   "done_when": "Decision table committed; every fix commit classified; Fable's ruling recorded: go (KS1-KS6), go-minimal (KS1-KS3 only, probes and lookup, no Docker gate), or stop.",
+   "workflow": "Fable briefs and rules; Sonnet audits; Opus spot-checks five rows, refuting by default.",
+   "size": "Small",
+   "resume": "The audit table's first unclassified commit."
+  },
+  {
+   "id": "KS1",
+   "title": "Record engine, write-gate skeleton, backup (tools/kb; one PR; no search)",
+   "entry": "KS0 ruled go or go-minimal; touches no ship-phase file.",
+   "scope": "tools/kb/kb.mjs and lib/, zero dependencies (node:sqlite): the DDL with meta.schema_version and min_cli_version; KB_HOME resolution (default %LOCALAPPDATA%/fixflow-kb; refuse paths it can detect as network or synced); SQLite >= 3.51.3 gate; WAL, busy_timeout, BEGIN IMMEDIATE; canonical JSON and sha256 event ids; fold and CAS; mainline-SHA normalisation; scrubber v1 (exact value plus patterns, fail closed); required --actor; commands record, show (fix withheld), confirm, doctor, backup, export-journal; tests with the built-in node:test.",
+   "done_when": "`node --test tools/kb` green; a 4-process test appends 1,200 events with no SQLITE_BUSY, and replaying them inserts 0; a draft citing 9b98c88 is refused with 2fe77f5 suggested; a curated event from a non-Opus actor is rejected by the fold; a VACUUM INTO backup restores and accepts a write; Opus review verdict names the PR head SHA.",
+   "workflow": "Sonnet implements from this test list; Opus reviews refute-by-default (idempotency, CAS, scrub, readOnly open, fold policy).",
+   "size": "Medium",
+   "resume": "Draft PR checklist (`gh pr view <branch>`), first unticked box; `Plan @ <sha>` first line."
+  },
+  {
+   "id": "KS2",
+   "title": "Probe gate runner and the first six entries",
+   "entry": "KS1 merged.",
+   "scope": "GateRunner for structural_probe (`git grep -E` on commit objects, scoped paths, non-comment pattern, mandatory anchor, git hardening flags) and library_probe (json_empty_string_values, json_path_matches, alembic_duplicate_revisions, line_present); runner-owned JSON verdict artifacts with sha256; tri-state; control pair (historical or synthetic) at record and at confirm; anchor missing -> inconclusive. Record ex1, ex2a, ex3, ex4, ex7, ex8 and ex8-dependabot through the write gate; Opus confirms each.",
+   "done_when": "Each entry's pair gives applies at fails_at and not_applies at passes_at in the runner (ex1 2fe77f5^/2fe77f5; ex4 da988e2^/da988e2; ex7 140428c/79a8dd4; ex8 60c026d/6928828; dependabot 6928828^/6928828; ex2a and ex3 synthetic). `kb verify` at HEAD: ex3 applies, the others not_applies. The `catch { return; }` probe for ex5 and the unscoped compare_digest grep are refused as non-discriminating.",
+   "workflow": "Sonnet implements; Opus re-runs every pair independently and tries to make one vacuous or inverted.",
+   "size": "Medium",
+   "resume": "Draft PR checklist."
+  },
+  {
+   "id": "KS3",
+   "title": "Canonicaliser, projections and lookup with abstention",
+   "entry": "KS2 merged.",
+   "scope": "Recipe v1 mask pipeline and tool adapters with golden fixtures (the eight examples' raw symptoms); projection_state; exact_handle, search_doc, search_fts, search_tri, search_vocab; OOV-aware IDF coverage and margin; thresholds in meta; lookup log; `kb lookup`, `kb rebuild`, `kb eval`; output bounds and return scrub. Probe set: at least 40 hard-negative and stale probes (ex7/ex8, InPars-style paraphrases written by Sonnet [T-03.F22], symptoms of unrelated fix commits) plus leave-one-handle-out.",
+   "done_when": "Golden fixtures green; `kb rebuild` from events reproduces identical projection content hashes; eval shows 0 false leads on 40 or more probes (bound recorded as 7.5% or less, not as zero); recall per handle type recorded (NULL where unmeasured); thresholds written to meta with the eval id.",
+   "workflow": "Sonnet implements and writes probes; Opus judges the eval and attacks the thresholds with new hard negatives.",
+   "size": "Large",
+   "resume": "Draft PR checklist."
+  },
+  {
+   "id": "KS4",
+   "title": "Docker test_id gate, ex5/ex6, the skill and the plan hook",
+   "entry": "KS3 merged; the owner has started Docker Desktop (`docker info`); no ship backend phase with Docker gates in flight (container names kb-gate-*); KS0 ruled go (not go-minimal).",
+   "scope": "test_id runner: git archive to temp; dependencies prepared by lockfile hash in a separate trusted step; --network none, or an --internal net with a throwaway postgres:16-alpine; read-only source, tmpfs, env allow-list, HOME redirected, caps; verdict from junit XML or jest --json; uncollected, skipped or errored -> inconclusive; rerun only on disagreement, unanimity for applies; --change for do_not_apply; transplant mode. Record ex5 (synthetic mutant control) and ex6 (protective tests plus the mutant of the prescribed fix); add the deeper ex1 and ex4 test_id checks. Write .claude/skills/kb/SKILL.md. Open a plan PR with the §0 hook sentences for the owner.",
+   "done_when": "ex5 and ex6 control pairs pass with junit/json artifacts; a non-existent test id gives inconclusive; Docker stopped gives inconclusive; a check trying to reach the network or localhost:5432 fails inside the container; the plan-hook PR is open.",
+   "workflow": "Opus implements (it executes stored checks); a second Opus verifies isolation adversarially.",
+   "size": "Large",
+   "resume": "Draft PR checklist."
+  },
+  {
+   "id": "KS5",
+   "title": "(×n) Seed from the prose sources, one source per session",
+   "entry": "KS4 merged (or KS3 for go-minimal, probe checks only).",
+   "scope": "One source per session: CLAUDE.md traps and solved items; HANDOFF §2/§4/§5.5/§6 solved items and traps; lifecycle follow-ups trap; G2 negatives and HR traps; W2 ruled-out statements attached to existing entries. Haiku extracts rows; Sonnet drafts entries with doc_pointers and checks; `kb record`; Opus confirms. One docs PR per session corrects the contradictions found (HANDOFF A2, the 0045 free-slot line, C1/C2, §4.4).",
+   "done_when": "That source's table is full (row -> entry id, status, check kind, control kind or 'none: unverified_seed'); the corrections PR is open.",
+   "workflow": "Haiku extracts; Sonnet drafts; Opus confirms and refutes.",
+   "size": "Medium",
+   "resume": "The source table's first empty row."
+  },
+  {
+   "id": "KS6",
+   "title": "Pilot readout, CLAUDE.md shrink, engine-trigger review",
+   "entry": "20 logged encounters or 8 weeks after KS4, whichever comes first (X-05).",
+   "scope": "Blind replay with raw original symptoms (a grep-over-prose arm vs the kb arm; 40 or more negative and stale probes); lookup-log readout (leads shown, applies, refutes, missed_existing by cause class, reuse by tier, tokens and wall time with NULL for unknown); keep/kill ruling against the KS0 criterion; review of the Meilisearch, DuckDB and embeddings triggers from `kb eval --replay-misses` and view timings; CLAUDE.md PR replacing validated narratives with one-line rules and kb ids.",
+   "done_when": "Readout committed under docs/program/evidence/knowledge-store/; owner ruling recorded (keep, kill, or fire a trigger); CLAUDE.md PR merged or explicitly declined.",
+   "workflow": "Sonnet runs the replay; Opus judges; Fable rules with the owner.",
+   "size": "Medium",
+   "resume": "Readout checklist, first unticked item."
+  },
+  {
+   "id": "KS7",
+   "title": "(conditional) Journal authoritative and a second host",
+   "entry": "The owner says a second host will write (X-01 trigger); that host runs Node with SQLite >= 3.51.3 and is reachable over SSH.",
+   "scope": "Store repo with events/<2>/<sha256>.json; `kb sync` (pull adds, ingest, refold, push) to a bare repo on the owner's host; deterministic fold over the event set; conflict status for concurrent revisions; `kb rebuild --from-journal` on the Linux host; doctor checks on both hosts.",
+   "done_when": "Events written on both hosts, synced both ways, give identical projection content hashes; a conflicting revision is flagged, not merged; an event committed and then deleted from the working copy is recovered from the bare repo.",
+   "workflow": "Opus implements (consistency); a second Opus verifies.",
+   "size": "Medium",
+   "resume": "Draft PR checklist."
+  },
+  {
+   "id": "KS8",
+   "title": "(conditional) Meilisearch search tier",
+   "entry": "The KS6 trigger fired (typo/morphology misses at or above the owner's threshold, recoverable in a scratch replay); the owner's install decision; an always-on host to run it.",
+   "scope": "SearchIndex adapter; projector using lastAppliedSeq and awaitVisible; FTS5 fallback on lag; launch definition with MEILI_NO_ANALYTICS=true and --no-analytics, community asset pinned, embedders restricted to userProvided; an egress-blocked smoke test; threshold re-calibration on the KS3 probe set (coverage stays record-side).",
+   "done_when": "The replay recovers at least half of the typo-attributable misses with 0 new false leads on the probe set; the smoke test shows no outbound connection; `kb doctor` asserts the telemetry flags.",
+   "workflow": "Sonnet implements; Opus verifies egress and calibration.",
+   "size": "Medium",
+   "resume": "Draft PR checklist."
+  }
+ ],
+ "owner_decisions": [
+  {
+   "decision": "Acknowledge the store as a new state owner (diagnoses, traps and negative results with their validity), which links to and never restates the plan, PR bodies, git and the register (KS-R7; HR ruled one owner per kind of state)",
+   "default": "Acknowledge, with doc_pointers and link-only fields enforced by the schema",
+   "blocks": "KS1"
+  },
+  {
+   "decision": "Where the database lives",
+   "default": "%LOCALAPPDATA%/fixflow-kb (never synced by OneDrive; outside every worktree and the repo); KB_HOME override; ~/.local/share/fixflow-kb on Linux",
+   "blocks": "KS1"
+  },
+  {
+   "decision": "Provider-egress scope: what kb may print into model context, which reaches Anthropic (X-06)",
+   "default": "Scrubbed templates, repo code paths and symbols only; never raw production data; scrub on write and on every return",
+   "blocks": "KS1"
+  },
+  {
+   "decision": "Where the CLI code lives",
+   "default": "tools/kb/ in the FixFlow repo, reviewed by PR, with a min_cli_version guard against stale worktrees (alternative: the store repo in KB_HOME)",
+   "blocks": "KS1"
+  },
+  {
+   "decision": "Go / go-minimal / stop after the free recurrence audit, and the pilot kill criterion",
+   "default": "Go-minimal if the audit finds fewer than 3 recurrences; kill at the KS6 checkpoint if 0 lookups produced an applies-verified reuse and 0 do_not_apply stops; FP evidence of 0 in 40 or more probes required to keep. All are owner parameters (KS-R10; X-05).",
+   "blocks": "KS1 (go/go-minimal), KS6 (keep/kill)"
+  },
+  {
+   "decision": "Docker images for the test_id gate (postgres:16-alpine is already used by the project; a Node image) and the expectation that the owner starts Docker before such a verify",
+   "default": "Yes, using images the project already uses; verifies are inconclusive while Docker is off",
+   "blocks": "KS4"
+  },
+  {
+   "decision": "Adopt the skill file .claude/skills/kb/SKILL.md and the §0 hook sentences in the ship plan",
+   "default": "Adopt both, but only after KS4 (no hook before the gate exists)",
+   "blocks": "KS4 Done-when"
+  },
+  {
+   "decision": "Install secretlint and gitleaks as the scrubber's second pass",
+   "default": "Defer; v1 uses exact-value redaction plus patterns, refuses unclassifiable credential-shaped text, and never stores raw production output",
+   "blocks": "Nothing (strengthens KS5)"
+  },
+  {
+   "decision": "Coverage dev-dependencies for the causal footprint tier (a backend coverage tool, root Vitest coverage) and ast-grep for structural probes",
+   "default": "No; v1 footprint = declared + cognitive + env probe + git blob OIDs, and probes = git grep with comment exclusion and anchors",
+   "blocks": "Nothing (limits footprint precision)"
+  },
+  {
+   "decision": "Numeric triggers for extra engines: Meilisearch (typo/morphology misses, recoverable in replay, plus an always-on host), DuckDB (a view over 1 s or external joins), embeddings (E-07's inferred ~5% missed-existing over 50 lookups or over ~1,000 entries)",
+   "default": "All OFF; numbers recorded as owner parameters and evaluated only in KS6",
+   "blocks": "KS8"
+  },
+  {
+   "decision": "Second host and journal authority",
+   "default": "Stage 0: one host, plus a one-way VACUUM INTO backup to the VPS from P3b; KS7 only when a second host will write",
+   "blocks": "KS7"
+  },
+  {
+   "decision": "Add `node --test tools/kb` to CI",
+   "default": "No (keep the ship program's CI untouched); run it in the KS PRs locally",
+   "blocks": "Nothing"
+  }
+ ],
+ "limits": [
+  "The shape's own engines are not justified at this scale. The 'hybrid' is roles and interfaces in one file; Meilisearch and DuckDB are triggered slots, not components, and may never be built.",
+  "FTS5 has no edit-distance typo tolerance. A typo query ('easbuild faild gradel') returned nothing in my probe. That is a safe miss, but recall is lost until KS8's trigger fires, if ever.",
+  "Vocabulary mismatch ('android build broke') is only partly covered by write-time handle expansion. Embeddings are deferred, so such a query is a miss.",
+  "An entry without a runnable discriminating check (ex2b's rollback crash-loop, and many prose seeds) can never be a lead. The store's useful size is bounded by how many problems admit a cheap check.",
+  "Text probes are brittle (measured today: comment matches and multi-line forms inverted two naive probes). The control pair and anchors catch this at write time, but probes can still go vacuous after refactors outside their scope; only footprint invalidation and anchors guard that.",
+  "Untracked dependencies cannot be detected: remote resolvers (the EAS image, Railpack), production data state, external APIs, callers outside the footprint, cherry-picked fixes (ancestry predicates are wrong on release/drain).",
+  "Actor identity and model tier are self-reported. The Opus-only rule for curated events is policy plus an audit trail, not cryptography.",
+  "Provider egress is unavoidable. Whatever kb prints reaches the model provider; the return-path scrub reduces this but cannot remove it, and names and addresses cannot be detected locally.",
+  "Small evaluation sets: 0 false leads in 40 probes bounds the false-lead rate at 7.5%, not zero; differences between configurations must be large to be believable [T-03.F19,F20].",
+  "Docker AutoStart is off, so test_id verifies are inconclusive until the owner starts Docker, and they cannot run while a ship backend phase holds the Docker gates.",
+  "node:sqlite is a release candidate (Stability 1.2). A Node upgrade could change its API; the fallback driver needs an npm install.",
+  "Two hosts converge by set-union of events and a deterministic fold. Concurrent revisions are flagged for a human or Opus decision, never auto-merged.",
+  "There is no measured base rate of recurrence or of cost saved (X-05); ex8 is the only local repeat in the examples. The store may simply not pay for itself, which is why KS0 and KS6 have kill points.",
+  "CLI version skew across worktrees is handled by refusal (read-only with an older CLI), not by compatibility."
+ ],
+ "load_bearing_claims": [
+  {
+   "id": "LB1",
+   "claim": "At up to ~1,000 entries, the exact-handle tier plus FTS5 in the record file returns every entry a dedicated search engine would put in its top 2, except misses caused by typos or morphology, so a separate search engine is not justified until those misses are measured.",
+   "falsifiable_by": "`kb eval --replay-misses` over 50 or more logged lookups finds 5% or more missed_existing lookups that are NOT typo/morphology, where a scratch Meilisearch index ranks the true entry top-2 while FTS5 abstains, with 0 new false leads.",
+   "rests_on": "E-04.F22,F25 (what search servers add); T-03.F09-F11 (BM25 robustness on identifiers); E-07.F01,F03. My local FTS5 run over the eight examples (paraphrased queries found the right entry first; typo query returned nothing) is NOT in the register."
+  },
+  {
+   "id": "LB2",
+   "claim": "The control pair makes a vacuous gate impossible to validate: any check that gives the same or an inverted verdict at fails_at and passes_at is refused at write time.",
+   "falsifiable_by": "A validated entry whose check returns applies at a mainline SHA where the root cause is verifiably absent, or not_applies where it is present, in KS3/KS6 stale probes.",
+   "rests_on": "X-02 (control pair, runner-owned verdict); M-03.F01,F02,F07 (Getafix, SapFix). My runs today: ex1 3->0, ex4 0->1 and 0->5, ex7 FAIL->OK, ex8 FAIL->OK, Dependabot 0->1, plus two naive probes that inverted (unscoped compare_digest 4->9, `catch { return; }` 0->1). These are not in the register."
+  },
+  {
+   "id": "LB3",
+   "claim": "Every projection (exact_handle, search_doc and FTS5, validity, analytics views) is a deterministic function of the event log, so `kb rebuild` from events or from the journal reproduces it exactly, and a recipe change never needs a data migration.",
+   "falsifiable_by": "A projection content-hash mismatch after `kb rebuild` on the same event set, or between two hosts after `kb sync` (KS3, KS7).",
+   "rests_on": "T-02.F01 (event sourcing); E-09.F02,F05,F13 (index-is-a-cache); X-01.F20; T-04.F12,F13 (re-derive on recipe change)."
+  },
+  {
+   "id": "LB4",
+   "claim": "One SQLite file in WAL mode with BEGIN IMMEDIATE and busy_timeout serves all parallel sessions, worktrees and subagents with no SQLITE_BUSY failures and no lost or duplicated events.",
+   "falsifiable_by": "The KS1 4-process test, or the production lookup log, shows a SQLITE_BUSY error surfaced to an agent, a missing event after a replay, or a duplicated content-hash id.",
+   "rests_on": "E-01.F10 (4 writers, 1200 inserts, no BUSY); T-06.F1-F6 (and the 3.51.3 version gate); node:sqlite readOnly enforcement verified today (not in the register)."
+  },
+  {
+   "id": "LB5",
+   "claim": "No analytic question the owner asks during the program needs a second engine: every outcome view runs in under 100 ms in the record file.",
+   "falsifiable_by": "Any v_* view or `kb stats` query taking more than 1 s on the real store, or the owner asking for an analysis that SQLite views cannot express.",
+   "rests_on": "E-05.F22,F26 (thresholds reported; scale arithmetic inferred); KS-R6; KS-R10 (thresholds are owner parameters)."
+  },
+  {
+   "id": "LB6",
+   "claim": "Score-free abstention (exact discriminating handle + OOV-aware IDF coverage + margin) keeps false leads at 0 on hard negatives such as the ex7/ex8 pair, while the true entry still reaches LEAD for exact-template queries.",
+   "falsifiable_by": "Any false LEAD among 40 or more hard-negative and stale probes at the calibrated thresholds in KS3, or recall@lead of 0 on the exact-template golden fixtures.",
+   "rests_on": "T-03.F04,F05,F18,F23,F25,F26. My probe showing coverage over in-corpus terms = 1.0 for 'android build broke' on two entries (the reason for OOV weighting) is NOT in the register."
+  },
+  {
+   "id": "LB7",
+   "claim": "Event-driven invalidation via git predicates (blob OIDs, key-path hashes, lockfile versions, ancestry with patch-id fallback) flags as suspect every entry whose check would change verdict because of a tracked dependency, before any agent acts on it.",
+   "falsifiable_by": "A stale probe where the gate's verdict flips between two commits while `kb validity` reports valid, for a cause whose dependency is in the recorded footprint.",
+   "rests_on": "T-01.F01-F03 (verifying traces; untracked dependencies are the stated exception); T-02.F13-F16; X-03 (three captures). The cherry-pick/patch-id point is my inference, not in the register."
+  },
+  {
+   "id": "LB8",
+   "claim": "Withholding the fix text until an applies verdict means a cheap agent cannot copy a near-matching but wrong entry's fix, so cheap-agent reuse produces no reviewer-refuted fix that came from the store.",
+   "falsifiable_by": "In KS6's blind replay or the prospective log, a phase's Opus reviewer refutes a fix that a Haiku or Sonnet agent took from a kb entry.",
+   "rests_on": "M-02.28 (experience-following copies wrong records); T-05.F22,F23; M-02.30 (similarity and LLM judges no better than chance at ranking harmful memories, so the gate must be external and executable)."
+  },
+  {
+   "id": "LB9",
+   "claim": "Hard defects and traps recur often enough in this repository for the store to pay for itself: at least 2 applies-verified reuses or do_not_apply stops occur within 20 encounters or 8 weeks of KS4.",
+   "falsifiable_by": "The KS6 readout shows fewer than 2, or the KS0 audit finds fewer than 3 recurrences among the 48 fix commits.",
+   "rests_on": "X-05 (no measured base rate; pilot design; 369 commits, 48 fix-prefixed, almost no explicit repeats); R-02 ex8 (the one local recurrence, twice in 16 days). This is an owner parameter (KS-R10)."
+  }
+ ],
+ "risks": [
+  "The store is built and never consulted: it is pull-only and the owner wants less to track. Mitigations: the §0 step-zero sentence, the phase-close validity sweep naming suspects, and the kill points at KS0 and KS6. If it is not used, it is deleted, not maintained.",
+  "Engine creep: adding Meilisearch or DuckDB 'because the shape has a slot'. Mitigation: triggers are owner parameters measured only in KS6, and FTS5 remains the fallback forever.",
+  "A false positive through a weak check: a probe that matches comments, or goes vacuous after code moves out of its scope. Mitigations: control pairs at write, anchors, absence-polarity probes requiring an anchor, re-verify on footprint change, and fix text withheld until applies.",
+  "Poisoned or stale prose seeded as truth: HANDOFF A2 prescribes the fix ex6 refutes. Mitigations: per-entry seeding through the gate (KS-R9), unverified_seed never a lead, and contradictions corrected in the source.",
+  "The gate executes repository code at old SHAs (old lockfiles, test side effects such as conftest TRUNCATE). Mitigations: Docker --network none or --internal, a throwaway Postgres, an env allow-list, dependencies prepared separately, fail closed.",
+  "Docker contention with the ship plan's fixed-name containers (Appendix A). Mitigations: kb-gate-* names, and KS4 and test_id verifies never run while a ship backend phase holds the gates.",
+  "Secrets or customer data leak into the store and then into provider context. Mitigations: scrub at write and at return, refuse unclassifiable credential shapes, never store production output; the residual risk is ruled by the owner.",
+  "The store file lands on a synced or network path, or an old sqlite3 binary opens it (WAL-reset corruption before 3.51.3). Mitigations: the LOCALAPPDATA default and `kb doctor` checks on every open.",
+  "Squash-merge SHAs: 6 of 13 SHAs cited in the worked examples are off mainline (checked today). Mitigation: the write gate normalises to mainline, otherwise entries cite commits that vanish.",
+  "State-owner drift (KS-R7): entries start restating plan or register content and become a second truth. Mitigations: doc_pointers only, a link-only schema for plan state, and open defects not seeded.",
+  "node:sqlite API churn on a Node upgrade (release-candidate stability). Mitigation: all access sits behind RecordStore, with better-sqlite3 as an install-gated fallback.",
+  "Over-invalidation churn on hot files (AppContext.jsx, outbox.ts) makes test_id entries expensive to keep valid. Mitigations: symbol- and key-path-level hashes where available, early-cutoff re-stamps, and probe checks preferred over test_id where they discriminate."
+ ]
+}
