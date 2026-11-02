@@ -1,0 +1,656 @@
+{
+ "lane": "X-04",
+ "tool_status": "web_degraded",
+ "summary": "The three CI-failure systems (elastic-recheck, Jenkins Build Failure Analyzer, logreduce) confirm that a known-failure store is \"one machine-matchable signature per entry, tied to a tracked defect, with a coverage metric\". None documents a statistical false-positive control. Precision comes from authoring discipline. elastic-recheck has the best rule: a query that hits more than 10% of successful runs is too broad. It adds an optional second discriminator (test_ids) and retires entries on upstream fix status, with a dry-run cleanup. Jenkins BFA supplies a minimal schema (name, description, categories, regex indications, comment, modification history, lastOccurred) but no lifecycle or false-positive handling beyond a regex tester. logreduce is a novelty detector over baseline-good logs. It is not a known-failure matcher, but its canonicalisation recipe (strip hashes, UUIDs, dates, random prefixes) transfers. Develocity and Buildkite are hosted or commercial, so they are cited for design only. Develocity shows a retry-based discriminating oracle (FLAKY = fail then pass) and a prefix-override-the-model classification rule. KCS v6 supplies the lifecycle (WIP, Not Validated, Validated, Archived), template (Issue, Environment, Resolution, Cause, Metadata), many-to-many typed links, \"reuse is review\", flag-it-or-fix-it, and the metric hierarchy \"reuse accuracy over reuse rate\" (target above 90%). The staffed-org machinery (licensing, coaches, KDEs, audience promotion, self-service success) does not transfer. The volume-driven statistics also do not transfer, because ER's backend needed about 6 TB for 7 days of logs. KCS has no negative-results field, so the \"failed approaches\" field is our addition. The web search budget ran out after two searches, so Develocity's grouping mechanics and ER's published classification rate were not verified.",
+ "facts": [
+  {
+   "id": "F01",
+   "statement": "elastic-recheck stores each known gate-failure signature as one YAML file per tracked bug in a queries/ directory in git, named <launchpad bug number>.yaml. The only required key is `query` (Lucene text run against logstash/ElasticSearch). Optional keys: suppress-graph, suppress-notification, allow-nonvoting, test_ids. Adding a signature goes through code review, and a single-query change may be self-approved by core reviewers.",
+   "source": "https://docs.openstack.org/infra/elastic-recheck/readme.html (page footer dated 2013-12-10; opendev README confirms same keys)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "workflow",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F02",
+   "statement": "elastic-recheck authoring rule: a good query returns no hits on successful jobs, and 'more than 10% success hits means the query isn't specific enough'. It should target the log nearest the root cause (e.g. a service log tag, not the console log). It should avoid wildcards, filter on the `tags` field rather than filename, and only INFO+ messages are indexed. This is the only documented false-positive control and it is applied at authoring time against a negative corpus (successful runs), not at match time.",
+   "source": "https://docs.openstack.org/infra/elastic-recheck/readme.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "canonicalisation",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F03",
+   "statement": "elastic-recheck supports a second discriminator per entry: `test_ids` lists Tempest test IDs and the signature matches only if the log query hits AND one of the listed tests failed in that run (via subunit2sql, only for Tempest/grenade gate jobs). The page describes it as a way to narrow signatures that are too broad.",
+   "source": "https://docs.openstack.org/infra/elastic-recheck/readme.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F04",
+   "statement": "elastic-recheck's coverage metric is the 'Unclassified failed jobs' page (status.openstack.org uncategorized.html): failed voting gate jobs with no matching fingerprint. Classification happens in real time and matches are reported to Gerrit. Each signature's hit history gives trend data (when a bug started, whether fixed, whether worsening). No numeric classification-rate figure was found in the sources read. The status.openstack.org hostname did not resolve (ENOTFOUND) from this machine on 2026-11-02.",
+   "source": "https://docs.openstack.org/infra/elastic-recheck/readme.html ; WebFetch https://status.openstack.org/elastic-recheck/ -> getaddrinfo ENOTFOUND",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F05",
+   "statement": "elastic-recheck retirement is event-driven plus traffic-based. Queries for bugs with status Fixed/Incomplete/Invalid/Won't Fix that no longer hit are deleted. `elastic-recheck-cleanup` removes queries whose bug is Fix Committed/Released, with `--dry-run` recommended first. Manual cleanup looks for entries with no hits in 10 days. A bug still New/Confirmed/Triaged/In Progress with 10+ days of no hits is 'reassessed'. Queries with suppress-graph are kept because they track persistent infrastructure issues. If an Incomplete bug recurs, it is reopened and the query restored. The 'Future Work' list still names 'check whether resolved bugs return' and a nightly job to propose removals as unbuilt.",
+   "source": "https://docs.openstack.org/infra/elastic-recheck/readme.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F06",
+   "statement": "elastic-recheck workflow ties the signature to a durable tracker record: the author links the bug via a 'Related-Bug' commit footer or a bug comment holding the query and a logstash URL. The page says this 'stored link' helps track rare failures that reappear after the logs age out. So provenance survives log retention.",
+   "source": "https://docs.openstack.org/infra/elastic-recheck/readme.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "provenance",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F07",
+   "statement": "elastic-recheck's backend is sized for a very large workload and became a maintenance burden. In the 2022-05-12 OpenStack TC meeting, clarkb said the old system was stable with 7 days of logs on 6 TB of storage, fungi/dpawlik said the logstash/OpenSearch backend had run out of space the previous week, some logs exceed 200 MB, and the stated next challenge was 'hosting and maintaining ER and logstash, including scaling and upgrades'. OpenStack Health, a sibling dashboard, had been stopped and its repo retired. The opendev repo page shows the last visible commit as 2021-05-19 (page itself does not say archived).",
+   "source": "https://meetings.opendev.org/irclogs/%23openstack-tc/%23openstack-tc.2022-05-12.log.html ; https://opendev.org/opendev/elastic-recheck",
+   "source_kind": "primary_docs",
+   "confidence": "reported",
+   "bears_on": [
+    "ops_cost",
+    "limits",
+    "engine"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F08",
+   "statement": "Jenkins Build Failure Analyzer FailureCause fields (from the Java model): id, name, description, comment, lastOccurred (Date; computed from latest failure for that cause, epoch = 'Never'), categories (List<String>), indications (List<Indication>), modifications (List<FailureCauseModification>, newest first, each user+date). A cause name must be unique.",
+   "source": "https://raw.githubusercontent.com/jenkinsci/build-failure-analyzer-plugin/master/src/main/java/com/sonyericsson/jenkins/plugins/bfa/model/FailureCause.java",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F09",
+   "statement": "BFA matching: the default 'Build Log Indication' checks the log one line at a time against a regular expression (Java Pattern, compiled with no flags). The scan returns the first matching indication/line. A build page shows matched causes with a link to the matching log line, or a configurable 'no cause found' message. Aborted, failed and unstable builds are scanned. Description text can embed captured groups with ${I,G} placeholders. Since v1.3.1 a regex can be tested against sample text or a build-log URL. Categories are 'used only for statistics'.",
+   "source": "https://plugins.jenkins.io/build-failure-analyzer/ ; BuildLogIndication.java in jenkinsci/build-failure-analyzer-plugin",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "canonicalisation",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F10",
+   "statement": "BFA storage and stats: the knowledge base starts empty, is edited through 'Failure Cause Management' (requires the UpdateCauses permission), and is stored as local XML or MongoDB (shared across servers, in-memory cached). Statistics are saved only with MongoDB or another store type that supports them. The pages read describe no false-positive handling beyond the regex tester, no retirement or lifecycle, and no reuse or refute counters. That is an absence in the pages read, not a confirmed absence in the code.",
+   "source": "https://plugins.jenkins.io/build-failure-analyzer/",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "engine",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F11",
+   "statement": "BFA licence and status: MIT. Version 3.889.vda_d3b_30435fc, requires Jenkins >= 2.479.3, installed on 2.32% of controllers. The release is listed as '3 months ago' (no exact date). The repo is not archived (889 commits, 130 open issues, 12 PRs). Maintainers are Robert Sandell and Tomas Westling, and past security advisories are listed. It is a Jenkins-only plugin and this project's CI is GitHub Actions, so it is unusable as an engine here.",
+   "source": "https://plugins.jenkins.io/build-failure-analyzer/ ; https://github.com/Jenkinsci/build-failure-analyzer-plugin ; CLAUDE.md (CI row)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F12",
+   "statement": "logreduce canonicalisation (2017 design): known bogus events skipped (e.g. sshd invalid-user scans). Removed tokens include 32/64/128-character hex hashes, UUID4s, date names and random prefixes (tmp, req-, qdhcp-). Every character outside [a-z_/] is discarded. Features are TF-IDF with a word analyzer, one model per file type (audit.log and audit.log.1 share one model). Scoring uses NearestNeighbors (brute, cosine, k=1), and lines with distance > 0.2 are reported as anomalies. Baseline = last 5 successful jobs.",
+   "source": "https://blogs.rdoproject.org/2017/11/anomaly-detection-in-ci-logs/",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "canonicalisation",
+    "retrieval"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F13",
+   "statement": "logreduce is a novelty detector, not a known-failure matcher. It flags lines unlike baseline-good logs. Documented limits: 'doesn't work when debug content is only included in failed logs', results depend heavily on the baseline holding all nominal events, and it works poorly when line lengths vary widely. The only quantitative result is a demo (572 anomalies in a 1,078,248-line TripleO job), with no precision/recall published. Filters in a config file suppress known false positives. Later versions use HashingVectorizer plus NearestNeighbors.",
+   "source": "https://blogs.rdoproject.org/2017/11/anomaly-detection-in-ci-logs/ ; https://pypi.org/project/logreduce/",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F14",
+   "statement": "logreduce status: PyPI 0.6.1 released 2021-01-19 (history 0.0.1 Dec 2017 to 0.6.1), Apache licence, classifiers list only Python 3.5. The page does not state maintenance status, and the last release is almost 6 years old as of 2026-11-02. The repository URLs tried (github softwarefactory-project/logreduce, opendev zuul/logreduce) returned 404, so the current home is unconfirmed.",
+   "source": "https://pypi.org/project/logreduce/",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F15",
+   "statement": "Develocity (Gradle) failure classification is hosted/commercial and not customisable. A model reads the exception message, stack trace and build info to classify each failure as 'verification' (expected in normal dev: tests, compile, lint) or 'non-verification' (build config, dependency resolution, infrastructure). Definitive message prefixes ('Test failed', 'Compilation failed', 'Lint failed', 'Verification failed' vs 'Unexpected error/failure') override the model. Classification is not customisable for third-party failures, and misclassifications are reported to vendor support. The pages read do not document failure grouping or fingerprinting mechanics.",
+   "source": "https://docs.develocity.ai/2026.3/guides/failure-classification-guide/",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "canonicalisation",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F16",
+   "statement": "Develocity flaky detection uses a retry-based oracle. A test is marked FLAKY when it fails and then succeeds within one execution unit (Gradle task, Maven goal, Bazel target, etc.), which requires retries to be configured. Output from every failed attempt and the first successful attempt is kept for comparison. Buildkite Test Engine reliability is passed/(passed+failed) with unknown/skipped ignored, a run is marked failed if any execution fails even when it passes on retry, tests can be labelled (e.g. flaky) and assigned team owners, and executions are grouped by test, not by error text.",
+   "source": "https://docs.develocity.ai/2026.3/guides/flaky-test-detection-guide/ ; https://buildkite.com/docs/test-engine/test-suites",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "workflow",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F17",
+   "statement": "KCS v6 article lifecycle ('confidence'): WIP (problem framed, no resolution, should exist only while the incident is open), Not Validated (has a resolution, low confidence), Validated (complete, reusable, compliant), Archived (removed from search/browse but viewable from a linked incident; restorable to any state; preferred over deletion when linked to a ticket). Transitions are non-linear. Validated confidence comes from requestor confirmation, recreating the problem, or responder experience. Separate metadata fields: audience and governance (experience-based vs compliance-based). The guide defines no 'retired' state or numeric archive rule.",
+   "source": "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/040/010/030 (Technique 5.2)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F18",
+   "statement": "KCS template: Issue (symptom, in the requestor's words), Environment (function, products, platforms, configuration, recent changes; 'a key factor in findability'), Resolution, Cause (optional, mainly for complex problems or defects), Metadata (audience, confidence, governance, date created, reuse count, modification history, date last modified). The guide says to use one simple template. The Quick Reference adds: quote error messages exactly, order issues generic to specific, one environment per statement, changes in the environment are not presented as the cause, resolution as numbered present-tense steps with no if-then logic, workarounds labelled, and one cause per article (multiple causes means split). There is no field for failed approaches or negative results.",
+   "source": "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/030/020/010 ; .../090 (Appendix E)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "canonicalisation",
+    "retrieval"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F19",
+   "statement": "KCS 'Reuse is Review' (Technique 4.1): day-to-day use is the review, so only articles actually used get reviewed and never-referenced articles are never reviewed. Whoever uses an article is responsible for its quality, and if it is inaccurate, unclear or doesn't work they improve it during the interaction. The page states up to 80% of articles may rarely or never be reused (about 20% solve about 80% of issues). 'Flag It or Fix It' (4.2): fix if confident and licensed, otherwise flag, and a flag 'must trigger a workflow' that reaches a subject-matter expert. Neither technique defines metrics.",
+   "source": "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/030/040/020 ; .../030/030/040/030",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "invalidation",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F20",
+   "statement": "KCS v6 content-health indicators (Technique 5.10): Reuse Rate = percentage of cases closed with an article linked, target above 60%. Reuse Accuracy = whether the linked article actually resolved the issue, target above 90%, and 'Reuse accuracy is more important than reuse rate'. Content Standard Checklist (formerly Article Quality Index, AQI) has six yes/no checks: Unique, Complete, Content Clear, Title Relates, Links Valid, Metadata Correct. Each error is weighted 2, below 90% triggers coach attention, and consistently below 80% risks licence loss. Process Adherence Review is a sampled workflow check. These targets are calibrated for staffed customer-support organisations.",
+   "source": "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/040/010/065 (Technique 5.10)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "limits",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F21",
+   "statement": "KCS linking (Technique 3.3): each system-of-record event (case/incident) is associated with the article that resolved it. The link must be stored in machine-usable form (a hyperlink typed into a note does not qualify), is many-to-many, may carry a type such as 'resolved' or 'referenced', and responders can link and unlink. Responders should see both the article's current content and what was delivered (stored snapshot or link to a specific article version). 'Link rate' is used but not defined or given a target in the guide. The glossary has only 'Linked: attaching content that solves an issue from a request'. The Metrics Matrix lists known-vs-new ('ideal = 85% new'), time to relief known/new, and cost per known incident as a menu, 'not recommending organizations use all of these'.",
+   "source": "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/030/030/030 ; .../060 ; .../070",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "provenance",
+    "data_model",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F22",
+   "statement": "KCS operating model assumes a staffed support organisation: licence levels (Candidate, Contributor, Publisher, Knowledge Domain Expert, Coach), licence revocation on low quality score, audience promotion (internal to external via a reuse threshold or a 'conveyor belt' of 3 internal reuses then a 5-day timer), '90/0' external availability, and customer self-service success measures. The only state-health indicator stated is that article flow through states must not stagnate. Copyright is Consortium for Service Innovation, CC BY-NC 4.0. v6 released 2016-04-21, PDF updated 2025-04-07.",
+   "source": "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide ; .../030/040/010/030",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F23",
+   "statement": "Across the three operational CI classifiers, matching is exact-structure on machine text (Lucene query, per-line regex, or novelty distance). None documents a false-positive measurement on live matches, a refute/feedback loop into the signature, or confidence scoring on a hit. Precision is controlled by author discipline: ER's negative-corpus rule and test_ids, BFA's regex tester, and logreduce's baseline and filter list.",
+   "source": "Synthesis of F02, F03, F09, F10, F13",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "retrieval",
+    "provenance"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "elastic-recheck (signature-per-bug design)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Closest precedent. An entry is a versioned file tied to a tracked defect, with a handle query, an author-time precision test against a negative corpus (more than 10% hits on successes means too broad), an optional second discriminator (test_ids), and retirement keyed to the upstream fix status with dry-run cleanup. It also publishes an 'unclassified failures' coverage view. Transfer to our store as: an entry file in git; a write-time check of its handles against known-good logs; a required verification check per entry; event-driven invalidation; a miss list. The 10-day no-hit rule does not transfer, since a few hundred entries would have too few hits to infer anything from silence.",
+   "egress_posture": "Pattern only; no data leaves. Own design is local.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F01",
+    "F02",
+    "F03",
+    "F04",
+    "F05",
+    "F06",
+    "F23"
+   ],
+   "footprint": "Pattern implementable as files plus a small matcher.",
+   "maturity": "Operated in OpenStack gate for years; docs dated 2013, project revival discussed in 2022.",
+   "agent_access": "Not applicable (pattern).",
+   "linux_prod_fit": "Pattern is OS-neutral.",
+   "windows_dev_fit": "Pattern is OS-neutral."
+  },
+  {
+   "name": "elastic-recheck (the tool itself: logstash/ElasticSearch + Gerrit bot)",
+   "kind": "tool",
+   "verdict": "rejected",
+   "why": "Designed for a workload orders of magnitude larger (about 6 TB for 7 days of CI logs). It needs a logstash/OpenSearch cluster and is coupled to Gerrit/Launchpad/subunit2sql. OpenStack itself struggled to host and maintain it (2022). Wrong ops cost for one developer; cite the design only.",
+   "egress_posture": "Self-hosted by design, but needs a heavy cluster.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F07",
+    "F01"
+   ],
+   "footprint": "ElasticSearch/OpenSearch cluster plus logstash plus Gerrit integration.",
+   "maturity": "Last visible commit 2021-05-19 on the opendev page; revival discussed 2022; current status unconfirmed.",
+   "agent_access": "CLI only (elastic-recheck-query).",
+   "linux_prod_fit": "Runs on Linux but with large resource needs.",
+   "windows_dev_fit": "Poor; not intended."
+  },
+  {
+   "name": "Jenkins Build Failure Analyzer",
+   "kind": "tool",
+   "verdict": "cite_design_only",
+   "why": "Gives a minimal failure-cause schema (name, description with captured-group placeholders, comment, categories, regex indications, modification history, lastOccurred) and per-cause occurrence statistics. It is bound to Jenkins (this project uses GitHub Actions), matches one line at a time with first-match-wins, and has no documented refute loop, retirement or false-positive control beyond a regex tester. Only the schema shape transfers.",
+   "egress_posture": "Self-hosted, no third party (MIT, local XML or own MongoDB).",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F08",
+    "F09",
+    "F10",
+    "F11"
+   ],
+   "footprint": "Jenkins controller plus optional MongoDB.",
+   "maturity": "Maintained; installed on about 2% of Jenkins controllers; MIT.",
+   "agent_access": "Jenkins UI/REST only; no CLI or MCP for agents.",
+   "linux_prod_fit": "Fine, but requires running Jenkins.",
+   "windows_dev_fit": "Not applicable."
+  },
+  {
+   "name": "logreduce / log-classify",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "A novelty detector against baseline-good logs, not a known-defect matcher, so it does not provide symptom lookup. Its canonicalisation recipe (strip long hashes, UUIDs, dates and random prefixes, keep only [a-z_/]) is directly reusable for template mining. Last release was January 2021 (Python 3.5 classifiers), with no published precision/recall. At most it is a diagnosis-time aid for surfacing unfamiliar log lines.",
+   "egress_posture": "Local library; no data leaves.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F12",
+    "F13",
+    "F14"
+   ],
+   "footprint": "Python plus scikit-learn.",
+   "maturity": "Stale (0.6.1, 2021-01-19); repo location unconfirmed.",
+   "agent_access": "CLI exists.",
+   "linux_prod_fit": "OK in principle but unmaintained.",
+   "windows_dev_fit": "Python needed; not on PATH; installation prohibited by this research."
+  },
+  {
+   "name": "Develocity failure classification and flaky detection",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Commercial, vendor-run model. Two ideas transfer. First, deterministic definitive rules override a statistical classifier. Second, a retry-based oracle (fail then pass) is a cheap discriminating check. Its grouping/fingerprint mechanics were not documented in the pages read, and it has no user-editable knowledge base for classification.",
+   "egress_posture": "Vendor product; deployment model not verified from the pages read. Treat as sending build data to a third party; disqualified for production use.",
+   "one_dev_ops_cost": "unknown",
+   "fact_ids": [
+    "F15",
+    "F16"
+   ],
+   "footprint": "Not assessed.",
+   "maturity": "Current docs 2026.3.",
+   "agent_access": "API exists for some data; not assessed.",
+   "linux_prod_fit": "Not assessed.",
+   "windows_dev_fit": "Not assessed."
+  },
+  {
+   "name": "Buildkite Test Engine",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Hosted test-analytics SaaS. It groups executions by test (not by error text), defines reliability = pass/(pass+fail), labels tests and assigns owners. Nothing in the pages read on failure signatures or retrieval by symptom. Design reference for outcome statistics only.",
+   "egress_posture": "Hosted by Buildkite (inferred from product model); disqualified for production use.",
+   "one_dev_ops_cost": "unknown",
+   "fact_ids": [
+    "F16"
+   ],
+   "footprint": "SaaS.",
+   "maturity": "Current docs.",
+   "agent_access": "Not assessed.",
+   "linux_prod_fit": "Not applicable.",
+   "windows_dev_fit": "Not applicable."
+  },
+  {
+   "name": "KCS v6 article lifecycle, template and linking",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Best-documented lifecycle and schema for a reuse-driven knowledge base. States WIP, Not Validated, Validated and Archived; fields Issue, Environment, Resolution, Cause and metadata; one cause per article; many-to-many typed links to the incident that used the article, with a snapshot of what was delivered; 'reuse is review'; and flag-it-or-fix-it. Needs additions for our case: a failed-approaches field, machine-checkable dependency scope (files, symbols, versions, platform) in place of KCS's prose Environment, a verification-check field, and a 'refuted/invalidated' state. Drop licences, coaches, audience promotion and self-service concepts.",
+   "egress_posture": "Process pattern; no data flow. CC BY-NC 4.0 documentation; fine to cite.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F17",
+    "F18",
+    "F19",
+    "F21",
+    "F22"
+   ],
+   "footprint": "None (pattern).",
+   "maturity": "v6 since 2016; PDF updated 2025-04-07.",
+   "agent_access": "Not applicable.",
+   "linux_prod_fit": "OS-neutral.",
+   "windows_dev_fit": "OS-neutral."
+  },
+  {
+   "name": "KCS metric set: reuse accuracy first, reuse rate second, known-vs-new",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "Reuse accuracy (does the linked article actually resolve it, target above 90%, stated as more important than reuse rate) is the right headline for a precision-first store. It is the complement of the refute rate. Reuse rate (cases closed with an article linked, above 60%) and known-vs-new map to hit rate and miss rate. The targets are calibrated for large support organisations. At a few hundred entries and a few writes per phase, report counts with the denominator, not percentages with targets. 'Link rate' has no KCS definition, so define our own.",
+   "egress_posture": "Local analytics only.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F20",
+    "F21",
+    "F22"
+   ],
+   "footprint": "Counters in the outcome history table.",
+   "maturity": "Established practice.",
+   "agent_access": "Not applicable.",
+   "linux_prod_fit": "OS-neutral.",
+   "windows_dev_fit": "OS-neutral."
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Gate every write on a negative-corpus precision check. Run the entry's handles (canonicalised templates, regex or query) against known-good logs and unrelated historic failures, and reject or tighten an entry that fires on them. ER's own rule is a 10% ceiling on success hits, but with our small corpus use zero tolerance for the negatives we hold. This is the only documented write-time false-positive control in the prior art, and it costs the agent no extra tracking.",
+   "fact_ids": [
+    "F02",
+    "F23"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Every entry carries a required, discriminating verification check, not just a handle. ER's test_ids (log hit AND a specific test failed) and Develocity's fail-then-pass retry oracle are the two precedents. A symptom match is a candidate and only the check on current code is the verdict.",
+   "fact_ids": [
+    "F03",
+    "F16"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Invalidate on events tied to what the entry depends on (ER ties retirement to the upstream bug's fix status; we tie it to changed files, symbols, dependency versions and platform). Do not use ER's 'no hits in 10 days' rule. At tens to a few hundred entries, absence of hits is not evidence. When ER's Future Work still lists 'check whether resolved bugs return' as unbuilt, it shows even the precedent never closed the loop, so we need re-open and restore as a first-class transition. Archived (not deleted) with a restorable state follows KCS.",
+   "fact_ids": [
+    "F05",
+    "F17"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Keep the outcome history as a separate many-to-many link record between an entry (with its version) and the incident that used it, typed resolved/referenced/refuted, with a snapshot or version pointer of what was delivered. That table, and not a counter on the entry, makes reuse accuracy, hit/refute/miss rates and cost-saved analytics possible, and matches KCS's insistence that links be machine-usable.",
+   "fact_ids": [
+    "F21",
+    "F20"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Use reuse accuracy (1 minus the refute rate) as the headline health metric and coverage miss rate (the ER 'unclassified' page, KCS known-vs-new) as the second. Report raw counts with denominators, because at a few writes per phase percentages and KCS's numeric targets (above 90%, above 60%, 85% new) are noise.",
+   "fact_ids": [
+    "F04",
+    "F20",
+    "F21"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Adopt 'reuse is review' and 'flag it or fix it' as the only maintenance process. Review happens at hit time through the verification gate, never as a scheduled sweep, which fits the ADHD constraint of less to track. An agent that verifies and finds a small error fixes the entry. An agent that cannot confirm flags it (state Not Validated or Refuted) and the flag escalates to a top-tier session or the owner. KCS requires that a flag triggers a workflow, not just a counter.",
+   "fact_ids": [
+    "F19",
+    "F17"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Start from KCS's template and states and extend them. Keep Issue (verbatim error text plus the agent's paraphrase), Environment (machine-checkable: files, symbols, versions, platform), Resolution as numbered steps, one cause per entry (split otherwise), and metadata. Add what KCS lacks: a diagnosis path, a failed-approaches list with reasons, validity conditions, and the verification check. KCS has no negative-results field, so this is our addition, not prior art.",
+   "fact_ids": [
+    "F18",
+    "F17"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Canonicalise machine text with the logreduce recipe before indexing or matching: strip long hex hashes, UUIDs, dates and random prefixes, and keep a stable token alphabet. Keep entries' raw verbatim symptom text alongside, as KCS says to quote error messages exactly.",
+   "fact_ids": [
+    "F12",
+    "F18"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Do not adopt the infrastructure of these systems or their statistics. ER's backend needed about 6 TB per 7 days of logs and became a hosting burden. BFA needs Jenkins and Mongo for stats. Develocity and Buildkite are hosted. Our store should keep entries as git-tracked data with a locally rebuilt index and use a lightweight engine behind the abstraction layer, which the brief already requires.",
+   "fact_ids": [
+    "F07",
+    "F10",
+    "F11",
+    "F15"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Novelty detection (logreduce) is a diagnosis aid at most. It answers 'what is unusual in this failed log', not 'have we seen this before', and its documented failure mode (extra debug content only in failed runs) means it floods with false positives. It should not sit in the retrieval path of a precision-first store.",
+   "fact_ids": [
+    "F13",
+    "F14"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "KCS's staffed-organisation machinery does not transfer: licence levels, coaches, KDE, Process Adherence Review sampling, audience promotion, 90/0, and customer self-service success. Likewise skip BFA/ER-style per-job statistics dashboards. The agent-level analogue of licence is simple and already in the orchestration method: cheap agents may confirm or flag, only top-tier sessions validate a new entry or change its check.",
+   "fact_ids": [
+    "F22",
+    "F20"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "The precedents document no refute-to-entry feedback loop and no confidence score on a hit. Our relevance-feedback and revise/retain loop therefore comes from case-based reasoning and KCS's reuse-is-review, not from CI classifier prior art, and should be justified from those sources.",
+   "fact_ids": [
+    "F23",
+    "F19"
+   ],
+   "strength": "weak"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Run elastic-recheck (logstash/OpenSearch) as the store or index",
+   "why": "Designed for CI log volumes of terabytes. It is coupled to Gerrit, Launchpad and subunit2sql. OpenStack itself struggled to host and scale it. Far too heavy for one developer with a few hundred entries.",
+   "fact_ids": [
+    "F07",
+    "F01"
+   ]
+  },
+  {
+   "what": "Jenkins Build Failure Analyzer as the engine",
+   "why": "Requires Jenkins (this project runs GitHub Actions). It has single-line regex first-match semantics, no documented lifecycle or refute loop, and statistics only via MongoDB.",
+   "fact_ids": [
+    "F09",
+    "F10",
+    "F11"
+   ]
+  },
+  {
+   "what": "logreduce as the symptom matcher",
+   "why": "It is a novelty detector, not a known-failure lookup. It needs a clean baseline of good runs, it floods with false positives when failed runs contain extra content, and the last release was January 2021.",
+   "fact_ids": [
+    "F13",
+    "F14"
+   ]
+  },
+  {
+   "what": "Hosted failure-analytics products (Develocity failure classification, Buildkite Test Engine) as the store",
+   "why": "Hosted or commercial and data leaves owner-controlled machines, so disqualified for production use. Neither exposes a user-editable symptom-to-fix knowledge base in the pages read. Cited for design only.",
+   "fact_ids": [
+    "F15",
+    "F16"
+   ]
+  },
+  {
+   "what": "ER-style 'no hits in 10 days' time/traffic expiry",
+   "why": "Needs thousands of events per day to be meaningful. With a few writes per phase, silence is expected for healthy entries. Invalidation must be driven by dependency change events.",
+   "fact_ids": [
+    "F05"
+   ]
+  },
+  {
+   "what": "Adopt KCS wholesale (roles, licensing, audience promotion, PAR, AQI targets)",
+   "why": "It is a process for a staffed support organisation. Only the lifecycle states, template, linking, reuse-is-review, flag-it-or-fix-it and reuse-accuracy emphasis transfer.",
+   "fact_ids": [
+    "F22",
+    "F20"
+   ]
+  }
+ ],
+ "open_questions": [
+  "Develocity: how are failures grouped or fingerprinted (the pages read only cover verification vs non-verification classification), and can it be self-hosted so that no data leaves? Not verified.",
+  "elastic-recheck: what are the published classification (categorised) rates or hit-precision numbers? None found, and status.openstack.org did not resolve. Is the project archived or revived since 2022?",
+  "BFA: the statistics schema and whether Mongo statistics record 'wrong cause' feedback. The pages read describe none.",
+  "KCS: the guide gives no formula for link rate and Appendix E has no AQI weights beyond the 2-per-error Content Standard Checklist. We must define our own link-rate analogue (share of resolved incidents that cite an entry).",
+  "What is our negative corpus? Candidate sources are green GitHub Actions logs, past successful local build output, and unrelated resolved defects. Its size at program start and whether it can be seeded are unknown.",
+  "Where is logreduce's current repository (the github softwarefactory-project and opendev zuul URLs tried returned 404)? Only matters if its canonicalisation code is to be read."
+ ],
+ "urls_attempted": [
+  "https://docs.openstack.org/infra/elastic-recheck/",
+  "https://docs.openstack.org/infra/elastic-recheck/readme.html",
+  "https://opendev.org/openstack/elastic-recheck",
+  "https://opendev.org/opendev/elastic-recheck",
+  "https://status.openstack.org/elastic-recheck/",
+  "https://meetings.opendev.org/irclogs/%23openstack-tc/%23openstack-tc.2022-05-12.log.html",
+  "https://plugins.jenkins.io/build-failure-analyzer/",
+  "https://github.com/Jenkinsci/build-failure-analyzer-plugin",
+  "https://raw.githubusercontent.com/jenkinsci/build-failure-analyzer-plugin/master/README.md",
+  "https://github.com/jenkinsci/build-failure-analyzer-plugin/blob/master/docs/user-guide.md",
+  "https://raw.githubusercontent.com/jenkinsci/build-failure-analyzer-plugin/master/src/main/java/com/sonyericsson/jenkins/plugins/bfa/model/FailureCause.java",
+  "https://raw.githubusercontent.com/jenkinsci/build-failure-analyzer-plugin/master/src/main/java/com/sonyericsson/jenkins/plugins/bfa/model/indication/BuildLogIndication.java",
+  "https://docs.openstack.org/infra/logreduce/",
+  "https://blogs.rdoproject.org/2017/11/anomaly-detection-in-ci-logs/",
+  "https://pypi.org/project/logreduce/",
+  "https://github.com/softwarefactory-project/logreduce",
+  "https://opendev.org/zuul/logreduce",
+  "https://docs.gradle.com/develocity/api-manual/",
+  "https://docs.develocity.ai/api-manual/",
+  "https://docs.develocity.ai/develocity/failures-dashboard/",
+  "https://docs.develocity.ai/current/",
+  "https://docs.develocity.ai/llms.txt",
+  "https://docs.develocity.ai/2026.3/guides/index.md",
+  "https://docs.develocity.ai/2026.3/guides/failure-classification-guide/",
+  "https://docs.develocity.ai/2026.3/guides/flaky-test-detection-guide/",
+  "https://buildkite.com/docs/test-engine",
+  "https://buildkite.com/docs/test-engine/test-suites",
+  "https://buildkite.com/docs/test-engine/test-suites/flaky-tests",
+  "https://buildkite.com/docs/test-engine/flaky-tests",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/030/040/020",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/030/040/030",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/040/010/030",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/040/010/065",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/030/030/030",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/030/020/010",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/030/040/030/020",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/070",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/090",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Practices_Guide/060",
+  "WebSearch x2 (elastic-recheck status; logreduce design) succeeded, then WebSearch budget exhausted (Develocity grouping and KCS searches refused)"
+ ],
+ "anomalies": [
+  "WebSearch budget was exhausted after two searches (limit message: shared per turn), so the Develocity grouping and KCS searches were refused. I used direct WebFetch URLs instead.",
+  "WebFetch summarises pages with a small model, so all quotes and field lists are second-hand renderings of the pages, not raw text. Treat 'verified' as 'read in the fetch result'.",
+  "The elastic-recheck readme on docs.openstack.org is stamped 2013-12-10 and mentions older hosts, while the opendev README lists the same keys. The key set was cross-checked, but the details of current deployments were not.",
+  "status.openstack.org did not resolve (getaddrinfo ENOTFOUND) on 2026-11-02, so the ER uncategorised page and any real classification rate could not be read.",
+  "Several repository URLs (opendev openstack/elastic-recheck, github softwarefactory-project/logreduce, opendev zuul/logreduce, BFA docs/user-guide.md) returned 404. The opendev.org/opendev/elastic-recheck page was readable and showed a last visible commit of 2021-05-19, but the fetch tool may show a stale snapshot.",
+  "KCS v6 renamed the Article Quality Index to the Content Standard Checklist, and the lane brief's term 'article quality index' maps to that. 'Link rate' is not defined in the guide.",
+  "Develocity's deployment model (self-hosted vs SaaS) and its failure-grouping mechanics were not found in the pages read. Hosted/commercial status is inferred from the brief and product context, not verified.",
+  "No local files were read, no git writes, no installs. The glob for docs/**/*knowledge* found nothing."
+ ]
+}

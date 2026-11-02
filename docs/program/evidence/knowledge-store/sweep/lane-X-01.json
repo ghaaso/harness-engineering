@@ -1,0 +1,861 @@
+{
+ "lane": "X-01",
+ "tool_status": "web_degraded",
+ "summary": "WebSearch was refused (budget exhausted), so I used WebFetch on primary docs, GitHub APIs and source files, plus two local tests. The two round-1 designs are not rivals. The SQLite file is the same in both. The real question is which thing is the source of truth. Recommendation: (1) immutable per-entry event files in a dedicated store repo, kept outside the code repo and its worktrees, synced by git over SSH to a bare repo on the VPS, with a rebuildable per-host SQLite/FTS5 index; (2) a single SQLite file on the dev box with one-way backup (VACUUM INTO or sqlite3_rsync) to the VPS. Ranked by ongoing workload, (2) is cheaper on day one but cannot take VPS writes and needs a backup job. (1) wins once two hosts write. (2) is also stage 0 of (1), because the index is that file. Tested on this Windows box: 4 concurrent WAL writer processes had 0 errors, backup under load passed integrity_check, and restore then write worked. Tested in a scratch git repo: events in distinct files merge cleanly, including under squash merge, while a shared append file conflicts without merge=union. Events committed only on an abandoned branch vanish from main. Every candidate engine (sqlite3_rsync, Litestream, libSQL, rqlite, cr-sqlite, Dolt, VPS service) either replicates one way, needs the network for writes, or is a cluster or VCS built for a much larger workload. No tested path exists for sqlite3_rsync from Windows to Linux; it needs a binary I may not install.",
+ "facts": [
+  {
+   "id": "F01",
+   "statement": "SQLite WAL requires all processes on the same host; it does not work over a network filesystem because the wal-index is shared memory (an mmapped file next to the database).",
+   "source": "https://www.sqlite.org/wal.html (read 2026-11-02; sections 1, 2.2, 7)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "engine",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F02",
+   "statement": "A SQLite WAL-reset data race can corrupt a WAL-mode database when two connections write or checkpoint at the same instant. It is present in 3.7.0 through 3.51.2 and fixed in 3.51.3 (2026-03-13), with backports in 3.44.6 and 3.50.7. Any host that runs the store (dev box, VPS) must use a fixed version.",
+   "source": "https://www.sqlite.org/wal.html section 11 (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "limits",
+    "engine"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F03",
+   "statement": "sqlite3_rsync makes REPLICA a copy of ORIGIN. It is one-way. ORIGIN may be in use and the result is a consistent snapshot. REPLICA is read-only while the tool runs, and any independent writes to it are overwritten. Remote use needs SSH and the sqlite3_rsync binary on the remote PATH (or --exe). From 3.50.0 (2025-05-29) the WAL and page-size requirements are gone. Mixing a 3.50+ side with a 3.49.1-or-earlier side can hang (workaround: --protocol 1). At least one side must be local; one database per invocation.",
+   "source": "https://sqlite.org/rsync.html (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "concurrency"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F04",
+   "statement": "sqlite3_rsync Windows notes: the page says a single-letter host is treated as a drive letter, and the author had no success running SSHD on Windows, so it gives no instructions for syncing with a remote Windows machine. The dev box can therefore only be the local side, with the VPS as the remote SSH side.",
+   "source": "https://sqlite.org/rsync.html (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F05",
+   "statement": "The official SQLite download page lists sqlite-tools-win-x64 for version 3.54.1, containing sqlite3.exe, sqldiff.exe, sqlite3_analyzer.exe and sqlite3_rsync.exe. The page gives no release date.",
+   "source": "https://www.sqlite.org/download.html (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F06",
+   "statement": "SQLite's 'How to corrupt' page names three safe ways to copy a live database: sqlite3_rsync (3.47.0+), VACUUM INTO, and the backup API. A plain file copy is safe only when no transaction is in progress, and the -wal/-journal file must travel with the database. Moving or deleting hot journals, or copying a database without its journal, can corrupt it.",
+   "source": "https://www.sqlite.org/howtocorrupt.html sections 1.2-1.4 (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "concurrency"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F07",
+   "statement": "VACUUM INTO writes a consistent, transactional snapshot to a new file (the target must not exist or must be empty). The source is untouched and a live source is fine. It fails if the calling connection has an open transaction. A crash mid-run can leave a corrupt output file, so write to a temp name and rename after an integrity check.",
+   "source": "https://www.sqlite.org/lang_vacuum.html (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F08",
+   "statement": "SQLite's own advice for use over a network is to avoid network filesystems. Either use a client/server engine, or keep WAL SQLite on the data host behind a proxy that relays remote requests. File locking and fsync over NFS/SMB are unreliable and not tested by the SQLite project.",
+   "source": "https://www.sqlite.org/useovernet.html (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "concurrency",
+    "access"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F09",
+   "statement": "The Windows dev box already has Node v24.22.1, whose built-in node:sqlite reports SQLite 3.53.4. That is at or above the F02 fix level. node:sqlite is Stability 1.2 (release candidate) in v24 docs. It has backup(sourceDb, path) since v23.8.0, and the source stays usable during a backup, but writes from other connections restart the backup. It needs no install. There is no sqlite3 or sqlite3_rsync on PATH.",
+   "source": "local: node -e on this machine 2026-11-02; https://nodejs.org/docs/latest-v24.x/api/sqlite.html",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "access",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F10",
+   "statement": "My local test on this Windows 11 box: 4 concurrent Node processes inserted 12,000 rows into one WAL database (busy timeout 5 s) with 0 errors and integrity_check ok. node:sqlite backup() taken while the writers ran finished in 51 ms. The copy had 8,664 rows, passed integrity_check and kept journal_mode wal. VACUUM INTO taken during the same run had 9,019 rows, passed integrity_check and has journal_mode delete. The restore drill (copy VACUUM INTO file to a new path, enable WAL, write) worked. Tested in the session scratchpad, not on the project.",
+   "source": "local test: scratchpad .../x01/run.cjs and writer.cjs (run 2026-11-02)",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "ops_cost",
+    "engine"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F11",
+   "statement": "Litestream latest release is v0.5.17 (2026-08-31), with windows-x86_64 and windows-arm64 zip assets. Replica types include file, SFTP, S3, WebDAV, NATS and others. v0.5.x ships only a zip, so the Windows service is registered by hand with sc.exe. Each database replicates to a single destination. Restore applies a snapshot plus TXID-ordered LTX files, with gap detection. Restore granularity is coarse and L0 files expire (l0-retention default 5 min), so fine restore points disappear. The SFTP host key is NOT verified unless host-key is set. The docs do not say what happens if two machines replicate to one path.",
+   "source": "https://api.github.com/repos/benbjohnson/litestream/releases/latest; https://litestream.io/guides/windows/; https://litestream.io/guides/sftp/; https://litestream.io/how-it-works/ (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "egress",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F12",
+   "statement": "Litestream's main.go contains no telemetry or usage-reporting code. The only extra outbound call is the opt-in heartbeat-url. Litestream replicates one database one way to a replica and is not a multi-writer sync tool. The README badge says Beta.",
+   "source": "https://raw.githubusercontent.com/benbjohnson/litestream/main/cmd/litestream/main.go; https://raw.githubusercontent.com/benbjohnson/litestream/main/README.md (read 2026-11-02; summarised by fetch model)",
+   "source_kind": "source_repo",
+   "confidence": "reported",
+   "bears_on": [
+    "egress",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F13",
+   "statement": "libSQL/sqld: the last libsql-server release visible is libsql-server-v0.24.32 (2025-02-14), with assets only for Linux and macOS and none for Windows. The libsql repo README says new features are developed in Turso and recommends Turso (a Rust rewrite, beta) for new projects. Auth is JWT (Ed25519), basic, or none. There is no telemetry flag. The heartbeat URL is opt-in. It supports primary/replica over gRPC, and Docker is the documented path.",
+   "source": "https://api.github.com/repos/tursodatabase/libsql/releases; https://github.com/tursodatabase/libsql; https://raw.githubusercontent.com/tursodatabase/libsql/main/libsql-server/src/main.rs; https://github.com/tursodatabase/libsql/blob/main/docs/DOCKER.md (read 2026-11-02)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "access",
+    "egress",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F14",
+   "statement": "rqlite latest is v10.6.6 (2026-10-28), MIT licence, with a win64 zip and many Linux builds. It is a Raft-replicated SQLite behind an HTTP API. Hot backup is GET /db/backup. Auto-backup to S3/GCS/local file runs on the leader. Restore is /boot (fast, SQLite file) or /db/load. Auth is basic with a permissions file, plus TLS and mutual TLS. Read levels are weak (default), none (local, may be stale), linearizable and strong. Linearizable and strong need a quorum and fail when the leader is unreachable. No telemetry in main.go (OTLP is opt-in). The changelog notes Windows file-rename retries (v10.3.6) and snapshot fixes (v10.0.0).",
+   "source": "https://api.github.com/repos/rqlite/rqlite/releases/latest; https://rqlite.io/docs/guides/backup/; https://rqlite.io/docs/guides/security/; https://rqlite.io/docs/api/read-consistency/; https://raw.githubusercontent.com/rqlite/rqlite/master/cmd/rqlited/main.go; CHANGELOG (first 100k chars only) (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "access",
+    "ops_cost",
+    "egress",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F15",
+   "statement": "cr-sqlite (vlcn): the latest GitHub release is v0.16.3 (published 2024-01-17). The repo is not archived and was last pushed 2026-08-10, with 56 open issues. It merges per column (last-write-wins, fractional index, observe-remove set), keyed by primary key, with changes exchanged through the crsql_changes virtual table. The extension must be loaded on every connection and ALTERs need crsql_begin_alter/commit_alter. Writes are about 2.5x slower. The README says v1 keeps no event log (a causal event log is planned for v2), and recommends building from a release tag because main may be unstable. Windows zips exist (x86_64, i686). MIT licence.",
+   "source": "https://api.github.com/repos/vlcn-io/cr-sqlite/releases/latest; https://api.github.com/repos/vlcn-io/cr-sqlite; https://raw.githubusercontent.com/vlcn-io/cr-sqlite/main/README.md (read 2026-11-02)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "concurrency",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F16",
+   "statement": "Dolt latest is v2.6.2 (2026-10-31), Apache-2.0, with Windows msi/zip/7z assets. dolt sql-server speaks the MySQL protocol, stores users in a privilege file, and supports TLS client certs and JWT. It can serve a Dolt remote (remotesapi.port, optionally read-only). Merge is three-way with dolt_conflicts_<table> tables and schema-conflict tables. Backup is 'dolt backup add/sync' (sync overwrites the destination) and 'dolt backup restore'. For live servers the docs prefer block-device snapshots or the backup commands, and say a plain filesystem copy is safe only with the server stopped. Users/grants and branch-control tables are NOT included in backup sync.",
+   "source": "https://api.github.com/repos/dolthub/dolt/releases/latest; https://www.dolthub.com/docs/sql-reference/server/configuration; https://www.dolthub.com/docs/sql-reference/server/backups; https://www.dolthub.com/docs/sql-reference/version-control/merges (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "concurrency",
+    "ops_cost",
+    "access"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F17",
+   "statement": "Dolt CLI telemetry is ON by default. dolt.go builds a file emitter unless the config key metrics.disabled is true, and flushes events to a server through a spawned send-metrics process unless DOLT_DISABLE_EVENT_FLUSH is set (it skips send-metrics, init and config). The endpoint host was not visible in the file read. Any Dolt use needs 'dolt config --global --add metrics.disabled true' and the env var, and an egress check, to meet the no-third-party-data rule.",
+   "source": "https://raw.githubusercontent.com/dolthub/dolt/main/go/cmd/dolt/dolt.go; https://www.dolthub.com/docs/reference/cli (dolt config: metrics.disabled) (read 2026-11-02)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "egress",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F18",
+   "statement": "Beads (steveyegge/beads), an issue tracker for AI agents, moved its storage to Dolt. Embedded mode is the default and is single-writer, enforced by a file lock; a second writer gets 'database is locked'. Server mode (dolt sql-server) is for multiple agents. Cross-machine sync uses dolt push/pull against refs/dolt/data on a git remote (git+ssh works). .beads/issues.jsonl is only an export, not the source of truth or a backup. Full backups use 'bd backup'. Hash-based IDs avoid collisions across agents and branches. Claim leases are per replica and do not replicate. Concurrent-writer and same-checkout worktree behaviour is not documented on the pages read.",
+   "source": "https://raw.githubusercontent.com/steveyegge/beads/main/README.md; https://raw.githubusercontent.com/steveyegge/beads/main/docs/architecture/dolt.md; https://raw.githubusercontent.com/steveyegge/beads/main/docs/multi-agent/federation.md (read 2026-11-02)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "concurrency",
+    "workflow",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F19",
+   "statement": "git worktrees share the object database and all refs/* (except refs/bisect, refs/worktree, refs/rewritten). Only HEAD, the index and similar files are per worktree. A store kept in the git common dir, or in a directory outside every worktree, is therefore one data set for all worktrees. In my scratch test, 'git rev-parse --git-common-dir' run in a linked worktree returned the main repo's .git.",
+   "source": "https://git-scm.com/docs/git-worktree (read 2026-11-02); local scratch test x01/gt",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "workflow",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F20",
+   "statement": "Local scratch git test (temp repo outside the project). Two branches each added a DISTINCT event file (ev/eA1.json, ev/eB1.json): a squash merge of one and a normal merge of the other both succeeded with no conflict. When both branches appended a line to the SAME file (log.jsonl) the merge conflicted. With 'log.jsonl merge=union' in .gitattributes it merged and kept both lines. An event committed only on a branch that was deleted without merging (eC1.json) is absent from main afterwards.",
+   "source": "local test: scratchpad .../x01/gt (run 2026-11-02, git 2.56.0.windows.4)",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency",
+    "workflow",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F21",
+   "statement": "merge=union runs the normal three-way text merge but keeps lines from both sides with no conflict markers. Git's own docs warn that added lines may end up in random order and that the user should verify the result. git merge-file --union is similar and its docs do not specify line order. Neither is a safe way to merge anything order- or uniqueness-sensitive, so one immutable file per event is safer than a shared append file.",
+   "source": "https://git-scm.com/docs/gitattributes; https://git-scm.com/docs/git-merge-file (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F22",
+   "statement": "git merge --squash makes no merge commit and records no MERGE_HEAD or merge parentage, so the result is a single-parent commit. Unreachable commits from a deleted branch survive only via reflog (gc.reflogExpireUnreachable 30 days) plus the gc.pruneExpire grace (2 weeks). Any knowledge entry that anchors on a feature-branch commit SHA can dangle after a squash merge or branch delete. Anchoring on blob or tree hashes of the files an entry depends on survives, because a squash preserves the final content.",
+   "source": "https://git-scm.com/docs/git-merge; https://git-scm.com/docs/git-gc (read 2026-11-02); the blob-anchor consequence is my inference",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F23",
+   "statement": "git notes attach to commit SHAs. They are copied to rewritten commits only for amend and rebase, and only when notes.rewriteRef is set (it has no default). The page does not cover squash merge, so notes on branch commits are likely lost in a squash. The merge strategies are manual (default), ours, theirs, union and cat_sort_uniq. By general git behaviour (not on that page), notes refs are not fetched or pushed by default. Git notes are a poor home for per-entry data.",
+   "source": "https://git-scm.com/docs/git-notes (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "reported",
+   "bears_on": [
+    "provenance",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F24",
+   "statement": "The repo's .gitattributes sets '* text=auto eol=lf' (line 2). A knowledge-store repo or file set on Windows that lacks an equivalent rule can store CRLF on one host and LF on the other. That changes byte hashes, so content-addressed event IDs must be computed over canonical bytes (canonical JSON, LF).",
+   "source": "local: .gitattributes lines 1-2 in this worktree",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "canonicalisation",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F25",
+   "statement": "MCP spec 2025-06-18: stdio is the preferred transport (the client launches the server as a subprocess). Streamable HTTP servers MUST validate the Origin header, SHOULD bind to localhost when local, and SHOULD authenticate all connections. A remote HTTP MCP endpoint over a VPN therefore needs token auth and Origin checks that a stdio or SSH-forced-command CLI does not.",
+   "source": "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F26",
+   "statement": "Tailscale's coordination server is run by Tailscale (login.tailscale.com). The data plane is peer-to-peer WireGuard, with DERP relays when a direct path fails. By default each client streams its logs to log.tailscale.com. On Windows this can be disabled only via TS_NO_LOGS_NO_SUPPORT in %ProgramData%\\Tailscale\\tailscaled-env.txt. Headscale (self-hosted control server, latest v0.29.7 on 2026-10-30) targets a single tailnet and instructs clients to disable log upload (logtail.enabled=false). It has a Windows client guide and is not supported on a node that is itself in the tailnet. Tailscale-run coordination is a third-party dependency, so Tailscale is cite-only. Headscale is acceptable but is a new service to run.",
+   "source": "https://tailscale.com/blog/how-tailscale-works; https://tailscale.com/kb/1011/log-mesh-traffic; https://headscale.net/stable/about/faq/; https://api.github.com/repos/juanfont/headscale/releases/latest (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "egress",
+    "access",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F27",
+   "statement": "WireGuard offers an official Windows installer (Windows 10/11 and Server 2016-2025) and Linux packages. This is the no-third-party transport option. Windows 11 here also has the OpenSSH client (ssh, scp, sftp) in C:\\Windows\\System32\\OpenSSH, ssh 10.6p1. I could not check whether the sshd service is installed (needs elevation) and the design does not need it.",
+   "source": "https://www.wireguard.com/install/ (read 2026-11-02); local: ls C:/Windows/System32/OpenSSH and ssh -V",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "egress",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F28",
+   "statement": "The code repo's remote is used through the gh CLI (PR #182 in memory notes), so the code and the docs/ defect write-ups already sit on GitHub. Pushing a knowledge repo there would put defect text on a third party, which the owner's constraint disqualifies. A bare repo on the VPS over SSH keeps it owner-controlled. Git can push a separate repo or ref namespace to any SSH remote.",
+   "source": "local: MEMORY.md (PR #182), CLAUDE.md doc map; the SSH-remote claim is general git behaviour (inferred)",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "egress",
+    "workflow"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "Dedicated store repo of immutable event files + per-host rebuildable SQLite/FTS5 index, synced by git over SSH to a bare repo on the VPS",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "One file per event, with a content-hash or ULID name, never edited. Distinct paths merge conflict-free (F20), so concurrent agents and hosts need no merge logic. The store repo lives OUTSIDE the code repo, so abandoned or squash-merged feature branches cannot lose entries. A shared append file does conflict (F20) and union ordering is unreliable (F21). Backup is the clone itself (dev box, VPS bare repo), and restore is 'git clone' plus 'ks reindex' with no engine-specific tooling. Offline is native: the dev box reads its local index and commits locally while the VPS is unreachable. Outcomes (confirmed, refuted, invalidated, revised) are events, so provenance comes free. The index is a derived cache, safe to delete, same-host WAL only (F01), tested concurrent (F10). Needs: one store repo, one bare repo, a 'ks sync' step that batches add/commit/pull/push under a lock (parallel agents would otherwise fight over index.lock), a store .gitattributes to pin LF (F24), and SQLite >= 3.51.3 (F02).",
+   "windows_dev_fit": "Good. Git for Windows and OpenSSH client are present (F27), node:sqlite is available with no install (F09), and the concurrency test passed (F10).",
+   "linux_prod_fit": "Good. Git and sshd are standard on a VPS. Only 'git init --bare' is needed there. The index can be built there too if a VPS agent reads or writes.",
+   "egress_posture": "No egress if the remote is the VPS or home box over SSH. It must NOT go to GitHub (F28). No telemetry anywhere in the stack.",
+   "one_dev_ops_cost": "low",
+   "maturity": "Git, SQLite and the pattern are mature. The pattern is proven by git-bug and Beads' refs/dolt/data usage (F18). The ks CLI is new code (indexer, sync, lock) and is the main implementation risk.",
+   "footprint": "A bare repo plus a local clone of a few hundred small JSON files (KBs to a few MB), and one SQLite index file per host. No daemon.",
+   "agent_access": "CLI invoked as a subprocess, or an MCP stdio server over the same CLI (F25). It runs on the same host as the agent, so there is no remote auth surface.",
+   "fact_ids": [
+    "F01",
+    "F02",
+    "F10",
+    "F19",
+    "F20",
+    "F21",
+    "F22",
+    "F24",
+    "F27",
+    "F28",
+    "F09"
+   ]
+  },
+  {
+   "name": "Single SQLite file on the dev box, outside all worktrees (git common dir or app-data), one-way backup to the VPS",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "The lowest day-one workload: one file, WAL, CLI or MCP stdio on the same host (F01). Tested concurrent writes from 4 processes and a live backup (F10). The backup is scheduled VACUUM INTO or node backup() to a temp file, an integrity_check, then rename and scp or sqlite3_rsync to the VPS (F03, F06, F07). It loses entries written since the last backup if the disk dies. The VPS can read a replica but cannot write, because replica writes are overwritten (F03). A VPS-side agent would need SSH to the dev box, which is not realistic, or must fall back to option 1. Backup is a scheduled job the owner has to keep alive. A worktree-local path would silently fork the data per worktree, so the path must be absolute or derived from the git common dir (F19). It is also the index in option 1, so it is stage 0 of that design, not a dead end.",
+   "windows_dev_fit": "Good. The node:sqlite path is tested (F09, F10). sqlite3_rsync.exe is shipped in the official tools zip but would need an install, so it is untested here (F05).",
+   "linux_prod_fit": "Good if the VPS only stores the replica. The VPS needs sqlite3_rsync on its SSH PATH, and a version >= 3.51.3 for the WAL-reset fix (F02, F03).",
+   "egress_posture": "No egress; a backup to a self-owned VPS over SSH. No telemetry.",
+   "one_dev_ops_cost": "low",
+   "maturity": "SQLite and VACUUM INTO are very mature. sqlite3_rsync is newer (3.47.0 in 2024; relaxed in 3.50.0, 2025-05-29) and has not been tested by me on Windows to Linux.",
+   "footprint": "One DB file of a few MB plus dated backups.",
+   "agent_access": "CLI or MCP stdio on the dev box only.",
+   "fact_ids": [
+    "F01",
+    "F02",
+    "F03",
+    "F05",
+    "F06",
+    "F07",
+    "F09",
+    "F10",
+    "F19"
+   ]
+  },
+  {
+   "name": "sqlite3_rsync (SQLite 3.47+, protocol revised in 3.50.0)",
+   "kind": "tool",
+   "verdict": "viable",
+   "why": "A good fit as a backup or read-replica transport. One-way, safe on a live origin, and the SQLite project's own recommended live-copy method (F03, F06). It is NOT a merge tool: it overwrites the replica. The tool cannot be the dev-box-to-VPS write path. VPS-unreachable: the command fails and the local file is untouched. Merge semantics: none. Backup/restore drill: pull or push a snapshot, run integrity_check, and for restore run it the other way or copy the file. Auth: SSH keys. Windows: the dev box must be the local side, because the author could not run SSHD on Windows (F04). The binary ships in the official tools zip (F05). The remote needs the binary on the SSH PATH. Maintenance: part of core SQLite, 3.54.1 current. Telemetry: none known.",
+   "windows_dev_fit": "Binary available but untested by me; install needed.",
+   "linux_prod_fit": "Good; needs the binary on the remote PATH and version parity with the local side.",
+   "egress_posture": "No egress; SSH to a self-owned host.",
+   "one_dev_ops_cost": "low",
+   "maturity": "Newer SQLite component (3.47.0 intro, 3.50.0 protocol change); a 3.50+ local side hangs against a 3.49.1-or-earlier remote.",
+   "footprint": "A single binary.",
+   "agent_access": "CLI; run by a hook, not by the agent.",
+   "fact_ids": [
+    "F03",
+    "F04",
+    "F05",
+    "F06"
+   ]
+  },
+  {
+   "name": "VACUUM INTO and the SQLite backup API (node:sqlite backup())",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Needs no new binary. Tested on this box under 4 concurrent writers: both gave integrity-ok consistent snapshots, and the restore from the VACUUM INTO file accepted a write (F10). The backup API does not block writers but restarts if another connection writes during it (F09). Write to a temp name, run integrity_check, then rename. Use it for the nightly or phase-end backup in any topology.",
+   "windows_dev_fit": "Tested and working.",
+   "linux_prod_fit": "Same code path with the SQLite CLI or any binding.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "none",
+   "maturity": "Mature SQLite features. node:sqlite is Stability 1.2 (release candidate).",
+   "footprint": "One backup file per run.",
+   "agent_access": "Internal to the CLI.",
+   "fact_ids": [
+    "F06",
+    "F07",
+    "F09",
+    "F10"
+   ]
+  },
+  {
+   "name": "Litestream to a self-hosted SFTP or file target",
+   "kind": "tool",
+   "verdict": "weak",
+   "why": "Continuous one-way replication gives a better recovery point than periodic backups, and restore is 'litestream restore'. It is built for a database that changes constantly, and the workload is a few writes per phase, so a Windows service for that is a lot of upkeep for the owner (F11). v0.5.x on Windows needs a hand-registered service with sc.exe (F11). SFTP host-key checking is off by default (F11). Fine restore points expire (F11). It cannot merge two hosts' writes, so it does not answer the two-host question. No telemetry code seen (F12). If a continuous backup is wanted later it can be added on whichever host owns the file, to a file or SFTP target on the VPS.",
+   "windows_dev_fit": "Works as a service (v0.5.17 zip) but with manual service setup.",
+   "linux_prod_fit": "Good; the primary Litestream target.",
+   "egress_posture": "No egress to a self-hosted SFTP or file target. Set host-key explicitly. The heartbeat URL is opt-in.",
+   "one_dev_ops_cost": "medium",
+   "maturity": "v0.5.17 (2026-08-31); the README badge says Beta.",
+   "footprint": "One daemon process plus LTX files on the target.",
+   "agent_access": "None; it is infrastructure, not a query path.",
+   "fact_ids": [
+    "F11",
+    "F12"
+   ]
+  },
+  {
+   "name": "libSQL / sqld self-hosted",
+   "kind": "engine",
+   "verdict": "rejected",
+   "why": "No Windows release binary (F13). The upstream repo steers new work to Turso (F13). The last libsql-server release is 2025-02-14 (F13). The dev box would need Docker Desktop to run it. Writes need the primary reachable, so there is no offline write path. Embedded replicas would add a second client library. Sized for a hosted multi-tenant workload many orders of magnitude larger than a few hundred entries. Nothing here the SQLite file does not already do.",
+   "windows_dev_fit": "No native binary; Docker Desktop only.",
+   "linux_prod_fit": "Good; Docker or release tarball.",
+   "egress_posture": "No telemetry flags found. Heartbeat is opt-in.",
+   "one_dev_ops_cost": "high",
+   "maturity": "Maintained for fixes only; releases stopped at v0.24.32 (2025-02-14).",
+   "footprint": "A server process with a data directory.",
+   "agent_access": "HTTP and Hrana with JWT or basic auth.",
+   "fact_ids": [
+    "F13"
+   ]
+  },
+  {
+   "name": "rqlite",
+   "kind": "engine",
+   "verdict": "weak",
+   "why": "Active (v10.6.6 on 2026-10-28), a Windows zip exists, and hot backup, auto-backup and boot-restore are well documented (F14). But it is a Raft cluster for high availability. A single-node rqlite on the VPS only repeats the 'one store service' option. A read-only node on the dev box can serve 'none'-level reads while the VPS is unreachable, but writes need the leader, so a dev box offline loses its write path. Sized for fault-tolerant cluster workloads, orders of magnitude beyond a few hundred rows. It adds a service, cert and permission management, and a backup schedule, with no merge story. Use only if the owner later insists on a networked SQL service.",
+   "windows_dev_fit": "Native win64 zip; works as a read replica client.",
+   "linux_prod_fit": "Good; deb, rpm and tarball packages.",
+   "egress_posture": "No telemetry in main.go; OTLP and discovery are opt-in.",
+   "one_dev_ops_cost": "medium",
+   "maturity": "Mature and very active.",
+   "footprint": "One Go binary; Raft logs plus SQLite.",
+   "agent_access": "HTTP API with basic auth and TLS.",
+   "fact_ids": [
+    "F14"
+   ]
+  },
+  {
+   "name": "cr-sqlite (vlcn)",
+   "kind": "engine",
+   "verdict": "rejected",
+   "why": "It merges rows by primary key with per-column last-write-wins, so concurrent edits of one entry silently lose one side. The workload needs append-only events with an outcome history, which an event table plus a derived state already gives with no CRDT. v1 keeps no event log (F15). The latest release (v0.16.3, 2024-01-17) is older than the repo's last push (2026-08-10) (F15). The extension must be loaded on every connection, which node:sqlite disables by default (F09, F15). Schema changes need special calls. Writes are slower (F15). Solves a problem the git event-file pattern does not have.",
+   "windows_dev_fit": "Windows zips exist but the extension-loading path is awkward.",
+   "linux_prod_fit": "Linux zips exist.",
+   "egress_posture": "No network components; it is a local extension.",
+   "one_dev_ops_cost": "medium",
+   "maturity": "The last release is almost three years old; the repo is not archived.",
+   "footprint": "A loadable extension plus metadata tables.",
+   "agent_access": "Library only; no server.",
+   "fact_ids": [
+    "F15",
+    "F09"
+   ]
+  },
+  {
+   "name": "Dolt sql-server (with Dolt remotes / backup)",
+   "kind": "engine",
+   "verdict": "weak",
+   "why": "It is the one candidate that natively offers distributed merge, history and a git-style remote, and the Beads project chose it for multi-agent use (F16, F18). Against it: a second version-control system to learn, a daemon, and a MySQL-protocol server for a few hundred rows. Embedded use is single-writer behind a file lock, and Beads documents 'database is locked' for a second writer (F18). Telemetry is on by default and must be disabled in both config and env (F17). Backups omit users, grants and branch-control tables (F16). Merge is conflict-table based, so conflicts need a resolver, which is extra tracking for the owner. Cite its design for relevance feedback and cell-level history, but the workload is far below what it targets.",
+   "windows_dev_fit": "Native msi/zip; the server works. The CLI telemetry flag must be set.",
+   "linux_prod_fit": "Good.",
+   "egress_posture": "Default-on usage metrics from the CLI (F17); disable with metrics.disabled=true and DOLT_DISABLE_EVENT_FLUSH. Endpoint host not verified.",
+   "one_dev_ops_cost": "high",
+   "maturity": "Mature and very active (v2.6.2 on 2026-10-31).",
+   "footprint": "A Go server and data directory, hundreds of MB resident.",
+   "agent_access": "MySQL protocol or the CLI; auth by privilege file, TLS client certs or JWT.",
+   "fact_ids": [
+    "F16",
+    "F17",
+    "F18"
+   ]
+  },
+  {
+   "name": "One store service on the VPS, reached over SSH (CLI) or WireGuard/Headscale (MCP over HTTP)",
+   "kind": "system",
+   "verdict": "weak",
+   "why": "A single writer host removes merge questions, and SSH with a forced command is simple and uses keys (F27). But when the VPS is unreachable the dev box has neither reads nor writes, and a cheap-agent lookup that fails is the failure the track exists to avoid. It needs a local cache plus an outbox, which is the git-event-file design with more moving parts. MCP over HTTP must meet the spec's Origin validation, localhost bind and authentication rules (F25), which is more attack surface than a stdio CLI. SQLite should be reached through a host-local proxy rather than a network filesystem (F08). Tailscale's coordination server is third-party, so Tailscale is cite-only for production. Headscale is acceptable but is another service (F26). Plain SSH or a WireGuard tunnel avoids both. Reasonable later only as a read-only query front-end for VPS-side agents.",
+   "windows_dev_fit": "The OpenSSH client is present (F27); the WireGuard Windows client is official.",
+   "linux_prod_fit": "Good.",
+   "egress_posture": "No egress with SSH or WireGuard. Tailscale: third-party control plane and default client log upload (F26). Headscale: self-hosted, with log upload disabled.",
+   "one_dev_ops_cost": "medium",
+   "maturity": "Components are mature. The glue service is new code.",
+   "footprint": "A daemon on the VPS, a VPN or SSH key distribution, and a client cache.",
+   "agent_access": "SSH forced-command CLI; or MCP Streamable HTTP with bearer-token auth.",
+   "fact_ids": [
+    "F08",
+    "F25",
+    "F26",
+    "F27"
+   ]
+  },
+  {
+   "name": "Tailscale (hosted control plane)",
+   "kind": "tool",
+   "verdict": "cite_design_only",
+   "why": "Peer-to-peer WireGuard data plane, but the coordination server is Tailscale's and clients upload logs by default (F26). Disqualified for production data paths by the egress rule. Not needed, since SSH or WireGuard suffices.",
+   "egress_posture": "Third-party control plane and log upload.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F26"
+   ]
+  },
+  {
+   "name": "git notes as the entry store",
+   "kind": "technique",
+   "verdict": "rejected",
+   "why": "Notes attach to commit SHAs, which a squash merge or a deleted branch drops (F22, F23). They are copied on amend and rebase only if notes.rewriteRef is configured, and are not synced by default. They tie provenance to exactly the object that disappears.",
+   "egress_posture": "n/a",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F22",
+    "F23"
+   ]
+  },
+  {
+   "name": "Beads' Dolt-backed agent tracker as design prior art",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Shows that agent-facing stores converge on: hash IDs against collisions, a JSONL export that is not the source of truth, a git remote as transport, embedded single-writer versus server for multi-agent, and a full-fidelity backup distinct from the export (F18). Cite the lessons, not the engine, for this workload.",
+   "egress_posture": "Depends on Dolt telemetry setting (F17).",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F18",
+    "F17"
+   ]
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "The two round-1 designs are compatible. The dev-box SQLite file (option a) should be the derived local index, and immutable event files in a store repo (option b) should be the replicated truth. Start with the SQLite file and CLI, and add the event-file journal and sync when a second host needs to write.",
+   "fact_ids": [
+    "F01",
+    "F10",
+    "F20"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Keep the store OUTSIDE every worktree and outside the code repo: an absolute path, or something derived from git's common dir. All worktrees then see one data set (F19). Entries cannot vanish when a feature branch is abandoned or squash-merged (F20). A store inside a worktree would fork per worktree, and events committed only on a deleted branch disappear from main.",
+   "fact_ids": [
+    "F19",
+    "F20",
+    "F22"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Answer for an entry written in a worktree whose branch is abandoned or squash-merged: if the entry lives in the separate store repo, nothing happens to it. If it was committed in the code repo's feature branch, an abandoned branch drops it from main (recoverable only via reflog for about 30 days plus a 2-week prune grace), and a squash keeps the file but loses the original commit SHAs. Never use a feature-branch commit SHA as an anchor. Anchor entries on blob or tree hashes of the files they depend on, plus dependency and platform versions, which survive a squash. A hit whose anchor files changed is simply an invalidation event.",
+   "fact_ids": [
+    "F20",
+    "F22",
+    "F23"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Use one immutable file per event (content-hash or ULID name, canonical JSON, LF). Distinct paths merge conflict-free, while a shared append file conflicts and union merge has unreliable order. State changes (confirmed, refuted, invalidated, revised) are new event files. Pin LF in the store's .gitattributes so hashes agree across Windows and Linux.",
+   "fact_ids": [
+    "F20",
+    "F21",
+    "F24"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Make the SQLite index per host and rebuildable. Only same-host processes open it (WAL). Never place it on a network share, in a synced folder, or on Docker-for-Windows bind mounts. The tested pattern: busy timeout around 5 s, WAL, multiple writer processes on one Windows box without errors.",
+   "fact_ids": [
+    "F01",
+    "F08",
+    "F10"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Backup and restore drill (tested pieces marked): (1) backup = 'git push' of the store repo to a bare repo on the VPS, as every clone is a full copy; plus a snapshot of the index via node backup() or VACUUM INTO to a temp file with an integrity_check then rename, which I tested on Windows under write load; (2) restore = 'git clone' the bare repo and rebuild the index from the event files, or copy the snapshot and enable WAL, which I tested; (3) drill monthly or per release by cloning into a temp directory, rebuilding, and comparing the entry count and a hash of all event IDs against the live store. sqlite3_rsync is an optional faster snapshot transport, not a requirement, and I could not test it.",
+   "fact_ids": [
+    "F06",
+    "F07",
+    "F09",
+    "F10",
+    "F03"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Behaviour with the VPS unreachable. With the git-event-file design the dev box is fully functional: it reads from its local index, writes new event files, and commits locally. Sync is a deferred push and pull, and retries are safe because event IDs are unique. With a VPS-resident service (rqlite, libSQL, a store daemon over SSH or MCP-HTTP) the dev box loses writes, and also reads unless it keeps a cache. Treat that as disqualifying for the agent lookup path.",
+   "fact_ids": [
+    "F14",
+    "F13",
+    "F08",
+    "F20"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Do not use a merging database to solve a problem the event-file design does not have. cr-sqlite is per-column last-write-wins and rqlite and Dolt are cluster or VCS systems sized well beyond a few hundred rows. Dolt additionally ships default-on telemetry that must be disabled and verified. Cite Beads and Dolt for design lessons only (hash IDs, export is not truth, full-fidelity backup).",
+   "fact_ids": [
+    "F14",
+    "F15",
+    "F16",
+    "F17",
+    "F18"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "The egress constraint decides the sync remote. A bare git repo on the VPS over SSH keeps defect text owner-controlled, while the existing code remote (GitHub, per the gh CLI usage) does not. Use a separate store repo and remote, and never push the store to the code remote. Use SSH keys, and plain WireGuard if a tunnel is needed. Tailscale's coordination server and default log upload are third-party, so Headscale would be the only acceptable mesh option.",
+   "fact_ids": [
+    "F26",
+    "F27",
+    "F28"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Agent access should be a CLI invoked on the same host as the agent, with an MCP stdio wrapper over the same CLI. A remote HTTP MCP endpoint is optional later and must meet the spec's Origin validation, localhost bind and authentication requirements. This avoids a new network auth surface for a one-developer shop.",
+   "fact_ids": [
+    "F25"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Version gate: any host that opens the index must run SQLite >= 3.51.3 (or the 3.50.7 / 3.44.6 backports) to avoid the WAL-reset corruption bug, and, if sqlite3_rsync is used, both ends should be >= 3.50.0. Node 24's bundled 3.53.4 on the dev box satisfies this. The VPS runtime must be checked at install time.",
+   "fact_ids": [
+    "F02",
+    "F03",
+    "F09"
+   ],
+   "strength": "strong"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Putting event files on feature branches of the code repo, or in a docs/ folder inside a worktree",
+   "why": "Entries on an abandoned branch vanish from main (tested), and a squash drops original commit SHAs. A worktree-local DB forks per worktree.",
+   "fact_ids": [
+    "F19",
+    "F20",
+    "F22"
+   ]
+  },
+  {
+   "what": "A shared append-only JSONL log merged with merge=union",
+   "why": "Without union the same-file append conflicts (tested). With union, git's own docs say the line order is arbitrary and must be verified, and the result cannot be checked for duplicate or ordered IDs.",
+   "fact_ids": [
+    "F20",
+    "F21"
+   ]
+  },
+  {
+   "what": "SQLite file on a network share or synced folder (SMB, NFS, OneDrive-style) shared by Windows and Linux",
+   "why": "WAL needs same-host shared memory and SQLite's own docs say network locking and fsync are unreliable. Sync tools that move or miss -wal files corrupt databases.",
+   "fact_ids": [
+    "F01",
+    "F06",
+    "F08"
+   ]
+  },
+  {
+   "what": "sqlite3_rsync as a bidirectional sync",
+   "why": "It is one-way. The replica is overwritten, so writes made on the replica are lost.",
+   "fact_ids": [
+    "F03"
+   ]
+  },
+  {
+   "what": "libSQL/sqld",
+   "why": "No Windows binary, upstream steers to Turso, last server release 2025-02-14, and no offline writes.",
+   "fact_ids": [
+    "F13"
+   ]
+  },
+  {
+   "what": "cr-sqlite",
+   "why": "Per-column last-write-wins loses concurrent edits, no event log in v1, and the latest release is from January 2024.",
+   "fact_ids": [
+    "F15"
+   ]
+  },
+  {
+   "what": "Tailscale (hosted coordination server) as the transport",
+   "why": "Third-party control plane and default log upload, which breaks the egress rule. Plain SSH or WireGuard is enough.",
+   "fact_ids": [
+    "F26",
+    "F27"
+   ]
+  },
+  {
+   "what": "git notes for entry storage",
+   "why": "Anchored on commit SHAs that squash and branch deletion drop; not synced by default; the rewrite config is unset by default.",
+   "fact_ids": [
+    "F22",
+    "F23"
+   ]
+  }
+ ],
+ "open_questions": [
+  "Does sqlite3_rsync work end-to-end from the Windows 11 dev box (local side) to a Linux VPS (remote side) with git-bash/OpenSSH path handling? Untested here because it requires installing the SQLite tools zip. Test on the owner's machine in a later phase.",
+  "Is sshd installed or running on the dev box? The Get-WindowsCapability check needed elevation. The design does not need it, but a VPS agent pulling from the dev box would.",
+  "Is a VPS or home box provisioned, and which OS and SQLite version does it ship? The F02 fix level (3.51.3+) must hold there if the index runs on it.",
+  "Owner decision: may defect text live in the GitHub-hosted code repo? docs/ write-ups already do. The strict constraint says no for the knowledge store; the safe default is a separate repo whose only remote is the VPS.",
+  "Concurrent 'ks sync' commits from several worktrees contend on git's index.lock. A file lock or a single sync-on-phase-end rule is needed. I have not measured contention.",
+  "Dolt's telemetry endpoint host was not visible in the file read. If Dolt is ever reconsidered, egress must be confirmed with a packet capture or a firewall block.",
+  "rqlite and Litestream 'no telemetry' rest on reading main.go and the absence of mentions, not on a network capture. Treat as reported.",
+  "Whether OpenSSH on Windows supports connection multiplexing (ControlMaster) for fast repeated CLI calls over SSH was not checked.",
+  "The sqlite3_rsync page does not state the introduction version. The 'How to corrupt' page says 3.47.0+. The release date of SQLite 3.54.1 is not stated on the download page.",
+  "The libsql release list was truncated (726 KB). Only the four newest entries were read, and I assumed newest-first ordering, so a newer release than v0.24.32 cannot be fully ruled out; the repo's last push is 2026-10-17."
+ ],
+ "urls_attempted": [
+  "https://sqlite.org/rsync.html",
+  "https://litestream.io/reference/",
+  "https://www.sqlite.org/wal.html",
+  "https://github.com/tursodatabase/libsql",
+  "https://rqlite.io/docs/",
+  "https://github.com/vlcn-io/cr-sqlite",
+  "https://docs.dolthub.com/sql-reference/server/configuration (301 to www.dolthub.com)",
+  "https://www.dolthub.com/docs/sql-reference/server/configuration",
+  "https://github.com/rqlite/rqlite",
+  "https://github.com/vlcn-io/cr-sqlite/releases",
+  "https://github.com/tursodatabase/libsql/blob/main/docs/DOCKER.md",
+  "https://rqlite.io/docs/guides/backup/",
+  "https://rqlite.io/docs/install-rqlite/",
+  "https://rqlite.io/docs/guides/security/",
+  "https://www.dolthub.com/docs/introduction/installation/windows",
+  "https://www.dolthub.com/docs/reference/cli",
+  "https://rqlite.io/docs/guides/monitoring-rqlite/",
+  "https://github.com/rqlite/rqlite/blob/master/CHANGELOG.md",
+  "https://raw.githubusercontent.com/rqlite/rqlite/master/CHANGELOG.md",
+  "https://raw.githubusercontent.com/tursodatabase/libsql/main/libsql-server/README.md",
+  "https://raw.githubusercontent.com/vlcn-io/cr-sqlite/main/README.md",
+  "https://litestream.io/guides/sftp/",
+  "https://litestream.io/install/windows/ (404)",
+  "https://raw.githubusercontent.com/benbjohnson/litestream/main/README.md",
+  "https://litestream.io/how-it-works/",
+  "https://litestream.io/guides/windows/",
+  "https://git-scm.com/docs/gitattributes",
+  "https://headscale.net/stable/",
+  "https://www.wireguard.com/install/",
+  "https://www.sqlite.org/download.html",
+  "https://www.sqlite.org/howtocorrupt.html",
+  "https://www.sqlite.org/lang_vacuum.html",
+  "https://www.sqlite.org/useovernet.html",
+  "https://nodejs.org/docs/latest-v24.x/api/sqlite.html",
+  "https://git-scm.com/docs/git-worktree",
+  "https://git-scm.com/docs/git-notes",
+  "https://www.dolthub.com/blog/2022-06-28-dolt-metrics/ (404)",
+  "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports",
+  "https://raw.githubusercontent.com/dolthub/dolt/main/README.md",
+  "https://tailscale.com/kb/1151/what-is-tailscale",
+  "https://tailscale.com/blog/how-tailscale-works",
+  "https://raw.githubusercontent.com/dolthub/dolt/main/go/libraries/doltcore/env/config.go",
+  "https://raw.githubusercontent.com/dolthub/dolt/main/go/cmd/dolt/dolt.go",
+  "https://raw.githubusercontent.com/rqlite/rqlite/master/cmd/rqlited/main.go",
+  "https://raw.githubusercontent.com/benbjohnson/litestream/main/cmd/litestream/main.go",
+  "https://raw.githubusercontent.com/tursodatabase/libsql/main/libsql-server/src/main.rs",
+  "https://api.github.com/repos/vlcn-io/cr-sqlite/releases/latest",
+  "https://api.github.com/repos/vlcn-io/cr-sqlite",
+  "https://api.github.com/repos/benbjohnson/litestream/releases/latest",
+  "https://api.github.com/repos/tursodatabase/libsql/releases",
+  "https://api.github.com/repos/tursodatabase/libsql",
+  "https://api.github.com/repos/dolthub/dolt/releases/latest",
+  "https://api.github.com/repos/rqlite/rqlite/releases/latest",
+  "https://api.github.com/repos/juanfont/headscale/releases/latest",
+  "https://www.dolthub.com/docs/sql-reference/version-control/merges",
+  "https://www.dolthub.com/docs/sql-reference/server/backups",
+  "https://rqlite.io/docs/api/read-consistency/",
+  "https://raw.githubusercontent.com/steveyegge/beads/main/README.md",
+  "https://raw.githubusercontent.com/MichaelMure/git-bug/master/README.md",
+  "https://raw.githubusercontent.com/steveyegge/beads/main/docs/DOLT.md (404)",
+  "https://raw.githubusercontent.com/steveyegge/beads/main/docs/WORKTREES.md (404)",
+  "https://api.github.com/repos/steveyegge/beads/contents/docs",
+  "https://api.github.com/repos/steveyegge/beads/contents/docs/architecture",
+  "https://api.github.com/repos/steveyegge/beads/contents/docs/multi-agent",
+  "https://raw.githubusercontent.com/steveyegge/beads/main/docs/architecture/dolt.md",
+  "https://raw.githubusercontent.com/steveyegge/beads/main/docs/multi-agent/federation.md",
+  "https://git-scm.com/docs/git-gc",
+  "https://git-scm.com/docs/git-merge",
+  "https://git-scm.com/docs/git-merge-file",
+  "https://tailscale.com/kb/1011/log-mesh-traffic",
+  "https://headscale.net/stable/about/faq/",
+  "WebSearch x3 (rqlite telemetry; Dolt telemetry; sqld telemetry): refused, per-turn search budget exhausted"
+ ],
+ "anomalies": [
+  "WebSearch was unavailable: all 3 queries were refused because the per-turn search budget was already used. All evidence is from WebFetch of primary pages, GitHub API JSON and raw source files. tool_status is web_degraded.",
+  "WebFetch answers come from a small summarising model. 'Not mentioned' answers mean absent from the fetched text, not proof of absence (for example telemetry for rqlite, libSQL and Litestream). Telemetry claims for those three are therefore marked reported or are absences in main.go, not verified negatives.",
+  "Several fetched documents were truncated by WebFetch (rqlite CHANGELOG ~220 KB, libsql releases 726 KB, Dolt CLI reference 105 KB). Only the leading portion was read.",
+  "The sqlite.org rsync.html page content has been revised since the 3.47 introduction. It now says the WAL and page-size requirements were removed in 3.50.0, so older blog claims that sqlite3_rsync needs WAL on both ends are stale.",
+  "The SQLite download page lists 3.54.1 and the Node bundle reports 3.53.4. Both are later than any version I know from before the session, so I relied only on what the pages and the local run say.",
+  "dolthub docs.dolthub.com redirects (301) to www.dolthub.com/docs. Two attempted URLs 404: litestream.io/install/windows/ and dolthub.com/blog/2022-06-28-dolt-metrics/. Two Beads doc URLs 404 and I found the real files via the GitHub contents API.",
+  "I created a temp git repo and temp SQLite files under the session scratchpad (.../scratchpad/x01) for tests F10 and F20. No project files were modified and nothing was installed.",
+  "The Get-WindowsCapability check for the OpenSSH server needed elevation and failed, so sshd status is unknown."
+ ]
+}

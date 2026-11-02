@@ -1,0 +1,34 @@
+# recheck:E-11
+
+lane=E-11 tool_status=ok checks=10
+
+- E11-F02 ON_PAGE — https://docs.arango.ai/arangodb/stable/operations/installation/
+    quote: Starting with version 3.12, ArangoDB packages for Windows and macOS are not provided anymore. Running production environments with Windows or macOS as the host operating system is not supported.
+    note: Docker on Linux/macOS/Windows and the SSE 4.2 + AVX requirement are also on the page.
+- E11-F06 ON_PAGE — https://surrealdb.com/license
+    quote: Each version becomes available under the Apache License 2.0 no later than four years after its release.
+    note: Grant allows any usage except running SurrealDB as a database service for third parties; SDKs are Apache 2.0 or MIT. Fetch tool paraphrase was a bit garbled but consistent.
+- E11-F07 PARTIAL — https://surrealdb.com/docs/manage/self-hosted/deployment-models.md and https://surrealdb.com/docs/build/embedding.md
+    quote: This is the simplest and most widely used production architecture on disk. ... Vertical scaling only.
+    note: Embedding page lists .NET, Go, JavaScript, Python and Rust. WebAssembly and explicit TypeScript were not confirmed. Single-node and vertical-scaling parts are supported.
+- E11-F08 PARTIAL — https://surrealdb.com/docs/manage/self-hosted/deployment-models.md ; https://github.com/surrealdb/surrealdb/releases
+    quote: SurrealDB 4.0 removed the RocksDB and IndexedDB engines, and data in either is converted to SurrealKV when it is opened. ... From 3.3.0 it does not support versioned queries.
+    note: Supported: RocksDB removed in 4.0, SurrealMX no versioned queries from 3.3.0, releases page shows 3.3.5 (29 Oct) latest with no 4.0 on first page. Page wording is SurrealKV 'reached 1.0 before 4.0', not literally 'beta before'. The 'other pages still call SurrealKV beta' claim was not checked here, and only the first releases page was seen.
+- E11-F09 ON_PAGE — https://surrealdb.com/docs/surrealql/statements/define/indexes.md
+    quote: Before SurrealDB version 3.0.0, the FULLTEXT ANALYZER clause used the syntax SEARCH ANALYZER.
+    note: Syntax [UNIQUE | FULLTEXT ANALYZER @analyzer [BM25 [(@k1,@b)]] [HIGHLIGHTS]] present; page does not mention fuzzy matching or vector indexes.
+- E11-F10 ON_PAGE — https://surrealdb.com/docs/reference/cli/surrealdb-cli/commands/mcp.md
+    quote: Stdio MCP is intended for a trusted operator on the same machine.
+    note: Also: stdio, embedded datastore default memory, since v3.1.0, owner privileges, no read-only option mentioned.
+- E11-F11 PARTIAL — https://ravendb.net/buy
+    quote: Valid for one year, requires periodic renewals. ... Max number of revisions to keep is 2, and max age is 45 days.
+    note: Supported: 6 GB RAM cluster cap, latest major version, local backups only, revisions 2/45 days, one custom analyzer per database, vector search. Not confirmed: 12 static / 24 auto index limits (page said static and auto indexes included). The cores line was ambiguous in the extraction (60 cores per customer entity vs 3 cores).
+- E11-F15 ON_PAGE — https://docs.couchdb.org/en/stable/ddocs/nouveau.html ; https://docs.couchdb.org/en/stable/install/nouveau.html ; https://docs.couchdb.org/en/stable/api/database/find.html
+    quote: Future releases might change how the endpoints work and might invalidate existing indexes.
+    note: Fuzzy 'term~', Java 21+, Dropwizard, *-nouveau Docker tags, and 'only available if those features are installed' all found. Literal word 'experimental' not seen in extraction; install page says the server usually runs on the CouchDB host but can be separate.
+- E11-F17 ON_PAGE — https://www.mongodb.com/products/updates/now-ga-mongodb-search-and-vector-search-for-community-edition/ ; https://www.mongodb.com/products/updates/public-preview-mongodb-community-edition-now-offers-native-full-text-and-vector-search/
+    quote: mongot is available under the SSPL ... this preview is intended for development and evaluation only (not production).
+    note: GA dated June 30, 2026; preview September 17, 2025; separate mongot process; change streams sync mentioned on the preview page.
+- E11-F18 ON_PAGE — https://www.mongodb.com/docs/search/self-managed/current/deployment/compatibility-requirements/
+    quote: atlas-local is a single-container development image, not a production deployment target.
+    note: x86_64/aarch64 Linux only, no native Windows/macOS binaries, mongot 1.70.1 with Server 8.3, 8.2 end of life; memory/JVM sizing not on this page.

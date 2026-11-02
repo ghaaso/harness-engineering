@@ -1,0 +1,878 @@
+{
+ "lane": "M-03",
+ "tool_status": "ok",
+ "summary": "Repair and crash-triage prior art supports the framing but tightens it in six ways. (1) Every serious system that reuses a past fix puts a validation step between retrieval and action, and the strongest one re-runs the detector that raised the signal (Getafix; 84% of top fixes passed). (2) Test-pass is a weak gate on its own: SapFix produced fixes that passed tests but were rejected as \"null guard for an expression that cannot be null\", and Prophet and Qi et al. document plausible-but-incorrect patches. So the gate must reproduce the root cause, not just show the symptom gone. (3) Retrieval quality is modest even at Meta (top-1 exact match 12-91%; 42% acceptance; Graph2Diff 61% precision at 46% coverage), so retrieval is a candidate generator with abstention. (4) Durable keys avoid line numbers and paths: WER tagged asserts permanently, Getafix binds holes via code context, Socorro and Sentry normalise frames. (5) Key-derivation changes orphan links. Socorro bug 1178094 had to rewrite 2,044 Bugzilla signature fields, WER kept raw minidumps six months to re-bucket, and Sentry versions grouping. So keep raw evidence plus a versioned derived key, and append rather than replace. (6) Crude known-issue pages (Expo, Gradle) give no per-entry applicability, dates or failed approaches. The Linux Fixes: tag and Sentry resolved-in-release are the best precedent for event-driven applicability. I found no study quantifying fix decay after refactors. Getafix-style clustering and Prophet-style learning are scale mismatches. ast-grep is a plausible local structural-probe tool.",
+ "facts": [
+  {
+   "id": "M03-F01",
+   "statement": "Getafix validates a suggested fix against the same tool that raised the bug signal (the static analyzer) before showing it, and only for the top-ranked candidate. In the Facebook deployment the top-most predicted fix removed the Infer warning in 84% of validation runs, and only those were shown to developers. Getafix does not walk down its list looking for a validated fix.",
+   "source": "https://arxiv.org/pdf/1902.06111 (Bader, Scott, Pradel, Chandra; arXiv v5, 20 Nov 2019; OOPSLA 2019), Sec 1 and Sec 7 deployment; read via local text extraction",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F02",
+   "statement": "Getafix accuracy: on 1,268 historical fixes across six bug categories the top-1 suggestion exactly matched the human fix 12% to 91% of the time depending on category, and the top-5 contained fixes for 526 of 1,268 bugs. In production, developers accepted 106 of about 250 suggestions (42%) over three months. Acceptance exceeded top-1 accuracy because developers accept several valid fixes. About 10% of non-accepted cases were fixes Getafix knew but ranked lower, and about 10% were assertion-style fixes it deliberately does not roll out.",
+   "source": "https://arxiv.org/pdf/1902.06111 abstract and Sec 7 (Figure 13)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F03",
+   "statement": "Getafix edit patterns carry code context and error context in addition to the changed nodes, with 'holes' for context-specific values. The paper gives two reasons: context makes patterns more specific so they match fewer locations, which reduces the chance of producing invalid fixes, and context binds otherwise unbound holes so the pattern can be applied to new code. Patterns that are more specialised (applicable at fewer locations) get a higher ranking score.",
+   "source": "https://arxiv.org/pdf/1902.06111 Sec 4.3 and Sec 5.2; also https://engineering.fb.com/2018/11/06/developer-tools/getafix-how-facebook-tools-learn-to-fix-bugs-automatically/",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "retrieval",
+    "canonicalisation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F04",
+   "statement": "Getafix ranks candidate fixes by the product of three scores estimated from the training fixes: prevalence (share of training fixes the pattern covers), location (how often the pattern was applied at that line offset from the warning) and specialization (inverse of how many AST subtrees the 'before' part matches). It learned from 'several dozens to several hundreds' of examples per category, accuracy rose with more training data, and training on 804 null-dereference fixes took 762s. This scale is similar to the store's expected entry count, but Getafix's examples are homogeneous AST edits for one bug category, while the store's entries are heterogeneous.",
+   "source": "https://arxiv.org/pdf/1902.06111 Sec 1, Sec 5.2, Sec 6.5, Table 2",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F05",
+   "statement": "For deployment Getafix dropped all patterns that add assertions or just remove code, because they produce a plethora of candidates that are hard to rank and would encourage suppressing warnings rather than fixing causes. SapFix likewise attempted 18 diff reverts in three months, all declined by developers, though it argues deletion is legitimate for blocking high-firing crashes in a master build.",
+   "source": "https://arxiv.org/pdf/1902.06111 Sec 7; SapFix paper https://web.eecs.umich.edu/~weimerw/2022-481W/readings/SapFix-Automated-End-to-End-Repair-at-Scale-v2.pdf (Lessons Learned)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F06",
+   "statement": "SapFix (Facebook, ICSE-SEIP 2019): for 57 crashes it constructed 165 patches (about half template-based, half mutation-based); 131 built and passed all tests; 55 were reported to developers covering 55 of the 57 crashes; 27 of 57 (48%) were judged correct and about one quarter landed. Candidates were abandoned if not reviewed within 7 days. The template pool was updated once (9 Aug 2018) during the pilot after observed failures.",
+   "source": "https://web.eecs.umich.edu/~weimerw/2022-481W/readings/SapFix-Automated-End-to-End-Repair-at-Scale-v2.pdf (Marginean et al., ICSE-SEIP 2019; DOI 10.1109/ICSE-SEIP.2019.00039), results section and Table I; read via local text extraction",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "limits",
+    "invalidation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F07",
+   "statement": "In SapFix's reviewer log, patches that built and passed all tests were repeatedly rejected by developers with comments such as 'Wrong fix: null guard for an expression that cannot be null', 'The fix might mask a race condition', 'Fixing the crash, but not a reasonable fix', and 'We do want to crash because we wanna know when it can be null'. The authors state no repair lands without human oversight, so the system 'is merely a recommender system', and they cite weak test oracles as the reason for combining static and dynamic checks.",
+   "source": "https://web.eecs.umich.edu/~weimerw/2022-481W/readings/SapFix-Automated-End-to-End-Repair-at-Scale-v2.pdf Table I reviewer comments and Lessons Learned; read via local text extraction",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "limits",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F08",
+   "statement": "Prophet (Long and Rinard, POPL 2016) learns a probabilistic model from past successful human patches (777 errors and fixes from eight open-source applications, per secondary report) to rank candidate patches. The paper says plausible-but-incorrect patches (pass all tests, wrong on other inputs) complicate generate-and-validate repair. Its search space contained correct patches for only 19 of 69 defects; Prophet found a correct patch as the first for 15 of those 19. It learns from variable-name-independent 'universal' features so patches transfer across applications.",
+   "source": "https://people.csail.mit.edu/rinard/paper/popl16.pdf (Intro and Sec 1; read via local text extraction); 777-error figure from https://www.pcworld.com/article/3029202/turns-out-machine-learning-is-a-champ-at-fixing-buggy-code.html",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "canonicalisation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F09",
+   "statement": "Qi, Long, Achour and Rinard (ISSTA 2015), as summarised by search results: GenProg produced a correct patch for only 2 of 105 defects, RSRepair 2 of 24 and AE 3 of 105; the overwhelming majority of reported patches were equivalent to deleting functionality, and a deletion-only system (Kali) matched them on test-suite plausibility. Smith, Barr, Le Goues and Brun (FSE 2015) show repair tools overfit the tests that drive them and that evaluation needs independent tests. I did not open either paper in full.",
+   "source": "https://www.cs.toronto.edu/~fanl/papers/kali-issta2015.pdf ; https://www.cs.washington.edu/homes/brun/pubs/pubs/Smith15fse.pdf (both via WebSearch result summaries)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F10",
+   "statement": "Google's Graph2Diff build-error fixer (Tarlow et al., arXiv 1911.01205, preprint Aug 2019) trained on over 500k real build errors with their developer fixes and reports 61% precision at producing the exact developer fix when it suggests fixes for 46% of errors. The paper presents this as a precision/coverage trade-off (the model abstains on the rest), and notes that suggestions failing to build can be filtered before reaching developers, while an estimated 26% (+/-13%) of incorrect predictions still build.",
+   "source": "https://arxiv.org/pdf/1911.01205 Sec 1 and Sec 7; read via local text extraction",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F11",
+   "statement": "Windows Error Reporting maintains a mapping from buckets to 'solutions' (a URL to a patch, update site or workaround page); one solution can apply to many buckets via a simple regular-expression match. When a fix already exists for a bucket the WER service gives the client the URL. This is a production crash-to-fix mapping where the key (bucket) is machine-derived and the value is a human-curated pointer.",
+   "source": "https://cs.uwaterloo.ca/~m2nagapp/courses/CS846/1171/papers/glerum_sosp09.pdf (Glerum et al., SOSP 2009), Sec 2.5; read via local text extraction",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "retrieval"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F12",
+   "statement": "WER's build process assigns a permanent unique tag to each assert statement in the source; when an assert fails, the bucket is labeled by the assert tag (heuristic L15) rather than module/offset information, so all instances of that assert land in one bucket 'even as the assert moves in the source over time'. WER thus keys on a stable semantic anchor instead of a location, so that refactors that move code do not change the key.",
+   "source": "https://cs.uwaterloo.ca/~m2nagapp/courses/CS846/1171/papers/glerum_sosp09.pdf Sec 3.1 (L15); read via local text extraction",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "canonicalisation",
+    "invalidation",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F13",
+   "statement": "WER bucketing is two-phase (client-side labeling, server-side classifying) using expanding heuristics (split bugs) and condensing heuristics (merge buckets). The authors say no perfect algorithm is known and measure the damage: for Office 2010 ITP, 17.7% to 36.8% of reports (PowerPoint 36.8%) were in a second bucket for the same bug or in single-report 'one-hit wonder' buckets; they also assume 'real bugs are always encountered more than once'. About 500 server-side heuristics (roughly one added per week) are re-run over retained minidumps (kept six months) whenever classification changes, so reports are re-bucketed from raw evidence rather than from the old key.",
+   "source": "https://cs.uwaterloo.ca/~m2nagapp/courses/CS846/1171/papers/glerum_sosp09.pdf Sec 3.2 and Sec 6.3 (Figures 16-17); read via local text extraction",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "canonicalisation",
+    "invalidation",
+    "provenance",
+    "retrieval"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F14",
+   "statement": "Mozilla Socorro builds a crash signature from the crashing thread's stack: walk for sentinels, skip irrelevant frames, collapse DLL frames to module names, accumulate prefix-list frames, optionally add line numbers; the result is a concatenation. The docs say signatures that are too coarse group unrelated crashes and signatures that are too fine create groups too small to get attention. Every signature-generation change needs a Bugzilla bug 'for the historical data for what changes we made, for whom, why, and how it affected signature generation', and affected crashes may be reprocessed afterwards.",
+   "source": "https://socorro.readthedocs.io/en/latest/signaturegeneration.html (fetched 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "canonicalisation",
+    "provenance",
+    "invalidation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F15",
+   "statement": "Socorro's signature utilities normalise frames by collapsing template arguments to '<T>', removing parenthesised argument lists (keeping '(anonymous namespace)' and operator parens), dropping return types and prefixes, stripping leading zeros from hex addresses, restricting to printable ASCII, and extracting repo-relative paths from VCS-style source strings. Generic low-information frames (allocators, abort/panic helpers, standard-library internals, any .dll) sit in a regex 'irrelevant' skip list, with a separate prefix list for frames that should be kept and extended. Read through a fetch-tool summary of the source, not line by line.",
+   "source": "https://raw.githubusercontent.com/mozilla-services/socorro/main/socorro/signature/utils.py ; https://github.com/mozilla-services/socorro/blob/main/socorro/signature/siglists/prefix_signature_re.txt",
+   "source_kind": "source_repo",
+   "confidence": "reported",
+   "bears_on": [
+    "canonicalisation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F16",
+   "statement": "Bugzilla bug 1178094: when Socorro changed signature generation (collapsing C++ template parameters to T and dropping argument lists), crash-signature fields already stored in Bugzilla bugs no longer matched new crashes. Resolution: a script converted existing signatures to the new style and APPENDED the new variants while keeping the old entries so crashes processed before and after the switch could both be found; it updated 2,044 bugs; applied to open bugs, with top crashers handled manually and duplicates avoided. This is a worked example of a key-derivation change orphaning human-curated links.",
+   "source": "https://bugzilla.mozilla.org/show_bug.cgi?id=1178094",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "canonicalisation",
+    "provenance",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F17",
+   "statement": "Socorro's bug-to-crash mapping is owned by humans in Bugzilla: the cf_crash_signature field on a bug lists the signatures relevant to it. A scheduled 'bugassociations' job re-reads bugs created or whose field changed in a recent window and updates a cache table with new associations and removed ones. The link is thus a curated field on the issue side, with the crash-stats side holding a rebuildable cache.",
+   "source": "https://socorro.readthedocs.io/en/latest/flows/bugs.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F18",
+   "statement": "Sentry event grouping uses a fallback order (explicit fingerprint, stack trace, exception type/value, message); with a stack trace it uses only in-app frames, with normalised filenames (revision hashes removed) and normalised context lines. Each change to default grouping ships as a new algorithm version applied only to new events, so existing issues keep their grouping. Issues can be merged or unmerged manually, and after an unmerge the AI grouping will not regroup them. Fingerprint rules do not change existing issues.",
+   "source": "https://docs.sentry.io/concepts/data-management/event-grouping/ (fetched 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "canonicalisation",
+    "invalidation",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F19",
+   "statement": "Sentry ties resolution to a release: an issue resolved 'in release X' that shows up again in a newer release automatically becomes 'Regressed'; a plain Resolve with no release treats any later event as a regression. This is an event-driven reopen condition keyed on a version coordinate rather than elapsed time.",
+   "source": "https://docs.sentry.io/product/issues/states-triage/ (fetched 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F20",
+   "statement": "ClusterFuzz keys duplicates on a 'crash state' signature derived from the stack trace. Per an OSS-Fuzz issue and a Dawn/Tint commit (secondary descriptions), it relies on roughly the top three frames, infrastructure frames at the top (Rust panic helpers, a FatalError wrapper) make unrelated bugs group together or hide the useful frame, and the workaround was to skip such frames or turn the helper into a macro. An academic paper (Igor, CCS 2021) says stack hashes are coarse and can falsely merge unrelated bugs. I did not read ClusterFuzz's own normalization code.",
+   "source": "https://google.github.io/clusterfuzz/reference/glossary/ ; https://github.com/google/oss-fuzz/issues/8389 ; https://www.nebelwelt.net/files/21CCS.pdf (via WebSearch summary)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "canonicalisation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F21",
+   "statement": "TraceSim (JetBrains/SPbU; MaLTeSQuE 2020 workshop, extended in Empirical Software Engineering 2022; arXiv 2009.12590) states that the same bug can produce slightly different crash reports, and combines TF-IDF, edit distance and machine learning into a stack-trace similarity metric with frame weights that depend on position and rarity. It is implemented in an industrial report-triaging system and evaluated on a manually labeled dataset against baselines. The per-frame IDF idea is cheap and needs no model; the learned weighting needs a labeled corpus.",
+   "source": "https://arxiv.org/pdf/2009.12590 (read via local text extraction); venue per https://publications.polymtl.ca/50496/",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "canonicalisation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F22",
+   "statement": "Mozilla Treeherder shows 'bug suggestions' for a failure line. Bugs become suggestions when their summary follows 'Intermittent <test file> | <failure text>' and carry the intermittent-failure keyword; Treeherder syncs with Bugzilla several times a day, so new bugs appear with a lag. The wiki warns that for crashes with no readable function name you may assume a match only if there is exactly one crash suggestion, that general messages like timeouts need a new bug per job type and message to avoid matching unrelated jobs, and it documents how to undo a wrong classification (remove the bug from the task's Annotations). The page says nothing about stale or no-longer-applicable bugs. A search summary (unverified) says matching is word-based and order-insensitive and the suggestion is only a hint for the sheriff.",
+   "source": "https://wiki.mozilla.org/Sheriffing/How_To/Intermittent_bugs (fetched 2026-11-02); matching note from https://wiki.mozilla.org/Special:MobileDiff/1176065",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "workflow",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F23",
+   "statement": "Stack Overflow duplicate-question detectors are evaluated as ranked top-k recall (DupPredictor: recall-rate@20 of 63.8% on over two million questions, combining title, description, latent-topic and tag similarity), meaning the system proposes a candidate list for a human to confirm rather than deciding. A reproducibility study (Silva et al., 2018) reports that reimplementations showed recall decay as the number of questions grew and original implementations were not public. Precision is not the headline metric in this literature.",
+   "source": "https://ink.library.smu.edu.sg/sis_research/2843/ ; https://peerj.com/preprints/26555 (via WebSearch summaries; not opened in full)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F24",
+   "statement": "The Linux kernel's 'Fixes:' tag names the earlier commit a patch corrects (at least 12 hex chars of the SHA-1 plus its subject), and the stable team uses it to decide which stable trees get the fix; the tag can make explicit version annotations ('Cc: stable ... # 3.3.x') redundant. Stable rules also require the fix (or an equivalent) to exist in mainline first and be 'obviously correct and tested'. Applicability is expressed as 'the introducing change is present in this tree', not as a symptom match.",
+   "source": "https://docs.kernel.org/process/submitting-patches.html ; https://docs.kernel.org/process/stable-kernel-rules.html (fetched 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "data_model",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F25",
+   "statement": "Flaky-test knowledge bases: Spotify reports that merely showing teams a table of test results and flakiness cut flakiness from 6% to 4% in two months. GitHub's post (via search summary) says it reruns a failing test in the same process with a shifted clock and that this catches about 90% of flaky failures, whereas a same-git-tree-hash check caught about 25%, and that only the top 0.4% of flaky tests by an impact score get issues opened. Google's 2016 post (via search summary) reports about 1.5% of runs flaky and re-runs only for tests marked flaky; the body of that post could not be fetched. The common pattern is evidence counts plus a cheap confirm-by-rerun, not a prose description.",
+   "source": "https://engineering.atspotify.com/2019/11/test-flakiness-methods-for-identifying-and-dealing-with-flaky-tests/ (verified); https://github.blog/engineering/infrastructure/reducing-flaky-builds-by-18x/ and https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html (reported)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "invalidation",
+    "workflow",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F26",
+   "statement": "Expo's EAS build troubleshooting page is organised by symptom/topic with some headings naming a symptom ('Out-of-memory (OOM) errors', 'None of the files exist error'); entries carry no per-entry version/applicability conditions and no dates (only a page-level modification date), and do not record approaches that failed. Gradle's troubleshooting guide uses literal error text as some headings ('Command not found: gradle', 'JAVA_HOME is set to an invalid directory') but states version applicability only at the page level (version 9.8.2), with no per-entry affected/fixed-in versions. Both are crude known-error databases that omit exactly the fields (applicability, negative results, discriminating check) this store needs.",
+   "source": "https://docs.expo.dev/build-reference/troubleshooting/ ; https://docs.gradle.org/current/userguide/troubleshooting.html (fetched 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M03-F27",
+   "statement": "ast-grep is an MIT-licensed structural search/rewrite tool written in Rust on tree-sitter: patterns are ordinary code with metavariables like $PAT. It installs via npm (@ast-grep/cli), pip, cargo, Homebrew and Scoop, and has a Node.js API (@ast-grep/napi) with find, findAll, getMatch, inside/has/precedes/follows relational matchers and replace/commitEdits. The pages list TypeScript/TSX, Python, Java and Kotlin among supported languages. Windows support is implied by the Scoop package but not stated, and the docs do not explicitly state that it runs fully offline (it is a local CLI/library; no network use is described).",
+   "source": "https://github.com/ast-grep/ast-grep ; https://ast-grep.github.io/guide/introduction.html ; https://ast-grep.github.io/guide/api-usage/js-api.html (fetched 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "canonicalisation",
+    "engine",
+    "access",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F28",
+   "statement": "LLM-era experience banks for issue resolution: SWE-Exp (arXiv 2507.23361) keeps a bank of both successful and failed repair attempts distilled at several granularities and reports 73.0% Pass@1 on SWE-Bench Verified with Claude 4 Sonnet (abstract; retrieval mechanism not stated in the abstract). MemGovern (arXiv 2601.06789) converts GitHub issue data into 135K 'governed' experience cards retrieved agentically and reports +4.65% on SWE-bench Verified. Neither abstract reports a false-positive or staleness rate for reused experience, and both are benchmark pass-rate gains, not precision of reuse.",
+   "source": "https://arxiv.org/abs/2507.23361 ; https://arxiv.org/abs/2601.06789 (abstract pages fetched 2026-11-02)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F29",
+   "statement": "This repository's CLAUDE.md already holds known-error entries in prose, each combining a trap, a cause and a rule but with no applicability predicate or discriminating check: for example 'Never put EXPO_PUBLIC_SENTRY_DSN in eas.json as an empty string' (eas.json rejects empty env values and every eas build fails), 'expo export bundles JS only and does not catch native/Gradle compile breaks', and 'Deploy the backend from backend/, never the repo root'. It also records an UNFIXED known defect (outbox has no mutual exclusion on a stable id), i.e. an entry whose truth depends on code that has not changed. These are natural seed-corpus items.",
+   "source": "CLAUDE.md:81, CLAUDE.md:86, CLAUDE.md:88, CLAUDE.md:161 (worktree root)",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "seed_corpus",
+    "data_model",
+    "invalidation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F30",
+   "statement": "Google's Tricorder paper (ICSE 2015), via search summary, notes that analysis writers and developers define 'false positive' differently: to a developer any report they dismiss is a false positive. A 2026 survey attributes to Tricorder a requirement to keep false-positive rates below roughly 10%, but I could not confirm that figure in the primary paper (PDF fetch failed with a certificate error). Treat the 10% number as unverified.",
+   "source": "https://research.google/pubs/pub43322/ (via WebSearch summary); https://arxiv.org/pdf/2604.27000 (secondary, unverified 10% claim)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F31",
+   "statement": "History-driven and regression-specific repair (Le, Lo, Le Goues, SANER 2016: mines fix patterns from many projects' histories, applies mutation operators, recommends candidates that pass previously failing tests; evaluated on 90 bugs in 5 Java programs. relifix, Tan and Roychoudhury, ICSE 2015: transformations derived from manual inspection of 73 regressions, repaired 23 bugs versus GenProg's 5) use history as a source of candidate transformations and tests as the filter. Details come from search-result summaries, not the papers.",
+   "source": "https://findanexpert.unimelb.edu.au/scholarlywork/1414934-history-driven-program-repair ; https://www.comp.nus.edu.sg/~abhik/pdf/ICSE15-relifix.pdf (search summaries only; direct fetches failed)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "retrieval",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M03-F32",
+   "statement": "Aroma (Meta, arXiv 1812.01158) is a structural code-search recommender: given a partial snippet it finds corpus methods containing it, then clusters and intersects the results to recommend a few concise snippets; evaluated on 2,000 corpus-derived queries and 64 Stack Overflow-derived queries across 4 languages with a 12-programmer study. The abstract I read does not give precision figures or describe the parse-tree features.",
+   "source": "https://arxiv.org/abs/1812.01158 (abstract page fetched 2026-11-02)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "canonicalisation"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "Re-run-the-detector verification gate (Getafix validation step, generalised)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "The strongest precedent for the store's gate: Getafix shows the top candidate only if the originating signal (the analyzer) no longer fires on the patched code. For this store, each entry stores a discriminating probe (a command, a test name, or a structural query) that fires on the root cause on current code. A cheap agent runs it before acting. SapFix shows tests alone pass wrong fixes, so the probe should assert the cause is present before the fix and absent after, not only that the symptom disappeared.",
+   "egress_posture": "No egress; a local command or test run.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F01",
+    "M03-F07",
+    "M03-F08",
+    "M03-F09"
+   ],
+   "linux_prod_fit": "Fits; probes are shell/test commands.",
+   "windows_dev_fit": "Fits; probes must work in Git Bash/PowerShell/Node.",
+   "maturity": "Industrial (Meta) for static-analysis warnings; for agent memory it is an inferred transfer.",
+   "agent_access": "Probe stored as data on the entry; the agent or CLI runs it."
+  },
+  {
+   "name": "Stable semantic anchors instead of locations (WER assert tags; Getafix context/holes)",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "WER tags asserts permanently so the key survives code movement; Getafix binds holes through surrounding code context. Entries should key on symbols, config keys, error-template IDs, dependency names and versions, and structural patterns, and treat file path and line number only as weak handles. This is the main defence against entries that silently stop applying after a refactor.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F12",
+    "M03-F03",
+    "M03-F18"
+   ],
+   "linux_prod_fit": "Fits; plain data fields.",
+   "windows_dev_fit": "Fits.",
+   "maturity": "Proven in WER and Sentry.",
+   "agent_access": "Agents record anchors at write time; CLI verifies they still exist."
+  },
+  {
+   "name": "Raw evidence plus versioned derived keys, re-derivable and append-only on change (WER minidumps, Sentry grouping versions, Socorro bug 1178094)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Three independent systems found that the function from raw symptom to key changes over time and that stored links go stale when it does. WER keeps raw dumps six months to re-bucket; Sentry versions grouping and applies new versions to new events only; Socorro had to append new-style signatures to 2,044 Bugzilla bugs. For a 100-entry store: keep the original error text and log verbatim, store the canonical template with the canonicaliser version, and re-derive on version bump while keeping old keys as aliases.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F13",
+    "M03-F16",
+    "M03-F18",
+    "M03-F14"
+   ],
+   "linux_prod_fit": "Fits.",
+   "windows_dev_fit": "Fits.",
+   "maturity": "Proven at very large scale; trivially small here.",
+   "agent_access": "Re-key as a CLI maintenance command."
+  },
+  {
+   "name": "Introduced-by / applies-while predicate (Linux Fixes: tag; Sentry resolved-in-release)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Applicability is stated as a condition on the introducing change or the version, not as symptom text. For an entry that means recording the dependency versions, file or symbol anchors and platform it was true under, plus a fixed-in coordinate where known. A repo or dependency change touching those anchors flags the entry for re-verification. Sentry's Regressed state is the same idea in reverse: a recurrence in a newer release reopens the entry. This is the event-driven invalidation the owner asked for, with real precedent.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F24",
+    "M03-F19",
+    "M03-F26"
+   ],
+   "linux_prod_fit": "Fits.",
+   "windows_dev_fit": "Fits.",
+   "maturity": "Mature conventions in the kernel and Sentry; adaptation to agent memory is inferred.",
+   "agent_access": "Predicate checked by the CLI against git diff, lockfiles and the file tree."
+  },
+  {
+   "name": "Socorro-style canonicalisation pipeline with skip-lists (frame normalisation, irrelevant-frame list, prefix list)",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "A well-documented, hand-tuned rule pipeline: collapse template arguments, strip arguments and addresses, skip generic infrastructure frames, and review every rule change against a recorded reason. The same shape suits build-tool and runtime errors (strip paths, versions, hashes and UUIDs; skip wrapper frames). The Socorro code is Python (an extracted socorro-siggen package exists per the search summary), so the cheap route is porting the ideas to a small Node module rather than depending on it.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F14",
+    "M03-F15",
+    "M03-F20"
+   ],
+   "linux_prod_fit": "Fits.",
+   "windows_dev_fit": "Fits if ported to Node; Python exists only off-PATH.",
+   "maturity": "Production-proven at Mozilla scale.",
+   "agent_access": "Library function behind the CLI."
+  },
+  {
+   "name": "Per-frame IDF weighting of normalised stack frames (TraceSim without the ML)",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Gives a stack-trace handle that tolerates small differences between reports of the same bug. The TF-IDF and position-weight parts are cheap and need no training data; TraceSim's learned weights need a labeled corpus the store will not have for a long time. Useful only for entries with stack traces.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F21",
+    "M03-F23"
+   ],
+   "linux_prod_fit": "Fits.",
+   "windows_dev_fit": "Fits.",
+   "maturity": "Industrial at JetBrains; the reduced variant is untested here.",
+   "agent_access": "Index field queried by the search layer."
+  },
+  {
+   "name": "ast-grep structural probes and anchors",
+   "kind": "tool",
+   "verdict": "viable",
+   "why": "Lets an entry carry a structural pattern in ordinary code syntax (e.g. a call shape or config shape) as both a retrieval handle and a gate probe, with metavariables playing the role of Getafix holes. MIT licensed, local, tree-sitter based, with a Node API suited to this stack. Caveats: Windows support is implied (Scoop) but unconfirmed, language coverage for config files such as eas.json and for Gradle files was not checked, and patterns break when code is restructured, so they need the same re-verification as any anchor.",
+   "egress_posture": "Local library/CLI; no network use described.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F27",
+    "M03-F03",
+    "M03-F32"
+   ],
+   "linux_prod_fit": "Fits (cargo, npm, brew).",
+   "windows_dev_fit": "Probable (Scoop package, npm); not confirmed from docs.",
+   "maturity": "Active open source project; production maturity not assessed.",
+   "agent_access": "CLI invoked by the store's gate runner."
+  },
+  {
+   "name": "Top-k hits as hints with abstention, gated before action (Treeherder bug suggestions; Graph2Diff coverage/precision)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Treeherder shows suggestions that a sheriff must confirm and gives an undo; Graph2Diff reports precision at a chosen coverage and abstains elsewhere. The store should return a short ranked list with a 'no confident match' outcome, never auto-apply, and make rejecting a hit a first-class recorded event.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F22",
+    "M03-F10",
+    "M03-F02",
+    "M03-F23"
+   ],
+   "linux_prod_fit": "Fits.",
+   "windows_dev_fit": "Fits.",
+   "maturity": "Proven in production tooling.",
+   "agent_access": "CLI returns hits plus the gate to run."
+  },
+  {
+   "name": "Getafix hierarchical clustering and anti-unification of fix edits",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Excellent for its job (turning dozens to hundreds of homogeneous AST edits for one warning category into ranked patterns), but this store's entries are heterogeneous diagnosis records rather than repetitive edits. Revisit only if a category recurs many times (for example many similar null-guard or env-var fixes).",
+   "egress_posture": "Meta-internal, not available; cite the design only.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "M03-F03",
+    "M03-F04",
+    "M03-F02"
+   ],
+   "linux_prod_fit": "Not applicable; no public implementation was found.",
+   "windows_dev_fit": "Not applicable.",
+   "maturity": "Industrial at Meta; closed source as far as I found.",
+   "agent_access": "None."
+  },
+  {
+   "name": "Prophet-style learned patch-correctness model",
+   "kind": "technique",
+   "verdict": "rejected",
+   "why": "Needs a training set (777 fixes in the paper) and test-driven candidate generation; built to rank generated patches, not to retrieve past diagnoses. Its useful lesson is the existence of plausible-but-incorrect patches, which motivates the gate.",
+   "egress_posture": "Local research code; not assessed.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "M03-F08",
+    "M03-F09"
+   ],
+   "linux_prod_fit": "Research prototype.",
+   "windows_dev_fit": "Poor.",
+   "maturity": "Research.",
+   "agent_access": "None."
+  },
+  {
+   "name": "Test-suite-only validation (GenProg-style generate-and-validate)",
+   "kind": "technique",
+   "verdict": "rejected",
+   "why": "As the sole gate it is known to accept plausible-but-incorrect fixes (GenProg 2/105 correct per Qi et al., summary only; SapFix reviewers rejected test-passing fixes). Tests remain a useful part of the gate only if one of them reproduces the root cause.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F09",
+    "M03-F07",
+    "M03-F08"
+   ],
+   "linux_prod_fit": "n/a",
+   "windows_dev_fit": "n/a",
+   "maturity": "Superseded as a sole oracle.",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "Known-issues pages (Expo, Gradle) as the storage model",
+   "kind": "pattern",
+   "verdict": "cite_design_only",
+   "why": "Useful as a source of seed symptoms and as proof that literal error text is a natural lookup key, but they carry no per-entry applicability, dates or negative results, which is exactly what the store must add.",
+   "egress_posture": "Public docs; no data leaves.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M03-F26",
+    "M03-F29"
+   ],
+   "linux_prod_fit": "n/a",
+   "windows_dev_fit": "n/a",
+   "maturity": "Mature documentation.",
+   "agent_access": "Read-only."
+  },
+  {
+   "name": "Evidence-count and confirm-by-rerun conventions from flaky-test systems",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "Spotify, GitHub and Google (the last two via summaries) treat 'seen N times, reproduces/doesn't on rerun' as the entry's core state and prioritise by impact. The store can keep a hit/refute counter and a last-verified-at-commit per entry, and only escalate entries by impact. Weak evidence on knowledge decay, strong on cheap confirmation.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M03-F25",
+    "M03-F13"
+   ],
+   "linux_prod_fit": "Fits.",
+   "windows_dev_fit": "Fits.",
+   "maturity": "Industrial practice.",
+   "agent_access": "Counters updated by CLI."
+  },
+  {
+   "name": "LLM experience banks (SWE-Exp, MemGovern)",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Confirms that storing failed attempts alongside successful ones is a live research direction, but the abstracts give benchmark pass-rate gains, no retrieval precision or staleness measurements, and rely on LLM calls over code and defect text, which would breach the egress constraint if hosted APIs were used.",
+   "egress_posture": "Depends on LLM APIs; treat as egress risk unless run locally.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "M03-F28"
+   ],
+   "linux_prod_fit": "Unknown.",
+   "windows_dev_fit": "Unknown.",
+   "maturity": "Recent research preprints.",
+   "agent_access": "None."
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Make the verification gate a stored, runnable probe on every entry, and make it reproduce the root cause on current code (positive reproduction, then negative after the fix), not just assert the symptom is gone. Retrieval only nominates; the probe decides. Evidence: Getafix re-runs the originating detector (84% of top fixes passed); SapFix patches that passed all tests were still rejected as wrong.",
+   "fact_ids": [
+    "M03-F01",
+    "M03-F07",
+    "M03-F08",
+    "M03-F09"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Tune the store to abstain. Even the best systems get modest top-1 hit rates (Getafix 12-91% exact match, 42% accepted; Graph2Diff 61% precision at 46% coverage), so return a short ranked list or 'no confident match', never auto-apply, and treat a refuted hit as a recorded event. A miss costs a normal investigation; a false positive wastes a gate run or worse.",
+   "fact_ids": [
+    "M03-F02",
+    "M03-F10",
+    "M03-F22",
+    "M03-F23"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Key entries on stable semantic anchors (symbols, config keys, error templates, dependency names and versions, structural patterns) and demote file path and line number to weak handles. WER's permanent assert tags and Getafix's context-bound holes both exist so the key survives code motion.",
+   "fact_ids": [
+    "M03-F12",
+    "M03-F03",
+    "M03-F18"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Store the raw symptom evidence verbatim next to the canonical template and the canonicaliser version. When the canonicaliser changes, re-derive keys from the raw text and keep old keys as aliases (append, do not replace). Socorro had to rewrite 2,044 bug signature fields after a one-time key change, WER kept raw dumps to re-bucket, and Sentry applies new grouping versions only to new events.",
+   "fact_ids": [
+    "M03-F13",
+    "M03-F16",
+    "M03-F18",
+    "M03-F14"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Express applicability as a predicate on the cause and its environment (introduced-by anchor, versions, platform, fixed-in coordinate), as the kernel's Fixes: tag and Sentry's resolved-in-release do, and trigger re-verification when a change touches those anchors rather than on a timer. Neither Expo's nor Gradle's known-issue pages carry per-entry applicability, so this is the field that turns a prose list into an entry an agent can safely reuse. This transfer to agent memory is my inference; I found no study measuring fix decay after refactors.",
+   "fact_ids": [
+    "M03-F24",
+    "M03-F19",
+    "M03-F26",
+    "M03-F29"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Record negative conditions and failed approaches as first-class fields, and let a refuted hit add a 'does not apply when' condition. SapFix's rejection reasons ('null guard for an expression that cannot be null') read as exactly that, and its template pool was updated once during the pilot; Getafix argues extra context reduces invalid fixes. The Expo and Gradle pages show what happens without such a field.",
+   "fact_ids": [
+    "M03-F07",
+    "M03-F06",
+    "M03-F03",
+    "M03-F26"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Use several handle types per entry (literal error text, canonical template, stack-frame IDF set, structural pattern, anchors) and expect both over-splitting and over-merging: WER measured up to 36.8% of reports mis-bucketed, Socorro says too coarse and too fine are both harmful, ClusterFuzz's top-frames heuristic merges unrelated crashes. Bias toward splitting and link related entries instead of merging them; Sentry's unmerge-and-do-not-regroup behaviour is the model for keeping human corrections.",
+   "fact_ids": [
+    "M03-F13",
+    "M03-F14",
+    "M03-F20",
+    "M03-F18",
+    "M03-F21"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "At tens to a few hundred heterogeneous entries, do not cluster or train. Getafix needs dozens to hundreds of homogeneous edits per category and Prophet needs hundreds of training patches; plain lexical retrieval over canonicalised handles plus structured filters (component, platform, anchors) is the proportionate design. Clustering becomes worth revisiting only if one failure class accumulates many near-identical entries. This is an inferred scale judgment.",
+   "fact_ids": [
+    "M03-F04",
+    "M03-F08",
+    "M03-F31"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Keep the human-curated link as the source of truth and the machine-derived index as a rebuildable cache, as Socorro does with Bugzilla's cf_crash_signature field and a periodically rebuilt association table. That makes parallel agents and worktrees safe to reason about, since the derived index can always be regenerated.",
+   "fact_ids": [
+    "M03-F17",
+    "M03-F11"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Seed the corpus from the prose traps already in CLAUDE.md, but each needs an applicability predicate and a probe added before it counts as an entry; the unfixed outbox defect is the clearest case of an entry whose truth depends on code staying unchanged.",
+   "fact_ids": [
+    "M03-F29",
+    "M03-F26"
+   ],
+   "strength": "weak"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Test-suite-pass as the only validation of a reused fix",
+   "why": "Plausible-but-incorrect patches are well documented (Prophet paper; Qi et al., summary only) and SapFix reviewers rejected test-passing patches. The gate must exercise the root cause.",
+   "fact_ids": [
+    "M03-F07",
+    "M03-F08",
+    "M03-F09"
+   ]
+  },
+  {
+   "what": "Auto-applying a retrieved fix without a human or gate in the loop",
+   "why": "Every deployed system keeps a gate: Getafix re-runs the analyzer and shows only the top fix, SapFix lands nothing without human review and calls itself a recommender, Treeherder suggestions are hints for sheriffs.",
+   "fact_ids": [
+    "M03-F01",
+    "M03-F07",
+    "M03-F22"
+   ]
+  },
+  {
+   "what": "Learning a ranking model or clustering fix edits for this store",
+   "why": "Needs hundreds of homogeneous training examples (Getafix dozens to hundreds per category; Prophet 777 patches); the store will hold tens to a few hundred heterogeneous entries and has no labeled corpus.",
+   "fact_ids": [
+    "M03-F04",
+    "M03-F08"
+   ]
+  },
+  {
+   "what": "Keying entries on file path or line number",
+   "why": "Moves under refactors; WER deliberately replaced module/offset labels with permanent tags for this reason.",
+   "fact_ids": [
+    "M03-F12"
+   ]
+  },
+  {
+   "what": "Rewriting stored keys in place when the canonicaliser changes",
+   "why": "Socorro's key change orphaned Bugzilla links and needed a 2,044-bug migration that appended variants; WER re-derived from retained raw evidence.",
+   "fact_ids": [
+    "M03-F16",
+    "M03-F13"
+   ]
+  },
+  {
+   "what": "Time-based expiry as the invalidation mechanism",
+   "why": "None of the systems studied use elapsed time: Sentry reopens on a newer release, the kernel keys on the introducing change, WER re-buckets when heuristics change. Matches the owner's event-driven framing.",
+   "fact_ids": [
+    "M03-F19",
+    "M03-F24",
+    "M03-F13"
+   ]
+  },
+  {
+   "what": "Hosted LLM-memory services or APIs that process code or defect text",
+   "why": "Egress constraint; the SWE-Exp and MemGovern designs are citeable but their hosted-API form is disqualified for production use.",
+   "fact_ids": [
+    "M03-F28"
+   ]
+  },
+  {
+   "what": "Using the Expo/Gradle known-issues page format as the entry schema",
+   "why": "No per-entry applicability, dates, or failed approaches, so it cannot support verify-before-reuse.",
+   "fact_ids": [
+    "M03-F26"
+   ]
+  }
+ ],
+ "open_questions": [
+  "No study found that measures how often a stored fix or diagnosis stops applying after refactors or dependency upgrades; the decay argument is by analogy (Socorro bug 1178094, WER re-bucketing). Is a small measurement on this repo's own history (re-run old CLAUDE.md traps against current code) worth doing in the seed-corpus phase?",
+  "Which probe forms are cheap and reliable enough for a Haiku-class agent to run: a shell command, a named test, or an ast-grep rule? Does ast-grep parse the file types that matter here (eas.json, Gradle/Kotlin build files, Alembic migrations) and does it run on Windows 11 without a native build step? The docs I read do not say.",
+  "How should the store record a probe that cannot run offline or needs a device or EAS build (native compile breaks are not gated anywhere per CLAUDE.md)? No precedent found; SapFix and Getafix assume a runnable oracle.",
+  "Precision numbers: no source gives a measured false-positive rate for reusing a stored fix by symptom lookup. Getafix acceptance (42%) and Graph2Diff precision (61% at 46% coverage) are for generated or predicted fixes, not retrieval of a diagnosed past defect, so the store should measure its own hit/refute rates from day one.",
+  "Tricorder's reported 10% false-positive ceiling and Google's flaky-test figures (1.5% of runs, 84% of pass-to-fail transitions) are unverified from primary text. Does the design need them, or can they be dropped?",
+  "Treeherder's actual matching algorithm (Elasticsearch scoring) and ClusterFuzz's frame-normalization code were not read; both are candidates for a follow-up if the retrieval lane wants concrete scoring precedent.",
+  "Getafix and SapFix are not publicly available as code that I found, so only their designs and published numbers can be cited."
+ ],
+ "urls_attempted": [
+  "https://arxiv.org/pdf/1902.06111",
+  "https://arxiv.org/abs/1902.06111",
+  "https://engineering.fb.com/2018/11/06/developer-tools/getafix-how-facebook-tools-learn-to-fix-bugs-automatically/",
+  "https://discovery-pp.ucl.ac.uk/10084761/1/SapFix-Automated-End-to-End-Repair-at-Scale-v2.pdf (HTTP 403)",
+  "https://web.eecs.umich.edu/~weimerw/2022-481W/readings/SapFix-Automated-End-to-End-Repair-at-Scale-v2.pdf",
+  "https://people.csail.mit.edu/rinard/paper/popl16.pdf",
+  "https://socorro.readthedocs.io/en/latest/signaturegeneration.html",
+  "https://socorro.readthedocs.io/en/latest/flows/bugs.html",
+  "https://bugzilla.mozilla.org/show_bug.cgi?id=1178094",
+  "https://raw.githubusercontent.com/mozilla-services/socorro/main/socorro/signature/utils.py",
+  "https://github.com/mozilla-services/socorro/blob/main/socorro/signature/siglists/prefix_signature_re.txt",
+  "https://ece.uwaterloo.ca/~wshang/soen691/2016winter/papers/sosp153-glerum-web.pdf (DNS failure)",
+  "https://cs.uwaterloo.ca/~m2nagapp/courses/CS846/1171/papers/glerum_sosp09.pdf",
+  "https://arxiv.org/pdf/2009.12590",
+  "https://arxiv.org/pdf/1911.01205",
+  "https://www.comp.nus.edu.sg/%7Eabhik/pdf/ICSE15-relifix.pdf (too many redirects)",
+  "https://www.comp.nus.edu.sg/~abhik/pdf/ICSE15-relifix.pdf (empty)",
+  "https://www.cs.washington.edu/homes/brun/pubs/pubs/Smith15fse.pdf (redirect, then 404)",
+  "https://homes.cs.washington.edu/~brun/pubs/pubs/Smith15fse.pdf (404)",
+  "https://web.cs.umass.edu/publication/docs/2015/UM-CS-2015-007.pdf (certificate rejected)",
+  "https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html (article body missing; comments only)",
+  "https://engineering.atspotify.com/2019/11/test-flakiness-methods-for-identifying-and-dealing-with-flaky-tests/",
+  "https://wiki.mozilla.org/Sheriffing/How_To/Intermittent_bugs",
+  "https://docs.expo.dev/build-reference/troubleshooting/",
+  "https://docs.gradle.org/current/userguide/troubleshooting.html",
+  "https://reactnative.dev/docs/0.76/troubleshooting (404)",
+  "https://arxiv.org/abs/1812.01158",
+  "https://ast-grep.github.io/guide/introduction.html",
+  "https://github.com/ast-grep/ast-grep",
+  "https://ast-grep.github.io/guide/api-usage/js-api.html",
+  "https://cacm.acm.org/research/lessons-from-building-static-analysis-tools-at-google/ (403)",
+  "https://research.google/pubs/lessons-from-building-static-analysis-tools-at-google/",
+  "https://www.cs.umd.edu/class/spring2019/cmsc414/papers/tricorder-building-a-program-analysis-ecosystem.pdf (certificate rejected)",
+  "https://docs.sentry.io/concepts/data-management/event-grouping/",
+  "https://docs.sentry.io/product/issues/states-triage/",
+  "https://google.github.io/clusterfuzz/reference/glossary/",
+  "https://google.github.io/clusterfuzz/using-clusterfuzz/workflow/ (404)",
+  "https://docs.kernel.org/process/submitting-patches.html",
+  "https://docs.kernel.org/process/stable-kernel-rules.html",
+  "https://arxiv.org/abs/2507.23361",
+  "https://arxiv.org/abs/2601.06789",
+  "WebSearch queries (no repository text used): Getafix; SapFix; Socorro signature generation; Prophet; WER bucketing; history-driven repair; relifix; TraceSim; Graph2Diff; overfitting in repair; Google flaky tests; Spotify flaky tests; Treeherder bug suggestions; ClusterFuzz dedup; Qi et al. patch plausibility; Revisar; Stack Overflow duplicate detection; Tricorder; cf_crash_signature; SWE-Exp/experience banks; GitHub flaky builds; fix-pattern drift"
+ ],
+ "anomalies": [
+  "WebFetch cannot parse PDFs (returns raw bytes and reports unreadable content) but saves the binary under the session tool-results folder. I extracted text from those saved PDFs with the local Python 3.12 interpreter (python -I) and its already-installed pypdf, writing only to the session scratchpad. Nothing was installed. Facts marked verified from PDFs were read in that extracted text.",
+  "I downloaded one PDF (the Prophet paper, people.csail.mit.edu/rinard/paper/popl16.pdf) with curl into the scratchpad rather than through WebFetch. It is a public paper used only for reading; no other files were downloaded by me, and nothing outside the scratchpad and tool-results folders was written.",
+  "The tool-results folder is shared with other lanes' fetches (there were many pre-existing webfetch-*.pdf files from other agents); I only read the files my own fetches created plus one that matched my WER URL.",
+  "Several fetches failed: DNS error (ece.uwaterloo.ca), certificate rejected (umass.edu, cs.umd.edu), HTTP 403 (ucl discovery, cacm.acm.org), 404s, a redirect loop (comp.nus.edu.sg) and an empty body. Each URL was tried at most twice with alternatives; I did not retry beyond that.",
+  "The Google Testing Blog fetch returned only reader comments, not the article body. The 1.5% / 84% flaky figures therefore come from a search-result summary and are marked reported.",
+  "WebFetch answers are produced by a small summarising model, so facts from non-PDF pages were read through that summary (with quoted phrases) rather than raw page text. Where a summary was ambiguous or contradicted a search snippet I downgraded to reported or omitted the claim.",
+  "Secondary sources disagree on SapFix figures (55 candidates for 57 crashes vs 165 patches). The paper text shows both: 165 patches constructed, 131 passed tests, 55 reported. I used the paper.",
+  "TraceSim was described in one search result as ICSE 2020; the venue is the MaLTeSQuE 2020 workshop with an extended Empirical Software Engineering version (2022).",
+  "The Stanford-style 'STAIR' result claiming raw trajectories transfer worse appeared in a search snippet with an implausible arXiv identifier (2607.29658); I did not cite it.",
+  "Today's date in this environment is 2026-11-02; the Expo page shows a modification date of 2026-10-26, so the Expo and Gradle observations reflect docs current at that date (Gradle page version 9.8.2)."
+ ]
+}

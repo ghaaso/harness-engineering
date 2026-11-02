@@ -1,0 +1,22 @@
+# recheck:X-02
+
+lane=X-02 tool_status=ok checks=6
+
+- F01 ON_PAGE — https://git-scm.com/docs/git-bisect
+    quote: exit with a code between 1 and 127 (inclusive), except 125, if the current source code is bad/new. ... Any other exit code will abort the bisect process.
+    note: Good=0, skip=125, exit(-1)->255 abort all supported. The '2.56.0' version label was not verified.
+- F03 PARTIAL — https://code.claude.com/docs/en/sandboxing
+    quote: On native Windows, Claude Code runs commands unsandboxed. ... if the sandbox can't start ... Claude Code runs commands without sandboxing ... set sandbox.failIfUnavailable to true.
+    note: Nearly all of it is supported: sandbox-runtime, Seatbelt/bubblewrap/socat, separate network namespace, outside-sandbox tools, ~/.ssh and ~/.aws read access, failIfUnavailable. The page was read only to char 100000 of 107564. The fetch returned the WSL1 text as 'Sandboxing requires WSL2, ... upgrade to WSL2 or run without sandboxing', which does not literally say 'unsupported'. Also, the fetched text had no sentence naming socat as part of the Linux/WSL2 network setup beyond a relay description.
+- F06 PARTIAL — https://docs.docker.com/engine/network/drivers/none/ ; https://docs.docker.com/reference/cli/docker/container/run/ ; https://docs.docker.com/engine/containers/run/ ; https://docs.docker.com/reference/cli/docker/network/create/
+    quote: Within the container, only the loopback device is created. / The --read-only flag mounts the container's root filesystem as read only / Restrict external access to the network
+    note: Supported: none network, read-only, tmpfs, pids-limit, memory, cpus, no-new-privileges, cap-drop, -e without value copying from host, --internal. Weak spots: the run reference supported 'container does not inherit the whole host environment' only by inference. The containers/run page did not say that explicitly and did not mention --env-file. The run reference did mention bare names in an env-file.
+- F12 ON_PAGE — https://docs.pytest.org/en/stable/reference/exit-codes.html ; https://jestjs.io/docs/cli
+    quote: No tests were collected ... Allows the test suite to pass when no files are found. ... The page does not state an exit code for the 'No tests found' case.
+    note: All pytest codes 0-5 match. Jest flags and the 'No tests found' output are on the page, and the exit code is not documented. The final sentence 'Any gate must assert...' is the agent's inference, not a source claim.
+- F19 PARTIAL — https://nodejs.org/api/child_process.html
+    quote: env ... Default: process.env. / If the shell option is enabled, do not pass unsanitized user input to this function. / On Windows, environment variables are case-insensitive.
+    note: Supported: env default, timeout/killSignal defaults, shell /bin/sh or ComSpec, unsanitized-input warning, PATH vs Path collision. Not on the page as quoted: 'timeout and killSignal only signal the child' (the page gives a signal for kill on timeout, with no 'only' caveat) and the Node 24 gate-runner recommendation, which is inference. The page was read only to char 100000 of 122057.
+- F20 PARTIAL — https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+    quote: attackers 'may push new changes after the workflow was approved (labeled), but has not started yet.'
+    note: Supported: date 2021-08-03, unprivileged workflow with artifacts passed to a privileged workflow_run, artifacts untrusted, no secrets or write token, label gating is a stopgap with the push-after-approval race. Not supported: the 'direct precedent' claim that approval must bind to a content hash. The page does not mention content-hash binding and the fetch reported it does not. That is the agent's analogy.

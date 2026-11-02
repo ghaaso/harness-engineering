@@ -1,0 +1,28 @@
+# recheck:E-04
+
+lane=E-04 tool_status=ok checks=8
+
+- E04-F01 ON_PAGE — https://www.meilisearch.com/docs/learn/resources/telemetry
+    quote: Batches are sent either every hour, or after reaching 500kb, whichever occurs first. ... Data collection can be disabled at any time by setting a command-line option or environment variable.
+    note: Segment/Amplitude, 500 KB batches, fields, no IPs/emails/document data, --no-analytics/MEILI_NO_ANALYTICS all supported. Page does not state default-on and does not mention Docker, as the fact says. Second URL (configure_meilisearch_at_launch) not fetched.
+- E04-F04 PARTIAL — https://www.meilisearch.com/docs/resources/self_hosting/overview ; https://meilisearch.com/docs/learn/advanced/storage ; https://www.meilisearch.com/docs/learn/self_hosted/getting_started_with_self_hosted_meilisearch
+    quote: At least 256 MB of RAM (more for larger datasets, see performance guide). / Master keys are mandatory in production environments.
+    note: Supported: 256 MB minimum, no idle RSS figure, master key mandatory. NOT on the cited storage page (both URL variants): movies.json 8.6 MB/19,553 docs, ~122 MB LMDB, ~305 MB RAM, LMDB memory map. Getting-started page does not mention two-thirds of RAM or --max-indexing-memory.
+- E04-F05 ON_PAGE — https://www.meilisearch.com/docs/learn/async/asynchronous_operations
+    quote: Enqueued tasks are processed one at a time, following the order in which they were requested.
+    note: Task object with taskUid/enqueued, high-priority cancel/delete, five statuses, failed task changes nothing, webhook available. No blocking call described.
+- E04-F07 ON_PAGE — https://www.meilisearch.com/docs/reference/api/settings/update-embedders ; https://www.meilisearch.com/docs/learn/ai_powered_search/getting_started_with_ai_search
+    quote: hybrid: { semanticRatio: 0.9, embedder: products-openai } with q; ollama example http://localhost:11434/api/embeddings
+    note: All six sources, localhost ollama example, q+hybrid+semanticRatio confirmed; page states no default semanticRatio. The no-egress classification is the researcher's inference, not source text.
+- E04-F09 PARTIAL — https://typesense.org/docs/guide/system-requirements.html ; README ; install guide ; GitHub API ; Docker Hub
+    quote: it stores the entire search index in-memory and a copy of the raw data on disk. / Typesense requires at least 2 vCPUs of compute capacity to operate.
+    note: Supported: RAM index + disk copy, ~20 MB idle, 2-3x keyword RAM, 2 vCPUs, README ~30 MB, GPL with Apache clients, GitHub SPDX GPL-3.0, Linux amd64/Mac binaries, Windows via WSL (install guide also offers Docker), tag 31.0.rc23 amd64 size 384,850,885 bytes (API field is 'size', not labelled compressed). Not verified: Releases listing showing v30.2 (2026-04-19) as latest stable (install guide only shows 30.2 binary).
+- E04-F10 ON_PAGE — https://typesense.org/docs/latest/api/server-configuration.html ; https://raw.githubusercontent.com/typesense/typesense/master/README.md
+    quote: --enable-search-analytics: Allow search queries to be aggregated for query analytics. Default: false
+    note: Server-config page describes no telemetry/phone-home option; README does not mention telemetry. Web-search claim and the unresolved status are not checkable from the pages.
+- E04-F22 PARTIAL — https://www.sqlite.org/fts5.html
+    quote: By passing extra real value arguments to the bm25() SQL function, each column of the table may be assigned a different weight
+    note: Supported: bm25 weights, prefix queries and prefix indexes, trigram substring tokenizer, highlight(), snippet(), NEAR, column filters, no fuzzy/edit-distance operator in the part read, fts5vocab exists. Not stated on page: 'no egress surface' and that fts5vocab is the route for typo logic (inference). Only first 100k of ~172k chars read.
+- E04-F23 ON_PAGE — https://www.postgresql.org/docs/current/pgtrgm.html
+    quote: The threshold must be between 0 and 1 (default is 0.3).
+    note: Trusted module, similarity/word_similarity/strict_word_similarity, % operator, GIN/GiST supporting LIKE/ILIKE and regex all supported. 'Built-in tsvector' and the Supabase-hosting remark are not on this page (context).

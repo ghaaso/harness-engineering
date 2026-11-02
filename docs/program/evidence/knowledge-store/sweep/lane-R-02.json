@@ -1,0 +1,591 @@
+{
+ "lane": "R-02",
+ "examples": [
+  {
+   "name": "ex1-non-ascii-compare-digest-500",
+   "symptom_as_seen": [
+    "TypeError: comparing strings with non-ASCII characters is not supported (message reproduced locally on Python 3.12.14 by calling hmac.compare_digest('abc', 'ébc'); the exact traceback in prod is not_recorded)",
+    "HTTP 500 instead of 401/403 on GET /api/ops/* when header X-Ops-Proxy-Token contains a non-ASCII byte",
+    "HTTP 500 on the PUBLIC WhatsApp webhook (GET verify-token query param and the X-Hub signature header) when the value contains a non-ASCII character",
+    "Sibling symptom in ops-server.mjs: RangeError from crypto.timingSafeEqual (unauthenticated POST kills the Node process, exit code 1, connection reset, Railway restart loop)"
+   ],
+   "surfaced_where": "Found by a prior audit and listed in docs/HANDOFF-2026-07-28-open-work.md:587 ('the two non-ASCII compare_digest' bugs); fixed in PR #168 (merged 2026-07-28). Not a production incident report: no runtime log of an exploit is recorded. [verified: commit message and handoff]",
+   "root_cause": "[verified, commit 9b98c88 message] hmac.compare_digest raises TypeError when either str operand contains non-ASCII. Header values arrive as bytes and Starlette decodes them latin-1, so a single 'é' on the wire becomes a non-ASCII str and the auth comparison throws instead of returning False. Three call sites compared an attacker-controlled str against a configured secret: ops proxy-token gate (ops/deps.py), WhatsApp webhook verify token (customer_messaging/router.py), webhook signature header (customer_messaging/service.py verify_webhook_signature). Same family in the Node BFF: length guard compared String.length (UTF-16 units) against timingSafeEqual over UTF-8 bytes. Root-cause class (inferred): 'comparison primitive is partial over its input domain, applied to untrusted input'.",
+   "fix_commits": [
+    "9b98c88 (squashed to 2fe77f5, PR #168)"
+   ],
+   "fix_summary": "Added core.security.compare_secret(candidate, expected): returns False if expected is None/empty or candidate is None (fail closed), otherwise sha256-hashes both sides to 32-byte digests and calls hmac.compare_digest on bytes, so it is total over all inputs and leaks no length. All three Python call sites were routed through it. For ops-server.mjs the length guard was replaced with a sha256-digest compare, readBody was hardened to a plain-object contract (JSON.parse('null') returns null without throwing), the WHOLE handler was wrapped (new URL on a malformed Host header was a third route to the same crash), and process-level guards were added. CLAUDE.md now carries the rule 'compare shared secrets with compare_secret, never hmac.compare_digest on a str'.",
+   "ruled_out": [
+    {
+     "what": "A naive `typeof body.password` guard against the null body",
+     "why": "typeof null === 'object', so the guard does not catch JSON.parse('null'); readBody had to be changed to a plain-object contract instead.",
+     "source": "git show 9b98c88 (commit message)"
+    },
+    {
+     "what": "Keeping a String.length-based length check before timingSafeEqual",
+     "why": "String.length counts UTF-16 code units while timingSafeEqual compares UTF-8 bytes; 'é'.repeat(len) passes the guard and throws RangeError with no knowledge of the password. Replaced by digest compare (also removes the length oracle).",
+     "source": "git show 9b98c88 (commit message)"
+    },
+    {
+     "what": "Handoff's prescription for the related metrics bug: build labels from scope['route'].path",
+     "why": "That key does not exist: Starlette 0.49.3 Route.matches builds a child scope of exactly {endpoint, path_params} (verified by the fixer against the installed library). Labels now come from FastAPI APIRoute.path_format via an endpoint->template map. (Same commit, sibling defect; shows the store must hold 'prescribed fix was wrong' notes.)",
+     "source": "git show 9b98c88 (commit message)"
+    },
+    {
+     "what": "Severity claim 'metrics route table grows without bound -> OOM'",
+     "why": "Corrected in the commit: label set was bounded (FastAPI str convertor puts raw string in path_params); it is metrics correctness, not availability.",
+     "source": "git show 9b98c88 (commit message)"
+    },
+    {
+     "what": "Unit test over an exported ops-server function as the proof",
+     "why": "A unit test cannot see a process kill; the new tests spawn the real server and assert the process is still alive after each hostile request. Old route-label tests built a synthetic scope, which is why they could not see the label bug.",
+     "source": "git show 9b98c88 (commit message); tests/ops-server.test.mjs"
+    }
+   ],
+   "files": [
+    "backend/app/core/security.py",
+    "backend/app/features/ops/deps.py",
+    "backend/app/features/customer_messaging/router.py",
+    "backend/app/features/customer_messaging/service.py",
+    "ops-server.mjs",
+    "backend/app/core/metrics.py",
+    "backend/tests/test_security.py",
+    "tests/ops-server.test.mjs"
+   ],
+   "symbols": [
+    "compare_secret",
+    "hmac.compare_digest",
+    "verify_webhook_signature",
+    "verify_ops_token / X-Ops-Proxy-Token gate in ops/deps.py",
+    "readBody",
+    "tokenValid",
+    "timingSafeEqual"
+   ],
+   "dependencies": [
+    "Python hmac.compare_digest str-operand ASCII-only behaviour [verified locally: Python 3.12.14 at C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe raises 'TypeError comparing strings with non-ASCII characters is not supported']",
+    "Starlette decodes header bytes as latin-1 [reported: commit 9b98c88 message]; Starlette 0.49.3 route scope shape [reported: same message]",
+    "Node: unhandled promise rejection in an async handler terminates the process [reported: commit message]; ops-server.mjs is a zero-dep Node BFF"
+   ],
+   "verification_command": "Pre-fix-reproducing primitive check (runs anywhere, verified to raise on 3.12.14): python -I -c \"import hmac; hmac.compare_digest('abc','ébc')\"  -> TypeError. Fixed-code checks: (cd backend && pytest tests/test_security.py app/features/ops/tests/test_router.py::test_non_ascii_token_is_unauthorized_not_a_500 app/features/customer_messaging/tests/test_service.py::test_signature_rejects_non_ascii_header_without_raising) and npx vitest run tests/ops-server.test.mjs. Family sweep (proposed, read-only): git grep -n 'compare_digest' -- backend/app  -> only core/security.py (on bytes) and identity/security.py:44 (both operands hex, ASCII) should remain.",
+   "existing_test": "backend/tests/test_security.py::test_non_ascii_candidate_returns_false_and_does_not_raise (line 23); backend/app/features/ops/tests/test_router.py::test_non_ascii_token_is_unauthorized_not_a_500 (line 98); backend/app/features/customer_messaging/tests/test_service.py::test_signature_rejects_non_ascii_header_without_raising (line 152); backend/tests/test_messaging_integration.py::test_webhook_get_non_ascii_token_is_403_not_500 (line 361); tests/ops-server.test.mjs (spawns real server). Note: test_security.py imports compare_secret so it cannot run on pre-fix code (ImportError); the ops router test is the one that fails pre-fix with a 500.",
+   "cost_to_solve_evidence": "One commit / one PR (#168, 0 reviews, 0 comments, merged same day) fixing four defects; 13 files, +513/-47. The finding itself came from an earlier adversarial audit recorded in the handoff, so the discovery cost is not_recorded. No revert or reopening found. The fix commit message records two prescriptions/severity claims from that audit that were wrong and corrected.",
+   "still_open": false,
+   "sources": [
+    "git show 9b98c88 (message + stat)",
+    "git log --all -S compare_secret",
+    "gh pr view 168 (merged 2026-07-28T10:59:46Z, 0 reviews, 0 comments, 1 commit)",
+    "backend/app/core/security.py:22-34",
+    "backend/tests/test_security.py:1-35",
+    "docs/HANDOFF-2026-07-28-open-work.md:587",
+    "CLAUDE.md (Security invariants section)",
+    "local Python 3.12.14 run (verified)"
+   ]
+  },
+  {
+   "name": "ex2-reverted-migration-0045-duplicate-revision-and-rollback-crash-loop",
+   "symptom_as_seen": [
+    "Predicted, not observed: alembic raises on EVERY command (including the boot `alembic upgrade head` in start.sh under set -e) when two migration files carry the same `revision` id -> failed deploy / container crash-loop [reported: docs/HANDOFF-2026-07-28-open-work.md section 2.2; exact alembic error text not_recorded]",
+    "Observed by execution (alembic 1.18.5): after DB is at 0046, rolling the Railway deployment back to code that only knows <=0045 makes `alembic upgrade head` (and `0045`, and `0044`) exit non-zero with the identical `CommandError`; container crash-loops, old container does not come back [verified in handoff text; exact message not_recorded]",
+    "Squash-merging PR #162 put migrations 0044 and 0045 on main together, so the next `railway up` would have applied a VALIDATE CONSTRAINT scan at boot and could abort startup on the first off-vocabulary job_event.kind value"
+   ],
+   "surfaced_where": "Review of PR #162 (squash merge 2026-07-27) -> immediate revert c79bec7; restoration as PR #166 (ea48987, 2026-07-28); rollback crash-loop hypothesis verified in the 2026-08-02 review programme (docs/adr/0001-database-region-topology.md and handoff section 2.1). No prod outage is recorded for the duplicate-revision case; it is a guarded near-miss.",
+   "root_cause": "[verified from commit messages] (a) start.sh runs `alembic upgrade head` at every container start, so any migration present on main is applied at the next deploy; a VALIDATE CONSTRAINT bundled with the NOT VALID constraint of 0044 would scan months of human rows during boot and abort on the first bad value, i.e. an API outage to enforce a quiet constraint. The two-step only works if 0045 is NOT deployable yet. (b) A reverted-then-restored migration file keeps its old `revision` string; if anything else took that number meanwhile, restoring it verbatim yields two files with the same revision id. (c) alembic cannot locate a DB revision that the checked-out code does not contain, so code rollback past a migration boundary is not a valid abort path.",
+   "fix_commits": [
+    "c79bec7 (revert 0045 off main, 2026-07-27)",
+    "0740a26 (original 0045, inside PR #162 / squash 4a40423)",
+    "a960406 / ea48987 (restore 0045 verbatim, PR #166, 2026-07-28)",
+    "4b64a5d (ADR-0001 records the two non-negotiable deploy rules, 2026-08-02)"
+   ],
+   "fix_summary": "The VALIDATE migration 0045 was removed from main (file kept intact in 4a40423) until prod job_event.kind was audited with SELECT kind, count(*) FROM job_event GROUP BY kind. After the audit (10 kinds, all JobEventKind members) it was restored verbatim as PR #166 because nothing had taken 0045 in the interim; the PR body states it verified no duplicate revision ids exist in alembic/versions/. The rule recorded: restore a parked migration numbered head+1 at that time, editing both `revision` and `down_revision`; deploy the VALIDATE on its own. Two non-negotiable rules were added: never run `alembic downgrade` (39 of 46 downgrade bodies drop a table/column), and never abort a deploy via Railway's rollback once code and DB heads diverge - roll forward, hand-edit alembic_version, or revert the env variable.",
+   "ruled_out": [
+    {
+     "what": "Shipping the VALIDATE in the same deploy as 0044",
+     "why": "start.sh applies all pending migrations at boot; the VALIDATE scan could abort the boot on one off-vocabulary row (two kinds, claim and pin, had already drifted in unnoticed).",
+     "source": "git show c79bec7 / 0740a26 commit messages"
+    },
+    {
+     "what": "Widening the CHECK reflexively if the audit finds an unexpected kind",
+     "why": "An unexpected kind means a writer nobody accounted for; fix the writer and repair its rows, add to the vocabulary only if the product means it.",
+     "source": "backend/alembic/versions/0045_validate_event_kind_check.py docstring (git show 4a40423:...)"
+    },
+    {
+     "what": "Using `alembic downgrade` as the rollback tool",
+     "why": "39 of 46 downgrade bodies drop a table or column; past 0041 the loss is disguised because the money-chain re-verifies clean over an emptied ledger.",
+     "source": "docs/HANDOFF-2026-07-28-open-work.md:75-79"
+    },
+    {
+     "what": "Escaping the rollback crash-loop by targeting a specific older revision (head, 0045, 0044)",
+     "why": "All three raise the identical CommandError (executed against alembic 1.18.5).",
+     "source": "docs/HANDOFF-2026-07-28-open-work.md:83-84 and :526-530"
+    },
+    {
+     "what": "A 0045 downgrade that drops the constraint",
+     "why": "A downgrade of THIS revision should only undo THIS revision and would undo 0044's work; Postgres has no un-validate, so downgrade is a deliberate no-op.",
+     "source": "git show 4a40423:backend/alembic/versions/0045_validate_event_kind_check.py"
+    }
+   ],
+   "files": [
+    "backend/alembic/versions/0044_*.py",
+    "backend/alembic/versions/0045_validate_event_kind_check.py",
+    "backend/alembic/versions/0046_seed_dispatch_cursor.py",
+    "backend/start.sh",
+    ".github/workflows/ci.yml:132-135",
+    "docs/HANDOFF-2026-07-28-open-work.md",
+    "docs/lifecycle-audit-followups-2026-07.md:154-170",
+    "docs/adr/0001-database-region-topology.md"
+   ],
+   "symbols": [
+    "revision / down_revision identifiers",
+    "job_event_kind_check (CHECK ... NOT VALID then VALIDATE CONSTRAINT)",
+    "JobEventKind",
+    "alembic upgrade head under set -e in start.sh"
+   ],
+   "dependencies": [
+    "alembic 1.18.5 (version the rollback behaviour was proven against) [reported: handoff]",
+    "Postgres: VALIDATE CONSTRAINT takes SHARE UPDATE EXCLUSIVE, so reads/writes continue [reported: commit message]",
+    "Railway deploy runs start.sh at every container start (manual `railway up`; rollback button re-deploys old code) [reported: handoff/CLAUDE.md]",
+    "Supabase Postgres via session pooler"
+   ],
+   "verification_command": "Duplicate-revision check, run read-only at the current worktree and returned 0 duplicates over 46 migration files (verified): (cd backend/alembic/versions && grep -h '^revision' *.py | sed 's/.*= *//' | sort | uniq -d) must print nothing. CI's `alembic upgrade head` + `alembic check` (ci.yml:132,135) would also fail on a duplicate [inferred]. Rollback crash-loop check (proposed, not found in repo): on a scratch Postgres migrated to head, run alembic against a copy of backend/ with the newest versions/*.py deleted -> expect non-zero exit CommandError; exact reproduction command not_recorded.",
+   "existing_test": "none for the duplicate-revision hazard beyond CI's alembic upgrade/check (inferred); the rollback proof was a one-off execution, no test recorded. A cheap proposed guard: add the uniq -d one-liner to CI.",
+   "cost_to_solve_evidence": "Revert c79bec7 came hours after the squash merge (22:54 on 2026-07-27, merge 17:52Z same day); restoration ~17 hours later after a prod audit. 0 reviews/comments on PR #166; the rollback hypothesis was settled in a separate multi-lens review programme (2026-08-02, three background runs, two hit the account session limit) - cost not otherwise quantified. Notable: the lesson is documented in three places (lifecycle-audit-followups:154-170, handoff 2.2, PR #166 body) and the trap did not fire because nothing took 0045.",
+   "still_open": false,
+   "sources": [
+    "git show c79bec7",
+    "git show 0740a26",
+    "git show a960406 / ea48987",
+    "gh pr view 166 (body, merged 2026-07-28T10:27:53Z, 0 reviews)",
+    "docs/HANDOFF-2026-07-28-open-work.md:55-98 and :515-530",
+    "docs/lifecycle-audit-followups-2026-07.md:154-170",
+    "docs/adr/0001-database-region-topology.md",
+    "backend/start.sh",
+    ".github/workflows/ci.yml:132-135",
+    "local grep over backend/alembic/versions (verified, 46 files, 0 dup)"
+   ]
+  },
+  {
+   "name": "ex3-web-payment-idempotency-key-minted-per-attempt",
+   "symptom_as_seen": [
+    "No error text: a silent double charge. Manager clicks 'Record', request fails or the response is lost, toast reads 'Couldn't record payment — please retry', the retry succeeds AND the first attempt had actually landed -> two payment rows in the append-only ledger",
+    "Server dedupe constraint uq_job_payment_client never fires because each attempt carries a different client_id"
+   ],
+   "surfaced_where": "Found by the 2026-07-28 adversarial audit; registered as defect A4 in docs/HANDOFF-2026-07-28-open-work.md:257-266 (P0 list). Never observed in production; job_payment has 9 rows lifetime per the later ADR amendment (so impact to date is nil but the endpoint is the one documented as idempotent).",
+   "root_cause": "[verified by reading code at origin/main a31924a] AppContext.jsx:319 evaluates crypto.randomUUID() inside logPayment's callback body, so every call - including the retry after the failure toast - sends a fresh client_id. Introduced in 542e28e (P2f, 2026-06-08). logPayment also swallows errors and returns undefined, so the caller cannot know whether to rotate an id. The correct pattern exists 290 lines away in NewJobForm.jsx:20-25 (useState(() => crypto.randomUUID()) minted once per fill-in, with a comment naming this exact bug).",
+   "fix_commits": [],
+   "fix_summary": "NOT FIXED on main (origin/main = a31924a, 2026-08-03) nor on branch docs/orchestration-design-2026-10; AppContext.jsx:319 still reads crypto.randomUUID() inside logPayment and JobDetail.jsx:675-682 PaymentModal still calls app.logPayment(job.id, payload) then closes. Prescribed fix (handoff): hold the id in PaymentModal state, rotate on success only; logPayment must start returning a boolean. Planned as 'PR: web money pair (A3+A4)', item 5 in the handoff PR order, deliberately unbundled.",
+   "ruled_out": [
+    {
+     "what": "Naive fix: `const [id] = useState(() => crypto.randomUUID())` in PaymentModal",
+     "why": "PaymentModal is mounted unconditionally (JobDetail.jsx:675), so the id would survive close/reopen and the server would silently swallow a legitimate SECOND partial payment as a duplicate. The id must rotate on success only.",
+     "source": "docs/HANDOFF-2026-07-28-open-work.md:262-266 and :596-598"
+    }
+   ],
+   "files": [
+    "src/app/providers/AppContext.jsx:309-327",
+    "src/features/jobs/pages/JobDetail.jsx:675-682 and :866-905 (PaymentModal)",
+    "src/features/jobs/data/jobsApi.js:94-103",
+    "src/features/jobs/components/NewJobForm.jsx:20-25 (correct pattern)",
+    "backend/app/features/jobs/models.py:477 (uq_job_payment_client)",
+    "backend/app/features/jobs/service.py:1452"
+   ],
+   "symbols": [
+    "logPayment",
+    "PaymentModal",
+    "crypto.randomUUID",
+    "uq_job_payment_client",
+    "client_id"
+   ],
+   "dependencies": [
+    "Server dedupe is by client_id unique constraint uq_job_payment_client (backend/app/features/jobs/models.py:477) [verified]",
+    "Browser crypto.randomUUID; React 19 useState lazy initialiser",
+    "Mobile outbox already carries stable client_id per queued write (different runtime, not affected)"
+   ],
+   "verification_command": "Pre-fix-reproducing, PROPOSED (no existing test): a Vitest test that renders the provider (or calls app.logPayment) with logPaymentApi mocked to reject once then resolve, invokes logPayment twice with the same payload through the PaymentModal flow, and asserts both API calls received the SAME client_id; a second assertion that after a success the next payment gets a NEW id. Fails on current code (two different UUIDs). Cheap static discriminator [verified to exist today]: grep -n 'randomUUID' src/app/providers/AppContext.jsx returns line 319 inside the callback while only NewJobForm.jsx holds it in useState.",
+   "existing_test": "none for the id lifecycle; src/features/jobs/data/jobsApi.test.js:105 only checks the payload shape; backend/app/features/jobs/tests/test_service.py:687 covers the server-side dedupe collision.",
+   "cost_to_solve_evidence": "Open since introduction on 2026-06-08 (about 8 weeks before detection, 2026-07-28) and still open at the last commit read (2026-08-03). Zero fix commits, zero PRs. The only recorded effort is the audit entry plus the explicit caution that the obvious fix is wrong.",
+   "still_open": true,
+   "sources": [
+    "docs/HANDOFF-2026-07-28-open-work.md:257-266, :596-598",
+    "src/app/providers/AppContext.jsx:309-327 (read at HEAD and at origin/main via git show)",
+    "src/features/jobs/pages/JobDetail.jsx:675-682, :866-905",
+    "src/features/jobs/components/NewJobForm.jsx:20-25",
+    "git show 542e28e -s",
+    "git log --all --since=2026-07-28 -- AppContext.jsx JobDetail.jsx (empty)",
+    "git show origin/main:src/app/providers/AppContext.jsx; git show docs/orchestration-design-2026-10:... (both line 319 unchanged)",
+    "git show 2c7f91e (job_payment = 9 rows lifetime)"
+   ]
+  },
+  {
+   "name": "ex4-dispatcher-unseeded-cursor-replays-job-event-history",
+   "symptom_as_seen": [
+    "Predicted before it fired (never occurred): after setting FIXFLOW_ENABLE_DISPATCHER=true, the first scheduler tick of outbox-dispatch-whatsapp treats every historical job_event as a live customer message; measured against prod at the time as 87 events, 36 of them dispatch triggers (24 complete, 7 ready, 5 create) -> 36 WhatsApp messages about months-old jobs to real customers",
+    "Silent permanent damage even if no message is sent: uq_customer_message_job_kind + the `existing is not None -> return` short-circuit makes a `suppressed` row the terminal decision per (job, kind), so a legitimate future bill send for those jobs becomes impossible without manual prod DELETEs"
+   ],
+   "surfaced_where": "Register item B1 in docs/HANDOFF-2026-07-28-open-work.md (~line 300-310), found by the adversarial audit and ranked P1 'one named operator action away'; fixed in PR #170 (c731e66, merged 2026-08-02). Dispatcher itself shipped 2026-07-08 in d1f78cd (0027); latent for ~3 weeks.",
+   "root_cause": "[verified] backend/app/features/jobs/service.py:501 `cursor = DispatchCursor(consumer=consumer, last_seq=0)` mints a missing cursor at sequence 0, and dispatch_cursor never had a row in prod; so the first run drains all of job_event. The existing `payload.get('auto')` guard does not help because every pre-0043 `ready` event has an empty payload. Related wedge, found in review of the same fix: a rollback inside the loop expunges a still-pending newly-created cursor, so `cursor.last_seq = ...` mutates a detached instance and the consumer replays the same batch forever (hence: commit the new cursor before the loop, commit per event).",
+   "fix_commits": [
+    "c731e66 (squashed into da988e2, PR #170, 2026-08-02)",
+    "5465cff (sibling hardening M25/M23/M10, same PR)"
+   ],
+   "fix_summary": "Two independent locks. (1) Migration 0046 `INSERT INTO dispatch_cursor ... SELECT 'whatsapp', COALESCE(MAX(seq),0), now() FROM job_event ON CONFLICT (consumer) DO NOTHING` makes enabling the dispatcher forward-only; idempotent and correct on an empty DB; downgrade() is deliberately a no-op because deleting the cursor re-arms the replay. (2) build_dispatch_handler(max_event_age=_MAX_DISPATCH_EVENT_AGE = 2 days, main.py:94) skips stale events for cases a seed cannot cover (cursor reset by hand, restore from older snapshot, new consumer). Also in the PR: run_dispatch_once commits per event and commits a new cursor before the loop; claim row written in a savepoint and committed before the Meta call; automated send calls log_customer_message so bill_sent_at is stamped (B2). Deliberate consequence documented: a job completed just before the dispatcher is enabled will not auto-message; the manual wa.me/send endpoint covers it.",
+   "ruled_out": [
+    {
+     "what": "Relying on the existing payload.get('auto') guard to skip history",
+     "why": "Every one of the 7 pre-0043 `ready` rows predates the `auto` key and passes the guard.",
+     "source": "backend/alembic/versions/0046_seed_dispatch_cursor.py docstring"
+    },
+    {
+     "what": "A 0046 downgrade() that deletes the cursor only if still at the seeded value (`last_seq = (SELECT COALESCE(MAX(seq),0) FROM job_event)`)",
+     "why": "It compares against the CURRENT head, not the seeded value, so it silently no-ops in the normal case and in the one case it fires (drained dispatcher level with head) it deletes a cursor in active use. Replaced by an explicit no-op with comment. How this was caught pre-commit is not_recorded (file history shows only the two final commits).",
+     "source": "backend/alembic/versions/0046_seed_dispatch_cursor.py downgrade comment; docs/HANDOFF-2026-07-28-open-work.md:196-199"
+    },
+    {
+     "what": "Trusting the cursor seed alone as the protection",
+     "why": "Seed does not cover a manually reset cursor, restore from an older snapshot, or a consumer added later; age guard is 'the second lock on the same door'.",
+     "source": "backend/app/features/customer_messaging/service.py:421-426"
+    },
+    {
+     "what": "Auto-resuming a stuck `pending` claim row after a rollback",
+     "why": "Risks double-billing a real customer, and uq_customer_message_job_kind makes either decision terminal; left as an operator action. Design decision still open at handoff time.",
+     "source": "docs/HANDOFF-2026-07-28-open-work.md:187-193"
+    },
+    {
+     "what": "A dead-letter guard around record_dead_letter",
+     "why": "record_dead_letter is only a session.add and cannot raise; the failure surfaces on the per-event commit, which sat outside every guard, wedging the consumer on one event every 60s forever.",
+     "source": "docs/HANDOFF-2026-07-28-open-work.md:169-176; git show c731e66 message"
+    }
+   ],
+   "files": [
+    "backend/alembic/versions/0046_seed_dispatch_cursor.py",
+    "backend/app/features/jobs/service.py:501 (run_dispatch_once)",
+    "backend/app/features/jobs/models.py:498 (DispatchCursor)",
+    "backend/app/features/customer_messaging/service.py:400-470 (build_dispatch_handler)",
+    "backend/app/main.py:94,126 (_MAX_DISPATCH_EVENT_AGE, wiring)",
+    "backend/tests/test_dispatch_integration.py"
+   ],
+   "symbols": [
+    "run_dispatch_once",
+    "DispatchCursor",
+    "dispatch_cursor",
+    "build_dispatch_handler",
+    "max_event_age",
+    "_MAX_DISPATCH_EVENT_AGE",
+    "uq_customer_message_job_kind",
+    "send_cloud_message",
+    "log_customer_message",
+    "enable_dispatcher / FIXFLOW_ENABLE_DISPATCHER"
+   ],
+   "dependencies": [
+    "Alembic head chain 0045 -> 0046 (0046 down_revision='0045')",
+    "SQLAlchemy 2.0 async: Session.rollback() unwinds the outermost transaction and expires the identity map (MissingGreenlet on lazy reload) [reported: commit message]",
+    "Postgres: unique index uq_customer_message_job_kind; ON CONFLICT DO NOTHING",
+    "Meta WhatsApp Cloud API (external side effect, not reversible)",
+    "scheduler single-replica, interval = dispatcher_interval_seconds (60 s)"
+   ],
+   "verification_command": "PROPOSED (none found in repo): on a Postgres migrated to 0045 with seeded job_event rows run `SELECT count(*) FROM dispatch_cursor WHERE consumer='whatsapp'` -> 0 (root cause present); after `alembic upgrade head` it must be 1 with last_seq = (SELECT max(seq) FROM job_event). Age guard: unit test building build_dispatch_handler(..., max_event_age=timedelta(days=2)) and feeding an event with created_at = now-3d for kind 'complete' with whatsapp_cloud_enabled patched true; assert service.send_cloud_message is not awaited. Existing nearby coverage: backend/tests/test_dispatch_integration.py (cursor advance, dead letter, per-event commit) - run with FIXFLOW_TEST_DATABASE_URL set.",
+   "existing_test": "backend/tests/test_dispatch_integration.py::test_dispatch_advances_cursor_on_success, ::test_handler_failure_leaves_cursor_unmoved, ::test_dead_letter_survives_a_handler_that_poisons_the_transaction, ::test_one_poisoned_event_does_not_cancel_the_rest_of_the_batch (cover the commit/dead-letter parts). A grep for max_event_age / stale in backend tests found NO test of the age guard or of the 0046 seed.",
+   "cost_to_solve_evidence": "Detection by adversarial audit (2026-07-28); fix landed 5 days later in a PR bundling ADR-0001, M25/M23/M10 and mobile completion guards (4 commits, 0 GitHub reviews, 0 comments). The c731e66 message lists four 'review-pass fixes on top of that branch' and the handoff records that the first design had a dead-letter guard aimed at a statement that cannot raise and a downgrade that did the opposite of its comment - i.e. at least two defects introduced by the fix itself. Impact avoided: 36 customer messages; never fired.",
+   "still_open": false,
+   "sources": [
+    "backend/alembic/versions/0046_seed_dispatch_cursor.py (full file)",
+    "git show c731e66 (message + stat)",
+    "gh pr view 170 (MERGED 2026-08-02T05:13:45Z, 4 commits, 0 reviews)",
+    "docs/HANDOFF-2026-07-28-open-work.md:160-200 and :296-330",
+    "backend/app/features/customer_messaging/service.py:400-470",
+    "backend/app/main.py:90-130",
+    "backend/app/features/jobs/service.py:501",
+    "CLAUDE.md (outbox dispatcher invariants)",
+    "git show d1f78cd -s (2026-07-08)"
+   ]
+  },
+  {
+   "name": "ex5-completion-form-opens-blank-and-replaces-a-real-bill",
+   "symptom_as_seen": [
+    "No error: a technician taps 'Something is wrong - correct the completion' (or 'route looks wrong'), the CompleteJobScreen opens EMPTY, they submit, and the real bill is gone (materials cleared, labour re-priced from a restarted stopwatch -> bills silently rewritten to zero materials and about 2 minutes of labour)",
+    "Variant: wizard stuck on 'Completion is syncing' forever after the server rejected the completion",
+    "Variant: wizard restarts the capture flow at step 1 on a finished job for one render after the outbox removes the landed item"
+   ],
+   "surfaced_where": "Introduced by PR #162 (commit 37821f5 added a prefill; its first version swallowed fetch failure with `catch { return; }`); recorded as C1/C2 in the 2026-07-28 handoff ('the two defects gating the next EAS build'); fixed in 8dafcec (2026-07-30), merged inside PR #170.",
+   "root_cause": "[verified from commit 8dafcec message] The server upsert clear_materials() and re-prices labour from the submitted payload, so a blank form IS a delete. C1 had THREE doors plus a fourth unlisted route: (1) pending+online: blank form live-sent, then sendOrQueue's removeItem deleted the queued REAL completion; (2) pending+offline: enqueue replaces by stable id; (3) done+offline: prefill treated a failed fetch as 'no completion exists' because `catch { return; }` made 'offline' and 'no completion' the same answer; (4) ArrivalJobBillScreen 'route looks wrong'. The #163 server-side freeze only catches this once the bill is sent/negotiated/paid. C2: wizard state mirrored in draft.submittedPending cleared only on the landed path; deriving it live from the outbox races because flushOutbox calls removeItem BEFORE notifying landed-listeners, so for one render neither source knows the completion. Pre-existing underlying defect: no mutual exclusion on a stable id in the outbox, so two writes for one id can be in flight and the SERVER's finish order picks the winner (still unfixed).",
+   "fix_commits": [
+    "37821f5 (first prefill, PR #162, 2026-07-27 - incomplete)",
+    "8dafcec (guard + wizardState, 2026-07-30, merged via PR #170)"
+   ],
+   "fix_summary": "Two decisions extracted into pure, unit-tested modules because the app has no screen-test harness. completionPrefill.ts resolvePrefill({queued, server, cached}) returns one of: blocked/'queued' (refuse to open while a completion is in the outbox - load-bearing because of the stable-id race), blocked/'unknown' (fetch failed and no cache - NOT 'new'), new, or prefill from server -> cache; never prefills from a payload the server rejected. freezeReason mirrors the server's freeze arms (sent, negotiated, live payment). wizardState.ts makes arrival-wizard state MONOTONIC (may be upgraded to pending/failed/done, never walked back to run) and tech-scoped. Same commit also fixed decimal-price rounding on prefill (Rs 15.50 -> 16.00), a read-only machine prefix for outcome/adjust-reason in remarks_text, a 409 mis-reported as 'check your connection', and a discarded rejected completion leaving submittedPending set.",
+   "ruled_out": [
+    {
+     "what": "Plan's central claim that re-queueing the same id is last-write-wins",
+     "why": "Refuted in red-team: sendOrQueue never checks flushOutbox's `syncing` flag and removeItem runs only after the request returns, so two writes can be in flight and the server's ordering decides. Three of the first plan's design choices were refuted and replaced.",
+     "source": "git show 8dafcec (commit message)"
+    },
+    {
+     "what": "Deriving wizard state live from the outbox (non-monotonic)",
+     "why": "One render has neither a queued item nor a known completion, restarting capture on finished work and wiping evidence via clearArrivalDraft.",
+     "source": "git show 8dafcec; CLAUDE.md 'Arrival-wizard state is monotonic'"
+    },
+    {
+     "what": "Relying on the server freeze (#163) alone",
+     "why": "It only engages after the bill is sent/negotiated/paid; a done+offline blank resubmit before that still wipes the bill.",
+     "source": "git show 8dafcec (commit message)"
+    },
+    {
+     "what": "Bare `catch { return; }` in the prefill fetch",
+     "why": "Collapses 'offline' and 'no completion' into one answer.",
+     "source": "git show 8dafcec; CLAUDE.md"
+    },
+    {
+     "what": "Adding a renderer / @testing-library/react-native to test the component",
+     "why": "Not adopted; logic extracted to pure functions instead (no screen-test harness exists in the app).",
+     "source": "git show 8dafcec (commit message)"
+    }
+   ],
+   "files": [
+    "technician-app/src/features/jobs/completionPrefill.ts",
+    "technician-app/src/features/jobs/completionPrefill.test.ts",
+    "technician-app/src/features/jobs/arrival-job/wizardState.ts",
+    "technician-app/src/features/jobs/arrival-job/wizardState.test.ts",
+    "technician-app/src/features/jobs/CompleteJobScreen.tsx",
+    "technician-app/src/features/jobs/arrival-job/ArrivalAlreadyDoneScreen.tsx",
+    "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx",
+    "technician-app/src/lib/outbox.ts, outboxSync.ts (sendOrQueue/flushOutbox)"
+   ],
+   "symbols": [
+    "resolvePrefill",
+    "freezeReason",
+    "splitRemarks",
+    "joinRemarks",
+    "paisaToRupeeInput",
+    "sendOrQueue",
+    "flushOutbox",
+    "removeItem",
+    "draft.submittedPending",
+    "clear_materials"
+   ],
+   "dependencies": [
+    "Server upsert semantics: completion POST clears materials and re-prices labour from payload (backend jobs service) [reported: commit message]",
+    "Mobile: Expo SDK 52, React Native 0.76.9, jest-expo; no @testing-library/react-native or react-test-renderer [CLAUDE.md, verified]",
+    "Backend freeze rule from PR #163 (bill_sent_at, bill_negotiated_paisa, non-voided payment)",
+    "AsyncStorage-backed outbox"
+   ],
+   "verification_command": "Fixed-code check (existing, not run here): cd technician-app && npx jest src/features/jobs/completionPrefill.test.ts src/features/jobs/arrival-job/wizardState.test.ts. Discriminating cases are 'BLOCKS as unknown when the fetch failed and there is no cache at all' (line 120), 'falls back to the cache when the fetch failed - this is the offline wipe (D3)' (line 105) and 'BLOCKS while a completion is queued' (line 60). Pre-fix reproduction: not possible via these tests because both modules were created by 8dafcec (on 37821f5 they do not exist); PROPOSED pre-fix reproducer would be a test of CompleteJobScreen's load path with getCompletion rejecting, which the app cannot run (no renderer).",
+   "existing_test": "technician-app/src/features/jobs/completionPrefill.test.ts (resolvePrefill, freezeReason, splitRemarks, paisaToRupeeInput suites); technician-app/src/features/jobs/arrival-job/wizardState.test.ts; CI test that fails on any direct jobsApi write from a screen (added in e58bc70).",
+   "cost_to_solve_evidence": "Two rounds: 37821f5 (prefill, PR #162, 11 commits / 52 files / +3229) introduced the safe-looking but incomplete guard; the audit found the hole; 8dafcec rewrote it (8 files, +907/-63; tests 296 -> 334; plan red-teamed before implementation, 3 design choices refuted). 0 GitHub reviews on #162 and #170. Related stable-id outbox race remains unfixed (CLAUDE.md KNOWN DEFECT). EAS build / device smoke of the carry-in loop not done at merge time (CI expo export is JS-only).",
+   "still_open": false,
+   "sources": [
+    "git show 8dafcec (full message + stat)",
+    "git show 37821f5",
+    "gh pr view 162 (body, 11 commits, merged 2026-07-27T17:52:24Z)",
+    "technician-app/src/features/jobs/completionPrefill.ts:22-114",
+    "technician-app/src/features/jobs/completionPrefill.test.ts:59-127",
+    "CLAUDE.md (bill freeze and outbox KNOWN DEFECT sections)"
+   ]
+  },
+  {
+   "name": "ex6-login-lock-must-keep-blocking-a-correct-pin-do-not-apply-the-prescribed-fix",
+   "symptom_as_seen": [
+    "HTTP 429 with Retry-After on POST /api/auth/login even though the PIN is correct, while the account is locked",
+    "Pointer an agent would follow: handoff item A2 says 'gate the lock on the failure path only so a correct PIN clears it'; two tests (backend/tests/test_identity_integration.py and identity/tests/test_service.py) 'pin the broken behaviour and must be inverted'"
+   ],
+   "surfaced_where": "Handoff A2 (docs/HANDOFF-2026-07-28-open-work.md:~237-250) described an unauthenticated lockout DoS (GET /api/technicians lists every id; one wrong PIN per expired window re-arms the lock; with 30-day tokens an attacker can leave no way in). Resolved in PR #169 (f3dfa6f/1c546a3, merged 2026-07-28) by NOT applying the prescribed fix.",
+   "root_cause": "Two layers. DoS part [verified in PR body]: lock is evaluated before verify_pin and the counter is not incremented while locked, so ~96 requests/day/account (576/day for six accounts) holds accounts down, and no recovery path exists once no live token exists. Why the obvious fix is wrong [verified, owner decision in PR]: to know a PIN is correct you must verify every PIN during the lock, which stops the lock throttling guessing. 4-digit tech PIN = 10,000 combos; with lock about 4 guesses/hour (years); without it only the 20-per-60s IP limiter remains (one IP about 4 h, ten IPs about 25 min). Separate real bug: login did a read-modify-write on failed_attempts with plain session.get, so a burst of N wrong PINs counted as ONE increment (lost update).",
+   "fix_commits": [
+    "f3dfa6f (squashed 1c546a3, PR #169, 2026-07-28)"
+   ],
+   "fix_summary": "Kept the lock blocking a correct PIN on purpose and made recovery explicit and the counter correct: (1) IdentityRepository.get_for_update (SELECT ... FOR UPDATE) serialises attempts per account; (2) escalation decay: failed_attempts resets once a lapsed lock has been quiet for an hour (DECAY_AFTER_SECONDS, labelled ergonomic NOT a security control, MAX_LOCK_SECONDS 15 min); (3) backend/scripts/unlock_account.py (dry-run default, --apply, --tech) clears throttle state only (no PIN/role/active/token_version change); a manager's set_pin also clears a tech's lock. The two handoff-flagged tests were NOT inverted; they got comments saying the refusal is load-bearing. PR states plainly: the DoS is reduced, not eliminated; actual enabler is the unauthenticated GET /api/technicians (follow-up idea).",
+   "ruled_out": [
+    {
+     "what": "Handoff A2 prescription: gate the lock on the failure path so a correct PIN clears it",
+     "why": "Removes the DoS but turns the lock into no throttle for brute force of a 4-digit PIN: IP limiter alone gives about 4 h on one IP, about 25 min on ten. Owner chose to keep the lock and add explicit recovery.",
+     "source": "gh pr view 169 body; git show f3dfa6f message; CLAUDE.md 'login lock deliberately blocks a correct PIN'"
+    },
+    {
+     "what": "Treating escalation decay as a security control",
+     "why": "An attacker sustains escalation with one request an hour either way; it exists only so a human's stale mistake does not follow them.",
+     "source": "gh pr view 169 body"
+    },
+    {
+     "what": "Inverting the two tests the handoff said to invert",
+     "why": "Under the chosen design they pin the correct behaviour; comments added so the next reader does not 'fix' them and silently remove the throttle.",
+     "source": "gh pr view 169 body; backend/tests/test_identity_integration.py:86-95"
+    }
+   ],
+   "files": [
+    "backend/app/features/identity/service.py (login)",
+    "backend/app/features/identity/throttle.py",
+    "backend/app/features/identity/repository.py (get_for_update)",
+    "backend/scripts/unlock_account.py",
+    "backend/tests/test_identity_integration.py:86-130",
+    "backend/app/features/identity/tests/test_service.py:102,135,174,216",
+    "backend/app/features/identity/tests/test_throttle.py"
+   ],
+   "symbols": [
+    "IdentityRepository.get_for_update",
+    "throttle.py MAX_LOCK_SECONDS / DECAY_AFTER_SECONDS",
+    "failed_attempts",
+    "set_pin",
+    "unlock_account",
+    "GET /api/technicians"
+   ],
+   "dependencies": [
+    "Tech PIN length 4 digits (10,000 combinations) [reported: PR body]",
+    "Per-IP limiter 20 requests per 60 s [reported: PR body]",
+    "JWT token expiry 30 days (config.py:154 per handoff) with token_version revocation",
+    "Postgres SELECT ... FOR UPDATE row locking; integration tests run only with FIXFLOW_TEST_DATABASE_URL"
+   ],
+   "verification_command": "A 'do-not-apply' entry's check is that the protective tests still pass on the proposed change: (cd backend && pytest app/features/identity/tests/test_service.py::test_failed_logins_bump_counter_then_lock backend/tests/test_identity_integration.py::test_five_failures_lock_the_account_even_for_the_right_pin) with FIXFLOW_TEST_DATABASE_URL set for the integration test. Any patch that makes the integration test (5 wrong PINs then correct PIN -> expects 429 + Retry-After >= 1) fail is the refuted fix. Not run here.",
+   "existing_test": "backend/tests/test_identity_integration.py::test_five_failures_lock_the_account_even_for_the_right_pin (line 86), ::test_a_locked_out_technician_is_recoverable_by_a_manager (line 107); backend/app/features/identity/tests/test_service.py::test_failed_logins_bump_counter_then_lock (102), ::test_login_locks_the_row_it_is_about_to_mutate (135), ::test_expired_lock_lets_a_correct_pin_through (216)",
+   "cost_to_solve_evidence": "One commit / one PR, merged the same day as the handoff-register PR order step; 0 reviews. The substantive cost was a design reversal against the register: the audited prescription was rejected after an attack-math argument, then encoded as test comments, a CLAUDE.md invariant and a PR table. Integration tests were NOT run locally (Docker would not start), first exercised by CI - flagged in the PR. Residual DoS remains by design.",
+   "still_open": false,
+   "sources": [
+    "gh pr view 169 (body, 1 commit, MERGED 2026-07-28T13:01:31Z)",
+    "git show f3dfa6f",
+    "docs/HANDOFF-2026-07-28-open-work.md:237-250 and :590-592",
+    "backend/tests/test_identity_integration.py:83-130",
+    "CLAUDE.md (Security invariants)"
+   ]
+  },
+  {
+   "name": "ex7-eas-json-empty-string-env-value-fails-every-eas-build",
+   "symptom_as_seen": [
+    "Every `eas build` fails schema validation before the build starts, with the validation message that the env value is 'not allowed to be empty' (quoted in the fix commit; full eas CLI output not_recorded)",
+    "CI stays green: the mobile CI job runs `expo export`, which bundles JS only and does not validate eas.json"
+   ],
+   "surfaced_where": "Broke when PR #143 (140428c, 2026-07-18) added \"EXPO_PUBLIC_SENTRY_DSN\": \"\" to the preview and production EAS profiles; fixed 2026-07-20 in 79a8dd4 (PR #150 'unblock EAS build - Maps key + fix invalid eas.json'). Re-guarded in CLAUDE.md and respected again in a31924a (PR #176, 2026-08-03).",
+   "root_cause": "[verified from commit 79a8dd4] EAS rejects an empty-string value in a build profile's `env` block (schema validation 'not allowed to be empty'). The runtime does not need the key: an unset EXPO_PUBLIC_SENTRY_DSN already means 'Sentry off' via the `?? \"\"` gate in technician-app/src/lib/sentry.ts. CI cannot catch it because expo export does not read eas.json.",
+   "fix_commits": [
+    "79a8dd4 (remove the empty keys, 2026-07-20; PR #150)",
+    "140428c (the introducing commit, PR #143)",
+    "a31924a (PR #176: sets a real validated DSN, 2026-08-03)"
+   ],
+   "fix_summary": "Removed the two empty EXPO_PUBLIC_SENTRY_DSN keys from eas.json (unset == off). Updated technician-app/.env.example and CLAUDE.md to warn against the empty-string form: to enable Sentry, add the key back WITH a real DSN value. a31924a later added the key with a real DSN (validated by a synthetic capture_message accepted by the Sentry project) to preview and production profiles; a Sentry DSN is not a secret (ships in the APK).",
+   "ruled_out": [
+    {
+     "what": "Using an empty string to mean 'present but off' in eas.json",
+     "why": "EAS schema rejects empty env values; unset already means off.",
+     "source": "git show 79a8dd4"
+    },
+    {
+     "what": "Relying on CI (expo export) to catch eas.json problems",
+     "why": "expo export does not validate eas.json; no CI gate exists for this class (CLAUDE.md: 'CI's expo export will not catch this').",
+     "source": "git show 79a8dd4; CLAUDE.md build traps"
+    }
+   ],
+   "files": [
+    "technician-app/eas.json",
+    "technician-app/.env.example",
+    "technician-app/src/lib/sentry.ts:13",
+    "CLAUDE.md (Build and deploy traps)"
+   ],
+   "symbols": [
+    "EXPO_PUBLIC_SENTRY_DSN",
+    "eas.json build.<profile>.env",
+    "initSentry"
+   ],
+   "dependencies": [
+    "EAS Build / eas-cli env schema validation (rejects empty env values) [reported: commit message; eas-cli version not_recorded]",
+    "Expo SDK 52 / @sentry/react-native runtime init gated on EXPO_PUBLIC_SENTRY_DSN",
+    "CI job runs `npx expo export --platform android` (JS only)"
+   ],
+   "verification_command": "PROPOSED static check (no existing test), verified by me to discriminate on historical blobs: node -e \"const j=JSON.parse(require('fs').readFileSync('technician-app/eas.json','utf8'));const bad=[];for(const [p,c] of Object.entries(j.build||{}))for(const [k,v] of Object.entries(c.env||{}))if(v==='')bad.push(p+'.'+k);console.log(bad.length?'FAIL '+bad:'OK');process.exit(bad.length?1:0)\". Result when piped from `git show` : 140428c -> FAIL preview.EXPO_PUBLIC_SENTRY_DSN,production.EXPO_PUBLIC_SENTRY_DSN; 79a8dd4 -> OK; a31924a -> OK.",
+   "existing_test": "none (the class is documented as uncaught by CI). Proposed: add the check above as a mobile CI step.",
+   "cost_to_solve_evidence": "Latent for 2 days (2026-07-18 to 2026-07-20), one corrective commit in a 2-commit PR. The failure was found by trying to build, not by CI. The trap then recurred as a documented constraint rather than a defect (a31924a respects it). No re-opened issue.",
+   "still_open": false,
+   "sources": [
+    "git show 140428c",
+    "git show 79a8dd4",
+    "git show a31924a",
+    "gh pr view 150 (merged 2026-07-20T08:19:44Z, 2 commits)",
+    "technician-app/eas.json at a31924a (lines 22 and 32 hold a real DSN)",
+    "CLAUDE.md lines on Build and deploy traps",
+    "local node run of the proposed check against git blobs (verified)"
+   ]
+  },
+  {
+   "name": "ex8-sentry-expo-config-plugin-breaks-eas-gradle-build-recurrence",
+   "symptom_as_seen": [
+    "EAS build ERRORED in the 'Run gradlew' phase (first occurrence, build id not_recorded)",
+    "EAS build 15 failed with EAS_BUILD_UNKNOWN_GRADLE_ERROR (second occurrence, 2026-06-26)",
+    "CI green both times because `expo export` bundles JS only and never runs gradle"
+   ],
+   "surfaced_where": "EAS Build (cloud) on the Android app. First fix a6f9048 (2026-06-10); trap re-entered main and was fixed again in 6928828 (PR #97, 2026-06-26); then recorded as a CLAUDE.md invariant by 140428c (2026-07-18).",
+   "root_cause": "[verified from commit messages] `expo install` auto-added the @sentry/react-native Expo config plugin to technician-app/app.json plugins. On EAS it wires a Sentry gradle step that needs org/project/auth token, which were not configured, and errors in the gradlew phase. It recurred because the plugin re-entered main via PR #59 (60c026d outbox v2, which also touched app.json) while build 14 had been cut from a side branch that had removed it. The 2026-06-26 failure had a SECOND independent cause: Dependabot bumped expo-asset ~11.0.5 -> ~56.0.17, expo-crypto ~14.0.2 -> ~56.0.4, expo-location ~18.0.10 -> ~56.0.17 (far-future SDK) incompatible with SDK 52 / RN 0.76; passed CI for the same reason.",
+   "fix_commits": [
+    "a6f9048 (2026-06-10)",
+    "6928828 (2026-06-26, PR #97)",
+    "140428c (CLAUDE.md invariant, 2026-07-18)"
+   ],
+   "fix_summary": "Removed the plugin from app.json plugins (SDK still autolinks; DSN-gated runtime init via EXPO_PUBLIC_SENTRY_DSN is unaffected), restored the three Expo native modules to the SDK-52 pins from expo/bundledNativeModules.json via `expo install`, set app.json plugins to exactly match the last good build (14), and added a systemic guard: .github/dependabot.yml now ignores the whole Expo/RN native family (expo*, @expo/*, react, react-native*, @react-native*/*, @sentry/react-native) because those track the SDK via `expo install`. CLAUDE.md now says never add the Sentry Expo config plugin to app.json. Full plugin wiring plus sourcemap upload is deferred until a Sentry project and auth token exist.",
+   "ruled_out": [
+    {
+     "what": "Keeping the Sentry config plugin in app.json",
+     "why": "Needs Sentry org/project/auth token that are not configured; fails the gradle step.",
+     "source": "git show a6f9048; git show 6928828"
+    },
+    {
+     "what": "Letting Dependabot bump Expo/RN native modules",
+     "why": "It bumped three modules to far-future SDK versions; CI cannot see native breakage. Dependabot ignore list added.",
+     "source": "git show 6928828"
+    },
+    {
+     "what": "Treating CI green (expo export) as proof the Android build works",
+     "why": "expo export is JS-only; a real Android compile is not gated anywhere (CLAUDE.md).",
+     "source": "git show 6928828; git show 140428c; CLAUDE.md"
+    }
+   ],
+   "files": [
+    "technician-app/app.json (plugins)",
+    "technician-app/package.json",
+    "technician-app/package-lock.json",
+    ".github/dependabot.yml",
+    "technician-app/src/lib/sentry.ts",
+    "CLAUDE.md"
+   ],
+   "symbols": [
+    "expo.plugins in app.json",
+    "@sentry/react-native",
+    "EAS_BUILD_UNKNOWN_GRADLE_ERROR",
+    "expo install",
+    "bundledNativeModules.json"
+   ],
+   "dependencies": [
+    "Expo SDK 52, React Native 0.76.9, Android-only, EAS dev build (CLAUDE.md)",
+    "@sentry/react-native config plugin requires Sentry org/project/auth token at gradle time [reported: commit message]",
+    "Dependabot ignore rules in .github/dependabot.yml",
+    "EAS build 14 = last known good (cut from side branch); build 15 failed"
+   ],
+   "verification_command": "PROPOSED static check, verified by me to discriminate on historical blobs: node -e \"const j=JSON.parse(require('fs').readFileSync('technician-app/app.json','utf8'));const s=JSON.stringify((j.expo||j).plugins||[]);console.log(/sentry/i.test(s)?'FAIL':'OK');process.exit(/sentry/i.test(s)?1:0)\". Result piping `git show`: 60c026d -> FAIL (plugin present); a6f9048 -> OK; HEAD -> OK. Native-version sanity (proposed): run `npx expo install --check` in technician-app to list modules off the SDK-52 pins (not run here). Only a real `eas build --platform android` proves the gradle step; not available to this lane.",
+   "existing_test": "none; the failure is invisible to CI by design. Proposed: add the app.json plugin check and an expo install --check step to the mobile CI job.",
+   "cost_to_solve_evidence": "Hit twice in 16 days (2026-06-10 and 2026-06-26), each a burned EAS build; the second time was hidden behind a coincident Dependabot failure and needed a differential against the last good build (14). Fixes were 1 file and 4 files respectively. The 2026-07-18 CLAUDE.md note, and its respect in a31924a, show the lesson moving from commit message to checked-in guidance. Number of builds wasted beyond builds 15 and the first failure is not_recorded.",
+   "still_open": false,
+   "sources": [
+    "git show a6f9048",
+    "git show 6928828",
+    "git show 140428c",
+    "git show 60c026d (app.json plugin entry, PR #59 merged 2026-06-10T06:51:00Z)",
+    "gh pr view 97 (merged 2026-06-26T11:44:18Z)",
+    "git grep sentry a31924a -- technician-app/app.json (empty)",
+    "CLAUDE.md Build and deploy traps",
+    "local node run of the proposed check against git blobs (verified)"
+   ]
+  }
+ ],
+ "not_recorded_notes": [
+  "Candidate 6 (railway up from the repo root rebuilding the API as the web SPA) is NOT reconstructible from history: the only sources are one-line assertions 'This has happened' in CLAUDE.md:88 and docs/HANDOFF-2026-07-28-open-work.md:62 (RAILPACK detects Vite). No commit, PR, incident date, symptom text, or fix is recorded; git log -S RAILPACK only finds the docs that state the rule. It is a rule without a case record - good evidence of what an entry looks like when only the lesson survived. Not included as an example for that reason.",
+  "No fix-time ruled-out list exists for ex2's duplicate-revision trap beyond the 'restore numbered head+1' rule; the exact alembic error text for duplicate revision and for the missing-revision CommandError is not_recorded (the handoff says only 'CommandError').",
+  "Prod symptom text for ex1 (traceback, HTTP log lines) is not_recorded; no exploitation in prod is recorded. Discovery path of the compare_digest family is not_recorded beyond 'prior audit' (handoff line 587).",
+  "ex3: whether any real double charge occurred is not_recorded (job_payment had 9 rows lifetime per commit 2c7f91e, so likely none). History after 2026-08-03 is not in the local repo snapshot; fix status is as of origin/main a31924a.",
+  "ex4: how the first buggy 0046 downgrade body was caught is not_recorded (file history has only c731e66 and da988e2). No test of the 0046 seed or of the max_event_age guard was found by grep. Whether FIXFLOW_ENABLE_DISPATCHER was ever switched on in prod is not_recorded (CLAUDE.md says default OFF).",
+  "GitHub PR review counts are 0 for all PRs read (#162, #166, #168, #169, #170, #150, #97): review passes happened as agent-internal adversarial verification (recorded in commit messages/handoff), not as GitHub reviews. Token/wall-clock cost per fix is not_recorded anywhere in git; only commit counts, timestamps, and test deltas are available.",
+  "Which model tier solved each problem is only partially recorded via Co-Authored-By trailers (Claude Opus 5 on most 2026-07/08 commits; Claude Fable 5 on the 2026-06-10/07-18/07-20 EAS commits; Claude Opus 4.8 on 6928828). Whether each case needed escalation from a cheaper tier is not_recorded.",
+  "Dates: git author dates in the repo run to 2026-08-03; the environment date is 2026-11-02, so anything after 2026-08-03 (e.g. whether A4 got fixed) is unknown to this lane."
+ ],
+ "anomalies": [
+  "The CLAUDE.md headline for ex2 ('alembic duplicate-revision trap') is a PREDICTED hazard that was guarded, not an observed failure: PR #166 states nothing took 0045 so no renumbering was needed. The only observed failure-class in that story is the rollback crash-loop, proven by one-off execution with no recorded command.",
+  "ex6 shows an audited, adversarially verified register entry (A2) whose prescribed fix was deliberately rejected; the handoff still says to invert the two tests. A store entry derived from the handoff alone would recommend the wrong (refuted) fix - strong argument for outcome/refuted status and 'do-not-apply' entries as first-class.",
+  "ex1 side finding: the handoff prescribed scope['route'].path for the metrics label, which does not exist in Starlette 0.49.3; the fixer verified against the installed library. Prescriptions in a verified register can be wrong in detail.",
+  "CLAUDE.md says the next free Alembic slot is 0047 and head is 0046, consistent with the files; but the worktree git log shows 369 commits and many remote branches (e.g. remotes/origin/chore/validate-event-kind-0045 still exists) - stale branch names mirror resolved incidents and could mislead a symptom-keyed lookup.",
+  "Commit author for repo commits is 'Your Name <youremail@example.com>' with Co-Authored-By trailers; provenance of 'who/which model fixed it' must come from trailers, not author fields.",
+  "The 0045 revert (c79bec7) happened after the squash merge of #162 (merged 17:52Z, revert authored 22:54 +0500 = 17:54Z), i.e. within minutes; the revert is itself an example of fast event-driven invalidation of a just-merged change.",
+  "A SENTRY DSN value appears in technician-app/eas.json at a31924a; it was not copied into this output (commit message states a DSN is not a secret, but it is project identifying data)."
+ ]
+}

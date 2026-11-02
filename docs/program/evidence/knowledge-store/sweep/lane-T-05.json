@@ -1,0 +1,726 @@
+{
+ "lane": "T-05",
+ "tool_status": "ok",
+ "summary": "Prior art agrees on a small core. CBR (Aamodt and Plaza) gives the loop: retrieve, reuse, revise, retain. Retain happens whether the solve succeeded or failed. A case holds problem, solution and outcome, plus annotations on how the solution was derived. ITIL known-error records add symptom, root cause, workaround versus permanent fix, status and affected configuration. Practitioner KEDB templates add version scope, a status line with a review date, symptom-first titles, extend-never-sibling dedup, and retire-by-status-never-delete. Google SRE postmortems add owner, measurable action items, \"what went well / poorly / where we got lucky\", and metadata for trend analysis. The Learning-from-Incidents community adds that write-ups get reused when they record what was surprising or hard. Cook warns that a single \"root cause\" is a hindsight artefact, so entries should record validity conditions rather than one cause. Smyth and Keane show that performance-driven deletion destroys coverage in pure CBR. A store backed by a top-tier fallback is closer to their \"speed-up learner\", which makes deletion safer. At tens to hundreds of entries (their experiments used 50 cases), swamping is not the threat. Staleness and false positives are. Agent-memory work (ReasoningBank, Xiong et al.) shows top-1 retrieval beats more retrieval, and that agents copy near-matching records, wrong or misaligned ones included. No source found describes invalidation by code dependency; that gap has to be designed. No empirical study of KEDB rot was found, only practitioner guidance. Nothing here needs an engine. Egress risk appears only in ReasoningBank (embeddings via a Google API), which is cite-for-design-only.",
+ "facts": [
+  {
+   "id": "F1",
+   "statement": "Aamodt and Plaza (1994, AI Communications 7(1), 39-59) define the CBR cycle as four steps: RETRIEVE the most similar case(s); REUSE the information and knowledge in that case to solve the problem; REVISE the proposed solution; RETAIN the parts of this experience likely to be useful for future problem solving.",
+   "source": "https://www.cs.auckland.ac.nz/~ian/CBR/AICom.pdf (read via local stdlib text extraction; extraction is partial and fragmentary but this numbered list is intact); bibliographic data https://www.doi.org/10.3233/AIC-1994-7104",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "provenance",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F2",
+   "statement": "Aamodt and Plaza: in CBR the case base is updated no matter how the problem was solved, and the text discusses learning from the success or failure of the proposed solution (CHEF-style repair of failed solutions). Failed outcomes are retained, not discarded.",
+   "source": "https://www.cs.auckland.ac.nz/~ian/CBR/AICom.pdf (partial local extraction, fragment around the Revise/Retain discussion)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "provenance",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F3",
+   "statement": "A CBR case is described as a problem, its solution, and typically annotations about how the solution was derived. This is the 'justification' element that must be stored alongside problem and solution.",
+   "source": "https://en.wikipedia.org/wiki/Case-based_reasoning (read 2026-11-02)",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F4",
+   "statement": "A 2025 review of CBR for LLM agents models a case as a tuple (problem features, solution actions, outcome metrics, metadata incl. temporal markers, environmental conditions and provenance). Retention is gated: a new episode is stored only if a utility score (novelty, effectiveness, generalizability) meets a threshold. Retrieval combines dense embeddings with sparse feature indices. It lists noisy/redundant cases and maintaining competence and efficiency as open maintenance needs. Its comparison with CoT/RAG is theoretical, resting mainly on cited work.",
+   "source": "https://arxiv.org/html/2504.06943v2 (Hatalis and Christou, arXiv 2504.06943 v2)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "retrieval",
+    "provenance",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F5",
+   "statement": "Smyth and Keane (IJCAI-95, pp. 377-382) define the swamping problem as the cost of searching large case bases, a form of the utility problem (Minton 1990). They distinguish selective utilization (filters/indexing hide cases from retrieval; cases may be missed) from selective retention (permanently deleting cases under a deletion policy).",
+   "source": "https://folk.idi.ntnu.no/agnar/CBR%20papers/smyth-keane-remembering-95.pdf (read via local stdlib text extraction); https://ijcai.org/proceedings/1995/50",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F6",
+   "statement": "Smyth and Keane: performance-driven deletion (random, Minton-style utility) works for speed-up learners such as Prodigy/EBL and SOAR because they can always solve from first principles, so competence is unaltered. For pure CBR systems with no first-principles solver, deleting critical cases permanently removes the ability to solve whole classes of problems. They report random and utility deletion falling to 86% and 80% of benchmark competence while footprint deletion held 100%.",
+   "source": "https://folk.idi.ntnu.no/agnar/CBR%20papers/smyth-keane-remembering-95.pdf (local text extraction, sections 2.2 and 4.1)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F7",
+   "statement": "Smyth and Keane classify cases by coverage and reachability into pivotal (only reachable from itself; deleting it loses competence), auxiliary (coverage subsumed by another case; deletion only costs efficiency), spanning (links regions covered by other cases) and support (groups of similar-coverage cases; deleting a whole group is like deleting a pivot). Footprint deletion removes auxiliary first, then support, then spanning, then pivotal.",
+   "source": "https://folk.idi.ntnu.no/agnar/CBR%20papers/smyth-keane-remembering-95.pdf (local text extraction, section 3)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F8",
+   "statement": "Smyth and Keane's experiments used an initial case base of 50 cases, 160 target problems and a swamping limit of 75 cases. This is the same order of magnitude as the owner's expected store (tens to a few hundred entries). The competence model is stated to be unreliable if the case base is not representative of the target-problem distribution.",
+   "source": "https://folk.idi.ntnu.no/agnar/CBR%20papers/smyth-keane-remembering-95.pdf (local text extraction, section 4.1 and the closing discussion)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F9",
+   "statement": "Watson's case study of a commercially fielded CBR system (HVAC sales engineering, deployed May 1998) reports that after two years of operation the maintenance problems were case redundancy (many functionally similar cases acquired) and case obsolescence (mainly caused by equipment obsolescence). A simple redundancy-removal algorithm and DBMS techniques were used. I saw only abstract/introduction snippets, not the full text.",
+   "source": "https://www.cs.auckland.ac.nz/~ian/papers/cbr/coin172.pdf (via search-result excerpt; full PDF unreadable to the fetch tool)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F10",
+   "statement": "Leake and Wilson (EWCBR-98) note there is no general framework describing case-base maintenance systems and offer a first set of dimensions. Prior work addressed maintaining consistency, preserving competence and controlling case-base growth. The 2001 Wilson and Leake paper extends maintenance to other knowledge containers (vocabulary, similarity, adaptation), not only the case base. The dimension list itself was not read.",
+   "source": "https://homes.luddy.indiana.edu/leake/papers/a-98-03.html (abstract page, read); https://cse.hkust.edu.hk/~qyang/Docs/2001/maintaincbr.pdf (listed by search only)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F11",
+   "statement": "Compaq SMART (Acorn and Walden, IAAI-92): a case holds a problem description, relevant questions with answers, and a resolution. Retrieval matches the problem description string at subword level with trigram matching. Case building is tiered (case generators identify problem and resolution; case builders refine them; case auditors verify and refine). Unresolved cases are reviewed daily and assigned by domain specialty. Cases move from NEW to ACTIVE after resolution is confirmed, and the case base was partitioned into nine domains. Headline resolution rates (85-95%) come only from secondary sources and conflict with each other.",
+   "source": "https://cdn.aaai.org/IAAI/1992/IAAI92-003.pdf (local text extraction, workflow figure and text); secondary rates: search results citing Cheetham and Watson",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "retrieval",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F12",
+   "statement": "Cheetham and Watson's review of fielded CBR says helpdesk and customer-support applications (SMART lineage, conversational case retrieval) were among the most commercially profitable CBR uses and that CBR has become a standard solution for many engineering and support problems. It gives no controlled evaluation of case-base rot.",
+   "source": "https://www.maxapress.com/data/article/ker/preview/pdf/S0269888906000580.pdf (local text extraction, Knowledge Engineering Review, 2005/2006)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F13",
+   "statement": "ITIL vocabulary: an incident is an unplanned disruption; a problem is the underlying cause of one or more incidents; once a root cause is identified the problem is reclassified as a known error, which stays a known error until a permanent fix is implemented or the system is decommissioned. A known error is also characterised as having a low-impact or known workaround.",
+   "source": "https://en.wikipedia.org/wiki/Known_error (read 2026-11-02); https://confluence.atlassian.com/servicedeskcloud/managing-problems-with-your-it-service-desk-817562149.html",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F14",
+   "statement": "A known-error record contains: description/symptoms (including error text), root cause, workaround (temporary or permanent, with status), and links to the problem record and related incidents. Atlassian's Jira model adds root-cause and workaround fields plus linked issues, priority, impact and urgency. Practitioner KEDB sources list as pitfalls: incomplete entries, outdated irrelevant content, and poor search access. They say the record should be archived or deleted after the permanent fix is implemented and tested.",
+   "source": "https://confluence.atlassian.com/servicedeskcloud/managing-problems-with-your-it-service-desk-817562149.html; https://spike.sh/glossary/known-error-database-kedb/; https://cio-wiki.org/wiki/Known_Error_Database_(KEDB)",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "retrieval"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F15",
+   "statement": "A KEDB entry template (vendor skill library, not ITIL primary) specifies: symptom-first title in the words a searcher would use; symptoms with verbatim error text; an 'Affects' field giving versions/configurations in and out of scope; one-paragraph confirmed root cause; workaround with cost and hold time ('no workaround, escalate to X' is valid); a status line with problem reference, state and a review date. Entry prerequisite is an evidenced root cause on a problem record (a hunch from one ticket goes to the problem track first). Lookup output cites entry date and status. Same root cause with different wording means extend the symptom list and never create a sibling. Similar symptom with different cause means a new entry cross-referenced to its lookalike. A hygiene sweep flags entries past review date, entries whose problem record changed state without the entry being updated, and near-duplicate pairs. Fixed-and-verified entries are marked RESOLVED and retained for history. Retirement recommendations go to a human and bulk deletion is not allowed.",
+   "source": "https://docs.getthread.com/skill-library/change-and-problem-management/known-error-database.md (read 2026-11-02)",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "retrieval",
+    "provenance",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F16",
+   "statement": "I found no empirical study of why KEDBs rot (ownership gaps, incentives, search failure rates). Guidance on staleness is practitioner advice only: review regularly, retire on verified fix, prefer correcting a stale entry to abandoning it, require version scope for third-party bugs.",
+   "source": "Search results 2026-11-02 (spike.sh, getthread, cio-wiki, Pluralsight); negative result across several queries",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F17",
+   "statement": "Google SRE Workbook postmortem example/template fields: header (title, date, owner as single point of contact, shared with, status, incident and published dates); executive summary; problem summary (duration, products affected, user/revenue impact, detection method, resolution); background and glossary; impact; root causes and trigger; timeline; lessons learned split into what went well, what went poorly, and where the team got lucky; action items grouped by theme with type, priority, owner and tracking bug; appendix. Action items need one owner, a tracking number, a priority and measurable end states, and prefer changing automated systems over relying on human behaviour. Finished postmortems go to a searchable repository, with metadata used for trend analysis.",
+   "source": "https://sre.google/workbook/postmortem-culture/ (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F18",
+   "statement": "Google SRE book chapter 15: each finished postmortem is added to a repository of past incidents (Etsy's Morgue named as one tool); unreviewed postmortems are treated as having no value; reading clubs and 'Wheel of Misfortune' exercises reuse old postmortems; aggregation tools look for common themes and added metadata fields support automated trend analysis; machine learning to predict weaknesses and reduce duplicate incidents is listed as future work, not shipped.",
+   "source": "https://sre.google/sre-book/postmortem-culture/ (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "retrieval",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F19",
+   "statement": "Etsy Morgue (github.com/etsy/morgue) is a PHP postmortem web app, MIT licensed, archived read-only on 2019-12-18. Fields include status time, contact, summary, timeline, remediation items, and a 'why_surprised' text field. It integrates IRC logs and JIRA keys with a plugin system. The README describes no search or tagging feature.",
+   "source": "https://github.com/etsy/morgue (read 2026-11-02)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "retrieval",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F20",
+   "statement": "Adaptive Capacity Labs / Learning from Incidents: the aim of analysis is the richest understanding of an event for the broadest audience; ACL says learning does not come from filling out a template; John Allspaw argues that what was surprising or difficult makes an incident memorable and reusable; analysts reread older write-ups when they recognise familiar themes; a write-up is only worth the effort if someone is likely to read it afterward (ACL surveys likelihood of reading).",
+   "source": "https://www.adaptivecapacitylabs.com/2025/02/28/what-progress-in-learning-from-incidents-actually-looks-like/ (read); https://www.adaptivecapacitylabs.com/incident-analysis-workshop-series/ (search excerpt)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "data_model",
+    "provenance",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F21",
+   "statement": "Richard Cook, How Complex Systems Fail: attributing an accident to a single 'root cause' is fundamentally wrong because failures need several insufficient factors to align; hindsight bias makes warning signs look more obvious than they were; post-accident remedies aimed at the 'cause' rarely prevent future failures and can add coupling. The Howie guide (Jeli, now PagerDuty) likewise prefers contributing factors to root cause.",
+   "source": "https://how.complexsystems.fail/ (read); https://howie-guide.pagerduty.com/ (via search excerpt)",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F22",
+   "statement": "ReasoningBank (Ouyang et al., arXiv 2509.25140, v1 2025-09-29, v2 2026-03-16, ICLR 2026): memory items are JSON {title, description, content} stored beside the original query and trajectory. An LLM judge labels trajectories success or failure without ground truth. Failures are distilled into lessons and pitfalls (at most 3 items per trajectory). Retrieval is cosine similarity over gemini-embedding-001 embeddings, i.e. a call to a Google embedding API. Top-k=1 was best on WebArena-Shopping (49.7 at k=1, 46.0, 45.5, 44.4 at k=2..4); the authors conclude relevance and quality matter more than quantity. Consolidation is plain addition with no pruning or dedup; merging and forgetting are future work.",
+   "source": "https://arxiv.org/html/2509.25140v1 (read, 100k of 102k chars); https://arxiv.org/abs/2509.25140",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "data_model",
+    "egress",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F23",
+   "statement": "Xiong et al., 'How Memory Management Impacts LLM Agents: An Empirical Study of Experience-Following Behavior' (arXiv 2505.16067; ACL 2026): when a task is highly similar to a stored record, the agent's output tends to closely resemble that record's output. Wrong or noisy retrieved records are copied and amplified, and if re-stored the error propagates. 'Misaligned' records that look similar but perform poorly are also found. Selective addition (quality-check before storing) with evaluator feedback gave about 10% average absolute gain, and is limited by evaluator accuracy.",
+   "source": "https://arxiv.org/abs/2505.16067v2 (identified via search; claims from search-result summary, paper body not read)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "retrieval",
+    "provenance",
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F24",
+   "statement": "Runbook-decay literature is practitioner-level: runbooks decay silently as systems change and a stale runbook misdirects responders; suggested remedies are fixing the runbook as part of closing the incident, an owner per runbook, game days, and flagging docs whose service changed while the doc did not. An AWS DocEng 2026 study of 17 weeks of runbook revisions measures linguistic and structural change signals, not staleness or reuse outcomes.",
+   "source": "Search results 2026-11-02 (opspilot.com, tallyfy.com, kilo.ai); https://cdn.amazon.science/1e/ea/106a0192461e9e0b366340d558bf/scipub-approval152134-47174930-operational-runbooks-as-living-documents-a-longitudinal-study-of-document-evolution-under-assisted-postincident-revision.pdf (abstract read via local extraction)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "invalidation",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F25",
+   "statement": "Richter's knowledge-container view: CBR knowledge lives in four containers (vocabulary, case base, similarity measure, adaptation knowledge), and knowledge can be shifted between them. Similarity and adaptation are the hard ones to acquire and standardise.",
+   "source": "Search-result summaries 2026-11-02 (arxiv 2504.06943; TCD-CS-2004-25; myCBR paper); Richter's own papers not retrieved",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "retrieval",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F26",
+   "statement": "None of the sources read describes invalidating an entry by what it depends on (files, symbols, dependency versions, platform). Prior art invalidates by time (review dates), by linked-record state change (problem closed fixed), by external obsolescence (Watson's equipment obsolescence), or by an explicit version-range field. Event-driven dependency invalidation is therefore a design gap to fill from outside this lane.",
+   "source": "Inference across F9, F15, F16, F24",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F27",
+   "statement": "This store sits between a pure CBR system and a speed-up learner. A top-tier agent can always re-derive a fix from first principles, so deleting or retiring an entry costs money, not capability (Smyth and Keane's safe case). It stays risky because a retained but invalid entry is actively harmful (F23). Competence-preserving deletion (footprint policy) is unnecessary at this scale.",
+   "source": "Inference from F6, F7, F8, F23",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "limits",
+    "invalidation",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "CBR four-R cycle with case = problem + solution + outcome + derivation annotations",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "The canonical frame for the whole track. Retrieve maps to symptom lookup, reuse plus revise maps to the verification gate and adaptation to current code, retain maps to writing back confirmed, refuted and revised outcomes. It states that failed outcomes are retained too. Zero infrastructure; it is a workflow and schema discipline.",
+   "egress_posture": "none (pure method)",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F1",
+    "F2",
+    "F3",
+    "F4"
+   ],
+   "maturity": "Published 1994; foundational and still the cited frame in 2025-26 agent-memory papers",
+   "footprint": "none",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "n/a (schema and workflow only)"
+  },
+  {
+   "name": "ITIL known-error record (symptom, root cause, workaround vs permanent fix, status, affected CIs)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "The nearest organisational analogue: lookup by symptom before diagnosis, status lifecycle ending in retirement, workaround versus permanent fix distinction. The vendor template adds the fields this track needs most: verbatim error text, Affects with version scope, symptom-first titles, review/status line, extend-never-sibling dedup, retire by status. Caveat: ITIL's fields are coarse and rot is only discussed anecdotally (F16).",
+   "egress_posture": "none (pattern)",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F13",
+    "F14",
+    "F15",
+    "F16"
+   ],
+   "maturity": "Decades of practice; field list varies by tool; the strongest template source is a vendor skill page, not ITIL primary text",
+   "footprint": "none",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "Google SRE postmortem template fields and action-item rules",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "Source for 'what went well / what went poorly / where we got lucky', trigger versus root cause, detection method, single owner plus tracking id plus measurable action items, and metadata for trend analysis. It is written for human narrative reading, so only the structured subset (detection, trigger, lessons, actions, metadata) belongs in an entry; the narrative belongs in a linked evidence document.",
+   "egress_posture": "none (pattern)",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F17",
+    "F18"
+   ],
+   "maturity": "Published 2016/2018; stable",
+   "footprint": "none",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "Hygiene sweep with human-approved retirement (flag stale, flag changed-linked-record, flag near-duplicates)",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Matches the owner's 'less to track': a periodic job produces a short list of recommendations, and nothing is deleted without a human. The template's triggers (linked record changed state, duplicate pairs) are event-like and can be extended to code-dependency change. The time-based review date is the part to replace with dependency events.",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F15",
+    "F24",
+    "F26"
+   ],
+   "maturity": "Practitioner template only; no evaluation found",
+   "footprint": "a scheduled script or CLI subcommand",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "CLI subcommand"
+  },
+  {
+   "name": "Smyth and Keane footprint / footprint-utility deletion (competence-preserving case deletion)",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Rigorous, but built for case bases large enough to swamp retrieval where deletion is needed. At tens to hundreds of entries, with a top-tier fallback, swamping is not the constraint. Keep the idea of classing entries as pivotal (sole coverage of a symptom class) versus auxiliary (subsumed by another) to rank review and merge priority, nothing more.",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F27"
+   ],
+   "maturity": "1995 paper; later work (Zhu and Yang 1999) criticises its lack of a coverage guarantee (reported via search snippet)",
+   "footprint": "none",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "Compaq SMART tiered case-building workflow (generator, builder, auditor; NEW to ACTIVE)",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Evidence that candidate entries should enter a NEW state and be audited before becoming ACTIVE, with unresolved cases queued for review. Designed for a call centre with many staff and a large case base; adopt the state machine, not the staffing model.",
+   "egress_posture": "none (1992 on-premises system)",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F11",
+    "F12"
+   ],
+   "maturity": "1992 fielded system; resolution-rate claims unverified",
+   "footprint": "not applicable",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "ReasoningBank memory items and top-1 retrieval",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Useful evidence on shape (short title, one-sentence description, content) and on retrieval breadth: top-1 beat top-2..4, so return one verified hit rather than a pile. Failure lessons are distilled as first-class items. Not usable as built: it embeds queries via a Google API (data egress), it does no pruning or dedup, and it has no verification gate.",
+   "egress_posture": "Sends queries to a third-party embedding API (gemini-embedding-001) in the reference design; disqualified for production use unless embeddings are computed locally",
+   "one_dev_ops_cost": "unknown",
+   "fact_ids": [
+    "F22",
+    "F23"
+   ],
+   "maturity": "ICLR 2026 paper with released code; web-navigation benchmarks, not defect diagnosis",
+   "footprint": "not assessed (code not read)",
+   "windows_dev_fit": "not assessed",
+   "linux_prod_fit": "not assessed",
+   "agent_access": "not assessed"
+  },
+  {
+   "name": "Selective addition / quality gate before retain (Xiong et al.)",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Directly supports the agreed stance: do not retain unverified entries, treat later task outcomes as quality labels, and guard against copying similar-looking-but-wrong records. Its evaluator is an LLM judge, which is weaker than this track's reproducible discriminating check, so the gate here should be the reproduction, not a judge. Only the search-summary level of the paper was read.",
+   "egress_posture": "none for the method; their evaluator is an LLM",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F23"
+   ],
+   "maturity": "ACL 2026 paper; arXiv v2 (reported)",
+   "footprint": "none",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "Etsy Morgue",
+   "kind": "tool",
+   "verdict": "rejected",
+   "why": "Archived 2019, PHP/MySQL stack the owner does not run, designed for human postmortem meetings, and its README shows no search or tagging. Its useful content is the 'why_surprised' field idea.",
+   "egress_posture": "self-hosted, none",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F19"
+   ],
+   "maturity": "Archived read-only 2019-12-18",
+   "footprint": "PHP web app plus a database",
+   "windows_dev_fit": "poor (would need PHP or a container)",
+   "linux_prod_fit": "possible but unmaintained",
+   "agent_access": "none (web UI)"
+  },
+  {
+   "name": "Contributing-conditions (not single root cause) framing from Cook and the Howie guide",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "Argues for storing a root cause and the conditions under which it manifested, rather than a single cause line. For deterministic build and code defects a single mechanism is often accurate, so keep a root-cause field but make 'valid when' conditions and 'where we got lucky' explicit.",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F20",
+    "F21"
+   ],
+   "maturity": "Cook 1998; Howie guide 2021",
+   "footprint": "none",
+   "windows_dev_fit": "n/a",
+   "linux_prod_fit": "n/a",
+   "agent_access": "n/a"
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Entry schema: prior art converges on these field groups. Problem (symptom text verbatim, plus a symptom-first title). Context (affected versions, platform, configuration, in and out of scope). Diagnosis (root cause plus the conditions under which it manifests). Solution (workaround and permanent fix kept separate, with cost). Outcome and status. Derivation and justification (how it was found). Failed approaches and why (retained failures, 'what went poorly', 'why surprised'). Provenance (owner, dates, linked evidence). Metadata for trend analysis. This maps to CBR's problem/solution/outcome/justification and to the KEDB and SRE templates.",
+   "fact_ids": [
+    "F3",
+    "F4",
+    "F14",
+    "F15",
+    "F17",
+    "F19",
+    "F20"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Entry prerequisite: an entry is created only on an evidenced root cause, and a hunch goes to an unconfirmed state first. The KEDB template and Compaq's NEW-to-ACTIVE flow agree, and Xiong et al. show unvetted stored records get copied. The store needs at least a candidate state and an active state, with only active entries served to cheap agents.",
+   "fact_ids": [
+    "F11",
+    "F15",
+    "F23"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Retire by status, never by deletion: mark entries RESOLVED, SUPERSEDED or INVALIDATED and keep them for history, with retirement and merge recommendations going to a human. The KEDB template says retain-for-history and no bulk deletion. Smyth and Keane show deletion by performance heuristics is irreversible. Retired entries stay searchable so a session on an old branch can still find the fix.",
+   "fact_ids": [
+    "F6",
+    "F15"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Merge rule: same root cause with different symptom wording extends the existing entry's symptom handles (never create a sibling); similar symptoms with a different root cause create a new entry cross-referenced to its lookalike. This directly supports multiple handle types per entry and distinguishes merging from splitting.",
+   "fact_ids": [
+    "F15"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Serve at most one verified hit (or at most two) per lookup, with the entry's date, status and validity conditions displayed. ReasoningBank's top-k ablation got worse as k rose, and the KEDB template says lookup output must show date and status so freshness can be judged.",
+   "fact_ids": [
+    "F15",
+    "F22"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "The false-positive failure mode is documented: agents copy retrieved records whose inputs resemble the new task, including wrong or misaligned ones, and a copied error can be re-stored. This supports the owner's precision-first stance, a verification gate before any action, and writing back refuted outcomes so a bad entry stops being served. Evidence is at the search-summary level for the paper itself.",
+   "fact_ids": [
+    "F23"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Do not copy time-based review as the invalidation mechanism. Prior art uses review dates and linked-record state changes; no source describes dependency-based invalidation (files, symbols, versions, platform). The 'Affects' version-scope field is the closest prior art and should be the seed for a machine-checkable dependency fingerprint, which has to come from another lane.",
+   "fact_ids": [
+    "F9",
+    "F15",
+    "F16",
+    "F26"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Scale: Smyth and Keane's swamping analysis and competence-preserving deletion address case bases far larger than a few hundred entries, and the fallback of a top-tier session makes deletion a cost question rather than a competence question. Maintenance effort should go to staleness and duplicate control, not to retrieval-cost control or footprint modelling. Watson's field study confirms the two practical maintenance problems are redundancy and obsolescence.",
+   "fact_ids": [
+    "F6",
+    "F8",
+    "F9",
+    "F27"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Store failed approaches as first-class data: Aamodt and Plaza retain experience regardless of success, ReasoningBank distils lessons from failures, SRE templates have 'what went poorly' and 'where we got lucky', and Morgue has 'why_surprised'. Negative results are the expensive part to save, and nothing in this lane's sources discourages that.",
+   "fact_ids": [
+    "F2",
+    "F17",
+    "F19",
+    "F22"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Do not require lengthy narrative or template-heavy entries. ACL argues write-ups worth keeping are those someone will read and that record what was surprising or difficult, not template completion. Keep the structured part small enough to be written in minutes, with a link to the evidence folder for narrative.",
+   "fact_ids": [
+    "F20"
+   ],
+   "strength": "weak"
+  },
+  {
+   "claim": "Action items from a postmortem need a single owner, tracking id and measurable end state. For a one-developer program, the analogue is that every entry's follow-up (for example 'add a regression test' or 'update CLAUDE.md') is a tracked item or it is not recorded as an action, because SRE treats action-free postmortems as having no effect.",
+   "fact_ids": [
+    "F17"
+   ],
+   "strength": "weak"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Adopt Etsy Morgue as the store",
+   "why": "Archived since 2019-12-18, PHP stack, human-meeting oriented, no search or tagging in the README.",
+   "fact_ids": [
+    "F19"
+   ]
+  },
+  {
+   "what": "Competence-preserving (footprint) deletion as the retirement policy",
+   "why": "Built for large case bases where swamping drives deletion. Here retirement is driven by invalidity, and the entry history is worth keeping at this scale.",
+   "fact_ids": [
+    "F5",
+    "F6",
+    "F8",
+    "F27"
+   ]
+  },
+  {
+   "what": "Reuse ReasoningBank as built (embedding-API retrieval, add-only memory)",
+   "why": "Sends queries to a Google embedding API (egress), has no pruning, no dedup, and no verification gate; keep only its design lessons (top-1, failure lessons).",
+   "fact_ids": [
+    "F22"
+   ]
+  },
+  {
+   "what": "Time-only review dates as the invalidation mechanism",
+   "why": "Prior art uses it, but the owner wants event-driven invalidation and no source shows time-based review preventing false positives. Retained as a fallback tripwire at most.",
+   "fact_ids": [
+    "F15",
+    "F26"
+   ]
+  },
+  {
+   "what": "Single 'root cause' line as the only diagnostic field",
+   "why": "Cook and the Howie guide argue single-cause attribution is a hindsight artefact; store root cause plus manifestation conditions plus lucky-escape notes.",
+   "fact_ids": [
+    "F21"
+   ]
+  },
+  {
+   "what": "LLM-judge as the retain gate",
+   "why": "Xiong et al. note selective addition is limited by evaluator accuracy; the track's reproducing check is a stronger gate. Evidence on the judge is at search-summary level.",
+   "fact_ids": [
+    "F22",
+    "F23"
+   ]
+  }
+ ],
+ "open_questions": [
+  "Aamodt and Plaza 1994 was read only through a partial local text extraction (the 4R list and the retain-regardless-of-success passage are intact, but the full discussion of case indexing and retain-time generalisation was not read). Re-read the full text before citing detail.",
+  "Leake and Wilson's actual list of maintenance dimensions (data collection, triggering, type, timing, scope, execution) was not read; the PDFs appear encrypted and unreadable to the fetch tool. The 2001 Wilson and Leake and Watson 2001 papers were seen only via abstracts and snippets.",
+  "Is there any empirical evidence on how fast KEDB or runbook entries go stale and what fraction of reused entries were wrong? None was found; the false-positive rate must be measured in this program, not assumed from literature.",
+  "Xiong et al. (arXiv 2505.16067) and the 2026 CBR-augmented R&D agent paper (arXiv 2606.05250) were identified but their bodies were not read; verify before relying on the 10% gain or the swamping mitigation claims.",
+  "Jeli/Howie guidance on write-up structure and on reuse was not retrieved (only its stance on contributing factors). The Etsy blameless-postmortem blog returned 403.",
+  "How should 'root cause' versus 'contributing conditions' be represented for deterministic build/code defects, where a single mechanism is common? Needs a decision in the design, not more literature.",
+  "Compaq's reported 85-95% resolution rates conflict across secondary sources; the primary paper shows a test in which under 50 percent of cases were resolved in some analysis phase (context not fully read). Do not cite a hit-rate from SMART."
+ ],
+ "urls_attempted": [
+  "https://www.iiia.csic.es/~enric/papers/AICom.pdf",
+  "https://www.cs.auckland.ac.nz/~ian/CBR/AICom.pdf",
+  "https://folk.idi.ntnu.no/agnar/CBR%20papers/smyth-keane-remembering-95.pdf",
+  "https://ijcai.org/proceedings/1995/50",
+  "https://sre.google/workbook/postmortem-culture/",
+  "https://sre.google/sre-book/postmortem-culture/",
+  "https://research.idi.ntnu.no/cbr/tdt55/presentation/TDT55-Summary.pdf",
+  "https://en.wikipedia.org/wiki/Case-based_reasoning",
+  "https://legacy.cs.indiana.edu/ftp/leake/a-98-03.html",
+  "https://homes.luddy.indiana.edu/leake/papers/a-98-03.html",
+  "https://en.wikipedia.org/wiki/Known_error",
+  "https://www.etsy.com/codeascraft/blameless-postmortems",
+  "https://github.com/etsy/morgue",
+  "https://www.pluralsight.com/resources/blog/tech-operations/known-error-database-example",
+  "https://cio-wiki.com/wiki/Known_Error_Database_(KEDB)",
+  "https://cio-wiki.org/wiki/Known_Error_Database_(KEDB)",
+  "https://www.usenix.org/publications/login/spring2017/lunney",
+  "https://www.cs.auckland.ac.nz/~ian/papers/cbr/coin172.pdf",
+  "https://cse.hkust.edu.hk/~qyang/Docs/2001/maintaincbr.pdf",
+  "https://www.maxapress.com/data/article/ker/preview/pdf/S0269888906000580.pdf",
+  "https://cdn.aaai.org/IAAI/1992/IAAI92-003.pdf",
+  "https://arxiv.org/abs/2509.25140",
+  "https://arxiv.org/html/2509.25140v1",
+  "https://arxiv.org/pdf/2606.05250",
+  "https://how.complexsystems.fail/",
+  "https://www.adaptivecapacitylabs.com/2025/02/28/what-progress-in-learning-from-incidents-actually-looks-like/",
+  "https://arxiv.org/html/2504.06943v2",
+  "https://cdn.amazon.science/1e/ea/106a0192461e9e0b366340d558bf/scipub-approval152134-47174930-operational-runbooks-as-living-documents-a-longitudinal-study-of-document-evolution-under-assisted-postincident-revision.pdf",
+  "https://confluence.atlassian.com/servicedeskcloud/managing-problems-with-your-it-service-desk-817562149.html",
+  "https://spike.sh/glossary/known-error-database-kedb/",
+  "https://helpdocs.getthread.com/skill-library/change-and-problem-management/known-error-database",
+  "https://docs.getthread.com/skill-library/change-and-problem-management/known-error-database.md",
+  "WebSearch: Aamodt/Plaza, Smyth/Keane, SRE postmortem, Wilson/Leake, ITIL KEDB, Etsy Morgue, Adaptive Capacity Labs, CBR help desk/SMART, Cheetham/Watson, ReasoningBank, CBR LLM agents, Xiong experience-following, runbook staleness, Watson 2001, Richter knowledge containers, Jeli Howie, KEDB staleness"
+ ],
+ "anomalies": [
+  "WebFetch cannot parse PDFs (returned 'binary content' refusals). For Aamodt and Plaza, Smyth and Keane, Acorn and Walden, Cheetham and Watson and the AWS runbook paper I downloaded or reused the saved tool-result PDFs and extracted text with a small stdlib-only Python script (zlib plus an LZW decoder) using the existing interpreter with -I. No packages installed. Scratch files (downloaded PDFs, extraction script, text dumps) are in /tmp/ks on the Windows box, outside the repository and not the session scratchpad; delete them if desired. No repo files were written or modified and no git writes were made.",
+  "The Aamodt and Plaza extraction is partial and fragmentary (about 12k characters from a 27-page PDF); only quoted passages were treated as verified.",
+  "Wilson and Leake 2001 and Watson 2001 PDFs yielded zero extractable text (probably encrypted or font-encoded), so those facts are 'reported' from search snippets and abstract pages.",
+  "WebFetch passes pages through a small summariser model; page-level statements marked 'verified' were read in that summary and, where a direct quote was available, checked against it, but wording is the summariser's.",
+  "The getthread KEDB template is a vendor skill-library page, not an ITIL primary source. ITIL 4 (AXELOS) text is paywalled and was not read; field lists for a 'known error record' come from Atlassian, Wikipedia and practitioner pages.",
+  "Community pages disagree on how many sections Google's postmortem template has (nine versus ten); I used the sre.google workbook example instead.",
+  "Etsy blog returned HTTP 403; legacy.cs.indiana.edu failed DNS (ENOTFOUND) though homes.luddy.indiana.edu worked.",
+  "A search result and fetched page dated 2026 (arXiv 2606.05250, AWS DocEng 2026) were found; they are recent relative to the session date (2026-11-02) and I could not cross-check them against other sources."
+ ]
+}
