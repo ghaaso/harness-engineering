@@ -1,0 +1,3 @@
+# Owner critique of design v1.2 (2026-11-03)
+
+`critique.md` is the owner's critique, verbatim. `verdicts.txt` is the main session's adjudication (per-point verdicts, research with fetched sources, the "missed by the critique" list). `wf_2c872948-51a.*` are the raw outputs of the check workflow (8 Opus verifiers, 4 Sonnet researchers, 4 Opus synthesisers, one completeness critic) and its script. Copied verbatim from the main session's scratchpad and journal on 2026-11-03 so the design's §12.7 rests on files in the repository; grepped for secret-shaped values before copying (none). These files are evidence, not state.
