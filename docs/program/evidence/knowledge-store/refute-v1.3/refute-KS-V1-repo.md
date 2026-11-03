@@ -1,0 +1,220 @@
+# refute:KS-V1:repo
+
+**Claim:** KS-V1  **Lens:** repo  **Verdict:** NARROWED
+
+The diff check is cheap (about 0.2 s a run), needs no hook, and sees every committed edit however it was made. With rare, hand-picked identifiers matched on -U0 changed lines it does reach function grain on shared files: in history, 3 of the 13 PRs that touched AppContext.jsx would have fired. As written it breaks in five places: (1) any edit to a whole-file precondition fires (JobDetail.jsx, 11 of 154 PRs); (2) nothing limits common identifiers (useState is in 31% of PRs); (3) it prints only one card, so a do-not-apply warning can be hidden behind another; (4) working-tree runs cannot see untracked files; (5) the `ks close` range picks up other PRs whenever a branch was behind main.
+
+## Attacks
+
+- **[fell]** 1. Whole-file blobs before KS-6b against the hunk-level rule: what does a hunk-level match mean, and what can the KS-5 pilot measure?
+    - evidence: Design:284 says `symbol_span` is not built before KS-6b, so the 'changed span' clause is empty until then. Two other clauses turn path overlap back into a warning.
+(a) Design:301 sends `--diff`'s changed paths into the exact `ident` lookup, and design:260 lists files as `ident` handles, naming AppContext.jsx as one. A changed path is therefore an exact ident hit, which contradicts §7.1:431's rule that path-only overlaps are not printed.
+(b) ex3's precondition is the whole-file blob of JobDetail.jsx (KS-O4, design:283). So 'a changed precondition item' means any edit to that file. In my replay of all 154 first-parent commits on main, ex3 fired through that precondition on 11 PRs, for example 2820fe9 (web-travel-map), cc857d3 (p3e-web-route-closing) and d683faa (jobs-lifecycle-ui), with no ex3 token in their hunks.
+What is actually left before KS-6b: plain word tokens from the raw changed lines (comments and strings included, since KS-O1 builds no lexer) intersected with the ident handles; a JSON-pointer value comparison for config items (12 PRs fired on the ex7/ex8 pointers, which is precise); and whole-file preconditions.
+    - consequence: State the pre-KS-6b rule exactly in §7.1 and §3.7: word tokens from the + and − lines of a -U0 diff, matched against symbol, env-name and error-code idents; config-key value change; no span clause. File-kind idents and whole-file preconditions or protective-test blobs count as path_only (logged, not printed), or the doc says they fire and gives the measured rate. KS-5 can then measure token-rule recall on synthetic diffs, its historical false-fire rate and the config clause. It cannot measure span grain, so the claim of function grain belongs to KS-6b.
+- **[held]** 2. ex3's two pilot requirements: an unrelated edit to another AppContext.jsx function must stay silent, and the naive PaymentModal useState fix must fire. Can the rule as written meet both, and with which ident handles?
+    - evidence: PaymentModal is not a separate file. It is a function at JobDetail.jsx:866, used at :675-682. A naive fix that actually works has to touch both files, because logPayment (AppContext.jsx:312-328) must stop minting its own id; the KS-C11 refuters found the same.
+I built the variants in a scratch repo from the HEAD blobs (ex3variants.mjs):
+- Naive fix, -U0 changed-line tokens: async jobId amount method clientId const useState crypto randomUUID onSave val. Neither logPayment nor PaymentModal is among them.
+- With handles {logPayment, logPaymentApi, PaymentModal, randomUUID, clientId, client_id}, the naive fix hits [randomUUID, clientId].
+- Unrelated edits (the voidRevenueEntry toast, its comment, the setNegotiatedBill toast) hit nothing under -U0.
+- Under -U3 the voidRevenueEntry comment edit fires on logPayment, because the context line AppContext.jsx:332 reads '// logPayment afterward.'.
+- Handles taken mechanically from the fix diff fire every unrelated variant (amount, jobId, const).
+- An unrelated NegotiateModal edit in JobDetail.jsx fires through the whole-file precondition.
+The history replay (appctx.mjs) reproduces the design's figure. Of 13 PRs touching AppContext.jsx, 3 fire with {logPayment, logPaymentApi, PaymentModal} and 10 once useState, payload, onSave, randomUUID, clientId and client_id are added. 11 PRs touched JobDetail.jsx.
+Answer: yes, both requirements can be met, but only with -U0, + and − lines, and curated handles that include randomUUID and clientId. The naive fix fires only through those two tokens (each in 8% of PRs) or through the JobDetail.jsx precondition, never through logPayment.
+    - consequence: Make the KS-2 done-when and §12.7's 'one interpretation' paragraph explicit: -U0, both line signs, curated handles. Record that the naive fix fires through randomUUID/clientId or the JobDetail.jsx precondition. 'Silent on unrelated edits to shared files' does not hold for JobDetail.jsx while its precondition is a whole-file blob.
+- **[fell]** 3. Ident handles that are common words or rare in no useful sense (useState, client_id, payload, job, id). What bounds the false-fire rate when matching is exact and not IDF-weighted?
+    - evidence: Share of the 154 first-parent PRs whose -U0 changed code lines contain the token (df.mjs):
+- useState 47 (31%)
+- client_id 34 (22%)
+- payload 26 (17%)
+- job 89 (58%)
+- id 101 (66%)
+- method 38, jobId 25, randomUUID 12, clientId 12
+- logPayment 10, verify_pin 3, compare_secret 1
+Stripping strings and comments barely changes these counts.
+Full replay with a realistic 15-entry seed (replay.mjs): under the rule as written, 103 of 154 PRs print at least one warning, against 85 for a path-only join. With high-specificity handles only (replay-strict2.mjs) it is 44, or 27 without whole-file preconditions.
+Nothing in the text sets a bound. Ident hits 'are exact handles and do not enter coverage' (§4.1 step 4, K13). §7.3's negative-corpus precision check covers handles firing on known-good HEAD or on unrelated historic failures (symptoms), not diffs.
+    - consequence: Add a write-gate rule in §7.3 and §3.3: every ident handle that `--diff` uses for a do_not_apply, open_defect or trap entry is replayed against the -U0 changed lines of origin/main's first-parent history and refused or tightened above a set share of PRs (for example 5%). `ks record` prints each handle's historic fire count. For a do_not_apply entry, handles are owner- or author-named guarded identifiers, never derived from the fix diff.
+- **[held]** 4. Edits made through Bash, PowerShell or subagents: does the diff see them, and what does it not see?
+    - evidence: git diff reads the tree, so the edit route does not matter. A PowerShell-style rewrite that adds CRLF and a BOM (simulated in the scratch repo) shows as one changed line; `.gitattributes` `* text=auto eol=lf` normalises the CRLF.
+What it does not see:
+- untracked files in working-tree mode (attack 5);
+- gitignored files (backend/.env and technician-app/.env, .gitignore:28 and :47);
+- state outside git: the enable_dispatcher flip on the host (config.py:188 defaults it to False), EAS secrets, DB rows;
+- pure renames: at 100% similarity there are zero hunks, so they are path_only;
+- binary files;
+- a subagent's edits in another worktree, until they land on this branch;
+- deletion-only hunks unless − lines count, and the text does not say whether they do (the scratch diff shows `verify_pin` only on a − line).
+    - consequence: State in §7.1 that − lines count; that renames are matched with --no-renames, or a rename of a protected file is printed; and §5.5's list of what the diff cannot see (ignored files, out-of-repo state, binaries). 'Needs no hook' stands.
+- **[fell]** 5. Working-tree target: KS-F19 uses `git stash create`, which cannot see untracked files, and a new file is exactly the second-door case. Which runs are blind?
+    - evidence: In the scratch repo I added a new untracked file that calls verify_pin:
+- `git diff <base> --name-only` printed nothing;
+- `git diff <base>...HEAD` printed nothing;
+- `git stash create` returned an empty string, so there is no snapshot at all when the only change is an untracked file.
+KS-F19's guard ('untracked path matches a probe's or footprint's path set') can never fire for a new path. After the file is committed, `git diff <base>...HEAD -U0` shows every line as added.
+Blind: the working-tree form of `--diff`, and `ks verify --target worktree` or proposed with a working tree. Not blind: the committed first-commit run, PR-ready, the reviewer at the head SHA, and `ks close`. Even those catch the file only if verify_pin is among ex6's ident handles.
+A fix exists. A temporary index outside the repo (GIT_INDEX_FILE, then `read-tree HEAD` and `add -N`) made the untracked file visible to `git diff <base>`. The object count stayed at 23 before and after, and the real index was untouched.
+    - consequence: Amend KS-F19, §4.1 step 5 and §7.1. Working-tree runs include untracked, non-ignored files through the temporary-index intent-to-add snapshot, or return inconclusive(untracked_present) whenever any such file exists. Never fall back silently to HEAD when `stash create` returns nothing.
+- **[fell]** 6. Squash merges and release/drain cherry-picks moving the merge-base: what does <merge-base> mean, and can the diff be empty or cover the whole history?
+    - evidence: (a) `ks close` over 'merge-base to the squash commit' (design:344). In 59 of 133 merge-commit PRs on main, the branch was behind main when it merged. For example, ef8ae86's own diff is 1 file with 1 insertion, but the merge-base range is 29 files with 810 insertions; d18205d is 2 files against 32. Here `git diff mb..merged` contains other PRs' changes. The six most recent squashes were rebased first (merge-base equals the squash's parent), so the bug shows only when work runs in parallel, which the ship plan allows.
+(b) In a scratch repo I modelled release/drain as SHIP-PLAN L66-68 defines it: P1's squash plus cherry-picks of P2b-2 and P3a. On a fix branch cut from it, `git diff main...HEAD` listed the fix, p2b.py and p3a_migration.py, so the cherry-picked phases fire on every drain-tool fix. Against `release/drain...HEAD` only the fix appears.
+(c) Run on main, the diff is empty, which prints the vacuous one line.
+(d) With unrelated history the command fails: `fatal: main...HEAD: no merge base`, exit 128.
+(e) Main holds 135 merge commits. In the KS-5 replay `--diff <parent>` is ambiguous for them, and `--diff` has no head argument, so a replay or reviewer must check out each SHA.
+    - consequence: §7.2 and §5.2 need four changes:
+- Base: `git merge-base origin/main HEAD` after fetch for branches from main; the release branch itself for branches from release/drain or release/drain-web.
+- `ks close` uses `<merged>^1..<merged>`, the first parent.
+- An empty range or a missing merge base exits with a distinct code, never a miss.
+- The KS-5 replay uses first parents, counted per PR.
+Add `--head <sha>` and `--repo <path>` to `ks lookup` (§7.1), and have the header print the base and head SHAs it used.
+- **[unverifiable]** 7. Worktrees on old branches running an old tools/ks CLI against a newer store schema (§9 version skew): what does the --diff join do, and does the phase go on silently?
+    - evidence: Text-level gap only; nothing runnable exists.
+- Design:525 specifies that an old CLI rebuilds its own index and refuses to write events of a newer schema. It says nothing about reads. A `--diff` lookup writes only to the host-local log, so an old CLI answers from an old fold, and what it does with unknown event kinds or item types (symbol_span after KS-6b, guarded_refs) is unspecified.
+- The critic offered a single pinned CLI in the store home (refute/critic.md, 'fix' option a); the design took option b, which covers writes only.
+- release/drain is 'P1's squash commit' plus cherry-picks only (SHIP-PLAN L66-68). It therefore has no tools/ks unless KS-1 merged before P1, and §7.6 then says the phase 'proceeds without it'.
+    - consequence: Either run ks from one copy pinned to origin/main in the store home, or have a lookup by a CLI older than the newest event schema in the journal exit with a distinct `cli_outdated` code that the routine reports as 'diff check not run'. Extend KS-1's two-worktree version-skew test to lookups. What would settle it: that test, with an old CLI reading a journal that holds newer-schema events.
+- **[held]** 8. The first-commit run when the first commit is the whole change (one-PR phases such as P12a): is 'an early hint' honest, and does the PR-ready run add anything?
+    - evidence: Design:446 already says it is 'an early hint, not a pre-edit guard: in a one-PR phase the first commit can be the whole change', and P12a is 'one small PR' (SHIP-PLAN L656-664). In history, 106 of 133 merge PRs were single-commit, and four of seven recent squash branches had one commit (fix/identity-lockout, completion-replay, unauthenticated-availability, whatsapp-consent-optin). In most phases, then, the first-commit and PR-ready runs see the same diff, and any warning arrives after the code is written.
+    - consequence: The wording is honest. Make the PR-ready run print 'same head as the first-commit run, not re-run' when HEAD has not moved, so a duplicate turn is not counted as a second check. Do not claim pre-edit value for it.
+- **[held]** 9. Cost per run, three runs per code phase: the join itself, and the token cost of its output under the 2,000-character cap. Does 'one line when nothing is protected' hold?
+    - evidence: one.mjs runs a full simulation in a fresh node process: merge-base, `git diff --name-only`, `git diff -U0`, tokenising, and a node:sqlite join against 80 seed items. Medians over 11 runs:
+- #169 (7 files, +329): 197 ms
+- #170 (22 files, +2003, 15.8k hunk tokens): 204 ms
+- #173 (2 files): 207 ms
+Of that, node start is 51 ms, git 120-190 ms and the join 2-14 ms. The real CLI's freshness check (23-35 ms at 5k events, KS-C4) is not included.
+Output: 86 characters (about 89 tokens at 0.4 per character plus 55) with no warning; 460-650 characters (about 240-315 tokens) with a warning card and a '+N more' line.
+The one-line case holds for the diff part. With `--action` in the same call it holds only if the action match also misses, which needs the store to test.
+    - consequence: Cost is not an objection: about 0.6 s of compute per phase, dominated by turns (§7.7). Reword §7.6 to 'one line when neither the diff nor the action matches'.
+- **[fell]** 10. Can the Opus reviewer's §7.6 sentence ('runs ks lookup --diff at the PR head SHA and names every do-not-apply warning') be satisfied vacuously, and what makes it checkable?
+    - evidence: Five routes to a vacuous pass:
+- §7.1:431 says exits 3 (unavailable) and 4 (busy) are what 'callers treat as a miss', and the Routing sentence (design:469) has no exit-code clause. A reviewer following the text reports 'no warnings'.
+- The CLI has no head argument, so a reviewer not checked out at the PR head diffs the wrong HEAD.
+- The base is unspecified (attack 6). The empty case is shown in the scratch repo.
+- A worktree that predates tools/ks has no CLI.
+- The one-card rule limits 'every warning it printed' to at most one (attack 11).
+Nothing checks the reviewer ran it. Lookups go to the host-local log, but `ks close` does not check for one at the final head.
+    - consequence: Rewrite the Routing sentence: the reviewer runs the current CLI with `--diff <base> --head <PR head SHA>` and quotes the header line verbatim (base, head, journal watermark, counts per kind, warnings, exit code). Exit 3 or 4, a missing CLI, or a base or head mismatch is stated as 'diff check not run', never as 'no warnings'. `ks close` reports whether a `--diff` lookup at the PR's final head SHA exists in the host-local log.
+- **[fell]** 11 (added). The one-card cap: can a do-not-apply warning be hidden when several entries match?
+    - evidence: Simulating #170 (da988e2) with the realistic seed, 12 entries matched, among them ex3 (open_defect) and ex4 and ex6 (do_not_apply). One card fits, and it went to ex1a, which matched through CLAUDE.md prose. The ordering among warnings is undefined: §3.7 says only ORDER BY …, entry_id. The text is also inconsistent: §4.1:303 has 'any do-not-apply warning lines' inside the cap, while §7.1:431 and §7.2:446 say 'at most one warning card'.
+    - consequence: Print one line per warning (entry id, kind, matched token, path:line), ordered do_not_apply, then open_defect, then trap, all inside the 2,000-character cap (12 lines is about 1,450 characters), plus at most one full card for the first. Reconcile §4.1, §7.1 and §7.2.
+- **[fell]** 12 (added). Docs and prose hunks: do changes to .md files fire warnings?
+    - evidence: Docs-only PRs fired through prose that names the identifiers: 906b990 (HANDOFF) fired ex3, ex4 and ex6; 5acd4cc (restore runbook) fired ex4; 7006d5a (phase-0 audit) fired ex3 and ex4. Across the replay, U0all against U0code was 93 against 81 PRs. The rule does not exclude docs, and this design document names every worked-example handle.
+    - consequence: In §7.1, match docs hunks (*.md, docs/) separately and report them as one counted line, never a warning card. HANDOFF-style prescriptions already have their own route (`--prescription` / `doc_ref`).
+- **[fell]** 13 (added). Context width and line sign are unspecified: -U0 against -U3, and + only against + and −.
+    - evidence: Scratch repo results:
+- the voidRevenueEntry comment edit is silent under -U0 and fires on logPayment under -U3;
+- the naive fix's AppContext hunk carries `randomUUID` only on a − line;
+- a deletion-only hunk shows `verify_pin` only on a − line.
+Removing a guard (for example `_MAX_DISPATCH_EVENT_AGE` at main.py:94) or deleting a protective test therefore appears only in − lines.
+    - consequence: In §7.1 and the KS-2 done-when, specify -U0 with --no-color, --no-ext-diff, --no-textconv and --no-renames, and tokens from both + and − lines.
+- **[fell]** 14 (added). Are the KS-5 synthetic forbidden diffs self-fulfilling?
+    - evidence: Every synthetic diff in KS-5 (design:614) is written by someone who knows the handles. A test-only inversion of ex6's protective assertion (test_identity_integration.py:103, `assert locked.status_code == 429, locked.text`) yields the tokens {assert, locked, status_code, text}. None of them is an ex6 handle, so under the rule as written it is path_only and prints nothing. Likewise a pure rename of the protective test has zero hunks, and a second-door new file in the working tree is invisible (attack 5).
+    - consequence: Add adversarial forbidden diffs to KS-5's diff arm, written by a session that has not seen the handles: a test-only inversion, a second-door file (committed and untracked), a rename of the protective test, and a deletion-only removal of the age guard. Report per-handle historic fire rates and the share of fires that come only through whole-file preconditions.
+
+## Counter-evidence
+
+Each of these is a measurement or demonstration on this box against this repository's history (first-parent, 154 PRs) or a scratch copy:
+- **Path overlap still prints.** ex3's whole-file JobDetail.jsx precondition fires on 11 of 154 PRs with no ex3 token in the hunks. §4.1:301 also makes a changed path an exact ident hit, because files are ident handles (design:260).
+- **Nothing bounds common identifiers.** Under the rule as written, a realistic 15-entry seed fires on 103 of 154 PRs, against 85 for a path-only join. Common identifiers fire on 17-66% of PRs (useState 31%, client_id 22%).
+- **A do-not-apply warning can be hidden.** With one card printed, a multi-hit PR such as #170 (12 entries matched) can hide ex4 and ex6 behind a trap matched through CLAUDE.md.
+- **Working-tree runs are blind to new files.** `git diff <base>` and `git stash create` cannot see an untracked second-door file; `stash create` returns nothing.
+- **The `ks close` range pulls in other PRs.** 'Merge-base to the squash commit' includes other PRs in 59 of 133 historical merges (ef8ae86: 1 file of its own against 29 in the range).
+- **Drain branches inherit other phases.** A release/drain branch diffed against main's merge-base includes the cherry-picked phases.
+- **The reviewer step can pass vacuously.** Exit 3 or 4 is defined as a miss, so the reviewer sentence can be satisfied without the check having run.
+
+## Trace (if confirmed)
+
+What holds, with evidence:
+- **It sees every committed edit, with no hook.** git diff reads the tree, so Bash, PowerShell and subagent edits are all seen once committed. The CRLF+BOM rewrite was normalised to a one-line change.
+- **Function grain is reachable with curated handles.** Matching curated, rare identifiers on -U0 lines gives grain close to function level on shared files. AppContext.jsx: 3 of 13 PRs fire with {logPayment, logPaymentApi, PaymentModal}, reproducing the design's 13/3 figure. ex4's handles fire on 6 of the 39 PRs that touch its files.
+- **The pilot pair can be met.** The naive ex3 fix fires (randomUUID, clientId) while unrelated AppContext.jsx edits stay silent under -U0.
+- **Committed runs see new files.** A committed second-door file shows fully in `git diff <base>...HEAD`.
+- **It is cheap.** About 200 ms a run, and the output is far under the 2,000-character cap.
+
+## Narrowed claim
+
+`ks lookup --diff` is a hook-free check over committed ranges. It sees every committed edit however it was made, and costs about 0.2 s plus one agent turn per run. It prints a do_not_apply, open_defect or trap warning before merge, and gets function-like grain on shared files, when six conditions hold:
+1. Tokens come from both + and − lines of a -U0 diff of code files.
+2. Ident handles are curated, high-specificity identifiers whose historic fire rate is bounded at write time.
+3. File-kind idents and whole-file preconditions count as path_only.
+4. Docs hunks are counted separately.
+5. Every warning gets one line, do_not_apply first.
+6. The base is the branch's own first-parent base: the release branch for drain worktrees, `<merged>^1` for `ks close`.
+
+It does not see untracked files in working-tree mode unless the temporary-index snapshot is used. It does not see ignored files or out-of-repo operator actions. Before KS-6b it has no span clause, so the pilot measures the token rule and the config-value rule only.
+
+## What would settle the unverifiable items
+
+Things that remain unverifiable need the store or a decision:
+- Old-CLI read behaviour on newer-schema events: settled by the KS-1 two-worktree version-skew test extended to `ks lookup --diff`.
+- Whether `--action` in the same call keeps the quiet case to one line: settled by the KS-2 fixture tests with seeded action handles.
+- The real false-fire rate: settled by the actual KS-4 ident handles, which do not exist yet, replayed with replay.mjs's method (first-parent, -U0, both signs, code-only).
+
+## Proposed amendments
+
+- **§7.1 (--diff row) and §3.7** — Define the hunk-level rule exactly. Range: `git diff -U0 --no-color --no-ext-diff --no-textconv --no-renames <base> <head>`. Tokens: word tokens from both + and − lines, with strings and comments kept (SQL inside op.execute, env names). A warning needs a symbol, env-name or error-code ident among those tokens, or a config-key value change. File-kind ident handles, renames, and preconditions or protective-test items held as whole-file blobs are path_only (logged, not printed) until KS-6b builds spans. Docs hunks (*.md, docs/) are reported as one counted line, never a card. Add `--head <sha>` and `--repo <path>`. The header line prints the base and head SHAs, the journal watermark, counts per kind, the number of warnings and path_only items, and the exit code. _(why: Before KS-6b the span clause is empty. A whole-file precondition (JobDetail.jsx) fires on 11 of 154 PRs. §4.1:301 makes a changed path an ident hit. -U3 against -U0 and the line sign change the result (scratch repo). Docs PRs fire through prose.)_
+- **§4.1 step 4, §7.1, §7.2 ('at most one warning card')** — Replace it with: one line per warning (entry id, kind, matched token, path:line), ordered do_not_apply, then open_defect, then trap, then entry_id, all inside the 2,000-character cap; plus at most one full card, for the first. _(why: In #170, 12 entries matched and the one card went to a trap matched in CLAUDE.md, hiding ex4 and ex6. §4.1:303 and §7.1:431/§7.2:446 contradict each other.)_
+- **§7.3 write gate and §3.3 ident row** — Every ident handle a do_not_apply, open_defect or trap entry uses for `--diff` is replayed against the -U0 changed code lines of origin/main's first-parent history. A handle above the agreed share of PRs is refused or tightened, and `ks record` prints each handle's historic count. Handles for a do_not_apply entry are named guarded identifiers, never derived from the fix diff. _(why: Exact ident hits carry no IDF. useState is in 31% of PRs, client_id 22%, payload 17%, randomUUID and clientId 8% each. Handles derived from the ex3 fix diff fire every unrelated variant.)_
+- **§7.2 and §5.2 (ks close range)** — Define the base: `git merge-base origin/main HEAD` after fetch for branches from main; release/drain or release/drain-web for branches cut from them. `ks close` diffs `<merged>^1..<merged>`, never 'merge-base to the squash commit'. An empty range or a missing merge base exits with a distinct code reported as 'diff check not run'. _(why: In 59 of 133 historical merges the branch was behind main (ef8ae86: 1 file of its own against 29 in the range). A drain-branch diff against main's merge-base includes the cherry-picked P2b-2 and P3a. On main the range is empty; with unrelated history git exits 128.)_
+- **§3.4 KS-F19, §4.1 step 5, §7.1 (working-tree target)** — Working-tree runs include untracked, non-ignored files: a temporary index outside the repository (GIT_INDEX_FILE, `read-tree HEAD`, `add -N` for `git ls-files --others --exclude-standard`), which writes no objects. Failing that, return inconclusive(untracked_present) whenever any such file exists. Never fall back to HEAD when `git stash create` returns nothing. _(why: A new untracked second-door file is invisible to `git diff <base>` and to `git stash create`, which returns an empty string. The KS-F19 guard cannot match a new path. The temporary-index method made the file visible with 23 objects before and after.)_
+- **§7.6 Routing sentence (KS-O11) and §7.8** — Replace it with: 'The reviewer runs the current `ks lookup --diff <base> --head <PR head SHA>`, quotes its header line verbatim, and names every do-not-apply warning line and how the diff respects it; exit 3 or 4, a missing CLI or a base/head mismatch is reported as "diff check not run", never as no warnings.' `ks close` reports whether a `--diff` lookup at the PR's final head SHA exists in the host-local log. In §7.1, exits 3 and 4 are a miss for retrieval only, never for `--diff`. _(why: As written, the sentence can be met vacuously (§7.1:431 treats exits 3 and 4 as a miss). There is no head argument and no check that the reviewer ran it.)_
+- **§10 KS-5 diff arm (KS-O14) and KS-2 done-when** — Replay per PR over first-parent commits, with `<parent>` = `^1`. Add adversarial forbidden diffs written by a session that has not seen the handles: a test-only inversion of test_identity_integration.py:103, a second-door file (committed and untracked), a pure rename of a protective test, and a deletion-only removal of `_MAX_DISPATCH_EVENT_AGE`. Report per-handle fire rates and the share of fires that come only through whole-file preconditions. State that span grain is not measured before KS-6b. KS-2's done-when names -U0 and both line signs. _(why: Main has 135 merge commits, so `<parent>` is ambiguous. Synthetic diffs that contain the handles prove only token presence: a test-only inversion has no ex6 token.)_
+- **§9 CLI version skew** — Extend the rule to reads: a lookup (including `--diff`) by a CLI older than the newest event schema in the journal exits `cli_outdated`, reported as 'not run'. Or adopt the critic's option (a), one CLI pinned to origin/main in the store home. Note that release/drain worktrees carry no tools/ks unless KS-1 precedes P1. _(why: Design:525 covers writes only. A `--diff` lookup by an old CLI would answer from an old fold, or the phase proceeds without ks.)_
+- **§12.7 'What was not applied, and one interpretation'** — Add: the AppContext.jsx pair is satisfiable only with -U0, both line signs and curated handles; the naive PaymentModal fix fires through randomUUID and clientId or through the JobDetail.jsx whole-file precondition, not through logPayment; the whole-file precondition makes every JobDetail.jsx edit fire until KS-6b. _(why: Scratch-repo variants and the history replay: 3 of 13 AppContext.jsx PRs fire with strict handles, 10 with wide ones; 11 JobDetail.jsx PRs fire through the precondition.)_
+- **§7.6 phase-routine text ('one line when nothing in the store touches the change') and §7.2** — Say 'one line when neither the diff nor the action matches'. When HEAD has not moved since the first-commit run, the PR-ready run prints 'same head as the first-commit run'. _(why: `--action` is matched in the same call. 106 of 133 historical PRs were single-commit, so the first-commit and PR-ready diffs usually match.)_
+
+## Changes a §12.7 ruling?
+
+Amends KS-O10, KS-O11, KS-O14 and the §12.7 'one interpretation' paragraph; reverses nothing.
+- **KS-O10:** the hunk-level rule needs an exact definition. File-kind idents and whole-file preconditions become path_only before KS-6b. There is one line per warning, do_not_apply first. `ks close` uses the merged commit's first parent instead of 'merge-base to the squash commit'. Base rules cover release/drain.
+- **KS-O11:** the reviewer quotes the header, and exits 3 or 4 or a missing CLI count as 'not run'.
+- **KS-O14:** the replay uses first parents, adds adversarial forbidden diffs and reports per-handle fire rates.
+- **§12.7 'one interpretation':** the AppContext.jsx pair is satisfiable only with -U0 and curated handles.
+- **KS-F19 (§12.5):** extended, because new untracked files are invisible and `git stash create` returns nothing.
+
+## Could not run
+
+- Any real `ks lookup --diff`: tools/ks, the store and the index do not exist. Every join was simulated with node:sqlite over a synthetic seed (scratch seed.mjs) that I wrote from the worked examples, not with KS-4's real ident handles.
+- Whether `--action` (FTS plus verb-object tokens) adds a candidate card to the quiet case. This needs the seeded action handles and the KS-2 matcher.
+- How an old CLI behaves reading a journal with newer-schema events, and whether it answers, refuses or exits 3.
+- The store's freshness check inside the timed run (KS-C4 measured 23-35 ms at 5k events), and real index open and lookup-log append costs.
+- The symbol-span clause and KS-6b's ast-grep reader (D5b not ruled; nothing installed).
+- The executable half of `target_mode: proposed_change`: Docker is not started, and it is outside this claim.
+
+## Commands run
+
+- `sed/Read over docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md §3.3-§3.7, §4.1, §4.4-§4.6, §5, §7.1-§7.8, §9, §10 KS-0..KS-9, §11, §12.5, §12.7`
+- `sed -n 80,125p docs/program/evidence/knowledge-store/critique-2026-11-03/verdicts.txt (point 2)`
+- `grep over refute/refute-KS-C11-*.md and refute/critic.md (version skew)`
+- `git show docs/orchestration-design-2026-10:docs/program/SHIP-PLAN-2026-11.md | sed -n 25,90p / 650,672p / 695,706p`
+- `git grep -n logPayment|PaymentModal|verify_pin|is_locked|compare_secret|_MAX_DISPATCH_EVENT_AGE|run_dispatch_once; sed -n 300,340p src/app/providers/AppContext.jsx; sed -n 660,700p and 860,960p src/features/jobs/pages/JobDetail.jsx; sed -n 85,105p backend/app/features/identity/service.py; sed -n 236,262p docs/HANDOFF-2026-07-28-open-work.md; grep test_identity_integration.py and test_service.py`
+- `git rev-list --count main / --merges / --first-parent; git log --first-parent --format='%h %p | %ad | %s' main | head -40; git branch -a`
+- `for each of 6 recent squash PRs: git merge-base origin/<branch> <squash>; git diff --shortstat over squash^..squash, mb..squash, mb..tip`
+- `for each first-parent merge on main: git merge-base m^1 m^2 vs m^1; git diff --shortstat (59 of 133 behind)`
+- `for each merge PR: git rev-list --count m^1..m^2 (106 of 133 single-commit)`
+- `node run2/replay.mjs <repo> main (154 first-parent PRs; rule variants; per-ident document frequency)`
+- `node run2/replay-strict.mjs and replay-strict2.mjs (high-specificity handles; no-precondition variant)`
+- `node run2/df.mjs <repo> useState client_id payload job id ... (document frequency)`
+- `node run2/appctx.mjs <repo> (AppContext.jsx and JobDetail.jsx PRs against ex3 handles)`
+- `scratch repo run2/x3 (git init --template=, HEAD blobs of AppContext.jsx, JobDetail.jsx, .gitattributes): node run2/ex3variants.mjs (naive fix and four unrelated edits, -U0/-U3)`
+- `scratch x3: untracked second-door file: git diff <base>, git diff <base>...HEAD, git stash create (empty), git add -N, commit then -U0; git mv rename (zero hunks); deletion-only hunk; CRLF+BOM rewrite diff`
+- `scratch x3: GIT_INDEX_FILE temp index: read-tree HEAD; add -N; git diff -U0 <base> (object count 23/23)`
+- `scratch run2/dr: release/drain modelled by cherry-pick; git merge-base main HEAD; git diff --name-only main...HEAD vs release/drain...HEAD; empty diff on main; orphan branch (no merge base, exit 128)`
+- `node run2/one.mjs <repo> 1c546a3^ 1c546a3 (and da988e2, 24184b2): simulated --diff run with node:sqlite join and capped output`
+- `node run2/bench.mjs <repo>: node cold start; full simulated run, 11 runs, medians`
+- `git ls-files -v (skip-worktree count 0); grep .gitignore for env files`
+
+## Sources
+
+- docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:260 (ident row: files are handles; AppContext.jsx low IDF), :283-284 (KS-O1 whole-file blobs; ex3 JobDetail.jsx precondition; symbol_span not before KS-6b), :301 (--diff changed paths go into the ident lookup), :303 ('any do-not-apply warning lines'), :304 (KS-F19 stash create; untracked invisible), :344 (ks close 'merge-base to the squash commit'), :431 (§7.1 --diff row; exits 3/4 are a miss; one warning card), :446 (§7.2 three runs; one card; 'early hint'), :469 (§7.6 Routing sentence), :525 (§9 version skew, writes only), :614 (KS-5 diff arm), :899 (§12.7 one interpretation)
+- docs/program/evidence/knowledge-store/critique-2026-11-03/verdicts.txt:80-125 (point 2 adjudication)
+- docs/program/evidence/knowledge-store/refute/refute-KS-C11-repo.md and refute-KS-C11-ops.md (every ex3 fix changes logPayment identically; PaymentModal at JobDetail.jsx:866)
+- docs/program/evidence/knowledge-store/refute/critic.md (version-skew options a/b)
+- git show docs/orchestration-design-2026-10:docs/program/SHIP-PLAN-2026-11.md L31-36 (draft PR at first commit), L66-73 and L82-83 (release/drain by cherry-pick; release/drain-web), L656-664 (P12a one small PR)
+- src/app/providers/AppContext.jsx:312-328 (logPayment), :330-333 (comment '// logPayment afterward.' above voidRevenueEntry)
+- src/features/jobs/pages/JobDetail.jsx:675-682 (PaymentModal use), :866 (PaymentModal definition)
+- backend/app/features/identity/service.py:91-97; backend/tests/test_identity_integration.py:86-104; docs/HANDOFF-2026-07-28-open-work.md:236-246 (A2)
+- backend/app/main.py:94; backend/app/core/config.py:188; .gitignore:28,47; .gitattributes
+- Scratch scripts and repos (mine): C:\Users\User\AppData\Local\Temp\claude\C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-knowledge-store-research-9c609c\f3bbe503-2a20-4258-976b-7d457d3bf63a\scratchpad\refute-v13\scratch-repo-1\run2\ (seed.mjs, replay.mjs, replay-strict.mjs, replay-strict2.mjs, df.mjs, appctx.mjs, ex3variants.mjs, one.mjs, bench.mjs, fires.json, x3\, dr\). Files already in scratch-repo-1\ from an earlier run (replay.mjs, cost.mjs, ex3synth.mjs, globalscan.mjs, gd\, ex3work\) were not executed or relied on.
