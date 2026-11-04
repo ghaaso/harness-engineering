@@ -1,0 +1,50 @@
+# <!-- Authored for FixFlow, 2026-11-04 -->
+# O-03 offline intake smoke. BEFORE the run the person at the phone cuts FixFlow's network
+# (the OEM per-app data setting, as in O-01 step 0); the flow never touches device settings.
+# Proves: an offline create queues instead of being refused (CreateJobWizard.tsx:181-186 "Saved
+# offline"), the amber banner counts it (App.tsx:46), and after the person restores the network
+# the foreground drain empties it (useOutboxSync mounted for the authed app, App.tsx:58).
+# Does NOT prove the row landed server-side: read it from the manager side (SKILL.md checks).
+# WRITES A REAL ROW once the network is back: owner approval as for carry-in-completion.yaml.
+appId: com.fixflow.technician
+name: FixFlow carry-in offline intake smoke (O-03)
+tags:
+  - fixflow-write
+  - fixflow-offline
+env:
+  CUSTOMER_NAME: ${CUSTOMER_NAME || "Maestro Smoke Offline"}
+  APPLIANCE: ${APPLIANCE || "Fridge"}
+  BRAND: ${BRAND || "Dawlance"}
+  ESTIMATE: ${ESTIMATE || "1500"}
+---
+- extendedWaitUntil:
+    visible: "Welcome back,"
+    timeout: 30000
+- runFlow: subflows/preconditions.yaml
+- tapOn: "Jobs"
+- extendedWaitUntil:
+    visible: "Task Management"
+    timeout: 15000
+- runFlow: subflows/intake-who-what.yaml
+- tapOn: "Carry-in"
+- scrollUntilVisible:
+    element: "Next"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Next"
+- runFlow: subflows/intake-estimate.yaml
+- extendedWaitUntil:
+    visible: "Saved offline"
+    timeout: 30000
+- takeScreenshot: offline-create-queued
+- tapOn: "OK"
+- extendedWaitUntil:
+    visible: "1 change saved offline — syncing when reconnected.*"
+    timeout: 15000
+- takeScreenshot: offline-banner-one-queued
+# The person at the phone restores FixFlow's network now. The banner must clear within 5 min.
+- extendedWaitUntil:
+    notVisible: ".*saved offline — syncing when reconnected.*"
+    timeout: 300000
+- assertNotVisible: ".*need attention \\(see the job\\).*"
+- takeScreenshot: offline-banner-drained
