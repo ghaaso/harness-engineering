@@ -10,7 +10,9 @@ PR #183 @ 22da1df), not code. Nothing was installed and BAML was not run. Proven
 `wf_c1ca7657-850` on 2026-11-04, nine agents (six Sonnet readers, one Opus assessment at high
 effort, one fresh-context Opus refuter at xhigh, one short Opus critic), about 1.32M subagent
 tokens, 477 tool uses, 29 minutes. Raw outputs: `docs/program/evidence/harness-ideas/baml/`
-(`manifest.sha256`). The parallel sweep of Dex Horthy's work is a separate document; this one
+(`manifest.sha256`). §4, added the same day at the owner's request, compares the two
+structures on one problem case with two further Sonnet agents (`compare/` in the evidence
+folder) and amends §0 where it corrected a fact. The parallel sweep of Dex Horthy's work is a separate document; this one
 covers BoundaryML's own material and Vaibhav Gupta's and Aaron Villalpando's talks, and reads
 "AI That Works" episodes only for their BAML and structured-output content.
 
@@ -23,10 +25,14 @@ ideas about output contracts and prompt tests, not adopting the tool.*
 ## 0. Half a page for the owner
 
 **The answer.** BAML's value to this harness is not the tool, and it is not BAML's own ideas
-either. Three structural facts settle the tool. First, BAML works by generating a host-language
-client that calls provider APIs with its own keys; it cannot be imported into a Workflow script,
-which has no imports, and it cannot drive a Claude Code subagent with tools (the issue asking for
-a Claude Code client type, #2673, is open; cards D-15, R-14). Second, BAML's mechanism is "put the
+either. Three structural facts settle the tool. First, the route fork (§4.3, amended after the
+structural comparison): BAML's distinctive structure, typed functions on an API-keyed client
+with its own tools and schema-aligned parsing, needs a second billing path and a rebuilt Read and
+Grep, since BAML ships no filesystem or grep tools; the one route that keeps the owner's auth and
+Claude Code's tools, v1's canary-only `ClaudeCodeClient` that runs one `claude -p` process per
+model turn, sets no effort, sees each subagent run as one opaque call, and makes BAML a second
+orchestrator around the loop the Workflow tool already drives (the first sweep's wording "cannot
+drive a Claude Code subagent", card R-14, was wrong as stated). Second, BAML's mechanism is "put the
 schema in the prompt and repair the reply" (schema-aligned parsing); the harness does the
 opposite, a forced StructuredOutput tool call validated at the tool layer with reject-and-retry,
 and the repair side has a documented silent-data-loss failure (issue #4590, R-05) that the
@@ -70,6 +76,20 @@ against the program's most-recorded failure, Opus quota; and the owner's precede
 measurement pipelines (harness review §4: "a month of research established no gain"). The one
 shape that could ever work is a skeptic brief with frozen claim inputs at a pinned commit, and
 only after a recorded brief edit that flipped a verdict. No such edit is on record.
+
+**The structural comparison (§4).** Asked whether the two structures should be compared on the
+problem case rather than BAML's pieces fitted under ours, this document did that for one
+deep-dive lane end to end (analyst, citation check, blind skeptics under a cap, web re-check,
+gate). The current structure serves the case better or equally on all ten dimensions; the
+decisive ones are the route fork above, resume after a mid-run death (the harness's one
+recorded failure class; BAML's runner has none), and whole-object validation against a parser
+whose own v1 test is named "refused items in a list are dropped". The useful residue is five
+structural borrows (§4.6, S-1..S-5, under 100 lines of plain JS, zero spend, **trial, unrefuted**):
+tagged `run()` results, one constants table generating both enums and buckets, a stub harness
+for the script body (feasibility settled: the body runs under node with stubs), a pure
+prompt-input boundary for the skeptic, and a transcript-derived read audit (settled: subagent
+transcripts do record tool calls). The comparison also found two stale lines in the design
+about analyst caps (ruling R-10).
 
 ---
 
@@ -578,3 +598,153 @@ Critic's note: Two searches were run. One confirmed that new.boundaryml.com show
 | P | https://boundaryml.com/blog/sota-function-calling | partially read: the results section rendered only 'Loading data...', so no per-model BFCL numbers from this post |
 | P | https://arxiv.org/html/2501.10868 | partially read: first 100,000 of 111,171 characters |
 | P | https://python.useinstructor.com/ | first attempt failed with DNS error EAI_AGAIN; second attempt succeeded (page read, but it has no testing, fallback or versioning content) |
+
+
+---
+
+## 4. Structural comparison on the problem case
+
+Added 2026-11-04 after the owner's question on the sweep: BAML has a completely different
+structure from the one adopted here, so instead of checking whether its pieces fit under ours,
+compare the two structures on the problem case. This section does that for one concrete case,
+with two Sonnet agents and this session's judgement, and amends §0 where the comparison
+corrected it. Raw inputs and outputs: `evidence/harness-ideas/baml/compare/` (`P.md` the case,
+`A-baml-design.md`, `B-comparison.md`).
+
+### 4.1 The problem case P
+
+One deep-dive lane of the W2 pass, end to end, as `docs/ORCHESTRATION-DESIGN-2026-10.md`
+§4.5–§4.6 specifies it: an Opus analyst reads the live repository under the reading rules and
+returns `FINDINGS` (ranked, evidenced claims with a failing condition, a `backlog` so no omission
+is silent); a Sonnet citation check re-locates every quote; a fresh-context Opus skeptic per P0
+and sensitive P1 receives only the claim, evidence and failing condition and returns `VERDICT`
+(`CONFIRMED` needs the path traced, `REFUTED` needs positive counter-evidence, otherwise
+`UNVERIFIABLE`), under a hard cap of 12 with overflow to the open-risks list; a Sonnet web
+re-check; and a script that derives three buckets for the Fable gate. Standing constraints:
+plain-JS Workflow scripts with `agent(prompt, {schema, model, effort})`, journaled results and
+cached-prefix resume; the owner's Claude Code subscription as the only auth and billing path;
+Windows; the §4.3 breaker that reads fresh nulls as a suspected usage limit; honest empties and
+no silent caps. Recorded failures: mid-run agent deaths from usage and session limits, and
+script bookkeeping defects found by review. The full statement, with ten comparison dimensions
+R1–R10, is `compare/P.md`.
+
+### 4.2 Method
+
+Agent A (Sonnet) built P in BAML's own structure from BAML v1's material, reading the v1 agent
+skill and, since the user-facing v1 docs are thin, the standard-library source on the canary
+branch (`baml_std/ai/*.baml`, `claude_code/*.baml`, `testing/*.baml`, the parser tests), with
+every snippet it composed marked INFERRED and every gap marked UNKNOWN. Agent B (Sonnet)
+compared the two structures dimension by dimension against P's own requirements, verifying
+three of A's highest-stakes claims at source. This session verified the two that change §0
+independently (the Claude Code client and the silent list drop, quotes below), settled two of
+B's open unknowns at zero spend (§4.7), and ruled (§4.5). No Opus refuter ran over this
+section: the owner asked for Sonnet agents to save tokens, so the structural borrows in §4.6
+carry the mark **unrefuted**.
+
+### 4.3 What the comparison corrected
+
+The first sweep's card R-14, and §0 as first written, said BAML "cannot drive a Claude Code
+subagent". That is wrong as stated. BAML v1's canary standard library has `ClaudeCodeClient`,
+"A harness client: the authenticated Claude Code CLI as an `ai.Client`", which runs one
+`claude -p` process per model turn ("One CLI run is one model call, with no HTTP exchange to
+record") with `--model`, `--permission-mode`, `--no-session-persistence`, `--tools` (Claude
+Code's own tools) and `--json-schema`. What stands, and what the structural verdict now rests
+on: that client pushes no `--effort` flag and its HTTP sibling has no effort field; it sees each
+subagent run as one opaque call, so the analyst's file reads are invisible to BAML's journal; it
+is absent from BAML's own agent skill and the issue asking for it (#2673) is still open, so it
+is canary-only; and on that route BAML is a second orchestrator wrapped around the same
+`claude -p` loop the Workflow tool already drives, with a second schema pass (Claude Code's
+`--json-schema`, then schema-aligned parsing) on top. BAML's *distinctive* route, typed
+functions on an API-keyed `anthropic.Client` with hand-written tools and schema-aligned
+parsing, needs `ANTHROPIC_API_KEY` (a second billing and egress path) and a rebuilt Read and
+Grep, because BAML ships no filesystem, shell or grep tools. §0 is amended accordingly; the
+"not the tool" verdict stands on these grounds rather than on the earlier wording.
+
+A second correction in the other direction: the silent list drop is not only a v0 issue. v1's
+own parser test is named "refused items in a list are dropped" (an `Instant[]` with two
+unparseable entries returns the three good ones, no error). A `findings[]` element that fails
+to coerce would vanish with exit 0, which is exactly the omission P forbids. Whether a *class*
+element missing a required field is dropped the same way was verified only for v0 (issue #4590)
+and stays inferred for v1.
+
+### 4.4 Per dimension (B's table, line numbers in the design at 3415b5e)
+
+| dim | P built today | P built BAML's way | serves P better | confidence; what would change it |
+| --- | --- | --- | --- | --- |
+| **R1 unit of work** | a task record `{id, model, effort, schema, brief}` run as `agent(CONTEXT + brief, {model, effort, schema})` (design:222–226); the contract is a JSON Schema with enums, `required`, `minimum`/`maximum` | a typed function: parameters, return class, client; v1 has no value constraints (`@assert`/`@check` are v0), so a 0–1 range moves to code | current, narrowly: the contract keeps its ranges and has a home for effort | medium; changes if v1 gains value constraints, or if the tool layer turns out to enforce only a schema subset (UNKNOWN whether `minimum`/`maximum` are enforced) |
+| **R2 agentic reading** | a subagent with Read/Grep/Bash; the reading rules are brief text, extras self-listed, unenforced | Route A: `claude -p --tools`, the same loop, one opaque call; Route B: hand-written tools, the 300-line rule in the handler, the file list derived from `ToolRequested` events | current on the subscription path (Route A is today's loop wrapped once more); Route B enforces the rules better but needs a key and rebuilt tools | high vs Route A; settled below: subagent transcripts do record tool calls, so today can audit reads too (§4.7) |
+| **R3 enforcement** | forced StructuredOutput call, whole-object validation, retry; object or `null`; honest empties carried by fields | schema in the prompt, schema-aligned parsing, `schema_attempts = 2`, loud `ParseFailed{raw_output}` after the budget; silent: refused list elements dropped | current for "never a silent omission"; BAML for diagnosis (raw output kept where today gives a bare `null`); net current | medium; a Route A probe with a malformed element, and what `agent()` returns on schema exhaustion (UNKNOWN) |
+| **R4 isolation** | separate `agent()`; the script builds the prompt; "skeptics get the claim, its evidence and its failing condition only" (design:543); untyped | `SkepticInput` has three fields, so nothing else can be passed (static); fresh journal; Route A a fresh process with `--no-session-persistence`; whether that process loads cwd `CLAUDE.md`/hooks: UNKNOWN | BAML on the static guarantee; equal on real isolation; the guarantee is cheap to copy (S-4) | high on equality; no contaminated skeptic is on record |
+| **R5 control flow** | slices of five, the fresh-null breaker, `HALT` with `not_started`, tail retries (design:205–250); the cap of 12 and overflow are prose, not yet script (design:330, 340) | green threads, `spawn`, `all_settled`; `Limit` caps concurrency not count, so the cap is sort-and-take-12 in code; the breaker is our code; typed failures (`RateLimited`, `ParseFailed`…) mostly on Route B; Route A errors are coarse | current today (same logic, already reviewed); neither side resolves a P gap: a global severity-ranked cap needs a barrier after all citation checks, which conflicts with per-analyst pipelining | medium; a written barrier design; whether a usage-limit error is distinguishable on Route A |
+| **R6 failure and resume** | results journaled; resume with `resumeFromRunId` and `args.knownDead` (design:586–587); "a journaled null is never re-served" (design:209) | no resume in the runner ("every attempt commits: the journal is the complete record"); journal in memory; DIY `write_atomic` per step (INFERRED) | **current, clearly**: P's recorded failure is mid-run death, and BAML would make us build and test resume, the bookkeeping that already produced three defects | high; a BAML release with journal replay |
+| **R7 testing** | none in the design; three bookkeeping defects were found by review | `test` blocks, offline `.parse(saved_reply)`, a fake client; covers cap, bucketing, downgrade, canned replies, not analyst quality; evals "planned, not yet available" | BAML ships it and it hits the code where P's defects lived; but the same property is reachable with a stub harness (S-3), so the edge is cost, not capability | medium-high; settled below: the script body runs under node with stubs (§4.7) |
+| **R8 routing, effort, auth** | `model` and `effort` per agent (design:226); "xhigh for the geofence analyst and P0 skeptics" (design:97); "raise effort on the current tier before moving up a tier" (design:88); subscription only | tier = the client's `model` string; Route A pushes no `--effort`, `anthropic.Client` has no effort field; Route B needs `ANTHROPIC_API_KEY`; `Fallback`/`RoundRobin` have no use here | **current, decisively**: P's tiering needs per-step effort and the owner's auth, and BAML gives one or the other | high on the absence; medium on "cannot" (UNKNOWN whether `request_body` or the environment carries effort) |
+| **R9 operability** | nothing to install; plain JS inside Claude Code | the `baml` binary (Windows installer listed, landing page says Windows "not covered"); pre-1.0, canary and nightly channels only; the client unreleased in docs; AI-call inputs and outputs recorded by default under `.baml/btel`, a second local store of repository excerpts; telemetry upload default UNKNOWN | current | high; a pinned release shipping the client, and a Windows run |
+| **R10 the gate** | Fable reads results by id from the journal; three buckets derived in the script; spot-reads refuted P0s | nothing for a model judge beyond files we write and `baml query` over spans; `match` makes bucketing total | tie; BAML adds bucket totality (copyable, S-2) | medium |
+
+### 4.5 Rulings
+
+- **R-7.** B's per-dimension verdicts stand: the current structure serves P better or equally
+  on all ten dimensions. BAML's structure is better only on sub-step properties (a typed skeptic
+  input, an exhaustive match over verdicts, typed failures instead of `null`, offline tests of
+  the pure steps), and each except typed failures is reproducible in plain JS for 10–40 lines.
+  Typed failures would need a change to the Workflow tool itself; the partial remedy is S-1.
+- **R-8.** §0's first structural fact is amended as §4.3 says. The verdict "not the tool" does
+  not change; its grounds do. The decisive difference is the route fork (B §4.1): the part of
+  BAML's structure P could use (the Claude Code client) is not the distinctive part, and the
+  distinctive part (API-keyed typed functions with schema-aligned parsing and its own tools)
+  cannot use the owner's auth or Claude Code's tools. Second: resume, which P has and BAML's
+  runner lacks, against P's one recorded failure class. Third: whole-object validation versus a
+  parser that drops list elements silently, now verified in v1's own tests.
+- **R-9.** The five structural borrows in §4.6 are the useful residue of this comparison. S-3 is
+  the first sweep's P-10 with a sharper measurement; S-1, S-2 and S-4 are new; S-5 is
+  gated on a check this session settled (§4.7). They have had one Sonnet pass and this
+  session's judgement, not an Opus refuter, and are listed as **trial, unrefuted**. Whether
+  they earn a refuter is the owner's call; together they are under 100 lines of script and
+  spend no tokens.
+- **R-10.** A finding about the design, not about BAML, surfaced by B and confirmed here: the
+  design says findings are "sliced to 12 in the script with the dropped count logged" (§4.3,
+  line 219) and the `FINDINGS` schema comment says "script slices + logs" (line 487), while §4.5
+  says "the script never truncates a P0 or P1" (line 292) and the v3 change log says "reporting
+  caps removed from analysts" (line 792). Lines 219 and 487 are stale against v3. An item for the
+  orchestration design's next edit; not applied here.
+- **R-11.** On "compare structures rather than fit pieces": the exercise was worth its two
+  agents. It corrected a headline fact, found a stale line in the design, and turned one vague
+  trial (P-10) into a measurable one with two preconditions settled. It did not change the
+  answer to the owner's question.
+
+### 4.6 What the current structure could borrow, structurally
+
+Shape, not features. Each is plain JS inside a Workflow script, zero model spend, and names
+the measurement that would show it helped. Status for all five: trial, unrefuted.
+
+| id | borrow | cost | the measurement that decides it |
+| --- | --- | --- | --- |
+| S-1 | **Tagged `run()` results**: `null` (agent died), a caught error with its message, or a value, so the §4.3 breaker counts only suspected-limit nulls and a schema-exhaustion failure cannot masquerade as a usage limit | ~10 lines | precondition: a Haiku/low probe with an impossible schema to learn what `agent()` returns on schema exhaustion (UNKNOWN today). Then a stubbed run injecting one schema error and two nulls must halt on the nulls only. |
+| S-2 | **One constants table** from which the schema enums (`Object.keys`) and the bucket mapping are both generated, so a verdict value cannot exist without a bucket; citation statuses folded in the same way | ~15 lines | in the stub harness (S-3), adding a verdict to the table without a bucket fails the test. |
+| S-3 | **A stub harness for the script body**: run the Workflow script body under node as an async function with stub `agent`/`parallel`/`pipeline`/`log`/`phase`, scripted nulls and throws, no model | ~40 lines | re-introduce each of the three recorded bookkeeping defects (`not_started` on HALT, the swallowed catch, a cached null re-served); the harness must fail on all three. Feasibility settled in §4.7. This supersedes P-10's measurement. |
+| S-4 | **A pure prompt-input boundary for the skeptic**: `skepticInput(finding)` returns exactly `{claim, evidence, failing_condition}`, with a replay test that the rendered prompt contains no `impact`, `fix_sketch`, `confidence` or `severity` | ~10 lines | the test fails when a forbidden field is added. No contaminated skeptic is on record, so this is hygiene, not a fix. |
+| S-5 | **A transcript-derived read audit**: compare an analyst's self-listed extra reads (design §5.3 c) with the Read/Grep calls in its `agent-<id>.jsonl` transcript | a short node script | the mismatch rate on one analyst from a committed run; a standing step only if self-reports are found to under-count. Feasibility settled in §4.7. |
+
+### 4.7 Open unknowns, two settled
+
+| # | unknown | status |
+| --- | --- | --- |
+| 1 | what `agent()` returns on schema exhaustion, whether attempts are exposed, whether `minimum`/`maximum` are enforced | open; least spend: one Haiku/low probe workflow with an impossible schema and a `minimum: 0.9` field |
+| 2 | are subagent tool calls recoverable from transcripts? | **settled, yes**: this session's own run `wf_c1ca7657-850` keeps one `agent-<id>.jsonl` per subagent; the lane-I reader's holds 115 `tool_use` entries |
+| 3 | can the Workflow script body run under `node` with stubs? | **settled, yes**: a body using `phase`, `parallel`, `agent` with a `schema`, `log`, top-level `await` and `return` ran as an `AsyncFunction` with stub globals and returned `{"live":2,"missing":["b"]}` when the stub killed one of three agents |
+| 4 | can effort reach `ClaudeCodeClient` (environment, settings, `request_body`)? whether the client is in any released toolchain, runs nested under a Claude Code session on Windows, or loads cwd `CLAUDE.md` | open; the first by reading `claude --help` and the client's environment handling; the rest only by running it, which is not authorised here |
+| 5 | which analyst cap is current (design lines 219 and 487 versus 292 and 792) | open; ruling R-10 names it for the design's next edit |
+| 6 | does the Workflow tool's "forcing" skip thinking (card I-12)? | open; one paired Opus run, only if analyst quality is ever in doubt |
+
+### 4.8 Run record
+
+Two Sonnet agents through the Agent tool, run one after the other because B needs A's output:
+A ("build the lane BAML's way") 96 tool uses, about 168k tokens, 10 minutes; B ("compare the two
+structures per dimension") 19 tool uses, about 148k tokens, 6 minutes. Verification by this
+session: two WebFetch reads of the v1 source (`claude_code/ns_internal/cli.baml`,
+`claude_code/cli.baml`) and one of the parser test file. Could not be read by A:
+`boundaryml.com/agent/guide` and `/llms.txt` (404), the v1 attachment syntax `tools:` (no page
+reached shows it), issue #2673's comments, and anything about Windows behaviour or telemetry
+upload defaults beyond the environment-variable documentation. No install, no clone, nothing
+run except the node stub proof in the scratchpad.

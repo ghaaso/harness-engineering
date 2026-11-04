@@ -13,6 +13,9 @@ post-review lists rest on files in the repository rather than in a temporary fol
 | `refute.json` | the one fresh-context Opus refuter (xhigh): a verdict per adopt and trial card, default refuted |
 | `critic.json` | the one short completeness critic: what was not read |
 | `run.json` | run id and the counts the document quotes |
+| `compare/P.md` | the problem case P (one deep-dive lane, steps 1–5) and the ten comparison dimensions R1–R10, written by the orchestrator for §4 |
+| `compare/A-baml-design.md` | Sonnet agent A: P built in BAML v1's own structure from the canary standard-library source, with INFERRED and UNKNOWN marks |
+| `compare/B-comparison.md` | Sonnet agent B: the two structures compared per dimension, with three of A's claims verified at source |
 
 `manifest.sha256` lists every file's digest at copy time. These files are evidence, not state:
 nothing here is updated after the fact.
