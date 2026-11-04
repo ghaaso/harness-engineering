@@ -1,0 +1,23 @@
+// Parses the inventory into dated items with their URLs. Usage: node inventory-items.mjs <inventory.md> > items.json
+import fs from 'node:fs';
+const text = fs.readFileSync(process.argv[2], 'utf8');
+const lines = text.split(/\r?\n/);
+let section = '';
+const items = [];
+const urlRe = /https?:\/\/[^\s)|\]>]+/g;
+for (let i = 0; i < lines.length; i++) {
+  const l = lines[i];
+  const h = l.match(/^#{2,3}\s+(.*)/); if (h) { section = h[1].trim(); continue; }
+  if (/^\|\s*\d{4}-\d{2}-\d{2}/.test(l)) { // table rows in A3
+    const cells = l.split('|').map(s => s.trim()).filter(Boolean);
+    items.push({ n: items.length + 1, line: i + 1, section, date: cells[0], text: cells.slice(1).join(' | '), urls: ['https://www.humanlayer.dev/blog/' + ''] .filter(()=>false) });
+    continue;
+  }
+  if (/^- /.test(l)) {
+    const urls = (l.match(urlRe) || []).map(u => u.replace(/[.,;:]+$/, ''));
+    const d = l.match(/\b(20\d{2}-\d{2}(?:-\d{2})?)\b/);
+    items.push({ n: items.length + 1, line: i + 1, section, date: d ? d[1] : '', text: l.replace(/^- /, '').slice(0, 220), urls });
+  }
+}
+console.log(JSON.stringify(items, null, 1));
+console.error('items:', items.length, 'with urls:', items.filter(x => x.urls.length).length);

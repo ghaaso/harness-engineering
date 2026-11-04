@@ -1,0 +1,20 @@
+// Extracts the Sanity portable-text transcript embedded in a tessl.io podcast page (data is split across script chunks).
+// Usage: node tessl-transcript.mjs <page.html> <out.txt> <source-url> <title-line>
+import fs from 'node:fs';
+const [htmlPath, outPath, url, title] = process.argv.slice(2);
+const h = fs.readFileSync(htmlPath, 'utf8');
+const key = '\\"transcript\\":[';
+const start = h.indexOf(key);
+if (start < 0) { console.log('no transcript key'); process.exit(1); }
+const re = /\\"text\\":\\"((?:[^\\]|\\.)*?)\\"/g;
+let m; const spans = [];
+while ((m = re.exec(h))) spans.push({ i: m.index, t: m[1] });
+const after = spans.filter(s => s.i > start);
+const before = spans.filter(s => s.i < start);
+console.log('spans total', spans.length, 'before key', before.length, 'after key', after.length);
+let last = start;
+for (const s of after) { if (s.i - last > 20000) console.log('gap before span at', s.i, 'size', s.i - last); last = s.i; }
+const clean = t => t.replace(/\\\\n/g, '\n').replace(/\\\\\\"/g, '"').replace(/\\\\u0026/g, '&').replace(/\\\\u003c/g, '<').replace(/\\\\u003e/g, '>').replace(/\\\\'/g, "'");
+const out = `SOURCE: ${url} (transcript embedded in the page's data)\nTITLE: ${title}\n\n` + after.map(s => clean(s.t)).join('\n');
+fs.writeFileSync(outPath, out);
+console.log('words', out.split(/\s+/).length);

@@ -1,0 +1,35 @@
+export const meta = {
+  name: 'horthy-sweep-3',
+  description: 'One Sonnet reader for the Tessl AI Native Dev episode 124 (2026-09-22) found by the gap sweep: the page description, chapter list and the partial transcript the site exposes',
+  phases: [{ title: 'Sweep-3', detail: '1 Sonnet reader' }],
+}
+const S = args.S, INV = args.INV, W = S + '/sources/web'
+const CARD = {
+  type: 'object', additionalProperties: false,
+  required: ['id','source_title','source_url','source_date','source_type','author','read_mode','quote','claim','evidence_type','evidence_detail','bears_on','landing','in_inventory','inventory_ref'],
+  properties: {
+    id: { type: 'string' }, source_title: { type: 'string' }, source_url: { type: 'string' }, source_date: { type: 'string' },
+    source_type: { type: 'string', enum: ['repo','blog','docs','release-notes','talk','podcast','x-article','x-thread','aitw-episode','hn','follow-on','other'] },
+    author: { type: 'string', enum: ['Dex','Kyle','Dex+others','other'] }, read_mode: { type: 'string', enum: ['read','summarised'] },
+    quote: { type: 'string' }, claim: { type: 'string' }, evidence_type: { type: 'string', enum: ['measured','anecdotal','asserted','marketing'] }, evidence_detail: { type: 'string' },
+    bears_on: { type: 'array', items: { type: 'string', enum: ['W1','W2','W3','W4','W5','L1','L2','L3','none'] } },
+    landing: { type: 'string' }, in_inventory: { type: 'boolean' }, inventory_ref: { type: 'string' },
+  },
+}
+const OUT = {
+  type: 'object', additionalProperties: false, required: ['reader_id','sources','cards','gaps','new_sources'],
+  properties: {
+    reader_id: { type: 'string' },
+    sources: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['title','url','date','status','words_read','note'], properties: { title: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' }, status: { type: 'string', enum: ['read','partial','summarised','unreadable','not-by-dex'] }, words_read: { type: 'integer' }, note: { type: 'string' } } } },
+    cards: { type: 'array', items: CARD }, gaps: { type: 'array', items: { type: 'string' } },
+    new_sources: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['title','url','date','why'], properties: { title: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' }, why: { type: 'string' } } } },
+  },
+}
+const CONTEXT = `You are a blind reader in a research sweep of Dex Horthy's (HumanLayer) published work since 2025-06-01. Output = IDEA CARDS for a later review; do not judge or rank.
+The review scores every card against five weaknesses and three levers of the FixFlow harness:
+W1 CLAUDE.md is 390 lines (~2x the length at which adherence is known to fall). W2 Compliance with the phase routine is self-reported; no hooks. W3 The phase routine has never run; P1's cold-resume trial is its first test. W4 One custom agent (Haiku locator); skills being added; no workflow library. W5 Workflows authored per task, not saved. L1 Effort routing (verifiers mostly at xhigh; his SlopCodeBench report says medium often matched xhigh). L2 Context budget and compaction (one phase per session; dumb zone, forking, long-context). L3 Output backpressure and verifiers.
+The harness already has: an always-loaded CLAUDE.md; a phase routine (one phase per chat; draft PR "Plan @ <sha>" with a decisions journal; Opus reviewer per PR refute-by-default; six-question close; owner view); Workflow-tool orchestration with judge panels, fresh-context refuters, completeness critics, evidence folders; CI with boundaries; one Haiku agent; skills being added; a knowledge-store design. A harness review deliberately skipped hooks, a context system, call-graph tooling, a pre-commit gate and a measurement pipeline.
+RULES: read the files with Read. One card per distinct idea; be generous and literal (practices, rules, mechanisms, heuristics, numbers, warnings, retractions). Only Dex's statements (the hosts are Guy Podjarny and Simon Maple: author other, no cards unless Dex adopts the point). quote ≤ 15 words verbatim; claim one sentence; evidence_type measured/anecdotal/asserted/marketing. in_inventory: check the inventory file at ${INV}. Card ids: R46-n. Return ONLY the structured object. Today ${args.today}.`
+phase('Sweep-3')
+const r = await agent(CONTEXT + `\n\nYOUR READER ID: R46\nYOUR BUNDLE: Tessl "AI Native Dev" podcast episode 124, "Dexter Horthy: Why We Stopped Trusting AI to Write the Plan" (2026-09-22, 56 min; YouTube H_1PygR7kwk). The site exposes only the opening ~1,800 words of the transcript (the opening hook, the intro, and the first exchange on 12-factor agents and the spec-driven bet); the rest is not retrievable (YouTube captions are rate-limited from this machine). Read: ${W}/pod-2026-09-22-tessl-ai-native-dev-124-transcript.txt (partial transcript) and ${W}/pod-2026-09-22-tessl-ai-native-dev-124.txt (page: description, "In this episode" summary, chapter titles). Card what Dex says in the transcript (read_mode read) and what the page summary attributes to him (read_mode summarised; evidence as the page gives it). Mark the source status partial and say in gaps what the missing 50 minutes likely cover (from the chapter titles).`, { label: 'R46 Tessl AI Native Dev 124', phase: 'Sweep-3', model: 'sonnet', effort: 'low', schema: OUT })
+return { stats: { readers_total: 1, readers_done: r ? 1 : 0, cards_raw: r ? r.cards.length : 0 }, readers: r ? [r] : [] }

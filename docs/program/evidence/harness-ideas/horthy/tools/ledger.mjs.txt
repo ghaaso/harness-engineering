@@ -1,0 +1,29 @@
+// Sources ledger: every fetched text source the readers were given, with bytes, words, sha256 and origin URL.
+// Usage: node ledger.mjs <scratchpad> > sources-ledger.tsv
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+const SP = process.argv[2];
+const rows = [['kind', 'path', 'bytes', 'words', 'sha256', 'source']];
+const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+const words = p => fs.readFileSync(p, 'utf8').split(/\s+/).filter(Boolean).length;
+const head = (p, re) => { const l = fs.readFileSync(p, 'utf8').split(/\r?\n/, 3); for (const x of l) { const m = x.match(re); if (m) return m[1]; } return ''; };
+const add = (kind, p, rel, src) => rows.push([kind, rel, fs.statSync(p).size, words(p), sha(p), src]);
+const list = (d, filt) => fs.existsSync(d) ? fs.readdirSync(d).filter(filt).sort() : [];
+for (const f of list(path.join(SP, 'sources/x'), f => f.endsWith('.txt') && !f.startsWith('_'))) { const p = path.join(SP, 'sources/x', f); add('x', p, 'x/' + f, head(p, /^URL: (.*)$/)); }
+for (const f of list(path.join(SP, 'sources/web'), f => f.endsWith('.txt'))) { const p = path.join(SP, 'sources/web', f); add('web', p, 'web/' + f, head(p, /^SOURCE: (.*)$/)); }
+for (const f of list(path.join(SP, 'sources/hn'), f => f.endsWith('.txt'))) { const p = path.join(SP, 'sources/hn', f); add('hn', p, 'hn/' + f, 'https://news.ycombinator.com/item?id=' + f.replace('.txt', '')); }
+for (const f of list(path.join(SP, 'transcripts'), f => f.endsWith('.txt'))) { const p = path.join(SP, 'transcripts', f); const id = f.replace(/-dex-segment/, '').replace('.txt', ''); add('youtube-transcript', p, 'transcripts/' + f, 'https://www.youtube.com/watch?v=' + id); }
+const aitw = path.join(SP, 'sources/aitw');
+for (const d of list(aitw, d => fs.statSync(path.join(aitw, d)).isDirectory())) for (const f of ['transcript.txt', 'README.md', 'EPISODE.md', 'meta.md']) { const p = path.join(aitw, d, f); if (fs.existsSync(p) && fs.statSync(p).size) add('aitw', p, 'aitw/' + d + '/' + f, 'https://github.com/ai-that-works/ai-that-works/tree/main/' + d); }
+const repos = path.join(SP, 'sources/repos');
+const owner = n => ['shannon', 'slopfiles', 'multiclaude', 'better-github', 'kustomark-ralph-bash', 'kustomark-ralph-plugin', 'dotfiles'].includes(n) ? 'dexhorthy' : 'humanlayer';
+for (const n of list(repos, d => fs.statSync(path.join(repos, d)).isDirectory())) {
+  let count = 0, bytes = 0;
+  const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else { count++; bytes += fs.statSync(p).size; } } };
+  walk(path.join(repos, n));
+  const readme = path.join(repos, n, 'README.md');
+  rows.push(['repo', 'repos/' + n + '/ (' + count + ' files)', bytes, '-', fs.existsSync(readme) ? sha(readme) + ' (README.md)' : '-', 'https://github.com/' + owner(n) + '/' + n]);
+}
+console.log(rows.map(r => r.join('\t')).join('\n'));
+console.error('rows', rows.length - 1);
