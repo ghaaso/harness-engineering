@@ -1,0 +1,119 @@
+// Builds the post-review list from the review workflow's journal.
+// Usage: node build-postreview.mjs <review-journal.jsonl> <prereview-dir> <outdir>
+// Writes: families.json, reviews.json, refutations.json, critic.json, POST-REVIEW-LIST.md, card-dispositions.tsv, stats.json
+import fs from 'node:fs';
+import path from 'node:path';
+const [journalPath, preDir, outDir] = process.argv.slice(2);
+fs.mkdirSync(outDir, { recursive: true });
+const lines = fs.readFileSync(journalPath, 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean);
+const merged = JSON.parse(fs.readFileSync(path.join(preDir, 'cards-merged.json'), 'utf8'));
+const cardById = {}; for (const c of merged) cardById[c.card] = c;
+
+// Collect agent results by label
+const labelById = {};
+for (const e of lines) if (e.type === 'started' && e.agentId) labelById[e.agentId] = e.label || '';
+const results = lines.filter(e => e.type === 'result').map(e => ({ label: e.label || labelById[e.agentId] || '', r: e.result || e.value || e.data }));
+const clusters = results.filter(x => /^cluster /.test(x.label));
+const reviews = results.filter(x => /^review /.test(x.label));
+const refutes = results.filter(x => /^refute /.test(x.label));
+const critics = results.filter(x => /^completeness/.test(x.label));
+console.error(`results: clusters ${clusters.length}, reviews ${reviews.length}, refuters ${refutes.length}, critic ${critics.length}`);
+
+// Rebuild families exactly as the script did (same order: parts in order, families in order, filtered to valid unseen Cnnnn)
+const GROUPS = ['G1', 'G2', 'G3', 'G4', 'G5'];
+const GNAME = { G1: 'W1 + L2 — CLAUDE.md length, context budget, compaction', G2: 'W2 + W3 — routine compliance, hooks, cold resume', G3: 'W4 + W5 — agents, skills, workflow library', G4: 'L1 + L3 — effort routing, verifiers, backpressure, benchmarks', G5: 'none / cross-cutting — software-factory method, product, loops, process' };
+const families = [];
+const assignedGlobal = new Set();
+for (const g of GROUPS) {
+  const parts = clusters.filter(x => x.label.startsWith(`cluster ${g} `) || x.label.startsWith(`cluster ${g}(`)).sort((a, b) => a.label.localeCompare(b.label));
+  const seen = new Set(); let n = 0;
+  for (const p of parts) for (const f of (p.r && p.r.families) || []) {
+    const mem = [];
+    for (const id of f.members) if (/^C\d{4}$/.test(id) && !seen.has(id)) { seen.add(id); mem.push(id); }
+    if (!mem.length) continue;
+    n++;
+    families.push({ id: `${g}-F${String(n).padStart(3, '0')}`, group: g, label: f.label, members: mem, bears_on: f.bears_on || [], strongest_evidence: f.strongest_evidence, sources: f.sources || [], sample_quote: f.sample_quote, landing_guesses: f.landing_guesses });
+    for (const id of mem) assignedGlobal.add(id);
+  }
+}
+// Membership validation against the pre-review list
+const groupOf = c => { const b = (c.bears_on || []).filter(x => x !== 'none'); if (!b.length) return 'G5'; const map = { W1: 'G1', L2: 'G1', W2: 'G2', W3: 'G2', W4: 'G3', W5: 'G3', L1: 'G4', L3: 'G4' }; return map[b[0]] || 'G5'; };
+const invented = [...assignedGlobal].filter(id => !cardById[id]);
+const unassigned = merged.filter(c => !assignedGlobal.has(c.card)).map(c => c.card);
+const misgrouped = families.flatMap(f => f.members.filter(id => cardById[id] && groupOf(cardById[id]) !== f.group).map(id => `${id}→${f.id}`));
+console.error(`families ${families.length}; invented ids ${invented.length}; unassigned cards ${unassigned.length}; cross-group members ${misgrouped.length}`);
+
+// Reviews per family
+const revByFam = {};
+for (const x of reviews) for (const rv of (x.r && x.r.reviews) || []) (revByFam[rv.family] = revByFam[rv.family] || []).push({ reviewer: x.r.reviewer_id, lens: x.r.lens, ...rv });
+const refByFam = {};
+for (const x of refutes) if (x.r && x.r.family) refByFam[x.r.family] = x.r;
+const critic = critics.length ? critics[critics.length - 1].r : null;
+
+const fin = f => {
+  const rv = revByFam[f.id] || [];
+  const ref = refByFam[f.id];
+  const disp = rv.map(r => r.disposition);
+  const agree = disp.length === 2 && disp[0] === disp[1];
+  let final, how;
+  if (ref) { final = ref.final_disposition; how = `refuter: ${ref.verdict}`; }
+  else if (disp.some(d => d === 'adopt' || d === 'trial')) { final = 'unrefuted (over cap)'; how = 'over the refuter cap'; }
+  else if (agree) { final = disp[0]; how = 'reviewers agree'; }
+  else if (disp.length === 2) { final = disp.includes('already-done') ? 'already-done' : 'skip'; how = 'reviewers disagree (skip vs already-done); recorded as the weaker'; }
+  else if (disp.length === 1) { final = disp[0]; how = 'one reviewer only'; }
+  else { final = 'unreviewed'; how = 'no review returned'; }
+  return { final, how, agree, rv, ref };
+};
+const famOut = families.map(f => { const x = fin(f); return { ...f, reviews: x.rv, refutation: x.ref || null, final_disposition: x.final, decided_by: x.how, reviewers_agree: x.agree }; });
+fs.writeFileSync(path.join(outDir, 'families.json'), JSON.stringify(famOut, null, 1));
+fs.writeFileSync(path.join(outDir, 'reviews.json'), JSON.stringify(reviews.map(x => x.r), null, 1));
+fs.writeFileSync(path.join(outDir, 'refutations.json'), JSON.stringify(refutes.map(x => x.r), null, 1));
+fs.writeFileSync(path.join(outDir, 'critic.json'), JSON.stringify(critic, null, 1));
+
+// Stats
+const count = (arr, f) => arr.reduce((m, x) => { const k = f(x); m[k] = (m[k] || 0) + 1; return m; }, {});
+const stats = {
+  families: families.length, cards: merged.length, invented_ids: invented, unassigned_cards: unassigned, cross_group_members: misgrouped.length,
+  reviewers: reviews.length, refuters: refutes.length, critic: !!critic,
+  final_by_disposition: count(famOut, f => f.final_disposition),
+  cards_by_final: count(famOut.flatMap(f => f.members.map(() => f.final_disposition)), x => x),
+  reviewer_dispositions: count(Object.values(revByFam).flat(), r => r.disposition),
+  refuter_verdicts: count(Object.values(refByFam), r => r.verdict),
+  agreement: count(famOut.filter(f => f.reviews.length === 2), f => f.reviewers_agree ? 'agree' : 'disagree'),
+  per_group: Object.fromEntries(GROUPS.map(g => [g, { families: famOut.filter(f => f.group === g).length, cards: famOut.filter(f => f.group === g).reduce((n, f) => n + f.members.length, 0), refuted_targets: famOut.filter(f => f.group === g && f.refutation).length, final: count(famOut.filter(f => f.group === g), f => f.final_disposition) }])),
+};
+fs.writeFileSync(path.join(outDir, 'stats.json'), JSON.stringify(stats, null, 1));
+console.error(JSON.stringify(stats.final_by_disposition), JSON.stringify(stats.refuter_verdicts));
+
+// Card dispositions TSV
+const tsv = ['card\tfamily\tfinal_disposition\tdecided_by\tsource_date\tsource_title'];
+for (const f of famOut) for (const id of f.members) { const c = cardById[id]; tsv.push([id, f.id, f.final_disposition, f.decided_by, c ? c.source_date : '', c ? c.source_title : ''].join('\t')); }
+for (const id of unassigned) { const c = cardById[id]; tsv.push([id, '-', 'unclustered', 'clusterer omitted it', c.source_date, c.source_title].join('\t')); }
+fs.writeFileSync(path.join(outDir, 'card-dispositions.tsv'), tsv.join('\n') + '\n');
+
+// Markdown post-review list grouped by weakness (group), ordered: adopt, trial, narrowed survivors, then the rest
+const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+const order = { adopt: 0, trial: 1, 'unrefuted (over cap)': 2, 'already-done': 3, skip: 4, unreviewed: 5 };
+const md = [];
+md.push('# Post-review list — every family with scores, disposition and refuter verdict');
+md.push('');
+md.push(`Families are groups of cards making the same claim (clustered by Sonnet, organising only); every member card inherits the family's scores and disposition. Scores are 0–3 per dimension from two Opus reviewers (A = benefit-seeker, B = cost-and-novelty skeptic) in the order evidence / transferability / novelty / benefit / cost-risk. A refuter (Opus, xhigh, fresh context, default verdict refuted) ran on every family at least one reviewer marked adopt or trial, up to the per-group cap; "unrefuted (over cap)" families keep both reviewers' dispositions and no final verdict.`);
+md.push('');
+for (const g of GROUPS) {
+  const fs_ = famOut.filter(f => f.group === g).sort((a, b) => (order[a.final_disposition] ?? 9) - (order[b.final_disposition] ?? 9) || a.id.localeCompare(b.id));
+  md.push(`## ${g} — ${GNAME[g]} (${fs_.length} families, ${fs_.reduce((n, f) => n + f.members.length, 0)} cards)`);
+  md.push('');
+  md.push('| Family | Final | Claim | Cards | A: e/t/n/b/c → disp | B: e/t/n/b/c → disp | Refuter | One line |');
+  md.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+  for (const f of fs_) {
+    const A = f.reviews.find(r => /-A$/.test(r.reviewer)), B = f.reviews.find(r => /-B$/.test(r.reviewer));
+    const sc = r => r ? `${r.evidence}/${r.transferability}/${r.novelty}/${r.benefit}/${r.cost_risk} → ${r.disposition}` : '—';
+    const ref = f.refutation ? `${f.refutation.verdict} → ${f.refutation.final_disposition}` : (f.final_disposition === 'unrefuted (over cap)' ? 'over cap' : '—');
+    const line = f.refutation ? f.refutation.reason : (A && B && A.disposition === B.disposition ? `reviewers agree: ${B.reason}` : (B ? B.reason : (A ? A.reason : '')));
+    md.push(`| ${f.id} | **${f.final_disposition}** | ${esc(f.label)} | ${f.members.length}: ${f.members.slice(0, 6).join(', ')}${f.members.length > 6 ? ' …' : ''} | ${sc(A)} | ${sc(B)} | ${ref} | ${esc(line)} |`);
+  }
+  md.push('');
+}
+if (unassigned.length) { md.push(`## Unclustered cards (${unassigned.length})`); md.push(''); md.push(unassigned.join(', ')); md.push(''); }
+fs.writeFileSync(path.join(outDir, 'POST-REVIEW-LIST.md'), md.join('\n'));
+console.error('written', outDir);
