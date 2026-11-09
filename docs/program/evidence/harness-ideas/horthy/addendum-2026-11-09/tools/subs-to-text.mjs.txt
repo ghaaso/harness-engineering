@@ -1,0 +1,25 @@
+// Converts an SRT or VTT subtitle file to plain text with a timestamp roughly every minute.
+// Usage: node subs-to-text.mjs <in.srt|vtt> <out.txt> <source-url> <title>
+import fs from 'node:fs';
+const [inp, out, url, title] = process.argv.slice(2);
+const raw = fs.readFileSync(inp, 'utf8').replace(/\r/g, '');
+const blocks = raw.split(/\n\n+/);
+const lines = [];
+let lastStamp = -60;
+const toSec = t => { const m = t.match(/(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})/); return m ? (Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) : 0; };
+const fmt = s => String(Math.floor(s / 3600)).padStart(2, '0') + ':' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+let prev = '';
+for (const b of blocks) {
+  const ls = b.split('\n').filter(Boolean);
+  const ti = ls.findIndex(l => l.includes('-->'));
+  if (ti < 0) continue;
+  const start = toSec(ls[ti].split('-->')[0].trim());
+  let text = ls.slice(ti + 1).join(' ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  if (!text || text === prev) continue;
+  prev = text;
+  if (start - lastStamp >= 60) { lines.push('\n[' + fmt(start) + ']'); lastStamp = start; }
+  lines.push(text);
+}
+const body = lines.join(' ').replace(/ \n/g, '\n').trim();
+fs.writeFileSync(out, 'SOURCE: ' + url + '\nTITLE: ' + title + '\n\n' + body + '\n');
+console.log('words ' + body.split(/\s+/).length + ' -> ' + out);

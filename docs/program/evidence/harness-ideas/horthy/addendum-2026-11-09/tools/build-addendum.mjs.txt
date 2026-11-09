@@ -1,0 +1,77 @@
+// Builds the addendum's pre-review artefacts from the addendum sweep journals.
+// Usage: node build-addendum.mjs <families.json> <outdir> <journal1.jsonl> [journal2.jsonl ...]
+// Writes: readers/Rxx.json, mappings/Rxx.json, cards.json, affected-families.json, PRE-REVIEW-ADDENDUM.md, summary.json
+import fs from 'node:fs';
+import path from 'node:path';
+const [famPath, outDir, ...journals] = process.argv.slice(2);
+const fams = JSON.parse(fs.readFileSync(famPath, 'utf8'));
+const famById = {}; for (const f of fams) famById[f.id] = f;
+fs.mkdirSync(path.join(outDir, 'readers'), { recursive: true });
+fs.mkdirSync(path.join(outDir, 'mappings'), { recursive: true });
+
+const readers = {}, maps = {};
+for (const jp of journals) {
+  const lines = fs.readFileSync(jp, 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean);
+  for (const e of lines) {
+    if (e.type !== 'result' || !e.result) continue;
+    const r = e.result;
+    if (r.reader_id && Array.isArray(r.cards)) readers[r.reader_id] = r;
+    else if (r.reader_id && Array.isArray(r.mappings)) maps[r.reader_id] = r;
+  }
+}
+const ids = Object.keys(readers).sort();
+const START = 1907; // the first pass ended at C1906
+let n = START;
+const cards = []; const bad = [];
+for (const id of ids) {
+  const r = readers[id];
+  fs.writeFileSync(path.join(outDir, 'readers', id + '.json'), JSON.stringify(r, null, 1));
+  const m = maps[id];
+  if (m) fs.writeFileSync(path.join(outDir, 'mappings', id + '.json'), JSON.stringify(m, null, 1));
+  const mapByCard = {}; for (const x of (m && m.mappings) || []) mapByCard[x.card_id] = x;
+  for (const c of r.cards) {
+    const x = mapByCard[c.id] || null;
+    let family = x ? x.family : 'UNMAPPED', relation = x ? x.relation : 'unmapped';
+    if (family !== 'NEW' && family !== 'UNMAPPED' && !famById[family]) { bad.push(c.id + '→' + family); family = 'NEW'; relation = 'new'; }
+    let second = x && x.second_family && famById[x.second_family] ? x.second_family : '';
+    cards.push({ card: 'C' + String(n++).padStart(4, '0'), ...c, reader: id, family, relation, second_family: second, second_relation: second ? x.second_relation : '', map_note: x ? x.note : '' });
+  }
+}
+fs.writeFileSync(path.join(outDir, 'cards.json'), JSON.stringify(cards, null, 1));
+
+// affected families
+const aff = {};
+const add = (fid, c, rel) => { (aff[fid] = aff[fid] || { family: fid, label: famById[fid].label, group: famById[fid].group, final_disposition: famById[fid].final_disposition, bears_on: famById[fid].bears_on, cards: [] }).cards.push({ card: c.card, relation: rel, date: c.source_date, evidence: c.evidence_type, claim: c.claim, note: c.map_note }); };
+for (const c of cards) { if (famById[c.family]) add(c.family, c, c.relation); if (c.second_family) add(c.second_family, c, c.second_relation || 'supports'); }
+const affected = Object.values(aff);
+for (const a of affected) { a.relations = [...new Set(a.cards.map(x => x.relation))]; }
+fs.writeFileSync(path.join(outDir, 'affected-families.json'), JSON.stringify(affected, null, 1));
+
+const count = (arr, f) => arr.reduce((m, x) => { const k = f(x); m[k] = (m[k] || 0) + 1; return m; }, {});
+const newCards = cards.filter(c => c.family === 'NEW' || c.family === 'UNMAPPED');
+const summary = {
+  readers: ids.length, cards: cards.length, first_card: 'C' + START, last_card: cards.length ? cards[cards.length - 1].card : null,
+  by_reader: Object.fromEntries(ids.map(id => [id, readers[id].cards.length])),
+  relations: count(cards, c => c.relation), new_cards: newCards.length, invalid_family_ids: bad,
+  affected_families: affected.length,
+  affected_by_prior_disposition: count(affected, a => a.final_disposition),
+  affected_with_update_or_contradiction: affected.filter(a => a.relations.includes('updates') || a.relations.includes('contradicts')).length,
+  evidence: count(cards, c => c.evidence_type), read_mode: count(cards, c => c.read_mode), source_type: count(cards, c => c.source_type),
+};
+fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 1));
+
+const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+const md = ['# Addendum pre-review list — cards from sources published or first readable after the first pass', '',
+  `Built from the addendum sweep (${ids.join(', ')}). ${cards.length} cards, numbered ${summary.first_card} onward (the first pass ended at C1906). Nothing here is scored. Each card carries the family the mapping stage attached it to (one of the 838 fixed families, never re-clustered) and the relation: restates, supports, updates (the author changed a number or position the family records), contradicts, or NEW (no family makes this claim).`, ''];
+for (const c of cards) {
+  md.push(`### ${c.card} · ${c.source_date} · ${esc(c.source_title)}`);
+  md.push(`- **Source:** ${c.source_type}, ${c.author}, ${c.read_mode} — <${c.source_url}>${c.in_inventory ? ' (inventory: ' + esc(c.inventory_ref) + ')' : ' (not in inventory)'}`);
+  md.push(`- **Claim:** ${esc(c.claim)}`);
+  md.push(`- **Quote:** "${esc(c.quote)}"`);
+  md.push(`- **Evidence:** ${c.evidence_type} — ${esc(c.evidence_detail)}`);
+  md.push(`- **Bears on:** ${(c.bears_on || []).join(', ') || 'none'} · **Landing guess:** ${esc(c.landing)} · **Reader:** ${c.reader} (${c.id})`);
+  md.push(`- **Family:** ${c.family}${famById[c.family] ? ' (' + famById[c.family].final_disposition + ') — ' + esc(famById[c.family].label).slice(0, 160) : ''} · **Relation:** ${c.relation}${c.second_family ? ' · also ' + c.second_family + ' (' + c.second_relation + ')' : ''}${c.map_note ? ' · ' + esc(c.map_note) : ''}`);
+  md.push('');
+}
+fs.writeFileSync(path.join(outDir, 'PRE-REVIEW-ADDENDUM.md'), md.join('\n'));
+console.log(JSON.stringify(summary, null, 1));

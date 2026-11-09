@@ -1,0 +1,92 @@
+# Local speech-to-text with faster-whisper (GPU if available, CPU fallback).
+# Usage: uv run --no-project --with faster-whisper --with nvidia-cublas-cu12 --with nvidia-cudnn-cu12 python asr.py <audio> <out.txt> <source-url> <title> [start_sec end_sec]
+import os, sys, time, glob, site
+
+def add_nvidia_dll_dirs():
+    # ctranslate2 on Windows needs cublas/cudnn DLLs; the pip wheels put them under site-packages/nvidia/*/bin
+    dirs = []
+    roots = list(dict.fromkeys(site.getsitepackages() + [site.getusersitepackages()] + [p for p in sys.path if p]))
+    for sp in roots:
+        dirs += glob.glob(os.path.join(sp, "nvidia", "*", "bin"))
+    dirs = list(dict.fromkeys(dirs))
+    for d in dirs:
+        try:
+            os.add_dll_directory(d)
+        except Exception:
+            pass
+    if dirs:
+        os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
+    return dirs
+
+def fmt(s):
+    s = int(s)
+    return "%02d:%02d:%02d" % (s // 3600, (s % 3600) // 60, s % 60)
+
+def decode_16k_mono(path):
+    # Decode with PyAV directly (the wrapper's own decoder passes an argument newer PyAV builds reject).
+    import av
+    import numpy as np
+    chunks = []
+    with av.open(path) as container:
+        stream = next(s for s in container.streams if s.type == "audio")
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):
+            chunks.append(out.to_ndarray().reshape(-1))
+    audio = np.concatenate(chunks).astype(np.float32) / 32768.0
+    return audio
+
+def main():
+    audio, out, url, title = sys.argv[1:5]
+    clip = None
+    if len(sys.argv) >= 7:
+        clip = [float(sys.argv[5]), float(sys.argv[6])]
+    model_name = os.environ.get("ASR_MODEL", "distil-large-v3")
+    dll_dirs = add_nvidia_dll_dirs()
+    from faster_whisper import WhisperModel
+    device, compute = "cuda", "float16"
+    t0 = time.time()
+    try:
+        if os.environ.get("ASR_DEVICE") == "cpu":
+            raise RuntimeError("cpu forced")
+        model = WhisperModel(model_name, device="cuda", compute_type="float16")
+    except Exception as e:
+        print("GPU unavailable (%s); falling back to CPU int8" % str(e)[:200], flush=True)
+        device, compute = "cpu", "int8"
+        model = WhisperModel(model_name, device="cpu", compute_type="int8", cpu_threads=20)
+    kwargs = dict(language="en", beam_size=5, vad_filter=True, condition_on_previous_text=False)
+    if clip:
+        kwargs["clip_timestamps"] = clip
+    audio = decode_16k_mono(audio)
+    print("decoded %.0fs of audio in %.0fs" % (len(audio) / 16000.0, time.time() - t0), flush=True)
+    try:
+        segments, info = model.transcribe(audio, **kwargs)
+        segs = list(segments)
+    except Exception as e:
+        if device == "cuda":
+            print("GPU run failed (%s); retrying on CPU int8" % str(e)[:300], flush=True)
+            device, compute = "cpu", "int8"
+            model = WhisperModel(model_name, device="cpu", compute_type="int8", cpu_threads=20)
+            segments, info = model.transcribe(audio, **kwargs)
+            segs = list(segments)
+        else:
+            raise
+    lines, last = [], -60.0
+    for s in segs:
+        if s.start - last >= 60:
+            lines.append("\n[%s]" % fmt(s.start))
+            last = s.start
+        lines.append(s.text.strip())
+    body = " ".join(lines).replace(" \n", "\n").strip()
+    dur = (clip[1] - clip[0]) if clip else info.duration
+    el = time.time() - t0
+    head = "SOURCE: %s\nTITLE: %s\nTRANSCRIBED: locally with faster-whisper %s on %s/%s (machine speech-to-text; names and jargon may be misheard; no speaker labels)%s\n\n" % (
+        url, title, model_name, device, compute, (" ; clip %s-%s" % (fmt(clip[0]), fmt(clip[1])) if clip else ""))
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(head + body + "\n")
+    print("OK %s words=%d audio=%.0fs elapsed=%.0fs speed=%.1fx device=%s dlls=%d" % (out, len(body.split()), dur, el, dur / max(el, 1), device, len(dll_dirs)), flush=True)
+
+if __name__ == "__main__":
+    main()

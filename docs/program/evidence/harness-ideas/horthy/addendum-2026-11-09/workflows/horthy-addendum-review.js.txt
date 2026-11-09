@@ -1,0 +1,120 @@
+export const meta = {
+  name: 'horthy-addendum-review',
+  description: 'Addendum review: two Opus lenses re-adjudicate the first-pass families that received new cards, score the new families, and fresh-context Opus refuters attack every proposed change, every new adopt or trial, and the 16 families the first pass left unrefuted',
+  phases: [
+    { title: 'Group new cards', detail: 'one Sonnet pass groups the cards no family covers (the 838 families are not touched)' },
+    { title: 'Re-adjudicate', detail: 'two Opus/high lenses per batch of affected families' },
+    { title: 'Refute', detail: 'fresh-context Opus/xhigh; default: the first-pass disposition stands' },
+  ],
+}
+
+const PR = args.PR182, REPO = args.REPO, SKILLS = args.skillsWorktree
+
+const HARNESS = `THE HARNESS BEING REVIEWED (FixFlow, one developer, Windows 11, Git Bash + PowerShell, Claude Code desktop app; a 40-phase ship plan run one phase per fresh chat):
+- CLAUDE.md: 390 lines, always loaded (${REPO}/CLAUDE.md).
+- Phase routine: ship plan §0 (${PR}/docs/program/SHIP-PLAN-2026-11.md lines 24-116): one phase per session; a draft PR at first commit whose body starts "Plan @ <sha>" and keeps a "Decisions / ruled out / owner corrections" journal; resume = first unticked box; an Opus reviewer per PR with a refute-by-default brief naming register ids, verdict bound to the head SHA, fail-before/pass-after per id; six-question closing message; OWNER-VIEW.md refreshed at close; Opus owns invariant-sensitive code, Sonnet implements well-specified work, Haiku extracts; Fable (the main session) briefs, gates and judges and never implements.
+- Orchestration: ${PR}/docs/ORCHESTRATION-DESIGN-2026-10.md — Workflow-tool scripts per task (not saved), judge panels, fresh-context refuters (default verdict refuted), completeness critics, citation checks, evidence folders with sha256 manifests, hard caps on skeptics, a tier guide (§3), a CONTEXT block prepended to every brief (§5.1), JSON output schemas (§5.2). The orchestration is two levels deep: the main session and its subagents.
+- CI: three jobs; import-linter + ESLint slice boundaries; dependency-cruiser planned for mobile; a P1 CI check that CLAUDE.md's Alembic head matches the migration chain; skip-aware gates.
+- Agents/skills: one custom agent on the plan branch; 13 skill packages and 11 fixflow-* agent definitions on draft PR #185 (readable at ${SKILLS}/.claude/skills and ${SKILLS}/.claude/agents); a knowledge-store design (${PR}/docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md, not built; the CLAUDE.md trim is gated behind its pilot and its ruling D11 keeps every rule).
+- Compaction rulings (${PR}/docs/program/HARNESS-REVIEW-2026-11-01.md §6): HR-C1 one phase per new session; HR-C2 plan sha and decisions journal in the PR body as the compaction defence; HR-C3 no PreCompact hook, idle compaction left on; HR-C4 a Fable-keyed autoCompactWindow is set only if a phase session is observed past 500k (the owner's existing entry is 400000 for Opus). The same review DELIBERATELY SKIPPED a pre-commit hook, the owner's context system, a SessionStart(compact) hook, a measurement pipeline M00–M06 and evaluation-run schema, call-graph tooling, a "Compact Instructions" section, a doctor script — each for a named reason in §4.
+THE FIVE WEAKNESSES AND THREE LEVERS: W1 CLAUDE.md is 390 lines; trim gated behind the knowledge-store pilot. W2 compliance with the phase routine is self-reported; no hooks. W3 the phase routine has never run; P1's cold-resume trial is its first test. W4 one custom agent; skills being added; no reusable workflow library. W5 workflows are authored per task and not saved. L1 effort routing: most verifiers run at xhigh. L2 context budget and compaction: one phase per session. L3 output backpressure and verifiers.
+OWNER RULES: critiques and ideas are not taken blindly; evidence over appeal; marketing scores as a claim, not evidence; "we did this" without numbers is anecdotal; a post on X is at most asserted unless it reports a measurement; nothing is installed without an owner decision (this review produces dispositions, not changes).
+THIS IS AN ADDENDUM. The first pass (${REPO}/docs/program/HARNESS-IDEAS-HORTHY-2026-11.md; per-family list at ${REPO}/docs/program/evidence/harness-ideas/horthy/review/POST-REVIEW-LIST.md) scored 838 fixed claim families. New cards from sources published or first readable after it (X posts September to November 2026, publisher and local machine transcripts of talks and podcasts, the October SlopCodeBench article and charts) have been attached to those families; the families themselves are not re-clustered. The new cards are in ${args.cardsFile} (JSON, one object per card with its "card" id).`
+
+const DELTA_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['reviewer_id', 'lens', 'reviews'],
+  properties: { reviewer_id: { type: 'string' }, lens: { type: 'string' },
+    reviews: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['family', 'verdict', 'disposition', 'amendment', 'measurement', 'reason'], properties: {
+      family: { type: 'string' },
+      verdict: { type: 'string', enum: ['unchanged', 'amended', 'changed'], description: 'unchanged = the first-pass disposition and wording stand; amended = same disposition but the surviving form, its measurement or its stated evidence must be reworded because of the new cards; changed = the disposition itself changes' },
+      disposition: { type: 'string', enum: ['adopt', 'trial', 'skip', 'already-done'], description: 'the disposition after the new cards (equal to the first-pass one unless verdict is changed; for a first-pass "unrefuted (over cap)" family give your own)' },
+      amendment: { type: 'string', description: 'for amended/changed: the exact new wording of what survives or why it no longer does; else ""' },
+      measurement: { type: 'string', description: 'for a trial or adopt whose measurement changes: the new measurement; else ""' },
+      reason: { type: 'string', description: 'one line naming the new card(s) that drive the verdict' },
+    } } } },
+}
+const NEW_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['reviewer_id', 'lens', 'reviews'],
+  properties: { reviewer_id: { type: 'string' }, lens: { type: 'string' },
+    reviews: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['family', 'evidence', 'transferability', 'novelty', 'benefit', 'cost_risk', 'existing_mechanism', 'reopens_skipped', 'disposition', 'measurement', 'reason'], properties: {
+      family: { type: 'string' }, evidence: { type: 'integer', minimum: 0, maximum: 3 }, transferability: { type: 'integer', minimum: 0, maximum: 3 }, novelty: { type: 'integer', minimum: 0, maximum: 3 }, benefit: { type: 'integer', minimum: 0, maximum: 3 }, cost_risk: { type: 'integer', minimum: 0, maximum: 3 },
+      existing_mechanism: { type: 'string' }, reopens_skipped: { type: 'string' },
+      disposition: { type: 'string', enum: ['adopt', 'trial', 'skip', 'already-done'] }, measurement: { type: 'string' }, reason: { type: 'string' },
+    } } } },
+}
+const GROUP_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['families'],
+  properties: { families: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['label', 'members', 'bears_on', 'strongest_evidence', 'sample_quote'], properties: {
+    label: { type: 'string' }, members: { type: 'array', items: { type: 'string' } }, bears_on: { type: 'array', items: { type: 'string', enum: ['W1', 'W2', 'W3', 'W4', 'W5', 'L1', 'L2', 'L3', 'none'] } }, strongest_evidence: { type: 'string' }, sample_quote: { type: 'string' },
+  } } } },
+}
+const REFUTE_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['family', 'verdict', 'final_disposition', 'final_wording', 'counter_evidence', 'what_would_settle_it', 'reason'],
+  properties: {
+    family: { type: 'string' },
+    verdict: { type: 'string', enum: ['first-pass stands', 'amended', 'changed', 'refuted', 'narrowed', 'survives'], description: 'for a re-adjudicated first-pass family: first-pass stands | amended | changed. For a new family or a first-pass over-cap family: refuted | narrowed | survives' },
+    final_disposition: { type: 'string', enum: ['adopt', 'trial', 'skip', 'already-done'] },
+    final_wording: { type: 'string', description: 'the wording of what survives after this verdict (the amended narrowed form, or the narrowed new idea); "" when nothing survives or nothing changes' },
+    counter_evidence: { type: 'string' }, what_would_settle_it: { type: 'string' }, reason: { type: 'string', description: 'one line' },
+  },
+}
+
+const LENSES = [
+  { id: 'A', name: 'change-seeker', brief: 'Your lens: argue the best honest case that the new cards change something — a disposition, the narrowed form that survived, or the measurement that would decide a trial. A later statement by the same author that withdraws or moves a number the family rests on is a real change. Do not inflate: more anecdotes of the same kind change nothing.' },
+  { id: 'B', name: 'stability skeptic', brief: 'Your lens: the first-pass disposition stands unless the new cards bring evidence of a kind the first pass lacked (a measurement where there was only assertion, or the author changing or withdrawing the claim), or show the first-pass wording is now wrong. Check the harness files before agreeing to any change, and check whether a proposed change re-adopts a deliberate skip.' },
+]
+
+// ---------- new cards: group among themselves ----------
+phase('Group new cards')
+let newFamilies = []
+if (args.newCards && args.newCards.ids.length) {
+  const g = await agent(`You are organising idea cards. This is NOT judging. Read ${args.newCards.file} in full: it holds ${args.newCards.ids.length} new cards that match none of the 838 first-pass families. Group cards that make the same claim into families (a card with a distinct claim is its own family); every card id appears in exactly one family; do not invent ids; label = one sentence stating the claim in the strongest form its members support; fill bears_on, strongest_evidence and sample_quote from the cards. Return the structured object.`,
+    { label: 'group NEW cards (' + args.newCards.ids.length + ')', phase: 'Group new cards', model: 'sonnet', effort: 'medium', schema: GROUP_SCHEMA })
+  const valid = new Set(args.newCards.ids), seen = new Set()
+  for (const f of (g && g.families) || []) { const mem = f.members.filter(id => valid.has(id) && !seen.has(id)); mem.forEach(id => seen.add(id)); if (mem.length) newFamilies.push({ ...f, members: mem }) }
+  for (const id of args.newCards.ids) if (!seen.has(id)) newFamilies.push({ label: '(ungrouped card ' + id + ')', members: [id], bears_on: [], strongest_evidence: 'see card', sample_quote: '' })
+  newFamilies.forEach((f, i) => { f.id = 'N-F' + String(i + 1).padStart(3, '0') })
+  log('new cards ' + args.newCards.ids.length + ' → ' + newFamilies.length + ' new families')
+}
+const newText = f => `[${f.id}] ${f.label}\n  bears on: ${(f.bears_on || []).join(',') || 'none'} · cards: ${f.members.join(', ')}\n  strongest evidence: ${f.strongest_evidence}\n  sample quote: ${f.sample_quote}`
+
+// ---------- stage A: existing-family batches and the new-family batch, two lenses each ----------
+phase('Re-adjudicate')
+const work = args.batches.map(b => ({ ...b })).concat(newFamilies.length ? [{ id: 'NEW', kind: 'new', file: args.newCards.file, families: newFamilies.map(f => f.id) }] : [])
+const staged = await pipeline(work,
+  async (b) => {
+    const prompt = (lens) => b.kind === 'new'
+      ? `${HARNESS}\n\nYou are reviewer NEW-${lens.id} for the NEW families: ideas in the addendum's cards that no first-pass family covers. Score each as the first pass did: five integers 0–3 (evidence, transferability to a one-developer Windows repository running this routine, novelty against what the harness already does, benefit on the weakness it bears on, cost_risk where 3 = cheap and safe), then a disposition: adopt, trial (write the measurement that decides it), skip, or already-done (name the mechanism). Lens ${lens.id === 'A' ? 'A (benefit-seeker): argue the best honest case, score evidence strictly.' : 'B (cost-and-novelty skeptic): check the harness files first; adopt only at near-zero cost with a mechanism we lack.'} The full cards are in ${b.file}. You may open harness files (at most 10 reads).\n\nNEW FAMILIES (${newFamilies.length}):\n\n${newFamilies.map(newText).join('\n\n')}\n\nReturn the structured object (reviewer_id "NEW-${lens.id}"), one review per family.`
+      : `${HARNESS}\n\nYou are reviewer ${b.id}-${lens.id} (${lens.name}) for addendum batch ${b.id}. Read ${b.file} in full: it holds ${b.families.length} first-pass families, each with its first-pass reviews, refuter verdict and final disposition, followed by the NEW CARDS now attached to it and the relation the mapper gave (restates, supports, updates, contradicts). For each family decide whether the new cards change anything.\n${lens.brief}\nRules: verdict unchanged / amended / changed as the schema defines; for a first-pass "unrefuted (over cap)" family give your own disposition; name the card ids that drive your verdict; a change to adopt or trial needs a measurement. You may open harness files and the first-pass list to check (at most 10 reads).\n\nFAMILIES IN THIS BATCH: ${b.families.join(', ')}\n\nReturn the structured object (reviewer_id "${b.id}-${lens.id}"), one review per family.`
+    const two = await parallel(LENSES.map(lens => () => agent(prompt(lens), { label: 'review ' + b.id + '-' + lens.id + ' (' + b.families.length + ' families)', phase: 'Re-adjudicate', model: 'opus', effort: 'high', schema: b.kind === 'new' ? NEW_SCHEMA : DELTA_SCHEMA })))
+    return { batch: b, reviews: two.filter(Boolean) }
+  },
+  async (r) => {
+    const b = r.batch
+    const byFam = {}
+    for (const rv of r.reviews) for (const x of rv.reviews) (byFam[x.family] = byFam[x.family] || []).push({ reviewer: rv.reviewer_id, lens: rv.lens, ...x })
+    const targets = b.kind === 'new'
+      ? b.families.filter(id => (byFam[id] || []).some(x => x.disposition === 'adopt' || x.disposition === 'trial'))
+      : b.families.filter(id => (byFam[id] || []).some(x => x.verdict !== 'unchanged'))
+    log(b.id + ': ' + targets.length + '/' + b.families.length + ' go to refuters')
+    const refutations = await parallel(targets.map(id => () => {
+      const revs = (byFam[id] || []).map(x => b.kind === 'new'
+        ? `- ${x.reviewer}: e/t/n/b/c ${x.evidence}/${x.transferability}/${x.novelty}/${x.benefit}/${x.cost_risk} → ${x.disposition}; existing: ${x.existing_mechanism || '-'}; reopens: ${x.reopens_skipped || '-'}; measurement: ${x.measurement || '-'}; reason: ${x.reason}`
+        : `- ${x.reviewer} (${x.lens}): ${x.verdict} → ${x.disposition}; amendment: ${x.amendment || '-'}; measurement: ${x.measurement || '-'}; reason: ${x.reason}`).join('\n')
+      const body = b.kind === 'new'
+        ? `One NEW idea family from the addendum was marked adopt or trial by at least one of two reviewers. Default verdict: REFUTED. Break it: show the evidence does not support the claim, that the harness already has the mechanism (name the file/§), that it does not transfer to a one-developer Windows repository running this routine, that it re-adopts a deliberate skip whose reason still holds, or that its benefit is illusory. "survives" requires that you looked for counter-evidence in the harness files and found none; "narrowed" means a smaller version survives (put it in final_wording). Verdict must be refuted, narrowed or survives.\n\nTHE FAMILY:\n${newText(newFamilies.find(f => f.id === id))}\n(the member cards are in ${b.file}, one "## Cnnnn" block each)`
+        : `One first-pass family received new cards, and at least one of two reviewers says they change it. Default verdict: THE FIRST-PASS DISPOSITION AND WORDING STAND ("first-pass stands"). A change survives only if the new cards bring evidence of a kind the first pass lacked, or the author has changed or withdrawn the claim the family or its first-pass refutation rested on, or the first-pass wording is now factually wrong. Read the family's block in ${b.file} (heading "## ${id}"): first-pass reviews, first-pass refuter verdict and the new cards. Check the harness files before agreeing to any change. Verdict must be "first-pass stands", "amended" (same disposition, new wording or measurement: write it in final_wording / what_would_settle_it) or "changed" (new disposition: justify it).`
+      return agent(`${HARNESS}\n\nYou are a FRESH-CONTEXT REFUTER (Opus, xhigh) in the addendum review. ${body}\n\nTHE TWO ADDENDUM REVIEWS:\n${revs}\n\nYou may open harness files (at most 8 reads). Return the structured object (family = "${id}").`,
+        { label: 'refute ' + id, phase: 'Refute', model: 'opus', effort: 'xhigh', schema: REFUTE_SCHEMA })
+    }))
+    return { batch: b.id, kind: b.kind, families: b.families, reviews: r.reviews, refutations: refutations.filter(Boolean), targets }
+  }
+)
+
+// ---------- the 16 first-pass over-cap families: refute now ----------
+const oc = args.overcap
+const ocRef = await parallel(oc.families.map(id => () => agent(
+  `${HARNESS}\n\nYou are a FRESH-CONTEXT REFUTER (Opus, xhigh). The first pass left this family UNREFUTED because of a per-group cap: one reviewer said trial, the other skip or already-done. Default verdict: REFUTED. Read its block in ${oc.file} (heading "## ${id}": the claim, both first-pass reviews, and any new cards attached since). Break it: weak evidence, the harness already has the mechanism (name the file/§), it does not transfer to a one-developer Windows repository running this routine, it re-adopts a deliberate skip whose reason still holds, or the benefit is illusory. "survives" requires that you looked for counter-evidence in the harness files (at most 8 reads) and found none; "narrowed" means a smaller version survives (write it in final_wording, with the measurement in what_would_settle_it). Verdict must be refuted, narrowed or survives. Return the structured object (family = "${id}").`,
+  { label: 'refute over-cap ' + id, phase: 'Refute', model: 'opus', effort: 'xhigh', schema: REFUTE_SCHEMA })))
+
+return { newFamilies, staged: staged.filter(Boolean), overcap: ocRef.filter(Boolean) }

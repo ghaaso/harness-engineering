@@ -1,0 +1,23 @@
+# Loads the speech model once to confirm the GPU path works (downloads the model on first run).
+import os, sys, glob, site, time
+dirs = []
+for sp in site.getsitepackages() + [site.getusersitepackages()]:
+    dirs += glob.glob(os.path.join(sp, "nvidia", "*", "bin"))
+for d in dirs:
+    try:
+        os.add_dll_directory(d)
+    except Exception:
+        pass
+os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
+import ctranslate2
+print("ctranslate2", ctranslate2.__version__, "cuda devices:", ctranslate2.get_cuda_device_count(), "dll dirs:", len(dirs), flush=True)
+from faster_whisper import WhisperModel
+t = time.time()
+name = os.environ.get("ASR_MODEL", "distil-large-v3")
+try:
+    m = WhisperModel(name, device="cuda", compute_type="float16")
+    print("GPU model load OK in %.0fs" % (time.time() - t), flush=True)
+except Exception as e:
+    print("GPU load failed:", str(e)[:400], flush=True)
+    m = WhisperModel(name, device="cpu", compute_type="int8", cpu_threads=20)
+    print("CPU model load OK in %.0fs" % (time.time() - t), flush=True)
