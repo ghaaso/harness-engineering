@@ -1,0 +1,13 @@
+// Inserts §4 (addendum) into the document just before the Appendix heading. Idempotent: replaces an existing §4.
+// Usage: node insert-s4.mjs <doc.md> <s4-head.md> <s4-tables.md> <s4-tail.md>
+import fs from 'node:fs';
+const [docPath, headPath, tablesPath, tailPath] = process.argv.slice(2);
+let doc = fs.readFileSync(docPath, 'utf8');
+const s4 = fs.readFileSync(headPath, 'utf8').trimEnd() + '\n\n' + fs.readFileSync(tablesPath, 'utf8').trimEnd() + '\n\n' + fs.readFileSync(tailPath, 'utf8').trimEnd() + '\n\n';
+const appIdx = doc.indexOf('## Appendix — the inventory');
+if (appIdx < 0) throw new Error('appendix heading not found');
+const s4Idx = doc.indexOf('## 4. Addendum, 2026-11-09');
+const before = s4Idx >= 0 ? doc.slice(0, s4Idx) : doc.slice(0, appIdx);
+const after = doc.slice(appIdx);
+fs.writeFileSync(docPath, before + s4 + after);
+console.log('inserted §4:', s4.length, 'chars; doc now', (before + s4 + after).split('\n').length, 'lines');

@@ -21,6 +21,7 @@ time the document was committed.
 | `review/stats.json` | Counts per group and disposition, coverage validation |
 | `workflows/*.js.txt` | The Workflow-tool scripts exactly as run (saved as `.txt` so the frontend lint job does not parse them) |
 | `tools/*.txt` | The helper scripts used to fetch and render sources (YouTube transcripts via an ephemeral `uvx` run, X articles via the fxtwitter API, page-to-text, the Tessl CMS query) and to build the lists |
+| `addendum-2026-11-09/` | The addendum of 2026-11-09: sources published or first readable after the first pass, their cards mapped onto the same 838 families, the re-adjudication and the refuter verdicts (its own README lists the files). Added later; no first-pass file was changed |
 
 Readers were Sonnet at low or medium effort, blind to each other; reviewers and refuters were
 Opus (high; refuters xhigh). The main session (Fable) briefed and judged and read no source in

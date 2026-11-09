@@ -1,0 +1,36 @@
+// Renders the generated tables of §4 (addendum) from the addendum review outcomes.
+// Usage: node render-s4.mjs <outcomes.json> <cards.json> <out.md>
+import fs from 'node:fs';
+const [outPath, cardsPath, out] = process.argv.slice(2);
+const o = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+const cards = JSON.parse(fs.readFileSync(cardsPath, 'utf8'));
+const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n+/g, ' ').trim();
+const cut = (s, n) => { s = esc(s); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; };
+const L = [];
+const amended = o.filter(x => x.kind === 'existing' && x.verdict === 'amended');
+L.push('#### Amended (same disposition, new wording or measurement): ' + amended.length + ' families', '');
+L.push('| Family | Disposition | What the wording is now | What the measurement is now | Why (the refuter\'s line) | New cards |', '| --- | --- | --- | --- | --- | --- |');
+for (const x of amended) L.push(`| **${x.family}** | ${x.final_disposition} | ${cut(x.final_wording, 700)} | ${cut(x.measurement, 420)} | ${cut(x.reason, 320)} | ${x.new_cards.slice(0, 6).join(', ')}${x.new_cards.length > 6 ? ' +' + (x.new_cards.length - 6) : ''} |`);
+L.push('');
+const stands = o.filter(x => x.kind === 'existing' && x.verdict === 'first-pass stands');
+L.push('#### A change was proposed and the refuter rejected it: ' + stands.length + ' families', '');
+L.push('| Family | Disposition (unchanged) | Claim | Why the first pass stands |', '| --- | --- | --- | --- |');
+for (const x of stands) L.push(`| **${x.family}** | ${x.final_disposition} | ${cut(x.label, 170)} | ${cut(x.reason, 330)} |`);
+L.push('');
+const unch = o.filter(x => x.kind === 'existing' && x.verdict === 'unchanged');
+L.push('#### Both lenses said nothing changes: ' + unch.length + ' families', '');
+L.push(unch.map(x => x.family + ' (' + x.final_disposition + ')').join(', ') + '.', '');
+const oc = o.filter(x => x.kind === 'over-cap');
+L.push('#### The 16 families the first pass left over the refuter cap', '');
+L.push('| Family | Bears on | Claim | Refuter | Now | One line |', '| --- | --- | --- | --- | --- | --- |');
+for (const x of oc) L.push(`| **${x.family}** | ${(x.bears_on || []).join(', ')} | ${cut(x.label, 170)} | ${x.verdict} | **${x.final_disposition}** | ${cut(x.verdict === 'narrowed' ? x.final_wording + ' Measurement: ' + x.measurement : x.reason, 420)} |`);
+L.push('');
+const nw = o.filter(x => x.kind === 'new');
+L.push('#### New families (claims no first-pass family covers): ' + nw.length, '');
+L.push('| Family | Bears on | Claim | A · B (e/t/n/b/c) | Now | One line | Cards |', '| --- | --- | --- | --- | --- | --- | --- |');
+const sc = r => r ? `${r.evidence}/${r.transferability}/${r.novelty}/${r.benefit}/${r.cost_risk} ${r.disposition}` : '—';
+for (const x of nw) { const A = x.reviews.find(r => /-A$/.test(r.reviewer)), B = x.reviews.find(r => /-B$/.test(r.reviewer)); L.push(`| **${x.family}** | ${(x.bears_on || []).join(', ') || 'none'} | ${cut(x.label, 190)} | ${sc(A)} · ${sc(B)} | **${x.final_disposition}** (${x.decided_by}) | ${cut(x.reason, 230)} | ${x.new_cards.join(', ')} |`); }
+L.push('');
+fs.writeFileSync(out, L.join('\n'));
+const byR = cards.reduce((m, c) => { m[c.reader] = (m[c.reader] || 0) + 1; return m; }, {});
+console.log('amended', amended.length, 'stands', stands.length, 'unchanged', unch.length, 'overcap', oc.length, 'new', nw.length, JSON.stringify(byR));

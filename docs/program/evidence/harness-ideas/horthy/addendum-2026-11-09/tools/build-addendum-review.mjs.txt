@@ -1,0 +1,89 @@
+// Builds the addendum review outputs from the addendum review workflow's journal.
+// Usage: node build-addendum-review.mjs <journal.jsonl> <first-pass families.json> <addendum sweep dir> <review-args.json> <outdir>
+import fs from 'node:fs';
+import path from 'node:path';
+const [journalPath, famPath, sweepDir, argsPath, outDir] = process.argv.slice(2);
+fs.mkdirSync(outDir, { recursive: true });
+const lines = fs.readFileSync(journalPath, 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean);
+const fams = JSON.parse(fs.readFileSync(famPath, 'utf8'));
+const famById = {}; for (const f of fams) famById[f.id] = f;
+const cards = JSON.parse(fs.readFileSync(path.join(sweepDir, 'cards.json'), 'utf8'));
+const affected = JSON.parse(fs.readFileSync(path.join(sweepDir, 'affected-families.json'), 'utf8'));
+const affById = {}; for (const a of affected) affById[a.family] = a;
+const args = JSON.parse(fs.readFileSync(argsPath, 'utf8'));
+const labelById = {}; for (const e of lines) if (e.type === 'started' && e.agentId) labelById[e.agentId] = e.label || '';
+const results = lines.filter(e => e.type === 'result').map(e => ({ label: labelById[e.agentId] || '', r: e.result }));
+
+// new families: replicate the script's validation and numbering
+const grp = results.find(x => /^group NEW cards/.test(x.label));
+const newIds = args.newCards.ids; const valid = new Set(newIds), seen = new Set();
+const newFamilies = [];
+for (const f of (grp && grp.r && grp.r.families) || []) { const mem = f.members.filter(id => valid.has(id) && !seen.has(id)); mem.forEach(id => seen.add(id)); if (mem.length) newFamilies.push({ ...f, members: mem }); }
+for (const id of newIds) if (!seen.has(id)) newFamilies.push({ label: '(ungrouped card ' + id + ')', members: [id], bears_on: [], strongest_evidence: 'see card', sample_quote: '' });
+newFamilies.forEach((f, i) => { f.id = 'N-F' + String(i + 1).padStart(3, '0'); });
+const newById = {}; for (const f of newFamilies) newById[f.id] = f;
+
+const revs = {}; // family -> reviews
+for (const x of results.filter(x => /^review /.test(x.label))) for (const rv of (x.r && x.r.reviews) || []) (revs[rv.family] = revs[rv.family] || []).push({ reviewer: x.r.reviewer_id, lens: x.r.lens, ...rv });
+const refs = {}; const ocRefs = {};
+for (const x of results.filter(x => /^refute over-cap /.test(x.label))) if (x.r && x.r.family) ocRefs[x.r.family] = x.r;
+for (const x of results.filter(x => /^refute /.test(x.label) && !/^refute over-cap /.test(x.label))) if (x.r && x.r.family) refs[x.r.family] = x.r;
+console.error('new families', newFamilies.length, '| families reviewed', Object.keys(revs).length, '| refutations', Object.keys(refs).length, '| over-cap refutations', Object.keys(ocRefs).length);
+
+const existing = args.batches.flatMap(b => b.families);
+const outcomes = [];
+for (const id of existing) {
+  const f = famById[id]; const rv = revs[id] || []; const ref = refs[id];
+  let verdict, final = f.final_disposition, wording = '', measure = '', reason = '', by;
+  if (ref) { verdict = ref.verdict; final = ref.final_disposition; wording = ref.final_wording; measure = ref.what_would_settle_it; reason = ref.reason; by = 'refuter'; }
+  else if (rv.length && rv.every(r => r.verdict === 'unchanged')) { verdict = 'unchanged'; reason = (rv.find(r => /-B$/.test(r.reviewer)) || rv[0]).reason; by = 'both lenses'; }
+  else if (!rv.length) { verdict = 'unreviewed'; by = 'no review returned'; }
+  else { verdict = 'unrefuted change proposal'; reason = rv.map(r => r.reviewer + ':' + r.verdict).join(' '); by = 'refuter missing'; }
+  outcomes.push({ family: id, kind: 'existing', label: f.label, bears_on: f.bears_on, first_pass: f.final_disposition, verdict, final_disposition: final, final_wording: wording, measurement: measure, reason, decided_by: by, new_cards: (affById[id] ? affById[id].cards.map(c => c.card + ':' + c.relation) : []), reviews: rv, refutation: ref || null });
+}
+for (const id of args.overcap.families) {
+  const f = famById[id]; const ref = ocRefs[id];
+  outcomes.push({ family: id, kind: 'over-cap', label: f.label, bears_on: f.bears_on, first_pass: f.final_disposition, verdict: ref ? ref.verdict : 'unrefuted', final_disposition: ref ? ref.final_disposition : f.final_disposition, final_wording: ref ? ref.final_wording : '', measurement: ref ? ref.what_would_settle_it : '', reason: ref ? ref.reason : '', decided_by: ref ? 'refuter' : 'no refuter returned', new_cards: (affById[id] ? affById[id].cards.map(c => c.card + ':' + c.relation) : []), reviews: f.reviews, refutation: ref || null });
+}
+for (const f of newFamilies) {
+  const rv = revs[f.id] || []; const ref = refs[f.id];
+  let final, by, verdict;
+  if (ref) { final = ref.final_disposition; verdict = ref.verdict; by = 'refuter'; }
+  else if (rv.length === 2 && rv[0].disposition === rv[1].disposition) { final = rv[0].disposition; verdict = 'reviewers agree'; by = 'both lenses'; }
+  else if (rv.length) { const d = rv.map(r => r.disposition); final = d.includes('already-done') && !d.includes('skip') ? 'already-done' : (d.includes('skip') ? 'skip' : d[0]); verdict = 'reviewers disagree (no adopt or trial)'; by = 'weaker of the two'; }
+  else { final = 'unreviewed'; verdict = 'unreviewed'; by = 'no review returned'; }
+  outcomes.push({ family: f.id, kind: 'new', label: f.label, bears_on: f.bears_on, first_pass: '-', verdict, final_disposition: final, final_wording: ref ? ref.final_wording : '', measurement: ref ? ref.what_would_settle_it : '', reason: ref ? ref.reason : ((rv.find(r => /-B$/.test(r.reviewer)) || rv[0] || {}).reason || ''), decided_by: by, new_cards: f.members, reviews: rv, refutation: ref || null });
+}
+fs.writeFileSync(path.join(outDir, 'new-families.json'), JSON.stringify(newFamilies, null, 1));
+fs.writeFileSync(path.join(outDir, 'outcomes.json'), JSON.stringify(outcomes, null, 1));
+fs.writeFileSync(path.join(outDir, 'reviews.json'), JSON.stringify(results.filter(x => /^review /.test(x.label)).map(x => x.r), null, 1));
+fs.writeFileSync(path.join(outDir, 'refutations.json'), JSON.stringify(results.filter(x => /^refute /.test(x.label)).map(x => ({ label: x.label, ...x.r })), null, 1));
+
+// combined totals after the addendum
+const finalByFam = {}; for (const f of fams) finalByFam[f.id] = f.final_disposition;
+for (const o of outcomes) if (o.kind !== 'new') finalByFam[o.family] = o.final_disposition;
+const count = (arr) => arr.reduce((m, x) => { m[x] = (m[x] || 0) + 1; return m; }, {});
+const stats = {
+  cards_new: cards.length, readers: 9,
+  existing_readjudicated: existing.length, existing_verdicts: count(outcomes.filter(o => o.kind === 'existing').map(o => o.verdict)),
+  existing_disposition_changes: outcomes.filter(o => o.kind === 'existing' && o.final_disposition !== o.first_pass).map(o => o.family + ': ' + o.first_pass + ' → ' + o.final_disposition),
+  overcap: args.overcap.families.length, overcap_verdicts: count(outcomes.filter(o => o.kind === 'over-cap').map(o => o.verdict)), overcap_final: count(outcomes.filter(o => o.kind === 'over-cap').map(o => o.final_disposition)),
+  new_families: newFamilies.length, new_final: count(outcomes.filter(o => o.kind === 'new').map(o => o.final_disposition)),
+  reviewers: results.filter(x => /^review /.test(x.label)).length, refuters: results.filter(x => /^refute /.test(x.label)).length,
+  totals_first_pass: count(fams.map(f => f.final_disposition)),
+  totals_after_addendum_existing_838: count(Object.values(finalByFam)),
+  totals_after_addendum_with_new: count(Object.values(finalByFam).concat(outcomes.filter(o => o.kind === 'new').map(o => o.final_disposition))),
+};
+fs.writeFileSync(path.join(outDir, 'stats.json'), JSON.stringify(stats, null, 1));
+
+const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n+/g, ' ').trim();
+const cut = (s, n) => { s = esc(s); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; };
+const md = ['# Addendum post-review list (2026-11-09)', '', 'Every first-pass family that was re-adjudicated, the 16 first-pass families the refuter cap had left without a verdict, and the new families. "Decided by" says whether a fresh-context refuter ruled or both lenses agreed nothing changes.', ''];
+const sect = (title, list, cols) => { md.push('## ' + title + ' (' + list.length + ')', ''); md.push('| Family | Bears on | First pass | Verdict | Now | What changed or survives | Measurement | New cards | Decided by |'); md.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |'); for (const o of list) md.push(`| **${o.family}** | ${(o.bears_on || []).join(', ') || 'none'} | ${o.first_pass} | ${o.verdict} | **${o.final_disposition}** | ${cut(o.final_wording || o.reason || o.label, 380)} | ${cut(o.measurement, 260)} | ${o.new_cards.slice(0, 5).join(', ')}${o.new_cards.length > 5 ? ' +' + (o.new_cards.length - 5) : ''} | ${o.decided_by} |`); md.push(''); };
+const ex = outcomes.filter(o => o.kind === 'existing');
+sect('First-pass families whose disposition or wording changed', ex.filter(o => ['amended', 'changed'].includes(o.verdict)));
+sect('First-pass families re-adjudicated and left as they were', ex.filter(o => !['amended', 'changed'].includes(o.verdict)));
+sect('First-pass families that had been left unrefuted by the cap', outcomes.filter(o => o.kind === 'over-cap'));
+sect('New families (claims no first-pass family covers)', outcomes.filter(o => o.kind === 'new'));
+fs.writeFileSync(path.join(outDir, 'ADDENDUM-POST-REVIEW.md'), md.join('\n'));
+console.log(JSON.stringify(stats, null, 1));

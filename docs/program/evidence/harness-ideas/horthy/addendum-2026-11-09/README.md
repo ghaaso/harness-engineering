@@ -15,7 +15,12 @@ pass are fixed: new cards were attached to them, never re-clustered.
 | `sweep/affected-families.json` | Per first-pass family: the new cards attached and their relations |
 | `sweep/selection.json` | Which families were re-adjudicated and why (a new card updates or contradicts the family; the family was adopt, trial or over-cap; or a new card brings measured evidence), which were attached only, and the cards no family covers |
 | `sweep/summary.json` | Counts |
-| `review/` | The addendum review's outputs (written after the pre-review commit): the two-lens re-adjudication, the refuter verdicts, the first-pass over-cap families now refuted, the new families |
+| `review/outcomes.json` | Per family: the first-pass disposition, the addendum verdict (unchanged, first-pass stands, amended; refuted or narrowed for over-cap and new families), the disposition now, the amended wording and measurement, and who decided |
+| `review/ADDENDUM-POST-REVIEW.md` | The same, rendered |
+| `review/new-families.json` | The 23 families formed from the 27 cards no first-pass family covers (ids N-F001 to N-F023) |
+| `review/reviews.json`, `review/refutations.json` | The 14 reviewer outputs and the 39 refuter verdicts, verbatim |
+| `review/stats.json` | Counts, and the disposition totals before and after the addendum |
+| `review-input/` | The batch files the reviewers and refuters read: each re-adjudicated family with its first-pass reviews and the new cards attached |
 | `workflows/*.js.txt` | The two Workflow-tool scripts exactly as run |
 | `tools/*.txt` | The fetch, transcription and build scripts |
 
@@ -26,4 +31,4 @@ for the timeline, the status endpoint for articles); the Tessl and Build Wiz tra
 on the GPU through an ephemeral `uv run` environment; seven SlopCodeBench charts as PNGs read as
 images. Readers were Sonnet (low or medium), mappers Sonnet (medium); reviewers Opus (high);
 refuters Opus (xhigh). Run ids: sweep `wf_680c14a9-4a7` (R47–R50) and `wf_e6bb6562-8d7`
-(R51–R55); the review run id is in the document's §4.
+(R51–R55); review `wf_e94ba181-fbc` (1 Sonnet grouper, 14 Opus reviewers, 39 Opus refuters).

@@ -9,6 +9,13 @@ v8 at commit 3415b5e (PR #182); harness review `HARNESS-REVIEW-2026-11-01.md`; k
 design at PR #183. Evidence: `docs/program/evidence/harness-ideas/horthy/` (README there lists the
 files; `manifest.sha256` pins them).
 
+**Addendum 2026-11-09 (§4).** Sources published or first readable after the first pass were read
+and attached to the same 838 families without re-clustering: his X posts from September to
+November, the October SlopCodeBench article, charts and live breakdown, the full Tessl episode,
+and nine recordings transcribed on this machine. No disposition changed; eight families' wording
+was amended; the 16 families the first pass had left unrefuted now have verdicts. §0 below is
+current as of the addendum; §1 to §3 are the record of the first pass.
+
 The weaknesses and levers every idea was scored against:
 
 | Id | Statement |
@@ -38,6 +45,12 @@ refute-by-default reviewer bound to a head SHA, the evidence manifests, the skip
 carry a measured number, and the one measured lever, L1, rests on a single benchmark run per
 setting. Not one idea re-opens the skipped hooks, context system, measurement pipeline or
 pre-commit gate as such; two trials below give W2 an outside check without any of them.
+
+**After the addendum of 2026-11-09 (§4):** 36 more sources, 311 more cards, no disposition
+changed. Totals over 861 families (838 plus 23 new): **adopt 24, trial 54, already-done 407,
+skip 376**, none left unrefuted. The one new trial is small: a single `tsc --noUnusedLocals` run
+on the mobile app, adopt the flag only if it finds real hits (G4-F125). Two things below are
+reworded by it: the effort trial's evidence (trial 1) and the note on context numbers.
 
 **Top adopts (each costs minutes, none touches `CLAUDE.md`):**
 
@@ -70,6 +83,12 @@ pre-commit gate as such; two trials below give W2 an outside check without any o
    model, at least 30 pairs across the next review workflows and PR reviews, scored against the
    final adjudication; a pre-registered pass bar and three repeats per arm. *Cost:* about 30 extra
    Opus-medium agents. *Decides:* whether the xhigh default for refuters and the PR reviewer stays.
+   *Amended by the addendum:* the outside evidence is weaker than first written. His chart's
+   footnote says each medium and xhigh pair ran on a different date and agent version, and he now
+   reads the result as specific to Opus. The trial stands on this harness's own facts instead: its
+   review-workflow verifiers run at xhigh in practice while the tier guide says high, and the plan
+   never states the PR reviewer's effort. Both arms of a pair must run on the same build, and the
+   pass rule is applied per model id.
 2. **A transcript tally at phase close** (G2-F183, G2-F023, G3-F074; W2): one read-only Node script
    over the session JSONL scoring the routine steps that leave no git or GitHub trace (Fable never
    edits code, the reviewer brief carried the head SHA and register ids, the cold-resume dispatch
@@ -97,12 +116,20 @@ pre-commit gate as such; two trials below give W2 an outside check without any o
 **What the owner should know before deciding.** Half of what he publishes this harness already
 does. His own numbers have moved under him: the "dumb zone" was 100k tokens in mid-2025 and "much
 higher now" by September 2026, the 40 % context rule was set on 200k windows, and the
-medium-versus-xhigh finding is one run per setting with no error bars (his report says so). The
+medium-versus-xhigh finding is one run per setting with no error bars (his report says so). On
+7 November he went further: compaction is now good enough that he no longer clears context for
+the model's sake, he auto-compacts at 400k and compacts by hand between 200k and 400k, and he
+keeps externalised state for hand-off only. That is where this harness already stands (state in
+the repository and the PR body, idle compaction left on, a compaction window considered past
+500k), so nothing changes here; it does mean his earlier context rules should not be cited as
+his current view. The
 one place his material cuts against the plan is the knowledge-store ruling that keeps every
 `CLAUDE.md` rule: his March 2026 `<important if>` technique and his "delete what a linter can
 enforce" trim both fell to that ruling and to the fact that his adherence claims carry no
 measurements. The AGNTCon talk the brief flagged, "There Is No Software Factory Without Better
-Verifiers" (2026-10-22), still has no recording or slides; its promo was read, the talk was not.
+Verifiers" (2026-10-22), still has no recording or slides as of 2026-11-09; its promo was read,
+the talk was not, and nothing here infers its content. The Europe keynote of 18 September, the
+October SlopCodeBench breakdown and his X posts through 9 November have now been read (§4).
 
 ---
 
@@ -140,6 +167,8 @@ family is in `review/card-dispositions.tsv`.
 ## 2. Post-review list
 
 Every one of the 1906 cards sits in one of 838 families (the clusterers covered all cards; code validated membership after the run: 0 invented ids, 0 unassigned cards, 0 cards placed outside their weakness group). Each family carries two Opus reviews (A = benefit-seeker, B = cost-and-novelty skeptic; five scores 0–3 in the order evidence / transferability / novelty / benefit / cost-risk, higher is better on every dimension, then the disposition) and, where at least one reviewer said adopt or trial, a fresh-context Opus refuter's verdict. The complete per-family list with every reviewer's one-line reason is `evidence/harness-ideas/horthy/review/POST-REVIEW-LIST.md` (838 rows); the per-card mapping is `review/card-dispositions.tsv`; the raw reviews, refutations and critic output sit beside them. This section prints in full the families that survived the refuters, the families the cap left unrefuted, and a count of the rest per weakness.
+
+*Since the addendum (§4.3):* the 16 "unrefuted (over cap)" families printed below now have refuter verdicts (15 fell, G4-F125 survives as a narrowed trial), and eight families have amended wording or measurements, G4-F034 and G1-F159 among the trials. The tables below are the first-pass record and are not rewritten; where they and §4.3 differ, §4.3 is current.
 
 | Weakness or lever | Families | Cards | adopt | trial | already-done | skip | unrefuted (over cap) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -462,6 +491,11 @@ transcripts, 181 files from 75 AI That Works episode folders (transcripts for 20
 
 ### 3.3 How the unreadable became readable, and what stayed unread
 
+*As of the first pass. The addendum read most of what this section lists as unread (the X posts
+from September on, the Europe keynote, the full Tessl episode, the podcasts without transcripts,
+two AI That Works episodes); §4.6 is the current list, and §4.2 corrects the keynote's date to
+18 September.*
+
 - **X articles and threads** (HTTP 402 at inventory time) were rendered from the fxtwitter API
   (`tools/x-fetch.sh.txt`): the head tweet and, for articles, the full body with links. Replies and
   later tweets in a thread are not captured, and no timeline listing was available (nitter's search
@@ -608,6 +642,277 @@ Pre-review list committed at `95cc9e6` before the review ran. Review run `wf_732
 passes, §3.1). Document, review outputs and manifest committed after. The main session (Fable)
 read no source in full and scored no card; it wrote the briefs and the code, ran the dedupe and
 the renderers, chose the refuter cap and ordering, and wrote §0 and §3 from the review outputs.
+
+---
+
+## 4. Addendum, 2026-11-09: what was published or first became readable after the first pass
+
+The first pass closed on 2026-11-04 with a list of things it could not read (§3.3). Five days
+later the owner supplied a note from a tool with access to X: the posts by @dexhorthy from 1
+October to 9 November that mattered, routes to the unread talks and podcasts, and one instruction,
+not to re-cluster the 838 families. The note's hand-off file was not on this machine, so the
+posts were pulled again from a public API and everything in the note was checked against the
+primary text before use (§4.2). The owner also asked what the machine itself could do about the
+access problems (§4.5). Sections 0 to 3 above remain the record of the first pass; where this
+addendum changes a statement in them, it says so here and §0 has been brought up to date.
+
+**Result in one paragraph.** 36 new sources, 9 Sonnet readers, 311 new cards (C1907–C2217). Each
+card was attached to one of the 838 fixed families or marked new: 233 support a family, 32 restate
+one, 12 update one (the author changed a number or a position), 7 contradict one, 27 match none.
+64 families were re-adjudicated by two Opus lenses, and every proposed change went to a
+fresh-context refuter whose default was that the first pass stands: **no disposition changed**, 8
+families had their wording or measurement amended, 13 proposed changes were rejected. The 16
+families the first pass had left over its refuter cap now have verdicts: 15 fell, 1 survives as a
+narrowed trial. The 27 unmatched cards formed 23 new families; none reached adopt or trial. Totals
+after the addendum, over 861 families: **adopt 24, trial 54, already-done 407, skip 376**, nothing
+left unrefuted.
+
+### 4.1 What was read this round, and how
+
+| Reader | Source | Route | Cards |
+| --- | --- | --- | --- |
+| R47 | The X article of 2026-10-27, "Astra beats Opus 5.5 on SlopCodeBench, xhigh considered harmful" (modified 2026-11-02), against the repository report of 2026-10-15 it mirrors, plus the report's seven charts | fxtwitter status endpoint; chart PNGs read as images | 29 |
+| R48 | @dexhorthy on X, 2026-09-01 → 10-14 (81 of his own posts) | fxtwitter profile-timeline endpoint, paged | 23 |
+| R49 | @dexhorthy on X, 2026-10-15 → 11-09 (78 posts), one reply the timeline omits, and the three texts on HumanLayer joining Factory | the same, plus the status endpoint and two page fetches | 29 |
+| R50 | Tessl AI Native Dev episode 124 (2026-09-22), the full 12,100-word speaker-labelled transcript (the first pass had the opening 1,800 words) | the show's RSS feed, `podcast:transcript` tag | 32 |
+| R51 | AGNTCon + MCPCon Europe keynote "State of Software Factories // Slop Bench" (Amsterdam, 16 min) and Beyond Coding episode 270 (2026-09-30, 45 min) | audio-only stream and RSS enclosure, transcribed on this machine | 43 |
+| R52 | "Why Opus Medium Beats X-High at Writing Maintainable Code" (AI That Works, uploaded 2026-10-30, 38 min), the live breakdown behind the October report | audio-only stream, transcribed on this machine | 23 |
+| R53 | AI That Works "Harness Engineering Without the Hype" (2026-04-21) and #40 "Applying 12-Factor Principles to Coding Agent SDKs" (2026-01-13) | the same | 40 |
+| R54 | AI Tinkerers One-Shot (2026-03-04, 62 min) and Mastra Agents Hour (2026-07-07, 23 min) | the same | 48 |
+| R55 | The Matt Pocock livestream (2026-01-16, 46 min) and AI That Works "Git Worktrees for AI Coding Agents" (2025-12-09) | the same | 44 |
+
+Of the 311 cards, 307 rest on a primary text or transcript and 4 on a third party's summary; 37
+carry a measured number (almost all from the SlopCodeBench article, charts and breakdown), 141 are
+anecdotal, 128 asserted, 5 marketing. The local transcripts have no speaker labels and mishear
+names, so attribution in the two-host episodes is by content; the readers say so per source.
+Ledger with hashes: `evidence/harness-ideas/horthy/addendum-2026-11-09/sources-ledger-addendum.tsv`.
+The cards, unjudged and committed before the review at `29fd4ed`:
+`addendum-2026-11-09/sweep/PRE-REVIEW-ADDENDUM.md`.
+
+### 4.2 The note's statements, checked against the primary text
+
+| The note said | What the primary source shows |
+| --- | --- |
+| A hand-off file holds the cardable posts from 1 Oct to 9 Nov | The file was not on this machine. The posts were re-pulled from the fxtwitter timeline endpoint: 197 statuses since 1 September, 159 of them his own; five of the six ids the note names were in the timeline and the sixth, a reply, was fetched by id |
+| The post the sweep missed is the 27 Oct SlopCodeBench write-up | It is an X article of 1,463 words that mirrors the repository report of 15 October, which the first pass did read (R06). The numbers match: strict pass 12.2–16.3 %, Opus 5.5 medium 28 against xhigh 25 of 196, cost 2.11–4.22×, flagged-line coverage 77.75 % against 94.25 %, 36 problems and 196 checkpoints, one campaign per setting. What the first pass lacked: the article's caveat that "Astra/Sol models do seem to perform better on xhigh" (his own chart shows only Astra did, 29 to 32; Sol fell from 30 to 26), the charts, and the live breakdown |
+| He says one run cannot separate the gap from noise, and expects the lights to stay on | Both are in the article, verbatim: "One campaign per setting can't tell me how much is run-to-run variation"; "I think we'll be keeping the lights on for a while" |
+| Four later posts can stale a family | All four were read; none changed a disposition (§4.4) |
+| `XUEfIxkdT2Q` is a factories masterclass still to transcribe | It is AI That Works of 2026-10-20, "How to Build an AI Software Factory That Ships Faster", which the first pass read in full from the show's repository transcript (R36). Nothing to do |
+| Dex's keynote is 39:05–56:13 of the AGNTCon Europe day-2 livestream | The foundation also uploaded the keynote on its own (`ix1qQK1IvmA`, 16:15, "State of Software Factories // Slop Bench"); that upload was transcribed. The schedule gives 2026-09-18, 09:41–09:51, so the first pass's date of 17 September (§3.3) was a day early |
+| The Europe slides are on the schedule site | No file is attached to his session page or the list page as fetched on 2026-11-09 |
+| The North America session is "There's No Dark Factory Without Better Software Verifiers", room 210B; no recording | No schedule page was found at the address the Europe site's pattern suggests, and the foundation's channel has no such upload among its 80 most recent videos. Left unread and not inferred from the SlopCodeBench post, as the note asks |
+| Tessl: use the Buzzsprout RSS and its transcript tag; confirm the episode number | The feed is `rss.buzzsprout.com/2375985.rss`; the episode carries `itunes:episode` 124 and four transcript tags. The first pass's number was right |
+| HumanLayer joined Factory on 4 November | Confirmed on factory.com (dated 4 November 2026), on HumanLayer's own blog and in his X article of the same day. Provenance, not an idea; the one card it produced (the RPI skills will migrate to Factory, a dependence risk for borrowing them) is family N-F010, skipped |
+
+### 4.3 What the review decided
+
+Selection rule for re-adjudication, applied by code: a first-pass family was reviewed again if a
+new card updates or contradicts it (23 families), if it was adopt, trial or over-cap and received
+any new card (28), or if a new card brings measured evidence (25); 66 families qualified, two of
+them over-cap families that went straight to the over-cap refuters. The other 187 families that
+received cards got more anecdote or assertion of the kind they already had and were left as they
+were (`addendum-2026-11-09/sweep/selection.json` lists them).
+
+#### Amended (same disposition, new wording or measurement): 8 families
+
+| Family | Disposition | What the wording is now | What the measurement is now | Why (the refuter's line) | New cards |
+| --- | --- | --- | --- | --- | --- |
+| **G1-F159** | trial | Trial, narrowed, same substance as the first pass. For the first 5 phase sessions, the closing message's "what evidence ran" line (SHIP-PLAN §0 line 45) records two things. (a) The main session's peak per-call context. (b) The context position of each Fable gating or judging decision that the owner or a reviewer later reversed, as logged in the PR's "Decisions / ruled out / owner corrections" journal. Count context per assistant call from the transcript JSONL usage block as input_tokens + cache_creation_input_tokens + cache_read_input_tokens. Do not use the /context or status-line percentage: Claude Code's displayed figure includes the autocompact buffer (C2187). Do not use input plus… | For the first 5 phase sessions, a Haiku extractor reads the main-session transcript JSONL. It computes the per-call context as input_tokens + cache_creation_input_tokens + cache_read_input_tokens and records the per-window maximum, so the true peak survives a compaction. It also records the main-session model id and the autoCompactWindow in force. For each Fable decision that the PR journal shows as later reversed,… | The disposition stays trial because the new cards are anecdotal and change nothing of substance, but checking the counting method C2187 asks for showed the first pass's "input plus cache-read" is not the true context and misplaces decisions made after a cache expiry; so the method is corrected and the model id and… | C2179:supports, C2187:supports |
+| **G4-F034** | trial | Trial, with the scope unchanged: a blind paired shadow of medium effort against the incumbent effort, for non-P0 Opus verifiers only. Those are (a) the review-workflow refuters and judges, which in practice run at xhigh, not the high that §3 line 97 documents (HARNESS-REVIEW-2026-11-01 line 8; KNOWLEDGE-STORE-DESIGN §12.2, §12.5, §12.6 and §12.8; this addendum), and (b) the per-PR reviewer, whose effort SHIP-PLAN §0 line 51 leaves unspecified. O-01 and the P0/P1 skeptics stay at xhigh. The stated evidence is reworded. The external data is one campaign per setting. The chart footnote (C1925) says each medium/xhigh pair ran at a different date and on a different agent version, so neither the… | The first-pass measurement still stands: at least 30 blind pairs with the same brief and the same input hash. Medium's agreement with the final adjudication must be at least the incumbent's minus 1. No medium verdict may flip a final skip or refuted outcome to adopt or trial, and medium may miss no CONFIRMED defect. Medium's tokens must be at most 0.6x the incumbent's. Three additions: (1) Both arms of each pair… | The disposition and scope stand. The author narrowing the claim to Opus (C2064, C1907) and the confound in the chart footnote (C1925) change the stated evidence and justify pairing on the same build plus a pass rule per model id and per incumbent effort. The harness files show that review-workflow verifiers run at… | C1907:contradicts, C1908:supports, C1910:supports, C1925:contradicts, C1926:supports, C2063:supports +3 |
+| **G1-F156** | skip | Skip. C1479 was only the chapter title "Ralph's Refactoring Experiment" (24:45) from the Matt Pocock livestream of 2026-01-16. C2188 is the transcript of that same chapter, so the results are now shown. A 30-minute Claude interview and 30 minutes with a front-end engineer produced about 25-27 React style rules. A Ralph loop on a cloud VM then ran for about 6 hours and made 20 commits and a PR of about 20,000 lines, some of it plan files. Those numbers measure output volume and setup time, not quality. The outcome comes from the same livestream (C2189, filed under G4-F105/G3-F063) and is negative: the PR was never merged, and two days later it had about 100 merge conflicts. Dex's own lesson… | Nothing more is needed for this family, because its author reports that the experiment failed to merge. A loop could only be reopened by a measurement of phase-sized PRs produced by a loop: merge rate, reviewer findings per PR, and reverts, compared with hand-run phases. That question belongs to G3-F056 (nightly small-PR runs) and G4-F105 (PR size cap), not here. | C2188 transcribes the chapter that C1479 only titled, so "outline entry with no results" is now out of date. The results are volume only, and the same run's outcome (C2189: never merged, about 100 conflicts) supports the skip. | C2188:supports |
+| **G4-F010** | skip | Slop-rule detectors flag most code for every model. The July and August reports put it at 79-98% of lines. The October campaigns put it at 77.75-94.25% SLOC-weighted coverage (28 matched problems, one run each), and the author labels that figure "heuristic coverage, not a defective-code percentage". Part of the reason is that a hit at function level counts every line of the function. The detectors can rank models scored on the same rule set, but they give no absolute bad-code verdict. The author also says many rules date from March and may miss newer models' patterns, which weakens comparisons across model generations too. No slop gate is built here. | Nothing needs settling for FixFlow. This is a skip with no trial, and it only comes back if the owner ever proposes a slop or complexity gate. Testing the wording itself would take one coverage definition, re-run on a refreshed rule set with repeated seeds and scored against a reviewed human-code baseline, as G4-F136 did for the July rules. That would show whether the high coverage is over-aggression or real… | The skip stands, but the range has to be corrected because 77.75% (C1932) and the first pass's own 79% fall below "80-98%". The wording also gets the author's coverage-not-defect label and his staleness caveat, which weakens comparisons across model generations rather than inflating the figure. | C1932:supports, C2031:supports, C2076:supports, C2078:supports |
+| **G1-F099** | already-done | Already done, narrowed to the artifact half: nothing that matters should live only in the context window (C1947). The harness keeps phase state in the repo and the draft PR body: HR-C1 (one phase per new session) and HR-C2 (`Plan @ <sha>` as line 1, plus the "Decisions / ruled out / owner corrections" journal appended the moment an entry occurs, SHIP-PLAN §0 lines 31-43). The harness never practised the "skip built-in compaction" half, and its main author has now softened it rather than withdrawn it. C1959 (anecdotal, no numbers) says compaction is much better and clearing is often unnecessary "for certain things", though externalising state stays useful for handoff. In the same post he… | There is no new measurement, because C1959 reports none. Plan-level resume is settled by P1's cold-resume trial as written. The journal half, which says mid-phase decisions survive compaction through the PR body, is settled the first time a phase session compacts mid-phase. At that point, run a §6-style audit of the transcript: list what the summary dropped or misstated, and check whether each item was already in… | Dex has softened the "skip compaction" half (C1959), which justifies narrowing the wording, but the disposition does not move: the harness already keeps state in artifacts and never skipped compaction (HR-C3), and its own n=2 audit still found summaries lossy. | C1947:supports, C1959:updates |
+| **G1-F165** | already-done | Already done. The claim's author has narrowed it but not withdrawn it. In C1959 (2026-11-07, anecdotal, no numbers) he says compaction is much better, so "for certain things" explicit clearing is no longer needed. He keeps externalised context for human collaboration and for handoff between agents or machines. C1958 is cost reasoning about when idle compaction should fire (before the prompt cache expires). It says nothing about what a summary keeps, and its quote ("after 24h") does not match its paraphrase (about 1h). The surviving form: built-in compaction is an acceptable fallback, but state that a later session or a reviewer must resume from should not live only in a compaction summary.… | No new tooling or measurement is needed. The existing triggers decide it. The first phase session that compacts mid-phase (the HR-C5 trigger) should be audited as in HR §6. Compare the compaction summary against the PR-body decisions journal and the first unticked checklist box. Count decisions, owner corrections or open loops that the summary dropped and only the journal held. Count also whether the resume needed… | C1959 is a same-author change of position, which earns a wording update. It narrows the claim and does not withdraw it, and the harness (HR-C1/C2/C3 and its own n=2 audit) already sits at the narrowed position. | C1958:contradicts, C1959:updates |
+| **G2-F135** | already-done | Narrowed to "humans review the design and the plan". Review effort pays off most before any code is written. The research document has become a model-to-model hand-off: the author says he rarely reads it now, but he still reads the design discussion and answers its questions (C2145, same-author update, anecdotal). The harness already does the narrowed form. The owner's effort goes to plan-level material: the plan critiques, the "Decisions / ruled out / owner corrections" journal under "Plan @ <sha>", and the one-page OWNER-VIEW.md derived from the plan. Research and discovery output is checked by models instead of read by the owner: Sonnet citation checks and capped Opus fresh-context… | The disposition needs nothing more; it stays already-done either way. Two things would firm up or undo the narrowing: - A same-author statement telling others not to read research would firm it up. A statement restoring human research reading for alignment would undo it. - For the harness, after the first ship-plan phases run, a count of Opus-reviewer findings and post-merge defects that trace back to discovery or… | Same disposition, narrower wording: the author's own update (C2145) drops the "humans review research" half that the harness never did. The 3x multipliers in C2147 are asserted, not measured. | C2145:updates, C2147:supports |
+| **G4-F019** | already-done | Already done (unchanged). The harness never uses a pass count as its success signal. CI runs every suite on every PR: web `npm test`, mobile Jest, and backend `pytest` including the real-DB integration tests (.github/workflows/ci.yml lines 41, 71, 138). A code phase is not done until the gates are green locally and on CI. For each register id, the Opus reviewer names the test that fails on the base commit and passes on head. It also lists every changed expected value, every removed assertion and every new skip or xfail (SHIP-PLAN §0, Routing and Gates). Evidence is now measured on one seed, but only for the claim's "outcomes over time" part. That evidence is C1931, whose primary family is… | Whether the existing mechanism covers the "outcomes over time" part: across the phase PRs after P1, count regressions in an earlier phase's behaviour that are found after merge and that the full CI suite at the merged head did not catch. Zero keeps already-done. Any escape reopens this family as a verifier gap: a missing regression test or reviewer item, not a benchmark. For C1931 to count as more than one seed, a… | C1931 adds one-seed measured support for the "outcomes over time" part only (the same measurement as G4-F021), so the "no data" label is updated. The disposition, the existing mechanism and the lack of any new action are unchanged, and both reviewers' extra claims fail verification. | C1931:supports, C1944:supports |
+
+#### A change was proposed and the refuter rejected it: 13 families
+
+| Family | Disposition (unchanged) | Claim | Why the first pass stands |
+| --- | --- | --- | --- |
+| **G4-F022** | adopt | Single-run benchmark differences (including medium vs xhigh) cannot separate effort from run-to-run variance; treat 1-4 strict-pass gaps as noise unless repeated,… | The new cards restate caveats and data the first pass already had (C0252, C0254). C1925's date and agent-version confound is already covered by the adopted F025(b) same-window rule and the F023 same-inputs rule. No published F022 wording is factually wrong, so the default holds. |
+| **G1-F098** | trial | A monolithic multi-step prompt of 50-85 instructions had steps skipped about half the time; splitting it into prompts under 40 instructions each fixed the skipping. | The new cards are more anecdotes and assertions with no rate after the split. The count drift (50-100 and about 50) sits inside the claim's 50-85 range and touches nothing the refutation rested on. The control-flow reading was already the first-pass confound and is already G2-F041's ground. D01-A's remedy would lower G2-F041's… |
+| **G1-F157** | trial | Loading many MCP servers/tool definitions eats the context budget (measured about 5.7k tokens for one MCP), so tool surface should be chosen per need. | C2183 is an untested assertion, and Dex hedges it in the same talk (C2182). It concerns custom MCPs, which this harness does not use, and it agrees with the first pass's own observation that MCP tools are deferred. It adds no new kind of evidence, withdraws nothing the narrowing rested on, and makes no first-pass wording wrong. |
+| **G5-F024** | trial | Prompt-injection risk is the lethal trifecta (untrusted content, private data, external communication); removing any one leg (cut prod DB access, network sandbox,… | C1936 is a harness guardrail of a kind the refuter already counted, and it cuts no leg. C1957 is a recalled opinion with no numbers. No measurement, no change by the author, and no first-pass wording made wrong, so the narrowed trial stands as written. |
+| **G1-F061** | skip | Repeat the most important instruction at both the start and the end of a prompt. | C2128 is older than the first-pass card (March vs April 2026), adds only anecdote of the same kind, and criticises the UX rather than withdrawing any claim. The first-pass skip and its wording are still accurate. At most, C2128 can be cited as support. |
+| **G1-F080** | skip | The dumb zone begins around 100,000 tokens for Claude; HumanLayer's context warning moved from 40% to a flat 100k. | C1994 and C1960 are anecdotal statements by the same author that only strengthen the withdrawal the refutation already cited. They bring no measurement and do not make the first-pass wording wrong, so the skip and its wording stand. |
+| **G4-F012** | skip | A deterministic complexity/duplication script (cyclomatic max, clone %) could serve as a backpressure gate; models differ sharply in function count and complexity growth. | C2081 is a relayed, numberless endorsement of a mechanism its own experiment did not test, and the same episode (C2079) reaffirms the gameability the skip rests on, so the bar for a change is not met. |
+| **G4-F018** | skip | A trustworthy maintainability benchmark feeds a model features one at a time from a hidden roadmap (about 20) and scores how the codebase evolves;… | The new cards are model scores and a design that is still being built; the first pass already had both. Neither measures the claim's design comparison, the author has not changed the claim, and the out-of-scope reason plus the deliberate M00–M06 skip are unchanged. |
+| **G4-F035** | skip | Cost is a weak predictor of outcome across models: the priciest configuration did not lead and ~5-8x spend bought ~2 points or fewer strict passes. | The new cards restate measurements the first pass already had (C0253, C0252), add one detail that strengthens the claim (Fable unmetered), and the one contradiction (C2066) is spoken with no numbers and refuted by the author's own chart. The claim is not withdrawn and the wording is not wrong, so it stays as background for F034. |
+| **G4-F037** | skip | Higher effort can buy cleaner code while lower effort buys more passes: Opus 5.5 XHigh left far less slop-flagged code than Medium despite fewer strict passes, so route… | The filtered 92.90%, the loose '5x' and the stale rules were all already in first-pass card C0258. The only new data, the cross-model pairs, narrows the effect to Opus and favours skip. xhigh in the harness is used only for verifiers. |
+| **G4-F197** | skip | Do not read 1,000-2,000 line implementation plans (a plan is as long as the code and duplicates code review); review the short design discussion and outline, spot-check… | C2116 and C2143 repeat the Dex position the first pass already had (C1451, C1336, C1320), at the same anecdotal tier. C2116 predates C1451, so it is not a retraction. Neither touches Vaibhav's dissent or the harness match, so the skip and its wording stand. |
+| **G1-F081** | already-done | The dumb-zone threshold has risen and experts regularly go well past it (200-400k); it is a guideline for newcomers, not a hard limit, so tier the rule by task. | The new cards are the same author restating the family's own 200-400k, "training wheels" claim with no measurement, which first-pass card C0903 already carried. D05-A's rewording adds two errors: no card withdraws the 50-60k figure for hard problems, and the Opus 400000 entry does not apply to Fable phase sessions. |
+| **G4-F143** | already-done | AI review agents and review bots are unproven against slop and mostly add noise (a model always finds something to say); AI reviewing AI is not the answer, and an extra… | C2099 is the same kind of evidence (asserted), predates the July C0901 that restates the claim, and does not touch the first-pass reason, which rests on the harness. Its advice to have an AI reviewer in the PR flow is already met by the per-PR Opus reviewer (ship plan §0), so already-done and its wording stand. |
+
+#### Both lenses said nothing changes: 43 families
+
+G3-F117 (adopt), G4-F023 (adopt), G4-F025 (adopt), G1-F016 (trial), G1-F042 (trial), G1-F048 (trial), G1-F069 (trial), G2-F041 (trial), G2-F066 (trial), G2-F114 (trial), G2-F115 (trial), G3-F029 (trial), G4-F008 (trial), G4-F017 (trial), G4-F068 (trial), G4-F140 (trial), G4-F152 (trial), G4-F185 (trial), G4-F225 (trial), G4-F228 (trial), G1-F038 (skip), G1-F079 (skip), G1-F128 (skip), G1-F187 (skip), G3-F003 (skip), G3-F037 (skip), G3-F072 (skip), G4-F011 (skip), G4-F013 (skip), G4-F036 (skip), G4-F184 (skip), G1-F026 (already-done), G1-F188 (already-done), G2-F007 (already-done), G2-F093 (already-done), G3-F066 (already-done), G4-F014 (already-done), G4-F015 (already-done), G4-F020 (already-done), G4-F021 (already-done), G4-F093 (already-done), G4-F094 (already-done), G4-F101 (already-done).
+
+#### The 16 families the first pass left over the refuter cap
+
+| Family | Bears on | Claim | Refuter | Now | One line |
+| --- | --- | --- | --- | --- | --- |
+| **G2-F028** | W2, L3 | A Stop hook that runs the same quality/typecheck commands as CI and exits 2 with only the errors on failure stops the agent finishing with a red tree; hook scripts are… | refuted | **skip** | This reopens the pre-commit-hook skip, whose reason ("CI gates the PRs", plus §0's CI-green done rule) still holds. Backend gates run in Docker for minutes, against the source's own seconds precondition. Fable never implements, so a Stop hook would gate the wrong actor. |
+| **G2-F168** | W3, W5 | Worktree creation is a fixed scripted checklist (copy env and settings, make setup, then launch one implement command), and dev environments must not touch shared state. | refuted | **skip** | There is no untracked env to copy, and the shared-state guard plus a per-phase worktree checklist already exist (Appendix A, SHIP-PLAN:28-30, fixflow-repo-conventions §1.5/§2), so the evidence is an anecdote from an unrelated daemon setup. |
+| **G2-F179** | W2, W3 | Generate document provenance by script (metadata frontmatter with git commit and branch, never placeholders) and cite with commit-pinned permalinks; pre-approve only… | refuted | **already-done** | The evidence is one asserted template. Commit-pinned provenance already exists: Plan @ sha, the head-SHA-bound verdict, sha256 manifests, the citation check, and KS mainline-only refs. Pinning branch shas conflicts with squash-merge, and the only residual check is already G2-F118's trial. |
+| **G4-F002** | L2, L3 | CLAUDE.md should name the noisy raw commands as off-limits and pair each with its quiet wrapper, so the guard is a named alternative rather than a bare prohibition. | refuted | **skip** | There is no quiet wrapper to pair with (F001 is already-done through the §4.3 and Appendix A logging). The agents that run gates already follow that rule, and this repo has no source of warning floods. A CLAUDE.md ban would also contradict its own Commands section and add lines against W1. |
+| **G4-F005** | W1, W2, L3 | Provide a single named aggregate check command (typecheck, format, tests, often in parallel) as the one pre-handoff gate that the routine and any hook both call. | refuted | **already-done** | Named exit-coded gates already exist per runtime (Appendix A for the backend, the CLAUDE.md chains for web and mobile, which match CI), the hook consumer is a skip that still holds, and a cross-runtime aggregate does not fit a backend gated in Docker on Windows. |
+| **G4-F058** | W2, L3 | Track per-PR rework rate (share of diff changed after review; under 5% is the quality bar) as a harness health metric. | refuted | **skip** | The 5% bar is an unmeasured rule of thumb about how much reviewing humans can handle. In this routine a post-review diff means the reviewer is working, the proposed git measurement is broken by squash merges, and the useful signal is already covered by §0's verdict-SHA re-read and G4-F081's review-round count. |
+| **G4-F060** | L1, L2, W2 | Attribute token spend and cost per stage, agent and model, and compute dollars afterwards from recorded token counts at pinned rates; use tokens per solve as a… | refuted | **skip** | The evidence is marketing, one anecdote and a hypothesis. Standing attribution reopens the M00–M06 skip, whose reason still holds. Per-agent, per-stage and per-model token data is already recorded in workflow subagent transcripts, and F032/F034 already include the only cost arm worth having. |
+| **G4-F125** | L3 | Run dead-code ('deslop' unused-export) checks as backpressure against agent-added unused code, with documented exceptions. | narrowed | **trial** | Mobile parity only, no new tooling. Run `npx tsc --noEmit --noUnusedLocals` once in technician-app on main. tsc is already a devDependency, so nothing is installed. If it reports at least one real unused import or local, add `"noUnusedLocals": true` to technician-app/tsconfig.json so the existing `npm run typecheck` CI step enforces it, landing beside P5b-2's dependency-cruiser rules. Leave noUnusedParameters off,… |
+| **G4-F147** | L3, W2 | Use the model only for binary yes/no classifications about the artifact and compute the score deterministically in code; never ask for a holistic 1-100 or 1-10 score. | refuted | **already-done** | The harness already uses enum verdicts that the script rolls up into buckets, and per-id fail-before/pass-after facts. No holistic score exists to remove, and the claim is asserted without numbers. |
+| **G4-F154** | L3, W2, W3 | Give each phase a cheap human-checkable proof of correctness (a curl, a black-box integration test, a one-off main) so the human can verify without reading all the logic. | refuted | **already-done** | The evidence is asserted only. Per-phase Done-when checks, CI green on the PR and per-register-id fail-before/pass-after tests already give a cheap check that sits outside the agent's own report. The owner-runnable re-run adds nothing measurable. |
+| **G4-F156** | L3, L1, L2 | Tier verification by cost and risk: run a relevant subset per phase (not the whole 5+ minute suite each session), use cheap proxies first, checkpoint every 200-400… | refuted | **skip** | Refuted: the full gates at close already exist, the stop-hook failure behind C1255 has no counterpart in a hook-less, one-phase-per-session harness, and with python running only in Docker the per-run setup cost does not shrink with a test subset. All three cards are anecdotal or asserted, with no measurement. |
+| **G4-F182** | L1, L2 | Judge a model by loop or goal outcomes and corrections needed per conversation, not one-shot answers; cutting corrections from five to two roughly doubles effectiveness. | refuted | **skip** | The evidence is illustrative only, with no new cards. Owner corrections are already journalled (ship plan §0) and already tallied by the G1-F159 and G2-F180 trials, the "not one-shot" point is already part of the F181 effort trial, and corrections land on Fable rather than on a routing tier, so they cannot be used to judge the models. |
+| **G4-F183** | L1, L2, L3, W3, W5 | Durable skill is re-evaluating on each new model/harness release: production-grounded evals survive models, so vary one dimension at a time, test each new model on your… | refuted | **skip** | The re-run on every release is the standing re-run already refuted in G4-F181 and the skipped M00-M06 pipeline under another name. The useful parts (own-case fixtures, one change at a time) already live in the F181 trial and top trial 1, and the new cards report no measurements. |
+| **G4-F199** | L1, L2, L3, W3 | Scale process weight to task size and calibrate by reps: a one-line change or button colour needs only a prompt, small issues may skip research, and plan time has… | refuted | **skip** | The evidence is anecdotal, and three sibling families (G2-F157 skip, G2-F069 already-done, G4-F053 skip) already decided this. ORCHESTRATION §3 and ship plan §0 already scale the work, and G2-F157's revisit after P1-P3 already holds the only measurement worth running. |
+| **G4-F210** | L2, L3, W3, W5 | Control-loop flow limits: bound work in progress to one open PR per loop, restrict the actuator to safe directories with batch caps, and widen frequency or batch only… | refuted | **already-done** | The evidence is only asserted. The loop-actuator, batch and frequency parts have no target here because there are no scheduled agent loops. The WIP and batch bounds that do apply already exist (§0 Sessions/Resume, Entry gating, OWNER-VIEW, the ORCHESTRATION caps). The only new piece, an owner-review cap, would cut across parallelism the plan allows on purpose, and PR history can check it later at no cost. |
+| **G4-F224** | L3, W4 | Let CI and a review bot drive fresh follow-up fix agents per failure stage instead of running the full suite in the agent's sandbox (test wait fell from 15-20 minutes… | refuted | **skip** | FixFlow's CI already runs the full suite in about 3 minutes, and the draft-PR, CI and reviewer parts already exist in ship plan §0. Dropping the local run would leave `release/drain` with no gate, since CI never runs on it. |
+
+#### New families (claims no first-pass family covers): 23
+
+| Family | Bears on | Claim | A · B (e/t/n/b/c) | Now | One line | Cards |
+| --- | --- | --- | --- | --- | --- | --- |
+| **N-F001** | L3 | Part II of the SlopCodeBench work and a swyx/AI Engineer slop-definition piece are forthcoming, so slop-metric findings should be held until they land. | 0/1/1/1/3 skip · 0/1/1/0/3 skip | **skip** (both lenses) | This is a pointer to content that does not exist yet, so there is nothing to adopt. 'Hold findings until X lands' is a watch-list entry, not a harness change. The first pass's slop-metric families are already weighted by what… | C1924, C1983 |
+| **N-F002** | L3, W2 | Verifier scanner policy should treat unmeasured output as failure: missing scans never count as clean. | 1/3/0/2/3 already-done · 1/3/0/1/3 already-done | **already-done** (both lenses) | The source is a chart-footnote policy, not a measurement. The harness already treats unmeasured as failed: the skip-aware gate is adopted, and CLAUDE.md states the same principle twice for runtime code. Nothing new is left to… | C1935 |
+| **N-F003** | W4, W2 | Claude Code now labels a subagent's final report as model output with no user authority, a harness-level defence against injection via hand-back. | 2/3/0/1/3 already-done · 2/3/0/1/3 already-done | **already-done** (both lenses) | This is a platform behaviour the harness gets for free. It is visible in this very subagent's framing, so we have nothing to build or install. At most, a brief can repeat it, but Claude Code already does that at platform level. | C1936 |
+| **N-F004** | none | A learned scoring model used as a RAG reranker is a sensible retrieval design. | 0/1/1/0/2 skip · 0/1/2/0/2 skip | **skip** (both lenses) | An endorsement of an article nobody read, which bears on no weakness. The store is unbuilt, and its lookups are deterministic by design. A learned reranker would add a model dependency to a component whose value is that it can… | C1941 |
+| **N-F005** | L3, W5 | Key terms (software factory, forge, spec-driven dev, harness engineering) are shifting or being diluted, so earlier factory guidance may be superseded and terms should be defined before… | 1/1/1/1/3 skip · 0/1/1/0/3 skip | **skip** (both lenses) | These are vocabulary and positioning posts. The only actionable reading is 'first-pass factory-essay families may be dated'. That is a caveat for the adjudicator on those families, not a new idea. Define-before-adopt is already… | C1949, C1977, C2171 |
+| **N-F006** | W1, W3 | Docs remain a primary source for agents when code is closed, so the humans-versus-agents codebase split is a false framing. | 0/1/1/0/3 skip · 0/1/0/0/3 skip | **skip** (both lenses) | This is an opinion about framing whose premise (closed code) does not hold here. It does not move the gated W1 trim decision in either direction. | C1965 |
+| **N-F007** | L3 | Apparently novel model behaviour is likely recombination of techniques already in the weights, so sandbox and permission assumptions should not rely on models not knowing such techniques. | 1/2/1/1/2 skip · 1/1/1/0/3 skip | **skip** (both lenses) | Commentary on someone else's sandbox anecdote. The harness never relies on models not knowing techniques, so the lesson has no foothold. It suggests no concrete permission change for a one-developer repository. | C1979 |
+| **N-F008** | W4 | More skill packs, not more tooling, is what is needed. | 0/2/0/1/3 already-done · 0/2/0/0/3 already-done | **already-done** (both lenses) | One line and an unseen photo, possibly ironic, so it carries no evidence. Whatever it means, the harness is already adding skill packs, so it changes nothing. | C1982 |
+| **N-F009** | W5, L2, L3 | A talk combining 12-factor agents with software factories is due around 2026-11-12 and is a source to read once published. | 0/1/1/1/3 skip · 0/1/1/0/3 skip | **skip** (both lenses) | This is a talk announcement with no content. You cannot adopt or trial a title. | C1984 |
+| **N-F010** | W3, W4 | HumanLayer has been open-sourced and is joining Factory, so HumanLayer-based tooling will migrate to Factory, a dependence risk for borrowing its RPI skills or repo. | 1/2/1/1/3 already-done · 1/1/1/1/3 skip | **skip** (weaker of the two) | The dependence risk only exists if something is taken as a dependency, and nothing is. As a caveat it belongs on any first-pass family that proposed borrowing HumanLayer code: pin and copy, never depend. It is not a family to… | C1986, C1987 |
+| **N-F011** | none | Enterprises should move fast without giving up control or taste, accepting a small chance of missing upside. | 0/0/0/0/3 skip · 0/0/0/0/3 skip | **skip** (both lenses) | Enterprise positioning advice that bears on no weakness and changes nothing for a one-developer money-handling repository. | C2014 |
+| **N-F012** | none | The durable moat is understanding the customer problem better than anyone, which lets you context-engineer better than competitors. | 0/1/0/0/3 skip · 0/0/0/0/3 skip | **skip** (both lenses) | A business-strategy opinion with no harness mechanism. | C2015 |
+| **N-F013** | L1 | Some enterprise teams ban the most expensive model by default and require a per-task request for temporary access as a spend control. | 1/1/1/1/2 skip · 1/0/1/0/2 skip | **skip** (both lenses) | An enterprise spend control built on per-team approval queues. With one developer, the requester and approver are the same person, so the gate is ceremony. Role-based tier routing already gives the intended default. | C2042 |
+| **N-F014** | L3 | For fast zero-to-one work thrown out every few months, tests are close to pointless now (an undeveloped aside). | 0/0/0/0/0 skip · 0/0/1/0/0 skip | **skip** (both lenses) | An undeveloped aside about throwaway zero-to-one code, contradicted by the same speaker's regression-test stance. FixFlow is a long-lived system with money invariants. Acting on this would remove the harness's main backpressure. | C2084 |
+| **N-F015** | W4 | Every engineer should hand-build an agent loop and read Claude Code/Codex source to understand sub-agents, cheap-model delegation and context recycling. | 0/1/1/1/1 skip · 0/1/1/0/1 skip | **skip** (both lenses) | Educational advice for engineers, not a harness change. The concrete techniques it names (subagents, cheap-model delegation) are already in use. Building an agent loop costs time and moves no weakness. | C2100 |
+| **N-F016** | W4, L3 | Slow, reliable agentic search (grep plus model) is preferable to optimised retrieval for codebase understanding. | 1/3/0/1/3 already-done · 1/3/0/1/3 already-done | **already-done** (both lenses) | A stated preference that matches what the harness already does. It is extra support for an existing skip, not new work. | C2136 |
+| **N-F017** | W3 | Design questions are better answered in a flat file (often by voice) than through the ask-user-question tool, since it is faster and lets you point at other code. | 1/2/1/1/3 already-done · 0/2/0/1/3 already-done | **already-done** (both lenses) | A personal preference whose substance (answer design questions in a file you can point from, not a transient tool prompt) is already the harness's habit through the PR-body journal and the owner-critique sections. | C2146 |
+| **N-F018** | W4, W5 | A worktree is only usable if one repo-defined setup script installs dependencies and copies untracked files, with automatic cleanup when setup fails. | 1/2/2/2/2 trial · 1/2/1/1/2 skip | **skip** (refuter) | Duplicate of G2-F168, and the evidence is one anecdote. Docker Appendix A and the B=worktree rule already cover the backend. There are no untracked env files to copy, and P1 wants a cleaned environment anyway. The desktop app… | C2203 |
+| **N-F019** | W5 | Worktrees are optional and should be adopted only where parallel work exists. | 1/2/0/1/3 already-done · 0/2/0/0/3 skip | **skip** (weaker of the two) | A personal preference that confirms current practice and suggests no change. | C2206 |
+| **N-F020** | W2, W5 | One Claude can monitor another agent's terminal through tmux, giving an outside-observer check of worker state. | 1/0/1/1/2 skip · 1/1/2/1/2 trial | **skip** (refuter) | tmux is absent on this machine and phase sessions are not tmux panes. The real idea, an outside observer of routine compliance, is already the first pass's transcript-tally trial (G2-F183/F023/F074, main doc :73), and G2-F186… | C2208 |
+| **N-F021** | W5 | A branch can be checked out in only one worktree at a time, enforcing a one-branch-one-directory layout. | 3/3/0/0/3 already-done · 2/3/0/0/3 already-done | **already-done** (both lenses) | A fact about git, not a practice to adopt. The layout it enforces is the one already in use. | C2209 |
+| **N-F022** | W5 | Dex declined worktree support in CodeLayer because users already know Git (a dated position later reversed in the product). | 1/0/0/0/3 skip · 0/0/0/0/3 skip | **skip** (both lenses) | A dated product-prioritisation statement that the product later reversed (release 0.201.0 added worktrees). It has no bearing on this harness. At most it is a staleness flag for the adjudicator on any first-pass family that… | C2211 |
+| **N-F023** | L3 | Stage everything at each good review checkpoint so the diff shows only what the agent changed since the last reviewed state. | 1/2/1/1/3 already-done · 0/2/1/1/2 already-done | **already-done** (both lenses) | An anecdote that belongs to the co-host, with no numbers. SHA-bound review checkpoints already do the same job more robustly. Staging-as-checkpoint lives in a shared mutable index that a subagent's own git add or a stash in… | C2212 |
+
+Three things in these tables matter to the owner.
+
+- **The effort trial (G4-F034, L1) stands, and its evidence is weaker than the first pass wrote.**
+  The chart's own footnote says each medium and xhigh pair ran on a different date and agent
+  version, so the gap isolates nothing; the author now reads the result as specific to Opus (he
+  writes that Astra and Sol do better at xhigh, though his chart shows that only for Astra); and
+  the live breakdown adds no repeat runs. The refuter also found that this harness's
+  review-workflow verifiers run at xhigh in practice while the tier guide documents high, and that
+  the plan leaves the per-PR reviewer's effort unstated. The trial keeps its 30 blind pairs and
+  gains two conditions: both arms of a pair run on the same build, and the pass rule is applied
+  per model id and per incumbent effort level.
+- **The compaction position moved toward this harness.** On 7 November he wrote that compaction
+  is good enough that he no longer clears context for the model's sake, that he auto-compacts at
+  400k and compacts by hand between 200k and 400k, and that externalising state is still worth it
+  for hand-off. The two families that record his earlier "skip built-in compaction" rule were
+  already "already done" here in their artifact half (state in the repo and the PR body, idle
+  compaction left on); their wording is amended, not their disposition. The 40 % context trial
+  (G1-F159) keeps its form with the counting method corrected: per-call context is input plus
+  cache-creation plus cache-read tokens, not the on-screen percentage.
+- **Nothing he published since September reopens a skip.** The posts on personas, on sub-agent
+  nesting, on per-directory summaries and on the term "software factory" all attached to families
+  the harness already satisfies (§4.4).
+
+### 4.4 The five posts the note flagged, traced
+
+| Date | Post | Card → family | Outcome |
+| --- | --- | --- | --- |
+| 2026-11-07 | Compaction is good enough now; auto-compact at 400k, manual between 200k and 400k; externalise for hand-off; no reason to nest sub-agents past three levels | C1959 → G1-F165 and G1-F099 (updates); C1960, C1961, C1963 → G1-F081; C1962 → G1-F117 | G1-F165 and G1-F099 amended in wording, both still already-done; G1-F081 stands (the family already recorded 200–400k and "training wheels"); G1-F117 (cap nesting at three) already done: this orchestration is two levels deep |
+| 2026-10-30 | A per-directory summary is justified only if it is faster and no worse, watched by codebase-specific evals; otherwise read the source | C1964 → G1-F185 and G1-F131 (supports); C1965 → new family N-F006 | G1-F185 already done (pointers to authoritative code, not persistent summaries); N-F006 skipped. The runtime-scoped `CLAUDE.md` trial (G1-F022) is untouched: it moves rules, not summaries |
+| 2026-11-06 | "Software factory" is being diluted; the pre-AI sense is still useful; linters, tests and previews are too particular to each stack for a drop-in product | C1977 → N-F005; C1978 → G3-F096 (supports) | N-F005 skipped (vocabulary); G3-F096 already done (the harness is repo-held files) |
+| 2026-10-12 | Prompts, skills and roles are fine as procedures the weights lack; naming agents or casting them as "adversaries" is playing house | C1955 → G3-F001 (supports), G3-F003 | G3-F001 already done (sub-agents for context control, not personas); G3-F003 (role-persona files) stays skipped |
+| 2026-10-25 | Sub-agents are good for code research and sequential sub-context work; most other use is role-play | C1968 → G3-F001 (supports) | as above |
+
+One note from the main session on the 12 October post, since it touches how this very review was
+run: the refuters here are defined by a procedure (fresh context, a stated burden of evidence, a
+default verdict), which is his "procedure the weights lack" case, and no reviewer read the post as
+bearing on them. Whether the default-refuted framing itself earns its cost is what the effort and
+shadow-pair trial (G4-F034) would show for the verifier stage; the post is an assertion, not a
+measurement, and changes nothing by itself.
+
+### 4.5 What this machine can do about access (the owner's question)
+
+The machine: Ryzen 9 7900X (24 threads), 31 GB RAM, RTX 5070 with 12 GB, 276 GB free, Docker
+Desktop on WSL 2 (the only distribution is Docker's own), `uv`, no ffmpeg or yt-dlp installed,
+Cloudflare WARP installed and disconnected. What worked, in order of how much it unlocked:
+
+1. **Local speech-to-text on the GPU removes the dependence on YouTube captions and on publisher
+   transcripts.** YouTube's caption endpoint still answered HTTP 429 from this address five days
+   after the first pass; listing formats and downloading the audio-only stream worked throughout.
+   Nine recordings (6 to 43 MB each, 172 MB in all, about 7 hours) were transcribed with
+   faster-whisper `distil-large-v3` through an ephemeral `uv run` environment at 19 to 45 times
+   real time: about 12 minutes of GPU time for everything. On the CPU, with other sessions' test
+   runs loading it, the same model ran at 2.7 times real time. Nothing was installed system-wide.
+   What it left on disk: over 1 GB of Python wheels in `uv`'s cache (mostly the two CUDA
+   libraries), the 1.5 GB model under `~/.cache/huggingface`, and the audio in this session's
+   scratch folder;
+   `uv cache clean` and deleting the model folder remove them. Two snags, both in
+   `tools/asr.py.txt`: the newest PyAV rejects an argument the wrapper passes (the script decodes
+   audio itself), and `uv` failed to install a second Python (the installed 3.13 was used; the
+   partial 3.12 the failed attempt left was removed).
+2. **Podcast RSS feeds carry transcripts more often than the show pages suggest.** Tessl's feed
+   had the full transcript in four formats while its site exposed nine minutes; Build Wiz had an
+   SRT (and turned out to be an AI-generated recap of the AI Tinkerers episode, not Dex speaking).
+   Where the feed has none, the enclosure is an MP3 any machine can fetch (Beyond Coding).
+3. **The X timeline is readable without X.** The fxtwitter profile-timeline endpoint pages
+   through a user's posts; the first pass only knew the single-status endpoint. It returns head
+   posts and self-replies. Replies under a post, and most of his replies to other people, are not
+   in it.
+4. **Charts are readable as images.** The seven SlopCodeBench charts were given to a reader as
+   PNGs; the per-effort numbers and the footnote that undercuts the effort comparison came from
+   them.
+
+What a Linux distribution would and would not change: the caption block is on the network
+address, which WSL and Docker containers share with Windows, so a distribution adds nothing for
+access. It would make ffmpeg-based work easy (cutting a keynote out of a seven-hour stream,
+pulling slide frames from a talk for an image read), which was not needed here because the audio
+decoder runs in-process and the keynote had its own upload. Changing the address is what WARP
+would do; that is a network setting on the owner's machine, so it was left alone, and it stopped
+mattering once transcription worked. A cloud session is the "fresh machine" the note mentions;
+YouTube tends to refuse datacentre ranges, so local transcription is the more dependable route.
+
+Other bottlenecks met, and what removed them: the Bash tool collapses doubled backslashes inside
+heredocs, which broke two regular expressions in the first pass and cost its review run a wasted
+first attempt, so every script this round was written with the file-writing tool; Workflow scripts
+cannot read files, so they are given paths and the agents read; and with other sessions running
+test suites on all cores, GPU work was the one thing not slowed.
+
+### 4.6 Still unread after the addendum
+
+- **The North America talk of 22 October** (no recording, slides or write-up exists that these
+  tools can find). Family N-F009 records a further talk he announced for about 12 November,
+  "Twelve Factor Factories: Design Patterns for Agentic Engineering"; that and any recording of the
+  verifiers talk are the next things to read.
+- **Reply threads on X**, and most of his replies to others; **LinkedIn**; the account-gated
+  **WeAreDevelopers** delivery; **slides and on-screen material** in every talk.
+- **AI That Works #79 and #80**: not in the show's repository and not on its channel; the 27
+  October slot appears to have become the SlopCodeBench breakdown, which was read. The 2025
+  **bash-versus-MCP** episode's audio refused to download (HTTP 403).
+- **Gabe Orlanski's Part II** of the October report is still unpublished (N-F001).
+- The **code.talks Hamburg** keynote of 4 November was not checked again for a recording.
+
+### 4.7 Provenance of the addendum
+
+| Stage | Workflow run | Agents | Model / effort | Tokens | Wall clock |
+| --- | --- | --- | --- | --- | --- |
+| Read and map, text sources | `wf_680c14a9-4a7` | 4 readers, 4 mappers | Sonnet low/medium; mappers medium | 0.86M | 2 min |
+| Read and map, transcribed audio | `wf_e6bb6562-8d7` | 5 readers, 5 mappers | the same | 1.17M | 2.5 min |
+| Re-adjudicate, refute | `wf_e94ba181-fbc` | 1 Sonnet grouper for the unmatched cards; 14 Opus reviewers (two lenses × 6 batches and the new families); 39 Opus refuters (23 on proposed changes, 16 on the over-cap families) | Sonnet medium; Opus high; refuters Opus xhigh | 4.89M | 10 min |
+
+Pre-review cards committed at `29fd4ed` before the review ran. The families were not
+re-clustered: the mappers were given the fixed index and told to use ids exactly as printed; two
+cards came back with ids that do not exist and were treated as unmatched. The first-pass files
+under `evidence/harness-ideas/horthy/` were not edited, apart from its README gaining a pointer to
+the addendum folder and `manifest.sha256` being regenerated to cover both. The main session
+fetched and transcribed the sources, wrote the briefs and the code, and wrote this section from the
+review outputs; it scored nothing.
 
 ---
 
