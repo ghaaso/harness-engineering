@@ -1,0 +1,36 @@
+VERDICT: PASS
+PR #202 at 61c1c3921bb026bc6443bea2225027fe064e0156
+Line 1 is the coordinator's, written for the merge gate under ruling C44 (see the end of this file). The reviewer's own verdict line read: PASS-WITH-FIXES, two minor, with the words "neither affects any client that exists today, so both could also be follow-ups if you rule so".
+Third pass (the delta `b2f5e7d..61c1c39` only) by the reviewer of the first two, restarted by the coordinator on 2026-11-14 at 02:38 after the desktop app's restart cut the first attempt. Reviewed on a fresh checkout merged with `main` b4b19af (local merge 102618b, no conflict). This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The full gate run is green: all seven gates exit 0 and 1410 tests pass with none skipped (the lane's 1402 plus 8 scheduler tests from main). Both second-pass findings are fixed.
+
+FINDINGS
+1. MINOR: a malformed `captured_at` still refuses the payment, against ruling C40. The field is parsed by the schema before the service sees it (`backend/app/features/jobs/schemas.py:166`, `captured_at: datetime | None = None`). Three values that cannot be parsed (`"not-a-date"`, `"2026-13-45T00:00:00Z"`, `10**20`) each got a 422 from Pydantic and no payment landed; a phone would park that cash. Nothing sends `captured_at` today: the installed app (`a31924a`), the phone code (`c5eadbd`) and the web on `main` send only `{amount_paisa, method, client_id}`. So this is latent, and the first client to send the field inherits it. Smallest fix: accept `captured_at` as a raw value, parse it in the service, treat a parse failure as "no claim", and add these three cases to the edge test.
+2. MINOR: the site test does not see a writer that uses a different spelling. It looks for exactly three forms: `JobEvent(`, `insert(JobEvent)`, and an `INSERT INTO job_event` string (`tests/test_event_payload_free_text_integration.py:66`, `:76`, `:84`). These passed unnoticed: `insert(JobEvent.__table__)`; an aliased import (`from ...models import JobEvent as _Ev`, then `_Ev(...)`); a quoted raw insert, `INSERT INTO "job_event"`. It scans only `app/` and `scripts/` (`:92`), so a migration that inserts into `job_event` is never checked. CLAUDE.md:178-182 names the three forms, so its claim is accurate but narrow. Fix: resolve import aliases and treat `JobEvent.__table__` as `JobEvent`; let the SQL pattern allow quotes and a `public.` prefix; or state these limits in the test's docstring.
+
+ANSWERS
+1. Second-pass finding 1 (the 500): fixed. `_claim_in_utc` (`service.py:882-895`) catches only `OverflowError`; `:2063` calls it only when the claim is not trusted. Seven claims and their replays each returned 200 (`0001-01-01T00:00:00+05:00`, `9999-12-31T23:00:00-05:00`, `0001-01-01T00:00:00+23:59`, naive `0001-01-01T00:00:00`, `9999-12-31T23:59:59.999999-23:59`, epoch `0`, `253402300799`). The rest of the payment path is safe: the trust-window comparison did not raise; `_aware` only attaches a zone; an in-window value is close to now; the payload holds a string. Leaving the claim out cannot hide one that should be kept. What remains is the schema-level 422 (finding 1).
+2. Second-pass finding 2 (the guard): fixed for every writer that exists today. Break B (`row.problem` in the GPS-punch payload) is now caught; a control writer with a plain `JobEvent(` in a new function is caught; the hiding writers were not (finding 2). Helpers are fine; customer messaging and the dispatcher are inside the scanned tree; the plain `close` is covered by `transition`'s one site, which has no `payload` argument.
+3. Second-pass finding 4 (the PR body): fixed. Line 1 is `Plan @ plan-v9.34`; Proof names `61c1c39` and 1402 tests; item 23 is present.
+4. The 4096 cap on `reason`: correct (`schemas.py:175`; "within the cap" in the schema comment, the service docstring and `CLAUDE.md:169`; a 4096-character reason on an open job is ignored and 4097 is a 422 with no payment written). It refuses no client that exists.
+5. Regression: none. The delta does not touch the migration, `models.py` or `repository.py`. Two set-style assertions in the guard test were replaced by a stronger per-writer loop; nothing was weakened. No skip or xfail. CLAUDE.md still says head 0047 and next slot 0048. R12, the replay rules and `job_payment.reason` pass in the full run.
+6. Full gate run on the clean tree of the head merged with b4b19af: gates 1-7 all `EXIT=0`, `SKIPS total=1410 skipped=0 integration_skipped=0`, `SUMMARY FAIL=0` (log `/c/Users/User/.fixflow-cache/gate-logs/p8a-rev/backend-20261114-023838`).
+
+BREAKS
+
+| Break | Caught? |
+|---|---|
+| B: `row.problem` in the GPS-punch payload | caught by the leak test |
+| G (control): new function with a plain `JobEvent(` | caught by the site test |
+| E: `insert(JobEvent.__table__)` with a free-text payload | not caught |
+| F: aliased `_Ev(...)` and quoted `INSERT INTO "job_event"` | not caught |
+
+UNVERIFIED. The PostgreSQL lock levels (cited only from FixFlow's own comments). CLEANUP. The dead containers from the cut pass and both review worktrees are removed; no `fixflow-p8a-rev-*` container remains; probe files kept in the coordinator's scratchpad, `p8a2/`.
+
+DEPLOY-TRAIN ROW (the reviewer's)
+| Phase | PR | Merge sha | Migration | Post-deploy check | Owner's check |
+|---|---|---|---|---|---|
+| P8a | #202 | (at merge) | 0047: four nullable columns on `job_payment` (`voided_at`, `voided_by`, `captured_at`, `reason`); FK `fk_job_payment_voided_by` validated; FK `fk_job_payment_recorded_by` NOT VALID until P13d | Read-only: `/api/ops/health` shows head 0047 and the deployed git sha. `SELECT column_name FROM information_schema.columns WHERE table_name='job_payment' AND column_name IN ('voided_at','voided_by','captured_at','reason')` returns 4 rows. `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'fk_job_payment_%_by'` shows `voided_by` true and `recorded_by` false. With a technician token, a payment on a closed job answers 409 ending `(current status: closed)`. | Review the next real void (who and when are stamped). Run `backend/scripts/backfill_payment_voided_at.py` as a dry run only and read its "not attributable" list before any `--apply`. Before P13d, run the orphan audit query from 0047's docstring on the host. |
+
+COORDINATOR, RULING C44 (2026-11-14). Three passes have each found less: five minor, four minor, two minor, and the last two cannot be reached by any client that exists (no client sends `captured_at`; no writer uses the spellings the site test misses). A fourth pass by the same reviewer would cost more than these two findings are worth before the merge. So the PR merges at 61c1c3921bb026bc6443bea2225027fe064e0156, and both findings become an immediate `[P8a] follow-up` by the same lane, reviewed by a fresh reviewer: `captured_at` is accepted as a raw value and a value that cannot be parsed is "no claim" (ruling C40 then holds for every input); the site test resolves aliases, `JobEvent.__table__`, quoted and schema-qualified SQL, and scans migrations, or says exactly what it does not see. The follow-up must be merged before any client sends `captured_at`, which means before the first P5 phase builds one.

@@ -4,14 +4,14 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-14. Do not
 
 ## Right now
 
-- Production is still dead: both old Railway addresses answer Railway's own 404. Eight phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P9-0a, P12a, L2); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-14)
+- Production is still dead: both old Railway addresses answer Railway's own 404. Nine phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P8a, P9-0a, P12a, L2); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-14)
 - Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. The drain tooling is built and reviewed and waits only for those two. 37 of 56 phases wait behind it.
 - Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-14)
 
 ## Phases by state
 
-- **done** (10): P0a-prep, P1, P2a, P3a, P12a, P6a, P7a, P9-0a, L1, L2
-- **running now** (4): P2b-2, P8a, L3, L4
+- **done** (11): P0a-prep, P1, P2a, P3a, P12a, P6a, P7a, P8a, P9-0a, L1, L2
+- **running now** (3): P2b-2, L3, L4
 - **starting next** (0): 
 - **waiting on you** (2): P0a, P2b-1
 - **held (may be built, may not merge yet)** (16): P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
@@ -54,7 +54,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-14. Do not
 | P7a | Who may do what, and money guards | B-jobs | A | done | P1 | - |
 | P7b-1 | Login, lock and session hardening | B-core | C | held (may be built, may not merge yet) | P7a, P3c, P4b, P5d-1a | every roster phone on app v2 or retired |
 | P7b-2 | Ops console, media, web deps, Cloudflare rules | O | B | not started | P7a, P3c | - |
-| P8a | Money integrity 1: void attribution, payloads | B-jobs | B | running now | P7a | - |
+| P8a | Money integrity 1: void attribution, payloads | B-jobs | B | done | P7a | - |
 | P8b | Money integrity 2: bill revisions, chain, daily check | B-jobs | C | not started | P8a | - |
 | P8b-2 | Money integrity 2, second half (only if the size hatch is taken) | B-jobs | later | not started | P8b | - |
 | P9-0a | Week-export script | B-tools | A | done | - | - |
