@@ -1,0 +1,52 @@
+VERDICT: PASS-WITH-FIXES
+PR #198 at 67a68ae9ae9284bab13745740513c1a8b221661d (I confirmed this is the current head; it is based on 15df06d)
+
+Note 1 is fixed. One major problem remains, the one you asked me to judge in 3a: the new 20 s timeout can leave a job page showing Rs 0 paid with nothing saying the payments didn't load.
+
+**Findings**
+
+1. MAJOR: the job page can show Rs 0 paid and the full balance, with no sign the payments failed to load.
+   - Evidence: `JobDetail.jsx:81`, `loadJobDetail(id).catch(() => {});`. The new 20 s abort (`AppContext.jsx`, `JOB_REREAD_TIMEOUT_MS`) applies to this first load too.
+   - Why: a list row has no payments, so the ledger reads as empty (`src/shared/lib/job.js:28-29`). But the list row does carry `bill_original_paisa`, so "Log Payment" is enabled (`JobDetail.jsx:525-528`, `hasBill(job)`). The form's default amount is the balance (`val = amount === "" ? balance : …`).
+   - Scenario: on a slow link the manager opens a job that was already paid Rs 2,000. The detail load is abandoned at 20 s. The page shows Rs 0 paid and Rs 2,000 due, with no error and no retry. The manager presses Log Payment, then Record, and a new Rs 2,000 entry lands under a fresh key. That is a wrong entry, not a replay, so the idempotency key can't catch it.
+   - Partly old, made worse here: `main` already shows this silent zero on a failed load (network error or 5xx) and while the load is in progress. Before this PR a slow load eventually arrived and corrected the page; now it never does.
+   - Applying the timeout to re-reads only would not fix the failed-load case.
+   - Smallest fix: mark whether a job's detail has loaded (for example `hasDetail` from `api.events !== undefined` in `mapApiJob`, the same test the late-list merge already uses). Until it has, the Cash & Revenue card shows "Payments not loaded — Retry" in place of paid and balance, and Log Payment is disabled. Add one test: the detail load times out, Log Payment is unavailable, and no Rs 0 appears.
+
+2. MINOR: `apiGet` lets a caller's options change the request method.
+   - Evidence: `src/shared/lib/api.js`, `{ ...init, headers: { ...authHeaders() } }`. Headers are protected, but `method` and `body` in `init` would pass through.
+   - Today only `fetchJob` forwards options, and only `{ signal }`, so nothing is exposed.
+   - Fix: spread `init` first and set `method: "GET"` after it, or pass only `signal`.
+
+3. MINOR: the ledger guard holds only if no one deletes a payment row by hand.
+   - Evidence: `ledgerRegresses` (`AppContext.jsx:48-55`) assumes rows are never deleted and voids are one-way. At `origin/main` both hold in the application code: there is no payment delete; `void_payment` only sets `voided = True` and refuses another job's payment (`service.py:1509-1513`); `job_id` is a plain foreign key with no cascade.
+   - A payment row deleted directly in the database (for example a hand fix during the drain) would stay on screen in an open tab until reload. Low.
+
+**Note 1:** FIXED.
+- I replayed my scenario against the code. The first payment times out, so the counter moves and a re-read goes out holding the counter's value. The retry moves the counter on start and again on success. When the stale answer arrives the counter no longer matches, so the answer is dropped and one fresh read is applied (`AppContext.jsx`, the `loadJobDetail` loop). Separately, `ledgerRegresses` would keep the held payment anyway.
+- Tests: "a re-read issued before a successful retry and answered after it keeps the payment", "a re-read issued while a payment call is in flight, answered after it lands, is dropped" and "a re-read that times out changes nothing".
+- I judged that these fail on 15df06d by reading. I did not run them against 15df06d.
+- Changed expectations: two `toHaveBeenLastCalledWith` assertions gain `{ signal }`. No removed assertions, no new skips.
+
+**Tried and could not break**
+- **Re-read loop:** none. At most two attempts, then the job is left as the payment call set it.
+- **Two payments in flight, or a failure before sending:** these only move the counter, which causes an extra read and nothing else.
+- **Job switch:** answers are applied by `mapped.id`, so an answer for job A never lands on job B.
+- **Newer answer wrongly rejected:** only possible if a held row disappears, which the server never does.
+- **Older answer wrongly accepted:** an answer that holds every held row, with the same voids, is not older on the ledger. Its other fields (status, timeline) can be briefly older, as the author notes.
+- **Late list:** it keeps detail fields only for jobs whose detail already loaded, and list fields still apply. Detail fields are refreshed on the next load. The old behaviour (an emptied completion) was worse.
+- **Money logic:** unchanged. `paymentAttempts.js` and `logPayment` in `jobsApi.js` are not in this diff; only `fetchJob` changed.
+
+**Gates** (tree = head 67a68ae merged with origin/main 9b2e8f5, local merge commit 306b397, clean)
+
+```
+GATE[1 npm run lint] EXIT=0
+GATE[2 npm run format:check] EXIT=0
+GATE[3 npm test -- --maxWorkers=4] EXIT=0
+GATE[4 npm run build] EXIT=0
+SUMMARY FAIL=0
+```
+
+I removed the review worktree. I did not push, comment on or edit the PR.
+
+Coordinator's ruling (2026-11-13): review of the P12a follow-up by the reviewer of PR #193. Sent back: finding 1 (until a job's detail has loaded, the page shows that payments are not loaded, with a retry, in place of the paid amount and the balance, and Log Payment is unavailable; this also covers the failed first load that main already had) and finding 2 (apiGet fixes the method after spreading the caller's options). Finding 3 is recorded: a payment row deleted by hand in the database stays on an open tab until reload. Not mergeable at 67a68ae9ae9284bab13745740513c1a8b221661d.

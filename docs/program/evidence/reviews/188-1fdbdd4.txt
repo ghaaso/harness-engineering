@@ -1,0 +1,36 @@
+VERDICT: PASS
+PR #188 at 1fdbdd4362188487c244e1f1b373ae342815f01b
+Second pass of the binding review (same reviewer; first pass PASS-WITH-FIXES at 7cb4c7d, file 188-7cb4c7d.txt). The head is unchanged from the lane's READY; all four files were read at both commits (git diff 7cb4c7d 1fdbdd4). Nothing is left that should send the PR back; the items below are notes, plus one hand-off to the device-lab PR.
+
+Notes
+
+1. The orphan removal trusts that this run holds every slot, which is true only by configuration (ops/lab/android-compile.sh:184, :205-212). The acquire passes on whatever FF_POOL, FF_SLOT_SH, FF_LOCK_DIR or FF_SLOTS the caller's shell has set. Today ff-gates.sh:119 sets FF_POOL for its own command only, so the default is the heavy pool and the precondition holds. But if someone runs with FF_POOL=light, the build takes the light pool exclusively, and the removal would then kill another lane's legitimate Android build running in the heavy pool. Smallest hardening: call the acquire with FF_POOL=heavy explicitly, and skip any container whose fixflow.holder label ends in a PID that kill -0 finds alive. On name-alikes: a container named fixflow-*-android is removed only if it carries the fixflow.holder label or runs the fixflow-android-build image (:207-208); none of the containers running now matches.
+2. Coordination with the device lab (other PR): its ops/lab/device/build-apk.sh:75 copies $OUTDIR/app-release.apk. After this rename that file no longer exists, so L3a's APK build fails until it uses COMPILE-ONLY-debugkey-release.apk.
+3. The Gradle checksum is correct but has not been exercised yet. The pinned value matches the published one (downloads.gradle.org, gradle-8.10.2-all.zip.sha256, fetched). If the template asks for a different Gradle version, the grep -q at android-compile-inner.sh:68 fails the build at the prebuild stage (exit 10). The wrapper verifies only on download; the cache volume already holds gradle-8.10.2-all, fetched by the cold run without a check, so the checksum first applies on the next cold build.
+4. The copy-list refusal is case-sensitive. Tested on sample paths: nested .env.development, .env.production.local, .envrc and *.keystore are caught; .ENV.production, Credentials.json and b.JKS are not. The .env miss is harmless (Expo on Linux loads only the lowercase name); the other two just sit in the container's copy. The refusal also runs after the slot wait (:229-235), so a refused run has queued for nothing first.
+5. Peak memory hit the 6g cap again (6144 MiB) with no out-of-memory kill. A cold build at 6g is still unmeasured.
+
+The nine first-pass findings
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 Orphan container after a hard kill | FIXED (see note 1) | android-compile.sh:199-212 |
+| 2 Secret files copied into the build | FIXED (see note 4) | :229-235 |
+| 3 APK name | FIXED | inner:110, :281; the run folder holds COMPILE-ONLY-debugkey-release.apk |
+| 4 Gradle cache volume holds secrets | FIXED | README.md:110-112 |
+| 5 Docker down | FIXED | :160, which runs before the acquire |
+| 6 Supply chain | FIXED | template pinned (inner:59-64; the log shows template: expo-template-bare-minimum@52.0.79); Gradle sha256 (inner:67-69,113); licence acceptance and unpinned apt packages documented at Dockerfile.android:47-49 |
+| 7 Memory knob and out-of-memory exit | FIXED | :162-165, run (5g, 4097m and abc all exit 3 with a summary); :275-277 read |
+| 8 Records | FIXED | header :10-12; tslocationmanager 4.7.8 is the only version in the Gradle cache volume (directory names only were listed) |
+| 9 summary.txt on interrupt and refusal | FIXED | die at :40-44, trap at :157; run for the refusals |
+
+Warm run at this head (android-20261113T155325), all read: head 1fdbdd4, exit 0, 47 s of Gradle and 75 s in total once the slots were held, 0 orphans removed, git status unchanged, 10 values redacted with 0 left, 0 out-of-memory kills, the same signer, newArchEnabled=false.
+
+Tried and could not break
+- Everything approved last time is unchanged: the read-only mount (:247), the redaction, the image built with no build context, and the acquire with the PID plus the trap.
+- ff-slot.sh as it is now: an exclusive take in the heavy pool needs both slots and gives them back while any slot numbered above 2 is still held. So inside the heavy pool no other Android build can be running when the removal fires.
+- No container that merely has a similar name gets removed.
+
+What the reviewer ran: gh pr view; a fresh detached worktree at 1fdbdd4; the FF_ANDROID_XMX refusals three times (each exited before the acquire, the worktree stayed clean); the copy-list regex against sample paths; one read-only docker run --network none on the existing build image, listing directory names in fixflow-gradle-cache; two web fetches (the Gradle checksum file). No build. The three refusal folders were deleted and the worktree removed; nothing was pushed or posted.
+
+Coordinator's ruling (2026-11-13): mergeable at 1fdbdd4362188487c244e1f1b373ae342815f01b. Notes 1 and 4 (the acquire names the heavy pool explicitly; a container whose holder process is alive is never removed; the refusal is case-insensitive and runs before the slot wait) go into a small follow-up PR by the same lane. Note 2 was sent to the device-lab lane. Notes 3 and 5 are recorded: the checksum first applies on the next cold build, and the cold build at 6g is still to be measured when the heavy pool is idle. The CLAUDE.md sentence about the Android compile gate is corrected by the coordinator in its own PR, because the lane's session would not edit that file on another session's request.

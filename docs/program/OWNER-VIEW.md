@@ -4,14 +4,14 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 
 ## Right now
 
-- Production is still dead: both old Railway addresses answer Railway's own 404. Four phases are merged on GitHub in five pull requests (P1, P2a, P6a with its follow-up, P12a); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-13)
+- Production is still dead: both old Railway addresses answer Railway's own 404. Five phases are merged on GitHub (P1, P2a, P6a, P12a, L2); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-13)
 - Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. 37 of 56 phases wait behind it.
 - Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-13)
 
 ## Phases by state
 
-- **done** (6): P0a-prep, P1, P2a, P12a, P6a, L1
-- **running now** (6): P2b-1, P3a, P7a, P9-0a, L2, L3
+- **done** (7): P0a-prep, P1, P2a, P12a, P6a, L1, L2
+- **running now** (5): P2b-1, P3a, P7a, P9-0a, L3
 - **starting next** (0): 
 - **waiting on you** (1): P0a
 - **held (may be built, may not merge yet)** (16): P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
@@ -74,7 +74,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P14-fleet | Install each Expo upgrade on the fleet | OWN | later | not started | P14-n | - |
 | P14-log | One command log for the six queues (backlog) | M | later | not started | P5d-2, P14-n | - |
 | L1 | Parallel gate harness | L | A | done | - | - |
-| L2 | Local Android compile gate | L | A | running now | L1 | - |
+| L2 | Local Android compile gate | L | A | done | L1 | - |
 | L3 | Device lab (emulator on this PC) | L | B | running now | L1 | - |
 | L4 | Deploy-train and restore rehearsal | L | C | not started | L1 | - |
 
