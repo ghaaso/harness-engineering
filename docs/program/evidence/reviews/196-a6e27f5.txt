@@ -1,0 +1,51 @@
+VERDICT: PASS
+PR #196 at a6e27f538f6726fdcc591db7f3426857569e3e05
+
+The head had not moved (confirmed with `gh pr view`). The base is `47a2246`. Gates ran on the head merged with `origin/main` `15df06d` (merge commit `804e70f`, no conflict).
+
+**Findings.** No BLOCKER, MAJOR or MINOR. These are notes only:
+
+1. **The payroll job's new "today" has no test.** `backend/app/main.py` now calls `today = await service.shop_today(DEFAULT_SHOP_ID)`, which goes through `service.py:1394` and then `_shop_tz` and `zone_or_default`.
+   - Nothing calls `shop_today` or `_run_payroll_export` in a test; I grepped for both.
+   - The read path underneath is already covered by `test_shop_timezone_falls_back…` (missing shop row, or a zone that cannot load, both fall back to the default).
+   - The job gets its session from `SessionLocal()`. The read now sits inside the `try`, so a database error rolls back and re-raises inside the job, which is the same failure mode as before. APScheduler logs a failed job; one failure does not stop the scheduler.
+   - A one-line test would close this.
+2. **An overnight shift's hours after midnight are measured nowhere.** `service.py:1280-1281` clips each day's breakdown at its own midnight. Today's `tech_days` row has no clock-in, so it measures nothing either.
+   - Disclosed in the PR body ("unmeasured, not reported missing").
+   - It is not shown as healthy, and the board's sampler state covers the live case.
+3. **The board can contradict itself for a carried shift.** A tech whose shift was opened yesterday still gets today's `status` from `classify_day`, which can read "absent", shown next to the "On duty since 22:00 (shift began before today)" chip. This waits for an overnight-shift model.
+4. **One stale mention of a deleted setting remains.** `technician-app/src/features/jobs/arrivalGate.ts:25` still names `jobs_punch_accuracy_ceiling_m`. Disclosed: this lane may not edit mobile files, and P5a rewrites that gate.
+5. **Query count.** Today's board now runs one more query every load (the look-back `list_events`) and a second only when some tech has a carried shift (the look-back `ping_liveness`). Both are single range queries, not one per tech.
+
+**Five-item table**
+
+| item | status | evidence | proving test (fails on base 47a2246, passes on head) |
+|---|---|---|---|
+| 1 shift open across midnight | FIXED | `service.py:725-746`: look-back `[start-14h, start)`; `on_duty_since` from yesterday's plus today's events | `test_board_carries_a_shift_opened_last_night`, `…_is_not_arrived_but_not_clocked_in`, `…_uses_the_ping_before_midnight`, `…_past_the_duty_bound_is_expired`, `test_board_ignores_an_open_clock_in_older_than_the_duty_bound`, `test_board_does_not_carry_a_shift_closed_before_midnight`, `test_tech_days_open_shift_breakdown_stops_at_its_midnight`. All 7 failed on base, by running |
+| 2 silent label | FIXED | `sampler.js:53` gives `mins = null` for `silent` | `sampler.test.js` "says 'since clock-in' for silent even when a ping from an earlier session exists". Shown by reading: base computed minutes from `last_ping_at` |
+| 3 retired settings | FIXED | `config.py` loses both fields; `extra="ignore"` at `config.py:36` | `tests/test_retired_settings.py`: 3 tests, all failed on base, by running. They assert that both fields are gone from `model_fields`, and that a leftover key with value `250`, from the environment or from a `.env` file, builds `Settings` without error. So the PR body's claim is true |
+| 4 payroll "today" (half) | FIXED, no test | `main.py:96`, `service.py:1394` | none (note 1) |
+| 5 BSSID separators | FIXED | `verdict.py:160` `.replace("-", ":")`; `RULE_VERSION = 2`; fixture `version: 2` with 3 dash vectors | `test_bssid_vector[dash-*]` (3 tests) and `test_contract_header_matches_the_module` failed on base, by running |
+
+**Changed expectations**
+- `sampler.test.js`: the assertion that `silent` with a ping reads "No pings for 45 min…" was narrowed to `stale` only. Reason: finding 2.
+- `jobs/tests/test_service.py:1602`: the expected value `settings.jobs_punch_accuracy_ceiling_m + 50` became `ACCURACY_CEILING_M + 50`. Same value (150); the setting it named was deleted.
+- No assertion removed; no new skip, xfail or `.only`.
+
+**Tried and could not break**
+- **Old open clock-in:** a clock-in from 09:00 yesterday, never closed, falls outside the look-back. The board shows `not_expected`, never `ok`. One from 10:30 yesterday shows `expired`.
+- **Re-clocked shift:** in 22:00 yesterday, out 02:00, in 09:00. `_open_clock_in` over both days returns 09:00. Yesterday's events never reach today's flags, `classify_day`, `pings_today` or coverage. The pre-midnight ping is used only when there is no ping today and the tech is on duty, and it is still compared against the clock-in.
+- **Day boundary:** `start` is local midnight converted to UTC.
+- **Tech filters:** a tech with no shift falls back to the default shift. A carried tech joins the roster only when `tech_ids` is not given.
+- **Web chip:** it uses `first_in`, which is a real `BoardRow` field. `fmtClock` parses the UTC ISO time correctly.
+- **No phone reader yet:** nothing under `technician-app/src` or `src` reads `verdict-vectors.json`, so the version bump to 2 breaks nothing.
+- **Why the docs file is in the diff:** `docs/lifecycle-audit-followups-2026-07.md` named the deleted setting, and the PR corrects it.
+
+**Gates** (tree = head merged with `15df06d`, at `804e70f`)
+- **Backend:** ruff format 0, ruff check 0, mypy 0, lint-imports 0, alembic upgrade 0, alembic check 0, pytest 0 (1083 total, 0 skipped, 0 integration skipped). SUMMARY FAIL=0.
+- **Web:** lint 0, format:check 0, test 0, build 0. SUMMARY FAIL=0.
+- **Fail-on-base** (`RUN partial`, the 5 changed backend source files at `47a2246`): pytest EXIT=1, and the 14 new or changed tests fail. Afterwards I restored the worktree to its HEAD and the tree was clean.
+
+**Cleanup:** I removed the review worktree. No `fixflow-p6a-rev-*` containers remain. Nothing was pushed, commented or edited.
+
+Coordinator's ruling (2026-11-13): re-read by the reviewer of PR #192 (same agent, its findings were the brief). Mergeable at a6e27f538f6726fdcc591db7f3426857569e3e05. Notes routed: 1 (a test for the payroll job's shop_today), 2 and 3 (an overnight shift is carried on the board but its hours after midnight are measured nowhere, and the day status can read absent beside the on-duty chip) go into P6b-1's Scope as the overnight-shift item; 4 (a stale setting name in technician-app arrivalGate.ts) goes to P5a, which rewrites that file; 5 needs nothing.
