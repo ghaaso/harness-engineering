@@ -9,15 +9,19 @@ assembleRelease`) in a container. Ship plan §7.5, phase L2.
 
 ## The APK is compile evidence only
 
-**The APK this gate produces is never installed on any phone, roster or spare, and is never
-distributed.** It exists to prove that the native project compiles, and it is kept only as
+**The APK this gate produces (`COMPILE-ONLY-debugkey-<variant>.apk`) is never installed on any
+phone, roster or spare, and is never distributed.** It exists to prove that the native project compiles, and it is kept only as
 that evidence (plan standing rule 1: only EAS builds reach phones).
 
 - It is signed with the prebuild template's **public** debug key, so it could not install
   over the field app anyway (different signing certificate).
-- It cannot reach a real server: no `EXPO_PUBLIC_API_URL` is set, so the bundle falls back to
-  the emulator loopback `http://10.0.2.2:8000` (`technician-app/src/lib/config.ts`), and no
-  Sentry DSN is set.
+- It cannot reach a real server: no `EXPO_PUBLIC_API_URL` is set, so the bundle bakes the
+  fallback API base, the emulator loopback `http://10.0.2.2:8000`
+  (`technician-app/src/lib/config.ts`), and no Sentry DSN is set. To keep it that way the
+  script refuses (exit 3, naming the files, never their contents) a copy list that carries
+  `technician-app/.env*` other than `.env.example`, a `credentials.json`, or a `*.keystore` /
+  `*.jks`: those are not gitignored, and Expo would load an `.env.production` into the release
+  bundle without the redaction ever seeing it.
 - It does carry the Maps and Firebase keys from `app.json` / `google-services.json`, as any
   build of this app does, so the output directory must stay outside every git checkout; the
   script refuses an `FF_LAB_OUT` inside one.
@@ -40,14 +44,19 @@ bash ops/lab/android-compile.sh <lane> <worktree> [release|debug]
 For example, from a lane worktree: `bash ops/lab/android-compile.sh p5a . release`. Run it in
 the background. It queues for **2 slots** of the shared lock (`ff-slot.sh` in
 `docs/program/lab/` on the program branch), which is the whole machine, with its own PID on
-the slots. A trap releases the slots and removes the container on exit, error, Ctrl-C, TERM
-or HUP. After a SIGKILL the lock reaps the slots once the PID is gone, but the container
-(labelled `fixflow.holder=<holder>`) runs on until its own timeout: remove it with
-`docker rm -f fixflow-<lane>-android`.
+the slots. It checks `docker info` first, so a stopped Docker fails at once instead of after the
+queue. A trap releases the slots and removes the container on exit, error, Ctrl-C, TERM or
+HUP. A hard kill (SIGKILL, a task stop, `taskkill /F`) cannot be trapped: the lock reaps the
+slots once the PID is gone, but the container (labelled `fixflow.holder=<holder>`) runs on.
+The next run therefore removes, as soon as it holds every slot and before starting its own,
+any running container named `fixflow-*-android` that carries that label or this image
+(`orphans_removed` in its summary). Every run that gets as far as creating its output folder
+leaves a `summary.txt`, including refusals and interrupts.
 
 Output goes to `C:/Users/User/.fixflow-cache/lab/<lane>/android-<stamp>/`:
 
-- `app-<variant>.apk`
+- `COMPILE-ONLY-debugkey-<variant>.apk` (the name says what it is: compile evidence, debug-key
+  signed)
 - `build.log`: the full log. Every value from `app.json`'s key, secret, token, DSN, id and URL
   fields, from `google-services.json` and from `eas.json`'s `env` blocks is replaced by
   `[REDACTED]`. The script re-scans the log and withholds it (exit 13) if any value remains,
@@ -57,25 +66,25 @@ Output goes to `C:/Users/User/.fixflow-cache/lab/<lane>/android-<stamp>/`:
   bytes copied), `apk_bytes`, `abis`, `signer_sha256` (`apksigner verify --print-certs`), the
   `aapt2 dump badging` package line (package, versionCode, versionName), min/target SDK,
   `container_memory_peak_mib`, `container_oom_kills`, `ccache` hits, `sdk_autoinstalls`
-  (should be 0), and `git_status_unchanged`.
+  (should be 0), `slot_acquire_requeues`, `orphans_removed`, and `git_status_unchanged`.
 
 Exit codes:
 
-| Code | Meaning                                                                                                                                                |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0    | APK built, redaction check passed, worktree unchanged                                                                                                  |
-| 2    | usage                                                                                                                                                  |
-| 3    | refused to start: `technician-app/android/` exists, `FF_LAB_OUT` is inside a checkout, another build of the same lane is running, a git command failed |
-| 4    | slot acquire failed                                                                                                                                    |
-| 5    | image build failed                                                                                                                                     |
-| 6    | the build exited 0 but produced no APK                                                                                                                 |
-| 7    | the worktree's status or HEAD changed during the run                                                                                                   |
-| 8    | `docker run` could not start the container                                                                                                             |
-| 10   | the build failed (`failed_stage` names the stage: `copy`, `npm-ci`, `hook`, `prebuild`, `gradle`, `collect`)                                           |
-| 11   | timed out                                                                                                                                              |
-| 12   | killed: out of memory, or a timeout's kill-after                                                                                                       |
-| 13   | redaction check failed: `build.log` withheld                                                                                                           |
-| 130  | interrupted                                                                                                                                            |
+| Code | Meaning                                                                                                                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | APK built, redaction check passed, worktree unchanged                                                                                                                                                   |
+| 2    | usage                                                                                                                                                                                                   |
+| 3    | refused to start: Docker not reachable, `FF_ANDROID_XMX` above 4g, `technician-app/android/` exists, `FF_LAB_OUT` is inside a checkout, a secret-bearing file is in the copy list, a git command failed |
+| 4    | slot acquire failed                                                                                                                                                                                     |
+| 5    | image build failed                                                                                                                                                                                      |
+| 6    | the build exited 0 but produced no APK                                                                                                                                                                  |
+| 7    | the worktree's status or HEAD changed during the run                                                                                                                                                    |
+| 8    | `docker run` could not start the container                                                                                                                                                              |
+| 10   | the build failed (`failed_stage` names the stage: `copy`, `npm-ci`, `hook`, `prebuild`, `gradle`, `collect`)                                                                                            |
+| 11   | timed out                                                                                                                                                                                               |
+| 12   | killed: out of memory (also when only a Gradle child was OOM-killed: the cgroup's `oom_kill` counter decides), or a timeout's kill-after                                                                |
+| 13   | redaction check failed: `build.log` withheld                                                                                                                                                            |
+| 130  | interrupted                                                                                                                                                                                             |
 
 ### How it works
 
@@ -88,13 +97,21 @@ Exit codes:
    enter. It mounts the worktree **read-only** at `/src` and copies those files to
    `/work/technician-app` inside the container.
 3. In the copy: `npm ci`; for spikes only, the `FF_ANDROID_HOOK` script (the summary marks
-   the run `MODIFIED`); `npx expo prebuild --platform android --no-install`; then
-   `./gradlew --build-cache assembleRelease` (or `assembleDebug`).
+   the run `MODIFIED`); `npx expo prebuild --platform android --no-install --template
+expo-template-bare-minimum@52.0.79` (pinned: the `sdk-52` dist-tag moves; 52.0.79 is what it
+   resolved to when this gate was verified); the generated Gradle wrapper gets the
+   `distributionSha256Sum` that services.gradle.org publishes for `gradle-8.10.2-all.zip`
+   (the template ships none); then `./gradlew --build-cache assembleRelease` (or
+   `assembleDebug`).
 4. Caches live in named volumes: `fixflow-gradle-cache` at `/root/.gradle` holds the Gradle
    distribution, dependencies, the build cache, and `ccache` for the NDK compiles (through
    `CMAKE_<LANG>_COMPILER_LAUNCHER`); `fixflow-npm-cache` sits at `/root/.npm`. The copy, the
    generated `android/` and the template's debug keystore live only in the container, which
-   runs with `--rm`.
+   runs with `--rm`. **The `fixflow-gradle-cache` volume is secret-bearing:** the Gradle build
+   cache stores task outputs, including the processed `google-services` resources and the
+   merged manifest with the Maps key, unredacted. Never export, copy or attach that volume.
+   `FF_ANDROID_GRADLE_VOL` / `FF_ANDROID_NPM_VOL` name other volumes (`fixflow-*`) for a cold
+   build without wiping the shared ones.
 5. Limits: `--memory 6g` with no swap; `--cpuset-cpus 0-7`, so the container sees 8 CPUs,
    which also bounds ninja and clang; Gradle `-Xmx3g` with Kotlin compiling inside the Gradle
    JVM; `--max-workers 8`; a 100-minute timeout. Each is overridable: `FF_ANDROID_MEM`,
@@ -118,6 +135,13 @@ This gate refuses to start if that directory exists.
 | Gradle / AGP / Kotlin           | 8.10.2 / 8.6.0 / 1.9.25                                      | the template's wrapper; `libs.versions.toml`                                                                                                     |
 | architecture                    | old (`newArchEnabled=false`), Hermes on                      | the template's `gradle.properties`; `app.json` sets no `newArchEnabled`                                                                          |
 | command-line tools              | `commandlinetools-linux-15859902_latest.zip`, sha256-checked | file name and sha256 as published on <https://developer.android.com/studio>                                                                      |
+| prebuild template               | `expo-template-bare-minimum@52.0.79`, pinned                 | what `sdk-52` resolved to on 2026-11-13                                                                                                          |
+
+The image build accepts the Android SDK licence agreements (`yes | sdkmanager --licenses`) on
+the builder's behalf, as Android Studio and EAS's images do. Known and unpinned: the Debian apt
+packages (`openjdk-17-jdk-headless`, `unzip`, `ccache`) and `platform-tools` track their
+current release, so two image builds from the same Dockerfile can differ there; the tag hashes
+the Dockerfile only.
 
 ## Measured times
 

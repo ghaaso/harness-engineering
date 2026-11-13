@@ -5,10 +5,11 @@
 #   /lab/files  NUL-separated list of the worktree's technician-app files to copy (tracked +
 #               untracked-not-ignored, so .env / .eastoken / node_modules never come in)
 #   /lab/hook   optional: a script run in the copy after `npm ci` (spikes only)
-#   /out        the host output directory: receives only the APK, the REDACTED log and facts
+#   /out        the host output directory: receives only the APK (named COMPILE-ONLY-debugkey-*,
+#               it is compile evidence, never installed), the REDACTED log and facts
 #   /root/.gradle, /root/.npm   the fixflow-gradle-cache / fixflow-npm-cache volumes
 #
-#   inner.sh <release|debug> <gradle max workers> <gradle Xmx> <timeout seconds>
+#   inner.sh <release|debug> <gradle max workers> <gradle Xmx> <timeout seconds> [template]
 #
 # Everything is built under /work, in the container's own filesystem: `expo prebuild` writes
 # /work/technician-app/android, never the repository. The whole file is one `main` call, so
@@ -57,8 +58,15 @@ build() {
   fi
 
   stage prebuild
-  npm view expo-template-bare-minimum@sdk-52 version || true
-  npx expo prebuild --platform android --no-install
+  # The template is pinned (the sdk-52 dist-tag moves); 52.0.79 is what the tag resolved to
+  # when this gate was verified, and what EAS used for SDK 52 at the time.
+  echo "template: $TEMPLATE"
+  npx expo prebuild --platform android --no-install --template "$TEMPLATE"
+  # The template's wrapper carries no checksum: pin the one services.gradle.org publishes for
+  # this distribution, so a tampered download fails the build instead of running.
+  local wp=android/gradle/wrapper/gradle-wrapper.properties
+  grep -q '^distributionUrl=.*/gradle-8.10.2-all.zip$' "$wp"
+  grep -q '^distributionSha256Sum=' "$wp" || echo "distributionSha256Sum=$GRADLE_DIST_SHA256" >> "$wp"
 
   stage gradle
   cd android
@@ -80,7 +88,7 @@ build() {
   stage collect
   local apk
   apk=$(ls app/build/outputs/apk/"$VARIANT"/*.apk | head -n1)
-  cp "$apk" "/work/app-$VARIANT.apk"
+  cp "$apk" "/work/$APK_NAME"
 }
 
 redact_file() { # in-place: replace every value listed in /work/secrets.txt
@@ -98,6 +106,11 @@ NODE
 
 main() {
   export VARIANT="$1" WORKERS="$2" XMX="$3"
+  export TEMPLATE="${5:-expo-template-bare-minimum@52.0.79}"
+  export APK_NAME="COMPILE-ONLY-debugkey-$VARIANT.apk"
+  # sha256 of gradle-8.10.2-all.zip as published at
+  # https://services.gradle.org/distributions/gradle-8.10.2-all.zip.sha256 (read 2026-11-13)
+  export GRADLE_DIST_SHA256=2ab88d6de2c23e6adae7363ae6e29cbdd2a709e992929b48b6530fd0c7133bd6
   local timeout_s="$4" rc cur_stage stage_t0
   case "$VARIANT" in
     release) export TASK=assembleRelease ;;
@@ -125,7 +138,7 @@ main() {
   fact "container_memory_peak_mib" "$(($(cat /sys/fs/cgroup/memory.peak 2> /dev/null || echo 0) / 1048576))"
   fact "container_oom_kills" "$(sed -n 's/^oom_kill //p' /sys/fs/cgroup/memory.events 2> /dev/null)"
 
-  local apk="/work/app-$VARIANT.apk"
+  local apk="/work/$APK_NAME"
   if [ "$rc" -eq 0 ] && [ -f "$apk" ]; then
     fact "apk_bytes" "$(stat -c %s "$apk")"
     fact "apk_sha256" "$(sha256sum "$apk" | cut -d' ' -f1)"
@@ -192,7 +205,7 @@ NODE
     return 97
   fi
   cp /work/build.log /out/build.log
-  [ -f "$apk" ] && [ "$rc" -eq 0 ] && cp "$apk" "/out/app-$VARIANT.apk"
+  [ -f "$apk" ] && [ "$rc" -eq 0 ] && cp "$apk" "/out/$APK_NAME"
   tail -n 40 /out/build.log
   return "$rc"
 }

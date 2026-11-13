@@ -5,16 +5,18 @@
 #
 # Copies <worktree>/technician-app into a container (the worktree is mounted READ-ONLY), runs
 # `npm ci`, `npx expo prebuild --platform android` and the Gradle assemble task THERE, and
-# writes the APK, the redacted build log and summary.txt to
+# writes COMPILE-ONLY-debugkey-<variant>.apk, the redacted build log and summary.txt to
 #   ${FF_LAB_OUT:-C:/Users/User/.fixflow-cache/lab}/<lane>/android-<stamp>/
 # Exits non-zero on any failure. The APK is compile evidence only: it is signed with the
-# prebuild template's public debug key, bakes no API host, and is NEVER installed on any phone
+# prebuild template's public debug key, bakes only the emulator-loopback fallback API base
+# (http://10.0.2.2:8000, technician-app/src/lib/config.ts), and is NEVER installed on any phone
 # (plan standing rule 1). Only EAS builds reach phones.
 #
 # Holds 2 slots of the machine-wide lock (ff-slot.sh, with this script's PID on them) for the
 # whole run; a trap releases them and removes the container on exit, error, Ctrl-C, TERM or HUP.
-# SIGKILL cannot be trapped: the lock then reaps the slots once the PID is gone, while the
-# container (labelled fixflow.holder=<holder>) runs on until its own timeout.
+# SIGKILL (a task stop, taskkill /F) cannot be trapped: the lock then reaps the slots once the
+# PID is gone and the container (labelled fixflow.holder=<holder>) runs on, so the NEXT run, once
+# it holds every slot, removes any Android build container still running before starting its own.
 #
 # Knobs (env): FF_ANDROID_MEM (6g), FF_ANDROID_CPUSET (0-7: the container sees 8 CPUs, which
 # also bounds ninja/clang), FF_ANDROID_WORKERS (8), FF_ANDROID_XMX (3g, at most 4g),
@@ -23,7 +25,8 @@
 # (cache volume names, default fixflow-gradle-cache / fixflow-npm-cache; fresh names give a
 # cold build without wiping the shared caches), FF_SLOT_SH, FF_LAB_OUT.
 #
-# Exit codes: 0 APK built; 2 usage; 3 refused to start; 4 slot acquire failed; 5 image build
+# Exit codes: 0 APK built; 2 usage; 3 refused to start (Docker down, Xmx above 4g, a secret file
+# in the copy list, ...); 4 slot acquire failed; 5 image build
 # failed; 6 no APK; 7 the worktree changed during the run; 8 docker could not start the
 # container; 10 build failed; 11 timed out; 12 killed (out of memory); 13 redaction check
 # failed (log withheld); 130 interrupted.
@@ -34,7 +37,11 @@ winpath() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "
 # that off for docker ONLY: exported globally it also stops `git -C /c/...` from resolving,
 # which once produced an empty copy list and a vacuous git-status proof.
 docker() { MSYS_NO_PATHCONV=1 command docker "$@"; }
-die() { echo "android-compile: $*" >&2; exit 3; }
+die() { # refuse: exit 3, leaving a summary once the output folder exists (never an empty folder)
+  echo "android-compile: $*" >&2
+  if [ -n "${SUMMARY:-}" ] && [ ! -f "$SUMMARY" ]; then write_summary 3 "refused: $*" > /dev/null 2>&1; fi
+  exit 3
+}
 usage() { echo "usage: android-compile.sh <lane> <worktree> [release|debug]" >&2; exit 2; }
 
 # Long children (the slot wait, docker run) run in the background and are waited for: bash
@@ -81,6 +88,7 @@ write_summary() { # exit_code note  -> prints the summary; returns 1 if the work
     echo "wall_seconds: $(($(date +%s) - t_start))"
     echo "slot_wait_seconds: ${slot_wait:-n/a}"
     echo "slot_acquire_requeues: ${acq_requeues:-0}"
+    echo "orphans_removed:${stale_removed:- none}"
     echo "files_copied: $nfiles"
     echo "caches: $GRADLE_VOL $NPM_VOL"
     echo "limits: memory=$MEM cpuset=$CPUSET gradle_workers=$WORKERS gradle_xmx=$XMX timeout_min=$TIMEOUT_MIN"
@@ -146,13 +154,21 @@ main() {
   status_before=""
 
   trap cleanup EXIT
-  trap 'echo "interrupted" >&2; cleanup; exit 130' INT TERM HUP
+  trap 'echo "interrupted" >&2; cleanup; [ -f "$SUMMARY" ] || write_summary 130 "interrupted" > /dev/null; exit 130' INT TERM HUP
+
+  # Docker first: a stopped engine must fail now, not after queueing for every slot.
+  docker info > /dev/null 2>&1 || die "the Docker engine is not reachable (docker info failed)"
+  # The Gradle heap must leave room in the container for Kotlin, Metro/Hermes and the NDK.
+  [[ "$XMX" =~ ^([0-9]+)([mMgG])$ ]] || die "FF_ANDROID_XMX must look like 3g or 3072m"
+  local xmx_mib="${BASH_REMATCH[1]}"
+  [[ "${BASH_REMATCH[2]}" =~ [gG] ]] && xmx_mib=$((xmx_mib * 1024))
+  [ "$xmx_mib" -le 4096 ] || die "FF_ANDROID_XMX ($XMX) is above the 4g ceiling"
 
   [ -e "$wt/technician-app/android" ] &&
     die "technician-app/android/ exists in the worktree: a native project makes EAS treat the app as bare. Stop."
-  # A container with our name that is still running belongs to another run of this lane.
-  [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2> /dev/null)" = "true" ] &&
-    die "$NAME is already running (another build for lane $lane)"
+  # No "is our container already running?" refusal here: a live run of this lane holds the
+  # slots, so the wait below serialises us behind it; anything still running once we hold
+  # the slots is an orphan, removed below.
 
   # Our PID goes on the slots: ff-slot reaps them only once this script is gone, so a long
   # cold build never loses them.
@@ -180,6 +196,21 @@ main() {
   fi
   slot_wait=$(($(date +%s) - t_slot))
 
+  # This run now holds every slot, so no other Android build can legitimately be running. One
+  # that is was left by a hard-killed run (its slots were reaped, its container was not):
+  # remove it before adding another 6 GB to the VM. Matched by name AND by our label or our
+  # image, so nothing outside this gate is touched.
+  local cid cname clabel cimage
+  stale_removed=""
+  while read -r cid cname clabel cimage; do
+    [ -n "$cid" ] || continue
+    [[ "$cname" =~ ^fixflow-[a-z0-9-]+-android$ ]] || continue
+    [ "$clabel" != "-" ] || [[ "$cimage" == fixflow-android-build:* ]] || continue
+    docker rm -f "$cid" > /dev/null 2>&1 && stale_removed="$stale_removed $cname(holder=$clabel)"
+    echo "removed an orphaned Android build container: $cname (holder $clabel)" >&2
+  done < <(docker ps --format '{{.ID}} {{.Names}} {{if .Labels}}{{.Label "fixflow.holder"}}{{end}} {{.Image}}' |
+    awk '{ if (NF == 3) print $1, $2, "-", $3; else print }')
+
   # What gets built is captured only now, after the (possibly long) slot wait, so a checkout
   # during the wait cannot credit this result to the wrong commit; write_summary re-checks HEAD
   # and the status at the end.
@@ -195,6 +226,13 @@ main() {
   nfiles=$(tr -cd '\0' < "$LIST" | wc -c)
   [ "$nfiles" -gt 0 ] || die "empty copy list for $wt/technician-app"
   tr '\0' '\n' < "$LIST" | grep -qx 'technician-app/package-lock.json' || die "package-lock.json not in the copy list"
+  # Secret-bearing files that are NOT gitignored would be copied in: an .env.production is
+  # loaded by Expo into the release bundle (a real API URL / DSN, never redacted), and a
+  # keystore or credentials.json has no business in a compile. Refuse, naming the files only.
+  local bad
+  bad=$(tr '\0' '\n' < "$LIST" | grep -E '(^|/)(\.env[^/]*|credentials\.json|[^/]*\.keystore|[^/]*\.jks)$' |
+    grep -vE '(^|/)\.env\.example$' || true)
+  [ -z "$bad" ] || die "refusing to copy secret-bearing files into the build: $(echo $bad) (move them out or gitignore them)"
 
   if ! docker image inspect "$TAG" > /dev/null 2>&1; then
     echo "building $TAG (no build context)"
@@ -232,16 +270,21 @@ main() {
 
   # Map the container's exit into this script's own codes, so a build that happens to exit
   # 3..7 can never be read as one of the refusals above (inner_exit keeps the raw value).
+  # A Gradle child killed by the kernel's OOM killer makes the build exit 1, not 137: the
+  # cgroup's own oom_kill counter is the reliable signal.
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 137 ] && grep -qE '^container_oom_kills: [1-9]' "$OUT/facts.txt" 2> /dev/null; then
+    rc=137
+  fi
   note=ok
   case "$rc" in
     0)
-      if [ ! -f "$OUT/app-$variant.apk" ]; then
+      if [ ! -f "$OUT/COMPILE-ONLY-debugkey-$variant.apk" ]; then
         rc=6
         note="build exited 0 but produced no APK"
       fi
       ;;
     124) rc=11 note="timed out after $TIMEOUT_MIN min (failed_stage names where)" ;;
-    137) rc=12 note="killed (SIGKILL: out of memory at $MEM, or a timeout's kill-after)" ;;
+    137) rc=12 note="killed: out of memory at $MEM (see container_oom_kills), or a timeout's kill-after" ;;
     97) rc=13 note="redaction check failed: build.log withheld" ;;
     125 | 126 | 127) note="docker run could not start the container (exit $rc): no build ran" rc=8 ;;
     *) note="build failed (container exit $rc): see failed_stage and build.log" rc=10 ;;
