@@ -121,7 +121,7 @@ ui_find() { # text [~]
     const fs = require("fs");
     const xml = fs.readFileSync(process.argv[1], "utf8");
     const want = process.argv[2], contains = process.argv[3] === "~";
-    const esc = (s) => s.replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#39;/g, "'"'"'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+    const esc = (s) => s.replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#39;/g, "'"'"'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(d+);/g, (m, d) => String.fromCodePoint(+d));
     for (const m of xml.matchAll(/<node [^>]*>/g)) {
       const n = m[0];
       const text = esc((/ text="([^"]*)"/.exec(n) || [])[1] || "");

@@ -177,21 +177,15 @@ check_d() {
 }
 
 # ---- b: O01-F03 ---------------------------------------------------------------------------
+# Play services' own dump lists every registered fence under "Geofencer State", e.g.
+#   Geofence[CIRCLE id:workshop transitions:3 24.900000, 67.100000 80m, ...] ... com.fixflow.technician
 fence_dump() { # file
-  {
-    echo "## dumpsys location (geofences section)"
-    ash dumpsys location | grep -i -A3 "geofence" | head -n 80
-    echo "## GMS location service (lines naming the app)"
-    ash dumpsys activity service com.google.android.gms/com.google.android.location.internal.GoogleLocationManagerService 2> /dev/null |
-      grep -i -B2 -A4 "$APP_PKG" | head -n 120
-  } > "$1"
+  ash dumpsys activity service com.google.android.gms/com.google.android.location.internal.GoogleLocationManagerService |
+    sed -n "/Geofencer State:/,/Dump of hardware geofencing/p" > "$1"
 }
 fence_registered() { # file -> yes|no|unknown
-  if grep -qi "$APP_PKG" "$1"; then
-    if grep -i "$APP_PKG" "$1" | grep -qi "geofence\|fence"; then echo yes; else echo unknown; fi
-  else
-    echo no
-  fi
+  if ! grep -q "Geofencer State" "$1"; then echo unknown; return; fi
+  if grep -q "Geofence\[CIRCLE id:workshop.*$APP_PKG" "$1"; then echo yes; else echo no; fi
 }
 check_b() {
   mark "CHECK b O01-F03 location toggle with the app in the background"
