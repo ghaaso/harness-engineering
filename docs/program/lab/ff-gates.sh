@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
-# Lane-parameterised gates for the FixFlow ship program (plan section 0.1).
+# Lane-parameterised gates for the FixFlow ship program (plan section 7.4).
 #
 #   ff-gates.sh backend <lane> <worktree> [extra pytest args]
 #   ff-gates.sh mobile  <lane> <worktree>
 #   ff-gates.sh web     <lane> <worktree>
 #
-# <lane>     short id, [a-z0-9-], unique per phase in flight (p1, p2a, p7a, ...). It names the
-#            Docker network and containers, so every lane has its OWN database.
-# <worktree> the lane's checkout, C:/... or /c/... form.
+# <lane>     the PHASE id in lower case, [a-z0-9-] (p1, p2a, p7a, p90a ...). It names the
+#            containers, so every phase in flight has its OWN database. Two stacked phases of
+#            one lane never share an id.
+# <worktree> the phase's checkout, C:/... or /c/... form.
 #
 # What it keeps from design Appendix A: the read-only mount plus a copy into /work, no host
-# ports, every gate runs even after a failure, a per-gate log file, and a name conflict that
-# mechanically stops a second pytest against one database. What it changes: the names carry
-# the lane, so N backend lanes run at once; the gates container joins the database container's
-# network namespace (the database is at localhost, as in CI) instead of a user network, because
-# Docker's predefined address pools are exhausted on this machine by another project's 29
-# networks ("all predefined address pools have been fully subnetted", measured 2026-11-13) and
-# FixFlow neither prunes networks it did not create nor reconfigures Docker; pip uses a shared
-# cache volume;
-# the copy includes technician-app/src/shared (the cross-runtime contract fixtures the backend
-# tests read by repo-relative path) and CLAUDE.md; a stray backend/.env is never copied; pytest
-# writes junit and the gate FAILS if any integration test was skipped; pip-audit is advisory.
+# ports, every gate runs even after a failure, a per-gate log file, and a mechanical stop on a
+# second pytest against one database (here: a per-lane lock taken before anything else, which
+# a second run for the same lane and kind cannot take while the first is alive). What it
+# changes: the names carry the lane, so N backend phases run at once; the gates container
+# joins the database container's network namespace (the database is at localhost, as in CI)
+# instead of a user network, because Docker's predefined address pools are exhausted on this
+# machine by another project's 29 networks ("all predefined address pools have been fully
+# subnetted", measured 2026-11-13) and FixFlow neither prunes networks it did not create nor
+# reconfigures Docker; pip uses a shared cache volume; the copy includes
+# technician-app/src/shared (the cross-runtime contract fixtures the backend tests read by
+# repo-relative path) and CLAUDE.md; a stray backend/.env is never copied; the backend job's
+# FIXFLOW_ENVIRONMENT is mirrored from the worktree's own ci.yml; pytest writes junit and the
+# gate FAILS if any integration test was skipped; pip-audit is advisory.
+#
+# A MERGE-READINESS run is a run with a clean tree and no extra pytest args. The summary says
+# "tree=dirty(n)" when uncommitted or untracked files were tested, and "RUN partial" when
+# extra args were passed (they can deselect tests, which the skip check cannot see).
 #
 # Run it in the background (it can exceed the 10-minute foreground limit) and read
 # <log dir>/summary.txt when it exits. Exit code 0 only when every gate passed.
@@ -32,36 +39,62 @@ LANE="${2:?lane id}"
 WT_IN="${3:?worktree path}"
 shift 3
 case "$LANE" in *[!a-z0-9-]*) echo "lane id must be [a-z0-9-]: $LANE" >&2; exit 2 ;; esac
+case "$KIND" in backend|mobile|web) ;; *) echo "unknown kind: $KIND" >&2; exit 2 ;; esac
 
-WTW="$(cygpath -m "$WT_IN")"     # C:/... for docker -v
+WTW="$(cygpath -m "$WT_IN")"     # C:/... for docker and git (native binaries; conversion is off)
 WTU="$(cygpath -u "$WT_IN")"     # /c/... for cd
 [ -d "$WTU" ] || { echo "no such worktree: $WT_IN" >&2; exit 2; }
 
+LOCKROOT="${FF_LOCK_DIR:-/c/Users/User/.fixflow-cache/locks}"
 LOGROOT="${FF_LOG_DIR:-/c/Users/User/.fixflow-cache/gate-logs}"
 L="$LOGROOT/$LANE/$KIND-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$L"
+mkdir -p "$L" "$LOCKROOT"
 HOLDER="$LANE-$KIND-$$"
-# C:/ form here: git is a native binary and path conversion is switched off above
 HEAD_SHA="$(git -C "$WTW" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+DIRTY="$(git -C "$WTW" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$DIRTY" = 0 ]; then TREE="clean"; else TREE="dirty($DIRTY)"; fi
+PARTIAL=""
+[ "$#" -gt 0 ] && PARTIAL="RUN partial (extra args: $*): not a merge-readiness run"
 echo "LOGDIR $L"
-echo "HEAD $HEAD_SHA lane=$LANE kind=$KIND"
+echo "HEAD $HEAD_SHA tree=$TREE lane=$LANE kind=$KIND"
+
+finish() {  # $1 = exit code
+  {
+    echo "lane=$LANE kind=$KIND head=$HEAD_SHA tree=$TREE worktree=$WTW"
+    [ -n "$PARTIAL" ] && echo "$PARTIAL"
+    grep -E "^(ENV|GATE|ADVISORY|SETUP|SKIPS|SUMMARY)" "$L/gates.log" 2>/dev/null
+  } > "$L/summary.txt"
+  cat "$L/summary.txt"
+  exit "$1"
+}
+
+# ── one run per lane and kind ───────────────────────────────────────────────────────────────
+# Taken before anything else, so a second run can never touch the first run's containers.
+LL="$LOCKROOT/lane-$LANE-$KIND"
+take_lane_lock() {
+  if mkdir "$LL" 2>/dev/null; then echo "$$" > "$LL/pid"; return 0; fi
+  local other; other="$(cat "$LL/pid" 2>/dev/null)"
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then return 1; fi
+  # the previous run died without cleaning up; a lock younger than 2 minutes may still be
+  # writing its pid file, so leave that one alone
+  [ -n "$(find "$LL" -maxdepth 0 -mmin +2 2>/dev/null)" ] || return 1
+  rm -rf "$LL"
+  mkdir "$LL" 2>/dev/null || return 1
+  echo "$$" > "$LL/pid"
+}
+if ! take_lane_lock; then
+  echo "SETUP[lane] ALREADY_RUNNING: another $KIND run for lane $LANE holds $LL" | tee -a "$L/gates.log"
+  finish 4
+fi
 
 cleanup() {
   if [ "$KIND" = backend ]; then
     docker rm -f "fixflow-$LANE-gates" "fixflow-$LANE-db" >/dev/null 2>&1
   fi
   bash "$HERE/ff-slot.sh" release "$HOLDER" >/dev/null 2>&1
+  rm -rf "$LL"
 }
 trap cleanup EXIT
-
-finish() {  # $1 = FAIL flag
-  {
-    echo "lane=$LANE kind=$KIND head=$HEAD_SHA worktree=$WTW"
-    grep -E "^(GATE|ADVISORY|SETUP|SKIPS|SUMMARY)" "$L/gates.log" 2>/dev/null
-  } > "$L/summary.txt"
-  cat "$L/summary.txt"
-  exit "$1"
-}
 
 # every gate runs; FAIL is sticky
 FAIL=0; i=0
@@ -86,13 +119,21 @@ case "$KIND" in
   backend)
     docker info --format '{{.ServerVersion}}' >/dev/null 2>&1 || { echo "SETUP[docker] DOCKER_ENGINE_DOWN" | tee -a "$L/gates.log"; finish 3; }
     N="fixflow-$LANE"
-    if docker ps --format '{{.Names}}' | grep -qx "$N-gates"; then
-      echo "SETUP[lane] GATES_ALREADY_RUNNING for $LANE (one pytest per database)" | tee -a "$L/gates.log"
-      trap - EXIT; finish 4
-    fi
-    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 | tee -a "$L/slot.log"
+    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" | tee -a "$L/slot.log"
     PG="${FF_PG_IMAGE:-postgres:16-alpine}"   # CI parity today; the plan moves both to 17-alpine in P3a
     U="postgresql+asyncpg://postgres:postgres@localhost:5432/fixflow_test"
+    # Mirror CI's environment per worktree: P1 makes the backend refuse to boot outside an
+    # explicit dev/test environment and sets FIXFLOW_ENVIRONMENT in ci.yml. Whatever the
+    # worktree's own ci.yml gives the backend job is what the gate gives it; a worktree cut
+    # before P1 has no such line and gets none, exactly as CI ran it. FF_GATES_ENV adds more
+    # ("K=V K2=V2") for a lane that needs a variable before its ci.yml edit exists.
+    ENVARGS=()
+    ci_env="$(grep -m1 -E '^[[:space:]]*FIXFLOW_ENVIRONMENT:' "$WTU/.github/workflows/ci.yml" 2>/dev/null \
+      | sed -E 's/^[^:]*:[[:space:]]*//; s/[[:space:]]*(#.*)?$//' | tr -d "\"'")"
+    [ -n "$ci_env" ] && ENVARGS+=(-e "FIXFLOW_ENVIRONMENT=$ci_env")
+    for kv in ${FF_GATES_ENV:-}; do ENVARGS+=(-e "$kv"); done
+    echo "ENV ${ENVARGS[*]:-none}" | tee -a "$L/gates.log"
+    # we hold the lane lock, so anything with these names is a leftover of a dead run
     docker rm -f "$N-db" "$N-gates" >/dev/null 2>&1
     docker run -d --name "$N-db" --memory 1g \
       -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fixflow_test "$PG" > /dev/null \
@@ -100,7 +141,7 @@ case "$KIND" in
     docker run -d --name "$N-gates" --network "container:$N-db" --memory 3g --cpus "${FF_GATE_CPUS:-6}" \
       -v "$WTW:/src:ro" -v fixflow-pip-cache:/root/.cache/pip \
       -e FIXFLOW_DATABASE_URL="$U" -e FIXFLOW_TEST_DATABASE_URL="$U" -e PYTHONDONTWRITEBYTECODE=1 \
-      -e FF_DB_HOST=localhost -e FF_PYTEST_ARGS="$*" \
+      -e FF_DB_HOST=localhost -e FF_PYTEST_ARGS="$*" "${ENVARGS[@]}" \
       python:3.12-slim sh -c '
         mkdir -p /work/backend /work/logs || exit 2
         tar -C /src/backend --exclude=.venv --exclude=.env --exclude=__pycache__ --exclude=.mypy_cache \
@@ -130,7 +171,8 @@ for case in root.iter("testcase"):
     for s in case.findall("skipped"):
         skipped += 1
         text = (s.get("message") or "") + (s.text or "")
-        if "FIXFLOW_TEST_DATABASE_URL" in text or "integration" in text.lower():
+        # conftest skips integration tests with exactly this reason when no test database is set
+        if "FIXFLOW_TEST_DATABASE_URL" in text:
             integ += 1
 print("SKIPS total=%d skipped=%d integration_skipped=%d" % (total, skipped, integ))
 sys.exit(1 if integ else 0)
@@ -151,29 +193,24 @@ PY
 
   mobile)
     cd "$WTU/technician-app" || finish 2
-    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 | tee -a "$L/slot.log"
+    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" | tee -a "$L/slot.log"
     npm_ready || finish 2
     g npm run typecheck
     g npx jest --ci --maxWorkers="${FF_JEST_WORKERS:-4}"      # no --passWithNoTests (plan P1)
-    g npx expo export --platform android                      # JS bundle only; the native compile gate is the lab's android kind
-    echo "SUMMARY FAIL=$FAIL" | tee -a "$L/gates.log"
+    g npx expo export --platform android                      # JS bundle only; the native compile gate is the lab's android script
+    echo "SUMMARY FAIL=$FAIL" >> "$L/gates.log"
     finish "$FAIL"
     ;;
 
   web)
     cd "$WTU" || finish 2
-    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 | tee -a "$L/slot.log"
+    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" | tee -a "$L/slot.log"
     npm_ready || finish 2
     g npm run lint
     g npm run format:check
     g npm test -- --maxWorkers="${FF_VITEST_WORKERS:-4}"
     g npm run build
-    echo "SUMMARY FAIL=$FAIL" | tee -a "$L/gates.log"
+    echo "SUMMARY FAIL=$FAIL" >> "$L/gates.log"
     finish "$FAIL"
-    ;;
-
-  *)
-    echo "unknown kind: $KIND" >&2
-    exit 2
     ;;
 esac

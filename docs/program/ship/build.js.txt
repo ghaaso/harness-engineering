@@ -1,0 +1,472 @@
+// Builds the owner-facing ship-program page from program.json.
+// Run:  cd docs/program/ship && node - < build.js.txt
+// Writes index.html (self-contained) and OWNER-VIEW.generated.md. No dependencies.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const dir = process.cwd();
+const P = JSON.parse(fs.readFileSync(path.join(dir, 'program.json'), 'utf8'));
+const asOf = P.stateAsOf;
+
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const byId = {};
+P.phases.forEach((p) => (byId[p.id] = p));
+const ST = P.states;
+const stateOrder = ['done', 'running', 'next', 'you', 'held', 'todo'];
+const measured = (what) => `<span class="tag m">measured ${esc(what || asOf)}</span>`;
+const illus = () => `<span class="tag i">illustrative</span>`;
+
+// sanity: every reference resolves
+const bad = [];
+P.phases.forEach((p) => (p.needs || []).concat(p.stackOn ? [p.stackOn] : []).forEach((n) => { if (!byId[n]) bad.push(p.id + ' -> ' + n); }));
+P.goals.forEach((g) => g.phases.forEach((n) => { if (!byId[n]) bad.push('goal -> ' + n); }));
+P.ownerChain.forEach((n) => { if (!byId[n]) bad.push('owner chain -> ' + n); });
+if (bad.length) { console.error('Unknown phase ids:', bad.join(', ')); process.exit(1); }
+
+// dependants: everything that cannot finish without X
+const rev = {};
+P.phases.forEach((p) => (p.needs || []).forEach((n) => (rev[n] = rev[n] || []).push(p.id)));
+function downstream(id) {
+  const seen = new Set(); const st = [id];
+  while (st.length) { const x = st.pop(); (rev[x] || []).forEach((y) => { if (!seen.has(y)) { seen.add(y); st.push(y); } }); }
+  return [...seen];
+}
+const p0aDown = downstream('P0a');
+const total = P.phases.length;
+const countBy = (ids) => { const c = {}; ids.forEach((i) => { const s = byId[i].state; c[s] = (c[s] || 0) + 1; }); return c; };
+const allCounts = countBy(P.phases.map((p) => p.id));
+
+// ---------- pieces ----------
+const SHORT = { done: 'done', running: 'running now', next: 'starting next', you: 'waiting on you', held: 'held', todo: 'not started' };
+function pill(state) { return `<span class="pill s-${state}">${esc(SHORT[state])}</span>`; }
+
+function box(p, opts = {}) {
+  const lines = [];
+  lines.push(`<span class="bx-name">${esc(p.name)}</span>`);
+  lines.push(`<span class="bx-meta"><b>${esc(p.id)}</b> ${pill(p.state)}</span>`);
+  if (p.stackOn && !opts.chainedFromPrev) lines.push(`<span class="bx-stack">builds on ${esc(p.stackOn)}'s reviewed branch</span>`);
+  if (p.hold) lines.push(`<span class="bx-hold">Merge held until: ${esc(p.hold)}</span>`);
+  return `<button type="button" class="bx s-${p.state}" data-id="${esc(p.id)}" aria-pressed="false">${lines.join('')}</button>`;
+}
+
+function chip(id) { const p = byId[id]; return `<button type="button" class="chip s-${p.state}" data-id="${esc(id)}" title="${esc(p.name)}: ${esc(ST[p.state])}">${esc(id)}</button>`; }
+
+function stackBar(counts, totalN) {
+  return `<div class="sbar">` + stateOrder.filter((s) => counts[s]).map((s) =>
+    `<span class="seg s-${s}" style="flex:${counts[s]} 1 0" title="${counts[s]} ${esc(SHORT[s])}"><b>${counts[s]}</b>${counts[s] / totalN >= 0.25 ? ' ' + esc(SHORT[s]) : ''}</span>`).join('') + `</div>` +
+    `<p class="g-count">` + stateOrder.filter((s) => counts[s]).map((s) => `<b>${counts[s]}</b> ${esc(SHORT[s])}`).join(' · ') + ` (of ${totalN} phase${totalN === 1 ? '' : 's'})</p>`;
+}
+
+// ---------- section: header ----------
+const runningIds = P.phases.filter((p) => p.state === 'running').map((p) => p.id);
+const nextIds = P.phases.filter((p) => p.state === 'next').map((p) => p.id);
+const doneIds = P.phases.filter((p) => p.state === 'done').map((p) => p.id);
+const listIds = (a) => (a.length ? a.join(', ') : 'none');
+const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+const header = `
+<header class="top">
+  <h1>FixFlow ship program</h1>
+  <p class="sub">The whole program on one page: what is running, what waits on what, and what only you can do. State as of <b>${esc(asOf)}</b>. The plan decides; this page explains. Built from <code>program.json</code>.</p>
+  <div class="now">
+    <div class="card bad"><span class="big">Production is dead</span><span>${esc(P.headline.production)}</span>${measured()}</div>
+    <div class="card you"><span class="big">Your pre-flight (P0a) has not started</span><span>${esc(P.headline.critical)} <b>${p0aDown.length} of ${total}</b> phases wait behind it.</span>${measured()}</div>
+    <div class="card run"><span class="big">${plural(runningIds.length, 'lane', 'lanes')} running now, ${nextIds.length} starting next</span><span>Running, each in its own session and its own copy of the repository: ${esc(listIds(runningIds))}. Starting next: ${esc(listIds(nextIds))}. Done: ${esc(listIds(doneIds))}. ${esc(P.headline.baseline)}</span>${measured()}</div>
+  </div>
+  <nav class="toc">
+    <a href="#where">Where are we?</a><a href="#lanes">What is running in parallel?</a><a href="#waits">What waits on what?</a><a href="#you">What only you can do next</a><a href="#decide">Decisions waiting on you</a><a href="#machine">How the computer is used</a><a href="#rules">What never bends</a>
+  </nav>
+  <div class="legend" aria-label="Colour key">${stateOrder.map((s) => `<span class="pill s-${s}">${esc(ST[s])}</span>`).join('')}</div>
+</header>`;
+
+function secHead(id, q, how, now) {
+  return `<h2 id="${id}">${esc(q)}</h2><p class="how"><b>How to read this:</b> ${how}</p><p class="shows"><b>What it shows right now:</b> ${now}</p>`;
+}
+
+// ---------- section 1: goals ----------
+const goalsHtml = secHead('where', 'Where are we?',
+  'one row per goal of the plan. The bar shows how many of that goal\'s phases are in each state (the number is written on the bar); below it every phase is a coloured mark. Click a mark to see what waits on it.',
+  `${allCounts.done || 0} phase done, ${allCounts.running || 0} running (${esc(listIds(runningIds))}), ${allCounts.next || 0} starting next, ${allCounts.you || 0} waiting on you, ${allCounts.held || 0} held, ${allCounts.todo || 0} not started, out of ${total}. No goal is reached. State as of ${esc(asOf)} ${measured()}`) +
+  `<div class="goals">` + P.goals.map((g, i) => {
+    const c = countBy(g.phases);
+    return `<div class="goal"><div class="g-head"><span class="g-num">Goal ${i + 1}</span><span class="g-name">${esc(g.name)}</span><span class="g-at">Reached at: ${esc(g.reached)}</span></div>
+    ${stackBar(c, g.phases.length)}<div class="chips">${g.phases.map(chip).join('')}</div></div>`;
+  }).join('') + `</div><p class="note">The plan's heading says "five goals"; its table has six rows (latency is its own row). All six are shown.</p>`;
+
+// ---------- section 2: lanes ----------
+const waveIds = P.waves.map((w) => w.id);
+const laneRows = P.lanes.filter((l) => l.id !== 'OWN').map((l) => {
+  const cells = waveIds.map((w) => {
+    const ps = P.phases.filter((p) => p.lane === l.id && p.wave === w);
+    let html = '';
+    ps.forEach((p, i) => {
+      const chained = i > 0 && p.stackOn === ps[i - 1].id;
+      if (chained) html += `<span class="arrow-down" aria-hidden="true">&#8595; then, on its branch</span>`;
+      html += box(p, { chainedFromPrev: chained });
+    });
+    const wv = P.waves.find((x) => x.id === w);
+    return `<div class="cell${ps.length ? '' : ' empty'}"><span class="cell-wave">${esc(wv.name)}</span>${html}</div>`;
+  }).join('');
+  return `<div class="lane"><div class="lane-name"><b>${esc(l.name)}</b><span>lane ${esc(l.id)}</span><span class="owns">${esc(l.owns)}</span></div>${cells}</div>`;
+}).join('');
+const own = P.lanes.find((l) => l.id === 'OWN');
+const ownerRow = `<div class="owner-row"><div class="lane-name"><b>${esc(own.name)}</b><span>lane OWN: the critical path</span><span class="owns">${esc(own.owns)}. Runs beside all four waves; no wave shortens it.</span></div>
+  <div class="ochain">${P.ownerChain.map((id, i) => (i ? `<span class="arrow-r" aria-hidden="true">&#8594;</span>` : '') + box(byId[id])).join('')}</div></div>`;
+const waveHead = `<div class="lane whead"><div class="lane-name"><b>Lane</b></div>${P.waves.map((w) => `<div class="cell"><b>${esc(w.name)}</b><span>starts ${esc(w.starts)}</span></div>`).join('')}</div>`;
+const lanesHtml = secHead('lanes', 'What is running in parallel?',
+  'each row is a lane: one kind of code, worked by its own session in its own copy of the repository. Columns are the waves A to D in the order the plan starts them, then "Later" for phases the plan puts in no wave. A box is a phase: plain name, plan id, state. "&#8595; then" joins phases built one on top of the other. A purple box may be built but must stay unmerged until the line in it says. Click any box.',
+  `${plural(runningIds.length, 'phase runs', 'phases run')} now (${esc(listIds(runningIds))}); done: ${esc(listIds(doneIds))}; starting next: ${esc(listIds(nextIds))}. Your own chain (bottom) has not started, and everything that needs a server or a phone waits on it. ${measured()}`) +
+  `<div class="board">${waveHead}${laneRows}${ownerRow}</div>
+  <div class="info" id="info" aria-live="polite"><span id="info-text">Click any phase to see what it needs and what waits on it.</span> <button type="button" class="btn" id="show-p0a">Show what waits behind P0a</button> <button type="button" class="btn ghost" id="clear-sel">Clear</button></div>`;
+
+// ---------- section 3: waits ----------
+const p0aByLane = {};
+p0aDown.forEach((id) => { const l = byId[id].lane; (p0aByLane[l] = p0aByLane[l] || []).push(id); });
+const waitsHtml = secHead('waits', 'What waits on what?',
+  'click a phase anywhere on this page. It gets a thick outline; every phase that cannot finish without it gets a yellow ring and "waits on it"; the phases it needs get a dashed ring; the rest fade. This panel then lists them.',
+  `with nothing clicked it shows your pre-flight, P0a: <b>${p0aDown.length} of ${total}</b> phases cannot finish without it.`) +
+  `<div class="waits" id="waits">
+    <div class="wbar"><span class="wfill" id="w-fill" style="width:${(100 * p0aDown.length / total).toFixed(1)}%"><b id="w-num">${p0aDown.length}</b></span><span class="wrest">of ${total} phases</span></div>
+    <p class="wtitle" id="w-title"><b>Your pre-flight (P0a)</b>: ${p0aDown.length} phases wait behind it. It needs nothing; only you can do it.</p>
+    <div id="w-lists"><h3>Waits on it, by lane</h3>${P.lanes.filter((l) => p0aByLane[l.id]).map((l) => `<div class="wl"><span class="wl-name">${esc(l.name)} (${p0aByLane[l.id].length})</span><span class="chips">${p0aByLane[l.id].map(chip).join('')}</span></div>`).join('')}</div>
+  </div>`;
+
+// ---------- section 4: P0a ----------
+const p0aHtml = secHead('you', 'What only you can do next',
+  `your pre-flight, P0a, as sixteen steps in the plan's order (tools first, then items 1 to 16). Each card says what to do, why, and which helper it uses. Tick it when done and write the result in a few words. Your ticks and words stay in this browser only. Never type a password, key, token or connection string here: results only (dates, yes/no, counts, model names).`,
+  `<span id="p0a-progress">0 of 16 ticked</span>. ${esc(P.p0aDone)}`) +
+  `<div class="stepstrip" id="stepstrip">${P.p0a.map((it, i) => `<a href="#item-${it.n}" class="sq" data-n="${it.n}" title="Step ${i + 1}: ${esc(it.title)}"><span>${i + 1}</span><small>item ${it.n}</small></a>`).join('')}</div>
+  <div class="p0a-tools"><button type="button" class="btn" id="focus-toggle">One step at a time</button> <span id="focus-nav" hidden><button type="button" class="btn ghost" id="f-prev">&#8592; Previous</button> <button type="button" class="btn ghost" id="f-next">Next &#8594;</button></span></div>
+  <ol class="steps">` + P.p0a.map((it, i) => {
+    const must = it.must === 'MUST' ? `<span class="must">MUST</span>` : it.must === 'done-when' ? `<span class="must soft">needed for "done"</span>` : `<span class="must opt">value, or "unknown, because ..."</span>`;
+    const cmds = (it.cmds || []).map((c) => `<div class="cmd"><code>${esc(c)}</code><button type="button" class="copy" data-copy="${esc(c)}">Copy</button></div>`).join('');
+    return `<li class="step" id="item-${it.n}" data-n="${it.n}">
+      <div class="st-head"><span class="st-num">Step ${i + 1}</span><span class="st-item">plan item ${it.n}</span>${must}</div>
+      <h3>${esc(it.title)}</h3>
+      <p><b>Do:</b> ${esc(it.do)}</p>
+      <p><b>Why:</b> ${esc(it.why)}</p>
+      ${it.helper ? `<p><b>Uses:</b> ${esc(it.helper)}${/\.sh/.test(it.helper) ? ' <span class="tag i">helper kit: docs/program/lab/p0a/ (read its README first)</span>' : ''}</p>` : ''}
+      ${cmds ? `<div class="cmds"><span class="cmds-h">Commands (Git Bash; words in &lt; &gt; are yours to fill in your terminal, never here)</span>${cmds}</div>` : ''}
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="${it.n}"> Done</label>
+      <label class="res">Result <input type="text" data-res="${it.n}" maxlength="200" placeholder="${esc(it.result)}" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="${it.n}" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li>`;
+  }).join('') + `</ol>
+  <div class="export"><button type="button" class="btn" id="export-btn">Export my answers</button> <button type="button" class="btn ghost" id="export-copy" hidden>Copy the text</button>
+  <p class="how">Makes plain text of your ticks, results and decision choices to paste back to the coordinator.</p>
+  <textarea id="export-out" rows="10" readonly hidden></textarea></div>`;
+
+// ---------- section 5: decisions ----------
+function decCard(d, key, isNew) {
+  const opts = isNew ? d.options : ['Accept the default', 'I decide otherwise (write it below)'];
+  return `<div class="dec${isNew ? ' new' : ''}" data-key="${key}">
+    ${isNew ? '<span class="tag new">new, decide now</span>' : ''}
+    <h3>${esc(d.decision)}</h3>
+    <p><b>Blocks:</b> ${esc(d.blocks)}</p>
+    <p><b>If you don't decide:</b> ${esc(d.default)}</p>
+    <fieldset><legend>Your choice</legend>${opts.map((o, i) => `<label><input type="radio" name="d-${key}" value="${esc(o)}" data-dec="${key}"> ${esc(o)}</label>`).join('')}
+    <label class="res">Note <input type="text" data-decnote="${key}" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-${key}" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div>`;
+}
+const decHtml = secHead('decide', 'Decisions waiting on you',
+  'each card is one decision: what it is, what it blocks, and what happens if you never decide (the default is a valid answer). Mark your choice; it is kept in this browser and goes into "Export my answers".',
+  `4 new decisions wait now (top row), plus the plan's ${P.decisions.length} standing rows (section 4 of the plan). <span id="dec-progress">0 of ${P.decisions.length + 4} marked</span>.`) +
+  `<h3 class="dh">New since the parallel plan (decide now)</h3><div class="decs">${P.decisionsNew.map((d) => decCard(d, d.id, true)).join('')}</div>
+  <h3 class="dh">The plan's decisions table (section 4), in the plan's order</h3><div class="decs">${P.decisions.map((d, i) => decCard(d, 'T' + (i + 1), false)).join('')}</div>`;
+
+// ---------- section 6: machine ----------
+const M = P.machine;
+const ramUsed = M.ramTotal - M.ramFree;
+const threads = Array.from({ length: M.threads }, (_, i) => `<span class="th">${i + 1}</span>`).join('');
+const slotJobs = M.costs.map((c) => `<div class="job"><span class="job-name">${esc(c.job)}</span><span class="job-bar">${Array.from({ length: M.slots }, (_, i) => `<span class="slot${i < c.slots ? ' on' : ''}">${i < c.slots ? 'slot' : ''}</span>`).join('')}</span><span class="job-n"><b>${c.slots}</b> of ${M.slots} · ${esc(c.detail)}</span></div>`).join('');
+const machineHtml = secHead('machine', 'How the computer is used',
+  'the boxes and bars are drawn to scale; the number is written on each. Memory, not processor, is what runs out first, so a lock with 3 slots rations the heavy jobs.',
+  `${esc(M.cpu)}; ${M.ramTotal} GB memory with about ${M.ramFree} GB free while other sessions run; ${M.diskFree} GB disk free. ${measured(M.asOf)}`) +
+  `<div class="mach">
+    <div class="mpart"><h3>Processor: ${M.threads} threads ${measured(M.asOf)}</h3><div class="threads">${threads}</div><p>Each lane's backend gate container is capped at 6 of them; Jest and Vitest at 4 workers each.</p></div>
+    <div class="mpart"><h3>Memory: ${M.ramTotal} GB, the resource that runs out first ${measured(M.asOf)}</h3>
+      <div class="ram"><span class="ram-used" style="flex:${ramUsed} 1 0"><b>about ${ramUsed} GB in use</b>&nbsp;(other sessions and projects)</span><span class="ram-free" style="flex:${M.ramFree} 1 0"><b>about ${M.ramFree} GB free</b></span></div>
+      <p>A gates container gets 3 GB, each test database 1 GB.</p></div>
+    <div class="mpart"><h3>The 3-slot lock: what each heavy job costs</h3><div class="jobs">${slotJobs}</div><p>At most 3 slots busy at once, machine-wide. Example: one backend gate + one Gradle build fills it. ${illus()}</p></div>
+    <div class="mpart two"><div><h3>Graphics card (${esc(M.gpu)})</h3><p class="yes"><b>Does:</b> ${esc(M.gpuDoes)}.</p><p class="no"><b>Does not:</b> ${esc(M.gpuDoesNot)}.</p></div>
+      <div><h3>Disk: ${M.diskFree} GB free ${measured(M.asOf)}</h3><div class="ram"><span class="ram-free" style="flex:1"><b>${M.diskFree} GB free</b></span></div><p>A worktree with phone node_modules is about 1.2 GB.</p></div></div>
+    <div class="mpart"><h3>Docker networks</h3><p>${esc(M.docker)}</p></div>
+  </div>`;
+
+// ---------- section 7: rules ----------
+const rulesHtml = secHead('rules', 'What never bends',
+  'seven standing rules. Running work in parallel changes when work starts, never these.',
+  'all seven stand as written in the plan (section 0); the parallel amendment changes none of them.') +
+  `<ol class="rules">${P.rules.map((r, i) => `<li><span class="rn">${i + 1}</span><span>${esc(r)}</span></li>`).join('')}</ol>`;
+
+// ---------- CSS ----------
+const css = `
+:root{--bg:#f7f6f2;--panel:#fff;--ink:#1d1d1f;--ink2:#4a4a52;--line:#d6d3cc;--accent:#1f5fbf;
+--done:#1e7a3c;--done-bg:#dff3e5;--run:#1f5fbf;--run-bg:#dde8fb;--next:#0b7c86;--next-bg:#d8f1f2;--you:#b34700;--you-bg:#ffe6cf;
+--held:#6b3fa0;--held-bg:#ece2f7;--todo:#5d5d66;--todo-bg:#f0efeb;--hi:#f2c200;--bad:#b3261e;--bad-bg:#fde3e1}
+@media (prefers-color-scheme: dark){:root{--bg:#16171a;--panel:#212227;--ink:#ececf0;--ink2:#b4b4bf;--line:#3a3b42;--accent:#7fb0ff;
+--done:#6fd28f;--done-bg:#1d3a26;--run:#86b3ff;--run-bg:#1d2d4a;--next:#5fd0d8;--next-bg:#163a3d;--you:#ffaa66;--you-bg:#47290f;
+--held:#c39cf0;--held-bg:#33244a;--todo:#a6a6b0;--todo-bg:#2a2b31;--hi:#ffd84d;--bad:#ff8a80;--bad-bg:#45201d}}
+*{box-sizing:border-box}html{scroll-behavior:auto}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1840px;margin:0 auto;padding:16px 16px 80px}
+h1{font-size:32px;margin:8px 0 4px}h2{font-size:27px;margin:56px 0 6px;padding-top:12px;border-top:3px solid var(--line)}
+h3{font-size:18px;margin:4px 0 6px}code{font:14px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}
+p{margin:6px 0}.sub{color:var(--ink2);font-size:17px;max-width:1100px}
+.how,.shows{margin:4px 0;font-size:16px;max-width:1300px}.shows{color:var(--ink2)}
+.note{color:var(--ink2);font-size:15px}
+.tag{display:inline-block;font-size:14px;line-height:1.3;padding:1px 7px;border-radius:9px;margin-left:4px;border:1px solid var(--line);color:var(--ink2);max-width:100%;vertical-align:middle}
+.tag.m{border-color:var(--done);color:var(--done)}.tag.i{border-style:dashed}.tag.new{border-color:var(--you);color:var(--you);font-weight:600;margin:0 0 6px}
+.now{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-left:8px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;font-size:16px}
+.card .big{font-size:21px;font-weight:700}.card.bad{border-left-color:var(--bad)}.card.you{border-left-color:var(--you)}.card.run{border-left-color:var(--run)}
+.card .tag{align-self:flex-start;margin:0}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.toc a{color:var(--accent);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 10px;text-decoration:none;font-size:15px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{display:inline-block;font-size:14px;font-weight:600;padding:1px 8px;border-radius:10px;white-space:nowrap}
+.s-done{--c:var(--done);--cb:var(--done-bg)}.s-running{--c:var(--run);--cb:var(--run-bg)}.s-next{--c:var(--next);--cb:var(--next-bg)}
+.s-you{--c:var(--you);--cb:var(--you-bg)}.s-held{--c:var(--held);--cb:var(--held-bg)}.s-todo{--c:var(--todo);--cb:var(--todo-bg)}
+.pill{background:var(--cb);color:var(--c);border:1px solid var(--c)}
+.goals{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr));gap:14px;margin-top:12px}
+.goal{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.g-head{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}.g-num{font-weight:700;color:var(--ink2)}.g-name{font-weight:700;font-size:18px}
+.g-at{width:100%;color:var(--ink2);font-size:15px}.g-count{color:var(--ink2);font-size:14px;margin:4px 0 0}
+.sbar{display:flex;gap:2px;margin:8px 0;min-height:30px}
+.seg{background:var(--cb);color:var(--c);border:1px solid var(--c);border-radius:4px;font-size:14px;padding:3px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:34px}
+.seg b{font-size:16px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:600 14px/1.2 system-ui,sans-serif;background:var(--cb);color:var(--c);border:2px solid var(--c);border-radius:6px;padding:5px 8px;cursor:pointer}
+.chip.s-todo{border-style:dashed}
+.board{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:200px repeat(5,minmax(0,1fr));gap:8px;align-items:stretch}
+.lane-name{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;font-size:14px;color:var(--ink2)}
+.lane-name b{font-size:17px;color:var(--ink)}.owns{font-size:14px}
+.cell{background:color-mix(in srgb,var(--panel) 55%,transparent);border:1px dashed var(--line);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.whead .cell{border-style:solid;background:var(--panel);font-size:14px;color:var(--ink2)}.whead .cell b{font-size:17px;color:var(--ink)}
+.whead .lane-name{justify-content:center}
+.cell-wave{display:none;font-size:14px;font-weight:700;color:var(--ink2)}
+.bx{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:3px;background:var(--panel);border:2px solid var(--c);border-left:9px solid var(--c);border-radius:7px;padding:7px 9px;min-width:0;transition:opacity .15s}
+.bx.s-todo{border-style:dashed;border-left-style:solid}
+.bx:focus-visible,.chip:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.bx-name{font-size:15px;font-weight:600;line-height:1.3;color:var(--ink)}.bx-meta{font-size:14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bx-stack{font-size:14px;color:var(--ink2)}.bx-hold{font-size:14px;color:var(--held);font-weight:600;background:var(--held-bg);border-radius:4px;padding:2px 5px}
+.arrow-down{font-size:14px;color:var(--ink2);padding-left:10px}
+.owner-row{display:grid;grid-template-columns:200px 1fr;gap:8px;margin-top:6px}
+.owner-row .lane-name{border-color:var(--you);border-width:2px}
+.ochain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--you-bg);border:2px solid var(--you);border-radius:8px;padding:8px}
+.ochain .bx{width:200px}.arrow-r{font-size:20px;color:var(--you);font-weight:700}
+.info{position:sticky;bottom:0;z-index:5;background:var(--panel);border:2px solid var(--accent);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:16px;box-shadow:0 -4px 14px rgba(0,0,0,.12)}
+.btn{font:600 15px system-ui,sans-serif;background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}
+@media (prefers-color-scheme: dark){.btn{color:#111}}
+.btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.sel-on .bx,.sel-on .chip{opacity:.32}
+.sel-on .is-sel,.sel-on .is-down,.sel-on .is-up{opacity:1}
+.is-sel{box-shadow:0 0 0 4px var(--ink)!important}
+.is-down{box-shadow:0 0 0 4px var(--hi)!important}
+.is-down.bx::after{content:"waits on it";font-size:14px;font-weight:700;color:var(--ink);background:var(--hi);border-radius:4px;padding:0 6px;align-self:flex-start}
+@media (prefers-color-scheme: dark){.is-down.bx::after{color:#111}}
+.is-up{outline:3px dashed var(--ink2);outline-offset:2px}
+.is-up.bx::after{content:"needed by it";font-size:14px;font-weight:700;color:var(--ink2)}
+.waits{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:10px}
+.wbar{display:flex;align-items:center;gap:10px;height:40px}
+.wfill{height:100%;background:var(--hi);border-radius:6px;display:flex;align-items:center;justify-content:flex-end;padding-right:10px;min-width:44px;color:#111;font-size:19px}
+.wbar{background:var(--todo-bg);border-radius:6px}.wrest{font-size:16px;color:var(--ink2);white-space:nowrap;padding-right:8px}
+.wtitle{font-size:17px;margin:10px 0}.wl{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:6px 0}.wl-name{font-weight:600;min-width:220px}
+.stepstrip{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:4px;margin:12px 0}
+.sq{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:var(--ink);background:var(--panel);border:2px solid var(--line);border-radius:6px;padding:4px 0;font-weight:700;font-size:16px}
+.sq small{font-size:14px;font-weight:400;color:var(--ink2)}.sq.ok{background:var(--done-bg);border-color:var(--done);color:var(--done)}
+.sq.cur{outline:3px solid var(--accent)}
+.steps{list-style:none;padding:0;margin:10px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:12px}
+.step{background:var(--panel);border:1px solid var(--line);border-left:8px solid var(--you);border-radius:8px;padding:12px 14px;min-width:0}
+.step.ok{border-left-color:var(--done)}
+.focus .step{display:none}.focus .step.cur{display:block;grid-column:1/-1}
+.st-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:15px}.st-num{font-weight:700}.st-item{color:var(--ink2)}
+.must{font-size:14px;font-weight:700;padding:1px 8px;border-radius:9px;background:var(--bad-bg);color:var(--bad);border:1px solid var(--bad)}
+.must.soft{background:var(--you-bg);color:var(--you);border-color:var(--you)}.must.opt{background:transparent;color:var(--ink2);border-color:var(--line);font-weight:400}
+.cmds{margin:8px 0;display:flex;flex-direction:column;gap:6px}.cmds-h{font-size:14px;color:var(--ink2)}
+.cmd{display:flex;gap:8px;align-items:flex-start;background:var(--todo-bg);border-radius:6px;padding:6px 8px}.cmd code{flex:1;min-width:0}
+.copy{font:600 14px system-ui,sans-serif;border:1px solid var(--accent);color:var(--accent);background:var(--panel);border-radius:5px;padding:3px 9px;cursor:pointer}
+.answer{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.tick{font-weight:700;display:flex;gap:6px;align-items:center}.tick input{width:22px;height:22px}
+.res{display:flex;gap:6px;align-items:center;flex:1 1 100%;min-width:0;font-size:15px}
+.res input{flex:1;min-width:0;font:15px system-ui,sans-serif;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink)}
+.warn{color:var(--bad);font-weight:600;font-size:15px;width:100%}
+.export{margin-top:12px}.export textarea{width:100%;font:14px/1.4 ui-monospace,Consolas,monospace;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px}
+.dh{margin-top:18px}
+.decs{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:12px}
+.dec{background:var(--panel);border:1px solid var(--line);border-top:6px solid var(--line);border-radius:8px;padding:12px 14px;font-size:15px;min-width:0}
+.dec.new{border-top-color:var(--you)}.dec.marked{border-top-color:var(--done)}
+.dec fieldset{border:1px solid var(--line);border-radius:6px;margin:8px 0 0;padding:6px 10px;display:flex;flex-direction:column;gap:5px}
+.dec legend{font-size:14px;color:var(--ink2)}.dec label{display:flex;gap:6px;align-items:center}
+.mach{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr));gap:12px;margin-top:10px}
+.mpart{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0}
+.mpart.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px}
+.threads{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px}
+.th{background:var(--run-bg);color:var(--run);border:1px solid var(--run);border-radius:4px;text-align:center;font-size:14px;padding:4px 0}
+.ram{display:flex;height:44px;gap:2px;margin:8px 0}
+.ram-used,.ram-free{display:flex;align-items:center;padding:0 10px;border-radius:5px;font-size:15px;overflow:hidden;min-width:0}
+.ram-used{background:var(--todo-bg);border:1px solid var(--todo);color:var(--ink)}.ram-free{background:var(--done-bg);border:2px solid var(--done);color:var(--done)}
+.jobs{display:flex;flex-direction:column;gap:6px}.job{display:grid;grid-template-columns:minmax(0,1.3fr) 150px minmax(0,1.6fr);gap:8px;align-items:center;font-size:15px}
+.job-bar{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}.slot{height:26px;border:1px dashed var(--line);border-radius:4px;font-size:14px;text-align:center;line-height:24px}
+.slot.on{background:var(--run-bg);border:1px solid var(--run);color:var(--run);font-weight:700}.job-n{color:var(--ink2)}
+.yes b{color:var(--done)}.no b{color:var(--bad)}
+.rules{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:10px}
+.rules li{display:flex;gap:12px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:17px}
+.rn{flex:none;width:36px;height:36px;border-radius:50%;background:var(--ink);color:var(--bg);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
+@media (max-width:1200px){.now{grid-template-columns:1fr}}
+@media (max-width:1100px){
+ .lane,.owner-row{grid-template-columns:1fr}.whead{display:none}
+ .lane{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px}
+ .lane .lane-name{border:0;padding:2px 2px 6px}.cell.empty{display:none}.cell-wave{display:block}
+ .ochain .bx{width:100%}.arrow-r{transform:rotate(90deg);align-self:center}
+ .stepstrip{grid-template-columns:repeat(8,minmax(0,1fr))}
+ .job{grid-template-columns:1fr 130px}.job-n{grid-column:1/-1}
+}
+@media (max-width:520px){h1{font-size:26px}h2{font-size:23px}.wl-name{min-width:0;width:100%}.threads{grid-template-columns:repeat(6,1fr)}}
+`;
+
+// ---------- client JS (no template literals inside) ----------
+const js = `
+(function(){
+var D = window.__P;
+var byId = {}; D.phases.forEach(function(p){ byId[p.id]=p; });
+var rev = {}; D.phases.forEach(function(p){ (p.needs||[]).forEach(function(n){ (rev[n]=rev[n]||[]).push(p.id); }); });
+function closure(id, map){ var seen={}, st=[id], out=[]; while(st.length){ var x=st.pop(); (map(x)||[]).forEach(function(y){ if(!seen[y]){ seen[y]=1; out.push(y); st.push(y); } }); } return out; }
+function down(id){ return closure(id, function(x){ return rev[x]; }); }
+function up(id){ return closure(id, function(x){ return (byId[x]||{}).needs; }); }
+var laneName = {}; D.lanes.forEach(function(l){ laneName[l.id]=l.name; });
+var stName = D.states;
+function el(q){ return document.querySelector(q); }
+function all(q){ return Array.prototype.slice.call(document.querySelectorAll(q)); }
+function txt(s){ var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+var cur = null;
+function chipHtml(id){ var p=byId[id]; return '<button type="button" class="chip s-'+p.state+'" data-id="'+id+'" title="'+txt(p.name)+'">'+id+'</button>'; }
+function select(id, scroll){
+  all('.is-sel,.is-down,.is-up').forEach(function(e){ e.classList.remove('is-sel','is-down','is-up'); e.setAttribute('aria-pressed','false'); });
+  if(!id || id===cur){ cur=null; document.body.classList.remove('sel-on'); el('#info-text').textContent='Click any phase to see what it needs and what waits on it.'; return; }
+  cur=id; var p=byId[id], d=down(id), u=up(id);
+  document.body.classList.add('sel-on');
+  all('[data-id="'+id+'"]').forEach(function(e){ e.classList.add('is-sel'); e.setAttribute('aria-pressed','true'); });
+  d.forEach(function(x){ all('[data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-down'); }); });
+  u.forEach(function(x){ all('[data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-up'); }); });
+  var needs=(p.needs||[]);
+  var s='<b>'+txt(p.name)+' ('+id+')</b>, '+txt(stName[p.state])+'. ';
+  s+= needs.length ? 'Needs: '+needs.join(', ')+'. ' : 'Needs nothing before it. ';
+  if(p.hold) s+='Merge held until: '+txt(p.hold)+'. ';
+  if(p.note) s+=txt(p.note)+' ';
+  s+='<b>'+d.length+' of '+D.phases.length+'</b> phases cannot finish without it.';
+  el('#info-text').innerHTML=s;
+  el('#w-fill').style.width=(100*d.length/D.phases.length).toFixed(1)+'%';
+  el('#w-num').textContent=d.length;
+  el('#w-title').innerHTML=s;
+  var byLane={}; d.forEach(function(x){ var l=byId[x].lane; (byLane[l]=byLane[l]||[]).push(x); });
+  var h='<h3>Waits on it, by lane</h3>';
+  var any=false;
+  D.lanes.forEach(function(l){ if(byLane[l.id]){ any=true; h+='<div class="wl"><span class="wl-name">'+txt(l.name)+' ('+byLane[l.id].length+')</span><span class="chips">'+byLane[l.id].map(chipHtml).join('')+'</span></div>'; } });
+  if(!any) h+='<p>Nothing else waits on it.</p>';
+  if(u.length) h+='<h3>It needs, directly or further back</h3><div class="chips">'+u.map(chipHtml).join('')+'</div>';
+  el('#w-lists').innerHTML=h;
+  // re-mark freshly drawn chips
+  d.forEach(function(x){ all('#w-lists [data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-down'); }); });
+  u.forEach(function(x){ all('#w-lists [data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-up'); }); });
+  if(scroll){ var b=el('.board'); if(b) b.scrollIntoView(); }
+}
+document.addEventListener('click', function(ev){
+  var t=ev.target.closest('[data-id]'); if(t){ select(t.getAttribute('data-id')); return; }
+  var c=ev.target.closest('[data-copy]'); if(c){ copy(c.getAttribute('data-copy'), c); }
+});
+el('#show-p0a').addEventListener('click', function(){ cur=null; select('P0a'); });
+el('#clear-sel').addEventListener('click', function(){ select(null); });
+function copy(text, btn){
+  function ok(){ var o=btn.textContent; btn.textContent='Copied'; setTimeout(function(){ btn.textContent=o; },1200); }
+  try{ if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(ok, fallback); return; } }catch(e){}
+  fallback();
+  function fallback(){ try{ var ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); ok(); }catch(e){ btn.textContent='Select and copy by hand'; } }
+}
+// ---- storage (optional) ----
+var KEY='fixflow-ship-answers-v1';
+var store={ticks:{},res:{},dec:{},decnote:{}};
+try{ var raw=window.localStorage.getItem(KEY); if(raw){ var o=JSON.parse(raw); if(o&&typeof o==='object'){ store.ticks=o.ticks||{}; store.res=o.res||{}; store.dec=o.dec||{}; store.decnote=o.decnote||{}; } } }catch(e){}
+function save(){ try{ window.localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){} }
+var SECRET=/(postgres(ql)?:\\/\\/|mysql:\\/\\/|[a-z]+:\\/\\/[^\\s\\/]*:[^\\s\\/]*@|eyJ[A-Za-z0-9_-]{10,}|AKIA[0-9A-Z]{8,}|sk_(live|test)_|-----BEGIN|password\\s*[:=]|secret\\s*[:=]|token\\s*[:=]|[A-Za-z0-9+\\/_=-]{32,})/i;
+function guard(input, warnKey, setter){
+  var v=input.value; var w=el('[data-warn="'+warnKey+'"]');
+  if(SECRET.test(v)){ if(w) w.hidden=false; input.value=''; setter(''); save(); return; }
+  if(w) w.hidden=true; setter(v); save();
+}
+all('[data-tick]').forEach(function(cb){ var n=cb.getAttribute('data-tick'); cb.checked=!!store.ticks[n]; cb.addEventListener('change', function(){ store.ticks[n]=cb.checked; save(); refresh(); }); });
+all('[data-res]').forEach(function(inp){ var n=inp.getAttribute('data-res'); inp.value=store.res[n]||''; inp.addEventListener('input', function(){ guard(inp, n, function(v){ store.res[n]=v; }); }); });
+all('[data-dec]').forEach(function(r){ var k=r.getAttribute('data-dec'); if(store.dec[k]===r.value) r.checked=true; r.addEventListener('change', function(){ store.dec[k]=r.value; save(); refresh(); }); });
+all('[data-decnote]').forEach(function(inp){ var k=inp.getAttribute('data-decnote'); inp.value=store.decnote[k]||''; inp.addEventListener('input', function(){ guard(inp, 'd-'+k, function(v){ store.decnote[k]=v; }); }); });
+function refresh(){
+  var n=0; D.p0a.forEach(function(it){ var ok=!!store.ticks[it.n]; if(ok) n++; var s=el('#item-'+it.n); if(s) s.classList.toggle('ok',ok); var q=el('.sq[data-n="'+it.n+'"]'); if(q) q.classList.toggle('ok',ok); });
+  var must=[1,2,3,4,6,10,12].filter(function(k){ return store.ticks[k]; }).length;
+  el('#p0a-progress').textContent=n+' of 16 ticked; '+must+' of the 7 items needed for "done" ticked';
+  var m=0; all('.dec').forEach(function(c){ var k=c.getAttribute('data-key'); var on=!!store.dec[k]; if(on) m++; c.classList.toggle('marked',on); });
+  el('#dec-progress').textContent=m+' of '+all('.dec').length+' marked';
+}
+refresh();
+// ---- focus mode ----
+var focusIdx=0, steps=all('.step');
+function showFocus(){ steps.forEach(function(s,i){ s.classList.toggle('cur', i===focusIdx); }); all('.sq').forEach(function(q,i){ q.classList.toggle('cur', document.querySelector('.steps').classList.contains('focus') && i===focusIdx); }); }
+el('#focus-toggle').addEventListener('click', function(){ var ol=el('.steps'); var on=!ol.classList.contains('focus'); ol.classList.toggle('focus',on); el('#focus-nav').hidden=!on; this.textContent=on?'Show all 16':'One step at a time'; showFocus(); });
+el('#f-prev').addEventListener('click', function(){ focusIdx=Math.max(0,focusIdx-1); showFocus(); });
+el('#f-next').addEventListener('click', function(){ focusIdx=Math.min(steps.length-1,focusIdx+1); showFocus(); });
+all('.sq').forEach(function(q,i){ q.addEventListener('click', function(ev){ if(el('.steps').classList.contains('focus')){ ev.preventDefault(); focusIdx=i; showFocus(); } }); });
+// ---- export ----
+el('#export-btn').addEventListener('click', function(){
+  var L=['FixFlow P0a answers and decisions, exported '+new Date().toISOString().slice(0,10)+' (state of the page: '+D.stateAsOf+')',''];
+  L.push('P0a pre-flight (plan order, item 10 first):');
+  D.p0a.forEach(function(it,i){ L.push('  ['+(store.ticks[it.n]?'x':' ')+'] step '+(i+1)+', item '+it.n+' '+it.title+(it.must==='MUST'?' (MUST)':'')+': '+(store.res[it.n]||'(no result written)')); });
+  L.push(''); L.push('Decisions:');
+  all('.dec').forEach(function(c){ var k=c.getAttribute('data-key'); var t=c.querySelector('h3').textContent; L.push('  '+k+' '+t+': '+(store.dec[k]||'(not marked: default applies)')+(store.decnote[k]?' | note: '+store.decnote[k]:'')); });
+  var ta=el('#export-out'); ta.value=L.join('\\n'); ta.hidden=false; el('#export-copy').hidden=false;
+});
+el('#export-copy').addEventListener('click', function(){ copy(el('#export-out').value, this); });
+})();
+`;
+
+const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FixFlow Ship Program</title>
+<style>${css}</style></head>
+<body><main>
+${header}
+<section>${goalsHtml}</section>
+<section>${lanesHtml}</section>
+<section>${waitsHtml}</section>
+<section>${p0aHtml}</section>
+<section>${decHtml}</section>
+<section>${machineHtml}</section>
+<section>${rulesHtml}</section>
+<p class="note">Generated from program.json (state as of ${esc(asOf)}) by build.js.txt. Every count on this page is computed from that file; the machine figures and production state are measured ${esc(asOf)}; "e.g." text in empty result fields is illustrative.</p>
+</main>
+<script>window.__P=${JSON.stringify({ phases: P.phases, lanes: P.lanes, states: P.states, p0a: P.p0a.map((x) => ({ n: x.n, title: x.title, must: x.must })), stateAsOf: asOf }).replace(/</g, '\\u003c')};</script>
+<script>${js}</script>
+</body></html>`;
+
+fs.writeFileSync(path.join(dir, 'index.html'), html);
+
+// ---------- Markdown record ----------
+const md = [];
+md.push('# FixFlow ship program: owner view (generated)', '');
+md.push(`_Generated from \`program.json\` by \`build.js.txt\`; state as of ${asOf}. Do not edit by hand; edit program.json and rebuild. The page is \`index.html\` in this folder._`, '');
+md.push('## Right now', '', '- ' + P.headline.production + ' (measured ' + asOf + ')', '- ' + P.headline.critical + ` ${p0aDown.length} of ${total} phases wait behind it.`, '- ' + P.headline.baseline + ' (measured ' + asOf + ')', '');
+md.push('## Phases by state', '');
+stateOrder.forEach((s) => { const ids = P.phases.filter((p) => p.state === s); md.push(`- **${ST[s]}** (${ids.length}): ${ids.map((p) => p.id).join(', ')}`); });
+md.push('', '## Phases', '', '| Id | Phase | Lane | Wave | State | Needs | Merge held until |', '| --- | --- | --- | --- | --- | --- | --- |');
+P.phases.forEach((p) => md.push(`| ${p.id} | ${p.name} | ${p.lane} | ${p.wave} | ${ST[p.state]} | ${(p.needs || []).join(', ') || '-'} | ${p.hold || '-'} |`));
+md.push('', '## Goals', '');
+P.goals.forEach((g, i) => md.push(`${i + 1}. ${g.name} (reached at: ${g.reached}): ${g.phases.join(', ')}`));
+md.push('', '## P0a, in order (item 10 first)', '', P.p0aDone, '');
+P.p0a.forEach((it, i) => md.push(`${i + 1}. **Item ${it.n}: ${it.title}**${it.must === 'MUST' ? ' (MUST)' : it.must === 'done-when' ? ' (needed for done)' : ''}. ${it.do}${it.helper ? ' Uses: ' + it.helper + '.' : ''}`));
+md.push('', '## Decisions', '', '| Id | Decision | Blocks | Default |', '| --- | --- | --- | --- |');
+P.decisionsNew.forEach((d) => md.push(`| ${d.id} (new) | ${d.decision} | ${d.blocks} | ${d.default} |`));
+P.decisions.forEach((d, i) => md.push(`| T${i + 1} | ${d.decision} | ${d.blocks} | ${d.default} |`));
+md.push('', '## The rules that never bend', '');
+P.rules.forEach((r, i) => md.push(`${i + 1}. ${r}`));
+md.push('');
+fs.writeFileSync(path.join(dir, 'OWNER-VIEW.generated.md'), md.join('\n'));
+const size = Buffer.byteLength(html);
+console.log('index.html', size, 'bytes', size < 480000 ? 'OK' : 'TOO BIG');
+console.log('phases', total, 'P0a waits', p0aDown.length);

@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FixFlow Ship Program</title>
+<style>
+:root{--bg:#f7f6f2;--panel:#fff;--ink:#1d1d1f;--ink2:#4a4a52;--line:#d6d3cc;--accent:#1f5fbf;
+--done:#1e7a3c;--done-bg:#dff3e5;--run:#1f5fbf;--run-bg:#dde8fb;--next:#0b7c86;--next-bg:#d8f1f2;--you:#b34700;--you-bg:#ffe6cf;
+--held:#6b3fa0;--held-bg:#ece2f7;--todo:#5d5d66;--todo-bg:#f0efeb;--hi:#f2c200;--bad:#b3261e;--bad-bg:#fde3e1}
+@media (prefers-color-scheme: dark){:root{--bg:#16171a;--panel:#212227;--ink:#ececf0;--ink2:#b4b4bf;--line:#3a3b42;--accent:#7fb0ff;
+--done:#6fd28f;--done-bg:#1d3a26;--run:#86b3ff;--run-bg:#1d2d4a;--next:#5fd0d8;--next-bg:#163a3d;--you:#ffaa66;--you-bg:#47290f;
+--held:#c39cf0;--held-bg:#33244a;--todo:#a6a6b0;--todo-bg:#2a2b31;--hi:#ffd84d;--bad:#ff8a80;--bad-bg:#45201d}}
+*{box-sizing:border-box}html{scroll-behavior:auto}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1840px;margin:0 auto;padding:16px 16px 80px}
+h1{font-size:32px;margin:8px 0 4px}h2{font-size:27px;margin:56px 0 6px;padding-top:12px;border-top:3px solid var(--line)}
+h3{font-size:18px;margin:4px 0 6px}code{font:14px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}
+p{margin:6px 0}.sub{color:var(--ink2);font-size:17px;max-width:1100px}
+.how,.shows{margin:4px 0;font-size:16px;max-width:1300px}.shows{color:var(--ink2)}
+.note{color:var(--ink2);font-size:15px}
+.tag{display:inline-block;font-size:14px;line-height:1.3;padding:1px 7px;border-radius:9px;margin-left:4px;border:1px solid var(--line);color:var(--ink2);max-width:100%;vertical-align:middle}
+.tag.m{border-color:var(--done);color:var(--done)}.tag.i{border-style:dashed}.tag.new{border-color:var(--you);color:var(--you);font-weight:600;margin:0 0 6px}
+.now{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-left:8px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;font-size:16px}
+.card .big{font-size:21px;font-weight:700}.card.bad{border-left-color:var(--bad)}.card.you{border-left-color:var(--you)}.card.run{border-left-color:var(--run)}
+.card .tag{align-self:flex-start;margin:0}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.toc a{color:var(--accent);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 10px;text-decoration:none;font-size:15px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{display:inline-block;font-size:14px;font-weight:600;padding:1px 8px;border-radius:10px;white-space:nowrap}
+.s-done{--c:var(--done);--cb:var(--done-bg)}.s-running{--c:var(--run);--cb:var(--run-bg)}.s-next{--c:var(--next);--cb:var(--next-bg)}
+.s-you{--c:var(--you);--cb:var(--you-bg)}.s-held{--c:var(--held);--cb:var(--held-bg)}.s-todo{--c:var(--todo);--cb:var(--todo-bg)}
+.pill{background:var(--cb);color:var(--c);border:1px solid var(--c)}
+.goals{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr));gap:14px;margin-top:12px}
+.goal{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.g-head{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}.g-num{font-weight:700;color:var(--ink2)}.g-name{font-weight:700;font-size:18px}
+.g-at{width:100%;color:var(--ink2);font-size:15px}.g-count{color:var(--ink2);font-size:14px;margin:4px 0 0}
+.sbar{display:flex;gap:2px;margin:8px 0;min-height:30px}
+.seg{background:var(--cb);color:var(--c);border:1px solid var(--c);border-radius:4px;font-size:14px;padding:3px 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:34px}
+.seg b{font-size:16px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:600 14px/1.2 system-ui,sans-serif;background:var(--cb);color:var(--c);border:2px solid var(--c);border-radius:6px;padding:5px 8px;cursor:pointer}
+.chip.s-todo{border-style:dashed}
+.board{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.lane{display:grid;grid-template-columns:200px repeat(5,minmax(0,1fr));gap:8px;align-items:stretch}
+.lane-name{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;font-size:14px;color:var(--ink2)}
+.lane-name b{font-size:17px;color:var(--ink)}.owns{font-size:14px}
+.cell{background:color-mix(in srgb,var(--panel) 55%,transparent);border:1px dashed var(--line);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.whead .cell{border-style:solid;background:var(--panel);font-size:14px;color:var(--ink2)}.whead .cell b{font-size:17px;color:var(--ink)}
+.whead .lane-name{justify-content:center}
+.cell-wave{display:none;font-size:14px;font-weight:700;color:var(--ink2)}
+.bx{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;gap:3px;background:var(--panel);border:2px solid var(--c);border-left:9px solid var(--c);border-radius:7px;padding:7px 9px;min-width:0;transition:opacity .15s}
+.bx.s-todo{border-style:dashed;border-left-style:solid}
+.bx:focus-visible,.chip:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.bx-name{font-size:15px;font-weight:600;line-height:1.3;color:var(--ink)}.bx-meta{font-size:14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bx-stack{font-size:14px;color:var(--ink2)}.bx-hold{font-size:14px;color:var(--held);font-weight:600;background:var(--held-bg);border-radius:4px;padding:2px 5px}
+.arrow-down{font-size:14px;color:var(--ink2);padding-left:10px}
+.owner-row{display:grid;grid-template-columns:200px 1fr;gap:8px;margin-top:6px}
+.owner-row .lane-name{border-color:var(--you);border-width:2px}
+.ochain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--you-bg);border:2px solid var(--you);border-radius:8px;padding:8px}
+.ochain .bx{width:200px}.arrow-r{font-size:20px;color:var(--you);font-weight:700}
+.info{position:sticky;bottom:0;z-index:5;background:var(--panel);border:2px solid var(--accent);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:16px;box-shadow:0 -4px 14px rgba(0,0,0,.12)}
+.btn{font:600 15px system-ui,sans-serif;background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}
+@media (prefers-color-scheme: dark){.btn{color:#111}}
+.btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+.sel-on .bx,.sel-on .chip{opacity:.32}
+.sel-on .is-sel,.sel-on .is-down,.sel-on .is-up{opacity:1}
+.is-sel{box-shadow:0 0 0 4px var(--ink)!important}
+.is-down{box-shadow:0 0 0 4px var(--hi)!important}
+.is-down.bx::after{content:"waits on it";font-size:14px;font-weight:700;color:var(--ink);background:var(--hi);border-radius:4px;padding:0 6px;align-self:flex-start}
+@media (prefers-color-scheme: dark){.is-down.bx::after{color:#111}}
+.is-up{outline:3px dashed var(--ink2);outline-offset:2px}
+.is-up.bx::after{content:"needed by it";font-size:14px;font-weight:700;color:var(--ink2)}
+.waits{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:10px}
+.wbar{display:flex;align-items:center;gap:10px;height:40px}
+.wfill{height:100%;background:var(--hi);border-radius:6px;display:flex;align-items:center;justify-content:flex-end;padding-right:10px;min-width:44px;color:#111;font-size:19px}
+.wbar{background:var(--todo-bg);border-radius:6px}.wrest{font-size:16px;color:var(--ink2);white-space:nowrap;padding-right:8px}
+.wtitle{font-size:17px;margin:10px 0}.wl{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:6px 0}.wl-name{font-weight:600;min-width:220px}
+.stepstrip{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:4px;margin:12px 0}
+.sq{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:var(--ink);background:var(--panel);border:2px solid var(--line);border-radius:6px;padding:4px 0;font-weight:700;font-size:16px}
+.sq small{font-size:14px;font-weight:400;color:var(--ink2)}.sq.ok{background:var(--done-bg);border-color:var(--done);color:var(--done)}
+.sq.cur{outline:3px solid var(--accent)}
+.steps{list-style:none;padding:0;margin:10px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:12px}
+.step{background:var(--panel);border:1px solid var(--line);border-left:8px solid var(--you);border-radius:8px;padding:12px 14px;min-width:0}
+.step.ok{border-left-color:var(--done)}
+.focus .step{display:none}.focus .step.cur{display:block;grid-column:1/-1}
+.st-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:15px}.st-num{font-weight:700}.st-item{color:var(--ink2)}
+.must{font-size:14px;font-weight:700;padding:1px 8px;border-radius:9px;background:var(--bad-bg);color:var(--bad);border:1px solid var(--bad)}
+.must.soft{background:var(--you-bg);color:var(--you);border-color:var(--you)}.must.opt{background:transparent;color:var(--ink2);border-color:var(--line);font-weight:400}
+.cmds{margin:8px 0;display:flex;flex-direction:column;gap:6px}.cmds-h{font-size:14px;color:var(--ink2)}
+.cmd{display:flex;gap:8px;align-items:flex-start;background:var(--todo-bg);border-radius:6px;padding:6px 8px}.cmd code{flex:1;min-width:0}
+.copy{font:600 14px system-ui,sans-serif;border:1px solid var(--accent);color:var(--accent);background:var(--panel);border-radius:5px;padding:3px 9px;cursor:pointer}
+.answer{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.tick{font-weight:700;display:flex;gap:6px;align-items:center}.tick input{width:22px;height:22px}
+.res{display:flex;gap:6px;align-items:center;flex:1 1 100%;min-width:0;font-size:15px}
+.res input{flex:1;min-width:0;font:15px system-ui,sans-serif;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink)}
+.warn{color:var(--bad);font-weight:600;font-size:15px;width:100%}
+.export{margin-top:12px}.export textarea{width:100%;font:14px/1.4 ui-monospace,Consolas,monospace;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px}
+.dh{margin-top:18px}
+.decs{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:12px}
+.dec{background:var(--panel);border:1px solid var(--line);border-top:6px solid var(--line);border-radius:8px;padding:12px 14px;font-size:15px;min-width:0}
+.dec.new{border-top-color:var(--you)}.dec.marked{border-top-color:var(--done)}
+.dec fieldset{border:1px solid var(--line);border-radius:6px;margin:8px 0 0;padding:6px 10px;display:flex;flex-direction:column;gap:5px}
+.dec legend{font-size:14px;color:var(--ink2)}.dec label{display:flex;gap:6px;align-items:center}
+.mach{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr));gap:12px;margin-top:10px}
+.mpart{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0}
+.mpart.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px}
+.threads{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px}
+.th{background:var(--run-bg);color:var(--run);border:1px solid var(--run);border-radius:4px;text-align:center;font-size:14px;padding:4px 0}
+.ram{display:flex;height:44px;gap:2px;margin:8px 0}
+.ram-used,.ram-free{display:flex;align-items:center;padding:0 10px;border-radius:5px;font-size:15px;overflow:hidden;min-width:0}
+.ram-used{background:var(--todo-bg);border:1px solid var(--todo);color:var(--ink)}.ram-free{background:var(--done-bg);border:2px solid var(--done);color:var(--done)}
+.jobs{display:flex;flex-direction:column;gap:6px}.job{display:grid;grid-template-columns:minmax(0,1.3fr) 150px minmax(0,1.6fr);gap:8px;align-items:center;font-size:15px}
+.job-bar{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}.slot{height:26px;border:1px dashed var(--line);border-radius:4px;font-size:14px;text-align:center;line-height:24px}
+.slot.on{background:var(--run-bg);border:1px solid var(--run);color:var(--run);font-weight:700}.job-n{color:var(--ink2)}
+.yes b{color:var(--done)}.no b{color:var(--bad)}
+.rules{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:10px}
+.rules li{display:flex;gap:12px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:17px}
+.rn{flex:none;width:36px;height:36px;border-radius:50%;background:var(--ink);color:var(--bg);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
+@media (max-width:1200px){.now{grid-template-columns:1fr}}
+@media (max-width:1100px){
+ .lane,.owner-row{grid-template-columns:1fr}.whead{display:none}
+ .lane{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px}
+ .lane .lane-name{border:0;padding:2px 2px 6px}.cell.empty{display:none}.cell-wave{display:block}
+ .ochain .bx{width:100%}.arrow-r{transform:rotate(90deg);align-self:center}
+ .stepstrip{grid-template-columns:repeat(8,minmax(0,1fr))}
+ .job{grid-template-columns:1fr 130px}.job-n{grid-column:1/-1}
+}
+@media (max-width:520px){h1{font-size:26px}h2{font-size:23px}.wl-name{min-width:0;width:100%}.threads{grid-template-columns:repeat(6,1fr)}}
+</style></head>
+<body><main>
+
+<header class="top">
+  <h1>FixFlow ship program</h1>
+  <p class="sub">The whole program on one page: what is running, what waits on what, and what only you can do. State as of <b>2026-11-13</b>. The plan decides; this page explains. Built from <code>program.json</code>.</p>
+  <div class="now">
+    <div class="card bad"><span class="big">Production is dead</span><span>Production is still dead: both old Railway addresses answer Railway's own 404.</span><span class="tag m">measured 2026-11-13</span></div>
+    <div class="card you"><span class="big">Your pre-flight (P0a) has not started</span><span>Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. <b>37 of 56</b> phases wait behind it.</span><span class="tag m">measured 2026-11-13</span></div>
+    <div class="card run"><span class="big">6 lanes running now, 1 starting next</span><span>Running, each in its own session and its own copy of the repository: P1, P2a, P6a, P7a, P9-0a, L2. Starting next: P12a. Done: L1. Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests.</span><span class="tag m">measured 2026-11-13</span></div>
+  </div>
+  <nav class="toc">
+    <a href="#where">Where are we?</a><a href="#lanes">What is running in parallel?</a><a href="#waits">What waits on what?</a><a href="#you">What only you can do next</a><a href="#decide">Decisions waiting on you</a><a href="#machine">How the computer is used</a><a href="#rules">What never bends</a>
+  </nav>
+  <div class="legend" aria-label="Colour key"><span class="pill s-done">done</span><span class="pill s-running">running now</span><span class="pill s-next">starting next</span><span class="pill s-you">waiting on you</span><span class="pill s-held">held (may be built, may not merge yet)</span><span class="pill s-todo">not started</span></div>
+</header>
+<section><h2 id="where">Where are we?</h2><p class="how"><b>How to read this:</b> one row per goal of the plan. The bar shows how many of that goal's phases are in each state (the number is written on the bar); below it every phase is a coloured mark. Click a mark to see what waits on it.</p><p class="shows"><b>What it shows right now:</b> 1 phase done, 6 running (P1, P2a, P6a, P7a, P9-0a, L2), 1 starting next, 3 waiting on you, 16 held, 29 not started, out of 56. No goal is reached. State as of 2026-11-13 <span class="tag m">measured 2026-11-13</span></p><div class="goals"><div class="goal"><div class="g-head"><span class="g-num">Goal 1</span><span class="g-name">Production back on a server you control; phone data drained with proof</span><span class="g-at">Reached at: end of P4c (late phones via P4r)</span></div>
+    <div class="sbar"><span class="seg s-running" style="flex:2 1 0" title="2 running now"><b>2</b></span><span class="seg s-next" style="flex:1 1 0" title="1 starting next"><b>1</b></span><span class="seg s-you" style="flex:1 1 0" title="1 waiting on you"><b>1</b></span><span class="seg s-todo" style="flex:11 1 0" title="11 not started"><b>11</b> not started</span></div><p class="g-count"><b>2</b> running now · <b>1</b> starting next · <b>1</b> waiting on you · <b>11</b> not started (of 15 phases)</p><div class="chips"><button type="button" class="chip s-you" data-id="P0a" title="Your pre-flight: cut off, archive, dump, evidence, decisions: waiting on you">P0a</button><button type="button" class="chip s-todo" data-id="P0b" title="Buy: domain, host (VPS), internet, UPS: not started">P0b</button><button type="button" class="chip s-running" data-id="P1" title="Backend first-boot gate: running now">P1</button><button type="button" class="chip s-running" data-id="P2a" title="Offline engine honesty (phone app): running now">P2a</button><button type="button" class="chip s-todo" data-id="P2b-1" title="Drain tooling and fleet profile (phone app): not started">P2b-1</button><button type="button" class="chip s-todo" data-id="P2b-2" title="Drain audit script (backend): not started">P2b-2</button><button type="button" class="chip s-todo" data-id="P2c" title="Fleet app v1: build, signature, install proof: not started">P2c</button><button type="button" class="chip s-todo" data-id="P3a" title="Self-host repository changes: not started">P3a</button><button type="button" class="chip s-todo" data-id="P3b" title="Host ready, restore, PIN rotation (your session): not started">P3b</button><button type="button" class="chip s-todo" data-id="P3c" title="Pre-cutover checks (route stays closed): not started">P3c</button><button type="button" class="chip s-next" data-id="P12a" title="Web payment double-charge fix: starting next">P12a</button><button type="button" class="chip s-todo" data-id="P4a" title="Pilot drain on one phone: not started">P4a</button><button type="button" class="chip s-todo" data-id="P4b" title="Fleet drain, one workshop visit at a time: not started">P4b</button><button type="button" class="chip s-todo" data-id="P4c" title="Close the drain window, deploy train: not started">P4c</button><button type="button" class="chip s-todo" data-id="P4r" title="Late phones re-open, one at a time: not started">P4r</button></div></div><div class="goal"><div class="g-head"><span class="g-num">Goal 2</span><span class="g-name">Geofencing, pings and travel behave as designed in the field</span><span class="g-at">Reached at: end of P5d-2, thresholds passing</span></div>
+    <div class="sbar"><span class="seg s-running" style="flex:1 1 0" title="1 running now"><b>1</b></span><span class="seg s-held" style="flex:5 1 0" title="5 held"><b>5</b> held</span><span class="seg s-todo" style="flex:5 1 0" title="5 not started"><b>5</b> not started</span></div><p class="g-count"><b>1</b> running now · <b>5</b> held · <b>5</b> not started (of 11 phases)</p><div class="chips"><button type="button" class="chip s-running" data-id="P6a" title="Attendance truth (no migration): running now">P6a</button><button type="button" class="chip s-todo" data-id="P5-spike" title="Trial of a paid background-location kit (or declined): not started">P5-spike</button><button type="button" class="chip s-held" data-id="P5a" title="Geofence and sampler fixes: held (may be built, may not merge yet)">P5a</button><button type="button" class="chip s-held" data-id="P5b-1" title="Permissions, phone-maker setup, typed-id login: held (may be built, may not merge yet)">P5b-1</button><button type="button" class="chip s-held" data-id="P5b-2" title="Shift reminder, boundary rules, app v2 build: held (may be built, may not merge yet)">P5b-2</button><button type="button" class="chip s-todo" data-id="P5c" title="Pilot test of app v2: not started">P5c</button><button type="button" class="chip s-todo" data-id="P5d-1a" title="Install app v2 on the fleet, per visit: not started">P5d-1a</button><button type="button" class="chip s-todo" data-id="P5d-1b" title="Per-phone-maker test runs: not started">P5d-1b</button><button type="button" class="chip s-todo" data-id="P5d-2" title="48-hour review and field validation: not started">P5d-2</button><button type="button" class="chip s-held" data-id="P6b-1" title="Attendance migration: late flags, payroll version: held (may be built, may not merge yet)">P6b-1</button><button type="button" class="chip s-held" data-id="P6b-2" title="Heartbeat, sampler health, dispatcher guard, audit: held (may be built, may not merge yet)">P6b-2</button></div></div><div class="goal"><div class="g-head"><span class="g-num">Goal 3</span><span class="g-name">Security holes closed for a shipped system</span><span class="g-at">Reached at: boot/edge set at P3c; the rest at the later of P7b-1 and P7b-2; insider evidence at P8b, P13a</span></div>
+    <div class="sbar"><span class="seg s-running" style="flex:2 1 0" title="2 running now"><b>2</b></span><span class="seg s-held" style="flex:3 1 0" title="3 held"><b>3</b> held</span><span class="seg s-todo" style="flex:5 1 0" title="5 not started"><b>5</b> not started</span></div><p class="g-count"><b>2</b> running now · <b>3</b> held · <b>5</b> not started (of 10 phases)</p><div class="chips"><button type="button" class="chip s-running" data-id="P1" title="Backend first-boot gate: running now">P1</button><button type="button" class="chip s-todo" data-id="P3c" title="Pre-cutover checks (route stays closed): not started">P3c</button><button type="button" class="chip s-running" data-id="P7a" title="Who may do what, and money guards: running now">P7a</button><button type="button" class="chip s-held" data-id="P7b-1" title="Login, lock and session hardening: held (may be built, may not merge yet)">P7b-1</button><button type="button" class="chip s-todo" data-id="P7b-2" title="Ops console, media, web deps, Cloudflare rules: not started">P7b-2</button><button type="button" class="chip s-todo" data-id="P8a" title="Money integrity 1: void attribution, payloads: not started">P8a</button><button type="button" class="chip s-todo" data-id="P8b" title="Money integrity 2: bill revisions, chain, daily check: not started">P8b</button><button type="button" class="chip s-todo" data-id="P12" title="Web manager defects: not started">P12</button><button type="button" class="chip s-held" data-id="P13a" title="Database role split: held (may be built, may not merge yet)">P13a</button><button type="button" class="chip s-held" data-id="P13b" title="Backup encryption, retention, first drill: held (may be built, may not merge yet)">P13b</button></div></div><div class="goal"><div class="g-head"><span class="g-num">Goal 4</span><span class="g-name">Speed (latency) acceptable</span><span class="g-at">Reached at: measured in P3c before the route opens</span></div>
+    <div class="sbar"><span class="seg s-todo" style="flex:1 1 0" title="1 not started"><b>1</b> not started</span></div><p class="g-count"><b>1</b> not started (of 1 phase)</p><div class="chips"><button type="button" class="chip s-todo" data-id="P3c" title="Pre-cutover checks (route stays closed): not started">P3c</button></div></div><div class="goal"><div class="g-head"><span class="g-num">Goal 5</span><span class="g-name">Kacha khata, then manager-approved pakka khata, then Odoo</span><span class="g-at">Reached at: end of P10b (P11 only on a Custom plan); without Odoo, end of P10a</span></div>
+    <div class="sbar"><span class="seg s-running" style="flex:2 1 0" title="2 running now"><b>2</b></span><span class="seg s-held" style="flex:5 1 0" title="5 held"><b>5</b> held</span><span class="seg s-todo" style="flex:4 1 0" title="4 not started"><b>4</b> not started</span></div><p class="g-count"><b>2</b> running now · <b>5</b> held · <b>4</b> not started (of 11 phases)</p><div class="chips"><button type="button" class="chip s-running" data-id="P7a" title="Who may do what, and money guards: running now">P7a</button><button type="button" class="chip s-todo" data-id="P8a" title="Money integrity 1: void attribution, payloads: not started">P8a</button><button type="button" class="chip s-todo" data-id="P8b" title="Money integrity 2: bill revisions, chain, daily check: not started">P8b</button><button type="button" class="chip s-running" data-id="P9-0a" title="Week-export script: running now">P9-0a</button><button type="button" class="chip s-todo" data-id="P9-0b" title="Odoo and books rehearsal (you + accountant): not started">P9-0b</button><button type="button" class="chip s-held" data-id="P9a-1" title="Accounting 1: posting tables, decision API: held (may be built, may not merge yet)">P9a-1</button><button type="button" class="chip s-held" data-id="P9a-2" title="Accounting 2: stager: held (may be built, may not merge yet)">P9a-2</button><button type="button" class="chip s-held" data-id="P9b" title="Approval and reconciliation screens: held (may be built, may not merge yet)">P9b</button><button type="button" class="chip s-held" data-id="P10a" title="CSV export and exports page: held (may be built, may not merge yet)">P10a</button><button type="button" class="chip s-todo" data-id="P10b" title="Odoo import rehearsal (your session): not started">P10b</button><button type="button" class="chip s-held" data-id="P11" title="Odoo push adapter (Custom plan only): held (may be built, may not merge yet)">P11</button></div></div><div class="goal"><div class="g-head"><span class="g-num">Goal 6</span><span class="g-name">Self-hosting durable, not just running</span><span class="g-at">Reached at: end of P13e (or P13d when there is no home box and P13e is skipped)</span></div>
+    <div class="sbar"><span class="seg s-held" style="flex:4 1 0" title="4 held"><b>4</b> held</span><span class="seg s-todo" style="flex:1 1 0" title="1 not started"><b>1</b></span></div><p class="g-count"><b>4</b> held · <b>1</b> not started (of 5 phases)</p><div class="chips"><button type="button" class="chip s-held" data-id="P13a" title="Database role split: held (may be built, may not merge yet)">P13a</button><button type="button" class="chip s-held" data-id="P13b" title="Backup encryption, retention, first drill: held (may be built, may not merge yet)">P13b</button><button type="button" class="chip s-held" data-id="P13c" title="Monitoring upgrade, node 22 images, lock file: held (may be built, may not merge yet)">P13c</button><button type="button" class="chip s-held" data-id="P13d" title="Monitoring upgrade, second PR: held (may be built, may not merge yet)">P13d</button><button type="button" class="chip s-todo" data-id="P13e" title="Move the server to the home box (your session): not started">P13e</button></div></div></div><p class="note">The plan's heading says "five goals"; its table has six rows (latency is its own row). All six are shown.</p></section>
+<section><h2 id="lanes">What is running in parallel?</h2><p class="how"><b>How to read this:</b> each row is a lane: one kind of code, worked by its own session in its own copy of the repository. Columns are the waves A to D in the order the plan starts them, then "Later" for phases the plan puts in no wave. A box is a phase: plain name, plan id, state. "&#8595; then" joins phases built one on top of the other. A purple box may be built but must stay unmerged until the line in it says. Click any box.</p><p class="shows"><b>What it shows right now:</b> 6 phases run now (P1, P2a, P6a, P7a, P9-0a, L2); done: L1; starting next: P12a. Your own chain (bottom) has not started, and everything that needs a server or a phone waits on it. <span class="tag m">measured 2026-11-13</span></p><div class="board"><div class="lane whead"><div class="lane-name"><b>Lane</b></div><div class="cell"><b>Wave A</b><span>starts 2026-11-13</span></div><div class="cell"><b>Wave B</b><span>starts when a wave-A PR passes review</span></div><div class="cell"><b>Wave C</b><span>starts when wave-B tips pass review</span></div><div class="cell"><b>Wave D</b><span>starts as tips allow</span></div><div class="cell"><b>Later</b><span>starts not in a wave in section 7.6</span></div></div><div class="lane"><div class="lane-name"><b>Backend core</b><span>lane B-core</span><span class="owns">backend core, main.py, identity, ops, CI file</span></div><div class="cell"><span class="cell-wave">Wave A</span><button type="button" class="bx s-running" data-id="P1" aria-pressed="false"><span class="bx-name">Backend first-boot gate</span><span class="bx-meta"><b>P1</b> <span class="pill s-running">running now</span></span></button></div><div class="cell empty"><span class="cell-wave">Wave B</span></div><div class="cell"><span class="cell-wave">Wave C</span><button type="button" class="bx s-held" data-id="P7b-1" aria-pressed="false"><span class="bx-name">Login, lock and session hardening</span><span class="bx-meta"><b>P7b-1</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P7a's reviewed branch</span><span class="bx-hold">Merge held until: every roster phone on app v2 or retired</span></button></div><div class="cell empty"><span class="cell-wave">Wave D</span></div><div class="cell empty"><span class="cell-wave">Later</span></div></div><div class="lane"><div class="lane-name"><b>Backend jobs and money</b><span>lane B-jobs</span><span class="owns">jobs, media, customer messaging, money and accounting</span></div><div class="cell"><span class="cell-wave">Wave A</span><button type="button" class="bx s-running" data-id="P7a" aria-pressed="false"><span class="bx-name">Who may do what, and money guards</span><span class="bx-meta"><b>P7a</b> <span class="pill s-running">running now</span></span></button></div><div class="cell"><span class="cell-wave">Wave B</span><button type="button" class="bx s-todo" data-id="P8a" aria-pressed="false"><span class="bx-name">Money integrity 1: void attribution, payloads</span><span class="bx-meta"><b>P8a</b> <span class="pill s-todo">not started</span></span><span class="bx-stack">builds on P7a's reviewed branch</span></button></div><div class="cell"><span class="cell-wave">Wave C</span><button type="button" class="bx s-todo" data-id="P8b" aria-pressed="false"><span class="bx-name">Money integrity 2: bill revisions, chain, daily check</span><span class="bx-meta"><b>P8b</b> <span class="pill s-todo">not started</span></span><span class="bx-stack">builds on P8a's reviewed branch</span></button><span class="arrow-down" aria-hidden="true">&#8595; then, on its branch</span><button type="button" class="bx s-held" data-id="P9a-1" aria-pressed="false"><span class="bx-name">Accounting 1: posting tables, decision API</span><span class="bx-meta"><b>P9a-1</b> <span class="pill s-held">held</span></span><span class="bx-hold">Merge held until: the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time</span></button></div><div class="cell"><span class="cell-wave">Wave D</span><button type="button" class="bx s-held" data-id="P9a-2" aria-pressed="false"><span class="bx-name">Accounting 2: stager</span><span class="bx-meta"><b>P9a-2</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P9a-1's reviewed branch</span><span class="bx-hold">Merge held until: the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time</span></button><span class="arrow-down" aria-hidden="true">&#8595; then, on its branch</span><button type="button" class="bx s-held" data-id="P9b" aria-pressed="false"><span class="bx-name">Approval and reconciliation screens</span><span class="bx-meta"><b>P9b</b> <span class="pill s-held">held</span></span><span class="bx-hold">Merge held until: the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time</span></button><button type="button" class="bx s-held" data-id="P10a" aria-pressed="false"><span class="bx-name">CSV export and exports page</span><span class="bx-meta"><b>P10a</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P9a-2's reviewed branch</span><span class="bx-hold">Merge held until: the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time</span></button></div><div class="cell"><span class="cell-wave">Later</span><button type="button" class="bx s-todo" data-id="P8b-2" aria-pressed="false"><span class="bx-name">Money integrity 2, second half (only if the size hatch is taken)</span><span class="bx-meta"><b>P8b-2</b> <span class="pill s-todo">not started</span></span></button><button type="button" class="bx s-held" data-id="P11" aria-pressed="false"><span class="bx-name">Odoo push adapter (Custom plan only)</span><span class="bx-meta"><b>P11</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P10a's reviewed branch</span><span class="bx-hold">Merge held until: the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time</span></button></div></div><div class="lane"><div class="lane-name"><b>Backend attendance</b><span>lane B-att</span><span class="owns">attendance, telemetry, tenancy</span></div><div class="cell"><span class="cell-wave">Wave A</span><button type="button" class="bx s-running" data-id="P6a" aria-pressed="false"><span class="bx-name">Attendance truth (no migration)</span><span class="bx-meta"><b>P6a</b> <span class="pill s-running">running now</span></span></button></div><div class="cell empty"><span class="cell-wave">Wave B</span></div><div class="cell"><span class="cell-wave">Wave C</span><button type="button" class="bx s-held" data-id="P6b-1" aria-pressed="false"><span class="bx-name">Attendance migration: late flags, payroll version</span><span class="bx-meta"><b>P6b-1</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P6a's reviewed branch</span><span class="bx-hold">Merge held until: P4c done</span></button></div><div class="cell"><span class="cell-wave">Wave D</span><button type="button" class="bx s-held" data-id="P6b-2" aria-pressed="false"><span class="bx-name">Heartbeat, sampler health, dispatcher guard, audit</span><span class="bx-meta"><b>P6b-2</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P6b-1's reviewed branch</span><span class="bx-hold">Merge held until: P4c done</span></button></div><div class="cell empty"><span class="cell-wave">Later</span></div></div><div class="lane"><div class="lane-name"><b>Backend scripts</b><span>lane B-tools</span><span class="owns">new scripts under backend/scripts and their tests</span></div><div class="cell"><span class="cell-wave">Wave A</span><button type="button" class="bx s-running" data-id="P9-0a" aria-pressed="false"><span class="bx-name">Week-export script</span><span class="bx-meta"><b>P9-0a</b> <span class="pill s-running">running now</span></span></button></div><div class="cell"><span class="cell-wave">Wave B</span><button type="button" class="bx s-todo" data-id="P2b-2" aria-pressed="false"><span class="bx-name">Drain audit script (backend)</span><span class="bx-meta"><b>P2b-2</b> <span class="pill s-todo">not started</span></span><span class="bx-stack">builds on P2b-1's reviewed branch</span></button></div><div class="cell empty"><span class="cell-wave">Wave C</span></div><div class="cell empty"><span class="cell-wave">Wave D</span></div><div class="cell empty"><span class="cell-wave">Later</span></div></div><div class="lane"><div class="lane-name"><b>Phone app</b><span>lane M</span><span class="owns">technician-app/</span></div><div class="cell"><span class="cell-wave">Wave A</span><button type="button" class="bx s-running" data-id="P2a" aria-pressed="false"><span class="bx-name">Offline engine honesty (phone app)</span><span class="bx-meta"><b>P2a</b> <span class="pill s-running">running now</span></span></button></div><div class="cell"><span class="cell-wave">Wave B</span><button type="button" class="bx s-todo" data-id="P2b-1" aria-pressed="false"><span class="bx-name">Drain tooling and fleet profile (phone app)</span><span class="bx-meta"><b>P2b-1</b> <span class="pill s-todo">not started</span></span><span class="bx-stack">builds on P2a's reviewed branch</span></button></div><div class="cell"><span class="cell-wave">Wave C</span><button type="button" class="bx s-held" data-id="P5a" aria-pressed="false"><span class="bx-name">Geofence and sampler fixes</span><span class="bx-meta"><b>P5a</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P2b-1's reviewed branch</span><span class="bx-hold">Merge held until: P4a passed and the SDK decision answered; app v2 is built only after P4c</span></button></div><div class="cell"><span class="cell-wave">Wave D</span><button type="button" class="bx s-held" data-id="P5b-1" aria-pressed="false"><span class="bx-name">Permissions, phone-maker setup, typed-id login</span><span class="bx-meta"><b>P5b-1</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P5a's reviewed branch</span><span class="bx-hold">Merge held until: P4a passed and the SDK decision answered; app v2 is built only after P4c</span></button><span class="arrow-down" aria-hidden="true">&#8595; then, on its branch</span><button type="button" class="bx s-held" data-id="P5b-2" aria-pressed="false"><span class="bx-name">Shift reminder, boundary rules, app v2 build</span><span class="bx-meta"><b>P5b-2</b> <span class="pill s-held">held</span></span><span class="bx-hold">Merge held until: P4a passed and the SDK decision answered; app v2 is built only after P4c</span></button></div><div class="cell"><span class="cell-wave">Later</span><button type="button" class="bx s-todo" data-id="P2a-2" aria-pressed="false"><span class="bx-name">Offline engine, second half (only if the size hatch is taken)</span><span class="bx-meta"><b>P2a-2</b> <span class="pill s-todo">not started</span></span></button><button type="button" class="bx s-todo" data-id="P2c" aria-pressed="false"><span class="bx-name">Fleet app v1: build, signature, install proof</span><span class="bx-meta"><b>P2c</b> <span class="pill s-todo">not started</span></span></button><button type="button" class="bx s-todo" data-id="P5-spike" aria-pressed="false"><span class="bx-name">Trial of a paid background-location kit (or declined)</span><span class="bx-meta"><b>P5-spike</b> <span class="pill s-todo">not started</span></span></button><button type="button" class="bx s-held" data-id="P14-n" aria-pressed="false"><span class="bx-name">Expo upgrade, one major version at a time</span><span class="bx-meta"><b>P14-n</b> <span class="pill s-held">held</span></span><span class="bx-hold">Merge held until: P4a passed and the SDK decision answered; app v2 is built only after P4c</span></button><button type="button" class="bx s-todo" data-id="P14-log" aria-pressed="false"><span class="bx-name">One command log for the six queues (backlog)</span><span class="bx-meta"><b>P14-log</b> <span class="pill s-todo">not started</span></span></button></div></div><div class="lane"><div class="lane-name"><b>Web manager</b><span>lane W</span><span class="owns">src/</span></div><div class="cell"><span class="cell-wave">Wave A</span><button type="button" class="bx s-next" data-id="P12a" aria-pressed="false"><span class="bx-name">Web payment double-charge fix</span><span class="bx-meta"><b>P12a</b> <span class="pill s-next">starting next</span></span></button></div><div class="cell"><span class="cell-wave">Wave B</span><button type="button" class="bx s-todo" data-id="P12" aria-pressed="false"><span class="bx-name">Web manager defects</span><span class="bx-meta"><b>P12</b> <span class="pill s-todo">not started</span></span><span class="bx-stack">builds on P12a's reviewed branch</span></button></div><div class="cell empty"><span class="cell-wave">Wave C</span></div><div class="cell empty"><span class="cell-wave">Wave D</span></div><div class="cell empty"><span class="cell-wave">Later</span></div></div><div class="lane"><div class="lane-name"><b>Operations</b><span>lane O</span><span class="owns">ops/, ops-server, compose files, Dockerfiles, runbooks</span></div><div class="cell empty"><span class="cell-wave">Wave A</span></div><div class="cell"><span class="cell-wave">Wave B</span><button type="button" class="bx s-todo" data-id="P3a" aria-pressed="false"><span class="bx-name">Self-host repository changes</span><span class="bx-meta"><b>P3a</b> <span class="pill s-todo">not started</span></span><span class="bx-stack">builds on P1's reviewed branch</span></button><button type="button" class="bx s-todo" data-id="P7b-2" aria-pressed="false"><span class="bx-name">Ops console, media, web deps, Cloudflare rules</span><span class="bx-meta"><b>P7b-2</b> <span class="pill s-todo">not started</span></span></button></div><div class="cell empty"><span class="cell-wave">Wave C</span></div><div class="cell"><span class="cell-wave">Wave D</span><button type="button" class="bx s-held" data-id="P13a" aria-pressed="false"><span class="bx-name">Database role split</span><span class="bx-meta"><b>P13a</b> <span class="pill s-held">held</span></span><span class="bx-hold">Merge held until: drain window closed (T_close)</span></button><span class="arrow-down" aria-hidden="true">&#8595; then, on its branch</span><button type="button" class="bx s-held" data-id="P13b" aria-pressed="false"><span class="bx-name">Backup encryption, retention, first drill</span><span class="bx-meta"><b>P13b</b> <span class="pill s-held">held</span></span><span class="bx-hold">Merge held until: drain window closed (T_close)</span></button><button type="button" class="bx s-held" data-id="P13c" aria-pressed="false"><span class="bx-name">Monitoring upgrade, node 22 images, lock file</span><span class="bx-meta"><b>P13c</b> <span class="pill s-held">held</span></span><span class="bx-stack">builds on P13a's reviewed branch</span><span class="bx-hold">Merge held until: drain window closed (T_close)</span></button><span class="arrow-down" aria-hidden="true">&#8595; then, on its branch</span><button type="button" class="bx s-held" data-id="P13d" aria-pressed="false"><span class="bx-name">Monitoring upgrade, second PR</span><span class="bx-meta"><b>P13d</b> <span class="pill s-held">held</span></span><span class="bx-hold">Merge held until: drain window closed (T_close)</span></button></div><div class="cell"><span class="cell-wave">Later</span><button type="button" class="bx s-todo" data-id="P3a-2" aria-pressed="false"><span class="bx-name">Self-host stub and heartbeat (only if P3a takes its size hatch)</span><span class="bx-meta"><b>P3a-2</b> <span class="pill s-todo">not started</span></span></button></div></div><div class="lane"><div class="lane-name"><b>Lab</b><span>lane L</span><span class="owns">ops/lab/, docs/program/lab/</span></div><div class="cell"><span class="cell-wave">Wave A</span><button type="button" class="bx s-done" data-id="L1" aria-pressed="false"><span class="bx-name">Parallel gate harness</span><span class="bx-meta"><b>L1</b> <span class="pill s-done">done</span></span></button><button type="button" class="bx s-running" data-id="L2" aria-pressed="false"><span class="bx-name">Local Android compile gate</span><span class="bx-meta"><b>L2</b> <span class="pill s-running">running now</span></span></button></div><div class="cell"><span class="cell-wave">Wave B</span><button type="button" class="bx s-you" data-id="L3" aria-pressed="false"><span class="bx-name">Device lab (emulator on this PC)</span><span class="bx-meta"><b>L3</b> <span class="pill s-you">waiting on you</span></span></button></div><div class="cell"><span class="cell-wave">Wave C</span><button type="button" class="bx s-todo" data-id="L4" aria-pressed="false"><span class="bx-name">Deploy-train and restore rehearsal</span><span class="bx-meta"><b>L4</b> <span class="pill s-todo">not started</span></span></button></div><div class="cell empty"><span class="cell-wave">Wave D</span></div><div class="cell empty"><span class="cell-wave">Later</span></div></div><div class="owner-row"><div class="lane-name"><b>You (the owner)</b><span>lane OWN: the critical path</span><span class="owns">the phones, the dashboards, the host. Runs beside all four waves; no wave shortens it.</span></div>
+  <div class="ochain"><button type="button" class="bx s-you" data-id="P0a-prep" aria-pressed="false"><span class="bx-name">Pre-flight prep: step table, hold-notice draft, helper kit</span><span class="bx-meta"><b>P0a-prep</b> <span class="pill s-you">waiting on you</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-you" data-id="P0a" aria-pressed="false"><span class="bx-name">Your pre-flight: cut off, archive, dump, evidence, decisions</span><span class="bx-meta"><b>P0a</b> <span class="pill s-you">waiting on you</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P9-0b" aria-pressed="false"><span class="bx-name">Odoo and books rehearsal (you + accountant)</span><span class="bx-meta"><b>P9-0b</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P0b" aria-pressed="false"><span class="bx-name">Buy: domain, host (VPS), internet, UPS</span><span class="bx-meta"><b>P0b</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P3b" aria-pressed="false"><span class="bx-name">Host ready, restore, PIN rotation (your session)</span><span class="bx-meta"><b>P3b</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P3c" aria-pressed="false"><span class="bx-name">Pre-cutover checks (route stays closed)</span><span class="bx-meta"><b>P3c</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P4a" aria-pressed="false"><span class="bx-name">Pilot drain on one phone</span><span class="bx-meta"><b>P4a</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P4b" aria-pressed="false"><span class="bx-name">Fleet drain, one workshop visit at a time</span><span class="bx-meta"><b>P4b</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P4c" aria-pressed="false"><span class="bx-name">Close the drain window, deploy train</span><span class="bx-meta"><b>P4c</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P4r" aria-pressed="false"><span class="bx-name">Late phones re-open, one at a time</span><span class="bx-meta"><b>P4r</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P5c" aria-pressed="false"><span class="bx-name">Pilot test of app v2</span><span class="bx-meta"><b>P5c</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P5d-1a" aria-pressed="false"><span class="bx-name">Install app v2 on the fleet, per visit</span><span class="bx-meta"><b>P5d-1a</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P5d-1b" aria-pressed="false"><span class="bx-name">Per-phone-maker test runs</span><span class="bx-meta"><b>P5d-1b</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P5d-2" aria-pressed="false"><span class="bx-name">48-hour review and field validation</span><span class="bx-meta"><b>P5d-2</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P10b" aria-pressed="false"><span class="bx-name">Odoo import rehearsal (your session)</span><span class="bx-meta"><b>P10b</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P13e" aria-pressed="false"><span class="bx-name">Move the server to the home box (your session)</span><span class="bx-meta"><b>P13e</b> <span class="pill s-todo">not started</span></span></button><span class="arrow-r" aria-hidden="true">&#8594;</span><button type="button" class="bx s-todo" data-id="P14-fleet" aria-pressed="false"><span class="bx-name">Install each Expo upgrade on the fleet</span><span class="bx-meta"><b>P14-fleet</b> <span class="pill s-todo">not started</span></span></button></div></div></div>
+  <div class="info" id="info" aria-live="polite"><span id="info-text">Click any phase to see what it needs and what waits on it.</span> <button type="button" class="btn" id="show-p0a">Show what waits behind P0a</button> <button type="button" class="btn ghost" id="clear-sel">Clear</button></div></section>
+<section><h2 id="waits">What waits on what?</h2><p class="how"><b>How to read this:</b> click a phase anywhere on this page. It gets a thick outline; every phase that cannot finish without it gets a yellow ring and "waits on it"; the phases it needs get a dashed ring; the rest fade. This panel then lists them.</p><p class="shows"><b>What it shows right now:</b> with nothing clicked it shows your pre-flight, P0a: <b>37 of 56</b> phases cannot finish without it.</p><div class="waits" id="waits">
+    <div class="wbar"><span class="wfill" id="w-fill" style="width:66.1%"><b id="w-num">37</b></span><span class="wrest">of 56 phases</span></div>
+    <p class="wtitle" id="w-title"><b>Your pre-flight (P0a)</b>: 37 phases wait behind it. It needs nothing; only you can do it.</p>
+    <div id="w-lists"><h3>Waits on it, by lane</h3><div class="wl"><span class="wl-name">Backend core (1)</span><span class="chips"><button type="button" class="chip s-held" data-id="P7b-1" title="Login, lock and session hardening: held (may be built, may not merge yet)">P7b-1</button></span></div><div class="wl"><span class="wl-name">Backend jobs and money (5)</span><span class="chips"><button type="button" class="chip s-held" data-id="P9a-1" title="Accounting 1: posting tables, decision API: held (may be built, may not merge yet)">P9a-1</button><button type="button" class="chip s-held" data-id="P9a-2" title="Accounting 2: stager: held (may be built, may not merge yet)">P9a-2</button><button type="button" class="chip s-held" data-id="P9b" title="Approval and reconciliation screens: held (may be built, may not merge yet)">P9b</button><button type="button" class="chip s-held" data-id="P10a" title="CSV export and exports page: held (may be built, may not merge yet)">P10a</button><button type="button" class="chip s-held" data-id="P11" title="Odoo push adapter (Custom plan only): held (may be built, may not merge yet)">P11</button></span></div><div class="wl"><span class="wl-name">Backend attendance (2)</span><span class="chips"><button type="button" class="chip s-held" data-id="P6b-2" title="Heartbeat, sampler health, dispatcher guard, audit: held (may be built, may not merge yet)">P6b-2</button><button type="button" class="chip s-held" data-id="P6b-1" title="Attendance migration: late flags, payroll version: held (may be built, may not merge yet)">P6b-1</button></span></div><div class="wl"><span class="wl-name">Backend scripts (1)</span><span class="chips"><button type="button" class="chip s-todo" data-id="P2b-2" title="Drain audit script (backend): not started">P2b-2</button></span></div><div class="wl"><span class="wl-name">Phone app (8)</span><span class="chips"><button type="button" class="chip s-todo" data-id="P5-spike" title="Trial of a paid background-location kit (or declined): not started">P5-spike</button><button type="button" class="chip s-held" data-id="P5a" title="Geofence and sampler fixes: held (may be built, may not merge yet)">P5a</button><button type="button" class="chip s-held" data-id="P5b-1" title="Permissions, phone-maker setup, typed-id login: held (may be built, may not merge yet)">P5b-1</button><button type="button" class="chip s-held" data-id="P14-n" title="Expo upgrade, one major version at a time: held (may be built, may not merge yet)">P14-n</button><button type="button" class="chip s-todo" data-id="P14-log" title="One command log for the six queues (backlog): not started">P14-log</button><button type="button" class="chip s-held" data-id="P5b-2" title="Shift reminder, boundary rules, app v2 build: held (may be built, may not merge yet)">P5b-2</button><button type="button" class="chip s-todo" data-id="P2b-1" title="Drain tooling and fleet profile (phone app): not started">P2b-1</button><button type="button" class="chip s-todo" data-id="P2c" title="Fleet app v1: build, signature, install proof: not started">P2c</button></span></div><div class="wl"><span class="wl-name">Operations (5)</span><span class="chips"><button type="button" class="chip s-todo" data-id="P7b-2" title="Ops console, media, web deps, Cloudflare rules: not started">P7b-2</button><button type="button" class="chip s-held" data-id="P13a" title="Database role split: held (may be built, may not merge yet)">P13a</button><button type="button" class="chip s-held" data-id="P13b" title="Backup encryption, retention, first drill: held (may be built, may not merge yet)">P13b</button><button type="button" class="chip s-held" data-id="P13c" title="Monitoring upgrade, node 22 images, lock file: held (may be built, may not merge yet)">P13c</button><button type="button" class="chip s-held" data-id="P13d" title="Monitoring upgrade, second PR: held (may be built, may not merge yet)">P13d</button></span></div><div class="wl"><span class="wl-name">You (the owner) (15)</span><span class="chips"><button type="button" class="chip s-todo" data-id="P0b" title="Buy: domain, host (VPS), internet, UPS: not started">P0b</button><button type="button" class="chip s-todo" data-id="P3b" title="Host ready, restore, PIN rotation (your session): not started">P3b</button><button type="button" class="chip s-todo" data-id="P9-0b" title="Odoo and books rehearsal (you + accountant): not started">P9-0b</button><button type="button" class="chip s-todo" data-id="P10b" title="Odoo import rehearsal (your session): not started">P10b</button><button type="button" class="chip s-todo" data-id="P3c" title="Pre-cutover checks (route stays closed): not started">P3c</button><button type="button" class="chip s-todo" data-id="P4a" title="Pilot drain on one phone: not started">P4a</button><button type="button" class="chip s-todo" data-id="P13e" title="Move the server to the home box (your session): not started">P13e</button><button type="button" class="chip s-todo" data-id="P4b" title="Fleet drain, one workshop visit at a time: not started">P4b</button><button type="button" class="chip s-todo" data-id="P5d-1a" title="Install app v2 on the fleet, per visit: not started">P5d-1a</button><button type="button" class="chip s-todo" data-id="P5d-1b" title="Per-phone-maker test runs: not started">P5d-1b</button><button type="button" class="chip s-todo" data-id="P5d-2" title="48-hour review and field validation: not started">P5d-2</button><button type="button" class="chip s-todo" data-id="P14-fleet" title="Install each Expo upgrade on the fleet: not started">P14-fleet</button><button type="button" class="chip s-todo" data-id="P5c" title="Pilot test of app v2: not started">P5c</button><button type="button" class="chip s-todo" data-id="P4c" title="Close the drain window, deploy train: not started">P4c</button><button type="button" class="chip s-todo" data-id="P4r" title="Late phones re-open, one at a time: not started">P4r</button></span></div></div>
+  </div></section>
+<section><h2 id="you">What only you can do next</h2><p class="how"><b>How to read this:</b> your pre-flight, P0a, as sixteen steps in the plan's order (tools first, then items 1 to 16). Each card says what to do, why, and which helper it uses. Tick it when done and write the result in a few words. Your ticks and words stay in this browser only. Never type a password, key, token or connection string here: results only (dates, yes/no, counts, model names).</p><p class="shows"><b>What it shows right now:</b> <span id="p0a-progress">0 of 16 ticked</span>. Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest have values or a dated 'unknown, because ...'.</p><div class="stepstrip" id="stepstrip"><a href="#item-10" class="sq" data-n="10" title="Step 1: Tools and access"><span>1</span><small>item 10</small></a><a href="#item-1" class="sq" data-n="1" title="Step 2: Send the fleet hold notice"><span>2</span><small>item 1</small></a><a href="#item-2" class="sq" data-n="2" title="Step 3: Railway first: seal the old secret, cut old services off"><span>3</span><small>item 2</small></a><a href="#item-3" class="sq" data-n="3" title="Step 4: Archive the R2 backups"><span>4</span><small>item 3</small></a><a href="#item-4" class="sq" data-n="4" title="Step 5: Supabase: take the dump and verify it, same day"><span>5</span><small>item 4</small></a><a href="#item-5" class="sq" data-n="5" title="Step 6: Fleet roster"><span>6</span><small>item 5</small></a><a href="#item-6" class="sq" data-n="6" title="Step 7: Field build facts, per phone"><span>7</span><small>item 6</small></a><a href="#item-7" class="sq" data-n="7" title="Step 8: Photos of what is stuck, per phone, today"><span>8</span><small>item 7</small></a><a href="#item-8" class="sq" data-n="8" title="Step 9: Sentry"><span>9</span><small>item 8</small></a><a href="#item-9" class="sq" data-n="9" title="Step 10: Workshop location and fence size"><span>10</span><small>item 9</small></a><a href="#item-11" class="sq" data-n="11" title="Step 11: Decisions"><span>11</span><small>item 11</small></a><a href="#item-12" class="sq" data-n="12" title="Step 12: Cut the app's network, every phone"><span>12</span><small>item 12</small></a><a href="#item-13" class="sq" data-n="13" title="Step 13: Restrict the committed client keys"><span>13</span><small>item 13</small></a><a href="#item-14" class="sq" data-n="14" title="Step 14: Workshop Wi-Fi facts"><span>14</span><small>item 14</small></a><a href="#item-15" class="sq" data-n="15" title="Step 15: Who holds cash in the field"><span>15</span><small>item 15</small></a><a href="#item-16" class="sq" data-n="16" title="Step 16: Books basis"><span>16</span><small>item 16</small></a></div>
+  <div class="p0a-tools"><button type="button" class="btn" id="focus-toggle">One step at a time</button> <span id="focus-nav" hidden><button type="button" class="btn ghost" id="f-prev">&#8592; Previous</button> <button type="button" class="btn ghost" id="f-next">Next &#8594;</button></span></div>
+  <ol class="steps"><li class="step" id="item-10" data-n="10">
+      <div class="st-head"><span class="st-num">Step 1</span><span class="st-item">plan item 10</span><span class="must soft">needed for "done"</span></div>
+      <h3>Tools and access</h3>
+      <p><b>Do:</b> Start Docker Desktop. Install Android platform-tools (adb), build-tools (apksigner) and a JDK. Log in: EAS, GitHub CLI, Railway CLI (only if you control the old Railway hostname). Check you can log in to the Railway, Supabase, Cloudflare, Sentry, Firebase and Expo dashboards. Turn on USB debugging on every roster phone. Have a cable and a spare Android phone (for P2c).</p>
+      <p><b>Why:</b> Every other item uses these. It is done first, before item 1.</p>
+      <p><b>Uses:</b> tools-check.sh <span class="tag i">helper kit: docs/program/lab/p0a/ (read its README first)</span></p>
+      <div class="cmds"><span class="cmds-h">Commands (Git Bash; words in &lt; &gt; are yours to fill in your terminal, never here)</span><div class="cmd"><code>export MSYS_NO_PATHCONV=1</code><button type="button" class="copy" data-copy="export MSYS_NO_PATHCONV=1">Copy</button></div><div class="cmd"><code>bash docs/program/lab/p0a/tools-check.sh</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/tools-check.sh">Copy</button></div><div class="cmd"><code>docker info</code><button type="button" class="copy" data-copy="docker info">Copy</button></div><div class="cmd"><code>gh auth status</code><button type="button" class="copy" data-copy="gh auth status">Copy</button></div><div class="cmd"><code>npx eas-cli login</code><button type="button" class="copy" data-copy="npx eas-cli login">Copy</button></div><div class="cmd"><code>npx @railway/cli login</code><button type="button" class="copy" data-copy="npx @railway/cli login">Copy</button></div></div>
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="10"> Done</label>
+      <label class="res">Result <input type="text" data-res="10" maxlength="200" placeholder="e.g. docker yes, adb yes, apksigner yes, JDK yes, logins 6/6, USB debugging on 5/5 phones" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="10" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-1" data-n="1">
+      <div class="st-head"><span class="st-num">Step 2</span><span class="st-item">plan item 1</span><span class="must">MUST</span></div>
+      <h3>Send the fleet hold notice</h3>
+      <p><b>Do:</b> Edit the draft in docs/program/notices/fleet-hold.md (fill the square-bracket words), send it to every technician (English and Urdu), then replace its status line with the date, channel and who it went to, keeping the text exactly as sent.</p>
+      <p><b>Why:</b> Opening, updating, uninstalling or tapping Discard on a phone can lose records that never reached the server.</p>
+      <p><b>Uses:</b> docs/program/notices/fleet-hold.md (draft, not sent)</p>
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="1"> Done</label>
+      <label class="res">Result <input type="text" data-res="1" maxlength="200" placeholder="date sent, channel, which technicians" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="1" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-2" data-n="2">
+      <div class="st-head"><span class="st-num">Step 3</span><span class="st-item">plan item 2</span><span class="must">MUST</span></div>
+      <h3>Railway first: seal the old secret, cut old services off</h3>
+      <p><b>Do:</b> Record the Railway project state. Copy the old FIXFLOW_JWT_SECRET from the Railway environment and seal it offline (never into this page). Then remove DATABASE_URL from, or scale to 0, any surviving service, and reset the Supabase database password in its dashboard. Record whether you can bind the old subdomain (H) and to what, and your account and billing access.</p>
+      <p><b>Why:</b> An old backend could otherwise drain phones or run its 02:30 pruner on the old data.</p>
+      <p><b>Uses:</b> Railway and Supabase dashboards</p>
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="2"> Done</label>
+      <label class="res">Result <input type="text" data-res="2" maxlength="200" placeholder="e.g. secret sealed yes; services cut 2/2; DB password reset yes; H = yes/no" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="2" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-3" data-n="3">
+      <div class="st-head"><span class="st-num">Step 4</span><span class="st-item">plan item 3</span><span class="must">MUST</span></div>
+      <h3>Archive the R2 backups</h3>
+      <p><b>Do:</b> Mint an R2 API token (type it only into your own terminal). List backups/db/, copy it to archive/pre-selfhost/, make a laptop copy in C:/fixflow-r2, then list the archive prefix and record both listings.</p>
+      <p><b>Why:</b> Backups can be pruned; this keeps a copy that nothing old can delete.</p>
+      <p><b>Uses:</b> r2-archive.sh (set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your own terminal first; never paste them here or into chat) <span class="tag i">helper kit: docs/program/lab/p0a/ (read its README first)</span></p>
+      <div class="cmds"><span class="cmds-h">Commands (Git Bash; words in &lt; &gt; are yours to fill in your terminal, never here)</span><div class="cmd"><code>bash docs/program/lab/p0a/r2-archive.sh --dry-run &lt;account-id&gt; &lt;bucket&gt;</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/r2-archive.sh --dry-run &lt;account-id&gt; &lt;bucket&gt;">Copy</button></div><div class="cmd"><code>bash docs/program/lab/p0a/r2-archive.sh &lt;account-id&gt; &lt;bucket&gt;</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/r2-archive.sh &lt;account-id&gt; &lt;bucket&gt;">Copy</button></div></div>
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="3"> Done</label>
+      <label class="res">Result <input type="text" data-res="3" maxlength="200" placeholder="e.g. 31 files listed; archive listed 31; laptop copy yes" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="3" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-4" data-n="4">
+      <div class="st-head"><span class="st-num">Step 5</span><span class="st-item">plan item 4</span><span class="must">MUST</span></div>
+      <h3>Supabase: take the dump and verify it, same day</h3>
+      <p><b>Do:</b> Record status, pause date, the restore deadline shown, Postgres major version. If restorable: restore it and take the dump now through the session pooler, sha256 it, upload it to the R2 archive, and verify it the same day with design Appendix C. If only a dashboard download exists, convert it (see the plan). If unrecoverable: screenshot. 'Unknown' is not accepted, and 'project restored' alone is not enough.</p>
+      <p><b>Why:</b> The real data's last copy. Its restore deadline can run out; the recovery case (a/b/c) and P9-0b depend on it.</p>
+      <p><b>Uses:</b> supabase-dump.sh then verify-dump.sh (set FIXFLOW_SUPABASE_URL in your own terminal first; never paste it here or into chat) <span class="tag i">helper kit: docs/program/lab/p0a/ (read its README first)</span></p>
+      <div class="cmds"><span class="cmds-h">Commands (Git Bash; words in &lt; &gt; are yours to fill in your terminal, never here)</span><div class="cmd"><code>bash docs/program/lab/p0a/supabase-dump.sh --dry-run</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/supabase-dump.sh --dry-run">Copy</button></div><div class="cmd"><code>bash docs/program/lab/p0a/supabase-dump.sh</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/supabase-dump.sh">Copy</button></div><div class="cmd"><code>bash docs/program/lab/p0a/verify-dump.sh &lt;dump file&gt;</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/verify-dump.sh &lt;dump file&gt;">Copy</button></div></div>
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="4"> Done</label>
+      <label class="res">Result <input type="text" data-res="4" maxlength="200" placeholder="e.g. restorable yes; PG 15; dump sha256 first 8 chars; Appendix C passed yes" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="4" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-5" data-n="5">
+      <div class="st-head"><span class="st-num">Step 6</span><span class="st-item">plan item 5</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Fleet roster</h3>
+      <p><b>Do:</b> For each phone: which technician id, maker / model / Android version, and whether it is shared.</p>
+      <p><b>Why:</b> Every later phone step (drain, install, release) is per phone.</p>
+      <p><b>Uses:</b> phone-facts.sh (read-only on the phone: it never opens the app; needs adb and apksigner) <span class="tag i">helper kit: docs/program/lab/p0a/ (read its README first)</span></p>
+      <div class="cmds"><span class="cmds-h">Commands (Git Bash; words in &lt; &gt; are yours to fill in your terminal, never here)</span><div class="cmd"><code>bash docs/program/lab/p0a/phone-facts.sh --dry-run</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/phone-facts.sh --dry-run">Copy</button></div><div class="cmd"><code>bash docs/program/lab/p0a/phone-facts.sh &lt;adb serial&gt;</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/phone-facts.sh &lt;adb serial&gt;">Copy</button></div></div>
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="5"> Done</label>
+      <label class="res">Result <input type="text" data-res="5" maxlength="200" placeholder="e.g. 5 phones: Samsung A14 Android 14 (tech 3), ..." autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="5" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-6" data-n="6">
+      <div class="st-head"><span class="st-num">Step 7</span><span class="st-item">plan item 6</span><span class="must soft">needed for "done"</span></div>
+      <h3>Field build facts, per phone</h3>
+      <p><b>Do:</b> Pull each phone's installed app (adb), read its signing certificate (apksigner), versionCode, whether the bundle contains jobs.outbox.v2 (v2) and which API host it has baked in. Compare the certificate with the EAS keystore (K). Export the keystore.</p>
+      <p><b>Why:</b> K, H and v2 choose which drain branch each phone takes. The keystore cannot be re-made.</p>
+      <p><b>Uses:</b> phone-facts.sh (read-only on the phone: it never opens the app; needs adb and apksigner) <span class="tag i">helper kit: docs/program/lab/p0a/ (read its README first)</span></p>
+      <div class="cmds"><span class="cmds-h">Commands (Git Bash; words in &lt; &gt; are yours to fill in your terminal, never here)</span><div class="cmd"><code>bash docs/program/lab/p0a/phone-facts.sh --dry-run</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/phone-facts.sh --dry-run">Copy</button></div><div class="cmd"><code>bash docs/program/lab/p0a/phone-facts.sh &lt;adb serial&gt;</code><button type="button" class="copy" data-copy="bash docs/program/lab/p0a/phone-facts.sh &lt;adb serial&gt;">Copy</button></div></div>
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="6"> Done</label>
+      <label class="res">Result <input type="text" data-res="6" maxlength="200" placeholder="per phone: K yes/no, v2 yes/no, versionCode; keystore exported yes" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="6" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-7" data-n="7">
+      <div class="st-head"><span class="st-num">Step 8</span><span class="st-item">plan item 7</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Photos of what is stuck, per phone, today</h3>
+      <p><b>Do:</b> Airplane mode on and Wi-Fi off, open FixFlow, photograph the clock screen's DID-NOT-SYNC list and every job banner, close the app, airplane mode off. 'Not reachable' only for a phone whose login is gone.</p>
+      <p><b>Why:</b> The only record of what each phone still holds if a drain cannot happen.</p>
+      
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="7"> Done</label>
+      <label class="res">Result <input type="text" data-res="7" maxlength="200" placeholder="e.g. photos taken 5/5 phones; date" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="7" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-8" data-n="8">
+      <div class="st-head"><span class="st-num">Step 9</span><span class="st-item">plan item 8</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Sentry</h3>
+      <p><b>Do:</b> Backend project: date of last event. Mobile project: does it still receive events?</p>
+      <p><b>Why:</b> Confirms error tracking for the phones still works (decided: Sentry stays).</p>
+      <p><b>Uses:</b> Sentry dashboard</p>
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="8"> Done</label>
+      <label class="res">Result <input type="text" data-res="8" maxlength="200" placeholder="e.g. backend last event 2026-06-30; mobile ingests yes" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="8" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-9" data-n="9">
+      <div class="st-head"><span class="st-num">Step 10</span><span class="st-item">plan item 9</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Workshop location and fence size</h3>
+      <p><b>Do:</b> The workshop's coordinates and the fence radius you want (at least 100 m).</p>
+      <p><b>Why:</b> P3b and P5a block without it.</p>
+      
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="9"> Done</label>
+      <label class="res">Result <input type="text" data-res="9" maxlength="200" placeholder="e.g. 24.86, 67.01; radius 150 m" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="9" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-11" data-n="11">
+      <div class="st-head"><span class="st-num">Step 11</span><span class="st-item">plan item 11</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Decisions</h3>
+      <p><b>Do:</b> Answer every decision row (the board further down) or leave it to its default. Includes the chain-anchor address and mail relay (or 'unanchored'), geofence thresholds, drain host, SDK spike, shift reminder, Odoo plan and version.</p>
+      <p><b>Why:</b> The plan branches on these; a default is a valid answer.</p>
+      <p><b>Uses:</b> the decisions board on this page</p>
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="11"> Done</label>
+      <label class="res">Result <input type="text" data-res="11" maxlength="200" placeholder="e.g. all defaults except ..." autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="11" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-12" data-n="12">
+      <div class="st-head"><span class="st-num">Step 12</span><span class="st-item">plan item 12</span><span class="must soft">needed for "done"</span></div>
+      <h3>Cut the app's network, every phone</h3>
+      <p><b>Do:</b> In system settings, turn off FixFlow's Wi-Fi and mobile data (or background data off plus Wi-Fi blocked by a named method, or airplane mode if nothing else works). Record method and date per phone.</p>
+      <p><b>Why:</b> Stops a phone sending to a wrong or old server. It lifts only per the plan's branch box.</p>
+      
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="12"> Done</label>
+      <label class="res">Result <input type="text" data-res="12" maxlength="200" placeholder="per phone: method, date" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="12" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-13" data-n="13">
+      <div class="st-head"><span class="st-num">Step 13</span><span class="st-item">plan item 13</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Restrict the committed client keys</h3>
+      <p><b>Do:</b> In the Maps, Firebase and Sentry consoles, restrict each client key to the app's package name and SHA-1. Record done per key.</p>
+      <p><b>Why:</b> These keys are in the code; restriction makes them useless elsewhere.</p>
+      <p><b>Uses:</b> Google Cloud, Firebase, Sentry consoles</p>
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="13"> Done</label>
+      <label class="res">Result <input type="text" data-res="13" maxlength="200" placeholder="e.g. Maps yes, Firebase yes, Sentry yes" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="13" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-14" data-n="14">
+      <div class="st-head"><span class="st-num">Step 14</span><span class="st-item">plan item 14</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Workshop Wi-Fi facts</h3>
+      <p><b>Do:</b> Does the workshop have Wi-Fi the technicians' phones join during shifts? Its name (SSID), the access point id(s) (BSSID), and which phones join it. 'No Wi-Fi' is a valid answer.</p>
+      <p><b>Why:</b> Feeds an attendance rule; 'no Wi-Fi' simply turns that rule off.</p>
+      
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="14"> Done</label>
+      <label class="res">Result <input type="text" data-res="14" maxlength="200" placeholder="e.g. yes, SSID name, 1 BSSID, phones 1-4" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="14" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-15" data-n="15">
+      <div class="st-head"><span class="st-num">Step 15</span><span class="st-item">plan item 15</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Who holds cash in the field</h3>
+      <p><b>Do:</b> Do technicians hold cash collected at customers, or receive online payments into personal wallets, before handing them to the shop? For how long, and who counts the hand-over?</p>
+      <p><b>Why:</b> Decides whether the accounting needs a cash-remittance source. 'Never: every rupee reaches the manager the same day' is valid.</p>
+      
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="15"> Done</label>
+      <label class="res">Result <input type="text" data-res="15" maxlength="200" placeholder="e.g. yes, up to 2 days, manager counts" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="15" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li><li class="step" id="item-16" data-n="16">
+      <div class="st-head"><span class="st-num">Step 16</span><span class="st-item">plan item 16</span><span class="must opt">value, or "unknown, because ..."</span></div>
+      <h3>Books basis</h3>
+      <p><b>Do:</b> Registered for sales tax (SRB/FBR)? Books on cash basis? Is there an accountant, and do they want per-transaction entries or periodic totals? A second money writer (counter POS, offline web, second shop) planned within 12 months?</p>
+      <p><b>Why:</b> Shapes the Odoo hand-off. Unknowns are answered later in P9-0b, not here.</p>
+      
+      
+      <div class="answer"><label class="tick"><input type="checkbox" data-tick="16"> Done</label>
+      <label class="res">Result <input type="text" data-res="16" maxlength="200" placeholder="e.g. not registered; cash; accountant yes, weekly totals; no" autocomplete="off" spellcheck="false"></label>
+      <span class="warn" data-warn="16" hidden>That looks like a secret (a password, key, token or connection string). It was not saved. Write only the result, e.g. "yes" or a date.</span></div>
+    </li></ol>
+  <div class="export"><button type="button" class="btn" id="export-btn">Export my answers</button> <button type="button" class="btn ghost" id="export-copy" hidden>Copy the text</button>
+  <p class="how">Makes plain text of your ticks, results and decision choices to paste back to the coordinator.</p>
+  <textarea id="export-out" rows="10" readonly hidden></textarea></div></section>
+<section><h2 id="decide">Decisions waiting on you</h2><p class="how"><b>How to read this:</b> each card is one decision: what it is, what it blocks, and what happens if you never decide (the default is a valid answer). Mark your choice; it is kept in this browser and goes into "Export my answers".</p><p class="shows"><b>What it shows right now:</b> 4 new decisions wait now (top row), plus the plan's 33 standing rows (section 4 of the plan). <span id="dec-progress">0 of 37 marked</span>.</p><h3 class="dh">New since the parallel plan (decide now)</h3><div class="decs"><div class="dec new" data-key="N1">
+    <span class="tag new">new, decide now</span>
+    <h3>Who merges finished, reviewed pull requests</h3>
+    <p><b>Blocks:</b> every merge-ready PR (P1, P2a and the rest as they pass review)</p>
+    <p><b>If you don't decide:</b> you merge each one (plan v8; section 7.7)</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-N1" value="I merge" data-dec="N1"> I merge</label><label><input type="radio" name="d-N1" value="Coordinator merges merge-ready PRs" data-dec="N1"> Coordinator merges merge-ready PRs</label>
+    <label class="res">Note <input type="text" data-decnote="N1" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-N1" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec new" data-key="N2">
+    <span class="tag new">new, decide now</span>
+    <h3>Install the Android toolchain on this PC (about 8 GB, a user folder: JDK, adb, apksigner, emulator, one system image)</h3>
+    <p><b>Blocks:</b> L3 device lab; P0a item 6's phone checks and item 10's tools</p>
+    <p><b>If you don't decide:</b> not installed: L3 waits, and P0a items 6 and 10 wait for you to install them yourself</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-N2" value="Yes, install it" data-dec="N2"> Yes, install it</label><label><input type="radio" name="d-N2" value="No" data-dec="N2"> No</label>
+    <label class="res">Note <input type="text" data-decnote="N2" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-N2" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec new" data-key="N3">
+    <span class="tag new">new, decide now</span>
+    <h3>Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main</h3>
+    <p><b>Blocks:</b> nothing hard: lanes read the plan from the plan branch until then (section 7.1)</p>
+    <p><b>If you don't decide:</b> they stay unmerged; lanes keep reading the plan branch</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-N3" value="Merge both" data-dec="N3"> Merge both</label><label><input type="radio" name="d-N3" value="Not yet" data-dec="N3"> Not yet</label>
+    <label class="res">Note <input type="text" data-decnote="N3" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-N3" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec new" data-key="N4">
+    <span class="tag new">new, decide now</span>
+    <h3>Close the old draft PR #180 (an earlier geofence approach the plan replaces)</h3>
+    <p><b>Blocks:</b> nothing; it can be mistaken for live work</p>
+    <p><b>If you don't decide:</b> it stays open as a draft</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-N4" value="Close it" data-dec="N4"> Close it</label><label><input type="radio" name="d-N4" value="Keep it open" data-dec="N4"> Keep it open</label>
+    <label class="res">Note <input type="text" data-decnote="N4" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-N4" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec new" data-key="N5">
+    <span class="tag new">new, decide now</span>
+    <h3>May a manager record (or void) a payment on a job that is already closed?</h3>
+    <p><b>Blocks:</b> the merge of P7a (who may do what, and money guards)</p>
+    <p><b>If you don't decide:</b> no: closed is final for everyone (plan v8 as written). Cash found on a phone after the drain for a closed job would then have no way in</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-N5" value="Manager may, with a written reason" data-dec="N5"> Manager may, with a written reason</label><label><input type="radio" name="d-N5" value="Nobody may: closed is final" data-dec="N5"> Nobody may: closed is final</label>
+    <label class="res">Note <input type="text" data-decnote="N5" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-N5" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div></div>
+  <h3 class="dh">The plan's decisions table (section 4), in the plan's order</h3><div class="decs"><div class="dec" data-key="T1">
+    
+    <h3>Domain (Cloudflare DNS, multi-year, auto-renew)</h3>
+    <p><b>Blocks:</b> P2b-1 (name), P2c, P3a</p>
+    <p><b>If you don't decide:</b> nothing can ship to phones</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T1" value="Accept the default" data-dec="T1"> Accept the default</label><label><input type="radio" name="d-T1" value="I decide otherwise (write it below)" data-dec="T1"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T1" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T1" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T2">
+    
+    <h3>Host for the drain window and after: VPS (default) or the home box</h3>
+    <p><b>Blocks:</b> P0b, P3b, P13e</p>
+    <p><b>If you don't decide:</b> VPS from P3b until P13e (2 vCPU / 4 GB, Mumbai measured first). Box gate, the one condition for the home box in any role: 14 days at 99.5 % reachability from its site, or a second uplink. P13e not before the later of P5d-2 done and the last re-open; you may invert at P3b only if the box already passes the gate; 'no home box' keeps the VPS and skips P13e</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T2" value="Accept the default" data-dec="T2"> Accept the default</label><label><input type="radio" name="d-T2" value="I decide otherwise (write it below)" data-dec="T2"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T2" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T2" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T3">
+    
+    <h3>Recovery case a / b / c</h3>
+    <p><b>Blocks:</b> P3b</p>
+    <p><b>If you don't decide:</b> none: P3b blocks until P0a item 4 is answered; (a) wins when restorable</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T3" value="Accept the default" data-dec="T3"> Accept the default</label><label><input type="radio" name="d-T3" value="I decide otherwise (write it below)" data-dec="T3"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T3" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T3" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T4">
+    
+    <h3>Highest job ticket number printed for a customer (case c)</h3>
+    <p><b>Blocks:</b> P3b</p>
+    <p><b>If you don't decide:</b> none given</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T4" value="Accept the default" data-dec="T4"> Accept the default</label><label><input type="radio" name="d-T4" value="I decide otherwise (write it below)" data-dec="T4"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T4" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T4" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T5">
+    
+    <h3>Fence coordinates and radius (at least 100 m)</h3>
+    <p><b>Blocks:</b> P3b, P5a</p>
+    <p><b>If you don't decide:</b> P3b blocks</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T5" value="Accept the default" data-dec="T5"> Accept the default</label><label><input type="radio" name="d-T5" value="I decide otherwise (write it below)" data-dec="T5"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T5" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T5" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T6">
+    
+    <h3>O10-F15: accept old-secret tokens for the window (only if K=no and H=yes and v2=no)</h3>
+    <p><b>Blocks:</b> P3b, P4a (the verifier itself is always built in P1, default OFF)</p>
+    <p><b>If you don't decide:</b> no: photograph, retry by hand, declare the loss</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T6" value="Accept the default" data-dec="T6"> Accept the default</label><label><input type="radio" name="d-T6" value="I decide otherwise (write it below)" data-dec="T6"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T6" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T6" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T7">
+    
+    <h3>Geofence thresholds (P5d-2)</h3>
+    <p><b>Blocks:</b> P5d-2 verdict</p>
+    <p><b>If you don't decide:</b> sampler_gap under 1 per on-duty hour per phone; at least 90 % of real arrivals crossing_recorded; at least 95 % of geofence_error re-registered within 15 min; kill rate under 5 % per phone maker; suppressed-arrival rate at most 10 %</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T7" value="Accept the default" data-dec="T7"> Accept the default</label><label><input type="radio" name="d-T7" value="I decide otherwise (write it below)" data-dec="T7"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T7" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T7" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T8">
+    
+    <h3>Paid background-location kit trial (P5-spike; separate app id, never api.&lt;domain&gt; during the window)</h3>
+    <p><b>Blocks:</b> P5a entry</p>
+    <p><b>If you don't decide:</b> run it (the licence cost is yours to check); 'declined' means the patched Expo path; a good trial proves compatibility only</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T8" value="Accept the default" data-dec="T8"> Accept the default</label><label><input type="radio" name="d-T8" value="I decide otherwise (write it below)" data-dec="T8"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T8" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T8" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T9">
+    
+    <h3>Shift-start clock-in reminder (working days, cancelled by clock-in)</h3>
+    <p><b>Blocks:</b> P5b-2</p>
+    <p><b>If you don't decide:</b> yes</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T9" value="Accept the default" data-dec="T9"> Accept the default</label><label><input type="radio" name="d-T9" value="I decide otherwise (write it below)" data-dec="T9"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T9" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T9" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T10">
+    
+    <h3>Workshop Wi-Fi: name, access point ids, which phones join (P0a item 14)</h3>
+    <p><b>Blocks:</b> P3b step 5 (fence row); the P6a rule does nothing without it</p>
+    <p><b>If you don't decide:</b> record in P0a; 'no Wi-Fi' disables the rule</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T10" value="Accept the default" data-dec="T10"> Accept the default</label><label><input type="radio" name="d-T10" value="I decide otherwise (write it below)" data-dec="T10"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T10" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T10" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T11">
+    
+    <h3>Field cash custody: do technicians hold cash or online receipts before handing over</h3>
+    <p><b>Blocks:</b> P9-0b decides; P9a-1 / P9b build it</p>
+    <p><b>If you don't decide:</b> assume yes when P0a item 15 is unknown (cash_remittance source, cash_with_staff per tech, receipts_clearing)</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T11" value="Accept the default" data-dec="T11"> Accept the default</label><label><input type="radio" name="d-T11" value="I decide otherwise (write it below)" data-dec="T11"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T11" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T11" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T12">
+    
+    <h3>Latency threshold (P3c)</h3>
+    <p><b>Blocks:</b> P3c</p>
+    <p><b>If you don't decide:</b> POST p95 under 805 ms from a field phone; target 150-400 ms</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T12" value="Accept the default" data-dec="T12"> Accept the default</label><label><input type="radio" name="d-T12" value="I decide otherwise (write it below)" data-dec="T12"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T12" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T12" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T13">
+    
+    <h3>Jobs GPS backdate ceiling during the drain</h3>
+    <p><b>Blocks:</b> P4a</p>
+    <p><b>If you don't decide:</b> widened to the window like device_time (ruling R2) with the per-job fuel-distance before/after check; back to 48 h at T_close</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T13" value="Accept the default" data-dec="T13"> Accept the default</label><label><input type="radio" name="d-T13" value="I decide otherwise (write it below)" data-dec="T13"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T13" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T13" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T14">
+    
+    <h3>Plaintext backups under the app credential until P13b (nightly, hourly, and the VPS provider snapshots)</h3>
+    <p><b>Blocks:</b> P3c step 7</p>
+    <p><b>If you don't decide:</b> accepted (recorded deviation); P13b encrypts the dumps and switches provider snapshots off</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T14" value="Accept the default" data-dec="T14"> Accept the default</label><label><input type="radio" name="d-T14" value="I decide otherwise (write it below)" data-dec="T14"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T14" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T14" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T15">
+    
+    <h3>Odoo plan (the external API needs Custom)</h3>
+    <p><b>Blocks:</b> P11 only</p>
+    <p><b>If you don't decide:</b> CSV path (P10)</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T15" value="Accept the default" data-dec="T15"> Accept the default</label><label><input type="radio" name="d-T15" value="I decide otherwise (write it below)" data-dec="T15"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T15" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T15" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T16">
+    
+    <h3>Odoo version</h3>
+    <p><b>Blocks:</b> P10a labels, P10b</p>
+    <p><b>If you don't decide:</b> draft with the current release's labels</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T16" value="Accept the default" data-dec="T16"> Accept the default</label><label><input type="radio" name="d-T16" value="I decide otherwise (write it below)" data-dec="T16"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T16" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T16" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T17">
+    
+    <h3>Pakka record set, basis (cash/accrual), sales-tax registration, start date, reason codes</h3>
+    <p><b>Blocks:</b> P9-0b, then P9a-2 going live</p>
+    <p><b>If you don't decide:</b> no default: P9-0b must answer (you may sign the cash-basis / not-registered defaults); stager idle until a start date; invoice kind only on accrual</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T17" value="Accept the default" data-dec="T17"> Accept the default</label><label><input type="radio" name="d-T17" value="I decide otherwise (write it below)" data-dec="T17"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T17" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T17" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T18">
+    
+    <h3>Approver, unit and export cadence</h3>
+    <p><b>Blocks:</b> P9-0b, then P9a-1 / P10a</p>
+    <p><b>If you don't decide:</b> no default: P9-0b must answer (you may sign: the manager; per posting; weekly export)</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T18" value="Accept the default" data-dec="T18"> Accept the default</label><label><input type="radio" name="d-T18" value="I decide otherwise (write it below)" data-dec="T18"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T18" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T18" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T19">
+    
+    <h3>Full-fidelity or selective postings</h3>
+    <p><b>Blocks:</b> P9a-2</p>
+    <p><b>If you don't decide:</b> full-fidelity</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T19" value="Accept the default" data-dec="T19"> Accept the default</label><label><input type="radio" name="d-T19" value="I decide otherwise (write it below)" data-dec="T19"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T19" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T19" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T20">
+    
+    <h3>Tax regime and chart of accounts / journals</h3>
+    <p><b>Blocks:</b> P9-0b (then P10b)</p>
+    <p><b>If you don't decide:</b> none given (P9-0b answers; l10n_pk is the test-company chart)</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T20" value="Accept the default" data-dec="T20"> Accept the default</label><label><input type="radio" name="d-T20" value="I decide otherwise (write it below)" data-dec="T20"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T20" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T20" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T21">
+    
+    <h3>Customer to Odoo partner mapping</h3>
+    <p><b>Blocks:</b> P10a</p>
+    <p><b>If you don't decide:</b> one walk-in partner, no customer personal data exported</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T21" value="Accept the default" data-dec="T21"> Accept the default</label><label><input type="radio" name="d-T21" value="I decide otherwise (write it below)" data-dec="T21"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T21" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T21" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T22">
+    
+    <h3>Negotiation below the original price</h3>
+    <p><b>Blocks:</b> P7a</p>
+    <p><b>If you don't decide:</b> allowed for the assigned tech, flagged, never required (the note is optional); manager beyond the cap once set</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T22" value="Accept the default" data-dec="T22"> Accept the default</label><label><input type="radio" name="d-T22" value="I decide otherwise (write it below)" data-dec="T22"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T22" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T22" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T23">
+    
+    <h3>Hide personal data of unclaimed jobs from technicians (list and detail)</h3>
+    <p><b>Blocks:</b> P7a setting; P7b-1 turns it on</p>
+    <p><b>If you don't decide:</b> off until v2 is fleet-wide (the list shows addresses techs use before claiming), then on</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T23" value="Accept the default" data-dec="T23"> Accept the default</label><label><input type="radio" name="d-T23" value="I decide otherwise (write it below)" data-dec="T23"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T23" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T23" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T24">
+    
+    <h3>Second approver / self-approval</h3>
+    <p><b>Blocks:</b> P9a-1</p>
+    <p><b>If you don't decide:</b> flag, do not block (single-manager shop, ruling R9)</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T24" value="Accept the default" data-dec="T24"> Accept the default</label><label><input type="radio" name="d-T24" value="I decide otherwise (write it below)" data-dec="T24"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T24" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T24" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T25">
+    
+    <h3>Chain anchor channel and mail relay credentials</h3>
+    <p><b>Blocks:</b> P8b</p>
+    <p><b>If you don't decide:</b> email to you via core/mailer.py; without credentials the chain is labelled 'unanchored' and P8b still completes</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T25" value="Accept the default" data-dec="T25"> Accept the default</label><label><input type="radio" name="d-T25" value="I decide otherwise (write it below)" data-dec="T25"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T25" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T25" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T26">
+    
+    <h3>Error tracking</h3>
+    <p><b>Blocks:</b> already decided</p>
+    <p><b>If you don't decide:</b> Sentry SaaS; P0a confirms the mobile project ingests; a change needs a new app build</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T26" value="Accept the default" data-dec="T26"> Accept the default</label><label><input type="radio" name="d-T26" value="I decide otherwise (write it below)" data-dec="T26"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T26" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T26" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T27">
+    
+    <h3>Dead-man monitor location and paging</h3>
+    <p><b>Blocks:</b> P3a</p>
+    <p><b>If you don't decide:</b> external heartbeat service paging you by email</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T27" value="Accept the default" data-dec="T27"> Accept the default</label><label><input type="radio" name="d-T27" value="I decide otherwise (write it below)" data-dec="T27"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T27" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T27" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T28">
+    
+    <h3>Recovery point target; who is on call</h3>
+    <p><b>Blocks:</b> P3c, P13b</p>
+    <p><b>If you don't decide:</b> 1 h from the first drain until P13e (hourly dumps), 24 h after; you</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T28" value="Accept the default" data-dec="T28"> Accept the default</label><label><input type="radio" name="d-T28" value="I decide otherwise (write it below)" data-dec="T28"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T28" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T28" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T29">
+    
+    <h3>R2 retention and media cap</h3>
+    <p><b>Blocks:</b> P13b</p>
+    <p><b>If you don't decide:</b> dumps 30 days; media uncapped with an alert at 8 GB</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T29" value="Accept the default" data-dec="T29"> Accept the default</label><label><input type="radio" name="d-T29" value="I decide otherwise (write it below)" data-dec="T29"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T29" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T29" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T30">
+    
+    <h3>Second-provider backup copy</h3>
+    <p><b>Blocks:</b> P13b</p>
+    <p><b>If you don't decide:</b> none (recorded)</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T30" value="Accept the default" data-dec="T30"> Accept the default</label><label><input type="radio" name="d-T30" value="I decide otherwise (write it below)" data-dec="T30"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T30" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T30" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T31">
+    
+    <h3>Maintenance window</h3>
+    <p><b>Blocks:</b> P3a runbook</p>
+    <p><b>If you don't decide:</b> outside 02:00-04:00</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T31" value="Accept the default" data-dec="T31"> Accept the default</label><label><input type="radio" name="d-T31" value="I decide otherwise (write it below)" data-dec="T31"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T31" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T31" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T32">
+    
+    <h3>Holder of the backup encryption key (age)</h3>
+    <p><b>Blocks:</b> P13b</p>
+    <p><b>If you don't decide:</b> you, private key offline</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T32" value="Accept the default" data-dec="T32"> Accept the default</label><label><input type="radio" name="d-T32" value="I decide otherwise (write it below)" data-dec="T32"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T32" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T32" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div><div class="dec" data-key="T33">
+    
+    <h3>Second uplink, split-horizon DNS, disk encryption</h3>
+    <p><b>Blocks:</b> P13c</p>
+    <p><b>If you don't decide:</b> none</p>
+    <fieldset><legend>Your choice</legend><label><input type="radio" name="d-T33" value="Accept the default" data-dec="T33"> Accept the default</label><label><input type="radio" name="d-T33" value="I decide otherwise (write it below)" data-dec="T33"> I decide otherwise (write it below)</label>
+    <label class="res">Note <input type="text" data-decnote="T33" maxlength="200" autocomplete="off" spellcheck="false" placeholder="optional, no secrets"></label>
+    <span class="warn" data-warn="d-T33" hidden>That looks like a secret. It was not saved.</span></fieldset>
+  </div></div></section>
+<section><h2 id="machine">How the computer is used</h2><p class="how"><b>How to read this:</b> the boxes and bars are drawn to scale; the number is written on each. Memory, not processor, is what runs out first, so a lock with 3 slots rations the heavy jobs.</p><p class="shows"><b>What it shows right now:</b> Ryzen 9 7900X: 12 cores / 24 threads; 31 GB memory with about 11 GB free while other sessions run; 146 GB disk free. <span class="tag m">measured 2026-11-13</span></p><div class="mach">
+    <div class="mpart"><h3>Processor: 24 threads <span class="tag m">measured 2026-11-13</span></h3><div class="threads"><span class="th">1</span><span class="th">2</span><span class="th">3</span><span class="th">4</span><span class="th">5</span><span class="th">6</span><span class="th">7</span><span class="th">8</span><span class="th">9</span><span class="th">10</span><span class="th">11</span><span class="th">12</span><span class="th">13</span><span class="th">14</span><span class="th">15</span><span class="th">16</span><span class="th">17</span><span class="th">18</span><span class="th">19</span><span class="th">20</span><span class="th">21</span><span class="th">22</span><span class="th">23</span><span class="th">24</span></div><p>Each lane's backend gate container is capped at 6 of them; Jest and Vitest at 4 workers each.</p></div>
+    <div class="mpart"><h3>Memory: 31 GB, the resource that runs out first <span class="tag m">measured 2026-11-13</span></h3>
+      <div class="ram"><span class="ram-used" style="flex:20 1 0"><b>about 20 GB in use</b>&nbsp;(other sessions and projects)</span><span class="ram-free" style="flex:11 1 0"><b>about 11 GB free</b></span></div>
+      <p>A gates container gets 3 GB, each test database 1 GB.</p></div>
+    <div class="mpart"><h3>The 3-slot lock: what each heavy job costs</h3><div class="jobs"><div class="job"><span class="job-name">Backend gate stack</span><span class="job-bar"><span class="slot on">slot</span><span class="slot"></span></span><span class="job-n"><b>1</b> of 2 · up to 6 CPUs, 3 GB + 1 GB database</span></div><div class="job"><span class="job-name">Jest run (phone tests)</span><span class="job-bar"><span class="slot on">slot</span><span class="slot"></span></span><span class="job-n"><b>1</b> of 2 · 4 workers</span></div><div class="job"><span class="job-name">Vitest run (web tests)</span><span class="job-bar"><span class="slot on">slot</span><span class="slot"></span></span><span class="job-n"><b>1</b> of 2 · 4 workers</span></div><div class="job"><span class="job-name">Gradle build (Android compile)</span><span class="job-bar"><span class="slot on">slot</span><span class="slot on">slot</span></span><span class="job-n"><b>2</b> of 2 · the L2 gate</span></div><div class="job"><span class="job-name">Running emulator</span><span class="job-bar"><span class="slot on">slot</span><span class="slot"></span></span><span class="job-n"><b>1</b> of 2 · one at a time until measured</span></div></div><p>At most 3 slots busy at once, machine-wide. Example: one backend gate + one Gradle build fills it. <span class="tag i">illustrative</span></p></div>
+    <div class="mpart two"><div><h3>Graphics card (RTX 5070)</h3><p class="yes"><b>Does:</b> draws the Android emulator (natively, on the Windows Hypervisor Platform).</p><p class="no"><b>Does not:</b> no other job in this program: not the gates, not the tests, not builds; and no emulator inside Docker (no /dev/kvm there).</p></div>
+      <div><h3>Disk: 146 GB free <span class="tag m">measured 2026-11-13</span></h3><div class="ram"><span class="ram-free" style="flex:1"><b>146 GB free</b></span></div><p>A worktree with phone node_modules is about 1.2 GB.</p></div></div>
+    <div class="mpart"><h3>Docker networks</h3><p>Docker's network address pools are used up by another project (29 networks). The gate scripts work around it: they share the database container's network, and anything needing a real network uses 10.77.0.0/16. FixFlow never prunes networks it did not create and never reconfigures Docker.</p></div>
+  </div></section>
+<section><h2 id="rules">What never bends</h2><p class="how"><b>How to read this:</b> seven standing rules. Running work in parallel changes when work starts, never these.</p><p class="shows"><b>What it shows right now:</b> all seven stand as written in the plan (section 0); the parallel amendment changes none of them.</p><ol class="rules"><li><span class="rn">1</span><span>No phone gets a new app until its stuck data has been drained and the after-check passed. Never uninstall, except in the one documented branch with your written sign-off per phone.</span></li><li><span class="rn">2</span><span>No claim that geofencing works without evidence from the fleet's own phone models.</span></li><li><span class="rn">3</span><span>During the drain the server runs one pinned image and nothing else.</span></li><li><span class="rn">4</span><span>The automatic WhatsApp dispatcher stays off until every phone is drained or retired.</span></li><li><span class="rn">5</span><span>The old Railway address may only hang (or, in one branch, proxy). It never answers on its own.</span></li><li><span class="rn">6</span><span>Technicians stay on hold until the written release notice.</span></li><li><span class="rn">7</span><span>Money is whole paisa; no money feed runs off the event cursor; the outbox never deletes a write.</span></li></ol></section>
+<p class="note">Generated from program.json (state as of 2026-11-13) by build.js.txt. Every count on this page is computed from that file; the machine figures and production state are measured 2026-11-13; "e.g." text in empty result fields is illustrative.</p>
+</main>
+<script>window.__P={"phases":[{"id":"P0a-prep","name":"Pre-flight prep: step table, hold-notice draft, helper kit","lane":"OWN","wave":"A","state":"you","needs":[],"note":"Done by the coordinator: the step table (docs/program/W0-results.md), the hold notice draft in English, Urdu and Roman Urdu (not sent), and five helper scripts whose database-dump path was proven on a stand-in database. Left: installing the Android tools, on your yes."},{"id":"P0a","name":"Your pre-flight: cut off, archive, dump, evidence, decisions","lane":"OWN","wave":"A","state":"you","needs":[],"note":"Not started. The critical path: nothing reaches a phone or a server until it is done."},{"id":"P0b","name":"Buy: domain, host (VPS), internet, UPS","lane":"OWN","wave":"later","state":"todo","needs":["P0a"]},{"id":"P1","name":"Backend first-boot gate","lane":"B-core","wave":"A","state":"running","needs":[],"note":"Also: PIN policy, origin marker, deep-health, legacy verifier (default OFF)."},{"id":"P2a","name":"Offline engine honesty (phone app)","lane":"M","wave":"A","state":"running","needs":[]},{"id":"P2a-2","name":"Offline engine, second half (only if the size hatch is taken)","lane":"M","wave":"later","state":"todo","needs":["P2a"],"note":"Exists only if P2a is split."},{"id":"P2b-1","name":"Drain tooling and fleet profile (phone app)","lane":"M","wave":"B","state":"todo","needs":["P2a","P0b"],"stackOn":"P2a","note":"Builds on P2a's reviewed tip; domain name and highest versionCode are placeholders until filled."},{"id":"P2b-2","name":"Drain audit script (backend)","lane":"B-tools","wave":"B","state":"todo","needs":["P2b-1"],"stackOn":"P2b-1","note":"Starts once P2b-1's manifest schema commit exists."},{"id":"P2c","name":"Fleet app v1: build, signature, install proof","lane":"M","wave":"later","state":"todo","needs":["P2b-1","P0b","P2a-2"],"note":"Built from main; uses the spare phone. Section 7.3 gives it no lane."},{"id":"P3a","name":"Self-host repository changes","lane":"O","wave":"B","state":"todo","needs":["P1"],"stackOn":"P1"},{"id":"P3a-2","name":"Self-host stub and heartbeat (only if P3a takes its size hatch)","lane":"O","wave":"later","state":"todo","needs":["P3a"],"note":"Not started early: the critic showed it would collide with P3a and P1. The stub and heartbeat stay inside P3a."},{"id":"P3b","name":"Host ready, restore, PIN rotation (your session)","lane":"OWN","wave":"later","state":"todo","needs":["P3a","P0b","P0a","P2b-2"],"note":"Needs the drain-image tag (cut when the last of P1, P2b-2, P3a merges) and P0a item 4's recovery case."},{"id":"P3c","name":"Pre-cutover checks (route stays closed)","lane":"OWN","wave":"later","state":"todo","needs":["P3b","P3a-2"]},{"id":"P12a","name":"Web payment double-charge fix","lane":"W","wave":"A","state":"next","needs":[],"note":"Starts when a lane session ends: memory, not processor, limits how many run at once. Its deploy needs P3b and must land before P4a."},{"id":"P12","name":"Web manager defects","lane":"W","wave":"B","state":"todo","needs":["P12a"],"stackOn":"P12a","note":"Same files as P12a, so it builds on P12a. Deploy clause: P3c."},{"id":"P4a","name":"Pilot drain on one phone","lane":"OWN","wave":"later","state":"todo","needs":["P3c","P2c","P12a"]},{"id":"P4b","name":"Fleet drain, one workshop visit at a time","lane":"OWN","wave":"later","state":"todo","needs":["P4a"]},{"id":"P4c","name":"Close the drain window, deploy train","lane":"OWN","wave":"later","state":"todo","needs":["P4b"]},{"id":"P4r","name":"Late phones re-open, one at a time","lane":"OWN","wave":"later","state":"todo","needs":["P4c"]},{"id":"P5-spike","name":"Trial of a paid background-location kit (or declined)","lane":"M","wave":"later","state":"todo","needs":["P4a"],"note":"Spare phone, debug build. L2 answers its desk question (does the kit compile) first."},{"id":"P5a","name":"Geofence and sampler fixes","lane":"M","wave":"C","state":"held","needs":["P2b-1","P4a","P5-spike","P6a"],"stackOn":"P2b-1","hold":"P4a passed and the SDK decision answered; app v2 is built only after P4c","note":"Built on the default path, marked at risk."},{"id":"P5b-1","name":"Permissions, phone-maker setup, typed-id login","lane":"M","wave":"D","state":"held","needs":["P5a"],"stackOn":"P5a","hold":"P4a passed and the SDK decision answered; app v2 is built only after P4c"},{"id":"P5b-2","name":"Shift reminder, boundary rules, app v2 build","lane":"M","wave":"D","state":"held","needs":["P5b-1"],"stackOn":"P5b-1","hold":"P4a passed and the SDK decision answered; app v2 is built only after P4c"},{"id":"P5c","name":"Pilot test of app v2","lane":"OWN","wave":"later","state":"todo","needs":["P5b-2","P4c"]},{"id":"P5d-1a","name":"Install app v2 on the fleet, per visit","lane":"OWN","wave":"later","state":"todo","needs":["P5c","P6b-2"]},{"id":"P5d-1b","name":"Per-phone-maker test runs","lane":"OWN","wave":"later","state":"todo","needs":["P5d-1a"]},{"id":"P5d-2","name":"48-hour review and field validation","lane":"OWN","wave":"later","state":"todo","needs":["P5d-1b"]},{"id":"P6a","name":"Attendance truth (no migration)","lane":"B-att","wave":"A","state":"running","needs":["P1"],"note":"Running since 2026-11-13, built ahead of P1; merges after P1 (rebase). It creates the one shared inside/outside/unknown rule the phone and the server will both use."},{"id":"P6b-1","name":"Attendance migration: late flags, payroll version","lane":"B-att","wave":"C","state":"held","needs":["P6a","P4c"],"stackOn":"P6a","hold":"P4c done"},{"id":"P6b-2","name":"Heartbeat, sampler health, dispatcher guard, audit","lane":"B-att","wave":"D","state":"held","needs":["P6b-1","P5a"],"stackOn":"P6b-1","hold":"P4c done"},{"id":"P7a","name":"Who may do what, and money guards","lane":"B-jobs","wave":"A","state":"running","needs":["P1"],"note":"Running since 2026-11-13, built ahead of P1; merges after P1 (rebase)."},{"id":"P7b-1","name":"Login, lock and session hardening","lane":"B-core","wave":"C","state":"held","needs":["P7a","P3c","P4b","P5d-1a"],"stackOn":"P7a","hold":"every roster phone on app v2 or retired"},{"id":"P7b-2","name":"Ops console, media, web deps, Cloudflare rules","lane":"O","wave":"B","state":"todo","needs":["P7a","P3c"],"note":"Ops part now; media part on P7a's tip. Deploy clause: P3c."},{"id":"P8a","name":"Money integrity 1: void attribution, payloads","lane":"B-jobs","wave":"B","state":"todo","needs":["P7a"],"stackOn":"P7a"},{"id":"P8b","name":"Money integrity 2: bill revisions, chain, daily check","lane":"B-jobs","wave":"C","state":"todo","needs":["P8a"],"stackOn":"P8a"},{"id":"P8b-2","name":"Money integrity 2, second half (only if the size hatch is taken)","lane":"B-jobs","wave":"later","state":"todo","needs":["P8b"]},{"id":"P9-0a","name":"Week-export script","lane":"B-tools","wave":"A","state":"running","needs":[],"note":"Running since 2026-11-13. It needs a database dump only to run, so your Odoo rehearsal can follow your pre-flight directly."},{"id":"P9-0b","name":"Odoo and books rehearsal (you + accountant)","lane":"OWN","wave":"later","state":"todo","needs":["P0a","P9-0a"],"note":"Moved earlier by section 7.2: it needs your pre-flight item 4 (a verified dump) and the week-export script (P9-0a), no longer the server recovery. If item 4 ends with no dump, it uses the newest archived backup or a seeded week."},{"id":"P9a-1","name":"Accounting 1: posting tables, decision API","lane":"B-jobs","wave":"C","state":"held","needs":["P8b","P9-0b","P5d-2"],"stackOn":"P8b","hold":"the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time"},{"id":"P9a-2","name":"Accounting 2: stager","lane":"B-jobs","wave":"D","state":"held","needs":["P9a-1","P8b-2"],"stackOn":"P9a-1","hold":"the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time"},{"id":"P9b","name":"Approval and reconciliation screens","lane":"B-jobs","wave":"D","state":"held","needs":["P9a-2"],"stackOn":"P9a-2","hold":"the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time","note":"Section 7.6 puts it in wave D; section 7.3 lists its web half under W and omits it from B-jobs' chain."},{"id":"P10a","name":"CSV export and exports page","lane":"B-jobs","wave":"D","state":"held","needs":["P9a-2"],"stackOn":"P9a-2","hold":"the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time"},{"id":"P10b","name":"Odoo import rehearsal (your session)","lane":"OWN","wave":"later","state":"todo","needs":["P9b","P10a"]},{"id":"P11","name":"Odoo push adapter (Custom plan only)","lane":"B-jobs","wave":"later","state":"held","needs":["P10a"],"stackOn":"P10a","hold":"the 48-hour geofence review is done (P5d-2) and your Odoo answers are in (P9-0b); then one at a time"},{"id":"P13a","name":"Database role split","lane":"O","wave":"D","state":"held","needs":["P4c","P7b-2"],"hold":"drain window closed (T_close)"},{"id":"P13b","name":"Backup encryption, retention, first drill","lane":"O","wave":"D","state":"held","needs":["P13a"],"stackOn":"P13a","hold":"drain window closed (T_close)"},{"id":"P13c","name":"Monitoring upgrade, node 22 images, lock file","lane":"O","wave":"D","state":"held","needs":["P13a"],"stackOn":"P13a","hold":"drain window closed (T_close)"},{"id":"P13d","name":"Monitoring upgrade, second PR","lane":"O","wave":"D","state":"held","needs":["P13c","P6b-2","P8a"],"stackOn":"P13c","hold":"drain window closed (T_close)"},{"id":"P13e","name":"Move the server to the home box (your session)","lane":"OWN","wave":"later","state":"todo","needs":["P5d-2","P4r","P13b"],"note":"Only after the box gate (14 days at 99.5 % reachability or a second uplink). Skipped if 'no home box'."},{"id":"P14-n","name":"Expo upgrade, one major version at a time","lane":"M","wave":"later","state":"held","needs":["P5d-2"],"hold":"P4a passed and the SDK decision answered; app v2 is built only after P4c"},{"id":"P14-fleet","name":"Install each Expo upgrade on the fleet","lane":"OWN","wave":"later","state":"todo","needs":["P14-n"]},{"id":"P14-log","name":"One command log for the six queues (backlog)","lane":"M","wave":"later","state":"todo","needs":["P5d-2","P14-n"]},{"id":"L1","name":"Parallel gate harness","lane":"L","wave":"A","state":"done","needs":[],"note":"Done 2026-11-13. Baseline green on main's code: backend 757 tests, 0 skipped, 7.4 min; web 106; mobile 334."},{"id":"L2","name":"Local Android compile gate","lane":"L","wave":"A","state":"running","needs":["L1"],"note":"Answers whether the paid location kit compiles on SDK 52 before any phone is involved."},{"id":"L3","name":"Device lab (emulator on this PC)","lane":"L","wave":"B","state":"you","needs":["L1"],"note":"Needs your yes to install the Android toolchain (about 8 GB, a user folder)."},{"id":"L4","name":"Deploy-train and restore rehearsal","lane":"L","wave":"C","state":"todo","needs":["L1"],"note":"Uses a seeded database until P0a item 4 supplies the real dump."}],"lanes":[{"id":"B-core","name":"Backend core","owns":"backend core, main.py, identity, ops, CI file"},{"id":"B-jobs","name":"Backend jobs and money","owns":"jobs, media, customer messaging, money and accounting"},{"id":"B-att","name":"Backend attendance","owns":"attendance, telemetry, tenancy"},{"id":"B-tools","name":"Backend scripts","owns":"new scripts under backend/scripts and their tests"},{"id":"M","name":"Phone app","owns":"technician-app/"},{"id":"W","name":"Web manager","owns":"src/"},{"id":"O","name":"Operations","owns":"ops/, ops-server, compose files, Dockerfiles, runbooks"},{"id":"L","name":"Lab","owns":"ops/lab/, docs/program/lab/"},{"id":"OWN","name":"You (the owner)","owns":"the phones, the dashboards, the host"}],"states":{"done":"done","running":"running now","next":"starting next","you":"waiting on you","held":"held (may be built, may not merge yet)","todo":"not started"},"p0a":[{"n":10,"title":"Tools and access","must":"done-when"},{"n":1,"title":"Send the fleet hold notice","must":"MUST"},{"n":2,"title":"Railway first: seal the old secret, cut old services off","must":"MUST"},{"n":3,"title":"Archive the R2 backups","must":"MUST"},{"n":4,"title":"Supabase: take the dump and verify it, same day","must":"MUST"},{"n":5,"title":"Fleet roster","must":""},{"n":6,"title":"Field build facts, per phone","must":"done-when"},{"n":7,"title":"Photos of what is stuck, per phone, today","must":""},{"n":8,"title":"Sentry","must":""},{"n":9,"title":"Workshop location and fence size","must":""},{"n":11,"title":"Decisions","must":""},{"n":12,"title":"Cut the app's network, every phone","must":"done-when"},{"n":13,"title":"Restrict the committed client keys","must":""},{"n":14,"title":"Workshop Wi-Fi facts","must":""},{"n":15,"title":"Who holds cash in the field","must":""},{"n":16,"title":"Books basis","must":""}],"stateAsOf":"2026-11-13"};</script>
+<script>
+(function(){
+var D = window.__P;
+var byId = {}; D.phases.forEach(function(p){ byId[p.id]=p; });
+var rev = {}; D.phases.forEach(function(p){ (p.needs||[]).forEach(function(n){ (rev[n]=rev[n]||[]).push(p.id); }); });
+function closure(id, map){ var seen={}, st=[id], out=[]; while(st.length){ var x=st.pop(); (map(x)||[]).forEach(function(y){ if(!seen[y]){ seen[y]=1; out.push(y); st.push(y); } }); } return out; }
+function down(id){ return closure(id, function(x){ return rev[x]; }); }
+function up(id){ return closure(id, function(x){ return (byId[x]||{}).needs; }); }
+var laneName = {}; D.lanes.forEach(function(l){ laneName[l.id]=l.name; });
+var stName = D.states;
+function el(q){ return document.querySelector(q); }
+function all(q){ return Array.prototype.slice.call(document.querySelectorAll(q)); }
+function txt(s){ var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+var cur = null;
+function chipHtml(id){ var p=byId[id]; return '<button type="button" class="chip s-'+p.state+'" data-id="'+id+'" title="'+txt(p.name)+'">'+id+'</button>'; }
+function select(id, scroll){
+  all('.is-sel,.is-down,.is-up').forEach(function(e){ e.classList.remove('is-sel','is-down','is-up'); e.setAttribute('aria-pressed','false'); });
+  if(!id || id===cur){ cur=null; document.body.classList.remove('sel-on'); el('#info-text').textContent='Click any phase to see what it needs and what waits on it.'; return; }
+  cur=id; var p=byId[id], d=down(id), u=up(id);
+  document.body.classList.add('sel-on');
+  all('[data-id="'+id+'"]').forEach(function(e){ e.classList.add('is-sel'); e.setAttribute('aria-pressed','true'); });
+  d.forEach(function(x){ all('[data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-down'); }); });
+  u.forEach(function(x){ all('[data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-up'); }); });
+  var needs=(p.needs||[]);
+  var s='<b>'+txt(p.name)+' ('+id+')</b>, '+txt(stName[p.state])+'. ';
+  s+= needs.length ? 'Needs: '+needs.join(', ')+'. ' : 'Needs nothing before it. ';
+  if(p.hold) s+='Merge held until: '+txt(p.hold)+'. ';
+  if(p.note) s+=txt(p.note)+' ';
+  s+='<b>'+d.length+' of '+D.phases.length+'</b> phases cannot finish without it.';
+  el('#info-text').innerHTML=s;
+  el('#w-fill').style.width=(100*d.length/D.phases.length).toFixed(1)+'%';
+  el('#w-num').textContent=d.length;
+  el('#w-title').innerHTML=s;
+  var byLane={}; d.forEach(function(x){ var l=byId[x].lane; (byLane[l]=byLane[l]||[]).push(x); });
+  var h='<h3>Waits on it, by lane</h3>';
+  var any=false;
+  D.lanes.forEach(function(l){ if(byLane[l.id]){ any=true; h+='<div class="wl"><span class="wl-name">'+txt(l.name)+' ('+byLane[l.id].length+')</span><span class="chips">'+byLane[l.id].map(chipHtml).join('')+'</span></div>'; } });
+  if(!any) h+='<p>Nothing else waits on it.</p>';
+  if(u.length) h+='<h3>It needs, directly or further back</h3><div class="chips">'+u.map(chipHtml).join('')+'</div>';
+  el('#w-lists').innerHTML=h;
+  // re-mark freshly drawn chips
+  d.forEach(function(x){ all('#w-lists [data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-down'); }); });
+  u.forEach(function(x){ all('#w-lists [data-id="'+x+'"]').forEach(function(e){ e.classList.add('is-up'); }); });
+  if(scroll){ var b=el('.board'); if(b) b.scrollIntoView(); }
+}
+document.addEventListener('click', function(ev){
+  var t=ev.target.closest('[data-id]'); if(t){ select(t.getAttribute('data-id')); return; }
+  var c=ev.target.closest('[data-copy]'); if(c){ copy(c.getAttribute('data-copy'), c); }
+});
+el('#show-p0a').addEventListener('click', function(){ cur=null; select('P0a'); });
+el('#clear-sel').addEventListener('click', function(){ select(null); });
+function copy(text, btn){
+  function ok(){ var o=btn.textContent; btn.textContent='Copied'; setTimeout(function(){ btn.textContent=o; },1200); }
+  try{ if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(ok, fallback); return; } }catch(e){}
+  fallback();
+  function fallback(){ try{ var ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); ok(); }catch(e){ btn.textContent='Select and copy by hand'; } }
+}
+// ---- storage (optional) ----
+var KEY='fixflow-ship-answers-v1';
+var store={ticks:{},res:{},dec:{},decnote:{}};
+try{ var raw=window.localStorage.getItem(KEY); if(raw){ var o=JSON.parse(raw); if(o&&typeof o==='object'){ store.ticks=o.ticks||{}; store.res=o.res||{}; store.dec=o.dec||{}; store.decnote=o.decnote||{}; } } }catch(e){}
+function save(){ try{ window.localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){} }
+var SECRET=/(postgres(ql)?:\/\/|mysql:\/\/|[a-z]+:\/\/[^\s\/]*:[^\s\/]*@|eyJ[A-Za-z0-9_-]{10,}|AKIA[0-9A-Z]{8,}|sk_(live|test)_|-----BEGIN|password\s*[:=]|secret\s*[:=]|token\s*[:=]|[A-Za-z0-9+\/_=-]{32,})/i;
+function guard(input, warnKey, setter){
+  var v=input.value; var w=el('[data-warn="'+warnKey+'"]');
+  if(SECRET.test(v)){ if(w) w.hidden=false; input.value=''; setter(''); save(); return; }
+  if(w) w.hidden=true; setter(v); save();
+}
+all('[data-tick]').forEach(function(cb){ var n=cb.getAttribute('data-tick'); cb.checked=!!store.ticks[n]; cb.addEventListener('change', function(){ store.ticks[n]=cb.checked; save(); refresh(); }); });
+all('[data-res]').forEach(function(inp){ var n=inp.getAttribute('data-res'); inp.value=store.res[n]||''; inp.addEventListener('input', function(){ guard(inp, n, function(v){ store.res[n]=v; }); }); });
+all('[data-dec]').forEach(function(r){ var k=r.getAttribute('data-dec'); if(store.dec[k]===r.value) r.checked=true; r.addEventListener('change', function(){ store.dec[k]=r.value; save(); refresh(); }); });
+all('[data-decnote]').forEach(function(inp){ var k=inp.getAttribute('data-decnote'); inp.value=store.decnote[k]||''; inp.addEventListener('input', function(){ guard(inp, 'd-'+k, function(v){ store.decnote[k]=v; }); }); });
+function refresh(){
+  var n=0; D.p0a.forEach(function(it){ var ok=!!store.ticks[it.n]; if(ok) n++; var s=el('#item-'+it.n); if(s) s.classList.toggle('ok',ok); var q=el('.sq[data-n="'+it.n+'"]'); if(q) q.classList.toggle('ok',ok); });
+  var must=[1,2,3,4,6,10,12].filter(function(k){ return store.ticks[k]; }).length;
+  el('#p0a-progress').textContent=n+' of 16 ticked; '+must+' of the 7 items needed for "done" ticked';
+  var m=0; all('.dec').forEach(function(c){ var k=c.getAttribute('data-key'); var on=!!store.dec[k]; if(on) m++; c.classList.toggle('marked',on); });
+  el('#dec-progress').textContent=m+' of '+all('.dec').length+' marked';
+}
+refresh();
+// ---- focus mode ----
+var focusIdx=0, steps=all('.step');
+function showFocus(){ steps.forEach(function(s,i){ s.classList.toggle('cur', i===focusIdx); }); all('.sq').forEach(function(q,i){ q.classList.toggle('cur', document.querySelector('.steps').classList.contains('focus') && i===focusIdx); }); }
+el('#focus-toggle').addEventListener('click', function(){ var ol=el('.steps'); var on=!ol.classList.contains('focus'); ol.classList.toggle('focus',on); el('#focus-nav').hidden=!on; this.textContent=on?'Show all 16':'One step at a time'; showFocus(); });
+el('#f-prev').addEventListener('click', function(){ focusIdx=Math.max(0,focusIdx-1); showFocus(); });
+el('#f-next').addEventListener('click', function(){ focusIdx=Math.min(steps.length-1,focusIdx+1); showFocus(); });
+all('.sq').forEach(function(q,i){ q.addEventListener('click', function(ev){ if(el('.steps').classList.contains('focus')){ ev.preventDefault(); focusIdx=i; showFocus(); } }); });
+// ---- export ----
+el('#export-btn').addEventListener('click', function(){
+  var L=['FixFlow P0a answers and decisions, exported '+new Date().toISOString().slice(0,10)+' (state of the page: '+D.stateAsOf+')',''];
+  L.push('P0a pre-flight (plan order, item 10 first):');
+  D.p0a.forEach(function(it,i){ L.push('  ['+(store.ticks[it.n]?'x':' ')+'] step '+(i+1)+', item '+it.n+' '+it.title+(it.must==='MUST'?' (MUST)':'')+': '+(store.res[it.n]||'(no result written)')); });
+  L.push(''); L.push('Decisions:');
+  all('.dec').forEach(function(c){ var k=c.getAttribute('data-key'); var t=c.querySelector('h3').textContent; L.push('  '+k+' '+t+': '+(store.dec[k]||'(not marked: default applies)')+(store.decnote[k]?' | note: '+store.decnote[k]:'')); });
+  var ta=el('#export-out'); ta.value=L.join('\n'); ta.hidden=false; el('#export-copy').hidden=false;
+});
+el('#export-copy').addEventListener('click', function(){ copy(el('#export-out').value, this); });
+})();
+</script>
+</body></html>
