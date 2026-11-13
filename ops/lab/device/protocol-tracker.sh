@@ -6,10 +6,13 @@
 #   bash ops/lab/device/protocol-tracker.sh [check ...]     default: probe d f19 f14 a c b fneg
 #
 # Checks (run in the order given):
-#   probe  the FGS probe itself, every outcome: on duty (FGS), a process restored after kill -9
-#          (no FGS: the measured negative a and reboot rely on), clocked out (no FGS)
-#   a      O01-F01  kill -9 the app process while on duty, reopen it, is the sampler's FGS back
-#                   within 15 s?                                         (FF_REPEAT runs, default 3)
+#   probe  the FGS probe itself, every outcome: on duty (FGS), clocked out (no FGS), a process
+#          restored after kill -9 that logs the background refusal (no FGS: the measured negative
+#          reboot relies on); then records whether a clock-out on that process drops the FGS
+#   a      O01-F01 as two halves. Kill -9 on duty; (a) closed window: is the sampler restored
+#                   without its FGS while the app stays closed? (b) reopen warm (into the
+#                   restored process) and cold (no process): is the FGS back 15 s later, and by
+#                   which path (ActivityManager, service record, notification)?   (FF_REPEAT runs)
 #   b      O01-F03  location off/on with the app in the background: is the fence re-registered
 #                   (dumpsys) and does a crossing still record, without opening the app?
 #   c      O01-F20  on duty, start then end a job-travel leg: is the shared location service
@@ -68,20 +71,34 @@ notif_count() { notif_dump | grep -c "$1"; }
 ping_count() { lab_sql "select count(*) from attendance_ping where tech_id='$LAB_TECH_ID'" | tail -n1; }
 
 # ---- probe: the FGS probe reports both outcomes ---------------------------------------------
-# probe-on (on duty: yes), probe-restored (the measured negative the binding review asked for: a
-# process the system restored in the background after kill -9, which logs that the foreground
-# task cannot be started: no), probe-off (clocked out: no). check a relies on the second.
+# probe-on (on duty: yes) and probe-off (clocked out, normal process: no) first. Then
+# probe-restored: the measured negative the binding review asked for, a process the system
+# restored in the background after kill -9 that logs that the foreground task cannot be
+# started: the probe must say no. check a decides only after this control said no in the same
+# run. Measured (tracker-20261113T203532): a restored process can also keep the live record
+# and its notification without logging the refusal for 240 s, so the control is not always
+# stageable. After it, the clock-out on the reopened process is recorded as an observation
+# (that run: FGS still up after the server took the clock-out).
 FGS_BG_REFUSED="Foreground location task cannot be started while the app is in the background"
 check_probe() {
-  mark "CHECK probe: FGS probe on duty, on a restored process, off duty"
+  mark "CHECK probe: FGS probe on duty, off duty, on a restored process"
   clock in || {
     record probe-on control "probe sees the sampler FGS while on duty" "could not clock in via UI" inconclusive "timeline.txt"
     return
   }
-  local on rs off pid M line
+  local on rs off pid M line left
   on="$(wait_fgs yes 30)"
   fgs_lines > "$EV/services-probe-on.txt"
   record probe-on control "on duty: LocationTaskService in the foreground (live record + its notification)" "fgs=$on" "$([ "$on" = yes ] && echo reproduced || echo not_reproduced)" "services-probe-on.txt"
+  clock out
+  off="$(wait_fgs no 30)"
+  fgs_lines > "$EV/services-probe-off.txt"
+  record probe-off control "clocked out: no LocationTaskService in the foreground" "fgs=$off" "$([ "$off" = no ] && echo reproduced || echo not_reproduced)" "services-probe-off.txt"
+  clock in || {
+    record probe-restored control "a process restored in the background after kill -9 (logs '$FGS_BG_REFUSED'): fgs=no" "could not clock in again via UI" inconclusive "timeline.txt"
+    return
+  }
+  wait_fgs yes 30 > /dev/null
   go_home
   sleep 2
   pid="$(app_pid)"
@@ -92,68 +109,175 @@ check_probe() {
   sleep 3
   rs="$(fgs_up)"
   { echo "pid_now=$(app_pid) (killed $pid); record half alone (the old probe): $(fgs_record_up)"; echo "logcat: $line"; fgs_lines; } > "$EV/services-probe-restored.txt"
+  lc_since "$M" "$FGS_BG_REFUSED|ActivityManager.*$APP_PKG|LocationTaskService" > "$EV/probe-restored-logcat.txt"
   if [ -z "$line" ]; then
     record probe-restored control "a process restored in the background after kill -9 (logs '$FGS_BG_REFUSED'): fgs=no" \
-      "precondition failed: no restored process logged the refusal within 240 s (pid now: $(app_pid))" inconclusive "services-probe-restored.txt"
+      "precondition failed: no restored process logged the refusal within 240 s (pid now: $(app_pid); the probe reads fgs=$rs there)" inconclusive "services-probe-restored.txt probe-restored-logcat.txt"
   else
     record probe-restored control "a process restored in the background after kill -9 (logs '$FGS_BG_REFUSED'): fgs=no" \
-      "fgs=$rs (the record half alone says $(fgs_record_up)); $line" "$([ "$rs" = no ] && echo reproduced || echo not_reproduced)" "services-probe-restored.txt"
+      "fgs=$rs (the record half alone says $(fgs_record_up)); $line" "$([ "$rs" = no ] && echo reproduced || echo not_reproduced)" "services-probe-restored.txt probe-restored-logcat.txt"
   fi
   [ -n "$line" ] && [ "$rs" = no ] && PROBE_RESTORED_OK=1
   launch_app
   sleep 8
   clock out
-  off="$(wait_fgs no 30)"
-  fgs_lines > "$EV/services-probe-off.txt"
-  record probe-off control "clocked out: no LocationTaskService in the foreground" "fgs=$off" "$([ "$off" = no ] && echo reproduced || echo not_reproduced)" "services-probe-off.txt"
+  left="$(wait_fgs no 30)"
+  fgs_lines > "$EV/services-probe-restored-clockout.txt"
+  mark "probe observation: clock-out on the reopened restored process, 30 s later fgs=$left"
 }
 
-# ---- a: O01-F01 ---------------------------------------------------------------------------
-# On duty, kill -9 with the app in the background, let the system restore the process, reopen.
-# The register predicts the sampler comes back without its FGS: expo-location starts the
-# foreground service only from LocationTaskConsumer's start path, which refuses in the
-# background, and nothing retries it on resume (pingTracker skips once the task is "running").
-P01="after a process kill and reopen, the sampler returns without its FGS"
+# ---- a: O01-F01, as two halves --------------------------------------------------------------
+# The register's claim has two halves (coordinator, after C33): (a) after a restart the sampler
+# comes back WITHOUT its foreground service while the app stays closed, and (b) nothing repairs
+# it, not even the next foreground (LocationTaskConsumer.maybeStartForegroundService is the only
+# start and refuses in the background; onHostResume does not retry; pingTracker skips once the
+# task is "running"). Each run kills the on-duty app with the Activity in the background, then
+# watches a closed window of CLOSED_S seconds, then reopens:
+#   warm: reopen while the process the system restored in the background is alive (waits up to
+#         CLOSED_S for one; none -> the warm half of (b) is inconclusive for that run);
+#   cold: kill that process again and reopen with no process at all.
+# Evidence per run and variant: the ActivityManager lines (death, the restart it schedules, the
+# process start and why), the refusal line, the probe and the process state in the window, the
+# ping task's jobs and the pings captured in the window, and after the reopen the probe, the
+# service record (restartTime, startForegroundCount, delivered starts) and the notification
+# record, which together name the path that put the service back in the foreground.
+CLOSED_S="${FF_A_CLOSED_S:-150}"
+P01A="O01-F01 (a): after a kill the sampler is restored without its FGS while the app stays closed"
+P01B="O01-F01 (b): nothing repairs it, even at the next foreground"
+AM_RE="ActivityManager.*($APP_PKG|LocationTaskService)|$FGS_BG_REFUSED|TaskService: (Registered|Handling job with task name 'fixflow-attendance-pings')"
+proc_lines() { ash dumpsys activity processes "$APP_PKG" | grep -E "ProcessRecord|ProcState|procState|adjType|curAdj" | head -n 12; }
+notif_block() { notif_dump | awk -v id="id=$FGS_NOTIF_ID " '/NotificationRecord\(/ { p = (index($0, "pkg='"$APP_PKG"' ") && index($0, id)) } p' | head -n 60; }
+pings_between() { # epoch-from epoch-to
+  lab_sql "select count(*) from attendance_ping where tech_id='$LAB_TECH_ID' and captured_at between to_timestamp($1) and to_timestamp($2)" | tail -n1
+}
+# One kill and closed window. Sets: K_PID (restored pid or empty), K_FGS (probe in the window),
+# K_LINE (refusal), K_JOBS (ping jobs), K_PINGS. Writes $EV/a$n-$v-closed.txt.
+closed_window() { # run variant mark
+  local n="$1" v="$2" M="$3" t=0 t0 t1 f="$EV/a$n-$v-closed.txt"
+  t0="$(date +%s)"
+  K_PID=""
+  K_WOKE=""
+  while [ "$t" -lt "$CLOSED_S" ]; do
+    sleep 5
+    t=$((t + 5))
+    K_PID="$(app_pid)"
+    [ -n "$K_PID" ] && [ "$v" = warm ] && break
+    # Measured: after a repeated kill ActivityManager schedules the service restart 725 s out.
+    # The field's other way back is a geofence event: walk out of the fence to deliver one.
+    if [ "$v" = warm ] && [ "$t" -eq 60 ] && [ -z "$K_WOKE" ]; then
+      K_WOKE="geofence EXIT at ${t} s"
+      mark "a#$n warm: nothing restored in 60 s, walking out of the fence to deliver an EXIT"
+      geo_set "$OUT_LAT" "$OUT_LNG"
+      geo_nudge
+    fi
+  done
+  [ "$v" = warm ] && [ -n "$K_PID" ] && sleep 20 # let the restored process settle
+  if [ -n "$K_WOKE" ]; then
+    geo_set "$FENCE_LAT" "$FENCE_LNG"
+    geo_nudge
+  fi
+  t1="$(date +%s)"
+  K_PID="$(app_pid)"
+  K_FGS="$(fgs_up)"
+  K_LINE="$(lc_since "$M" "$FGS_BG_REFUSED" | head -n1)"
+  K_JOBS="$(lc_since "$M" "Handling job with task name 'fixflow-attendance-pings'" | grep -c .)"
+  K_PINGS="$(pings_between "$t0" "$t1")"
+  {
+    echo "closed window $((t1 - t0)) s; process now: ${K_PID:-none}; probe: fgs=$K_FGS (record half alone: $(fgs_record_up))"
+    echo "ping jobs handled: $K_JOBS; pings captured in the window (server): $K_PINGS"
+    echo "--- process state"
+    proc_lines
+    echo "--- logcat since the kill"
+    lc_since "$M" "$AM_RE"
+    echo "--- notification record"
+    notif_block
+    fgs_lines
+  } > "$f"
+}
+# The reopen. Sets R_PRE (pid before), R_PID (pid after), R_FGS. Writes $EV/a$n-$v-reopened.txt.
+reopen_and_read() { # run variant
+  local n="$1" v="$2" M2 f="$EV/a$n-$v-reopened.txt"
+  R_PRE="$(app_pid)"
+  M2="a#$n $v reopen (pid before: ${R_PRE:-none})"
+  mark "$M2"
+  launch_app
+  sleep 15
+  R_PID="$(app_pid)"
+  R_FGS="$(fgs_up)"
+  {
+    echo "reopen $v: pid before ${R_PRE:-none}, after $R_PID ($([ -n "$R_PRE" ] && [ "$R_PRE" = "$R_PID" ] && echo warm || echo cold) start); 15 s later probe fgs=$R_FGS (record half alone: $(fgs_record_up))"
+    echo "--- logcat since the reopen"
+    lc_since "$M2" "$AM_RE|ReactNativeJS: Running"
+    echo "--- notification record"
+    notif_block
+    fgs_lines
+  } > "$f"
+}
 check_a_once() { # run-no
-  local n="$1" pre pid M line mid post pid2 obs v=inconclusive
-  mark "CHECK a#$n O01-F01 kill -9 on duty, reopen"
+  local n="$1" pre pid M v a_obs a_v b_obs b_v w_ok=0
+  mark "CHECK a#$n O01-F01 kill -9 on duty: closed window, warm reopen, cold reopen"
   clock in || {
-    record "a#$n" O01-F01 "$P01" "could not clock in" inconclusive timeline.txt
+    record "a#$n-closed" O01-F01 "$P01A" "could not clock in" inconclusive timeline.txt
     return
   }
   pre="$(wait_fgs yes 30)"
   fgs_lines > "$EV/services-a$n-pre.txt"
   if [ "$pre" != yes ]; then
-    record "a#$n" O01-F01 "$P01" "precondition failed: no FGS on duty before the kill (fgs=$pre)" inconclusive "services-a$n-pre.txt"
+    record "a#$n-closed" O01-F01 "$P01A" "precondition failed: no FGS on duty before the kill (fgs=$pre)" inconclusive "services-a$n-pre.txt"
     return
   fi
+  # warm: kill, wait for the system to restore a process, reopen into it
   go_home
   sleep 2
   pid="$(app_pid)"
-  M="a#$n kill -9 pid=$pid"
+  M="a#$n warm kill -9 pid=$pid"
   mark "$M"
   ash kill -9 "$pid"
-  line="$(wait_lc "$M" "$FGS_BG_REFUSED" 60)"
-  mid="$(fgs_up)"
-  { echo "pid_after_kill=$(app_pid)"; echo "logcat: $line"; fgs_lines; } > "$EV/services-a$n-killed.txt"
-  launch_app
-  mark "a#$n reopened"
-  sleep 15
-  post="$(fgs_up)"
-  [ -n "$line" ] || line="$(lc_since "$M" "$FGS_BG_REFUSED" | head -n1)" # the refusal can log only at the reopen
-  pid2="$(app_pid)"
-  { echo "pid_after_reopen=$pid2; record half alone (the old probe): $(fgs_record_up)"; fgs_lines; } > "$EV/services-a$n-reopened.txt"
-  lc_since "$M" "$FGS_BG_REFUSED|LocationTaskConsumer|FFLAB" > "$EV/a$n-logcat.txt"
-  dump_state "$EV/state-a$n-reopened.json"
-  obs="fgs before kill=$pre; restored process logged the background refusal: $([ -n "$line" ] && echo "yes ($(echo "$line" | cut -c1-18))" || echo no); fgs while closed=$mid; 15 s after reopen: fgs=$post (pid $pid -> $pid2)"
-  if [ "$post" = yes ]; then
-    v=not_reproduced
-  elif [ -n "$line" ] && [ "${PROBE_RESTORED_OK:-0}" = 1 ]; then
-    v=reproduced
+  closed_window "$n" warm "$M"
+  a_obs="closed ${CLOSED_S} s max: restored process ${K_PID:-none}$([ -n "$K_WOKE" ] && echo " (after a $K_WOKE)"); started by: $(grep -m1 -o "Start proc [0-9]*:$APP_PKG[^ ]* for [^{]*" "$EV/a$n-warm-closed.txt" | sed 's/.* for //' || echo n/a); restart scheduled: $(grep -m1 -o "Scheduling restart of crashed service .* in [0-9]*ms" "$EV/a$n-warm-closed.txt" | grep -o "in [0-9]*ms" || echo n/a); probe fgs=$K_FGS; refusal logged: $([ -n "$K_LINE" ] && echo "yes ($(echo "$K_LINE" | cut -c1-18))" || echo no); ping jobs $K_JOBS, pings captured $K_PINGS"
+  if [ -z "$K_PID" ]; then
+    a_v=inconclusive
+    a_obs="$a_obs; nothing was restored in the window (see the restart ActivityManager scheduled)"
+  elif [ "$K_FGS" = no ]; then
+    a_v=reproduced
   else
-    obs="$obs; cannot decide: $([ "${PROBE_RESTORED_OK:-0}" = 1 ] || echo 'the probe has not been shown saying no on a restored process in this run (run probe first); ')$([ -n "$line" ] || echo 'no background refusal logged')"
+    a_v=not_reproduced
   fi
-  record "a#$n" O01-F01 "$P01" "$obs" "$v" "services-a$n-reopened.txt"
+  [ "$K_JOBS" -gt 0 ] || [ "$K_PINGS" -gt 0 ] || a_obs="$a_obs; whether the sampler sampled in the window: no ping job and no ping, which this rig's sparse sampler cannot tell apart from not sampling (inconclusive for that part)"
+  record "a#$n-closed" O01-F01 "$P01A" "$a_obs" "$a_v" "a$n-warm-closed.txt"
+  if [ -n "$K_PID" ]; then
+    w_ok=1
+    reopen_and_read "$n" warm
+    b_obs="warm reopen (restored pid ${R_PRE} -> $R_PID): 15 s later fgs=$R_FGS"
+    b_v="$([ "$R_FGS" = no ] && echo reproduced || echo not_reproduced)"
+    record "a#$n-warm" O01-F01 "$P01B" "$b_obs" "$b_v" "a$n-warm-reopened.txt"
+    go_home
+    sleep 2
+  else
+    record "a#$n-warm" O01-F01 "$P01B" "no restored process to reopen into within ${CLOSED_S} s" inconclusive "a$n-warm-closed.txt"
+  fi
+  # cold: kill whatever runs now and reopen with no process
+  clock in > /dev/null 2>&1 || true
+  pid="$(app_pid)"
+  M="a#$n cold kill -9 pid=${pid:-none}"
+  mark "$M"
+  [ -n "$pid" ] && ash kill -9 "$pid"
+  sleep 10
+  pid="$(app_pid)"
+  if [ -n "$pid" ]; then
+    ash kill -9 "$pid"
+    sleep 3
+  fi
+  closed_window "$n" cold "$M"
+  if [ -n "$(app_pid)" ]; then
+    record "a#$n-cold" O01-F01 "$P01B" "a process ($(app_pid)) was alive at the cold reopen" inconclusive "a$n-cold-closed.txt"
+  else
+    reopen_and_read "$n" cold
+    b_obs="cold reopen (no process before; pid $R_PID): 15 s later fgs=$R_FGS"
+    b_v="$([ "$R_FGS" = no ] && echo reproduced || echo not_reproduced)"
+    record "a#$n-cold" O01-F01 "$P01B" "$b_obs" "$b_v" "a$n-cold-closed.txt a$n-cold-reopened.txt"
+  fi
+  dump_state "$EV/state-a$n-reopened.json"
   rec_roll
 }
 check_a() {
