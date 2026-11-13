@@ -1,0 +1,62 @@
+VERDICT: PASS-WITH-FIXES
+PR #202 at b2f5e7df1c6388235fc3e37c6338586c4abfb428
+Second pass by the reviewer of the first (the fixflow-migration-reviewer definition), resumed by the coordinator 2026-11-14 01:29. Reviewed as the head merged with `main` 53c6046 (local merge caedca3, no conflict, clean tree). This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+On the full gate run all seven gates exit 0 and 1394 tests pass with none skipped, matching the lane's claim. Nothing blocks the merge by itself. One new crash and three smaller gaps.
+
+FINDINGS
+
+1. MINOR: a payment with an extreme device clock now crashes the server (500). The new line `backend/app/features/jobs/service.py:2048`, `payload["captured_at_claimed"] = _aware(captured_at).astimezone(UTC).isoformat()`, overflows for a claim such as `0001-01-01T00:00:00+05:00` or `9999-12-31T23:00:00-05:00`. Proved with a throwaway probe test: both cases fail with `OverflowError: date value out of range` at `service.py:2048`. The 500 rolls the payment back; the phone keeps retrying and, by CLAUDE.md, parks the payment after five 5xx answers. That breaks the rule that a payment is never refused for its clock. The crash comes from C35's conversion to UTC; the line at `03e18a8` had no conversion. The installed app sends no `captured_at`, so only a future client can hit it. Fix: catch `OverflowError` and leave the key out, and add a test with both claims.
+
+2. MINOR: the payload guard test does not cover every writer, although CLAUDE.md says it does (`CLAUDE.md:174`, "drives every writer"). It does not drive `record_location` (`service.py:2245`), `set_customer_pin` (`:2286`) or the implicit claim in `_claim_or_require` (`:1092`). The reviewer's break B put `payload={"p": row.problem}` on the GPS-punch event: all 1392 other tests passed and nothing caught it. The free text in that break comes from the job row, not from the request, so "these writers take no free-text input" does not protect them. Fix: drive a GPS punch and a pin change on a home-visit job inside the guard, and reword CLAUDE.md.
+
+3. MINOR: the deploy-train records will fail or mislead for this deploy (coordinator-owned documents). `docs/program/W0-results.md:92`, P7a check (2), says "a payment on a closed job answers 409" without naming the token; after P8a deploys, a manager token gets a 422 (no reason) or a 200, so the check fails and halts the train: it should say "with a technician token". There is no P8a row yet, and `SHIP-PLAN-2026-11.md:737` lists only the `voided_by/at` columns; the row should name all four columns, with a read-only check.
+
+4. MINOR: the PR body's Proof section is stale. It says the gate ran at `4d7e1e9` with 1391 tests; the head is `b2f5e7d`, measured 1394. The body also still says `Plan @ plan-v9.24`.
+
+Backlog (not a finding): `schemas.py:174`, `PaymentRequest.reason` no longer has a length limit, so an open-job reason of any size is accepted and then thrown away.
+
+FIRST-PASS FINDINGS, AGAINST THIS HEAD
+- 1 (free text in payloads): fixed. With the source files put back to the pre-fix-round versions (`6e9d9e7`) the guard reported four leaks (negotiate, open-job payment, closed-job payment, void); on the head it reports none.
+- 2 (tech-metrics timezone): fixed through #204 plus the rebase. The router passes `start`/`end` through (`router.py:161`); the service resolves today with `zone_or_default` (`service.py:2467-2469`); the tests use a fixed `TODAY = date(2026, 10, 31)`. The range-diff shows the only hand resolution is that hunk.
+- 3 (claims without tests): fixed. Breaks C and D below are now caught.
+- 4 (PR body wording): fixed in items 6 and 13; finding 4 above is new staleness.
+- 5 (`captured_at` 240 h window): deferred to P9a-1 under "What remains". Nothing reads `captured_at` yet, so this is acceptable.
+
+MIGRATION 0047
+The chain still ends 0046 -> 0047. All statements run in one boot transaction, after `SET LOCAL lock_timeout='3s'`, so any failure rolls everything back and the container restarts. Lock levels are quoted from the 0047 and 0045 docstrings, not checked against the PostgreSQL manual.
+
+| Statement | Lock | Validated | Safe at boot |
+|---|---|---|---|
+| ADD COLUMN `voided_at`, `voided_by`, `captured_at`, `reason` String(256) (all nullable, no default) | ACCESS EXCLUSIVE on `job_payment` until commit; catalog-only change | - | yes |
+| ADD FK `voided_by` NOT VALID, then VALIDATE | SHARE ROW EXCLUSIVE on both tables, then a scan under the lock already held | yes (new column, all NULL) | yes |
+| ADD FK `recorded_by` NOT VALID | SHARE ROW EXCLUSIVE | no (P13d validates it) | yes; the scratch-database test upgrades over an orphan row |
+
+The downgrade drops 2 FKs and 4 columns (as stated). `alembic check` exits 0, and `models.py:503-507` has `reason` String(256). `CLAUDE.md` says head 0047 and next slot 0048 (`:29`, `:147-148`), where each reason is stored (`:167`), the payload rule (`:172`) and the pin exception (`:173-174`).
+
+ANSWERS
+- 3, `job_payment.reason`: a technician paying on a closed job, even with a reason, gets 409 with the unchanged text. A manager or technician on an open job sending 300 characters gets 200 and nothing is stored. A manager on a closed job with no reason, an empty one or blanks only gets 422; with 257 characters, 422 "at most 256". Replaying a landed late payment with a different reason: the first reason is kept, no second event is written, and the API shows the first one (reviewer's probe). The reason is readable through `PaymentOut.reason` (`schemas.py:215`) by a manager or the assigned technician; the minimised view still empties payments (`service.py:908`).
+- 4, `captured_at_claimed`: the lane's four cases and the `+05:00` to UTC case pass. The value is built from the parsed datetime only, never from the raw string. Its one defect is finding 1.
+- 5, the negotiate change: the lane's claim holds: no P7a test asserted `payload["reason"]` (at `f192fee` the assertions read only `below_original`, `reason_missing`, `discount_paisa` and `by_manager`). Nothing reads that key at caedca3, c5eadbd or a31924a: the phone's `item.payload` is its own outbox item, `JobEventOut` has no payload field, the dispatcher reads only `auto`, and the export script reads no payloads.
+- 6, the guard test: finding 2. Break A was caught and reported by action; break B was not.
+- 8, regressions: R12, the technician's replay of a payment that landed before the close (still a 200), the backfill script and the C7/C11/C17/C21 tests are all green. The field replay test is unchanged (empty diff).
+- 9, PR body: "Changed expectations: none" under C35 is true. "What remains" lists the P9a-1 cap, P8b's note column and the P13b pin coordinates.
+
+BREAKS (one throwaway full run, tree dirty(4))
+
+| Break | Caught? |
+|---|---|
+| A: `customer_name` in the WhatsApp send-log payload | caught by `test_no_job_event_payload_carries_free_text` |
+| B: `row.problem` in the GPS-punch payload | not caught (finding 2) |
+| C: VALIDATE `recorded_by` in 0047 | caught by `test_0047_upgrades_a_populated_0046_database...` (ForeignKeyViolation) |
+| D: `SELECT ... FOR UPDATE` in `lock_job_status` | caught by `test_a_managers_late_payment_holds_the_job_row...` (lock timeout) |
+
+Changed expectations: no new ones since `03e18a8`. The fix-round tests only add assertions.
+
+WHAT THE REVIEWER RAN (all through `ff-gates.sh backend p8a-rev`). Full run on the clean merged tree: gates 1-7 all `EXIT=0`, `SKIPS total=1394 skipped=0 integration_skipped=0`, `SUMMARY FAIL=0` (log `/c/Users/User/.fixflow-cache/gate-logs/p8a-rev/backend-20261114-012953`). Breaks plus probes, full suite: 5 failed, 1392 passed (breaks A, C and D and the two probe cases). Pre-fix-round source (`6e9d9e7`) on the five affected test files: 18 failed, 50 passed.
+
+UNVERIFIED. The lock levels against the PostgreSQL manual. The lane's "1 leak on main @ 7bf9f49" (not run).
+
+CLEANUP. The tree was restored before each run and confirmed clean. The review worktree is removed and pruned, no `fixflow-p8a-rev-*` container remains. The probe test is kept at `C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/49260710-db37-438a-9bb3-1a4eebcd87dc/scratchpad/p8a2/test_zz_review_probe_integration.py`.
+
+COORDINATOR (2026-11-14). Findings 1, 2 and 4 go back to the lane for one small commit; the same reviewer re-reads only that delta. Finding 1 exists because ruling C35 asked for the claim in UTC: the rule stands (a payment is never refused for its clock), so a claim that cannot be represented is left out, never a 500. Finding 3 is the coordinator's: the P7a check in the deploy-train table now names the technician token, and the P8a row is added with all four columns when the PR merges. The backlog note gets a sanity cap in the same commit if it is one line. Not mergeable at b2f5e7df1c6388235fc3e37c6338586c4abfb428.
