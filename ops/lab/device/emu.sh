@@ -30,6 +30,9 @@ load_android_env
 
 GPU="${FF_EMU_GPU:-host}"
 EMU_MEM="${FF_EMU_MEM:-2048}"
+[ "$EMU_SERIAL" = "emulator-$EMU_PORT" ] || die "FF_EMU_SERIAL=$EMU_SERIAL does not match FF_EMU_PORT=$EMU_PORT"
+# 5584 is the coordinator's boot-test emulator: this lab never drives it.
+[ "$EMU_PORT" != 5584 ] || die "port 5584 belongs to the coordinator's emulator"
 [ "$EMU_MEM" -le 2048 ] || die "FF_EMU_MEM=$EMU_MEM exceeds the 2048 MB cap"
 case "$GPU" in *angle*) die "ANGLE GPU modes are not allowed on this machine (antivirus blocks d3dcompiler_47.dll)" ;; esac
 EMU_PORT="${FF_EMU_PORT:-5554}"
@@ -166,8 +169,9 @@ case "$cmd" in
       alive "$ep" && kill "$ep" 2> /dev/null
       sleep 2
       kill "$kp" 2> /dev/null
-      # the emulator's own processes, if a Windows-side child survived
-      taskkill //F //IM qemu-system-x86_64.exe > /dev/null 2>&1 || true
+      # A Windows-side child that survived: kill ONLY processes whose command line carries this
+      # lab's console port (another session may run its own emulator on another port).
+      powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { (\$_.Name -like 'qemu-system*' -or \$_.Name -eq 'emulator.exe') -and \$_.CommandLine -match '-port\s+$EMU_PORT(\s|\$)' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" > /dev/null 2>&1 || true
     fi
     # Backstop: release by the recorded holder name even if the keeper's trap never ran.
     [ -f "$HOLDER_F" ] && bash "$SLOT_SH" release "$(cat "$HOLDER_F")" > /dev/null 2>&1
