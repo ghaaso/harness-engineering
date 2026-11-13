@@ -201,11 +201,15 @@ phase_edge404() {
     "UI: $ui; outbox: $(qsummary jobs.outbox.v2); stub saw $(stub_hits /notes) note POSTs" \
     "$(qsummary jobs.outbox.v2 | grep -q 'total=0' && echo "$ui" | grep -q error && echo reproduced || echo not_reproduced)" "ui-note-$n.xml"
   # punch: clock out (needed for O3-F2 after revival)
-  tap_clock_button out
+  # The parked clock_in leaves the screen at "Not clocked in": then there is no Clock Out to tap,
+  # nothing is captured, and the row says nothing about a clock-out (final run, 19:24).
+  local tapped=yes po
+  tap_clock_button out || tapped="no ($(ui_has 'Not clocked in' && echo 'screen says Not clocked in' || echo 'no Clock Out button'))"
   sleep 20
+  po="$(qsummary attendance.queue.v1 clock_out)"
   record edge-punch-out "O-03 (2)" "a clock-out against the dead edge is parked too" \
-    "queue: $(qsummary attendance.queue.v1 clock_out)" \
-    "$(qsummary attendance.queue.v1 clock_out | grep -q 'parked=1' && echo reproduced || echo not_reproduced)" state-edge-after.json
+    "Clock Out tapped: $tapped; queue: $po" \
+    "$(if echo "$po" | grep -q 'parked=[1-9]'; then echo reproduced; elif echo "$po" | grep -q 'total=0'; then echo inconclusive; else echo not_reproduced; fi)" state-edge-after.json
   docker logs "$C_STUB" > "$EV/stub-edge404.log" 2>&1
   snap edge-after
   rec_roll
@@ -238,7 +242,11 @@ phase_revival() {
   # not evidence); the verdict needs the new clock-in to have LANDED, else it says nothing
   local p1 v
   p1="$(punches_srv)"
-  if [ "$p1" -le "$((p0))" ]; then
+  # ...and a parked clock_out to exist: without one (edge-punch-out captured none) the
+  # register's mechanism has nothing to act on (final run, 19:29, read not_reproduced)
+  if ! qsummary attendance.queue.v1 clock_out | grep -q 'parked=[1-9]'; then
+    v=inconclusive
+  elif [ "$p1" -le "$((p0))" ]; then
     v=inconclusive
   elif [ "$fg" = no ]; then
     v=reproduced
@@ -246,7 +254,7 @@ phase_revival() {
     v=not_reproduced
   fi
   record revival-duty O3-F2 "after any landed clock-in, the parked clock-out makes dutyStatus stop the on-duty sampler" \
-    "new clock-in: server punches $p0 -> $p1; queue: $(qsummary attendance.queue.v1); sampler FGS 170 s later=$fg; pings landed meanwhile: $(($(pings_srv) - g0)) (not evidence)" \
+    "new clock-in: server punches $p0 -> $p1; queue: $(qsummary attendance.queue.v1); clock_out items: $(qsummary attendance.queue.v1 clock_out); sampler FGS 170 s later=$fg; pings landed meanwhile: $(($(pings_srv) - g0)) (not evidence)" \
     "$v" services-revival.txt
   tap_clock_button out
   sleep 10
