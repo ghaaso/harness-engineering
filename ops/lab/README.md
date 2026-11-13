@@ -121,7 +121,20 @@ This gate refuses to start if that directory exists.
 
 ## Measured times
 
-MEASURED_TIMES
+Release builds of `main`'s `technician-app` (2026-11-13), times counted after the slots were held:
+
+| Run                                     | Cap                                         | Time                  | Stages                                                                                                        | Peak memory                    |
+| --------------------------------------- | ------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| cold (empty cache volumes, first image) | 10g, Gradle 4g + separate Kotlin daemon     | **1460 s** (24.3 min) | npm ci 36 s, prebuild 3 s, Gradle 1400 s, which includes downloading Gradle 8.10.2 and every Maven dependency | about 9.1 GiB (`docker stats`) |
+| warm (caches filled)                    | 6g, Gradle 3g, Kotlin in-process, 8 workers | **81 s**              | npm ci 18 s, prebuild 2 s, Gradle 50 s (619 tasks from the build cache, ccache 204/204 hits)                  | 5218 MiB, 0 OOM kills          |
+
+Cold build at the 6g cap: not measured. The warm build at 6g peaked at 5218 MiB with no OOM;
+the cold build was measured at 10g (1460 s). Both APKs: 79,870,313 bytes, ABIs `arm64-v8a
+armeabi-v7a x86 x86_64`, signer SHA-256
+`fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c` (the template debug key).
+
+The redaction matches the exact secret strings. The in-loop review checked the real logs for
+URL-encoded, JSON-escaped, base64 and truncated forms of each value and found none.
 
 ## Could this container run `eas build --local`?
 
