@@ -159,8 +159,8 @@ main() {
   HOLDER="$lane-android-$$"
   local t_slot rc note f
   t_slot=$(date +%s)
-  # A waiting acquire has twice been killed by a SIGTERM from outside this script (2026-11-13,
-  # source unknown). If the acquire dies by a signal while this script is alive, requeue (at
+  # A waiting acquire has been ended from outside this script (2026-11-13: a coordinator
+  # SIGTERM; an MSYS fork failure, exit 254). If it exits above 128 while this script lives, requeue (at
   # the back of the line) up to 5 times and record it; a signal to THIS script still ends
   # the run through the trap.
   acq_requeues=0
@@ -172,7 +172,7 @@ main() {
     acq_pid=""
     [ "$rc" -gt 128 ] && [ "$acq_requeues" -lt 5 ] || break
     acq_requeues=$((acq_requeues + 1))
-    echo "slot acquire killed by signal $((rc - 128)); requeue $acq_requeues/5" >&2
+    echo "slot acquire ended with exit $rc (killed, or bash could not fork); requeue $acq_requeues/5" >&2
   done
   if [ "$rc" -ne 0 ]; then
     write_summary 4 "slot acquire failed (ff-slot.sh exit $rc$([ "$rc" -gt 128 ] && echo ": killed by signal $((rc - 128))"))"
