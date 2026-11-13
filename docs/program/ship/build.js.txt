@@ -157,6 +157,14 @@ const p0aHtml = secHead('you', 'What only you can do next',
 
 // ---------- section 5: decisions ----------
 function decCard(d, key, isNew) {
+  if (d.answered) {
+    return `<div class="dec decided" data-key="${key}">
+    <span class="tag ok">decided ${esc(d.answeredOn || '')}</span>
+    <h3>${esc(d.decision)}</h3>
+    <p><b>You decided:</b> ${esc(d.answered)}</p>
+    <p><b>What happens now:</b> ${esc(d.effect || '')}</p>
+  </div>`;
+  }
   const opts = isNew ? d.options : ['Accept the default', 'I decide otherwise (write it below)'];
   return `<div class="dec${isNew ? ' new' : ''}" data-key="${key}">
     ${isNew ? '<span class="tag new">new, decide now</span>' : ''}
@@ -170,7 +178,7 @@ function decCard(d, key, isNew) {
 }
 const decHtml = secHead('decide', 'Decisions waiting on you',
   'each card is one decision: what it is, what it blocks, and what happens if you never decide (the default is a valid answer). Mark your choice; it is kept in this browser and goes into "Export my answers".',
-  `4 new decisions wait now (top row), plus the plan's ${P.decisions.length} standing rows (section 4 of the plan). <span id="dec-progress">0 of ${P.decisions.length + 4} marked</span>.`) +
+  `${P.decisionsNew.filter((d) => !d.answered).length} new decisions wait now (top row; ${P.decisionsNew.filter((d) => d.answered).length} already decided), plus the plan's ${P.decisions.length} standing rows (section 4 of the plan). <span id="dec-progress">0 of ${P.decisions.length + P.decisionsNew.length} marked</span>.`) +
   `<h3 class="dh">New since the parallel plan (decide now)</h3><div class="decs">${P.decisionsNew.map((d) => decCard(d, d.id, true)).join('')}</div>
   <h3 class="dh">The plan's decisions table (section 4), in the plan's order</h3><div class="decs">${P.decisions.map((d, i) => decCard(d, 'T' + (i + 1), false)).join('')}</div>`;
 
@@ -297,7 +305,7 @@ p{margin:6px 0}.sub{color:var(--ink2);font-size:17px;max-width:1100px}
 .dh{margin-top:18px}
 .decs{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:12px}
 .dec{background:var(--panel);border:1px solid var(--line);border-top:6px solid var(--line);border-radius:8px;padding:12px 14px;font-size:15px;min-width:0}
-.dec.new{border-top-color:var(--you)}.dec.marked{border-top-color:var(--done)}
+.dec.new{border-top-color:var(--you)}.dec.marked,.dec.decided{border-top-color:var(--done)}.tag.ok{border-color:var(--done);color:var(--done);font-weight:600;margin:0 0 6px}
 .dec fieldset{border:1px solid var(--line);border-radius:6px;margin:8px 0 0;padding:6px 10px;display:flex;flex-direction:column;gap:5px}
 .dec legend{font-size:14px;color:var(--ink2)}.dec label{display:flex;gap:6px;align-items:center}
 .mach{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr));gap:12px;margin-top:10px}
@@ -404,7 +412,7 @@ function refresh(){
   var n=0; D.p0a.forEach(function(it){ var ok=!!store.ticks[it.n]; if(ok) n++; var s=el('#item-'+it.n); if(s) s.classList.toggle('ok',ok); var q=el('.sq[data-n="'+it.n+'"]'); if(q) q.classList.toggle('ok',ok); });
   var must=[1,2,3,4,6,10,12].filter(function(k){ return store.ticks[k]; }).length;
   el('#p0a-progress').textContent=n+' of 16 ticked; '+must+' of the 7 items needed for "done" ticked';
-  var m=0; all('.dec').forEach(function(c){ var k=c.getAttribute('data-key'); var on=!!store.dec[k]; if(on) m++; c.classList.toggle('marked',on); });
+  var m=0; all('.dec').forEach(function(c){ var k=c.getAttribute('data-key'); var on=!!store.dec[k]||c.classList.contains('decided'); if(on) m++; c.classList.toggle('marked',on); });
   el('#dec-progress').textContent=m+' of '+all('.dec').length+' marked';
 }
 refresh();
@@ -463,7 +471,7 @@ P.goals.forEach((g, i) => md.push(`${i + 1}. ${g.name} (reached at: ${g.reached}
 md.push('', '## P0a, in order (item 10 first)', '', P.p0aDone, '');
 P.p0a.forEach((it, i) => md.push(`${i + 1}. **Item ${it.n}: ${it.title}**${it.must === 'MUST' ? ' (MUST)' : it.must === 'done-when' ? ' (needed for done)' : ''}. ${it.do}${it.helper ? ' Uses: ' + it.helper + '.' : ''}`));
 md.push('', '## Decisions', '', '| Id | Decision | Blocks | Default |', '| --- | --- | --- | --- |');
-P.decisionsNew.forEach((d) => md.push(`| ${d.id} (new) | ${d.decision} | ${d.blocks} | ${d.default} |`));
+P.decisionsNew.forEach((d) => md.push(`| ${d.id} (new) | ${d.decision} | ${d.blocks} | ${d.answered ? 'DECIDED ' + (d.answeredOn || '') + ': ' + d.answered : d.default} |`));
 P.decisions.forEach((d, i) => md.push(`| T${i + 1} | ${d.decision} | ${d.blocks} | ${d.default} |`));
 md.push('', '## The rules that never bend', '');
 P.rules.forEach((r, i) => md.push(`${i + 1}. ${r}`));

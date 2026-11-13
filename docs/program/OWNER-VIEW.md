@@ -11,11 +11,11 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 ## Phases by state
 
 - **done** (10): P0a-prep, P1, P2a, P3a, P12a, P6a, P7a, P9-0a, L1, L2
-- **running now** (1): L3
-- **starting next** (1): P8a
+- **running now** (4): P2b-2, P8a, L3, L4
+- **starting next** (0): 
 - **waiting on you** (2): P0a, P2b-1
 - **held (may be built, may not merge yet)** (16): P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
-- **not started** (26): P0b, P2a-2, P2b-2, P2c, P3a-2, P3b, P3c, P12, P4a, P4b, P4c, P4r, P5-spike, P5c, P5d-1a, P5d-1b, P5d-2, P7b-2, P8b, P8b-2, P9-0b, P10b, P13e, P14-fleet, P14-log, L4
+- **not started** (24): P0b, P2a-2, P2c, P3a-2, P3b, P3c, P12, P4a, P4b, P4c, P4r, P5-spike, P5c, P5d-1a, P5d-1b, P5d-2, P7b-2, P8b, P8b-2, P9-0b, P10b, P13e, P14-fleet, P14-log
 
 ## Phases
 
@@ -28,7 +28,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P2a | Offline engine honesty (phone app) | M | A | done | - | - |
 | P2a-2 | Offline engine, second half (only if the size hatch is taken) | M | later | not started | P2a | - |
 | P2b-1 | Drain tooling and fleet profile (phone app) | M | B | waiting on you | P2a, P0b | - |
-| P2b-2 | Drain audit script (backend) | B-tools | B | not started | P2b-1 | - |
+| P2b-2 | Drain audit script (backend) | B-tools | B | running now | P2b-1 | - |
 | P2c | Fleet app v1: build, signature, install proof | M | later | not started | P2b-1, P0b, P2a-2 | - |
 | P3a | Self-host repository changes | O | B | done | P1 | - |
 | P3a-2 | Self-host stub and heartbeat (only if P3a takes its size hatch) | O | later | not started | P3a | - |
@@ -54,7 +54,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P7a | Who may do what, and money guards | B-jobs | A | done | P1 | - |
 | P7b-1 | Login, lock and session hardening | B-core | C | held (may be built, may not merge yet) | P7a, P3c, P4b, P5d-1a | every roster phone on app v2 or retired |
 | P7b-2 | Ops console, media, web deps, Cloudflare rules | O | B | not started | P7a, P3c | - |
-| P8a | Money integrity 1: void attribution, payloads | B-jobs | B | starting next | P7a | - |
+| P8a | Money integrity 1: void attribution, payloads | B-jobs | B | running now | P7a | - |
 | P8b | Money integrity 2: bill revisions, chain, daily check | B-jobs | C | not started | P8a | - |
 | P8b-2 | Money integrity 2, second half (only if the size hatch is taken) | B-jobs | later | not started | P8b | - |
 | P9-0a | Week-export script | B-tools | A | done | - | - |
@@ -76,7 +76,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | L1 | Parallel gate harness | L | A | done | - | - |
 | L2 | Local Android compile gate | L | A | done | L1 | - |
 | L3 | Device lab (emulator on this PC) | L | B | running now | L1 | - |
-| L4 | Deploy-train and restore rehearsal | L | C | not started | L1 | - |
+| L4 | Deploy-train and restore rehearsal | L | C | running now | L1 | - |
 
 ## Goals
 
@@ -114,7 +114,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 | --- | --- | --- | --- |
 | N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | they stay unmerged; lanes keep reading the plan branch |
 | N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | it stays open as a draft |
-| N5 (new) | May a manager record (or void) a payment on a job that is already closed? | the merge of P7a (who may do what, and money guards) | no: closed is final for everyone (plan v8 as written). Cash found on a phone after the drain for a closed job would then have no way in |
+| N5 (new) | May a manager record (or void) a payment on a job that is already closed? | the merge of P7a (who may do what, and money guards) | DECIDED 2026-11-13: Yes, managers only. |
 | T1 | Domain (Cloudflare DNS, multi-year, auto-renew) | P2b-1 (name), P2c, P3a | nothing can ship to phones |
 | T2 | Host for the drain window and after: VPS (default) or the home box | P0b, P3b, P13e | VPS from P3b until P13e (2 vCPU / 4 GB, Mumbai measured first). Box gate, the one condition for the home box in any role: 14 days at 99.5 % reachability from its site, or a second uplink. P13e not before the later of P5d-2 done and the last re-open; you may invert at P3b only if the box already passes the gate; 'no home box' keeps the VPS and skips P13e |
 | T3 | Recovery case a / b / c | P3b | none: P3b blocks until P0a item 4 is answered; (a) wins when restorable |
