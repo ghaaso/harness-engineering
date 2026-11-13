@@ -1,0 +1,21 @@
+VERDICT: PASS
+PR #205 at 263694e42d5702f1383059005cad4181acbdeb25
+Binding review by the reviewer of P3a (PR #195), resumed by the coordinator 2026-11-13 19:52; `main` was at f192fee. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Findings
+
+Nothing blocks the merge. Three notes:
+- The fix commit only lives on the plan branch. `3810e42` is contained only in `origin/docs/orchestration-design-2026-10` (`docs/RUNBOOK-SELFHOST.md:2086`). If that branch is rebased or deleted before the cut, a clean clone cannot fetch the commit. Smallest fix: push a lightweight tag on `3810e42` now.
+- 11.6 checks the commit titles but not their source shas. A wrong pick of `f192fee` would apply cleanly on P1. It changes the same four files, with the same patch content at different line offsets. It is caught today only because its subject differs ("[P7a] follow-up: ..."), which 11.6's subject line would show. Comparing the `-x` trailers would be firmer: `git log a31924a..release/drain --format=%B | grep 'cherry picked from'` should list exactly `87bbe88`, `3810e42`, `<p2b2>` and `90ea88d`.
+- A stale procedure outside this PR's scope. `.claude/skills/fixflow-repo-conventions/SKILL.md:224` still says to create `release/drain` "at P1's squash", which predates plan 7.7.
+
+Answers
+
+1. Every list is updated. All pick lists in the runbook are in section 11, and every one now reads P1 `87bbe88`, then the fix `3810e42`, then P2b-2 `<p2b2>`, then P3a `90ea88d`: the intro, 11.1, 11.3a, 11.5, 11.6, 11.7, the 11.9 tag message, 11.11 and 11.13. No place still says "three commits"; 11.1's "the three phase commits" correctly means P1, P2b-2 and P3a. `CLAUDE.md`, `ops/selfhost/`, the smoke and `runbook-commands.sh` contain none of these shas and no pick list.
+2. The commands pick the right commit in the right place. 11.3a picks `3810e42`, not `f192fee`, and comes between P1 and P2b-2. After the cut: 11.6 expects four lines with named subjects and a count of 4; 11.7 compares the branch's changed files against the union of the four commits; 11.8's CI trigger catches a missing P3a pick. The reviewer tried the cut in a throwaway worktree at `a31924a`: `87bbe88`, `3810e42` and `90ea88d` each picked without a conflict, and `90ea88d` still applied after `3810e42`; the log shows the expected order, with 3 trailers (P2b-2 is not merged, so it was absent); 11.7's diff printed nothing; `3810e42` has one parent and changes the four files 11.3a names.
+3. Nothing outside section 11 changed. All diff hunks fall within lines 2079-2246. No other command changed, and no secret or real hostname was added.
+4. Nothing else in section 11 is wrong. 11.8's claim that CI runs on push to `release/drain` matches P3a's `ci.yml`. The "last Scope item of P2b-2" wording is correct now that P1, P3a and the fix are merged.
+
+What the reviewer ran: `gh pr view` and `gh pr diff`; `git grep` at the head across the runbook, `CLAUDE.md`, `ops/` and `.claude/`; the trial cherry-pick sequence and 11.7's check; a trial pick of `f192fee` onto P1 (it applies cleanly) and a patch comparison against `3810e42`. The throwaway worktree was removed and pruned. No local `release/*` branch was created, and nothing was pushed.
+
+Coordinator (2026-11-13): PASS with notes, so it merges and the notes become an immediate follow-up. Note 1: the coordinator pushes a tag on `3810e42` so the commit stays fetchable whatever happens to the plan branch; the runbook names the tag in the follow-up. Notes 2 and 3 go to the same lane as `[P3a] follow-up`: 11.6 compares the `-x` trailers, and the skill's line 224 is corrected to the order of plan 7.7 and ruling C30.

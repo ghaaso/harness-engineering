@@ -1,0 +1,107 @@
+VERDICT: PASS-WITH-FIXES
+PR #194 at cece18f59285542b1e7758d892f1e85cf4af3147
+Binding review dispatched by the coordinator, 2026-11-13 19:46 (the fixflow-android-background-analyst definition from main, with the PR-review lens; the reviewer read the head files through `gh api`, no checkout). The head did not move; base f2b7a5e. This file is the coordinator's record of the reviewer's report, written from the notification text (the agent's transcript file was empty).
+
+The safety side holds: the reviewer found no path by which a phone on this PC could receive a state-changing command. Four findings misreport what the PR's own evidence shows, and they need fixing before the results guide P5a.
+
+MAJOR 1: the O01-F01 "not reproduced 3 of 3" contradicts its own logcat.
+- Where: the verdict comes from `protocol-tracker.sh:110` (`post="$(fgs_up)"`). `lib-app.sh:97-103` counts any `isForeground=true` record bound to a live process.
+- What the logcat shows: `tracker-20261113T170700/logcat.txt` lines 29949, 31522 and 33091 each log `LocationTaskConsumer: Foreground location task cannot be started while the app is in the background!` They come from pids 20778, 21755 and 22673, the restarted or reopened processes of a#1-a#3.
+- No code path restarts the service: in Expo, `LocationTaskConsumer.kt:168-171` is the only foreground-service start and `onHostResume` (`:301-304`) does not retry it; `LocationTaskService.kt:34-41` never calls `startForeground`; in the app, `pingTracker.ts:264` (`if (onDuty && !running)`) skips the restart once the task is running.
+- Inference: the "FGS back" reading is most likely the stale ServiceRecord flag carried across the restart, the same flaw the earlier self-review fixed for `app=null` (INFERRED).
+- Impact: a P1 finding the register rates C is reported as not reproduced, while the run shows the restore without the service 3 of 3. That could lead P5a to drop the `isRunning()` repair.
+- Fix: report a#1-3 as reproduced (restore without FGS) or inconclusive, citing those log lines; make `fgs_up` require notification id 481756 in `dumpsys notification` for the package; show the probe saying "no" on a restarted process.
+
+MAJOR 2: O-03 (4) "the lab sampler sent no batch" is false.
+- `stub-edge404.log` lines 32, 33 and 49 show three `POST /api/attendance/pings`, each answered 404. `state-edge-before.json` and `state-edge-after.json` both show `"attendance.pings.queue.v1": []`.
+- The check (`protocol-offline.sh:174-179`) looks only at a 150 s window. The batches went out at the next foreground.
+- Impact: the evidence supports "batches dropped on the 404" (reproduced 1 of 1). It also weakens README:100-102's claim that "Pings are not evidence here".
+- Fix: count ping POSTs over the whole phase and read the queue at the end of the phase.
+
+MAJOR 3: O01-F03 is overstated as "not reproduced 1 of 1".
+- Thin trigger: location was off for 16 s (`protocol-tracker.sh:544-548`; timeline 17:27:44 to 17:28:00).
+- Nothing happened: `fence-b-before.txt` and `fence-b-after.txt` are byte-identical, and no geofence job ran between 17:27:43 and 17:28:22.
+- Missing preconditions: Play services logged "(no Google accounts)", and the PR itself notes "the emulator has no network location". Rule G5 (`references/android-12-15-rules.md:26`) says `GEOFENCE_NOT_AVAILABLE` "typically happens after NLP ... is disabled", so this rig lacks the trigger.
+- Never shown failing: `fence_registered` has never returned "no" in any run, so the plan's "Every check must be shown failing once" (`SHIP-PLAN-2026-11.md:1830`) is unmet.
+- Fix: report it as inconclusive with that reason; add a precondition (a geofence error was delivered); add a negative control for `fence_registered`, for example after `app.sh clear`.
+
+MAJOR 4: the doze check cannot fail in this rig, and the README misdescribes it.
+- `protocol-tracker.sh:698` (`[ $((p1 - p0)) -lt $((DOZE_MIN / 2)) ] && echo reproduced`) gives "reproduced" whenever pings are near zero. README:100-102 reports 4 pings in about two hours, so it would say "reproduced" even without doze.
+- README:151-152 says doze, reboot and revoke "record `inconclusive` by design". That is false for doze (`:698`) and reboot (`:727`).
+- Fix: make doze inconclusive unless an equal pre-doze window shows at least DOZE_MIN/2 pings; correct the README.
+
+MINOR 5: wrong stub counts. `protocol-offline.sh:57` uses `grep -c " $1"`. The pattern `" /notes"` never matches `POST /api/jobs/<id>/notes` (`stub-edge404.log:50`), so the edge-note row says "stub saw 0 note POSTs". The punch pattern also counts GETs: "8 punch POSTs" was 1 POST and 7 GETs, and the 5xx row's "20" was 5 POSTs and 15 GETs. The verdicts do not depend on these counts. Fix: `grep -cE "POST [^ ]*$1"`.
+
+MINOR 6: the lab signs in as a roster technician. `lab-backend.sh:53` uses `LAB_TECH_ID="t2"`, the migration roster row `0004_create_technicians.py:33` (a named person). The plan (`:1805-1806`) says "lab accounts, never as a roster technician". There is no route to production because the host is pinned, but it deviates from the spec. Fix: seed a `lab1` technician through the API.
+
+MINOR 7: APK artefacts. `build-apk.sh:93-96` renames L2's `COMPILE-ONLY-debugkey-release.apk` to `lab-<sha>-p<port>.apk`, which drops the "never install" marker. The `cp` at `:96` has no error check. The APK built before the fix is still on disk: `l3a/android-20261113T135953/app-release.apk` (sha256 f9e6a88ddb51..., built with the old hook 23098275...). Fix: keep the marker in the name, add `|| die` to the copy, and delete the stale APK.
+
+MINOR 8: evidence is outside the repo. The plan (`:1796`) asks for evidence under `docs/program/evidence/lab/`. README:46 keeps it in the cache folder, so every evidence path in the findings exists only on this PC. Fix: commit each `result.json` and the cited excerpt files.
+
+MINOR 9: README and machine hygiene. "Running it" never calls `lab-backend.sh down`, so the two 512 MB containers stay up (offline restores `up` on exit, `protocol-offline.sh:161-162`). Nothing stops an idle emulator automatically; its slot is held for as long as the keeper lives. The README does not mention the one-instance-per-AVD limit, the antivirus/ANGLE reason for the GPU mode, or that the swiftshader fallback changes timing. `lib.sh:66` accepts `FF_EMU_SERIAL=emulator-5584`; `emu.sh:36` refuses that port only for itself, so `app.sh` and the protocols could drive the coordinator's emulator. README:133 says "0 of 7 edge pairs at 85-100 m", but one of the seven was the 70 m pair, which is inside the fence (`calib.txt` line 8).
+
+adb table. Every call goes through `adb_` (`lib.sh:59`, `-s "$EMU_SERIAL"`); only `adbx devices` is unpinned. `require_emulator` (`lib.sh:65-70`) runs first in `app.sh`, in `lib-proto.sh:104` (before the trap at `:110`) and in `calibrate-fence.sh:20`. `emu.sh:34` forces the serial to `emulator-$PORT`.
+
+| command | file:line | pinned | state-changing |
+|---|---|---|---|
+| `adbx devices` | emu.sh:104,160,184 | no (lists only) | no |
+| `wait-for-device` | emu.sh:126,150; tracker:706,710 | yes | no |
+| `root` | emu.sh:148 (serial forced at :34); tracker:708 | yes | yes |
+| `emu kill` | emu.sh:161 | yes | yes |
+| `install -r` | app.sh:155 (after :152) | yes | yes |
+| `pm grant/revoke/set-permission-flags` | app.sh:99-102; tracker:735,748; lib-proto:159 | yes | yes |
+| `pm clear` | app.sh:188 | yes | yes |
+| `settings put secure location_mode` | app.sh:104 | yes | yes |
+| `cmd location set-location-enabled` | app.sh:105; tracker:544,547; lib-proto:155 | yes | yes |
+| test-provider mock location; `appops mock_location` | lib-proto:50-80,160; calibrate:23-37 | yes | yes |
+| `logcat -c` | lib-proto:123; calibrate:55 | yes | yes |
+| logcat read | lib-proto:124; tracker:712; calibrate:46 | yes | no |
+| screenrecord / pkill / rm / pull; uiautomator dump | lib-app:115,258-276; lib-proto:116 | yes | yes (sdcard) |
+| input / monkey / kill -9 | lib-app:156-207; lib-proto:210,216; tracker:102,422,449,604; offline:77,90-91; app.sh:126-127 | yes | yes |
+| `svc power stayon` | tracker:421,506 | yes | yes |
+| deviceidle / battery | tracker:689-695; lib-proto:156-157 | yes | yes |
+| airplane-mode | offline:292,298; lib-proto:158 | yes | yes |
+| `reboot` | tracker:705 | yes | yes |
+| `log -t FFLAB` | lib-proto:99 | yes | yes |
+
+Lab findings, one by one
+- O01-F19: supported (blocked launch, rows 113-115 s late, headless control 3/3).
+- O01-F14: supported (paired controls 3/3).
+- O01-F20: supported (`services-c1-post.txt:19` shows `startRequested=false` and no `isForeground` line).
+- O01-F01: not supported (MAJOR 1).
+- O01-F03: overstated (MAJOR 3).
+- O01-F04/F05 inconclusive: supported.
+- O-03 (2) clock-in: supported.
+- O-03 (3): supported.
+- O3-F1: supported (the stub did receive the note POST; the observed text is wrong, MINOR 5).
+- O-03 (1): supported.
+- O10-F2: supported (`revival-2` keeps it parked after a landed punch).
+- O3-F6: supported (5 POSTs, `gave up after 5 attempts (server 503)`).
+- O-03 (2) clock-out / O3-F2 inconclusive: supported. The corrected gates are not yet run.
+- O-03 (4): not supported (MAJOR 2).
+
+Tried and could not break
+- Reaching a phone: not possible. `-s` overrides `ANDROID_SERIAL`, and a USB or TCP phone cannot hold an `emulator-*` serial. A phone plugged in later is never addressed. `env.sh` sets no default serial.
+- Baked API host: only the lab host. `config.ts:14` falls back to `http://10.0.2.2:8000`. L2 passes no environment into the build and mounts the source read-only (`android-compile.sh:274,286-291`). The hook text at head matches the hook that built the tested APK (sha 9d62b387). All four final runs installed c28e85de..., the dummy-Firebase build. The install check found 0 of 3 `eas.json` values and 0 of 3 production Firebase values; it fails closed.
+- Other off-PC traffic: the Sentry DSN is empty, and push uses `getDevicePushTokenAsync` (`push.ts:36`) against the dummy project.
+- Stand-ins: the stub answers 404 with `x-railway-fallback: true` and no `X-FixFlow-Api`. The backend publishes on `127.0.0.1` only (`lab-backend.sh:92`). No Docker network is created.
+- Queue reads: "parked" in `qsummary` uses the app's own definition (`queue.ts:103`).
+- Machine state at review time: the heavy slot pool has no holder and `adb devices` is empty.
+- Scope: all 13 files are added under `ops/lab/device/` only, and CI passes 3 of 3.
+
+What the reviewer ran: `gh pr view`, `gh pr checks` and `gh api` to fetch the head files, L2's script at base, and `config.ts` at a31924a; `bash -n` on all 11 scripts (rc=0 each); no Python (only the WindowsApps alias stub is on PATH), so `edge-stub.py` was read, not run; `adb devices -l` (empty) and `ff-slot.sh status`; grep, sed, sha256sum and `node -e` reads of the run folders and the Expo cache. Extra files read: `technician-app/src/features/attendance/pingTracker.ts` (the early return is now at :188, not :185 as SKILL.md says), `queue.ts`, `presenceQueue.ts`, `sync.ts`, `lib/push.ts`, `0004_create_technicians.py`, and the cached `LocationTaskConsumer.kt`, `LocationTaskService.kt` and `LocationModule.kt`.
+
+Unverified
+- `--add-host` pins only `<account>.r2...`; a virtual-hosted bucket hostname would resolve publicly (the credentials are dummies).
+- Whether `ps -ef` parent matching kills the native `adb.exe` logcat child.
+- Whether the lab containers are running now (the reviewer has no docker).
+- The stale 13:59 APK most likely holds the production Firebase values (by the PR's own account).
+- `control-pings` may have failed through the same window flaw as MAJOR 2.
+
+Coordinator's ruling (2026-11-13 20:10): sent back to the lane; ruling C33. All four MAJOR and all five MINOR findings are to be fixed, and the corrected checks re-run, before this merges. No L3a result reaches P5a's brief until the second pass. Decisions the lane asked nothing about but needs:
+- MAJOR 1: the probe is corrected first and shown to say "no" on a restarted process (measured, replacing the reviewer's inference); only then is O01-F01 re-run and reported.
+- MINOR 6: a lab-only technician with a lab-only name; no migration-seeded roster row is signed in to. Evidence that names a roster technician is not committed.
+- MINOR 7: the stale APK is the lane's own artefact; if the tool's removal guard refuses the removal, the lane stops and names the path, and it joins the owner's list.
+- MINOR 8: the lane's PR targets `main`, where `docs/program/` does not exist. The lane writes one small bundle per cited run (result.json and the cited excerpts only, from the re-runs that use the lab account; no full logcat, no recording) to `C:/Users/User/.fixflow-cache/handoff/evidence/l3a/<run>/`, and the coordinator commits it on the plan branch under `docs/program/evidence/lab/`; recordings stay in the cache with their sha256 in result.json.
+- Added by the coordinator: `lab-backend.sh:50` pins `postgres:16-alpine`; `main` and the gates are on Postgres 17 since P3a (`90ea88d`), so the lab database follows.
+Not mergeable at cece18f59285542b1e7758d892f1e85cf4af3147.
