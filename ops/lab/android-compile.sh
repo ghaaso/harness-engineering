@@ -16,7 +16,8 @@
 # whole run; a trap releases them and removes the container on exit, error, Ctrl-C, TERM or HUP.
 # SIGKILL (a task stop, taskkill /F) cannot be trapped: the lock then reaps the slots once the
 # PID is gone and the container (labelled fixflow.holder=<holder>) runs on, so the NEXT run, once
-# it holds every slot, removes any Android build container still running before starting its own.
+# it holds every slot, removes any Android build container still running before starting its own
+# (never one whose holder label ends in a PID that is still alive).
 #
 # Knobs (env): FF_ANDROID_MEM (6g), FF_ANDROID_CPUSET (0-7: the container sees 8 CPUs, which
 # also bounds ninja/clang), FF_ANDROID_WORKERS (8), FF_ANDROID_XMX (3g, at most 4g),
@@ -60,7 +61,7 @@ cleanup() {
   fi
   [ "$own_container" -eq 1 ] && docker rm -f "$NAME" > /dev/null 2>&1
   [ -n "$run_pid" ] && kill "$run_pid" 2> /dev/null
-  [ -n "${HOLDER:-}" ] && bash "$SLOT_SH" release "$HOLDER" > /dev/null 2>&1
+  [ -n "${HOLDER:-}" ] && FF_POOL=heavy bash "$SLOT_SH" release "$HOLDER" > /dev/null 2>&1
   [ -n "${LIST:-}" ] && rm -f "$LIST" "$LIST.all"
 }
 
@@ -89,6 +90,7 @@ write_summary() { # exit_code note  -> prints the summary; returns 1 if the work
     echo "slot_wait_seconds: ${slot_wait:-n/a}"
     echo "slot_acquire_requeues: ${acq_requeues:-0}"
     echo "orphans_removed:${stale_removed:- none}"
+    echo "live_holders_left_running:${live_spared:- none}"
     echo "files_copied: $nfiles"
     echo "caches: $GRADLE_VOL $NPM_VOL"
     echo "limits: memory=$MEM cpuset=$CPUSET gradle_workers=$WORKERS gradle_xmx=$XMX timeout_min=$TIMEOUT_MIN"
@@ -108,6 +110,25 @@ write_summary() { # exit_code note  -> prints the summary; returns 1 if the work
   rm -f "$OUT/facts.txt"
   cat "$SUMMARY"
   [ "$unchanged" = yes ]
+}
+
+# Copy list: tracked + untracked-but-not-ignored files under technician-app/ that exist.
+# Ignored files (.env, .eastoken, node_modules) never enter the container.
+build_copy_list() {
+  local f bad
+  git -C "$wt" ls-files -z --cached --others --exclude-standard -- technician-app > "$LIST.all" ||
+    die "git ls-files failed in $wt"
+  while IFS= read -r -d '' f; do [ -f "$wt/$f" ] && printf '%s\0' "$f"; done < "$LIST.all" > "$LIST"
+  nfiles=$(tr -cd '\0' < "$LIST" | wc -c)
+  [ "$nfiles" -gt 0 ] || die "empty copy list for $wt/technician-app"
+  tr '\0' '\n' < "$LIST" | grep -qx 'technician-app/package-lock.json' || die "package-lock.json not in the copy list"
+  # Secret-bearing files that are NOT gitignored would be copied in: an .env.production is
+  # loaded by Expo into the release bundle (a real API URL / DSN, never redacted), and a
+  # keystore or credentials.json has no business in a compile. Refuse, naming the files only.
+  # Case-insensitive: Windows filesystems are, so Credentials.json or b.JKS is the same risk.
+  bad=$(tr '\0' '\n' < "$LIST" | grep -iE '(^|/)(\.env[^/]*|credentials\.json|[^/]*\.keystore|[^/]*\.jks)$' |
+    grep -viE '(^|/)\.env\.example$' || true)
+  [ -z "$bad" ] || die "refusing to copy secret-bearing files into the build: $(echo $bad) (move them out or gitignore them)"
 }
 
 main() {
@@ -166,6 +187,11 @@ main() {
 
   [ -e "$wt/technician-app/android" ] &&
     die "technician-app/android/ exists in the worktree: a native project makes EAS treat the app as bare. Stop."
+  # The copy list and its refusals run before queueing too, so a refused run never waits for
+  # every slot first; it is built again once the slots are held.
+  LIST="$OUT/.copy-list"
+  build_copy_list
+
   # No "is our container already running?" refusal here: a live run of this lane holds the
   # slots, so the wait below serialises us behind it; anything still running once we hold
   # the slots is an orphan, removed below.
@@ -181,7 +207,9 @@ main() {
   # the run through the trap.
   acq_requeues=0
   while :; do
-    bash "$SLOT_SH" acquire "$HOLDER" 2 "$$" &
+    # The pool is named, never inherited: a caller's FF_POOL=light would otherwise put a 6 GB
+    # build in the light pool, beside every heavy holder.
+    FF_POOL=heavy bash "$SLOT_SH" acquire "$HOLDER" 2 "$$" &
     acq_pid=$!
     wait "$acq_pid"
     rc=$?
@@ -199,13 +227,22 @@ main() {
   # This run now holds every slot, so no other Android build can legitimately be running. One
   # that is was left by a hard-killed run (its slots were reaped, its container was not):
   # remove it before adding another 6 GB to the VM. Matched by name AND by our label or our
-  # image, so nothing outside this gate is touched.
-  local cid cname clabel cimage
+  # image, so nothing outside this gate is touched. A container whose holder label ends in a
+  # PID that is still alive is never removed, whatever the lock says: that run may simply not
+  # be visible to this lock (another pool or lock dir, a reaped slot) and is still building.
+  local cid cname clabel cimage hpid
   stale_removed=""
+  live_spared=""
   while read -r cid cname clabel cimage; do
     [ -n "$cid" ] || continue
     [[ "$cname" =~ ^fixflow-[a-z0-9-]+-android$ ]] || continue
     [ "$clabel" != "-" ] || [[ "$cimage" == fixflow-android-build:* ]] || continue
+    hpid="${clabel##*-}"
+    if [[ "$hpid" =~ ^[0-9]+$ ]] && kill -0 "$hpid" 2> /dev/null; then
+      live_spared="$live_spared $cname(holder=$clabel)"
+      echo "left running: $cname belongs to a live holder ($clabel)" >&2
+      continue
+    fi
     docker rm -f "$cid" > /dev/null 2>&1 && stale_removed="$stale_removed $cname(holder=$clabel)"
     echo "removed an orphaned Android build container: $cname (holder $clabel)" >&2
   done < <(docker ps --format '{{.ID}} {{.Names}} {{if .Labels}}{{.Label "fixflow.holder"}}{{end}} {{.Image}}' |
@@ -217,22 +254,8 @@ main() {
   status_before=$(git_status) || die "git status failed in $wt"
   head_sha=$(git -C "$wt" rev-parse HEAD) || die "git rev-parse failed in $wt"
   [ -e "$wt/technician-app/android" ] && die "technician-app/android/ appeared in the worktree. Stop."
-  # Copy list: tracked + untracked-but-not-ignored files under technician-app/ that exist.
-  # Ignored files (.env, .eastoken, node_modules) never enter the container.
-  LIST="$OUT/.copy-list"
-  git -C "$wt" ls-files -z --cached --others --exclude-standard -- technician-app > "$LIST.all" ||
-    die "git ls-files failed in $wt"
-  while IFS= read -r -d '' f; do [ -f "$wt/$f" ] && printf '%s\0' "$f"; done < "$LIST.all" > "$LIST"
-  nfiles=$(tr -cd '\0' < "$LIST" | wc -c)
-  [ "$nfiles" -gt 0 ] || die "empty copy list for $wt/technician-app"
-  tr '\0' '\n' < "$LIST" | grep -qx 'technician-app/package-lock.json' || die "package-lock.json not in the copy list"
-  # Secret-bearing files that are NOT gitignored would be copied in: an .env.production is
-  # loaded by Expo into the release bundle (a real API URL / DSN, never redacted), and a
-  # keystore or credentials.json has no business in a compile. Refuse, naming the files only.
-  local bad
-  bad=$(tr '\0' '\n' < "$LIST" | grep -E '(^|/)(\.env[^/]*|credentials\.json|[^/]*\.keystore|[^/]*\.jks)$' |
-    grep -vE '(^|/)\.env\.example$' || true)
-  [ -z "$bad" ] || die "refusing to copy secret-bearing files into the build: $(echo $bad) (move them out or gitignore them)"
+  # Rebuilt now: the worktree may have changed during the wait, and this is the list copied.
+  build_copy_list
 
   if ! docker image inspect "$TAG" > /dev/null 2>&1; then
     echo "building $TAG (no build context)"
@@ -242,6 +265,10 @@ main() {
     fi
   fi
 
+  # This lane's own name still running here can only be a live holder's (the loop above
+  # removed every dead one): refuse rather than force-remove it.
+  [ -z "$(docker ps -q --filter "name=^${NAME}\$")" ] ||
+    die "$NAME is running for a live holder:${live_spared:- (unlabelled)}; not removing it"
   docker rm -f "$NAME" > /dev/null 2>&1 # a stopped leftover of this lane's own container
   local mounts=(
     -v "$(winpath "$wt"):/src:ro"

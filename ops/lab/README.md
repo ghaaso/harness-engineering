@@ -20,7 +20,7 @@ that evidence (plan standing rule 1: only EAS builds reach phones).
   (`technician-app/src/lib/config.ts`), and no Sentry DSN is set. To keep it that way the
   script refuses (exit 3, naming the files, never their contents) a copy list that carries
   `technician-app/.env*` other than `.env.example`, a `credentials.json`, or a `*.keystore` /
-  `*.jks`: those are not gitignored, and Expo would load an `.env.production` into the release
+  `*.jks`, in any letter case, before it queues and again once it holds the slots: those are not gitignored, and Expo would load an `.env.production` into the release
   bundle without the redaction ever seeing it.
 - It does carry the Maps and Firebase keys from `app.json` / `google-services.json`, as any
   build of this app does, so the output directory must stay outside every git checkout; the
@@ -42,15 +42,19 @@ bash ops/lab/android-compile.sh <lane> <worktree> [release|debug]
 ```
 
 For example, from a lane worktree: `bash ops/lab/android-compile.sh p5a . release`. Run it in
-the background. It queues for **2 slots** of the shared lock (`ff-slot.sh` in
-`docs/program/lab/` on the program branch), which is the whole machine, with its own PID on
+the background. It queues for **2 slots** of the shared lock's heavy pool (`ff-slot.sh` in
+`docs/program/lab/` on the program branch; the pool is set by the script, never inherited
+from `FF_POOL`), which is the whole machine, with its own PID on
 the slots. It checks `docker info` first, so a stopped Docker fails at once instead of after the
 queue. A trap releases the slots and removes the container on exit, error, Ctrl-C, TERM or
 HUP. A hard kill (SIGKILL, a task stop, `taskkill /F`) cannot be trapped: the lock reaps the
 slots once the PID is gone, but the container (labelled `fixflow.holder=<holder>`) runs on.
 The next run therefore removes, as soon as it holds every slot and before starting its own,
 any running container named `fixflow-*-android` that carries that label or this image
-(`orphans_removed` in its summary). Every run that gets as far as creating its output folder
+(`orphans_removed` in its summary). It never removes one whose holder label ends in a PID that
+is still alive (`kill -0`): that run is still building, so it is left running
+(`live_holders_left_running`), and if it carries this lane's own container name the run
+refuses (exit 3) rather than force-remove it. Every run that gets as far as creating its output folder
 leaves a `summary.txt`, including refusals and interrupts.
 
 Output goes to `C:/Users/User/.fixflow-cache/lab/<lane>/android-<stamp>/`:
@@ -66,7 +70,7 @@ Output goes to `C:/Users/User/.fixflow-cache/lab/<lane>/android-<stamp>/`:
   bytes copied), `apk_bytes`, `abis`, `signer_sha256` (`apksigner verify --print-certs`), the
   `aapt2 dump badging` package line (package, versionCode, versionName), min/target SDK,
   `container_memory_peak_mib`, `container_oom_kills`, `ccache` hits, `sdk_autoinstalls`
-  (should be 0), `slot_acquire_requeues`, `orphans_removed`, and `git_status_unchanged`.
+  (should be 0), `slot_acquire_requeues`, `orphans_removed`, `live_holders_left_running`, and `git_status_unchanged`.
 
 Exit codes:
 
