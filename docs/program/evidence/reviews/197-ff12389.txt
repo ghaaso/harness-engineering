@@ -1,0 +1,68 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at ff12389d757048474a29da709b11492410cead4a
+
+The head is unchanged since you named it. The branch was rebased onto `main` 53db3b8 with its six earlier commits unchanged (checked with `git range-diff`), plus three new commits. All three CI jobs on this head are SUCCESS; the backend job finished while I worked. One minor defect remains in the new code, with a one-line fix. Everything else you sent back is fixed or answered.
+
+**Findings**
+
+1. **MINOR. A corrupt manifest head after the receipt adds one storage copy per relaunch and per retry, up to 50.**
+   - Where: `preserveCorrupt` in `src/features/drain/drainGate.ts` (around line 238) writes the head's bytes under the first free `.corrupt[.N]` name. It never checks whether an earlier copy already holds the same bytes.
+   - After a receipt, `takeOrLoad` calls it (around line 347) and then throws, so the snapshot fails. Every retry repeats this: each relaunch, every queue write, and the Drain Report poll every 30 s.
+   - I showed it with a probe test in my checkout: six relaunches with a broken head left six `.corrupt*` keys.
+   - Failure: on a phone that is already in a bad state, up to 50 copies of the head pile up in AsyncStorage's 6 MB. That can push a nearly full phone into failing the technician's taps. Drained records are not touched.
+   - Smallest fix: return early when any existing copy equals the bytes, as `lib/queueStore.ts` `preserveCorrupt` already does.
+
+**Notes (no action needed for this PR)**
+- When storage is truly full, a Discard is refused for good and the row stays. The technician sees "Not discarded … Free some space", but freeing phone space does not lift AsyncStorage's own 6 MB limit. Draining the queues does free room. Nothing is lost.
+- A media item uploaded again still creates a second pending `job_media` row on the server. The PR records this as a backend follow-up.
+
+**Items 1–11**
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 1 | Discard aborts when its trace cannot be written | FIXED | `src/lib/telemetry.ts:120` `recordDiscard` now uses `appendEvent`, which throws. All four discard callers catch it and show `DISCARD_NOT_RECORDED`. `removePendingMedia` (a clip the technician deleted) stays best effort, deliberately. Break N1 is caught by 5 tests. |
+| 2 | No retake after a receipt; `.corrupt` never overwritten | FIXED, see finding 1 | `drainGate.ts:347-351`. Breaks N2 and N3 are caught. |
+| 3 | Tests for presence, travel, B10, B11 | FIXED | All four breaks are now caught in `drainGate.test`. |
+| 4 | Receipt tied to its manifest id; un-park always awaited | FIXED | `drainGate.ts:490` and `:503`. |
+| 5 | `--fleet-max` mandatory | FIXED | `scripts/check-fleet-values.js:63`; the `docs/HANDOFF.md` build line passes it. Break N5 is caught. |
+| 6 | Late prompt only on punches and crossings | FIXED | `retryAdvice.ts:57` (`LATE_RETRY_QUEUES`). Break N4 is caught. |
+| 7 | Drafts and the corrupt outbox copy counted | FIXED | `manifest.ts` `draftFacts` and `corruptRows` upload counts and job ids only. Break N6 (adding the materials to the upload) is caught by 2 tests. |
+| 8 | Largest manifest vs the 15 s timeout | ANSWERED | The author measured 432 KB with the three capped queues full and 652 KB on a heavy phone. The manifest upload now gets 15 s plus 1 s per 2 KB, capped at 5 min (`receipt.ts`). A test pins the formula. The pinned image has no body cap on `/api/events`. |
+| 9 | Where `EAS_BUILD_PROFILE` is set; does the refusal fire? | ANSWERED | On the EAS worker the built-in variable is used. On the laptop the `--profile`/`-e` argument is read, which is best effort. The host is read from `eas.json` itself. `appConfig.test.ts` covers both places. The hand-run check stays the documented guard. |
+| 10 | Duplicate pending media after un-park | ANSWERED | The phone keeps one row (a test pins it). The server can keep a second pending `job_media` row (see notes). |
+| 11 | Fleet export with `--clear`, then grep | FIXED | Exit 0, Hermes bundle 4,503,742 bytes. Hits: `api.fleet-domain-not-set.invalid` 1, `jobs.outbox.v2` 1, `drain_manifest` 1, `10.0.2.2:8000` 0, `railway.app` 0. |
+
+**Break results** (11 suites, 435 tests on the clean tree; restored after each break, `git status` clean at the end)
+
+| Break | Caught by |
+|---|---|
+| B4b: presence sync without the gate | `drainGate.test`, 1 test |
+| B4g: travel sync without the gate | `drainGate.test`, 1 test |
+| B10: gate opens without the un-park | `drainGate.test` "a cached receipt never opens the gate before the un-park has run (B10)" |
+| B11: receipt under another manifest id opens the gate | `drainGate.test` "…another manifest id… (B11)" |
+| N1: a failed local trace write still deletes the row | `telemetry.test` and `discardEvents.test`, 5 tests |
+| N2: snapshot retaken after a receipt | `drainGate.test`, 1 test |
+| N3: earlier `.corrupt` copy overwritten | `drainGate.test`, 1 test |
+| N4: late prompt on every queue | `retryAdvice.test`, 1 test |
+| N5: `--fleet-max` optional again | `checkFleetValues.test`, 1 test |
+| N6: bill materials uploaded | `manifest.test`, 2 tests |
+| Probe: repeated relaunches with a broken head | not caught: 6 copies (finding 1) |
+
+**Tried and could not break**
+- **Stranded receipt.** A receipt written earlier for this same versionCode carries the id of the head stored under it, because the head is written once. A mismatch only re-uploads the manifest held now, and a duplicate then counts as the receipt.
+- **Unreadable head after the receipt.** The gate still opens: the receipt stands on its own, and the un-park mark always exists before any upload.
+- **Draft counting.** It reads every draft but uploads only job ids and counts; no bill figures or paths.
+- **Order of events.** Snapshot, un-park, receipt, drain is unchanged. The upload still requires the snapshot and the un-park, and the gate still requires the receipt and the un-park.
+- **Native compile.** The coordinator's summary shows `d2938f7` compiled with exit 0. This head changes `app.config.js` again, so a compile of `ff12389` is still owed; the coordinator is running it.
+
+**Gate** (lane p2b1-rev, head ff12389, clean tree)
+```
+GATE[1 npm run typecheck] EXIT=0
+GATE[2 npx jest --ci --maxWorkers=4] EXIT=0   Test Suites: 62 passed / Tests: 711 passed, 711 total
+GATE[3 npx expo export --platform android --max-workers 4] EXIT=0
+SUMMARY FAIL=0
+```
+
+I made a fresh detached worktree and removed it afterwards (folder deleted, `git worktree prune`). The breaks ran under my own Jest slot, which I released. I did not touch the author's worktree, the PR, or the values in `eas.json`/`app.json`. The PR stays open until the owner supplies the domain and the fleet's highest versionCode.
+
+Coordinator's ruling (2026-11-13): second pass of the binding review (same reviewer; first pass PASS-WITH-FIXES at d2938f7, file 197-d2938f7.txt). Sent back for finding 1 only (the corrupt-head copy is written once: return early when an existing copy holds the same bytes; one test with repeated relaunches). The server-side second pending media row goes to P7b-2's backlog. The native compile of ff12389 is queued by the coordinator; a later commit that changes no native build input (app.config.js, eas.json, app.json, package.json, the lockfile, fleet-version.js) does not need another. Merge condition unchanged: both owner values. Not mergeable at ff12389d757048474a29da709b11492410cead4a.
