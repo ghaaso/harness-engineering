@@ -1738,9 +1738,11 @@ and rebases after P1).
   pool** has 3 slots and holds only backend gate stacks, measured at about 0.5 GB each (403 MiB
   for the gates container, 102 MiB for its database); `ff-gates.sh` picks the pool from the kind.
   Before the split six jobs queued behind three slots, most of them backend runs waiting behind
-  an emulator and each other. Worst case with both pools full: emulator 4.7 GB + one phone test
-  run about 2.5 GB (an estimate, not yet measured) + three backend stacks 1.5 GB = 8.7 GB, below
-  the 9.7 GB that three single-pool slots could reach. Each pool is first come first served. A
+  an emulator and each other. Measured worst case so far (16:15 the same day): emulator 4.9 GB + a
+  phone gate run 3.7 GB (its export step, 18 bundler processes; the gate script now caps them
+  at 4) + two backend stacks left 2.3 GB of RAM free. So the heavy pool stays at 2, every held
+  slot counts toward it (also an emulator that took slot 3 while the pool was larger), and a
+  web test run measured under 1 GB. Each pool is first come first served. A
   slot is reaped when its owner's process is gone, or after two minutes when its holder file was
   never written. A lane never starts a heavy job outside the lock.
 - **Docker networks.** The predefined address pools are exhausted on this machine by another

@@ -228,7 +228,9 @@ PY
     npm_ready || finish 2
     g npm run typecheck
     g npx jest --ci --maxWorkers="${FF_JEST_WORKERS:-4}"      # no --passWithNoTests (plan P1)
-    g npx expo export --platform android                      # JS bundle only; the native compile gate is the lab's android script
+    # 18 bundler processes and 3.7 GB were measured without a worker limit (2026-11-13 16:15);
+    # the limit changes memory and time, not the bundle.
+    g npx expo export --platform android --max-workers "${FF_EXPORT_WORKERS:-4}"   # JS bundle only; the native compile gate is the lab's android script
     echo "SUMMARY FAIL=$FAIL" >> "$L/gates.log"
     finish "$FAIL"
     ;;

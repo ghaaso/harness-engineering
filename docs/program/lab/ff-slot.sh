@@ -36,8 +36,9 @@ BASE_D="${FF_LOCK_DIR:-/c/Users/User/.fixflow-cache/locks}"
 # mostly backend runs waiting behind an emulator and each other. So backend stacks get their own
 # LIGHT pool (FF_POOL=light, set by ff-gates.sh for kind=backend) and no longer compete with the
 # HEAVY pool (Jest, Vitest, an emulator, a Gradle build). Worst case with both pools full:
-# emulator 4.7 + one phone test run 2.5 + three backend stacks 1.5 = 8.7 GB, under what three
-# single-pool slots could reach (emulator + two phone test runs = 9.7 GB).
+# emulator 4.9 + one phone gate run 3.7 (its export step, measured 16:15 with 18 bundler
+# processes; the gate script now caps them at 4) + three backend stacks 1.5 = 10.1 GB. Free RAM
+# at that measured moment, with two backend stacks: 2.3 GB of 31. So the heavy pool stays at 2.
 POOL="${FF_POOL:-heavy}"
 if [ "$POOL" = light ]; then D="$BASE_D/light"; else POOL=heavy; D="$BASE_D"; fi
 # 3 slots. Measured with two backend gate stacks running (2026-11-13 14:26): each stack used
@@ -150,6 +151,9 @@ case "$cmd" in
       if [ "$my_turn" = 1 ]; then
         got=()
         for i in $(seq 1 "$N"); do
+          # Every held slot counts toward N, also one numbered above N that was taken when the pool
+          # was larger (an emulator on slot 3): the memory it stands for is still in use.
+          [ "$(ls -d "$D"/slot-* 2>/dev/null | wc -l)" -ge "$N" ] && break
           if mkdir "$D/slot-$i" 2>/dev/null; then
             echo "$holder $(date -Is) $pid" > "$D/slot-$i/holder"
             got+=("$i")
