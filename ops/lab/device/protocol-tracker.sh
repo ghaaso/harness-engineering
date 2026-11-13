@@ -258,14 +258,22 @@ stop_app() { # variant mark
   mark "$2"
   if [ "$1" = fstop ]; then ash am force-stop "$APP_PKG"; else ash kill -9 "$(app_pid)"; fi
 }
-on_duty_in_background() { # run variant -> 0 when on duty with the Activity in the background
+# Measured (run 02:25): after a force-stop and a reopen the app still shows On duty with no FGS,
+# and nothing re-arms it until a clock-out and clock-in. So when the screen says on duty but
+# there is no FGS, re-arm that way, and say so in the timeline.
+on_duty_in_background() { # -> 0 when on duty, FGS up, with the Activity in the background
   clock in > /dev/null 2>&1 || true
-  [ "$(wait_fgs yes 30)" = yes ] || return 1
+  if [ "$(wait_fgs yes 30)" != yes ]; then
+    mark "on duty with no FGS ($(chain_state)): re-arming by clock out and clock in"
+    clock out > /dev/null 2>&1 || true
+    clock in > /dev/null 2>&1 || true
+    [ "$(wait_fgs yes 30)" = yes ] || return 1
+  fi
   go_home
   sleep 5
 }
 check_a_once() { # run-no
-  local n="$1" pre M a_v obs pid fence
+  local n="$1" pre M a_v obs pid fence later
   mark "CHECK a#$n O01-F01: kill -9 warm, kill -9 cold, force-stop; each closed, then reopened"
   # warm
   if ! on_duty_in_background; then
@@ -320,8 +328,10 @@ check_a_once() { # run-no
     reopen_and_read "$n" fstop
     fence_dump "$EV/fence-a$n-fstop.txt"
     fence="$(fence_registered "$EV/fence-a$n-fstop.txt")"
+    sleep 90 # still unrepaired two minutes after the reopen, with the app at home?
+    later="$(chain_state)"
     record "a#$n-fstop" O01-F01 "$P01B (stopped by am force-stop)" \
-      "before: $pre; closed ${FSTOP_S} s: restored ${K_PID:-none} by $K_PATH, $K_CHAIN; reopen $R_HOW; 15 s later (on screen): $R_CHAIN; 30 s after going home: $R_BG_CHAIN; workshop fence registered: $fence" \
+      "before: $pre; closed ${FSTOP_S} s: restored ${K_PID:-none} by $K_PATH, $K_CHAIN; reopen $R_HOW; 15 s later (on screen): $R_CHAIN; 30 s after going home: $R_BG_CHAIN; 2 min after going home: $later; workshop fence registered: $fence" \
       "$(samp_verdict "$R_BG_SAMP")" "a$n-fstop-closed.txt a$n-fstop-reopened.txt fence-a$n-fstop.txt"
   else
     record "a#$n-fstop" O01-F01 "$P01B (stopped by am force-stop)" "precondition failed: no FGS on duty before the stop" inconclusive timeline.txt
