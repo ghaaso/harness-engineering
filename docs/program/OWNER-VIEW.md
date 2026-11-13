@@ -1,21 +1,18 @@
-# FixFlow ship program — the owner view
-
-_The owner view is a page: open `docs/program/ship/index.html` in a browser (lanes, what waits on what, your pre-flight as a checklist, the decisions board). This file is the record generated from the same data (`docs/program/ship/program.json`) at each rebuild; the plan decides, the page and this record explain. Last rebuild: 2026-11-13, after the P1 and P2a merges._
-
+# FixFlow ship program: owner view (generated)
 
 _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not edit by hand; edit program.json and rebuild. The page is `index.html` in this folder._
 
 ## Right now
 
-- Production is still dead: both old Railway addresses answer Railway's own 404. This PC lost power for 28 minutes at about 13:25 on 2026-11-13; every lane resumed from its own copy. (measured 2026-11-13)
+- Production is still dead: both old Railway addresses answer Railway's own 404. Three phases are merged on GitHub (P1, P2a, P6a); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-13)
 - Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. 37 of 56 phases wait behind it.
 - Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-13)
 
 ## Phases by state
 
-- **done** (4): P0a-prep, P1, P2a, L1
-- **running now** (6): P12a, P6a, P7a, P9-0a, L2, L3
-- **starting next** (2): P2b-1, P3a
+- **done** (5): P0a-prep, P1, P2a, P6a, L1
+- **running now** (7): P2b-1, P3a, P12a, P7a, P9-0a, L2, L3
+- **starting next** (0): 
 - **waiting on you** (1): P0a
 - **held (may be built, may not merge yet)** (16): P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
 - **not started** (27): P0b, P2a-2, P2b-2, P2c, P3a-2, P3b, P3c, P12, P4a, P4b, P4c, P4r, P5-spike, P5c, P5d-1a, P5d-1b, P5d-2, P7b-2, P8a, P8b, P8b-2, P9-0b, P10b, P13e, P14-fleet, P14-log, L4
@@ -30,10 +27,10 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P1 | Backend first-boot gate | B-core | A | done | - | - |
 | P2a | Offline engine honesty (phone app) | M | A | done | - | - |
 | P2a-2 | Offline engine, second half (only if the size hatch is taken) | M | later | not started | P2a | - |
-| P2b-1 | Drain tooling and fleet profile (phone app) | M | B | starting next | P2a, P0b | - |
+| P2b-1 | Drain tooling and fleet profile (phone app) | M | B | running now | P2a, P0b | - |
 | P2b-2 | Drain audit script (backend) | B-tools | B | not started | P2b-1 | - |
 | P2c | Fleet app v1: build, signature, install proof | M | later | not started | P2b-1, P0b, P2a-2 | - |
-| P3a | Self-host repository changes | O | B | starting next | P1 | - |
+| P3a | Self-host repository changes | O | B | running now | P1 | - |
 | P3a-2 | Self-host stub and heartbeat (only if P3a takes its size hatch) | O | later | not started | P3a | - |
 | P3b | Host ready, restore, PIN rotation (your session) | OWN | later | not started | P3a, P0b, P0a, P2b-2 | - |
 | P3c | Pre-cutover checks (route stays closed) | OWN | later | not started | P3b, P3a-2 | - |
@@ -51,7 +48,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P5d-1a | Install app v2 on the fleet, per visit | OWN | later | not started | P5c, P6b-2 | - |
 | P5d-1b | Per-phone-maker test runs | OWN | later | not started | P5d-1a | - |
 | P5d-2 | 48-hour review and field validation | OWN | later | not started | P5d-1b | - |
-| P6a | Attendance truth (no migration) | B-att | A | running now | P1 | - |
+| P6a | Attendance truth (no migration) | B-att | A | done | P1 | - |
 | P6b-1 | Attendance migration: late flags, payroll version | B-att | C | held (may be built, may not merge yet) | P6a, P4c | P4c done |
 | P6b-2 | Heartbeat, sampler health, dispatcher guard, audit | B-att | D | held (may be built, may not merge yet) | P6b-1, P5a | P4c done |
 | P7a | Who may do what, and money guards | B-jobs | A | running now | P1 | - |

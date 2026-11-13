@@ -1,0 +1,62 @@
+VERDICT: PASS
+PR #192 at e1dfaca39fb19759fac80f776a1c5fd92b46fb58 (head confirmed with `gh pr view`, unchanged; merge-base = origin/main = 87bbe88)
+
+**Findings** (none blocking; all MINOR)
+
+1. MINOR. A shift open across midnight shows as "not clocked in". `backend/app/features/attendance/service.py:726` reads only the board day's events (`events = bucket.get(tech_id, {}).get(day, [])`), and `:739` derives `clocked_in_at` from them. A tech who clocked in at 22:00 yesterday and is still on duty shows `not_expected` on today's board. That is not "healthy", so the rule "a dead tracker never shows as healthy" still holds, but the tracker's state is hidden. Smallest fix: look back up to 14 h before the day start for an open clock-in.
+2. MINOR. The "silent" label can count from the wrong ping. `src/features/attendance/lib/sampler.js:51` reads ``const when = mins == null ? "since clock-in" : `for ${mins} min`;``. When the only ping came from an earlier session that day (in, out, in again), the server correctly says `silent`, but the label counts minutes from that old ping. The manager sees "No pings for 300 min" instead of "since clock-in". The tone is still danger. Fix: for `silent`, always say "since clock-in".
+3. MINOR. Two inert settings remain. `backend/app/core/config.py:64` `attendance_location_accuracy_ceiling_m: float = 200.0` and `:139` `jobs_punch_accuracy_ceiling_m` are no longer read anywhere. An env override in Railway would silently do nothing. The author flagged this for B-core (journal 2 and 17). Fix: delete both.
+4. MINOR. The single-timezone claim (O04-F8) covers the attendance slice only. Two other paths still use their own source:
+   - `backend/app/features/jobs/service.py:1796-1797` still calls `ZoneInfo(shop.timezone)` without the validator, so a bad stored zone would 500 the jobs report.
+   - `backend/app/main.py:90` takes the payroll cron's "today" from `settings.scheduler_timezone`.
+   Both default to Asia/Karachi, so today this is a latent problem, not a live divergence. The author disclosed both (journal 8 and 17).
+5. MINOR. `backend/app/shared/verdict.py:157` normalises only by trim and lower-case. A dash-separated BSSID (`AA-BB-…`, or `02-00-00-00-00-00`) counts as a Wi-Fi miss, not as a match or as redacted. A miss never demotes a verdict, so no outcome changes. The only effect is a false "Wi-Fi miss" in `_aggregate_wifi`. Fix: map `-` to `:` in `normalize_bssid` and add one fixture vector.
+
+**Register table**
+
+| id | claimed fixed | test that proves it | verified by |
+|---|---|---|---|
+| O04-F9 / O01-F04 | yes | `test_verdict_contract.py::test_verdict_vector[*]`, `::test_job_punch_straddling_is_unknown_not_verified`; `test_service.py::test_record_punch_straddling_fix_is_unknown_under_r1` | run on head (pass); on base the module fails to collect (ImportError). Reading the base: `jobs/service.py:419` `distance <= radius_m` and the overlap rule return True for these cases |
+| O04-F3 | yes | `test_derive.py::test_duty_intervals_all_unjudged_samples_are_one_unknown_run`, `::test_duty_intervals_leading_unknown_is_not_backfilled…` | run on head; base fails to collect; base `derive.py:244` backfills `INSIDE` |
+| O04-F4 | yes | `test_service.py::test_board_reports_a_stopped_sampler_as_stale`, `::…silent…`, `::test_tech_days_open_shift_with_no_pings`; integration `test_ping_liveness_newest_per_tech…` | run on head; base fails to collect; base `service.py:1101` returns nulls (`or not day_pings`) |
+| O04-F8 | partly (attendance only, see finding 4) | `test_tenancy_integration.py::test_shop_timezone_falls_back…`; `test_attendance_integration.py::test_an_unloadable_shop_timezone_does_not_500_reads`; `test_service.py::test_shift_update_rejects_an_unloadable_timezone` | run on head; base fails to collect; base `service.py:1866` `return ZoneInfo(name)` raises |
+| O04-F10 | yes | `AttendanceTechDetail.test.jsx` (new effective-time cases) | web gate run on head; read: base rendered `fmtClock(p.server_time)` |
+| O04-F18 | yes | `test_service.py::test_punch_wifi_match_*`, `::test_presence_wifi_match_*`, `::test_ping_wifi_match_never_promotes…`; `bssid_vectors` | run on head; base fails to collect |
+| discard count (O-06 item 6, O6-F14) | yes | `test_discard_integration.py::test_board_counts_discards_by_discarded_by_not_by_uploader` | run on head; base fails to collect (`DiscardTally` missing) |
+
+Every new test module failed to collect on base with an ImportError. That proves "fails on base" only at module level, not test by test. The per-test reasons above come from reading the base code at 87bbe88.
+
+**Item 12: changed expectations** (all match the PR body's journal 11)
+- `test_derive.py`: `test_geofence_accuracy_buffer_rescues_a_fuzzy_inside_fix` renamed; expected True became "unknown". Reason given: R1.
+- `test_service.py`: `test_record_punch_accuracy_buffer_keeps_fuzzy_inside_fix` renamed; `inside_geofence` True became None. Reason given: R1.
+- `test_service.py::test_variance_computes_arrival_and_departure_deltas`: `inside_minutes is None` / `away_intervals == []` became 0 / one `no_data` run / `no_pings`. Reason given: O04-F4.
+- `test_router.py::test_get_board_returns_200`: the exact body gains `ping_interval_minutes: None` (additive field).
+- Three `geofence_flags` tests removed with the function; rewritten onto `fence_verdict`.
+- Three web `getByText` became `getAllByText`. Reason given (journal 16): the text now repeats on the page.
+- No new skip, xfail or `.only`.
+
+**Tried and could not break**
+- **Boundaries:** d+a == r is inside; d−a == r is unknown. Accuracy null, 0, negative, NaN or ±inf gives unknown. Accuracy exactly 100 is judged; 100.5 is unknown. The ceiling never caps a value.
+- **The two float vectors:** they come out the same under IEEE ties-to-even in JS and in Python. 2^-53 is written in a form that round-trips exactly.
+- **Fixture shape:** vectors are given as distances. The coordinate vectors sit far from any boundary, and the 1112 m north vector's 0.5 m tolerance would catch an ellipsoid port. The fixture is versioned, and its header (version and constants) is pinned to the module by `test_contract_header_matches_the_module`.
+- **Job punches** use the same module (`jobs/service.py` imports `fence_verdict`), not a copy.
+- **Wi-Fi promotion:** it cannot turn an outside into an inside, cannot promote a mock fix, a ping or a job punch, and does nothing while the fence has no BSSIDs. The redacted BSSID with surrounding spaces or upper-case is stored as null.
+- **Ping query:** the window function is evaluated before DISTINCT ON, so counts are per tech. One range query uses `ix_attendance_ping_shop_time (shop_id, captured_at)`.
+- **Sampler states:** a late batch for an old gap leaves `last_captured_at` old. Past days get a null state. "ok" requires a ping since the clock-in within 3× the cadence, and the web demotes an aged "ok".
+- **Discard props:** missing or malformed props are never counted and never attributed to the uploader.
+- **Installed app compatibility:** punch, presence and ping request schemas are unchanged, so nothing the installed app sends is newly refused.
+- **Rebase onto P1:** 240 h is intact in both places (`config.py:98`, `service.py:136`). No `models.py` change; `alembic check` passed.
+- **Web confinement:** web changes stay inside `src/features/attendance/`, with no `dangerouslySetInnerHTML`.
+
+**Unverified**
+- On the phone side, JS `Math.sin`/`atan2` versus C libm can differ by one ULP exactly at d±a == r computed from coordinates. The impact is nil because the server recomputes every row.
+- A manager PC whose clock runs more than 15 min fast would show every "Tracking" badge as stale.
+
+**Gate summary lines** (my runs)
+- backend, head e1dfaca, tree clean: ruff format 0, ruff check 0, mypy 0, lint-imports 0, alembic upgrade 0, alembic check 0, pytest 0 (1070 total, 0 skipped, 0 integration skipped). SUMMARY FAIL=0
+- web, head e1dfaca, tree clean: lint 0, format:check 0, test 0, build 0. SUMMARY FAIL=0
+- fail-on-base (9 source files at 87bbe88, RUN partial, 6 PR test modules): pytest EXIT=2, 5 collection ImportErrors. mypy EXIT=1 is expected, because the new kernel files were kept beside the base sources. SUMMARY FAIL=1. Afterwards I restored the worktree to head and `git status` was clean.
+
+**Cleanup:** I removed `.claude/worktrees/review-p6a` with `git worktree remove --force`; it succeeded, so no prune was needed. No `fixflow-p6a-rev-*` containers remain. I did not push, comment or edit anything on GitHub.
+
+Coordinator's ruling on the minors (2026-11-13): none blocks the merge. 1, 2, 3 and 5 are fixed by the P6a lane in a follow-up PR opened straight after this merge (same lane, same reviewer re-reads it), so the verdict fixture is right before P5a consumes it; the follow-up also moves the payroll job's 'today' (main.py:90, half of finding 4) onto the validated shop timezone. The other half of finding 4 (jobs/service.py:1796-1797, the jobs report) goes into P8a's Scope, because lane B-jobs owns that file while P7a is open. Binding review dispatched by the coordinator (Opus, fresh context, refute-by-default, own detached worktree). Mergeable at e1dfaca39fb19759fac80f776a1c5fd92b46fb58.

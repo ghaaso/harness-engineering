@@ -88,6 +88,11 @@ by P4c. Until then their Done-when ends at "merged; deploy-train row added".
 
 | Phase | PR | Merge sha | Migration | Post-deploy check | Rehearsal (L4) |
 | --- | --- | --- | --- | --- | --- |
+| P6a | #192 | `47a2246` | none | read-only, with a manager token: the attendance board rows carry `sampler_state`, `last_ping_at` and `pings_today`; a technician who is clocked in with no recent ping shows a stale or silent tracker, never a healthy one; the technician day view renders the effective time. The lane's own wording replaces this when its follow-up reports | not yet run |
+
+P1 (`87bbe88`) is not a train row: it is part of the pinned drain image that P3b boots first
+(`release/drain`, plan section 7.7). P2a (`5cd29b1`) is not a train row either: it reaches a phone
+only inside the fleet app build (P2c).
 
 ## Lane board
 
@@ -95,12 +100,14 @@ by P4c. Until then their Done-when ends at "merged; deploy-train row added".
 | --- | --- | --- | --- | --- | --- | --- |
 | B-core | P1 backend first-boot gate | `p1-boot-gate` (local_9616a4f6-0e4f-423f-8939-57b041ff3979) | `claude/p1-backend-boot-gate-e5a6e7` | #187 | **merged 2026-11-13 as `87bbe88`** (binding review PASS on `73738d1`; 931 tests, 0 skipped; cold-resume trial 10/10) | 2026-11-13 |
 | M | P2a offline engine honesty | `p2a-engine-honesty` (local_25d6f554-9f47-46e9-b5f4-4d66ba12bddb) | `claude/p2a-mobile-engine-honesty-13ca22` | #189 | **merged 2026-11-13 as `5cd29b1`** (binding review: PASS-WITH-FIXES at `c770de8`, two major findings fixed, re-read PASS at `62cabae`; 512 tests) | 2026-11-13 |
-| L | L2 local Android compile gate | `l2-android-compile` (local_95a45d7c-489d-4341-8aae-898e6a4713fb) | `claude/l2-android-compile-gate-3d0bf0` | #188 | running | 2026-11-13 |
-| B-jobs | P7a authorization and money guards (built ahead of P1) | `p7a-authz-money` (local_e8309ceb-a4b6-4bae-be38-23550a12de18) | `claude/p7a-authz-money-guards-00cb4d` | #191 | running | 2026-11-13 |
-| B-att | P6a attendance truth (built ahead of P1) | `p6a-attendance-truth` (local_aa29532d-569a-4548-a9d9-af8be9c9d436) | `claude/p6a-attendance-truth-d088d0` | #192 | running | 2026-11-13 |
-| B-tools | P9-0a week-export script (built ahead of P3b) | `p90a-week-export` (local_95afe0ff-cf18-4caa-8814-e7e1b1187b04) | `claude/p90a-week-export-script-4f99a5` | #190 | running (waiting for a gate slot) | 2026-11-13 |
-| W | P12a web payment idempotency (built ahead of P3b) | `p12a-web-idempotency` (local_d11066b5-3340-40c0-b1c4-607b5c0d306e) | its session's branch | | running | 2026-11-13 |
-| L | L3a device lab: emulator rig and first protocols (stacked on L2, #188) | `l3a-device-lab` (local_39b83985-59b2-4118-a7a5-b0f343ecd1c6) | its session's branch | | running | 2026-11-13 |
+| L | L2 local Android compile gate | `l2-android-compile` (local_95a45d7c-489d-4341-8aae-898e6a4713fb) | `claude/l2-android-compile-gate-3d0bf0` | #188 | READY at `7cb4c7d` (main compiles: cold 1460 s, warm 81 s at a 6g cap; the location SDK 5.8.2 compiles on SDK 52); binding review dispatched 15:41 | 2026-11-13 |
+| B-jobs | P7a authorization and money guards (built ahead of P1) | `p7a-authz-money` (local_e8309ceb-a4b6-4bae-be38-23550a12de18) | `claude/p7a-authz-money-guards-00cb4d` | #191 | READY at `76a5128` with R11 built (1004 tests, 0 skipped); binding review dispatched 15:41 on that head; rebased onto `47a2246` as `3ddc81c` (a second pass covers the rebase and any fixes) | 2026-11-13 |
+| B-att | P6a attendance truth (built ahead of P1) | `p6a-attendance-truth` (local_aa29532d-569a-4548-a9d9-af8be9c9d436) | `claude/p6a-attendance-truth-d088d0`; follow-up on `claude/p6a-followup` | #192 | **merged 2026-11-13 as `47a2246`** (binding review PASS on `e1dfaca`; 1070 tests, 0 skipped; five minor findings: four plus half of the fifth go into a follow-up PR by the same lane, started 15:41; the jobs-report half goes to P8a) | 2026-11-13 |
+| B-tools | P9-0a week-export script (built ahead of P3b) | `p90a-week-export` (local_95afe0ff-cf18-4caa-8814-e7e1b1187b04) | `claude/p90a-week-export-script-4f99a5` | #190 | running (cut off by an API error at 15:16; resumed 15:36) | 2026-11-13 |
+| W | P12a web payment idempotency (built ahead of P3b) | `p12a-web-idempotency` (local_d11066b5-3340-40c0-b1c4-607b5c0d306e) | `claude/p12a-web-payment-idempotency-31f74e` | #193 | fix round done at `9e89425` (146 web tests); second review pass dispatched 15:41, with its gate run on the head merged with `47a2246` | 2026-11-13 |
+| L | L3a device lab: emulator rig and first protocols (stacked on L2, #188) | `l3a-device-lab` (local_39b83985-59b2-4118-a7a5-b0f343ecd1c6) | `claude/l3a-device-lab-0d5f13` | #194 | running (cut off by an API error at 15:15; resumed 15:36) | 2026-11-13 |
+| O | P3a self-host repository changes (on P1) | `p3a-self-host-repository` (local_c0c39af5-ca3b-4df3-82c8-218eec3749e9) | `claude/magical-lederberg-1067ae` | | running (started by the owner from the coordinator's card, about 15:40) | 2026-11-13 |
+| M | P2b-1 drain tooling and fleet profile (on P2a) | `p2b-1-drain-tooling-and` (local_7bb0a4ed-4137-4e16-a8c0-cc67512e783f) | `claude/silly-kowalevski-9f2fc3` | | running (started by the owner from the coordinator's card, about 15:40) | 2026-11-13 |
 | L | L1 gate harness | coordinator | plan branch | #182 | done: baselines green on main's code (backend 757 tests, 0 skipped; web 106 tests; mobile 334 tests) | 2026-11-13 |
 | OWN | P0a-prep | coordinator | plan branch | #182 | done: step table, hold-notice draft, helper kit, Android tools installed on the owner's yes | 2026-11-13 |
 
@@ -117,6 +124,12 @@ by P4c. Until then their Done-when ends at "merged; deploy-train row added".
   they were moved into that folder instead.
 - **Messages to lanes** are delivered when a lane's current turn ends, not mid-turn: a
   correction therefore lands as a follow-up turn in that lane.
+- **Memory is at its ceiling (2026-11-13 15:44).** With ten lane sessions and three reviewers:
+  4.3 GB of 31 GB RAM free, 6 GB of the 50 GB commit limit free (the Docker VM 6.5 GB, the
+  emulator 3.6 GB). No further session is started until one finishes; a watcher reports if free
+  commit falls under 3 GB. Archiving the sessions of merged phases (P1, P2a) is the owner's call.
+- **A lane cut off by an API error does not report.** It happened twice on 2026-11-13 (plan
+  section 7.9). After any quiet stretch the coordinator reads each idle lane's last message.
 - **Power loss, 2026-11-13 about 13:25 to 13:53.** Windows recorded an unexpected shutdown with
   no crash code, no long power-button press and no hardware-error record: the PC lost power.
   All eight lane sessions and Docker went down. At 13:57 the coordinator started Docker Desktop

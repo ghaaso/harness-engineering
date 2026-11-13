@@ -1927,16 +1927,22 @@ correct.
 | C8 | P2a binding review (unverified) | A `drainAll` pass started for one technician may keep sending after another signs in on a shared phone | P2a verifies and fixes or journals it; P2b-1's shared-phone work (`O10-F10`) inherits whatever is left |
 | C9 | P2a binding review, second pass (finding N1) | After a clock-out the server refuses while it still has the technician clocked in, location sampling correctly resumes, but the parked clock-out does not tell the technician so | **P2b-1's Scope gains:** a parked clock-out says the technician is still on duty and location recording continues until the clock-out is accepted |
 | C10 | P1 binding review (finding 1) | A legacy-secret token can replay an idempotent POST and read its response (a signed media URL; a job with the customer's phone). It needs the old secret and the ids | Accepted as the residual of ruling R10 (default OFF; a supervised window only; the secret is sealed in P0a and destroyed at P4c). **P7b-1's Scope gains:** correct the docstring and return no playback URL to a legacy principal |
+| C11 | P6a binding review (PR #192; five minor findings, none blocking) | A shift open across midnight shows as not clocked in on today's board; the web's "silent" label can count minutes from an earlier session's ping; two settings nothing reads remain in `config.py`; a dash-separated BSSID counts as a Wi-Fi miss; the single shop-timezone source (`O04-F8`) holds inside the attendance slice only | Merged as `47a2246`. The first four, and the payroll job's "today" in `main.py`, are fixed by the same lane in a follow-up PR (`[P6a] follow-up …`) before P5a consumes the fixture. **P8a's Scope gains:** the jobs report reads the shop timezone through the validator (`jobs/service.py`, the rest of `O04-F8`) |
+| C12 | coordinator, at the P6a merge | A PR's green CI ran on a merge with the `main` of its last push. Once another phase merges, that result no longer describes what a merge would produce | When `main` has moved since a PR's last CI run, the binding review's gate run is on the PR head **merged with current `main`** (a local merge in the reviewer's own checkout), or the lane rebases first; `main`'s own CI run after every merge is the backstop, and the coordinator reads it |
 
-**Merged so far (2026-11-13):** P1 as `87bbe88` (binding review PASS at `73738d1`) and P2a as `5cd29b1` (PASS at `62cabae` after a fix round). Verdicts are filed under `docs/program/evidence/reviews/`.
+**Merged so far (2026-11-13):** P1 as `87bbe88` (binding review PASS at `73738d1`), P2a as `5cd29b1` (PASS at `62cabae` after a fix round) and P6a as `47a2246` (PASS at `e1dfaca`, five minor findings routed by C11). Verdicts are filed under `docs/program/evidence/reviews/`.
 
-**What the binding reviews were worth.** Three lanes reported READY with green gates, green CI and a
-clean self-check; the two binding reviews that have returned each found a defect the self-check had
-not (a private status ladder in a component; a key that died on reload), and each re-ran the lane's
-fail-on-main claim instead of trusting it. No PR has merged on a self-check alone.
+**What the binding reviews were worth.** Every lane reported READY with green gates, green CI and a
+clean self-check. Of the four binding reviews that have returned, one passed clean (P1), one passed
+with five minor findings (P6a), and two found a defect the self-check had not (P2a: a private
+status ladder in a component and a refused clock-in that left location sampling on; P12a: a
+payment key that died on reload). Each re-ran the lane's fail-on-main claim instead of trusting
+it. No PR has merged on a self-check alone.
 
-**The API outage of 14:55.** The Claude API answered a Cloudflare "403 Attention Required" page for
-a few minutes; it ended four lane turns and all three reviewer agents at once. Every one resumed
+**The API outages of 14:55 and 15:15.** The Claude API answered a Cloudflare "403 Attention
+Required" page for a few minutes at 14:55; it ended four lane turns and all three reviewer agents
+at once. At about 15:15 the same page ended two more lane turns (P9-0a, L3a). Every one resumed
 from its own transcript (a lane by a message, a reviewer agent by its id), and no work was lost.
-Whether eleven concurrent conversations from one address caused it is not known; the concurrency
-is unchanged and the event is recorded so a repeat can be recognised.
+Whether many concurrent conversations from one address cause it is not known; the event is
+recorded so a repeat is recognised, and the coordinator checks every lane's last message after a
+quiet stretch because a lane cut off this way does not report.
