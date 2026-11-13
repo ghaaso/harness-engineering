@@ -1,0 +1,28 @@
+# L4 lab shim, passed to ffc as FF_EXTRA_COMPOSE on the STAND-IN host only (ops/lab/rehearsal).
+# It adds exactly two things and no port:
+#  1. l4-s3: a stand-in R2 bucket (moto's S3 server, TLS) under its own profile `l4s3`, which no
+#     runbook command names, so `ffc ... up` never starts it and `ffc ps` never lists it. On the
+#     compose's `app` network it answers to the hostname get_storage() builds from the stand-in
+#     account id (backend/app/core/storage.py hard-codes https://<account>.r2.cloudflarestorage.com),
+#     so the app's own backup, upload and prune code runs unchanged against it.
+#  2. the stand-in CA for that TLS certificate, mounted read-only into the backend and named by
+#     AWS_CA_BUNDLE (botocore's own setting).
+# The stand-in host has no network route out while any backend container runs (the entry script
+# disconnects it from the bridge after the image builds), so a mistake here cannot reach R2.
+services:
+  l4-s3:
+    profiles: ["l4s3"]
+    image: l4/s3:moto-5.0.28
+    command: ["-H", "0.0.0.0", "-p", "443", "-c", "/certs/s3.pem", "-k", "/certs/s3.key"]
+    volumes:
+      - /srv/l4/s3certs:/certs:ro
+    networks:
+      app:
+        aliases:
+          - l4lab.r2.cloudflarestorage.com
+          - l4-bucket.l4lab.r2.cloudflarestorage.com
+  backend:
+    environment:
+      AWS_CA_BUNDLE: /l4ca/ca.pem
+    volumes:
+      - /srv/l4/s3certs/ca.pem:/l4ca/ca.pem:ro
