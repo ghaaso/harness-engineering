@@ -64,8 +64,14 @@ l4_host_up() {
   [ -z "$(l4_dx docker ps -aq)" ] || l4_die "the stand-in host still has containers"
   l4_dx rm -rf /opt/fixflow /etc/fixflow /var/lib/fixflow /var/log/fixflow /srv/l4 /srv/prep /srv/dev /srv/prebuild
   l4_dx sh -c '! test -e /opt/fixflow && ! test -e /srv/l4' || l4_die "the stand-in host is not fresh"
-  l4_dx apk add -q --no-cache bash git python3 openssl curl iproute2 coreutils util-linux \
-    findutils grep sed gawk procps logrotate >/dev/null || l4_die "apk add failed (is the PC online?)"
+  # A mirror can stall a download for good: each attempt is bounded, and three are allowed.
+  local ok=0
+  for i in 1 2 3; do
+    l4_dx timeout 240 apk add -q --no-cache bash git python3 openssl curl iproute2 coreutils util-linux \
+      findutils grep sed gawk procps logrotate >/dev/null 2>&1 && { ok=1; break; }
+    echo "L4: apk add attempt $i did not finish; retrying" >&2
+  done
+  [ "$ok" = 1 ] || l4_die "apk add failed three times (is the PC online?)"
   # A Debian host has /etc/cron.d (7.4, 7.7, 7.8 install into it); Alpine has none. The files are
   # installed and listed as written; nothing here runs them (busybox crond does not read it).
   l4_dx mkdir -p /etc/cron.d
