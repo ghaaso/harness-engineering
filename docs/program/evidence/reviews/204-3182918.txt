@@ -1,0 +1,39 @@
+VERDICT: PASS
+PR #204 at 3182918b3dfc9e732ac3fe5224f8e466db9a81f9 (the head did not move)
+
+The claim is true on `main` today, and the fix is right. There are no blockers, majors or minors; only two journal-level notes remain.
+
+**Notes (journal only)**
+- **Router error mapping.** The router's `except ValueError` (`jobs/router.py:~161`) wraps the whole service call. Any other `ValueError` inside it would come back as a 422 rather than a 500, for example a malformed shop timezone name, which `ZoneInfo` rejects with `ValueError`. #202 (C11) validates the timezone, which removes this.
+- **Remaining clock dependence.** The integration tech-metrics tests still read the wall clock: they seed data now and call the default window. They only depend on the hour now if a test straddles 19:00:00 UTC exactly, which takes microseconds. No other jobs-slice test depends on the hour; the other `datetime.now` uses are timestamps or relative windows.
+
+**1. Cherry-pick.** The change lines in `git diff 3810e42^ 3810e42` and `git diff f2b7a5e 3182918` are identical. In `service.py` the auto-merge put the default resolution right after the `tz_name` and `tz` lines and removed the late `today_local` assignment. Nothing touched P7a's code (`_parse_token`, the replay helpers, the resubmit lock) or P6a's verdict code.
+
+**2. The claim on `main` (by running and by reading).**
+- At `f2b7a5e` the router sets `end = datetime.now(UTC).date()` (`router.py:155`). The service buckets rows by Karachi midnight and judges `refail_window_complete` against `datetime.now(UTC).astimezone(tz).date()` (`service.py:~2387`). Between 19:00 and 24:00 UTC the window therefore ends at the previous Karachi day.
+- **Run:** I froze the clock at 2026-11-13T20:32Z inside the test process with a temporary probe test (deleted afterwards). On the base the default `to_date` came out as 2026-11-13, where the Karachi date is 2026-11-14. On the head it is 2026-11-14, with `from_date` 2026-11-08.
+- **By reading, the four failing tests are:**
+  - three integration tests that seed data now and call the default window: `test_tech_metrics_revenue_attribution_voids_and_reconciliation`, `..._refail_cohort_counts_a_comeback_once` and `..._fuel_scope_and_category_mix` (`tests/test_jobs_integration.py:917/978/1056`). That evening's rows fall outside the window.
+  - `test_refail_window_complete_flips_at_scan_horizon`. Its `TODAY` was taken in the runner's zone (UTC), one day behind the service's Karachi today, so the "immature" window reads as mature.
+- So yes: every gate and CI run after 19:00 UTC fails until this merges.
+
+**3. The fix.**
+- The service resolves the defaults: Karachi today, and six days earlier for the start. Explicit dates pass through unchanged.
+- An explicitly inverted window is still a 422 in the router. An explicit future `start` with no `end` is now a 422 through the service's own `ValueError`; that was also a 422 on the base.
+- `today` is only injected by the tests; the router never passes it.
+- No client calls the endpoint: no hit in `src/`, `technician-app/src` or `ops-server.mjs`, so no caller's explicit dates can change.
+- `dependencies=[Depends(require_manager)]` is untouched, and `test_tech_metrics_rejects_a_tech_token` passes.
+- The tests now use a fixed `TODAY`.
+
+**4. Rebase of #202.** The change does not make it harder. It puts the timezone and the whole window resolution in one service block. #202's C11 change replaces the `tz_name = await self._repo.shop_timezone(...) or settings.scheduler_timezone` line just above the new lines, so expect at most a trivial adjacent-hunk conflict there.
+
+**Gates (my runs)**
+- **Full gate on 3182918, tree clean** (`gate-logs/tzfix-rev/backend-20261113-193250`): ruff format, ruff check, mypy, lint-imports, alembic upgrade and alembic check all EXIT=0; pytest EXIT=0, 1317 tests, 0 skipped, 0 integration skipped; SUMMARY FAIL=0.
+- **Probe on the head** (`backend-20261113-193842`): EXIT=0.
+- **Fail-on-base** (`router.py` and `service.py` from `f2b7a5e`, the two changed test files plus the probe; `backend-20261113-193943`): 5 failed, 50 passed.
+  - The probe fails (2026-11-13 ≠ 2026-11-14).
+  - `test_tech_metrics_passes_the_window_unresolved_to_the_service` fails (the base passes resolved dates).
+  - Three fail with `TypeError: ... unexpected keyword argument 'today'`: the horizon test and the two new regression tests.
+- **Cleanup:** the worktree was restored to the head, the probe deleted and the status clean; I then removed the worktree. There were no `fixflow-tzfix-rev-*` containers.
+
+Coordinator's note (2026-11-13): PR #204 is the plan branch's commit 3810e42 (2026-11-01), cherry-picked unchanged onto main by the coordinator after another session's merge note showed main had never received it (plan section 7.9 C29). Reviewed by the reviewer of PR #191. Mergeable at 3182918b3dfc9e732ac3fe5224f8e466db9a81f9. The first note (a ValueError from a malformed timezone becomes a 422) is closed by P8a's C11 change; the second (three integration tests read the wall clock but can only fail exactly at 19:00:00 UTC) is journaled.
