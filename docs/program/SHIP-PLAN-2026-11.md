@@ -1977,6 +1977,7 @@ correct.
 | C36 | PR #207 binding review (PASS-WITH-FIXES at `a9c16ab`, one major, three minor; the new order of C34 holds, the three exit codes of 11.1 print as written, the recovery block pasted into a plain interactive shell resets only when exactly one P1 pick exists, and with the variable empty the tag and worktree commands stop with an error) | **11.12 takes the web sha from the wrong branch**: it reuses 11.8's commands, which set the variable from `release/drain`, so the web gates would run on the backend tree with a matching check and `drain-web-image` would be tagged on the backend commit; only an empty CI query stands in the way, and the text explains it with the wrong cause. Also: a re-cut cannot create the gates worktree a second time; the reset acts on whatever branch is checked out; `gh` is not among the preconditions | Sent back; fixed in the same PR. 11.12 is written out in full from `release/drain-web`, with a check that the web sha is not the backend one. Added by the coordinator: every use of the variable stops with a message when it is empty; a re-cut starts with a fetch and a check that the local branch equals the remote one; the "no CI run" stop names what to look at and says: do not tag. The same reviewer re-reads |
 | C37 | PR #207 second pass (PASS at `007ab3c`, run again from the start after the PC shut down during the first attempt; every changed block pasted into a plain interactive shell: the web step in its right state and its two wrong states, the gates worktree twice, the reset on another branch, every line with the variable unset, a re-cut from a clone that is behind) | Two notes, both on the web image and both failing safe: the web gates run before the tag line refuses a leftover backend sha (one wasted gate run), and a re-cut of the web image is not written out (the tag name is edited by hand, `git switch -c` fails once the branch exists, no fetch-and-equal check for the web branch) | Merged as `53c6046`. The notes get no PR of their own: the web image cannot be cut before P12a and P12 are merged, section 11 cannot be run before P2b-2 is merged, and a further pass by a reviewer whose context is already large costs more than the notes are worth today. **They ride the follow-up that must touch section 11 when P2b-2 merges (it fills the `<p2b2>` placeholder): that PR also moves the web sha checks ahead of the web gates and writes out the web re-cut block with its own fetch-and-equal check** |
 | C38 | L4's READY report (PR #201 at `9fa28c5`: restore rehearsal 42 done, 4 failed, 4 ambiguous; train rehearsal 59 done, 1 failed, 2 ambiguous; findings D1 to D12), read by the coordinator before its binding review | Its finding D10 is a defect in the code, not in the runbook, and it predates the program: `backend/app/core/scheduler.py` builds its cron triggers with no time zone, so they take the container's UTC and not the scheduler's `Asia/Karachi`. Every cron job runs five hours late by shop time: the nightly backup at 07:30 instead of 02:30, the two nightly sweeps at 08:00 and 08:30, the weekly payroll export at 23:00 on Sunday instead of 18:00. The coordinator read the two lines and agrees. Its other findings are about the runbook (a restore check that stops the owner at a correct restore; nothing scripted between the pre-restore upload and the drop; a command not on the PATH; a dump cut at 99 % passing the listing check) | **D10 is fixed on `main` by a `[P1] follow-up` (tests on each job's next run time; a deploy-train row, no migration). It is not a fifth cherry-pick for the drain image:** there the jobs keep their UTC times, which harms nothing (the hourly dumps of the window are a host cron), and the runbook's check in 9.2 is reworded to say what the drain image shows. The runbook findings go to the runbook's lane as ONE batch after L4's binding review has judged each, together with the two notes of C37 |
+| C39 | The two binding reviews of P2b-2 (PR #203 at `5576c65`), on trees the coordinator built. Phone side: **FAIL**, one blocker, four major, seven minor, each shown by a scratch test. Server side: **PASS-WITH-FIXES**, one major, five minor; first gate run on the full four-pick drain tree `a0289ed`: green, 1041 tests | The audit could call a record arrived that never left a phone: evidence "by job state" was accepted from any technician of a shared phone, and printed nothing (blocker); a write still queued on one phone was "superseded" by another phone's; one discard trace cleared every phone's record with that id. It could report a mismatch nothing can clear: a location fix older than the snapshot but queued after it; a record the server refuses during the drain. It read at READ COMMITTED, about twenty snapshots for one verdict, and a phone landing rows mid-run gave a false "halt the fleet". A manifest carrying a NUL or an unpaired surrogate in a failure text would be refused by the database on every retry, so that phone could never open its drain. What held: it never writes (every write path refused by the database), leaks nothing, runs on the drain image; the drain image's ingest takes a manifest of 8,000 records unchanged and has no event-name list; money rows are matched by identity and can never end in a dropped class | **Not mergeable at `5576c65`; the stricter verdict binds.** One contract for the phone that writes the manifest (P2b-1, PR #197, not merged) and the script that reads it: **the drain manifest contract, version 2**, set out below this table. In short: every phone has an install id; a row's evidence must come from its own owner; the phone sends a second report after the drain, saying what is still on it and why, so every state has an action that clears it; no typed or server text travels in a manifest; the audit reads one snapshot. The reviewer called the after-report an owner decision; the coordinator rules it, because it changes no policy (O-10 E5 and E6 already judge by what the phone's Drain Report shows) and removes a manual step from the owner. The owner may overrule. Each lane fixes its half; each PR goes back to its own reviewer; P2b-2's fixture is re-checked against P2b-1's merged head |
 
 **Merged so far (by 2026-11-14 01:20):** P1 as `87bbe88` (binding review PASS at `73738d1`); P2a as `5cd29b1` (PASS at `62cabae` after a fix round); P6a as `47a2246` (PASS at `e1dfaca`, C11) with its follow-up as `9b2e8f5` (PASS at `a6e27f5`, C18); P12a as `15df06d` (PASS at `986b3ab` on the third pass, C16) with its follow-up as `fa860f9` (PASS at `c70ae78`, C23); L2 as `34f1dcd` (PASS at `1fdbdd4` on the second pass, C19) with its follow-up as `02af3cc` (PASS at `7749696`) and the `CLAUDE.md` sentence as `53db3b8` (PASS at `8ca48db`); P7a as `6ff6039` (PASS at `28dc751` on the second pass, C21); P9-0a as `c392cf8` (PASS at `f93ee97` on the second pass, C25); P3a as `90ea88d` (PASS at `d1b3de1` on the second pass, C27). Eight phases in twelve pull requests, plus the skill and agent definitions (PR #185 as `f2b7a5e`, C28), the tech-metrics timezone fix (PR #204 as `f192fee`, C29 and C30) and the runbook's corrected cut section (PR #205 as `66e891b`, PR #206 as `7bf9f49` and PR #207 as `53c6046`; C32, C34, C36 and C37). P2b-1 passed review at `c5eadbd` and waits for the owner's two values (C26). Verdicts are filed under `docs/program/evidence/reviews/`.
 
@@ -2015,3 +2016,55 @@ reviewer by a message that tells it to start its pass again and to distrust what
 send each lane with interrupted work one message that says what died and what was verified after
 the reboot (head, CI, slots); never report a run the shutdown cut. A lane whose turn had ended on
 "waiting for my gate" would otherwise wait for ever, because the job that was to wake it is gone.
+
+**The drain manifest contract, version 2 (ruling C39).** Binding on P2b-1 (the phone writes it)
+and P2b-2 (the audit reads it). It replaces the manifest as reviewed at `c5eadbd`. No phone has
+received a fleet build, so no version-1 manifest exists anywhere and the audit reads version 2 only.
+
+1. **Install id.** A UUID minted once per install by the first fleet build, stored under its own
+   key, never rewritten and never derived from the hardware. It is in every `drain_manifest`, every
+   `drain_after` and every `queue_discard` event. An in-place update keeps it; a cleared or
+   reinstalled app mints a new one, which is right: that phone's queues are new too.
+2. **Schema.** The manifest's `schema` value changes; the audit treats any other value as an
+   incomplete manifest and says what to do.
+3. **Snapshot time.** `taken_at` is stamped before the storage is read, not after.
+4. **Locations by identity.** A queued location row exports its `client_id`; the audit matches it by
+   that id and the ten-second rule goes.
+5. **No free text.** A manifest and an after-report carry `reason_class`, never the stored failure
+   text, and every remaining string passes a sanitiser that removes NUL and unpaired surrogates, so
+   no string on a phone can make its upload fail for ever (C35's rule, applied to these events).
+6. **The after-report (`drain_after`).** Built by the same builder as the manifest from the phone's
+   state now: the install id, the manifest id it follows, the version code, `taken_at`, the owners,
+   every record still on the phone that is not settled (queue, id or `client_id`, owner, kind, state
+   pending, paused or parked, `reason_class`), and every discard made on this install since the
+   manifest (queue, record id, owner, who discarded, when) from a durable local list. It is uploaded
+   straight to the events endpoint like the manifest, never through the droppable telemetry queue,
+   each upload under a fresh `client_id`: by a button on the Drain Report, and by itself, one at a
+   time and rate-limited, when the gate is open and a drain pass has ended. It gates nothing: a
+   failed after-report never stops the phone.
+7. **What the audit does with it.** It uses the newest after-report of the same install id and
+   manifest id. A manifest row that is not on the server is: `still_parked` when the report lists it
+   parked with an app reason (manual entry); `in_progress` when the report lists it pending or
+   paused; `discarded` when the report or a trace says so; `missing` when the report does not list
+   it at all. An after-report is evidence about the phone only: it never makes a row landed.
+8. **Evidence by owner.** Evidence matched by job state counts for a row only when its actor is the
+   row's owner (owner-less legacy rows and media: a technician of that install). Every row matched
+   by state is printed with its identity and the evidence that matched it.
+9. **Discards.** A trace or an after-report entry clears one row: same install, same owner, same
+   queue and record id, used once.
+10. **Superseded.** Only a later manifest or after-report of the same install id can supersede a
+    row. Never another phone's.
+11. **Unexpected rows.** Device time judges only punches and crossings; pings and breadcrumbs from
+    before the snapshot floor are listed and do not fail.
+12. **Exit codes.** 0: every row accounted for; the verdict line states how many rows, and how much
+    money in minor units, are left for manual entry, and never says "all accounted for" when that
+    number is not zero. 3: a record is unaccounted for (missing, conflict, unexpected); this is the
+    only code that halts the fleet. 4: cannot judge yet (a manifest problem, a phone in progress, no
+    after-report from a phone with rows not landed); finish that phone and run again. 5: cannot run.
+    3 outranks 4. For every 3 and 4 the report names the record, the install and the technician,
+    and says what clears it.
+13. **One snapshot.** The whole audit runs in one REPEATABLE READ, READ ONLY transaction.
+14. **In the procedures.** P2c, P4a, P4b and runbook section 8 gain one step before the audit: the
+    phone's Drain Report shows the after-report sent. Section 8.2 calls the script in the runbook's
+    form (`ffc exec -T backend python -m scripts.drain_audit`), checks the exit code and that the
+    fuel snapshot parses before the route is opened, and passes files through stdin and stdout only.

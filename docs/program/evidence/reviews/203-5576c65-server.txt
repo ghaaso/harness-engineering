@@ -1,0 +1,105 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at 5576c6549391d252ac5525babded009de60d4a53 (server-side lens)
+Binding review, one of two dispatched by the coordinator on 2026-11-14 at about 01:19 (the fixflow-migration-reviewer definition). Read through the squash 89235c9: `rv203-head` is main 7bf9f49 plus that squash, `rv203-drain` is a0289ed, the four-pick drain tree; `backend/scripts/drain_audit.py` is identical in both. Code cites are relative to `.claude/worktrees/rv203-head/`; app, compose and runbook cites are from `rv203-drain` unless marked. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Bottom line: the script never writes, never leaked a credential in any run tried, runs on the drain image, and every exit 0 produced was honest. But it reads at READ COMMITTED. With a phone still landing rows, the reviewer made it return a false exit 3 (MISMATCH, which means "halt the fleet"). A one-line fix removes this; the fix was tested. With that fix and a test for it, the reviewer would let the owner act on its exit code.
+
+FINDINGS
+
+MAJOR-1: the verdict comes from about 20 separate snapshots, not one.
+- `drain_audit.py:2209` sets `SET TRANSACTION READ ONLY` and no isolation level. VERIFIED-BY-COMMAND: inside `readonly_session`, `SHOW transaction_isolation` returns `read committed`.
+- Order of reads: manifests first (`:1924`), then `read_ceilings` (`:1939`), then per-key lookups (`:903-1069`), then the "extras" scans (`:1072-1124`).
+- The interleaving run (probe `test_probe_read_committed_interleaving`, drain tree, log `rv203p/backend-20261114-013145`): phone 1 of tech t3 had uploaded an empty manifest; between the manifest read and the server reads, phone 2 of t3 uploaded its manifest and landed a punch captured an hour earlier; the audit missed the new manifest but saw the punch; the punch was captured before t3's snapshot floor, so it was classed unexpected (`:1711-1712`). Result: `exit=3 unexpected=[('punch','t3','unexpected')]`. The same scenario at REPEATABLE READ: `exit=0`. Re-run once nothing was in flight: `exit=0`.
+- Without a second manifest from that tech, the same race gives a false exit 4 ("phone rows ... with no manifest", `:1965-1977`). INFERRED from the code.
+- No false exit 0 could be constructed: arriving rows only add evidence, and evidence that disappears (status, voids) only makes the result stricter.
+- Why it matters: the owner runs this while other phones drain. A false 3 halts the fleet (docstring `:34-36`).
+- Smallest fix: in `:2209`, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY` (or `default_transaction_isolation` in `server_settings`, `:2204`), plus a regression test (the probe is a ready template). On a copy of the drain tree with that one line changed, all 90 drain tests and both probes passed (log `rv203fix/backend-20261114-013149`); the only gate failures there were ruff on the long line and on the probe file. INFERRED: a read-only transaction cannot hit serialization failures at REPEATABLE READ; UNVERIFIED against the PostgreSQL manual.
+
+MINOR-2: a traceback on stderr, despite "never a traceback" (`:31`). `snapshot_fuel` calls `JobService._workshop` (`:2022`), which catches errors and calls `logger.exception` (drain-tree `app/features/jobs/service.py:915-919`). VERIFIED-BY-COMMAND: `--snapshot-fuel` against an empty database printed 118 stderr lines (logger message, full traceback, SQL text), then exit 5. No DSN, host or port appeared anywhere in those lines. The PR journals this in decision 25, but the docstring promise still contradicts it. Fix: call `attendance.service.workshop_circle` directly, so a failure becomes a one-line refusal.
+
+MINOR-3: one malformed manifest stops the whole run. `parse_manifest` says "Never raises" (`:359`), but `"owners": 5` raises a TypeError at `:469`. Parsing happens before the `--manifest-id` / `--tech` filters (`:1926-1936`), so scoping does not help. VERIFIED-BY-COMMAND, whole-run and scoped: `exit=5 'REFUSED: the audit stopped on an internal error (TypeError)'`. Any authenticated user can post such an event (no name allow-list; item 6). Fix: wrap `parse_manifest` per event so a failure becomes a manifest problem (exit 4).
+
+MINOR-4: the owner-facing commands.
+- The docstring (`:15-21`) uses `docker compose exec -T backend python scripts/drain_audit.py`. Runbook 8.2 (`docs/RUNBOOK-SELFHOST.md:1724`, same on main) uses `ffc exec -T backend python -m scripts.drain_audit`. `ffc` exists because a bare `docker compose` resolves the wrong file and profiles (`ops/selfhost/bin/ffc:8-9`).
+- The snapshot step has no `echo "exit $?"` and no parse check, and the 8.2 Check (`:1727-1729`) does not look at the file. A failed snapshot leaves an empty `fuel-$S.json`; it uploads fine, and the problem only shows after the route is open (VERIFIED: an empty baseline gives `exit=5 ... unusable (JSONDecodeError)`).
+- File arguments resolve inside the container: the backend service has no volume mount (`docker-compose.prod.yml:99-141`); `/code` is root-owned and the process runs as uid 10001 (`backend/Dockerfile:35-40`); so `--json PATH`, `--snapshot-fuel PATH` and `--manifest-file PATH` only work with `-` or `/tmp`.
+- `-T` is present in both docstring commands but its reason (stdin and stdout redirection) is never stated.
+- Fix: use the runbook form, add an exit-code and JSON check before 8.3, and say stdin/stdout only. An owner action at the box; no runbook edit was made.
+
+MINOR-5: four of the reviewer's six breaks outside the matching rules went uncaught (break table). Untested: the `postgres` host admission the production run depends on; the multi-host guard; the "billed" half of the fuel diff; the CLI `--test-window` path. Related (INFERRED): test-window labelling runs before both the scope check and the unexpected check (`:1701-1714`), so a mistyped, too-wide window from the owner can hide a real "manifest missed a row" mismatch and a "phone with no manifest" incompleteness. Fix: refuse a window outside [T_open, now], and add tests for the four gaps.
+
+MINOR-6 (program-level; not this PR's code). JSONB refuses NUL (`22P05`) and lone surrogates (`22P02`). VERIFIED-BY-COMMAND through POST /api/events on the drain tree. Either one in a manifest is an unhandled 500 on every retry. The manifest uploads `reason` as the phone's `failedReason` verbatim (c5eadbd `manifest.ts:346,415,433,486`). Whether any field phone holds such a string is UNVERIFIED.
+
+Merge conditions: P2b-1 (#197) is still OPEN at c5eadbd, and the plan's entry is "P2b-1 merged" (`SHIP-PLAN-2026-11.md:460`). `drain_fixture.py` mirrors c5eadbd's expected values (`test_drain_fixture.py:3-4`); no shared artefact pins them. Any change to #197 before it merges goes unseen, so re-check the fixture against #197's merged head.
+
+GATES (merge-readiness runs, clean trees, Postgres 17)
+
+| Tree | HEAD | GATE 1 to 6 | GATE 7 pytest | Tests / skipped / integration skipped | SUMMARY | Log |
+|---|---|---|---|---|---|---|
+| rv203-head | 89235c9 | 0,0,0,0,0,0 | 0 (1407 passed, 5:19) | 1407 / 0 / 0 | FAIL=0 | `C:/Users/User/.fixflow-cache/gate-logs/rv203/backend-20261114-011956` |
+| rv203-drain | a0289ed | 0,0,0,0,0,0 | 0 (1041 passed, 3:00) | 1041 / 0 / 0 | FAIL=0 | `C:/Users/User/.fixflow-cache/gate-logs/rv203d/backend-20261114-011958` |
+
+The branch count matches the lane's 1407. On the drain tree, 1041 = the lane's 1023 (d82c01c, without P3a) plus P3a's `test_backup.py`. Both trees run 90 drain tests (44 integration, 11 rules, 6 report, 29 fixture). This is the first gate run on the full four-pick tree, and it is green.
+
+ANSWERS
+
+2. It never writes. The connection is opened with `default_transaction_read_only=on` (`:2204`); the first statement is `SET TRANSACTION READ ONLY` (`:2209`); a `SHOW` check refuses unless it reads `on` (`:2210-2212`); `txid_current_if_assigned()` must be NULL (`:2223-2225`); the session is always rolled back (`:2216`). VERIFIED-BY-COMMAND inside `readonly_session`: INSERT, UPDATE, DELETE, `nextval`, `setval`, `CREATE TEMP TABLE` and `SELECT ... FOR UPDATE` are all refused with `25006`; `SET TRANSACTION READ WRITE` after a query: `25001`; commit, then INSERT: `25006`; `SET default_transaction_read_only=off`, commit, then INSERT: `25006`; `txid_current()` is caught by the xid check; `pg_advisory_xact_lock` is accepted (the script uses none). App imports: `app.core.config.settings` only reads env; `jobs.service` pulls in `app.core.db`, which builds an engine at import without connecting (INFERRED); the scheduler and the boot guard live only in `main.py`, which nothing the script imports reaches; `_fuel_rate`, `workshop_circle`, `list_locations`/`list_travel_samples` only read. `--snapshot-fuel PATH` / `--json PATH`: a file is never overwritten; a missing directory gives exit 5. The break "read-only switched off" was caught by `test_the_audit_transaction_cannot_write`.
+
+3. One consistent read: no; MAJOR-1. `now()` (`:890`) is transaction-start time, harmless.
+
+4. It leaks nothing. Every refusal was a single stderr line with no URL, password, host or traceback, except as noted.
+
+| Case | Exit | Output |
+|---|---|---|
+| No args (with or without env) | 5 | `nothing to do...` |
+| `--databse-url <url>` | 5 | `bad arguments: unrecognized arguments (details not shown...)` |
+| Stray positional URL | 5 | same |
+| `--data <url>` (abbreviation, remote host) | 5 | host refused |
+| Remote host; `?host=` multi-host | 5 | host refused |
+| `postgres` host | - | passes the guard, then `exit=5 could not use the database (gaierror)` |
+| Unreachable port | 5 | `(OSError)` |
+| No such role | 5 | `(DBAPIError, Error, SQLSTATE 28000)` |
+| No such database | 5 | `SQLSTATE 3D000` |
+| Not a URL / mysql URL | 5 | one-line refusal |
+| Empty database, audit | 5 | `SQLSTATE 42P01` |
+| Schema at 0042, audit | 5 | `SQLSTATE 42703` |
+| Empty database, snapshot | 5 | 118-line traceback (MINOR-2) |
+| Schema at 0042, snapshot | 0 | the snapshot does not check the head |
+| `--help` | 0 | usage on stdout |
+| Fuel-only or snapshot runs | 0 | by design |
+| `--snapshot-fuel --tech X` | 0 | `--tech` silently ignored |
+
+Wrong password: UNVERIFIED (the gate database trusts loopback). Exit precedence (`:1757-1762`): 3 beats 4 beats 0; 5 only from refusals and errors (`:2383-2402`).
+
+5. It runs where the owner will run it. VERIFIED-IN-CODE: the image does `WORKDIR /code` and `COPY . .` from `./backend`, so the script is at `/code/scripts/drain_audit.py`; `scripts/__init__.py` exists; the script adds `/code` to `sys.path`. The compose service is `backend`; its database host is `postgres`, and the guard admits it. Remote and multi-host URLs are refused (VERIFIED). Both the docstring form and the runbook form ran in the gate container (python:3.12-slim, the image's base); the image itself was not built, so running as uid 10001 is UNVERIFIED-by-build.
+
+6. The manifest's road into the database (drain tree). VERIFIED-BY-COMMAND through the ASGI app with all its middleware. No name allow-list: `name` only has to be 64 characters or fewer (`telemetry/schemas.py:18`). Authentication is required (401 without a token). No feature flag. At most 100 events per batch; `props` is an unbounded dict; no body cap on `/api/events` (the caps cover login and the webhook only, `main.py:81-84`). A 2,000-record manifest (408,241-byte body): 200, `{"accepted":1}`, stored JSONB (90,887 bytes) equal to what was sent. An 8,000-record manifest (2.6 MB): 200, stored equal. An identical replay gives `duplicate:1`; a replay with changed props gives `duplicate:1` and the first version stays (`on_conflict_do_nothing`). The stored row carries `actor_kind=tech`, `actor_id` = the signed-in tech, `device_time` = taken_at, `server_time` = now(). The lane's tests upload through this same endpoint and pass on the drain tree. The audit took 0.18 s on 2,000 rows and 0.28 s on 8,000. Not a BLOCKER, apart from MINOR-6. The Cloudflare tunnel's request-size limit is UNVERIFIED.
+
+7. SQL and scale. Two reads have no index on the column they filter by: `attendance_ping` filters `received_at` (its index is `(shop_id, captured_at)`); `job_travel_sample` filters `received_at >= t_open` with no shop filter and no index on `received_at`. Everything else has a usable index. The fuel snapshot does two queries per closed or billed job. Bound (INFERRED): even 10^6 ping rows is a sub-second scan; `_cap_evictions` is O(lost x samples) per manifest. The audit holds one read-only transaction for seconds. Traps checked: `--t-open` requires a zone; naive phone times are read as UTC; database times are timestamptz; `LEAST` ignores NULLs (right for `frozen_at`); every event-text literal matched exists on the drain tree; money is compared as integers. Backlog: a digit `job_ref` above 2^31 would overflow `ARRAY(Integer)` (`:948-949`, `:961`), giving exit 5.
+
+8. The tests. No skips, no xfails, no test without an assertion.
+
+| Break | Code changed | Caught? | By |
+|---|---|---|---|
+| B3 no settled-state check | `:1434` | Caught | `test_e6_kinds_without_client_id_match_by_job_state` |
+| B7 freeze read now | `:1462` deleted | Caught | `test_prior_state_is_read_at_the_receipt_and_needs_a_frozen_bill` |
+| B8 cap replay ignores landings | `:1635` | Caught | `test_a_phone_sending_as_it_samples_evicts_nothing_even_when_nothing_old_landed` |
+| B11 no oldest-first cut | `:1666` | Caught | `test_a_row_older_than_one_that_landed_was_sent_not_evicted` |
+| M1 guard `all` -> `any` | `:2190` | Not caught | - |
+| M2 `postgres` removed from the local hosts | `:160` | Not caught (every production run would exit 5) | - |
+| M3 fuel diff ignores `billed` | `:2139` | Not caught | - |
+| M4 CLI window collapsed to (start, start) | `:2298` | Not caught | - |
+| M5 unexpected extras not failing | `:1758` | Caught | `test_extras_before_the_snapshot_fail_after_it_and_in_the_test_window_do_not` |
+| M6 read-only disabled | `:2204,2209,2211` | Caught | `test_the_audit_transaction_cannot_write` |
+
+9. Repository conventions. 7 new files, +6229, all under `backend/scripts` and `backend/tests`. No migration, no model change. No secrets in the diff. `scripts/` is outside import-linter (`root_package = "app"`) and outside mypy (`ci.yml` runs `mypy app`): importing the private names `_route_possible`, `JobService._workshop` and `_fuel_rate` is allowed today and fragile tomorrow, and the 2,422-line script itself is never type-checked. Scope boxes against the findings: "one-line refusals, no traceback" overstated (MINOR-2); "gates green on the drain tree" proven on the three-pick tree and now also on the four-pick tree; "owner's exact command" matches the plan's wording, not the runbook's (MINOR-4); "fuel round trip" exact, but the `billed` half of the diff is untested.
+
+TRIED AND COULD NOT BREAK. Writing through any SQL path, including after a commit. Leaking a URL or secret through argparse, including abbreviations and stray positionals. A remote or multi-host URL passing the guard. Overwriting a snapshot. Stdout pollution (the snapshot's stdout was pure JSON). The drain image rejecting or mangling a 2,000 or 8,000-record manifest. A false exit 0 from READ COMMITTED.
+
+WHAT THE REVIEWER RAN. Two merge-readiness gate runs (lanes `rv203`, `rv203d`); one probe run on the drain tree (`rv203p`, five probes); one fix-verification run (`rv203fix`); ten break runs (`rv203b3` to `rv203m6`). All SQL ran only in the harness's throwaway databases. No pushes, no comments, no production access.
+
+WHAT STAYS UNVERIFIED. The wrong-password path. The built image as uid 10001. PostgreSQL manual pages for lock levels and for REPEATABLE READ read-only behaviour. The Cloudflare body limit. Whether field phones hold NUL or lone-surrogate strings. The fixture against #197's final head.
+
+CLEANUP. The reviewer removed its 12 throwaway worktrees and pruned; no branches were created; the harness removed every `fixflow-rv203*` container; no images were built; `rv203-head` and `rv203-drain` are clean. The probe source is kept at `C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/49260710-db37-438a-9bb3-1a4eebcd87dc/scratchpad/rv203probe/test_rv203_probe.py`.
+
+COORDINATOR (2026-11-14). The two verdicts on this head are FAIL (phone side) and PASS-WITH-FIXES (server side); the stricter binds: not mergeable at 5576c6549391d252ac5525babded009de60d4a53. Ruling C39 sets one manifest contract (version 2) for both P2b lanes; every finding of both reports is to be fixed or answered before the second passes, each by the same reviewer.
