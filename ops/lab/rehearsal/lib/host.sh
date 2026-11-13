@@ -83,7 +83,7 @@ l4_origin() { # <checkout> [extra refs...]
   # their lock for a moment, so each is tried three times and the last error is shown.
   local i ok=0
   for i in 1 2 3; do
-    git -C "$co" fetch -q origin main && git -C "$co" bundle create "$b" origin/main "$@" > "$b.err" 2>&1 \
+    git -C "$co" fetch -q origin main && git -C "$co" bundle create "$(l4_win "$b")" origin/main "$@" > "$b.err" 2>&1 \
       && { ok=1; break; }
     sleep 5
   done
