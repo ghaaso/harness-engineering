@@ -89,7 +89,7 @@ are this skill's flow names, not the design notes' titles)
 | --- | --- | --- |
 | P2c | `:479` | spare phone, network off, "the Drain Report renders (empty: the spare phone cannot log in)" (`:488-490`) → `drain-report-smoke.yaml` only |
 | P4a | `:667` | **nothing on the pilot phone.** Step 0 keeps the network cut while the app is opened (`:677-678`) and logcat is captured before the app is opened, "no sync before the manifest receipt" (`:686-687`). Record "Maestro: not run" in the row |
-| P5c | `:875` | after the owner's install-over of v2: the arrival pair around adb `dumpsys` for the cross-stop check's foreground case (`:885-890`); carry-in smoke if the owner approves writes |
+| P5c | `:875` | after the owner's install-over of v2: the **owner** runs the write-tagged arrival pair (and the carry-in smoke if the owner chooses); the agent captures adb `dumpsys` around them for the cross-stop check's foreground case (`:885-890`) |
 | P5d-1b | `:905` | optional `readonly-smoke.yaml` on one phone per OEM, owner-approved per phone; log start/end time (`:907-910`) |
 
 Standing rules that bind every run (`SHIP-PLAN-2026-11.md`, PR #182): rule 1 "Nothing ships to

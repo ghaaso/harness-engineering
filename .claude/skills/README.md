@@ -35,14 +35,14 @@ Packages fetched and adapted on 2026-11-04 (upstream commit SHAs and licences in
 
 ## Read this first: these files are dated
 
-Written against `main` @ `a31924a` on 2026-11-04 and merged into `main` on 2026-11-13, after P1,
-P2a, P3a, P6a, P7a, P9-0a, P12a and L2 had merged. Statements that those merges made false were
-corrected at the merge (each correction names the PR that changed the fact). Everything else is as
-written:
+Written against `main` @ `a31924a` on 2026-11-04; reviewed on 2026-11-13 against `main` @
+`90ea88d`, after P1, P2a, P3a, P6a, P7a, P9-0a, P12a and L2 had merged. The corrections made at
+that review name the PR that changed the fact. They are not exhaustive: treat any other
+present-tense statement about the code as describing `a31924a`.
 
 - Every FixFlow `path:line` citation refers to `a31924a`. About six in ten still point at the
   same text, three in ten at text that has moved, and the rest at text that changed (measured at
-  the merge). Resolve a citation with `git show a31924a:<path>`, or find the symbol on the current
+  that review). Resolve a citation with `git show a31924a:<path>`, or find the symbol on the current
   head. Never cite one of these lines as current without re-reading it.
 - A sentence in the present tense about the code is a statement about `a31924a` unless it names
   a later PR. `CLAUDE.md` wins wherever the two disagree.

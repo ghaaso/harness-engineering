@@ -46,8 +46,9 @@ the fleet's Android phones. Tier rationale: design §3: xhigh for the geofence a
   - `in_field_apk` is `unknown` unless the brief gives the field APK commit. Code on `main` yields
     candidates; only device evidence from a fleet model yields conclusions (plan §0 rule 2).
   - Any fix sketch keeps the 14 h / 4 h bounds through `dutyStatus` / the travel state, keeps presence
-    and punches undroppable, adds no `expo-updates`, and proves native patches by an EAS fleet
-    compile, never by `expo export`.
+    and punches undroppable, adds no `expo-updates`, and proves native patches by the local
+    compile gate (`ops/lab/android-compile.sh`, since L2 #188) or an EAS fleet compile, never by
+    `expo export`.
   - Never quote a value from `app.json`, `eas.json`, `google-services.json` or any `.env`; report a
     committed value as a fingerprint (first 12 hex of sha256) if you must mention it.
   - Steps marked `[owner]` in SKILL.md (installs on roster phones, talking to technicians, the live

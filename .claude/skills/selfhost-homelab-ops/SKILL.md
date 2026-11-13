@@ -48,7 +48,7 @@ Dates are absolute; this skill was written 2026-11-04 against `main` @ a31924a a
 | `/api/health` never touches the DB (`O08-F07`); use `/api/ops/health` + `X-Ops-Proxy-Token` | `backend/app/features/health/router.py:12`; `backend/app/features/ops/router.py:18`, `:23` |
 | Per-IP limiter takes the **last** XFF entry (`O08-F03`) | `backend/app/features/identity/router.py:63` — `return forwarded.split(",")[-1].strip()` |
 | The repo compose is dev-only: `postgres:16-alpine`, `5432:5432`, `--reload` (`O08-F04`, `O08-F12`) | `docker-compose.yml:9`, `:16`, `:28` |
-| Web image is `node:20-alpine` + unpinned `serve@14` (`O08-F11`) | `Dockerfile.web:10`, `:39` |
+| Since P3a (#195) the web image is a `node:22-alpine` build stage served by `caddy:2-alpine` (`O08-F11`). At `a31924a` it was `node:20-alpine` + unpinned `serve@14` | `Dockerfile.web`, `ops/selfhost/web/Caddyfile`: re-read on the current head |
 | Restore runbook line omits `--exit-on-error`; benign "schema public already exists" | `docs/RUNBOOK-BACKUPS.md:45`, `:94` |
 | Newest pre-death dump known: `fixflow-db-20260802T023008Z.dump`, 42-table drill | `docs/RUNBOOK-BACKUPS.md:128` |
 | The Deploy row describes the self-host path since P3a (#195) rewrote it; Railway is history for production | `CLAUDE.md` ("The actual stack", Deploy row); `docs/program/SHIP-PLAN-2026-11.md:567` |
@@ -104,12 +104,14 @@ dashboard step, and resumes only from output the owner pastes back.
 review holds those files against; an agent that follows them as "draft" writes a competing copy.
 
 1. Read O-08 §1-§2, §6 and the amendments (`docs/program/w2/O-08-design.md:11-35`, `:76-84`,
-   `:104-126`), plan P3a Scope (:504-568), and the two binding reviews of #195 (four major
-   findings, all fixed: a stub that answered by itself, a bypassable restore gate, a runbook STOP
-   step that detached the old hostname, a restore that dropped before it proved).
+   `:104-126`), plan P3a Scope (:504-568), and the review record of #195 (kept with the program
+   documents on PR #182, `docs/program/evidence/reviews/195-*.txt`: four major findings, all
+   fixed: a stub that answered by itself, a bypassable restore gate, a runbook STOP step that
+   detached the old hostname, a restore that dropped before it proved).
 2. Review `docker-compose.prod.yml` against `references/fixflow-stack-constants.md` §1: profiles,
    `db` network `internal: true`, **no `ports:` on any service**, env files outside the repo, the
-   forced keys (`FIXFLOW_ENVIRONMENT=production`, backups off, dispatcher off), the backup prefix,
+   keys `backend.env` cannot override (`FIXFLOW_ENVIRONMENT=production`, the dispatcher off),
+   backups off by default in `compose.env` until the owner turns them on, the backup prefix,
    the healthcheck reading the `database` component of `/api/ops/health`. Render the compose only
    through `ops/selfhost/bin/ffc` (the images need `FIXFLOW_GIT_SHA`; a bare
    `docker compose -f docker-compose.prod.yml config` skips the wrapper's profile and env handling).
@@ -121,7 +123,7 @@ review holds those files against; an agent that follows them as "draft" writes a
    proves the dump and saves a live database before anything is dropped; the old hostname is never
    detached while a roster phone lacks its row; the plan's R1-R9 numbering (constants §6).
 6. If the brief says "runs commands" and `docker info` answers: run the repository's own smoke
-   (`ops/selfhost/smoke/smoke.sh`) inside a machine slot, never a hand-made stack. Otherwise return
+   (`ops/selfhost/smoke/smoke.sh`), never a hand-made stack. Otherwise return
    `DOCKER_ENGINE_DOWN` or "not authorised to run", never a guess.
 7. Report differences between those files and O-08 or the plan as findings with `path:line`; a
    change to them is a new PR by the owning lane, reviewed against standing rule 5 (plan :573-574).
