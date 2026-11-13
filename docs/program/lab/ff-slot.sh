@@ -91,6 +91,13 @@ case "$cmd" in
     PATIENCE="${FF_HEAVY_PATIENCE:-900}"
     while :; do
       reap
+      # A waiter whose owner is gone leaves the line: a gate run that was stopped while queued
+      # used to leave its acquire call behind, which then took a slot nobody was waiting for
+      # (three such orphans of one lane were seen in the queue on 2026-11-13).
+      if [ "$pid" != "-" ] && ! alive "$pid"; then
+        echo "ABANDONED holder=$holder: owner process $pid is gone" >&2
+        exit 3
+      fi
       # if something removed our ticket while we are alive, put it back under the same name (same place in line)
       [ -f "$ticket" ] || echo "$$" > "$ticket"
       my_turn=1
