@@ -1,0 +1,71 @@
+VERDICT: PASS
+PR #195 at d1b3de1fec86cb71c2f46c73583ed77d34cd49d4. That is the head `gh` reported; it did not move during the review. The branch was already rebased onto `c392cf8`, so merging `origin/main` changed nothing ("Already up to date", no `CLAUDE.md` conflict). `git range-diff` shows the eight earlier commits unchanged apart from the rebase; the new commits are `130e778` and `d1b3de1`.
+
+**Findings**
+
+No blocker, major or minor is left. Three notes, none of which needs another round:
+- **Smoke order:** the smoke does not assert that the drop comes after the checks. In S7 (`ops/selfhost/smoke/smoke.sh:196-219`) the order is simply the order the code runs in, so only the runbook text keeps "prove before drop". I worked this out by reading the code; with one smoke run allowed I did not re-run the smoke with the order swapped.
+- **Owner-only guard:** 6.6 (b) refuses to go on when the pre-restore upload fails ("never go to 6.7 while the only copy is on the host's own disk"), but that guard is an instruction to the owner, not a script check. The file is megabytes, so filling the disk is not a realistic risk.
+- **Gate bypass for uploads:** `fixflow-r2-put.sh` and R3.4 now start the backend with `run --rm --no-deps --entrypoint python`, which skips the restore gate on purpose. Because the entrypoint is replaced, `start.sh` never runs, so no migration happens. This is acceptable as written.
+
+**The eight items and two rulings**
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| 1 Host-less 400 | FIXED | `ops/hang-stub/server.mjs:307` sets `requireHostHeader: false`. Tests at `server.test.mjs:243` and `:492`. The README table (lines 36-56) covers Node 22's automatic replies, including the 503 from `maxRequestsPerSocket` (now pinned to 0). |
+| 2 Gate spellings | FIXED | `ops/selfhost/bin/restore-gate.sh:42-63` refuses any key that matches a forced key ignoring case unless it is exactly `NAME=`, and any key that is not a plain ASCII name (this catches the Kelvin-sign trick). Fixture test has 25 cases; smoke S4b covers six spellings. The loader question is settled by running it (below). |
+| 3 Stub STOP remedy | FIXED | Runbook 10.6 now says "never remove the public route"; new 10.10 is: hang, roll back, fleet offline, domain untouched. 10.8 also routes to 10.10. The only other route-removal step is 10.9, which stays gated on every phone having its row. |
+| 4 Restore order | FIXED | 6.6 (a) proves the dump: the dump's hash, the restore list, a check that the list has no `SCHEMA - public` entry, and the `TABLE DATA` count above 30. 6.6 (b) dumps a live database to `archive/pre-restore/`. Only then does 6.7 drop. R3.4 fetches the dump the way R7.2 does and compares it with the receipt's sha256; R3.5 requires the pre-restore key. The smoke covers the pre-restore dump. |
+| 5 CI compose rules | FIXED | `ci.yml` runs `compose-rules.mjs` and `restore-gate.test.sh`. |
+| 6 Port wording | FIXED | `CLAUDE.md:100-105` now says "no `->`". |
+| 7 Stub guarantee limits | FIXED | README "When the stub is not a guarantee" section; the test comment at `server.test.mjs:356` is corrected. |
+| 8 Non-root backend | FIXED | `backend/Dockerfile`: `USER fixflow` (uid 10001). In the smoke, migrations at boot, the healthcheck and pg_dump 17 all worked as that user. |
+| Ruling: CI trigger | FIXED | `push` now includes `release/drain` and `release/drain-web`. No secrets are used, and the only other removed line in the workflow is `postgres:16-alpine`, so nothing is weakened. |
+| Ruling: web image tag | FIXED | The runbook uses `drain-web-image` at lines 2201, 2269 and 2273. |
+
+**Repeated attacks**
+
+Stub, raw socket:
+- Hang mode: every case was silent. The Host-less HTTP/1.1 request now gets no 400. HTTP/1.0, pipelined requests, duplicate Host, TE+CL smuggling, HTTP/2.0, the h2 preface, an absolute URI and `OPTIONS *` were all silent too.
+- Proxy mode: the Host-less request is now forwarded and the backend's marked 200 comes back, which is correct.
+- Stub tests: 51 pass, 0 fail.
+
+Restore gate, run in its own image (mawk, `--network none`):
+- Refused: quoted keys, `export` followed by a tab, a trailing comment, CRLF with a spaced colon, a BOM before an indented key, a bare name.
+- Let through, and safe:
+  - `EXPORT fixflow_environment=dev`: Compose itself rejects that file ("key cannot contain a space").
+  - A duplicate exact `FIXFLOW_ENVIRONMENT=dev` later in the file: the rendered config still shows `production`.
+  - A multi-line quoted value hiding a key: Compose treats it as part of value `X`.
+
+Loader, settled by running pydantic-settings against both orders of the duplicated variable: whichever spelling comes last in the environment wins (`FIXFLOW_` first gave `dev`; lowercase first gave `production`). The smoke's own probe shows that with the gate skipped, `environment=dev` wins. So the gate is required, and it holds.
+
+CI compose rules:
+- Caught: a long-syntax port (with `host_ip`) on `ops`, `network_mode: host` on `web`, and a removed forced dispatcher key.
+- Passed, correctly, because neither publishes a port: `expose` plus `cap_add` on `edge`.
+
+Runbook, read in order as the owner would run it: 6.1 → 6.6 (prove, then save) → 6.7 (drop, load) → 6.8 → 6.9. No step destroys anything before the dump is proven, and in section 10 no step leaves the old hostname answering on its own.
+
+**Deliberate breaks** (tree restored and clean after each)
+
+| Break | What caught it |
+| --- | --- |
+| `requireHostHeader: false` removed | 3 stub tests, including "no Host header gets no 400" |
+| Forced-key match made case-sensitive | `restore-gate.test.sh`: 10 of 25 cases fail |
+| Colon dropped from the key terminator | not caught, but harmless: `KEY:` is then not a plain name and is still refused |
+
+**Tried and could not break**
+- Gate spellings beyond the fixture set, as listed above.
+- The CI rules against a long-syntax port and the host network.
+- `archive/` and pre-restore keys never being pruned.
+- The non-root image at boot and during a backup.
+- No published port in the rendered config or the running containers (smoke S13).
+
+**Runs** (tree = head merged with `c392cf8`, which is the head itself)
+- Backend gate on Postgres 17: `HEAD d1b3de1 tree=clean`, all gates exit 0, 0 of 1315 tests skipped, `SUMMARY FAIL=0`.
+- Web gate: lint, format, test and build all exit 0, `SUMMARY FAIL=0`.
+- Stub tests: 51 pass, 0 fail.
+- Smoke (one run, light slot): 78 PASS, `SMOKE FAILS=0`, `TEARDOWN containers_left=0`. Afterwards no `fixflow-p3a` container, network or volume and no `fixflow/*` image was left.
+
+I removed my review worktree (`.claude/worktrees/review-p3a`) and ran `git worktree prune`, and I deleted my scratch env-file fixtures. Only my own containers were created, and none remain.
+
+Coordinator's ruling (2026-11-13): second pass of the binding review (same reviewer; first pass PASS-WITH-FIXES at f9d4a5b with four major findings, file 195-f9d4a5b.txt). Mergeable at d1b3de1fec86cb71c2f46c73583ed77d34cd49d4. Notes routed: the smoke does not assert that the drop comes after the checks, and the 'never drop while the only copy is on this disk' guard is an instruction, not a script check: both go to the restore rehearsal (L4), which runs runbook section 6 as written and may ask for a scripted guard. The upload helper's deliberate bypass of the restore gate is accepted as written. P3a is part of the pinned drain image (release/drain: a31924a, then P1, P2b-2 and P3a by cherry-pick), so it is not a deploy-train row; its first-boot check is recorded beside the table.

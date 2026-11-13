@@ -149,7 +149,7 @@ case "$KIND" in
     docker info --format '{{.ServerVersion}}' >/dev/null 2>&1 || { echo "SETUP[docker] DOCKER_ENGINE_DOWN" | tee -a "$L/gates.log"; finish 3; }
     N="fixflow-$LANE"
     take_slot || finish 5
-    PG="${FF_PG_IMAGE:-postgres:16-alpine}"   # CI parity today; the plan moves both to 17-alpine in P3a
+    PG="${FF_PG_IMAGE:-postgres:17-alpine}"   # CI parity: main moved to Postgres 17 with P3a (90ea88d, 2026-11-13); FF_PG_IMAGE=postgres:16-alpine for a branch cut before it
     U="postgresql+asyncpg://postgres:postgres@localhost:5432/fixflow_test"
     # Mirror CI's environment per worktree: P1 makes the backend refuse to boot outside an
     # explicit dev/test environment and sets FIXFLOW_ENVIRONMENT in ci.yml. Whatever the
