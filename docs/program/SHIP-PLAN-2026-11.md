@@ -1907,3 +1907,32 @@ P7a adds; P9-0a builds without a host; P2a needs only the header name; the all-o
 take cannot deadlock; P6b, P7b-1 and P13 holds agree with their v8 Entry lines. Unverified
 suspicions carried forward: P2b-2's tests reusing P9-0a's fixtures (both B-tools) and then
 failing on `release/drain`; P7b-2's stale-pending sweep registering in `main.py` (B-core).
+
+### 7.9 Rulings and plan corrections from the first lane reports and binding reviews (2026-11-13)
+
+Each row is something a lane or a binding review found by building or attacking, not by reading the
+plan. Lines above §7 keep their numbers, so the corrections live here and win over the text they
+correct.
+
+| # | Source | Finding | Ruling |
+| --- | --- | --- | --- |
+| R11 | P7a lane (PR #191, journal 18) | "Nothing the installed APK does is newly refused" (P7a Deliverables) is false for writes on an **unclaimed** job: the deployed app lets a technician add a note, mark ready, close, abandon, run the arrival wizard, start travel and send WhatsApp without claiming first, and `require_job_actor` as written answers 403, which the phone parks as failed | **A technician's write to an unclaimed job first claims it for that technician**, atomically, through the existing claim path with its usual event, then proceeds; a lost race is 403. It grants no new power (any technician may claim an unclaimed job) and keeps one owner per job. Reads keep the plan's rule. The owner may overrule before P7a deploys; a v2 app can make the claim explicit |
+| C1 | P7a lane | The replay order in P7a's Deliverables (negotiate, payment, completion) cannot run: negotiate needs a bill and the completion creates it | The replay is completion, negotiate, payment, transition |
+| C2 | P7a lane; §7.8 finding 16 | Closed-job payments: plan line 999 refuses everyone, O-05 item 3 refuses non-managers only, and P4r has the manager enter cash residue after P7a is deployed | Still the owner's decision (W0-results). P7a builds line 999 with the actor rule in one predicate, `_closed_job_refuses_money_write`, so the answer is a one-line change |
+| C3 | P7a lane (journal 19) | After a manager reassigns a job, the previous technician's queued writes are refused 403 (payments and the creator's own create replay excepted) and are parked, visibly, on that phone | Accepted as built: the write is not deleted, and the manager can see and re-enter it. Listed for the v2 app's copy |
+| C4 | P2a binding review (PR #189, finding 3) | A build containing P2a, pointed at a backend that sends no marker, treats every 4xx as connectivity: an expired token never reaches sign-in and a real rejection is retried forever. Ruling R8 assumed every backend the fleet APK can reach is P1 or later, but no Entry line said so | **P2c's Entry gains "P1 merged"**, and no build containing P2a is ever pointed at a backend without P1. The device lab runs a P2a build only against a lab backend that contains P1 |
+| C5 | P2a binding review (findings 1, 2) | One evidence-upload path (`ArrivalJobWizard`) kept a private status ladder; a clock-in the server refuses left the on-duty sampler recording for up to 14 h | Sent back to the lane as must-fix: both are inside P2a's Scope (HR-A2; `O3-F3`; the location-privacy bound in CLAUDE.md) |
+| C6 | P12a binding review (PR #193, finding 1) | The idempotency key survived a retry but not a page reload or a second tab, so a partial payment could still be recorded twice | Sent back as must-fix: unconfirmed attempts persist in `localStorage` for 24 h with a discard control |
+| C7 | P12a binding review (finding 3) | A genuinely separate payment identical to an unanswered-but-landed one reuses its key and the server silently returns the earlier row | **P8a's Scope gains:** the payment response says when it is a deduplicated replay, so the web can tell "confirmed the earlier payment" from "recorded a new one" |
+| C8 | P2a binding review (unverified) | A `drainAll` pass started for one technician may keep sending after another signs in on a shared phone | P2a verifies and fixes or journals it; P2b-1's shared-phone work (`O10-F10`) inherits whatever is left |
+
+**What the binding reviews were worth.** Three lanes reported READY with green gates, green CI and a
+clean self-check; the two binding reviews that have returned each found a defect the self-check had
+not (a private status ladder in a component; a key that died on reload), and each re-ran the lane's
+fail-on-main claim instead of trusting it. No PR has merged on a self-check alone.
+
+**The API outage of 14:55.** The Claude API answered a Cloudflare "403 Attention Required" page for
+a few minutes; it ended four lane turns and all three reviewer agents at once. Every one resumed
+from its own transcript (a lane by a message, a reviewer agent by its id), and no work was lost.
+Whether eleven concurrent conversations from one address caused it is not known; the concurrency
+is unchanged and the event is recorded so a repeat can be recognised.

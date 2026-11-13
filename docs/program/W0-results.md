@@ -79,6 +79,7 @@ dated "unknown, because".
 | Merging the docs-only PRs #182 (plan) and #185 (skills) to `main` (added 2026-11-13, plan section 7) | the plan and skills being readable from `main` | stay open on their branches |  |  |
 | Closing draft PR #180, an older geofence approach that the plan's P5a supersedes (added 2026-11-13, plan section 7) | P5a (tidiness only) | stays open as a draft |  |  |
 | May a manager record or void a payment on a job that is already closed? (added 2026-11-13, plan section 7.8 finding 16) | the merge of P7a | no: closed is final for everyone (v8 as written); cash found on a phone after the drain for a closed job then has no way in |  |  |
+| A technician acting on a job nobody has claimed: the coordinator ruled that the first write claims the job for that technician (plan section 7.9, R11), because the installed app already lets technicians do this and would otherwise show failed items (added 2026-11-13) | P7a deploy (the P4c train) | **the ruling stands**: acting on an unclaimed job assigns it to that technician |  |  |
 
 ## Deploy-train table
 
