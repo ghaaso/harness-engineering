@@ -230,9 +230,20 @@ phase_revival() {
   fg="$(fgs_up)"
   fgs_lines > "$EV/services-revival.txt"
   snap revival-2
+  # the sampler's FGS is the signal (the lab's sampler barely receives fixes, so a ping count is
+  # not evidence); the verdict needs the new clock-in to have LANDED, else it says nothing
+  local p1 v
+  p1="$(punches_srv)"
+  if [ "$p1" -le "$((p0))" ]; then
+    v=inconclusive
+  elif [ "$fg" = no ]; then
+    v=reproduced
+  else
+    v=not_reproduced
+  fi
   record revival-duty O3-F2 "after any landed clock-in, the parked clock-out makes dutyStatus stop the on-duty sampler" \
-    "new clock-in: server punches now $(punches_srv); queue: $(qsummary attendance.queue.v1); pings landed in 150 s on duty: $(($(pings_srv) - g0)); sampler FGS=$fg" \
-    "$([ $(($(pings_srv) - g0)) -eq 0 ] && echo reproduced || echo not_reproduced)" services-revival.txt
+    "new clock-in: server punches $p0 -> $p1; queue: $(qsummary attendance.queue.v1); sampler FGS 170 s later=$fg; pings landed meanwhile: $(($(pings_srv) - g0)) (not evidence)" \
+    "$v" services-revival.txt
   tap_clock_button out
   sleep 10
   rec_roll

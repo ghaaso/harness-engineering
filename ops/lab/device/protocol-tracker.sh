@@ -138,8 +138,21 @@ wait_presence() { # kind before-count seconds -> prints elapsed or -1
 GEOFENCE_JOB="Handling job with task name 'fixflow-attendance-geofence'"
 GEOFENCE_DONE="Finished task 'fixflow-attendance-geofence'"
 BLOCKED_PERM="Background activity launch blocked.*REQUEST_PERMISSIONS"
-latest_row() { # kind -> the newest presence row of that kind, psql -A (| separated)
-  lab_sql "select kind, lat, lng, accuracy_m, inside_geofence, round(distance_m::numeric, 1) as distance_m, confirmed, is_mock_location, device_time, extract(epoch from device_time)::int as device_epoch from attendance_presence_event where tech_id='t2' and kind='$1' order by server_time desc limit 1" | tail -n +2 | head -n1
+latest_row() { # kind since-epoch -> the newest presence row of that kind captured after since-epoch
+  lab_sql "select kind, lat, lng, accuracy_m, inside_geofence, round(distance_m::numeric, 1) as distance_m, confirmed, is_mock_location, device_time, extract(epoch from device_time)::int as device_epoch from attendance_presence_event where tech_id='t2' and kind='$1' and device_time >= to_timestamp(${2:-0}) order by server_time desc limit 1" | tail -n +2 | head -n1
+}
+dev_now() { ash date +%s; } # the emulator's clock (the app stamps device_time with it)
+# Presence rows on the server of this kind captured after since-epoch.
+rows_since() { lab_sql "select count(*) from attendance_presence_event where tech_id='t2' and kind='$1' and device_time >= to_timestamp($2)" | tail -n1; }
+# The LAST "Finished task" for the geofence task within $2 s after the job line $1 (each crossing
+# also yields a quick debounced duplicate job; the first Finished can be that one's).
+last_finish() { # job-line seconds
+  local j0 l e
+  j0="$(lc_epoch "$1")" || return 0
+  lc_since "${3:-}" "$GEOFENCE_DONE" | while read -r l; do
+    e="$(lc_epoch "$l")"
+    awk -v e="$e" -v a="$j0" -v w="$2" 'BEGIN { exit !(e >= a && e <= a + w) }' && echo "$l"
+  done | tail -n1
 }
 col() { echo "$1" | cut -d'|' -f"$2"; } # 1-based column of a psql -A row
 fsub() { # a b -> a - b (one decimal), "?" when either is missing
@@ -148,67 +161,86 @@ fsub() { # a b -> a - b (one decimal), "?" when either is missing
 fge() { [ "$1" != "?" ] && awk -v a="$1" -v b="$2" 'BEGIN { exit !(a >= b) }'; } # a >= b
 
 # ---- d: O01-F04 / F05 (contradicted arrival, headless) ------------------------------------
-# The F04 geometry: an arrival fix 100 m from the centre of the 80 m fence with 50 m accuracy.
-# The phone's raw-point rule says outside (contradicted -> 20 s dwell -> second fix, still
-# contradicted -> confirmed=false, prompt suppressed); the server's rule is predicted to say
-# inside_geofence=true for the same fix. The app is killed first so the event runs headless
-# (no Activity: avoids the F19 hang, which is its own check). Play services decides whether
-# this fix is an ENTER at all; when it does not fire, the run is inconclusive, not passed.
+# F04's condition is an OS ENTER whose confirmation fix lands just OUTSIDE the raw 80 m circle
+# but within r + accuracy. Play services decides on the raw point (calibration 2026-11-13: no
+# ENTER for any fix 85-100 m out, at 10-40 m accuracy), so the lab STAGES the divergence: an
+# inside fix makes Play services deliver ENTER, and the moment the job starts the fix moves to
+# 100 m out at the same 30 m accuracy, so the handler's own HIGH read is the edge fix. The
+# phone then says contradicted (20 s dwell, second fix, confirmed=false, prompt suppressed);
+# the register predicts the server says inside_geofence=true for that same fix. The process is
+# killed first so the event runs headless (no Activity: avoids the F19 hang, its own check).
+# When the handler's read wins the race and gets the inside fix, the run is inconclusive.
 P4="for one fix with r < d <= r + accuracy the phone says confirmed=false while the server stores inside_geofence=true"
-P5="the contradicted path outlives Expo's 15 s job and records the crossing only after the 20 s dwell (the loss itself needs an OEM kill: not testable on stock Android)"
+P5="on the contradicted path the handler runs past Expo's 15 s job window and enqueues only after the 20 s dwell (measured on device; the predicted LOSS needs an OEM kill and is not testable on stock Android)"
 check_d_once() {
-  local n="$1" a0 n0 M job fin t row="" n1 dur enq conf ins obs
-  mark "CHECK d#$n edge arrival (100 m, acc $EDGE_ACC m), clocked out, headless"
+  local n="$1" a0 n0 M T job fin t row="" n1 dur enq conf ins obs i
+  mark "CHECK d#$n staged edge arrival (ENTER from inside, confirmation fix 100 m out, acc $EDGE_ACC m), headless"
   clock out > /dev/null 2>&1
-  # the OUT fixes carry the same accuracy as the edge fix: Play services fusion keeps a recent
-  # 8 m fix over a newer 50 m one, so a downgrade would never reach the geofencer (run 2)
   geo_set "$OUT_LAT" "$OUT_LNG" "$EDGE_ACC"
   launch_app
   sleep 5 # foreground: ensureGeofenceMonitoring re-registers the fence (initial EXIT)
   go_home
   wait_debounce arrive
-  a0="$(presence_count arrive)"
   n0="$(notif_count "reached the workshop")"
   kill_app || mark "d#$n app process did not die"
-  M="d#$n move-edge"
+  M="d#$n move-in"
+  T="$(dev_now)"
   mark "$M"
-  geo_set "$EDGE_LAT" "$FENCE_LNG" "$EDGE_ACC"
+  geo_set "$FENCE_LAT" "$FENCE_LNG" "$EDGE_ACC"
   geo_nudge
-  job="$(wait_lc "$M" "$GEOFENCE_JOB" 120)"
-  t="$(wait_presence arrive "$a0" 120)"
+  job=""
+  for i in $(seq 1 120); do # poll the logcat file every 0.5 s for the ENTER job
+    job="$(lc_since "$M" "$GEOFENCE_JOB" | head -n1)"
+    [ -n "$job" ] && break
+    sleep 0.5
+  done
+  [ -n "$job" ] && geo_set "$EDGE_LAT" "$FENCE_LNG" "$EDGE_ACC"
+  mark "d#$n edge fix set after the ENTER job: ${job:+yes}"
+  t=-1
+  for i in $(seq 1 24); do
+    [ "$(rows_since arrive "$T")" -gt 0 ] && {
+      t=$((i * 5))
+      break
+    }
+    sleep 5
+  done
   sleep 5
-  fin="$(lc_since "$M" "$GEOFENCE_DONE" | head -n1)"
+  fin="$(last_finish "$job" 90 "$M")"
   n1="$(notif_count "reached the workshop")"
   notif_dump | grep -B2 -A12 "pkg=$APP_PKG" > "$EV/notifications-d$n.txt"
   dump_state "$EV/state-d$n.json"
-  [ "$t" != -1 ] && row="$(latest_row arrive)"
+  [ "$t" != -1 ] && row="$(latest_row arrive "$T")"
   {
     echo "geofence job: $job"
-    echo "finished: $fin"
+    echo "last finished within 90 s: $fin"
     echo "row (kind|lat|lng|accuracy_m|inside_geofence|distance_m|confirmed|mock|device_time|epoch): $row"
   } > "$EV/presence-d$n.txt"
   dur="$(fsub "$(lc_epoch "$fin")" "$(lc_epoch "$job")")"
   enq="$(fsub "$(col "$row" 10)" "$(lc_epoch "$job")")"
   conf="$(col "$row" 7)"
   ins="$(col "$row" 5)"
-  obs="ENTER delivered: $([ -n "$job" ] && echo yes || echo 'no (120 s)'); arrive row after ${t}s (-1 = none in 120 s): confirmed=$conf inside_geofence=$ins distance_m=$(col "$row" 6) accuracy_m=$(col "$row" 4) mock=$(col "$row" 8); handler ran ${dur}s (job start to Finished task); row device_time ${enq}s after the job started; arrival notifications $n0 -> $n1"
+  obs="ENTER delivered: $([ -n "$job" ] && echo yes || echo 'no (60 s)'); arrive row captured after the move: ${t}s (-1 = none in 120 s): confirmed=$conf inside_geofence=$ins distance_m=$(col "$row" 6) accuracy_m=$(col "$row" 4) mock=$(col "$row" 8); handler ran ${dur}s (job start to its last Finished task); row device_time ${enq}s after the job started; arrival notifications $n0 -> $n1"
   if [ -z "$job" ] || [ -z "$row" ]; then
     record "d#$n" O01-F04 "$P4" "$obs" inconclusive "presence-d$n.txt"
     record "d#$n" O01-F05 "$P5" "$obs" inconclusive "presence-d$n.txt"
+  elif [ "$conf" != f ]; then
+    record "d#$n" O01-F04 "$P4" "$obs; the handler's fix was not the edge fix (the staging race was lost), so this run cannot judge F04" inconclusive "presence-d$n.txt"
+    record "d#$n" O01-F05 "$P5" "$obs; not the contradicted path" inconclusive "presence-d$n.txt"
   else
-    record "d#$n" O01-F04 "$P4" "$obs" "$([ "$conf" = f ] && [ "$ins" = t ] && echo reproduced || echo not_reproduced)" "presence-d$n.txt"
-    if [ "$conf" != f ]; then
-      record "d#$n" O01-F05 "$P5" "$obs; the fix was not contradicted, so the dwell path did not run" inconclusive "presence-d$n.txt"
+    record "d#$n" O01-F04 "$P4" "$obs" "$([ "$ins" = t ] && echo reproduced || echo not_reproduced)" "presence-d$n.txt"
+    if [ "$dur" = "?" ] || [ "$enq" = "?" ]; then
+      record "d#$n" O01-F05 "$P5" "$obs; a timestamp is missing" inconclusive "presence-d$n.txt"
     else
       record "d#$n" O01-F05 "$P5" "$obs" "$(fge "$dur" 15.001 && fge "$enq" 20 && echo reproduced || echo not_reproduced)" "presence-d$n.txt"
     fi
   fi
+  geo_set "$OUT_LAT" "$OUT_LNG" "$EDGE_ACC"
   rec_roll
 }
 # The pipeline control: a clean arrival at the centre (acc 8 m), headless, must record a
 # confirmed row and post the arrival prompt. If this fails, the d/b/f19 verdicts mean nothing.
 check_d_control() {
-  local a0 n0 M job t row="" n1
+  local a0 n0 M T job t row="" n1
   mark "CHECK d-control clean arrival, clocked out, headless"
   clock out > /dev/null 2>&1
   geo_set "$OUT_LAT" "$OUT_LNG"
@@ -220,6 +252,7 @@ check_d_control() {
   n0="$(notif_count "reached the workshop")"
   kill_app || mark "d-control app process did not die"
   M="d-control move-in"
+  T="$(dev_now)"
   mark "$M"
   geo_set "$FENCE_LAT" "$FENCE_LNG"
   geo_nudge
@@ -227,7 +260,7 @@ check_d_control() {
   t="$(wait_presence arrive "$a0" 120)"
   sleep 8
   n1="$(notif_count "reached the workshop")"
-  [ "$t" != -1 ] && row="$(latest_row arrive)"
+  [ "$t" != -1 ] && row="$(latest_row arrive "$T")"
   {
     echo "geofence job: $job"
     echo "row: $row"
@@ -252,7 +285,7 @@ check_d() {
 # kind of crossing with the process killed (no Activity) records without opening the app.
 P19="with the Activity alive in the background the geofence handler hangs in requestForegroundPermissionsAsync; no row until the app is opened"
 check_f19_once() {
-  local n="$1" d0 M job t blk tr rows row late obs
+  local n="$1" d0 M T job t blk tr rows row late obs v
   mark "CHECK f19#$n depart with the Activity alive in the background"
   clock out > /dev/null 2>&1
   geo_set "$FENCE_LAT" "$FENCE_LNG"
@@ -263,6 +296,7 @@ check_f19_once() {
   wait_debounce depart
   d0="$(presence_count depart)"
   M="f19#$n move-out"
+  T="$(dev_now)"
   mark "$M (app pid $(app_pid), Activity stopped in the background)"
   geo_set "$OUT_LAT" "$OUT_LNG"
   geo_nudge
@@ -279,7 +313,7 @@ check_f19_once() {
   tr="$(wait_presence depart "$d0" 60)"
   sleep 10
   rows=$(($(presence_count depart) - d0))
-  row="$(latest_row depart)"
+  row="$(latest_row depart "$T")"
   late="$(fsub "$(col "$row" 10)" "$(lc_epoch "$job")")"
   {
     echo "geofence job: $job"
@@ -288,34 +322,58 @@ check_f19_once() {
     lc_since "$M" "TaskService|$BLOCKED_PERM|GrantPermissionsActivity|FFLAB"
   } > "$EV/f19-$n.txt"
   obs="EXIT delivered; depart row within 90 s with the app in the background: $([ "$t" = -1 ] && echo none || echo "after ${t}s"); blocked GrantPermissionsActivity launch: $([ -n "$blk" ] && echo yes || echo no); after reopening: a row after ${tr}s (-1 = none in 60 s), depart rows added $rows, newest device_time ${late}s after the EXIT job started"
-  record "f19#$n" O01-F19 "$P19" "$obs" "$([ "$t" = -1 ] && echo reproduced || echo not_reproduced)" "f19-$n.txt"
+  # reproduced needs all three: no row while backgrounded, the blocked permission launch, and a
+  # row once the app is opened (so the pipeline itself worked). A row in time = not reproduced.
+  if [ "$t" != -1 ]; then
+    v=not_reproduced
+  elif [ -n "$blk" ] && [ "$tr" != -1 ]; then
+    v=reproduced
+  else
+    v=inconclusive
+    obs="$obs; incomplete evidence (blocked launch and a row after reopening are both required)"
+  fi
+  record "f19#$n" O01-F19 "$P19" "$obs" "$v" "f19-$n.txt"
   rec_roll
 }
+# Control: the SAME crossing kind (a depart) with the process dead. First an arrival in the
+# foreground (records normally), then HOME, wait out the depart debounce, kill, move out.
 check_f19_headless_once() {
-  local n="$1" a0 M job t blk
-  mark "CHECK f19-headless#$n arrive with the process dead"
-  go_home
-  wait_debounce arrive
-  a0="$(presence_count arrive)"
-  kill_app || mark "f19-headless#$n app process did not die"
-  M="f19h#$n move-in"
-  mark "$M"
+  local n="$1" M T job t blk
+  mark "CHECK f19-headless#$n depart with the process dead"
+  launch_app
   geo_set "$FENCE_LAT" "$FENCE_LNG"
   geo_nudge
+  sleep 20
+  go_home
+  wait_debounce depart
+  kill_app || mark "f19-headless#$n app process did not die"
+  M="f19h#$n move-out"
+  T="$(dev_now)"
+  mark "$M"
+  geo_set "$OUT_LAT" "$OUT_LNG"
+  geo_nudge
   job="$(wait_lc "$M" "$GEOFENCE_JOB" 120)"
-  t="$(wait_presence arrive "$a0" 90)"
+  t=-1
+  local i
+  for i in $(seq 1 18); do
+    [ "$(rows_since depart "$T")" -gt 0 ] && {
+      t=$((i * 5))
+      break
+    }
+    sleep 5
+  done
   blk="$(lc_since "$M" "$BLOCKED_PERM" | head -n1 | cut -c1-220)"
   {
     echo "geofence job: $job"
     echo "blocked: $blk"
-    echo "newest arrive row: $(latest_row arrive)"
+    echo "newest depart row: $(latest_row depart "$T")"
   } > "$EV/f19h-$n.txt"
   if [ -z "$job" ]; then
-    record "f19-headless#$n" control "process dead: a crossing records without opening the app" "Play services delivered no ENTER within 120 s" inconclusive "f19h-$n.txt"
+    record "f19-headless#$n" control "process dead: the same depart records without opening the app" "Play services delivered no EXIT within 120 s" inconclusive "f19h-$n.txt"
   else
-    record "f19-headless#$n" control "process dead: a crossing records without opening the app" \
-      "ENTER delivered; arrive row after ${t}s (-1 = none in 90 s); blocked permission launch: $([ -n "$blk" ] && echo yes || echo no)" \
-      "$([ "$t" != -1 ] && echo reproduced || echo not_reproduced)" "f19h-$n.txt"
+    record "f19-headless#$n" control "process dead: the same depart records without opening the app" \
+      "EXIT delivered; depart row after ${t}s (-1 = none in 90 s); blocked permission launch: $([ -n "$blk" ] && echo yes || echo no)" \
+      "$([ "$t" != -1 ] && [ -z "$blk" ] && echo reproduced || echo not_reproduced)" "f19h-$n.txt"
   fi
 }
 check_f19() {
@@ -446,7 +504,7 @@ check_c() {
   p0="$(ping_count)"
   sleep 150
   p1="$(ping_count)"
-  local obs="FGS on duty before travel=$pre, during the leg=$during, 10 s after arrival=$post (still on duty); pings received in the 150 s after arrival: $((p1 - p0))"
+  local obs="FGS on duty before travel=$pre, during the leg=$during, 10 s after arrival=$post (duty cache: $(kv attendance.duty.v1)); pings received in the 150 s after arrival: $((p1 - p0)) (not evidence: the lab's sampler barely receives fixes, see README)"
   if [ "$pre" != yes ]; then
     record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "$obs" inconclusive "services-c-pre.txt"
   elif [ "$post" = no ]; then
@@ -490,6 +548,10 @@ check_reboot() {
   adb_ root > /dev/null 2>&1
   sleep 3
   adb_ wait-for-device
+  # a reboot ends the logcat stream and removes the test provider: restart both
+  adb_ logcat -v threadtime >> "$EV/logcat.txt" 2>&1 &
+  LOGCAT_PID=$!
+  geo_provider_on
   local p0 p1 f1 f2
   p0="$(ping_count)"
   sleep 180

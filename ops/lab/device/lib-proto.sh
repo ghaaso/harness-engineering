@@ -27,7 +27,7 @@ FENCE_R=80
 OUT_LAT="24.905000" # ~556 m north of the centre: past the 120 m exit threshold
 OUT_LNG="67.100000"
 EDGE_LAT="24.900900" # ~100 m north: outside the 80 m fence by the raw point, inside by r + accuracy
-EDGE_ACC=50
+EDGE_ACC=30
 JOB_LAT="24.918000" # the seeded lab job's customer pin
 JOB_LNG="67.100000"
 
@@ -106,14 +106,26 @@ proto_begin() { # name
   mkdir -p "$EV"
   : > "$EV/results.ndjson"
   : > "$EV/timeline.txt"
+  # the trap goes first, so anything started below is undone however the script dies
+  trap proto_cleanup EXIT
+  trap 'exit 130' INT TERM HUP
+  # the installed app must be a LAB build: same host + Firebase check as app.sh install
+  local apk_dev
+  apk_dev="$(ash pm path "$APP_PKG" | sed -n 's/^package://p' | head -n1)"
+  [ -n "$apk_dev" ] || die "$APP_PKG is not installed on $EMU_SERIAL"
+  adb_ pull "$apk_dev" "$(winpath "$EV/installed.apk")" > /dev/null || die "cannot pull the installed APK"
+  bash "$LAB_DIR/app.sh" check "$EV/installed.apk" > "$EV/installed-apk-check.txt" 2>&1 ||
+    die "the installed app is not a lab build (see $EV/installed-apk-check.txt): refusing to drive it"
+  sha256sum "$EV/installed.apk" | cut -c1-64 > "$EV/installed-apk.sha256"
+  rm -f "$EV/installed.apk"
+  # lc_epoch reads logcat wall time in the host's zone: the two must agree
+  [ "$(ash date +%z)" = "$(date +%z)" ] || die "emulator time zone $(ash date +%z) != host $(date +%z)"
   adb_ logcat -c > /dev/null 2>&1
   adb_ logcat -v threadtime > "$EV/logcat.txt" 2>&1 &
   LOGCAT_PID=$!
   geo_provider_on
   feeder_start
   rec_start
-  trap proto_cleanup EXIT
-  trap 'exit 130' INT TERM HUP
   {
     echo "protocol: $1"
     echo "started: $(date -Is)"
@@ -133,10 +145,14 @@ proto_cleanup() {
   geo_provider_off
   rec_collect 2> /dev/null
   [ -n "$LOGCAT_PID" ] && kill "$LOGCAT_PID" 2> /dev/null
+  [ -f "$EV/.result.tmp" ] && rm -f "$EV/.result.tmp"
   # never leave location switched off or the device forced into doze
   ash cmd location set-location-enabled true > /dev/null 2>&1
   ash dumpsys deviceidle unforce > /dev/null 2>&1
+  ash dumpsys battery reset > /dev/null 2>&1
   ash cmd connectivity airplane-mode disable > /dev/null 2>&1
+  ash pm grant "$APP_PKG" android.permission.ACCESS_BACKGROUND_LOCATION > /dev/null 2>&1
+  ash su 2000 cmd location providers remove-test-provider network > /dev/null 2>&1
   if [ -n "${PROTO_RESTORE_BACKEND:-}" ]; then
     bash "$LAB_DIR/lab-backend.sh" up > /dev/null 2>&1 || true
   fi

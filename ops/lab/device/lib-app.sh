@@ -92,8 +92,14 @@ fgs_lines() { ash dumpsys activity services "$APP_PKG"; }
 # expo.modules.location.services.LocationTaskService (HARNESS-REVIEW: O01-F20). These read only
 # that ServiceRecord block in `dumpsys activity services`.
 # "yes" when the location service is in the foreground right now.
+# Only a record bound to a LIVE process counts: after a kill the record keeps
+# isForeground=true with app=null (and a "Restarting" copy), which is not a running service.
 fgs_up() {
-  fgs_lines | awk '/ServiceRecord{/{inb=($0 ~ /LocationTaskService/)} inb && /isForeground=true/{f=1} END{print (f ? "yes" : "no")}'
+  fgs_lines | awk '
+    /ServiceRecord\{/ { inb = ($0 ~ /LocationTaskService/ && $0 !~ /Restarting/); live = 0 }
+    inb && /app=ProcessRecord\{/ { live = 1 }
+    inb && live && /isForeground=true/ { f = 1 }
+    END { print (f ? "yes" : "no") }'
 }
 # "yes" when a LocationTaskService record exists at all (foreground or not).
 loc_svc_present() {

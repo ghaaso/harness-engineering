@@ -9,7 +9,9 @@
 #   - writes technician-app/.env with EXPO_PUBLIC_API_URL=http://10.0.2.2:<FF_LAB_PORT> (the
 #     only API host a lab build may bake: plan 7.5) and an empty EXPO_PUBLIC_SENTRY_DSN;
 #   - adds a config plugin that sets android:usesCleartextTraffic="true" (the lab backend is
-#     plain HTTP; Android 9+ refuses cleartext by default in release builds).
+#     plain HTTP; Android 9+ refuses cleartext by default in release builds);
+#   - replaces google-services.json with a DUMMY Firebase project (push registration fails
+#     instead of reaching the production Firebase project).
 # L2's summary marks the run "MODIFIED" because of the hook: correct, this is a lab build, not
 # a gate result. The APK is signed with the prebuild template's public debug key and is for
 # the emulator only (app.sh install refuses a bundle that names any non-lab FixFlow host).
@@ -46,6 +48,23 @@ set -euo pipefail
 [ "\$(pwd)" = /work/technician-app ] || { echo "hook must run in /work/technician-app" >&2; exit 2; }
 printf 'EXPO_PUBLIC_API_URL=%s\nEXPO_PUBLIC_SENTRY_DSN=\n' "$LAB_API_URL" > .env
 rm -f .env.local .env.production .env.production.local
+# Firebase: a DUMMY project, never the production one. With the real google-services.json the
+# lab emulator registered with the production Firebase project for push (L3a review, 2026-11-13);
+# with this one that registration simply fails. Package name must match for the gradle plugin.
+cat > google-services.json << 'GS'
+{
+  "project_info": { "project_number": "000000000000", "project_id": "fixflow-lab-dummy", "storage_bucket": "fixflow-lab-dummy.appspot.com" },
+  "client": [
+    {
+      "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000", "android_client_info": { "package_name": "com.fixflow.technician" } },
+      "oauth_client": [],
+      "api_key": [{ "current_key": "AIzaLabDummyKeyNotARealKey000000000000" }],
+      "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+    }
+  ],
+  "configuration_version": "1"
+}
+GS
 mkdir -p plugins
 cat > plugins/lab-cleartext.js << 'JS'
 // FixFlow device lab only: allow plain-HTTP to the lab backend at 10.0.2.2.
@@ -62,7 +81,7 @@ node -e '
   a.expo.plugins = (a.expo.plugins || []).concat(["./plugins/lab-cleartext.js"]);
   fs.writeFileSync("app.json", JSON.stringify(a, null, 2));
 '
-echo "lab hook: API base $LAB_API_URL written to .env; cleartext plugin added (copy only)"
+echo "lab hook: API base $LAB_API_URL written to .env; cleartext plugin added; dummy Firebase project (copy only)"
 EOF
 
 log "building the lab APK of ${SHA:0:12} ($REF) with API $LAB_API_URL; needs 2 slots"

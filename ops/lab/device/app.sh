@@ -32,11 +32,14 @@ LAB_TECH_PIN="${FF_LAB_TECH_PIN:-2580}" # lab-backend.sh seeds this; a throwaway
 check_apk_hosts() { # apk
   local apk="$1" tmp
   tmp="$(mktemp -d)"
-  unzip -q -o "$apk" assets/index.android.bundle -d "$tmp" || die "no JS bundle in $apk"
+  unzip -q -o "$apk" assets/index.android.bundle resources.arsc -d "$tmp" || die "no JS bundle in $apk"
+  local top
+  top="$(git -C "$(winpath "$HERE")" rev-parse --show-toplevel)"
   node - "$(winpath "$tmp/assets/index.android.bundle")" "$LAB_API_URL" \
-    "$(winpath "$(git -C "$(winpath "$HERE")" rev-parse --show-toplevel)/technician-app/eas.json")" << 'NODE'
+    "$(winpath "$top/technician-app/eas.json")" "$(winpath "$tmp/resources.arsc")" \
+    "$(winpath "$top/technician-app/google-services.json")" << 'NODE'
 const fs = require("fs");
-const [bundlePath, labUrl, easPath] = process.argv.slice(2);
+const [bundlePath, labUrl, easPath, arscPath, gsPath] = process.argv.slice(2);
 const b = fs.readFileSync(bundlePath, "utf8");
 let bad = 0;
 // 1. the lab base must be in the bundle (the API URL is inlined at build time)
@@ -60,7 +63,28 @@ const origins = new Set((b.match(/https?:\/\/[A-Za-z0-9.-]+(:\d+)?/g) || []));
 const allowed = /^(http:\/\/10\.0\.2\.2:\d+|https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|https?:\/\/(www\.)?(w3\.org|reactnative\.dev|facebook\.github\.io|github\.com|fb\.me|expo\.dev|docs\.expo\.dev|goo\.gl|developer\.android\.com|developer\.apple\.com|reactjs\.org|react\.dev|example\.com|schemas\.android\.com|ns\.adobe\.com|json-schema\.org|bit\.ly|mozilla\.org|developer\.mozilla\.org|tools\.ietf\.org|nodejs\.org|sentry\.io|docs\.sentry\.io|ingest\.sentry\.io|nominatim\.openstreetmap\.org|openstreetmap\.org|tile\.openstreetmap\.org|maps\.google\.com|www\.google\.com|google\.com|wa\.me|api\.whatsapp\.com|exp\.host|u\.expo\.dev|reactnavigation\.org|callstack\.github\.io|xml\.org|purl\.org|www\.w3\.org))$/;
 const other = [...origins].filter((o) => !allowed.test(o));
 console.log(`origins in bundle: ${origins.size}; not on the allow-list: ${other.length}`);
-for (const o of other) console.log("  REVIEW " + o);
+// Reviewed by hand (2026-11-13), none a FixFlow host: Expo doc links, placeholder strings in RN
+// permission constants and a library test string, Sentry loader/dev-tool URLs (Sentry is off in
+// a lab build: empty DSN), and NetInfo's reachability probe (Google). Anything else FAILS.
+const reviewed = /^(https:\/\/expo\.fyi|http:\/\/www\.example\.com\.android\.|https:\/\/spotlightjs\.com|https:\/\/classic-assets\.eascdn\.net|https:\/\/browser\.sentry-cdn\.com\.android\.|http:\/\/dogs\.are\.greater|https:\/\/clients3\.google\.com)/;
+for (const o of other) {
+  const ok = reviewed.test(o);
+  console.log((ok ? "  reviewed " : "  NOT REVIEWED ") + o);
+  if (!ok) bad++;
+}
+// 4. the production Firebase project must not be baked in (compared by value, never printed)
+try {
+  const gs = JSON.parse(fs.readFileSync(gsPath, "utf8"));
+  const pi = gs.project_info || {};
+  const vals = [pi.project_id, pi.project_number]
+    .concat((gs.client || []).flatMap((c) => (c.api_key || []).map((k) => k.current_key)))
+    .filter((v) => typeof v === "string" && v.length >= 6);
+  const arsc = fs.readFileSync(arscPath);
+  let hits = 0;
+  for (const v of vals) if (arsc.includes(Buffer.from(v, "utf8")) || arsc.includes(Buffer.from(v, "utf16le"))) hits++;
+  console.log(`production Firebase values checked: ${vals.length}; present in resources: ${hits}`);
+  if (hits) { console.error("the production Firebase project is baked in (push would register with it)"); bad++; }
+} catch (e) { console.error("cannot check Firebase values: " + e.message); bad++; }
 if (/railway\.app|up\.railway|fixflow[a-z0-9-]*\.(com|app|pk|net)/i.test(b)) { console.error("a production-looking FixFlow/Railway host is in the bundle"); bad++; }
 process.exit(bad ? 1 : 0);
 NODE
