@@ -160,12 +160,13 @@ main() {
   t_slot=$(date +%s)
   bash "$SLOT_SH" acquire "$HOLDER" 2 "$$" &
   acq_pid=$!
-  if ! wait "$acq_pid"; then
-    acq_pid=""
-    write_summary 4 "slot acquire failed"
+  wait "$acq_pid"
+  rc=$?
+  acq_pid=""
+  if [ "$rc" -ne 0 ]; then
+    write_summary 4 "slot acquire failed (ff-slot.sh exit $rc$([ "$rc" -gt 128 ] && echo ": killed by signal $((rc - 128))"))"
     exit 4
   fi
-  acq_pid=""
   slot_wait=$(($(date +%s) - t_slot))
 
   # What gets built is captured only now, after the (possibly long) slot wait, so a checkout
