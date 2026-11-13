@@ -47,7 +47,7 @@ jobs_seen() { adb_ logcat -d -v time | tr -d '\r' | grep -c "Handling job with t
 lat_of() { awk -v m="$1" 'BEGIN { printf "%.6f", 24.9 + m / 111190 }'; } # metres north -> lat
 {
   echo "F04 calibration $(date -Is): fence 24.9,67.1 r=80 m; OUT = 556 m at the same accuracy"
-  for g in "90 20" "90 10" "85 10" "95 30" "100 30" "88 40" "70 30"; do
+  for g in "90 20" "90 10" "85 10" "95 30" "100 30" "88 40" "70 30" "40 30"; do
     set -- $g
     push 24.905 "$2"
     nudge
@@ -57,7 +57,7 @@ lat_of() { awk -v m="$1" 'BEGIN { printf "%.6f", 24.9 + m / 111190 }'; } # metre
     nudge
     feed "$(lat_of "$1")" "$2" 45
     st="$(ash dumpsys activity service com.google.android.gms/com.google.android.location.internal.GoogleLocationManagerService |
-      sed -n '/Geofencer State:/,/Dump of hardware/p' | grep -m1 'Geofence\[' | grep -o 'd=[^ ]* [A-Z?]*')"
+      sed -n '/Geofencer State:/,/Dump of hardware/p' | grep -m1 'Geofence\[' | grep -o 'd=[^ ]* [A-Z_?]*')"
     echo "d=${1}m acc=${2}m: geofence jobs delivered in 45 s: $(jobs_seen); geofencer state: $st"
   done
 } | tee "$OUTD/calib.txt"

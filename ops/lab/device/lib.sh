@@ -35,13 +35,17 @@ C_DB="fixflow-$LAB_LANE-labdb"
 C_API="fixflow-$LAB_LANE-labapi"
 C_STUB="fixflow-$LAB_LANE-labstub"
 
-mkdir -p "$LAB_RUN"
-
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
 die() {
   echo "error: $*" >&2
   exit 1
 }
+
+# Working outputs never go into a checkout: refuse a lab root inside this repository.
+case "$(cd "$LAB_ROOT" 2> /dev/null && pwd -P || echo "$LAB_ROOT")/" in
+  "$(cd "$LAB_DIR/../../.." && pwd -P)"/*) die "FF_LAB_ROOT=$LAB_ROOT is inside the repository" ;;
+esac
+mkdir -p "$LAB_RUN"
 
 load_android_env() {
   [ -f "$ANDROID_ENV" ] || die "no toolchain env at $ANDROID_ENV (is the Android toolchain installed?)"
