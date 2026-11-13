@@ -1,22 +1,22 @@
 # FixFlow ship program — the owner view
 
-_The owner view is now a page: open `docs/program/ship/index.html` in a browser (lanes, what waits on what, your pre-flight as a checklist, the decisions board). This file is the record generated from the same data (`docs/program/ship/program.json`) at each rebuild; the plan decides, the page and this record explain. Last rebuild: 2026-11-13, plan v9.1._
+_The owner view is a page: open `docs/program/ship/index.html` in a browser (lanes, what waits on what, your pre-flight as a checklist, the decisions board). This file is the record generated from the same data (`docs/program/ship/program.json`) at each rebuild; the plan decides, the page and this record explain. Last rebuild: 2026-11-13, plan v9.2._
 
 
 _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not edit by hand; edit program.json and rebuild. The page is `index.html` in this folder._
 
 ## Right now
 
-- Production is still dead: both old Railway addresses answer Railway's own 404. (measured 2026-11-13)
+- Production is still dead: both old Railway addresses answer Railway's own 404. This PC lost power for 28 minutes at about 13:25 on 2026-11-13; every lane resumed from its own copy. (measured 2026-11-13)
 - Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. 37 of 56 phases wait behind it.
 - Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-13)
 
 ## Phases by state
 
-- **done** (1): L1
-- **running now** (6): P1, P2a, P6a, P7a, P9-0a, L2
-- **starting next** (1): P12a
-- **waiting on you** (3): P0a-prep, P0a, L3
+- **done** (2): P0a-prep, L1
+- **running now** (8): P1, P2a, P12a, P6a, P7a, P9-0a, L2, L3
+- **starting next** (0): 
+- **waiting on you** (1): P0a
 - **held (may be built, may not merge yet)** (16): P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
 - **not started** (29): P0b, P2a-2, P2b-1, P2b-2, P2c, P3a, P3a-2, P3b, P3c, P12, P4a, P4b, P4c, P4r, P5-spike, P5c, P5d-1a, P5d-1b, P5d-2, P7b-2, P8a, P8b, P8b-2, P9-0b, P10b, P13e, P14-fleet, P14-log, L4
 
@@ -24,7 +24,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 
 | Id | Phase | Lane | Wave | State | Needs | Merge held until |
 | --- | --- | --- | --- | --- | --- | --- |
-| P0a-prep | Pre-flight prep: step table, hold-notice draft, helper kit | OWN | A | waiting on you | - | - |
+| P0a-prep | Pre-flight prep: step table, hold-notice draft, helper kit | OWN | A | done | - | - |
 | P0a | Your pre-flight: cut off, archive, dump, evidence, decisions | OWN | A | waiting on you | - | - |
 | P0b | Buy: domain, host (VPS), internet, UPS | OWN | later | not started | P0a | - |
 | P1 | Backend first-boot gate | B-core | A | running now | - | - |
@@ -37,7 +37,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P3a-2 | Self-host stub and heartbeat (only if P3a takes its size hatch) | O | later | not started | P3a | - |
 | P3b | Host ready, restore, PIN rotation (your session) | OWN | later | not started | P3a, P0b, P0a, P2b-2 | - |
 | P3c | Pre-cutover checks (route stays closed) | OWN | later | not started | P3b, P3a-2 | - |
-| P12a | Web payment double-charge fix | W | A | starting next | - | - |
+| P12a | Web payment double-charge fix | W | A | running now | - | - |
 | P12 | Web manager defects | W | B | not started | P12a | - |
 | P4a | Pilot drain on one phone | OWN | later | not started | P3c, P2c, P12a | - |
 | P4b | Fleet drain, one workshop visit at a time | OWN | later | not started | P4a | - |
@@ -78,7 +78,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P14-log | One command log for the six queues (backlog) | M | later | not started | P5d-2, P14-n | - |
 | L1 | Parallel gate harness | L | A | done | - | - |
 | L2 | Local Android compile gate | L | A | running now | L1 | - |
-| L3 | Device lab (emulator on this PC) | L | B | waiting on you | L1 | - |
+| L3 | Device lab (emulator on this PC) | L | B | running now | L1 | - |
 | L4 | Deploy-train and restore rehearsal | L | C | not started | L1 | - |
 
 ## Goals
@@ -94,7 +94,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 
 Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest have values or a dated 'unknown, because ...'.
 
-1. **Item 10: Tools and access** (needed for done). Start Docker Desktop. Install Android platform-tools (adb), build-tools (apksigner) and a JDK. Log in: EAS, GitHub CLI, Railway CLI (only if you control the old Railway hostname). Check you can log in to the Railway, Supabase, Cloudflare, Sentry, Firebase and Expo dashboards. Turn on USB debugging on every roster phone. Have a cable and a spare Android phone (for P2c). Uses: tools-check.sh.
+1. **Item 10: Tools and access** (needed for done). Start Docker Desktop. Install Android platform-tools (adb), build-tools (apksigner) and a JDK. Log in: EAS, GitHub CLI, Railway CLI (only if you control the old Railway hostname). Check you can log in to the Railway, Supabase, Cloudflare, Sentry, Firebase and Expo dashboards. Turn on USB debugging on every roster phone. Have a cable and a spare Android phone (for P2c). Uses: tools-check.sh. adb, apksigner and a JDK are already installed for you in C:/Users/User/.fixflow-cache/android/ (nothing was added to the system PATH: the first command below loads them into one terminal).
 2. **Item 1: Send the fleet hold notice** (MUST). Edit the draft in docs/program/notices/fleet-hold.md (fill the square-bracket words), send it to every technician (English and Urdu), then replace its status line with the date, channel and who it went to, keeping the text exactly as sent. Uses: docs/program/notices/fleet-hold.md (draft, not sent).
 3. **Item 2: Railway first: seal the old secret, cut old services off** (MUST). Record the Railway project state. Copy the old FIXFLOW_JWT_SECRET from the Railway environment and seal it offline (never into this page). Then remove DATABASE_URL from, or scale to 0, any surviving service, and reset the Supabase database password in its dashboard. Record whether you can bind the old subdomain (H) and to what, and your account and billing access. Uses: Railway and Supabase dashboards.
 4. **Item 3: Archive the R2 backups** (MUST). Mint an R2 API token (type it only into your own terminal). List backups/db/, copy it to archive/pre-selfhost/, make a laptop copy in C:/fixflow-r2, then list the archive prefix and record both listings. Uses: r2-archive.sh (set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your own terminal first; never paste them here or into chat).
@@ -116,7 +116,6 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 | Id | Decision | Blocks | Default |
 | --- | --- | --- | --- |
 | N1 (new) | Who merges finished, reviewed pull requests | every merge-ready PR (P1, P2a and the rest as they pass review) | you merge each one (plan v8; section 7.7) |
-| N2 (new) | Install the Android toolchain on this PC (about 8 GB, a user folder: JDK, adb, apksigner, emulator, one system image) | L3 device lab; P0a item 6's phone checks and item 10's tools | not installed: L3 waits, and P0a items 6 and 10 wait for you to install them yourself |
 | N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | they stay unmerged; lanes keep reading the plan branch |
 | N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | it stays open as a draft |
 | N5 (new) | May a manager record (or void) a payment on a job that is already closed? | the merge of P7a (who may do what, and money guards) | no: closed is final for everyone (plan v8 as written). Cash found on a phone after the drain for a closed job would then have no way in |

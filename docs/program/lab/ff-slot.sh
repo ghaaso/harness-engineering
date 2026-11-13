@@ -18,10 +18,13 @@
 # is gone, so a long build or an emulator session never loses its slot while it is alive. A
 # holder that gives no PID is reaped by age alone (FF_STALE_MIN minutes).
 #
-# Fairness: each waiter drops a ticket in queue/ and only the oldest live ticket may take
-# slots. Measured before this existed (2026-11-13): one lane waited 20 minutes while later
-# arrivals were served, because every waiter retried at random. The head of the queue blocks
-# those behind it even when it needs more slots than are free, so a heavy job cannot starve.
+# Fairness: each waiter drops a ticket in queue/ and tickets are served in arrival order.
+# Measured before this existed (2026-11-13): one lane waited 20 minutes while later arrivals
+# were served, because every waiter retried at random.
+# One exception, also measured: two exclusive Android builds at the head once held up eight
+# short test runs for most of an hour. So a weight-1 job may pass a heavier job that has
+# waited less than FF_HEAVY_PATIENCE seconds (default 900). After that the heavy job blocks
+# everything behind it until it has run, so it cannot starve.
 set -u
 D="${FF_LOCK_DIR:-/c/Users/User/.fixflow-cache/locks}"
 # 2 while Android builds (weight 2) are in play: with eight lane sessions running, free host
@@ -35,10 +38,22 @@ cmd="${1:?usage: ff-slot.sh acquire <holder> [weight] [pid] | release <holder> |
 
 alive() { [ -n "$1" ] && [ "$1" != "-" ] && kill -0 "$1" 2>/dev/null; }
 
+# A lock made before the machine last booted is dead, whatever its PID says: PIDs are reused
+# after a reboot. The PC lost power or hung at 13:25 on 2026-11-13 with two slots held and two
+# waiters queued; without this rule they would have blocked every lane until someone noticed.
+UP="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
+if [ -n "$UP" ]; then BOOT=$(( $(date +%s) - UP )); else BOOT=0; fi
+from_before_boot() {
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null)" || return 1
+  [ -n "$m" ] && [ "$m" -lt $(( BOOT - 5 )) ]
+}
+
 reap() {
   local s pid t
   for s in "$D"/slot-*; do
     [ -d "$s" ] || continue
+    if from_before_boot "$s"; then rm -rf "$s"; continue; fi
     pid="$(awk '{print $3}' "$s/holder" 2>/dev/null)"
     if [ -n "$pid" ] && [ "$pid" != "-" ]; then
       # owner process gone, and the slot is not seconds old (a holder file still being written)
@@ -52,7 +67,8 @@ reap() {
   # tickets of waiters that died
   for t in "$Q"/*; do
     [ -f "$t" ] || continue
-    pid="$(cat "$t" 2>/dev/null)"
+    if from_before_boot "$t"; then rm -f "$t"; continue; fi
+    pid="$(awk '{print $1}' "$t" 2>/dev/null)"
     if ! alive "$pid" && [ -n "$(find "$t" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -f "$t"; fi
   done
 }
@@ -66,12 +82,25 @@ case "$cmd" in
     t0=$(date +%s)
     # the ticket lives as long as this acquire call does; its name sorts by arrival time
     ticket="$Q/$(date +%s%N)-$holder"
-    echo "$$" > "$ticket"
+    echo "$$ $w $t0" > "$ticket"
     trap 'rm -f "$ticket"' EXIT
+    PATIENCE="${FF_HEAVY_PATIENCE:-900}"
     while :; do
       reap
-      head="$(ls "$Q" 2>/dev/null | sort | head -1)"
-      if [ "$Q/$head" = "$ticket" ]; then
+      my_turn=1
+      for t in $(ls "$Q" 2>/dev/null | sort); do
+        [ "$Q/$t" = "$ticket" ] && break
+        tw=""; tt=""
+        { read -r _p tw tt < "$Q/$t"; } 2>/dev/null   # the ticket may vanish between ls and read
+        # tickets written before weights were recorded: an Android build is the only heavy job
+        if [ -z "${tw:-}" ]; then case "$t" in *-android-*) tw=2 ;; *) tw=1 ;; esac; fi
+        [ -n "${tt:-}" ] || tt=$(( ${t%%-*} / 1000000000 ))
+        if [ "$w" -eq 1 ] && [ "$tw" -ge 2 ] && [ $(( $(date +%s) - tt )) -lt "$PATIENCE" ]; then
+          continue   # a short job may pass a heavy one that has not waited long yet
+        fi
+        my_turn=0; break
+      done
+      if [ "$my_turn" = 1 ]; then
         got=()
         for i in $(seq 1 "$N"); do
           if mkdir "$D/slot-$i" 2>/dev/null; then
@@ -100,11 +129,15 @@ case "$cmd" in
     echo "RELEASED holder=$holder"
     ;;
   status)
+    reap
     for s in "$D"/slot-*; do
       [ -f "$s/holder" ] && echo "$(basename "$s"): $(cat "$s/holder")"
     done
     n=0
-    for t in $(ls "$Q" 2>/dev/null | sort); do n=$((n+1)); echo "waiting $n: ${t#*-}"; done
+    for t in $(ls "$Q" 2>/dev/null | sort); do
+      n=$((n+1)); tw=""; { read -r _p tw _tt < "$Q/$t"; } 2>/dev/null
+      echo "waiting $n: ${t#*-} weight=${tw:-?} for $(( $(date +%s) - ${t%%-*} / 1000000000 ))s"
+    done
     echo "slots=$N stale_min=$STALE_MIN dir=$D"
     ;;
   *)

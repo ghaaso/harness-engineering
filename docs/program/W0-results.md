@@ -15,7 +15,7 @@ shell with `export MSYS_NO_PATHCONV=1`. Items run in this order: 10 first, then 
 
 | # | Item | MUST | How (script or where) | Result, or "unknown, because ..." | Date | Done |
 | --- | --- | --- | --- | --- | --- | --- |
-| 10 | **Tools and access.** Docker Desktop running (`docker info`); Android platform-tools (adb), build-tools (apksigner) and a JDK; `npx eas-cli login`; `gh auth status`; `npx @railway/cli login` if H=yes; dashboard logins for Railway, Supabase, Cloudflare, Sentry, Firebase, Expo; USB debugging on every roster phone (item 6 needs it); a cable; a spare Android phone for P2c. | done-when | `lab/p0a/tools-check.sh`; logins by hand | Partial (coordinator, measured): Docker Desktop 29.9.2 running, GitHub CLI logged in; adb, apksigner, JDK, eas and railway CLI not installed. Dashboard logins, USB debugging, cable, spare phone: unknown, because not yet checked by the owner. | 2026-11-13 | [ ] |
+| 10 | **Tools and access.** Docker Desktop running (`docker info`); Android platform-tools (adb), build-tools (apksigner) and a JDK; `npx eas-cli login`; `gh auth status`; `npx @railway/cli login` if H=yes; dashboard logins for Railway, Supabase, Cloudflare, Sentry, Firebase, Expo; USB debugging on every roster phone (item 6 needs it); a cable; a spare Android phone for P2c. | done-when | `lab/p0a/tools-check.sh`; logins by hand | Partial (coordinator, measured): Docker Desktop 29.9.2 running, GitHub CLI logged in. **Installed 2026-11-13 on the owner's yes**, in the user folder `C:/Users/User/.fixflow-cache/android` (load them into a terminal with `source /c/Users/User/.fixflow-cache/android/env.sh`): adb 1.0.41, apksigner (build-tools 37.0.0), JDK 17.0.21. eas and the railway CLI are not installed (both run through `npx` on demand and need the owner's login). Dashboard logins, USB debugging, cable, spare phone: unknown, because not yet checked by the owner. | 2026-11-13 | [ ] |
 | 1 | **Fleet hold notice.** Written procedure sent to every technician: do not open the app, clock in, start travel, tap Discard, update, uninstall, clear data or reset. Date sent. Text as sent committed to `docs/program/notices/fleet-hold.md` (English and Urdu). | MUST | by hand (owner sends); file in `docs/program/notices/` | | | [ ] |
 | 2 | **Railway first.** Project state. Copy the old `FIXFLOW_JWT_SECRET` from the Railway env and seal it unconditionally (used only if K=no, H=yes, v2=no and section 4 says yes; destroyed at P4c otherwise). Cut any surviving service off the database (remove its `DATABASE_URL` or scale to 0) and reset the Supabase DB password in the dashboard, so an old backend can neither drain phones nor run its 02:30 pruner (`O08-F02`). Whether the old subdomain can be bound (H), and to what. Account and billing access. | MUST | Railway and Supabase dashboards, by hand | Partial (coordinator, measured): both old Railway hostnames answer Railway's own edge 404 with header `x-railway-fallback: true`. Project state, the sealed secret, the cut-off, the password reset, H, billing: unknown, because the owner has not yet looked at the dashboards. | 2026-11-13 | [ ] |
 | 3 | **R2 archive.** Mint an R2 API token; export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; list `backups/db/` and record the listing; copy it to `archive/pre-selfhost/` in the same bucket; laptop copy to `C:/fixflow-r2/`; list the archive prefix and record it. | MUST | `lab/p0a/r2-archive.sh <account-id> <bucket>` (token minted by hand) | | | [ ] |
@@ -75,7 +75,7 @@ dated "unknown, because".
 | age key holder | P13b | the owner, private key offline |  |  |
 | Second uplink, split-horizon DNS, disk encryption | P13c | none |  |  |
 | Merging of merge-ready PRs (added 2026-11-13, plan section 7) | every phase's merge step | the owner merges; may delegate to the coordinator |  |  |
-| Installing the Android toolchain: JDK, platform-tools, build-tools, emulator, one system image, about 8 GB, in a user folder (added 2026-11-13, plan section 7) | device lab L3; P0a item 10 | not installed: L3 does not run and item 10 stays "unknown, because not installed" |  |  |
+| Installing the Android toolchain: JDK, platform-tools, build-tools, emulator, one system image, about 8 GB, in a user folder (added 2026-11-13, plan section 7) | device lab L3; P0a item 10 | not installed: L3 does not run and item 10 stays "unknown, because not installed" | **yes** ("Yes, install"); installed by the coordinator with `docs/program/lab/android-toolchain-install.ps1` into `C:/Users/User/.fixflow-cache/android/` | 2026-11-13 |
 | Merging the docs-only PRs #182 (plan) and #185 (skills) to `main` (added 2026-11-13, plan section 7) | the plan and skills being readable from `main` | stay open on their branches |  |  |
 | Closing draft PR #180, an older geofence approach that the plan's P5a supersedes (added 2026-11-13, plan section 7) | P5a (tidiness only) | stays open as a draft |  |  |
 | May a manager record or void a payment on a job that is already closed? (added 2026-11-13, plan section 7.8 finding 16) | the merge of P7a | no: closed is final for everyone (v8 as written); cash found on a phone after the drain for a closed job then has no way in |  |  |
@@ -92,15 +92,16 @@ by P4c. Until then their Done-when ends at "merged; deploy-train row added".
 
 | Lane | Phase | Session | Branch | PR | State | Since |
 | --- | --- | --- | --- | --- | --- | --- |
-| B-core | P1 backend first-boot gate | `p1-boot-gate` (local_9616a4f6-0e4f-423f-8939-57b041ff3979) | `claude/p1-backend-boot-gate-e5a6e7` | | running | 2026-11-13 |
-| M | P2a offline engine honesty | `p2a-engine-honesty` (local_25d6f554-9f47-46e9-b5f4-4d66ba12bddb) | `claude/p2a-mobile-engine-honesty-13ca22` | | running | 2026-11-13 |
-| L | L2 local Android compile gate | `l2-android-compile` (local_95a45d7c-489d-4341-8aae-898e6a4713fb) | `claude/l2-android-compile-gate-3d0bf0` | | running | 2026-11-13 |
-| B-jobs | P7a authorization and money guards (built ahead of P1) | `p7a-authz-money` (local_e8309ceb-a4b6-4bae-be38-23550a12de18) | its session's branch | | running | 2026-11-13 |
-| B-att | P6a attendance truth (built ahead of P1) | `p6a-attendance-truth` (local_aa29532d-569a-4548-a9d9-af8be9c9d436) | its session's branch | | running | 2026-11-13 |
-| B-tools | P9-0a week-export script (built ahead of P3b) | `p90a-week-export` (local_95afe0ff-cf18-4caa-8814-e7e1b1187b04) | its session's branch | | running | 2026-11-13 |
-| W | P12a web payment idempotency | not started: starts when a lane session ends (RAM) | | | next | |
+| B-core | P1 backend first-boot gate | `p1-boot-gate` (local_9616a4f6-0e4f-423f-8939-57b041ff3979) | `claude/p1-backend-boot-gate-e5a6e7` | #187 | running | 2026-11-13 |
+| M | P2a offline engine honesty | `p2a-engine-honesty` (local_25d6f554-9f47-46e9-b5f4-4d66ba12bddb) | `claude/p2a-mobile-engine-honesty-13ca22` | #189 | running | 2026-11-13 |
+| L | L2 local Android compile gate | `l2-android-compile` (local_95a45d7c-489d-4341-8aae-898e6a4713fb) | `claude/l2-android-compile-gate-3d0bf0` | #188 | running | 2026-11-13 |
+| B-jobs | P7a authorization and money guards (built ahead of P1) | `p7a-authz-money` (local_e8309ceb-a4b6-4bae-be38-23550a12de18) | `claude/p7a-authz-money-guards-00cb4d` | #191 | running | 2026-11-13 |
+| B-att | P6a attendance truth (built ahead of P1) | `p6a-attendance-truth` (local_aa29532d-569a-4548-a9d9-af8be9c9d436) | `claude/p6a-attendance-truth-d088d0` | #192 | running | 2026-11-13 |
+| B-tools | P9-0a week-export script (built ahead of P3b) | `p90a-week-export` (local_95afe0ff-cf18-4caa-8814-e7e1b1187b04) | `claude/p90a-week-export-script-4f99a5` | #190 | running (waiting for a gate slot) | 2026-11-13 |
+| W | P12a web payment idempotency (built ahead of P3b) | `p12a-web-idempotency` (local_d11066b5-3340-40c0-b1c4-607b5c0d306e) | its session's branch | | running | 2026-11-13 |
+| L | L3a device lab: emulator rig and first protocols (stacked on L2, #188) | `l3a-device-lab` (local_39b83985-59b2-4118-a7a5-b0f343ecd1c6) | its session's branch | | running | 2026-11-13 |
 | L | L1 gate harness | coordinator | plan branch | #182 | done: baselines green on main's code (backend 757 tests, 0 skipped; web 106 tests; mobile 334 tests) | 2026-11-13 |
-| OWN | P0a-prep | coordinator | plan branch | #182 | step table, hold-notice draft and helper kit done; the Android tools wait on the owner's yes | 2026-11-13 |
+| OWN | P0a-prep | coordinator | plan branch | #182 | done: step table, hold-notice draft, helper kit, Android tools installed on the owner's yes | 2026-11-13 |
 
 ## Coordinator notes
 
@@ -115,3 +116,22 @@ by P4c. Until then their Done-when ends at "merged; deploy-train row added".
   they were moved into that folder instead.
 - **Messages to lanes** are delivered when a lane's current turn ends, not mid-turn: a
   correction therefore lands as a follow-up turn in that lane.
+- **Power loss, 2026-11-13 about 13:25 to 13:53.** Windows recorded an unexpected shutdown with
+  no crash code, no long power-button press and no hardware-error record: the PC lost power.
+  All eight lane sessions and Docker went down. At 13:57 the coordinator started Docker Desktop
+  (no setting changed) and woke every lane with a resume message; each resumed from its
+  worktree. Lanes now commit and push at every green checkpoint. Locks made before a boot are
+  treated as dead.
+- **Antivirus.** 360 Total Security is the active scanner. It blocks, every time, the creation
+  of one file of Google's emulator package, `sdk/emulator/lib64/gles_angle/d3dcompiler_47.dll`.
+  That block was left alone and the file is absent (listed in
+  `C:/Users/User/.fixflow-cache/android/BLOCKED-FILES.txt`); the emulator is run with `-gpu host`
+  or `swiftshader_indirect`, never an ANGLE mode. Whether to allow the folder in the antivirus is
+  the owner's decision; nothing in the program needs it today.
+- **Leftovers the coordinator could not remove** (the tool's safety guard refuses these
+  removals; all are harmless and the owner may delete them): the installer's temporary folders
+  `C:/Users/User/.fixflow-cache/android/sdk/.temp` (about 0.5 GB), `.../sdk/emulator-2`,
+  `.../sdk/emulator/.installer`, `.../android/emu-probe`, `.../android/jdk-tmp`; and the kit's
+  self-test folder `C:/fixflow-dumps/_kit-selftest-2026-11-13-NOT-REAL`.
+- **Ready signal.** A lane that reports READY marks its PR ready for review; a coordinator
+  watcher polls that flag and the coordinator then dispatches the binding review.

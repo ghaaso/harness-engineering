@@ -1714,6 +1714,9 @@ and rebases after P1).
 | Docker Desktop 29.9 (WSL2 VM, 15.5 GB) | gates, restore rehearsals, the local full stack, the Android compile container | no `/dev/kvm` inside it (0 `svm` flags): no emulator in Docker |
 | Windows Hypervisor Platform (enabled) + RTX 5070 | the Android emulator, natively (`-gpu host`); the GPU has no other job in this program | one emulator at a time until measured |
 | 146 GB free disk | worktrees (about 1.2 GB each with mobile `node_modules`), images, one AVD | — |
+| Android toolchain in the user folder `C:/Users/User/.fixflow-cache/android` (owner's yes, 2026-11-13) | a JDK 17.0.21 (Temurin), adb 1.0.41 (platform-tools), apksigner and aapt2 (build-tools 37.0.0), the emulator 37.2.13 (hardware acceleration: "WHPX is installed and usable"), one system image (Android 14 / API 34, Google APIs, x86_64, revision 14) and the AVD `ff34` (2 GB RAM); 8.6 GB on disk. Every installed file matches its official archive by name and size except the one DLL the antivirus blocks (next row) | loaded per terminal with `source /c/Users/User/.fixflow-cache/android/env.sh`; nothing on the system PATH; uninstall = delete the folder |
+| A third-party antivirus (360 Total Security) is the active real-time scanner | it blocks, every time, the creation of the emulator's `lib64/gles_angle/d3dcompiler_47.dll` ("Access to the path is denied"), and once blocked the JDK's `ucrtbase.dll` in mid-unpack. Google's sdkmanager abandons a package when one file fails, and the system image depends on the emulator package, so neither can be installed through it here | **the block is left alone.** The emulator and the image are unpacked directly from the archives Google's manifests name (checksums verified, every file checked), the one blocked DLL stays absent, and the emulator is never run in an ANGLE gpu mode. FixFlow never changes an antivirus setting; allowing the folder is the owner's decision |
+| Mains power | the PC lost power at about 13:25 on 2026-11-13 and was off for 28 minutes (Kernel-Power 41 with no bugcheck code, no long power-button press, no hardware-error record) | eight lanes were cut off mid-turn and all resumed from their worktrees; lanes now commit and push at every green checkpoint; a lock made before the last boot is treated as dead (`ff-slot.sh`, `ff-gates.sh`) |
 
 - **Gates.** `bash C:/Users/User/Documents/projects/EMS_workshop1/docs/program/lab/ff-gates.sh
   backend|mobile|web <lane> <worktree>`, run in the background; the result is
@@ -1740,7 +1743,18 @@ and rebases after P1).
   an explicit subnet inside `10.77.0.0/16`. FixFlow never prunes a network it did not create and
   never reconfigures Docker.
 - **Other sessions.** Another project's containers run on this machine. A FixFlow session
-  removes only containers named `fixflow-*` and never restarts Docker or WSL.
+  removes only containers named `fixflow-*` and never restarts Docker or WSL. After the power
+  loss the coordinator started Docker Desktop (the owner had said to continue everything); it
+  changed no Docker setting.
+- **Memory, measured with eight lane sessions running (2026-11-13):** 5.5 to 7.7 GB free of 31;
+  commit 35 to 41.5 of 50.1 GB; the Docker VM held 8.3 GB of which 4.4 GB was disk cache it was
+  not using. The gate script therefore drops the VM's page cache after every backend run (cache
+  only; the first drop gave 2.2 GB back at once), the slot count stays at 2, and eight sessions
+  is the ceiling until some finish. The queue is first come first served: before that, one lane
+  waited 20 minutes while later arrivals were served. Gate runs queue, so a lane's inner loop
+  passes pytest args for the tests it is working on and keeps full runs for merge-readiness.
+- **Ready signal.** A lane that reports READY also marks its PR ready for review (`gh pr ready`);
+  a coordinator watcher polls that flag and wakes the binding review.
 
 ### 7.5 New phases
 
@@ -1779,15 +1793,31 @@ and rebases after P1).
   post-deploy check, record it. P3b's restore, PIN rotation and deep-health read-back are
   rehearsed the same way against the P3a compose. **Done when** each deploy-train row has a
   rehearsal row beside it, so P4c replays a tested sequence.
-- [ ] **P0a-prep** (coordinator). The `W0-results.md` step table committed, the hold notice
+- [x] **P0a-prep** (coordinator). The `W0-results.md` step table committed, the hold notice
   drafted in English and Urdu for the owner to send, item 10's tools installed on the owner's
   yes. Items 1–9 and 11–16 remain the owner's; nothing here touches a dashboard or a phone.
+  **Done 2026-11-13:** the table, the notice (English, Urdu, Roman Urdu; not sent), the
+  five-script kit under `docs/program/lab/p0a/`, and — on the owner's "Yes, install" the same
+  day — adb, apksigner and a JDK (§7.4). The installer's first run printed "INSTALL OK" with no
+  SDK package on disk (a PowerShell pipe into `sdkmanager.bat` installs nothing and exits 0);
+  `docs/program/lab/android-toolchain-install.ps1` now reports success only for files it finds
+  on disk and lists any file it could not create.
+- **L3 runs in parts.** **L3a** (lane session, started 2026-11-13, stacked on L2): the rig —
+  `ops/lab/device/emu.sh`, a lab backend whose port can instead serve an `edge404`, `5xx` or
+  `hang` stand-in for the dead host, a lab APK that bakes only `http://10.0.2.2:<port>`, and
+  `app.sh`, which reads the app's queues straight from its storage — plus the first two
+  protocols on today's app: the tracker checks (`O01-F01`, `O01-F03`, `O01-F20`, a fence
+  crossing) and four writes against the edge-404 stand-in, each reported as reproduced / not
+  reproduced / inconclusive with its evidence. Every check must be shown failing once. **L3b:**
+  the drain rehearsal, when P2a and P2b-1 can be built. **L3c:** the remaining O-01 steps, the
+  full offline matrix, and more Android versions once P0a item 5 names the fleet's.
+  *(The coordinator's emulator boot proof, `docs/program/lab/emulator-boot-proof.sh`, was queued behind the gate runs at 14:20; its result is recorded in §7.8.)*
 
 ### 7.6 Waves
 
 | Wave | Starts when | Lanes |
 | --- | --- | --- |
-| **A** | 2026-11-13 | P1, P2a, L2, P7a, P6a, P9-0a (six sessions: RAM, not CPU, sets the number); P12a when a session ends |
+| **A** | 2026-11-13 | P1, P2a, L2, P7a, P6a, P9-0a, then P12a and L3a the same day (eight sessions: RAM, not CPU, sets the ceiling) |
 | **B** | a wave-A PR is review-passed | P2b-1 (on P2a), P3a with its stub and heartbeat (on P1), P8a (on P7a), P12 (on P12a), P7b-2 (on P7a), P2b-2 (after P2b-1's schema commit), L3 (on the owner's yes) |
 | **C** | wave-B tips are review-passed | P5a (at risk), P8b, P6b-1, P7b-1, P9a-1 (after P9-0b), L4 |
 | **D** | as tips allow | P5b-1, P5b-2, P6b-2, P9a-2, P9b, P10a, P13a–d code |

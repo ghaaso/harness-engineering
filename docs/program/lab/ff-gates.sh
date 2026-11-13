@@ -73,7 +73,18 @@ finish() {  # $1 = exit code
 LL="$LOCKROOT/lane-$LANE-$KIND"
 take_lane_lock() {
   if mkdir "$LL" 2>/dev/null; then echo "$$" > "$LL/pid"; return 0; fi
-  local other; other="$(cat "$LL/pid" 2>/dev/null)"
+  # a lock from before the last boot is dead whatever its PID says (PIDs are reused after a reboot)
+  local up boot m other
+  up="$(cut -d. -f1 /proc/uptime 2>/dev/null)"; m="$(stat -c %Y "$LL" 2>/dev/null)"
+  if [ -n "$up" ] && [ -n "$m" ]; then
+    boot=$(( $(date +%s) - up ))
+    if [ "$m" -lt $(( boot - 5 )) ]; then
+      rm -rf "$LL"
+      if mkdir "$LL" 2>/dev/null; then echo "$$" > "$LL/pid"; return 0; fi
+      return 1
+    fi
+  fi
+  other="$(cat "$LL/pid" 2>/dev/null)"
   if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then return 1; fi
   # the previous run died without cleaning up; a lock younger than 2 minutes may still be
   # writing its pid file, so leave that one alone
