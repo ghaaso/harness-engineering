@@ -53,6 +53,9 @@ l4_host_up() {
     sleep 2
   done
   l4_dx docker info >/dev/null 2>&1 || l4_die "the stand-in host's Docker did not start"
+  # A fresh container has none of the runbook's paths; anything else means another run is
+  # driving the same container name (seen once: 1.11 met an existing /opt/fixflow).
+  l4_dx sh -c '! test -e /opt/fixflow && ! test -e /srv/l4' || l4_die "the stand-in host is not fresh"
   # The cache volume keeps the stand-in host's images between runs, but also its containers,
   # volumes and networks (restart: unless-stopped brings an old stack back up). Every run starts
   # from an empty host: only the images survive.

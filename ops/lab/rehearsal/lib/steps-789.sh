@@ -157,7 +157,7 @@ sec8() {
   local up_rc="$RC" up_out; up_out="$(out_of | tail -n 1)"
   row 8.6 "$( [ "$q_rc" = 0 ] && [ "$q_err" = 0 ] && [ -s /var/lib/fixflow/drain/late-sync.csv ] && [ "$up_rc" = 0 ] && echo DONE || echo FAILED)" \
     "three window-audit queries; upload the CSV" "exit $q_rc, psql ERROR lines $q_err; late-sync.csv $(wc -l < /var/lib/fixflow/drain/late-sync.csv 2>/dev/null) line(s); $q_out; upload exit $up_rc: $up_out" \
-    "the window is minutes long here, so the tables are near empty; each query parses and runs"
+    "the window is minutes long here, so the tables are near empty; each query parses and runs$( [ "$up_rc" = 127 ] && echo "; RUNBOOK DEFECT: the upload line calls fixflow-r2-put.sh by bare name, which is not on PATH (only ffc is linked into /usr/local/bin; 6.6 b, 8.2, 8.5 spell out /opt/fixflow/ops/selfhost/bin/). Same at the P13e line. Smallest fix: the full path")"
   sed -i 's/^\(FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=\)/# \1/; s/^\(FIXFLOW_JOBS_GPS_BACKDATE_CEILING_HOURS=\)/# \1/' $f
   echo "edited $f: commented the two ceilings out again" >> "$OUT/editor.log"
   rb_run 8.7 "$(rb_fence 8.7 1)"
