@@ -36,7 +36,7 @@ BASE_D="${FF_LOCK_DIR:-/c/Users/User/.fixflow-cache/locks}"
 # mostly backend runs waiting behind an emulator and each other. So backend stacks get their own
 # LIGHT pool (FF_POOL=light, set by ff-gates.sh for kind=backend) and no longer compete with the
 # HEAVY pool (Jest, Vitest, an emulator, a Gradle build). Worst case with both pools full:
-# emulator 4.7 + one phone test run 2.5 + two backend stacks 1.0 = 8.2 GB, under what three
+# emulator 4.7 + one phone test run 2.5 + three backend stacks 1.5 = 8.7 GB, under what three
 # single-pool slots could reach (emulator + two phone test runs = 9.7 GB).
 POOL="${FF_POOL:-heavy}"
 if [ "$POOL" = light ]; then D="$BASE_D/light"; else POOL=heavy; D="$BASE_D"; fi
@@ -44,7 +44,7 @@ if [ "$POOL" = light ]; then D="$BASE_D/light"; else POOL=heavy; D="$BASE_D"; fi
 # about 0.4-0.5 GB (the 3 GB figure is only its cap), while the Docker VM held 6.9 GB of page
 # cache; so the cache, not the gates, was eating the host's RAM, and the gate script now drops
 # it at the start and end of every backend run. A Gradle build stays exclusive (see weights).
-if [ "$POOL" = light ]; then N="${FF_LIGHT_SLOTS:-2}"; else N="${FF_SLOTS:-2}"; fi
+if [ "$POOL" = light ]; then N="${FF_LIGHT_SLOTS:-3}"; else N="${FF_SLOTS:-2}"; fi
 STALE_MIN="${FF_STALE_MIN:-240}"
 Q="$D/queue"
 mkdir -p "$D" "$Q"

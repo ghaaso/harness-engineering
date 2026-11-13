@@ -1735,11 +1735,11 @@ and rebases after P1).
 - **Slot lock.** `ff-slot.sh` has **two pools** since 2026-11-13 15:53. The **heavy pool** has 2
   slots: a Jest run, a Vitest run and a running emulator take 1 each, and a Gradle build takes
   the whole pool (and waits for any holder left over from a larger slot count). The **light
-  pool** has 2 slots and holds only backend gate stacks, measured at about 0.5 GB each (403 MiB
+  pool** has 3 slots and holds only backend gate stacks, measured at about 0.5 GB each (403 MiB
   for the gates container, 102 MiB for its database); `ff-gates.sh` picks the pool from the kind.
   Before the split six jobs queued behind three slots, most of them backend runs waiting behind
   an emulator and each other. Worst case with both pools full: emulator 4.7 GB + one phone test
-  run about 2.5 GB (an estimate, not yet measured) + two backend stacks 1.0 GB = 8.2 GB, below
+  run about 2.5 GB (an estimate, not yet measured) + three backend stacks 1.5 GB = 8.7 GB, below
   the 9.7 GB that three single-pool slots could reach. Each pool is first come first served. A
   slot is reaped when its owner's process is gone, or after two minutes when its holder file was
   never written. A lane never starts a heavy job outside the lock.
