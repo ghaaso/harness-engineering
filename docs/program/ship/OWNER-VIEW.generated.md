@@ -5,7 +5,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-14. Do not
 ## Right now
 
 - Production is still dead: both old Railway addresses answer Railway's own 404. Nine phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P8a, P9-0a, P12a, L2); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-14)
-- Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. The drain tooling is built and reviewed and waits only for those two. 37 of 56 phases wait behind it.
+- Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. The drain tooling is built and reviewed and waits only for those two. New on 2026-11-14: GitHub has stopped running the automatic checks (billing: the month's included minutes are used up or a payment failed), so nothing more can be merged until you restore them or allow merging on this PC's own runs. I used far more of those minutes than I should have: every note I saved to the plan started a full run. That is stopped. 37 of 56 phases wait behind it.
 - Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-14)
 
 ## Phases by state
@@ -112,6 +112,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 
 | Id | Decision | Blocks | Default |
 | --- | --- | --- | --- |
+| N6 (new) | GitHub has stopped running the automatic checks on every pull request (since 03:43 on 2026-11-14). The cause is in your GitHub account: Settings, Billing and plans. Either a payment failed, or the month's included Actions minutes are used up and the spending limit is zero. Restore them when you can. Until then: may I merge on the same checks run on this PC? | every merge from now on (the first one waiting is the money phase's follow-up, PR #210) | nothing is merged until GitHub's checks run again; the lanes and the reviews carry on, because they already run the same checks on this PC |
 | N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | DECIDED 2026-11-13: Yes for #185 (the reviewer and skill definitions). |
 | N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | DECIDED 2026-11-13: Close it. |
 | N5 (new) | May a manager record (or void) a payment on a job that is already closed? | the merge of P7a (who may do what, and money guards) | DECIDED 2026-11-13: Yes, managers only. |
