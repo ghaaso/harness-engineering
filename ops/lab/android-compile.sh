@@ -14,8 +14,8 @@
 # Holds 2 slots of the machine-wide lock (ff-slot.sh, with this script's PID on them) for the
 # whole run; a trap releases them and removes the container on exit, error, Ctrl-C or TERM.
 #
-# Knobs (env): FF_ANDROID_MEM (10g), FF_ANDROID_CPUSET (0-7: the container sees 8 CPUs, which
-# also bounds ninja/clang), FF_ANDROID_WORKERS (6), FF_ANDROID_XMX (4g), FF_ANDROID_TIMEOUT_MIN
+# Knobs (env): FF_ANDROID_MEM (6g), FF_ANDROID_CPUSET (0-7: the container sees 8 CPUs, which
+# also bounds ninja/clang), FF_ANDROID_WORKERS (8), FF_ANDROID_XMX (3g, at most 4g), FF_ANDROID_TIMEOUT_MIN
 # (100), FF_ANDROID_HOOK (a host script run in the copy after `npm ci` — spikes only; the
 # summary marks such a run MODIFIED), FF_SLOT_SH, FF_LAB_OUT.
 set -uo pipefail
@@ -83,10 +83,10 @@ main() {
   HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   SLOT_SH="${FF_SLOT_SH:-/c/Users/User/Documents/projects/EMS_workshop1/docs/program/lab/ff-slot.sh}"
   OUT_ROOT="${FF_LAB_OUT:-/c/Users/User/.fixflow-cache/lab}"
-  MEM="${FF_ANDROID_MEM:-10g}"
+  MEM="${FF_ANDROID_MEM:-6g}"
   CPUSET="${FF_ANDROID_CPUSET:-0-7}"
-  WORKERS="${FF_ANDROID_WORKERS:-6}"
-  XMX="${FF_ANDROID_XMX:-4g}"
+  WORKERS="${FF_ANDROID_WORKERS:-8}"
+  XMX="${FF_ANDROID_XMX:-3g}"
   TIMEOUT_MIN="${FF_ANDROID_TIMEOUT_MIN:-100}"
   HOOK="${FF_ANDROID_HOOK:-}"
   [ -f "$SLOT_SH" ] || die "slot lock not found: $SLOT_SH"

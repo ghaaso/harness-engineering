@@ -61,8 +61,10 @@ build() {
   {
     echo ""
     echo "# --- fixflow lab overrides (container copy only) ---"
-    echo "org.gradle.jvmargs=-Xmx${XMX} -XX:MaxMetaspaceSize=1g"
-    echo "kotlin.daemon.jvmargs=-Xmx2g"
+    echo "org.gradle.jvmargs=-Xmx${XMX} -XX:MaxMetaspaceSize=768m"
+    # Kotlin compiles inside the Gradle JVM: a separate Kotlin daemon (2 GB RSS on the first
+    # run) does not fit the 6 GB container cap beside Gradle and the NDK compilers.
+    echo "kotlin.compiler.execution.strategy=in-process"
     echo "org.gradle.caching=true"
     echo "org.gradle.parallel=true"
   } >> gradle.properties
