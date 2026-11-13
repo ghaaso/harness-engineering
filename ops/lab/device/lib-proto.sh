@@ -187,7 +187,17 @@ snap() {
 # "Clock Out" alone is not proof: the punch history lists past "Clock Out" punches too.
 clocked_in_ui() { ui_has "Clock Out" && ! ui_has "Not clocked in"; }
 
+# A punch can hang in the app's own permission request: sign-in's geofence job asked for location
+# permission, and every later request in that process (the clock-in's getLocation included) never
+# resolved; no POST reached the backend (tracker-20261114T014228, 01:42:33-01:44:48). clock()
+# retries once on a fresh process and says so in the timeline.
 clock() { # in|out ; returns non-zero when the UI did not reach that state
+  clock_once "$1" && return 0
+  mark "clock $1: the UI did not reach the state in 45 s (a punch stuck in a permission request?); retrying once on a fresh process"
+  fresh_app || return 1
+  clock_once "$1"
+}
+clock_once() {
   open_clock || return 1
   if [ "$1" = in ]; then
     clocked_in_ui && return 0
