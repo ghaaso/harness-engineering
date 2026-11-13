@@ -221,12 +221,13 @@ location time bounds Opus-owned (`docs/program/SHIP-PLAN-2026-11.md:47-50`).
 11. Before `T_close`: commit the deploy-train row to `docs/program/W0-results.md` (phase, PR,
     merge sha, migration, post-deploy check). After `T_close`: [owner] deploy per runbook R5
     and record `/api/ops/health` head + `FIXFLOW_GIT_SHA` + the image id.
-12. If this PR is the last of P1 / P2b-2 / P3a to merge: create `release/drain` **at P1's squash
-    commit** on `main`, then `git cherry-pick` the P2b-2 and P3a squash commits onto it (never
-    `git merge`; `SHIP-PLAN:65-68`). If P1 is not the first of the three to merge, the base is an
-    owner question — stop and ask. Record `git log release/drain`, run the backend gates on it
-    (§1.5, `B` = that worktree). [owner] Pushing `release/drain` and the `drain-image` tag (it is
-    what production runs until `T_close`, rule 3).
+12. If this PR is the last of the `release/drain` picks to merge (P2b-2 now): cut `release/drain`
+    exactly as `docs/RUNBOOK-SELFHOST.md` section 11 says (plan §7.7, rulings C30 and C32). It is cut
+    from `a31924a`, not from a squash on `main`, and takes four `git cherry-pick -x` commits in a
+    fixed order; never `git merge`. Do not copy the list here: section 11 is the one source, with
+    its checks (11.6 compares the `-x` source shas). Run the backend gates on it (§1.5, `B` = that
+    worktree). [owner] Pushing `release/drain` and the `drain-image` tag (it is what production
+    runs until `T_close`, rule 3).
 13. Production-side steps a phase may name — `railway run psql` audits, a script's `--apply`,
     the VALIDATE pre-deploy audit on the box, hand-editing `alembic_version`, re-seeding the
     cursor, enabling the dispatcher — are each [owner], one per step, reviewed in between.
