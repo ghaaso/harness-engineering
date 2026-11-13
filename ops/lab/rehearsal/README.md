@@ -59,7 +59,7 @@ case). Each row quotes what was seen.
 - 6.13's interactive `set_pin` prompt is answered through a pseudo-terminal (`lib/typist.py`).
 - 8.5 needs a manifest a phone uploads: one stand-in `drain_manifest` event is inserted by SQL.
 - The train's `R5.5` build is a cache hit: the same build ran online beforehand (`train.sh
-  prebuild`), because the host is offline when R5 runs.
+prebuild`), because the host is offline when R5 runs.
 
 ## The stand-in production database
 
@@ -71,10 +71,10 @@ shop settings, staff accounts with stand-in PINs (two left on the seed PIN), and
 `dispatch_cursor` deliberately **below** `max(job_event.seq)` (as if 0046 ran mid-history and
 the dispatcher stayed off). Fictional names only. It is dumped twice:
 
-| Form | Command | What it stands for |
-| --- | --- | --- |
-| nightly | the backup job's own `core/backup.py dump_database()`: `--format=custom --schema=public --no-owner --no-privileges` | R2 nightly / hourly / post-drain dumps and P0a's case-a dump |
-| B5 | `pg_dump -U fixflow_app -d fixflow --format=custom` | the runbook's pre-drain snapshot (8.2) and pre-restore copy (6.6 b) |
+| Form    | Command                                                                                                             | What it stands for                                                  |
+| ------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| nightly | the backup job's own `core/backup.py dump_database()`: `--format=custom --schema=public --no-owner --no-privileges` | R2 nightly / hourly / post-drain dumps and P0a's case-a dump        |
+| B5      | `pg_dump -U fixflow_app -d fixflow --format=custom`                                                                 | the runbook's pre-drain snapshot (8.2) and pre-restore copy (6.6 b) |
 
 `dumpfacts-standin.txt` is Appendix B on the source (P0a's `verify-dump.sh` output role).
 
@@ -86,18 +86,18 @@ matching migrations (this seed runs only against head 0046).
 
 ## Files
 
-| Path | What |
-| --- | --- |
-| `restore-rehearsal.sh`, `train-rehearsal.sh` | entry points (this PC) |
-| `lib/host.sh` | the stand-in host: start, origin bundle, kit copy, results, teardown |
-| `lib/runbook.py` | cuts step text out of the runbook |
-| `lib/harness.sh` | substitute, log, eval, mask, record a row |
-| `lib/steps.sh`, `lib/steps-789.sh` | sections 1, 3, 4, 6 and 7-9, one function per section |
-| `lib/traincheck.py` | the train rows' post-deploy checks as API calls |
-| `lib/lab-override.yml`, `lib/deadman.py`, `lib/typist.py` | the stand-ins above |
-| `lib/report.py` | `results.md` from the TSVs |
-| `inner/prep.sh`, `inner/restore.sh`, `inner/wrongturns.sh`, `inner/train.sh` | run inside the stand-in host |
-| `seed/standin_seed.py` | the stand-in production data |
+| Path                                                                         | What                                                                 |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `restore-rehearsal.sh`, `train-rehearsal.sh`                                 | entry points (this PC)                                               |
+| `lib/host.sh`                                                                | the stand-in host: start, origin bundle, kit copy, results, teardown |
+| `lib/runbook.py`                                                             | cuts step text out of the runbook                                    |
+| `lib/harness.sh`                                                             | substitute, log, eval, mask, record a row                            |
+| `lib/steps.sh`, `lib/steps-789.sh`                                           | sections 1, 3, 4, 6 and 7-9, one function per section                |
+| `lib/traincheck.py`                                                          | the train rows' post-deploy checks as API calls                      |
+| `lib/lab-override.yml`, `lib/deadman.py`, `lib/typist.py`                    | the stand-ins above                                                  |
+| `lib/report.py`                                                              | `results.md` from the TSVs                                           |
+| `inner/prep.sh`, `inner/restore.sh`, `inner/wrongturns.sh`, `inner/train.sh` | run inside the stand-in host                                         |
+| `seed/standin_seed.py`                                                       | the stand-in production data                                         |
 
 ## Adding a deploy-train row
 

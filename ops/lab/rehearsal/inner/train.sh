@@ -62,6 +62,9 @@ prebuild)
   ;;
 
 deploy)
+  # The owner reads the runbook of main (the one being deployed), not the copy in the checkout
+  # that R5.4 is about to replace; /srv/prep is the clone of main that prep.sh made.
+  RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md
   sec4_profiles
   lab_up || exit 1
   PHASE=train-restore

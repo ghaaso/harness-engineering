@@ -53,6 +53,13 @@ l4_host_up() {
     sleep 2
   done
   l4_dx docker info >/dev/null 2>&1 || l4_die "the stand-in host's Docker did not start"
+  # The cache volume keeps the stand-in host's images between runs, but also its containers,
+  # volumes and networks (restart: unless-stopped brings an old stack back up). Every run starts
+  # from an empty host: only the images survive.
+  l4_dx sh -c 'ids=$(docker ps -aq); [ -z "$ids" ] || docker rm -f $ids >/dev/null;
+    docker volume prune -af >/dev/null; docker network prune -f >/dev/null' \
+    || l4_die "could not empty the stand-in host"
+  [ -z "$(l4_dx docker ps -aq)" ] || l4_die "the stand-in host still has containers"
   l4_dx apk add -q --no-cache bash git python3 openssl curl iproute2 coreutils util-linux \
     findutils grep sed gawk procps logrotate >/dev/null || l4_die "apk add failed (is the PC online?)"
   local img have
@@ -72,8 +79,15 @@ l4_host_up() {
 l4_origin() { # <checkout> [extra refs...]
   local co="$1"; shift
   local b; b="$(mktemp -d)/l4.bundle"
-  git -C "$co" fetch -q origin main || l4_die "git fetch origin main failed"
-  git -C "$co" bundle create "$b" origin/main "$@" >/dev/null 2>&1 || l4_die "git bundle failed"
+  # Other sessions share this repository's object store and refs: a fetch or bundle can meet
+  # their lock for a moment, so each is tried three times and the last error is shown.
+  local i ok=0
+  for i in 1 2 3; do
+    git -C "$co" fetch -q origin main && git -C "$co" bundle create "$b" origin/main "$@" > "$b.err" 2>&1 \
+      && { ok=1; break; }
+    sleep 5
+  done
+  [ "$ok" = 1 ] || { cat "$b.err" >&2; l4_die "git fetch/bundle failed"; }
   l4_dx mkdir -p /srv/in
   docker cp "$(l4_win "$b")" "$L4_HOST:/srv/in/l4.bundle" >/dev/null || l4_die "docker cp of the bundle failed"
   l4_dx sh -c 'rm -rf /srv/origin.git && git init -q --bare /srv/origin.git \
