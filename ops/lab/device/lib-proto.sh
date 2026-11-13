@@ -40,10 +40,14 @@ geo_shell() { ash su 2000 cmd location providers "$@"; } # as the shell uid (roo
 geo_push() { geo_shell set-test-provider-location gps --location "$1,$2" --accuracy "$3" > /dev/null 2>&1; }
 geo_provider_on() {
   ash appops set com.android.shell android:mock_location allow
-  geo_shell add-test-provider gps --supportsAltitude --supportsSpeed --supportsBearing > /dev/null 2>&1
-  geo_shell set-test-provider-enabled gps true > /dev/null 2>&1
-  ash dumpsys location | grep -q "gps provider [mock]" ||
-    die "could not install the GPS test provider (mock location refused?)"
+  local i
+  for i in 1 2 3; do
+    geo_shell add-test-provider gps --supportsAltitude --supportsSpeed --supportsBearing > /dev/null 2>&1
+    geo_shell set-test-provider-enabled gps true > /dev/null 2>&1
+    ash dumpsys location | grep -qF "gps provider [mock]" && return 0
+    sleep 3
+  done
+  die "could not install the GPS test provider: $(geo_shell add-test-provider gps 2>&1 | head -n2)"
 }
 geo_provider_off() { # back to the emulated GPS hardware
   geo_shell remove-test-provider gps > /dev/null 2>&1
@@ -79,7 +83,9 @@ feeder_start() {
 
 mark() { # a line in the evidence timeline and in logcat (so both can be lined up)
   echo "$(date -Is) $*" >> "$EV/timeline.txt"
-  ash log -t FFLAB "$*" > /dev/null 2>&1
+  # adb shell re-parses its arguments on the device: single-quote the text (minus any single
+  # quotes) or "(" in a mark is a device-side syntax error and the marker never reaches logcat
+  ash log -t FFLAB "'$(printf '%s' "$*" | tr -d "'")'" > /dev/null 2>&1
   log "$*"
 }
 

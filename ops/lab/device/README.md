@@ -75,6 +75,29 @@ register check has a control that shows the same probe reporting the other outco
   `ff-slot.sh` when the keeper is gone); the APK build holds two inside L2's script. The lab
   backend takes none (two 512 MB containers, not a gate run).
 
+## Emulator caveats (what the lab changes about the phone)
+
+- **Location is a mock provider.** The emulated GPS hardware (`adb emu geo fix`) produces fixes
+  only while some client requests GPS. Once the app's HIGH-accuracy read ended, the GPS provider
+  went `ProviderRequest[OFF]`, the emulator has no network location, and Play services'
+  geofencer (BALANCED) and the on-duty sampler (BALANCED) received nothing: no transitions, one
+  ping in a run. The lab therefore installs a Location-Manager test provider named `gps` (as the
+  shell uid: root is refused `MOCK_LOCATION`, so `appops set com.android.shell
+  android:mock_location allow` first) and feeds it every 3 s. Every fix is flagged mock: the
+  phone sends `is_mock_location=true` and the server records it (it does not reject mock).
+  Accuracy is whatever the script says.
+- **The geofencer is nudged.** Play services re-evaluates a fence on its own schedule (it
+  requested `@5m` while 556 m away and had not re-evaluated after 8 min of fixes), on a provider
+  change, and on re-registration. `geo_nudge` switches the test provider off and on so it
+  evaluates now. The lab says nothing about how soon a real phone notices a crossing.
+- **No OEM layer**: no autostart manager, no app battery saver, no lock-in-recents. A check that
+  needs an OEM kill (O01-F05's loss, O01-F02) cannot reproduce here.
+- **NetInfo** probes `clients3.google.com` for reachability; the lab APK keeps that (it is
+  Google's, not a FixFlow host) and the emulator has internet through the host.
+- **UI by text is brittle**: the scripts find buttons by their visible text in a
+  `uiautomator dump` (`app.sh`, `lib-app.sh`). A copy change in the app breaks a step; the step
+  then records `inconclusive` with the screen dump, never a pass.
+
 ## Findings
 
 _Filled from the runs below._

@@ -160,7 +160,9 @@ check_d_once() {
   local n="$1" a0 n0 M job fin t row="" n1 dur enq conf ins obs
   mark "CHECK d#$n edge arrival (100 m, acc $EDGE_ACC m), clocked out, headless"
   clock out > /dev/null 2>&1
-  geo_set "$OUT_LAT" "$OUT_LNG"
+  # the OUT fixes carry the same accuracy as the edge fix: Play services fusion keeps a recent
+  # 8 m fix over a newer 50 m one, so a downgrade would never reach the geofencer (run 2)
+  geo_set "$OUT_LAT" "$OUT_LNG" "$EDGE_ACC"
   launch_app
   sleep 5 # foreground: ensureGeofenceMonitoring re-registers the fence (initial EXIT)
   go_home
