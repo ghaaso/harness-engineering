@@ -445,7 +445,22 @@ check_b() {
 }
 
 # ---- c: O01-F20 ---------------------------------------------------------------------------
-open_lab_job() {
+# A fresh home-visit job per c run: a job's travel state lives on the server, so a job that was
+# already travelled no longer offers START TRAVEL (final run, 2026-11-13). Created through the
+# lab backend's own API as the seeded manager (migration seed PIN, a throwaway local DB).
+fresh_lab_job() { # -> prints the customer name
+  local name mt code
+  name="LAB travel $(date +%H%M%S)"
+  mt="$(lab_curl -X POST "$LAB_HOST_URL/api/auth/login" -H 'Content-Type: application/json' \
+    -d '{"tech_id":"m1","pin":"1234"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+  [ -n "$mt" ] || return 1
+  code="$(lab_curl -o /dev/null -w '%{http_code}' -X POST "$LAB_HOST_URL/api/jobs" \
+    -H "Authorization: Bearer $mt" -H 'Content-Type: application/json' \
+    -d "{\"job_type\":\"home-visit\",\"customer_name\":\"$name\",\"customer_address\":\"LAB address\",\"customer_lat\":$JOB_LAT,\"customer_lng\":$JOB_LNG,\"appliance_type\":\"AC\",\"problem\":\"lab travel job\",\"assigned_tech_id\":\"t2\"}")"
+  case "$code" in 2*) echo "$name" ;; *) return 1 ;; esac
+}
+open_lab_job() { # [customer name]
+  local who="${1:-LAB customer}"
   to_dashboard || return 1
   tap_text "Jobs" || return 1
   sleep 2
@@ -453,8 +468,8 @@ open_lab_job() {
   for c in "On-Going Tasks" "Available Tasks"; do
     if ui_has "$c"; then
       tap_text "$c"
-      if wait_text "LAB customer" 15; then
-        tap_text "LAB customer"
+      if wait_text "$who" 15; then
+        tap_text "$who"
         wait_text "Add a note…" 20 && return 0
       fi
       ash input keyevent KEYCODE_BACK
@@ -463,58 +478,70 @@ open_lab_job() {
   done
   return 1
 }
-check_c() {
-  mark "CHECK c O01-F20 travel leg start/stop while on duty"
+check_c() { # [run-no]
+  local n="${1:-1}" job_name
+  mark "CHECK c#$n O01-F20 travel leg start/stop while on duty"
   geo_set "$FENCE_LAT" "$FENCE_LNG"
   clock in || {
-    record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "could not clock in" inconclusive timeline.txt
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "could not clock in" inconclusive timeline.txt
     return
   }
   local pre during post p0 p1
   pre="$(wait_fgs yes 30)"
-  fgs_lines > "$EV/services-c-pre.txt"
-  open_lab_job || {
-    record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "could not open the lab job by UI (see ui.xml)" inconclusive "timeline.txt"
-    cp "$UI_XML" "$EV/ui-c-fail.xml" 2> /dev/null
+  fgs_lines > "$EV/services-c$n-pre.txt"
+  job_name="$(fresh_lab_job)" || {
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "could not create a fresh lab job" inconclusive timeline.txt
+    return
+  }
+  mark "c#$n fresh job: $job_name"
+  sleep 3
+  open_lab_job "$job_name" || {
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "could not open the lab job by UI (see ui.xml)" inconclusive "timeline.txt"
+    cp "$UI_XML" "$EV/ui-c$n-fail.xml" 2> /dev/null
     return
   }
   tap_text "🚀 START TRAVEL" || tap_text "START TRAVEL" "~" || {
-    record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "no START TRAVEL button on the job" inconclusive timeline.txt
-    cp "$UI_XML" "$EV/ui-c-fail.xml"
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "no START TRAVEL button on the job" inconclusive timeline.txt
+    cp "$UI_XML" "$EV/ui-c$n-fail.xml"
     return
   }
   sleep 3
   tap_text "START TRAVEL" "~" || true # the Travel screen's own start button
   sleep 10
   during="$(fgs_up)"
-  fgs_lines > "$EV/services-c-during.txt"
-  dump_state "$EV/state-c-during.json"
+  fgs_lines > "$EV/services-c$n-during.txt"
+  dump_state "$EV/state-c$n-during.json"
   geo_set "$JOB_LAT" "$JOB_LNG"
   sleep 15
   tap_text "I HAVE ARRIVED" || {
-    record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "no I HAVE ARRIVED button" inconclusive timeline.txt
-    cp "$UI_XML" "$EV/ui-c-fail.xml"
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "no I HAVE ARRIVED button" inconclusive timeline.txt
+    cp "$UI_XML" "$EV/ui-c$n-fail.xml"
     return
   }
   wait_text "OK" 30 && tap_text "OK"
   sleep 10
   post="$(fgs_up)"
-  fgs_lines > "$EV/services-c-post.txt"
-  dump_state "$EV/state-c-post.json"
+  fgs_lines > "$EV/services-c$n-post.txt"
+  dump_state "$EV/state-c$n-post.json"
   p0="$(ping_count)"
   sleep 150
   p1="$(ping_count)"
   local obs="FGS on duty before travel=$pre, during the leg=$during, 10 s after arrival=$post (duty cache: $(kv attendance.duty.v1)); pings received in the 150 s after arrival: $((p1 - p0)) (not evidence: the lab's sampler barely receives fixes, see README)"
   if [ "$pre" != yes ]; then
-    record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "$obs" inconclusive "services-c-pre.txt"
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "$obs" inconclusive "services-c$n-pre.txt"
   elif [ "$post" = no ]; then
-    record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "$obs" reproduced "services-c-post.txt"
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "$obs" reproduced "services-c$n-post.txt"
   else
-    record c O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "$obs" not_reproduced "services-c-post.txt"
+    record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "$obs" not_reproduced "services-c$n-post.txt"
   fi
   geo_set "$FENCE_LAT" "$FENCE_LNG"
   clock out > /dev/null 2>&1
   rec_roll
+}
+
+check_c_all() {
+  local i
+  for i in $(seq 1 "$REPEAT"); do check_c "$i"; done
 }
 
 # ---- doze / reboot / revoke ---------------------------------------------------------------
@@ -595,7 +622,7 @@ for c in "${CHECKS[@]}"; do
     probe) check_probe ;;
     a) check_a ;;
     b) check_b ;;
-    c) check_c ;;
+    c) check_c_all ;;
     d) check_d ;;
     f19) check_f19 ;;
     doze) check_doze ;;
