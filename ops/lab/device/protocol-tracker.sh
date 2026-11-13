@@ -613,6 +613,10 @@ check_c() { # [run-no]
   local n="${1:-1}" job_name
   mark "CHECK c#$n O01-F20 travel leg start/stop while on duty"
   geo_set "$FENCE_LAT" "$FENCE_LNG"
+  # a fresh duty session per run: the previous run's arrival may have stripped the sampler's
+  # FGS (the finding itself), and staying clocked in leaves it off (final run, c#2/c#3)
+  clock out > /dev/null 2>&1
+  sleep 3
   clock in || {
     record "c#$n" O01-F20 "ending a travel leg strips the on-duty sampler's FGS" "could not clock in" inconclusive timeline.txt
     return
