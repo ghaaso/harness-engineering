@@ -17,6 +17,7 @@ case "${1:?online|offline}" in
   online)
     REF="${2:-main}"
     echo "lab: ffc runs with FF_EXTRA_COMPOSE=lib/lab-override.yml (stand-in bucket + its CA; no port)" >> "$OUT/deviations.log"
+    echo "lab: /etc/cron.d created on the (Alpine) stand-in host; cron files are installed and listed, never run by a cron" >> "$OUT/deviations.log"
     RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md   # /opt/fixflow does not exist before 1.11
     sec1 /srv/origin.git "$REF"
     RB_FILE=/opt/fixflow/docs/RUNBOOK-SELFHOST.md

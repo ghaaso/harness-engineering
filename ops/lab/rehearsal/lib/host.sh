@@ -62,6 +62,9 @@ l4_host_up() {
   [ -z "$(l4_dx docker ps -aq)" ] || l4_die "the stand-in host still has containers"
   l4_dx apk add -q --no-cache bash git python3 openssl curl iproute2 coreutils util-linux \
     findutils grep sed gawk procps logrotate >/dev/null || l4_die "apk add failed (is the PC online?)"
+  # A Debian host has /etc/cron.d (7.4, 7.7, 7.8 install into it); Alpine has none. The files are
+  # installed and listed as written; nothing here runs them (busybox crond does not read it).
+  l4_dx mkdir -p /etc/cron.d
   local img have
   for img in $L4_SEED_IMAGES; do
     have="$(l4_dx docker image ls -q "$img")"

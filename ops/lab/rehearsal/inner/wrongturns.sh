@@ -41,7 +41,7 @@ for spelling in 'fixflow_environment=dev' 'FIXFLOW_ENVIRONMENT: dev' 'export FIX
   rb_run wt2-envcheck "$ENVCHK"
   chk="$(out_of | tr '\n' ' ' | cut -c1-160)"
   rb_run wt2-up "$(rb_fence 6.12 1 '$p')"       # `ffc $P_DB --profile app up -d --force-recreate backend`
-  urc="$RC"; wait_backend_healthy 120 >/dev/null 2>&1
+  urc="$RC"; [ "$urc" = 0 ] && wait_backend_healthy 120 >/dev/null 2>&1
   if backend_running; then
     deep_health > "$OUT/deep-health-wt2.json"
     facts="environment=$(jget facts.environment < "$OUT/deep-health-wt2.json") dispatcher=$(jget facts.enable_dispatcher < "$OUT/deep-health-wt2.json") backup=$(jget facts.backup_enabled < "$OUT/deep-health-wt2.json") prefix=$(jget facts.backup_prefix < "$OUT/deep-health-wt2.json")"
@@ -54,7 +54,7 @@ for spelling in 'fixflow_environment=dev' 'FIXFLOW_ENVIRONMENT: dev' 'export FIX
     *) stop="gate allows it; the compose override decides";;
   esac
   wt "WT2 [$spelling]" "backend.env gains: $spelling" "3.6 check: $chk | $started" "$stop" \
-    "$( case "$started" in *environment=production*dispatcher=False*backup=False*prefix=backups/db-selfhost/*) echo 'no: the compose override held';; *running*) echo 'YES: a forced key won';; *) echo 'no: refused';; esac)"
+    "$( case "$started" in *environment=production*dispatcher=False*backup=False*prefix=backups/db-selfhost/*) echo 'no: the compose override held';; *'not running'*) echo 'no: refused';; *running*) echo 'YES: a forced key won';; *) echo 'no: refused';; esac)"
   ffc $P_DB --profile app stop backend >/dev/null 2>&1
 done
 cp /srv/l4/backend.env.good /etc/fixflow/backend.env

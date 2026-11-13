@@ -22,9 +22,21 @@ sec7() {
   local ok=no
   [ "$(echo "$o1" | tr -d ' ')" = exit=0 ] && [ "$after" -gt "$before" ] && echo "$o2" | grep -q 'heartbeat: UNHEALTHY http=200' \
     && echo "$o2" | grep -qx 'exit=1' && [ "$(echo "$o3" | tr -d ' ')" = exit=0 ] && ok=yes
+  # lab probe (not a runbook command): how long deep health takes to answer with postgres stopped
+  ffc $P_DB stop postgres >/dev/null 2>&1
+  local probe; probe="$(ffc exec -T backend sh -c 'curl -sS -m 150 -o /dev/null -w "%{http_code} after %{time_total}s" -H "X-Ops-Proxy-Token: $FIXFLOW_OPS_PROXY_TOKEN" http://localhost:8000/api/ops/health' 2>&1 | tail -n 1)"
+  ffc $P_DB up -d postgres >/dev/null 2>&1
+  for i in $(seq 1 60); do
+    [ "$(docker inspect --format '{{.State.Health.Status}}' "$(ffc $P_DB ps -q postgres)" 2>/dev/null)" = healthy ] && break
+    sleep 2
+  done
+  wait_backend_healthy 120
+  echo "lab probe 7.2: deep health with postgres stopped answered: $probe" >> "$OUT/deviations.log"
+  o2="$o2
+lab probe: deep health with postgres stopped answered $probe"
   row 7.2 "$( [ $ok = yes ] && echo DONE || echo FAILED)" "heartbeat by hand at the container address; then with postgres stopped; then again" \
-    "healthy: [$o1] pings $before->$after; db down: [$(echo "$o2" | grep -o 'UNHEALTHY http=[0-9]*' | head -n 1) $(echo "$o2" | grep '^exit=')]; again: [$o3]" \
-    "network name fixflow_app confirmed (the VERIFY line)"
+    "healthy: [$o1] pings $before->$after; db down: [$(echo "$o2" | grep -o 'UNHEALTHY http=[0-9]*' | head -n 1) $(echo "$o2" | grep '^exit=')]; again: [$o3]; $(echo "$o2" | grep '^lab probe')" \
+    "network name fixflow_app confirmed (the VERIFY line)$( [ $ok = no ] && echo "$o2" | grep -q 'UNHEALTHY http=000' && echo "$o2" | grep -qx 'exit=1' && echo "; the alarm fired (exit=1, no ping) but the Expected 'http=200' was not seen: with the postgres container stopped, /api/ops/health did not answer within the heartbeat's curl -m 20, so it printed http=000. RUNBOOK DEFECT CANDIDATE (Expected text): accept 'http=000 or http=200 with database not ok'")"
   row 7.3 NRH "heartbeat through the tunnel" "-" "needs api.<domain> on the tunnel"
   rb_run 7.4-do "$(rb_fence 7.4 1)"
   rb_run 7.4-check "$(rb_fence 7.4 2 1p)"
@@ -139,8 +151,12 @@ sec8() {
     "manifest export to json; count; r2-put" "$(out_of | tail -n 2 | tr '\n' ' ')" "a stand-in manifest event"
   local t_close; t_close="$(date -u +%FT%TZ)"
   rb_run 8.6 "$(rb_fence 8.6 1)" "<T_OPEN>=$t_open" "<T_CLOSE>=$t_close"
-  row 8.6 "$( [ "$RC" = 0 ] && [ -s /var/lib/fixflow/drain/late-sync.csv ] && ! has ERROR && echo DONE || echo FAILED)" \
-    "three window-audit queries" "exit $RC; late-sync.csv $(wc -l < /var/lib/fixflow/drain/late-sync.csv 2>/dev/null) line(s); $(out_of | tr '\n' ' ' | cut -c1-200)" \
+  local q_rc="$RC" q_err; q_err="$(out_of | grep -c 'ERROR:')"
+  local q_out; q_out="$(out_of | tr '\n' ' ' | cut -c1-200)"
+  rb_run 8.6-upload "$(rb_span 8.6 'fixflow-r2-put.sh')" "<T_CLOSE stamp>=$(date -u -d "$t_close" +%Y%m%dT%H%M%SZ)"
+  local up_rc="$RC" up_out; up_out="$(out_of | tail -n 1)"
+  row 8.6 "$( [ "$q_rc" = 0 ] && [ "$q_err" = 0 ] && [ -s /var/lib/fixflow/drain/late-sync.csv ] && [ "$up_rc" = 0 ] && echo DONE || echo FAILED)" \
+    "three window-audit queries; upload the CSV" "exit $q_rc, psql ERROR lines $q_err; late-sync.csv $(wc -l < /var/lib/fixflow/drain/late-sync.csv 2>/dev/null) line(s); $q_out; upload exit $up_rc: $up_out" \
     "the window is minutes long here, so the tables are near empty; each query parses and runs"
   sed -i 's/^\(FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=\)/# \1/; s/^\(FIXFLOW_JOBS_GPS_BACKDATE_CEILING_HOURS=\)/# \1/' $f
   echo "edited $f: commented the two ceilings out again" >> "$OUT/editor.log"
