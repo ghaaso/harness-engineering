@@ -629,6 +629,13 @@ an account session limit, completed agents are in
 
 ### Appendix A — backend gates recipe (S-07b, Git Bash; pass the script inline, never a mounted `.sh`)
 
+> **Superseded for phase work (2026-11-13) by `docs/program/lab/ff-gates.sh`** (ship plan §7.4): one
+> stack per phase, the gates container in the database container's network namespace (this
+> machine cannot create Docker networks), a slot lock, a skip-aware pytest, and
+> `FIXFLOW_ENVIRONMENT` mirrored from the worktree's own `ci.yml`. The recipe below is kept as the
+> single-run reference; since P1 (merged as `87bbe88`) the backend refuses to boot outside an
+> explicit `dev` or `test` environment, so the gates container sets `FIXFLOW_ENVIRONMENT=test`.
+
 ```bash
 export MSYS_NO_PATHCONV=1
 B='C:/Users/User/Documents/projects/EMS_workshop1/backend'
@@ -638,7 +645,7 @@ docker info --format '{{.ServerVersion}}' || { echo DOCKER_ENGINE_DOWN; exit 3; 
 docker network create fixflow-w1 2>/dev/null; docker rm -f fixflow-w1-db fixflow-w1-gates 2>/dev/null
 docker run -d --name fixflow-w1-db --network fixflow-w1 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fixflow_test postgres:16-alpine
 docker run -d --name fixflow-w1-gates --network fixflow-w1 -v "$B:/src:ro" \
-  -e FIXFLOW_DATABASE_URL=$U -e FIXFLOW_TEST_DATABASE_URL=$U -e PYTHONDONTWRITEBYTECODE=1 \
+  -e FIXFLOW_DATABASE_URL=$U -e FIXFLOW_TEST_DATABASE_URL=$U -e PYTHONDONTWRITEBYTECODE=1 -e FIXFLOW_ENVIRONMENT=test \
   python:3.12-slim sh -c '
     cp -r /src /work && mkdir -p /work/logs && cd /work || exit 2
     pip install -q -e ".[dev]" pip-audit > /work/logs/setup-pip.log 2>&1 || { echo "SETUP[pip] FAILED"; exit 2; }

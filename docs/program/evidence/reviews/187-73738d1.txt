@@ -1,0 +1,20 @@
+VERDICT: PASS
+PR #187 at 73738d16259a31a5911c721659e12d38893a278c
+Binding review dispatched by the coordinator, 2026-11-13 (Opus, fresh context, appsec + PR reviewer definitions). Reviewer's own gate run on the head (lane p1-rev, clean tree): ruff format, ruff check, mypy, lint-imports, alembic upgrade head, alembic check, pytest: all green; 931 tests, 0 skipped, 0 integration skipped. Fail-on-main run of the PR's 14 new or changed test files against main's sources: 56 failed, 29 errors, each passing on the head.
+
+No BLOCKER or MAJOR finding.
+
+MINOR
+1. backend/app/features/identity/deps.py:35 decides "write route" by HTTP method only. A legacy token can therefore replay an idempotent POST and read its response: POST /api/jobs/{id}/media/{mid}/complete on already-uploaded media returns a signed playback URL; a transition replay returns JobDetail with the customer's phone and address. The attacker needs the old secret AND the UUIDs; list endpoints stay closed. Consistent with ruling R10's "write routes only"; the docstring's "cannot browse the shop" overstates it.
+2. docker-compose.yml sets FIXFLOW_ENVIRONMENT: dev where plan line 333 says test. Both are exempt values; behaviour is identical.
+3. config.py boot_problems checks the legacy secret for blank or the dev default but applies no 32-byte floor.
+4. FIXFLOW_GIT_SHA is read and exposed but not yet wired through a Dockerfile ARG or the compose; the PR body defers that to P3a.
+Unverified: the legacy audit log line could take a CR/LF through a str path parameter (needs a valid legacy token; depends on the formatter).
+
+Verified fixed by running (fails on origin/main, passes on head): O6-F01 / O08-F01 / O05-01 / O10-F5 (boot gate); O6-F05 / O05-02 / O10-F6 (seed PINs); O05-04 with ruling R4 (6-digit policy); O10-F15 with ruling R10 (legacy verifier); O6-F19 / O05-16 (docs off); O05-14 (body caps); the origin marker on 404, 405, 413, 422 and a forced 500; O04-F12 (ping ceiling 240 h); deep-health exposure. By reading: O08-F07 (docs) and the CI harness items.
+
+Held against attack: unset, mistyped or blank environment all fail closed; the default-PIN check runs after the lock check and after verify_pin, so the lock still blocks a correct PIN and there is no new oracle; only two PIN writers exist and both apply the policy; the legacy verifier falls back only on a signature mismatch, pins HS256, checks ver and active, refuses manager tokens and set_pin, is inert without an expiry and refuses a production boot without one; the marker is a pure ASGI layer outside ServerErrorMiddleware; the body cap counts chunked bodies and replays the raw body unchanged to the webhook signature check; the ops gate uses compare_secret and the default-PIN check is memoised.
+
+Changed expectations: PIN literals moved to 6 digits that are not known defaults; ping test offsets moved past the new 240 h ceiling. No assertion removed, no skip or xfail added, no existing test weakened for the environment-default change.
+
+Coordinator's ruling on the minors (2026-11-13): 1 accepted as the residual of R10 (the verifier is default OFF and only ever ON in a supervised window; the old secret is sealed in P0a and destroyed at P4c): the docstring correction and "no playback URL for a legacy principal" go to the next backend-core phase's Scope; 2 the plan's text is corrected to "dev" for the dev compose; 3 REJECTED: the legacy secret is the old production value, whatever its length, and a floor would defeat the verifier's only purpose; 4 stands as P3a's item. Mergeable at 73738d1.

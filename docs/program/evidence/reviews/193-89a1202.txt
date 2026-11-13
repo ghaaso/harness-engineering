@@ -1,0 +1,13 @@
+VERDICT: PASS-WITH-FIXES
+PR #193 at 89a12022546cfdd76d25701efefa178766398ce3
+Binding review dispatched by the coordinator, 2026-11-13 (Opus, fresh context). Reviewer's own gate run on the head: lint, format, 125 tests in 22 files, build: all green; tree clean. Fail-on-main verified by running: 10 of 11 integration tests fail on origin/main.
+
+Findings
+1. MAJOR  src/features/jobs/data/paymentAttempts.js:71 (`const attempts = new Map();`): the store of unconfirmed attempts is in memory only. Response lost -> manager reloads the page or uses a second tab -> re-enters the same partial payment -> new key -> the server (lookup by client_id only, backend/app/features/jobs/service.py:1457) records it twice. A full-balance payment is protected by the balance reaching 0; partial payments, which the fleet drain will mostly enter, are not.
+2. MINOR  src/shared/lib/api.js:66: no timeout on the request; a hung request is joined by every later identical Save with no feedback; the manager's way out is a reload, which leads to finding 1.
+3. MINOR  paymentAttempts.js:109-114: known residual. An unanswered attempt that did land keeps its key; a later genuinely separate payment of the same job, amount and method reuses it and the server returns the earlier row with a "Payment recorded" toast. A full fix needs the server to say that it deduplicated (backend; out of this lane).
+4. MINOR  convention: branch name differs from the plan's Resume line; body line 1 is a plan tag, not a sha. Both accepted by plan section 7.1.
+
+Held: a key is never sent with a different job, amount or method (lookup is by job + paisa + method), so the 409 P7a adds is unreachable from the UI; the key is retired on every 2xx; a 401 keeps the key and the provider stays mounted through re-login; double-click sends one request; scope is only the expected files plus the new module; no dependency change.
+
+Coordinator's ruling on the findings (2026-11-13): fix 1 and 2 in this PR; 3 becomes a note for the backend money phase (the payment response should say when it was a deduplicated replay); 4 no action. Not mergeable at 89a1202.

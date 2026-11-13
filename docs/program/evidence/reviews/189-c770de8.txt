@@ -1,0 +1,16 @@
+VERDICT: PASS-WITH-FIXES
+PR #189 at c770de83382139605a19e79818b86f43a7e335d0
+Binding review dispatched by the coordinator, 2026-11-13 (Opus, fresh context). Reviewer's own gate run on the head: typecheck, Jest (48 suites, 489 tests), expo export: all green; tree clean. Fail-on-main verified by running: with main's sources under the PR's 21 test files, 20 suites and 61 tests fail; on head all pass.
+
+Findings
+1. MAJOR  technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx:208 (`if (e instanceof ApiError && e.status < 500 && e.status !== 429) {`): the arrival-wizard evidence upload keeps its own status ladder, unchanged from main, never reads the marker. During an outage (edge 404, Cloudflare 403, markerless 401) the slot goes to "failed", the capture is never handed to enqueuePendingMedia, and every recapture fails the same way: evidence cannot be saved while the backend is down. An application 401 also lands in "failed" instead of being kept. Breaks HR-A2 (no private ladder).
+2. MAJOR  pingTracker.ts dutyStatus falls back to the duty cache when there is no live punch; punch.ts:55 writes clockedIn:true at the tap. A clock-in the server refuses (422/403) parks, the Clock screen says "not clocked in", and the background sampler keeps recording location for up to 14 h. Verified by a probe test (not committed). O3-F3 is only partly fixed; the PR's own test seeds no duty cache and never reaches this path. The mirror case (a refused clock-out) also disagrees.
+3. MINOR  against a backend that sends no marker (today's main), an expired token never reaches sign-in and a real 409/422 on a live tap is retried forever, blocking the outbox. Ruling R8 accepts this only for P1-and-later servers; say so in the PR body. (Plan: P2c's Entry gains "P1 merged".)
+4. MINOR  the O3-F10 test checks the helper, not the screen (no screen harness; stated in the PR).
+5. MINOR  "every 401" is narrowed to marked 401s; consistent with R8 and documented.
+Unverified: a drainAll pass started for technician A keeps running after A signs out and B signs in; it could send A's punches with B's token, get 403 and park them.
+
+Register: O3-F1, F2, F6, F7, F8, F9, F10, F11, F14, F17, F18, F22 fixed and verified by running; O3-F3 partly (finding 2).
+Held: one classify(e, kind) used by every queue loop; drop only on the ping and travel rows, pinned by a test; no JSON-detail fallback; no new path deletes a write; completionPrefill.ts untouched; the 14 h and 4 h bounds intact; drainAll survives a throwing step.
+
+Coordinator's ruling (2026-11-13): fix 1 and 2 in this PR; document 3; verify the unverified item and fix or journal it with a test; 4 and 5 accepted. Not mergeable at c770de8.
