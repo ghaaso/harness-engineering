@@ -1737,7 +1737,7 @@ and rebases after P1).
 - **Slot lock.** `ff-slot.sh` has **two pools** since 2026-11-13 15:53. The **heavy pool** has 2
   slots: a Jest run, a Vitest run and a running emulator take 1 each, and a Gradle build takes
   the whole pool (and waits for any holder left over from a larger slot count). The **light
-  pool** has 3 slots and holds only backend gate stacks, measured at about 0.5 GB each (403 MiB
+  pool** has 2 slots since 2026-11-14 02:37 (3 before; see "The app restart of 2026-11-14" in §7.9) and holds only backend gate stacks, measured at about 0.5 GB each (403 MiB
   for the gates container, 102 MiB for its database); `ff-gates.sh` picks the pool from the kind.
   Before the split six jobs queued behind three slots, most of them backend runs waiting behind
   an emulator and each other. Measured worst case so far (16:15 the same day): emulator 4.9 GB + a
@@ -2021,6 +2021,21 @@ reviewer by a message that tells it to start its pass again and to distrust what
 send each lane with interrupted work one message that says what died and what was verified after
 the reboot (head, CI, slots); never report a run the shutdown cut. A lane whose turn had ended on
 "waiting for my gate" would otherwise wait for ever, because the job that was to wake it is gone.
+
+**The app restart of 2026-11-14.** At 02:32 the desktop app restarted (its log ends at 02:30:03 with
+no shutdown line and starts again at 02:32:02; the PC did not reboot). Every session restarted with
+it, and so did everything the sessions had started: two reviewers in mid-pass, every gate run, the
+coordinator's three background tasks, and **Docker Desktop, because the coordinator had started it
+from inside its own session an hour earlier**: the app puts what its sessions launch into one
+Windows job, and the job ends with the app. Docker's own log stops at 02:31:54 with no shutdown
+line. The emulator survived. Measured just before: the app's process tree held 9.7 GB in 124 child
+processes, and free memory had dipped to 1.1 GB at 02:00; the owner was running container jobs of
+his own in the same Docker. Changes: Docker Desktop is started through the Windows shell
+(`explorer.exe` with its path), never as a child of a session, or by the owner; the backend gate
+pool goes from three slots to two; the VM memory return acts below 4 GB free instead of 3; no more
+than three lanes work at once while free memory is near 4 GB (the owner's own rule of that night
+for child sessions), the others wait their turn; long lab runs are packaged one variant per
+invocation so that a cut costs one variant. Restart order as after the shutdown above.
 
 **The drain manifest contract, version 2 (ruling C39).** Binding on P2b-1 (the phone writes it)
 and P2b-2 (the audit reads it). It replaces the manifest as reviewed at `c5eadbd`. No phone has

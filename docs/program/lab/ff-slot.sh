@@ -45,7 +45,7 @@ if [ "$POOL" = light ]; then D="$BASE_D/light"; else POOL=heavy; D="$BASE_D"; fi
 # about 0.4-0.5 GB (the 3 GB figure is only its cap), while the Docker VM held 6.9 GB of page
 # cache; so the cache, not the gates, was eating the host's RAM, and the gate script now drops
 # it at the start and end of every backend run. A Gradle build stays exclusive (see weights).
-if [ "$POOL" = light ]; then N="${FF_LIGHT_SLOTS:-3}"; else N="${FF_SLOTS:-2}"; fi
+if [ "$POOL" = light ]; then N="${FF_LIGHT_SLOTS:-2}"; else N="${FF_SLOTS:-2}"; fi
 STALE_MIN="${FF_STALE_MIN:-240}"
 Q="$D/queue"
 mkdir -p "$D" "$Q"
