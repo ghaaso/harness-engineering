@@ -91,7 +91,9 @@ OUTDIR="$(ls -dt "$LAB_OUT"/android-* 2> /dev/null | head -n1)"
 [ "$rc" -eq 0 ] || die "android-compile.sh failed (rc=$rc); see $OUTDIR/summary.txt"
 mkdir -p "$LAB_OUT/apk"
 APK="$LAB_OUT/apk/lab-${SHA:0:12}-p$LAB_PORT.apk"
-cp "$OUTDIR/app-release.apk" "$APK"
+# L2 names its output COMPILE-ONLY-debugkey-*: debug-signed, for the emulator only (app.sh refuses
+# anything that is not an emulator), never a phone or a store.
+cp "$OUTDIR/COMPILE-ONLY-debugkey-release.apk" "$APK"
 {
   echo "ref: $REF"
   echo "commit: $SHA"
