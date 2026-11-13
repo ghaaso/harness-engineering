@@ -2037,18 +2037,20 @@ received a fleet build, so no version-1 manifest exists anywhere and the audit r
    no string on a phone can make its upload fail for ever (C35's rule, applied to these events).
 6. **The after-report (`drain_after`).** Built by the same builder as the manifest from the phone's
    state now: the install id, the manifest id it follows, the version code, `taken_at`, the owners,
-   every record still on the phone that is not settled (queue, id or `client_id`, owner, kind, state
-   pending, paused or parked, `reason_class`), and every discard made on this install since the
-   manifest (queue, record id, owner, who discarded, when) from a durable local list. It is uploaded
+   every record still on the phone that is not settled (the manifest's own record shapes, rows whose
+   state is `pending` or `parked`), and every discard made on this install (queue, record id, owner,
+   who discarded, when) from a durable local list. It is always built at upload time. It is uploaded
    straight to the events endpoint like the manifest, never through the droppable telemetry queue,
    each upload under a fresh `client_id`: by a button on the Drain Report, and by itself, one at a
    time and rate-limited, when the gate is open and a drain pass has ended. It gates nothing: a
    failed after-report never stops the phone.
-7. **What the audit does with it.** It uses the newest after-report of the same install id and
-   manifest id. A manifest row that is not on the server is: `still_parked` when the report lists it
-   parked with an app reason (manual entry); `in_progress` when the report lists it pending or
-   paused; `discarded` when the report or a trace says so; `missing` when the report does not list
-   it at all. An after-report is evidence about the phone only: it never makes a row landed.
+7. **What the audit does with it.** It uses the newest after-report of the same install id that the
+   server received after that manifest (newest by the server's receipt time; a later build's report
+   counts, it is the same phone). A manifest row that is not on the server is: `still_parked` when
+   the report lists it parked with an app reason (manual entry); `in_progress` when the report lists
+   it pending; `discarded` when the report or a trace says so; `missing` when the report does not
+   list it at all. An after-report is evidence about the phone only: it never makes a row landed. A
+   row the server can prove it refused stays `residue` whatever the report says.
 8. **Evidence by owner.** Evidence matched by job state counts for a row only when its actor is the
    row's owner (owner-less legacy rows and media: a technician of that install). Every row matched
    by state is printed with its identity and the evidence that matched it.
@@ -2070,3 +2072,28 @@ received a fleet build, so no version-1 manifest exists anywhere and the audit r
     phone's Drain Report shows the after-report sent. Section 8.2 calls the script in the runbook's
     form (`ffc exec -T backend python -m scripts.drain_audit`), checks the exit code and that the
     fuel snapshot parses before the route is opened, and passes files through stdin and stdout only.
+
+*Field names (same ruling, added 2026-11-14 on the P2b-2 lane's question; both lanes build to this).*
+
+- **`drain_manifest` props, `schema` = `fixflow.drain_manifest.v2`.** Exactly the version-1 props as
+  written at `c5eadbd`, with four changes: a top-level `install_id` (UUID string); `taken_at`
+  stamped before the read; in `records.outbox[]` the `client_id` is also set for kind `location`;
+  the field `reason` is removed from `records.punch[]`, `records.presence[]`, `records.outbox[]` and
+  `records.media[]` (`reason_class` stays). Every string value passes the sanitiser.
+- **`queue_discard` props.** The version-1 fields (`queue`, `kind`, `reason_class`, `owner_tech`,
+  `discarded_by`, `record_id`) plus `install_id`.
+- **`drain_after` props, `schema` = `fixflow.drain_after.v1`.** `install_id`; `manifest_id` (the
+  stored manifest of the build that sends the report); `version_code`; `taken_at`; `storage` and
+  `owners` as in the manifest; `records`, the same object with the same seven queues and the same
+  record shapes as the version-2 manifest, built by the same builder, keeping only rows whose
+  `state` is `pending` or `parked`; `discards`, a list of the `queue_discard` fields plus `at` (the
+  time of the discard), one entry per discard made on this install. The event's own `client_id` is a
+  fresh UUID for every upload and its `device_time` is `taken_at`. Other manifest fields may be
+  present; the audit ignores them.
+- **Reading it.** A row is the same row in a manifest and in an after-report when the audit's own
+  row key (its id or `client_id`, and its content) is the same. A queue the after-report's `storage`
+  marks unreadable cannot be judged from that report. A phone "with rows not landed" is one with a
+  manifest row that would otherwise end `missing` or `still_parked`; rows the server can settle by
+  itself (`dropped`, `dropped_edge`, `residue`, `restore_gap`, `prior_state`, discarded by a trace)
+  need no after-report. Where an after-report is needed and none has arrived, the run exits 4 and
+  names the install; it never exits 3 for that reason.
