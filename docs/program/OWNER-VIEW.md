@@ -113,7 +113,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 | Id | Decision | Blocks | Default |
 | --- | --- | --- | --- |
 | N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | DECIDED 2026-11-13: Yes for #185 (the reviewer and skill definitions). |
-| N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | it stays open as a draft |
+| N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | DECIDED 2026-11-13: Close it. |
 | N5 (new) | May a manager record (or void) a payment on a job that is already closed? | the merge of P7a (who may do what, and money guards) | DECIDED 2026-11-13: Yes, managers only. |
 | T1 | Domain (Cloudflare DNS, multi-year, auto-renew) | P2b-1 (name), P2c, P3a | nothing can ship to phones |
 | T2 | Host for the drain window and after: VPS (default) or the home box | P0b, P3b, P13e | VPS from P3b until P13e (2 vCPU / 4 GB, Mumbai measured first). Box gate, the one condition for the home box in any role: 14 days at 99.5 % reachability from its site, or a second uplink. P13e not before the later of P5d-2 done and the last re-open; you may invert at P3b only if the box already passes the gate; 'no home box' keeps the VPS and skips P13e |
