@@ -90,6 +90,9 @@ fi
 cleanup() {
   if [ "$KIND" = backend ]; then
     docker rm -f "fixflow-$LANE-gates" "fixflow-$LANE-db" >/dev/null 2>&1
+    # Give the run's disk cache back to Windows: the Docker VM keeps page cache it no longer needs
+    # (4.4 GB measured on 2026-11-13 while the host had 5.5 GB free). Cache only; no data is touched.
+    docker run --rm --privileged alpine:3 sh -c "sync; echo 1 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
   fi
   bash "$HERE/ff-slot.sh" release "$HOLDER" >/dev/null 2>&1
   rm -rf "$LL"
