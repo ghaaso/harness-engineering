@@ -502,9 +502,7 @@ check_f14_once() { # run-no test|control
     record "$id" control "opened 10 s after the headless job finished: the next job finishes and records" "$obs" "$v" "f14-$n-$mode.txt"
   fi
   # a broken process stays broken: end every run on a fresh one
-  kill_app || mark "$id app process did not die"
-  launch_app
-  sleep 8
+  fresh_app || mark "$id no fresh process: it kept coming back headless"
   ash svc power stayon false
 }
 check_f14() {

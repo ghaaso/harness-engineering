@@ -218,6 +218,27 @@ kill_app() {
   [ -z "$(app_pid)" ]
 }
 
+# A fresh app process with a working TaskManager, opened in the foreground. Opening the app while
+# a headless task instance is alive drops the TaskManager for the rest of the process (O01-F14,
+# reproduced 3 of 3 by check f14), and Play services restarts a killed process headless within
+# seconds for any pending geofence event (it did, and the 18:26 offline run lost its controls).
+# So: kill, and open only once a kill has stayed dead for 10 s.
+fresh_app() {
+  local i
+  for i in 1 2 3 4 5; do
+    kill_app > /dev/null
+    sleep 10
+    if [ -z "$(app_pid)" ]; then
+      launch_app
+      sleep 8
+      return 0
+    fi
+    mark "fresh_app: the process came back headless (pid $(app_pid)); letting its job finish"
+    sleep 15
+  done
+  return 1
+}
+
 # Logcat lines matching ERE $2 that come after the FFLAB mark containing $1.
 lc_since() {
   awk -v m="$1" -v re="$2" 'index($0, "FFLAB") && index($0, m) { on = 1; next } on && $0 ~ re' "$EV/logcat.txt"
