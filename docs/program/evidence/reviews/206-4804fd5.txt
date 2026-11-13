@@ -1,0 +1,30 @@
+VERDICT: PASS
+PR #206 at 4804fd5c99edb89679fcdf2415c8d3dff8a4beab
+Binding review by the reviewer of P3a (PRs #195 and #205), resumed by the coordinator 2026-11-13 20:11; `main` was at 66e891b. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Findings
+
+No blockers or majors. Three things are worth a follow-up, plus one display oddity under question 2; none can lead to a wrong image being cut.
+
+1. A missing tag ends on the pass text. At `docs/RUNBOOK-SELFHOST.md:2111`, `merge-base --is-ancestor ... || echo "fix not on main"` prints "fix not on main" whether the tag is absent (exit 128) or genuinely not on `main` (exit 1). Run with an absent tag name: the last line read exactly "fix not on main". The three lines before it do print `fatal:` errors, the check says "A missing tag ... is a STOP", and 11.3a's pick would then fail loudly. So an operator is warned, but the final line on its own reads like a pass. Smallest fix: `git merge-base --is-ancestor drain-pick-tz-fix origin/main; echo "is-ancestor exit=$?"`, expecting `exit=1`.
+2. The reset target is described, not computed. The STOP for a line naming `f192fee` says "`git reset --hard <sha of the P1 pick>`, the commit 11.3 made", but gives no command to find that sha. Suggested: `git reset --hard "$(git log --format=%H --grep='cherry picked from commit 87bbe88' a31924a..release/drain)"`. The reviewer ran exactly that recovery (answer 4).
+3. The PR body is stale on one line. It says `Plan @ plan-v9.27`, but C32 does not appear in `plan-v9.27`; it is recorded in `plan-v9.29` (`SHIP-PLAN:1973`).
+
+Answers
+
+1. The tag: `git ls-remote` shows `d7b71d1` at `refs/tags/drain-pick-tz-fix`, peeling to `3810e4209ea4bf8fde7ce500cea0458d3e7ff701`. 11.1's tag commands, run as written after `git fetch origin --tags` (from the main repo, not a clean clone), printed `tag`, the full sha, `parents=81c7a4f fix(jobs): resolve the tech-metrics window in the shop timezone, not UTC`, and `fix not on main`: the runbook's expected text. With the tag missing, the first three commands fail with `fatal:` (exit 128) and the last prints the pass text (finding 1).
+2. 11.3a picks the tag correctly. The `-x` trailer records the commit sha `3810e42...`, not the tag object's. The four files match. Display oddity: `git show --stat drain-pick-tz-fix` prints the tag's message before the commit; `drain-pick-tz-fix^{commit}` would print the commit alone.
+3. 11.6 catches the wrong pick. Two cuts in a throwaway worktree at `a31924a` (P2b-2 is not merged, so three of four picks each). Right picks printed `87bbe88...`, then `3810e42...`, then `90ea88d...`, in pick order, matching the runbook. Picking `f192fee` after P1 applied with exit 0 and printed a `f192fee97d3e...` line, which the check catches. The expected block is written in full, with `<p2b2-full-sha>` marked as `git rev-parse <p2b2>`.
+4. The recovery restores a correct branch. The reset command is not written out (finding 2), but the step is correct, and the branch is not yet pushed at that point (the push is 11.10, after 11.6), so no force push is needed. After the wrong pick: reset to the P1 pick, picked the tag, picked P3a. The trailers came out right and the tree matched the correct cut exactly (`f899144...`); commit shas differ only by timestamps. A pick made without `-x` leaves out one line, which the check catches under "Any other difference ... STOP, re-cut".
+5. 11.13 and scope: all runbook hunks fall within section 11 (lines 2078-2290), and 11.13's new wording agrees with 11.6. No secrets, no real hostnames.
+6. The skill file: one hunk in the body (new lines 224-230); the YAML header is untouched. The text points at runbook section 11, plan 7.7, C30 and C32, does not copy the list, and nothing in the runbook contradicts it.
+7. The PR body: every claim is true of the diff, except the plan tag (finding 3).
+
+What the reviewer ran: `gh pr view`; `git diff 66e891b..4804fd5`; `git ls-remote --tags`; 11.1's tag commands with the real tag and with an absent tag name; in a throwaway worktree at `a31924a`: the right cut, the wrong cut with `f192fee`, the reset recovery, a pick made without `-x`. The worktree and the local `rv206-*` branches were removed and pruned. No `release/*` branch exists locally, and nothing was pushed.
+
+Unverified by the reviewer: a true clean clone; the PR body's statement that Prettier checked the skill file.
+
+Coordinator (2026-11-13 20:20)
+- The clean clone, run by the coordinator: a clone of `main` only (no plan branch, no tags). Before any tag fetch the four fix lines of 11.1 print three `fatal:` lines and then "fix not on main" (finding 1 confirmed). After `git fetch origin tag drain-pick-tz-fix` alone they print `tag`, `3810e4209ea4bf8fde7ce500cea0458d3e7ff701`, `parents=81c7a4f fix(jobs): resolve the tech-metrics window in the shop timezone, not UTC`, `fix not on main`, and `merge-base --is-ancestor` exits 1. The commit is fetchable from a clone that has neither the plan branch nor the plan tags.
+- Finding 3: the coordinator corrected the PR body's first line to `Plan @ plan-v9.29` before the merge (the head sha does not change).
+- PASS with notes, so it merges; findings 1 and 2 and the display oddity go to one more small follow-up by the same lane, together with a point the coordinator found while reading the merged section: 11.8 tells the operator to read the CI run of the pushed branch before tagging, but the branch is first pushed in 11.10, with the tag (ruling C34).
