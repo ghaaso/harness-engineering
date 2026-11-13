@@ -1,0 +1,57 @@
+# <!-- Authored for FixFlow, 2026-11-04 -->
+# O-03 carry-in completion smoke, ONLINE. Creates one carry-in job through the outbox create
+# kind (CreateJobWizard.tsx:160-162), runs the wizard to the bill, then checks the job sits
+# under "AWAITING HANDOVER / PICKUP" (carry-in completion moves the job to ready, CLAUDE.md
+# "ready means work done, awaiting handover"; JobsListScreen.tsx:243).
+# WRITES REAL ROWS to whatever API the installed build bakes: run only after the owner approved
+# the backend, the test technician, and the window (SKILL.md procedure step 5).
+# The app must already be open on the phone; this flow never starts, stops or resets it.
+appId: com.fixflow.technician
+name: FixFlow carry-in completion smoke (O-03)
+tags:
+  - fixflow-write
+env:
+  CUSTOMER_NAME: ${CUSTOMER_NAME || "Maestro Smoke Test"}
+  APPLIANCE: ${APPLIANCE || "Fridge"}
+  BRAND: ${BRAND || "Dawlance"}
+  ESTIMATE: ${ESTIMATE || "1500"}
+---
+- runFlow:
+    when:
+      visible: "Technician sign-in"
+    file: subflows/login.yaml
+- extendedWaitUntil:
+    visible: "Welcome back,"
+    timeout: 30000
+- runFlow: subflows/preconditions.yaml
+- tapOn: "Jobs"
+- extendedWaitUntil:
+    visible: "Task Management"
+    timeout: 15000
+- runFlow: subflows/intake-who-what.yaml
+- tapOn: "Carry-in"
+- scrollUntilVisible:
+    element: "Next"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Next"
+- runFlow: subflows/intake-estimate.yaml
+# Online: the wizard replaces itself with the job's detail (CreateJobWizard.tsx:179-180).
+# A "Saved offline" alert here fails the flow: that is the offline flow's case, not this one.
+- extendedWaitUntil:
+    visible: "WORKSHOP WORK"
+    timeout: 30000
+- takeScreenshot: carry-in-created
+- tapOn: ".*Open Job Wizard"
+- runFlow: subflows/wizard-to-bill.yaml
+- tapOn: "Done — back to dashboard"
+- extendedWaitUntil:
+    visible: "Welcome back,"
+    timeout: 15000
+- tapOn: "Jobs"
+- tapOn: "On-Going Tasks"
+- extendedWaitUntil:
+    visible: "AWAITING HANDOVER / PICKUP"
+    timeout: 30000
+- assertNotVisible: "Offline — showing last synced data.*"
+- takeScreenshot: carry-in-awaiting-handover

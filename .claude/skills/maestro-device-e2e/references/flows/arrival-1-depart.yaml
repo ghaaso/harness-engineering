@@ -1,0 +1,61 @@
+# <!-- Authored for FixFlow, 2026-11-04 -->
+# O-01 arrival smoke, part 1 of 2. Creates a home-visit job whose customer pin is the phone's
+# own real GPS fix ("My location", CreateJobStep3.tsx:89-101) so the tap-time arrival gate
+# (arrivalGate.ts:24 ARRIVE_RADIUS_M = 250) passes at the workshop without a mock location.
+# Then departs: the depart punch starts the travel breadcrumb sampler (TravelScreen.tsx:200-203).
+# Ends on "I HAVE ARRIVED". The agent then runs the adb captures of
+# references/background-delivery-evidence.md before part 2. Part 2 must follow the same session:
+# an un-arrived leg samples until MAX_TRAVEL_MS (4 h, travelTracker.ts:39).
+# WRITES REAL ROWS (job, depart punch, breadcrumbs): owner approval as in SKILL.md step 5.
+appId: com.fixflow.technician
+name: FixFlow arrival smoke part 1 - depart (O-01)
+tags:
+  - fixflow-write
+  - fixflow-location
+env:
+  CUSTOMER_NAME: ${CUSTOMER_NAME || "Maestro Smoke Visit"}
+  APPLIANCE: ${APPLIANCE || "Fridge"}
+  BRAND: ${BRAND || "Dawlance"}
+  ESTIMATE: ${ESTIMATE || "1500"}
+---
+- runFlow:
+    when:
+      visible: "Technician sign-in"
+    file: subflows/login.yaml
+- extendedWaitUntil:
+    visible: "Welcome back,"
+    timeout: 30000
+- runFlow: subflows/preconditions.yaml
+- tapOn: "Jobs"
+- extendedWaitUntil:
+    visible: "Task Management"
+    timeout: 15000
+- runFlow: subflows/intake-who-what.yaml
+- tapOn: "Home visit"
+- tapOn: "Type customer address\\.\\.\\."
+- inputText: "Maestro smoke - at the workshop"
+- hideKeyboard
+- tapOn: ".*My location"
+- extendedWaitUntil:
+    visible: "Pin set.*"
+    timeout: 60000
+- tapOn: "Today 4-6"
+- scrollUntilVisible:
+    element: "Next"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Next"
+- runFlow: subflows/intake-estimate.yaml
+- extendedWaitUntil:
+    visible: ".*START TRAVEL"
+    timeout: 30000
+- takeScreenshot: visit-created
+- tapOn: ".*START TRAVEL"
+- extendedWaitUntil:
+    visible: "Punch out of the workshop.*"
+    timeout: 20000
+- tapOn: ".*START TRAVEL"
+- extendedWaitUntil:
+    visible: "I HAVE ARRIVED"
+    timeout: 60000
+- takeScreenshot: travel-started
