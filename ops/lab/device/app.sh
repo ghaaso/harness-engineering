@@ -3,6 +3,7 @@
 #
 #   bash ops/lab/device/app.sh install <apk>   verify the APK bakes only the lab host, install it
 #                                              on the lab emulator (never a phone), grant perms
+#   bash ops/lab/device/app.sh check <apk>     the host check alone (no emulator needed)
 #   bash ops/lab/device/app.sh grant           fine + coarse + background location and
 #                                              notifications by `pm grant`; CAMERA denied and
 #                                              user-fixed, so a clock-in takes no selfie and
@@ -129,6 +130,10 @@ case "$cmd" in
     check_apk_hosts "$apk" || die "REFUSED: $apk could reach a non-lab host (see above)"
     adb_ install -r "$(winpath "$apk")" || die "install failed"
     do_grant
+    ;;
+  check)
+    apk="${1:?usage: app.sh check <apk>}"
+    check_apk_hosts "$apk" && echo "OK: $apk bakes only the lab API base"
     ;;
   grant)
     require_emulator
