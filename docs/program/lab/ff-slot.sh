@@ -81,20 +81,28 @@ case "$cmd" in
     if [ "$w" -gt "$N" ]; then echo "weight $w exceeds slots $N" >&2; exit 2; fi
     t0=$(date +%s)
     # the ticket lives as long as this acquire call does; its name sorts by arrival time
-    ticket="$Q/$(date +%s%N)-$holder"
-    echo "$$ $w $t0" > "$ticket"
+    # The weight is in the ticket's NAME and its content is the bare PID. A waiter still running an
+    # earlier version of this script reads the content as a PID and reaps a ticket it cannot parse
+    # (that stranded two runs on 2026-11-13), so the content format never changes again.
+    ticket="$Q/$(date +%s%N)-w${w}-$holder"
+    echo "$$" > "$ticket"
     trap 'rm -f "$ticket"' EXIT
     PATIENCE="${FF_HEAVY_PATIENCE:-900}"
     while :; do
       reap
+      # if something removed our ticket while we are alive, put it back under the same name (same place in line)
+      [ -f "$ticket" ] || echo "$$" > "$ticket"
       my_turn=1
       for t in $(ls "$Q" 2>/dev/null | sort); do
         [ "$Q/$t" = "$ticket" ] && break
-        tw=""; tt=""
-        { read -r _p tw tt < "$Q/$t"; } 2>/dev/null   # the ticket may vanish between ls and read
-        # tickets written before weights were recorded: an Android build is the only heavy job
-        if [ -z "${tw:-}" ]; then case "$t" in *-android-*) tw=2 ;; *) tw=1 ;; esac; fi
-        [ -n "${tt:-}" ] || tt=$(( ${t%%-*} / 1000000000 ))
+        # weight from the name ("<ns>-w<weight>-<holder>"); older tickets have none: an Android build is the only heavy job
+        rest="${t#*-}"
+        case "$rest" in
+          w[0-9]-*) tw="${rest:1:1}" ;;
+          *-android-*) tw=2 ;;
+          *) tw=1 ;;
+        esac
+        tt=$(( ${t%%-*} / 1000000000 ))
         if [ "$w" -eq 1 ] && [ "$tw" -ge 2 ] && [ $(( $(date +%s) - tt )) -lt "$PATIENCE" ]; then
           continue   # a short job may pass a heavy one that has not waited long yet
         fi
@@ -135,8 +143,8 @@ case "$cmd" in
     done
     n=0
     for t in $(ls "$Q" 2>/dev/null | sort); do
-      n=$((n+1)); tw=""; { read -r _p tw _tt < "$Q/$t"; } 2>/dev/null
-      echo "waiting $n: ${t#*-} weight=${tw:-?} for $(( $(date +%s) - ${t%%-*} / 1000000000 ))s"
+      n=$((n+1))
+      echo "waiting $n: ${t#*-} for $(( $(date +%s) - ${t%%-*} / 1000000000 ))s"
     done
     echo "slots=$N stale_min=$STALE_MIN dir=$D"
     ;;

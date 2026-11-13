@@ -110,6 +110,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A gate never runs without its slot: if the acquire call dies or fails, the run stops here
+# (a killed acquire used to fall through and run unslotted).
+take_slot() {
+  bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" > "$L/slot.log" 2>&1
+  local rc=$?
+  cat "$L/slot.log"
+  if [ "$rc" -ne 0 ] || ! grep -q "^SLOTS " "$L/slot.log"; then
+    echo "SETUP[slot] ACQUIRE FAILED (exit $rc): the gate did not run" | tee -a "$L/gates.log"
+    return 1
+  fi
+}
+
 # every gate runs; FAIL is sticky
 FAIL=0; i=0
 g() {
@@ -133,7 +145,7 @@ case "$KIND" in
   backend)
     docker info --format '{{.ServerVersion}}' >/dev/null 2>&1 || { echo "SETUP[docker] DOCKER_ENGINE_DOWN" | tee -a "$L/gates.log"; finish 3; }
     N="fixflow-$LANE"
-    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" | tee -a "$L/slot.log"
+    take_slot || finish 5
     PG="${FF_PG_IMAGE:-postgres:16-alpine}"   # CI parity today; the plan moves both to 17-alpine in P3a
     U="postgresql+asyncpg://postgres:postgres@localhost:5432/fixflow_test"
     # Mirror CI's environment per worktree: P1 makes the backend refuse to boot outside an
@@ -207,7 +219,7 @@ PY
 
   mobile)
     cd "$WTU/technician-app" || finish 2
-    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" | tee -a "$L/slot.log"
+    take_slot || finish 5
     npm_ready || finish 2
     g npm run typecheck
     g npx jest --ci --maxWorkers="${FF_JEST_WORKERS:-4}"      # no --passWithNoTests (plan P1)
@@ -218,7 +230,7 @@ PY
 
   web)
     cd "$WTU" || finish 2
-    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" | tee -a "$L/slot.log"
+    take_slot || finish 5
     npm_ready || finish 2
     g npm run lint
     g npm run format:check
