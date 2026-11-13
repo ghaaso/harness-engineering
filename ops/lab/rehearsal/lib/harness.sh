@@ -47,6 +47,8 @@ rb_run() { # <id> <text> [<from>=<to>]...
   local id="$1" text="$2"; shift 2
   RUN_N=$((RUN_N + 1))
   LOG="$OUT/steps/$(printf '%03d' "$RUN_N")-$id.log"
+  # OLOG: what the command printed (masked), alone; every Check reads this, never the command text
+  mkdir -p "$OUT/.stepout"; OLOG="$OUT/.stepout/$(basename "$LOG" .log).out"; : > "$OLOG"
   case "$text" in *__RB_MISSING__*) { echo "RUNBOOK TEXT NOT FOUND: $text"; } > "$LOG"; RC=99; return 99 ;; esac
   local cmd
   if ! cmd="$(rb_sub "$text" "$@" 2>"$LOG.err")"; then
@@ -63,11 +65,11 @@ rb_run() { # <id> <text> [<from>=<to>]...
   eval "$cmd" >> "$LOG.out" 2>&1
   RC=$?
   # never let a stand-in secret into the record: mask anything that looks like one of ours
-  l4_mask < "$LOG.out" >> "$LOG"; rm -f "$LOG.out"
+  l4_mask < "$LOG.out" > "$OLOG"; cat "$OLOG" >> "$LOG"; rm -f "$LOG.out"
   echo "### exit=$RC" >> "$LOG"
   return 0
 }
-out_of() { sed -n '/^### output:$/,/^### exit=/p' "$LOG" | sed '1d;$d'; }
+out_of() { cat "$OLOG"; }
 
 # Values generated in 3.3 are stand-ins, but they still never reach a results file.
 L4_SECRETS_FILE=/srv/l4/secrets.list

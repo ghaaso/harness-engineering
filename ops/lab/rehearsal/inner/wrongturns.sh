@@ -75,6 +75,7 @@ for pct in 60 99; do
   psql_super -c 'DROP DATABASE IF EXISTS fixflow_wt' >/dev/null 2>&1
   psql_super -c 'CREATE DATABASE fixflow_wt OWNER fixflow_app' >/dev/null 2>&1
   r67="$(rb_fence 6.7 1 '$p' | sed 's/-d fixflow /-d fixflow_wt /')"
+  [ "$pct" = 60 ] && echo "lab WT3: 6.7's pg_restore line is run with '-d fixflow' changed to '-d fixflow_wt' (a scratch database, so the live one is not dropped)" >> "$OUT/deviations.log"
   rb_run "wt3-$pct-67" "$r67" "\$D=$T"
   o67="$(out_of | tail -n 3 | tr '\n' ' ')"
   nt="$(ffc exec -T postgres psql -U fixflow_app -d fixflow_wt -tAc "select count(*) from pg_tables where schemaname='public'" 2>/dev/null)"

@@ -89,23 +89,32 @@ l4_host_up() {
 # this checkout's origin/main (and of any extra refs passed). It stands in for GitHub: the
 # runbook's `git clone <repo-url>`, `git fetch origin --tags` and `git push origin ...` all go to
 # it, never to the real remote.
-l4_origin() { # <checkout> [extra refs...]
+l4_origin() { # <checkout> [tag:<name> | <branch name>]... extra refs of the real remote
   local co="$1"; shift
   local b; b="$(mktemp -d)/l4.bundle"
+  local refs="origin/main" maps="refs/remotes/origin/main:refs/heads/main" fetch="main" r
+  for r in "$@"; do
+    case "$r" in
+      tag:*) r="refs/tags/${r#tag:}"; refs="$refs $r"; maps="$maps $r:$r"; fetch="$fetch $r:$r" ;;
+      *) refs="$refs origin/$r"; maps="$maps refs/remotes/origin/$r:refs/heads/$r"; fetch="$fetch $r" ;;
+    esac
+  done
   # Other sessions share this repository's object store and refs: a fetch or bundle can meet
-  # their lock for a moment, so each is tried three times and the last error is shown.
+  # their lock for a moment, so each is tried three times and the last error is shown. A tag is
+  # fetched without --force: one that moved on the real remote fails here instead of being copied.
   local i ok=0
   for i in 1 2 3; do
-    git -C "$co" fetch -q origin main && git -C "$co" bundle create "$(l4_win "$b")" origin/main "$@" > "$b.err" 2>&1 \
+    # shellcheck disable=SC2086
+    git -C "$co" fetch -q origin $fetch > "$b.err" 2>&1 && git -C "$co" bundle create "$(l4_win "$b")" $refs >> "$b.err" 2>&1 \
       && { ok=1; break; }
     sleep 5
   done
   [ "$ok" = 1 ] || { cat "$b.err" >&2; l4_die "git fetch/bundle failed"; }
   l4_dx mkdir -p /srv/in
   docker cp "$(l4_win "$b")" "$L4_HOST:/srv/in/l4.bundle" >/dev/null || l4_die "docker cp of the bundle failed"
-  l4_dx sh -c 'rm -rf /srv/origin.git && git init -q --bare /srv/origin.git \
-    && git -C /srv/origin.git fetch -q /srv/in/l4.bundle "refs/remotes/origin/main:refs/heads/main" \
-    && git -C /srv/origin.git symbolic-ref HEAD refs/heads/main' || l4_die "origin repo failed"
+  l4_dx sh -c "rm -rf /srv/origin.git && git init -q --bare /srv/origin.git \
+    && git -C /srv/origin.git fetch -q /srv/in/l4.bundle $maps \
+    && git -C /srv/origin.git symbolic-ref HEAD refs/heads/main" || l4_die "origin repo failed"
   rm -rf "$(dirname "$b")"
 }
 

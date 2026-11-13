@@ -26,8 +26,9 @@ from __future__ import annotations
 import re
 import sys
 
-HEAD_MD = re.compile(r"^###\s+(\d+\.\d+)\s")
-HEAD_BOLD = re.compile(r"^\*\*((?:R\d+|\d+)\.\d+)\s")
+# a step number may carry a letter (11.3a, inserted between 11.3 and 11.4)
+HEAD_MD = re.compile(r"^###\s+(\d+\.\d+[a-z]?)\s")
+HEAD_BOLD = re.compile(r"^\*\*((?:R\d+|\d+)\.\d+[a-z]?)\s")
 SECTION = re.compile(r"^##\s")
 
 

@@ -120,11 +120,13 @@ def p6a(setup: dict) -> None:
 
 
 def verdict(items: list) -> str:
-    """PASS, FAIL, or PASS with the items that cannot run here named (None = cannot run)."""
+    """PASS, FAIL, or PARTIAL naming the items that cannot run here (None = cannot run).
+
+    An item that did not run is not a pass: a check with one is PARTIAL, never PASS."""
     if any(i[1] is False for i in items):
         return "FAIL"
     skipped = [i[0] for i in items if i[1] is None]
-    return "PASS" if not skipped else "PASS (cannot run here: " + "; ".join(skipped) + ")"
+    return "PASS" if not skipped else "PARTIAL (cannot run here: " + "; ".join(skipped) + ")"
 
 
 def p7a(jobs: dict[str, str]) -> None:

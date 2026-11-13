@@ -46,7 +46,7 @@ l4_dx bash /srv/l4/kit/inner/prep.sh main || l4_die "prep failed"
 l4_dx bash /srv/l4/kit/inner/restore.sh online "$REF" || l4_die "online part failed"
 # From here no backend container can reach anything but the stand-in host itself.
 docker network disconnect bridge "$L4_HOST" || l4_die "could not take the stand-in host offline"
-l4_dx sh -c 'ip -4 route | grep -c default' | grep -qx 0 || l4_die "the stand-in host still has a default route"
+l4_dx sh -c '{ ip -4 route; ip -6 route; } | grep -c default' | grep -qx 0 || l4_die "the stand-in host still has a default route"
 l4_dx bash /srv/l4/kit/inner/restore.sh offline || l4_die "offline part failed"
 [ "$WRONG" = 1 ] && { l4_dx bash /srv/l4/kit/inner/wrongturns.sh || echo "L4: wrong-turn part failed" >&2; }
 l4_dx python3 /srv/l4/kit/lib/report.py /srv/l4/out "restore rehearsal ($REF)" > /dev/null || echo "L4: report failed" >&2

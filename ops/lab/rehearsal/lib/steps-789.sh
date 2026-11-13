@@ -25,6 +25,17 @@ sec7() {
   # lab probe (not a runbook command): how long deep health takes to answer with postgres stopped
   ffc $P_DB stop postgres >/dev/null 2>&1
   local probe; probe="$(ffc exec -T backend sh -c 'curl -sS -m 150 -o /dev/null -w "%{http_code} after %{time_total}s" -H "X-Ops-Proxy-Token: $FIXFLOW_OPS_PROXY_TOKEN" http://localhost:8000/api/ops/health' 2>&1 | tail -n 1)"
+  # ... and how long the name `postgres` takes to fail to resolve: with the container stopped,
+  # Docker's resolver forwards the name upstream, and this host has no upstream (it is offline)
+  local dns; dns="$(ffc exec -T backend python -c '
+import socket, time
+t = time.monotonic()
+try:
+    socket.getaddrinfo("postgres", 5432); r = "resolved"
+except OSError as e:
+    r = type(e).__name__
+print(f"getaddrinfo(postgres) {r} after {time.monotonic() - t:.1f}s")' 2>&1 | tail -n 1)"
+  probe="$probe; $dns"
   ffc $P_DB up -d postgres >/dev/null 2>&1
   for i in $(seq 1 60); do
     [ "$(docker inspect --format '{{.State.Health.Status}}' "$(ffc $P_DB ps -q postgres)" 2>/dev/null)" = healthy ] && break
@@ -34,14 +45,21 @@ sec7() {
   echo "lab probe 7.2: deep health with postgres stopped answered: $probe" >> "$OUT/deviations.log"
   o2="$o2
 lab probe: deep health with postgres stopped answered $probe"
-  row 7.2 "$( [ $ok = yes ] && echo DONE || echo FAILED)" "heartbeat by hand at the container address; then with postgres stopped; then again" \
+  # The alarm firing with http=000 instead of the Expected http=200 is AMBIGUOUS, not FAILED: the
+  # slow answer may come from this offline host's DNS (see the probe), which a real host lacks.
+  local amb=no
+  [ $ok = no ] && echo "$o2" | grep -q 'UNHEALTHY http=000' && echo "$o2" | grep -qx 'exit=1' \
+    && [ "$(echo "$o1" | tr -d ' ')" = exit=0 ] && [ "$(echo "$o3" | tr -d ' ')" = exit=0 ] && amb=yes
+  row 7.2 "$( [ $ok = yes ] && echo DONE || { [ $amb = yes ] && echo AMBIGUOUS || echo FAILED; })" "heartbeat by hand at the container address; then with postgres stopped; then again" \
     "healthy: [$o1] pings $before->$after; db down: [$(echo "$o2" | grep -o 'UNHEALTHY http=[0-9]*' | head -n 1) $(echo "$o2" | grep '^exit=')]; again: [$o3]; $(echo "$o2" | grep '^lab probe')" \
-    "network name fixflow_app confirmed (the VERIFY line)$( [ $ok = no ] && echo "$o2" | grep -q 'UNHEALTHY http=000' && echo "$o2" | grep -qx 'exit=1' && echo "; the alarm fired (exit=1, no ping) but the Expected 'http=200' was not seen: with the postgres container stopped, /api/ops/health did not answer within the heartbeat's curl -m 20, so it printed http=000. RUNBOOK DEFECT CANDIDATE (Expected text): accept 'http=000 or http=200 with database not ok'")"
+    "network name fixflow_app confirmed (the VERIFY line)$( [ $amb = yes ] && echo "; the alarm fired (exit=1, no ping) but the Expected 'http=200' was not seen: with postgres stopped, /api/ops/health did not answer within the heartbeat's curl -m 20, so it printed http=000. The lab probe shows whether this host's offline DNS explains the delay (a real host gets a fast NXDOMAIN). Either way the alarm fires; settle on the real host. If it recurs there, the smallest fix is the Expected text: 'http=000 or http=200 with database not ok'")"
   row 7.3 NRH "heartbeat through the tunnel" "-" "needs api.<domain> on the tunnel"
   rb_run 7.4-do "$(rb_fence 7.4 1)"
   rb_run 7.4-check "$(rb_fence 7.4 2 1p)"
-  row 7.4 "$(v has '-rw-r--r-- 1 root root')" "install the heartbeat cron file" "$(out_of)" \
-    "the file is installed; whether cron runs it every minute is NRH: the stand-in host (Alpine) has no Debian cron reading /etc/cron.d"
+  # The Check is a ping every minute; only the installed file can be seen here, so a good file is
+  # AMBIGUOUS, never DONE.
+  row 7.4 "$(has '-rw-r--r-- 1 root root' && echo AMBIGUOUS || echo FAILED)" "install the heartbeat cron file" "$(out_of)" \
+    "the file is installed as written; the Check (a ping every minute) cannot be seen: the stand-in host (Alpine) has no Debian cron reading /etc/cron.d. Settled on the real host"
   row 7.5 NRH "test paging once" "-" "needs the monitoring service's e-mail"
   rb_run 7.6 "$(rb_fence 7.6 1)"
   local h; h="$(out_of)"
@@ -55,7 +73,7 @@ lab probe: deep health with postgres stopped answered $probe"
   row 7.7 NRH "install the hourly-dump cron" "file installed: $(ls -l /etc/cron.d/fixflow-hourly-dump 2>/dev/null | cut -c1-30)" \
     "the :17 run needs a Debian cron; 7.6 ran the same command by hand"
   rb_run 7.8 "$(rb_fence 7.8 1)"
-  row 7.8 "$(v sh -c "grep -qx fixflow-heartbeat '$LOG' && grep -qx fixflow-hourly-dump '$LOG'")" "ls /etc/cron.d | grep fixflow" "$(out_of | tr '\n' ' ')" "one host only here"
+  row 7.8 "$(v sh -c "grep -qx fixflow-heartbeat '$OLOG' && grep -qx fixflow-hourly-dump '$OLOG'")" "ls /etc/cron.d | grep fixflow" "$(out_of | tr '\n' ' ')" "one host only here"
 }
 
 # ---------------------------------------------------------------- section 9
@@ -101,9 +119,12 @@ sec9_2() {
   local bk sch
   bk="$(jget facts.backup_enabled < "$OUT/deep-health-9.2.json")"
   sch="$(jget components < "$OUT/deep-health-9.2.json" | jget scheduler.detail)"
-  row 9.2 "$( [ "$bk" = True ] && echo "$sch" | grep -q 'db-backup-nightly' && echo DONE || echo FAILED)" \
-    "compose.env FIXFLOW_BACKUP_ENABLED=true; ffc \$P_RUN up -d backend" "backup_enabled=$bk; scheduler: $(echo "$sch" | cut -c1-220)" \
-    "the Check also wants the next run at 02:30 Asia/Karachi"
+  # The Check: the next run at 02:30 Asia/Karachi. health.py prints next_run_time with %Z, the
+  # trigger's own zone, so 02:30 in Asia/Karachi reads "02:30 PKT"; anything else is a failure.
+  local nightly; nightly="$(echo "$sch" | tr ';' '\n' | grep -o 'db-backup-nightly→[^;]*' | head -n 1)"
+  row 9.2 "$( [ "$bk" = True ] && echo "$nightly" | grep -qE '→[0-9-]+ 02:30 PKT$' && echo DONE || echo FAILED)" \
+    "compose.env FIXFLOW_BACKUP_ENABLED=true; ffc \$P_RUN up -d backend" "backup_enabled=$bk; $nightly; scheduler: $(echo "$sch" | cut -c1-220)" \
+    "$(echo "$nightly" | grep -q ' UTC$' && echo "APP DEFECT: the nightly job is scheduled at 02:30 UTC (07:30 Karachi), not 02:30 Asia/Karachi. backend/app/core/scheduler.py:53 and :72 build CronTrigger(...) without timezone=, so the trigger takes the container's zone (UTC) instead of the scheduler's settings.scheduler_timezone; payroll-weekly-export runs Sunday 18:00 UTC (23:00 Karachi) the same way. Smallest fix: CronTrigger(..., timezone=scheduler.timezone) in both helpers" || echo "the Check wants the next run at 02:30 Asia/Karachi")"
   env_set /etc/fixflow/compose.env FIXFLOW_BACKUP_ENABLED false
   ffc $P_RUN up -d backend >/dev/null 2>&1; wait_backend_healthy 150
 }
@@ -147,7 +168,7 @@ sec8() {
   psql_app -c "insert into app_event (client_id, actor_kind, actor_id, name, props) values (gen_random_uuid(), 'tech', 't1', 'drain_manifest', '{\"versionCode\": 9, \"lab\": \"L4 stand-in\"}')" >/dev/null 2>&1
   echo "lab: 8.5 a stand-in drain_manifest app_event for t1 inserted by SQL (no phone here)" >> "$OUT/deviations.log"
   rb_run 8.5 "$(rb_fence 8.5 1)" "<tech id signed in on that phone>=t1" "<versionCode>=9"
-  row 8.5 "$(v sh -c "grep -q '1 manifest event(s)' '$LOG' && grep -q 'uploaded key=archive/manifests/t1-9.json' '$LOG'")" \
+  row 8.5 "$(v sh -c "grep -q '1 manifest event(s)' '$OLOG' && grep -q 'uploaded key=archive/manifests/t1-9.json' '$OLOG'")" \
     "manifest export to json; count; r2-put" "$(out_of | tail -n 2 | tr '\n' ' ')" "a stand-in manifest event"
   local t_close; t_close="$(date -u +%FT%TZ)"
   rb_run 8.6 "$(rb_fence 8.6 1)" "<T_OPEN>=$t_open" "<T_CLOSE>=$t_close"

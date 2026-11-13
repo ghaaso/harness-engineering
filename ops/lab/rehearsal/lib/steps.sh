@@ -7,8 +7,9 @@
 # Requires harness.sh. Stand-in values only: example.invalid, the account id `l4lab`, random hex.
 
 DOMAIN=l4lab.example.invalid
-has() { grep -qF -- "$1" "$LOG"; }
-hasre() { grep -qE -- "$1" "$LOG"; }
+# a Check is matched against what the command printed, never against the logged command text
+has() { out_of | grep -qF -- "$1"; }
+hasre() { out_of | grep -qE -- "$1"; }
 v() { if "$@"; then echo DONE; else echo FAILED; fi; }
 
 env_set() { # <file> <KEY> <value>   (the owner's editor: replace the KEY= line, keep the rest)
@@ -43,10 +44,13 @@ sec1() { # <repo-url> <tag-or-sha>
     "rev-parse = $want, status empty, ffc executable" "repo-url is the stand-in origin /srv/origin.git (the VERIFY on a deploy key does not apply)"
   rb_run 1.12-do "$(rb_fence 1.12 1)"
   rb_run 1.12-check "$(rb_fence 1.12 2)"
-  row 1.12 "$(v hasre '^/opt/fixflow/ops/selfhost/bin/ffc$')" "ln -sfn ffc" "readlink + executable: $(out_of | tr '\n' ' ')"
+  # the Expected in full: both lines, and nothing else
+  row 1.12 "$( [ "$(out_of | tr '\n' '|')" = '/opt/fixflow/ops/selfhost/bin/ffc|executable|' ] && echo DONE || echo FAILED)" \
+    "ln -sfn ffc" "readlink + executable: $(out_of | tr '\n' ' ')"
   rb_run 1.13-do "$(rb_fence 1.13 1)"
   rb_run 1.13-check "$(rb_fence 1.13 2)"
-  row 1.13 "$(v grep -qc '700 root:root /var/lib/fixflow/drain' "$LOG")" "install -d" "$(out_of | tr '\n' ';')"
+  row 1.13 "$( [ "$(out_of | tr '\n' '|')" = '700 root:root /etc/fixflow|700 root:root /var/lib/fixflow|700 root:root /var/lib/fixflow/drain|755 root:root /var/log/fixflow|' ] && echo DONE || echo FAILED)" \
+    "install -d" "$(out_of | tr '\n' ';')"
   mkdir -p /run/lock
 }
 
@@ -54,8 +58,8 @@ sec1() { # <repo-url> <tag-or-sha>
 sec3() {
   rb_run 3.1-do "$(rb_fence 3.1 1)"
   rb_run 3.1-check "$(rb_fence 3.1 2)"
-  row 3.1 "$( [ "$(grep -c -- '-rw------- 1 root root' "$LOG")" = 5 ] && echo DONE || echo FAILED)" \
-    "install -m 0600 the five templates" "ls -l: $(grep -c -- '-rw------- 1 root root' "$LOG") of 5 files -rw------- root root"
+  row 3.1 "$( [ "$(grep -c -- '-rw------- 1 root root' "$OLOG")" = 5 ] && echo DONE || echo FAILED)" \
+    "install -m 0600 the five templates" "ls -l: $(grep -c -- '-rw------- 1 root root' "$OLOG") of 5 files -rw------- root root"
   row 3.2 NRH "create the dead-man checks at the monitoring service" "-" \
     "needs the off-box monitoring service. Stand-in: a local listener on the stand-in host (127.0.0.1:9999) whose URLs go into heartbeat.env"
 
@@ -77,13 +81,13 @@ sec3() {
   env_set /etc/fixflow/compose.env FIXFLOW_DOMAIN "$DOMAIN"
   env_set /etc/fixflow/compose.env FIXFLOW_CLOUDFLARED_TAG 2025.11.1
   rb_run 3.4-check "$(rb_fence 3.4 1)"
-  row 3.4 "$(v sh -c "grep -qx 'FIXFLOW_DOMAIN=$DOMAIN' '$LOG' && grep -qx 'FIXFLOW_BACKUP_ENABLED=false' '$LOG' && grep -qx 'FIXFLOW_CLOUDFLARED_TAG=2025.11.1' '$LOG'")" \
+  row 3.4 "$(v sh -c "grep -qx 'FIXFLOW_DOMAIN=$DOMAIN' '$OLOG' && grep -qx 'FIXFLOW_BACKUP_ENABLED=false' '$OLOG' && grep -qx 'FIXFLOW_CLOUDFLARED_TAG=2025.11.1' '$OLOG'")" \
     "edit compose.env (domain, cloudflared tag)" "$(out_of | tr '\n' ';')" "cloudflared tag 2025.11.1 (the smoke's); the VERIFY on picking a dated tag was not exercised"
 
   env_set /etc/fixflow/postgres.env POSTGRES_PASSWORD "$PGPW"
   env_set /etc/fixflow/postgres.env FIXFLOW_APP_DB_PASSWORD "$APPPW"
   rb_run 3.5-check "$(rb_fence 3.5 1)"
-  row 3.5 "$(v sh -c "grep -qx 'POSTGRES_PASSWORD 48' '$LOG' && grep -qx 'FIXFLOW_APP_DB_PASSWORD 48' '$LOG'")" \
+  row 3.5 "$(v sh -c "grep -qx 'POSTGRES_PASSWORD 48' '$OLOG' && grep -qx 'FIXFLOW_APP_DB_PASSWORD 48' '$OLOG'")" \
     "edit postgres.env" "$(out_of | tr '\n' ';')"
 
   local f=/etc/fixflow/backend.env
@@ -111,15 +115,15 @@ sec3() {
   env_set /etc/fixflow/heartbeat.env FIXFLOW_HEARTBEAT_PING_URL "http://127.0.0.1:9999/ping/heartbeat"
   env_set /etc/fixflow/heartbeat.env FIXFLOW_HOURLY_DUMP_PING_URL "http://127.0.0.1:9999/ping/hourly-dump"
   rb_run 3.7-check "$(rb_fence 3.7 1)"
-  row 3.7 "$(v sh -c "grep -q 'ops token matches' '$LOG' && grep -q 'FIXFLOW_HEARTBEAT_HEALTH_URL=https://api.$DOMAIN/api/ops/health' '$LOG'")" \
+  row 3.7 "$(v sh -c "grep -q 'ops token matches' '$OLOG' && grep -q 'FIXFLOW_HEARTBEAT_HEALTH_URL=https://api.$DOMAIN/api/ops/health' '$OLOG'")" \
     "edit ops.env and heartbeat.env" "$(out_of | tr '\n' ';')" "ping URLs point at the stand-in dead-man listener"
 
   rb_run 3.8-do "$(rb_fence 3.8 1)"
   rb_run 3.8-check "$(rb_fence 3.8 2)"
-  local five; five="$(grep -c '^600 root:root /etc/fixflow/' "$LOG")"
-  local repl; repl="$(grep -E '\.env:[0-9]+$' "$LOG" | grep -vc ':0$')"
+  local five; five="$(grep -c '^600 root:root /etc/fixflow/' "$OLOG")"
+  local repl; repl="$(grep -E '\.env:[0-9]+$' "$OLOG" | grep -vc ':0$')"
   row 3.8 "$( [ "$five" = 5 ] && [ "$repl" = 0 ] && echo DONE || echo FAILED)" "chown/chmod" \
-    "stat: $five of 5 '600 root:root'; files with a REPLACE count above 0: $repl ($(grep -E '\.env:[0-9]+$' "$LOG" | tr '\n' ' '))"
+    "stat: $five of 5 '600 root:root'; files with a REPLACE count above 0: $repl ($(grep -E '\.env:[0-9]+$' "$OLOG" | tr '\n' ' '))"
   rb_run 3.9-check "$(rb_fence 3.9 2 1p)"
   row 3.9 NRH "scp the env files to the laptop, password-manager vault, printed sheet" \
     "host half of the check ran: $(out_of | wc -l) fingerprints of 12 characters" "needs the owner's laptop and vault"
@@ -141,19 +145,19 @@ sec4() {
     && has 'FIXFLOW_BACKUP_ENABLED: "false"' && has 'FIXFLOW_ENABLE_DISPATCHER: "false"' \
     && has "https://app.$DOMAIN" && [ "$(out_of | tail -n 1)" = 0 ] && ok=yes
   row 4.2 "$( [ $ok = yes ] && echo DONE || echo FAILED)" "config | grep overrides; ports count" "$(out_of | tr '\n' ';' | sed 's/ \+/ /g')" \
-    "the CORS line: $(grep -c CORS "$LOG") rendered (the VERIFY on env_file inlining is answered: compose v2.33 inlines it)"
+    "the CORS line: $(grep -c CORS "$OLOG") rendered (the VERIFY on env_file inlining is answered: compose v2.33 inlines it)"
   rb_run 4.3-do "$(rb_fence 4.3 1)"
   local brc="$RC"
   cp "$LOG" "$OUT/build-$(git -C /opt/fixflow rev-parse --short HEAD).log"
   rb_run 4.3-check "$(rb_fence 4.3 2)"
   local sha; sha="$(git -C /opt/fixflow rev-parse HEAD)"
   ok=no
-  [ "$brc" = 0 ] && grep -q "^fixflow/backend:$sha " "$LOG" && grep -q "^fixflow/web:$sha " "$LOG" \
-    && grep -q "^fixflow/ops:$sha " "$LOG" && grep -q '^postgres:17-bookworm' "$LOG" && grep -q '^cloudflare/cloudflared:2025.11.1' "$LOG" && ok=yes
+  [ "$brc" = 0 ] && grep -q "^fixflow/backend:$sha " "$OLOG" && grep -q "^fixflow/web:$sha " "$OLOG" \
+    && grep -q "^fixflow/ops:$sha " "$OLOG" && grep -q '^postgres:17-bookworm' "$OLOG" && grep -q '^cloudflare/cloudflared:2025.11.1' "$OLOG" && ok=yes
   row 4.3 "$( [ $ok = yes ] && echo DONE || echo FAILED)" "pull postgres restore-gate edge; build backend web ops (exit $brc)" \
     "$(out_of | tr '\n' ';')"
   rb_run 4.4 "$(rb_fence 4.4 1)"
-  local digs; digs="$(grep -cE '(@sha256:[0-9a-f]{64}|sha256:[0-9a-f]{64})$' "$LOG")"
+  local digs; digs="$(grep -cE '(@sha256:[0-9a-f]{64}|sha256:[0-9a-f]{64})$' "$OLOG")"
   row 4.4 "$( [ "$digs" = 5 ] && ls /var/lib/fixflow/image-digests-*.txt >/dev/null 2>&1 && echo DONE || echo FAILED)" \
     "record the digests" "$digs of 5 digest lines; file $(ls /var/lib/fixflow/image-digests-*.txt 2>/dev/null | tail -n 1)"
   sec4_5 "4.5 (nothing running)"
@@ -185,7 +189,7 @@ sec6() {
   cp "/srv/l4/dumps/$DUMPF" "/var/lib/fixflow/restore/$DUMPF"
   echo "lab: 6.2 scp from the laptop played by cp /srv/l4/dumps/$DUMPF /var/lib/fixflow/restore/" >> "$OUT/deviations.log"
   rb_run 6.2-check "$(rb_span 6.2 'sha256sum')" "<dump>=$DUMPF"
-  row "6.2 $tag" "$(v grep -q "^$want_sha " "$LOG")" "install -d restore; (scp played by cp)" \
+  row "6.2 $tag" "$(v grep -q "^$want_sha " "$OLOG")" "install -d restore; (scp played by cp)" \
     "sha256 $(out_of | cut -c1-16)… vs recorded $(echo "$want_sha" | cut -c1-16)…" "recorded sha = dumps.sha256 from prep (P0a's role)"
 
   rb_run 6.3-do "$(rb_fence 6.3 1)"
@@ -248,7 +252,7 @@ sec6() {
   local up_rc="$RC" upo; upo="$(out_of | tail -n 3 | tr '\n' ';')"
   wait_backend_healthy 150; local healthy=$?
   rb_run 6.9-gate "$(rb_span 6.9 'logs restore-gate')"
-  local gate; gate="$(grep -c 'restore gate: signed off' "$LOG")"
+  local gate; gate="$(grep -c 'restore gate: signed off' "$OLOG")"
   deep_health > "$OUT/deep-health-6.9-$tag.json"
   local dh="$OUT/deep-health-6.9-$tag.json"
   local env dsp bk pfx gsha db mig
@@ -302,7 +306,11 @@ sec6_8() { # <tag>  Appendix B against the source's facts
   local ok=no
   [ "$qexit" = 1 ] && [ "$diffc" = 0 ] && [ "$ntab" -gt 30 ] && [ "$ver" = 0046 ] && [ "$pay_src" = "$pay_dst" ] \
     && [ "$led_src" = "$led_dst" ] && [ "$seqok" = yes ] && ok=yes
-  row "6.8 $tag" "$( [ $ok = yes ] && echo DONE || echo FAILED)" "appendix-b.sql; the sequence query" \
+  # Check 6 is "at or near max(seq)", which no reader can apply the same way twice: a cursor
+  # below max(seq) leaves the step AMBIGUOUS (the same reading makes 6.9 stop; finding D1)
+  local cseq mseq; cseq="${curs##*|}"; mseq="$(echo "$o" | awk '/job_event_seq/{print $3; exit}')"
+  [ $ok = yes ] && [ -n "$cseq" ] && [ "$cseq" != "$mseq" ] && ok=amb
+  row "6.8 $tag" "$(case $ok in yes) echo DONE ;; amb) echo AMBIGUOUS ;; *) echo FAILED ;; esac)" "appendix-b.sql; the sequence query" \
     "queries exit=0: $qexit; $ntab tables, count lines differing from the source: $diffc; version $ver; payments $pay_dst (source $pay_src); ledger|chain|head $led_dst (source $led_src); sequences at/above max: $seqok; cursor $curs; geofence: $(awk '/center_lat/{getline; getline; print; exit}' "$af" | tr -s ' ')" \
     "check 6 reads 'a 0046 dump has the whatsapp row at or near max(job_event.seq)': here $curs vs max $(echo "$o" | awk '/job_event_seq/{print $3}')"
 }
@@ -334,7 +342,7 @@ print("yes" if len(rows) == 1 and [float(x) for x in rows[0]] == [24.86, 67.0, 8
 
 sec6_13() {
   rb_run 6.13-report "$(rb_fence 6.13 1 1p)"
-  local before; before="$(grep 'DEFAULT PIN' "$LOG" | awk '{print $1}' | tr '\n' ' ')"
+  local before; before="$(grep 'DEFAULT PIN' "$OLOG" | awk '{print $1}' | tr '\n' ' ')"
   local set_line; set_line="$(rb_fence 6.13 1 2p)"
   local id rc_all=0
   for id in $before; do
@@ -345,11 +353,11 @@ sec6_13() {
     # the script prompts twice on a terminal: typist.py gives it one and types the PIN at each prompt
     export L4_PIN="$pin"
     rb_run "6.13-set-$id" "$set_line" "<id>=$id" "ffc exec backend=python3 /srv/l4/kit/lib/typist.py ffc exec backend"
-    grep -q "PIN set for $id" "$LOG" || rc_all=1
+    grep -q "PIN set for $id" "$OLOG" || rc_all=1
     unset L4_PIN
   done
   rb_run 6.13-report2 "$(rb_fence 6.13 1 1p)"
-  local after; after="$(grep -c 'DEFAULT PIN' "$LOG")"
+  local after; after="$(grep -c 'DEFAULT PIN' "$OLOG")"
   deep_health > "$OUT/deep-health-6.13.json"
   local dflt; dflt="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum(1 for a in d.get("accounts",[]) if a["active"] and a["default_pin_active"]))' "$OUT/deep-health-6.13.json" 2>/dev/null)"
   row 6.13 "$( [ "$rc_all" = 0 ] && [ "$after" = 0 ] && [ "$dflt" = 0 ] && echo DONE || echo FAILED)" \

@@ -9,12 +9,18 @@
 #                      rollback R5.9 back to drain-image
 set -u
 export OUT=/srv/l4/out
+# Every phase reads one runbook: main's, from the clone prep.sh made (/srv/prep). The checkout in
+# /opt/fixflow is drain-image (a31924a predates the file) until R5.4 replaces it.
+export RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md
 source /srv/l4/kit/lib/harness.sh
 source /srv/l4/kit/lib/steps.sh
 source /srv/l4/kit/lib/steps-789.sh
 export FF_EXTRA_COMPOSE=/srv/l4/kit/lib/lab-override.yml
 source /srv/l4/dumps/names.env
-P1=87bbe88; P3A=90ea88d
+P1=87bbe88; P3A=90ea88d; FIX=3810e42   # FIX: the tech-metrics timezone fix, ruling C30 (runbook 11.3a)
+FIX_TAG=drain-pick-tz-fix; FIX_FULL=3810e4209ea4bf8fde7ce500cea0458d3e7ff701   # ruling C32: picked by its tag
+P1_FULL=87bbe88abf3c1b1222edda696ef032678a4dc34e; P3A_FULL=90ea88d67a4b3939c318c82a813039037291aa51
+FIX_SUBJECT="fix(jobs): resolve the tech-metrics window in the shop timezone, not UTC"
 TR="$OUT/train.tsv"
 [ -f "$TR" ] || printf 'row\tcheck\tresult\tevidence\n' > "$TR"
 trow() { printf '%s\t%s\t%s\t%s\n' "$1" "$(clean "$2" 300)" "$3" "$(clean "$4" 900)" >> "$TR"; echo "TRAIN $1: $3"; }
@@ -24,31 +30,52 @@ cut)
   PHASE=release-drain
   git config --global user.name "L4 rehearsal"; git config --global user.email "l4@example.invalid"
   rm -rf /srv/dev && git clone -q /srv/origin.git /srv/dev && cd /srv/dev || exit 1
-  # the runbook of main: a31924a (checked out at 11.2) predates the file
-  RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md
-  echo "lab: section 11 with P2b-2 absent (not merged): '87bbe88 <p2b2> <p3a>' becomes '87bbe88 $P3A'" >> "$OUT/deviations.log"
-  rb_run 11.1 "$(rb_fence 11.1 1)" "87bbe88 <p2b2> <p3a>=$P1 $P3A"
-  row 11.1 "$( [ "$(out_of | grep -c 'on main')" = 2 ] && [ "$(out_of | grep -c 'parents: 1')" = 2 ] && out_of | grep -qx commit && echo DONE || echo FAILED)" \
-    "preconditions" "$(out_of | tr '\n' ';')" "two commits checked, not three: P2b-2 is not merged"
+  echo "lab: section 11 with P2b-2 absent (not merged): every '<p2b2>' is dropped from the commit lists, 11.4 is not run, and 11.6/11.11 count three commits, not four" >> "$OUT/deviations.log"
+  rb_run 11.1 "$(rb_fence 11.1 1)" "87bbe88 <p2b2> 90ea88d=$P1 $P3A"
+  # the Check for the fix, in order: `tag`, the full sha, ONE parent and the subject, `fix not on main`
+  fixblock="$(out_of | grep -A3 -x tag | head -n 4)"
+  fixexp="tag
+$FIX_FULL"
+  l3="$(echo "$fixblock" | sed -n 3p)"
+  row 11.1 "$( [ "$(out_of | grep -cE '^[0-9a-f]{7} on main$')" = 2 ] && [ "$(out_of | grep -c 'parents: 1')" = 2 ] && out_of | grep -qx commit \
+      && [ "$(echo "$fixblock" | head -n 2)" = "$fixexp" ] \
+      && echo "$l3" | grep -qE '^parents=[0-9a-f]+ ' && [ "${l3#* }" = "$FIX_SUBJECT" ] \
+      && [ "$(echo "$fixblock" | sed -n 4p)" = "fix not on main" ] && ! out_of | grep -q 'NOT on main' && echo DONE || echo FAILED)" \
+    "preconditions" "$(out_of | tr '\n' ';')" "two phase commits checked, not three: P2b-2 is not merged; the fix's tag drain-pick-tz-fix is in the stand-in origin as on GitHub"
   rb_run 11.2 "$(rb_span 11.2 'git switch -c')"
   row 11.2 "$( [ "$(git rev-parse --short HEAD)" = a31924a ] && echo DONE || echo FAILED)" "git switch -c release/drain a31924a" "HEAD $(git rev-parse --short HEAD)"
   rb_run 11.3 "$(rb_span 11.3 'cherry-pick -x')"
   row 11.3 "$( [ "$RC" = 0 ] && ! has CONFLICT && echo DONE || echo FAILED)" "git cherry-pick -x $P1" "exit $RC; $(out_of | head -n 1)"
+  rb_run 11.3a "$(rb_span 11.3a 'cherry-pick -x')"
+  rc3a="$RC"; o3a="$(out_of | head -n 1)"
+  # the Check compares `git show --stat`; the file lists are compared by name (--stat shortens paths)
+  same="$( [ "$(git show --name-only --format= HEAD | sort)" = "$(git show --name-only --format= "$FIX_TAG" | sort)" ] && echo yes || echo no)"
+  nfiles="$(git show --name-only --format= HEAD | grep -c .)"
+  trailer="$(git log -1 --format=%B HEAD | grep 'cherry picked from')"
+  row 11.3a "$( [ "$rc3a" = 0 ] && ! has CONFLICT && [ "$trailer" = "(cherry picked from commit $FIX_FULL)" ] && [ "$same" = yes ] && [ "$nfiles" = 4 ] && echo DONE || echo FAILED)" \
+    "git cherry-pick -x $FIX_TAG" "exit $rc3a; $o3a; trailer: $trailer; files as in $FIX_TAG: $same ($nfiles files)"
   row 11.4 NRH "git cherry-pick -x <p2b2>" "-" "P2b-2 is not merged (lane still working); the drain image is not complete until it is"
-  rb_run 11.5 "$(rb_span 11.5 'cherry-pick -x')" "<p3a>=$P3A"
+  rb_run 11.5 "$(rb_span 11.5 'cherry-pick -x')"
   row 11.5 "$( [ "$RC" = 0 ] && ! has CONFLICT && echo DONE || echo FAILED)" "git cherry-pick -x $P3A" "exit $RC; $(out_of | head -n 1)"
   rb_run 11.6 "$(rb_fence 11.6 1)"
-  row 11.6 "$( [ "$(out_of | grep -c '(#')" = 2 ] && [ "$(out_of | tail -n 1)" = 2 ] && echo DONE || echo FAILED)" "git log a31924a..release/drain" \
-    "$(out_of | tr '\n' ';')" "the Check expects three lines and 3; with P2b-2 absent two and 2 are the right answer"
-  rb_run 11.7 "$(rb_fence 11.7 1)" "87bbe88 <p2b2> <p3a>=$P1 $P3A"
-  row 11.7 "$( [ "$(out_of | grep -c '^[<>]')" = 0 ] && echo DONE || echo FAILED)" "diff --name-only vs the PRs' files" "$(out_of | head -n 3 | tr '\n' ';')"
+  # first command: the oneline log (three lines: P3a, the fix, P1); second: the -x trailers in pick
+  # order, exactly the Check's lines without the P2b-2 one
+  srcexp="(cherry picked from commit $P1_FULL)
+(cherry picked from commit $FIX_FULL)
+(cherry picked from commit $P3A_FULL)"
+  row 11.6 "$( [ "$(out_of | grep -vc 'cherry picked from')" = 3 ] && [ "$(out_of | grep 'cherry picked from')" = "$srcexp" ] \
+      && [ "$(out_of | sed -n 2p | cut -d' ' -f2-)" = "$FIX_SUBJECT" ] && echo DONE || echo FAILED)" "git log a31924a..release/drain; the -x sources in pick order" \
+    "$(out_of | tr '\n' ';')" "the Check expects four log lines and four source lines; with P2b-2 absent three of each (P1, the fix, P3a) are the right answer"
+  rb_run 11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A"
+  row 11.7 "$( [ "$RC" = 0 ] && [ "$(out_of | grep -c '^[<>]')" = 0 ] && echo DONE || echo FAILED)" "diff --name-only vs the commits' files" "$(out_of | head -n 3 | tr '\n' ';')"
   row 11.8 NRH "backend gates on release/drain (ff-gates.sh) and CI on push" "-" \
     "CI runs only on a push to the real remote (forbidden here); the local gate stack is the coordinator's and takes a light slot of its own; both belong to the cut that tags the real drain-image"
-  rb_run 11.9 "$(rb_fence 11.9 1)" "<p2b2>, =" "<p3a>=$P3A" "<summary path>=not run here (11.8)" "<date UTC>=$(date -u +%F)"
+  rb_run 11.9 "$(rb_fence 11.9 1)" " P2b-2 <p2b2>,=" "<summary path>=not run here (11.8)" "<date UTC>=$(date -u +%F)"
   local_ok=no
-  [ "$(git cat-file -t drain-image)" = tag ] && [ "$(git rev-parse 'drain-image^{commit}')" = "$(git rev-parse release/drain)" ] && local_ok=yes
-  row 11.9 "$( [ $local_ok = yes ] && echo DONE || echo FAILED)" "git tag -a drain-image" "type $(git cat-file -t drain-image); $(git tag -n1 drain-image | cut -c1-120)" \
-    "the message's '<p2b2>, ' was dropped (P2b-2 absent)"
+  [ "$(git cat-file -t drain-image)" = tag ] && [ "$(git rev-parse 'drain-image^{commit}')" = "$(git rev-parse release/drain)" ] \
+    && git tag -n1 drain-image | grep -q "$P1" && git tag -n1 drain-image | grep -q "$FIX" && git tag -n1 drain-image | grep -q "$P3A" && local_ok=yes
+  row 11.9 "$( [ $local_ok = yes ] && echo DONE || echo FAILED)" "git tag -a drain-image" "type $(git cat-file -t drain-image); $(git tag -n1 drain-image | cut -c1-160)" \
+    "the message's ' P2b-2 <p2b2>,' was dropped (P2b-2 absent)"
   rb_run 11.10 "$(rb_span 11.10 'git push origin')"
   rb_run 11.10-check "$(rb_span 11.10 'git ls-remote')"
   row 11.10 "$( [ "$(out_of | grep -c 'refs/')" -ge 3 ] && echo DONE || echo FAILED)" "git push origin release/drain drain-image (the stand-in origin)" "$(out_of | awk '{print substr($1,1,9), $2}' | tr '\n' ';')"
@@ -63,9 +90,6 @@ prebuild)
   ;;
 
 deploy)
-  # The owner reads the runbook of main (the one being deployed), not the copy in the checkout
-  # that R5.4 is about to replace; /srv/prep is the clone of main that prep.sh made.
-  RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md
   sec4_profiles
   lab_up || exit 1
   PHASE=train-restore
@@ -81,7 +105,7 @@ deploy)
 
   PHASE=train
   rb_run 11.14 "$(rb_fence 11.14 1)"
-  row 11.14 "$(v sh -c "[ \"\$(sed -n '/^### output:/,/^### exit/p' '$LOG' | sed '1d;\$d')\" = drain-image ]")" "describe --tags --exact-match HEAD" "$(out_of)"
+  row 11.14 "$( [ "$(out_of)" = drain-image ] && echo DONE || echo FAILED)" "describe --tags --exact-match HEAD" "$(out_of)"
 
   rb_run 12.4-do "$(rb_fence 12.4 1)"
   TARGET="$(out_of | grep -E '^[0-9a-f]{40}$' | tail -n 1)"
@@ -111,7 +135,7 @@ deploy)
   wait_backend_healthy 150; hb=$?
   rb_run R5.6-logs "$(rb_span R5.6 'logs --tail 60 backend')"
   row R5.6 "$( [ $hb = 0 ] && has 'alembic' && has 'Application startup complete' && echo DONE || echo FAILED)" "ffc \$P_RUN up -d (start.sh migrates, then serves)" \
-    "healthy=$([ $hb = 0 ] && echo yes || echo no); alembic lines $(grep -ci alembic "$LOG"); startup complete $(grep -c 'Application startup complete' "$LOG")"
+    "healthy=$([ $hb = 0 ] && echo yes || echo no); alembic lines $(grep -ci alembic "$OLOG"); startup complete $(grep -c 'Application startup complete' "$OLOG")"
   rb_run R5.7 "$(rb_fence R5.7 1)"
   row R5.7 "$( has "git_sha= $TARGET" && has "'status': 'ok'" && echo DONE || echo FAILED)" "deep health git_sha and database" "$(out_of | tr '\n' ' ' | cut -c1-200)" \
     "the curl through api.<domain> half is NRH (no tunnel)"
@@ -119,7 +143,10 @@ deploy)
   NEW_IMG="$(out_of)"
   row R5.8 "$( echo "$NEW_IMG" | grep -q '^sha256:' && echo DONE || echo FAILED)" "record the image id" "image $(echo "$NEW_IMG" | cut -c1-19); was $(echo "$PREV_IMG" | cut -c1-19)"
   rb_run 12.4-check "$(rb_fence 12.4 2)"
-  row 12.4 "$( [ "$(out_of)" = 0046 ] && echo DONE || echo FAILED)" "select version_num from alembic_version" "$(out_of) (no train row carries a migration; CLAUDE.md at main says 0046)"
+  # the expected head is the one CLAUDE.md declares at TARGET, never a number written here
+  tgthead="$(git -C /opt/fixflow show "$TARGET:CLAUDE.md" 2>/dev/null | grep -o 'head = \*\*[0-9]\{4\}\*\*' | head -n 1 | grep -o '[0-9]\{4\}')"
+  row 12.4 "$( [ -n "$tgthead" ] && [ "$(out_of)" = "$tgthead" ] && echo DONE || echo FAILED)" "select version_num from alembic_version" \
+    "$(out_of); CLAUDE.md at TARGET says head ${tgthead:-(not found)}"
 
   # ---- 12.5: each row's post-deploy check, in table order
   BIP="$(docker inspect -f '{{(index .NetworkSettings.Networks "fixflow_app").IPAddress}}' "$(ffc $P_RUN ps -q backend)")"

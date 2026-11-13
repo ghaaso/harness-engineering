@@ -39,13 +39,13 @@ trap 'exit 130' INT TERM
 
 l4_slot_acquire train
 l4_host_up
-l4_origin "$REPO"
+l4_origin "$REPO" tag:drain-pick-tz-fix   # 3810e42 (rulings C30, C32): on no main commit, kept reachable by this tag
 l4_copy_kit "$HERE"
 l4_dx bash /srv/l4/kit/inner/prep.sh main || l4_die "prep failed"
 l4_dx bash /srv/l4/kit/inner/train.sh cut || l4_die "cut failed"
 l4_dx env PHASE=train-host bash /srv/l4/kit/inner/restore.sh online drain-image || l4_die "online part failed"
 l4_dx bash /srv/l4/kit/inner/train.sh prebuild || l4_die "prebuild failed"
 docker network disconnect bridge "$L4_HOST" || l4_die "could not take the stand-in host offline"
-l4_dx sh -c 'ip -4 route | grep -c default' | grep -qx 0 || l4_die "the stand-in host still has a default route"
+l4_dx sh -c '{ ip -4 route; ip -6 route; } | grep -c default' | grep -qx 0 || l4_die "the stand-in host still has a default route"
 l4_dx bash /srv/l4/kit/inner/train.sh deploy || l4_die "deploy part failed"
 l4_dx python3 /srv/l4/kit/lib/report.py /srv/l4/out "deploy-train rehearsal" > /dev/null || echo "L4: report failed" >&2
