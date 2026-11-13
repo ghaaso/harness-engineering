@@ -1,0 +1,50 @@
+VERDICT: PASS
+PR #210 at c290f891b7bfe12dd597a7190084c07ddddef419
+Delta re-read by the reviewer of the first pass (the fixflow-pr-reviewer definition), resumed by the coordinator on 2026-11-14 at 04:05 after ruling C49. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The delta `56003be..c290f89` answers both findings of the first report. Every spelling the site test caught before is still caught. All seven breaks that were "not caught and not listed" are now either caught or listed. The full gate on a clean copy of the head is green. GitHub CI did not run on this head, so that gate is the only full run of the suite on it.
+
+FINDINGS. BLOCKER / MAJOR / MINOR: none.
+Notes for the docstring list (spellings that still get past the test; under C49 these hold no merge, and neither is a regression against `56003be`): `functools.partial(insert, JobEvent)` and then calling it (arguably covered by "a class passed in as an argument ... reached at run time", but not named); a class reached through a container (`reg = {"ev": JobEvent}; reg["ev"](...)`), not named.
+CI (a fact, not a finding): `gh pr checks 210` shows all three jobs failing after 2 s; this is the repository-wide billing refusal, so CI ran nothing on this head.
+
+DELTA READ (`git diff 56003be c290f89`)
+- No behaviour change: `service.py` is not in the diff; `schemas.py` changes only the comment and the `description` string (`captured_at: Any = Field(default=None, ...)` unchanged). Files changed: CLAUDE.md, `schemas.py` and the site-test file only.
+- The test can only see more than before: `_is_write_name` (any callee containing insert/update/upsert, or a name bound to such a function) accepts every name the old rule accepted; `_is_table` now reads `name=` as well as a first positional argument; `_bound_names` gains a third set for write functions; `_GAP` contains `\s`, so the SQL pattern matches everything the old `\s+` did; the fallback for a receiver that mentions the class is back, with a guard so a chained call on a write is not counted twice; `_DICT_MUTATORS` gains `__ior__`.
+- No assertion weakened, no skip or xfail. The only assert gains `_NOT_WRITES`, which is empty.
+- The three wordings are true: the schema comment carries the decoder carve-out (a 4301-digit integer returned 400 in the spot-check); the OpenAPI text says seconds, or milliseconds when the magnitude is above about 2e10, and that a string over 64 characters is no claim; the compatibility sentence has the exception for strings over 64 characters.
+- CLAUDE.md says "a tripwire rather than a proof (ruling C49)", names `_NOT_WRITES`, and says "The test's docstring lists the known blind spots ... a further one a reviewer finds is added there as a note and does not hold a merge": true of the code and the docstring.
+- The docstring lists the conditional and tuple-unpacking bindings, the `.payload` dict alias with `flag_modified`, and asyncpg `copy_records_to_table`; it says the SQL pattern fires on a docstring that merely mentions an insert, and that later spellings are notes.
+- PR body: line 1 `Plan @ plan-v9.43`; a `## Decisions / ruled out / owner corrections` heading. Commit: the repo identity, the `Co-Authored-By` trailer; the secret grep of the delta found nothing.
+
+BREAK TABLE (scratch copy of `c290f89`, site test only)
+
+| Break | At `c290f89` |
+|---|---|
+| `bulk_insert_mappings` / `bulk_update_mappings` | caught (2 sites) |
+| aliased `update as sa_update` / `insert as ins` | caught (2) |
+| `JobEvent.__mapper__.local_table.insert()` | caught again |
+| `inspect(JobEvent).local_table.insert()` | caught again |
+| `INSERT /* x */ INTO job_event` | caught |
+| `sa.Table(name="job_event")` | caught |
+| binding through `X if c else Y`; tuple unpacking | not caught, listed |
+| `.payload` dict alias, then `flag_modified` | not caught, listed |
+
+The 13 sites caught at `56003be` are all still caught. Already listed, still not caught (as stated): `getattr`, run-time `+` concatenation, `.format`, the f-string with `__tablename__`, asyncpg `copy_records_to_table`. New probes: `Insert(JobEvent)`, a `-- comment` inside the SQL verb, `up = sa.update` then `up(JobEvent)`, a walrus binding: all caught; `functools.partial(insert, JobEvent)` and a class taken from a dict: neither (notes).
+
+`captured_at` SPOT-CHECK THROUGH THE ENDPOINT (each value replayed; each matches the first report's table)
+
+| Value | Result |
+|---|---|
+| `"not-a-date"`, `"2026-13-45T00:00:00Z"`, `10**20` | 200, no claim, replay `true`, one event |
+| `1.7e9` | 200, claimed `2023-11-14T22:13:20+00:00` |
+| now-1h as an int | 200, `captured_at` stored |
+| `-0` | 200, claimed `1970-01-01T00:00:00+00:00` |
+| `0001-01-01T00:00:00+23:59`, lone surrogate, `true`, 65-character date | 200, no claim |
+| 4301-digit integer | 400 from the decoder, nothing written |
+
+GATE. A clean copy made with `git archive c290f89`, lane `rv210`: gates 1-7 all EXIT=0; `SKIPS total=1435 skipped=0 integration_skipped=0`; `SUMMARY FAIL=0`; log `C:/Users/User/.fixflow-cache/gate-logs/rv210/backend-20261114-040550`. The break and spot-check run used a second copy (lane `rv210p`). No `fixflow-rv210*` container remains.
+
+WHAT STAYS UNVERIFIED. The copies are `git archive` exports, not git checkouts, so the gate's summary says `head=unknown`; that they are `c290f89` comes from the archive command. No GitHub CI run exists on this head.
+
+COORDINATOR (2026-11-14). PASS. The PR is NOT merged: GitHub refused to start the three jobs on this head (ruling C52), and the owner's delegation requires those checks green. It merges when Actions is restored and the checks have run green on this head, or as the owner decides (decision N6). The lane does not push to this branch meanwhile; the two spellings in the notes are added to the docstring's list with the next change to that test, by whichever lane makes it.
