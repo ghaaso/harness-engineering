@@ -53,16 +53,17 @@ l4_host_up() {
     sleep 2
   done
   l4_dx docker info >/dev/null 2>&1 || l4_die "the stand-in host's Docker did not start"
-  # A fresh container has none of the runbook's paths; anything else means another run is
-  # driving the same container name (seen once: 1.11 met an existing /opt/fixflow).
-  l4_dx sh -c '! test -e /opt/fixflow && ! test -e /srv/l4' || l4_die "the stand-in host is not fresh"
   # The cache volume keeps the stand-in host's images between runs, but also its containers,
-  # volumes and networks (restart: unless-stopped brings an old stack back up). Every run starts
-  # from an empty host: only the images survive.
+  # volumes and networks, and its daemon restarts a previous run's stack (restart:
+  # unless-stopped), creating that stack's bind-mount directories (/opt/fixflow/..., /srv/l4/...)
+  # in this new container. Every run starts from an empty host: the containers, volumes and
+  # networks go, then those directories, and only the images survive.
   l4_dx sh -c 'ids=$(docker ps -aq); [ -z "$ids" ] || docker rm -f $ids >/dev/null;
     docker volume prune -af >/dev/null; docker network prune -f >/dev/null' \
     || l4_die "could not empty the stand-in host"
   [ -z "$(l4_dx docker ps -aq)" ] || l4_die "the stand-in host still has containers"
+  l4_dx rm -rf /opt/fixflow /etc/fixflow /var/lib/fixflow /var/log/fixflow /srv/l4 /srv/prep /srv/dev /srv/prebuild
+  l4_dx sh -c '! test -e /opt/fixflow && ! test -e /srv/l4' || l4_die "the stand-in host is not fresh"
   l4_dx apk add -q --no-cache bash git python3 openssl curl iproute2 coreutils util-linux \
     findutils grep sed gawk procps logrotate >/dev/null || l4_die "apk add failed (is the PC online?)"
   # A Debian host has /etc/cron.d (7.4, 7.7, 7.8 install into it); Alpine has none. The files are
@@ -117,6 +118,8 @@ l4_collect() { # <run name> -> prints the local results folder
 }
 
 l4_host_down() { # [--purge]
+  # the stack inside goes first, so the cache volume holds no container to restart next time
+  l4_dx sh -c 'ids=$(docker ps -aq); [ -z "$ids" ] || docker rm -f $ids' >/dev/null 2>&1
   docker rm -f "$L4_HOST" >/dev/null 2>&1
   [ "${1:-}" = "--purge" ] && docker volume rm "$L4_VOL" >/dev/null 2>&1
   local left
