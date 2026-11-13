@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The deploy-train rehearsal (the owner's P4c), inside the stand-in host, as root.
 #   train.sh cut       runbook section 11 on a development clone: release/drain = a31924a + the
-#                      squash commits by cherry-pick, tag drain-image, push to the stand-in origin
+#                      squash commits by cherry-pick, push the branch, tag that sha, push the tag
+#                      (all to the stand-in origin); the 11.13 re-cut; wrong turns WT7-WT11
 #   train.sh prebuild  (online) build main's backend and web images once, so R5.5's build later
 #                      is the same build from cache while the host is offline
 #   train.sh deploy    (offline) restore onto drain-image (section 6), then R5 to main (12.4),
@@ -29,10 +30,18 @@ case "${1:?cut|prebuild|deploy}" in
 cut)
   PHASE=release-drain
   git config --global user.name "L4 rehearsal"; git config --global user.email "l4@example.invalid"
-  rm -rf /srv/dev && git clone -q /srv/origin.git /srv/dev && cd /srv/dev || exit 1
-  echo "lab: section 11 with P2b-2 absent (not merged): every '<p2b2>' is dropped from the commit lists, 11.4 is not run, and 11.6/11.11 count three commits, not four" >> "$OUT/deviations.log"
+  rm -rf /srv/dev /srv/ff-rdrain-* /srv/wt7 /srv/behind /srv/fresh
+  git clone -q /srv/origin.git /srv/dev && cd /srv/dev || exit 1
+  echo "lab: section 11 with P2b-2 absent (not merged): every '<p2b2>' is dropped from the commit lists, 11.4 is not run, and 11.6/11.11/11.13 count three commits, not four" >> "$OUT/deviations.log"
+  echo "lab: no gh and no GitHub here: 11.1's gh lines, 11.8's CI read and 11.8's gates (ff-gates.sh, the plan checkout's tool) are NRH; the tag messages say 'not run here' where the run id and the gate summary go" >> "$OUT/deviations.log"
+  WT="$OUT/wrongturns.tsv"
+  wt() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$3" 900)" "$(clean "$4" 400)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"; }
+  [ -f "$WT" ] || printf 'id\twrong turn\twhat happened\twhat stopped it\tscripted guard needed?\n' > "$WT"
+  NOTRUN_CI="not run here (11.8 CI is NRH)"; NOTRUN_GATES="not run here (11.8 gates are NRH)"
+
+  # ---- 11.1: the git half is judged here, the gh half is its own row
   rb_run 11.1 "$(rb_fence 11.1 1)" "87bbe88 <p2b2> 90ea88d=$P1 $P3A"
-  # the Check for the fix, in order: `tag`, the full sha, ONE parent and the subject, `fix not on main`
+  # the Check for the fix, in order: `tag`, the full sha, ONE parent and the subject, `is-ancestor exit=1`
   fixblock="$(out_of | grep -A3 -x tag | head -n 4)"
   fixexp="tag
 $FIX_FULL"
@@ -40,20 +49,24 @@ $FIX_FULL"
   row 11.1 "$( [ "$(out_of | grep -cE '^[0-9a-f]{7} on main$')" = 2 ] && [ "$(out_of | grep -c 'parents: 1')" = 2 ] && out_of | grep -qx commit \
       && [ "$(echo "$fixblock" | head -n 2)" = "$fixexp" ] \
       && echo "$l3" | grep -qE '^parents=[0-9a-f]+ ' && [ "${l3#* }" = "$FIX_SUBJECT" ] \
-      && [ "$(echo "$fixblock" | sed -n 4p)" = "fix not on main" ] && ! out_of | grep -q 'NOT on main' && echo DONE || echo FAILED)" \
-    "preconditions" "$(out_of | tr '\n' ';')" "two phase commits checked, not three: P2b-2 is not merged; the fix's tag drain-pick-tz-fix is in the stand-in origin as on GitHub"
+      && [ "$(echo "$fixblock" | sed -n 4p)" = "is-ancestor exit=1" ] && ! out_of | grep -q 'NOT on main' && ! out_of | grep -q '^fatal' && echo DONE || echo FAILED)" \
+    "preconditions (the git lines)" "$(out_of | grep -vE 'gh: |^gh version|Logged in' | tr '\n' ';')" \
+    "two phase commits checked, not three: P2b-2 is not merged; the tag drain-pick-tz-fix is in the stand-in origin as on GitHub"
+  row "11.1 gh" NRH "gh --version; gh auth status" "$(out_of | grep -E 'gh: |^gh version|Logged in' | tr '\n' ';')" \
+    "no gh and no GitHub login on the stand-in, and none may be made (no account, no real remote). Here the lines print 'gh: command not found', which the Check makes a STOP; installing gh and gh auth login are the owner's steps"
+
   rb_run 11.2 "$(rb_span 11.2 'git switch -c')"
   row 11.2 "$( [ "$(git rev-parse --short HEAD)" = a31924a ] && echo DONE || echo FAILED)" "git switch -c release/drain a31924a" "HEAD $(git rev-parse --short HEAD)"
   rb_run 11.3 "$(rb_span 11.3 'cherry-pick -x')"
   row 11.3 "$( [ "$RC" = 0 ] && ! has CONFLICT && echo DONE || echo FAILED)" "git cherry-pick -x $P1" "exit $RC; $(out_of | head -n 1)"
   rb_run 11.3a "$(rb_span 11.3a 'cherry-pick -x')"
   rc3a="$RC"; o3a="$(out_of | head -n 1)"
-  # the Check compares `git show --stat`; the file lists are compared by name (--stat shortens paths)
+  # the Check compares `git show --stat HEAD` with `git show --stat 'drain-pick-tz-fix^{commit}'`; by name here (--stat shortens paths)
   same="$( [ "$(git show --name-only --format= HEAD | sort)" = "$(git show --name-only --format= "$FIX_TAG^{commit}" | sort)" ] && echo yes || echo no)"
   nfiles="$(git show --name-only --format= HEAD | grep -c .)"
   trailer="$(git log -1 --format=%B HEAD | grep 'cherry picked from')"
   row 11.3a "$( [ "$rc3a" = 0 ] && ! has CONFLICT && [ "$trailer" = "(cherry picked from commit $FIX_FULL)" ] && [ "$same" = yes ] && [ "$nfiles" = 4 ] && echo DONE || echo FAILED)" \
-    "git cherry-pick -x $FIX_TAG" "exit $rc3a; $o3a; trailer: $trailer; files as in $FIX_TAG: $same ($nfiles files)"
+    "git cherry-pick -x $FIX_TAG" "exit $rc3a; $o3a; trailer: $trailer; files as in $FIX_TAG^{commit}: $same ($nfiles files)"
   row 11.4 NRH "git cherry-pick -x <p2b2>" "-" "P2b-2 is not merged (lane still working); the drain image is not complete until it is"
   rb_run 11.5 "$(rb_span 11.5 'cherry-pick -x')"
   row 11.5 "$( [ "$RC" = 0 ] && ! has CONFLICT && echo DONE || echo FAILED)" "git cherry-pick -x $P3A" "exit $RC; $(out_of | head -n 1)"
@@ -65,47 +78,157 @@ $FIX_FULL"
 (cherry picked from commit $P3A_FULL)"
   row 11.6 "$( [ "$(out_of | grep -vc 'cherry picked from')" = 3 ] && [ "$(out_of | grep 'cherry picked from')" = "$srcexp" ] \
       && [ "$(out_of | sed -n 2p | cut -d' ' -f2-)" = "$FIX_SUBJECT" ] && echo DONE || echo FAILED)" "git log a31924a..release/drain; the -x sources in pick order" \
-    "$(out_of | tr '\n' ';')" "the Check expects four log lines and four source lines; with P2b-2 absent three of each (P1, the fix, P3a) are the right answer"
+    "$(out_of | tr '\n' ';')" "the Check expects four log lines and four source lines; with P2b-2 absent three of each (P1, the fix, P3a) are the right answer. The recovery block is rehearsed in WT7 and WT9"
   rb_run 11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A"
   row 11.7 "$( [ "$RC" = 0 ] && [ "$(out_of | grep -c '^[<>]')" = 0 ] && echo DONE || echo FAILED)" "diff --name-only vs the commits' files" "$(out_of | head -n 3 | tr '\n' ';')"
-  row 11.8 NRH "backend gates on release/drain (ff-gates.sh) and CI on push" "-" \
-    "CI runs only on a push to the real remote (forbidden here); the local gate stack is the coordinator's and takes a light slot of its own; both belong to the cut that tags the real drain-image"
-  rb_run 11.9 "$(rb_fence 11.9 1)" " P2b-2 <p2b2>,=" "<summary path>=not run here (11.8)" "<date UTC>=$(date -u +%F)"
+
+  # ---- 11.8 (ruling C34): push the branch alone, SHA, CI for that sha, the gates in a detached worktree
+  rb_run 11.8-push "$(rb_fence 11.8 1 '1,2p')"
+  seen="$(out_of | grep -xE '[0-9a-f]{40}' | tail -n 1)"; lsr="$(git ls-remote origin refs/heads/release/drain | cut -f1)"
+  ntag="$(git ls-remote origin 'refs/tags/drain-image*' | grep -c .)"
+  row 11.8-push "$( [ "$RC" = 0 ] && [ -n "${SHA:-}" ] && [ "$SHA" = "$seen" ] && [ "$lsr" = "$SHA" ] && [ "$ntag" = 0 ] && echo DONE || echo FAILED)" \
+    "git push origin release/drain (the branch alone, to the stand-in origin); SHA=\$(git rev-parse release/drain)" \
+    "SHA=${SHA:-}; origin's release/drain $lsr; drain-image* tags on origin: $ntag" "the push goes to the stand-in origin; on the real remote it would start CI"
+  row "11.8 CI" NRH "gh run list --commit \"\${SHA:?...}\"; gh run view <run-id>" "-" \
+    "reads the GitHub Actions run of the pushed sha: needs gh, the owner's login and a push to the real remote (all forbidden here). The SHA guard on that line is exercised in WT8"
+  rb_run 11.8-worktree "$(rb_fence 11.8 3 '1p')"
+  wtp="/srv/ff-rdrain-${SHA:0:7}"; wth="$(git -C "$wtp" rev-parse HEAD 2>/dev/null)"; wtd="$(git -C "$wtp" status --porcelain 2>/dev/null | grep -c .)"
+  wdet="$(git -C "$wtp" symbolic-ref -q HEAD >/dev/null 2>&1 && echo no || echo yes)"
+  row 11.8-worktree "$( [ "$RC" = 0 ] && [ "$wth" = "$SHA" ] && [ "$wdet" = yes ] && [ "$wtd" = 0 ] && echo DONE || echo FAILED)" \
+    "git worktree add --detach ../ff-rdrain-<sha7> \"\$SHA\"" "$(out_of | tr '\n' ';') path $wtp, HEAD $wth, detached $wdet, changes $wtd"
+  row "11.8 gates" NRH "ff-gates.sh backend rdrain ../ff-rdrain-<sha7>" "-" \
+    "the plan checkout's gate tool (docs/program/lab/ff-gates.sh, not in this repository's tree) on this PC's Docker under the coordinator's gate slots; its VERIFY (argument order, lane names) stays open"
+  rb_run 11.8-remove "$(rb_fence 11.8 4)"
+  row 11.8-remove "$( [ "$RC" = 0 ] && [ -z "$(out_of)" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" "git worktree remove ../ff-rdrain-<sha7>" \
+    "prints [$(out_of | tr '\n' ' ')]; path gone: $([ -e "$wtp" ] && echo no || echo yes)"
+
+  # ---- WT8: SHA left empty in a new terminal. Every line of 11.8 and 11.9 that uses SHA, pasted into
+  # a fresh interactive bash where SHA was never set (continuation lines joined, as a paste is one command)
+  wt8="$OUT/wt8.log"; : > "$wt8"; nlines=0; nguard=0
+  { rb_fence 11.8 1; rb_fence 11.8 3; rb_fence 11.8 4; rb_fence 11.9 1; } | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' \
+    | grep 'SHA' | grep -v '^SHA=' > "$OUT/wt8-lines.txt"
+  while IFS= read -r line; do
+    nlines=$((nlines + 1))
+    o="$(printf '%s\n' "$line" | env -u SHA PS1= PS2= bash --norc -i 2>&1 | grep -vE 'no job control|cannot set terminal|^exit$')"
+    printf '### %s\n%s\n' "$line" "$o" >> "$wt8"
+    echo "$o" | grep -q 'SHA: not set - run the SHA= line of 11.8' && nguard=$((nguard + 1))
+  done < "$OUT/wt8-lines.txt"
+  wt8tag="$(git tag -l drain-image | grep -c .)"; wt8wt="$(git worktree list | grep -c ff-rdrain)"
+  wt WT8 "SHA left empty in a new terminal: each line of 11.8 and 11.9 that uses SHA pasted into a fresh interactive shell" \
+    "$nlines lines; $nguard printed 'bash: SHA: not set - run the SHA= line of 11.8'; afterwards drain-image tags: $wt8tag, ff-rdrain worktrees: $wt8wt (log wt8.log)" \
+    "$( [ "$nguard" = "$nlines" ] && [ "$wt8tag" = 0 ] && [ "$wt8wt" = 0 ] && echo "the \${SHA:?} guard on every line: nothing ran, no tag and no worktree were made" || echo "NOT every line was stopped (see wt8.log)")" \
+    "$( [ "$nguard" = "$nlines" ] && echo "no: already scripted (C34)" || echo "YES: the unguarded lines in wt8.log")"
+
+  # ---- 11.9 tag that sha; 11.10 push the tag alone
+  rb_run 11.9 "$(rb_fence 11.9 1)" " P2b-2 <p2b2>,=" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
   local_ok=no
-  [ "$(git cat-file -t drain-image)" = tag ] && [ "$(git rev-parse 'drain-image^{commit}')" = "$(git rev-parse release/drain)" ] \
+  [ "$(git cat-file -t drain-image)" = tag ] && [ "$(git rev-parse 'drain-image^{commit}')" = "$SHA" ] && has 'drain-image = SHA = origin/release/drain' \
     && git tag -n1 drain-image | grep -q "$P1" && git tag -n1 drain-image | grep -q "$FIX" && git tag -n1 drain-image | grep -q "$P3A" && local_ok=yes
-  row 11.9 "$( [ $local_ok = yes ] && echo DONE || echo FAILED)" "git tag -a drain-image" "type $(git cat-file -t drain-image); $(git tag -n1 drain-image | cut -c1-160)" \
-    "the message's ' P2b-2 <p2b2>,' was dropped (P2b-2 absent)"
+  row 11.9 "$( [ $local_ok = yes ] && echo DONE || echo FAILED)" "git tag -a drain-image ... \"\${SHA:?...}\"" "$(out_of | tr '\n' ';' | cut -c1-300)" \
+    "the message's ' P2b-2 <p2b2>,' was dropped (P2b-2 absent); its CI run and gate summary say 'not run here'"
   rb_run 11.10 "$(rb_span 11.10 'git push origin')"
   rb_run 11.10-check "$(rb_span 11.10 'git ls-remote')"
-  row 11.10 "$( [ "$(out_of | grep -c 'refs/')" -ge 3 ] && echo DONE || echo FAILED)" "git push origin release/drain drain-image (the stand-in origin)" "$(out_of | awk '{print substr($1,1,9), $2}' | tr '\n' ';')"
+  brl="$(out_of | awk '$2=="refs/heads/release/drain"{print $1}')"; pel="$(out_of | awk '$2=="refs/tags/drain-image^{}"{print $1}')"
+  row 11.10 "$( [ "$brl" = "$SHA" ] && [ "$pel" = "$SHA" ] && out_of | grep -q 'refs/tags/drain-image$' && echo DONE || echo FAILED)" \
+    "git push origin drain-image (the tag alone, to the stand-in origin)" "$(out_of | awk '{print substr($1,1,9), $2}' | tr '\n' ';')"
   row 11.11 N/A "record the cut in W0-results" "-" "the coordinator's record; this rehearsal's results file holds the log"
 
-  # ---- WT7 (asked for by the review of #205): main's squash f192fee picked at 11.3a instead of
-  # the tagged original. A throwaway branch after the real cut is pushed; 11.6 and 11.7 are run
-  # as written with release/drain read as that branch.
-  WT="$OUT/wrongturns.tsv"
-  wt() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$3" 900)" "$(clean "$4" 400)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"; }
-  [ -f "$WT" ] || printf 'id\twrong turn\twhat happened\twhat stopped it\tscripted guard needed?\n' > "$WT"
+  # ---- 11.12: not until P12a and P12 merge; its tag line's guard against 11.8's SHA is WT11
+  row 11.12 NRH "release/drain-web: pick P12a, P12; push, CI, gates, tag drain-web-image" "-" "P12a and P12 are not merged"
+  rb_run wt11 "$(rb_fence 11.12 4)"
+  wt WT11 "11.12's tag line run with SHA still holding 11.8's value (release/drain's commit)" \
+    "printed: $(out_of | tr '\n' ' '); drain-web-image tags afterwards: $(git tag -l 'drain-web-image*' | grep -c .)" \
+    "$(has "STOP: SHA is release/drain's commit" && [ -z "$(git tag -l 'drain-web-image*')" ] && echo "the tag line's own test: STOP, no tag" || echo "NOTHING: see the step log")" \
+    "$(has "STOP: SHA is release/drain's commit" && echo "no: already scripted" || echo "YES")"
+
+  # ---- a clone made now is "behind" once 11.13 pushes the re-cut (WT10)
+  git clone -q /srv/origin.git /srv/behind && git -C /srv/behind switch -q release/drain
+
+  # ---- WT7 and WT9 in a clone of their own, so 11.6's recovery block runs on a real release/drain
+  rm -rf /srv/wt7 && git clone -q /srv/origin.git /srv/wt7 && cd /srv/wt7 || exit 1
   SQ=f192fee; SQ_FULL="$(git rev-parse "$SQ")"
-  git switch -q -c wt7-drain a31924a && git cherry-pick -x "$P1" >/dev/null 2>&1
+  git switch -q -c release/drain a31924a && git cherry-pick -x "$P1" >/dev/null 2>&1
   git cherry-pick -x "$SQ" > "$OUT/wt7-pick.log" 2>&1; rcsq=$?
   [ "$rcsq" = 0 ] || git cherry-pick --abort >/dev/null 2>&1
   git cherry-pick -x "$P3A" >/dev/null 2>&1 || git cherry-pick --abort >/dev/null 2>&1
   sqfiles="$( [ "$(git show --name-only --format= HEAD~1 | sort)" = "$(git show --name-only --format= "$FIX_TAG^{commit}" | sort)" ] && echo "the same four files as the tag" || echo "other files than the tag")"
-  echo "lab WT7: 11.6 and 11.7 run with 'release/drain' read as the throwaway branch wt7-drain" >> "$OUT/deviations.log"
-  rb_run wt7-11.6 "$(rb_fence 11.6 1)" "release/drain=wt7-drain"
+  rb_run wt7-11.6 "$(rb_fence 11.6 1)"
   o76="$(out_of)"
-  oldcount="$(git log a31924a..wt7-drain --format=%B | grep -c 'cherry picked from commit')"
-  rb_run wt7-11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A" "release/drain=wt7-drain"
+  oldcount="$(git log a31924a..release/drain --format=%B | grep -c 'cherry picked from commit')"
+  rb_run wt7-11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A"
   o77="$(out_of)"
   s117="$( [ "$(echo "$o77" | grep -c '^[<>]')" = 0 ] && echo "silent (no file outside the commits)" || echo "lists files")"
   caught=no; [ "$rcsq" != 0 ] && caught=notrun; echo "$o76" | grep -qF "(cherry picked from commit $SQ_FULL)" && [ "$(echo "$o76" | grep 'cherry picked from')" != "$srcexp" ] && caught=yes
+  # WT9 first: the recovery block pasted while another branch is checked out
+  git switch -q main
+  b9="$(git rev-parse main) $(git rev-parse release/drain)"
+  rb_run wt9 "$(rb_fence 11.6 3)"
+  o9="$(out_of)"; a9="$(git rev-parse main) $(git rev-parse release/drain)"
+  wt WT9 "11.6's recovery (reset) block pasted while another branch (main) is checked out" \
+    "printed: $(echo "$o9" | tr '\n' ';' | cut -c1-400); main and release/drain $( [ "$b9" = "$a9" ] && echo unchanged || echo CHANGED)" \
+    "$(echo "$o9" | grep -q 'STOP: not on release/drain' && [ "$b9" = "$a9" ] && echo "the block's branch-name test: STOP: not on release/drain, nothing reset" || echo "NOTHING: see the step log")" \
+    "$(echo "$o9" | grep -q 'STOP: not on release/drain' && [ "$b9" = "$a9" ] && echo "no: already scripted (C34)" || echo "YES")"
+  # then the recovery as written, on release/drain, and the redo the text asks for
+  git switch -q release/drain
+  rb_run wt7-recover "$(rb_fence 11.6 3)"
+  orc="$(out_of)"
+  rb_run wt7-11.3a "$(rb_span 11.3a 'cherry-pick -x')"
+  rb_run wt7-11.5 "$(rb_span 11.5 'cherry-pick -x')"
+  rb_run wt7-11.6b "$(rb_fence 11.6 1)"
+  o76b="$(out_of)"
+  recok=no
+  echo "$orc" | grep -qx 'release/drain' && echo "$orc" | grep -qx 'count=1' && echo "$orc" | grep -q '^HEAD is now at' \
+    && [ "$(echo "$orc" | tail -n 1)" = "(cherry picked from commit $P1_FULL)" ] && [ "$(echo "$o76b" | grep 'cherry picked from')" = "$srcexp" ] && recok=yes
   wt WT7 "11.3a picks main's squash f192fee (PR #204) instead of the tag drain-pick-tz-fix (3810e42)" \
-    "the pick: exit $rcsq, no conflict$( [ "$rcsq" = 0 ] || echo ' (CONFLICT)'), $sqfiles. 11.6 log: $(echo "$o76" | grep -v 'cherry picked' | tr '\n' ';') 11.6 sources: $(echo "$o76" | grep 'cherry picked' | sed 's/(cherry picked from commit \(.......\)[0-9a-f]*)/\1/' | tr '\n' ' '). 11.7: $(echo "$o77" | tr '\n' ';' | cut -c1-160). The pre-#206 Check (a count of trailers) would read $oldcount and pass" \
-    "$( [ $caught = yes ] && echo "11.6 as merged at 7bf9f49 (C32): its source list names f192fee97d… where the Check wants 3810e420…, so the text says STOP and how to recover. 11.7 is $s117. The subject line differs too ([P7a] follow-up: … (#204) vs fix(jobs): …), but only an operator comparing it notices" || { [ $caught = notrun ] && echo "wrong turn not reproduced: f192fee did not apply on P1 (see wt7-pick.log)" || echo "nothing: 11.6 and 11.7 both looked as expected"; })" \
-    "$( [ $caught = yes ] && echo "no new guard: 11.6's source check (C32) is the guard, though it is a comparison the operator reads, not a test that stops; the smallest scripted form is diff <(git log --reverse … | grep 'cherry picked from') <(expected lines) || echo STOP" || { [ $caught = notrun ] && echo "not judged" || echo "YES: compare the -x trailers to the expected full shas"; })"
-  git switch -q release/drain && git branch -q -D wt7-drain
+    "the pick: exit $rcsq$( [ "$rcsq" = 0 ] && echo ', no conflict' || echo ' (CONFLICT)'), $sqfiles. 11.6 log: $(echo "$o76" | grep -v 'cherry picked' | tr '\n' ';') 11.6 sources: $(echo "$o76" | grep 'cherry picked' | sed 's/(cherry picked from commit \(.......\)[0-9a-f]*)/\1/' | tr '\n' ' '). 11.7: $(echo "$o77" | tr '\n' ';' | cut -c1-120). A count of trailers (the pre-#206 Check) would read $oldcount and pass. Recovery as written: $(echo "$orc" | grep -E '^count=|^HEAD is now' | tr '\n' ';') then 11.3a, 11.5 and 11.6 again: sources $( [ "$recok" = yes ] && echo 'as expected' || echo 'NOT as expected')" \
+    "$( [ $caught = yes ] && echo "11.6 as merged at 53c6046 (C32/C34): its source list names f192fee97d… where the Check wants 3810e420…, so the text says STOP; its reset block (computed P1 pick, branch-guarded) recovered the branch: $recok. 11.7 is $s117. The subject differs too, but only an operator comparing it notices" || { [ $caught = notrun ] && echo "wrong turn not reproduced: f192fee did not apply on P1 (see wt7-pick.log)" || echo "nothing: 11.6 and 11.7 both looked as expected"; })" \
+    "$( [ $caught = yes ] && echo "no new guard: 11.6's source list is the guard, a comparison the operator reads, not a test that stops; the smallest scripted form is diff <(git log --reverse … | grep 'cherry picked from') <(expected lines) || echo STOP" || { [ $caught = notrun ] && echo "not judged" || echo "YES: compare the -x trailers to the expected full shas"; })"
+  cd /srv/dev || exit 1
+
+  # ---- 11.13 a re-cut after a window fix. The fix is a stand-in: one new file on top of main, kept
+  # local (the stand-in origin's main stays the real main)
+  git switch -q -c l4-window-fix origin/main && printf 'L4 stand-in window fix (lab only)\n' > ops/lab/L4-STANDIN-WINDOW-FIX.txt \
+    && git add ops/lab/L4-STANDIN-WINDOW-FIX.txt && git commit -q -m "fix(lab): stand-in window fix for the L4 re-cut rehearsal" && WFIX="$(git rev-parse HEAD)"
+  git switch -q release/drain
+  echo "lab 11.13: the window fix is a stand-in commit (one new file, ops/lab/L4-STANDIN-WINDOW-FIX.txt) on top of main, not pushed to the stand-in origin's main" >> "$OUT/deviations.log"
+  OLDSHA="$SHA"
+  rb_run 11.13-sync "$(rb_fence 11.13 1)"
+  row 11.13-sync "$(has 'release/drain = origin/release/drain' && echo DONE || echo FAILED)" "fetch; switch release/drain; local = origin" "$(out_of | tail -n 1)"
+  rb_run 11.13-pick "$(rb_fence 11.13 2)" "<fix-sha>=$WFIX"
+  row 11.13-pick "$( [ "$RC" = 0 ] && ! has CONFLICT && echo DONE || echo FAILED)" "git cherry-pick -x <fix-sha> (the stand-in fix)" "exit $RC; $(out_of | head -n 1)"
+  rb_run 11.13-6 "$(rb_fence 11.6 1)"
+  row 11.13-6 "$( [ "$(out_of | grep -vc 'cherry picked from')" = 4 ] && [ "$(out_of | grep 'cherry picked from')" = "$srcexp
+(cherry picked from commit $WFIX)" ] && echo DONE || echo FAILED)" "11.6 again" "$(out_of | tr '\n' ';' | cut -c1-400)" "three commits and the fix (P2b-2 absent); the trailer list is 11.6's lines followed by the fix's full sha"
+  rb_run 11.13-7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A $WFIX"
+  row 11.13-7 "$( [ "$RC" = 0 ] && [ "$(out_of | grep -c '^[<>]')" = 0 ] && echo DONE || echo FAILED)" "11.7 again with the fix" "$(out_of | head -n 2 | tr '\n' ';')"
+  rb_run 11.13-push "$(rb_fence 11.8 1 '1,2p')"
+  lsr="$(git ls-remote origin refs/heads/release/drain | cut -f1)"
+  row 11.13-push "$( [ "$RC" = 0 ] && ! has 'forced update' && ! has rejected && [ "$SHA" != "$OLDSHA" ] && [ "$lsr" = "$SHA" ] && [ "$(git rev-parse "$SHA~1")" = "$OLDSHA" ] && echo DONE || echo FAILED)" \
+    "11.8's push (a fast-forward) and SHA again" "SHA $OLDSHA -> $SHA; origin's release/drain $lsr; $(out_of | grep -E '\.\.|->' | head -n 1)"
+  rb_run 11.13-worktree "$(rb_fence 11.8 3 '1p')"
+  wtp="/srv/ff-rdrain-${SHA:0:7}"; wth="$(git -C "$wtp" rev-parse HEAD 2>/dev/null)"
+  rb_run 11.13-remove "$(rb_fence 11.8 4)"
+  row 11.13-worktree "$( [ "$wth" = "$SHA" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" "11.8's worktree for the new sha, then removed" "path $wtp at $wth; removed: $([ -e "$wtp" ] && echo no || echo yes)" \
+    "its CI read and gates are NRH, as in 11.8"
+  rb_run 11.13-tag "$(rb_fence 11.13 3)" "<fix-sha>=$WFIX" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
+  pel2="$(git ls-remote origin 'refs/tags/drain-image-2*' | awk '$2=="refs/tags/drain-image-2^{}"{print $1}')"
+  row 11.13 "$( [ "$RC" = 0 ] && [ "$(git rev-parse 'drain-image-2^{commit}')" = "$SHA" ] && [ "$(git rev-parse origin/release/drain)" = "$SHA" ] && [ "$pel2" = "$SHA" ] \
+      && [ "$(git rev-parse 'drain-image^{commit}')" = "$OLDSHA" ] && [ "$(git log --oneline a31924a..release/drain | grep -c .)" = 4 ] && echo DONE || echo FAILED)" \
+    "git tag -a drain-image-2 ... \"\$SHA\"; git push origin drain-image-2" "drain-image-2 -> $(git rev-parse --short 'drain-image-2^{commit}'); origin's peeled $(echo "$pel2" | cut -c1-9); drain-image still $(git rev-parse --short 'drain-image^{commit}')" \
+    "the deploy below still uses drain-image (the re-cut is rehearsed, not deployed)"
+
+  # ---- WT10: the re-cut started from a clone that is behind (made before the re-cut was pushed)
+  cd /srv/behind || exit 1
+  rb_run wt10 "$(rb_fence 11.13 1)"
+  o10="$(out_of)"; l10="$(git rev-parse --short release/drain)"; r10="$(git rev-parse --short origin/release/drain)"
+  rm -rf /srv/fresh && git clone -q /srv/origin.git /srv/fresh && cd /srv/fresh || exit 1
+  rb_run wt10-fresh "$(rb_fence 11.13 1)"
+  of="$(out_of | tail -n 1)"
+  cd /srv/dev || exit 1
+  wt WT10 "11.13 started in a clone made before the last cut was pushed (its release/drain is behind origin's)" \
+    "printed: $(echo "$o10" | tail -n 1); local release/drain $l10, origin/release/drain $r10. The text's remedy, a fresh clone, prints: $of" \
+    "$(echo "$o10" | grep -q "STOP: local release/drain is not origin's" && echo "11.13's equality test: STOP before any pick; a fresh clone passes it" || echo "NOTHING: see the step log")" \
+    "$(echo "$o10" | grep -q "STOP: local release/drain is not origin's" && echo "no: already scripted (C34). It prints a STOP line but exits 0: a pasted block keeps going only if the operator ignores it" || echo "YES")"
   ;;
 
 prebuild)
