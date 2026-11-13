@@ -41,7 +41,7 @@ LOGCAT_PID=""
 tl() {
   local i
   for i in 1 2 3 4 5; do
-    echo "$*" >> "$EV/timeline.txt" 2> /dev/null && return 0
+    { echo "$*" >> "$EV/timeline.txt"; } 2> /dev/null && return 0
     sleep 0.3
   done
   echo "timeline append failed: $*" >&2

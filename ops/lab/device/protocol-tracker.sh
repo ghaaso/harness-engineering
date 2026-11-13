@@ -88,13 +88,13 @@ check_probe() {
   M="probe kill -9 pid=$pid"
   mark "$M"
   ash kill -9 "$pid"
-  line="$(wait_lc "$M" "$FGS_BG_REFUSED" 90)"
+  line="$(wait_lc "$M" "$FGS_BG_REFUSED" 240)"
   sleep 3
   rs="$(fgs_up)"
   { echo "pid_now=$(app_pid) (killed $pid); record half alone (the old probe): $(fgs_record_up)"; echo "logcat: $line"; fgs_lines; } > "$EV/services-probe-restored.txt"
   if [ -z "$line" ]; then
     record probe-restored control "a process restored in the background after kill -9 (logs '$FGS_BG_REFUSED'): fgs=no" \
-      "precondition failed: no restored process logged the refusal within 90 s (pid now: $(app_pid))" inconclusive "services-probe-restored.txt"
+      "precondition failed: no restored process logged the refusal within 240 s (pid now: $(app_pid))" inconclusive "services-probe-restored.txt"
   else
     record probe-restored control "a process restored in the background after kill -9 (logs '$FGS_BG_REFUSED'): fgs=no" \
       "fgs=$rs (the record half alone says $(fgs_record_up)); $line" "$([ "$rs" = no ] && echo reproduced || echo not_reproduced)" "services-probe-restored.txt"
@@ -140,6 +140,7 @@ check_a_once() { # run-no
   mark "a#$n reopened"
   sleep 15
   post="$(fgs_up)"
+  [ -n "$line" ] || line="$(lc_since "$M" "$FGS_BG_REFUSED" | head -n1)" # the refusal can log only at the reopen
   pid2="$(app_pid)"
   { echo "pid_after_reopen=$pid2; record half alone (the old probe): $(fgs_record_up)"; fgs_lines; } > "$EV/services-a$n-reopened.txt"
   lc_since "$M" "$FGS_BG_REFUSED|LocationTaskConsumer|FFLAB" > "$EV/a$n-logcat.txt"
@@ -728,6 +729,7 @@ check_c() { # [run-no]
   wait_text "OK" 30 && tap_text "OK"
   sleep 10
   post="$(fgs_up)"
+  [ -n "$line" ] || line="$(lc_since "$M" "$FGS_BG_REFUSED" | head -n1)" # the refusal can log only at the reopen
   fgs_lines > "$EV/services-c$n-post.txt"
   dump_state "$EV/state-c$n-post.json"
   p0="$(ping_count)"
