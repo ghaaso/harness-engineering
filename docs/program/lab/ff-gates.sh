@@ -159,6 +159,8 @@ case "$KIND" in
     [ -n "$ci_env" ] && ENVARGS+=(-e "FIXFLOW_ENVIRONMENT=$ci_env")
     for kv in ${FF_GATES_ENV:-}; do ENVARGS+=(-e "$kv"); done
     echo "ENV ${ENVARGS[*]:-none}" | tee -a "$L/gates.log"
+    # start lean: hand the VM's unused disk cache back to Windows before this run adds its own
+    docker run --rm --privileged alpine:3 sh -c "sync; echo 1 > /proc/sys/vm/drop_caches" >/dev/null 2>&1
     # we hold the lane lock, so anything with these names is a leftover of a dead run
     docker rm -f "$N-db" "$N-gates" >/dev/null 2>&1
     docker run -d --name "$N-db" --memory 1g \

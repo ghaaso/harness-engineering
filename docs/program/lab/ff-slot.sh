@@ -10,8 +10,8 @@
 #   ff-slot.sh release <holder>
 #   ff-slot.sh status
 #
-# Weights: a backend stack, a Jest run, a Vitest run and a running emulator take 1; a Gradle
-# build takes 2 (with 2 slots that is the whole machine).
+# Weights: a backend stack, a Jest run, a Vitest run and a running emulator take 1. Any request
+# for 2 or more (a Gradle build) is EXCLUSIVE: it takes every slot, whatever the slot count is.
 #
 # Slots are directories (mkdir is atomic on NTFS). Pass the PID of the long-lived process that
 # owns the job (the gate script passes its own): a slot is then reaped only when that process
@@ -27,10 +27,11 @@
 # everything behind it until it has run, so it cannot starve.
 set -u
 D="${FF_LOCK_DIR:-/c/Users/User/.fixflow-cache/locks}"
-# 2 while Android builds (weight 2) are in play: with eight lane sessions running, free host
-# RAM measured 5.5-7.7 GB (2026-11-13), so a Gradle build must not share the machine with
-# another gate. Raise to 3 only with FF_SLOTS and only when no Gradle build can start.
-N="${FF_SLOTS:-2}"
+# 3 slots. Measured with two backend gate stacks running (2026-11-13 14:26): each stack used
+# about 0.4-0.5 GB (the 3 GB figure is only its cap), while the Docker VM held 6.9 GB of page
+# cache; so the cache, not the gates, was eating the host's RAM, and the gate script now drops
+# it at the start and end of every backend run. A Gradle build stays exclusive (see weights).
+N="${FF_SLOTS:-3}"
 STALE_MIN="${FF_STALE_MIN:-240}"
 Q="$D/queue"
 mkdir -p "$D" "$Q"
@@ -78,7 +79,7 @@ case "$cmd" in
     holder="${2:?holder}"
     w="${3:-1}"
     pid="${4:--}"
-    if [ "$w" -gt "$N" ]; then echo "weight $w exceeds slots $N" >&2; exit 2; fi
+    if [ "$w" -ge 2 ]; then w="$N"; fi   # heavy means exclusive
     t0=$(date +%s)
     # the ticket lives as long as this acquire call does; its name sorts by arrival time
     # The weight is in the ticket's NAME and its content is the bare PID. A waiter still running an
