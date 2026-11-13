@@ -112,7 +112,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 
 | Id | Decision | Blocks | Default |
 | --- | --- | --- | --- |
-| N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | they stay unmerged; lanes keep reading the plan branch |
+| N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | DECIDED 2026-11-13: Yes for #185 (the reviewer and skill definitions). |
 | N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | it stays open as a draft |
 | N5 (new) | May a manager record (or void) a payment on a job that is already closed? | the merge of P7a (who may do what, and money guards) | DECIDED 2026-11-13: Yes, managers only. |
 | T1 | Domain (Cloudflare DNS, multi-year, auto-renew) | P2b-1 (name), P2c, P3a | nothing can ship to phones |
