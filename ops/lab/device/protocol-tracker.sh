@@ -3,10 +3,11 @@
 # (ship plan 7.5, phase L3a). Each check bears on one row of the G2 register and can come out
 # either way; nothing here claims anything about the fleet's phones (standing rule 2).
 #
-#   bash ops/lab/device/protocol-tracker.sh [check ...]     default: probe d f19 f14 a c b
+#   bash ops/lab/device/protocol-tracker.sh [check ...]     default: probe d f19 f14 a c b fneg
 #
 # Checks (run in the order given):
-#   probe  the FGS probe itself, both outcomes: on duty (expect FGS) and clocked out (expect none)
+#   probe  the FGS probe itself, every outcome: on duty (FGS), a process restored after kill -9
+#          (no FGS: the measured negative a and reboot rely on), clocked out (no FGS)
 #   a      O01-F01  kill -9 the app process while on duty, reopen it, is the sampler's FGS back
 #                   within 15 s?                                         (FF_REPEAT runs, default 3)
 #   b      O01-F03  location off/on with the app in the background: is the fence re-registered
@@ -22,6 +23,7 @@
 #   f14    O01-F14  kill, a headless depart, open the app the moment its job starts: does the next
 #                   crossing's job ever finish? Paired with a control that opens the app 10 s
 #                   after the headless job finished.                    (FF_REPEAT runs, default 3)
+#   fneg   the fence probe after pm clear (expect no fence), then sign in again
 #   doze   on duty, `dumpsys deviceidle force-idle` for FF_DOZE_MIN (4) minutes: pings received
 #   reboot on duty, `adb reboot`, do NOT open the app for 3 min: FGS and pings; then open it
 #   revoke on duty, `pm revoke ACCESS_BACKGROUND_LOCATION`: what the sampler does
@@ -43,7 +45,7 @@ REPEAT="${FF_REPEAT:-3}"
 PROBE_RESTORED_OK=0 # set by check_probe once the FGS probe said "no" on a restored process
 DOZE_MIN="${FF_DOZE_MIN:-4}"
 CHECKS=("$@")
-[ "${#CHECKS[@]}" -eq 0 ] && CHECKS=(probe d f19 f14 a c b)
+[ "${#CHECKS[@]}" -eq 0 ] && CHECKS=(probe d f19 f14 a c b fneg)
 
 bash "$HERE/lab-backend.sh" status 2> /dev/null | head -n1 | grep -q "mode: backend" ||
   die "the lab backend is not answering (run lab-backend.sh up)"

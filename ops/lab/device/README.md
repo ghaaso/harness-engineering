@@ -13,17 +13,18 @@ field session confirms; the lab only makes it confirm instead of explore.
 
 ## The pieces
 
-| Script                                                             | What it does                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `emu.sh start [--window] [--cold] \| stop \| status`               | Boots AVD `ff34` (headless unless `--window`), 2048 MB RAM cap, `-gpu host` with one automatic retry on `swiftshader_indirect`, waits for `sys.boot_completed`, enables `adb root`. Holds **one** `ff-slot.sh` slot for the emulator's whole life through a detached keeper process.                       |
-| `lab-backend.sh up \| reset \| down \| status`                     | Postgres 16 + this worktree's committed backend in Docker, on the default bridge, published on `127.0.0.1:18431` (the emulator's `http://10.0.2.2:18431`). Migrated to head, seeded through the backend's own API.                                                                                         |
-| `lab-backend.sh edge404 \| 5xx \| hang`                            | Replaces the backend on the same port with `edge-stub.py` (stdlib only): the dead host's 404 + `x-railway-fallback: true` + text body + no `X-FixFlow-Api`; a 503; or accept-and-say-nothing for 20 s. `up` revives the backend with its database intact.                                                  |
-| `build-apk.sh [ref]`                                               | The lab APK of `ref` (default `origin/main`) through L2's `ops/lab/android-compile.sh`, from a detached throwaway worktree, with a hook that bakes `EXPO_PUBLIC_API_URL=http://10.0.2.2:18431` and allows cleartext **in the container copy only**. Needs 2 slots: stop the emulator first.                |
-| `app.sh install <apk> \| grant \| login \| state \| keys \| clear` | Installs on the emulator only (refuses a bundle that lacks the lab base or contains any `eas.json` env value); grants fine, coarse, background location and notifications, denies camera (user-fixed, so a clock-in takes no selfie); signs in as the lab-only technician `lab1` by UI; dumps the queues from AsyncStorage. |
-| `protocol-tracker.sh [probe d f19 f14 a c b doze reboot revoke]`   | The adb-scriptable core of the O-01 field protocol.                                                                                                                                                                                                                                                        |
-| `protocol-offline.sh [control edge404 revival 5xx airplane]`       | The outage matrix.                                                                                                                                                                                                                                                                                         |
-| `calibrate-fence.sh`                                               | Which edge fixes make Play services deliver an ENTER for the lab fence (pairs of distance and accuracy, plus an inside control). Why `d` is staged.                                                                                                                                                        |
-| `findings.sh <evidence-dir> ...`                                   | Tabulates `result.json` files into the findings table (verdicts counted as n of runs).                                                                                                                                                                                                                     |
+| Script                                                                | What it does                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `emu.sh start [--window] [--cold]                                     | stop                                                                                                                                                                                                                                                                                                                                                                                                                          | status` | Boots AVD `ff34` (headless unless `--window`), 2048 MB RAM cap, `-gpu host` with one automatic retry on `swiftshader_indirect` (software rendering: slower, so its timings are not comparable), waits for `sys.boot_completed`, enables `adb root`. Holds **one** heavy-pool `ff-slot.sh` slot for the emulator's whole life through a detached keeper, which stops an emulator no lab script has driven for `FF_EMU_IDLE_MIN` (20) minutes. One instance per AVD; port 5554 only (every script refuses `emulator-5584`, the coordinator's). The ANGLE GPU modes are never used: this PC's antivirus blocks `gles_angle/d3dcompiler_47.dll`. |
+| `lab-backend.sh up                                                    | reset                                                                                                                                                                                                                                                                                                                                                                                                                         | down    | status`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Postgres 17 + the **app under test's** committed backend (`FF_LAB_APP_REF`, default `a31924a`, the same commit as the lab APK) in Docker, on the default bridge, published on `127.0.0.1:18431` (the emulator's `http://10.0.2.2:18431`). Migrated to head; the lab-only technician `lab1` is the one row written by SQL (the app under test has no create-technician API), its PIN is set through `PUT /api/technicians/lab1/pin`; the rest is seeded through the API. |
+| reset \| down \| status`                                              | Postgres 16 + this worktree's committed backend in Docker, on the default bridge, published on `127.0.0.1:18431` (the emulator's `http://10.0.2.2:18431`). Migrated to head, seeded through the backend's own API.                                                                                                                                                                                                            |
+| `lab-backend.sh edge404 \| 5xx \| hang`                               | Replaces the backend on the same port with `edge-stub.py` (stdlib only): the dead host's 404 + `x-railway-fallback: true` + text body + no `X-FixFlow-Api`; a 503; or accept-and-say-nothing for 20 s. `up` revives the backend with its database intact.                                                                                                                                                                     |
+| `build-apk.sh [ref]`                                                  | The lab APK of `ref` (default `origin/main`) through L2's `ops/lab/android-compile.sh`, from a detached throwaway worktree, with a hook that bakes `EXPO_PUBLIC_API_URL=http://10.0.2.2:18431`, allows cleartext and writes a dummy Firebase project **in the container copy only**. Output `lab-COMPILE-ONLY-debugkey-<sha>-p18431.apk`: debug-signed, emulator only, never a phone. Needs 2 slots: stop the emulator first. |
+| `app.sh install <apk> \| grant \| login \| state \| keys \| clear`    | Installs on the emulator only (refuses a bundle that lacks the lab base or contains any `eas.json` env value); grants fine, coarse, background location and notifications, denies camera (user-fixed, so a clock-in takes no selfie); signs in as the lab-only technician `lab1` by UI; dumps the queues from AsyncStorage.                                                                                                   |
+| `protocol-tracker.sh [probe d f19 f14 a c b fneg doze reboot revoke]` | The adb-scriptable core of the O-01 field protocol.                                                                                                                                                                                                                                                                                                                                                                           |
+| `protocol-offline.sh [control edge404 revival 5xx airplane]`          | The outage matrix.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `calibrate-fence.sh`                                                  | Which edge fixes make Play services deliver an ENTER for the lab fence (pairs of distance and accuracy, plus an inside control). Why `d` is staged.                                                                                                                                                                                                                                                                           |
+| `findings.sh <evidence-dir> ...`                                      | Tabulates `result.json` files into the findings table (verdicts counted as n of runs).                                                                                                                                                                                                                                                                                                                                        |
 
 Shared code: `lib.sh` (paths, adb/docker wrappers, emulator guard), `lib-app.sh` (UI by text,
 AsyncStorage reads, service probes, `result.json` entries), `lib-proto.sh` (evidence folder,
@@ -36,29 +37,34 @@ source /c/Users/User/.fixflow-cache/android/env.sh
 bash ops/lab/device/lab-backend.sh up
 bash ops/lab/device/build-apk.sh            # only when the app changed; emulator must be stopped
 bash ops/lab/device/emu.sh start            # --window to watch
-bash ops/lab/device/app.sh install /c/Users/User/.fixflow-cache/lab/l3a/apk/lab-<sha>-p18431.apk
+bash ops/lab/device/app.sh install /c/Users/User/.fixflow-cache/lab/l3a/apk/lab-COMPILE-ONLY-debugkey-<sha>-p18431.apk
 bash ops/lab/device/app.sh login
 bash ops/lab/device/protocol-tracker.sh
 bash ops/lab/device/protocol-offline.sh
 bash ops/lab/device/emu.sh stop             # always: a running emulator holds a slot
+bash ops/lab/device/lab-backend.sh down     # the two lab containers (protocol-offline revives them on exit)
 ```
 
-Evidence lands in `C:/Users/User/.fixflow-cache/lab/l3a/<protocol>-<stamp>/`, never in the
-repository: `logcat.txt`, `timeline.txt` (every step, also written to logcat under tag
+Evidence lands in `C:/Users/User/.fixflow-cache/lab/l3a/<protocol>-<stamp>/`, never in this
+branch: `logcat.txt`, `timeline.txt` (every step, also written to logcat under tag
 `FFLAB`), `services-*.txt` (`dumpsys activity services`), `state-*.json` (the queue keys),
 `backend-*.txt` (the lab database rows), `stub-*.log` (every request the stub saw),
-`screen-*.mp4`, and `result.json`: one entry per check with the register id it bears on, what the
-register predicts, what happened, the verdict and the evidence file.
+`adb-processes.txt` (every `adb.exe` before and after the logcat stream stops), `screen-*.mp4`,
+and `result.json`: one entry per check with the register id it bears on, what the register
+predicts, what happened, the verdict and the evidence file, plus the lab account, the app ref and
+each recording's sha256. For every run the findings cite, a small bundle (its `result.json` and
+the cited excerpt files only; no full logcat, no recording) is committed on the plan branch under
+`docs/program/evidence/lab/<run>/`; the findings cite that path.
 
 **Verdicts.** `reproduced` = the register's predicted behaviour happened. `not_reproduced` = it
 did not, under this script. `inconclusive` = the precondition failed or the evidence cannot
 decide, with the reason in `observed`. Rows with `register_id: control` are the lab checking
 itself: their `reproduced` means the expected control outcome happened (a write landed against
-the live backend, the FGS probe saw the service on duty and did not see it off duty, a headless
-crossing recorded). Not every register check has a same-probe control for the other outcome:
-the findings table says which do (f19 pairs each run with a headless depart; d with a clean
-arrival; probe covers the FGS probe used by a and c), and which only show the other outcome
-across checks (b and a never produced a "reproduced" here).
+the live backend, the FGS probe saw the service on duty and did not see it off duty or on a
+process restored after a kill, the fence probe lost the fence after `pm clear`, a headless crossing
+recorded). Every probe a verdict rests on is shown giving both answers in the same run; a check
+whose own precondition did not happen (no geofence error delivered, no pings without doze) says
+`inconclusive`, never `not_reproduced`.
 
 ## Safety properties
 
@@ -69,7 +75,8 @@ across checks (b and a never produced a "reproduced" here).
   emulator signs in only to the lab backend, as the lab-only technician `lab1` (never a roster technician).
 - **The lab backend reaches nothing outside**: scheduler, backups and dispatcher off; R2, FCM,
   WhatsApp and Sentry unset, except a dummy R2 account id (an empty one makes the attendance
-  service 500) whose hostname is pinned to `127.0.0.1` inside the container namespace.
+  service 500) whose hostnames are pinned to `127.0.0.1` inside the container namespace: the
+  account one the backend signs (path-style, measured) and the bucket-style one.
 - **Nothing writes into a checkout's `technician-app/`**: L2's script copies the app into its
   container; the build worktree is a fresh detached checkout under the cache folder, mounted
   read-only.
@@ -97,9 +104,13 @@ android:mock_location allow` first) and feeds it every 3 s. Every fix is flagged
   the fix 100 m out at the same 30 m accuracy, so the handler's own confirmation read is the
   edge fix. That is the register's condition (OS says inside, the fresh fix says just outside);
   how often a real phone sees it is a field question.
-- **Pings are not evidence here.** The on-duty sampler (Balanced) barely receives the test
-  provider's fixes: 4 pings landed in about two hours at a 1-minute lab cadence. Checks read the
-  sampler's foreground service instead; a ping count is printed but labelled not-evidence.
+- **Ping counts need a whole phase.** The on-duty sampler (Balanced) receives few of the test
+  provider's fixes, and a batch often goes out only at the next sync (the next foreground), so a
+  count over a short window says nothing (the first edge404 run read "no batch in 150 s" while the
+  stub log showed three batch POSTs answered 404 later in the phase). Ping rows count over the
+  whole phase after a final foreground; FGS presence (record plus notification) is the signal for
+  O01-F01, O01-F20 and O3-F2; doze needs an equal no-doze window with pings before it can say
+  anything.
 - **Firebase.** Until commit `a5a65e8` the lab APK carried the production
   `google-services.json`, so the emulator initialised Firebase with the production project
   (logcat: `FirebaseInitProvider: FirebaseApp initialization successful`). The build hook now
