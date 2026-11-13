@@ -1,0 +1,17 @@
+VERDICT: PASS
+PR #200 at 7749696641e0590009e879f9788254560fc34bdb
+Review of the L2 follow-up by the reviewer of PR #188 (same agent), dispatched by the coordinator on 2026-11-13.
+
+All three requested changes are in, and nothing needs another round.
+
+(a) Pool named explicitly: done. Both the acquire (ops/lab/android-compile.sh:212) and the release in the cleanup (:64) are called with FF_POOL=heavy. A caller can still override FF_SLOT_SH, FF_LOCK_DIR or FF_SLOTS. That no longer matters for safety: a running build always has its script PID alive, so the new liveness check spares its container whichever lock it used.
+(b) A live holder's container is never removed: done. :240 takes the PID as the text after the last dash of the holder label, which is always <lane>-android-<pid>, so a lane name ending in digits cannot confuse it. :241 only treats a number that kill -0 finds alive as a live holder; both the label and kill -0 use Git Bash PIDs, so Windows PIDs never enter the comparison. An orphan with no label gives no number and is removed. If a dead build's PID has been reused by another process, its container is spared; that container stops at its own timeout (110 min plus 30 s), and the run notes it under live_holders_left_running. If the spared container has this lane's own name, :270 refuses with exit 3 rather than force-removing it.
+(c) Secret-file refusal is case-insensitive and runs before the wait: done. build_copy_list (:117-131, grep -iE at :129) runs before the slot wait (:193) and again after it (:258); it is the same function both times, so the second call refuses exactly what the first would. Environment.md is not matched, because the pattern needs a leading dot. The only file in the tracked tree it matches is technician-app/.env.example, which is exempt, so it does not block normal builds.
+
+Notes
+- Any dot-file starting with .env is refused, for example .envoy or src/.Env.ts. That would be a false refusal, but no such file exists in the app today.
+- With a caller-overridden lock, a spared live build can run alongside a new one (about 12 GB). That takes a deliberate misconfiguration.
+
+What the reviewer ran: a detached checkout at 7749696; an untracked dummy file technician-app/Credentials.JSON with FF_POOL=light set (the run exited 3 before the acquire, the summary named the file, no slot or queue ticket was left); the pattern against sample paths and against git ls-files technician-app. The test file, the refusal folder and the worktree were deleted; git status was clean before removal.
+
+Coordinator's ruling (2026-11-13): mergeable at 7749696641e0590009e879f9788254560fc34bdb. Both notes are recorded, no action.
