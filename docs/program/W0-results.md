@@ -132,7 +132,7 @@ only inside the fleet app build (P2c).
   4.3 GB of 31 GB RAM free, 6 GB of the 50 GB commit limit free (the Docker VM 6.5 GB, the
   emulator 3.6 GB). No further session is started until one finishes; a watcher reports if free
   commit falls under 3 GB. Archiving the sessions of merged phases (P1, P2a) is the owner's call.
-- **Cards waiting for the owner (2026-11-13 16:55):** P8a, money integrity 1 (`task_6c8adf32`), unblocked by the P7a merge. Start it after archiving finished lane sessions if memory is short.
+- **Cards waiting for the owner (2026-11-13 16:55):** P8a, money integrity 1 (`task_6c8adf32`), unblocked by the P7a merge. Start it after archiving finished lane sessions if memory is short. Its brief was written before P9-0a merged: when it starts, the coordinator sends it ruling C25 (three more items for the export script, which is now on `main`).
 - **A memory dip, 16:49:** free RAM touched 1.4 GB for a few seconds while three backend gate stacks started at once beside the emulator and a Jest run, and was back at 5.4 GB eight seconds later. The watcher now reports only three low samples in a row.
 - **A lane cut off by an API error does not report.** It happened twice on 2026-11-13 (plan
   section 7.9). After any quiet stretch the coordinator reads each idle lane's last message.
