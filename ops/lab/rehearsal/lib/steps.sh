@@ -321,9 +321,13 @@ sec6_tail() { # 6.10-6.14 after a case-a restore
   local frc="$RC"
   wait_backend_healthy 120
   rb_run 6.12-check "$(rb_fence 6.12 2)"
-  row 6.12 "$( [ "$frc" = 0 ] && [ "$(out_of)" = '24.8600000|67.0000000|80' ] || [ "$(out_of | tr -d '0' )" = "$(echo '24.86|67.|8' )" ] && echo DONE || echo AMBIGUOUS)" \
+  local fence_ok
+  fence_ok="$(out_of | python3 -c 'import sys
+rows = [l.strip().split("|") for l in sys.stdin if l.strip()]
+print("yes" if len(rows) == 1 and [float(x) for x in rows[0]] == [24.86, 67.0, 80.0] else "no")' 2>/dev/null)"
+  row 6.12 "$( [ "$frc" = 0 ] && [ "$fence_ok" = yes ] && echo DONE || echo FAILED)" \
     "fence update + force-recreate backend" "rows: [$(out_of | tr '\n' ' ')] (exit $frc)" \
-    "Expected says 'exactly one row, with the coordinates typed and 80'; the column type prints the coordinates with its own scale"
+    "typed 24.8600 / 67.0000; Postgres prints them as numbers (24.86|67|80), compared numerically"
   sec6_13
   row 6.14 NRH "route api. to the backend (5.9)" "-" "needs the Cloudflare tunnel"
 }
@@ -338,11 +342,9 @@ sec6_13() {
     case "$pin" in 123456|000000) pin=482917 ;; esac
     secret "$pin"
     echo "$id stand-in PIN set (value in no file)" >> "$OUT/editor.log"
-    # the script prompts twice on a terminal: script(1) gives it one, the PIN is typed into it
+    # the script prompts twice on a terminal: typist.py gives it one and types the PIN at each prompt
     export L4_PIN="$pin"
-    rb_run "6.13-set-$id" "$set_line" "<id>=$id" \
-      "ffc exec backend=printf '%s\n%s\n' \"\$L4_PIN\" \"\$L4_PIN\" | script -qec 'ffc exec backend" \
-      "--apply=--apply' /dev/null"
+    rb_run "6.13-set-$id" "$set_line" "<id>=$id" "ffc exec backend=python3 /srv/l4/kit/lib/typist.py ffc exec backend"
     grep -q "PIN set for $id" "$LOG" || rc_all=1
     unset L4_PIN
   done
@@ -353,5 +355,16 @@ sec6_13() {
   row 6.13 "$( [ "$rc_all" = 0 ] && [ "$after" = 0 ] && [ "$dflt" = 0 ] && echo DONE || echo FAILED)" \
     "set_pin --report; set_pin --tech <id> --apply (interactive, twice) for: $before" \
     "report after: $after on a seed PIN; deep health active accounts with default_pin_active: $dflt" \
-    "the interactive prompt was driven through script(1); PINs are random stand-ins kept in no file"
+    "the interactive prompt was answered through a pty (lib/typist.py) at each prompt; PINs are random stand-ins kept in no file"
+}
+
+# The stand-in dead-man listener and the stand-in bucket (lab setup, not runbook steps).
+lab_up() {
+  nohup python3 /srv/l4/kit/lib/deadman.py "$OUT/deadman.log" >/dev/null 2>&1 &
+  : > "$OUT/deadman.log"
+  ffc --profile l4s3 up -d l4-s3 > "$OUT/s3-up.log" 2>&1
+  sleep 3
+  ffc --profile db --profile app run --rm --no-deps -T --entrypoint python backend -c \
+    "from app.core.storage import get_storage; s=get_storage(); s._client.create_bucket(Bucket=s._bucket, CreateBucketConfiguration={'LocationConstraint': 'auto'}); print('bucket', s._bucket)" \
+    >> "$OUT/s3-up.log" 2>&1 || { echo "stand-in bucket could not be created"; tail -5 "$OUT/s3-up.log"; return 1; }
 }

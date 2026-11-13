@@ -25,14 +25,7 @@ case "${1:?online|offline}" in
     ;;
   offline)
     sec4_profiles
-    # the stand-in dead-man listener and the stand-in bucket (lab setup, not runbook steps)
-    nohup python3 /srv/l4/kit/lib/deadman.py "$OUT/deadman.log" >/dev/null 2>&1 &
-    : > "$OUT/deadman.log"
-    ffc --profile l4s3 up -d l4-s3 > "$OUT/s3-up.log" 2>&1
-    sleep 3
-    ffc --profile db --profile app run --rm --no-deps -T --entrypoint python backend -c \
-      "from app.core.storage import get_storage; s=get_storage(); s._client.create_bucket(Bucket=s._bucket); print('bucket', s._bucket)" \
-      >> "$OUT/s3-up.log" 2>&1 || { echo "stand-in bucket could not be created"; cat "$OUT/s3-up.log"; exit 1; }
+    lab_up || exit 1
 
     PHASE=restore-1
     sec6 "(nightly form, empty volume)" "$NIGHTLY" a

@@ -37,7 +37,7 @@ def section_lines(lines: list[str], num: str) -> list[str]:
     inside = False
     in_fence = False
     for line in lines:
-        if line.startswith("```"):
+        if line.lstrip().startswith("```"):
             in_fence = not in_fence
         if not in_fence and line.startswith("## "):
             if inside:
@@ -61,7 +61,7 @@ def step_lines(path: str, step: str) -> list[str]:
     inside = False
     in_fence = False
     for line in lines:
-        if line.startswith("```"):
+        if line.lstrip().startswith("```"):
             in_fence = not in_fence
         if not in_fence:
             m = HEAD_MD.match(line) or HEAD_BOLD.match(line)
@@ -81,18 +81,22 @@ def step_lines(path: str, step: str) -> list[str]:
 
 
 def fences(lines: list[str]) -> list[str]:
+    # A fence may be indented inside a list item (section 0); its body is dedented by the
+    # fence's own indentation, as a markdown renderer shows it.
     blocks: list[str] = []
     cur: list[str] | None = None
+    indent = 0
     for line in lines:
-        if line.startswith("```"):
+        if line.lstrip().startswith("```"):
             if cur is None:
                 cur = []
+                indent = len(line) - len(line.lstrip())
             else:
                 blocks.append("\n".join(cur))
                 cur = None
             continue
         if cur is not None:
-            cur.append(line)
+            cur.append(line[indent:] if line[:indent].strip() == "" else line)
     return blocks
 
 
@@ -100,7 +104,7 @@ def spans(lines: list[str]) -> list[str]:
     text = []
     in_fence = False
     for line in lines:
-        if line.startswith("```"):
+        if line.lstrip().startswith("```"):
             in_fence = not in_fence
             continue
         if not in_fence:
