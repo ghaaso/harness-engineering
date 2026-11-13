@@ -25,11 +25,11 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
-from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime, timedelta, timezone
 
 BASE = sys.argv[1].rstrip("/")
-SHOP_TZ = ZoneInfo("Asia/Karachi")
+# Asia/Karachi is UTC+05:00 all year (no DST); the stand-in host (Alpine) has no tzdata.
+SHOP_TZ = timezone(timedelta(hours=5))
 
 
 def call(method: str, path: str, token: str | None = None, body: object | None = None) -> tuple[int, object]:

@@ -160,11 +160,14 @@ deploy)
   PHASE=rollback
   rb_run R5.9-1 "$(rb_span R5.9 "show <PREV>:CLAUDE.md")" "<PREV>=$PREV"
   prevhead="$(out_of | grep -o '[0-9]\{4\}' | head -n 1)"
-  rb_run R5.9-1b "$(rb_span R5.3 'select version_num')"
-  dbh="$(out_of)"
+  # step 1's "the database's applied head (..., as in R5.3)": R5.3's third line
+  rb_run R5.9-1b "$(rb_fence R5.3 1 '3p')"
+  dbh="$(out_of | grep -xE '[0-9]{4}' | head -n 1)"
   row R5.9.1 "$( [ -n "$prevhead" ] && [ -n "$dbh" ] && echo DONE || echo FAILED)" "previous head from CLAUDE.md at PREV; DB head" "PREV head $prevhead; DB head $dbh" \
     "the VERIFY on 'head = **NNNN**' existing at the previous sha: $( [ -n "$prevhead" ] && echo present || echo ABSENT)"
-  if [ -n "$prevhead" ] && [ "$dbh" -gt "$prevhead" ] 2>/dev/null; then
+  if [ -z "$prevhead" ] || [ -z "$dbh" ]; then
+    row R5.9.2 FAILED "compare the heads" "PREV head '$prevhead', DB head '$dbh'" "a head could not be read: no rollback attempted"
+  elif [ "$dbh" -gt "$prevhead" ]; then
     row R5.9.2 DONE "database head above the previous version's: STOP, no rollback" "$dbh > $prevhead"
   else
     row R5.9.2 DONE "heads equal: rollback allowed" "$dbh = $prevhead"
