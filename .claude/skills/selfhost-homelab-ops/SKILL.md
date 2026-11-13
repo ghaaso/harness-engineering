@@ -38,10 +38,10 @@ Dates are absolute; this skill was written 2026-11-04 against `main` @ a31924a a
 
 | Fact | Cite |
 | --- | --- |
-| Boot guard is open off Railway unless `FIXFLOW_ENVIRONMENT=production` (`O08-F01`, `O6-F01`) | `backend/app/core/config.py:221` — `return self.environment.lower() == "production" or bool(os.getenv("RAILWAY_ENVIRONMENT"))` |
+| Boot guard is **fail-closed** since P1 (#187, `87bbe88`): the default environment is `production`, and a production boot is refused while `boot_problems` finds a missing or default secret (`O08-F01`, `O6-F01`). At `a31924a` it was open off Railway | `backend/app/core/config.py` (`environment`, `boot_problems`): re-read on the current head |
 | Backups ON by default, 30-day retention, prefix `backups/db/` | `backend/app/core/config.py:197`, `:201`, `:202` |
 | Dispatcher OFF by default | `backend/app/core/config.py:188` — `enable_dispatcher: bool = False` |
-| After each upload the job deletes every matching key older than retention (`O08-F02`) | `backend/app/core/backup.py:125-131` |
+| After each upload the job prunes keys directly under its own prefix that are older than retention; since P3a (#195, `90ea88d`) it never prunes under `archive/` and always keeps the newest dumps (`O08-F02`). At `a31924a` it deleted every matching key older than retention | `backend/app/core/backup.py` (`keys_to_prune`): re-read on the current head |
 | Dump flags `--format=custom --schema=public --no-owner --no-privileges` | `backend/app/core/backup.py:88-92` |
 | Image has `pg_dump` client 17 on `python:3.12-slim` | `backend/Dockerfile:25`, `:4` |
 | `start.sh` migrates on every start, then one uvicorn | `backend/start.sh:9`, `:12` |
@@ -51,7 +51,7 @@ Dates are absolute; this skill was written 2026-11-04 against `main` @ a31924a a
 | Web image is `node:20-alpine` + unpinned `serve@14` (`O08-F11`) | `Dockerfile.web:10`, `:39` |
 | Restore runbook line omits `--exit-on-error`; benign "schema public already exists" | `docs/RUNBOOK-BACKUPS.md:45`, `:94` |
 | Newest pre-death dump known: `fixflow-db-20260802T023008Z.dump`, 42-table drill | `docs/RUNBOOK-BACKUPS.md:128` |
-| Deploy row still says Railway `railway up`; P3a rewrites it | `CLAUDE.md:36`; `docs/program/SHIP-PLAN-2026-11.md:567` |
+| The Deploy row describes the self-host path since P3a (#195) rewrote it; Railway is history for production | `CLAUDE.md` ("The actual stack", Deploy row); `docs/program/SHIP-PLAN-2026-11.md:567` |
 
 ### 1.3 Plan phases this skill serves (`docs/program/SHIP-PLAN-2026-11.md`)
 
@@ -95,28 +95,36 @@ The agent drafts, renders, drills on disposable local containers and tabulates. 
 **[owner]** is the owner's; the agent's procedure **stops there**, hands over the exact command or
 dashboard step, and resumes only from output the owner pastes back.
 
-### 2.1 P3a — draft the repository files (Sonnet drafts; Opus reviews, plan :573-574)
+### 2.1 P3a — the repository files exist: review them, never redraft them
+
+**P3a merged on 2026-11-13 as `90ea88d` (#195).** `docker-compose.prod.yml`, `ops/selfhost/` (the
+`bin/ffc` wrapper, `bin/restore-gate.sh`, env examples, the Caddyfile, the cloudflared examples,
+`sql/appendix-b.sql`, the compose smoke), `ops/hang-stub/` and `docs/RUNBOOK-SELFHOST.md` are on
+`main`. Steps 1-7 below were the drafting procedure at `a31924a` and are kept as the checklist a
+review holds those files against; an agent that follows them as "draft" writes a competing copy.
 
 1. Read O-08 §1-§2, §6 and the amendments (`docs/program/w2/O-08-design.md:11-35`, `:76-84`,
-   `:104-126`) and plan P3a Scope (:504-568). Copy the Scope into the PR body checklist.
-2. Draft `docker-compose.prod.yml` from `references/fixflow-stack-constants.md` §1: profiles, `db`
-   network `internal: true`, **no `ports:` on any service**, env file outside the repo,
-   `FIXFLOW_ENVIRONMENT=production`, `FIXFLOW_BACKUP_ENABLED=false`, the new backup prefix,
-   backend healthcheck on `/api/ops/health`.
-3. Draft the cloudflared `config.yml` (constants §2): `api.` -> `backend:8000` directly, final
-   catch-all `http_status:503`. Keep the locally managed file (O-08-design.md:16) unless an owner
-   decision row says otherwise.
-4. Draft the Caddy web stage on `node:22` with CSP and security headers (`O05-11`), `auto_https off`.
-5. Draft `docs/RUNBOOK-SELFHOST.md`: host-ready checklist (VPS and home-box sections, one check
-   command per item, §3 below), secrets list by name, restore per recovery case with the O-08 §3
-   commands, the plan's R1-R9 numbering (constants §6), Cloudflare settings for `api.`.
-6. If the brief says "runs commands" and `docker info` answers: validate with synthetic inputs per
-   `references/example-validation.md` (`docker compose -f docker-compose.prod.yml config --quiet`
-   in a temp tree with a fixture env file), then the local smoke on Docker Desktop with a fake
-   domain and a throwaway DB: health green, catch-all 503 (plan :569-570). Otherwise return
+   `:104-126`), plan P3a Scope (:504-568), and the two binding reviews of #195 (four major
+   findings, all fixed: a stub that answered by itself, a bypassable restore gate, a runbook STOP
+   step that detached the old hostname, a restore that dropped before it proved).
+2. Review `docker-compose.prod.yml` against `references/fixflow-stack-constants.md` §1: profiles,
+   `db` network `internal: true`, **no `ports:` on any service**, env files outside the repo, the
+   forced keys (`FIXFLOW_ENVIRONMENT=production`, backups off, dispatcher off), the backup prefix,
+   the healthcheck reading the `database` component of `/api/ops/health`. Render the compose only
+   through `ops/selfhost/bin/ffc` (the images need `FIXFLOW_GIT_SHA`; a bare
+   `docker compose -f docker-compose.prod.yml config` skips the wrapper's profile and env handling).
+3. Review the cloudflared examples (constants §2): `api.` -> `backend:8000` directly, final
+   catch-all `http_status:503`.
+4. Review the Caddy web stage: `node:22` build stage, CSP and security headers (`O05-11`),
+   `auto_https off`.
+5. Review `docs/RUNBOOK-SELFHOST.md`: every step numbered with its check command; the restore
+   proves the dump and saves a live database before anything is dropped; the old hostname is never
+   detached while a roster phone lacks its row; the plan's R1-R9 numbering (constants §6).
+6. If the brief says "runs commands" and `docker info` answers: run the repository's own smoke
+   (`ops/selfhost/smoke/smoke.sh`) inside a machine slot, never a hand-made stack. Otherwise return
    `DOCKER_ENGINE_DOWN` or "not authorised to run", never a guess.
-7. Hand compose, restore order and stub modes to the Opus reviewer naming `O08-F01`, `O08-F02`,
-   `O08-F07` and standing rule 5 (plan :573-574).
+7. Report differences between those files and O-08 or the plan as findings with `path:line`; a
+   change to them is a new PR by the owning lane, reviewed against standing rule 5 (plan :573-574).
 
 ### 2.2 P0b / P3b — host ready and restore
 

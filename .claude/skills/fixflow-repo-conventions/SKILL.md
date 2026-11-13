@@ -93,7 +93,7 @@ location time bounds Opus-owned (`docs/program/SHIP-PLAN-2026-11.md:47-50`).
 | --- | --- | --- |
 | Web | job `frontend` "Lint · Format · Test · Build" `:18-19`, Node 22 `:28`: lint `:35`, format:check `:38`, test `:41`, build `:44` | same (`CONTRIBUTING.md:145-150`); template says `npm run format` applied, not `format:check` (`.github/pull_request_template.md:27`) |
 | Mobile | job `mobile` `:47-48`: typecheck `:68`, `npm test -- --ci --passWithNoTests` `:71`, `npx expo export --platform android` `:77` | omits `expo export` (`CONTRIBUTING.md:164-168`) |
-| Backend | job `backend` `:80-81`, `postgres:16-alpine` `:88`, Python 3.12 `:110`: ruff format `:120`, ruff check `:123`, mypy `:126`, `lint-imports` `:129`, `alembic upgrade head` `:132`, `alembic check` `:135`, pytest `:138` | omits `lint-imports`, both alembic steps (`CONTRIBUTING.md:154-160`); template is npm-only (`:25-28`) |
+| Backend | job `backend` `:80-81`, `postgres:17-alpine` since P3a (#195; `:88` showed `postgres:16-alpine` at `a31924a`), Python 3.12 `:110`: ruff format `:120`, ruff check `:123`, mypy `:126`, `lint-imports` `:129`, `alembic upgrade head` `:132`, `alembic check` `:135`, pytest `:138` | omits `lint-imports`, both alembic steps (`CONTRIBUTING.md:154-160`); template is npm-only (`:25-28`) |
 
 - **CI wins**: "done" = gates green locally **and** CI green on the PR
   (`docs/program/SHIP-PLAN-2026-11.md:59-60`). Backend gates run in Docker per design Appendix A
@@ -142,7 +142,7 @@ location time bounds Opus-owned (`docs/program/SHIP-PLAN-2026-11.md:47-50`).
   opt-in (M11) (#173)`). `main` is protected; one review and green CI required; squash merge
   (`CONTRIBUTING.md:70-71`, `:173-174`); every path owned by `@Tempest-Zero`
   (`.github/CODEOWNERS:7`). The owner merges.
-- Identity: commits as **Muhammad Bilal** (GitHub `Tempest-Zero`, noreply address), stored
+- Identity: commits under the repo-local git identity (`git config user.name` in this repository; GitHub `Tempest-Zero`, noreply address), stored
   repo-locally on 2026-10-31; branch, never `main`; `git commit -F <file>` and `--body-file`
   because apostrophes break `-m`; `gh.exe` is at `C:\Program Files\GitHub CLI\gh.exe`, not on the
   Git Bash PATH (project memory `user-git-identity`, not a repo file). Commit messages end with the
@@ -175,8 +175,8 @@ location time bounds Opus-owned (`docs/program/SHIP-PLAN-2026-11.md:47-50`).
 | --- | --- | --- |
 | "the next free slot is **0047**" (`CLAUDE.md:120-121`); "Free migration slot 0047" (`docs/HANDOFF-2026-07-28-open-work.md:29`) | plan `:85-86` + R6 `:1480` (no pre-assigned numbers) | derive the slot from the chain at rebase time; bump `CLAUDE.md:29` and `:120-121` in the same PR. The handoff table is point-in-time (`:17`) |
 | "0045 is a free slot" (`docs/lifecycle-audit-followups-2026-07.md:163`) | `0045_validate_event_kind_check.py:42` exists; handoff `:90-93` "0045 is no longer a free slot" | stale; ignore |
-| Deploy = `cd backend && railway up --ci --service efficient-tenderness` (`CLAUDE.md:36`, handoff `:58-60`) | plan `:61-84`, rule 3 `:100-101` | until P3a rewrites the row, any deploy is [owner]; before `T_close` only the `drain-image` tag deploys |
-| CI and the local recipe on `postgres:16-alpine` (`ci.yml:88`, handoff `:127`) | plan `:57`, `:566` (17 from P3a) | 16 until P3a merges; a migration that depends on a 17-only feature is a P3a-or-later change |
+| Deploy = `cd backend && railway up --ci --service efficient-tenderness` (`CLAUDE.md:36`, handoff `:58-60`) | plan `:61-84`, rule 3 `:100-101` | P3a has merged (#195): the Deploy row now describes the self-host path and `railway up` is history; any deploy is still [owner], and before `T_close` only the `drain-image` tag deploys |
+| CI and the local recipe on `postgres:16-alpine` (`ci.yml:88`, handoff `:127`) | plan `:57`, `:566` (17 from P3a) | P3a merged on 2026-11-13 (#195): CI and the gate script run `postgres:17-alpine` (the first cell describes `a31924a`); pass `FF_PG_IMAGE=postgres:16-alpine` to the gate script only for a branch cut before it |
 | Backend PR gates in `CONTRIBUTING.md:154-160` and `.github/pull_request_template.md:25-28` | `ci.yml:119-138` | the CI list is the gate list |
 | "a feature's `index.js` barrel (web)" for cross-slice access (`CLAUDE.md:127-128`) | `ARCHITECTURE.md:143-151` and `Dashboard.jsx:21` | **unruled**: app/router → feature via `index.js` satisfies both; a feature → feature import is reported `not_applicable` with an open question (§4 check 6), never pass/fail. A PR that touches this may propose the CLAUDE.md:127-128 rewording ("Keeping this file honest", `CLAUDE.md:372-380`) for the owner to accept |
 | "Prefer squash merge" (`CONTRIBUTING.md:174`) | `release/drain` by cherry-pick only (plan `:66-68`) | compatible: squash to `main`, cherry-pick the squash commits onto `release/drain` |
@@ -280,7 +280,7 @@ at `CLAUDE.md:386` greps the working tree, which is the wrong code unless
    is untested.
 9. **PR body** — first line `Plan @ <sha>`; a Scope checkbox list; the journal heading.
 10. **CI** — `gh pr checks <n>` shows the three jobs green; a local-only green is not "done".
-11. **Commits** — `git log --format='%an%n%s%n%b' <base>..<head>`: author Muhammad Bilal,
+11. **Commits** — `git log --format='%an%n%s%n%b' <base>..<head>`: author = the repo-local identity (`git config user.name`),
     Conventional subject, the `Co-Authored-By:` trailer; branch is not `main`; branch name has no
     migration number.
 12. **Drain scope** — the CI-harness items pass inside a P1 PR (plan default deliverables,

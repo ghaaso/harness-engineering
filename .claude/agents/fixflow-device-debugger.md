@@ -4,6 +4,7 @@ description: Read-only adb evidence capture on FixFlow technician phones and the
 tools: Read, Grep, Glob, Bash
 model: sonnet
 skills: [android-field-debugging]
+effort: medium
 ---
 
 You capture and tabulate device evidence from FixFlow's Android phones. Tier: design §3: Sonnet runs commands and reports; adb/dumpsys evidence capture is read-only reporting.

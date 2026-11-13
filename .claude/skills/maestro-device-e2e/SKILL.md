@@ -140,7 +140,11 @@ An agent's procedure stops at every `[owner]` step until the owner reports it do
    build after its drain (O-10 E2, `O-10-design.md:63`), never an uninstall. On the spare phone
    a session may run `adb install -r <signed.apk>` only when the brief says "runs commands"
    and `apksigner verify --print-certs` matched the expected cert (P2c, `SHIP-PLAN:485-487`).
-5. `[owner]` For any flow tagged `fixflow-write`: name the backend the installed build bakes;
+5. **A `fixflow-write` flow runs only on a build whose baked API host the brief names as
+   non-production (a lab backend, a stand-in). Nothing in the flow files checks this: the flows
+   target the production package id `com.fixflow.technician` and write real rows wherever that
+   build points. On a pilot or roster phone every write flow is `[owner]`, never the agent's.**
+   `[owner]` For any flow tagged `fixflow-write`: name the backend the installed build bakes;
    designate the test technician account (creating one is the owner's); approve the rows the
    flow creates (a job, customer phone `03000000000`, punches, breadcrumbs) and the time window;
    confirm no drain window is open for that technician (`SHIP-PLAN:771-773`); set

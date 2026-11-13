@@ -21,7 +21,7 @@ Shape (read the source for the exact text; do not retype the DSN):
 - Fixed names: network `fixflow-w1`, DB container `fixflow-w1-db`, gates container
   `fixflow-w1-gates`; `docker rm -f` of those names up front is intentional (`:638`,
   `:620-623`). A second start fails on the name conflict — mechanically one pytest per DB.
-- DB image `postgres:16-alpine` on 2026-11-04 (`:639`); the plan moves it to `postgres:17-alpine` from
+- DB image `postgres:16-alpine` on 2026-11-04 (`:639`); P3a has merged (#195, 2026-11-13) and CI and the gate script now run `postgres:17-alpine`, as the plan set from
   P3a on (`[PR182] docs/program/SHIP-PLAN-2026-11.md:57-58`, `:566`, `O08-F12`). Record which
   one ran.
 - Source mounted read-only and copied to `/work` (`:640`, `:643`) so nothing writes into the repo;

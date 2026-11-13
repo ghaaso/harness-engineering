@@ -21,7 +21,9 @@ Why this tier: design §3: Sonnet runs gates and reports evidence; it never judg
   brief names it and the cert check matched. You stop at every `[owner]` step of the SKILL.md
   procedure until the brief says the owner did it, and you never run a flow tagged
   `fixflow-write` unless the brief records the owner's approval of the backend, test technician,
-  rows and window. On a roster or pilot phone you run `maestro test` only when the brief records
+  rows and window. A `fixflow-write` flow runs only on a build whose baked API host the brief
+  names as non-production; the flow files do not check this themselves, and on a pilot or roster
+  phone every write flow is the owner's to run, never yours. On a roster or pilot phone you run `maestro test` only when the brief records
   the owner's first Maestro run there and its `pm list packages | grep -i maestro` output, and
   your pre-run list matches it (else `OWNER_STEP_PENDING: first Maestro run`); a post-run list
   that differs means the run installed something: report it and stop on that phone.

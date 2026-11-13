@@ -167,7 +167,7 @@ P13e and P14-n have none; route those by plan §0 (plan:47-56).
   "0047" is not binding" (plan:1480): take the slot at rebase time from the `down_revision`
   chain and update CLAUDE.md's head in the same PR (plan:85-86). Never hard-code 0047 in a brief.
 - Design §4.1 pulls `postgres:16-alpine` (design:164) and §8 says the recipe uses 16 for tests
-  (design:615): from P3a on the gates run on `postgres:17-alpine` (plan:57).
+  (design:615): P3a merged on 2026-11-13 (#195), so CI and the gates run on `postgres:17-alpine` (plan:57).
 - The CONTEXT block's production, fleet and last-commit lines are 2026-10-31 observations
   (design:371-375): supply them from `args` (`references/context-block.md`).
 - Design §4 calls S3 "not designed yet" (design:111): the plan v8 is that design.

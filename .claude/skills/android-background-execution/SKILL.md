@@ -33,8 +33,11 @@ path (see References). Expo native lines live in `references/expo-native-interna
   `isAndroidForegroundServiceEnabled` (`:53`); `expo-task-manager` at `:56`. No `newArchEnabled` key.
 - `technician-app/eas.json` profiles: `development` (`:7`), `preview` (`:14`), `production` (`:25`); no
   `fleet` profile yet (the plan's `eas build --profile fleet` is P2b-1).
-- CI: `.github/workflows/ci.yml:76-77` — "Bundle check (expo export)"; no Gradle compile anywhere
-  (CLAUDE.md:86-87). A native patch or `app.json` plugin change is unproven until an EAS compile.
+- CI: `.github/workflows/ci.yml:76-77` — "Bundle check (expo export)"; CI compiles no native code
+  (CLAUDE.md, "Build & deploy traps"). Since L2 (#188, 2026-11-13) a local gate exists:
+  `ops/lab/android-compile.sh` builds a debug-signed release APK in a container (compile evidence
+  only, never installed on a phone). A native patch or `app.json` plugin change is unproven until
+  that gate or an EAS compile has built it; EAS remains the only build a phone receives.
 
 ### 1.2 The three tasks
 
@@ -240,7 +243,7 @@ OEM autostart, app battery saver and lock-in-recents state cannot be read reliab
 |---|---|---|
 | H1 OEM kill | No autostart handling (§1.5 absence); `dontkillmyapp/*`; boot restore needs the receiver to run (`expo-native-internals.md` §2) | per-ROM prevalence (device) |
 | H2 budget | 15 s job timer; dwell 20 s + untimed GPS reads (`geofence.ts:58,131`, `location.ts:31-33`); G2 narrowing: the timer frees the job, the 2 s teardown + untimed reads lose data | JS fate after `jobFinished` on OEM ROMs |
-| H3 radius | `CONFIRM_ACCURACY_MAX_M` 100 vs ~80 m fence (`location.ts:28` comment), raw-point judge `evaluateFix` (`geofence.ts:89-113`); rule G2 (100-150 m) | the live fence row (owner) |
+| H3 radius | `CONFIRM_ACCURACY_MAX_M` 100 vs ~80 m fence (`location.ts:28` comment), raw-point judge `evaluateFix` (`geofence.ts:89-113`); rule G2 (100-150 m). Since P6a (#192) the server judges every row with one three-state rule (`backend/app/shared/verdict.py`, contract `technician-app/src/shared/contracts/verdict-vectors.json`); re-locate the phone-side constant by symbol | the live fence row (owner) |
 | H9 permission decay | single request site `permissions.ts:61`; silent stop `geofence.ts:313-316`; hibernation rules H1-H3 | auto-reset prevalence |
 | H10 FGS family | `LocationTaskConsumer.kt:168-171`; `LocationModule.kt:284-286`; early returns §1.2; shared service (O01-F20) | prevalence only (SETTLED mechanism) |
 | H11 Expo defects | `O-01-design.md:104-111` classification | issues not re-fetched here |

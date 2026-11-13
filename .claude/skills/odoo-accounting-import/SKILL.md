@@ -10,8 +10,9 @@ Verified against the worktree at `main @ a31924a` and the web on 2026-11-04. The
 
 ## (a) FixFlow facts first
 
-**State today (VERIFIED-BY-COMMAND, 2026-11-04).** There is no `backend/app/features/accounting/`,
-no `backend/scripts/export_week_csv.py` and no `backend/app/core/posting_transport.py`. No file in
+**State today (VERIFIED-BY-COMMAND, 2026-11-04).** There is no `backend/app/features/accounting/`
+and no `backend/app/core/posting_transport.py`. `backend/scripts/export_week_csv.py` exists since
+`c392cf8` (P9-0a, #190, 2026-11-13: read-only, pseudonymised unless `--real-names` is passed). No file in
 `backend/app`, `src/` or `technician-app/src/` mentions Odoo. Settings use
 `backend/app/core/config.py:24` — `env_prefix="FIXFLOW_",` and no `FIXFLOW_ODOO_*` key exists
 yet. Everything below about postings is **design**, not code.

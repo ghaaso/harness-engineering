@@ -34,8 +34,17 @@ map, with ASVS ids, register ids and phases, is `references/fixflow-asvs-check-m
 - Plan §0 routing: Opus owns "auth, PIN, / JWT" (`SHIP-PLAN-2026-11.md:48-49`); every PR gets
   an Opus reviewer that names the PR head SHA and, per register id fixed, "the test that fails
   on the base commit and passes on head" (`:51-54`).
-- Branch state 2026-11-04 is **pre-P1**: `require_job_actor` does not exist in `backend/app`
-  (grep, no match); `MIN_PIN_DIGITS_TECH = 4` (`backend/app/features/identity/service.py:31`).
+- **Every fact row in this section describes `main` at `a31924a` (2026-11-04), before P1 and
+  before P7a. Both have merged (P1 #187 `87bbe88`, P7a #191 `6ff6039`, 2026-11-13), and several
+  rows below are now FALSE as present-tense statements:** the technician PIN minimum is 6, not 4
+  (`backend/app/features/identity/pin_policy.py`); the environment default is `production` and
+  the boot guard is fail-closed (`backend/app/core/config.py`, `boot_problems`); the API docs are
+  gated (`backend/app/main.py`); job reads and writes are authorised in the service layer
+  (`backend/app/features/jobs/service.py`: the actor rule, the implicit claim of an unclaimed
+  job, the atomic closed-job money guards); every response carries `X-FixFlow-Api: 1`
+  (`backend/app/core/origin_marker.py`). Re-derive each row from those files on the current head
+  before citing it, and report a row as an open gap only after the grep checks later in this
+  skill confirm it on the current head.
 
 ### Tokens (custom FastAPI JWT, CLAUDE.md:31)
 

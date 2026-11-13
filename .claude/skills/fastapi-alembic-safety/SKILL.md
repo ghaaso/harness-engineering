@@ -85,7 +85,7 @@ All migration paths above are under `backend/alembic/versions/`.
 
 ### 1.6 What CI proves and what it cannot
 
-- CI: `postgres:16-alpine` (`ci.yml:88`), `alembic upgrade head` (`:132`; the step name at
+- CI: `postgres:17-alpine` since P3a (#195, 2026-11-13; the backend job's `services.postgres.image` in `ci.yml`; it was `postgres:16-alpine` at `a31924a`, `ci.yml:88`), `alembic upgrade head` (`:132`; the step name at
   `:131` still says "0001→0003"), `alembic check` (`:135`), `pytest` (`:138`).
 - `alembic check` **cannot see CHECK constraints** — "A wrong or missing CHECK ships green"
   (`docs/HANDOFF-2026-07-28-open-work.md:113-116`).

@@ -33,6 +33,26 @@ _researched_ (written here from fetched web sources).
 Packages fetched and adapted on 2026-11-04 (upstream commit SHAs and licences in each `UPSTREAM.md`).
 <!-- INDEX:END -->
 
+## Read this first: these files are dated
+
+Written against `main` @ `a31924a` on 2026-11-04 and merged into `main` on 2026-11-13, after P1,
+P2a, P3a, P6a, P7a, P9-0a, P12a and L2 had merged. Statements that those merges made false were
+corrected at the merge (each correction names the PR that changed the fact). Everything else is as
+written:
+
+- Every FixFlow `path:line` citation refers to `a31924a`. About six in ten still point at the
+  same text, three in ten at text that has moved, and the rest at text that changed (measured at
+  the merge). Resolve a citation with `git show a31924a:<path>`, or find the symbol on the current
+  head. Never cite one of these lines as current without re-reading it.
+- A sentence in the present tense about the code is a statement about `a31924a` unless it names
+  a later PR. `CLAUDE.md` wins wherever the two disagree.
+- `docs/program/...` and `docs/ORCHESTRATION-DESIGN-2026-10.md` are not on `main`: they live on
+  branch `docs/orchestration-design-2026-10` (PR #182), and their line numbers refer to the head
+  the citing file names (`3415b5e` unless it says otherwise).
+- Paths under `C:/Users/User/.fixflow-cache/` exist only on the owner's PC.
+- Every agent definition grants Bash. "Read-only" is a rule in the definition's own text and in
+  the session's permission settings; the tool list does not enforce it.
+
 ## Conventions every package follows
 
 ### Layout

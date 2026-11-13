@@ -46,7 +46,7 @@ FixFlow keeps that skill's idempotency and serialisation ideas and rejects its e
 | A 401 clears the token and fires `onUnauthorized` | `technician-app/src/lib/api.ts:111-114` |
 | Any non-OK response becomes an `ApiError`. Any 204 returns `undefined`, and any JSON body is returned as success (`O10-F4`) | `technician-app/src/lib/api.ts:115-121` |
 | Outbox UI backoff `BASE_MS = 4_000`, `MAX_MS = 60_000` | `technician-app/src/lib/useOutboxSync.ts:18-19` |
-| The origin marker `X-FixFlow-Api` does not exist yet. Only `X-Request-ID` is echoed | `backend/app/core/request_id.py:41-49`. `grep -rn X-FixFlow-Api backend/app technician-app/src` is empty (VERIFIED-BY-COMMAND 2026-11-04) |
+| At `a31924a` the origin marker `X-FixFlow-Api` did not exist and only `X-Request-ID` was echoed. **It exists since P1 (#187, `backend/app/core/origin_marker.py`), and the phone's classifier reads it since P2a (#189)** | `backend/app/core/request_id.py:41-49`. `grep -rn X-FixFlow-Api backend/app technician-app/src` is empty (VERIFIED-BY-COMMAND 2026-11-04) |
 | The marker is planned as `X-FixFlow-Api: 1` on every response, including unknown-route 404s and unhandled 500s (P1). P2a step 1 consumes it | `docs/program/SHIP-PLAN-2026-11.md:348-349`, `:389-399` |
 
 ### 1.3 The seven rows (CLAUDE.md offline-engine table, `CLAUDE.md:62`), ladder by ladder

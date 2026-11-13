@@ -51,8 +51,10 @@ Written 2026-11-04 against `main` @ a31924a. Short forms used below: **plan** =
 - Sentry traps: CLAUDE.md:81 (never an empty `EXPO_PUBLIC_SENTRY_DSN` in `eas.json` — every
   `eas build` fails), CLAUDE.md:84 (never the Sentry Expo config plugin in `app.json`).
 - CI proves JS only: `.github/workflows/ci.yml:76-77` `npx expo export --platform android`;
-  CLAUDE.md:86 — "It does NOT catch native/Gradle compile breaks." The compile gate is
-  `eas build --profile fleet` in P5a and P5b-1 (plan:828, plan:847-849).
+  CLAUDE.md:86 — "It does NOT catch native/Gradle compile breaks." Since L2 (#188, 2026-11-13) the
+  local compile gate is `ops/lab/android-compile.sh` (compile evidence only, never installed on a
+  phone); `eas build --profile fleet` in P5a and P5b-1 (plan:828, plan:847-849) remains the only
+  build a phone receives.
 - Token: `.gitignore:50-52` ignore `technician-app/.eastoken`; the runbook exports it into
   `EXPO_TOKEN` (`docs/HANDOFF.md:83`). Never read or print it.
 - Keystore files are **not** ignored: neither `.gitignore` nor `technician-app/.gitignore:2-4`

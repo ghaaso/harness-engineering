@@ -61,7 +61,7 @@ do not work them here.
   `job_event_seq` (:56), `shop_setting_seq` (backend/app/features/tenancy/models.py:36); created by
   migrations 0016:31, 0027:51, 0040:47. Head 0046 (`down_revision = "0045"`,
   backend/alembic/versions/0046_seed_dispatch_cursor.py:46-47; CLAUDE.md:120).
-- Tests and dev run `postgres:16-alpine` (.github/workflows/ci.yml:88, docker-compose.yml:9).
+- Tests run `postgres:17-alpine` since P3a (#195, 2026-11-13; the backend job in .github/workflows/ci.yml); the dev compose still runs `postgres:16-alpine` (docker-compose.yml:9).
 - Field classification: `DEFINITIVE_4XX = new Set([400, 403, 404, 409, 422])`, `MAX_ATTEMPTS = 5`
   (technician-app/src/lib/syncClassification.ts:18, :24); `REQUEST_TIMEOUT_MS = 15_000` and a
   timeout throws a plain `Error` (technician-app/src/lib/api.ts:85, :105) while a non-OK answer

@@ -71,7 +71,7 @@ are rows in the two reference files (§6).
   `:372` `payroll_export_window_key`), run by `run_weekly_export` (`attendance/service.py:1244`) on
   the `payroll-weekly-export` job (`backend/app/main.py:191`, inside `if settings.enable_scheduler:` at `:189`).
 - **Migration head.** 0046 (`backend/alembic/versions/0046_seed_dispatch_cursor.py:46-47`); next
-  free slot 0047 (`CLAUDE.md:120-121`). No `backend/scripts/export_week_csv.py` yet (P9-0a adds it).
+  free slot 0047 (`CLAUDE.md:120-121`). `backend/scripts/export_week_csv.py` exists since `c392cf8` (P9-0a, #190, 2026-11-13).
 
 ### 1.2 What the owner and the design already decided
 
