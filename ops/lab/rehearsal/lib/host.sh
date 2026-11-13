@@ -25,9 +25,15 @@ l4_die() { echo "L4: $*" >&2; exit 1; }
 l4_dx() { docker exec "$L4_HOST" "$@"; }
 l4_win() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf "%s" "$1"; fi; }
 
-l4_slot_acquire() { # holds one slot of the light pool for this script's lifetime
+# Warm (the image-cache volume exists), the stand-in host peaks at about 0.7 GB, mean 0.5 GB
+# (the binding review's 117 samples): one slot of the light pool. Cold (no volume: the first run,
+# or the run after a --purge), it pulls and builds every image: one slot of the heavy pool.
+l4_slot_acquire() { # holds one slot for this script's lifetime
+  L4_POOL=light
+  docker volume inspect "$L4_VOL" >/dev/null 2>&1 || L4_POOL=heavy
   if [ -f "$L4_SLOT" ]; then
-    FF_POOL=light bash "$L4_SLOT" acquire "l4-$1" 1 "$$" || l4_die "could not take a slot"
+    echo "L4: taking a slot of the $L4_POOL pool ($( [ $L4_POOL = light ] && echo warm || echo 'cold: no image cache'))"
+    FF_POOL=$L4_POOL bash "$L4_SLOT" acquire "l4-$1" 1 "$$" || l4_die "could not take a slot"
     L4_SLOT_HOLDER="l4-$1"
   else
     echo "L4: no ff-slot.sh at $L4_SLOT; running without the shared lock" >&2
@@ -35,7 +41,7 @@ l4_slot_acquire() { # holds one slot of the light pool for this script's lifetim
   fi
 }
 l4_slot_release() {
-  [ -n "${L4_SLOT_HOLDER:-}" ] && FF_POOL=light bash "$L4_SLOT" release "$L4_SLOT_HOLDER" >/dev/null 2>&1
+  [ -n "${L4_SLOT_HOLDER:-}" ] && FF_POOL="${L4_POOL:-light}" bash "$L4_SLOT" release "$L4_SLOT_HOLDER" >/dev/null 2>&1
   L4_SLOT_HOLDER=""
 }
 
@@ -68,13 +74,15 @@ l4_host_up() {
   local ok=0
   for i in 1 2 3; do
     l4_dx timeout 240 apk add -q --no-cache bash git python3 openssl curl iproute2 coreutils util-linux \
-      findutils grep sed gawk procps logrotate >/dev/null 2>&1 && { ok=1; break; }
+      findutils grep sed gawk procps logrotate cronie >/dev/null 2>&1 && { ok=1; break; }
     echo "L4: apk add attempt $i did not finish; retrying" >&2
   done
   [ "$ok" = 1 ] || l4_die "apk add failed three times (is the PC online?)"
-  # A Debian host has /etc/cron.d (7.4, 7.7, 7.8 install into it); Alpine has none. The files are
-  # installed and listed as written; nothing here runs them (busybox crond does not read it).
+  # A Debian host runs a cron that reads /etc/cron.d (7.4, 7.7 and 7.8 install into it, with a
+  # user field). Alpine's busybox crond does not read it; cronie (1.7, the same cron Fedora and
+  # RHEL ship) does, so the installed files run here as written.
   l4_dx mkdir -p /etc/cron.d
+  l4_dx crond -s || l4_die "cronie's crond did not start"
   local img have
   for img in $L4_SEED_IMAGES; do
     have="$(l4_dx docker image ls -q "$img")"
@@ -86,13 +94,22 @@ l4_host_up() {
 }
 
 # The repository the stand-in host clones from: a bare repo inside it, filled from a bundle of
-# this checkout's origin/main (and of any extra refs passed). It stands in for GitHub: the
-# runbook's `git clone <repo-url>`, `git fetch origin --tags` and `git push origin ...` all go to
-# it, never to the real remote.
-l4_origin() { # <checkout> [tag:<name> | <branch name>]... extra refs of the real remote
-  local co="$1"; shift
+# this checkout's refs. It stands in for GitHub: the runbook's `git clone <repo-url>`,
+# `git fetch origin --tags` and `git push origin ...` all go to it, never to the real remote.
+# <ref> is the code and runbook under rehearsal (default origin/main): it becomes the stand-in's
+# `main`, so a runbook change can be rehearsed from its PR branch before it merges. A ref of the
+# form origin/<branch> is fetched from GitHub first (read only, into this repository's refs, as
+# any `git fetch` does); a local branch or tag name is bundled as it is.
+l4_origin() { # <checkout> <ref> [tag:<name> | <branch name>]... extra refs of the real remote
+  local co="$1" ref="$2"; shift 2
   local b; b="$(mktemp -d)/l4.bundle"
-  local refs="origin/main" maps="refs/remotes/origin/main:refs/heads/main" fetch="main" r
+  local full; full="$(git -C "$co" rev-parse --symbolic-full-name "$ref" 2>/dev/null)"
+  case "$ref" in
+    origin/*) full="refs/remotes/$ref" ;;
+  esac
+  [ -n "$full" ] || l4_die "--ref $ref is not a branch or tag name of this repository (a bare sha cannot be bundled)"
+  local refs="$full" maps="$full:refs/heads/main" fetch="" r
+  case "$ref" in origin/*) fetch="${ref#origin/}" ;; esac
   for r in "$@"; do
     case "$r" in
       tag:*) r="refs/tags/${r#tag:}"; refs="$refs $r"; maps="$maps $r:$r"; fetch="$fetch $r:$r" ;;
@@ -105,11 +122,13 @@ l4_origin() { # <checkout> [tag:<name> | <branch name>]... extra refs of the rea
   local i ok=0
   for i in 1 2 3; do
     # shellcheck disable=SC2086
-    git -C "$co" fetch -q origin $fetch > "$b.err" 2>&1 && git -C "$co" bundle create "$(l4_win "$b")" $refs >> "$b.err" 2>&1 \
+    { [ -z "$fetch" ] || git -C "$co" fetch -q origin $fetch > "$b.err" 2>&1; } && git -C "$co" bundle create "$(l4_win "$b")" $refs >> "$b.err" 2>&1 \
       && { ok=1; break; }
     sleep 5
   done
   [ "$ok" = 1 ] || { cat "$b.err" >&2; l4_die "git fetch/bundle failed"; }
+  L4_REF_SHA="$(git -C "$co" rev-parse "$full^{commit}")"
+  echo "L4: rehearsing $ref ($L4_REF_SHA) as the stand-in origin's main"
   l4_dx mkdir -p /srv/in
   docker cp "$(l4_win "$b")" "$L4_HOST:/srv/in/l4.bundle" >/dev/null || l4_die "docker cp of the bundle failed"
   l4_dx sh -c "rm -rf /srv/origin.git && git init -q --bare /srv/origin.git \
@@ -140,4 +159,48 @@ l4_host_down() { # [--purge]
   local left
   left="$(docker ps -a --filter "name=^fixflow-l4" --format '{{.Names}}' | tr '\n' ' ')"
   echo "TEARDOWN containers_left=[${left}] volume_kept=$(docker volume ls -q --filter "name=^$L4_VOL$" | wc -l | tr -d ' ')"
+}
+
+# The run's modes, read by harness.sh inside the stand-in host.
+l4_mode() { # <restore|train>
+  l4_dx sh -c "mkdir -p /srv/l4 && printf 'export L4_REHEARSAL=%s L4_MUTATE=%s L4_REPIN=%s L4_REF=%s L4_REF_SHA=%s\n' \
+    '$1' '${L4_MUTATE:-0}' '${L4_REPIN:-0}' '$L4_REF' '$L4_REF_SHA' > /srv/l4/mode.env"
+}
+
+# The evidence bundle the coordinator commits on the plan branch (ruling C33): the results table,
+# the raw TSVs, the small logs and, for every row that is not DONE, the output its check read.
+# No full logs.
+L4_EVIDENCE_ROOT="${L4_EVIDENCE_ROOT:-C:/Users/User/.fixflow-cache/handoff/evidence/l4}"
+l4_evidence() { # <results dir> <run name>
+  local src="$1" dst="$L4_EVIDENCE_ROOT/$2" f
+  rm -rf "$dst"; mkdir -p "$dst"
+  for f in results.md rows.tsv train.tsv wrongturns.tsv mutations.md mutations-result.tsv deviations.log editor.log \
+    moved.log mutations-applied.log dumpfacts-standin.txt source-cursor.txt dumps.sha256 run.txt selftest-runbook.txt; do
+    [ -f "$src/$f" ] && cp "$src/$f" "$dst/"
+  done
+  cp "$src"/pins-diff-*.txt "$src"/deep-health-*.json "$dst/" 2>/dev/null
+  # the output each non-DONE row's check read: the step logs whose id begins with the row's step
+  awk -F'\t' 'NR>1 && $3!="DONE"{split($2,a," "); print $1"\t"a[1]"\t"$3"\t"$2}' "$src/rows.tsv" | sort -u |
+    while IFS="$(printf '\t')" read -r phase step verdict label; do
+      printf '==== %s | %s | %s\n' "$phase" "$label" "$verdict"
+      for f in "$src"/steps/*-"$step".log "$src"/steps/*-"$step"-*.log; do
+        [ -f "$f" ] || continue
+        printf -- '-- %s\n' "$(basename "$f")"
+        sed -n '/^### output:/,/^### exit=/p' "$f" | head -n 40
+      done
+    done > "$dst/cited.txt"
+  echo "$dst"
+}
+
+# What this run rehearsed, for the record (run.txt in the results and the evidence bundle).
+l4_run_record() { # <checkout> <rehearsal dir>
+  local rig dirty
+  rig="$(git -C "$1" rev-parse HEAD)"
+  dirty="$(git -C "$1" status --porcelain -- "$(l4_win "$2")" | grep -c .)"
+  docker exec -i "$L4_HOST" sh -c "mkdir -p /srv/l4/out && cat > /srv/l4/out/run.txt" <<RUN
+rehearsed ref: $L4_REF = $L4_REF_SHA (the stand-in origin's main)
+rig: ops/lab/rehearsal at $rig ($dirty uncommitted file(s) under it)
+modes: mutate=${L4_MUTATE:-0} repin=${L4_REPIN:-0}; slot pool: ${L4_POOL:-none}
+started: $(date -u +%FT%TZ)
+RUN
 }

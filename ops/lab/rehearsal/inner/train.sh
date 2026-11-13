@@ -10,14 +10,15 @@
 #                      rollback R5.9 back to drain-image
 set -u
 export OUT=/srv/l4/out
-# Every phase reads one runbook: main's, from the clone prep.sh made (/srv/prep). The checkout in
-# /opt/fixflow is drain-image (a31924a predates the file) until R5.4 replaces it.
-export RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md
+# Every phase reads one runbook: main's (the ref under rehearsal), from the clone `cut` makes
+# (/srv/rbsrc). The checkout in /opt/fixflow is drain-image (a31924a predates the file) until
+# R5.4 replaces it, and /srv/prep is the seed's checkout (drain-image, see prep.sh).
+export RB_FILE=/srv/rbsrc/docs/RUNBOOK-SELFHOST.md
 source /srv/l4/kit/lib/harness.sh
 source /srv/l4/kit/lib/steps.sh
 source /srv/l4/kit/lib/steps-789.sh
 export FF_EXTRA_COMPOSE=/srv/l4/kit/lib/lab-override.yml
-source /srv/l4/dumps/names.env
+[ -f /srv/l4/dumps/names.env ] && source /srv/l4/dumps/names.env   # made by prep.sh, which runs after `cut`
 P1=87bbe88; P3A=90ea88d; FIX=3810e42   # FIX: the tech-metrics timezone fix, ruling C30 (runbook 11.3a)
 FIX_TAG=drain-pick-tz-fix; FIX_FULL=3810e4209ea4bf8fde7ce500cea0458d3e7ff701   # ruling C32: picked by its tag
 P1_FULL=87bbe88abf3c1b1222edda696ef032678a4dc34e; P3A_FULL=90ea88d67a4b3939c318c82a813039037291aa51
@@ -26,16 +27,122 @@ TR="$OUT/train.tsv"
 [ -f "$TR" ] || printf 'row\tcheck\tresult\tevidence\n' > "$TR"
 trow() { printf '%s\t%s\t%s\t%s\n' "$1" "$(clean "$2" 300)" "$3" "$(clean "$4" 900)" >> "$TR"; echo "TRAIN $1: $3"; }
 
+# R5 once with the target 12.4 names (origin/main), rows suffixed with <s>: sets TARGET, PREV,
+# PREV_IMG, hb. Used for main, then for the stand-in row that carries a migration.
+r5() { # <row suffix>
+  local s="$1"
+  rb_run 12.4-do "$(rb_fence 12.4 1)"
+  TARGET="$(out_of | grep -E '^[0-9a-f]{40}$' | tail -n 1)"
+  row "12.4a$s" "$( [ -n "$TARGET" ] && echo DONE || echo FAILED)" "fetch origin --tags; rev-parse origin/main" "TARGET=$TARGET"
+  rb_run R5.1 "$(rb_span R5.1 'status --porcelain')"
+  row "R5.1$s" "$( [ -z "$(out_of)" ] && echo DONE || echo FAILED)" "status --porcelain" "[$(out_of | tr '\n' ' ')]"
+  rb_run R5.2 "$(rb_fence R5.2 1)" "<target>=$TARGET"
+  rb_run R5.2-check "$(rb_span R5.2 'branch -r --contains')" "<sha>=$TARGET"
+  row "R5.2$s" "$(v has origin/main)" "fetch; rev-parse '<target>^{commit}' (after T_close: a main sha)" "$(out_of | tr '\n' ' ')" \
+    "T_close is assumed recorded (the train runs after it); before T_close the target could only be a drain-image tag"
+  rb_run R5.3 "$(rb_fence R5.3 1)"
+  PREV="$(out_of | grep -E '^[0-9a-f]{40}$' | head -n 1)"; PREV_IMG="$(out_of | grep -E '^sha256:' | head -n 1)"
+  local dbhead; dbhead="$(out_of | grep -xE '[0-9]{4}' | head -n 1)"
+  row "R5.3$s" "$( [ -n "$PREV" ] && [ -n "$PREV_IMG" ] && [ -n "$dbhead" ] && has '"sha256"' && echo DONE || echo FAILED)" \
+    "PREV sha, PREV image, DB head, manual backup" "PREV=$PREV image=$(echo "$PREV_IMG" | cut -c1-19) head=$dbhead; $(out_of | grep '^{' | cut -c1-100)"
+  rb_run R5.4 "$(rb_span R5.4 'checkout --detach')" "<TARGET>=$TARGET"
+  row "R5.4$s" "$( [ "$(git -C /opt/fixflow rev-parse HEAD)" = "$TARGET" ] && echo DONE || echo FAILED)" "checkout --detach TARGET" "HEAD $(git -C /opt/fixflow rev-parse --short HEAD)"
+  if [ -z "$s" ]; then
+    # P6a's row: a leftover value of a retired key must be ignored on boot
+    printf 'FIXFLOW_ATTENDANCE_LOCATION_ACCURACY_CEILING_M=50\nFIXFLOW_JOBS_PUNCH_ACCURACY_CEILING_M=50\n' >> /etc/fixflow/backend.env
+    echo "edited /etc/fixflow/backend.env: added the two keys P6a retired (leftover values)" >> "$OUT/editor.log"
+  fi
+  # R5.5's Check (the tag fixflow/backend:<HEAD> exists) must be able to fail: the prebuild made
+  # the same tags while online, so they are moved aside first (the image is kept under l4-keep/
+  # for the build cache) and only R5.5's own build can put them back.
+  local im
+  for im in backend web; do
+    docker tag "fixflow/$im:$TARGET" "l4-keep/$im:$TARGET" 2>/dev/null && docker rmi -f "fixflow/$im:$TARGET" >/dev/null 2>&1
+  done
+  echo "lab: R5.5$s the prebuild's fixflow/backend and fixflow/web tags at $TARGET were removed before the build (kept as l4-keep/*), so R5.5's check sees only its own build" >> "$OUT/deviations.log"
+  rb_run R5.5 "$(rb_span R5.5 'build backend web')"
+  local brc="$RC"
+  local m55=no
+  [ -z "$s" ] && l4_mut R5.5-no-tag && { docker rmi -f "fixflow/backend:$TARGET" >/dev/null 2>&1; m55=yes; }
+  rb_run R5.5-check "$(rb_span R5.5 'docker images')"
+  row "R5.5$s" "$( [ "$brc" = 0 ] && has "fixflow/backend:$TARGET" && echo DONE || echo FAILED)" "ffc \$P_RUN build backend web" "exit $brc; $(out_of | head -n 1)" \
+    "built offline from the build cache (the same build ran online in the prebuild step); the tags were removed first"
+  [ $m55 = yes ] && docker tag "l4-keep/backend:$TARGET" "fixflow/backend:$TARGET"
+  rb_run R5.6 "$(rb_span R5.6 'up -d')"
+  wait_backend_healthy 150; hb=$?
+  rb_run R5.6-logs "$(rb_span R5.6 'logs --tail 60 backend')"
+  row "R5.6$s" "$( [ $hb = 0 ] && has 'alembic' && has 'Application startup complete' && echo DONE || echo FAILED)" "ffc \$P_RUN up -d (start.sh migrates, then serves)" \
+    "healthy=$([ $hb = 0 ] && echo yes || echo no); alembic lines $(grep -ci alembic "$OLOG"); startup complete $(grep -c 'Application startup complete' "$OLOG"); $(grep -o 'Running upgrade [0-9a-z_]* -> [0-9a-z_]*' "$OLOG" | tr '\n' ' ')"
+  rb_run R5.7 "$(rb_fence R5.7 1)"
+  row "R5.7$s" "$( has "git_sha= $TARGET" && has "'status': 'ok'" && echo DONE || echo FAILED)" "deep health git_sha and database" "$(out_of | tr '\n' ' ' | cut -c1-200)" \
+    "the curl through api.<domain> half is NRH (no tunnel)"
+  rb_run R5.8 "$(rb_span R5.8 "docker inspect --format '{{.Image}}'")"
+  local newimg; newimg="$(out_of)"
+  row "R5.8$s" "$( echo "$newimg" | grep -q '^sha256:' && echo DONE || echo FAILED)" "record the image id" "image $(echo "$newimg" | cut -c1-19); was $(echo "$PREV_IMG" | cut -c1-19)"
+  local m124=no v124
+  if [ -z "$s" ] && l4_mut 12.4-head; then
+    v124="$(psql_app -c 'select version_num from alembic_version')"
+    psql_app -c "update alembic_version set version_num = '$(printf '%04d' $((10#$v124 - 1)))'" >/dev/null; m124=yes
+  fi
+  rb_run 12.4-check "$(rb_fence 12.4 2)"
+  [ $m124 = yes ] && psql_app -c "update alembic_version set version_num = '$v124'" >/dev/null
+  # the expected head is the one CLAUDE.md declares at TARGET, never a number written here
+  local tgthead; tgthead="$( [ -n "$TARGET" ] && claude_head /opt/fixflow "$TARGET")"
+  row "12.4$s" "$( [ -n "$tgthead" ] && [ "$(out_of)" = "$tgthead" ] && echo DONE || echo FAILED)" "select version_num from alembic_version" \
+    "$(out_of); CLAUDE.md at TARGET says head ${tgthead:-(not found)}; the database was at $dbhead before (R5.3)"
+}
+
+# R5.9 from TARGET back to PREV, rows suffixed with <s>. Rolls back when the database's head is
+# the previous version's; refuses (and checks nothing was touched) when it is above it.
+r59() { # <row suffix>
+  local s="$1"
+  rb_run R5.9-1 "$(rb_span R5.9 "show <PREV>:CLAUDE.md")" "<PREV>=$PREV"
+  local prevhead; prevhead="$(out_of | grep -o '[0-9]\{4\}' | head -n 1)"
+  # step 1's "the database's applied head (..., as in R5.3)": R5.3's third line
+  rb_run R5.9-1b "$(rb_fence R5.3 1 '3p')"
+  local dbh; dbh="$(out_of | grep -xE '[0-9]{4}' | head -n 1)"
+  row "R5.9.1$s" "$( [ -n "$prevhead" ] && [ -n "$dbh" ] && echo DONE || echo FAILED)" "previous head from CLAUDE.md at PREV; DB head" "PREV head $prevhead; DB head $dbh" \
+    "the VERIFY on 'head = **NNNN**' existing at the previous sha: $( [ -n "$prevhead" ] && echo present || echo ABSENT)"
+  if [ -z "$prevhead" ] || [ -z "$dbh" ]; then
+    row "R5.9.2$s" FAILED "compare the heads" "PREV head '$prevhead', DB head '$dbh'" "a head could not be read: no rollback attempted"
+  elif [ "$((10#$dbh))" -gt "$((10#$prevhead))" ]; then
+    # the refusal branch: nothing may change; the stack stays on TARGET, healthy
+    deep_health > "$OUT/deep-health-r59$(echo "$s" | tr -cd 'a-z').json"
+    local gs db_ok
+    gs="$(jget facts.git_sha < "$OUT/deep-health-r59$(echo "$s" | tr -cd 'a-z').json")"
+    db_ok="$(jget components < "$OUT/deep-health-r59$(echo "$s" | tr -cd 'a-z').json" | jget database.status)"
+    row "R5.9.2$s" "$( [ "$gs" = "$TARGET" ] && [ "$db_ok" = ok ] && [ "$(git -C /opt/fixflow rev-parse HEAD)" = "$TARGET" ] && echo DONE || echo FAILED)" \
+      "database head above the previous version's: STOP, no rollback" "$dbh > $prevhead; still serving git_sha ${gs:0:7} (TARGET ${TARGET:0:7}), database $db_ok, checkout at $(git -C /opt/fixflow rev-parse --short HEAD)" \
+      "the refusal branch: an image below the database's head is never started, and alembic downgrade is never run"
+  else
+    row "R5.9.2$s" DONE "heads equal: rollback allowed" "$dbh = $prevhead"
+    rb_run R5.9-3a "$(rb_span R5.9 'checkout --detach <PREV>')" "<PREV>=$PREV"
+    rb_run R5.9-3b "$(rb_span R5.9 'build backend web')"
+    rb_run R5.9-3c "$(rb_span R5.9 'up -d')"
+    wait_backend_healthy 150
+    rb_run R5.9-r57 "$(rb_fence R5.7 1)"
+    row "R5.9$s" "$( has "git_sha= $PREV" && has "'status': 'ok'" && echo DONE || echo FAILED)" "checkout PREV; build; up -d; R5.7" "$(out_of | tr '\n' ' ' | cut -c1-200)" \
+      "rolled back to the drain-image commit; describe: $(git -C /opt/fixflow describe --tags --exact-match HEAD 2>&1)"
+  fi
+}
+
 case "${1:?cut|prebuild|deploy}" in
 cut)
   PHASE=release-drain
   git config --global user.name "L4 rehearsal"; git config --global user.email "l4@example.invalid"
-  rm -rf /srv/dev /srv/ff-rdrain-* /srv/wt7 /srv/behind /srv/fresh
+  rm -rf /srv/dev /srv/ff-rdrain-* /srv/wt7 /srv/behind /srv/fresh /srv/rbsrc
+  # the runbook every train phase reads: main's (the ref under rehearsal), in a clone of its own
+  git clone -q /srv/origin.git /srv/rbsrc || exit 1
   git clone -q /srv/origin.git /srv/dev && cd /srv/dev || exit 1
   echo "lab: section 11 with P2b-2 absent (not merged): every '<p2b2>' is dropped from the commit lists, 11.4 is not run, and 11.6/11.11/11.13 count three commits, not four" >> "$OUT/deviations.log"
   echo "lab: no gh and no GitHub here: 11.1's gh lines, 11.8's CI read and 11.8's gates (ff-gates.sh, the plan checkout's tool) are NRH; the tag messages say 'not run here' where the run id and the gate summary go" >> "$OUT/deviations.log"
+  echo "lab: a runbook line carrying a \${NAME:?} guard runs in a subshell (lib/guardwrap.py): the rig's non-interactive bash would exit on it, where the owner's interactive shell drops the rest of that line; what the line assigns is carried back" >> "$OUT/deviations.log"
   WT="$OUT/wrongturns.tsv"
-  wt() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$3" 900)" "$(clean "$4" 400)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"; }
+  wt() {
+    local what="$3"
+    [ -n "$RB_MOVED" ] && { what="MOVED (runbook moved under: $RB_MOVED; nothing typed for it) $what"; RB_MOVED=""; }
+    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$what" 900)" "$(clean "$4" 400)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"
+  }
   [ -f "$WT" ] || printf 'id\twrong turn\twhat happened\twhat stopped it\tscripted guard needed?\n' > "$WT"
   NOTRUN_CI="not run here (11.8 CI is NRH)"; NOTRUN_GATES="not run here (11.8 gates are NRH)"
 
@@ -106,7 +213,9 @@ $FIX_FULL"
   # ---- WT8: SHA left empty in a new terminal. Every line of 11.8 and 11.9 that uses SHA, pasted into
   # a fresh interactive bash where SHA was never set (continuation lines joined, as a paste is one command)
   wt8="$OUT/wt8.log"; : > "$wt8"; nlines=0; nguard=0
-  { rb_fence 11.8 1; rb_fence 11.8 3; rb_fence 11.8 4; rb_fence 11.9 1; } | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' \
+  wt8src="$(rb_fence 11.8 1; rb_fence 11.8 3; rb_fence 11.8 4; rb_fence 11.9 1)"
+  rb_moved_check WT8 "$wt8src" || wt8src=""
+  printf '%s\n' "$wt8src" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' \
     | grep 'SHA' | grep -v '^SHA=' > "$OUT/wt8-lines.txt"
   while IFS= read -r line; do
     nlines=$((nlines + 1))
@@ -136,11 +245,20 @@ $FIX_FULL"
 
   # ---- 11.12: not until P12a and P12 merge; its tag line's guard against 11.8's SHA is WT11
   row 11.12 NRH "release/drain-web: pick P12a, P12; push, CI, gates, tag drain-web-image" "-" "P12a and P12 are not merged"
-  rb_run wt11 "$(rb_fence 11.12 4)"
+  rb_run wt11 "$(rb_fence 11.12 @web-tag/4)"
   wt WT11 "11.12's tag line run with SHA still holding 11.8's value (release/drain's commit)" \
     "printed: $(out_of | tr '\n' ' '); drain-web-image tags afterwards: $(git tag -l 'drain-web-image*' | grep -c .)" \
     "$(has "STOP: SHA is release/drain's commit" && [ -z "$(git tag -l 'drain-web-image*')" ] && echo "the tag line's own test: STOP, no tag" || echo "NOTHING: see the step log")" \
     "$(has "STOP: SHA is release/drain's commit" && echo "no: already scripted" || echo "YES")"
+  if rb_anch 11.12 web-ci; then
+    # the batch checks the web sha BEFORE the push (ruling C37): its check-and-push line, with SHA
+    # still holding 11.8's value, must push nothing
+    rb_run wt11b "$(rb_fence 11.12 @web-ci '2p')"
+    wt WT11b "11.12's check-and-push line run with SHA still holding 11.8's value" \
+      "printed: $(out_of | tr '\n' ' ' | cut -c1-200); origin's release/drain-web afterwards: $(git ls-remote origin refs/heads/release/drain-web | grep -c .)" \
+      "$(has 'STOP: not pushed' && [ -z "$(git ls-remote origin refs/heads/release/drain-web)" ] && echo "the line's own test: STOP, nothing pushed" || echo "NOTHING: see the step log")" \
+      "$(has 'STOP: not pushed' && echo "no: scripted (the batch's 11.12)" || echo "YES")"
+  fi
 
   # ---- a clone made now is "behind" once 11.13 pushes the re-cut (WT10)
   git clone -q /srv/origin.git /srv/behind && git -C /srv/behind switch -q release/drain
@@ -215,11 +333,16 @@ $FIX_FULL"
   row 11.13-worktree "$( [ "$rcwa" = 0 ] && [ "$wth" = "$SHA" ] && [ "$wdet" = yes ] && [ "$RC" = 0 ] && [ -z "$(out_of)" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" \
     "11.8's worktree for the new sha, then removed" "path $wtp at $wth, detached $wdet; remove printed [$(out_of | tr '\n' ' ')]; removed: $([ -e "$wtp" ] && echo no || echo yes)"
   rb_run 11.13-tag "$(rb_fence 11.13 3)" "<fix-sha>=$WFIX" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
+  l4_mut 11.13-tag-gone && git push -q origin :refs/tags/drain-image-2 >/dev/null 2>&1
   pel2="$(git ls-remote origin 'refs/tags/drain-image-2*' | awk '$2=="refs/tags/drain-image-2^{}"{print $1}')"
   row 11.13 "$( [ "$RC" = 0 ] && [ "$(git rev-parse 'drain-image-2^{commit}')" = "$SHA" ] && [ "$(git rev-parse origin/release/drain)" = "$SHA" ] && [ "$pel2" = "$SHA" ] \
       && [ "$(git rev-parse 'drain-image^{commit}')" = "$OLDSHA" ] && [ "$(git log --oneline a31924a..release/drain | grep -c .)" = 4 ] && echo DONE || echo FAILED)" \
     "git tag -a drain-image-2 ... \"\$SHA\"; git push origin drain-image-2" "drain-image-2 -> $(git rev-parse --short 'drain-image-2^{commit}'); origin's peeled $(echo "$pel2" | cut -c1-9); drain-image still $(git rev-parse --short 'drain-image^{commit}')" \
     "the deploy below still uses drain-image (the re-cut is rehearsed, not deployed)"
+  if rb_anch 11.13a web-fetch; then
+    row 11.13a "$( [ -z "$(git ls-remote origin refs/heads/release/drain-web)" ] && echo N/A || echo NRH)" "re-cut release/drain-web after the same fix (only if it exists)" \
+      "origin's release/drain-web: $(git ls-remote origin refs/heads/release/drain-web | grep -c .)" "the web branch does not exist here: P12a and P12 are not merged (11.12)"
+  fi
 
   # ---- WT10: the re-cut started from a clone that is behind (made before the re-cut was pushed)
   cd /srv/behind || exit 1
@@ -240,6 +363,56 @@ prebuild)
   MAIN="$(git -C /srv/prebuild rev-parse HEAD)"
   FF_ROOT=/srv/prebuild ffc --profile db --profile app --profile web build backend web > "$OUT/prebuild-main.log" 2>&1 \
     && echo "prebuild: fixflow/backend and fixflow/web at $MAIN" || { echo "prebuild failed"; tail "$OUT/prebuild-main.log"; exit 1; }
+  # A train row that carries a migration (the binding review's findings 3 and 7): a stand-in
+  # commit on top of main, kept in the stand-in origin only (branch l4-next, never on GitHub). It
+  # adds the next migration in the chain, which writes to every job row, and moves CLAUDE.md's
+  # head to it. deploy lands it on the stand-in's main after the first R5.9, so R5 applies a new
+  # migration to populated data and R5.9 meets a database above the previous version's head.
+  rm -rf /srv/next && git clone -q /srv/origin.git /srv/next && cd /srv/next || exit 1
+  git config --global user.name "L4 rehearsal"; git config --global user.email "l4@example.invalid"
+  V=backend/alembic/versions
+  revs="$(grep -h '^revision' $V/*.py | sed 's/.*"\(.*\)".*/\1/')"
+  downs="$(grep -h '^down_revision' $V/*.py | sed 's/.*"\(.*\)".*/\1/')"
+  HEADREV="$(for r in $revs; do printf '%s\n' "$downs" | grep -qx "$r" || echo "$r"; done)"
+  [ "$(printf '%s\n' "$HEADREV" | grep -c .)" = 1 ] || { echo "prebuild: the migration head is not one revision: [$HEADREV]"; exit 1; }
+  CH="$(claude_head /srv/next)"
+  [ "$CH" = "$HEADREV" ] || echo "lab: CLAUDE.md at main says head $CH, the migration chain ends at $HEADREV" >> "$OUT/deviations.log"
+  NEXTREV="$(printf '%04d' $((10#$HEADREV + 1)))"
+  cat > "$V/${NEXTREV}_l4_standin_row.py" <<PY
+"""L4 STAND-IN, lab only, never on GitHub: a train row's migration on populated data
+
+Revision ID: $NEXTREV
+Revises: $HEADREV
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "$NEXTREV"
+down_revision: str | None = "$HEADREV"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    op.add_column("job", sa.Column("l4_standin_mark", sa.Text(), nullable=True))
+    op.execute("UPDATE job SET l4_standin_mark = 'l4'")
+
+
+def downgrade() -> None:
+    op.drop_column("job", "l4_standin_mark")
+PY
+  sed -i "s/head = \*\*$CH\*\*/head = **$NEXTREV**/" CLAUDE.md
+  git add -A && git commit -q -m "L4 STAND-IN: a train row with migration $NEXTREV (lab only)" && git push -q origin HEAD:refs/heads/l4-next \
+    || { echo "prebuild: the stand-in migration row could not be made"; exit 1; }
+  NEXT="$(git rev-parse HEAD)"
+  printf 'NEXT=%s\nNEXTREV=%s\nHEADREV=%s\n' "$NEXT" "$NEXTREV" "$HEADREV" > /srv/l4/next.env
+  echo "lab: stand-in train row with a migration: commit ${NEXT:0:7} on the stand-in origin's l4-next adds $NEXTREV after $HEADREV (writes job.l4_standin_mark on every row) and sets CLAUDE.md's head to $NEXTREV" >> "$OUT/deviations.log"
+  FF_ROOT=/srv/next ffc --profile db --profile app --profile web build backend web > "$OUT/prebuild-next.log" 2>&1 \
+    && echo "prebuild: fixflow/backend and fixflow/web at the stand-in row $NEXT" || { echo "prebuild of the stand-in row failed"; tail "$OUT/prebuild-next.log"; exit 1; }
+  cd / || exit 1
   ;;
 
 deploy)
@@ -260,46 +433,8 @@ deploy)
   rb_run 11.14 "$(rb_fence 11.14 1)"
   row 11.14 "$( [ "$(out_of)" = drain-image ] && echo DONE || echo FAILED)" "describe --tags --exact-match HEAD" "$(out_of)"
 
-  rb_run 12.4-do "$(rb_fence 12.4 1)"
-  TARGET="$(out_of | grep -E '^[0-9a-f]{40}$' | tail -n 1)"
-  row 12.4a "$( [ -n "$TARGET" ] && echo DONE || echo FAILED)" "fetch origin --tags; rev-parse origin/main" "TARGET=$TARGET"
-  rb_run R5.1 "$(rb_span R5.1 'status --porcelain')"
-  row R5.1 "$( [ -z "$(out_of)" ] && echo DONE || echo FAILED)" "status --porcelain" "[$(out_of | tr '\n' ' ')]"
-  rb_run R5.2 "$(rb_fence R5.2 1)" "<target>=$TARGET"
-  rb_run R5.2-check "$(rb_span R5.2 'branch -r --contains')" "<sha>=$TARGET"
-  row R5.2 "$(v has origin/main)" "fetch; rev-parse '<target>^{commit}' (after T_close: a main sha)" "$(out_of | tr '\n' ' ')" \
-    "T_close is assumed recorded (the train runs after it); before T_close the target could only be a drain-image tag"
-  rb_run R5.3 "$(rb_fence R5.3 1)"
-  PREV="$(out_of | grep -E '^[0-9a-f]{40}$' | head -n 1)"; PREV_IMG="$(out_of | grep -E '^sha256:' | head -n 1)"
-  DBHEAD="$(out_of | grep -xE '[0-9]{4}' | head -n 1)"
-  row R5.3 "$( [ -n "$PREV" ] && [ -n "$PREV_IMG" ] && [ -n "$DBHEAD" ] && has '"sha256"' && echo DONE || echo FAILED)" \
-    "PREV sha, PREV image, DB head, manual backup" "PREV=$PREV image=$(echo "$PREV_IMG" | cut -c1-19) head=$DBHEAD; $(out_of | grep '^{' | cut -c1-100)"
-  rb_run R5.4 "$(rb_span R5.4 'checkout --detach')" "<TARGET>=$TARGET"
-  row R5.4 "$( [ "$(git -C /opt/fixflow rev-parse HEAD)" = "$TARGET" ] && echo DONE || echo FAILED)" "checkout --detach TARGET" "HEAD $(git -C /opt/fixflow rev-parse --short HEAD)"
-  # P6a's row: a leftover value of a retired key must be ignored on boot
-  printf 'FIXFLOW_ATTENDANCE_LOCATION_ACCURACY_CEILING_M=50\nFIXFLOW_JOBS_PUNCH_ACCURACY_CEILING_M=50\n' >> /etc/fixflow/backend.env
-  echo "edited /etc/fixflow/backend.env: added the two keys P6a retired (leftover values)" >> "$OUT/editor.log"
-  rb_run R5.5 "$(rb_span R5.5 'build backend web')"
-  local_b="$RC"
-  rb_run R5.5-check "$(rb_span R5.5 'docker images')"
-  row R5.5 "$( [ "$local_b" = 0 ] && [ -n "$(out_of)" ] && echo DONE || echo FAILED)" "ffc \$P_RUN build backend web" "exit $local_b; $(out_of | head -n 1)" \
-    "built from cache: the same build ran online in the prebuild step"
-  rb_run R5.6 "$(rb_span R5.6 'up -d')"
-  wait_backend_healthy 150; hb=$?
-  rb_run R5.6-logs "$(rb_span R5.6 'logs --tail 60 backend')"
-  row R5.6 "$( [ $hb = 0 ] && has 'alembic' && has 'Application startup complete' && echo DONE || echo FAILED)" "ffc \$P_RUN up -d (start.sh migrates, then serves)" \
-    "healthy=$([ $hb = 0 ] && echo yes || echo no); alembic lines $(grep -ci alembic "$OLOG"); startup complete $(grep -c 'Application startup complete' "$OLOG")"
-  rb_run R5.7 "$(rb_fence R5.7 1)"
-  row R5.7 "$( has "git_sha= $TARGET" && has "'status': 'ok'" && echo DONE || echo FAILED)" "deep health git_sha and database" "$(out_of | tr '\n' ' ' | cut -c1-200)" \
-    "the curl through api.<domain> half is NRH (no tunnel)"
-  rb_run R5.8 "$(rb_span R5.8 "docker inspect --format '{{.Image}}'")"
-  NEW_IMG="$(out_of)"
-  row R5.8 "$( echo "$NEW_IMG" | grep -q '^sha256:' && echo DONE || echo FAILED)" "record the image id" "image $(echo "$NEW_IMG" | cut -c1-19); was $(echo "$PREV_IMG" | cut -c1-19)"
-  rb_run 12.4-check "$(rb_fence 12.4 2)"
-  # the expected head is the one CLAUDE.md declares at TARGET, never a number written here
-  tgthead="$( [ -n "$TARGET" ] && git -C /opt/fixflow show "$TARGET:CLAUDE.md" 2>/dev/null | grep -o 'head = \*\*[0-9]\{4\}\*\*' | head -n 1 | grep -o '[0-9]\{4\}')"
-  row 12.4 "$( [ -n "$tgthead" ] && [ "$(out_of)" = "$tgthead" ] && echo DONE || echo FAILED)" "select version_num from alembic_version" \
-    "$(out_of); CLAUDE.md at TARGET says head ${tgthead:-(not found)}"
+  # ---- 12.4 / R5 to main (the target)
+  r5 ""
 
   # ---- 12.5: each row's post-deploy check, in table order
   BIP="$(docker inspect -f '{{(index .NetworkSettings.Networks "fixflow_app").IPAddress}}' "$(ffc $P_RUN ps -q backend)")"
@@ -314,6 +449,7 @@ deploy)
   J_OTHER="$(psql_app -c "select id from job where assigned_tech_id='t2' and status in ('open','waiting','ready') order by token limit 1")"
   J_CLOSED="$(psql_app -c "select id from job where status='closed' order by token limit 1")"
   J_UNCL="$(psql_app -c "select id from job where assigned_tech_id is null and status='open' order by token limit 1")"
+  l4_mut p7a-open-job && J_CLOSED="$(psql_app -c "select id from job where status='open' order by token desc limit 1")"
   r7="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p7a "{\"other\": \"$J_OTHER\", \"closed\": \"$J_CLOSED\", \"unclaimed\": \"$J_UNCL\"}" 2>&1)"
   J_UNCL="$(echo "$r7" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin).get("unclaimed",""))' 2>/dev/null)"
   claims="$(psql_app -c "select count(*) from job_event where job_id='$J_UNCL' and kind='claim' and actor='t1'" 2>/dev/null)"
@@ -343,27 +479,20 @@ deploy)
 
   # ---- R5.9 the rollback, to PREV (the drain-image commit)
   PHASE=rollback
-  rb_run R5.9-1 "$(rb_span R5.9 "show <PREV>:CLAUDE.md")" "<PREV>=$PREV"
-  prevhead="$(out_of | grep -o '[0-9]\{4\}' | head -n 1)"
-  # step 1's "the database's applied head (..., as in R5.3)": R5.3's third line
-  rb_run R5.9-1b "$(rb_fence R5.3 1 '3p')"
-  dbh="$(out_of | grep -xE '[0-9]{4}' | head -n 1)"
-  row R5.9.1 "$( [ -n "$prevhead" ] && [ -n "$dbh" ] && echo DONE || echo FAILED)" "previous head from CLAUDE.md at PREV; DB head" "PREV head $prevhead; DB head $dbh" \
-    "the VERIFY on 'head = **NNNN**' existing at the previous sha: $( [ -n "$prevhead" ] && echo present || echo ABSENT)"
-  if [ -z "$prevhead" ] || [ -z "$dbh" ]; then
-    row R5.9.2 FAILED "compare the heads" "PREV head '$prevhead', DB head '$dbh'" "a head could not be read: no rollback attempted"
-  elif [ "$dbh" -gt "$prevhead" ]; then
-    row R5.9.2 DONE "database head above the previous version's: STOP, no rollback" "$dbh > $prevhead"
-  else
-    row R5.9.2 DONE "heads equal: rollback allowed" "$dbh = $prevhead"
-    rb_run R5.9-3a "$(rb_span R5.9 'checkout --detach <PREV>')" "<PREV>=$PREV"
-    rb_run R5.9-3b "$(rb_span R5.9 'build backend web')"
-    rb_run R5.9-3c "$(rb_span R5.9 'up -d')"
-    wait_backend_healthy 150
-    rb_run R5.9-r57 "$(rb_fence R5.7 1)"
-    row R5.9 "$( has "git_sha= $PREV" && has "'status': 'ok'" && echo DONE || echo FAILED)" "checkout PREV; build; up -d; R5.7" "$(out_of | tr '\n' ' ' | cut -c1-200)" \
-      "rolled back to the drain-image commit; describe: $(git -C /opt/fixflow describe --tags --exact-match HEAD 2>&1)"
-  fi
+  r59 ""
+
+  # ---- a train row that carries a migration (stand-in): R5 again, then R5.9's refusal branch
+  PHASE=train-migration
+  source /srv/l4/next.env
+  git -C /srv/next push -q origin "$NEXT:refs/heads/main" || { echo "could not land the stand-in row on the stand-in main"; exit 1; }
+  echo "lab: the stand-in row ${NEXT:0:7} (migration $NEXTREV) landed on the stand-in origin's main after the first R5.9 (a fast-forward)" >> "$OUT/deviations.log"
+  r5 " (migration row)"
+  mark="$(psql_app -c "select count(*) filter (where l4_standin_mark = 'l4') || '|' || count(*) from job" 2>&1)"
+  row "12.4b (migration row)" "$( [ "${mark%%|*}" = "${mark##*|}" ] && [ "${mark##*|}" -gt 0 ] 2>/dev/null && echo DONE || echo FAILED)" \
+    "start.sh applied the stand-in row's migration $NEXTREV on boot" "job rows written by the migration | job rows: $mark" \
+    "the migration ran against the restored, populated database (plan 7.5: run start.sh's migrations to the new head)"
+  PHASE=rollback-migration
+  r59 " (migration row)"
   sec4_5 "4.5 (after the train)"
   ;;
 esac

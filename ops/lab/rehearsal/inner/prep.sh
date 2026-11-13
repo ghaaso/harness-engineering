@@ -3,9 +3,16 @@
 # the stand-in production database and its two dumps. Nothing here is a runbook step.
 #
 # The stand-in "production" database is what the dead deployment most plausibly holds: the
-# schema of Alembic head 0046 built by the migrations themselves (the head of main; the real
-# head is unknown until the owner's P0a item 4), then seed/standin_seed.py, which writes every
-# table family the restore and the train touch with fictional data. It is dumped twice:
+# schema built by the migrations of the checkout <ref> names, then seed/standin_seed.py, which
+# writes every table family the restore and the train touch with fictional data.
+#   restore rehearsal: <ref> is main (the stand-in origin's main: the ref under rehearsal), the
+#                      code it deploys
+#   train rehearsal:   <ref> is drain-image, the code production runs until the train. Seeding at
+#                      main's head would make the dump newer than drain-image as soon as a train
+#                      row carries a migration (the binding review's finding 3)
+# Production was deployed at 0046 on 2026-08-02 (docs/RUNBOOK-BACKUPS.md:141), the head of both
+# today; P0a item 4 settles the real dump's head. The dump's head is written to names.env as
+# SEED_HEAD (the source's alembic_version, checked against CLAUDE.md at that checkout). It is dumped twice:
 #   nightly form  - the backup job's own function, core/backup.py dump_database():
 #                   pg_dump --format=custom --schema=public --no-owner --no-privileges
 #                   (the R2 nightly dumps, the hourly and post-drain dumps, P0a's case-a dump)
@@ -43,7 +50,7 @@ if [ ! -s /srv/l4/s3certs/s3.pem ]; then
   log "stand-in CA and bucket certificate made (valid 7 days, this host only)"
 fi
 
-# --- 2. a clone of the code the seed runs with (main: head 0046)
+# --- 2. a clone of the code the seed runs with
 rm -rf /srv/prep && git clone -q /srv/origin.git /srv/prep && git -C /srv/prep checkout -q "$REF" \
   || { log "clone of $REF failed"; exit 1; }
 PREP_SHA="$(git -C /srv/prep rev-parse HEAD)"
@@ -70,6 +77,10 @@ seedrun() {
     --entrypoint sh l4/seed-backend:"$PREP_SHA" -c "$1"
 }
 seedrun 'alembic upgrade head' > "$OUT/prep-alembic.log" 2>&1 || { log "alembic failed"; tail "$OUT/prep-alembic.log"; exit 1; }
+SEED_HEAD="$(docker exec l4-standin-db psql -U fixflow_app -d fixflow -tAc 'select version_num from alembic_version')"
+CLAUDE_HEAD="$(git -C /srv/prep show HEAD:CLAUDE.md | grep -o 'head = \*\*[0-9]\{4\}\*\*' | head -n 1 | grep -o '[0-9]\{4\}')"
+[ "$SEED_HEAD" = "$CLAUDE_HEAD" ] || echo "lab: the seed's database is at $SEED_HEAD, CLAUDE.md at $REF says $CLAUDE_HEAD" >> "$OUT/deviations.log"
+log "seed database at head $SEED_HEAD (CLAUDE.md at $REF: $CLAUDE_HEAD)"
 seedrun 'cd /code && python /seed/standin_seed.py' > "$OUT/prep-seed.log" 2>&1 || { log "seed failed"; tail -20 "$OUT/prep-seed.log"; exit 1; }
 log "seeded: $(grep -c '=' "$OUT/prep-seed.log") lines of counts (prep-seed.log)"
 
@@ -97,7 +108,7 @@ docker exec l4-standin-db psql -U fixflow_app -d fixflow -tA -c \
 for f in "$NIGHTLY" "$B5"; do
   docker exec -i l4-standin-db sh -c 'cat > /tmp/d && pg_restore -l /tmp/d' < "/srv/l4/dumps/$f" > "$OUT/toc-$f.txt"
 done
-printf 'NIGHTLY=%s\nB5=%s\nSEED_SHA=%s\n' "$NIGHTLY" "$B5" "$PREP_SHA" > /srv/l4/dumps/names.env
+printf 'NIGHTLY=%s\nB5=%s\nSEED_SHA=%s\nSEED_REF=%s\nSEED_HEAD=%s\n' "$NIGHTLY" "$B5" "$PREP_SHA" "$REF" "$SEED_HEAD" > /srv/l4/dumps/names.env
 log "dumps: $NIGHTLY ($(stat -c %s "/srv/l4/dumps/$NIGHTLY") B, $(grep -c 'TABLE DATA' "$OUT/toc-$NIGHTLY.txt") TABLE DATA), $B5 ($(stat -c %s "/srv/l4/dumps/$B5") B, $(grep -c 'TABLE DATA' "$OUT/toc-$B5.txt") TABLE DATA)"
 log "source cursor|max(seq): $(cat "$OUT/source-cursor.txt")"
 

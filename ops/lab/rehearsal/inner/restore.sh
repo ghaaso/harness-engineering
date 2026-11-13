@@ -17,10 +17,12 @@ case "${1:?online|offline}" in
   online)
     REF="${2:-main}"
     echo "lab: ffc runs with FF_EXTRA_COMPOSE=lib/lab-override.yml (stand-in bucket + its CA; no port)" >> "$OUT/deviations.log"
-    echo "lab: /etc/cron.d created on the (Alpine) stand-in host; cron files are installed and listed, never run by a cron" >> "$OUT/deviations.log"
-    RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md   # /opt/fixflow does not exist before 1.11
+    echo "lab: cron is cronie on the (Alpine) stand-in host; it reads /etc/cron.d with the user field, as Debian's cron does" >> "$OUT/deviations.log"
+    echo "lab: a runbook line carrying a \${NAME:?} guard runs in a subshell (lib/guardwrap.py): the rig's non-interactive bash would exit on it, where the owner's interactive shell drops the rest of that line; what the line assigns is carried back" >> "$OUT/deviations.log"
+    # /opt/fixflow does not exist before 1.11. The train reads main's runbook throughout (its own
+    # clone, /srv/rbsrc); a restore reads main's from the seed's clone, then the copy it checked out.
+    if [ "${PHASE:-}" = train-host ]; then RB_FILE=/srv/rbsrc/docs/RUNBOOK-SELFHOST.md; else RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md; fi
     sec1 /srv/origin.git "$REF"
-    # the train reads main's runbook throughout; a restore reads the copy it checked out
     [ "${PHASE:-}" = train-host ] || RB_FILE=/opt/fixflow/docs/RUNBOOK-SELFHOST.md
     sec3
     sec4

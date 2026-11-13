@@ -54,14 +54,26 @@ lab probe: deep health with postgres stopped answered $probe"
     "healthy: [$o1] pings $before->$after; db down: [$(echo "$o2" | grep -o 'UNHEALTHY http=[0-9]*' | head -n 1) $(echo "$o2" | grep '^exit=')]; again: [$o3]; $(echo "$o2" | grep '^lab probe')" \
     "network name fixflow_app confirmed (the VERIFY line)$( [ $amb = yes ] && echo "; the alarm fired (exit=1, no ping) but the Expected 'http=200' was not seen: with postgres stopped, /api/ops/health did not answer within the heartbeat's curl -m 20, so it printed http=000. The lab probe shows whether this host's offline DNS explains the delay (a real host gets a fast NXDOMAIN). Either way the alarm fires; settle on the real host. If it recurs there, the smallest fix is the Expected text: 'http=000 or http=200 with database not ok'")"
   row 7.3 NRH "heartbeat through the tunnel" "-" "needs api.<domain> on the tunnel"
+  # lab: heartbeat.env's health URL is api.<domain>, which needs the tunnel (7.4 comes after 7.3 on
+  # a real host). While cron runs it here, it points at the backend's container address, the
+  # address 7.2's own test file uses.
+  local bip; bip="$(docker inspect -f '{{(index .NetworkSettings.Networks "fixflow_app").IPAddress}}' "$(ffc $P_RUN ps -q backend)")"
+  env_set /etc/fixflow/heartbeat.env FIXFLOW_HEARTBEAT_HEALTH_URL "http://$bip:8000/api/ops/health"
+  echo "lab: from 7.4 on, heartbeat.env's FIXFLOW_HEARTBEAT_HEALTH_URL is the backend's container address (no tunnel), so the cron heartbeat can be healthy" >> "$OUT/deviations.log"
   rb_run 7.4-do "$(rb_fence 7.4 1)"
-  rb_run 7.4-check "$(rb_fence 7.4 2 1p)"
-  # The Check is a ping every minute; only the installed file can be seen here, so a good file is
-  # AMBIGUOUS, never DONE.
-  row 7.4 "$(has '-rw-r--r-- 1 root root' && echo AMBIGUOUS || echo FAILED)" "install the heartbeat cron file" "$(out_of)" \
-    "the file is installed as written; the Check (a ping every minute) cannot be seen: the stand-in host (Alpine) has no Debian cron reading /etc/cron.d. Settled on the real host"
+  local m74=no; l4_mut 7.4-no-cron && { pkill -x crond; m74=yes; }
+  local hb0 hb1; hb0="$(grep -c ' /ping/heartbeat' "$OUT/deadman.log")"
+  rb_run 7.4-check "$(rb_fence 7.4 2)"    # its own 'sleep 130'
+  hb1="$(grep -c ' /ping/heartbeat' "$OUT/deadman.log")"
+  [ $m74 = yes ] && crond -s
+  local times; times="$(grep ' /ping/heartbeat' "$OUT/deadman.log" | tail -n $((hb1 - hb0)) | awk '{print substr($1,12,5)}' | tr '\n' ' ')"
+  row 7.4 "$( has '-rw-r--r-- 1 root root' && has 'log empty' && [ $((hb1 - hb0)) -ge 2 ] && echo DONE || echo FAILED)" \
+    "install the heartbeat cron file; cronie runs it" "$(out_of | tr '\n' ';'); heartbeat pings at the stand-in dead-man service during the 130 s: $((hb1 - hb0)) (at $times)" \
+    "cronie reads /etc/cron.d with the user field as Debian's cron does; the ping URL is the stand-in listener"
   row 7.5 NRH "test paging once" "-" "needs the monitoring service's e-mail"
+  local m76=no; l4_mut 7.6-deadman-down && { pkill -f lib/deadman.py; m76=yes; }
   rb_run 7.6 "$(rb_fence 7.6 1)"
+  [ $m76 = yes ] && { nohup python3 /srv/l4/kit/lib/deadman.py "$OUT/deadman.log" >/dev/null 2>&1 & sleep 1; }
   local h; h="$(out_of)"
   local hk; hk="$(echo "$h" | grep '^{' | head -n 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["key"], d["size_bytes"], len(d["sha256"]), d["pruned"])' 2>/dev/null)"
   local pinged; pinged="$(grep -c 'ping/hourly-dump' "$OUT/deadman.log" 2>/dev/null)"
@@ -70,8 +82,25 @@ lab probe: deep health with postgres stopped answered $probe"
   row 7.6 "$( [ $ok = yes ] && echo DONE || echo FAILED)" "fixflow-backup.sh hourly" "receipt: $hk; $(echo "$h" | grep '^exit='); hourly ping x$pinged" \
     "written to the stand-in bucket through the app's own run_db_backup"
   rb_run 7.7-do "$(rb_fence 7.7 1)"
-  row 7.7 NRH "install the hourly-dump cron" "file installed: $(ls -l /etc/cron.d/fixflow-hourly-dump 2>/dev/null | cut -c1-30)" \
-    "the :17 run needs a Debian cron; 7.6 ran the same command by hand"
+  # lab: the Check waits for the next :17. Here the installed copy's minute field is moved to two
+  # minutes ahead, cron runs the line as written otherwise, and the :17 is put back.
+  local f77=/etc/cron.d/fixflow-hourly-dump nm hd0 hd1 i
+  nm=$(( (10#$(date -u +%M) + 2) % 60 ))
+  sed -i "s/^17 \(\* \* \* \* root \)/$nm \1/" $f77
+  echo "lab: 7.7 the installed cron line's minute 17 moved to $nm for one run, then put back (the Check waits for the next :17)" >> "$OUT/deviations.log"
+  hd0="$(grep -c ' /ping/hourly-dump' "$OUT/deadman.log")"
+  for i in $(seq 1 60); do
+    sleep 5
+    hd1="$(grep -c ' /ping/hourly-dump' "$OUT/deadman.log")"
+    [ "$hd1" -gt "$hd0" ] && break
+  done
+  sed -i "s/^$nm \(\* \* \* \* root \)/17 \1/" $f77
+  rb_run 7.7-check "$(rb_fence 7.7 2)"
+  # "a timestamp from that hour": the run landed within the last five minutes
+  local hrs; hrs="($(date -u +%Y%m%dT%H)|$(date -u -d '-5 min' +%Y%m%dT%H))"
+  row 7.7 "$( has '-rw-r--r-- 1 root root' && hasre "\"key\": *\"backups/db-hourly/fixflow-db-$hrs" && ! has Traceback && [ "$hd1" -gt "$hd0" ] && grep -q '^17 ' $f77 && echo DONE || echo FAILED)" \
+    "install the hourly-dump cron; cronie runs it" "$(out_of | cut -c1-140 | tr '\n' ';'); hourly-dump pings $hd0 -> $hd1" \
+    "the minute field was moved to the next run and put back (deviations.log); everything else in the line ran under cron as written"
   rb_run 7.8 "$(rb_fence 7.8 1)"
   row 7.8 "$(v sh -c "grep -qx fixflow-heartbeat '$OLOG' && grep -qx fixflow-hourly-dump '$OLOG'")" "ls /etc/cron.d | grep fixflow" "$(out_of | tr '\n' ' ')" "one host only here"
 }
@@ -89,6 +118,7 @@ sec9_1() {
   # setup: the stand-in bucket holds older dumps under the self-host prefix, under the Railway-era
   # prefix, in a sub-folder and under archive/, so 9.1's prune has something to prune and to leave
   local old="backups/db-selfhost/fixflow-db-20260801T023000Z.dump backups/db-selfhost/fixflow-db-20260901T023000Z.dump backups/db-selfhost/fixflow-db-20260915T023000Z.dump backups/db-selfhost/fixflow-db-20261001T023000Z.dump backups/db/fixflow-db-20260701T023000Z.dump archive/pre-selfhost/fixflow-db-20260701T023000Z.dump backups/db-selfhost/sub/fixflow-db-20260101T000000Z.dump"
+  l4_mut 9.1-plant && old="${old#backups/db-selfhost/fixflow-db-20260801T023000Z.dump }"
   # shellcheck disable=SC2086
   s3_put_old $old
   echo "lab: planted in the stand-in bucket before 9.1: $old" >> "$OUT/deviations.log"
@@ -119,12 +149,23 @@ sec9_2() {
   local bk sch
   bk="$(jget facts.backup_enabled < "$OUT/deep-health-9.2.json")"
   sch="$(jget components < "$OUT/deep-health-9.2.json" | jget scheduler.detail)"
-  # The Check: the next run at 02:30 Asia/Karachi. health.py prints next_run_time with %Z, the
-  # trigger's own zone, so 02:30 in Asia/Karachi reads "02:30 PKT"; anything else is a failure.
+  # health.py prints next_run_time with %Z, the trigger's own zone. Whether the deployed code puts
+  # its cron triggers in the shop zone is read from the checkout (PR #208 passes timezone= to
+  # each CronTrigger); what the Check accepts is read from the runbook's own 9.2 text: main's
+  # before the batch wants 02:30 Asia/Karachi (PKT) whatever runs; the batch's (ruling C38/C42)
+  # wants 02:30 UTC from the drain image and 02:30 PKT once main with #208 runs.
   local nightly; nightly="$(echo "$sch" | tr ';' '\n' | grep -o 'db-backup-nightly→[^;]*' | head -n 1)"
-  row 9.2 "$( [ "$bk" = True ] && echo "$nightly" | grep -qE '→[0-9-]+ 02:30 PKT$' && echo DONE || echo FAILED)" \
-    "compose.env FIXFLOW_BACKUP_ENABLED=true; ffc \$P_RUN up -d backend" "backup_enabled=$bk; $nightly; scheduler: $(echo "$sch" | cut -c1-220)" \
-    "$(echo "$nightly" | grep -q ' UTC$' && echo "APP DEFECT: the nightly job is scheduled at 02:30 UTC (07:30 Karachi), not 02:30 Asia/Karachi. backend/app/core/scheduler.py:53 and :72 build CronTrigger(...) without timezone=, so the trigger takes the container's zone (UTC) instead of the scheduler's settings.scheduler_timezone; payroll-weekly-export runs Sunday 18:00 UTC (23:00 Karachi) the same way. Smallest fix: CronTrigger(..., timezone=scheduler.timezone) in both helpers" || echo "the Check wants the next run at 02:30 Asia/Karachi")"
+  local fixed=no want=PKT
+  grep -q 'CronTrigger(.*timezone=' /opt/fixflow/backend/app/core/scheduler.py 2>/dev/null && fixed=yes
+  if rb_text_has 9.2 '02:30 UTC'; then [ $fixed = yes ] && want=PKT || want=UTC; fi
+  local note
+  if [ $fixed = yes ]; then
+    note="the deployed checkout ($(git -C /opt/fixflow rev-parse --short HEAD)) carries PR #208 (CronTrigger with timezone=): the four cron jobs (payroll-weekly-export, db-backup-nightly, outcome-auto-link-scan, media-orphan-sweep) run in the shop zone; the Check wants $want"
+  else
+    note="the deployed checkout ($(git -C /opt/fixflow rev-parse --short HEAD)) predates PR #208: its CronTriggers take the container's UTC, so the four cron jobs (payroll-weekly-export, db-backup-nightly, outcome-auto-link-scan, media-orphan-sweep) run 5 h late by shop time (D10); the Check wants $want$( [ $want = PKT ] && echo ', which this code cannot give' )"
+  fi
+  row 9.2 "$( [ "$bk" = True ] && echo "$nightly" | grep -qE "→[0-9-]+ 02:30 $want\$" && echo DONE || echo FAILED)" \
+    "compose.env FIXFLOW_BACKUP_ENABLED=true; ffc \$P_RUN up -d backend" "backup_enabled=$bk; $nightly; scheduler: $(echo "$sch" | cut -c1-220)" "$note"
   env_set /etc/fixflow/compose.env FIXFLOW_BACKUP_ENABLED false
   ffc $P_RUN up -d backend >/dev/null 2>&1; wait_backend_healthy 150
 }
@@ -152,14 +193,14 @@ sec8() {
   td="$(echo "$o" | grep -xE '[0-9]+' | head -n 1)"
   up="$(echo "$o" | grep '^uploaded key=archive/pre-drain/')"
   lsum="$(echo "$o" | grep -E '^[0-9a-f]{64} ' | cut -d' ' -f1)"
-  rb_run 8.2-fuel "$(rb_fence 8.2 2)"
+  rb_run 8.2-fuel "$(rb_fence 8.2 @fuel/2)"
   local frc="$RC" fuel; fuel="$(out_of | tail -n 2 | tr '\n' ' ')"
   local snap=no
   [ "${td:-0}" -gt 40 ] && [ -n "$lsum" ] && echo "$up" | grep -q "sha256=$lsum" && snap=yes
   row 8.2 "$( [ $snap = yes ] && echo NRH || echo FAILED)" \
     "pg_dump predrain; count; sha256; r2-put; then drain_audit --snapshot-fuel; r2-put" \
     "snapshot: TABLE DATA $td (>40 expected); $(echo "$up" | cut -c1-110); fuel (exit $frc): $(echo "$fuel" | cut -c1-160)" \
-    "the snapshot half ran as written and passed; the fuel half needs P2b-2's backend/scripts/drain_audit.py, which is not merged (the runbook marks its arguments VERIFY)"
+    "the snapshot half ran as written and passed; the fuel half needs P2b-2's backend/scripts/drain_audit.py, which is not merged (the runbook marks its arguments VERIFY)$(rb_anch 8.2 fuel && echo "; the batch's exit-and-parse guard: $(echo "$fuel" | grep -o 'STOP: no usable fuel snapshot uploaded[^;]*' | head -n 1 || true)$(echo "$fuel" | grep -q STOP && echo ' (it stopped the upload of the failed snapshot, as written)' || echo ' NO STOP line printed')")"
   row 8.3 NRH "open the route (6.14)" "-" "needs the tunnel"
   rb_run 8.4 "$(rb_fence 8.4 1)"
   local pk; pk="$(out_of | grep '^{' | head -n 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["key"], d["pruned"])' 2>/dev/null)"
@@ -170,17 +211,26 @@ sec8() {
   rb_run 8.5 "$(rb_fence 8.5 1)" "<tech id signed in on that phone>=t1" "<versionCode>=9"
   row 8.5 "$(v sh -c "grep -q '1 manifest event(s)' '$OLOG' && grep -q 'uploaded key=archive/manifests/t1-9.json' '$OLOG'")" \
     "manifest export to json; count; r2-put" "$(out_of | tail -n 2 | tr '\n' ' ')" "a stand-in manifest event"
-  local t_close; t_close="$(date -u +%FT%TZ)"
-  rb_run 8.6 "$(rb_fence 8.6 1)" "<T_OPEN>=$t_open" "<T_CLOSE>=$t_close"
+  if rb_anch 8.6 close; then
+    sec8_c42 "$t_open"
+    sec8_8
+    return
+  fi
+  # 8.6 needs <T_CLOSE> "as recorded", and T_close is recorded only in 8.7, which comes after it
+  # (finding N2). The rig types the text as written: <T_OPEN> is filled from 8.1, <T_CLOSE> is
+  # left as it stands, and the row fails where an owner would.
+  rb_run 8.6 "$(rb_fence 8.6 1)" "<T_OPEN>=$t_open"
   local q_rc="$RC" q_err; q_err="$(out_of | grep -c 'ERROR:')"
   local q_out; q_out="$(out_of | tr '\n' ' ' | cut -c1-200)"
-  rb_run 8.6-upload "$(rb_span 8.6 'fixflow-r2-put.sh')" "<T_CLOSE stamp>=$(date -u -d "$t_close" +%Y%m%dT%H%M%SZ)"
+  rb_run 8.6-upload "$(rb_span 8.6 'fixflow-r2-put.sh')"
   local up_rc="$RC" up_out; up_out="$(out_of | tail -n 1)"
   row 8.6 "$( [ "$q_rc" = 0 ] && [ "$q_err" = 0 ] && [ -s /var/lib/fixflow/drain/late-sync.csv ] && [ "$up_rc" = 0 ] && echo DONE || echo FAILED)" \
-    "three window-audit queries; upload the CSV" "exit $q_rc, psql ERROR lines $q_err; late-sync.csv $(wc -l < /var/lib/fixflow/drain/late-sync.csv 2>/dev/null) line(s); $q_out; upload exit $up_rc: $up_out" \
-    "the window is minutes long here, so the tables are near empty; each query parses and runs$( [ "$up_rc" = 127 ] && echo "; RUNBOOK DEFECT: the upload line calls fixflow-r2-put.sh by bare name, which is not on PATH (only ffc is linked into /usr/local/bin; 6.6 b, 8.2, 8.5 spell out /opt/fixflow/ops/selfhost/bin/). Same at the P13e line. Smallest fix: the full path")"
-  sed -i 's/^\(FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=\)/# \1/; s/^\(FIXFLOW_JOBS_GPS_BACKDATE_CEILING_HOURS=\)/# \1/' $f
-  echo "edited $f: commented the two ceilings out again" >> "$OUT/editor.log"
+    "three window-audit queries; upload the CSV (typed as written: no T_close exists yet)" "exit $q_rc, psql ERROR lines $q_err; late-sync.csv $(wc -l < /var/lib/fixflow/drain/late-sync.csv 2>/dev/null) line(s); $q_out; upload exit $up_rc: $up_out" \
+    "RUNBOOK DEFECTS: (N2) the step needs <T_CLOSE> 'as recorded', but T_close is recorded only in 8.7, after it, so it cannot be followed where it stands; typed as written, the placeholder is a shell redirection and the queries never run. (D3) the upload line calls fixflow-r2-put.sh by bare name, which is not on PATH (only ffc is linked into /usr/local/bin; 6.6 b, 8.2, 8.5 spell out /opt/fixflow/ops/selfhost/bin/); the same at the P13e line; $( [ "$up_rc" = 127 ] && echo 'seen here (exit 127)' || echo "not reached in this run: the placeholder's redirection fails first (exit $up_rc); seen as exit 127 in the runs with a filled-in stamp") Fixes: 8.6 after 8.7 with 8.7's T_close; the full path"
+  if ! l4_mut 8.7-forgot-edit; then
+    sed -i 's/^\(FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=\)/# \1/; s/^\(FIXFLOW_JOBS_GPS_BACKDATE_CEILING_HOURS=\)/# \1/' $f
+    echo "edited $f: commented the two ceilings out again" >> "$OUT/editor.log"
+  fi
   rb_run 8.7 "$(rb_fence 8.7 1)"
   wait_backend_healthy 150
   deep_health > "$OUT/deep-health-8.7.json"
@@ -190,10 +240,45 @@ sec8() {
   row 8.7 "$( [ "$a" = 24 ] && [ "$j" = 48 ] && [ "$p" = 240 ] && echo DONE || echo FAILED)" "comment the ceilings out; recreate" "facts $a / $j / $p"
   sec8_8
 }
+# Section 8 from 8.5a on, as the runbook batch (ruling C42) orders it: 8.5a audits the phone,
+# 8.6 puts the ceilings back and records T_close, 8.7 reads the window [T_open, T_close].
+sec8_c42() { # <T_open>
+  local t_open="$1" f=/etc/fixflow/backend.env a j p
+  if rb_anch 8.5a audit; then
+    rb_run 8.5a "$(rb_fence 8.5a @audit)" "<T_OPEN>=$t_open" "<S>=${S:-}"
+    row 8.5a "$( has 'audit exit=0' && echo DONE || echo NRH)" "drain_audit --t-open --tech --fuel-baseline (exit code contract 0/3/4/5)" \
+      "$(out_of | tail -n 2 | tr '\n' ' ' | cut -c1-200)" "needs P2b-2's backend/scripts/drain_audit.py (not merged); typed as written with T from 8.5 and S from 8.2"
+  fi
+  if ! l4_mut 8.7-forgot-edit; then
+    sed -i 's/^\(FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=\)/# \1/; s/^\(FIXFLOW_JOBS_GPS_BACKDATE_CEILING_HOURS=\)/# \1/' $f
+    echo "edited $f: commented the two ceilings out again (8.6)" >> "$OUT/editor.log"
+  fi
+  rb_run 8.6 "$(rb_fence 8.6 @close)"
+  local t_close; t_close="$(out_of | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | tail -n 1)"
+  wait_backend_healthy 150
+  deep_health > "$OUT/deep-health-8.6.json"
+  a="$(jget facts.attendance_device_time_backdate_ceiling_hours < "$OUT/deep-health-8.6.json")"
+  j="$(jget facts.jobs_gps_backdate_ceiling_hours < "$OUT/deep-health-8.6.json")"
+  p="$(jget facts.attendance_ping_backdate_ceiling_hours < "$OUT/deep-health-8.6.json")"
+  row 8.6 "$( [ "$a" = 24 ] && [ "$j" = 48 ] && [ "$p" = 240 ] && [ -n "$t_close" ] && echo DONE || echo FAILED)" \
+    "comment the ceilings out; recreate; date -u (T_close)" "facts $a / $j / $p; T_close=$t_close" "the batch's order: T_close is read after the recreate"
+  local stamp; stamp="$(echo "$t_close" | tr -d ':-')"
+  rb_run 8.7 "$(rb_fence 8.7 @queries)" "<T_OPEN>=$t_open" "<T_CLOSE>=$t_close"
+  local q_rc="$RC" q_err; q_err="$(out_of | grep -c 'ERROR:')"
+  local q_out; q_out="$(out_of | tr '\n' ' ' | cut -c1-200)"
+  rb_run 8.7-upload "$(rb_fence 8.7 @upload)" "<T_CLOSE stamp>=$stamp"
+  local up_rc="$RC" up_out; up_out="$(out_of | tail -n 1)"
+  row 8.7 "$( [ "$q_rc" = 0 ] && [ "$q_err" = 0 ] && [ -s /var/lib/fixflow/drain/late-sync.csv ] && [ "$up_rc" = 0 ] && echo "$up_out" | grep -q '^uploaded key=archive/drain-audit/late-sync-' && echo DONE || echo FAILED)" \
+    "three window-audit queries over [T_open, T_close]; upload the CSV by its full path" \
+    "exit $q_rc, psql ERROR lines $q_err; late-sync.csv $(wc -l < /var/lib/fixflow/drain/late-sync.csv 2>/dev/null) line(s); $q_out; upload exit $up_rc: $up_out" \
+    "T_OPEN from 8.1 and T_CLOSE from 8.6, as recorded; the stamp in the CSV's key is T_close without '-' and ':' ($stamp), a form the text leaves to the owner"
+}
+
 sec8_8() {
   local before; before="$(psql_app -c "select last_seq from dispatch_cursor where consumer='whatsapp'" 2>/dev/null)"
   rb_run 8.8-do "$(rb_fence 8.8 1)"
   local drc="$RC"
+  l4_mut 8.8-new-event && psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', 'L4 mutation: an event after the re-seed', 'm1', nextval('job_event_seq') from job limit 1" >/dev/null 2>&1
   rb_run 8.8-check "$(rb_span 8.8 'select (select last_seq')"
   local t; t="$(out_of)"
   rb_run 8.8-compose "$(rb_span 8.8 "grep -n 'FIXFLOW_ENABLE_DISPATCHER'")"

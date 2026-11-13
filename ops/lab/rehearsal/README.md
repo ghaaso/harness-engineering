@@ -6,15 +6,31 @@ runbook file itself**, and records what each step did. Run it again for every ne
 row (W0-results "Deploy-train table") and paste the train table into its "Rehearsal (L4)" column.
 
 ```bash
-bash ops/lab/rehearsal/restore-rehearsal.sh      # the owner's P3b: sections 1.11-1.13, 3, 4, 6-9, wrong turns
+bash ops/lab/rehearsal/restore-rehearsal.sh      # the owner's P3b: sections 1.11-1.14, 3, 4, 6-9, wrong turns
 bash ops/lab/rehearsal/train-rehearsal.sh        # the owner's P4c: section 11, restore onto drain-image, R5 to main, the train rows' checks, R5.9
 ```
 
-Each takes a slot of the shared lock (`docs/program/lab/ff-slot.sh`, light pool) when it is on
-this PC, writes `C:/Users/User/.fixflow-cache/lab/l4/<UTC stamp>-restore|train/` (`results.md`,
-`rows.tsv`, `wrongturns.tsv`, `train.tsv`, one log per runbook command under `steps/`), and
-tears the stand-in host down. `--keep` leaves it running; `--purge` also drops the image cache.
-A first run builds the images (about 10 minutes); later runs reuse the cache volume.
+Options (both scripts):
+
+| Option        | What                                                                                                                                                                                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--ref <ref>` | The code and runbook under rehearsal, default `origin/main`. It becomes the stand-in origin's `main`, so a runbook change is rehearsed from its PR branch **before** it merges (`--ref origin/<branch>`). A branch or tag name; a bare sha cannot be bundled. |
+| `--repin`     | Find blocks by pins made from the runbook itself instead of the committed ones (see "Choosing a block"); `pins-diff-*.txt` lists every unanchored block the ref under rehearsal changed. Only for reading a diff: a repinned run checks less.                 |
+| `--mutate`    | The negative run (see "Every kind of check, shown failing"). The restore skips its wrong turns.                                                                                                                                                               |
+| `--keep`      | Leave the stand-in host running at the end.                                                                                                                                                                                                                   |
+| `--purge`     | Also drop the image cache volume at the end.                                                                                                                                                                                                                  |
+
+Each run writes `C:/Users/User/.fixflow-cache/lab/l4/<UTC stamp>-restore|train/` (`results.md`,
+`rows.tsv`, `wrongturns.tsv`, `train.tsv`, `run.txt`, one log per runbook command under
+`steps/`) and an **evidence bundle** in `C:/Users/User/.fixflow-cache/handoff/evidence/l4/<run>/`:
+the results table, the raw TSVs, the small logs, and `cited.txt` (the output each row that is
+not DONE read; no full logs). The coordinator commits the bundles on the plan branch under
+`docs/program/evidence/lab/` (ruling C33). Then the stand-in host is torn down.
+
+**Slots and cost.** Each run takes one slot of the shared lock (`docs/program/lab/ff-slot.sh`)
+for its lifetime: the **light** pool when the image cache volume exists (warm: the stand-in host
+peaks at about 0.7 GB, mean 0.5 GB), the **heavy** pool when it does not (cold: the first run, or
+the run after a `--purge`, pulls and builds every image, about 10 minutes).
 
 ## How it works
 
@@ -22,34 +38,77 @@ A first run builds the images (about 10 minutes); later runs reuse the cache vol
 privileged, default bridge, no published port, its Docker daemon on its unix socket only), with
 its image cache in the volume `fixflow-l4-host-docker`. On this PC's Docker daemon the scripts
 create only that container and that volume, and pull the `docker:27.5.1-dind` image if it is
-missing (the four base images are copied in from this PC when present). Inside it everything is as on the VPS: root, `/opt/fixflow` (a clone),
-`/etc/fixflow`, `/var/lib/fixflow`, `/usr/local/bin/ffc`, the compose project `fixflow` with its
-own networks (in the stand-in host's own daemon, so this PC's exhausted address pools are not
-touched). A bare repository inside it, `/srv/origin.git`, filled from a bundle of `origin/main` (for the train,
-also the annotated tag `drain-pick-tz-fix` that 11.1 and 11.3a fetch, ruling C32),
-plays GitHub: `git clone <repo-url>`, `fetch origin --tags` and section 11's `push` go there.
-To build that bundle the entry script reads from GitHub once: it fetches `main` (and, for the
-train, the tag, without `--force`, into this checkout's `refs/tags/`) before the stand-in
-host goes offline. Nothing is pushed to GitHub.
+missing (the four base images are copied in from this PC when present). Inside it everything is
+as on the VPS: root, `/opt/fixflow` (a clone), `/etc/fixflow`, `/var/lib/fixflow`,
+`/usr/local/bin/ffc`, a cron that reads `/etc/cron.d` (cronie), the compose project `fixflow`
+with its own networks (in the stand-in host's own daemon, so this PC's exhausted address pools
+are not touched).
 
-**Typing the runbook.** `lib/runbook.py` cuts a step's fenced blocks or inline `code` spans out of
-the runbook by step number (`6.6`, `11.3a`, `R5.4`, section `0`). The restore reads the copy in
-the checkout it is restoring (`/opt/fixflow/docs/RUNBOOK-SELFHOST.md`, after 1.11); the train
-reads `main`'s runbook throughout (`/srv/prep`, a clone of `main`), because the checkout it
-works in is `drain-image` (`a31924a` predates the file) until R5.4 replaces it. The
-harness (`lib/harness.sh`) substitutes the placeholders the owner fills in (`<dump file name>`,
-`<id>`, `<TARGET>`, ...: every substitution is printed in that step's log), then `eval`s the text
-in one shell, so a variable set in one block (`D`, `S`, `P_RUN`) is still set in the next, as in
-one SSH session. Then it cuts the Check command, runs it, and compares with the step's Expected
-text (`lib/steps.sh`, `lib/steps-789.sh`, `inner/train.sh`). If the runbook moves or drops a
-command, the step fails loudly instead of running something else.
+**GitHub, and this PC's repository.** A bare repository inside the stand-in host,
+`/srv/origin.git`, plays GitHub: `git clone <repo-url>`, `fetch origin --tags` and section 11's
+`push` go there. It is filled from a bundle of `--ref` (as its `main`) and, for the train, the
+annotated tag `drain-pick-tz-fix` that 11.1 and 11.3a fetch (ruling C32). **To build that
+bundle the entry script fetches from GitHub into this PC's shared repository**, read only: a ref
+`origin/<branch>` updates that remote-tracking ref, and the train's tag is fetched into
+`refs/tags/` (without `--force`, so a tag that moved on GitHub fails the run instead of being
+copied). Other sessions see those refs. **The rehearsal follows whatever that ref is at run
+time**; `run.txt` records the sha. Nothing is ever pushed to GitHub.
+
+**Typing the runbook.** `lib/runbook.py` cuts a step's fenced blocks or inline `code` spans out
+of the runbook by step number (`6.6`, `11.3a`, `R5.4`, section `0`). The restore reads the copy
+in the checkout it is restoring (`/opt/fixflow/docs/RUNBOOK-SELFHOST.md`, after 1.11); the train
+reads the rehearsed ref's runbook throughout (`/srv/rbsrc`), because the checkout it works in is
+`drain-image` (`a31924a` predates the file) until R5.4 replaces it. The harness
+(`lib/harness.sh`) substitutes the placeholders the owner fills in (`<dump file name>`, `<id>`,
+`<TARGET>`, ...: every substitution is printed in that step's log; a placeholder the owner
+cannot fill yet, like `<T_CLOSE>` in main's 8.6, which comes before 8.7 records it, is left as
+written and the row fails where the owner would), then `eval`s the text in one shell, so a
+variable set in one block (`D`, `S`, `P_RUN`) is still set in the next, as in one SSH session. A
+line that carries a guard (`: "${D:?...}" && ...`) behaves as in the owner's interactive shell:
+an unset variable drops the rest of that line and nothing else (`lib/guardwrap.py` runs such a
+line in a subshell, because a non-interactive bash would exit; what the line assigns is carried
+back). Then it cuts the Check command, runs it, and compares with the step's Expected text
+(`lib/steps.sh`, `lib/steps-789.sh`, `inner/train.sh`).
+
+**Choosing a block: by anchor or by content, never by position.** A runbook block preceded by
+an anchor comment, `<!-- block: <step>-<name> -->` (the runbook batch of ruling C42 anchors every
+block it adds or changes), is chosen by that anchor. Every other block is chosen by its content:
+the rig names block `n` of `lib/runbook-pins.tsv` (recorded from the runbook the rig was written
+against; its first line names the sha), and the cutter takes the step's block whose first line
+equals that pin's (whitespace collapsed; a `</dev/null` stdin redirect, which the batch adds to
+`ffc exec` lines runbook-wide, is ignored), wherever it now stands. When no block, or more blocks
+than pinned, begin that way, when the block's line count differs from the pin (an inserted line;
+the rig also picks some lines by a `sed` range), or when a range selects nothing, the step is
+**MOVED**: nothing is typed, the row's verdict is MOVED, `moved.log` names the block, and the run
+says so on stderr. A changed command that keeps its first line and length is typed as changed,
+which is the point of cutting instead of retyping. Where the batch rewrote a step, the rig has
+both readings: it asks the runbook under rehearsal whether the anchor exists (`rb_anch`) and
+follows that text (6.1, 6.6, 6.7, 6.9, 8.2, 8.5a-8.7, 11.12, 11.13a, 9.2's expected time, 6.8's
+check 6), so main and a runbook PR are rehearsed by the same rig. `lib/selftest-runbook.py
+<runbook> <pins>` is the mutation test of the cutter (an unchanged block, a same-length change, a
+block added in front, a `</dev/null` added, an inserted line, a changed first line, a duplicate
+first line, an anchor, an anchor fallback, a missing anchor, a renamed step; no Docker needed);
+the restore runs it on every run. After a runbook change merges, regenerate the pins
+(`python3 lib/runbook.py pins <runbook>`, with the two header lines) in the same change that
+teaches the rig any new text.
 
 **Verdicts:** DONE (ran as written, Check as expected), FAILED (ran as written, Check not as
 expected, or the command failed), AMBIGUOUS (the text allows two readings, or only part of the
-Check can be read here), NRH (not rehearsable here: names what it needs), N/A (another recovery
-case). Each row quotes what was seen. A Check is matched against what the command printed, never
-against the logged command text. A train row's check is PASS, FAIL, or PARTIAL (every item that
-ran passed, and the items that cannot run here are named).
+Check can be read here), MOVED (see "Choosing a block"), NRH (not rehearsable here: names what it needs),
+N/A (another recovery case). Each row quotes what was seen. A Check is matched against what the
+command printed, never against the logged command text. A train row's check is PASS, FAIL, or
+PARTIAL (every item that ran passed, and the items that cannot run here are named).
+
+**Every kind of check, shown failing.** `--mutate` runs a rehearsal with `lib/mutations.tsv`
+applied: one mutation per kind of check (exact Expected text, a printed exit code, a count of
+listing lines, a pattern in output, a checksum, database content against the source's facts, the
+app's own report, cron pings, the dead-man log, a bucket listing, deep-health facts, a SQL truth
+value, a ref on the remote, a train row's API item, the applied head against CLAUDE.md, an image
+tag, and the shape guard). A `runbook` mutation edits the copy of the runbook the run reads; a
+`state` mutation changes the stand-in's state at one hook (`l4_mut` in the step code); a `moved`
+mutation inserts a line while keeping the committed pin. `mutations.md` lists, per mutation, the
+row it targets, the verdict that row got, and whether the check caught it. The kinds no mutation
+covers are named in the PR that last ran it.
 
 **Lab substitutions** (each is written to `deviations.log` when it happens):
 
@@ -64,57 +123,90 @@ ran passed, and the items that cannot run here are named).
   of the `fixflow` stack starts**, so nothing the runbook starts can reach R2 or any other real
   host; the entry script stops if an IPv4 or IPv6 default route remains. Before the cut, while
   online, the host installs its packages, clones the stand-in origin, builds the images (4.3,
-  the train's prebuild), and `inner/prep.sh` runs a backend image of `main` in two throwaway
-  containers to migrate and seed the stand-in database (no R2 or other real setting is given
-  to them).
+  the train's prebuild), and `inner/prep.sh` runs a backend image in two throwaway containers to
+  migrate and seed the stand-in database (no R2 or other real setting is given to them).
 - 6.2's `scp` from the laptop is a `cp` on the stand-in host; 3.4-3.7's editor is a line
   replacement (values never logged); 3.3's six values are generated by the block's own lines.
 - The dead-man service is a listener on the stand-in host's `127.0.0.1:9999` (`lib/deadman.py`).
+- From 7.4 on, `heartbeat.env`'s health URL is the backend's container address (the address
+  7.2's test uses), so the cron heartbeat can be healthy without a tunnel. 7.7's installed cron
+  line has its minute moved to the next run for one run and put back (the Check waits for the
+  next `:17`).
 - 6.13's interactive `set_pin` prompt is answered through a pseudo-terminal (`lib/typist.py`).
+  The stand-in PINs and every generated value are masked in every log (`<stand-in PIN>`,
+  `<stand-in secret>`).
 - 8.5 needs a manifest a phone uploads: one stand-in `drain_manifest` event is inserted by SQL.
-- The train's `R5.5` build is a cache hit: the same build ran online beforehand (`train.sh
-prebuild`), because the host is offline when R5 runs.
+- The train's `R5.5` builds from the build cache: the same build ran online beforehand (`train.sh
+prebuild`), because the host is offline when R5 runs. The prebuild's tags are removed before
+  R5.5, so R5.5's Check (the `fixflow/backend:<HEAD>` tag) sees only its own build.
 
 ## The stand-in production database
 
-`inner/prep.sh` builds it the way the real one was built: `alembic upgrade head` (head **0046**,
-the head of `main`), then `seed/standin_seed.py`: 47 jobs in every status with their events,
-payments (some voided), completions, a negotiated bill and a sent bill, punches, pings and
-presence crossings, the staff ledger with a valid hash chain, advance requests, media rows,
-shop settings, staff accounts with stand-in PINs (two left on the seed PIN), and the
-`dispatch_cursor` deliberately **below** `max(job_event.seq)` (as if 0046 ran mid-history and
-the dispatcher stayed off). Fictional names only. It is dumped twice:
+`inner/prep.sh` builds it the way the real one was built: `alembic upgrade head` of a checkout,
+then `seed/standin_seed.py`: 47 jobs in every status with their events, payments (some voided),
+completions, a negotiated bill and a sent bill, punches, pings and presence crossings, the staff
+ledger with a valid hash chain, advance requests, media rows, shop settings, staff accounts with
+stand-in PINs (two left on the seed PIN), and the `dispatch_cursor` deliberately **below**
+`max(job_event.seq)` (as if 0046 ran mid-history and the dispatcher stayed off). Fictional names
+only. The checkout is the one production would run:
+
+- **restore:** the rehearsed ref (`main`), which the restore deploys;
+- **train:** `drain-image`, the code production runs until the train. The cut runs first, so the
+  dump is never newer than the image it is restored into, and R5 then applies every migration
+  of the train's rows to the populated database.
+
+The dump's head (`SEED_HEAD`, its `alembic_version`, checked against `CLAUDE.md` at that
+checkout) is what 6.4 and 6.8 compare with; the image's head is the one `CLAUDE.md` declares at
+the deployed checkout; 12.4 reads `CLAUDE.md` at the target. No head number is written into the
+rig. The dump is made twice:
 
 | Form    | Command                                                                                                             | What it stands for                                                  |
 | ------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | nightly | the backup job's own `core/backup.py dump_database()`: `--format=custom --schema=public --no-owner --no-privileges` | R2 nightly / hourly / post-drain dumps and P0a's case-a dump        |
 | B5      | `pg_dump -U fixflow_app -d fixflow --format=custom`                                                                 | the runbook's pre-drain snapshot (8.2) and pre-restore copy (6.6 b) |
 
-`dumpfacts-standin.txt` is Appendix B on the source (P0a's `verify-dump.sh` output role).
+`dumpfacts-standin.txt` is Appendix B on the source (P0a's `verify-dump.sh` output role), and
+`source-cursor.txt` the source's `dispatch_cursor` and `max(job_event.seq)`.
 
-**The real head is unknown** until the owner's P0a item 4. If the dead production is at 0045,
-6.8's version check still passes, `dispatch_cursor` is absent in the dump and migration 0046
-seeds it at the restored head on the first boot, and 6.9's cursor check then reads the head. If
-it is older than 0045, 6.8 STOPs as written; that dump would need its own rehearsal with the
-matching migrations (this seed runs only against head 0046).
+**The real dump.** Production was deployed at 0046 on 2026-08-02 (`docs/RUNBOOK-BACKUPS.md:141`,
+"dispatch_cursor +1 (the 0046 seed)"), so the real dump is most likely at 0046 with the cursor
+below the head, exactly as this stand-in. Main's 6.9 checks the cursor against `max(seq)` with
+nothing in between to move it, so it stops on this dump (D1) and would stop the owner's real
+P3b; the runbook batch moves 8.8's forward-only re-seed into 6.9 and keeps the check exact, and
+its 6.8 compares the cursor with the value recorded for the dump. The owner's P0a item 4 settles
+the real head.
+
+## Train: a row that carries a migration
+
+The train runs R5 twice. First to `main`, with every train row's post-deploy check and R5.9:
+its rollback when `main` carries no migration (heads equal), its **refusal branch** when it does
+(since P8a, `main` is at 0047 and `drain-image` at 0046). Then a **stand-in row** lands on the stand-in origin's `main`: a commit
+(made in the prebuild, kept in the stand-in only, never on GitHub) that adds the next migration
+in the chain, writing to every `job` row, and moves `CLAUDE.md`'s head to it. R5 deploys it
+(`start.sh` runs the migration on the restored, populated database; row `12.4b`), and R5.9 then
+meets a database above the previous version's head: the **refusal branch** (no rollback, the
+stack stays on the target, healthy).
 
 ## Files
 
-| Path                                                                         | What                                                                 |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `restore-rehearsal.sh`, `train-rehearsal.sh`                                 | entry points (this PC)                                               |
-| `lib/host.sh`                                                                | the stand-in host: start, origin bundle, kit copy, results, teardown |
-| `lib/runbook.py`                                                             | cuts step text out of the runbook                                    |
-| `lib/harness.sh`                                                             | substitute, log, eval, mask, record a row                            |
-| `lib/steps.sh`, `lib/steps-789.sh`                                           | sections 1, 3, 4, 6 and 7-9, one function per section                |
-| `lib/traincheck.py`                                                          | the train rows' post-deploy checks as API calls                      |
-| `lib/lab-override.yml`, `lib/deadman.py`, `lib/typist.py`                    | the stand-ins above                                                  |
-| `lib/report.py`                                                              | `results.md` from the TSVs                                           |
-| `inner/prep.sh`, `inner/restore.sh`, `inner/wrongturns.sh`, `inner/train.sh` | run inside the stand-in host                                         |
-| `seed/standin_seed.py`                                                       | the stand-in production data                                         |
+| Path                                                                                    | What                                                                                                             |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `restore-rehearsal.sh`, `train-rehearsal.sh`                                            | entry points (this PC)                                                                                           |
+| `lib/host.sh`                                                                           | the stand-in host: slot, start, origin bundle, kit, results, evidence                                            |
+| `lib/runbook.py`, `lib/runbook-pins.tsv`, `lib/selftest-runbook.py`, `lib/guardwrap.py` | cuts step text out of the runbook; the pinned first lines; the self-test; guard lines as in an interactive shell |
+| `lib/harness.sh`                                                                        | substitute, log, eval, mask, record a row; MOVED; the mutate/repin modes                                         |
+| `lib/mutate.py`, `lib/mutations.tsv`                                                    | the negative run's mutations and its report                                                                      |
+| `lib/steps.sh`, `lib/steps-789.sh`                                                      | sections 1, 3, 4, 6 and 7-9, one function per section                                                            |
+| `lib/traincheck.py`                                                                     | the train rows' post-deploy checks as API calls                                                                  |
+| `lib/lab-override.yml`, `lib/deadman.py`, `lib/typist.py`                               | the stand-ins above                                                                                              |
+| `lib/report.py`                                                                         | `results.md` from the TSVs                                                                                       |
+| `inner/prep.sh`, `inner/restore.sh`, `inner/wrongturns.sh`, `inner/train.sh`            | run inside the stand-in host                                                                                     |
+| `seed/standin_seed.py`                                                                  | the stand-in production data                                                                                     |
 
 ## Adding a deploy-train row
 
 Add its check to `lib/traincheck.py` (a mode named after the phase) and one `trow` call in
-`inner/train.sh`'s 12.5 block, in table order. A row with a migration needs nothing else:
-`R5.6` lets `start.sh` migrate and `12.4` reads the applied head.
+`inner/train.sh`'s 12.5 block, in table order. A row's migration is applied by `R5.6`
+(`start.sh` migrates on boot) to the database restored at drain-image's head, and `12.4`
+compares the applied head with `CLAUDE.md` at the target. When main carries a migration, the
+first R5.9 takes the refusal branch, and the stand-in row still adds one migration on top.

@@ -1,0 +1,412 @@
+# The shape of every runbook step as the rig was written against it: docs/RUNBOOK-SELFHOST.md at 53c6046d146fa9c6ec6e642b36c50e0f1660e1f5 (main).
+# step	blocks in the step	block	lines in the block	first line. Regenerate only after reading every changed block (README, 'Pins').
+0	2	1	2	P_DB="--profile db"
+0	2	2	1	ffc exec -T backend sh -c 'curl -fsS -H "X-Ops-Proxy-Token: $FIXFLOW_OPS_PROXY_TOKEN" http://localhost:8000/api/ops/health' | python3 -m json.tool
+1	24	1	1	for p in 22 80 443 5432 8000; do nc -vz -w5 <vps-ip> $p; done
+1	24	2	1	nc -vz -w5 <vps-ip> 8000        # must NOT say succeeded
+1	24	3	4	lsb_release -d
+1	24	4	3	lsb_release -d                                      # Ubuntu ... LTS
+1	24	5	7	cat > /etc/ssh/sshd_config.d/10-fixflow.conf <<'EOF'
+1	24	6	1	sshd -T | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
+1	24	7	3	apt-get install -y chrony
+1	24	8	3	timedatectl show -p NTPSynchronized --value        # yes
+1	24	9	4	swapon --show
+1	24	10	1	swapon --show; free -h | grep -i swap; sysctl vm.swappiness; grep -c '^/swapfile ' /etc/fstab
+1	24	11	10	apt-get install -y unattended-upgrades
+1	24	12	3	apt-config dump | grep -E 'Automatic-Reboot|Unattended-Upgrade "1"'
+1	24	13	7	install -m 0755 -d /etc/apt/keyrings
+1	24	14	3	docker --version; docker compose version
+1	24	15	2	getent group docker                       # docker:x:<gid>:   (member list empty)
+1	24	16	1	df -h / /var/lib/docker
+1	24	17	3	git clone <repo-url> /opt/fixflow
+1	24	18	3	git -C /opt/fixflow rev-parse HEAD                              # the sha you meant to deploy
+1	24	19	1	ln -sfn /opt/fixflow/ops/selfhost/bin/ffc /usr/local/bin/ffc
+1	24	20	1	readlink -f /usr/local/bin/ffc; test -x /usr/local/bin/ffc && echo executable
+1	24	21	2	install -d -m 0700 -o root -g root /etc/fixflow /var/lib/fixflow /var/lib/fixflow/drain
+1	24	22	1	stat -c '%a %U:%G %n' /etc/fixflow /var/lib/fixflow /var/lib/fixflow/drain /var/log/fixflow
+1	24	23	1	install -m 0644 -o root -g root /opt/fixflow/ops/selfhost/cron/fixflow-logrotate /etc/logrotate.d/fixflow
+1	24	24	1	logrotate -d /etc/logrotate.d/fixflow; echo exit=$?
+1.1	2	1	1	for p in 22 80 443 5432 8000; do nc -vz -w5 <vps-ip> $p; done
+1.1	2	2	1	nc -vz -w5 <vps-ip> 8000        # must NOT say succeeded
+1.2	0	-	-	-
+1.3	2	1	4	lsb_release -d
+1.3	2	2	3	lsb_release -d                                      # Ubuntu ... LTS
+1.4	2	1	7	cat > /etc/ssh/sshd_config.d/10-fixflow.conf <<'EOF'
+1.4	2	2	1	sshd -T | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
+1.5	2	1	3	apt-get install -y chrony
+1.5	2	2	3	timedatectl show -p NTPSynchronized --value        # yes
+1.6	2	1	4	swapon --show
+1.6	2	2	1	swapon --show; free -h | grep -i swap; sysctl vm.swappiness; grep -c '^/swapfile ' /etc/fstab
+1.7	2	1	10	apt-get install -y unattended-upgrades
+1.7	2	2	3	apt-config dump | grep -E 'Automatic-Reboot|Unattended-Upgrade "1"'
+1.8	2	1	7	install -m 0755 -d /etc/apt/keyrings
+1.8	2	2	3	docker --version; docker compose version
+1.9	1	1	2	getent group docker                       # docker:x:<gid>:   (member list empty)
+1.10	1	1	1	df -h / /var/lib/docker
+1.11	2	1	3	git clone <repo-url> /opt/fixflow
+1.11	2	2	3	git -C /opt/fixflow rev-parse HEAD                              # the sha you meant to deploy
+1.12	2	1	1	ln -sfn /opt/fixflow/ops/selfhost/bin/ffc /usr/local/bin/ffc
+1.12	2	2	1	readlink -f /usr/local/bin/ffc; test -x /usr/local/bin/ffc && echo executable
+1.13	2	1	2	install -d -m 0700 -o root -g root /etc/fixflow /var/lib/fixflow /var/lib/fixflow/drain
+1.13	2	2	1	stat -c '%a %U:%G %n' /etc/fixflow /var/lib/fixflow /var/lib/fixflow/drain /var/log/fixflow
+1.14	2	1	1	install -m 0644 -o root -g root /opt/fixflow/ops/selfhost/cron/fixflow-logrotate /etc/logrotate.d/fixflow
+1.14	2	2	1	logrotate -d /etc/logrotate.d/fixflow; echo exit=$?
+2	9	1	1	lsb_release -d; lsblk -f | grep -c crypto_LUKS; smartctl -H /dev/sda | grep -i 'overall-health'
+2	9	2	1	uptime -s; systemctl is-active docker; systemctl is-enabled docker
+2	9	3	2	uptime -s                                                   # unchanged: the box did not reboot
+2	9	4	1	for p in 22 80 443 5432 8000; do nc -vz -w5 <public-ip> $p; done
+2	9	5	1	systemctl is-enabled docker; timedatectl show -p NTPSynchronized --value
+2	9	6	2	install -m 0600 -o root -g root /dev/null /etc/fixflow/heartbeat.env
+2	9	7	3	stat -c '%a %U:%G %n' /etc/fixflow/heartbeat.env
+2	9	8	3	/opt/fixflow/ops/selfhost/bin/fixflow-boxgate-ping.sh; echo exit=$?
+2	9	9	1	test ! -s /var/log/fixflow/boxgate.log && echo "log empty"; ls -l /etc/cron.d/fixflow-boxgate
+2.1	1	1	1	lsb_release -d; lsblk -f | grep -c crypto_LUKS; smartctl -H /dev/sda | grep -i 'overall-health'
+2.2	1	1	1	uptime -s; systemctl is-active docker; systemctl is-enabled docker
+2.3	1	1	2	uptime -s                                                   # unchanged: the box did not reboot
+2.4	1	1	1	for p in 22 80 443 5432 8000; do nc -vz -w5 <public-ip> $p; done
+2.5	1	1	1	systemctl is-enabled docker; timedatectl show -p NTPSynchronized --value
+2.6	0	-	-	-
+2.7	2	1	2	install -m 0600 -o root -g root /dev/null /etc/fixflow/heartbeat.env
+2.7	2	2	3	stat -c '%a %U:%G %n' /etc/fixflow/heartbeat.env
+2.8	2	1	3	/opt/fixflow/ops/selfhost/bin/fixflow-boxgate-ping.sh; echo exit=$?
+2.8	2	2	1	test ! -s /var/log/fixflow/boxgate.log && echo "log empty"; ls -l /etc/cron.d/fixflow-boxgate
+2.9	0	-	-	-
+3	11	1	3	for n in compose postgres backend ops heartbeat; do
+3	11	2	1	ls -l /etc/fixflow/*.env
+3	11	3	6	openssl rand -hex 32      # FIXFLOW_JWT_SECRET
+3	11	4	1	grep -E '^(FIXFLOW_DOMAIN|FIXFLOW_CLOUDFLARED_TAG|FIXFLOW_BACKUP_ENABLED)=' /etc/fixflow/compose.env
+3	11	5	1	awk -F= '$1=="POSTGRES_PASSWORD"||$1=="FIXFLOW_APP_DB_PASSWORD"{print $1, length($2)}' /etc/fixflow/postgres.env
+3	11	6	5	f=/etc/fixflow/backend.env
+3	11	7	2	[ "$(sed -n 's/^FIXFLOW_OPS_PROXY_TOKEN=//p' /etc/fixflow/backend.env)" = "$(sed -n 's/^OPS_PROXY_TOKEN=//p' /etc/fixflow/ops.env)" ] && echo "ops token matches" || echo "OPS TOKEN MISMATCH"
+3	11	8	1	chown root:root /etc/fixflow/*.env && chmod 600 /etc/fixflow/*.env
+3	11	9	2	stat -c '%a %U:%G %n' /etc/fixflow/*.env
+3	11	10	1	scp root@<vps-ip>:/etc/fixflow/{compose,postgres,backend,ops,heartbeat}.env .
+3	11	11	2	sha256sum /etc/fixflow/*.env | cut -c1-12     # on the host
+3.1	2	1	3	for n in compose postgres backend ops heartbeat; do
+3.1	2	2	1	ls -l /etc/fixflow/*.env
+3.2	0	-	-	-
+3.3	1	1	6	openssl rand -hex 32      # FIXFLOW_JWT_SECRET
+3.4	1	1	1	grep -E '^(FIXFLOW_DOMAIN|FIXFLOW_CLOUDFLARED_TAG|FIXFLOW_BACKUP_ENABLED)=' /etc/fixflow/compose.env
+3.5	1	1	1	awk -F= '$1=="POSTGRES_PASSWORD"||$1=="FIXFLOW_APP_DB_PASSWORD"{print $1, length($2)}' /etc/fixflow/postgres.env
+3.6	1	1	5	f=/etc/fixflow/backend.env
+3.7	1	1	2	[ "$(sed -n 's/^FIXFLOW_OPS_PROXY_TOKEN=//p' /etc/fixflow/backend.env)" = "$(sed -n 's/^OPS_PROXY_TOKEN=//p' /etc/fixflow/ops.env)" ] && echo "ops token matches" || echo "OPS TOKEN MISMATCH"
+3.8	2	1	1	chown root:root /etc/fixflow/*.env && chmod 600 /etc/fixflow/*.env
+3.8	2	2	2	stat -c '%a %U:%G %n' /etc/fixflow/*.env
+3.9	2	1	1	scp root@<vps-ip>:/etc/fixflow/{compose,postgres,backend,ops,heartbeat}.env .
+3.9	2	2	2	sha256sum /etc/fixflow/*.env | cut -c1-12     # on the host
+4	7	1	3	P_DB="--profile db"
+4	7	2	1	ffc $P_ALL config -q; echo exit=$?
+4	7	3	2	ffc $P_ALL config | grep -E 'FIXFLOW_(ENVIRONMENT|BACKUP_PREFIX|BACKUP_ENABLED|ENABLE_DISPATCHER|CORS_ORIGINS)'
+4	7	4	2	ffc $P_ALL pull postgres restore-gate edge
+4	7	5	2	docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep -E '^(postgres:17-bookworm|cloudflare/cloudflared|fixflow/)'
+4	7	6	8	SHA="$(git -C /opt/fixflow rev-parse HEAD)"
+4	7	7	3	docker ps --format '{{.Names}} [{{.Ports}}]'
+4.1	1	1	1	ffc $P_ALL config -q; echo exit=$?
+4.2	1	1	2	ffc $P_ALL config | grep -E 'FIXFLOW_(ENVIRONMENT|BACKUP_PREFIX|BACKUP_ENABLED|ENABLE_DISPATCHER|CORS_ORIGINS)'
+4.3	2	1	2	ffc $P_ALL pull postgres restore-gate edge
+4.3	2	2	2	docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep -E '^(postgres:17-bookworm|cloudflare/cloudflared|fixflow/)'
+4.4	1	1	8	SHA="$(git -C /opt/fixflow rev-parse HEAD)"
+4.5	1	1	3	docker ps --format '{{.Names}} [{{.Ports}}]'
+5	25	1	4	DOMAIN="$(sed -n 's/^FIXFLOW_DOMAIN=//p' /etc/fixflow/compose.env)"
+5	25	2	2	dig +short NS "$DOMAIN"
+5	25	3	2	install -d -m 0700 -o 65532 -g 65532 /root/cf-setup
+5	25	4	1	ls -l /root/cf-setup/cert.pem
+5	25	5	1	docker run --rm -v /root/cf-setup:/home/nonroot/.cloudflared cloudflare/cloudflared:$CF_TAG tunnel create fixflow
+5	25	6	2	ls /root/cf-setup/*.json
+5	25	7	2	docker run --rm -v /root/cf-setup:/home/nonroot/.cloudflared cloudflare/cloudflared:$CF_TAG tunnel route dns fixflow "api.$DOMAIN"
+5	25	8	1	dig +short "api.$DOMAIN"; dig +short "app.$DOMAIN"
+5	25	9	7	install -d -m 0500 -o 65532 -g 65532 "$CFDIR"
+5	25	10	3	stat -c '%a %u:%g %n' "$CFDIR" "$CFDIR"/*
+5	25	11	2	shred -u /root/cf-setup/cert.pem "/root/cf-setup/$TUNNEL_ID.json"
+5	25	12	1	ls -A /root/cf-setup 2>&1 | head -n 1
+5	25	13	8	for f in config.normal.yml config.maintenance.yml; do
+5	25	14	7	cd /etc/fixflow/cloudflared
+5	25	15	3	ffc $P_RUN logs --tail 30 edge | grep -ci 'registered tunnel connection'
+5	25	16	3	cd /etc/fixflow/cloudflared
+5	25	17	2	ffc $P_RUN logs --tail 30 edge | grep -ci 'registered tunnel connection'
+5	25	18	5	ffc $P_RUN stop edge
+5	25	19	1	curl -sS -D - -o /dev/null "https://api.example.invalid/api/health?x=%3Cscript%3Ealert(1)%3C/script%3E" | grep -iE '^(HTTP|cf-mitigated|server)'
+5	25	20	3	for ua in 'curl/8.5.0' 'okhttp/4.12.0' 'python-requests/2.32' ''; do
+5	25	21	1	curl -sS -D - -o /dev/null "https://api.example.invalid/api/health" | grep -iE '^(HTTP|location|cf-access|set-cookie|server)'
+5	25	22	1	for i in $(seq 1 40); do curl -sS -o /dev/null -D - "https://api.example.invalid/REPLACE-ME" | grep -iE '^(HTTP|retry-after)'; done | sort | uniq -c
+5	25	23	1	whois example.invalid | grep -iE 'expir|status'
+5	25	24	1	curl -sS -D - -o /dev/null "https://app.example.invalid/" | grep -iE '^(HTTP|location)'
+5	25	25	1	curl -sS -D - -o /dev/null "https://api.example.invalid/api/health" | grep -iE '^(HTTP|server|x-fixflow-api|cf-mitigated|location)'
+5.1	1	1	2	dig +short NS "$DOMAIN"
+5.2	2	1	2	install -d -m 0700 -o 65532 -g 65532 /root/cf-setup
+5.2	2	2	1	ls -l /root/cf-setup/cert.pem
+5.3	2	1	1	docker run --rm -v /root/cf-setup:/home/nonroot/.cloudflared cloudflare/cloudflared:$CF_TAG tunnel create fixflow
+5.3	2	2	2	ls /root/cf-setup/*.json
+5.4	2	1	2	docker run --rm -v /root/cf-setup:/home/nonroot/.cloudflared cloudflare/cloudflared:$CF_TAG tunnel route dns fixflow "api.$DOMAIN"
+5.4	2	2	1	dig +short "api.$DOMAIN"; dig +short "app.$DOMAIN"
+5.5	2	1	7	install -d -m 0500 -o 65532 -g 65532 "$CFDIR"
+5.5	2	2	3	stat -c '%a %u:%g %n' "$CFDIR" "$CFDIR"/*
+5.6	2	1	2	shred -u /root/cf-setup/cert.pem "/root/cf-setup/$TUNNEL_ID.json"
+5.6	2	2	1	ls -A /root/cf-setup 2>&1 | head -n 1
+5.7	1	1	8	for f in config.normal.yml config.maintenance.yml; do
+5.8	2	1	7	cd /etc/fixflow/cloudflared
+5.8	2	2	3	ffc $P_RUN logs --tail 30 edge | grep -ci 'registered tunnel connection'
+5.9	2	1	3	cd /etc/fixflow/cloudflared
+5.9	2	2	2	ffc $P_RUN logs --tail 30 edge | grep -ci 'registered tunnel connection'
+5.10	1	1	5	ffc $P_RUN stop edge
+5.11	1	1	1	curl -sS -D - -o /dev/null "https://api.example.invalid/api/health?x=%3Cscript%3Ealert(1)%3C/script%3E" | grep -iE '^(HTTP|cf-mitigated|server)'
+5.12	1	1	3	for ua in 'curl/8.5.0' 'okhttp/4.12.0' 'python-requests/2.32' ''; do
+5.13	1	1	1	curl -sS -D - -o /dev/null "https://api.example.invalid/api/health" | grep -iE '^(HTTP|location|cf-access|set-cookie|server)'
+5.14	1	1	1	for i in $(seq 1 40); do curl -sS -o /dev/null -D - "https://api.example.invalid/REPLACE-ME" | grep -iE '^(HTTP|retry-after)'; done | sort | uniq -c
+5.15	1	1	1	whois example.invalid | grep -iE 'expir|status'
+5.16	1	1	1	curl -sS -D - -o /dev/null "https://app.example.invalid/" | grep -iE '^(HTTP|location)'
+5.17	1	1	1	curl -sS -D - -o /dev/null "https://api.example.invalid/api/health" | grep -iE '^(HTTP|server|x-fixflow-api|cf-mitigated|location)'
+6	16	1	2	rm -f /etc/fixflow/restore-signed-off
+6	16	2	2	install -d -m 700 /var/lib/fixflow/restore
+6	16	3	1	ffc $P_DB up -d
+6	16	4	3	docker inspect --format '{{.State.Health.Status}}' $(ffc $P_DB ps -q postgres)
+6	16	5	1	ffc $P_DB --profile app run --rm --no-deps --entrypoint alembic backend heads
+6	16	6	7	D=<dump file name>
+6	16	7	7	ffc exec -T postgres psql -U fixflow_app -d fixflow -tAc "select count(*) from pg_tables where schemaname = 'public'"
+6	16	8	3	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public'
+6	16	9	3	ffc cp /opt/fixflow/ops/selfhost/sql/appendix-b.sql postgres:/restore/appendix-b.sql
+6	16	10	3	printf 'signed-off case=<a|b|c> dump=<file or none> sha256=<sum or none> by=<owner> at=%s\n' "$(date -u +%FT%TZ)" > /etc/fixflow/restore-signed-off
+6	16	11	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 -c "select setval('job_token_seq', <N>, true)"
+6	16	12	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -tA -c "select x from unnest(string_to_array('<t1 t2 t3 ...>', ' ')) as x where x not in (select id from technician)"
+6	16	13	11	ffc exec -T -e FF_ID=<id> -e FF_NAME='<Display Name>' -e FF_ROLE=tech backend python -c '
+6	16	14	9	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 <<'SQL'
+6	16	15	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -tAc "select center_lat, center_lng, radius_m from attendance_geofence where shop_id = 'default' and is_active and deleted_at is null"
+6	16	16	2	ffc exec -T backend python -m scripts.set_pin --report
+6.1	1	1	2	rm -f /etc/fixflow/restore-signed-off
+6.2	1	1	2	install -d -m 700 /var/lib/fixflow/restore
+6.3	2	1	1	ffc $P_DB up -d
+6.3	2	2	3	docker inspect --format '{{.State.Health.Status}}' $(ffc $P_DB ps -q postgres)
+6.4	1	1	1	ffc $P_DB --profile app run --rm --no-deps --entrypoint alembic backend heads
+6.5	0	-	-	-
+6.6	2	1	7	D=<dump file name>
+6.6	2	2	7	ffc exec -T postgres psql -U fixflow_app -d fixflow -tAc "select count(*) from pg_tables where schemaname = 'public'"
+6.7	1	1	3	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public'
+6.8	1	1	3	ffc cp /opt/fixflow/ops/selfhost/sql/appendix-b.sql postgres:/restore/appendix-b.sql
+6.9	1	1	3	printf 'signed-off case=<a|b|c> dump=<file or none> sha256=<sum or none> by=<owner> at=%s\n' "$(date -u +%FT%TZ)" > /etc/fixflow/restore-signed-off
+6.10	1	1	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 -c "select setval('job_token_seq', <N>, true)"
+6.11	2	1	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -tA -c "select x from unnest(string_to_array('<t1 t2 t3 ...>', ' ')) as x where x not in (select id from technician)"
+6.11	2	2	11	ffc exec -T -e FF_ID=<id> -e FF_NAME='<Display Name>' -e FF_ROLE=tech backend python -c '
+6.12	2	1	9	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 <<'SQL'
+6.12	2	2	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -tAc "select center_lat, center_lng, radius_m from attendance_geofence where shop_id = 'default' and is_active and deleted_at is null"
+6.13	1	1	2	ffc exec -T backend python -m scripts.set_pin --report
+6.14	0	-	-	-
+7	11	1	7	install -d -m 0700 /root/hbtest
+7	11	2	4	ffc $P_DB stop postgres
+7	11	3	1	rm -rf /root/hbtest
+7	11	4	1	/opt/fixflow/ops/selfhost/bin/fixflow-heartbeat.sh; echo exit=$?
+7	11	5	1	install -m 0644 -o root -g root /opt/fixflow/ops/selfhost/cron/fixflow-heartbeat /etc/cron.d/fixflow-heartbeat
+7	11	6	2	ls -l /etc/cron.d/fixflow-heartbeat
+7	11	7	1	ffc $P_RUN stop backend
+7	11	8	1	/opt/fixflow/ops/selfhost/bin/fixflow-backup.sh hourly; echo exit=$?
+7	11	9	1	install -m 0644 -o root -g root /opt/fixflow/ops/selfhost/cron/fixflow-hourly-dump /etc/cron.d/fixflow-hourly-dump
+7	11	10	2	ls -l /etc/cron.d/fixflow-hourly-dump
+7	11	11	1	ls /etc/cron.d/ | grep fixflow
+7.1	0	-	-	-
+7.2	3	1	7	install -d -m 0700 /root/hbtest
+7.2	3	2	4	ffc $P_DB stop postgres
+7.2	3	3	1	rm -rf /root/hbtest
+7.3	1	1	1	/opt/fixflow/ops/selfhost/bin/fixflow-heartbeat.sh; echo exit=$?
+7.4	2	1	1	install -m 0644 -o root -g root /opt/fixflow/ops/selfhost/cron/fixflow-heartbeat /etc/cron.d/fixflow-heartbeat
+7.4	2	2	2	ls -l /etc/cron.d/fixflow-heartbeat
+7.5	1	1	1	ffc $P_RUN stop backend
+7.6	1	1	1	/opt/fixflow/ops/selfhost/bin/fixflow-backup.sh hourly; echo exit=$?
+7.7	2	1	1	install -m 0644 -o root -g root /opt/fixflow/ops/selfhost/cron/fixflow-hourly-dump /etc/cron.d/fixflow-hourly-dump
+7.7	2	2	2	ls -l /etc/cron.d/fixflow-hourly-dump
+7.8	1	1	1	ls /etc/cron.d/ | grep fixflow
+8	9	1	3	FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=<W>   # W = hours from the oldest queued device_time to now, plus 72; start at 2640 until a manifest gives the maximum
+8	9	2	2	ffc $P_RUN up -d --force-recreate backend
+8	9	3	5	S=$(date -u +%Y%m%dT%H%M%SZ)
+8	9	4	2	ffc exec -T backend python -m scripts.drain_audit --snapshot-fuel > /var/lib/fixflow/drain/fuel-$S.json
+8	9	5	1	/opt/fixflow/ops/selfhost/bin/fixflow-backup.sh post-drain
+8	9	6	7	T=<tech id signed in on that phone>; VC=<versionCode>
+8	9	7	24	A() { ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 -v t_open=<T_OPEN> -v t_close=<T_CLOSE> "$@"; }
+8	9	8	2	ffc $P_RUN up -d --force-recreate backend
+8	9	9	6	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 <<'SQL'
+8.1	2	1	3	FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=<W>   # W = hours from the oldest queued device_time to now, plus 72; start at 2640 until a manifest gives the maximum
+8.1	2	2	2	ffc $P_RUN up -d --force-recreate backend
+8.2	2	1	5	S=$(date -u +%Y%m%dT%H%M%SZ)
+8.2	2	2	2	ffc exec -T backend python -m scripts.drain_audit --snapshot-fuel > /var/lib/fixflow/drain/fuel-$S.json
+8.3	0	-	-	-
+8.4	1	1	1	/opt/fixflow/ops/selfhost/bin/fixflow-backup.sh post-drain
+8.5	1	1	7	T=<tech id signed in on that phone>; VC=<versionCode>
+8.6	1	1	24	A() { ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 -v t_open=<T_OPEN> -v t_close=<T_CLOSE> "$@"; }
+8.7	1	1	2	ffc $P_RUN up -d --force-recreate backend
+8.8	1	1	6	ffc exec -T postgres psql -U fixflow_app -d fixflow -v ON_ERROR_STOP=1 <<'SQL'
+8.9	0	-	-	-
+9	1	1	1	/opt/fixflow/ops/selfhost/bin/fixflow-backup.sh manual
+9.1	1	1	1	/opt/fixflow/ops/selfhost/bin/fixflow-backup.sh manual
+9.2	0	-	-	-
+9.3	0	-	-	-
+10	8	1	2	cd <repo>            # a clean clone of the commit that holds ops/hang-stub/
+10	8	2	4	cd <repo>/ops/hang-stub
+10	8	3	1	railway variables --set "STUB_MODE=hang"
+10	8	4	2	grep -ci healthcheck railway.json     # expect 0 (the file sets none and one replica)
+10	8	5	3	curl -sS -m 30 -o /dev/null -w '%{http_code}' https://<old-host>/api/health; echo " exit=$?"
+10	8	6	3	cd <repo>/ops/hang-stub
+10	8	7	4	# the backend's own answer passes through with its marker
+10	8	8	3	cd <repo>/ops/hang-stub
+10.1	0	-	-	-
+10.2	1	1	2	cd <repo>            # a clean clone of the commit that holds ops/hang-stub/
+10.3	1	1	4	cd <repo>/ops/hang-stub
+10.4	1	1	1	railway variables --set "STUB_MODE=hang"
+10.5	1	1	2	grep -ci healthcheck railway.json     # expect 0 (the file sets none and one replica)
+10.6	1	1	3	curl -sS -m 30 -o /dev/null -w '%{http_code}' https://<old-host>/api/health; echo " exit=$?"
+10.7	2	1	3	cd <repo>/ops/hang-stub
+10.7	2	2	4	# the backend's own answer passes through with its marker
+10.8	1	1	3	cd <repo>/ops/hang-stub
+10.9	0	-	-	-
+10.10	0	-	-	-
+11	19	1	13	git fetch origin --tags
+11	19	2	2	git log --oneline a31924a..release/drain
+11	19	3	4	(cherry picked from commit 87bbe88abf3c1b1222edda696ef032678a4dc34e)
+11	19	4	6	git branch --show-current                    # release/drain
+11	19	5	3	git diff a31924a..release/drain --stat | tail -n 1
+11	19	6	6	git push origin release/drain                # the branch only; no tag yet
+11	19	7	4	run completed success <the full sha printed by echo>
+11	19	8	3	git worktree add --detach "../ff-rdrain-${SHA:0:7}" "${SHA:?not set - run the SHA= line of 11.8}"   # detached: release/drain is checked out here
+11	19	9	1	: "${SHA:?not set - run the SHA= line of 11.8}"; git worktree remove "../ff-rdrain-${SHA:0:7}"
+11	19	10	4	git tag -a drain-image -m "drain image: P1 87bbe88, fix 3810e42 (C30), P2b-2 <p2b2>, P3a 90ea88d cherry-picked onto a31924a; CI run <run-id>; gates <summary path>; <date UTC>" "${SHA:?not set - run the SHA= line of 11.8}"
+11	19	11	2	git switch -c release/drain-web release/drain
+11	19	12	7	git push origin release/drain-web            # the branch only; no tag yet
+11	19	13	2	git worktree add --detach "../ff-rdrain-web-${SHA:0:7}" "${SHA:?not set - run the SHA= line of 11.12}"
+11	19	14	1	if [ "$(git rev-parse release/drain)" = "${SHA:?not set - run the SHA= line of 11.12}" ]; then echo "STOP: SHA is release/drain's commit"; elif [ -n "$(git diff --stat release/drain "$SHA" -- backend/)" ]; then echo "STOP: SHA changes backend/"; else git tag -a drain-web-image -m "drain web image: P12a <p12a>, P12 <p12> cherry-picked onto drain-image; CI run <run-id>; gates <summary path>; <date UTC>" "$SHA" && echo "tagged $SHA"; fi
+11	19	15	2	git push origin drain-web-image
+11	19	16	3	git fetch origin
+11	19	17	1	git cherry-pick -x <fix-sha>               # the fix's squash commit on main
+11	19	18	2	git tag -a drain-image-2 -m "drain image re-cut: fix <fix-sha> on top of drain-image; CI run <run-id>; gates <summary path>; <date UTC>" "${SHA:?not set - run the SHA= line of 11.8}"
+11	19	19	1	git -C /opt/fixflow describe --tags --exact-match HEAD
+11.1	1	1	13	git fetch origin --tags
+11.2	0	-	-	-
+11.3	0	-	-	-
+11.3a	0	-	-	-
+11.4	0	-	-	-
+11.5	0	-	-	-
+11.6	3	1	2	git log --oneline a31924a..release/drain
+11.6	3	2	4	(cherry picked from commit 87bbe88abf3c1b1222edda696ef032678a4dc34e)
+11.6	3	3	6	git branch --show-current                    # release/drain
+11.7	1	1	3	git diff a31924a..release/drain --stat | tail -n 1
+11.8	4	1	6	git push origin release/drain                # the branch only; no tag yet
+11.8	4	2	4	run completed success <the full sha printed by echo>
+11.8	4	3	3	git worktree add --detach "../ff-rdrain-${SHA:0:7}" "${SHA:?not set - run the SHA= line of 11.8}"   # detached: release/drain is checked out here
+11.8	4	4	1	: "${SHA:?not set - run the SHA= line of 11.8}"; git worktree remove "../ff-rdrain-${SHA:0:7}"
+11.9	1	1	4	git tag -a drain-image -m "drain image: P1 87bbe88, fix 3810e42 (C30), P2b-2 <p2b2>, P3a 90ea88d cherry-picked onto a31924a; CI run <run-id>; gates <summary path>; <date UTC>" "${SHA:?not set - run the SHA= line of 11.8}"
+11.10	0	-	-	-
+11.11	0	-	-	-
+11.12	5	1	2	git switch -c release/drain-web release/drain
+11.12	5	2	7	git push origin release/drain-web            # the branch only; no tag yet
+11.12	5	3	2	git worktree add --detach "../ff-rdrain-web-${SHA:0:7}" "${SHA:?not set - run the SHA= line of 11.12}"
+11.12	5	4	1	if [ "$(git rev-parse release/drain)" = "${SHA:?not set - run the SHA= line of 11.12}" ]; then echo "STOP: SHA is release/drain's commit"; elif [ -n "$(git diff --stat release/drain "$SHA" -- backend/)" ]; then echo "STOP: SHA changes backend/"; else git tag -a drain-web-image -m "drain web image: P12a <p12a>, P12 <p12> cherry-picked onto drain-image; CI run <run-id>; gates <summary path>; <date UTC>" "$SHA" && echo "tagged $SHA"; fi
+11.12	5	5	2	git push origin drain-web-image
+11.13	3	1	3	git fetch origin
+11.13	3	2	1	git cherry-pick -x <fix-sha>               # the fix's squash commit on main
+11.13	3	3	2	git tag -a drain-image-2 -m "drain image re-cut: fix <fix-sha> on top of drain-image; CI run <run-id>; gates <summary path>; <date UTC>" "${SHA:?not set - run the SHA= line of 11.8}"
+11.14	1	1	1	git -C /opt/fixflow describe --tags --exact-match HEAD
+12	3	1	2	grep -n -A12 'Deploy-train table' docs/program/W0-results.md
+12	3	2	2	git -C /opt/fixflow fetch origin --tags
+12	3	3	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -Atc 'select version_num from alembic_version'
+12.1	1	1	2	grep -n -A12 'Deploy-train table' docs/program/W0-results.md
+12.2	0	-	-	-
+12.3	0	-	-	-
+12.4	2	1	2	git -C /opt/fixflow fetch origin --tags
+12.4	2	2	1	ffc exec -T postgres psql -U fixflow_app -d fixflow -Atc 'select version_num from alembic_version'
+12.5	0	-	-	-
+12.6	0	-	-	-
+12.7	0	-	-	-
+12.8	0	-	-	-
+13	27	1	3	ffc $P_DB up -d
+13	27	2	2	ffc $P_RUN run --rm --no-deps -T --entrypoint python backend -c "from app.core.storage import get_storage; print(*get_storage().list_keys('archive/manifests/'), sep='\n')"
+13	27	3	5	for p in backups/db-selfhost/ backups/db-hourly/ archive/post-drain/; do
+13	27	4	3	url="$(ffc $P_RUN run --rm --no-deps -T --entrypoint python backend -c 'import sys; from app.core.storage import get_storage; print(get_storage().mint_playback_url(sys.argv[1], 300))' "$KEY")"
+13	27	5	2	grep -F "\"$KEY\"" /var/log/fixflow/hourly-dump.log                       # backups/db-hourly/: a JSON line with "sha256"
+13	27	6	3	ls -ln /etc/fixflow/cloudflared
+13	27	7	2	git -C /opt/fixflow fetch origin --tags
+13	27	8	4	git -C /opt/fixflow rev-parse HEAD                                          # PREV sha
+13	27	9	3	want="$(git -C /opt/fixflow rev-parse HEAD)"; echo "want=$want"
+13	27	10	2	ffc exec -T backend sh -c 'curl -sS -o /dev/null -w "%{http_code}\n" -H "X-Ops-Proxy-Token: wrong" http://localhost:8000/api/ops/health'   # 401
+13	27	11	1	ffc exec -T backend python -c "from app.core.storage import get_storage; print(*sorted(get_storage().list_keys('backups/db-selfhost/'))[-3:], sep='\n')"
+13	27	12	3	url="$(ffc exec -T backend python -c 'import sys; from app.core.storage import get_storage; print(get_storage().mint_playback_url(sys.argv[1], 300))' "$KEY")"
+13	27	13	5	ffc exec -T postgres mkdir -p /restore
+13	27	14	2	ffc cp /opt/fixflow/ops/selfhost/sql/appendix-b.sql postgres:/restore/appendix-b.sql
+13	27	15	3	ffc exec -T postgres psql -U postgres -c 'DROP DATABASE fixflow_drill'
+13	27	16	2	rm -f /etc/cron.d/fixflow-heartbeat /etc/cron.d/fixflow-hourly-dump
+13	27	17	3	ls /etc/cron.d/fixflow-* 2>&1 | grep -E 'heartbeat|hourly' ; echo "grep-exit=$?"     # grep-exit=1 (nothing listed)
+13	27	18	3	cd /etc/fixflow && find . -type f ! -name restore-signed-off -print0 | sort -z | xargs -0 sha256sum > /root/etc-fixflow.sha256
+13	27	19	2	tar --numeric-owner -C /etc -xpzf /root/etc-fixflow.tgz
+13	27	20	8	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+13	27	21	2	ffc cp /opt/fixflow/ops/selfhost/sql/appendix-b.sql postgres:/restore/appendix-b.sql
+13	27	22	3	umask 077; h="$(mktemp)"
+13	27	23	7	mkdir -p /var/log/fixflow
+13	27	24	3	ffc $P_RUN stop backend web edge ops 2>/dev/null; true
+13	27	25	4	ffc exec -T postgres psql -U postgres -Atc 'SHOW default_transaction_read_only'                       # on
+13	27	26	2	ffc exec -T backend python -m scripts.unlock_account --tech m1            # dry run
+13	27	27	3	ffc exec backend python -m scripts.set_pin --report                       # which accounts carry a default PIN
+R0.1	0	-	-	-
+R0.2	0	-	-	-
+R0.3	0	-	-	-
+R0.4	0	-	-	-
+R0.5	0	-	-	-
+R0.6	0	-	-	-
+R1.1	0	-	-	-
+R1.2	0	-	-	-
+R1.3	0	-	-	-
+R1.4	1	1	3	ffc $P_DB up -d
+R1.5	0	-	-	-
+R1.6	0	-	-	-
+R2.1	0	-	-	-
+R2.2	0	-	-	-
+R2.3	0	-	-	-
+R2.4	0	-	-	-
+R3.1	0	-	-	-
+R3.2	0	-	-	-
+R3.3	1	1	2	ffc $P_RUN run --rm --no-deps -T --entrypoint python backend -c "from app.core.storage import get_storage; print(*get_storage().list_keys('archive/manifests/'), sep='\n')"
+R3.4	3	1	5	for p in backups/db-selfhost/ backups/db-hourly/ archive/post-drain/; do
+R3.4	3	2	3	url="$(ffc $P_RUN run --rm --no-deps -T --entrypoint python backend -c 'import sys; from app.core.storage import get_storage; print(get_storage().mint_playback_url(sys.argv[1], 300))' "$KEY")"
+R3.4	3	3	2	grep -F "\"$KEY\"" /var/log/fixflow/hourly-dump.log                       # backups/db-hourly/: a JSON line with "sha256"
+R3.5	0	-	-	-
+R4.1	0	-	-	-
+R4.2	0	-	-	-
+R4.3	0	-	-	-
+R4.4	1	1	3	ls -ln /etc/fixflow/cloudflared
+R5.1	0	-	-	-
+R5.2	1	1	2	git -C /opt/fixflow fetch origin --tags
+R5.3	1	1	4	git -C /opt/fixflow rev-parse HEAD                                          # PREV sha
+R5.4	0	-	-	-
+R5.5	0	-	-	-
+R5.6	0	-	-	-
+R5.7	1	1	3	want="$(git -C /opt/fixflow rev-parse HEAD)"; echo "want=$want"
+R5.8	0	-	-	-
+R5.9	0	-	-	-
+R6.1	0	-	-	-
+R6.2	0	-	-	-
+R6.3	1	1	2	ffc exec -T backend sh -c 'curl -sS -o /dev/null -w "%{http_code}\n" -H "X-Ops-Proxy-Token: wrong" http://localhost:8000/api/ops/health'   # 401
+R6.4	0	-	-	-
+R6.5	0	-	-	-
+R7.1	1	1	1	ffc exec -T backend python -c "from app.core.storage import get_storage; print(*sorted(get_storage().list_keys('backups/db-selfhost/'))[-3:], sep='\n')"
+R7.2	1	1	3	url="$(ffc exec -T backend python -c 'import sys; from app.core.storage import get_storage; print(get_storage().mint_playback_url(sys.argv[1], 300))' "$KEY")"
+R7.3	0	-	-	-
+R7.4	0	-	-	-
+R7.5	1	1	5	ffc exec -T postgres mkdir -p /restore
+R7.6	1	1	2	ffc cp /opt/fixflow/ops/selfhost/sql/appendix-b.sql postgres:/restore/appendix-b.sql
+R7.7	0	-	-	-
+R7.8	1	1	3	ffc exec -T postgres psql -U postgres -c 'DROP DATABASE fixflow_drill'
+R8.1	0	-	-	-
+R8.2	0	-	-	-
+R8.3	0	-	-	-
+R8.4	0	-	-	-
+R8.5	0	-	-	-
+R8.6	0	-	-	-
+R9.1	0	-	-	-
+R9.2	2	1	2	rm -f /etc/cron.d/fixflow-heartbeat /etc/cron.d/fixflow-hourly-dump
+R9.2	2	2	3	ls /etc/cron.d/fixflow-* 2>&1 | grep -E 'heartbeat|hourly' ; echo "grep-exit=$?"     # grep-exit=1 (nothing listed)
+R9.3	2	1	3	cd /etc/fixflow && find . -type f ! -name restore-signed-off -print0 | sort -z | xargs -0 sha256sum > /root/etc-fixflow.sha256
+R9.3	2	2	2	tar --numeric-owner -C /etc -xpzf /root/etc-fixflow.tgz
+R9.4	1	1	8	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+R9.5	0	-	-	-
+R9.6	1	1	2	ffc cp /opt/fixflow/ops/selfhost/sql/appendix-b.sql postgres:/restore/appendix-b.sql
+R9.7	0	-	-	-
+R9.8	1	1	3	umask 077; h="$(mktemp)"
+R9.9	1	1	7	mkdir -p /var/log/fixflow
+R9.10	2	1	3	ffc $P_RUN stop backend web edge ops 2>/dev/null; true
+R9.10	2	2	4	ffc exec -T postgres psql -U postgres -Atc 'SHOW default_transaction_read_only'                       # on
+R9.11	2	1	2	ffc exec -T backend python -m scripts.unlock_account --tech m1            # dry run
+R9.11	2	2	3	ffc exec backend python -m scripts.set_pin --report                       # which accounts carry a default PIN

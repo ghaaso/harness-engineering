@@ -34,9 +34,13 @@ def main() -> int:
     counts = collections.Counter(r["verdict"] for r in rows)
     lines.append(
         "Verdicts: "
-        + ", ".join(f"{k} {counts[k]}" for k in ("DONE", "FAILED", "AMBIGUOUS", "NRH", "N/A") if counts[k])
-        + f" (of {len(rows)} rows; NRH = not rehearsable here)"
+        + ", ".join(f"{k} {counts[k]}" for k in ("DONE", "FAILED", "AMBIGUOUS", "MOVED", "NRH", "N/A") if counts[k])
+        + f" (of {len(rows)} rows; NRH = not rehearsable here; MOVED = the runbook changed shape under the step, nothing typed)"
     )
+    for name, head in (("run.txt", "What was rehearsed"),):
+        p = os.path.join(out, name)
+        if os.path.exists(p):
+            lines += ["", f"## {head}", "", "```", *open(p, encoding="utf-8").read().splitlines(), "```"]
     lines += ["", "## Runbook steps", "", "| Phase | Step | Verdict | Run | Check and result | Note |", "| --- | --- | --- | --- | --- | --- |"]
     for r in rows:
         lines.append(
@@ -55,7 +59,7 @@ def main() -> int:
         lines += ["", "## Not rehearsable here", ""]
         for r in nrh:
             lines.append(f"- **{cell(r['step'])}** {cell(r['run'])}: {cell(r['note'])}")
-    for name, head in (("deviations.log", "Lab substitutions (each one, as it happened)"), ("editor.log", "Edits made in the owner's editor (values never shown)")):
+    for name, head in (("deviations.log", "Lab substitutions (each one, as it happened)"), ("editor.log", "Edits made in the owner's editor (values never shown)"), ("moved.log", "Runbook blocks that moved under a step (nothing typed for them)")):
         p = os.path.join(out, name)
         if os.path.exists(p):
             lines += ["", f"## {head}", "", "```", *open(p, encoding="utf-8").read().splitlines(), "```"]

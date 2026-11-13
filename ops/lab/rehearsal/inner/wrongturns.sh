@@ -16,18 +16,42 @@ source /srv/l4/dumps/names.env
 sec4_profiles
 WT="$OUT/wrongturns.tsv"
 printf 'id\twrong turn\twhat happened\twhat stopped it\tscripted guard needed?\n' > "$WT"
-wt() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$3" 700)" "$(clean "$4" 300)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"; }
+wt() {
+  local what="$3"
+  # a wrong turn whose runbook text moved typed nothing: say so instead of judging it
+  [ -n "$RB_MOVED" ] && { what="MOVED (runbook moved under: $RB_MOVED; nothing typed for it) $what"; RB_MOVED=""; }
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$what" 700)" "$(clean "$4" 300)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"
+}
+# The guard the binding review gives for D5/D6 (finding 2) and N1, quoted by WT5, WT6 and WT12
+MARKER_GUARD="YES. The binding review's form: 6.6 (b) writes a marker in BOTH branches ('tables=0', or 'key=... sha256=...' after the upload) together with 'dump=\$D'; 6.9 deletes it, and 6.1 too; 6.7's DROP line itself begins ': \"\${D:?...}\" && test -s <marker> && grep -qx \"dump=\$D\" <marker> &&', so one line carries the guard (the C34 \${SHA:?} pattern; a separate 'test || exit 1' line under 'sudo -i' would close the root shell instead). The scp fallback of 6.6 (b) needs a hand-written marker carrying the sha checked on the laptop. Owned by the runbook's lane"
 backend_running() { [ -n "$(docker ps -q --filter label=com.docker.compose.project=fixflow --filter label=com.docker.compose.service=backend --filter status=running)" ]; }
 ntables() { psql_app -c "select count(*) from pg_tables where schemaname = 'public'" 2>/dev/null | tr -d ' '; }
+# The runbook batch (ruling C42) gives 6.6 a marker chain and puts the guard on 6.7's DROP line;
+# with that text (MARKERS=yes) each wrong turn below types the guarded blocks, by their anchors.
+MARKERS=no; rb_anch 6.7 drop-restore && MARKERS=yes
+RD=/var/lib/fixflow/restore
+G67="$(rb_fence 6.7 @drop-restore/1)"
+# 6.6 (a) with its one-line proof, then (b): the count and the branch it takes; sets D and SUM
+six6() { # <id> <dump file> <recorded sha256>
+  D="$2"; SUM="$3"
+  rb_run "$1-66a" "$(rb_fence 6.6 @a-list)" "<dump file name>=$2" "<the recorded sha256 of that file>=$3"
+  rb_run "$1-66a-prove" "$(rb_fence 6.6 @a-prove)"
+  W66A="$(out_of | tail -n 1)"
+  rb_run "$1-66b-count" "$(rb_fence 6.6 @b-count)"
+  if [ "$(out_of | sed -n 's/^live tables: *//p')" = 0 ]; then rb_run "$1-66b-empty" "$(rb_fence 6.6 @b-empty)"
+  else rb_run "$1-66b-save" "$(rb_fence 6.6 @b-save)"; fi
+  W66B="$(out_of | tail -n 2 | tr '\n' ' ')"
+}
 
 # ---- WT1: skip the sign-off (start the app with no restore-signed-off) ----------------------
-rb_run wt1-close "$(rb_fence 6.1 1)"
-rb_run wt1-up "$(rb_fence 6.9 1 '$p')"            # only the `up` line of 6.9, no printf / chmod
+rb_run wt1-close "$(rb_fence 6.1 @close/1)"
+rb_run wt1-up "$(rb_fence 6.9 @signoff/1 '$p')"            # only the `up` line of 6.9, no printf / chmod
 o="$(out_of | tail -n 3 | tr '\n' ' ')"; rc="$RC"
 gate="$(ffc $P_DB --profile app logs restore-gate 2>&1 | grep -c 'restore gate: CLOSED')"
 if backend_running; then st="backend RUNNING"; else st="backend not running"; fi
 wt WT1 "6.9's 'up' without writing /etc/fixflow/restore-signed-off" "up exit $rc ($o); restore-gate log CLOSED x$gate; $st" \
-  "$( backend_running && echo NOTHING || echo 'the compose restore gate (a script): the backend never starts')" "no: already scripted"
+  "$( backend_running && echo NOTHING || echo 'the compose restore gate (a script): the backend never starts')" \
+  "$( backend_running && echo 'YES: the backend started without a sign-off' || echo 'no: already scripted (the compose gate)')"
 
 # ---- WT2: forced keys in backend.env, the spellings the P3a review tried --------------------
 cp /etc/fixflow/backend.env /srv/l4/backend.env.good
@@ -68,22 +92,30 @@ for pct in 60 99; do
   head -c "$(( $(stat -c %s "/srv/l4/dumps/$NIGHTLY") * pct / 100 ))" "/srv/l4/dumps/$NIGHTLY" > "/var/lib/fixflow/restore/$T"
   rb_run "wt3-$pct-62" "$(rb_span 6.2 'sha256sum')" "<dump>=$T"
   s62="$(out_of | cut -c1-16)"
-  rb_run "wt3-$pct-66a" "$(rb_fence 6.6 1)" "<dump file name>=$T"
-  o66="$(out_of | tail -n 4 | tr '\n' ' ')"
+  if [ $MARKERS = yes ]; then
+    rb_run "wt3-$pct-66a" "$(rb_fence 6.6 @a-list)" "<dump file name>=$T" "<the recorded sha256 of that file>=$want"
+    o66="$(out_of | tail -n 3 | tr '\n' ' ')"
+    D="$T"; SUM="$want"
+    rb_run "wt3-$pct-66a-prove" "$(rb_fence 6.6 @a-prove)"
+    o66="$o66; the proof: $(out_of | tail -n 1)"
+  else
+    rb_run "wt3-$pct-66a" "$(rb_fence 6.6 1)" "<dump file name>=$T"
+    o66="$(out_of | tail -n 4 | tr '\n' ' ')"
+  fi
   # an owner who does not compare the sum: the scratch-database copy of 6.7 (as R7.5 does it), so
   # the live database is not the casualty of this experiment
   psql_super -c 'DROP DATABASE IF EXISTS fixflow_wt' >/dev/null 2>&1
   psql_super -c 'CREATE DATABASE fixflow_wt OWNER fixflow_app' >/dev/null 2>&1
-  r67="$(rb_fence 6.7 1 '$p' | sed 's/-d fixflow /-d fixflow_wt /')"
+  r67="$(printf '%s\n' "$G67" | sed -n '$p' | sed 's/-d fixflow /-d fixflow_wt /g')"
   [ "$pct" = 60 ] && echo "lab WT3: 6.7's pg_restore line is run with '-d fixflow' changed to '-d fixflow_wt' (a scratch database, so the live one is not dropped)" >> "$OUT/deviations.log"
-  rb_run "wt3-$pct-67" "$r67" "\$D=$T"
+  if [ $MARKERS = yes ]; then rb_run "wt3-$pct-67" "$r67"; else rb_run "wt3-$pct-67" "$r67" "\$D=$T"; fi
   o67="$(out_of | tail -n 3 | tr '\n' ' ')"
   nt="$(ffc exec -T postgres psql -U fixflow_app -d fixflow_wt -tAc "select count(*) from pg_tables where schemaname='public'" 2>/dev/null)"
   nj="$(ffc exec -T postgres psql -U fixflow_app -d fixflow_wt -tAc "select count(*) from job" 2>/dev/null)"
   wt "WT3 ($pct %)" "a dump cut at $pct % (an interrupted scp)" \
     "6.2 sum $s62… vs recorded $(echo "$want" | cut -c1-16)…; 6.6 (a) on it: $o66; 6.7's pg_restore into a scratch db: $o67; tables loaded $nt, job rows $nj" \
-    "$( echo "$o66" | grep -q 'list exit=0' && echo "only 6.2's sha256 comparison (an instruction: a different sum prints, nothing exits non-zero); 6.6 (a) passed; pg_restore --exit-on-error at 6.7 fails AFTER the drop" || echo "6.6 (a): pg_restore -l itself failed on the cut file (list exit=1), before anything was dropped; 6.2's sum also differed")" \
-    "$( echo "$o66" | grep -q 'list exit=0' && echo "YES: 6.6 (a) passes this truncated dump, so 'prove the dump' proves the table of contents, not the data; 6.7 then drops and the load fails half-way. Smallest fix: in 6.6 (a) restore into a scratch database (R7.4/R7.5's lines) before 6.7 drops anything, or make the sum comparison a test that stops" || echo "no: 6.6 (a) refused it (the sum is still the primary check)")"
+    "$( [ $MARKERS = yes ] && echo "6.6 (a)'s one-line proof: $( echo "$o66" | grep -q 'proven:' && echo 'it wrote proven (NOT stopped)' || echo 'the sum (or the list) is not as recorded, so proven is not written; with no marker 6.7 drops nothing') ($o67)" || { echo "$o66" | grep -q 'list exit=0' && echo "only 6.2's sha256 comparison (an instruction: a different sum prints, nothing exits non-zero); 6.6 (a) passed; pg_restore --exit-on-error at 6.7 fails AFTER the drop" || echo "6.6 (a): pg_restore -l itself failed on the cut file (list exit=1), before anything was dropped; 6.2's sum also differed"; })" \
+    "$( [ $MARKERS = yes ] && { echo "$o66" | grep -q 'proven:' && echo 'YES: proven was written for a damaged file' || echo "no: the proof is scripted on one line (D4 as the batch fixed it; a file damaged before its sum was recorded would still pass, as 6.6 says)"; } || { echo "$o66" | grep -q 'list exit=0' && echo "YES: 6.6 (a) passes this truncated dump, so 'prove the dump' proves the table of contents, not the data; 6.7 then drops and the load fails half-way. Smallest fix: in 6.6 (a) restore into a scratch database (R7.4/R7.5's lines) before 6.7 drops anything, or make the sum comparison a test that stops" || echo "no: 6.6 (a) refused it (the sum is still the primary check)"; })"
   psql_super -c 'DROP DATABASE IF EXISTS fixflow_wt' >/dev/null 2>&1
 done
 
@@ -92,13 +124,38 @@ E="empty-$NIGHTLY"
 psql_super -c 'CREATE DATABASE fixflow_empty OWNER fixflow_app' >/dev/null 2>&1
 ffc exec -T postgres pg_dump -U fixflow_app -d fixflow_empty --format=custom > "/var/lib/fixflow/restore/$E"
 psql_super -c 'DROP DATABASE fixflow_empty' >/dev/null 2>&1
+if [ $MARKERS = yes ]; then
+  esum="$(sha256sum "/var/lib/fixflow/restore/$E" | cut -d' ' -f1)"
+  rb_run wt4-66a "$(rb_fence 6.6 @a-list)" "<dump file name>=$E" "<the recorded sha256 of that file>=$esum"
+  o66="$(out_of | tail -n 3 | tr '\n' ' ')"
+  D="$E"; SUM="$esum"
+  rb_run wt4-66a-prove "$(rb_fence 6.6 @a-prove)"
+  o66="$o66; the proof: $(out_of | tail -n 1)"
+  wt WT4 "a dump whose restore list is empty (its sum recorded, so only the count can stop it)" "6.6 (a): $o66" \
+    "$( echo "$o66" | grep -q 'proven:' && echo 'NOTHING: proven was written' || echo "6.6 (a)'s one-line proof: the TABLE DATA count is not above 30, so proven is not written (a script)")" \
+    "$( echo "$o66" | grep -q 'proven:' && echo 'YES' || echo 'no: scripted (D7 as the batch fixed it)')"
+else
 rb_run wt4-66a "$(rb_fence 6.6 1)" "<dump file name>=$E"
 o66="$(out_of | tail -n 4 | tr '\n' ' ')"
 wt WT4 "a dump whose restore list is empty" "6.6 (a): $o66" \
   "6.6 (a)'s Check ('a number above 30') — read by the owner; every command exits 0 except grep -c's 0-count exit 1, which nothing acts on" \
   "advisable: make the count a test that stops (e.g. '[ \$(grep -c ...) -gt 30 ] || echo STOP'); 6.8's count comparison is the second net before the backend starts"
+fi
 
 # ---- C27 note 2 (WT5): the pre-restore copy fails to leave the host; does anything stop 6.7? --
+if [ $MARKERS = yes ]; then
+  cp "/srv/l4/dumps/$NIGHTLY" "$RD/$NIGHTLY"
+  before_jobs="$(psql_app -c 'select count(*) from job')"
+  ffc --profile l4s3 stop l4-s3 >/dev/null 2>&1
+  six6 wt5 "$NIGHTLY" "$(grep " $NIGHTLY\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
+  ffc --profile l4s3 up -d l4-s3 >/dev/null 2>&1
+  rb_run wt5-67 "$G67"
+  o67="$(out_of | tr '\n' ' ' | cut -c1-200)"; after_jobs="$(psql_app -c 'select count(*) from job')"
+  wt "WT5 (C27 note 2)" "6.6 (b)'s upload fails (stand-in bucket stopped) and the owner goes on to 6.7, in the same shell" \
+    "6.6 (a): $W66A; 6.6 (b): $W66B; 6.7: $o67; live jobs $before_jobs before, $after_jobs after; marker: $( [ -e $RD/ready-to-drop ] && echo present || echo absent)" \
+    "$( [ "$after_jobs" = "$before_jobs" ] && echo 'the marker chain (a script): 6.6 (b) writes ready-to-drop only on the upload receipt, and 6.7 DROP line refuses without it' || echo 'NOTHING: the live database was dropped')" \
+    "$( [ "$after_jobs" = "$before_jobs" ] && echo 'no: scripted (D5 as the batch fixed it)' || echo YES)"
+else
 ffc --profile l4s3 stop l4-s3 >/dev/null 2>&1
 rb_run wt5-66b-count "$(rb_fence 6.6 2 1p)"
 cnt="$(out_of)"
@@ -112,26 +169,63 @@ rb_run wt5-67 "$(rb_fence 6.7 1)" "\$D=$NIGHTLY"
 o67="$(out_of | tail -n 2 | tr '\n' ' ')"
 wt "WT5 (C27 note 2)" "6.6 (b)'s upload fails (stand-in bucket stopped) and the owner goes on to 6.7" \
   "live tables $cnt; 6.6 (b): $o; 6.7 ran: $o67 (live jobs before: $before_jobs)" \
-  "NOTHING in a script: fixflow-r2-put.sh exits non-zero, but 6.7 is a separate command that does not look for the copy" \
-  "YES: 6.7 should refuse when 6.6 (b) found tables and no upload receipt exists, e.g. 6.6 (b) writes /var/lib/fixflow/restore/pre-restore.ok only after 'uploaded key=' and 6.7 starts with 'test -s .../pre-restore.ok || { echo STOP; exit 1; }' (cleared in 6.1)"
+  "$( echo "$o67" | grep -q 'restore exit=0' && echo "NOTHING in a script: fixflow-r2-put.sh exits non-zero, but 6.7 is a separate command that does not look for the copy" || echo "see the step log: 6.7 did not complete")" \
+  "$MARKER_GUARD"
+fi
 
 # ---- C27 note 1 (WT6): drop before the checks (6.7 first, 6.6 never run) ----------------------
 psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', 'WT6 manager write after the dump', 'm1', nextval('job_event_seq') from job limit 1" > "$OUT/wt6-insert.log" 2>&1
 marker="$(psql_app -c "select count(*) from job_event where text = 'WT6 manager write after the dump'")"
+if [ $MARKERS = yes ]; then
+  # the owner remembers the dump's name (D set) but skips 6.6; as after any sign-off, no marker is left
+  rm -f $RD/ready-to-drop $RD/proven; D="$NIGHTLY"
+  rb_run wt6-67-first "$G67"
+  o67="$(out_of | tr '\n' ' ' | cut -c1-200)"
+  after="$(psql_app -c "select count(*) from job_event where text = 'WT6 manager write after the dump'")"
+  # and a marker left for ANOTHER dump (an attempt abandoned before 6.9): it must not vouch for this one
+  printf 'dump=%s\npre-restore=none live-tables=0\nat=%s\n' "$B5" "$(date -u +%FT%TZ)" > $RD/ready-to-drop
+  rb_run wt6-67-stale "$G67"
+  o67b="$(out_of | tr '\n' ' ' | cut -c1-160)"; rm -f $RD/ready-to-drop
+  after2="$(psql_app -c "select count(*) from job_event where text = 'WT6 manager write after the dump'")"
+  wt "WT6 (C27 note 1)" "6.7 typed before 6.6 (D set, 6.6 skipped); then with a marker left for another dump" \
+    "a manager write made after the dump: $marker row(s) before, $after after the first try, $after2 after the second; 6.7 (no marker): $o67; 6.7 (another dump's marker): $o67b" \
+    "$( [ "$after2" = "$marker" ] && echo "the guard on 6.7's DROP line (a script): no marker naming this dump, nothing dropped" || echo 'NOTHING: the write is gone')" \
+    "$( [ "$after2" = "$marker" ] && echo 'no: scripted (D6 as the batch fixed it)' || echo YES)"
+else
 rb_run wt6-67-first "$(rb_fence 6.7 1)" "\$D=$NIGHTLY"
 o67="$(out_of | tail -n 2 | tr '\n' ' ')"
 after="$(psql_app -c "select count(*) from job_event where text = 'WT6 manager write after the dump'")"
 wt "WT6 (C27 note 1)" "6.7 typed before 6.6 (the owner skips 'prove' and 'save')" \
   "a manager write made after the dump: $marker row(s) before, $after after; 6.7: $o67" \
-  "NOTHING: 6.7's DROP runs whatever 6.6 did; the order exists only in the runbook text (and the P3a smoke, which runs it in order without asserting it)" \
-  "YES (same guard as WT5): 6.7 starts with a test for 6.6's proof and copy markers"
+  "$( [ "${after:-1}" = 0 ] && echo "NOTHING: 6.7's DROP runs whatever 6.6 did; the order exists only in the runbook text (and the P3a smoke, which runs it in order without asserting it)" || echo "the write survived: see the step log")" \
+  "$MARKER_GUARD (the marker names the dump, so a marker left by an earlier restore does not wave a skipped 6.6 through)"
+fi
+
+# ---- N1 (WT12): 6.7 in a new or reconnected shell, where D is empty -----------------------------
+D_SAVED="${D:-}"; unset D
+jobs12="$(psql_app -c 'select count(*) from job' 2>/dev/null)"
+rb_run wt12-67-no-d "$G67"
+o12="$(out_of | tail -n 3 | tr '\n' ' ')"
+nt12="$(ntables)"
+D="$D_SAVED"
+wt "WT12 (N1)" "6.7 typed in a new shell (the variable D from 6.6 is empty)" \
+  "job rows before $jobs12; 6.7: $o12; public tables after: ${nt12:-?}" \
+  "$( [ "${nt12:-1}" = 0 ] && echo "NOTHING: the DROP runs, then pg_restore cannot find /restore/.list and the schema is left empty" || { [ $MARKERS = yes ] && echo "the \${D:?} guard on 6.7's DROP line (bash drops the rest of the line, as in the owner's interactive shell)" || echo "something stopped the DROP: see the step log"; })" \
+  "$( [ "${nt12:-1}" = 0 ] && echo "$MARKER_GUARD (the \${D:?} on the DROP line is what stops this one)" || echo "no$( [ $MARKERS = yes ] && echo ': scripted (N1 as the batch fixed it)')")"
 
 # ---- the way back: the pre-restore copy, by the runbook's own route ---------------------------
 PRE="$(basename "$(cat "$OUT/pre-restore-file.txt" 2>/dev/null)")"
 if [ -n "$PRE" ] && [ -f "/var/lib/fixflow/restore/$PRE" ]; then
+  if [ $MARKERS = yes ]; then
+    # 6.7's way back as the batch writes it: D and SUM for the pre-restore copy, 6.6 (a) and (b), 6.7
+    six6 back "$PRE" "$(sha256sum "$RD/$PRE" | cut -d' ' -f1)"
+    ob="$W66A; $W66B"
+    rb_run back-67 "$G67"
+  else
   rb_run back-66a "$(rb_fence 6.6 1)" "<dump file name>=$PRE"
   ob="$(out_of | tail -n 3 | tr '\n' ' ')"
   rb_run back-67 "$(rb_fence 6.7 1)"
+  fi
   ob7="$(out_of | tail -n 2 | tr '\n' ' ')"
   marker_back="$(psql_app -c 'select count(*) from job' 2>/dev/null)"
   wt BACK "go back to the database as it was: 6.6 (a) and 6.7 with the pre-restore copy ($PRE)" \

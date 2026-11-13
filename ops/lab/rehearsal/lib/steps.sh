@@ -51,7 +51,19 @@ sec1() { # <repo-url> <tag-or-sha>
   rb_run 1.13-check "$(rb_fence 1.13 2)"
   row 1.13 "$( [ "$(out_of | tr '\n' '|')" = '700 root:root /etc/fixflow|700 root:root /var/lib/fixflow|700 root:root /var/lib/fixflow/drain|755 root:root /var/log/fixflow|' ] && echo DONE || echo FAILED)" \
     "install -d" "$(out_of | tr '\n' ';')"
+  rb_run 1.14-do "$(rb_fence 1.14 1)"
+  local lrc="$RC"
+  rb_run 1.14-check "$(rb_fence 1.14 2)"
+  row 1.14 "$( [ "$lrc" = 0 ] && has 'exit=0' && ! hasre 'error:' && has '/var/log/fixflow/*.log' && echo DONE || echo FAILED)" \
+    "install the logrotate file; logrotate -d" "$(out_of | grep -E 'exit=|/var/log/fixflow/|error:' | head -n 4 | tr '\n' ';')" \
+    "logrotate 3.x of the stand-in host (Alpine), the same configuration syntax as Debian's"
   mkdir -p /run/lock
+}
+
+# The migration head a checkout declares: CLAUDE.md's 'head = **NNNN**' at that commit (never a
+# number written into the rig: the head moves with every row that carries a migration).
+claude_head() { # <git dir> [<rev>]
+  git -C "$1" show "${2:-HEAD}:CLAUDE.md" 2>/dev/null | grep -o 'head = \*\*[0-9]\{4\}\*\*' | head -n 1 | grep -o '[0-9]\{4\}'
 }
 
 # ---------------------------------------------------------------- section 3
@@ -65,6 +77,7 @@ sec3() {
 
   # 3.3: each line is run on its own; the values go straight into the files, never into a log
   local gen="$(rb_fence 3.3 1)" line vals=() n=0
+  rb_moved_check 3.3 "$gen" || gen=""
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     vals+=("$(eval "${line%%#*}")")
@@ -139,7 +152,10 @@ sec4() {
   sec4_profiles
   rb_run 4.1 "$(rb_fence 4.1 1)"
   row 4.1 "$( [ "$(out_of)" = "exit=0" ] && echo DONE || echo FAILED)" "ffc \$P_ALL config -q" "$(out_of | tr '\n' ';')"
+  local m04=no
+  l4_mut 4.2-backup-on && { m04=yes; env_set /etc/fixflow/compose.env FIXFLOW_BACKUP_ENABLED true; }
   rb_run 4.2 "$(rb_fence 4.2 1)"
+  [ $m04 = yes ] && env_set /etc/fixflow/compose.env FIXFLOW_BACKUP_ENABLED false
   local ok=no
   has 'FIXFLOW_ENVIRONMENT: production' && has 'FIXFLOW_BACKUP_PREFIX: backups/db-selfhost/' \
     && has 'FIXFLOW_BACKUP_ENABLED: "false"' && has 'FIXFLOW_ENABLE_DISPATCHER: "false"' \
@@ -175,13 +191,19 @@ sec4_5() { # <label>
 sec6() {
   local tag="$1" DUMPF="$2" CASE="$3"
   local want_sha; want_sha="$(grep " $DUMPF\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
-  rb_run 6.1-do "$(rb_fence 6.1 1)"
+  [ "$PHASE" = restore-2 ] && l4_mut 6.2-recorded-sum && want_sha="$(printf '%064d' 0)"
+  # MARKERS: the runbook batch's marker chain (6.6 writes proven and ready-to-drop, 6.7's DROP
+  # line requires them, 6.1 and 6.9 remove them); main's text before it has none
+  MARKERS=no; rb_anch 6.7 drop-restore && MARKERS=yes
+  local RD=/var/lib/fixflow/restore
+  rb_run 6.1-do "$(rb_fence 6.1 @close/1)"
   rb_run 6.1-check "$(rb_span 6.1 'test ! -e')"
   local c1; c1="$(out_of)"
   rb_run 6.1-check2 "$(rb_span 6.1 'ps' 1)"
   local running; running="$(out_of | grep -c ' backend .* Up\| backend-1 .*Up' )"
-  row "6.1 $tag" "$( [ "$c1" = gate-closed ] && [ "$running" = 0 ] && echo DONE || echo FAILED)" \
-    "rm -f restore-signed-off; ffc stop backend; ffc ps" "$c1; backend rows Up: $running" \
+  local mk="n/a"; [ $MARKERS = yes ] && { [ ! -e $RD/ready-to-drop ] && [ ! -e $RD/proven ] && mk=gone || mk=PRESENT; }
+  row "6.1 $tag" "$( [ "$c1" = gate-closed ] && [ "$running" = 0 ] && [ "$mk" != PRESENT ] && echo DONE || echo FAILED)" \
+    "rm -f restore-signed-off$( [ $MARKERS = yes ] && echo ' ready-to-drop proven'); ffc stop backend; ffc ps" "$c1; backend rows Up: $running; 6.6's marker and proof: $mk" \
     "the curl-through-the-tunnel 503 check is NRH (no tunnel)"
 
   rb_run 6.2-do "$(rb_fence 6.2 1)"
@@ -205,23 +227,65 @@ sec6() {
   row "6.3 $tag" "$( [ $ok = yes ] && echo DONE || echo FAILED)" "ffc \$P_DB up -d" "$(out_of | tr '\n' ';')"
 
   rb_run 6.4 "$(rb_fence 6.4 1)"
-  row "6.4 $tag" "$(v has '0046 (head)')" "alembic heads in a one-off backend" "$(out_of | grep -v '^ *$' | tail -n 2 | tr '\n' ';')"
+  # The image's head is the one CLAUDE.md declares at the deployed checkout; the runbook's text
+  # names a literal head, which goes stale when a migration lands (then the row is AMBIGUOUS).
+  # A dump above the image's head must STOP here, as the text says.
+  local ch lit v64
+  ch="$(claude_head /opt/fixflow)"; lit="$(rb_span 6.4 '(head)')"
+  if [ -z "$ch" ] || ! has "$ch (head)"; then v64=FAILED
+  elif [ -n "${SEED_HEAD:-}" ] && [ "$((10#$SEED_HEAD))" -gt "$((10#$ch))" ]; then v64=FAILED
+  elif [ "$lit" != "$ch (head)" ]; then v64=AMBIGUOUS
+  else v64=DONE; fi
+  row "6.4 $tag" "$v64" "alembic heads in a one-off backend" "$(out_of | grep -v '^ *$' | tail -n 2 | tr '\n' ';')" \
+    "CLAUDE.md at the deployed checkout says head ${ch:-(not found)}; the runbook's text names '$lit'; the dump's head is ${SEED_HEAD:-?}$( [ -n "${SEED_HEAD:-}" ] && [ -n "$ch" ] && [ "$((10#$SEED_HEAD))" -gt "$((10#$ch))" ] && echo ': above the image, so the text says STOP')"
 
-  rb_run 6.6a "$(rb_fence 6.6 1)" "<dump file name>=$DUMPF"
-  local o; o="$(out_of)"
-  local sumline schema tdata
+  local o sumline schema tdata live proven="n/a"
+  if [ $MARKERS = yes ]; then
+    rb_run 6.6a "$(rb_fence 6.6 @a-list)" "<dump file name>=$DUMPF" "<the recorded sha256 of that file>=$want_sha"
+  else
+    rb_run 6.6a "$(rb_fence 6.6 1)" "<dump file name>=$DUMPF"
+  fi
+  o="$(out_of)"
   sumline="$(echo "$o" | grep -c "^$want_sha ")"
   schema="$(echo "$o" | grep -A1 '^list exit=' | sed -n 2p)"
   tdata="$(echo "$o" | grep -A2 '^list exit=' | sed -n 3p)"
+  if [ $MARKERS = yes ]; then
+    rb_run 6.6a-prove "$(rb_fence 6.6 @a-prove)"
+    proven=no; has "proven: $DUMPF" && grep -qsx "dump=$DUMPF" $RD/proven && proven=yes
+  fi
   ok=no
-  [ "$sumline" = 1 ] && echo "$o" | grep -qx 'list exit=0' && [ "$schema" = 0 ] && [ "${tdata:-0}" -gt 30 ] && ok=yes
-  row "6.6a $tag" "$( [ $ok = yes ] && echo DONE || echo FAILED)" "prove the dump: cp in, sha256, restore list" \
-    "sha match $sumline; $(echo "$o" | grep '^list exit='); SCHEMA-public entries $schema; TABLE DATA $tdata" \
+  [ "$sumline" = 1 ] && echo "$o" | grep -qx 'list exit=0' && [ "$schema" = 0 ] && [ "${tdata:-0}" -gt 30 ] && [ "$proven" != no ] && ok=yes
+  row "6.6a $tag" "$( [ $ok = yes ] && echo DONE || echo FAILED)" "prove the dump: cp in, sha256, restore list$( [ $MARKERS = yes ] && echo '; the one-line proof writes proven')" \
+    "sha match $sumline; $(echo "$o" | grep '^list exit='); SCHEMA-public entries $schema; TABLE DATA $tdata$( [ $MARKERS = yes ] && echo "; proven: $proven ($(out_of | tail -n 1 | cut -c1-80))")" \
     "D=$DUMPF; TOC SCHEMA lines in the original: $(grep -c 'SCHEMA - public' "$OUT/toc-$DUMPF.txt" 2>/dev/null)"
 
-  rb_run 6.6b-count "$(rb_fence 6.6 2 1p)"
-  local live; live="$(out_of | tr -d ' \r')"
-  if [ "$live" = 0 ]; then
+  if [ $MARKERS = yes ]; then
+    rb_run 6.6b-count "$(rb_fence 6.6 @b-count)"
+    live="$(out_of | sed -n 's/^live tables: *//p' | tr -d ' \r')"
+  else
+    rb_run 6.6b-count "$(rb_fence 6.6 2 1p)"
+    live="$(out_of | tr -d ' \r')"
+  fi
+  if [ $MARKERS = yes ] && [ "$live" = 0 ]; then
+    rb_run 6.6b-empty "$(rb_fence 6.6 @b-empty)"
+    row "6.6b $tag" "$( has "marker: $DUMPF (nothing to save)" && grep -qsx "dump=$DUMPF" $RD/ready-to-drop && echo DONE || echo FAILED)" \
+      "count live tables; 0: write the marker" "live tables: 0; $(out_of | tail -n 1)" "the marker: $(tr '\n' ' ' < $RD/ready-to-drop 2>/dev/null)"
+    PRE_KEY=""
+  elif [ $MARKERS = yes ]; then
+    rb_run 6.6b-save "$(rb_fence 6.6 @b-save)"
+    o="$(out_of)"
+    local td up lsum
+    td="$(echo "$o" | grep -A1 '^dump exit=' | sed -n 2p)"
+    up="$(echo "$o" | grep '^uploaded key=archive/pre-restore/pre-restore-')"
+    lsum="$(echo "$o" | grep -xE '[0-9a-f]{64}' | head -n 1)"
+    ok=no
+    echo "$o" | grep -qx 'dump exit=0' && [ "${td:-0}" -gt 30 ] && [ -n "$up" ] && echo "$up" | grep -q "sha256=$lsum" \
+      && has "marker: $DUMPF (pre-restore copy uploaded)" && grep -qsx "dump=$DUMPF" $RD/ready-to-drop && ok=yes
+    PRE_KEY="$(echo "$up" | sed -n 's/^uploaded key=\([^ ]*\).*/\1/p')"
+    PRE_FILE="$(ls -t $RD/pre-restore-*.pgdump 2>/dev/null | head -n 1)"
+    row "6.6b $tag" "$( [ $ok = yes ] && echo DONE || echo FAILED)" "count $live live tables; pg_dump; TABLE DATA count; sha256; fixflow-r2-put.sh; the marker on one line" \
+      "$(echo "$o" | grep '^dump exit='); TABLE DATA $td; $(echo "$up" | cut -c1-110); $(echo "$o" | tail -n 1)" "the marker: $(tr '\n' ' ' < $RD/ready-to-drop 2>/dev/null)"
+  elif [ "$live" = 0 ]; then
     row "6.6b $tag" DONE "count live tables" "count 0: 'pre-restore: empty, no copy'"
     PRE_KEY=""
   else
@@ -239,16 +303,25 @@ sec6() {
       "$(echo "$o" | grep '^dump exit='); TABLE DATA $td; $(echo "$up" | cut -c1-120)" "uploaded to the stand-in bucket"
   fi
 
-  rb_run 6.7 "$(rb_fence 6.7 1)"
+  if [ $MARKERS = yes ]; then rb_run 6.7 "$(rb_fence 6.7 @drop-restore)"; else rb_run 6.7 "$(rb_fence 6.7 1)"; fi
   o="$(out_of)"
   local cnt; cnt="$(echo "$o" | grep -xE '[0-9]+' | head -n 1)"
-  row "6.7 $tag" "$( [ "$cnt" = 0 ] && echo "$o" | grep -qx 'restore exit=0' && echo DONE || echo FAILED)" \
-    "DROP SCHEMA public CASCADE; CREATE SCHEMA public; pg_restore -L list" "count after drop $cnt; $(echo "$o" | grep 'restore exit=')" \
+  row "6.7 $tag" "$( [ "$cnt" = 0 ] && echo "$o" | grep -qx 'restore exit=0' && ! echo "$o" | grep -q '^STOP' && echo DONE || echo FAILED)" \
+    "$( [ $MARKERS = yes ] && echo 'the guarded DROP line (marker names D); the count; the guarded pg_restore -L list' || echo 'DROP SCHEMA public CASCADE; CREATE SCHEMA public; pg_restore -L list')" \
+    "count after drop $cnt; $(echo "$o" | grep 'restore exit='); STOP lines: $(echo "$o" | grep -c '^STOP')" \
     "$(echo "$o" | grep -m2 -i 'error' | tr '\n' ' ')"
+  if [ "$PHASE" = restore-1 ] && l4_mut 6.8-lost-row; then
+    local t n
+    for t in app_event attendance_ping customer_phone; do
+      n="$(psql_app -c "select count(*) from $t" 2>/dev/null)"
+      [ "${n:-0}" -gt 0 ] && psql_app -c "delete from $t where ctid = (select ctid from $t limit 1)" >/dev/null 2>&1 \
+        && { echo "state mutation 6.8-lost-row: one row of $t deleted" >> "$OUT/mutations-applied.log"; break; }
+    done
+  fi
 
   sec6_8 "$tag"
 
-  rb_run 6.9-do "$(rb_fence 6.9 1)" "<a|b|c>=$CASE" "<file or none>=$DUMPF" "<sum or none>=$want_sha" "<owner>=l4-rehearsal"
+  rb_run 6.9-do "$(rb_fence 6.9 @signoff/1)" "<a|b|c>=$CASE" "<file or none>=$DUMPF" "<sum or none>=$want_sha" "<owner>=l4-rehearsal"
   local up_rc="$RC" upo; upo="$(out_of | tail -n 3 | tr '\n' ';')"
   wait_backend_healthy 150; local healthy=$?
   rb_run 6.9-gate "$(rb_span 6.9 'logs restore-gate')"
@@ -260,18 +333,30 @@ sec6() {
   bk="$(jget facts.backup_enabled < "$dh")"; pfx="$(jget facts.backup_prefix < "$dh")"
   gsha="$(jget facts.git_sha < "$dh")"; db="$(jget database.status < <(jget components < "$dh"))"
   mig="$(jget migrations.detail < <(jget components < "$dh"))"
-  rb_run 6.9-cursor "$(rb_span 6.9 'select consumer, last_seq')"
-  local cur; cur="$(out_of | tr -d '\r')"
-  local maxseq; maxseq="$(psql_app -c 'select max(seq) from job_event' 2>/dev/null)"
+  local cur maxseq before="" mk="n/a"
+  if rb_anch 6.9 reseed; then
+    # the corrected 6.9 (ruling C42): once healthy, 8.8's forward-only re-seed, then the exact check
+    before="$(psql_app -c "select last_seq from dispatch_cursor where consumer = 'whatsapp'" 2>/dev/null)"
+    rb_run 6.9-reseed "$(rb_fence 6.9 @reseed)"
+    cur="$(out_of | grep '^whatsapp|' | tr -d '\r')"
+    maxseq="$(out_of | grep -xE '[0-9]+' | tail -n 1)"
+    has 'INSERT 0 1' || cur="$cur (no 'INSERT 0 1')"
+    mk=gone; { [ -e $RD/ready-to-drop ] || [ -e $RD/proven ]; } && mk=PRESENT
+  else
+    rb_run 6.9-cursor "$(rb_span 6.9 'select consumer, last_seq')"
+    cur="$(out_of | tr -d '\r')"
+    maxseq="$(psql_app -c 'select max(seq) from job_event' 2>/dev/null)"
+  fi
   local head; head="$(git -C /opt/fixflow rev-parse HEAD)"
   local base_ok=no
   [ "$up_rc" = 0 ] && [ "$healthy" = 0 ] && [ "$gate" -ge 1 ] && [ "$env" = production ] && [ "$dsp" = False ] \
-    && [ "$bk" = False ] && [ "$pfx" = backups/db-selfhost/ ] && [ "$gsha" = "$head" ] && [ "$db" = ok ] && base_ok=yes
+    && [ "$bk" = False ] && [ "$pfx" = backups/db-selfhost/ ] && [ "$gsha" = "$head" ] && [ "$db" = ok ] && [ "$mk" != PRESENT ] && base_ok=yes
   local verdict=FAILED note=""
+  [ -n "$before" ] && note="the re-seed moved the cursor from $before to ${cur#whatsapp|} (max(seq) $maxseq); 6.6's marker and proof: $mk"
   if [ $base_ok = yes ] && [ "$cur" = "whatsapp|$maxseq" ]; then verdict=DONE
   elif [ $base_ok = yes ]; then
     verdict=FAILED
-    note="RUNBOOK DEFECT CANDIDATE: everything else as expected, but the cursor check expects whatsapp|<max job_event.seq> and reads $cur with max(seq)=$maxseq. Nothing between 6.7 and 6.9 moves the cursor: migration 0046 is already applied in this dump, so it does not re-seed, and the re-seed is 8.8 (at T_close)."
+    note="RUNBOOK DEFECT (D1): everything else as expected, but the cursor check expects whatsapp|<max job_event.seq> and reads $cur with max(seq)=$maxseq. 0046 seeded the cursor at the head when the migration ran; events kept arriving with the dispatcher off, and nothing between 6.7 and 6.9 moves it (the re-seed is 8.8, at T_close). Production was deployed at 0046 on 2026-08-02 (docs/RUNBOOK-BACKUPS.md:141), so the real dump most likely shows the same. Fix (binding review, finding 1): 6.9 runs 8.8's forward-only re-seed (GREATEST) once the backend is healthy and keeps this check exact. Loosening the check to 'any N up to max(seq)' would pass a dangerously low cursor."
   fi
   row "6.9 $tag" "$verdict" "write restore-signed-off; ffc \$P_DB --profile app up -d (exit $up_rc)" \
     "gate-log 'signed off' x$gate; healthy=$([ $healthy = 0 ] && echo yes || echo no); environment=$env dispatcher=$dsp backup=$bk prefix=$pfx git_sha=$( [ "$gsha" = "$head" ] && echo "the checkout HEAD ${head:0:7}" || echo "$gsha") database=$db migrations=$mig; cursor=$cur max(seq)=$maxseq" "$note"
@@ -304,16 +389,28 @@ sec6_8() { # <tag>  Appendix B against the source's facts
   done < <(echo "$o" | grep '_seq ')
   local curs; curs="$(awk '/consumer \| last_seq/{getline; getline; print; exit}' "$af" | tr -d ' ')"
   local ok=no
-  [ "$qexit" = 1 ] && [ "$diffc" = 0 ] && [ "$ntab" -gt 30 ] && [ "$ver" = 0046 ] && [ "$pay_src" = "$pay_dst" ] \
+  # the version must be the dump's own head (SEED_HEAD: the source database's alembic_version,
+  # which prep.sh checked against CLAUDE.md at the seed's checkout)
+  [ "$qexit" = 1 ] && [ "$diffc" = 0 ] && [ "$ntab" -gt 30 ] && [ -n "${SEED_HEAD:-}" ] && [ "$ver" = "$SEED_HEAD" ] && [ "$pay_src" = "$pay_dst" ] \
     && [ "$led_src" = "$led_dst" ] && [ "$seqok" = yes ] && ok=yes
   # Check 6 is "at or near max(seq)", which no reader can apply the same way twice: a cursor
-  # below max(seq) leaves the step AMBIGUOUS (the same reading makes 6.9 stop; finding D1)
+  # below max(seq) leaves the step AMBIGUOUS (the same reading makes 6.9 stop; finding D1). The
+  # binding review's form of check 6, "equals the cursor recorded for this dump", is computed too.
   local cseq mseq; cseq="${curs##*|}"; mseq="$(echo "$o" | awk '/job_event_seq/{print $3; exit}')"
-  [ $ok = yes ] && [ -n "$cseq" ] && [ "$cseq" != "$mseq" ] && ok=amb
-  [ "$ver" = 0046 ] && [ -z "$cseq" ] && ok=no   # check 6: a 0046 dump has the whatsapp row
+  local src_cur; src_cur="$(cut -d'|' -f1 "$OUT/source-cursor.txt" 2>/dev/null)"
+  local exact=no
+  rb_text_has 6.8 'equals the `dispatch_cursor` line of P0a' && exact=yes
+  if [ $exact = yes ]; then
+    # the corrected check 6 (ruling C42): the cursor equals the value recorded for this dump
+    [ $ok = yes ] && [ "$cseq" != "$src_cur" ] && ok=no
+  else
+    [ $ok = yes ] && [ -n "$cseq" ] && [ "$cseq" != "$mseq" ] && ok=amb
+  fi
+  # check 6: a dump at 0046 or above has the whatsapp row
+  case "$ver" in [0-9][0-9][0-9][0-9]) [ "$((10#$ver))" -ge 46 ] && [ -z "$cseq" ] && ok=no ;; *) ok=no ;; esac
   row "6.8 $tag" "$(case $ok in yes) echo DONE ;; amb) echo AMBIGUOUS ;; *) echo FAILED ;; esac)" "appendix-b.sql; the sequence query" \
-    "queries exit=0: $qexit; $ntab tables, count lines differing from the source: $diffc; version $ver; payments $pay_dst (source $pay_src); ledger|chain|head $led_dst (source $led_src); sequences at/above max: $seqok; cursor $curs; geofence: $(awk '/center_lat/{getline; getline; print; exit}' "$af" | tr -s ' ')" \
-    "check 6 reads 'a 0046 dump has the whatsapp row at or near max(job_event.seq)': here $curs vs max $(echo "$o" | awk '/job_event_seq/{print $3}')"
+    "queries exit=0: $qexit; $ntab tables, count lines differing from the source: $diffc; version $ver (the dump's head ${SEED_HEAD:-?}); payments $pay_dst (source $pay_src); ledger|chain|head $led_dst (source $led_src); sequences at/above max: $seqok; cursor $curs; geofence: $(awk '/center_lat/{getline; getline; print; exit}' "$af" | tr -s ' ')" \
+    "$( [ $exact = yes ] && echo "check 6 as the runbook states it: the cursor equals the value recorded for this dump ($src_cur): here $curs (max(seq) $mseq)" || echo "check 6 reads 'a 0046 dump has the whatsapp row at or near max(job_event.seq)': here $curs vs max $mseq. In the review's form (equals the value recorded for this dump: $src_cur) it $( [ -n "$cseq" ] && [ "$cseq" = "$src_cur" ] && echo passes || echo fails)")"
 }
 
 sec6_tail() { # 6.10-6.14 after a case-a restore
@@ -344,6 +441,7 @@ print("yes" if len(rows) == 1 and [float(x) for x in rows[0]] == [24.86, 67.0, 8
 sec6_13() {
   rb_run 6.13-report "$(rb_fence 6.13 1 1p)"
   local before; before="$(grep 'DEFAULT PIN' "$OLOG" | awk '{print $1}' | tr '\n' ' ')"
+  [ "$PHASE" = restore-1 ] && l4_mut 6.13-skip-one && before="${before#* }"
   local set_line; set_line="$(rb_fence 6.13 1 2p)"
   local id rc_all=0
   for id in $before; do
