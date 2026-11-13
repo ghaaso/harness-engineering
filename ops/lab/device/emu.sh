@@ -30,12 +30,12 @@ load_android_env
 
 GPU="${FF_EMU_GPU:-host}"
 EMU_MEM="${FF_EMU_MEM:-2048}"
+EMU_PORT="${FF_EMU_PORT:-5554}"
 [ "$EMU_SERIAL" = "emulator-$EMU_PORT" ] || die "FF_EMU_SERIAL=$EMU_SERIAL does not match FF_EMU_PORT=$EMU_PORT"
 # 5584 is the coordinator's boot-test emulator: this lab never drives it.
 [ "$EMU_PORT" != 5584 ] || die "port 5584 belongs to the coordinator's emulator"
 [ "$EMU_MEM" -le 2048 ] || die "FF_EMU_MEM=$EMU_MEM exceeds the 2048 MB cap"
 case "$GPU" in *angle*) die "ANGLE GPU modes are not allowed on this machine (antivirus blocks d3dcompiler_47.dll)" ;; esac
-EMU_PORT="${FF_EMU_PORT:-5554}"
 BOOT_TIMEOUT="${FF_EMU_BOOT_TIMEOUT:-600}"
 SLOT_TIMEOUT="${FF_EMU_SLOT_TIMEOUT:-1800}"
 KEEPER_PID_F="$LAB_RUN/emu-keeper.pid"
