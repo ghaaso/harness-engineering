@@ -1,0 +1,51 @@
+VERDICT: PASS
+PR #193 at 986b3ab3fca7a446f321cc9dd31b6d994ab6a44b (I confirmed this is the current head)
+
+The money logic I approved last pass is unchanged: this diff touches only `AppContext.jsx` and `JobDetail.jsx` plus their tests. One minor issue remains, a new background re-read that can briefly show an out-of-date payments list. The coordinator's rule makes it a note rather than a fix, and it can go to P12.
+
+**Notes**
+
+1. MINOR: a slow background re-read can roll the payments list back.
+   - Evidence: `AppContext.jsx:345`, `if (!result.ok) loadJobDetail(jobId).catch(() => {});`, together with the re-read when the form opens (`JobDetail.jsx`, the `hasUnconfirmed` effect). The re-read's answer is merged with no check of which data is newer (`AppContext.jsx:41-46`, `applyServerJob`). The GET has no timeout.
+   - Scenario: on a flaky connection the 500 times out and a re-read starts. The manager retries at once, it lands, and the list shows the 500 with a "Payment recorded" toast. The re-read, which the server answered before the retry was written, then comes back and overwrites the list, so the 500 vanishes and the balance looks unpaid. The key has already been retired, so the notice is gone too. If the manager enters 500 again, it goes under a new key and the customer is charged twice.
+   - Limits: it needs the GET to be slower than a whole retry, and the manager to ignore the success toast. The next re-read (reopening the job) corrects the list.
+   - Smallest fix, for P12: let `replaceFromDetail` ignore a detail whose `updated_at` is older than the one it already holds.
+2. MINOR: the "possible landing" hint does not apply the "recorded after the attempt's first send" filter the coordinator asked for.
+   - Evidence: `JobDetail.jsx`, `PossibleLanding` matches any payment of the same amount and method that is not voided. The store keeps only the latest send time, so there is no first-send time to filter on.
+   - It shows the entry's date and time and only advises "do not discard". Nothing retires a key from it. A wrong hint can only discourage a discard, which is the safe direction.
+
+**Step 2 table**
+
+| Item | Status | Evidence |
+|---|---|---|
+| 1(a) Re-read after a failed or unanswered call, and when the form opens on an attempt | FIXED | `AppContext.jsx:345`; `JobDetail.jsx`, the `hasUnconfirmed` effect. Tests: "re-reads the job after an unanswered or refused payment, not after a success" and "opening the form on an unconfirmed payment re-reads the job". |
+| 1(a) Hint pointing at a matching payment | PARTLY | `PossibleLanding` (note 2). Tests: "points out a payment in the re-read list…" and "a voided or different payment in the list is not pointed out". |
+| 1(b) Discard asks for a check | FIXED | The button now reads "Not in the payments list? Discard this attempt". Test: "the discard control asks for a check instead of asserting the payment failed". It is still one click, but it now asks the manager to look first. |
+| 2 PR body | FIXED | Line 1 is now `Plan @ eaac386`, and journal item 6 corrects the `api.js` statement. |
+
+I judged that the new tests fail on 9e89425 by reading them (the old code made no `fetchJob` call and showed the old wording). I did not run them against 9e89425.
+
+**Tried and could not break**
+
+- **Re-read loop:** none. `loadJobDetail` is stable (its only dependency, `replaceFromDetail`, has no dependencies), and the effect runs only when the form opens or the attempt set becomes non-empty.
+- **Failed re-read:** it is swallowed and nothing changes.
+- **Typed figure:** a re-read changes only the `payments` and `balance` props. The typed amount stays in component state, the modal's `key={job.id}` is unchanged, and the resume figure is unchanged, so nothing resets.
+- **Voided and different payments:** filtered out of the hint.
+- **Money logic:** `paymentAttempts.js`, `jobsApi.js` and `api.js` are not in the 9e89425..986b3ab diff, so the key lookup, rotation, 30 s block, 25 s abort and the five stored fields are untouched.
+- **Changed expectations:** no removed assertions or new skips. The only test change outside the new cases adds a `fetchJob` mock in `AppContext.payments.test.jsx`.
+
+**Gates** (tree = head 986b3ab merged with origin/main 47a2246, local merge commit 3234ed9, clean)
+
+```
+GATE[1 npm run lint] EXIT=0
+GATE[2 npm run format:check] EXIT=0
+GATE[3 npm test -- --maxWorkers=4] EXIT=0
+GATE[4 npm run build] EXIT=0
+SUMMARY FAIL=0
+```
+
+CI on the PR shows mobile passing. The frontend and backend lines were cut off in my output, so I could not read their status; you reported all three green.
+
+I removed the review worktree. I did not push, comment on or edit the PR.
+
+Coordinator's ruling (2026-11-13): third pass of the binding review (same reviewer; PASS-WITH-FIXES at 89a1202 and at 9e89425, files 193-89a1202.txt and 193-9e89425.txt). Mergeable at 986b3ab3fca7a446f321cc9dd31b6d994ab6a44b. Note 1 (a slow background re-read can overwrite a newer payments list) is new in this round and sits on the money-entry path, so it is not left for P12: the same lane fixes it in a follow-up PR opened straight after this merge (a re-read's answer is applied only if no payment call for that job started or succeeded after the re-read was issued), and the web image for the drain window is not cut before that follow-up is merged. Note 2 (the hint has no first-send time to filter on) errs in the safe direction and is accepted; journaled for P12.
