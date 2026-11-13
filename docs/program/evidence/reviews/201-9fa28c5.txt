@@ -1,0 +1,79 @@
+VERDICT: PASS-WITH-FIXES
+PR #201 at 9fa28c5d6295f7afdbd830769c600baaa9183cc5
+Binding review dispatched by the coordinator on 2026-11-14 at 01:47 (the fixflow-pr-reviewer definition; a clean review tree `.claude/worktrees/rv201-head`). Head checked with `gh pr view` at the start and at the end: still 9fa28c5. Base main, merge-base 90ea88d. The runbook judged against is main's at 53c6046. CI 3 of 3 green. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The rig is safe to keep on main. Both rehearsals were run by the reviewer and gave exactly the lane's counts. Two of the lane's proposed fixes cannot be applied as written (D1, and the marker guard for D5/D6). The rig also has a gap that will break it as soon as a train row carries a migration. Those three need fixing first.
+
+FINDINGS ABOUT THE PR
+
+MAJOR
+1. D1's main proposed wording is the wrong fix (PR body, "Smallest fix" under D1; repeated in `lib/steps.sh:274`). Accepting `whatsapp|N` with `0 < N <= max(seq)` turns the only cursor check in the restore into one that accepts any positive value, including a cursor far below the head. It is not dangerous today: the compose file forces the dispatcher off (runbook 4.2) and 8.8 re-seeds forward-only. But R3's restores go through section 6, and nothing makes them run 8.8 before T_open. The dispatcher's two-day age guard does not cover this: it measures `job_event.created_at` (`customer_messaging/service.py:443-445`), so events drained during the window count as new. Smallest correct fix (the lane's own alternative): in 6.9, once the backend is healthy, run 8.8's forward-only block (`GREATEST`, runbook 1830-1835) and keep the check `whatsapp|<max job_event.seq>` exactly as written. Change 6.8's check 6 to "equals the `dispatch_cursor` value in P0a's dumpfacts for this dump (0046), absent (0045)". The PR and README (`README.md:95-99`) hedge that a 0045 dump would pass; the repo says otherwise: `docs/RUNBOOK-BACKUPS.md:141` records the 0046 deploy to production on 2026-08-02, with "dispatch_cursor +1 (the 0046 seed)". So the real dump is most likely at 0046 with the cursor below the head, and D1 will stop the owner's real P3b.
+2. The D5/D6 marker guard does not close both holes as proposed (PR body D5/D6; `inner/wrongturns.sh:116`). (a) The D5 row makes 6.7 refuse unconditionally unless the marker exists, but the count-0 branch of 6.6 (b) uploads nothing, so it writes no marker, and the first restore into an empty volume would stop at 6.7; the WT5 text makes the rule conditional; the two versions disagree. (b) Only 6.1 removes the marker: it survives a completed restore and waves through a later restore entered at 6.6 or 6.7, which is the skipped-step case D6 is about; it also does not record which dump or which database it vouches for. (c) A separate line `test ... || { echo STOP; exit 1; }` under `sudo -i` (runbook line 47) closes the root shell; the rest of the paste then runs as the login user and is refused only because ffc cannot read `/etc/fixflow` (`ffc:19`). Fix: 6.6 (b) writes the marker in both branches (`tables=0`, or `key=... sha256=...` after the upload, plus `dump=$D`); 6.9 deletes the marker; 6.1 also removes it; 6.7's DROP line itself starts `: "${D:?...}" && test -s marker && grep -qx "dump=$D" marker &&`, so one line carries the guard (the C34 `${SHA:?}` pattern); the scp fallback in the 6.6 (b) text needs a hand-written marker carrying the sha checked on the laptop.
+3. The train rehearsal seeds the stand-in production database at main's head, not the drain image's. `train-rehearsal.sh:45` calls `prep.sh main`, and `inner/prep.sh:47-50,72` runs `alembic upgrade head` on main. Today both heads are 0046. The first train row with a migration (P6b-1, P6b-2, P8a, ...) gives a dump newer than drain-image: 6.4 and 6.8 then stop, the drain backend cannot boot, and R5.6 never applies the new migration to populated data, which is what plan 7.5 L4 requires ("run start.sh's migrations to the new head"). `README.md:118-120` ("A row with a migration needs nothing else") is therefore false. The 0046 hard-codes at `steps.sh:208,307,313` have the same problem. Fix: run `train.sh cut` before prep and seed from `drain-image`; read the expected head from CLAUDE.md at the checkout, as `train.sh:300` already does for 12.4.
+
+MINOR
+4. The fidelity claim is overstated (`README.md:44-45`, `lib/runbook.py:20-21`). Proved by mutation: blocks are chosen by index and lines by sed range, so an added block or an inserted line makes the rig type something else, usually ending in a FAILED with a misleading reason, not a loud miss. Affected calls include `rb_fence 6.6 2 1p` and `'3,$p'`, `6.9 '$p'`, `6.12 '$p'`, `3.6 '$p'`, `R5.3 '3p'`, `11.8 '1,2p'` and `8.1 2`. The runbook batch for D1, D4, D5 and D6 will edit exactly these blocks. Fix: pick blocks by content, or check the block count and first line before typing.
+5. `wrongturns.sh:30` hard-codes WT1's "guard needed?" column to `no: already scripted`, so it can never report YES.
+6. R5.5's check cannot fail on the image tag: the prebuild step already tagged `fixflow/backend:<main sha>` (`train.sh:241` against `:284-285`); only the exit code is live.
+7. R5.9's refusal branch never runs (the branch for "database head above the previous version's, so do not roll back"). Both heads are 0046 here, so the most safety-relevant rollback path is unrehearsed. It becomes rehearsable once finding 3 is fixed.
+8. "Every check shown failing once" (plan line 1832, C33): the PR shows no negative run for most DONE checks. Only 9.2 and 3.6/3.7 were corrected after review.
+9. 7.4 and 7.7 can be rehearsed here: `apk add cronie` reads `/etc/cron.d` with a user field. Step 1.14 is never typed and has no row, although `host.sh:175` installs logrotate for it.
+10. The D10 row in the PR names two jobs; four are affected. The coordinator's C38 already lists all four.
+11. The rig writes to this PC's repository: `host.sh:213` fetches from GitHub into the shared repository's refs (`origin/main`, `refs/tags/drain-pick-tz-fix`). It never pushes, and the README discloses it (`README.md:31-33`). The rehearsal follows whatever GitHub's main is at run time; results do record the sha.
+12. `harness.sh:328` masks only values of 12 or more characters, so the 6-digit stand-in PINs are not masked. They are stand-ins only.
+
+THE LANE'S RUNBOOK FINDINGS, ONE BY ONE
+
+| Item | Verdict | Evidence and correction |
+|---|---|---|
+| D1 (6.9) and 6.8 AMBIGUOUS | Confirmed defect and cause; main fix wrong | 0046 seeds the cursor at `MAX(seq)` with `ON CONFLICT DO NOTHING` (`0046_seed_dispatch_cursor.py:54-61`). A 0046 dump taken later has the cursor below the head; the reviewer's runs showed `204|307`. Check text: runbook 1403-1404 and 1426-1427. Fix as in finding 1 (re-seed inside 6.9). Severity MAJOR: it blocks P3b. |
+| D3 (8.6) | Confirmed | Bare `fixflow-r2-put.sh` at runbook lines 1803 and 3213. The full-path fix is correct and smallest. |
+| D4 | Confirmed, fix partly right | `pg_restore -l` reads only the table of contents; WT3 at 99 % shows `list exit=0`. A sum test must stop on the same line (`echo STOP` stops nothing). It only catches damage after P0a recorded the sum; a scratch-database restore (R7.4/R7.5) is the robust fix. Effect: downtime, not loss, when 6.6 (b) worked. |
+| D5, D6 (C27 notes) | Confirmed; marker fix incomplete | WT5 and WT6 reproduced: nothing stops 6.7. See finding 2. |
+| D7 | Confirmed (advisory) | The guard needs the same-line form. |
+| D8 | Confirmed, harmless | `ops/selfhost/postgres/initdb/10-fixflow-app.sh:18` (`ALTER SCHEMA public OWNER TO fixflow_app`) makes the B5-form dump carry `SCHEMA - public fixflow_app`. Reword runbook 1338-1339. |
+| D10 (9.2) | Confirmed; the fix has a dependency the lane missed | `scheduler.py:53` and `:72` build `CronTrigger` with no timezone. With APScheduler 3.x a trigger passed as an object takes the local zone, which is UTC in the container. Reviewer's run: `db-backup-nightly -> ... 02:30 UTC`. Every cron job runs 5 hours late by shop time. Interval jobs are unaffected. |
+| D10, continued | Dependency on the wrong time | `payroll_week_window` includes Sunday (`attendance/service.py:264-270`). Today's 23:00 PKT run covers Sunday; the corrected 18:00 PKT run would leave Sunday 18:00-24:00 out of an export that is never regenerated (idempotent). So the fix must also choose the payroll hour. Runbook 1.5's reasoning (lines 200-202) and `config.py:227` assume Karachi times. The R2 key stamps `T023000Z` (RUNBOOK-BACKUPS:141) show the defect ran on Railway too. Nothing collides with the 04:30 PKT reboot either way. |
+| D11 | Confirmed | No change needed. |
+| D12 | Confirmed, trivial | |
+| 7.2 AMBIGUOUS | Plausible lab artefact (inferred) | The proposed Expected wording is safe: both outcomes exit 1. |
+| 7.4 AMBIGUOUS, 7.7 NRH | Overstated | Rehearsable here with cronie (finding 9). |
+| 8.6 FAILED | Confirmed (D3) | The rehearsal also hid an ordering defect: N2 below. |
+| 12.6 AMBIGUOUS | Fine | |
+| NRH and N/A rows | Honest | Except 7.4/7.7 and the missing 1.14 row. |
+
+NEW RUNBOOK DEFECTS (found by the reviewer)
+- N1 (MAJOR). 6.7 (lines 1370-1374) has no `${D:?}` guard. In a new or reconnected shell the DROP runs, then `pg_restore -L /restore/.list /restore/` fails, leaving an empty schema. Fix: put the guard on the DROP line itself, together with the marker test.
+- N2 (MAJOR). 8.6 runs "before the ceilings go back" but needs `<T_CLOSE>` "as recorded". T_close is recorded only in 8.7, which comes after 8.6, so the step cannot be followed as written. Rows that land between the audit and 8.7 escape it. The section intro (line 1683) also says T_close is recorded in 8.8. The rig hid this by making up `t_close=now` (`steps-789.sh:173`). Fix: run 8.6 after 8.7 using 8.7's T_close (the audit is read-only and does not need the wide ceilings), and correct the intro.
+- N3 (MINOR; the coordinator's question). The runbook nowhere says its authoritative text is main's. On the host, `/opt/fixflow` is the drain tag's copy. Sections 1-9 are identical between 90ea88d and 53c6046 today (every diff hunk starts at line 2079 or later), but this batch's fixes will land on main only. Fix: one line in the header and in section 0. Any fix that needs a new script under `ops/selfhost/bin` must be inline or re-cut into `release/drain`.
+- N4 (MINOR). The runbook text that assumes Karachi times (1.5's reasoning, R0.5's "the 02:30 dump" and the 9.2 Check) still describes 02:30 PKT, while per C38 the drain image keeps the UTC times (nightly at 07:30 PKT). Only 9.2's rewording is planned in C38.
+
+REPRODUCTION AND COST ON THIS PC
+
+| Run | DONE | FAILED | AMBIGUOUS | NRH | N/A | Wall time |
+|---|---|---|---|---|---|---|
+| Train `20261113T204818Z-train` (reviewer's) | 59 | 1 | 2 | 8 | 4 | 2 m 52 s |
+| Restore `20261113T205243Z-restore` (reviewer's) | 42 | 4 | 4 | 9 | 1 | 6 m 33 s |
+
+Both match the lane's counts exactly, and the wrong turns WT1-WT6 and BACK came out the same. The only differences are commit shas (cherry-picks get new timestamps). 117 `docker stats` samples during the restore: peak 720 MiB, mean 467 MiB, against a 6 GiB cap, with the image cache warm; a cold run (`--purge`, image builds) is unmeasured. Warm, it roughly fits the light pool's 0.5 GB assumption; a cold run should take the heavy pool or more weight. Teardown left no `fixflow-l4*` container. The cache volume `fixflow-l4-host-docker` is kept on purpose: 2.721 GB after the reviewer's runs.
+
+RIG SAFETY: TRIED AND COULD NOT BREAK
+- No port, no PC Docker socket: the container is started with no `-p` and no socket mount (`host.sh:152-153`); its only mount is the volume; kit and bundle go in by `docker cp`.
+- Prunes stay inside: `volume prune` and `network prune` run only inside the stand-in host's own daemon (`host.sh:166-170`). On the PC, only `fixflow-l4-host` and `fixflow-l4-host-docker` are ever removed (`host.sh:242-247`).
+- Offline before the stack starts: the host is cut off before any stack container starts, and the default-route check covers IPv4 and IPv6.
+- Stand-in R2 cannot be confused with the real one: the network alias, a fake account and key, and `AWS_CA_BUNDLE` set to the stand-in CA only (`lab-override.yml:177-181`). Even online, a typo could not authenticate to real R2.
+- No real domain or monitor: the domain is `.invalid` and the dead-man listener is on 127.0.0.1.
+- No GitHub writes: `gh` is not installed in the stand-in; every push goes to `/srv/origin.git`.
+- Nothing secret in the diff: the only hits of the secret grep are two database URLs built from variables (stand-in passwords generated at run time); no reads of `.env`, `eas.json`, `app.json` or `google-services.json`; no Railway, Supabase, wrangler or Cloudflare API call.
+- Missing text fails loudly in two cases: a missing placeholder makes `rb_sub` exit 98 (`harness.sh:285-287`), and a renamed step makes `runbook.py` exit 3 (both confirmed by mutation).
+- Known risk, accepted: `--privileged` gives root on the Docker Desktop VM if anything escapes an inner container; online, the inner builds run npm, PyPI and Docker Hub code. Docker-in-Docker needs the flag.
+
+CONVENTIONS. All 18 files are under `ops/lab/rehearsal/`; `bash -n` passes on all 10 scripts. More than ten cells of the PR tables checked against the lane's raw TSVs: all match. README inaccuracies at lines 44-45, 95-99 and 118-120. Commit subjects use `[L4]`, following the lane's practice. Line 1 of the PR body is `Plan @ plan-v9.23`.
+
+WHAT THE REVIEWER RAN. `git rev-parse`, `merge-base`, `diff`/`log`/`show`; `gh pr view` and `gh pr checks` (read-only); `bash -n` on every script, plus the secret and service greps; both rehearsals from the review tree, with a `docker stats` sampler during the restore; the `runbook.py` mutation tests in `python:3.12-slim` (`--network none`, `--rm`) against mutated copies in a scratch folder: one changed command (typed as changed), one added block and one inserted line (silently shifted), one renamed step (exit 3).
+
+STILL UNVERIFIED. Memory and time of a cold run. 7.2 on a real host's DNS. Whether compose accepts 8.1's literal `KEY=<W>   # ...` line with its trailing comment (the rig used sed on the template instead). The real dump's head; P0a item 4 settles it.
+
+CLEANUP. Both runs tore down; the cache volume is kept as designed. Two results folders were added under `C:/Users/User/.fixflow-cache/lab/l4/`. Scratch files are under the coordinator's scratchpad, `rv201/`. The rig's own `git fetch` was a no-op. No commits, pushes or PR comments.
+
+COORDINATOR (2026-11-14). Sent back to the lane for the rig (findings 3 to 9, 11, 12, and its two proposals corrected to the reviewer's forms in the PR body, the README and the scripts that quote them). The runbook defects, the lane's as judged here plus N1 to N4, go to the runbook's lane as one batch (ruling C42). Not mergeable at 9fa28c5d6295f7afdbd830769c600baaa9183cc5.
