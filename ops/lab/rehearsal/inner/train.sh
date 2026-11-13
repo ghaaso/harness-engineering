@@ -188,7 +188,9 @@ $FIX_FULL"
       && [ "$(out_of | sed -n 2p | cut -d' ' -f2-)" = "$FIX_SUBJECT" ] && echo DONE || echo FAILED)" "git log a31924a..release/drain; the -x sources in pick order" \
     "$(out_of | tr '\n' ';')" "the Check expects four log lines and four source lines; with P2b-2 absent three of each (P1, the fix, P3a) are the right answer. The recovery block is rehearsed in WT7 and WT9"
   rb_run 11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A"
-  row 11.7 "$( [ "$RC" = 0 ] && [ "$(out_of | grep -c '^[<>]')" = 0 ] && echo DONE || echo FAILED)" "diff --name-only vs the commits' files" "$(out_of | head -n 3 | tr '\n' ';')"
+  # the Check: the diff prints nothing; every line after the --stat summary is diff output (in any
+  # format: the stand-in host's busybox diff is unified, the owner's GNU diff is not)
+  row 11.7 "$( [ "$RC" = 0 ] && [ "$(out_of | sed 1d | grep -c .)" = 0 ] && echo DONE || echo FAILED)" "diff --name-only vs the commits' files" "$(out_of | head -n 3 | tr '\n' ';')"
 
   # ---- 11.8 (ruling C34): push the branch alone, SHA, CI for that sha, the gates in a detached worktree
   rb_run 11.8-push "$(rb_fence 11.8 1 '1,2p')"
@@ -276,7 +278,7 @@ $FIX_FULL"
   oldcount="$(git log a31924a..release/drain --format=%B | grep -c 'cherry picked from commit')"
   rb_run wt7-11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A"
   o77="$(out_of)"
-  s117="$( [ "$(echo "$o77" | grep -c '^[<>]')" = 0 ] && echo "silent (no file outside the commits)" || echo "lists files")"
+  s117="$( [ "$(echo "$o77" | sed 1d | grep -c .)" = 0 ] && echo "silent (no file outside the commits)" || echo "lists files")"
   caught=no; [ "$rcsq" != 0 ] && caught=notrun; echo "$o76" | grep -qF "(cherry picked from commit $SQ_FULL)" && [ "$(echo "$o76" | grep 'cherry picked from')" != "$srcexp" ] && caught=yes
   # WT9 first: the recovery block pasted while another branch is checked out
   git switch -q main

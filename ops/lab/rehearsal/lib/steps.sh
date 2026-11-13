@@ -377,7 +377,9 @@ sec6_8() { # <tag>  Appendix B against the source's facts
   local qexit; qexit="$(echo "$o" | grep -c '^queries exit=0$')"
   # 3. the count blocks: lines "<table> | <n>" between the geofence block and the max(time) block
   counts() { awk -F'|' 'NF==2 && $1 ~ /^ [a-z_]+ +$/ && $2 ~ /^ +[0-9]+$/ {gsub(/ /,""); print $1"|"$2}' "$1" | sort; }
-  local diffc; diffc="$(diff <(counts "$OUT/dumpfacts-standin.txt") <(counts "$af") | grep -c '^[<>]')"
+  # lines in one list and not the other (the stand-in host's busybox diff prints unified output,
+  # so counting '<'/'>' lines would never see a difference: mutation M06 showed it)
+  local diffc; diffc="$({ counts "$OUT/dumpfacts-standin.txt"; counts "$af"; } | sort | uniq -u | wc -l | tr -d ' ')"
   local ntab; ntab="$(counts "$af" | wc -l)"
   local ver; ver="$(awk '/version_num/{getline; getline; print $1; exit}' "$af")"
   local pay_src pay_dst
