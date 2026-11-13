@@ -80,6 +80,7 @@ write_summary() { # exit_code note  -> prints the summary; returns 1 if the work
     echo "note: $note"
     echo "wall_seconds: $(($(date +%s) - t_start))"
     echo "slot_wait_seconds: ${slot_wait:-n/a}"
+    echo "slot_acquire_requeues: ${acq_requeues:-0}"
     echo "files_copied: $nfiles"
     echo "caches: $GRADLE_VOL $NPM_VOL"
     echo "limits: memory=$MEM cpuset=$CPUSET gradle_workers=$WORKERS gradle_xmx=$XMX timeout_min=$TIMEOUT_MIN"
@@ -158,11 +159,21 @@ main() {
   HOLDER="$lane-android-$$"
   local t_slot rc note f
   t_slot=$(date +%s)
-  bash "$SLOT_SH" acquire "$HOLDER" 2 "$$" &
-  acq_pid=$!
-  wait "$acq_pid"
-  rc=$?
-  acq_pid=""
+  # A waiting acquire has twice been killed by a SIGTERM from outside this script (2026-11-13,
+  # source unknown). If the acquire dies by a signal while this script is alive, requeue (at
+  # the back of the line) up to 5 times and record it; a signal to THIS script still ends
+  # the run through the trap.
+  acq_requeues=0
+  while :; do
+    bash "$SLOT_SH" acquire "$HOLDER" 2 "$$" &
+    acq_pid=$!
+    wait "$acq_pid"
+    rc=$?
+    acq_pid=""
+    [ "$rc" -gt 128 ] && [ "$acq_requeues" -lt 5 ] || break
+    acq_requeues=$((acq_requeues + 1))
+    echo "slot acquire killed by signal $((rc - 128)); requeue $acq_requeues/5" >&2
+  done
   if [ "$rc" -ne 0 ]; then
     write_summary 4 "slot acquire failed (ff-slot.sh exit $rc$([ "$rc" -gt 128 ] && echo ": killed by signal $((rc - 128))"))"
     exit 4
