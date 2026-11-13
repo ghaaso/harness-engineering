@@ -70,7 +70,7 @@ open_lab_job() {
   for c in "On-Going Tasks" "Available Tasks"; do
     if ui_has "$c"; then
       tap_text "$c"
-      if wait_text "LAB customer" 15; then
+      if wait_text "LAB customer" 10 || scroll_to_text "LAB customer"; then
         tap_text "LAB customer"
         wait_text "Add a note…" 20 && return 0
       fi

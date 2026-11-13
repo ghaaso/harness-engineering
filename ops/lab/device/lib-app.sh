@@ -157,6 +157,19 @@ tap_text() { # text [~]
 }
 
 # Wait up to N seconds for a text to appear.
+# Swipe a list up until the text is on screen: a uiautomator dump sees only what is visible, and
+# the c runs' fresh jobs push the oldest one (LAB customer) below the fold. text [swipes=8]
+scroll_to_text() {
+  local i w h
+  read -r w h <<< "$(ash wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -n1)"
+  [ -n "${h:-}" ] || return 1
+  for i in $(seq 0 "${2:-8}"); do
+    ui_has "$1" && return 0
+    ash input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 4)) 400
+    sleep 2
+  done
+  return 1
+}
 wait_text() { # text seconds [~]
   local t=0
   while [ "$t" -lt "$2" ]; do
