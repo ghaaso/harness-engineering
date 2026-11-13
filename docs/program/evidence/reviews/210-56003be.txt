@@ -1,0 +1,73 @@
+VERDICT: PASS-WITH-FIXES
+PR #210 at 56003be3499619b2ea974105814e816bdcfed036
+Binding review by a fresh reviewer (the fixflow-pr-reviewer definition), dispatched by the coordinator on 2026-11-14 at 03:16 under ruling C44; review trees `rv210-head` (the PR head) and `rv210-base` (main 16e154e plus the PR's three test files). Base 16e154e. The head did not move during the review. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Summary. Finding 1 of P8a's third pass (`captured_at`) is fixed: nothing in that one field produces a 4xx or a 5xx now; the only exceptions are bodies the JSON decoder itself refuses, which were refused the same way before. Finding 2 (the site test) is partly fixed: breaks E and F and the gap in `alembic/` are now caught, but six spellings still get past it, and its docstring does not list them, although CLAUDE.md says that list is exact. No writer today uses any of them. The fix is small and needs one delta re-read.
+
+FINDINGS. MAJOR / BLOCKER: none.
+
+MINOR 1. The site test is not "every spelling", and its list of what it cannot see is not exact. CLAUDE.md:191 says "the test's docstring is the exact list", and the PR title says "sees every spelling". Not caught, and not listed in the docstring at `backend/tests/test_event_payload_free_text_integration.py:37-46`:
+- `session.bulk_insert_mappings(JobEvent, ...)` and `bulk_update_mappings(JobEvent, ...)` (at `:186`, `name.endswith("insert") or name in {"update","upsert"}` misses `*_mappings`);
+- the insert or update function under an import alias (`from sqlalchemy import update as sa_update`, `insert as ins`): only aliases of the class are followed;
+- `JobEvent.__mapper__.local_table.insert()` and `inspect(JobEvent).local_table.insert()`. This is a narrowing against base: base caught both through `"JobEvent" in ast.dump(func)` (`base:...:87`); the head's receiver check at `:189-193` accepts only the class or a recognised table;
+- `INSERT /* x */ INTO job_event` (a comment between the verb and `INTO`);
+- a name bound through `X if c else Y` or tuple unpacking;
+- `sa.Table(name="job_event", ...)` with the table name as a keyword;
+- `d = ev.payload; d["n"] = ...; flag_modified(ev, "payload")`.
+Smallest fix, either (a) widen the rule (any callee containing `insert`/`update` as a candidate, which covers `bulk_*_mappings`; follow import aliases of `insert`/`update` as class aliases are followed; put back base's fallback) or (b) add these forms to the docstring and change CLAUDE.md:191 to "the docstring lists the known blind spots". Also worth stating: the SQL regex runs on docstrings too, so `"""We never insert into job_event"""` counts as a write site, and `_WRITERS` has no honest place to list such a false positive.
+
+MINOR 2 (wording only, no behaviour change).
+- Schema comment: `schemas.py:164` says "no value of this one field is a 4xx". A 4301-digit integer, or a 100 000-deep array, is valid JSON that Python's decoder refuses: both returned 400 "There was an error parsing the body". The PR body has this carve-out; the code comment does not. Same on base.
+- OpenAPI description: `schemas.py:174` says "Unix seconds". Pydantic reads any number whose magnitude is above 2e10 as milliseconds (`-62135596800` became `1968-01-12T20:06:43.2Z`). Same as before; only the description is inexact.
+- Compatibility claim: "a value that parsed before parses to the same datetime now" is false for strings longer than 64 characters that parsed before (2 in a 25 054-value corpus: ISO strings with 39 or more fraction digits, now "no claim"). CLAUDE.md:162-164 documents the 64-character limit. No realistic client sends one.
+
+Notes (not findings): the commit subject follows the merged #202 precedent; the PR body has no "Decisions / ruled out / owner corrections" heading.
+
+ANSWERS
+1. `captured_at` as a raw field. `captured_at: Any` (`schemas.py:170`) goes to `log_payment`; the replay paths return before any parsing (`service.py:2041-2058`); `_parse_capture_claim` (`:870-891`): a `datetime` passes through; a `bool` is None; a string over 64 characters is None; anything not a string, int or float is None; everything else goes through `TypeAdapter(datetime).validate_python`, and `ValidationError`, `ValueError`, `TypeError` and `OverflowError` all become None. The parsed value then goes through `_trusted_payment_capture` and `_claim_in_utc`. Only the parsed datetime is ever stored. Nothing logs the claim. NUL, a NUL-tailed date and a lone surrogate all became "no claim", with 200 and nothing stored (VERIFIED-BY-COMMAND). The only refusals left are the two decoder-level 400s, the same as before. `true` and `false` are "no claim" (base refused them with 422). Nothing newly trusted: in the compat corpus, 0 values parse now that did not parse before, and 0 raise; a numeric string in the window is stored as `captured_at`, but base parsed it identically.
+2. Compatibility: same datetime for every value that parsed before, except strings over 64 characters. Replays never rewrite the column or the key. No other request field changed.
+3. The site test: today's scan equals the 13 listed writers (the full gate is green, so the "any `.payload`" rule gives no false positive on today's code). `_NOT_DRIVEN` is empty for a good reason (0027 writes payload only as a server default plus an `UPDATE ... SET seq`; 0043-0047 only read `job_event` or add or validate constraints).
+4. CLAUDE.md: :159-164 true as written; :182-191 true except "the test's docstring is the exact list".
+5. Base tree: `test_service.py` fails to import on base (covers the 15 new unit cases). With the two integration files: 9 failed, 19 passed; all nine are new `captured_at` cases answering 422. The `0` case and the 4 earlier edge claims pass on base, as expected. No assertion weakened; no skip, xfail or `.only`.
+6. Merge-readiness gate on `rv210-head` (clean tree at 56003be): gates 1-7 all EXIT=0; `SKIPS total=1435 skipped=0 integration_skipped=0`; SUMMARY FAIL=0; log `/c/Users/User/.fixflow-cache/gate-logs/rv210/backend-20261114-032628`. CI at the end: all three jobs pass.
+7. Scope and conventions: no migration, no `models.py` change; `alembic check` EXIT=0; secret grep: no hit; "What remains" says the follow-up must merge before any client sends `captured_at`.
+
+`captured_at` VALUES SENT THROUGH THE ENDPOINT (head, each replayed: 200 `replayed: true` with exactly one event, except the two decoder-level 400 rows)
+
+| Value | Result |
+|---|---|
+| nested object; 500-deep list; 5000-deep list | 200, no claim |
+| 100 000-deep list | 400 "error parsing the body", nothing written (decoder) |
+| `1e400`, `true`, `false`, `null`, `"x"*64`, `"x"*65`, `"b'2026...'"` | 200, no claim |
+| `1.7e9` | 200, claimed `2023-11-14T22:13:20+00:00` |
+| now-1h as a float with exponent, as an int, as ms, as a digit string | 200, `captured_at` stored (trusted; base parsed the same) |
+| digit string with spaces; ISO with a leading space | 200, no claim (422 on base) |
+| `-1` | 200, claimed `1969-12-31T23:59:59Z` |
+| `-62135596800`, `-62135596801` | 200, claimed 1968-01-12... (read as milliseconds) |
+| `-0`, `-0.0` | 200, claimed `1970-01-01T00:00:00Z` |
+| `+24:00` offset | 200, no claim |
+| `0001-01-01T00:00:00+23:59` | 200, left out (no UTC form) |
+| NUL-tailed date; `"\u0000"`; lone surrogate | 200, no claim, nothing stored |
+| 64-character date (outside the window) | 200, claimed |
+| 64-character date (inside the window) | 200, stored |
+| 65-character date | 200, no claim |
+| 4300-digit integer | 200, no claim |
+| 4301- and 5000-digit integers | 400 (decoder) |
+| `"2026-11-14"` (date only) | 200, claimed `2026-11-14T00:00:00Z` |
+
+SITE-TEST BREAKS (scratch copy of the head)
+
+| Break | Caught? | In the not-seen list? |
+|---|---|---|
+| E `insert(JobEvent.__table__)`; F1 `JobEvent as _Ev`; F2 `INSERT INTO "job_event"`; a helper under `alembic/`; implicit string concatenation; `UPDATE public.job_event AS e SET "payload"`; `ev.payload \|= ...`; `ev.payload.__setitem__(...)`; `sa.dialects.postgresql.insert(JobEvent)`; `sa.insert(table=JobEvent.__table__)`; `pg_insert(...).on_conflict_do_update`; `stmt = insert(JobEvent)` | yes | - |
+| a docstring saying "insert into job_event" | yes (false positive) | - |
+| `getattr(models,"JobEvent")(...)`; `"INSERT INTO " + "job_event"`; `.format("job_event")`; an f-string with `JobEvent.__tablename__`; a writer in `app/.../tests/` | no | listed |
+| `bulk_insert_mappings` / `bulk_update_mappings`; aliased `update as sa_update` / `insert as ins`; `JobEvent.__mapper__.local_table.insert()` and `inspect(JobEvent).local_table.insert()` (base caught both); `INSERT /* x */ INTO job_event`; binding through a conditional expression or tuple unpacking; `sa.Table(name="job_event")`; an alias of the `.payload` dict, then `flag_modified` | no | no |
+
+COULD NOT BREAK. No value of `captured_at` gave a 5xx, or a 4xx other than at the decoder. No raw string reached a column or the payload. No replay rewrote anything. Nothing that was a 422 before is now trusted.
+
+WHAT THE REVIEWER RAN. `gh pr view 210`, `gh pr checks 210` at the start and the end; `git diff`/`show`/`grep` at both SHAs; gate `rv210b` on the base tree twice (9 failed, 19 passed on the two integration files); gate `rv210` on the head (green, 1435 tests); gate `rv210p` twice on a `git archive` copy with a probe test and break modules. No container named `fixflow-rv210*` remains; nothing edited in the prepared trees. Probe files and outputs are kept in the coordinator's scratchpad (`probe/`) and under `C:/Users/User/.fixflow-cache/gate-logs/rv210p/`.
+
+UNVERIFIED. That base catches the two `local_table` breaks (read from base's rule, not run). The PR's own break run as written.
+
+COORDINATOR (2026-11-14), RULING C49. Sent back for one commit and one delta re-read by the same reviewer. The site test is a tripwire, not a proof: no reading of source can see every way a row can be written. So three things and no more: it must not see less than it did before (base's fallback goes back); it takes the forms that cost a line (the bulk mapping calls, import aliases of insert and update, a comment inside the SQL verb); and its docstring lists every form known to slip past, with CLAUDE.md saying "the known blind spots", not "the exact list". After this round a further unseen spelling found by a reviewer is added to that list by the lane as a note; it does not hold a merge. The three wording points are corrected in the same commit. Not mergeable at 56003be3499619b2ea974105814e816bdcfed036.
