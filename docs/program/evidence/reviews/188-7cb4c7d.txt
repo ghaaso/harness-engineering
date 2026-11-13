@@ -1,0 +1,55 @@
+VERDICT: PASS-WITH-FIXES
+PR #188 at 7cb4c7dc895db7dc3b1859b7ce6fef6c34bc970c (the head is unchanged from the brief; the base is a31924a)
+Binding review dispatched by the coordinator, 2026-11-13 15:41 (Opus, fresh context, PR-reviewer and EAS-release-operator definitions, own detached checkout).
+
+Findings
+
+1. MAJOR: a killed run leaves a 6 GB container running after its slots are freed. ops/lab/android-compile.sh:221 starts the container. docs/program/lab/ff-slot.sh:61 frees the slots once the script's PID is gone. An agent's task-stop or taskkill /F acts like SIGKILL: the container then runs for up to 110 minutes outside the lock, and the next exclusive build adds another 6 GB in a 15.5 GB VM where other lanes' database containers live. The README documents this; nothing prevents it. Smallest fix, in this PR's own file: after the slots are acquired, remove any running container labelled fixflow.holder whose name matches fixflow-*-android. That is safe because, while this run holds every slot, no other Android build can be legitimately running.
+2. MINOR: some untracked secret files are copied into the build. android-compile.sh:192 copies untracked files that are not ignored. git check-ignore: technician-app/.env.production, .env.development, credentials.json and *.keystore are NOT ignored. If a .env.production exists, Expo loads it for the release bundle, so the real API URL and DSN get baked in. The redaction never covers .env values. That would make README:18-20 ("cannot reach a real server") false. Fix: exit 3 when the copy list contains technician-app/.env* (except .env.example), credentials.json, *.keystore or *.jks.
+3. MINOR: "compile evidence only" is enforced by nothing. android-compile-inner.sh:195 writes app-release.apk with the production package name com.fixflow.technician. Fix: name it COMPILE-ONLY-debugkey-<variant>.apk, or keep only the facts unless an opt-in variable asks for the APK.
+4. MINOR: README:93-97 says the secret-bearing material lives only in the container. But the Gradle build cache in the fixflow-gradle-cache volume stores task outputs, which include the processed google-services resources and the merged manifest, unredacted (inferred from how the Gradle cache works; the volume was not opened). Fix: say so in the README.
+5. MINOR: with Docker stopped, the run still queues for the exclusive slots. The docker inspect at line 154 fails silently, the run waits for all slots, then reports "image build failed" with exit 5 (lines 199-204). Fix: docker info >/dev/null || die before acquiring.
+6. MINOR: supply chain gaps. Dockerfile.android:47: yes | sdkmanager --licenses accepts the SDK licences silently, and the README never says so. apt packages (line 34) and platform-tools (line 49) are unpinned. The prebuild template is fetched by the moving dist-tag sdk-52 (inner:61; the log resolved it to 52.0.79). The Gradle distribution download (cold build.log:87) shows no checksum check. Fix: pin the template with --template expo-template-bare-minimum@52.0.79 and document the licence acceptance.
+7. MINOR: memory knobs and the out-of-memory note. FF_ANDROID_XMX "at most 4g" is not enforced (outer:121). An out-of-memory kill of a Gradle child process exits 1, which maps to 10 "build failed", not 12 (outer:236-247); only container_oom_kills shows the real cause. The spike peaked at exactly the 6g cap, and a cold build at 6g is still unmeasured.
+8. MINOR: two gaps in the records. The spike pins tslocationmanagerVersion to 4.7.+, so the native SDK version actually resolved is not recorded. Header line 11 says the APK "bakes no API host"; it bakes the 10.0.2.2:8000 fallback.
+9. MINOR: a run stopped with TERM left an empty android-<stamp>/ folder with no summary.txt.
+
+CLAUDE.md:87 should read: "A real Android compile is gated only locally and by hand (ops/lab/android-compile.sh: release APK in a container, compile evidence only, never installed). CI still compiles no native code, and EAS stays the only build a phone receives."
+
+Claims
+
+| Claim | Where found | How verified |
+|---|---|---|
+| Cold 1460 s at 10g, Gradle 1400 s | lab/l2/android-20261113T124613/summary.txt | read |
+| Warm 81 s (1013 total minus 932 slot wait), 5218 MiB, 0 out-of-memory kills, ccache 204/204 | android-20261113T135958/summary.txt (head 26ebebd, not 7cb4c7d; copy_sha256 is the same) | read |
+| APK 79,870,313 B, 4 ABIs, com.fixflow.technician, versionCode 1 / versionName 0.1.0, min/target SDK 24/34 | the summaries above | read |
+| Signer fac617...3b9c, CN=Android Debug | the summaries above | read |
+| Release command-line tools file and sha256 | developer.android.com/studio | fetched; matches Dockerfile:25-26 |
+| 10 values redacted, 0 remaining | summaries; extraction re-run | ran: 10 values, 0 hits in any log or .out file (exact, URL-encoded, base64, 10-character prefix/suffix) |
+| APK points at no real host | the APK bundle | ran: 10.0.2.2:8000 found once; no eas.json URL or host. The Firebase values are in resources.arsc, as expected |
+| Spike: library 5.8.2, expo 52.0.49, RN 0.76.9, newArchEnabled=false, BUILD SUCCESSFUL, 87,884,418 B, peak 6144 MiB | android-20261113T144106/build.log:120-149, 2096 and its summary | read |
+| Library not added to the repository | the PR diff is 4 files under ops/lab/; the hook lives in .fixflow-cache/lab/l2/spike/ | read |
+| Licence statements | docs.transistorsoft.com/react-native/setup | partly: the page confirms release builds need a licence, debug builds don't, and a 30-day trial exists. It does not cover v4 to v5 keys or runtime vs build-time checking. The pricing page was not read |
+
+Tried and could not break
+- Writing to the repository: the worktree mount is read-only, the output folder is refused inside a checkout (lines 138-139), and the git calls use GIT_OPTIONAL_LOCKS=0. Exit 7 sees untracked files but not ignored ones; the read-only mount is the real guarantee.
+- The image: it is built with no build context, so no repository file can reach a layer.
+- Config values in the outer stdout: only the redacted tail is printed.
+- Paths: NUL-separated copy list, cygpath -m, and MSYS_NO_PATHCONV scoped to docker only.
+- Same-lane race: the exclusive slot serialises two runs.
+- TERM while waiting for a slot: tested. Exit 130 in under 5 s, ticket gone, no container, worktree clean.
+- No docker network command anywhere.
+- The base image is pinned by digest under the official node name.
+
+ff-slot.sh (the coordinator's script), the lane's three points
+1. Confirmed. The reap function (lines 53-66) checks only PID and age; line 61 removes a slot whose PID is dead. Nothing checks for a running container.
+2. Confirmed, narrow window. Line 128 makes the slot directory and line 129 writes the holder file. A slot without a holder has an empty PID, so it falls to line 64 and is only reaped after STALE_MIN = 240 minutes (line 35). Release at line 149 needs the holder file, and the EXIT trap at line 90 removes only the ticket.
+3. Partly confirmed. kill -0 <Windows PID> fails in Git Bash. On the current file, though, acquire exits 3 "ABANDONED" on its first pass (lines 97-99) before taking any slot. So such a caller is refused rather than having live slots reaped.
+
+What the reviewer ran: gh pr view; a detached worktree review-l2 at the head; docker volume ls (cache volumes and the image tag existed, so the build would have been warm); android-compile.sh l2-rev . release in the background, not run to completion: it waited 4th in the slot queue for about 2 minutes behind an emulator holding slot 3 and was then stopped with kill -TERM to test the trap; kill -0 tests against Windows PIDs, a count-only secret scan, a git check-ignore matrix, and two web fetches. The empty output folder and the extracted APK files were deleted and the worktree removed. Nothing was pushed or posted.
+
+Unverified
+- Whether the template's gradle-wrapper.properties carries distributionSha256Sum.
+- What the fixflow-gradle-cache volume actually contains.
+
+Coordinator's ruling (2026-11-13): sent back to the lane. Must fix before merge: 1 (stale Android containers removed once every slot is held), 2 (refuse a copy list that carries an env file, credentials.json or a keystore), 3 (the APK is named as compile-only), 5 (Docker checked before queueing), 6 (template pinned; licence acceptance documented), the README corrections of 4 and 8, and the CLAUDE.md sentence. 7 and 9 are fixed if cheap, else journaled. The three ff-slot.sh points are the coordinator's: the holder-less slot window is closed in ff-slot.sh the same day. Not mergeable at 7cb4c7dc895db7dc3b1859b7ce6fef6c34bc970c.

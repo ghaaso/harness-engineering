@@ -10,8 +10,12 @@
 #   ff-slot.sh release <holder>
 #   ff-slot.sh status
 #
+# Pools: FF_POOL=light is the pool for backend gate stacks (about 0.5 GB each); everything else
+# uses the default heavy pool. Each pool has its own slots and its own queue (see BASE_D below).
+#
 # Weights: a backend stack, a Jest run, a Vitest run and a running emulator take 1. Any request
-# for 2 or more (a Gradle build) is EXCLUSIVE: it takes every slot, whatever the slot count is.
+# for 2 or more (a Gradle build) is EXCLUSIVE in its pool: it takes every slot of that pool,
+# whatever the slot count is. It does not wait for the light pool.
 #
 # Slots are directories (mkdir is atomic on NTFS). Pass the PID of the long-lived process that
 # owns the job (the gate script passes its own): a slot is then reaped only when that process
@@ -26,12 +30,21 @@
 # waited less than FF_HEAVY_PATIENCE seconds (default 900). After that the heavy job blocks
 # everything behind it until it has run, so it cannot starve.
 set -u
-D="${FF_LOCK_DIR:-/c/Users/User/.fixflow-cache/locks}"
+BASE_D="${FF_LOCK_DIR:-/c/Users/User/.fixflow-cache/locks}"
+# Two pools since 2026-11-13 15:55. Measured with six jobs queued behind three slots: a backend
+# gate stack uses about 0.5 GB (403 MiB + 102 MiB), a running emulator 4.7 GB, and the queue was
+# mostly backend runs waiting behind an emulator and each other. So backend stacks get their own
+# LIGHT pool (FF_POOL=light, set by ff-gates.sh for kind=backend) and no longer compete with the
+# HEAVY pool (Jest, Vitest, an emulator, a Gradle build). Worst case with both pools full:
+# emulator 4.7 + one phone test run 2.5 + two backend stacks 1.0 = 8.2 GB, under what three
+# single-pool slots could reach (emulator + two phone test runs = 9.7 GB).
+POOL="${FF_POOL:-heavy}"
+if [ "$POOL" = light ]; then D="$BASE_D/light"; else POOL=heavy; D="$BASE_D"; fi
 # 3 slots. Measured with two backend gate stacks running (2026-11-13 14:26): each stack used
 # about 0.4-0.5 GB (the 3 GB figure is only its cap), while the Docker VM held 6.9 GB of page
 # cache; so the cache, not the gates, was eating the host's RAM, and the gate script now drops
 # it at the start and end of every backend run. A Gradle build stays exclusive (see weights).
-N="${FF_SLOTS:-3}"
+if [ "$POOL" = light ]; then N="${FF_LIGHT_SLOTS:-2}"; else N="${FF_SLOTS:-2}"; fi
 STALE_MIN="${FF_STALE_MIN:-240}"
 Q="$D/queue"
 mkdir -p "$D" "$Q"
@@ -55,6 +68,13 @@ reap() {
   for s in "$D"/slot-*; do
     [ -d "$s" ] || continue
     if from_before_boot "$s"; then rm -rf "$s"; continue; fi
+    # A slot whose holder file was never written: the acquire call died between making the
+    # directory and writing the file. Nobody can release it (release matches on the holder
+    # file), so it goes after two minutes, not after STALE_MIN (L2 review, 2026-11-13).
+    if [ ! -s "$s/holder" ]; then
+      [ -n "$(find "$s" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rm -rf "$s"
+      continue
+    fi
     pid="$(awk '{print $3}' "$s/holder" 2>/dev/null)"
     if [ -n "$pid" ] && [ "$pid" != "-" ]; then
       # owner process gone, and the slot is not seconds old (a holder file still being written)
@@ -79,7 +99,8 @@ case "$cmd" in
     holder="${2:?holder}"
     w="${3:-1}"
     pid="${4:--}"
-    if [ "$w" -ge 2 ]; then w="$N"; fi   # heavy means exclusive
+    excl=0
+    if [ "$w" -ge 2 ]; then w="$N"; excl=1; fi   # heavy means exclusive
     t0=$(date +%s)
     # the ticket lives as long as this acquire call does; its name sorts by arrival time
     # The weight is in the ticket's NAME and its content is the bare PID. A waiter still running an
@@ -87,7 +108,11 @@ case "$cmd" in
     # (that stranded two runs on 2026-11-13), so the content format never changes again.
     ticket="$Q/$(date +%s%N)-w${w}-$holder"
     echo "$$" > "$ticket"
-    trap 'rm -f "$ticket"' EXIT
+    # On any exit the ticket goes. Slots taken but not yet confirmed go too: an acquire call
+    # stopped part-way through an all-or-nothing take used to leave them behind.
+    got=()
+    confirmed=0
+    trap 'rm -f "$ticket"; if [ "$confirmed" != 1 ]; then for i in "${got[@]:-}"; do [ -n "$i" ] && rm -rf "$D/slot-$i"; done; fi' EXIT
     PATIENCE="${FF_HEAVY_PATIENCE:-900}"
     while :; do
       reap
@@ -132,11 +157,20 @@ case "$cmd" in
           fi
         done
         if [ "${#got[@]}" -ge "$w" ]; then
-          echo "SLOTS ${got[*]} holder=$holder waited=$(( $(date +%s) - t0 ))s"
-          exit 0
+          # An exclusive job needs the whole pool, and a slot numbered above N can still be held
+          # by a job that started when the pool was larger (the slot count went from 3 to 2 while
+          # an emulator held slot 3). Until that holder is gone, give the take back and wait.
+          if [ "$excl" = 1 ] && [ "$(ls -d "$D"/slot-* 2>/dev/null | wc -l)" -gt "${#got[@]}" ]; then
+            :
+          else
+            confirmed=1
+            echo "SLOTS ${got[*]} holder=$holder waited=$(( $(date +%s) - t0 ))s"
+            exit 0
+          fi
         fi
         # all-or-nothing: give back a partial take and keep our place at the head
         for i in "${got[@]:-}"; do [ -n "$i" ] && rm -rf "$D/slot-$i"; done
+        got=()
         sleep 3
       else
         sleep $(( 4 + RANDOM % 4 ))
@@ -145,7 +179,8 @@ case "$cmd" in
     ;;
   release)
     holder="${2:?holder}"
-    for s in "$D"/slot-*; do
+    # both pools: a caller need not know which one its acquire used
+    for s in "$BASE_D"/slot-* "$BASE_D"/light/slot-*; do
       [ -f "$s/holder" ] && grep -q "^$holder " "$s/holder" && rm -rf "$s"
     done
     echo "RELEASED holder=$holder"
@@ -161,6 +196,9 @@ case "$cmd" in
       echo "waiting $n: ${t#*-} for $(( $(date +%s) - ${t%%-*} / 1000000000 ))s"
     done
     echo "slots=$N stale_min=$STALE_MIN dir=$D"
+    if [ "$POOL" = heavy ] && [ -d "$BASE_D/light" ]; then
+      FF_POOL=light bash "$0" status | sed 's/^/light: /'
+    fi
     ;;
   *)
     echo "unknown command: $cmd" >&2

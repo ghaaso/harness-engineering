@@ -1,0 +1,78 @@
+VERDICT: PASS-WITH-FIXES
+PR #193 at 9e89425aef7245c541747c06bfdf0a212506d132 (I confirmed this is the current head; I reviewed 89a1202 in the first pass)
+
+Both first-pass double-charge paths are fixed and proven: 19 new tests fail on the 89a1202 code and pass on this head. What remains is two minor items, both outside the money logic.
+
+**Findings**
+
+1. MINOR: the discard button tells the manager something they can't know yet.
+   - Evidence: `src/features/jobs/pages/JobDetail.jsx`, the discard button labelled "It did not go through — discard". It appears once the 30 s window has passed.
+   - The job is not re-fetched after a failed or unanswered payment, so the payments list behind the modal can be stale.
+   - Scenario: during the drain the manager sees "Not confirmed yet: Rs 500 cash". The ledger doesn't show the 500 because it was never refreshed, so they click discard. The 500 had actually landed. They re-enter 500, it goes under a new key, and the customer is charged twice.
+   - The button is only an escape hatch the manager chooses, but the wording invites the wrong choice.
+   - Smallest fix: when the form opens with unconfirmed attempts, re-fetch the job. At minimum, change the wording to "Missing from the payments list after a refresh? Discard".
+
+2. MINOR: the PR's paperwork is stale or off-plan.
+   - Journal item 6 still says "`src/shared/lib/api.js` is not touched". This head changes it (the new `init` argument).
+   - Line 1 of the body is `Plan @ plan-v9.1`, a label rather than a sha.
+   - The branch is `claude/p12a-…`; the plan names `fix/web-payment-idempotency` (`SHIP-PLAN-2026-11.md:664`).
+
+**First-pass table**
+
+| First-pass finding | Status | Evidence |
+|---|---|---|
+| 1. Reload or second tab sends a new key (MAJOR) | FIXED | `paymentAttempts.js:206-225`: the attempt is written to storage before the request goes out, and storage is re-read on every submit. Proven by "a reload while the request is still in flight resumes the same key", "a second tab sends the same key…", "a retry after a page reload sends the same key" and "after a reload the form still resumes…" — each fails on 89a1202 and passes here. |
+| 2. A hung request is silently joined forever (MINOR) | FIXED | `jobsApi.js` `logPayment`: AbortController with a 25 s timeout. An abort carries no HTTP status, so the attempt counts as unconfirmed and keeps its key (`paymentAttempts.js:67-70`). Proven by "abandons a hung payment request after PAYMENT_TIMEOUT_MS…", which fails on 89a1202. |
+| 3. A genuinely new identical payment is swallowed (residual) | NOT FIXED, accepted | It needs the server to report a deduplicated replay; recorded for the backend money phase (journal 12). |
+| 4. Branch name and `Plan @` line | NOT FIXED | Finding 2 above. |
+
+- Changed expected values: two. `AppContext.payments.test.jsx` and `paymentAttempts.test.js` each widen an `unconfirmed` assertion to the new shape (key, at, recent). Both are stricter than before, not weaker.
+- Removed assertions: none. New skip or only: none.
+
+**Your attack list (item 3)**
+
+- **Reload with the request in flight:** the entry is stored before the send, so the reloaded page resumes the same key and shows "sent moments ago". Discard is blocked for 30 s.
+- **Two tabs, same payment:** the second tab finds the key in storage and resends it. If the server sees both at once, its IntegrityError recovery (`service.py:1468-1477`) keeps one row.
+- **Discard in one tab while the other is sending:** the sending tab restamps the send time in storage before it sends. The other tab picks up the later time on its next read (`paymentAttempts.js:170`), so its discard is refused.
+- **`storage` event late or never:** nothing depends on it except refreshing the notice. Every submit, discard and render re-reads storage.
+- **Clock backwards or a future-dated entry:** that entry can't be discarded or expired, but a retry restamps it to the current time (`:223`). That retry either lands or collapses onto the earlier payment, and either way the key is retired. So it never blocks a legitimate payment for good.
+- **24 h expiry:** applies on the client only (the server's key constraint never expires). After 24 h a retry would mint a new key, but by then the ledger shows whether it landed. Low.
+- **Storage full, disabled or holding the wrong shape:** wrong-shape data is filtered by `isEntry` and repaired by the next write. Storage that throws or is full falls back to memory, and an unsaved entry in memory is never pruned (`:175` prunes only entries that were saved). Covered by tests.
+- **Editing the figure after an unanswered attempt:** the edit gets a new key, so 500 and 600 can both land. The 500 stays listed in the notice. This is inherent: only server truth could fix it.
+- **Request the server received before the 25 s abort:** the key is kept, so a retry collapses onto it. A server commit after 30 s plus a discard is the manager's call (finding 1).
+- **Anything beyond the five fields in `localStorage`:** no. `writeStored` writes only key, job id, amount, method and time (`:141-147`); test "stores only key, job, amount, method and time".
+- **`init` changing other `apiSend` callers:** it can't. `...init` is spread first and `method`, `headers` and `body` override it (`api.js:68-72`). No other caller of the 15 passes a fourth argument; test "leaves other callers' requests without a signal".
+
+**The author's five accepted low items** (journal 11 (2)-(5), plus the 4b88de7 notes)
+
+- Another tab lands the attempt and this tab's form keeps the figure: agree low. A resend collapses onto the landed payment.
+- Two tabs minting in the same instant: agree low. One person can't click two tabs at once.
+- A future-dated entry never expires: agree, it is the safe direction, and a retry clears it.
+- The store survives logout: agree low. It holds no customer data, and a retry is still idempotent.
+- A storage write that fails and misses a restamp, or a server commit after the window: agree low. Both need storage failure or a discard by the manager on top.
+
+**Tried and could not break** (by reading `paymentAttempts.js`; the cases with tests named above are also covered by tests)
+
+- A stale key sent with a changed job, amount or method: still impossible, because the key is looked up by job, amount and method.
+- Rotation: every 2xx retires the key in this tab and in storage, and other tabs drop it on their next read.
+- A 4xx on a retry keeps the key, and discard is available 30 s later.
+- Double-click still joins the request in flight.
+
+**Gates** (tree = head 9e89425 merged with origin/main 47a2246, a local merge commit 9af4c2f; clean)
+
+```
+GATE[1 npm run lint] EXIT=0
+GATE[2 npm run format:check] EXIT=0
+GATE[3 npm test -- --maxWorkers=4] EXIT=0
+GATE[4 npm run build] EXIT=0
+SUMMARY FAIL=0
+```
+
+**Against the 89a1202 sources:** 19 of 53 tests fail, all of them new to this push. The four that pass there are the memory-only and other-caller cases (storage throws, storage full, an abort counting as unconfirmed, other callers sending no signal), which already worked at 89a1202.
+
+I restored the worktree, `git status` was clean, and I removed the review worktree. I did not push, comment on or edit the PR.
+
+**Unverified:** a forward clock jump of 30 s or more while a request is in flight would open discard early (the author noted this). I did not test it.
+
+
+Coordinator's ruling (2026-11-13): second pass of the binding review (same reviewer; first pass PASS-WITH-FIXES at 89a1202). Sent back once more for finding 1 only: when the payment form opens with an unconfirmed attempt the job is re-fetched, and the discard control's wording no longer asserts what the manager cannot know. Finding 2: the PR body is corrected (journal item 6; the plan line names a commit); the branch name is the session's own and is accepted (the lane board, not the v8 Resume line, names a lane's branch). Residual 3 stays with P8a (ruling C7). Not yet mergeable at 9e89425aef7245c541747c06bfdf0a212506d132.

@@ -50,6 +50,9 @@ LOGROOT="${FF_LOG_DIR:-/c/Users/User/.fixflow-cache/gate-logs}"
 L="$LOGROOT/$LANE/$KIND-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$L" "$LOCKROOT"
 HOLDER="$LANE-$KIND-$$"
+# Backend stacks are light (about 0.5 GB measured) and queue in their own pool; Jest, Vitest and
+# everything else stay in the heavy pool with the emulator and the Android build (ff-slot.sh).
+SLOT_POOL=heavy; [ "$KIND" = backend ] && SLOT_POOL=light
 HEAD_SHA="$(git -C "$WTW" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 DIRTY="$(git -C "$WTW" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$DIRTY" = 0 ]; then TREE="clean"; else TREE="dirty($DIRTY)"; fi
@@ -113,7 +116,7 @@ trap cleanup EXIT
 # A gate never runs without its slot: if the acquire call dies or fails, the run stops here
 # (a killed acquire used to fall through and run unslotted).
 take_slot() {
-  bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" > "$L/slot.log" 2>&1
+  FF_POOL="$SLOT_POOL" bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 "$$" > "$L/slot.log" 2>&1
   local rc=$?
   cat "$L/slot.log"
   if [ "$rc" -ne 0 ] || ! grep -q "^SLOTS " "$L/slot.log"; then

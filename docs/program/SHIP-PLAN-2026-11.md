@@ -1732,10 +1732,17 @@ and rebases after P1).
   first is alive. The backend job's `FIXFLOW_ENVIRONMENT` is mirrored from the worktree's own
   `ci.yml`. A **merge-readiness run** has a clean tree and no extra pytest args: the summary
   prints `tree=dirty(n)` and `RUN partial` otherwise.
-- **Slot lock.** `ff-slot.sh` holds **2** slots machine-wide while a Gradle lane is active (3
-  otherwise); a backend stack, a Jest run and a Vitest run take 1 each, a Gradle build 2, a
-  running emulator 1. A slot is reaped only when its owner's process is gone. A lane never
-  starts a heavy job outside it.
+- **Slot lock.** `ff-slot.sh` has **two pools** since 2026-11-13 15:53. The **heavy pool** has 2
+  slots: a Jest run, a Vitest run and a running emulator take 1 each, and a Gradle build takes
+  the whole pool (and waits for any holder left over from a larger slot count). The **light
+  pool** has 2 slots and holds only backend gate stacks, measured at about 0.5 GB each (403 MiB
+  for the gates container, 102 MiB for its database); `ff-gates.sh` picks the pool from the kind.
+  Before the split six jobs queued behind three slots, most of them backend runs waiting behind
+  an emulator and each other. Worst case with both pools full: emulator 4.7 GB + one phone test
+  run about 2.5 GB (an estimate, not yet measured) + two backend stacks 1.0 GB = 8.2 GB, below
+  the 9.7 GB that three single-pool slots could reach. Each pool is first come first served. A
+  slot is reaped when its owner's process is gone, or after two minutes when its holder file was
+  never written. A lane never starts a heavy job outside the lock.
 - **Docker networks.** The predefined address pools are exhausted on this machine by another
   project's 29 networks (`docker network create` fails with "all predefined address pools have
   been fully subnetted"). FixFlow gates therefore share the database container's network
@@ -1753,6 +1760,10 @@ and rebases after P1).
   is the ceiling until some finish. The queue is first come first served: before that, one lane
   waited 20 minutes while later arrivals were served. Gate runs queue, so a lane's inner loop
   passes pytest args for the tests it is working on and keeps full runs for merge-readiness.
+  **With ten lane sessions and three reviewers (15:44 the same day):** 4.1 GB free, commit 44 of
+  50.1 GB; the lane processes held 9.7 GB, the Docker VM 8.5 GB, the emulator 4.7 GB, the
+  owner's own applications about 4.4 GB. Ten sessions is the ceiling; a watcher reports when
+  free commit falls under 3 GB.
 - **Ready signal.** A lane that reports READY also marks its PR ready for review (`gh pr ready`);
   a coordinator watcher polls that flag and wakes the binding review.
 

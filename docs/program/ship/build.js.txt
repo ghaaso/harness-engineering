@@ -178,16 +178,18 @@ const decHtml = secHead('decide', 'Decisions waiting on you',
 const M = P.machine;
 const ramUsed = M.ramTotal - M.ramFree;
 const threads = Array.from({ length: M.threads }, (_, i) => `<span class="th">${i + 1}</span>`).join('');
-const slotJobs = M.costs.map((c) => `<div class="job"><span class="job-name">${esc(c.job)}</span><span class="job-bar">${Array.from({ length: M.slots }, (_, i) => `<span class="slot${i < c.slots ? ' on' : ''}">${i < c.slots ? 'slot' : ''}</span>`).join('')}</span><span class="job-n"><b>${c.slots}</b> of ${M.slots} · ${esc(c.detail)}</span></div>`).join('');
+const poolSize = (c) => (c.pool === 'light' ? M.lightSlots : M.slots);
+const poolName = (c) => (c.pool === 'light' ? 'backend pool' : 'heavy pool');
+const slotJobs = M.costs.map((c) => `<div class="job"><span class="job-name">${esc(c.job)}</span><span class="job-bar" style="grid-template-columns:repeat(${poolSize(c)},1fr)">${Array.from({ length: poolSize(c) }, (_, i) => `<span class="slot${i < c.slots ? ' on' : ''}">${i < c.slots ? 'slot' : ''}</span>`).join('')}</span><span class="job-n"><b>${c.slots}</b> of ${poolSize(c)} in the ${poolName(c)} · ${esc(c.detail)}</span></div>`).join('');
 const machineHtml = secHead('machine', 'How the computer is used',
-  'the boxes and bars are drawn to scale; the number is written on each. Memory, not processor, is what runs out first, so a lock with 3 slots rations the heavy jobs.',
+  'the boxes and bars are drawn to scale; the number is written on each. Memory, not processor, is what runs out first, so a lock rations the heavy jobs.',
   `${esc(M.cpu)}; ${M.ramTotal} GB memory with about ${M.ramFree} GB free while other sessions run; ${M.diskFree} GB disk free. ${measured(M.asOf)}`) +
   `<div class="mach">
     <div class="mpart"><h3>Processor: ${M.threads} threads ${measured(M.asOf)}</h3><div class="threads">${threads}</div><p>Each lane's backend gate container is capped at 6 of them; Jest and Vitest at 4 workers each.</p></div>
     <div class="mpart"><h3>Memory: ${M.ramTotal} GB, the resource that runs out first ${measured(M.asOf)}</h3>
       <div class="ram"><span class="ram-used" style="flex:${ramUsed} 1 0"><b>about ${ramUsed} GB in use</b>&nbsp;(other sessions and projects)</span><span class="ram-free" style="flex:${M.ramFree} 1 0"><b>about ${M.ramFree} GB free</b></span></div>
       <p>A gates container gets 3 GB, each test database 1 GB.</p></div>
-    <div class="mpart"><h3>The 3-slot lock: what each heavy job costs</h3><div class="jobs">${slotJobs}</div><p>At most 3 slots busy at once, machine-wide. Example: three test runs at once, or one Android build on its own. ${illus()}</p></div>
+    <div class="mpart"><h3>The slot lock: two pools, and what each job costs</h3><div class="jobs">${slotJobs}</div><p>Backend test stacks are light (about half a GB each, measured), so they have their own pool of ${M.lightSlots}. Phone and web test runs, the emulator and the Android build share the heavy pool of ${M.slots}; the Android build takes all of it. Split on 2026-11-13 at 15:53, when six jobs were queued behind three slots. ${illus()}</p></div>
     <div class="mpart two"><div><h3>Graphics card (${esc(M.gpu)})</h3><p class="yes"><b>Does:</b> ${esc(M.gpuDoes)}.</p><p class="no"><b>Does not:</b> ${esc(M.gpuDoesNot)}.</p></div>
       <div><h3>Disk: ${M.diskFree} GB free ${measured(M.asOf)}</h3><div class="ram"><span class="ram-free" style="flex:1"><b>${M.diskFree} GB free</b></span></div><p>A worktree with phone node_modules is about 1.2 GB.</p></div></div>
     <div class="mpart"><h3>Docker networks</h3><p>${esc(M.docker)}</p></div>
