@@ -1,0 +1,76 @@
+VERDICT: PASS-WITH-FIXES
+PR #190 at af58e9b85bbf70605d1dfb9d18b49ca5767208a4 (I confirmed this head with `gh pr view`. Base is 47a2246.)
+
+**Findings, most severe first**
+
+1. **MAJOR: No test checks which side of the books each ledger kind lands on.** That was the first thing you asked me to break, and it went through.
+   - Evidence: the only template test is `backend/tests/test_export_week_csv.py:215`, `assert set(LEDGER_TEMPLATE) == {str(kind) for kind in LEDGER_SIGN}`. It compares the kind names only. Every other test checks that a move balances, and a flipped move still balances.
+   - What goes wrong: in break A I flipped `earning` so it debits wages_payable and credits wages_expense. All 84 tests still passed. A swapped template would book every salary backwards in the Odoo trial, and the accountant would draw the wrong lesson from it.
+   - The template is correct today. I checked it against O-07 line 40 and `LEDGER_SIGN` at `attendance/models.py:405-411`. The only problem is that nothing guards it.
+   - Smallest fix: one unit test with the expected debit role, credit role and which line carries the technician for each of the five kinds, copied from O-07 line 40. Also assert that the technician's line is on `wages_payable` exactly on the side `LEDGER_SIGN` implies (a credit when the sign is +1, a debit when it is -1).
+
+2. **MINOR: Nothing tests the week boundaries for ledger rows.**
+   - Evidence: `export_week_csv.py:288-289` selects ledger rows by `occurred_on`. The test ledger rows all sit mid-week (07-23 and 07-24, `test_export_week_csv_integration.py:128-129`).
+   - What goes wrong: in break B I shifted the ledger week to Tuesday through Monday. All 84 tests passed. A Monday ledger row would drop out of its week and land in the previous one.
+   - Fix: add ledger rows dated on the Monday and the Sunday of the test week, plus one on the next Monday, and assert where each one appears.
+
+3. **MINOR: The script reads the shop timezone directly instead of through the validated source P6a added.**
+   - Evidence: `export_week_csv.py:258` and `:269`, `(p.recorded_at AT TIME ZONE s.timezone)::date`. P6a made `tenancy.service.shop_timezone` the single source; it validates the name and falls back to Asia/Karachi.
+   - What goes wrong: if the restored dump holds a bad timezone value, the app falls back but the script crashes with a raw Postgres error. If it holds a POSIX-style name like "UTC+5", Postgres reads the sign the opposite way, so the week boundary moves by about 10 hours.
+   - Fix: check the stored name with `app.shared.tz.is_valid_timezone` (it is in the shared kernel, so no layer rule is crossed). Refuse an invalid name; never fall back silently.
+
+4. **MINOR: A seeded fixture is mixed into the real totals.**
+   - Evidence: `seed_fixture` (`:710`) only runs when the real week is short, and then appends its rows to the real ones. The manifest's `by_kind` and `journal_debit_minor` (`:965-970`) add the two together. Only the counts (`real_rows`) are reported separately.
+   - In `--pseudonymise` mode the seeded technician becomes `Technician tech_<hex>` (`:464`), which looks the same as a real technician.
+   - The External IDs carry no seed marker. The author decided that deliberately (PR journal D15), but your list asked for one.
+   - What goes wrong: when the owner compares Odoo's totals with the manifest, he cannot separate the real money from the fixture.
+   - Fix: add separate `real_sum_minor` and `seeded_sum_minor` figures, and keep the "Seed" name on the seeded technician in both modes.
+
+5. **MINOR: The command the owner will actually run is not in the repo.**
+   - Evidence: the docstring (`:5-9`) says to run `python -m scripts.export_week_csv` from `backend/`, but this laptop has no `python` on PATH.
+   - The restore recipe in Appendix C (`ORCHESTRATION-DESIGN:700-712`) puts the database on a Docker user network named `fixflow-w1` and deletes the container at the end. Reached from outside that network, the database host is `fixflow-w1-restore`, which the host guard refuses unless `--allow-remote-host` is passed. The guard is then only as good as the owner's habit of not passing that flag.
+   - The Docker command rehearsed in D11 lives only in a closing report, not in the PR body, a comment or any file.
+   - Fix: put the exact Docker command in the docstring, using `--network container:<restore>` so the database is reached as `localhost`.
+
+6. **MINOR: Some failures exit with a raw traceback.** An unreachable database, a wrong role or an unparseable URL ends with a traceback and exit 1, not a `REFUSED:` message (shown in Probes below). No secret is printed. Fix: catch `OSError` and `sqlalchemy.exc.DBAPIError`/`ArgumentError` in `main` and print one line.
+
+7. **MINOR: Real names are the default.** Without the flag the export contains real technician names (`:467`, `name = f"{tech_name} ({tech_id})"`). HR-A4 says "pseudonymised unless the owner allows". This matches the plan's wording of the flag, but a forgotten flag sends real names to a third party. Fix: make pseudonymising the default and require an explicit `--real-names`; failing that, say this in the P9-0b runbook.
+
+8. **For P8a, re-check when it merges.** Payment voids are read only from `p.voided` (`:268`) and are always dated with the payment's own date and flagged `void_date_unknown` (`:618-632`).
+   - After migration 0047 adds `voided_at`, the script will not crash. It will keep giving voids the wrong date even when the real void date is known.
+   - Re-check then: date payment voids from `voided_at` in shop-local time, flag only the rows where it is still NULL, and re-test a void that falls in a later week.
+   - Today, a payment voided in a later week moves out of `journal.csv` when the old week is re-exported. That is fine for the rehearsal, which uses a single dump. But importing exports from two different dumps would leave an Odoo move with no reversal, because an import never deletes.
+
+**Deliberate breaks** (each run was only the two test files; I restored to the head after each and `git status` was clean)
+- A, flip the `earning` direction: **not caught** (84 passed).
+- B, shift the ledger week one day later: **not caught** (84 passed).
+- C, drop voided payment and ledger rows in SQL: caught, 10 failed (among them `test_a_void_appears_as_its_own_row_tied_to_its_payment`, `test_a_voided_row_is_not_exported_as_a_live_row` and `test_amounts_round_trip_exactly_from_minor_units`).
+- D, payment week end one day later: caught by `test_the_week_boundary_is_shop_local_time`.
+
+**Tried and could not break**
+- **Read-only:** every statement is a SELECT and no ORM objects are used. The connection sets `default_transaction_read_only=on`, the transaction is `SET TRANSACTION READ ONLY` and checked with `SHOW` (`:403-411`), and `txid_current_if_assigned()` is checked before any file is written (`:1048`). `test_run_export_refuses_a_session_that_has_written` exercises that last check. `--seed-week` adds rows in memory only.
+- **Host guard:** a remote URL was refused with exit 3, and the message does not echo the URL.
+- **Money:** amounts stay `int` and are formatted with `divmod` (`:205`). No float or `Decimal` is used; negatives and `bool` are refused. The 2**53+1 round trip passed against Postgres.
+- **Voids:** a void is its own `_x1` reversal with the lines swapped and the original named in its Reference. That matches the spec's "non-voided payments, voids"; `--voids pairs` gives the O-07 shape.
+- **External IDs:** they come from the row's UUID only and are sorted by (date, ID). Two real exports against Postgres are byte-identical (`:212`). The form is Odoo-safe.
+- **Pseudonymised tokens:** an HMAC under a secret key that is refused inside `--out`. The ledger `note`, the payment `void_reason` and customer fields are never selected. Payment rows carry job tokens only.
+- **CSV:** formula leads are prefixed with `'` (`:806-808`). Amounts are unsigned, so a negative number is never touched. The `csv` module handles quoting, and output is UTF-8 with `\r\n`.
+- **Empty-week refusal:** at least one live payment, one void and one live ledger row are required (`:761-769`), with exit 4 and nothing written.
+- **Layer rules:** the script imports only `app.shared.tenancy`.
+
+**Probes:** I ran the script's `main` inside the gate container with fake URLs containing a marker password. The marker appeared 0 times in any output.
+- remote host: `REFUSED`, exit 3
+- refused connection: `ConnectionRefusedError` traceback, exit 1
+- garbage URL: `ArgumentError: Could not parse SQLAlchemy URL from given URL string`
+- wrong role: `DBAPIError ... role "u" does not exist`
+
+**Gate summary lines (my runs)**
+- Full run, head af58e9b, tree clean: GATE[1..6] EXIT=0; GATE[7 pytest] EXIT=0; `SKIPS total=1154 skipped=0 integration_skipped=0`; `SUMMARY FAIL=0`. Log: `C:/Users/User/.fixflow-cache/gate-logs/p90a-rev/backend-20261113-155952/summary.txt`
+- Break runs, `RUN partial`, 84 tests and 0 integration skipped each: A EXIT=0, B EXIT=0, C EXIT=1 (10 failed), D EXIT=1 (1 failed).
+
+**Unverified**
+- How Odoo handles the `'` prefix and the `Journal Items/Partner/External ID` column header. Both stay open until P10b pins the Odoo version.
+
+**What I did:** I created the review checkout at `C:/Users/User/Documents/projects/EMS_workshop1/.claude/worktrees/review-p90a`, ran 5 gate runs in lane `p90a-rev` (the gate script removed its own containers), and then removed the worktree and pruned. No `fixflow-p90a-rev-*` containers remain. I did not push, comment on or edit the PR, and I never ran anything in the author's worktree.
+
+Coordinator's ruling (2026-11-13): binding review dispatched by the coordinator (Opus, fresh context, PR-reviewer and Odoo-analyst definitions, own detached checkout). Sent back to the lane. Must fix before merge: 1 (a test pins the debit role, the credit role and the technician's line for each ledger kind, and ties the side to LEDGER_SIGN), 2 (ledger rows on the week's first day, last day and the next Monday), 3 (an invalid or non-IANA shop timezone is refused, never followed), 4 (real and seeded sums reported separately; a seeded row is recognisable in both modes and by its identifier), 5 (the exact command the owner runs is in the script's docstring), 6 (connection and URL errors end in one line, not a traceback), 7 (pseudonymised output is the default and real names need an explicit flag: ruling HR-A4). Finding 8 goes into P8a's Scope (date a payment void from voided_at once it exists) and into the P9-0b runbook (never mix exports from two different dumps). Not mergeable at af58e9b85bbf70605d1dfb9d18b49ca5767208a4.
