@@ -224,7 +224,9 @@ closed_window() { # run variant mark seconds
   } > "$f"
   rm -f "$f.poll"
 }
-# The reopen. Sets R_PRE, R_PID, R_CHAIN, R_SAMP, R_HOW. Writes $EV/a<n>-<variant>-reopened.txt.
+# The reopen. Sets R_PRE, R_PID, R_CHAIN, R_SAMP, R_HOW, then, 30 s after going back home (the
+# technician pockets the phone; Play services throttles a background app without an FGS),
+# R_BG_CHAIN and R_BG_SAMP, which the (b) rows are judged on. Writes $EV/a<n>-<variant>-reopened.txt.
 reopen_and_read() { # run variant
   local n="$1" v="$2" M2 f refused
   f="$EV/a$n-$v-reopened.txt"
@@ -237,9 +239,13 @@ reopen_and_read() { # run variant
   R_CHAIN="$(chain_state)"
   R_SAMP="$(sampling_state)"
   refused="$(lc_since "$M2" "$FGS_BG_REFUSED" | head -n1 | cut -c1-18)"
+  go_home
+  sleep 30
+  R_BG_CHAIN="$(chain_state)"
+  R_BG_SAMP="$(sampling_state)"
   R_HOW="$([ -n "$R_PRE" ] && [ "$R_PRE" = "$R_PID" ] && echo "warm (into pid $R_PRE)" || echo "cold (pid ${R_PRE:-none} -> $R_PID)"); start reason: $(lc_since "$M2" "Start proc [0-9]*:$APP_PKG" | head -n1 | sed -n 's/.* for \([a-z-]*\).*/\1/p'); refusal at the reopen: ${refused:-no}"
   {
-    echo "reopen $v: $R_HOW; 15 s later: $R_CHAIN"
+    echo "reopen $v: $R_HOW; 15 s later (on screen): $R_CHAIN; 30 s after going home: $R_BG_CHAIN"
     echo "--- logcat since the reopen"
     lc_since "$M2" "$AM_RE|ReactNativeJS: Running"
     echo "--- notification record"
@@ -280,7 +286,7 @@ check_a_once() { # run-no
   record "a#$n-closed" O01-F01 "$P01A" "$obs" "$a_v" "a$n-warm-closed.txt"
   if [ -n "$K_PID" ]; then
     reopen_and_read "$n" warm
-    record "a#$n-warm" O01-F01 "$P01B" "reopen $R_HOW; 15 s later: $R_CHAIN" "$(samp_verdict "$R_SAMP")" "a$n-warm-reopened.txt"
+    record "a#$n-warm" O01-F01 "$P01B" "reopen $R_HOW; 15 s later (on screen): $R_CHAIN; 30 s after going home: $R_BG_CHAIN" "$(samp_verdict "$R_BG_SAMP")" "a$n-warm-reopened.txt"
   else
     record "a#$n-warm" O01-F01 "$P01B" "no restored process to reopen into" inconclusive "a$n-warm-closed.txt"
   fi
@@ -300,7 +306,7 @@ check_a_once() { # run-no
       record "a#$n-cold" O01-F01 "$P01B" "a process ($(app_pid)) was alive at the cold reopen" inconclusive "a$n-cold-closed.txt"
     else
       reopen_and_read "$n" cold
-      record "a#$n-cold" O01-F01 "$P01B" "before: $pre; closed 30 s: $K_CHAIN; reopen $R_HOW; 15 s later: $R_CHAIN" "$(samp_verdict "$R_SAMP")" "a$n-cold-closed.txt a$n-cold-reopened.txt"
+      record "a#$n-cold" O01-F01 "$P01B" "before: $pre; closed 30 s: $K_CHAIN; reopen $R_HOW; 15 s later (on screen): $R_CHAIN; 30 s after going home: $R_BG_CHAIN" "$(samp_verdict "$R_BG_SAMP")" "a$n-cold-closed.txt a$n-cold-reopened.txt"
     fi
   else
     record "a#$n-cold" O01-F01 "$P01B" "precondition failed: no FGS on duty before the kill" inconclusive timeline.txt
@@ -315,8 +321,8 @@ check_a_once() { # run-no
     fence_dump "$EV/fence-a$n-fstop.txt"
     fence="$(fence_registered "$EV/fence-a$n-fstop.txt")"
     record "a#$n-fstop" O01-F01 "$P01B (stopped by am force-stop)" \
-      "before: $pre; closed ${FSTOP_S} s: restored ${K_PID:-none} by $K_PATH, $K_CHAIN; reopen $R_HOW; 15 s later: $R_CHAIN; workshop fence registered: $fence" \
-      "$(samp_verdict "$R_SAMP")" "a$n-fstop-closed.txt a$n-fstop-reopened.txt fence-a$n-fstop.txt"
+      "before: $pre; closed ${FSTOP_S} s: restored ${K_PID:-none} by $K_PATH, $K_CHAIN; reopen $R_HOW; 15 s later (on screen): $R_CHAIN; 30 s after going home: $R_BG_CHAIN; workshop fence registered: $fence" \
+      "$(samp_verdict "$R_BG_SAMP")" "a$n-fstop-closed.txt a$n-fstop-reopened.txt fence-a$n-fstop.txt"
   else
     record "a#$n-fstop" O01-F01 "$P01B (stopped by am force-stop)" "precondition failed: no FGS on duty before the stop" inconclusive timeline.txt
   fi
@@ -965,7 +971,7 @@ check_reboot() {
   adb_ logcat -v threadtime >> "$EV/logcat.txt" 2>&1 &
   LOGCAT_PID=$!
   geo_provider_on
-  local p0 p1 f1 f2 c1 c2 s1 s2
+  local p0 p1 f1 f2 c1 c2 c3 s1 s2 s3
   p0="$(ping_count)"
   sleep 180
   f1="$(fgs_up)"
@@ -979,11 +985,16 @@ check_reboot() {
   c2="$(chain_state)"
   s2="$(sampling_state)"
   fgs_lines > "$EV/services-reboot-opened.txt"
+  go_home
+  sleep 30
+  c3="$(chain_state)"
+  s3="$(sampling_state)"
+  fgs_lines > "$EV/services-reboot-home.txt"
   # pid=none 3 min after boot: nothing restored the app, so half (a) cannot be judged
   record reboot-closed O01-F01 "$P01A (after a reboot)" \
     "3 min after boot, app not opened: $c1; pings stored=$((p1 - p0))" \
     "$(case "$c1" in pid=none*) echo inconclusive ;; *) samp_verdict "$s1" ;; esac)" services-reboot-closed.txt
-  record reboot-opened O01-F01 "$P01B (after a reboot)" "20 s after opening the app: $c2" "$(samp_verdict "$s2")" services-reboot-opened.txt
+  record reboot-opened O01-F01 "$P01B (after a reboot)" "20 s after opening the app: $c2; 30 s after going home: $c3" "$(samp_verdict "$s3")" "services-reboot-opened.txt services-reboot-home.txt"
   clock out > /dev/null 2>&1
 }
 check_revoke() {
