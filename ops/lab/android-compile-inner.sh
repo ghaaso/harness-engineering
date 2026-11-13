@@ -37,7 +37,11 @@ stage() {
 build() {
   set -euo pipefail
   stage copy
-  tar -C /src --null -T /lab/files -cf - | tar -C /work -xf -
+  # the hash of the exact bytes copied identifies what was built, whatever HEAD says
+  tar -C /src --null -T /lab/files --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 -cf /work/src.tar
+  echo "copy_sha256 $(sha256sum /work/src.tar | cut -c1-16)" > /work/copy.sha
+  tar -C /work -xf /work/src.tar
+  rm -f /work/src.tar
   cd "$APP"
   test ! -e android # the copy must start without a native project (EAS managed workflow)
 
@@ -68,7 +72,7 @@ build() {
     echo "org.gradle.caching=true"
     echo "org.gradle.parallel=true"
   } >> gradle.properties
-  grep -E '^(newArchEnabled|hermesEnabled|reactNativeArchitectures)=' gradle.properties
+  grep -E '^(newArchEnabled|hermesEnabled|reactNativeArchitectures)=' gradle.properties || true
   ccache -z > /dev/null
   ./gradlew --no-daemon --console=plain --build-cache --max-workers "$WORKERS" "$TASK"
   ccache -s
@@ -115,6 +119,7 @@ main() {
   fact "stage_seconds.$cur_stage" "$(($(date +%s) - stage_t0))"
   fact "failed_stage" "$([ "$rc" -eq 0 ] && echo none || echo "$cur_stage")"
   fact "inner_exit" "$rc"
+  [ -s /work/copy.sha ] && fact "copy_sha256" "$(cut -d' ' -f2 /work/copy.sha)"
   fact "sdk_autoinstalls" "$(grep -c 'Preparing "Install' "$RAW")"
   fact "ccache" "$(grep -E '^ +Hits:' "$RAW" | head -n1 | tr -s ' ')"
   fact "container_memory_peak_mib" "$(($(cat /sys/fs/cgroup/memory.peak 2> /dev/null || echo 0) / 1048576))"
