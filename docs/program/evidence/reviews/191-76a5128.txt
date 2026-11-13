@@ -1,0 +1,89 @@
+VERDICT: PASS-WITH-FIXES
+PR #191 at 76a512831fb011c158a893c360bb89b2c3b1827d (reviewed against base 87bbe88). The PR head moved to 3ddc81c (the rebase) while I worked; everything below is bound to 76a5128.
+
+No blockers or majors. The actor rule, R11, the atomic money guards and minimisation hold on every route I enumerated. The fixes below are all minor; any of them could also be deferred to a later phase.
+
+**Findings**
+
+1. MINOR: two media routes now answer 500 to an oversized job token. `backend/app/features/media/router.py:156` (list) and the finalize route now call `access_by_token`, which does `int(token)` and queries `job.token`, an `Integer` column (`jobs/models.py:130`). On the base, list and finalize never touched the database. A signed-in user who sends `GET /api/jobs/99999999999/media` should get a 500 from asyncpg's int32 range error (INFERRED, not run). Reserve and delete already had this on the base. Fix: in `access_by_token`, return `None` when the token falls outside 1..2^31-1.
+
+2. MINOR: media delete is outside the actor rule. `media/router.py:181` reads only `status_by_token`, and `media/service.py:187` reads `if media.created_by is not None and media.created_by != requested_by`. Two consequences:
+   - Older evidence rows have `created_by` NULL, so any technician can delete them on any open job, including another technician's.
+   - The technician who captured a photo can still delete it after a reassignment.
+   
+   The plan's list does not name delete, but the brief asked for every mutating route. Fix: call `access_by_token(write=False)` and refuse `"forbidden"` for non-managers. Otherwise, record it in the backlog.
+
+3. MINOR: a phone that queued a close on an unclaimed job before the deploy gets it parked after the deploy. `_claim_or_require` (`jobs/service.py`, about line 997) answers 409 `(current status: closed)` to any technician write on a closed job that nobody claimed. That 409 comes before `transition`'s settled-state replay check.
+   - Before P7a, a technician could close a job without claiming it. If such a close landed before the deploy, its response was lost and it is replayed after the deploy, it used to be an idempotent success. It now parks in the failed list.
+   - The same applies to notes on such jobs; the author journals that edge (journal 23).
+   
+   Fix: none needed if this goes on the deploy-train note. Otherwise run the settled check before the claim when the job is closed and unclaimed.
+
+4. MINOR (already journaled as finding 5): the payment replay shortcut returns the full job. `jobs/service.py:1816` (`if existing is not None and existing.recorded_by == actor ...`) returns `_detail(row)` without applying the read rule. A former technician who replays their own payment gets the full job after a reassignment, or unminimised while the PII setting is on. They already held that access once. Fix: return `_minimise_detail`, or a 200 with the job as `_read_access` would allow.
+
+5. MINOR: the discount cap is measured against an original bill that the technician writes. Discount is `original - amount`, so it cannot be split into two steps. But a technician can resubmit a lower completion before the first negotiation (the freeze engages only after it) and then negotiate inside the cap. Fix: document this, or measure the cap against the first original in P8b's `job_bill_revision`.
+
+6. MINOR (residual, journal 22): only `create` events written after this deploy record their actor (`_created_by`, `service.py:1090`). A create that landed before the deploy, was reassigned and is replayed afterwards gets 409, and the voice notes waiting on it stay pending. It fails closed. Put it on the deploy note.
+
+**Register**
+
+| Id | Claimed fixed | Test that fails on base, passes on head | Verified by |
+|---|---|---|---|
+| O05-05 / O6-F02 / O6-F04 / O07-F3 | yes | `test_jobs_authz_integration::test_tech_write_on_another_techs_job_is_403[negotiate, payment, completion, ready, abandon, note, followup]` (base: 200) | running |
+| O6-F03 / O04-F16 | yes | `test_payment_on_closed_job_is_409[assigned_tech, manager]` (base: 200) | running |
+| O07-F5 | yes | `test_manager_void_on_closed_job_is_409` | running |
+| O07-F16 (HR-A4) | yes | the three `test_money_close_race_integration::*_racing_a_close_*` tests (base: "money write was not refused: None"). They use two sessions, assert READ COMMITTED and observe the lock wait | running |
+| O07-F15 | yes | `test_payment_client_id_reused_on_another_job_is_409`, `..._with_different_amount_is_409` (base: 200) | running |
+| O07-F4 | yes | `test_tech_negotiate_below_original_without_note_is_flagged`, `test_tech_discount_above_cap_is_403_manager_is_200` | running |
+| O05-06 | yes | detail, list, media, preview and minimisation tests (base: 200 / extra rows) | running |
+| O05-13 | yes | `test_finalize_by_neither_assignee_nor_reserver_is_403_and_row_stays_pending` | running |
+| O05-15 | no (backlog, not claimed) | none | reading |
+
+`test_tech_write_on_another_techs_job_is_403[customer_pin]` passes on the base because the base already guarded that route; the author says so.
+
+**Item 13: changed expectations**
+
+- **The 8 removed `test_tech_write_on_unclaimed_job_is_403` cases:** reversed by R11 and replaced by 14 flow cases that each assert one claim event and an idempotent replay. Legitimate.
+- **Four tests in `test_jobs_integration.py`:** the jobs were assigned to t1 (the manager) and written to by t2; they are now booked to t2 or t7. This is not hiding a real flow: the installed list shows only "mine" and "available" (`JobsListScreen.tsx:180-181` at a31924a), so a technician is never offered another technician's job, and the 403 is asserted separately.
+- **`media/tests/test_router.py`:** fakes moved from `ref_by_token` to `access_by_token`; no assertion changed.
+- **`test_service.py`:** two assertions now name the new arguments.
+- No new skip or xfail.
+
+**Tried and could not break**
+
+- **Route coverage.** Every job-id route in jobs, media and messaging carries the service-layer guard or is manager-only (assign, void, travel trail, evidence-gaps, tech-metrics). The Cloud send checks the actor before it sends. Telemetry and attendance take no job id.
+- **Where R11 commits.** The routes share one session, and `get_session` only closes it, so a refused 403/409/422 rolls the claim back with the write. `send_cloud_message` writes in a savepoint. The only service rollback after a claim is the payment dedup race, which ends as an idempotent replay.
+- **R11's predicate** equals explicit `/claim` (not closed, unassigned). The claim event carries no `client_id`, so it cannot collide with the write's own event. No consumer of job events acts on a claim event.
+- **Races.**
+  - Implicit claim against a manager's assign or a close: re-evaluated under READ COMMITTED.
+  - Same technician, implicit against explicit claim: one claim event.
+  - Lock order: every write takes the job row first, so I found no deadlock.
+- **The installed app's payment `client_id`** is a fresh `Crypto.randomUUID()` per tap (`ArrivalJobBillScreen.tsx:252`). The 409 for a reused key cannot park a genuine payment. The same key with a different method is an idempotent success; a voided original replays as success.
+- **Closed-job rule and 409 text.** `_closed_job_refuses_money_write` is the only predicate. All closed 409s end `(current status: closed)`. No in-repo client regexes that suffix.
+- **`manager_id`.** Request schemas carry no actor field, and pydantic ignores extra fields, so an old client's `manager_id` is neither trusted nor a 422.
+- **Pagination** is opt-in, and the default response is unchanged.
+- **Error bodies.** 403 and 409 bodies carry ids only, no customer data.
+- **Repo conventions.** No migration, no `pyproject` change, no secret pattern in the diff. Commit hygiene and the Co-Authored-By trailers are fine. CI is green.
+
+**Unverified**
+
+- Finding 1's 500 was not run.
+- A completion resubmit racing a close is still check-then-act on the job row (not part of HR-A4's three paths). The bill-freeze read of payments can likewise race a concurrent payment.
+- `GET /api/customers/lookup` answers a customer's name for any phone number to any technician (customers slice, outside P7a).
+
+**What the rebase onto 47a2246 could disturb**
+
+1. `jobs/service.py` `record_location`: P6a rewrote `punch_verdict` and its imports. The actor check must stay before the `get_location_by_client` replay check.
+2. `tenancy/service.py` (29 lines changed on main): the imports and `__all__` for the two new keys; check that no settings key collides.
+3. `backend/pyproject.toml` (changed on main): the import-linter contracts for `app.shared.verdict` and `tz`. Re-run `lint-imports`.
+4. Telemetry service changes from P2a or P6a: confirm none take a job id.
+5. P2a's mobile behaviour (kept writes, a classifier that knows where an error came from) is not the installed app, but its new 4xx handling decides how C3's 403s show. Re-check that they stay visible, not dropped.
+6. Re-run the full gate and the race tests on the new head.
+
+**Gate summaries (my runs)**
+
+- **Full, head 76a5128, tree clean** (`gate-logs/p7a-rev/backend-20261113-154019`): ruff format, ruff check, mypy, lint-imports, alembic upgrade and alembic check all EXIT=0; pytest EXIT=0, 1004 tests, 0 skipped, 0 integration skipped; SUMMARY FAIL=0.
+- **Fail-on-base, RUN partial** (the PR's 9 source files reverted to 87bbe88, 7 test files; `backend-20261113-154928`): 75 fail, 39 pass. The failures are for the right reasons (the race tests: "money write was not refused: None"; the actor and closed tests: 200 instead of 403/409). The 39 that pass are behaviour that must not change. mypy EXIT=1 is expected with mixed trees.
+- **Cleanup:** the review worktree was restored to 76a5128 and its status was clean. I then removed it with `git worktree remove --force`, which succeeded with no long-path issue. There were no `fixflow-p7a-rev-*` containers to remove.
+
+Coordinator's ruling (2026-11-13): binding review dispatched by the coordinator (Opus, fresh context, PR-reviewer and appsec definitions, own detached checkout). Sent back to the lane. Must fix before merge: 1 (an oversized job token answers 404, never 500, on every media route, with a test that runs it), 2 (media delete follows the actor rule), 3 (a replay is recognised before the closed-and-unclaimed refusal, so a close that already landed stays an idempotent success), 4 (the payment replay returns only what the read rule allows). Fix if it is the same few lines as the three guarded paths, otherwise it goes to P8a: the completion resubmit's closed and freeze checks made atomic against a concurrent close or payment (the reviewer's unverified item). Routed: 5 to P8b (the cap is measured against the first original once job_bill_revision exists; P7a documents the limit); 6 to the deploy-train note; the customers lookup oracle to the P13b backlog. The second pass covers the rebase onto 47a2246 (the reviewer's six points) and the fixes together. Not mergeable at 76a512831fb011c158a893c360bb89b2c3b1827d.
