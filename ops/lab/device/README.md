@@ -20,7 +20,7 @@ field session confirms; the lab only makes it confirm instead of explore.
 | `lab-backend.sh edge404 \| 5xx \| hang`                            | Replaces the backend on the same port with `edge-stub.py` (stdlib only): the dead host's 404 + `x-railway-fallback: true` + text body + no `X-FixFlow-Api`; a 503; or accept-and-say-nothing for 20 s. `up` revives the backend with its database intact.                                                  |
 | `build-apk.sh [ref]`                                               | The lab APK of `ref` (default `origin/main`) through L2's `ops/lab/android-compile.sh`, from a detached throwaway worktree, with a hook that bakes `EXPO_PUBLIC_API_URL=http://10.0.2.2:18431` and allows cleartext **in the container copy only**. Needs 2 slots: stop the emulator first.                |
 | `app.sh install <apk> \| grant \| login \| state \| keys \| clear` | Installs on the emulator only (refuses a bundle that lacks the lab base or contains any `eas.json` env value); grants fine, coarse, background location and notifications, denies camera (user-fixed, so a clock-in takes no selfie); signs in as lab tech `t2` by UI; dumps the queues from AsyncStorage. |
-| `protocol-tracker.sh [probe d a c b doze reboot revoke]`           | The adb-scriptable core of the O-01 field protocol.                                                                                                                                                                                                                                                        |
+| `protocol-tracker.sh [probe d f19 a c b doze reboot revoke]`       | The adb-scriptable core of the O-01 field protocol.                                                                                                                                                                                                                                                        |
 | `protocol-offline.sh [control edge404 revival 5xx airplane]`       | The outage matrix.                                                                                                                                                                                                                                                                                         |
 
 Shared code: `lib.sh` (paths, adb/docker wrappers, emulator guard), `lib-app.sh` (UI by text,
@@ -52,8 +52,11 @@ register predicts, what happened, the verdict and the evidence file.
 did not, under this script. `inconclusive` = the precondition failed or the evidence cannot
 decide, with the reason in `observed`. Rows with `register_id: control` are the lab checking
 itself: their `reproduced` means the expected control outcome happened (a write landed against
-the live backend, the FGS probe saw the service on duty and did not see it off duty). Every
-register check has a control that shows the same probe reporting the other outcome.
+the live backend, the FGS probe saw the service on duty and did not see it off duty, a headless
+crossing recorded). Not every register check has a same-probe control for the other outcome:
+the findings table says which do (f19 pairs each run with a headless depart; d with a clean
+arrival; probe covers the FGS probe used by a and c), and which only show the other outcome
+across checks (b and a never produced a "reproduced" here).
 
 ## Safety properties
 
@@ -83,9 +86,22 @@ register check has a control that shows the same probe reporting the other outco
   geofencer (BALANCED) and the on-duty sampler (BALANCED) received nothing: no transitions, one
   ping in a run. The lab therefore installs a Location-Manager test provider named `gps` (as the
   shell uid: root is refused `MOCK_LOCATION`, so `appops set com.android.shell
-  android:mock_location allow` first) and feeds it every 3 s. Every fix is flagged mock: the
+android:mock_location allow` first) and feeds it every 3 s. Every fix is flagged mock: the
   phone sends `is_mock_location=true` and the server records it (it does not reject mock).
   Accuracy is whatever the script says.
+- **F04 is staged.** Play services decides ENTER on the raw point: a calibration run
+  (`calib-f04-*`) delivered no ENTER for any fix 85-100 m from the centre of the 80 m fence at
+  10-40 m accuracy. So `d` delivers ENTER from an inside fix and, as soon as the job starts, moves
+  the fix 100 m out at the same 30 m accuracy, so the handler's own confirmation read is the
+  edge fix. That is the register's condition (OS says inside, the fresh fix says just outside);
+  how often a real phone sees it is a field question.
+- **Pings are not evidence here.** The on-duty sampler (Balanced) barely receives the test
+  provider's fixes: 4 pings landed in about two hours at a 1-minute lab cadence. Checks read the
+  sampler's foreground service instead; a ping count is printed but labelled not-evidence.
+- **Firebase.** Until commit `a5a65e8` the lab APK carried the production
+  `google-services.json`, so the emulator initialised Firebase with the production project
+  (logcat: `FirebaseInitProvider: FirebaseApp initialization successful`). The build hook now
+  writes a dummy project and `app.sh check` fails an APK that carries the production values.
 - **The geofencer is nudged.** Play services re-evaluates a fence on its own schedule (it
   requested `@5m` while 556 m away and had not re-evaluated after 8 min of fixes), on a provider
   change, and on re-registration. `geo_nudge` switches the test provider off and on so it
