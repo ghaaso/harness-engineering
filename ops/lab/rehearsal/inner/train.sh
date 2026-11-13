@@ -125,7 +125,7 @@ deploy)
   BIP="$(docker inspect -f '{{(index .NetworkSettings.Networks "fixflow_app").IPAddress}}' "$(ffc $P_RUN ps -q backend)")"
   BASE="http://$BIP:8000"
   setup="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p6a-setup 2>&1)"
-  r6="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p6a 2>&1)"
+  r6="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p6a "$(echo "$setup" | tail -n 1)" 2>&1)"
   tmpl="$(grep -cE 'FIXFLOW_(ATTENDANCE_LOCATION|JOBS_PUNCH)_ACCURACY_CEILING_M' /opt/fixflow/ops/selfhost/env/backend.env.example)"
   res6="$(echo "$r6" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null || echo FAIL)"
   [ "$hb" = 0 ] && [ "$tmpl" = 0 ] || res6=FAIL
@@ -135,6 +135,7 @@ deploy)
   J_CLOSED="$(psql_app -c "select id from job where status='closed' order by token limit 1")"
   J_UNCL="$(psql_app -c "select id from job where assigned_tech_id is null and status='open' order by token limit 1")"
   r7="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p7a "{\"other\": \"$J_OTHER\", \"closed\": \"$J_CLOSED\", \"unclaimed\": \"$J_UNCL\"}" 2>&1)"
+  J_UNCL="$(echo "$r7" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin).get("unclaimed",""))' 2>/dev/null)"
   claims="$(psql_app -c "select count(*) from job_event where job_id='$J_UNCL' and kind='claim' and actor='t1'" 2>/dev/null)"
   res7="$(echo "$r7" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null || echo FAIL)"
   [ "$claims" = 1 ] || res7=FAIL

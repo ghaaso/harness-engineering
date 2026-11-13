@@ -62,6 +62,10 @@ def iso(dt: datetime) -> str:
 
 
 def p6a_setup() -> None:
+    # t1: clocked in 30 min ago with a ping 1 min ago (healthy). t2: clocked in, never pinged.
+    # The row's "a shift begun before midnight shows on duty" needs a clock-in before the shop's
+    # midnight that is still inside the 14 h duty bound, so it can only be staged before 13:00
+    # shop time; later in the day t2 clocks in two hours ago instead and that item cannot run.
     now = datetime.now(UTC)
     t1, t2 = login("t1", "L4_PIN_T1"), login("t2", "L4_PIN_T2")
     out = []
@@ -73,17 +77,21 @@ def p6a_setup() -> None:
                  {"pings": [{"client_id": str(uuid.uuid4()), "tech_id": "t1", "captured_at": iso(now - timedelta(minutes=1)),
                              "lat": 24.86, "lng": 67.0, "accuracy_m": 10}]})
     out.append(["t1 ping 1 min ago", st in (200, 201) and isinstance(b, dict) and b.get("accepted") == 1, f"{st} {b}"])
-    midnight = datetime.now(SHOP_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-    before = midnight - timedelta(hours=1)
+    local = datetime.now(SHOP_TZ)
+    midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    staged = local.hour < 13
+    since = midnight - timedelta(hours=1) if staged else local - timedelta(hours=2)
     st, b = call("POST", "/api/attendance/punches", t2,
                  {"client_id": str(uuid.uuid4()), "tech_id": "t2", "kind": "clock_in",
-                  "device_time": iso(before), "lat": 24.86, "lng": 67.0, "accuracy_m": 10})
-    out.append([f"t2 clock_in at {before.isoformat()} (before shop midnight)", st in (200, 201), f"{st} {b if st >= 300 else ''}"])
+                  "device_time": iso(since), "lat": 24.86, "lng": 67.0, "accuracy_m": 10})
+    out.append([f"t2 clock_in at {since.isoformat()}" + (" (before shop midnight)" if staged else " (two hours ago)"),
+                st in (200, 201), f"{st} {b if st >= 300 else ''}"])
     ok = all(i[1] for i in out)
-    print(json.dumps({"result": "PASS" if ok else "FAIL", "items": out, "t2_since": before.isoformat()}))
+    print(json.dumps({"result": "PASS" if ok else "FAIL", "items": out, "midnight_staged": staged,
+                      "local_time": local.strftime("%H:%M"), "t2_since": since.isoformat()}))
 
 
-def p6a() -> None:
+def p6a(setup: dict) -> None:
     m1 = login("m1", "L4_PIN_M1")
     items = []
     st, board = call("GET", "/api/attendance/board", m1)
@@ -96,14 +104,27 @@ def p6a() -> None:
     items.append(["clocked in, no recent ping: stale or silent, never healthy", r2.get("sampler_state") in ("stale", "silent"),
                   f"t2 sampler_state={r2.get('sampler_state')}"])
     since = r2.get("on_duty_since")
-    items.append(["a shift begun before midnight shows on duty with its start time", bool(since),
-                  f"t2 on_duty_since={since} status={r2.get('status')}"])
+    if setup.get("midnight_staged"):
+        items.append(["a shift begun before midnight shows on duty with its start time", bool(since),
+                      f"t2 on_duty_since={since} (clocked in {setup.get('t2_since')}) status={r2.get('status')}"])
+    else:
+        items.append(["a shift begun before midnight shows on duty with its start time", None,
+                      f"cannot run at {setup.get('local_time')} shop time: a clock-in before midnight is past the 14 h duty bound "
+                      f"until 13:00 the next day; run the train before 13:00 PKT to cover it (t2 on_duty_since={since} for a "
+                      f"clock-in two hours ago)"])
     today = datetime.now(SHOP_TZ).date()
     st, days = call("GET", f"/api/attendance/techs/t2/days?start={today - timedelta(days=1)}&end={today}", m1)
     has_eff = "effective_time" in json.dumps(days)
     items.append(["the technician day view renders the effective time", st == 200 and has_eff, f"{st}, effective_time present={has_eff}"])
-    ok = all(i[1] for i in items)
-    print(json.dumps({"result": "PASS" if ok else "FAIL", "items": items}))
+    print(json.dumps({"result": verdict(items), "items": items}))
+
+
+def verdict(items: list) -> str:
+    """PASS, FAIL, or PASS with the items that cannot run here named (None = cannot run)."""
+    if any(i[1] is False for i in items):
+        return "FAIL"
+    skipped = [i[0] for i in items if i[1] is None]
+    return "PASS" if not skipped else "PASS (cannot run here: " + "; ".join(skipped) + ")"
 
 
 def p7a(jobs: dict[str, str]) -> None:
@@ -116,15 +137,23 @@ def p7a(jobs: dict[str, str]) -> None:
     detail = b.get("detail") if isinstance(b, dict) else str(b)
     items.append(["(2) payment on a closed job: 409 ending (current status: closed)",
                   st == 409 and str(detail).endswith("(current status: closed)"), f"{st} {str(detail)[:160]}"])
-    st, b = call("POST", f"/api/jobs/{jobs['unclaimed']}/notes", t1, {"text": "L4 rehearsal note"})
-    st2, job = call("GET", f"/api/jobs/{jobs['unclaimed']}", m1)
+    # The stand-in data has no unclaimed open job, so one is made the way the shop makes one: a
+    # manager intake with no technician (POST /api/jobs). Its id is printed for the claim-event count.
+    unclaimed = jobs.get("unclaimed") or ""
+    made = ""
+    if not unclaimed:
+        st0, j0 = call("POST", "/api/jobs", m1, {"client_id": str(uuid.uuid4()), "customer_name": "L4 Walk-in",
+                                                 "appliance_type": "AC", "problem": "L4 rehearsal intake"})
+        unclaimed = j0.get("id", "") if isinstance(j0, dict) else ""
+        made = f"fixture: manager intake {st0}, assigned_tech_id={j0.get('assigned_tech_id') if isinstance(j0, dict) else None}; "
+    st, b = call("POST", f"/api/jobs/{unclaimed}/notes", t1, {"text": "L4 rehearsal note"})
+    st2, job = call("GET", f"/api/jobs/{unclaimed}", m1)
     assigned = job.get("assigned_tech_id") if isinstance(job, dict) else None
     items.append(["(3) tech note on an unclaimed job: 201, then assigned to that tech",
-                  st == 201 and assigned == "t1", f"note {st}; job now assigned_tech_id={assigned}"])
+                  bool(unclaimed) and st == 201 and assigned == "t1", f"{made}note {st}; job now assigned_tech_id={assigned}"])
     st, b = call("GET", "/api/jobs/99999999999/media", t1)
     items.append(["(4) GET /api/jobs/99999999999/media is not a 500", st != 500 and st < 500, f"{st} {str(b)[:120]}"])
-    ok = all(i[1] for i in items)
-    print(json.dumps({"result": "PASS" if ok else "FAIL", "items": items}))
+    print(json.dumps({"result": verdict(items), "items": items, "unclaimed": unclaimed}))
 
 
 if __name__ == "__main__":
@@ -132,7 +161,7 @@ if __name__ == "__main__":
     if mode == "p6a-setup":
         p6a_setup()
     elif mode == "p6a":
-        p6a()
+        p6a(json.loads(sys.argv[3]))
     elif mode == "p7a":
         p7a(json.loads(sys.argv[3]))
     else:
