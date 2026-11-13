@@ -169,7 +169,7 @@ case "$KIND" in
     docker run -d --name "$N-gates" --network "container:$N-db" --memory 3g --cpus "${FF_GATE_CPUS:-6}" \
       -v "$WTW:/src:ro" -v fixflow-pip-cache:/root/.cache/pip \
       -e FIXFLOW_DATABASE_URL="$U" -e FIXFLOW_TEST_DATABASE_URL="$U" -e PYTHONDONTWRITEBYTECODE=1 \
-      -e FF_DB_HOST=localhost -e FF_PYTEST_ARGS="$*" "${ENVARGS[@]}" \
+      -e FF_DB_HOST=localhost -e FF_PYTEST_ARGS="$*" -e FF_PIP_AUDIT="${FF_PIP_AUDIT:-0}" "${ENVARGS[@]}" \
       python:3.12-slim sh -c '
         mkdir -p /work/backend /work/logs || exit 2
         tar -C /src/backend --exclude=.venv --exclude=.env --exclude=__pycache__ --exclude=.mypy_cache \
@@ -206,7 +206,7 @@ print("SKIPS total=%d skipped=%d integration_skipped=%d" % (total, skipped, inte
 sys.exit(1 if integ else 0)
 PY
         rc=$?; cat /work/logs/skips.txt; echo "GATE[skip-aware integration tests ran] EXIT=$rc"; [ "$rc" -ne 0 ] && FAIL=1
-        pip-audit > /work/logs/pip-audit.log 2>&1; echo "ADVISORY[pip-audit] EXIT=$? (not a gate)"
+        if [ "${FF_PIP_AUDIT:-0}" = 1 ]; then pip-audit > /work/logs/pip-audit.log 2>&1; echo "ADVISORY[pip-audit] EXIT=$? (not a gate)"; else echo "ADVISORY[pip-audit] skipped (set FF_PIP_AUDIT=1 to run it; it is advisory and held a slot for up to a minute)"; fi
         echo "SUMMARY FAIL=$FAIL"; exit "$FAIL"' > /dev/null \
       || { echo "SETUP[gates] RUN FAILED" | tee -a "$L/gates.log"; finish 2; }
     docker wait "$N-gates" > "$L/gates.exit"
