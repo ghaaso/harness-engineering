@@ -49,8 +49,9 @@ $FIX_FULL"
   row 11.1 "$( [ "$(out_of | grep -cE '^[0-9a-f]{7} on main$')" = 2 ] && [ "$(out_of | grep -c 'parents: 1')" = 2 ] && out_of | grep -qx commit \
       && [ "$(echo "$fixblock" | head -n 2)" = "$fixexp" ] \
       && echo "$l3" | grep -qE '^parents=[0-9a-f]+ ' && [ "${l3#* }" = "$FIX_SUBJECT" ] \
-      && [ "$(echo "$fixblock" | sed -n 4p)" = "is-ancestor exit=1" ] && ! out_of | grep -q 'NOT on main' && ! out_of | grep -q '^fatal' && echo DONE || echo FAILED)" \
-    "preconditions (the git lines)" "$(out_of | grep -vE 'gh: |^gh version|Logged in' | tr '\n' ';')" \
+      && [ "$(echo "$fixblock" | sed -n 4p)" = "is-ancestor exit=1" ] && ! out_of | grep -q 'NOT on main' && ! out_of | grep -q '^fatal' \
+      && ! out_of | grep -qE '^(\?\?|[ MADRCU][ MADRCU]) [^ ]' && echo DONE || echo FAILED)" \
+    "preconditions (the git lines; no line of git status --porcelain)" "$(out_of | grep -vE 'gh: |^gh version|Logged in' | tr '\n' ';')" \
     "two phase commits checked, not three: P2b-2 is not merged; the tag drain-pick-tz-fix is in the stand-in origin as on GitHub"
   row "11.1 gh" NRH "gh --version; gh auth status" "$(out_of | grep -E 'gh: |^gh version|Logged in' | tr '\n' ';')" \
     "no gh and no GitHub login on the stand-in, and none may be made (no account, no real remote). Here the lines print 'gh: command not found', which the Check makes a STOP; installing gh and gh auth login are the owner's steps"
@@ -96,8 +97,8 @@ $FIX_FULL"
   wdet="$(git -C "$wtp" symbolic-ref -q HEAD >/dev/null 2>&1 && echo no || echo yes)"
   row 11.8-worktree "$( [ "$RC" = 0 ] && [ "$wth" = "$SHA" ] && [ "$wdet" = yes ] && [ "$wtd" = 0 ] && echo DONE || echo FAILED)" \
     "git worktree add --detach ../ff-rdrain-<sha7> \"\$SHA\"" "$(out_of | tr '\n' ';') path $wtp, HEAD $wth, detached $wdet, changes $wtd"
-  row "11.8 gates" NRH "ff-gates.sh backend rdrain ../ff-rdrain-<sha7>" "-" \
-    "the plan checkout's gate tool (docs/program/lab/ff-gates.sh, not in this repository's tree) on this PC's Docker under the coordinator's gate slots; its VERIFY (argument order, lane names) stays open"
+  row "11.8 gates" N/A "ff-gates.sh backend rdrain ../ff-rdrain-<sha7>" "-" \
+    "not run, by scope rather than by need: the tool (docs/program/lab/ff-gates.sh in the plan checkout) could run on this PC, but the gate run that clears a drain-image tag is the coordinator's, under its gate slots; the stand-in host does not hold the tool. Its VERIFY (argument order, lane names) stays open"
   rb_run 11.8-remove "$(rb_fence 11.8 4)"
   row 11.8-remove "$( [ "$RC" = 0 ] && [ -z "$(out_of)" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" "git worktree remove ../ff-rdrain-<sha7>" \
     "prints [$(out_of | tr '\n' ' ')]; path gone: $([ -e "$wtp" ] && echo no || echo yes)"
@@ -116,7 +117,7 @@ $FIX_FULL"
   wt8tag="$(git tag -l drain-image | grep -c .)"; wt8wt="$(git worktree list | grep -c ff-rdrain)"
   wt WT8 "SHA left empty in a new terminal: each line of 11.8 and 11.9 that uses SHA pasted into a fresh interactive shell" \
     "$nlines lines; $nguard printed 'bash: SHA: not set - run the SHA= line of 11.8'; afterwards drain-image tags: $wt8tag, ff-rdrain worktrees: $wt8wt (log wt8.log)" \
-    "$( [ "$nguard" = "$nlines" ] && [ "$wt8tag" = 0 ] && [ "$wt8wt" = 0 ] && echo "the \${SHA:?} guard on every line: nothing ran, no tag and no worktree were made" || echo "NOT every line was stopped (see wt8.log)")" \
+    "$( [ "$nguard" = "$nlines" ] && [ "$wt8tag" = 0 ] && [ "$wt8wt" = 0 ] && echo "the \${SHA:?} guard on every line: nothing that writes ran, no tag and no worktree were made (11.9's last line runs its \$(git rev-parse 'drain-image^{commit}') before the guard: a read-only 'fatal:' line, see wt8.log)" || echo "NOT every line was stopped (see wt8.log)")" \
     "$( [ "$nguard" = "$nlines" ] && echo "no: already scripted (C34)" || echo "YES: the unguarded lines in wt8.log")"
 
   # ---- 11.9 tag that sha; 11.10 push the tag alone
@@ -205,11 +206,14 @@ $FIX_FULL"
   lsr="$(git ls-remote origin refs/heads/release/drain | cut -f1)"
   row 11.13-push "$( [ "$RC" = 0 ] && ! has 'forced update' && ! has rejected && [ "$SHA" != "$OLDSHA" ] && [ "$lsr" = "$SHA" ] && [ "$(git rev-parse "$SHA~1")" = "$OLDSHA" ] && echo DONE || echo FAILED)" \
     "11.8's push (a fast-forward) and SHA again" "SHA $OLDSHA -> $SHA; origin's release/drain $lsr; $(out_of | grep -E '\.\.|->' | head -n 1)"
+  row "11.13 CI" NRH "11.8's gh run list/view for the new SHA" "-" "as 11.8 CI: needs gh, the owner's login and a push to the real remote"
   rb_run 11.13-worktree "$(rb_fence 11.8 3 '1p')"
-  wtp="/srv/ff-rdrain-${SHA:0:7}"; wth="$(git -C "$wtp" rev-parse HEAD 2>/dev/null)"
+  rcwa="$RC"; wtp="/srv/ff-rdrain-${SHA:0:7}"; wth="$(git -C "$wtp" rev-parse HEAD 2>/dev/null)"
+  wdet="$(git -C "$wtp" symbolic-ref -q HEAD >/dev/null 2>&1 && echo no || echo yes)"
+  row "11.13 gates" N/A "11.8's ff-gates.sh for the new SHA" "-" "as 11.8 gates: the coordinator's gate run"
   rb_run 11.13-remove "$(rb_fence 11.8 4)"
-  row 11.13-worktree "$( [ "$wth" = "$SHA" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" "11.8's worktree for the new sha, then removed" "path $wtp at $wth; removed: $([ -e "$wtp" ] && echo no || echo yes)" \
-    "its CI read and gates are NRH, as in 11.8"
+  row 11.13-worktree "$( [ "$rcwa" = 0 ] && [ "$wth" = "$SHA" ] && [ "$wdet" = yes ] && [ "$RC" = 0 ] && [ -z "$(out_of)" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" \
+    "11.8's worktree for the new sha, then removed" "path $wtp at $wth, detached $wdet; remove printed [$(out_of | tr '\n' ' ')]; removed: $([ -e "$wtp" ] && echo no || echo yes)"
   rb_run 11.13-tag "$(rb_fence 11.13 3)" "<fix-sha>=$WFIX" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
   pel2="$(git ls-remote origin 'refs/tags/drain-image-2*' | awk '$2=="refs/tags/drain-image-2^{}"{print $1}')"
   row 11.13 "$( [ "$RC" = 0 ] && [ "$(git rev-parse 'drain-image-2^{commit}')" = "$SHA" ] && [ "$(git rev-parse origin/release/drain)" = "$SHA" ] && [ "$pel2" = "$SHA" ] \
