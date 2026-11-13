@@ -1,12 +1,12 @@
 # FixFlow ship program: owner view (generated)
 
-_Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not edit by hand; edit program.json and rebuild. The page is `index.html` in this folder._
+_Generated from `program.json` by `build.js.txt`; state as of 2026-11-14. Do not edit by hand; edit program.json and rebuild. The page is `index.html` in this folder._
 
 ## Right now
 
-- Production is still dead: both old Railway addresses answer Railway's own 404. Eight phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P9-0a, P12a, L2); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-13)
+- Production is still dead: both old Railway addresses answer Railway's own 404. Eight phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P9-0a, P12a, L2); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-14)
 - Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. The drain tooling is built and reviewed and waits only for those two. 37 of 56 phases wait behind it.
-- Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-13)
+- Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-14)
 
 ## Phases by state
 
