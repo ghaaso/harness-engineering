@@ -80,6 +80,31 @@ $FIX_FULL"
   rb_run 11.10-check "$(rb_span 11.10 'git ls-remote')"
   row 11.10 "$( [ "$(out_of | grep -c 'refs/')" -ge 3 ] && echo DONE || echo FAILED)" "git push origin release/drain drain-image (the stand-in origin)" "$(out_of | awk '{print substr($1,1,9), $2}' | tr '\n' ';')"
   row 11.11 N/A "record the cut in W0-results" "-" "the coordinator's record; this rehearsal's results file holds the log"
+
+  # ---- WT7 (asked for by the review of #205): main's squash f192fee picked at 11.3a instead of
+  # the tagged original. A throwaway branch after the real cut is pushed; 11.6 and 11.7 are run
+  # as written with release/drain read as that branch.
+  WT="$OUT/wrongturns.tsv"
+  wt() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$3" 900)" "$(clean "$4" 400)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"; }
+  [ -f "$WT" ] || printf 'id\twrong turn\twhat happened\twhat stopped it\tscripted guard needed?\n' > "$WT"
+  SQ=f192fee; SQ_FULL="$(git rev-parse "$SQ")"
+  git switch -q -c wt7-drain a31924a && git cherry-pick -x "$P1" >/dev/null 2>&1
+  git cherry-pick -x "$SQ" > "$OUT/wt7-pick.log" 2>&1; rcsq=$?
+  [ "$rcsq" = 0 ] || git cherry-pick --abort >/dev/null 2>&1
+  git cherry-pick -x "$P3A" >/dev/null 2>&1 || git cherry-pick --abort >/dev/null 2>&1
+  sqfiles="$( [ "$(git show --name-only --format= HEAD~1 | sort)" = "$(git show --name-only --format= "$FIX_TAG" | sort)" ] && echo "the same four files as the tag" || echo "other files than the tag")"
+  echo "lab WT7: 11.6 and 11.7 run with 'release/drain' read as the throwaway branch wt7-drain" >> "$OUT/deviations.log"
+  rb_run wt7-11.6 "$(rb_fence 11.6 1)" "release/drain=wt7-drain"
+  o76="$(out_of)"
+  oldcount="$(git log a31924a..wt7-drain --format=%B | grep -c 'cherry picked from commit')"
+  rb_run wt7-11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A" "release/drain=wt7-drain"
+  o77="$(out_of)"
+  caught=no; echo "$o76" | grep -qF "(cherry picked from commit $SQ_FULL)" && [ "$(echo "$o76" | grep 'cherry picked from')" != "$srcexp" ] && caught=yes
+  wt WT7 "11.3a picks main's squash f192fee (PR #204) instead of the tag drain-pick-tz-fix (3810e42)" \
+    "the pick: exit $rcsq, no conflict$( [ "$rcsq" = 0 ] || echo ' (CONFLICT)'), $sqfiles. 11.6 log: $(echo "$o76" | grep -v 'cherry picked' | tr '\n' ';') 11.6 sources: $(echo "$o76" | grep 'cherry picked' | sed 's/(cherry picked from commit \(.......\)[0-9a-f]*)/\1/' | tr '\n' ' '). 11.7: $(echo "$o77" | tr '\n' ';' | cut -c1-160). The pre-#206 Check (a count of trailers) would read $oldcount and pass" \
+    "$( [ $caught = yes ] && echo "11.6 as merged at 7bf9f49 (C32): its source list names f192fee97d… where the Check wants 3810e420…, so the text says STOP and how to recover. 11.7 is silent (same files). The subject line differs too ([P7a] follow-up: … (#204) vs fix(jobs): …), but only an operator comparing it notices" || echo "nothing: 11.6 and 11.7 both looked as expected")" \
+    "$( [ $caught = yes ] && echo "no new guard: 11.6's source check (C32) is the guard, though it is a comparison the operator reads, not a test that stops; the smallest scripted form is diff <(git log --reverse … | grep 'cherry picked from') <(expected lines) || echo STOP" || echo "YES: compare the -x trailers to the expected full shas")"
+  git switch -q release/drain && git branch -q -D wt7-drain
   ;;
 
 prebuild)
@@ -168,6 +193,10 @@ deploy)
   [ "$claims" = 1 ] || res7=FAIL
   trow P7a "(1) tech GET another tech's job 403; (2) payment on a closed job 409 '(current status: closed)'; (3) tech note on an unclaimed job 201 + assigned + one claim event; (4) GET /api/jobs/99999999999/media not 500" \
     "$res7" "$r7 | claim events by t1 on that job: $claims"
+  r204="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p204 2>&1)"
+  res204="$(echo "$r204" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null || echo FAIL)"
+  trow "f192fee (#204)" "GET /api/jobs/reports/tech-metrics as a manager with no dates: the window ends on the shop-local today (no migration). In the drain tree the same fix is the original 3810e42 (11.3a, ruling C30)" \
+    "$res204" "$r204"
   deep_health > "$OUT/deep-health-train.json"
   d="$OUT/deep-health-train.json"
   ports="$(docker ps --format '{{.Names}} [{{.Ports}}]' | grep -c -- '->')"

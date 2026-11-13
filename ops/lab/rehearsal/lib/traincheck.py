@@ -158,8 +158,35 @@ def p7a(jobs: dict[str, str]) -> None:
     print(json.dumps({"result": verdict(items), "items": items, "unclaimed": unclaimed}))
 
 
+def p204() -> None:
+    """The f192fee row (PR #204): with a manager token and no dates, the tech-metrics window ends
+    on the shop-local today (and spans seven shop-local days). The old code took the UTC date, so
+    the check tells the fix from its absence only while the UTC date and the shop-local date
+    differ (19:00-24:00 UTC); at any other hour the item that would catch the defect cannot run."""
+    m1 = login("m1", "L4_PIN_M1")
+    now = datetime.now(UTC)
+    local_today, utc_today = now.astimezone(SHOP_TZ).date(), now.date()
+    st, b = call("GET", "/api/jobs/reports/tech-metrics", m1)
+    to_d = b.get("to_date") if isinstance(b, dict) else None
+    from_d = b.get("from_date") if isinstance(b, dict) else None
+    items = [
+        ["(1) 200 with a manager token and no dates", st == 200, f"{st} timezone={b.get('timezone') if isinstance(b, dict) else b}"],
+        ["(2) to_date is the shop-local today", st == 200 and to_d == local_today.isoformat(), f"to_date={to_d} shop-local today={local_today}"],
+        ["(3) from_date is six days before it", st == 200 and from_d == (local_today - timedelta(days=6)).isoformat(), f"from_date={from_d}"],
+    ]
+    if utc_today != local_today:
+        items.append(["(4) the window does not end on the UTC date", to_d != utc_today.isoformat(), f"UTC date {utc_today}"])
+    else:
+        items.append([f"(4) the window does not end on the UTC date (at {now:%H:%M} UTC both dates are {utc_today}: "
+                      "the fix and its absence give the same answer; discriminating only 19:00-24:00 UTC)", None, ""])
+    print(json.dumps({"result": verdict(items), "items": items}))
+
+
 if __name__ == "__main__":
     mode = sys.argv[2]
+    if mode == "p204":
+        p204()
+        raise SystemExit(0)
     if mode == "p6a-setup":
         p6a_setup()
     elif mode == "p6a":

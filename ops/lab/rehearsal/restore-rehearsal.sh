@@ -13,7 +13,8 @@
 # the verdicts are in results.md.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO="$(git -C "$HERE" rev-parse --show-toplevel)"
+# Git for Windows cannot see a Git Bash path such as /tmp/...: give it the Windows form
+REPO="$(git -C "$(command -v cygpath >/dev/null && cygpath -m "$HERE" || echo "$HERE")" rev-parse --show-toplevel)" || { echo "L4: not in a git checkout" >&2; exit 1; }
 source "$HERE/lib/host.sh"
 REF=main; KEEP=0; PURGE=""; WRONG=1
 while [ $# -gt 0 ]; do
