@@ -162,8 +162,8 @@ check_d_once() {
   else
     record "d#$n" O01-F05 "a crossing whose fix is contradicted runs past the 15 s job; recorded only after the 20 s dwell" "$obs; clean crossings take the confirmed path (no dwell), so the contradicted path was not exercised" inconclusive "presence-d$n.txt"
     record "d#$n" O01-F04 "phone raw-point rule vs server overlap rule disagree on indoor arrivals" "$obs; emulator geo-fix accuracy is not the poor indoor accuracy the claim needs" inconclusive "presence-d$n.txt"
-    record "d#$n-pipeline" "O01 (crossing pipeline)" "a clean out/in crossing on stock Android records a depart and an arrive row and posts the arrival prompt" "$obs" \
-      "$([ "$ta" != -1 ] && [ "$td" != -1 ] && [ "$n1" -gt "$n0" ] && echo not_reproduced || echo reproduced)" "presence-d$n.txt"
+    record "d#$n-pipeline" control "a clean out/in crossing on stock Android records a depart and an arrive row and posts the arrival prompt" "$obs" \
+      "$([ "$ta" != -1 ] && [ "$td" != -1 ] && [ "$n1" -gt "$n0" ] && echo reproduced || echo not_reproduced)" "presence-d$n.txt"
   fi
   rec_roll
 }
