@@ -3,7 +3,7 @@
 # (ship plan 7.5, phase L3a). Each check bears on one row of the G2 register and can come out
 # either way; nothing here claims anything about the fleet's phones (standing rule 2).
 #
-#   bash ops/lab/device/protocol-tracker.sh [check ...]     default: probe d f19 a c b
+#   bash ops/lab/device/protocol-tracker.sh [check ...]     default: probe d f19 f14 a c b
 #
 # Checks (run in the order given):
 #   probe  the FGS probe itself, both outcomes: on duty (expect FGS) and clocked out (expect none)
@@ -19,6 +19,9 @@
 #   f19    O01-F19  a depart while the Activity is alive in the background: does the handler hang
 #                   in requestForegroundPermissionsAsync until the app is reopened? Each run is
 #                   paired with a headless control (process killed).    (FF_REPEAT runs, default 3)
+#   f14    O01-F14  kill, a headless depart, open the app the moment its job starts: does the next
+#                   crossing's job ever finish? Paired with a control that opens the app 10 s
+#                   after the headless job finished.                    (FF_REPEAT runs, default 3)
 #   doze   on duty, `dumpsys deviceidle force-idle` for FF_DOZE_MIN (4) minutes: pings received
 #   reboot on duty, `adb reboot`, do NOT open the app for 3 min: FGS and pings; then open it
 #   revoke on duty, `pm revoke ACCESS_BACKGROUND_LOCATION`: what the sampler does
@@ -39,7 +42,7 @@ load_android_env
 REPEAT="${FF_REPEAT:-3}"
 DOZE_MIN="${FF_DOZE_MIN:-4}"
 CHECKS=("$@")
-[ "${#CHECKS[@]}" -eq 0 ] && CHECKS=(probe d f19 a c b)
+[ "${#CHECKS[@]}" -eq 0 ] && CHECKS=(probe d f19 f14 a c b)
 
 bash "$HERE/lab-backend.sh" status 2> /dev/null | head -n1 | grep -q "mode: backend" ||
   die "the lab backend is not answering (run lab-backend.sh up)"
@@ -384,6 +387,134 @@ check_f19() {
   done
 }
 
+# ---- f14: O01-F14 (the Activity opened while a headless task instance is alive) -----------
+# expo-task-manager registers its TaskManager once, headless, in onCreate; if the Activity opens
+# while that headless instance is alive (or in its ~2 s teardown), invalidateAppRecord drops the
+# registration and every later job is "Handling job" with no "Finished task": nothing reaches JS
+# until the process dies. Test: kill, a headless depart, open the app the moment the job starts.
+# Control: the same, but open the app 10 s after that job's "Finished task". Both then make an
+# arrival with the Activity in the FOREGROUND (a stopped one would hang the handler: f19) and
+# read whether that job finishes and records. Seen first by accident in the final tracker run
+# (17:28:27, check b's reopen), where it then emptied the offline run's controls.
+P14="opening the app while a headless task instance is alive drops the TaskManager: later jobs log 'Handling job' and never 'Finished task'; nothing reaches JS until the process dies"
+lc_size() { stat -c %s "$EV/logcat.txt"; }
+lc_from() { tail -c +"$(($1 + 1))" "$EV/logcat.txt"; } # logcat bytes after an offset
+wait_from() { # offset regex seconds [poll] -> the first matching line after the offset
+  local end=$((SECONDS + $3)) l
+  while [ "$SECONDS" -le "$end" ]; do
+    l="$(lc_from "$1" | grep -m1 -E "$2")"
+    [ -n "$l" ] && {
+      echo "$l"
+      return
+    }
+    sleep "${4:-0.3}"
+  done
+}
+esub() { # line-a line-b -> epoch(a) - epoch(b), "?" when either is missing
+  if [ -z "$1" ] || [ -z "$2" ]; then echo "?"; else fsub "$(lc_epoch "$1")" "$(lc_epoch "$2")"; fi
+}
+check_f14_once() { # run-no test|control
+  local n="$1" mode="$2" id M off job fin st T2 M2 off2 job2 fin2 rows=0 blk i dl ds obs v=inconclusive
+  id="f14#$n"
+  [ "$mode" = control ] && id="f14-control#$n"
+  mark "CHECK $id ($mode)"
+  ash svc power stayon true
+  ash input keyevent KEYCODE_WAKEUP
+  geo_set "$FENCE_LAT" "$FENCE_LNG"
+  wait_debounce depart
+  kill_app || mark "$id app process did not die"
+  M="$id move-out"
+  mark "$M"
+  off="$(lc_size)"
+  geo_set "$OUT_LAT" "$OUT_LNG"
+  geo_nudge
+  job="$(wait_from "$off" "$GEOFENCE_JOB" 120 0.2)"
+  if [ -z "$job" ]; then
+    record "$id" "$([ "$mode" = test ] && echo O01-F14 || echo control)" "$P14" "precondition failed: Play services delivered no EXIT within 120 s" inconclusive timeline.txt
+    return
+  fi
+  if [ "$mode" = test ]; then
+    launch_app
+  else
+    wait_from "$off" "$GEOFENCE_DONE" 60 1 > /dev/null
+    sleep 10
+    launch_app
+  fi
+  sleep 8
+  st="$(lc_from "$off" | grep -m1 -E "START u0.*$APP_PKG")"
+  fin="$(lc_from "$off" | grep -m1 -E "$GEOFENCE_DONE")"
+  dl="$(esub "$st" "$job")"  # the Activity's start after the headless job began
+  ds="$(esub "$st" "$fin")"  # ... after that job's Finished task (negative = while it ran)
+  wait_debounce arrive
+  ash input keyevent KEYCODE_WAKEUP
+  launch_app # the same process, brought to the front: the probe runs with a foreground Activity
+  sleep 3
+  M2="$id probe arrival"
+  mark "$M2 (app pid $(app_pid))"
+  T2="$(dev_now)"
+  off2="$(lc_size)"
+  geo_set "$FENCE_LAT" "$FENCE_LNG"
+  geo_nudge
+  job2="$(wait_from "$off2" "$GEOFENCE_JOB" 120 1)"
+  fin2=""
+  [ -n "$job2" ] && fin2="$(wait_from "$off2" "$GEOFENCE_DONE" 60 1)"
+  for i in $(seq 1 6); do
+    rows="$(rows_since arrive "$T2")"
+    [ "${rows:-0}" -gt 0 ] && break
+    sleep 5
+  done
+  blk="$(lc_from "$off2" | grep -m1 -E "$BLOCKED_PERM" | cut -c1-220)"
+  {
+    echo "headless job: $job"
+    echo "activity start: $st"
+    echo "headless finished: $fin"
+    echo "probe job: $job2"
+    echo "probe finished: $fin2"
+    echo "probe blocked permission launch: $blk"
+    echo "newest arrive row: $(latest_row arrive "$T2")"
+    lc_from "$off" | grep -E "TaskService|TaskManager|FFLAB|START u0.*$APP_PKG"
+  } > "$EV/f14-$n-$mode.txt"
+  obs="the Activity started ${dl}s after the headless job began and ${ds}s after its Finished task (negative = while it ran); the probe arrival with the app in the foreground: job delivered=$([ -n "$job2" ] && echo yes || echo no), Finished task=$([ -n "$fin2" ] && echo yes || echo no), arrive rows=$rows"
+  if [ -n "$blk" ]; then
+    obs="$obs; a blocked permission launch during the probe (the f19 hang, not this mechanism)"
+  elif [ -z "$job2" ]; then
+    obs="$obs; precondition failed (no ENTER for the probe)"
+  elif [ "$mode" = test ]; then
+    if [ -z "$st" ]; then
+      obs="$obs; precondition failed (no Activity start in logcat)"
+    elif [ "$ds" != "?" ] && ! fge 2 "$ds"; then
+      obs="$obs; precondition failed (the Activity opened more than 2 s after the headless job finished)"
+    elif [ -z "$fin2" ] && [ "${rows:-0}" -eq 0 ]; then
+      v=reproduced
+    elif [ -n "$fin2" ] && [ "${rows:-0}" -gt 0 ]; then
+      v=not_reproduced
+    fi
+  else
+    if [ -n "$fin2" ] && [ "${rows:-0}" -gt 0 ]; then
+      v=reproduced
+    elif [ -z "$fin2" ] && [ "${rows:-0}" -eq 0 ]; then
+      v=not_reproduced
+    fi
+  fi
+  if [ "$mode" = test ]; then
+    record "$id" O01-F14 "$P14" "$obs" "$v" "f14-$n-$mode.txt"
+  else
+    record "$id" control "opened 10 s after the headless job finished: the next job finishes and records" "$obs" "$v" "f14-$n-$mode.txt"
+  fi
+  # a broken process stays broken: end every run on a fresh one
+  kill_app || mark "$id app process did not die"
+  launch_app
+  sleep 8
+  ash svc power stayon false
+}
+check_f14() {
+  local i
+  for i in $(seq 1 "$REPEAT"); do
+    check_f14_once "$i" test
+    check_f14_once "$i" control
+  done
+}
+
 # ---- b: O01-F03 ---------------------------------------------------------------------------
 # Play services' own dump lists every registered fence under "Geofencer State", e.g.
 #   Geofence[CIRCLE id:workshop transitions:3 24.900000, 67.100000 80m, ...] ... com.fixflow.technician
@@ -625,6 +756,7 @@ for c in "${CHECKS[@]}"; do
     c) check_c_all ;;
     d) check_d ;;
     f19) check_f19 ;;
+    f14) check_f14 ;;
     doze) check_doze ;;
     reboot) check_reboot ;;
     revoke) check_revoke ;;

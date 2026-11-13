@@ -144,7 +144,12 @@ proto_cleanup() {
   [ -n "$FEEDER_PID" ] && kill "$FEEDER_PID" 2> /dev/null
   geo_provider_off
   rec_collect 2> /dev/null
-  [ -n "$LOGCAT_PID" ] && kill "$LOGCAT_PID" 2> /dev/null
+  # $LOGCAT_PID is the subshell running the adb_ function: kill its adb child too, or the
+  # stream outlives the protocol and keeps appending to logcat.txt
+  if [ -n "$LOGCAT_PID" ]; then
+    kill $(ps -ef | awk -v p="$LOGCAT_PID" '$3 == p { print $2 }') 2> /dev/null
+    kill "$LOGCAT_PID" 2> /dev/null
+  fi
   [ -f "$EV/.result.tmp" ] && rm -f "$EV/.result.tmp"
   # never leave location switched off or the device forced into doze
   ash cmd location set-location-enabled true > /dev/null 2>&1

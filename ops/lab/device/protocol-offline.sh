@@ -44,6 +44,12 @@ STAMP_NOTE="$(date +%H%M%S)"
 
 proto_begin offline
 geo_set "$FENCE_LAT" "$FENCE_LNG"
+# Start on a fresh app process: an earlier protocol can leave this one with no TaskManager
+# (O01-F14: the final run's offline controls were emptied that way, 2026-11-13).
+clock out > /dev/null 2>&1
+kill_app || mark "offline: the app process did not die"
+launch_app
+sleep 8
 
 srv_count() { lab_sql "$1" 2> /dev/null | tail -n1; }
 punches_srv() { srv_count "select count(*) from attendance_event where tech_id='t2'"; }
