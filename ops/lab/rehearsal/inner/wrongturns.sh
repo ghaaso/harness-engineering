@@ -60,29 +60,31 @@ done
 cp /srv/l4/backend.env.good /etc/fixflow/backend.env
 ffc $P_DB --profile app up -d >/dev/null 2>&1; wait_backend_healthy 150
 
-# ---- WT3: a truncated dump --------------------------------------------------------------------
-T="trunc-$NIGHTLY"
-head -c "$(( $(stat -c %s "/srv/l4/dumps/$NIGHTLY") * 6 / 10 ))" "/srv/l4/dumps/$NIGHTLY" > "/var/lib/fixflow/restore/$T"
-want="$(grep " $NIGHTLY\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
-rb_run wt3-62 "$(rb_span 6.2 'sha256sum')" "<dump>=$T"
-s62="$(out_of | cut -c1-16)"
-rb_run wt3-66a "$(rb_fence 6.6 1)" "<dump file name>=$T"
-o66="$(out_of | tail -n 4 | tr '\n' ' ')"
-# an owner who does not compare the sum: the scratch-database copy of 6.7 (as R7.5 does it), so
-# the live database is not the casualty of this experiment
+# ---- WT3: a truncated dump, cut early (60 %) and late (99 %: only the tail of the data lost) ----
 psql_super() { ffc exec -T postgres psql -U postgres -v ON_ERROR_STOP=1 "$@"; }
-psql_super -c 'DROP DATABASE IF EXISTS fixflow_wt' >/dev/null 2>&1
-psql_super -c 'CREATE DATABASE fixflow_wt OWNER fixflow_app' >/dev/null 2>&1
-r67="$(rb_fence 6.7 1 '$p' | sed 's/-d fixflow /-d fixflow_wt /')"
-rb_run wt3-67 "$r67" "\$D=$T"
-o67="$(out_of | tail -n 3 | tr '\n' ' ')"
-nt="$(ffc exec -T postgres psql -U fixflow_app -d fixflow_wt -tAc "select count(*) from pg_tables where schemaname='public'" 2>/dev/null)"
-nj="$(ffc exec -T postgres psql -U fixflow_app -d fixflow_wt -tAc "select count(*) from job" 2>/dev/null)"
-wt WT3 "a dump cut at 60 % (an interrupted scp)" \
-  "6.2 sum $s62… vs recorded $(echo "$want" | cut -c1-16)…; 6.6 (a) on it: $o66; 6.7's pg_restore into a scratch db: $o67; tables loaded $nt, job rows $nj" \
-  "6.2's sha256 comparison (an instruction: the command prints a different sum, nothing exits non-zero) and, if missed, pg_restore --exit-on-error at 6.7 AFTER the drop" \
-  "$( echo "$o66" | grep -q 'list exit=0' && echo "YES: 6.6 (a) passes a truncated dump (its restore list is in the file header), so 'prove the dump' proves the table of contents, not the data; the drop then happens and the load fails half-way. Smallest fix: in 6.6 (a) restore the dump into a scratch database (R7.4/R7.5's two lines) before 6.7 drops anything, or compare the sum in the command itself" || echo "no: 6.6 (a) refused it")"
-psql_super -c 'DROP DATABASE IF EXISTS fixflow_wt' >/dev/null 2>&1
+want="$(grep " $NIGHTLY\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
+for pct in 60 99; do
+  T="trunc$pct-$NIGHTLY"
+  head -c "$(( $(stat -c %s "/srv/l4/dumps/$NIGHTLY") * pct / 100 ))" "/srv/l4/dumps/$NIGHTLY" > "/var/lib/fixflow/restore/$T"
+  rb_run "wt3-$pct-62" "$(rb_span 6.2 'sha256sum')" "<dump>=$T"
+  s62="$(out_of | cut -c1-16)"
+  rb_run "wt3-$pct-66a" "$(rb_fence 6.6 1)" "<dump file name>=$T"
+  o66="$(out_of | tail -n 4 | tr '\n' ' ')"
+  # an owner who does not compare the sum: the scratch-database copy of 6.7 (as R7.5 does it), so
+  # the live database is not the casualty of this experiment
+  psql_super -c 'DROP DATABASE IF EXISTS fixflow_wt' >/dev/null 2>&1
+  psql_super -c 'CREATE DATABASE fixflow_wt OWNER fixflow_app' >/dev/null 2>&1
+  r67="$(rb_fence 6.7 1 '$p' | sed 's/-d fixflow /-d fixflow_wt /')"
+  rb_run "wt3-$pct-67" "$r67" "\$D=$T"
+  o67="$(out_of | tail -n 3 | tr '\n' ' ')"
+  nt="$(ffc exec -T postgres psql -U fixflow_app -d fixflow_wt -tAc "select count(*) from pg_tables where schemaname='public'" 2>/dev/null)"
+  nj="$(ffc exec -T postgres psql -U fixflow_app -d fixflow_wt -tAc "select count(*) from job" 2>/dev/null)"
+  wt "WT3 ($pct %)" "a dump cut at $pct % (an interrupted scp)" \
+    "6.2 sum $s62… vs recorded $(echo "$want" | cut -c1-16)…; 6.6 (a) on it: $o66; 6.7's pg_restore into a scratch db: $o67; tables loaded $nt, job rows $nj" \
+    "$( echo "$o66" | grep -q 'list exit=0' && echo "only 6.2's sha256 comparison (an instruction: a different sum prints, nothing exits non-zero); 6.6 (a) passed; pg_restore --exit-on-error at 6.7 fails AFTER the drop" || echo "6.6 (a): pg_restore -l itself failed on the cut file (list exit=1), before anything was dropped; 6.2's sum also differed")" \
+    "$( echo "$o66" | grep -q 'list exit=0' && echo "YES: 6.6 (a) passes this truncated dump, so 'prove the dump' proves the table of contents, not the data; 6.7 then drops and the load fails half-way. Smallest fix: in 6.6 (a) restore into a scratch database (R7.4/R7.5's lines) before 6.7 drops anything, or make the sum comparison a test that stops" || echo "no: 6.6 (a) refused it (the sum is still the primary check)")"
+  psql_super -c 'DROP DATABASE IF EXISTS fixflow_wt' >/dev/null 2>&1
+done
 
 # ---- WT4: a dump whose list is empty (a dump of an empty database) ---------------------------
 E="empty-$NIGHTLY"
@@ -113,7 +115,7 @@ wt "WT5 (C27 note 2)" "6.6 (b)'s upload fails (stand-in bucket stopped) and the 
   "YES: 6.7 should refuse when 6.6 (b) found tables and no upload receipt exists, e.g. 6.6 (b) writes /var/lib/fixflow/restore/pre-restore.ok only after 'uploaded key=' and 6.7 starts with 'test -s .../pre-restore.ok || { echo STOP; exit 1; }' (cleared in 6.1)"
 
 # ---- C27 note 1 (WT6): drop before the checks (6.7 first, 6.6 never run) ----------------------
-psql_app -c "insert into job_event (job_id, kind, text, actor) select id, 'note', 'WT6 manager write after the dump', 'm1' from job limit 1" >/dev/null 2>&1
+psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', 'WT6 manager write after the dump', 'm1', nextval('job_event_seq') from job limit 1" > "$OUT/wt6-insert.log" 2>&1
 marker="$(psql_app -c "select count(*) from job_event where text = 'WT6 manager write after the dump'")"
 rb_run wt6-67-first "$(rb_fence 6.7 1)" "\$D=$NIGHTLY"
 o67="$(out_of | tail -n 2 | tr '\n' ' ')"
