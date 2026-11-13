@@ -1,0 +1,40 @@
+VERDICT: PASS
+PR #190 at f93ee9747a8b16f3138f99cc1d00a3817f78fedb
+
+I made all runs on `3be716e` merged with `02af3cc` (my merge commit `6bfc896`). After `git fetch origin`, the range-diff shows all six commits as `=`, the diff of the three PR files is empty, and `git diff 6bfc896 f93ee97` is empty too, so it is the same code.
+
+**Findings:** none at BLOCKER or MAJOR. The notes below are minor and can be handled in the journal or a later PR.
+- **N1, error message, `export_week_csv.py:1330`.** The `SQLAlchemyError` catch turns every SQL failure into "could not use the database", real bugs included. When I ran the docstring command against a restore that had failed, the owner would see `REFUSED: could not use the database (ProgrammingError, ProgrammingError, SQLSTATE 42P01)`. The SQLSTATE still lets someone diagnose it. Nothing is hidden on the read-only side: the session rollback in `finally` still runs, and the no-write check raises its own `ExportRefusedError`. A clearer message would name the SQLSTATE as "schema missing or wrong", which helps after P8a changes columns.
+- **N2, file errors, `export_week_csv.py:1322`.** An `OSError` with no filename is reported as a database error. A disk-full error during `write_bytes` carries no filename, so it would be mislabelled and could leave a partial export folder. Cosmetic.
+- **N3, for P8a (routed there).** The P8a session should re-run the whole export suite and the docstring command once 0047 lands.
+
+**The seven items**
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 1 | Ledger sides pinned | FIXED | `test_export_week_csv.py`, `test_each_ledger_kind_books_on_the_o07_side[5 kinds]`: debit role, credit role, the technician's line tied to `LEDGER_SIGN`, and the reversal swap |
+| 2 | Ledger Monday / Sunday / next Monday | FIXED | integration `test_the_ledger_week_runs_monday_to_sunday_by_occurred_on` |
+| 3 | Bad timezone refused | FIXED | `export_week_csv.py:315-334`: checked with `is_valid_timezone` and by exact name in `pg_timezone_names`, refused, never followed. Test: `test_an_invalid_or_posix_shop_timezone_is_refused_never_guessed` with `UTC+5`, `Mars/Olympus`, `asia/karachi` and empty |
+| 4 | Seed kept apart | FIXED | `real_sum_minor` / `seeded_sum_minor` (`:1090-1091`); seeded IDs start `fixflow_seed_` (`:647-649`), which reverses D15 as asked; the seed technician is named `Seed Technician (SEED FIXTURE)` in both modes (`:540-545`). Tests: `test_seeded_rows_are_recognisable_by_id_and_technician_in_both_modes`, `test_manifest_reports_real_and_seeded_sums_apart`, `test_a_seeded_export_keeps_the_fixture_apart_from_the_real_money` |
+| 5 | Owner's Docker command in the docstring | FIXED | `:3-37`. I ran it as written (only the paths and the restore container's name changed): a Postgres 17 restore of a dump made with the backup job's `pg_dump` flags (`--schema=public`), joined with `--network container:`. `--list-weeks`, then the export with `--voids pairs`: exit 0, debit = credit = 5651.00 PKR (the hand-computed figure), `Asia/Karachi` accepted, and the real technician's id and name absent from every file |
+| 6 | One-line errors | FIXED | `:1316-1346`, exit 5. Tests: `test_an_unusable_database_ends_in_one_refused_line` (4 URLs, the marker password never echoed) and `test_a_wrong_role_ends_in_one_refused_line` |
+| 7 | Pseudonymised by default | FIXED | `:1173` and `:1252` refuse an export with neither a key nor `--real-names`; `--pseudonymise` is still accepted; the manifest has `technician_names`. Tests: `test_the_cli_pseudonymises_by_default` and three CLI tests |
+
+**Breaks** (each run was only the two test files; 116 tests, 0 skipped; restored to `6bfc896` afterwards with a clean tree)
+- **A, flip `earning`:** caught by `test_each_ledger_kind_books_on_the_o07_side[earning]` (1 failed).
+- **B, shift the ledger week by a day:** caught by `test_the_ledger_week_runs_monday_to_sunday_by_occurred_on` (1 failed).
+- **E, real names become the default again:** caught by `test_run_export_needs_exactly_one_names_mode[None-False]` and `test_the_cli_refuses_an_export_with_neither_key_nor_real_names` (2 failed).
+- **F, a bad timezone is followed instead of refused:** caught by `test_an_invalid_or_posix_shop_timezone_is_refused_never_guessed` (4 failed).
+
+**Tried and could not break**
+- **Real names leaking without `--real-names`:** I checked partners, the manifest, the seeded rows, `--list-weeks` output and the error messages; none carries a real name.
+- **`Asia/Karachi` being refused:** it is accepted with `python:3.12-slim` against both Postgres 16 (the gates) and Postgres 17 (the stand-in).
+- **Seeded IDs:** they are `uuid5`-stable and use only Odoo-safe characters; the existing test that two seeded exports are byte-identical still passes.
+- **Read-only:** the three locks are unchanged.
+- **The merged tree:** P7a's jobs changes do not touch `job_payment` or the columns the script reads; all 1297 tests pass on the merged tree.
+
+**Gate summary** (tree = head merged with `02af3cc`, `6bfc896`, clean): GATE[1..6] EXIT=0; GATE[7 pytest] EXIT=0; `SKIPS total=1297 skipped=0 integration_skipped=0`; `SUMMARY FAIL=0`. Log: `C:/Users/User/.fixflow-cache/gate-logs/p90a-rev/backend-20261113-165457/summary.txt`.
+
+**Housekeeping:** I removed the review worktree, the stand-in containers and the stand-in dump. No `fixflow-p90a-rev-*` containers remain. Nothing was pushed or posted, and I did not touch the author's worktree.
+
+Coordinator's ruling (2026-11-13): second pass of the binding review (same reviewer; first pass PASS-WITH-FIXES at af58e9b, file 190-af58e9b.txt). The lane rebased during the pass; the reviewer confirmed that f93ee97 is the tree it tested. Mergeable at f93ee9747a8b16f3138f99cc1d00a3817f78fedb. Notes N1 and N2 (a clearer message when the schema does not match; a file error without a filename labelled as a file error) and N3 (re-run the export suite and the docstring command once migration 0047 lands) go into P8a's Scope, which already changes this script for the void date. The P9-0b runbook note stands: exports from two different dumps are never mixed.
