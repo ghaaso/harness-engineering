@@ -41,6 +41,18 @@ case "$PHASE" in
   P13a|P13b|P13c|P13d)   die "$PHASE is held until T_close" ;;
 esac
 
+# value hold, plan section 7.2: a phase built with a named placeholder merges only when the owner
+# has supplied the value. P2b-1 carries two: the fleet versionCode and the domain name.
+if [ "$PHASE" = "P2b-1" ]; then
+  git fetch -q origin 2>/dev/null
+  if git show "$HEAD:technician-app/fleet-version.js" 2>/dev/null | grep -q "FLEET_VERSION_CODE = 0;"; then
+    die "P2b-1 is held: the fleet versionCode is still the placeholder 0 (the owner's value, P0a item 6)"
+  fi
+  if git show "$HEAD:technician-app/eas.json" 2>/dev/null | grep -q "fleet-domain-not-set.invalid"; then
+    die "P2b-1 is held: the domain name is still the placeholder (the owner's value, P0b)"
+  fi
+fi
+
 # merge order, plan section 7.2 ("Merges no earlier than")
 pred=""
 case "$PHASE" in
