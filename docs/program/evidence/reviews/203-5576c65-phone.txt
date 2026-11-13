@@ -1,0 +1,125 @@
+VERDICT: FAIL
+PR #203 at 5576c6549391d252ac5525babded009de60d4a53 (phone-side lens)
+Binding review, one of two dispatched by the coordinator on 2026-11-14 at about 01:19 (the fixflow-offline-sync-reviewer definition; its own probe tree `.claude/worktrees/rv203-probe` at 89235c9, the PR squashed onto main 7bf9f49; `git diff --stat 5576c65 89235c9` over the PR's files is empty, so the citations hold at the PR head). Phone code read at c5eadbd (PR #197), the field app at a31924a, the server as the drain tree (`rv203-drain`). This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The script and its tests are careful and mostly right. But the reviewer would not let it decide that the drain is complete. In four ways it can say "accounted for" about a record a phone held that never reached the server, and one of them leaves no line in the report. In four other ways it reports a mismatch that nothing the owner is allowed to do can clear; under P4a that halts the fleet and uses up a phone. Every fix is small except F5.
+
+FINDINGS, BY SEVERITY
+
+F1 BLOCKER: on a shared phone, another technician's write counts as the queued row's evidence, and the report shows nothing.
+- Code: a row "by state" is matched against `phone_techs`, the manifest's owners plus its uploader (`drain_audit.py:470`). The check is `_by_phone` at `:1162`, used by `_take` (transition fallback, completion, negotiate, customer pin) and by the note count at `:1280`. The row's own owner is never checked.
+- Phone side: an owned outbox row can only be sent under its owner's session: `if (item.techId !== null && item.techId !== me) continue;` (c5eadbd `lib/outboxSync.ts:206`).
+- Scenario: technicians a1 and b1 share a phone and b1 uploads the manifest; a1 has a queued note, or `completion:J`, that never sends because a1 does not sign in on that phone again; after the receipt b1 adds a note to job J, or completes J from b1's own phone; a1's row becomes `landed_by_state` and the run exits 0.
+- Why nobody is told: `landed_by_state` rows with no notes are not printed in ATTENTION (`drain_audit_report.py:166`). The completion form on a1's phone cannot catch this either, because it blocks on any technician's queued completion (c5eadbd `completionPrefill.ts:86`), which pushes b1 onto another phone.
+- Proof: VERIFIED-BY-COMMAND, scratch tests `test_shared_phone_another_technicians_note_accounts_for_an_unsent_note` and `..._completion_...` pass.
+- Fix: for outbox rows with an owner, require `actor == row.owner`. Keep `phone_techs` only for owner-less rows (legacy v1) and for media.
+
+F2 MAJOR: a write still waiting on one phone is called `superseded` because another phone listed a newer version.
+- Code: `_superseded` (`:698`) requires only "the two phones share a technician" and "newer device time". The manifest carries no phone identity: `uploadProps` (c5eadbd `drainGate.ts:524-533`) has none.
+- Scenario: phone P1 (owners t1 and u1) holds `completion:J` version A, never sent; phone P2 (owner t1) holds a newer version B, which lands; version A becomes SUPERSEDED with the note "replaced on the phone...", and the run exits 0. Version A is still queued on P1. If t1 ever signs in there, it sends, and it can rewrite the bill if the bill is not frozen.
+- Proof: VERIFIED-BY-COMMAND, `test_a_second_phone_of_the_same_technician_marks_an_unsent_version_superseded`.
+- Fix: require a strictly higher `version_code` (a later build on the same phone) for a supersede. Better, P2b-1 uploads a phone id: `fleet.drain.firstSeenAt` is already stored once per phone.
+
+F3 MAJOR: one discard trace accounts for every row with that id, on any phone.
+- Code: traces are keyed on `(queue, record_id)` only, the first trace wins (`:1069`), and they are looked up at `:1517` with no owner check and no use-once rule.
+- Why it matters: outbox and media ids are mostly shared per job: `ready:<job>`, `negotiate:<job>`, `completion:<job>`, `arrival:<job>:<slot>`.
+- Scenario: technician x1 discards his own `ready:J` on phone P2. Technician t1's unsent `ready:J` on phone P1 becomes DISCARDED, attributed to x1, with no shared-phone flag because `owner_tech == discarded_by`.
+- Proof: VERIFIED-BY-COMMAND, `test_one_discard_trace_accounts_for_every_phones_row_with_that_stable_id`.
+- Fix: match a trace only when `owner_tech == row.owner` (or, for an owner-less row, when `discarded_by` is in `row.phone_techs`), and use each trace once.
+
+F4 MAJOR (a mismatch nothing can clear): a ping or crossing captured just before the snapshot fails the audit.
+- Phone side, two causes: the snapshot stamps `takenAt` after reading every key (c5eadbd `drainGate.ts:360-361`); pings and travel stamp `captured_at` from `fix.timestamp` (`pingTracker.ts:296`, `travelTracker.ts:268`), the location's time, not the moment the row is queued.
+- Effect: such a row is written after the snapshot (writes wait for it), lands, and its device time is earlier than the floor. `find_extras` (`:1711-1712`) then calls it UNEXPECTED, and the run exits 3.
+- When it happens: P4a step 4 sets up exactly this case (the technician is clocked in and the ping task stays registered across `adb install -r`). A phone clock that runs fast, compared with location times, does the same between the snapshot and the receipt (INFERRED: Android location time is not guaranteed to be the system clock).
+- Proof: VERIFIED-BY-COMMAND, `test_a_fix_that_predates_the_snapshot_but_was_queued_after_it_fails_the_audit`.
+- Fix: audit: judge UNEXPECTED only for punches and crossings; list pings and breadcrumbs from before the floor in a category that does not fail. P2b-1: stamp `takenAt` before `readAllRaw`.
+
+F5 MAJOR (a mismatch nothing can clear): a row the server refuses during the drain stays `missing` for ever.
+- Cases: a pending row that our server refuses during the drain while its job exists (a negotiate refused with "no bill yet", a pin refused 403, a close refused because the restore lost its closing clip); a row whose discard trace was dropped (telemetry is a droppable queue with a 1000-row cap).
+- No way out today: retry cannot land a definitive refusal; discard is forbidden by the release notice; a manager re-entering cash writes a new `client_id`, so the row stays missing (VERIFIED-BY-COMMAND, `test_a_payment_parked_during_the_drain_stays_missing_after_the_manager_reenters_it`).
+- Why it matters: O-10 E5 and E7 accept leftovers parked with an app reason. P4a turns any exit 3 into a fleet halt and a rerun on the next phone.
+- Fix (the reviewer: needs an owner decision): either P2b-1 uploads an AFTER event (the record ids now parked, with their reason class, from `readLiveManifest`), or the audit takes an owner-signed acceptance file. In both cases the report should say what clears each kind.
+
+MINOR
+- M1. Parked cash exits 0 with "ALL ACCOUNTED FOR". A `still_parked` or `residue` payment exits 0 (`:1527`; scratch test `test_a_parked_payment_exits_zero_all_accounted_for`). ATTENTION does list it with its amount, but the verdict line should say "N rows / X minor units for manual entry".
+- M2. The phone could identify locations exactly. The phone holds the location's `client_id` (a31924a `TravelScreen.tsx:168`), and the server deduplicates on it (drain tree `service.py:1553`). P2b-1's `outboxRecord` does not export it (c5eadbd `manifest.ts:335-338`). A one-line phone change, and the +-10 s rule could then go.
+- M3. Any pin counts as `prior_state` for a customer pin. A job with any pin answers an unsent moved pin (`:1490`; scratch test). It is listed in ATTENTION. No privacy-safe fix exists, since even a hash of the coordinates can be brute-forced.
+- M4. Pending media uploaded under a third technician reads `missing` for ever. Pending media drains under whoever is signed in (c5eadbd `pendingMedia.ts:258-300`, no owner check). If that is a technician outside `phone_techs`, it is never cleared (`:1293`; scratch test).
+- M5. A second build inherits the first build's un-park list. The un-park record is written once per phone ever, so a later build's manifest uploads the first build's `unpark_applied`. Rows re-parked with app reasons then read MISSING instead of `still_parked`. Fix: ignore `unpark_applied` when its `at` is earlier than `taken_at`.
+- M6. Exit 4 can be permanent, with no way out written down: with `unreadable_parts`, with saved corrupt copies (these persist into every later build's manifest), and with the drain manifest's own `.corrupt` copy, which holds no rows but is counted as "unknown rows"; also when a non-owner, non-uploader technician's punches land, where the way out (a scoped run) is not stated.
+- M7. Manager correction after the receipt. If a manager corrects a frozen completion after the receipt, an identical replay that landed silently reads MISSING.
+
+MANIFEST CONTRACT (c5eadbd `manifest.ts`, `drainGate.ts uploadProps`)
+
+| Field (unit, when absent) | Audit reads | Fixture |
+|---|---|---|
+| event `client_id` = `manifest_id` (UUID); `device_time` = `taken_at`; `server_time` = receipt (first upload; a duplicate is dropped by the client_id conflict rule); `actor_id` = signed-in slug | `:841-850`, uploader and receipt | real endpoint |
+| `schema` (string) | must match (`:380`) | same |
+| `version_code` (int) | reported only, not used for supersede (F2) | same |
+| `taken_at` (ISO, phone system clock, stamped after the raw read) | required; used as the extras floor and in the cap replay (F4) | parameter |
+| `storage.unreadable_stores` / `preserved_corrupt[].rows` (int or null) | either makes the manifest incomplete (`:402-414`, M6) | ported |
+| `storage.total_bytes`, `key_count`, `store_bytes`, `unreadable_keys`, `oldest_unsent`, `outage_window_start` | not read | ported |
+| `owners` (sorted slugs) | `phone_techs` (F1) | ported |
+| `counts[]` {queue, owner, kind, state, reason_class, n} | recomputed key for key (`:424-448`) | ported |
+| `unpark_applied {at, ids{punch,presence,outbox,media}}`, else `unpark_planned` | ids read; `at` ignored (M5) | ported |
+| `drafts.arrival[]` failed/pending/unreadable | warning only; `submitted_pending` and `material_lines` not read | ported |
+| `full_rows_kept_on_phone` (bool), `full_rows_omitted` (string), `unreadable_parts` (string[], only when non-empty) | warning / warning / incomplete | ported |
+| punch / presence: `client_id`, `owner` (tech_id, "" when absent), `kind`, `device_time` (ISO, now at tap), `state`, `reason_class` | read; `reason`, `failed_at`, `attempts`, `server_event_id`, `selfie` not read | ported |
+| outbox: `id`, `owner` (null for v1), `kind`, `job_id` (server id or the create's client_id), `created_at` (ISO), `state`, `reason_class`, `client_id` (create/payment/transition/ready only), `amount_minor` (paisa, int), `method`, `action`, `payment_id` | all read; the location `client_id` is missing (M2) | ported |
+| ping / travel: `client_id`, `owner`, `captured_at` (location time, not system clock), `state`, travel `job_id` and `leg` | read | ported |
+| media: `id` (stable: `intake:`, `approval:`, `arrival:<job>:<slot>`), `owner` (from the create, else null), `job_client_id`, `job_token`, `phase`, `type`, `created_at` (reset on re-capture), `state` (attempts >= 5) | read; `failed_at` is absent in field rows and comes through as null | ported |
+| telemetry: `client_id`, `name`, `created_at` (the field app has no telemetry queue, so empty at the first build) | read | ported |
+
+No field the fixture invents or names differently, and no mismatch of units (all times are ISO text, all amounts are integer paisa). The fixture cannot reveal F2, F4 or M2: it ports the phone code faithfully, so it ports the phone's blind spots too.
+
+QUEUE KINDS OF THE FIELD APP (a31924a `OutboxKind`: 10 kinds; all are known to the audit)
+
+| Kind (phone id) | Key on the phone | Drain-tree write | Audit rule |
+|---|---|---|---|
+| create `create:<cid>` | body `client_id` | `job.client_id` | identity |
+| completion `completion:<job>` | none | `complete` event on each unfrozen upsert, plus auto-ready; nothing written for an identical replay on a frozen bill | `_take` by phone technician (F1), else `prior_state` when frozen, else `residue` |
+| payment `<clientId>` | `clientId` | `job_payment.client_id` | identity, and the amount must match (CONFLICT) |
+| void `void:<paymentId>` | by value | `voided`, no-op on repeat | voided (by anyone), else `residue` |
+| negotiate `negotiate:<job>` | none | `bill` event "Bill negotiated ... -> Rs N" on every call | whole rupees by phone technician (F1); `prior_state` when the amount is equal |
+| location `location:<kind>:<job>` | body `client_id` (not exported) | `job_location` with `client_id` and `device_time` stored verbatim (`:1553`, `:1577`) | kind plus +-10 s (M2) |
+| customer_pin `customer_pin:<job>` | by value | `pin` event only when the pin moves (`:1614`) | `_take`, else any pin (M3) |
+| ready `ready:<job>` | `client_id` | `ready` event, or none when already settled | client_id, then settled state, then tag, then F2 rule (journaled) |
+| transition `transition:<action>:<job>` (close, abandon, wait, reschedule, haul) | `client_id` | status event with `client_id`; settled for close/abandon (`:769-773`) | same as ready |
+| note `note:<uuid>` | none | `note` event, never deduplicated | counted per job and manifest (F1) |
+| punch / presence | `client_id` | identity tables | identity; `restore_gap` |
+| ping / travel | `client_id` | silent window rejection / 403 or 404 drop | identity / window / cap (F4) |
+| pending media | stable id | `job_media` uploaded, `created_by` | counted (M4) |
+| discard traces | `record_id` | `app_event` | (queue, record_id) only (F3) |
+
+OUTCOME CLASSES
+
+| Outcome | Exit | Identity printed in the text report | Hidden loss built? |
+|---|---|---|---|
+| landed | 0 | only if it has notes | no (matched by identity) |
+| landed_by_state | 0 | no | yes (F1) |
+| prior_state | 0 | yes | pin is weak (M3) |
+| superseded | 0 | yes, with a misleading note | yes (F2) |
+| discarded | 0 | yes | yes (F3) |
+| still_parked / residue | 0 | yes, with amount | by design (M1) |
+| dropped / dropped_edge | 0 | dropped: only if it has notes | only pings, breadcrumbs and telemetry can reach it; no money row can |
+| restore_gap | 0 | yes | declared loss (punches and crossings only) |
+| missing / conflict | 3 | yes | (F5 is the opposite problem) |
+| extra: unexpected | 3 | yes | F4 |
+| other extras | 0, or 4 for technicians with no manifest | counts only | - |
+| manifest problems | 4 | yes | M6 |
+
+TRIED AND COULD NOT BREAK
+- Money: payments are matched by identity and checked for amount, and no money row can end up dropped.
+- Location +-10 s with a wrong phone clock: the stored `device_time` and the manifest's `created_at` are taken in the same tap (`TravelScreen.tsx:167`, `outbox.ts:170`), so clock error cancels out.
+- Negotiate in whole rupees: the phone holds one negotiate per job, and each piece of evidence is used once. Apart from F1, no money loss found.
+- Gate claim: a live send queues while the gate is shut (c5eadbd `outboxSync.ts:299`, `:201`). Nothing sends before the receipt.
+- Settled states and event texts match the drain tree.
+- 401 pause during the drain: the row reads missing until the technician signs in, then lands and clears.
+- Completion replayed against a frozen bill: an unfrozen lost edit stays missing.
+- Personal data: no path prints props, typed text, server reason text, coordinates or names. Only ids, slugs, generated notes and integers are printed.
+
+REGISTER IDS AND TESTS. This PR adds new files only. Every test in them fails on the base (f192fee) because the module does not exist there. No existing expected value changed, no assertion was removed, and there is no new skip or xfail. O10-F1 (BEFORE counts) is the register id this PR consumes. No PR test covers F1-F5.
+
+WHAT THE REVIEWER RAN. Read-only `git show`, `grep` and `git diff`. One file added: `.claude/worktrees/rv203-probe/backend/tests/test_scratch_rv203_phone.py`, 9 pure-function tests, each asserting the current behaviour, so green means the scenario reproduces. `ff-gates.sh backend rv203phone .../rv203-probe tests/test_scratch_rv203_phone.py -q -v`: GATE[7] EXIT=0, 9 passed; log `/c/Users/User/.fixflow-cache/gate-logs/rv203phone/backend-20261114-013236`. An earlier run on lane `rv203p` passed 7 tests; its only failure was GATE[1] ruff format, on the scratch file.
+
+WHAT STAYS UNVERIFIED. Whether Android hands a location taken before the snapshot to the restarted ping task, and whether the fleet's phones stamp locations with GPS time (F4 depends on this; INFERRED). How common shared phones are on the roster. That the field APK really is a31924a. The SQL and read-only guarantees (the other reviewer's lens). The scenarios ran on pure functions, not through real Postgres.
