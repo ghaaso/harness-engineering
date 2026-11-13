@@ -90,7 +90,7 @@ case "$cmd" in
       }
       die "a keeper is alive (pid $(keeper_pid)) but $EMU_SERIAL is not booted: run 'emu.sh stop' first"
     fi
-    if "$FF_ADB" devices | grep -q "^$EMU_SERIAL"; then
+    if adbx devices | grep -q "^$EMU_SERIAL"; then
       die "$EMU_SERIAL is already attached but not owned by this lab (another emulator?)"
     fi
     args=()
@@ -112,7 +112,7 @@ case "$cmd" in
     done
     t0=$(date +%s)
     log "emulator launched ($( [ "$cold" -eq 1 ] && echo cold || echo warm ) boot, gpu=$GPU, $( [ "$window" -eq 1 ] && echo window || echo headless )); waiting for boot"
-    "$FF_ADB" -s "$EMU_SERIAL" wait-for-device 2> /dev/null &
+    adb_ wait-for-device 2> /dev/null &
     wpid=$!
     until booted; do
       sleep 2
@@ -126,9 +126,9 @@ case "$cmd" in
     done
     kill "$wpid" 2> /dev/null
     secs=$(($(date +%s) - t0))
-    "$FF_ADB" -s "$EMU_SERIAL" root > /dev/null 2>&1
+    adb_ root > /dev/null 2>&1
     sleep 2
-    "$FF_ADB" -s "$EMU_SERIAL" wait-for-device
+    adb_ wait-for-device
     require_emulator
     renderer="$(ash dumpsys SurfaceFlinger 2> /dev/null | grep -m1 -i 'GLES:' | sed 's/^ *//')"
     gpu_log="$(grep -m1 -iE 'graphics backend|gpu emulation|GPU mode|Renderer' "$EMU_LOG" 2> /dev/null | sed 's/^ *//')"
@@ -138,8 +138,8 @@ case "$cmd" in
   stop)
     kp="$(keeper_pid)"
     ep="$(cat "$EMU_PID_F" 2> /dev/null)"
-    if "$FF_ADB" devices | grep -q "^$EMU_SERIAL"; then
-      "$FF_ADB" -s "$EMU_SERIAL" emu kill > /dev/null 2>&1 || true
+    if adbx devices | grep -q "^$EMU_SERIAL"; then
+      adb_ emu kill > /dev/null 2>&1 || true
     fi
     for _ in $(seq 1 60); do
       alive "$kp" || break
@@ -161,7 +161,7 @@ case "$cmd" in
   status)
     kp="$(keeper_pid)"
     if alive "$kp"; then echo "keeper: alive (pid $kp)"; else echo "keeper: none"; fi
-    "$FF_ADB" devices | sed -n "/^$EMU_SERIAL/p"
+    adbx devices | sed -n "/^$EMU_SERIAL/p"
     if booted; then echo "boot_completed: 1"; else echo "boot_completed: no"; fi
     bash "$SLOT_SH" status
     tail -n 3 "$LAB_RUN/boot-times.log" 2> /dev/null

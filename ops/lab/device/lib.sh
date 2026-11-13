@@ -12,7 +12,9 @@
 #   FF_SLOT_SH       the machine-wide slot lock
 #   FF_EMU_SERIAL    adb serial of the lab emulator (emulator-5554)
 set -u
-export MSYS_NO_PATHCONV=1
+# MSYS path conversion is turned off for docker and adb ONLY (their arguments are container
+# and device paths). Exported globally it also breaks `git -C /c/...` (L2 found this the hard way).
+docker() { MSYS_NO_PATHCONV=1 command docker "$@"; }
 
 LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAB_LANE="${FF_LAB_LANE:-l3a}"
@@ -49,9 +51,10 @@ load_android_env() {
 }
 
 # adb against the lab emulator only: never a USB phone (plan: never touch a real phone).
-adb_() { "$FF_ADB" -s "$EMU_SERIAL" "$@"; }
+adbx() { MSYS_NO_PATHCONV=1 "$FF_ADB" "$@"; }
+adb_() { adbx -s "$EMU_SERIAL" "$@"; }
 # A shell command as root on the emulator (the google_apis image allows `adb root`).
-ash() { "$FF_ADB" -s "$EMU_SERIAL" shell "$@" | tr -d '\r'; }
+ash() { adb_ shell "$@" | tr -d '\r'; }
 
 # Refuse to run against anything that is not an emulator: a physical device has no
 # ro.kernel.qemu=1 / ro.boot.qemu=1.

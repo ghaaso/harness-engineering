@@ -36,6 +36,9 @@
 #
 # No slot is taken for this stack: it is two small containers (512 MB caps), not a gate run.
 #
+# The on-duty ping interval is 1 minute in the lab (FF_LAB_PING_MIN), not the production 5, so a
+# check sees a ping batch within its window.
+#
 # Knobs (env): FF_LAB_PORT (18431), FF_LAB_LANE (l3a), FF_LAB_WT (the worktree; default: this
 # script's checkout), FF_STUB_STATUS (503).
 set -u
@@ -43,7 +46,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-WT="${FF_LAB_WT:-$(git -C "$HERE" rev-parse --show-toplevel)}"
+WT="${FF_LAB_WT:-$(git -C "$(winpath "$HERE")" rev-parse --show-toplevel)}"
 PG_IMAGE="postgres:16-alpine"
 
 # Lab-only seed values (a local, throwaway database; never a real account or place).
@@ -56,6 +59,13 @@ FENCE_LNG="67.100000"
 FENCE_RADIUS_M=80
 JOB_LAT="24.918000" # ~2 km north of the fence
 JOB_LNG="67.100000"
+# The attendance and media services build an R2 client at request time and an EMPTY account id
+# is an invalid endpoint (HTTP 500 on PUT /geofences). A dummy id makes signing work (signing is
+# local); --add-host (on the database container, which owns the shared network namespace and its
+# /etc/hosts) pins that hostname to loopback so the backend can never
+# reach Cloudflare. A phone would only receive such a signed URL by uploading a selfie or media,
+# which the lab protocols never do (CAMERA is denied and user-fixed by app.sh grant).
+R2_DUMMY="fixflow-lab-no-r2"
 
 cmd="${1:-}"
 usage() {
@@ -66,7 +76,7 @@ usage() {
 api_image() {
   local tree
   tree="$(git -C "$WT" rev-parse HEAD:backend)" || die "cannot read HEAD:backend in $WT"
-  echo "fixflow-$LAB_LANE-labapi:${tree:0:12}"
+  echo "fixflow-$LAB_LANE-labapi:${tree:0:12}-lf"
 }
 
 running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2> /dev/null)" = "true" ]; }
@@ -80,6 +90,7 @@ ensure_db() {
     docker run -d --name "$C_DB" --memory 512m \
       -e POSTGRES_PASSWORD=lab -e POSTGRES_DB=fixflow \
       -p "127.0.0.1:$LAB_PORT:8000" \
+      --add-host "$R2_DUMMY.r2.cloudflarestorage.com:127.0.0.1" \
       "$PG_IMAGE" > /dev/null || die "cannot start $C_DB (port $LAB_PORT taken?)"
   fi
   local i
@@ -95,7 +106,7 @@ build_api() {
   tag="$(api_image)"
   if ! docker image inspect "$tag" > /dev/null 2>&1; then
     log "building $tag from $(git -C "$WT" rev-parse --short HEAD):backend (committed tree only)"
-    git -C "$WT" archive --format=tar HEAD:backend | docker build -q -t "$tag" - > /dev/null ||
+    git -C "$WT" -c core.autocrlf=false -c core.eol=lf archive --format=tar HEAD:backend | docker build -q -t "$tag" - > /dev/null ||
       die "backend image build failed"
   fi
   echo "$tag"
@@ -133,6 +144,9 @@ start_api() {
       -e FIXFLOW_ENABLE_SCHEDULER=false \
       -e FIXFLOW_BACKUP_ENABLED=false \
       -e FIXFLOW_ENABLE_DISPATCHER=false \
+      -e FIXFLOW_R2_ACCOUNT_ID="$R2_DUMMY" \
+      -e FIXFLOW_R2_ACCESS_KEY_ID=lab-no-key -e FIXFLOW_R2_SECRET_ACCESS_KEY=lab-no-secret \
+      -e FIXFLOW_ATTENDANCE_PING_INTERVAL_MINUTES="${FF_LAB_PING_MIN:-1}" \
       -e FIXFLOW_JWT_SECRET="lab-only-jwt-secret-$LAB_LANE-not-for-any-real-host-0123456789" \
       -e PORT=8000 \
       "$tag" > /dev/null || die "cannot start $C_API"
