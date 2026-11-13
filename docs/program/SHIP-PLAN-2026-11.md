@@ -1766,6 +1766,12 @@ and rebases after P1).
   50.1 GB; the lane processes held 9.7 GB, the Docker VM 8.5 GB, the emulator 4.7 GB, the
   owner's own applications about 4.4 GB. Ten sessions is the ceiling; a watcher reports when
   free commit falls under 3 GB.
+  **The Docker VM does not return freed memory by itself (17:00):** after two Android builds it
+  held 9.0 GB of host RAM while using 3.2 GB inside, and the host fell to 1.4 GB free. Dropping
+  the VM's clean caches and compacting its memory returned 2.8 GB in 40 seconds (host free
+  1.4 to 4.0 GB), with nothing restarted and no setting changed. `docs/program/lab/vm-return.sh`
+  does this whenever the host has under 3 GB free; the coordinator keeps it running, and the
+  backend gate compacts at the start and end of every run.
 - **Ready signal.** A lane that reports READY also marks its PR ready for review (`gh pr ready`);
   a coordinator watcher polls that flag and wakes the binding review.
 
