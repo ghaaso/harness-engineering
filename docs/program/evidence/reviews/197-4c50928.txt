@@ -1,0 +1,47 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at 4c509288e61fda64a7b7fd3fa99929ad3c47197d
+Re-review by the reviewer who passed the PR at c5eadbd (the fixflow-offline-sync-reviewer definition), resumed by the coordinator on 2026-11-14 at 02:53 for the addition made under rulings C39 and C45 (the drain manifest contract, version 2). The head was the same at the start and the end of the pass; CI 3 of 3 green; merge state clean. Only `e17a389` and `4c50928` are new: `git range-diff` shows the older commits unchanged, and `technician-app/` at `f56c33f` is identical to `c5eadbd`. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+One defect needs a phone fix (finding 1). One removal path is missing from the C45 list and needs a ruling on the audit side (finding 2).
+
+FINDINGS
+1. MINOR, needs fixing. A queued clip the technician deletes can leave the phone with no discard entry. Where: `removePendingMedia` (`technician-app/src/features/media/pendingMedia.ts:97`) passes `traceRequired: false`; `discardPendingMedia` (about :160) then swallows the error from `recordQueueDiscard`. Why the entry vanishes: `recordQueueDiscard` (`src/features/drain/discardEvent.ts:66-68`) takes the durable entry back with `removeDiscard` when the trace write fails; the row is then removed anyway. Proven by the reviewer's own test: a queued voice clip, with the telemetry store write failing; after `removePendingMedia` there were 0 rows left and 0 discard-list entries. Effect: the manifest row has neither landed nor been discarded, so it reads `missing` (exit 3), which halts the fleet with nothing on the phone that can clear it. It needs a failed local write, so it is rare. Smallest fix: in this mode keep the durable entry strict and make only the trace best effort (skip `removeDiscard`); if the entry itself cannot be stored, park the clip instead of removing it, so it never uploads and still shows in Needs attention.
+2. MINOR, a fourth removal path the C45 list does not name (audit side to rule). Where: `enqueuePendingMedia` (`pendingMedia.ts:80-84`) replaces a queued entry that has the same id when a slot is recaptured, for example `arrival:<job>:voice`. The earlier clip leaves without landing and without an entry, under the same record id with new content. C45 point 15 covers outbox kinds only. The audit must either match media by job and phase (O-10 E6) or extend point 15 to the media slot id; otherwise the row reads `missing`.
+3. Note. Removing the `gateOpen()` check from the automatic after-report (`afterSend.ts:345`) is caught by no test. It is harmless: `followed()` still requires a valid receipt, and a receipt implies the un-park has run.
+
+CONTRACT POINTS (PHONE SIDE)
+
+| Point | Verdict | Evidence |
+|---|---|---|
+| 1. Install id | Holds | `installId.ts:28-47`: random UUID under its own key; returned when present, never rewritten, not from hardware. A read error writes nothing and fails the snapshot, which is retried. A first-run race inside one JS context is covered by the memo, and the value is read back after the write. Break M5 (rewrite on every launch) caught by 9 tests. |
+| 2. Schema | Holds | `constants.ts`: `fixflow.drain_manifest.v2`. |
+| 3. `taken_at` before the read | Holds | Snapshot (`drainGate.ts` `takeOrLoad`), live read and after-report all stamp before reading. Break M6 caught. |
+| 4. Location `client_id` | Holds | `manifest.ts` `outboxRecord`. The field app's `LocationInput.client_id` is required (a31924a `jobsApi.ts:141`). Break M7 caught. |
+| 5. No free text; sanitiser | Holds | `reason` removed from the four record types. `sanitizeDeep` (keys too) runs over the whole manifest props, the after-report props and the `queue_discard` props at append. The remaining body fields are app-generated. The reviewer's own test fed NUL and unpaired surrogates through media id, job token, phase, type, travel `job_id`/`leg`, presence kind, a location `client_id`, a draft key and a JSON key; neither body was unsafe. Breaks M1, M2 and M15 caught. |
+| 6. `drain_after` | Holds | Same builder; `pending`/`parked` only (M8 caught); `manifest_id` from the valid receipt, never "live" (M10 caught); fresh `client_id` per upload (M12 caught); straight to `/api/events`, built at upload time. Automatic send only after a receipt, single-flight, at most one per 5 min, skipped when unchanged (M11 caught). 5xx: recorded and retried 5 min later at most. App 4xx or markerless 404: recorded, never parks anything. A full discard list refuses the discard and the screens show `DISCARD_NOT_RECORDED`, so the row stays. Eviction (M3) caught. |
+| 6. Gates nothing | Holds | `drainAll` calls `notifyDrainPassEnded`, which is synchronous, wrapped in try/catch, and fire-and-forget. A failing or hanging report does not block a queue, the gate or a screen. Sign-out: checked at the start of each attempt. |
+| 9 and `queue_discard` | Holds | `install_id` carried (M14 caught by 8 tests); the durable entry is written before the trace; M9 caught. |
+
+REMOVAL PATHS
+
+| Path | Covered by |
+|---|---|
+| Outbox success removal; live send drops the queued copy; `enqueue` replaces under the same id (`outbox.ts:162`, `outboxSync.ts:215,311`) | Landed, or C45 (1) |
+| Punch `pruneSettled` (done only); presence settled (`presenceSync.ts:89`) | Landed |
+| Ping and travel caps and drops; telemetry cap and drop | C45 (2) |
+| Corrupt store set aside | C45 (3) |
+| Discards on punch, presence, outbox, media | Discard list entry |
+| v1 outbox merged into v2, then `KEY_V1` removed | Rows kept in v2 |
+| Arrival draft removed | Not a queue row |
+| `removePendingMedia` with a failed trace write | Missed: finding 1 |
+| Media recapture replaces the queued entry | Missed: finding 2 |
+
+TRIED AND COULD NOT BREAK: a receipt under another `manifest_id`; a second install id; reason text reaching either body; the after-report sending before the receipt, running more often than its rate limit, reusing a `client_id`, or blocking a drain.
+
+TESTS: no weakened assertion and no skip; the removed lines are v1 to v2 replacements. The new suites import modules that do not exist at `c5eadbd`, so they fail there by construction. The PR's example events match the builder's fields.
+
+WHAT THE REVIEWER RAN. Gate on a clean tree at 4c50928 (lane rv197, its own detached worktree): typecheck exit 0; Jest 64 suites, 739/739; `expo export` exit 0; SUMMARY FAIL=0. No build-configuration file changed since `c5eadbd`. 14 mutations (13 caught, M4 not caught) and 2 probe tests (A passed; B shows finding 1). Everything restored, `git status` clean, worktree removed.
+
+UNVERIFIED: whether P2b-2's row key keeps a legacy-v1 outbox row recognisable after the v2 merge, since `legacy_v1` flips from true to false. Few or no phones are likely to still have a v1 store.
+
+COORDINATOR (2026-11-14), RULING C46. Finding 1 goes back to the lane: the durable discard entry is strict in every mode, only the telemetry trace is best effort, and a clip whose entry cannot be stored is parked, never removed; a test that fails on 4c50928. The note (finding 3) gets its test in the same commit. Finding 2 is ruled on the audit's side: contract point 15 extends to the pending-media slot ids. The unverified point goes to the audit lane: its row key must not include `legacy_v1`. Because this reviewer's context has grown past what a small delta is worth, the delta is read by a fresh reviewer with this report in hand. Not mergeable at 4c509288e61fda64a7b7fd3fa99929ad3c47197d; the two owner values hold the merge separately.

@@ -1,0 +1,55 @@
+VERDICT: PASS-WITH-FIXES
+PR #209 at c9be93a54d1d393f5ce1036c64277865599b263a
+Binding review by the reviewer who judged the L4 rehearsal (PR #201), dispatched by the coordinator on 2026-11-14 at 02:27 and restarted at 02:38 after the desktop app's restart cut the first attempt. Base 53c6046. The head was re-read at the end and is unchanged. Line numbers are `docs/RUNBOOK-SELFHOST.md` at the head. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Every block was taken from the runbook by its anchor, with host paths moved into a scratch folder, and piped into `bash --norc -i` against one `postgres:17-alpine`; for the paste test a compose-managed container on the default bridge with no published port.
+
+FINDINGS BY SEVERITY
+
+MAJOR-1: the scp fallback writes the marker without checking that the pre-restore pg_dump succeeded. Line 1452 (6.6-b-scp) checks D, P, L, LAPTOP and `proven`, but not `DX`; the save line at 1435 does check it. Trial: a pg_dump cut short (`dump exit=1`, `TABLE DATA` count `0`, `pg_restore: error: could not read from input file: end of file`), then the upload failing, then the scp fallback with the laptop's sum equal to `L`. Output: `marker: src.dump (copy on the laptop)`, then 6.7 printed `DROP SCHEMA` / `CREATE SCHEMA` / `0`. The live database's only off-host copy was a truncated file. This is the one route to the DROP that bypasses D5/D6. Smallest fix, at 1452: add `"${DX:?not set - run the pg_dump line of 6.6 (b)}"` to the `:` list and `[ "$DX" = 0 ] &&` before `[ "$LAPTOP" = "$L" ]`.
+
+MINOR-2: the count-0 branch trusts an `N` left from an earlier line. Line 1420 tests `[ "$N" = 0 ]`, not the database. Trial: `N=0` left in the shell, 46 live tables including a manager write; 6.6 (a), then 6.6-b-empty, then 6.7: `marker: src.dump (nothing to save)`, `DROP SCHEMA`, `restore exit=0`; `job_event` went from 320 to 307 and the manager write was gone. It needs the operator to skip 6.6-b-count. Fix: replace `[ "$N" = 0 ]` with a count read from the database on that line.
+
+MINOR-3: `ffc exec` eats the rest of a pasted block. Shown with a real `docker compose exec -T`: a paste of `ffc exec -T postgres psql ... -tAc 'select 1'` followed by two `echo` lines and another `ffc exec` printed only `1`; all later lines were consumed. With ` </dev/null` appended to each `ffc exec`, every line ran. 6.9-reseed (1549-1550) as written printed `INSERT 0 1|whatsapp|320|`: the `max(seq)` line was eaten, so the Check at 1553-1555 cannot be read. The guards fail safe, but the owner gets stuck (the 6.7 DROP line eats the restore line, and "redo 6.7" repeats that loop). When it happens: a paste that is not bracketed (bash older than 5.1, bracketed paste switched off, or a provider's web or serial console that types the paste, which is the emergency route when SSH is down). Fix: append ` </dev/null` to every `ffc exec` line in the anchored blocks that does not read stdin.
+
+MINOR-4: a cursor above the head is a STOP with no way forward (1555, "Any other cursor value is a STOP"). Trial: cursor 400, head 320 printed `whatsapp|400`, `320`. `GREATEST` correctly never moves the cursor back, and the high cursor is in the safe direction. Fix: one sentence saying what to do above `<N>`.
+
+MINOR-5: the web tag lines accept a stale web SHA when the fix touches nothing under `backend/` (11.13a-web-tag at 2664 and the same test at 2543/2571). Trial: a web-only fix picked on both branches; `SHA` still the pre-fix web cut; the `SHA=` line skipped: `web sha OK...`, push, then `tagged 52398d73...`: the tag `drain-web-image-2` landed on the commit without the fix. Fix: in both the tag lines and the 2543 check, also require `[ "$SHA" = "$(git rev-parse release/drain-web)" ]`.
+
+MINOR-6: a new line in R0.5 is wrong after #208. Line 2810 says the nightly dump is "stamped `T0230..Z`" in both phases. The key is stamped in UTC (`backend/app/core/backup.py:104`); with #208 the job runs at 02:30 PKT, which is `T2130..Z` on the previous UTC date. Fix: say both.
+
+MINOR-7: 8.5a's Check lists only exit codes 0/3/4/5 (1937-1946). A mistyped `<S>` or a missing fuel file gives `audit exit=1`; an `ffc`/docker failure gives 125-127. Fix: "Any other code: the audit did not run; fix the call."
+
+NIT-8: anchors. There are 21 anchors, not 22; 11.9 (D12) and 11.13 (D11) changed but are not anchored, against the rule at lines 69-71.
+NIT-9: word order at line 1293 ("The second and third files are 6.6's proof and marker" is reversed).
+
+THE TEN ITEMS
+
+| # | Item | Verdict |
+|---|---|---|
+| 1 | D1 re-seed / 6.8 check 6 / every path ends at the head | Closed. Cursor-above case: MINOR-4. Check readability: MINOR-3 |
+| 2 | D5/D6/N1 DROP guard | Closed except MAJOR-1 (scp without DX) and MINOR-2 (stale N). A written way forward exists in every state run |
+| 3 | D4/D7 proof line and "does NOT catch" text | Closed. The text is honest; a 60 % cut also lists cleanly and is covered by "cut after its table of contents" |
+| 4 | N2 8.6/8.7 swap | Closed. No stale reference in `ops/`, `CLAUDE.md`, `.claude/` or the plan; the smoke label is fixed. The reasoning holds (`T_close` is read after `--force-recreate`) |
+| 5 | D3, D8, D11, D12, 7.2 | Closed |
+| 6 | N3 authoritative text; guards inline; helpers present | Closed. The only `/opt/fixflow/docs` mention is line 58, and it says never follow it. Every called helper, plus `sql/appendix-b.sql` and `cron/*`, exists at `90ea88d` |
+| 7 | N4 with C38/C41 | 1.5 and 9.2 are correct. R0.5: MINOR-6 |
+| 8 | 8.2/8.5a | Call forms match `drain_audit.py` at the unmerged #203 head d0ddce7 (VERIFY correctly stays). The 8.2 guard holds. 8.5a: MINOR-7 |
+| 9 | C37's notes, 11.12/11.13a | The push sits on the check's line. The fetch check catches a clone that is behind. Stale web SHA: MINOR-5 |
+| 10 | Regressions, scope, fences, anchors, secrets, label, trial table | No regressions. Fences balanced. No secret-shaped or real hostname in the diff. The PR's trial rows re-run agree. Anchors: NIT-8 |
+
+STATES RUN
+Item 1: cursor below the head (250 vs 320): `INSERT 0 1`, `whatsapp|320`, `320`; at the head: same; absent: same; above the head (400): `whatsapp|400`, `320`; empty `job_event`: `whatsapp|0` and an empty line. The dispatcher cannot run before the re-seed: `docker-compose.prod.yml:118` forces `FIXFLOW_ENABLE_DISPATCHER: "false"` at both 90ea88d and c9be93a.
+Item 2: good path (R3, 46 live tables): `proven`, upload receipt, marker, DROP, `0`, `restore exit=0`. No marker: both STOP lines; 46 tables kept. Marker naming another dump: both STOP lines. New shell with `D` unset: `bash: D: not set - run 6.6 in this shell` twice; the shell stayed open. Restore line run a second time: `STOP: not restored ...`. Upload down after a failed pg_dump: `STOP: no marker written`, then the scp fallback wrote the marker and the DROP ran (MAJOR-1). Stale `N=0`: DROP, live writes lost (MINOR-2). 99 % cut restored (sum recorded after the cut): `restore exit=1`; go-back route with the pre-restore file: `restore exit=0`, with `job_event` 320, the manager write 1, cursor 250.
+Item 3: good dump: `proven`; 99 % cut: `proven` (documented as not caught); 60 % cut: `proven` (same text); empty list: `0 0 STOP`; wrong sum: `STOP`; `D` unset: `bash: D: not set`.
+8.2: OK: parses, then uploads; exit 5 with an empty file: STOP; exit 0 with partial JSON: STOP; exit 0 with an empty file: STOP; `S` unset: the guard fires twice.
+
+TRIED AND COULD NOT BREAK. The `sudo -i`-style unset guard (the shell stays open). A stale marker (removed by 6.1 and by 6.6 (a)'s first line). Proof and marker naming a different dump. The pre-restore receipt regex against the real `fixflow-r2-put.sh` receipt format. 6.8 check 6 for a 0045 dump. 11.12 with a leftover backend SHA; a web branch carrying a backend change. 8.6/8.7 numbering references across the repo.
+
+UNVERIFIED. A real host, a real R2 and a real production dump. `drain_audit.py` itself (P2b-2 is unmerged). Bracketed-paste behaviour in a real tty. `python -m json.tool` (stubbed). `sudo -i` itself.
+
+BACKLOG (not written up). R3 restores of R2 dumps have no P0a dumpfacts for 6.8 to compare against (older than this PR). The proof line does not test `list exit`, so a stale `/restore/$D.list` left in the container could vouch for a file `pg_restore -l` cannot read (downtime only). STOP texts do not name which test failed; the lines printed before them do.
+
+CLEANUP. The reviewer's two containers and their two anonymous volumes (identified by its fixture table names) are removed; it pulled `alpine:latest` (13 MB), which is still there. Scratch trial data deleted; scripts remain in the coordinator's scratchpad, `rv209/`. Nothing was pushed.
+
+COORDINATOR (2026-11-14), RULING C47. Sent back to the lane: the major and all six minor findings and both nits are fixed in this PR; the three backlog points are taken in the same round where each costs a line (the proof line tests the listing's exit; a STOP names the test that failed), and the R3 case gets a sentence. MINOR-3 is treated as more than minor for this runbook: the web or serial console is exactly where the owner will be on the day SSH is down, so every `ffc exec` line that does not read stdin gets ` </dev/null`, in every block of the runbook and not only the changed ones, and section 0 says why. The same reviewer re-reads; the L4 rig rehearses the branch before the merge. Not mergeable at c9be93a54d1d393f5ce1036c64277865599b263a.
