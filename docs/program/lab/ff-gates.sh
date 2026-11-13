@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# Lane-parameterised gates for the FixFlow ship program (plan section 0.1).
+#
+#   ff-gates.sh backend <lane> <worktree> [extra pytest args]
+#   ff-gates.sh mobile  <lane> <worktree>
+#   ff-gates.sh web     <lane> <worktree>
+#
+# <lane>     short id, [a-z0-9-], unique per phase in flight (p1, p2a, p7a, ...). It names the
+#            Docker network and containers, so every lane has its OWN database.
+# <worktree> the lane's checkout, C:/... or /c/... form.
+#
+# What it keeps from design Appendix A: the read-only mount plus a copy into /work, no host
+# ports, every gate runs even after a failure, a per-gate log file, and a name conflict that
+# mechanically stops a second pytest against one database. What it changes: the names carry
+# the lane, so N backend lanes run at once; the gates container joins the database container's
+# network namespace (the database is at localhost, as in CI) instead of a user network, because
+# Docker's predefined address pools are exhausted on this machine by another project's 29
+# networks ("all predefined address pools have been fully subnetted", measured 2026-11-13) and
+# FixFlow neither prunes networks it did not create nor reconfigures Docker; pip uses a shared
+# cache volume;
+# the copy includes technician-app/src/shared (the cross-runtime contract fixtures the backend
+# tests read by repo-relative path) and CLAUDE.md; a stray backend/.env is never copied; pytest
+# writes junit and the gate FAILS if any integration test was skipped; pip-audit is advisory.
+#
+# Run it in the background (it can exceed the 10-minute foreground limit) and read
+# <log dir>/summary.txt when it exits. Exit code 0 only when every gate passed.
+set -u
+export MSYS_NO_PATHCONV=1
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KIND="${1:?usage: ff-gates.sh backend|mobile|web <lane> <worktree> [args]}"
+LANE="${2:?lane id}"
+WT_IN="${3:?worktree path}"
+shift 3
+case "$LANE" in *[!a-z0-9-]*) echo "lane id must be [a-z0-9-]: $LANE" >&2; exit 2 ;; esac
+
+WTW="$(cygpath -m "$WT_IN")"     # C:/... for docker -v
+WTU="$(cygpath -u "$WT_IN")"     # /c/... for cd
+[ -d "$WTU" ] || { echo "no such worktree: $WT_IN" >&2; exit 2; }
+
+LOGROOT="${FF_LOG_DIR:-/c/Users/User/.fixflow-cache/gate-logs}"
+L="$LOGROOT/$LANE/$KIND-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$L"
+HOLDER="$LANE-$KIND-$$"
+# C:/ form here: git is a native binary and path conversion is switched off above
+HEAD_SHA="$(git -C "$WTW" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+echo "LOGDIR $L"
+echo "HEAD $HEAD_SHA lane=$LANE kind=$KIND"
+
+cleanup() {
+  if [ "$KIND" = backend ]; then
+    docker rm -f "fixflow-$LANE-gates" "fixflow-$LANE-db" >/dev/null 2>&1
+  fi
+  bash "$HERE/ff-slot.sh" release "$HOLDER" >/dev/null 2>&1
+}
+trap cleanup EXIT
+
+finish() {  # $1 = FAIL flag
+  {
+    echo "lane=$LANE kind=$KIND head=$HEAD_SHA worktree=$WTW"
+    grep -E "^(GATE|ADVISORY|SETUP|SKIPS|SUMMARY)" "$L/gates.log" 2>/dev/null
+  } > "$L/summary.txt"
+  cat "$L/summary.txt"
+  exit "$1"
+}
+
+# every gate runs; FAIL is sticky
+FAIL=0; i=0
+g() {
+  i=$((i+1))
+  "$@" > "$L/gate-$i.log" 2>&1
+  rc=$?
+  echo "GATE[$i $*] EXIT=$rc" | tee -a "$L/gates.log"
+  [ "$rc" -ne 0 ] && FAIL=1
+  return 0
+}
+
+npm_ready() {  # reinstall only when the lock file changed since the last install
+  local h; h="$(sha256sum package-lock.json | cut -c1-16)"
+  if [ ! -d node_modules ] || [ "$(cat node_modules/.ff-lock-hash 2>/dev/null)" != "$h" ]; then
+    npm ci > "$L/npm-ci.log" 2>&1 || { echo "SETUP[npm ci] FAILED" | tee -a "$L/gates.log"; return 1; }
+    echo "$h" > node_modules/.ff-lock-hash
+  fi
+}
+
+case "$KIND" in
+  backend)
+    docker info --format '{{.ServerVersion}}' >/dev/null 2>&1 || { echo "SETUP[docker] DOCKER_ENGINE_DOWN" | tee -a "$L/gates.log"; finish 3; }
+    N="fixflow-$LANE"
+    if docker ps --format '{{.Names}}' | grep -qx "$N-gates"; then
+      echo "SETUP[lane] GATES_ALREADY_RUNNING for $LANE (one pytest per database)" | tee -a "$L/gates.log"
+      trap - EXIT; finish 4
+    fi
+    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 | tee -a "$L/slot.log"
+    PG="${FF_PG_IMAGE:-postgres:16-alpine}"   # CI parity today; the plan moves both to 17-alpine in P3a
+    U="postgresql+asyncpg://postgres:postgres@localhost:5432/fixflow_test"
+    docker rm -f "$N-db" "$N-gates" >/dev/null 2>&1
+    docker run -d --name "$N-db" --memory 1g \
+      -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fixflow_test "$PG" > /dev/null \
+      || { echo "SETUP[db] RUN FAILED" | tee -a "$L/gates.log"; finish 2; }
+    docker run -d --name "$N-gates" --network "container:$N-db" --memory 3g --cpus "${FF_GATE_CPUS:-6}" \
+      -v "$WTW:/src:ro" -v fixflow-pip-cache:/root/.cache/pip \
+      -e FIXFLOW_DATABASE_URL="$U" -e FIXFLOW_TEST_DATABASE_URL="$U" -e PYTHONDONTWRITEBYTECODE=1 \
+      -e FF_DB_HOST=localhost -e FF_PYTEST_ARGS="$*" \
+      python:3.12-slim sh -c '
+        mkdir -p /work/backend /work/logs || exit 2
+        tar -C /src/backend --exclude=.venv --exclude=.env --exclude=__pycache__ --exclude=.mypy_cache \
+            --exclude=.ruff_cache --exclude=.pytest_cache -cf - . | tar -C /work/backend -xf - || exit 2
+        if [ -d /src/technician-app/src/shared ]; then
+          mkdir -p /work/technician-app/src/shared && cp -r /src/technician-app/src/shared/. /work/technician-app/src/shared/
+        fi
+        [ -f /src/CLAUDE.md ] && cp /src/CLAUDE.md /work/CLAUDE.md
+        cd /work/backend || exit 2
+        pip install -q -e ".[dev]" pip-audit > /work/logs/setup-pip.log 2>&1 || { echo "SETUP[pip] FAILED"; exit 2; }
+        n=0; until python -c "import socket,os;socket.create_connection((os.environ[\"FF_DB_HOST\"],5432),1)" 2>/dev/null; do
+          n=$((n+1)); [ "$n" -ge 60 ] && { echo "SETUP[db] TIMEOUT"; exit 2; }; sleep 1; done
+        FAIL=0; i=0
+        g(){ i=$((i+1)); "$@" > "/work/logs/gate-$i.log" 2>&1; rc=$?; echo "GATE[$i $*] EXIT=$rc"; [ "$rc" -ne 0 ] && FAIL=1; return 0; }
+        g ruff format --check .; g ruff check .; g mypy app; g lint-imports
+        g alembic upgrade head; g alembic check
+        g pytest -p no:cacheprovider -q -rs --junitxml=/work/logs/junit.xml $FF_PYTEST_ARGS
+        python - > /work/logs/skips.txt 2>&1 <<PY
+import sys, xml.etree.ElementTree as ET
+try:
+    root = ET.parse("/work/logs/junit.xml").getroot()
+except Exception as exc:
+    print("SKIPS junit unreadable: %s" % exc); sys.exit(1)
+total = skipped = integ = 0
+for case in root.iter("testcase"):
+    total += 1
+    for s in case.findall("skipped"):
+        skipped += 1
+        text = (s.get("message") or "") + (s.text or "")
+        if "FIXFLOW_TEST_DATABASE_URL" in text or "integration" in text.lower():
+            integ += 1
+print("SKIPS total=%d skipped=%d integration_skipped=%d" % (total, skipped, integ))
+sys.exit(1 if integ else 0)
+PY
+        rc=$?; cat /work/logs/skips.txt; echo "GATE[skip-aware integration tests ran] EXIT=$rc"; [ "$rc" -ne 0 ] && FAIL=1
+        pip-audit > /work/logs/pip-audit.log 2>&1; echo "ADVISORY[pip-audit] EXIT=$? (not a gate)"
+        echo "SUMMARY FAIL=$FAIL"; exit "$FAIL"' > /dev/null \
+      || { echo "SETUP[gates] RUN FAILED" | tee -a "$L/gates.log"; finish 2; }
+    docker wait "$N-gates" > "$L/gates.exit"
+    docker logs "$N-gates" >> "$L/gates.log" 2>&1
+    docker cp "$N-gates:/work/logs" "$L/gate-logs" > /dev/null 2>&1
+    rc="$(cat "$L/gates.exit")"
+    echo "container exit: $rc" >> "$L/gates.log"
+    finish "$rc"
+    ;;
+
+  mobile)
+    cd "$WTU/technician-app" || finish 2
+    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 | tee -a "$L/slot.log"
+    npm_ready || finish 2
+    g npm run typecheck
+    g npx jest --ci --maxWorkers="${FF_JEST_WORKERS:-4}"      # no --passWithNoTests (plan P1)
+    g npx expo export --platform android                      # JS bundle only; the native compile gate is the lab's android kind
+    echo "SUMMARY FAIL=$FAIL" | tee -a "$L/gates.log"
+    finish "$FAIL"
+    ;;
+
+  web)
+    cd "$WTU" || finish 2
+    bash "$HERE/ff-slot.sh" acquire "$HOLDER" 1 | tee -a "$L/slot.log"
+    npm_ready || finish 2
+    g npm run lint
+    g npm run format:check
+    g npm test -- --maxWorkers="${FF_VITEST_WORKERS:-4}"
+    g npm run build
+    echo "SUMMARY FAIL=$FAIL" | tee -a "$L/gates.log"
+    finish "$FAIL"
+    ;;
+
+  *)
+    echo "unknown kind: $KIND" >&2
+    exit 2
+    ;;
+esac

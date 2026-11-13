@@ -1,6 +1,6 @@
-# FixFlow ship plan — phases sized to one session each (v8, 2026-11-01)
+# FixFlow ship plan — phases sized to one session each (v9, 2026-11-13: v8 + §7 parallel lanes)
 
-**Status: v8 — revised seven times; ready for P0a.** v1 was critiqued by five Opus lenses (138
+**Status: v9 — v8 plus the parallel-execution amendment (§7); P0a is still owed.** v1 was critiqued by five Opus lenses (138
 findings, `SHIP-PLAN-2026-11-critique.md`); v2 reflected them and was verified by eight lenses
 (141, `SHIP-PLAN-2026-11-critique-2.md`); v3 by four lenses (52, `SHIP-PLAN-2026-11-critique-3.md`);
 v4 by a three-lens delta check (47, `SHIP-PLAN-2026-11-critique-4.md`); v5 by the harness and
@@ -9,8 +9,8 @@ each attacked by two refuters; rulings **HR-…**, §6.6); v6 by a three-lens de
 review (`SHIP-PLAN-2026-11-critique-5.md`: 1 blocker, 20 major, folded in); v7 by a one-critic
 final check of that fold-in (critique-5 part 2: 10 major, 12 minor, folded in). §6 records every
 adjudication and the rulings. Earlier versions are in git history (762a63f, 79b94c7, 9748453,
-46c5d98, 7a6dbfa v5, 3fb8f9c v6, 4e01c82 v7). Still awaiting: the owner's P0a answers (§4). No further critic pass is scheduled;
-the next session is **P0a**.
+46c5d98, 7a6dbfa v5, 3fb8f9c v6, 4e01c82 v7, 3415b5e v8). Still awaiting: the owner's P0a answers (§4). **v9 adds §7 only** (lanes,
+build-ahead, the lab; line numbers above §7 are unchanged from v8): the code lanes no longer wait for **P0a**; every phone and host step still does.
 
 Built on `G2-deep-dive-gate-2026-11-01.md` (the verified register and decisions G2-D1..D3),
 `G1-discovery-gate-2026-11-01.md`, the method in `docs/ORCHESTRATION-DESIGN-2026-10.md`, and
@@ -25,9 +25,9 @@ from the drain design, "runbook R5" is a RUNBOOK-SELFHOST operation, "ruling R5"
 
 - **Sessions.** One phase per session. A phase marked **(×n)** is *repeatable*: one session per
   unit (a workshop visit, an OEM, a late phone), each filling rows of a table that already
-  exists; the phase is complete when its table is. At most **one backend phase that runs the
-  Docker gates** (design Appendix A, fixed container names) is in flight at a time on this
-  machine; a mobile, web or operations phase may run alongside it.
+  exists; the phase is complete when its table is. **Several phase sessions run at once, one
+  lane each (§7, v9):** every lane has its own worktree and its own gate stack
+  (`docs/program/lab/ff-gates.sh <kind> <lane> <worktree>`); §7 wins where it and §0 differ.
 - **Resume.** A code phase opens a **draft PR at its first commit** whose body is its Scope as a
   checkbox list, ticked as items land; resume = `gh pr view <branch>`, first unticked box. An
   operations phase's **first act commits its numbered step table** (copied from its Scope) to
@@ -1551,3 +1551,227 @@ proxy guard in P4r), now closed, and the fifth found no wrong foundation, two re
 window); its delta check is folded into v7 and the check of that fold-in into v8. No further
 pass is scheduled: the remaining risk is in execution, which P0a starts **in a new session**. A phase session that finds the plan wrong
 records the finding in its W0-results step table and amends this file in the same PR.
+
+---
+
+## 7. Parallel execution (v9 amendment, 2026-11-13)
+
+**Why.** v8 runs one phase at a time and its first phase is the owner's. Twelve days after v8
+nothing was built, because P0a had not happened and every code phase queued behind an Entry line.
+Measured on 2026-11-13: production still answers Railway's edge 404 on both hostnames;
+`W0-results.md` does not exist; the machine is a 12-core / 24-thread Ryzen 9 7900X with 31 GB RAM,
+an RTX 5070 and 146 GB free disk, and it sat idle. This section changes **when work starts and
+how many things run at once**. It changes nothing about what must be true before a PR merges,
+deploys, or reaches a phone: §0's standing rules 1–7, rulings R1–R10 and HR-A1..A4 stand as written.
+
+### 7.1 Roles
+
+- **Coordinator session (Fable).** Owns this file, `W0-results.md`, `OWNER-VIEW.md`, the
+  cross-lane contracts (§7.3) and the merge-readiness call on every PR. Never implements.
+- **Lane session (Opus lead, its own git worktree cut from `origin/main`).** Runs exactly one
+  phase (HR-C1 stands: one phase per session; what is new is several sessions at once). The lead
+  reads §0, this section, its phase section and the cited design note, **implements the
+  Opus-owned work itself** (§0 Routing's list), and hands Sonnet subagents the Sonnet-owned work
+  (tests from a design's test list, screens, read models, infra files, runbooks). This replaces
+  "the main session never implements" for lane sessions: the orchestrator window was measured as
+  the largest token cost of the program (`TOKEN-BOTTLENECK-2026-11.md`), and a lead that both
+  briefs and implements loses nothing to a hand-off.
+- **Reviewer (Opus, fresh context, never the author).** Unchanged from §0: refute-by-default,
+  verdict bound to the PR head SHA, fail-before/pass-after named per register id, every changed
+  expectation, removed assertion and new skip listed. The lane dispatches it; the coordinator
+  reads the verdict.
+- **Where a lane reads the program.** The plan, the design notes and the evidence are on the
+  plan branch (PR #182), not on `main`. A lane reads them at
+  `C:/Users/User/Documents/projects/EMS_workshop1/docs/…` (the primary checkout stays on the plan
+  branch) or with `git show origin/docs/orchestration-design-2026-10:<path>`; skills and agent
+  definitions at `…/.claude/worktrees/wizardly-hertz-02c46a/.claude/{skills,agents}/` (PR #185).
+  `Plan @ <sha>` is a commit of the plan branch; the resume diff is
+  `git diff --stat <sha>..origin/docs/orchestration-design-2026-10 -- docs/program/`.
+- **Program files are the coordinator's.** A lane does not edit `docs/program/` or
+  `OWNER-VIEW.md`. Its closing message carries its deploy-train row (phase, PR, merge sha,
+  migration, post-deploy check) and any plan defect it found; the coordinator writes both down.
+
+### 7.2 Build-ahead
+
+An Entry line mixes four kinds of condition. Each clause is classified; only the first kind stops
+a build from starting.
+
+| Kind | Example | What a lane does |
+| --- | --- | --- |
+| **code** | "P2a merged" where the phase calls P2a's functions | builds on the other phase's **reviewed branch tip** (a stack); merges after it; after the squash-merge the stack is rebased with `git rebase --onto origin/main <old tip>` |
+| **value** | the domain name, the fleet's highest versionCode, the anchor address | builds with one named placeholder; the placeholder is the last unticked box; no merge until it is filled |
+| **operations / deploy** | "P3b done", "P3c done", "deployed per runbook R5" | builds now; the clause gates the deploy or the operation, exactly as written |
+| **evidence / decision** | P4a's protocol findings, the SDK row, P9-0b's answers | builds only the default path and marks the PR **at risk**; the evidence can still change it |
+
+**Merge-hold list.** "Merge is not deploy" is true only until P4c, whose train deploys `main`
+HEAD, and the fleet APK v1 is built from `main` (P2c). So these PRs are built and reviewed but
+stay **draft, unmerged** until the stated point:
+
+| PR(s) | Held until | Reason |
+| --- | --- | --- |
+| P5a, P5b-1, P5b-2, P14-n (every mobile PR after P2b-1) | P4a passed and the §4 SDK row answered; v2 is built only after P4c | fleet APK v1 must contain P2a + P2b-1 and nothing else on the mobile side; an APK-side drain fix needs a clean `main` to land on |
+| P6b-1, P6b-2 | P4c done | v8 sequences the late-flag migration after the window; it must not ride the train |
+| P7b-1 | every roster phone on v2 or retired | it removes the roster endpoint the v1 login calls |
+| P9a-1, P9a-2, P9b, P10a, P11 | `T_close`, then one at a time per runbook R5 | keeps the P4c train the size v8 gave it (HR-A4's coupling concern) |
+| P13a–P13d | `T_close` | `start.sh` would migrate as a role the host does not have yet |
+
+**The classification, per code phase** (the Entry line still wins for merge and deploy):
+
+| Phase | Lane | v8 Entry clause → kind | Build may start | Merges no earlier than |
+| --- | --- | --- | --- | --- |
+| P1 | B-core | none | now | its own gates and review |
+| P2a | M | none | now | its own gates and review |
+| P3a-2 (stub, heartbeat) | O | v8's size hatch, taken up front | now | any time; never part of the drain image |
+| P12a → P12 | W | P3a merged, P3b / P3c done → deploy | now (P12 after P12a: same files) | any time; the deploy clauses stand |
+| P9-0a | B-tools | "P3b done" → operations (it needs a dump only to *run*) | now | any time |
+| P7a | B-jobs | "P1 merged" → no shared function found; shared files `CLAUDE.md`, `conftest.py` | now | P1 merged (rebase) |
+| P6a | B-att | "P1 merged" → config lines only; "P2b-1 merged" → value (the event name, fixed in §7.3) | now | P1 merged (rebase) |
+| P2b-1 | M | P2a → code; domain, versionCode → value | on P2a's reviewed tip | P2a merged; both values filled |
+| P3a | O | P1 → code (`FIXFLOW_GIT_SHA`, environment, deep-health) | on P1's reviewed tip | P1 merged |
+| P2b-2 | B-tools | P2b-1 → code (manifest schema) | once P2b-1's schema commit exists | P2b-1 merged |
+| P8a → P8b | B-jobs | P7a / P8a → code; anchor → value with a default | on the previous reviewed tip | previous merged |
+| P7b-2 | O + media + web | P3c → deploy | ops part now; media part on P7a's tip | P7a merged |
+| P5a → P5b-1 → P5b-2 | M | P2b-1, P6a → code; P4a → evidence; SDK → decision | on P2b-1's tip + P6a's fixture, default path, **at risk** | merge-hold list |
+| P6b-1 → P6b-2 | B-att | P6a, P5a → code; P4c → operations data | on the previous reviewed tip | merge-hold list |
+| P7b-1 | B-core + W | P7a → code; P3c XFF → evidence (keying behind a setting) | on P7a's reviewed tip | merge-hold list |
+| P9a-1 → P9a-2 → P9b → P10a | B-jobs | P8b → code; P9-0b → decision; "P5d-2 done" → capacity | on P8b's tip, once P9-0b is answered or the owner signs the defaults | merge-hold list |
+| P13a–d | O | P4c → operations | code only, late | merge-hold list |
+
+**P9-0b moves earlier.** Its real need is "a verified dump exists and P9-0a is merged". P0a item 4
+verifies the dump with Appendix C on this machine, so P9-0b can run as soon as P0a item 4 and
+P9-0a are done; it no longer waits for P3b. The Odoo decision is then known months of
+calendar earlier, and the accounting lane has its answers when P8b is ready.
+
+**HR-A4's "P5d-2 done" clause.** Its recorded reason is capacity: "P7a→P8a→P8b→P9a-1 are four
+Docker-gated Opus PRs coupled to the P4c train." Per-lane gate stacks (§7.4) remove the Docker
+gating; the merge-hold keeps the coupling out of the train. The clause therefore no longer stops
+the *build* of P9a-1; it is kept as the merge-hold above.
+
+### 7.3 Lanes, file ownership and cross-lane contracts
+
+Two lanes never edit the same file in the same wave, except the shared files below.
+
+| Lane | Owns | Phases in order |
+| --- | --- | --- |
+| **B-core** | `backend/app/core/`, `main.py`, `features/identity`, `features/ops`, `.github/workflows/ci.yml` | P1 → P7b-1 |
+| **B-jobs** | `features/jobs`, `media`, `customer_messaging`, the money and accounting slices | P7a → P8a → P8b → P9a-1 → P9a-2 → P10a → P11 |
+| **B-att** | `features/attendance`, `telemetry`, `tenancy` | P6a → P6b-1 → P6b-2 |
+| **B-tools** | new files under `backend/scripts/` and their tests | P9-0a, P2b-2 |
+| **M** | `technician-app/` | P2a → P2b-1 → P5a → P5b-1 → P5b-2 |
+| **W** | `src/` | P12a → P12 → the web halves of P6a, P7b-1, P9b, P10a |
+| **O** | `ops/`, `ops-server.mjs`, compose files, Dockerfiles, runbooks | P3a-2 → P3a → P7b-2 → P13b, P13c |
+| **L** | `ops/lab/`, `docs/program/lab/` | L1 → L2 → L3 → L4 (§7.5) |
+| **OWN** | the phones, the dashboards, the host | P0a → P0b → P3b → P3c → P4a … (unchanged) |
+
+Shared files: `CLAUDE.md` (a PR edits only the lines its phase names; conflicts are resolved at
+rebase), `backend/app/core/config.py` (B-core owns it in wave A; other lanes add settings in
+their own block), `backend/tests/conftest.py` (same rule), `technician-app/src/shared/contracts/`
+(created by whichever of P6a and P2b-1 lands first; the JSON files hold sorted arrays, so the
+second lander's rebase is a union).
+
+**Contracts fixed now** so lanes do not wait on each other:
+
+| Contract | Value | Producer → consumer |
+| --- | --- | --- |
+| Origin marker | response header `X-FixFlow-Api: 1` | P1 → P2a, the hang stub |
+| Verdict fixture | `technician-app/src/shared/contracts/verdict-vectors.json` | P6a → P5a, P6b-2 |
+| Telemetry event names | `technician-app/src/shared/contracts/telemetry-events.json`, a sorted `events` array | P6a creates it; P2b-1, P5a, P5b-1 append |
+| Discard event | `queue_discard`, props `{queue, kind, reason_class}`; the tech comes from the principal | P2b-1 → P6a (board count) |
+| Drain manifest event | `drain_manifest` (v8's name) | P2b-1 → P2b-2, runbook |
+| Sampler events | `sampler_gap`, `geofence_error`, `crossing_recorded`, `notify_suppressed` (v8's names) | P5a → P6b-2 |
+
+### 7.4 The machine
+
+| Resource (measured 2026-11-13) | Used for | Cap |
+| --- | --- | --- |
+| 24 threads | one backend gate stack per lane; Jest; Vitest; Gradle | 6 CPUs per gate container; 4 Jest workers; 4 Vitest workers |
+| **RAM: 31 GB, about 11 GB free with other sessions running — the binding resource** | everything | the slot lock below; 3 GB per gates container, 1 GB per database |
+| Docker Desktop 29.9 (WSL2 VM, 15.5 GB) | gates, restore rehearsals, the local full stack, the Android compile container | no `/dev/kvm` inside it (0 `svm` flags): no emulator in Docker |
+| Windows Hypervisor Platform (enabled) + RTX 5070 | the Android emulator, natively (`-gpu host`); the GPU has no other job in this program | one emulator at a time until measured |
+| 146 GB free disk | worktrees (about 1.2 GB each with mobile `node_modules`), images, one AVD | — |
+
+- **Gates.** `bash C:/Users/User/Documents/projects/EMS_workshop1/docs/program/lab/ff-gates.sh
+  backend|mobile|web <lane> <worktree>`, run in the background; the result is
+  `<log dir>/summary.txt` under `C:/Users/User/.fixflow-cache/gate-logs/<lane>/`. It is design
+  Appendix A with the lane in the container names, so each lane has its own database and the
+  invariant "never a second pytest against one database" holds per lane. This replaces v8's "at
+  most one backend phase that runs the Docker gates". The backend kind mirrors CI
+  (`postgres:16-alpine` until P3a moves both to 17), fails when an integration test was skipped
+  (HR §4), and reports pip-audit as advisory. The mobile kind runs Jest without
+  `--passWithNoTests`. A Jest failure on Node 24 is re-run under `node:22` before it is called a
+  defect (design §8).
+- **Slot lock.** `ff-slot.sh` holds 3 slots machine-wide; a backend stack, a Jest run and a
+  Vitest run take 1 each, a Gradle build 2, a running emulator 1. A lane never starts a heavy job
+  outside it.
+- **Docker networks.** The predefined address pools are exhausted on this machine by another
+  project's 29 networks (`docker network create` fails with "all predefined address pools have
+  been fully subnetted"). FixFlow gates therefore share the database container's network
+  namespace; anything that needs a real network (the P3a compose smoke, the lab stack) declares
+  an explicit subnet inside `10.77.0.0/16`. FixFlow never prunes a network it did not create and
+  never reconfigures Docker.
+- **Other sessions.** Another project's containers run on this machine. A FixFlow session
+  removes only containers named `fixflow-*` and never restarts Docker or WSL.
+
+### 7.5 New phases
+
+- [ ] **L1 — Parallel gate harness** (coordinator). `ff-gates.sh`, `ff-slot.sh`, a baseline of
+  all three kinds on `main`'s code. **Done when** the baselines are recorded in §7.8.
+- [ ] **L2 — Local Android compile gate** (lane L, Docker only, Opus). A container with JDK 17 and
+  the Android SDK/NDK from their official sources; `ops/lab/android-compile.sh <lane> <worktree>`
+  copies `technician-app` **into the container**, runs `expo prebuild` there (never in the
+  repository: design §8) and `gradlew assembleRelease`, with Gradle and npm caches in named
+  volumes. It is the native compile gate CLAUDE.md says does not exist, it gives P5a and P5b-1
+  their "compiles" check in minutes instead of an EAS queue (the EAS build stays for every
+  artifact a phone receives), and it answers the P5-spike's desk question — does
+  `react-native-background-geolocation` build on SDK 52 / RN 0.76.9 old architecture — before
+  any phone is involved. **Done when** `main` compiles to an APK here, the time, size and
+  certificate are recorded, and the SDK compile fact is recorded yes/no with the log.
+- [ ] **L3 — Device lab** (lane L; needs the owner's yes to install the Android toolchain: a JDK,
+  platform-tools, build-tools, the emulator and one system image, about 8 GB, into a user
+  folder — the same adb, apksigner and JDK that P0a item 10 asks the owner to install). A native
+  emulator on the Windows Hypervisor Platform. Three scripted protocols with logs and screen
+  recordings under `docs/program/evidence/lab/`: **(a) drain rehearsal** — the field commit's
+  APK fills its queues against a stub that answers the edge 404, fleet v1 is installed over it
+  with the same lab key, the queues drain into a local backend, and `drain_audit.py` AFTER
+  equals the manifest: P2c and P4a's logic meets a device before it meets a phone holding real
+  data; **(b) the adb-scriptable steps of the O-01 protocol** on stock Android — location
+  toggle, process kill, doze, reboot, the cross-stop `dumpsys` check; **(c) the offline
+  matrix** — airplane mode, timeout, 5xx, edge 404 and 401 against each queue kind.
+  **Standing rule 2 is unchanged:** the lab is a pre-gate on stock Android; it makes a field
+  session confirm instead of explore, and it supports no reliability claim about the fleet.
+- [ ] **L4 — Train and restore rehearsal** (lane L). For every behaviour-changing PR that reaches
+  `main`: restore the newest dump (a seeded database until P0a item 4 supplies the real one) into
+  Postgres 17 per Appendix C, run `start.sh`'s migrations to the new head, run that PR's
+  post-deploy check, record it. P3b's restore, PIN rotation and deep-health read-back are
+  rehearsed the same way against the P3a compose. **Done when** each deploy-train row has a
+  rehearsal row beside it, so P4c replays a tested sequence.
+- [ ] **P0a-prep** (coordinator). The `W0-results.md` step table committed, the hold notice
+  drafted in English and Urdu for the owner to send, item 10's tools installed on the owner's
+  yes. Items 1–9 and 11–16 remain the owner's; nothing here touches a dashboard or a phone.
+
+### 7.6 Waves
+
+| Wave | Starts when | Lanes |
+| --- | --- | --- |
+| **A** | 2026-11-13 | P1, P2a, L2; then, once §7.8's check of this section is folded in: P7a, P6a, P12a → P12, P3a-2, P9-0a |
+| **B** | a wave-A PR is review-passed | P2b-1 (on P2a), P3a (on P1), P8a (on P7a), P7b-2, P2b-2 (after P2b-1's schema commit), L3 (on the owner's yes) |
+| **C** | wave-B tips are review-passed | P5a (at risk), P8b, P6b-1, P7b-1, P9a-1 (after P9-0b), L4 |
+| **D** | as tips allow | P5b-1, P5b-2, P6b-2, P9a-2, P9b, P10a, P13a–d code |
+
+The owner's chain (P0a → P0b → P3b → P3c → P4a → P4b → P4c, then P5c, P5d, P9-0b, P10b, P13e)
+runs beside all four waves and is the critical path: no wave shortens it, each wave empties what
+waits behind it.
+
+### 7.7 Merging
+
+A PR is **merge-ready** when its gates are green locally, CI is green, the reviewer's verdict
+names its head SHA, it is not on the merge-hold list, and the coordinator has read the verdict.
+The owner merges (v8). The owner may delegate the merge of merge-ready PRs to the coordinator;
+that decision is a `W0-results.md` row. Until a base PR merges, its stack keeps building on the
+reviewed tip. `release/drain` is unaffected: it is still P1's squash commit plus cherry-picks of
+P2b-2 and P3a, whatever else has reached `main`.
+
+### 7.8 Record of this amendment
+
+*(filled by the coordinator: the L1 baselines, and the refuter pass on this section with each
+finding accepted, narrowed or rejected.)*
