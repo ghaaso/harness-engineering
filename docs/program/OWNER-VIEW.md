@@ -1,6 +1,6 @@
 # FixFlow ship program — the owner view
 
-_The owner view is a page: open `docs/program/ship/index.html` in a browser (lanes, what waits on what, your pre-flight as a checklist, the decisions board). This file is the record generated from the same data (`docs/program/ship/program.json`) at each rebuild; the plan decides, the page and this record explain. Last rebuild: 2026-11-13, plan v9.2._
+_The owner view is a page: open `docs/program/ship/index.html` in a browser (lanes, what waits on what, your pre-flight as a checklist, the decisions board). This file is the record generated from the same data (`docs/program/ship/program.json`) at each rebuild; the plan decides, the page and this record explain. Last rebuild: 2026-11-13, plan v9.3._
 
 
 _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not edit by hand; edit program.json and rebuild. The page is `index.html` in this folder._
@@ -115,7 +115,6 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 
 | Id | Decision | Blocks | Default |
 | --- | --- | --- | --- |
-| N1 (new) | Who merges finished, reviewed pull requests | every merge-ready PR (P1, P2a and the rest as they pass review) | you merge each one (plan v8; section 7.7) |
 | N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | they stay unmerged; lanes keep reading the plan branch |
 | N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | it stays open as a draft |
 | N5 (new) | May a manager record (or void) a payment on a job that is already closed? | the merge of P7a (who may do what, and money guards) | no: closed is final for everyone (plan v8 as written). Cash found on a phone after the drain for a closed job would then have no way in |

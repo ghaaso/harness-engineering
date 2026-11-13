@@ -74,7 +74,7 @@ dated "unknown, because".
 | Maintenance window | P3a runbook | outside 02:00–04:00 |  |  |
 | age key holder | P13b | the owner, private key offline |  |  |
 | Second uplink, split-horizon DNS, disk encryption | P13c | none |  |  |
-| Merging of merge-ready PRs (added 2026-11-13, plan section 7) | every phase's merge step | the owner merges; may delegate to the coordinator |  |  |
+| Merging of merge-ready PRs (added 2026-11-13, plan section 7) | every phase's merge step | the owner merges; may delegate to the coordinator | **delegated** ("Yes, you merge"): the coordinator merges a PR once CI is green and the coordinator's own binding review passes on its head SHA; the merge-hold list (plan section 7.2) and merge order still apply; squash merges, branches kept | 2026-11-13 |
 | Installing the Android toolchain: JDK, platform-tools, build-tools, emulator, one system image, about 8 GB, in a user folder (added 2026-11-13, plan section 7) | device lab L3; P0a item 10 | not installed: L3 does not run and item 10 stays "unknown, because not installed" | **yes** ("Yes, install"); installed by the coordinator with `docs/program/lab/android-toolchain-install.ps1` into `C:/Users/User/.fixflow-cache/android/` | 2026-11-13 |
 | Merging the docs-only PRs #182 (plan) and #185 (skills) to `main` (added 2026-11-13, plan section 7) | the plan and skills being readable from `main` | stay open on their branches |  |  |
 | Closing draft PR #180, an older geofence approach that the plan's P5a supersedes (added 2026-11-13, plan section 7) | P5a (tidiness only) | stays open as a draft |  |  |

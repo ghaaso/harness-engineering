@@ -1831,7 +1831,13 @@ waits behind it.
 A PR is **merge-ready** when its gates are green locally, CI is green, the reviewer's verdict
 names its head SHA, it is not on the merge-hold list, and the coordinator has read the verdict.
 The owner merges (v8). The owner may delegate the merge of merge-ready PRs to the coordinator;
-that decision is a `W0-results.md` row. Until a base PR merges, its stack keeps building on the
+that decision is a `W0-results.md` row. **Delegated on 2026-11-13** ("Yes, you merge"): the
+coordinator merges a PR when CI is green on its head, the coordinator's own binding review has
+passed on that same SHA (a push after the review means a re-read of the diff since it), the PR
+is not on the merge-hold list, and its merge-order predecessor is merged. Squash merge; the
+branch is kept while a lane or a stack still uses it; the commit body names the phase, the
+register ids, the review verdict with its SHA and the plan tag. Merging deploys nothing
+(standing rule 3). Until a base PR merges, its stack keeps building on the
 reviewed tip.
 
 **`release/drain` is cut at `a31924a`** (`main` before the program's first merge) and receives
