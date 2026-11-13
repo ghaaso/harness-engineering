@@ -24,7 +24,8 @@ cut)
   PHASE=release-drain
   git config --global user.name "L4 rehearsal"; git config --global user.email "l4@example.invalid"
   rm -rf /srv/dev && git clone -q /srv/origin.git /srv/dev && cd /srv/dev || exit 1
-  RB_FILE=/srv/dev/docs/RUNBOOK-SELFHOST.md
+  # the runbook of main: a31924a (checked out at 11.2) predates the file
+  RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md
   echo "lab: section 11 with P2b-2 absent (not merged): '87bbe88 <p2b2> <p3a>' becomes '87bbe88 $P3A'" >> "$OUT/deviations.log"
   rb_run 11.1 "$(rb_fence 11.1 1)" "87bbe88 <p2b2> <p3a>=$P1 $P3A"
   row 11.1 "$( [ "$(out_of | grep -c 'on main')" = 2 ] && [ "$(out_of | grep -c 'parents: 1')" = 2 ] && out_of | grep -qx commit && echo DONE || echo FAILED)" \
@@ -57,7 +58,7 @@ cut)
 prebuild)
   rm -rf /srv/prebuild && git clone -q /srv/origin.git /srv/prebuild
   MAIN="$(git -C /srv/prebuild rev-parse HEAD)"
-  FF_ROOT=/srv/prebuild ffc --profile app --profile web build backend web > "$OUT/prebuild-main.log" 2>&1 \
+  FF_ROOT=/srv/prebuild ffc --profile db --profile app --profile web build backend web > "$OUT/prebuild-main.log" 2>&1 \
     && echo "prebuild: fixflow/backend and fixflow/web at $MAIN" || { echo "prebuild failed"; tail "$OUT/prebuild-main.log"; exit 1; }
   ;;
 
