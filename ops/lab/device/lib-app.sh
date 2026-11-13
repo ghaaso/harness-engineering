@@ -93,6 +93,44 @@ fgs_lines() {
   ash dumpsys activity services "$APP_PKG"
   echo "--- notification records of $APP_PKG with id=$FGS_NOTIF_ID (dumpsys notification)"
   notif_dump | grep -E "NotificationRecord\(.*pkg=$APP_PKG .*id=$FGS_NOTIF_ID " || echo "(none)"
+  echo "--- process state of $APP_PKG (dumpsys activity processes; 2=TOP, 4=FGS, 10+=background)"
+  echo "curProcState=$(proc_state)"
+  echo "--- fused-location listeners of $APP_PKG (Play services' live client list)"
+  sampling_lines
+}
+proc_state() { ash dumpsys activity processes "$APP_PKG" | grep -o "curProcState=[0-9]*" | head -n1 | cut -d= -f2; }
+
+# ---- sampling: is anyone asking for locations for the app? -----------------------------------
+# "The service is back" is not "sampling is back" (coordinator, after C33): the system restores
+# LocationTaskService in the foreground with its notification while no app code ran (measured,
+# tracker-20261114T012340). Play services' fused provider keeps the live client list; the app's
+# long-running samplers (on-duty pings, job travel) are the clients whose request carries no
+# duration= (a geofence handler's one-shot read asks with duration=30s).
+GLMS="com.google.android.gms/com.google.android.location.internal.GoogleLocationManagerService"
+glms_dump() { ash dumpsys activity service "$GLMS"; }
+sampling_lines() {
+  glms_dump | awk '/^    Fused Location Provider:/ { p = 1; next } p && /^    [^ ]/ { p = 0 }
+    p && /^      listeners:/ { l = 1; next } p && l && /^      [^ ]/ { l = 0 } p && l' |
+    grep -F "/$APP_PKG/" || echo "(no fused-location listener of $APP_PKG)"
+}
+# full: a sampler listener at its own interval; throttled: Play services' background throttle
+# (measured after kill -9: the 1-minute request becomes "@10m ..., minUpdateInterval=1m" until the
+# service is in the foreground again); none: no sampler listener at all.
+sampling_state() {
+  local l
+  l="$(sampling_lines | grep -F "/$APP_PKG/" | grep -v "duration=" | head -n1)"
+  if [ -z "$l" ]; then
+    echo none
+  elif echo "$l" | grep -q "minUpdateInterval="; then
+    echo "throttled($(echo "$l" | grep -o 'Request\[@[^ ]*' | cut -c10-))"
+  else
+    echo "full($(echo "$l" | grep -o 'Request\[@[^ ]*' | cut -c10-))"
+  fi
+}
+# Locations Play services delivered to the app since a logcat time ("MM-DD HH:MM:SS.mmm").
+deliveries_since() {
+  glms_dump | awk -v t="$1" -v pk="/$APP_PKG/" '/delivered locations\[/ && index($0, pk) {
+    ts = $1 " " $2; sub(/:$/, "", ts); if (ts >= t) n++ } END { print n + 0 }'
 }
 # expo-location runs BOTH location tasks (on-duty pings and job travel) in one service class,
 # expo.modules.location.services.LocationTaskService (HARNESS-REVIEW: O01-F20).
