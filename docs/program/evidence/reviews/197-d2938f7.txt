@@ -1,0 +1,60 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at d2938f75b2c56d22e7b5ee33c4e1e2e7a19dd8e5 (confirmed with gh pr view; base 9b2e8f5; the head did not move during the review)
+Binding review dispatched by the coordinator, 2026-11-13 16:34 (Opus, fresh context, PR-reviewer and offline-sync-reviewer definitions, own detached checkout, 19 deliberate breaks).
+
+No defect was found that loses, duplicates or misattributes a technician's records. The order snapshot, un-park, receipt, drain holds, and the break runs below confirm it. The fixes are small hardening items and test gaps.
+
+Findings
+
+1. MAJOR (evidence gap). Nobody had shown a native compile of this head. It adds technician-app/app.config.js (it sets android.versionCode from fleet-version.js) and switches eas.json cli.appVersionSource to a local source. Both change what a prebuild reads; expo export proves nothing native. What does not change: package, plugins and permissions are still app.json's own (keys checked; app.json has no versionCode today). Dev builds get versionCode 1 while the constant is 0. Fix: require that compile's green result before the merge counts as "fleet v1 ready".
+2. MINOR. A Discard whose trace fails to write still deletes the row. src/lib/telemetry.ts:117 swallows every storage error, so recordQueueDiscard never throws, and discardItem, discardPunch, discardPresence and discardPendingMedia go on to remove the row; telemetry.test "never throws when storage throws" pins this. On a nearly full phone a cash row can be discarded with no queue_discard trace; the audit then sees a manifest row that never landed, with nothing to explain it. O-06 item 6 only makes the network leg droppable. Fix: a variant that rethrows when the local write fails; abort the discard on that error.
+3. MINOR. A corrupt manifest part makes the app take a second snapshot over the phone's archive, even after the receipt. In src/features/drain/drainGate.ts takeOrLoad (around 287-303) a SyntaxError in the head or in any part copies only the head to .corrupt, overwriting any earlier .corrupt, then retakes the snapshot into the same keys, without checking whether a receipt already exists. On a later launch the payload archive the manager enters parked cash from (O-10 E7) is replaced by the post-drain state, with a new manifest_id. The server copy is unaffected. Fix: once a receipt exists for this versionCode, never retake; only report the part as unreadable.
+4. MINOR (test gap). Two sync paths can lose their gate check with no test failing: removing syncGateOpen() from presenceSync.ts and from travelSync.ts left all 186 tests of the 11 suites green. Presence is a never-delete queue. Fix: add both queues to the "no queue sends before the receipt" case.
+5. MINOR. The fleet versionCode check does not insist on the fleet maximum: scripts/check-fleet-values.js:59 checks --fleet-max only when it is passed, and the docs/HANDOFF.md build line runs the script without it. A positive versionCode below the fleet maximum passes; the install is then refused as a downgrade (safe under R5, but it costs a fleet build). Fix: make --fleet-max mandatory whenever the versionCode is set.
+6. MINOR. The 336 h "too old" prompt is shown on job writes and media, payments included (src/features/jobs/JobDetailScreen.tsx:223, src/features/drain/NeedsAttentionScreen.tsx:76). No such ceiling exists for job writes, so a technician may tap Keep on a payment for no reason. Nothing is lost. Fix: limit the prompt to punches and crossings.
+7. MINOR. The manifest does not count arrival drafts. The field app (a31924a) writes jobs.arrivalDraft.v1:<jobId> (bill materials in paisa, capture URIs, per-capture upload states) and jobs.arrivalAnchor.v1:*; STORE_KEYS in src/features/drain/constants.ts lacks both, so their bytes appear only in total_bytes. jobs.outbox.v1.corrupt (possibly cash) appears only as bytes in preserved_corrupt. Fix: a per-job draft count and a count of failed uploads inside drafts.
+8. MINOR. The receipt is not tied to its manifest: isGateOpen checks only that a receipt exists for the versionCode, not its manifest_id, and stops waiting for the un-park once a receipt is cached. Breaks B10 and B11 changed no test result. The impact today is nil, because the upload already requires the un-park and the snapshot.
+
+Deliberate breaks (each in the reviewer's own checkout, 11 suites, then restored)
+
+| Break | Caught? |
+|---|---|
+| B1: any 2xx counts as a receipt (no marker, no body check) | caught, drainGate 3 failed |
+| B1m: drop only the marker check | caught, drainGate 1 |
+| B2: un-park runs before the snapshot | caught, drainGate 2 |
+| B3: snapshot retaken for the same versionCode | caught, drainGate 1 |
+| B4a: flushOutbox without the gate | caught, drainGate 1 |
+| B4b: syncPresence without the gate | NOT caught |
+| B4c: drainPendingMedia without the gate | caught, pendingMedia 1 |
+| B4d: sendOrQueue sends live before the receipt | caught, drainGate 1 |
+| B4e: telemetry without the gate | caught, telemetry 2 |
+| B4f: pings without the gate | caught, drainGate 2 |
+| B4g: travel without the gate | NOT caught |
+| B5: outbox discard without the event | caught, discardEvents 2 |
+| B5p: punch discard without the event | caught, discardEvents 1 |
+| B6: selfie catch removed | caught, sync 3 |
+| B7: 336 h boundary changed from > to >= | caught, retryAdvice 2 |
+| B8: drainAll skips the manifest upload | caught, drainGate 13 |
+| B10: gate opens without the un-park | NOT caught |
+| B11: receipt stored under the wrong manifest_id | NOT caught (harmless today) |
+| B12: un-park also resets server-detail rows | caught, unpark and drainGate 7 |
+
+Changed expectations: syncClassification.test.ts adds telemetry to the queue list, and the "drop only in" rule now includes telemetry; drainAll.test.ts adds syncTelemetry as the last step. No assertion was removed; nothing skipped, xfail or .only.
+
+Tried and could not break
+- Receipt rules: a captive-portal 200 (no marker) and a proxy 204 (empty body) are never a receipt; non-JSON fails as unreachable. On the pinned image (87bbe88) EventIn accepts the name, any props dict, a UUID client_id and device_time; the only body caps there are on login and the webhook, so there is no 413 on /api/events; a retry comes back as duplicate = 1, which counts as a receipt; a 401 records "sign in again". The manifest goes up by direct POST, not through the telemetry queue, so there is no circular wait.
+- Shared phone: drainAll re-checks the technician before the upload and before every step; the queues filter by owner; the manifest under another technician's token is transport only; the login banner shows counts, roster names and ids only.
+- Un-park: runs once (fleet.drain.unpark.v1, written last); a crash half-way re-plans safely, because nothing can sync before the mark exists. Edge answers stored by the field app as "rejected (NNN)" are un-parked; server-detail rows stay parked; a real 422 whose detail is a list is un-parked and simply parks again.
+- No unasked deletes: corrupt queues are copied aside, never emptied; the ping and travel cap drops wait for the snapshot.
+- Selfie: a thrown PUT marks selfie_error and the queue moves on; recordPunch is idempotent, so a punch is never sent twice.
+- Location (C9): a queued clock-out is a live punch, so sampling stops; an un-parked old clock-in hits the 14 h cap; the C9 copy is in discardCopy.ts:96.
+- Build values: no empty DSN (the fleet profile's key is non-empty; value not read out); no Sentry plugin; the preview and production profiles are removed with their EXPO_PUBLIC entries and host values; no Railway host remains.
+
+Gate (reviewer's run, lane p2b1-rev, clean tree, head d2938f7): typecheck EXIT=0; Jest EXIT=0 (61 suites, 687 tests); expo export --platform android --max-workers 4 EXIT=0; SUMMARY FAIL=0. Bundle grep on that export: jobs.outbox.v2 1, drain_manifest 1, queue_discard 1, railway.app 0; the fleet domain placeholder 0 and 10.0.2.2:8000 1, because the gate exports without the fleet profile's environment, so the "owned domain in the bundle" half of the Done-when line is not shown by this run.
+
+Unverified
+- A heavy manifest uploading within the 15 s request timeout on slow data (with pings and travel capped at 1,000 each it is probably small).
+- Whether EAS sets EAS_BUILD_PROFILE when it evaluates app.config.js locally, so the placeholder refusal actually fires.
+- Possible duplicate pending-media rows when an un-parked media item is uploaded again.
+
+Coordinator's ruling (2026-11-13): finding 1 is answered by the coordinator's own run of the native compile gate on this head (ops/lab/android-compile.sh from main, lane p2b1-compile, run folder C:/Users/User/.fixflow-cache/lab/p2b1-compile/android-20261113T163711): exit 0, APK 79,912,613 bytes, package com.fixflow.technician, versionCode 1 (the development default while the fleet constant is 0), debug signer, worktree unchanged, 0 out-of-memory kills, Gradle 71 s. It is repeated on the final head (ruling C19). Sent back to the lane, to fix before a PASS: findings 2 to 8 and the uncaught breaks B10 and B11; the three unverified items are to be settled by the lane with evidence, and the fleet-profile export with its bundle grep is to be shown. Merge condition unchanged from plan section 7.2: P2b-1 merges when both owner values (the domain name; the fleet's highest versionCode) are filled; until then a PASS leaves the PR open. Not mergeable at d2938f75b2c56d22e7b5ee33c4e1e2e7a19dd8e5.
