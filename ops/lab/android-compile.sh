@@ -19,7 +19,9 @@
 # Knobs (env): FF_ANDROID_MEM (6g), FF_ANDROID_CPUSET (0-7: the container sees 8 CPUs, which
 # also bounds ninja/clang), FF_ANDROID_WORKERS (8), FF_ANDROID_XMX (3g, at most 4g),
 # FF_ANDROID_TIMEOUT_MIN (100), FF_ANDROID_HOOK (a host script run in the copy after `npm ci`;
-# spikes only, the summary marks such a run MODIFIED), FF_SLOT_SH, FF_LAB_OUT.
+# spikes only, the summary marks such a run MODIFIED), FF_ANDROID_GRADLE_VOL / FF_ANDROID_NPM_VOL
+# (cache volume names, default fixflow-gradle-cache / fixflow-npm-cache; fresh names give a
+# cold build without wiping the shared caches), FF_SLOT_SH, FF_LAB_OUT.
 #
 # Exit codes: 0 APK built; 2 usage; 3 refused to start; 4 slot acquire failed; 5 image build
 # failed; 6 no APK; 7 the worktree changed during the run; 8 docker could not start the
@@ -79,6 +81,7 @@ write_summary() { # exit_code note  -> prints the summary; returns 1 if the work
     echo "wall_seconds: $(($(date +%s) - t_start))"
     echo "slot_wait_seconds: ${slot_wait:-n/a}"
     echo "files_copied: $nfiles"
+    echo "caches: $GRADLE_VOL $NPM_VOL"
     echo "limits: memory=$MEM cpuset=$CPUSET gradle_workers=$WORKERS gradle_xmx=$XMX timeout_min=$TIMEOUT_MIN"
     if [ -n "$HOOK" ]; then
       echo "MODIFIED: hook $(basename "$HOOK") sha256=$(sha256sum "$HOOK" | cut -c1-16): a spike, not a gate result for the worktree as committed"
@@ -117,6 +120,10 @@ main() {
   XMX="${FF_ANDROID_XMX:-3g}"
   TIMEOUT_MIN="${FF_ANDROID_TIMEOUT_MIN:-100}"
   HOOK="${FF_ANDROID_HOOK:-}"
+  GRADLE_VOL="${FF_ANDROID_GRADLE_VOL:-fixflow-gradle-cache}"
+  NPM_VOL="${FF_ANDROID_NPM_VOL:-fixflow-npm-cache}"
+  [[ "$GRADLE_VOL" =~ ^fixflow-[a-z0-9-]+$ && "$NPM_VOL" =~ ^fixflow-[a-z0-9-]+$ ]] ||
+    die "cache volume names must match fixflow-[a-z0-9-]+"
   [ -f "$SLOT_SH" ] || die "slot lock not found: $SLOT_SH"
   if [ -n "$HOOK" ]; then
     [ -f "$HOOK" ] || die "hook not found: $HOOK"
@@ -191,8 +198,8 @@ main() {
     -v "$(winpath "$LIST"):/lab/files:ro"
     -v "$(winpath "$HERE/android-compile-inner.sh"):/lab/inner.sh:ro"
     -v "$(winpath "$OUT"):/out"
-    -v fixflow-gradle-cache:/root/.gradle
-    -v fixflow-npm-cache:/root/.npm
+    -v "$GRADLE_VOL:/root/.gradle"
+    -v "$NPM_VOL:/root/.npm"
   )
   [ -n "$HOOK" ] && mounts+=(-v "$(winpath "$HOOK"):/lab/hook:ro")
 
