@@ -2046,6 +2046,17 @@ than three lanes work at once while free memory is near 4 GB (the owner's own ru
 for child sessions), the others wait their turn; long lab runs are packaged one variant per
 invocation so that a cut costs one variant. Restart order as after the shutdown above.
 
+**The load rule since 04:10.** The owner's own diagnosis of that night (another session of his) found
+46 unclean shutdowns of this PC since late September, all hangs, and named the load at 02:30: about
+ten sessions, the Docker VM with no memory cap, and an emulator left running with no owner; commit
+charge had risen from 30.5 to 39.2 GB on 31 GB of RAM in twelve minutes, the desktop app hung and he
+killed it. At 04:08 commit stood at 42.2 GB with the emulator (5.3 GB private), the VM (7.3 GB) and
+24 app processes (8.9 GB). So: the emulator never runs beside more than one gate stack, and never
+while more than two lanes are working; L3a was paused at 04:10 and resumes when the two long backend
+lanes have finished; no emulator is left running when its lane's turn ends; the coordinator watches
+commit charge (a warning above 44 GB) as well as free RAM; and capping the VM, like the other steps
+of that diagnosis, is the owner's.
+
 **The drain manifest contract, version 2 (ruling C39).** Binding on P2b-1 (the phone writes it)
 and P2b-2 (the audit reads it). It replaces the manifest as reviewed at `c5eadbd`. No phone has
 received a fleet build, so no version-1 manifest exists anywhere and the audit reads version 2 only.
