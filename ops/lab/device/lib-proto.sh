@@ -3,10 +3,22 @@
 # the location feeder, clock-in/out by UI, and a cleanup trap that always runs. Sourced by the
 # protocol-*.sh scripts after lib.sh and lib-app.sh; never run alone.
 #
-# Location. The emulator's GPS is fed with `adb emu geo fix <lng> <lat>` (the emulated GPS
-# hardware: fixes are NOT flagged as mock). A background feeder re-sends the current target
-# every FF_GEO_EVERY seconds (3): Android's fused provider and Play-services geofencing only
-# evaluate a fence while fixes keep arriving, so a single geo fix is not enough for a crossing.
+# Location. The lab replaces the emulator's GPS with a Location-Manager TEST PROVIDER named "gps"
+# (`cmd location providers add-test-provider gps`, run as the shell uid after
+# `appops set com.android.shell android:mock_location allow`). Why not `adb emu geo fix`: the
+# emulated GPS hardware only produces fixes while some client requests GPS, so once the app's
+# HIGH-accuracy read ends, Play services' geofencer and the BALANCED on-duty sampler receive
+# nothing at all (seen 2026-11-13: GPS ProviderRequest[OFF], the emulator has no network
+# location, geofence d=UNKNOWN). A test provider's fixes reach every listener, passive ones
+# included. Consequences, recorded in every result: fixes are flagged mock (`mocked` = true on
+# the phone, is_mock_location = t on the server, which records but does not reject it), and the
+# accuracy is whatever the lab says (geo_set's third argument). A feeder re-sends the current
+# target every FF_GEO_EVERY seconds (3).
+#
+# Play services evaluates a fence on its own schedule: about every 5 min while far from it,
+# plus on a provider change and on re-registration. geo_nudge() switches the test provider off
+# and on (a PROVIDERS_CHANGED) so the geofencer re-evaluates now; the lab therefore says
+# nothing about how SOON a real phone notices a crossing, only what the app does once it does.
 
 # Lab coordinates (must match lab-backend.sh's seed).
 FENCE_LAT="24.900000"
@@ -14,6 +26,8 @@ FENCE_LNG="67.100000"
 FENCE_R=80
 OUT_LAT="24.905000" # ~556 m north of the centre: past the 120 m exit threshold
 OUT_LNG="67.100000"
+EDGE_LAT="24.900900" # ~100 m north: outside the 80 m fence by the raw point, inside by r + accuracy
+EDGE_ACC=50
 JOB_LAT="24.918000" # the seeded lab job's customer pin
 JOB_LNG="67.100000"
 
@@ -22,18 +36,40 @@ GEO_EVERY="${FF_GEO_EVERY:-3}"
 FEEDER_PID=""
 LOGCAT_PID=""
 
-geo_set() { # lat lng  (also records the move in the evidence timeline)
-  echo "$1 $2" > "$GEO_TARGET_F"
-  adb_ emu geo fix "$2" "$1" > /dev/null 2>&1
-  echo "$(date -Is) geo $1 $2" >> "$EV/timeline.txt"
+geo_shell() { ash su 2000 cmd location providers "$@"; } # as the shell uid (root is refused)
+geo_push() { geo_shell set-test-provider-location gps --location "$1,$2" --accuracy "$3" > /dev/null 2>&1; }
+geo_provider_on() {
+  ash appops set com.android.shell android:mock_location allow
+  geo_shell add-test-provider gps --supportsAltitude --supportsSpeed --supportsBearing > /dev/null 2>&1
+  geo_shell set-test-provider-enabled gps true > /dev/null 2>&1
+  ash dumpsys location | grep -q "gps provider [mock]" ||
+    die "could not install the GPS test provider (mock location refused?)"
+}
+geo_provider_off() { # back to the emulated GPS hardware
+  geo_shell remove-test-provider gps > /dev/null 2>&1
+  ash appops set com.android.shell android:mock_location default > /dev/null 2>&1
+}
+geo_set() { # lat lng [accuracy_m=8]  (also records the move in the evidence timeline)
+  echo "$1 $2 ${3:-8}" > "$GEO_TARGET_F"
+  geo_push "$1" "$2" "${3:-8}"
+  echo "$(date -Is) geo $1 $2 acc=${3:-8}" >> "$EV/timeline.txt"
+}
+geo_nudge() { # make Play services re-evaluate its fences now (see the header)
+  geo_shell set-test-provider-enabled gps false > /dev/null 2>&1
+  sleep 1
+  geo_shell set-test-provider-enabled gps true > /dev/null 2>&1
+  local la ln ac
+  read -r la ln ac < "$GEO_TARGET_F"
+  geo_push "$la" "$ln" "$ac"
+  echo "$(date -Is) geo nudge (test provider off/on)" >> "$EV/timeline.txt"
 }
 
 feeder_start() {
   (
     while :; do
       if [ -s "$GEO_TARGET_F" ]; then
-        read -r la ln < "$GEO_TARGET_F"
-        adb_ emu geo fix "$ln" "$la" > /dev/null 2>&1
+        read -r la ln ac < "$GEO_TARGET_F"
+        geo_push "$la" "$ln" "${ac:-8}"
       fi
       sleep "$GEO_EVERY"
     done
@@ -56,6 +92,7 @@ proto_begin() { # name
   adb_ logcat -c > /dev/null 2>&1
   adb_ logcat -v threadtime > "$EV/logcat.txt" 2>&1 &
   LOGCAT_PID=$!
+  geo_provider_on
   feeder_start
   rec_start
   trap proto_cleanup EXIT
@@ -76,6 +113,7 @@ proto_cleanup() {
   local rc=$?
   trap - EXIT
   [ -n "$FEEDER_PID" ] && kill "$FEEDER_PID" 2> /dev/null
+  geo_provider_off
   rec_collect 2> /dev/null
   [ -n "$LOGCAT_PID" ] && kill "$LOGCAT_PID" 2> /dev/null
   # never leave location switched off or the device forced into doze
@@ -102,7 +140,8 @@ snap() {
 }
 
 # ---- clock state by UI ----------------------------------------------------------------------
-clocked_in_ui() { ui_has "Clock Out"; }
+# "Clock Out" alone is not proof: the punch history lists past "Clock Out" punches too.
+clocked_in_ui() { ui_has "Clock Out" && ! ui_has "Not clocked in"; }
 
 clock() { # in|out ; returns non-zero when the UI did not reach that state
   open_clock || return 1
@@ -131,3 +170,49 @@ wait_fgs() {
 }
 
 go_home() { ash input keyevent KEYCODE_HOME; }
+
+# kill -9 the app process (root) so the next task event starts it headless (no Activity).
+kill_app() {
+  local p
+  p="$(app_pid)"
+  [ -n "$p" ] && ash kill -9 "$p"
+  sleep 3
+  [ -z "$(app_pid)" ]
+}
+
+# Logcat lines matching ERE $2 that come after the FFLAB mark containing $1.
+lc_since() {
+  awk -v m="$1" -v re="$2" 'index($0, "FFLAB") && index($0, m) { on = 1; next } on && $0 ~ re' "$EV/logcat.txt"
+}
+wait_lc() { # marker regex seconds -> first matching line (empty if none in time)
+  local t=0 l
+  while [ "$t" -le "$3" ]; do
+    l="$(lc_since "$1" "$2" | head -n1)"
+    [ -n "$l" ] && {
+      echo "$l"
+      return
+    }
+    sleep 3
+    t=$((t + 3))
+  done
+}
+lc_epoch() { # a threadtime logcat line -> epoch seconds (this year)
+  [ -n "$1" ] || return 1
+  date -d "$(date +%Y)-$(echo "$1" | awk '{print $1" "$2}')" +%s.%N 2> /dev/null | cut -c1-14
+}
+
+# The phone debounces an identical crossing kind for 3 min, stamped BEFORE confirmation
+# (geofence.ts isDuplicate, O01-F10). Sleep until the last crossing of this kind is >190 s old.
+wait_debounce() { # kind
+  local left
+  left="$(kv attendance.presence.lastCrossing.v1 | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      let v = null; try { v = JSON.parse(s); } catch {}
+      const now = +process.argv[2] * 1000;
+      console.log(v && v.kind === process.argv[1] ? Math.max(0, Math.ceil((190000 - (now - v.at)) / 1000)) : 0);
+    });' "$1" "$(ash date +%s)")"
+  if [ "${left:-0}" -gt 0 ]; then
+    mark "waiting ${left}s for the phone's 3-min $1 debounce"
+    sleep "$left"
+  fi
+}

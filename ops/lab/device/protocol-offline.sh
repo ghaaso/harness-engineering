@@ -122,8 +122,12 @@ phase_control() {
   record control-pings control "on-duty pings land" "server pings $g0 -> $(pings_srv) in ~170 s; queue: $(qsummary attendance.pings.queue.v1)" \
     "$([ "$(pings_srv)" -gt "$g0" ] && echo reproduced || echo not_reproduced)" backend-control-after.txt
   # crossing
-  go_home
+  # in the FOREGROUND: with the Activity stopped in the background the geofence handler hangs
+  # (O01-F19, protocol-tracker.sh f19); this phase tests the queue contract, not delivery
+  launch_app
+  wait_debounce depart
   geo_set "$OUT_LAT" "$OUT_LNG"
+  geo_nudge
   local t=0
   while [ "$t" -lt 240 ] && [ "$(presence_srv)" -le "$c0" ]; do
     sleep 10
@@ -170,8 +174,12 @@ phase_edge404() {
     "ping batches POSTed to the stub in 150 s: $g_hits; ping queue now: $(qsummary attendance.pings.queue.v1)" \
     "$([ "$g_hits" -ge 1 ] && qsummary attendance.pings.queue.v1 | grep -q 'total=0' && echo reproduced || echo inconclusive)" logcat.txt
   # crossing
-  go_home
+  # in the FOREGROUND: with the Activity stopped in the background the geofence handler hangs
+  # (O01-F19, protocol-tracker.sh f19); this phase tests the queue contract, not delivery
+  launch_app
+  wait_debounce depart
   geo_set "$OUT_LAT" "$OUT_LNG"
+  geo_nudge
   local t=0
   while [ "$t" -lt 240 ] && ! qsummary attendance.presence.queue.v1 depart | grep -q 'total=[1-9]'; do
     sleep 10
