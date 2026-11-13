@@ -208,7 +208,17 @@ record() {
     const ok = ["reproduced", "not_reproduced", "inconclusive", "not_scripted"].includes(verdict);
     if (!ok) { console.error("bad verdict " + verdict); process.exit(2); }
     console.log(JSON.stringify({ check, register_id: id, predicted, observed, verdict, evidence, at: new Date().toISOString() }));
-  ' "$@" >> "$EV/results.ndjson"
+  ' "$@" > "$EV/.result.tmp" || return 1
+  # Windows can briefly lock an appended file ("Device or resource busy"): retry, loudly
+  local i ok=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if cat "$EV/.result.tmp" >> "$EV/results.ndjson" 2> /dev/null; then
+      ok=1
+      break
+    fi
+    sleep 0.5
+  done
+  [ "$ok" = 1 ] || echo "RESULT NOT WRITTEN to results.ndjson: $1" >&2
   log "RESULT $1 [$2] => $5 :: $4"
 }
 

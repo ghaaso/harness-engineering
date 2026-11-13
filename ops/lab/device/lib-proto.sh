@@ -36,6 +36,17 @@ GEO_EVERY="${FF_GEO_EVERY:-3}"
 FEEDER_PID=""
 LOGCAT_PID=""
 
+# Append a line to the evidence timeline. Windows briefly locks a file being appended to
+# (seen as "Device or resource busy" in run 2, which silently dropped lines): retry.
+tl() {
+  local i
+  for i in 1 2 3 4 5; do
+    echo "$*" >> "$EV/timeline.txt" 2> /dev/null && return 0
+    sleep 0.3
+  done
+  echo "timeline append failed: $*" >&2
+}
+
 geo_shell() { ash su 2000 cmd location providers "$@"; } # as the shell uid (root is refused)
 geo_push() { geo_shell set-test-provider-location gps --location "$1,$2" --accuracy "$3" > /dev/null 2>&1; }
 geo_provider_on() {
@@ -56,7 +67,7 @@ geo_provider_off() { # back to the emulated GPS hardware
 geo_set() { # lat lng [accuracy_m=8]  (also records the move in the evidence timeline)
   echo "$1 $2 ${3:-8}" > "$GEO_TARGET_F"
   geo_push "$1" "$2" "${3:-8}"
-  echo "$(date -Is) geo $1 $2 acc=${3:-8}" >> "$EV/timeline.txt"
+  tl "$(date -Is) geo $1 $2 acc=${3:-8}"
 }
 geo_nudge() { # make Play services re-evaluate its fences now (see the header)
   geo_shell set-test-provider-enabled gps false > /dev/null 2>&1
@@ -65,7 +76,7 @@ geo_nudge() { # make Play services re-evaluate its fences now (see the header)
   local la ln ac
   read -r la ln ac < "$GEO_TARGET_F"
   geo_push "$la" "$ln" "$ac"
-  echo "$(date -Is) geo nudge (test provider off/on)" >> "$EV/timeline.txt"
+  tl "$(date -Is) geo nudge (test provider off/on)"
 }
 
 feeder_start() {
@@ -82,7 +93,7 @@ feeder_start() {
 }
 
 mark() { # a line in the evidence timeline and in logcat (so both can be lined up)
-  echo "$(date -Is) $*" >> "$EV/timeline.txt"
+  tl "$(date -Is) $*"
   # adb shell re-parses its arguments on the device: single-quote the text (minus any single
   # quotes) or "(" in a mark is a device-side syntax error and the marker never reaches logcat
   ash log -t FFLAB "'$(printf '%s' "$*" | tr -d "'")'" > /dev/null 2>&1
