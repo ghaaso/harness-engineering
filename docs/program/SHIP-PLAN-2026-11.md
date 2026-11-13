@@ -1811,7 +1811,13 @@ and rebases after P1).
   reproduced / inconclusive with its evidence. Every check must be shown failing once. **L3b:**
   the drain rehearsal, when P2a and P2b-1 can be built. **L3c:** the remaining O-01 steps, the
   full offline matrix, and more Android versions once P0a item 5 names the fleet's.
-  *(The coordinator's emulator boot proof, `docs/program/lab/emulator-boot-proof.sh`, was queued behind the gate runs at 14:20; its result is recorded in §7.8.)*
+  **The emulator boots here (measured 2026-11-13 14:38):** the L3a lane's instance of `ff34`
+  reported `sys.boot_completed=1` as Android 14 / API 34 / x86_64 (`sdk_gphone64_x86_64`,
+  userdebug) under the Windows Hypervisor Platform, with the lab build of
+  `com.fixflow.technician` installed; its process held 3.8 GB of host RAM. The coordinator's own
+  boot proof (`docs/program/lab/emulator-boot-proof.sh`) passed every compatibility check
+  (hypervisor, system, hardware GPU, disk) and was then refused only because that AVD was
+  already running: one AVD, one instance.
 
 ### 7.6 Waves
 
