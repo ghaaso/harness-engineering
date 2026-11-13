@@ -1,0 +1,19 @@
+VERDICT: PASS
+PR #189 at 62cabae89d93fe3ed28e931a1efbd389ed86db23
+Binding review, second pass (re-read after the fix round), dispatched by the coordinator on 2026-11-13; same reviewer as the first pass (Opus, fresh context at the first pass). First pass: PASS-WITH-FIXES at c770de8 (file 189-c770de8.txt). The branch was rebased onto main at 87bbe88 (P1); git range-diff shows the earlier commits unchanged except the CLAUDE.md privacy paragraph, which keeps both phases' sentences; ci.yml equals P1's.
+
+Reviewer's own gate run on the head (lane p2a-rev, clean tree): typecheck, Jest (50 suites, 512 tests), expo export: all green. With the pre-fix versions of the fix commit's 15 non-test files restored, its 8 test files fail (8 suites, 11 tests); with the fix they pass.
+
+1. First-pass finding 1 (ArrivalJobWizard private status ladder): FIXED. arrival-job/evidenceUpload.ts:26 decides through classify(error, "media"); pure and tested: a markerless 404, a Cloudflare 403, a markerless 401, an application 401, 503 and 429, a network error and an R2 failure all queue the capture; an application 413, 422, 404 and the local size check fail the slot. The marker check was also added to closeJobWithVideo.ts, JobsListScreen.tsx, JobDetailScreen.tsx and ArrivalJobBillScreen.tsx; the remaining ApiError checks sit behind sendOrQueue, which throws only on park.
+2. First-pass finding 2 (a refused clock-in kept the sampler recording): FIXED. sync.ts parkPunch re-reads the server's day and follows dutyAfterRefusal: on only if the server says clocked in, otherwise off, including when the server cannot be read. dutyRefusal.test.ts drives the real punch -> sync -> tracker path. A clock-in that is merely queued still counts as on duty; the 14 h bound is intact.
+3. The unverified item (a drain pass crossing a sign-out and another sign-in on a shared phone): FIXED AND TESTED. stillSignedInAs is checked before every step of drainAll and before every send in each queue; flushOutbox stops when its principal changes.
+4. The PR body states the degradation against a backend that sends no marker and ties it to ruling R8 and to "P1 merged" in P2c's Entry.
+5. Marker parsing matches P1's server (backend/app/core/origin_marker.py: X-FixFlow-Api, value 1, exactly one copy).
+
+New findings, both MINOR, neither blocks:
+N1. After a refused clock-out while the server still has the technician clocked in, the sampler is restarted although the technician tapped clock-out. Consistent with the server, capped at 14 h from last_in, and the on-duty notification shows; but the parked clock-out's wording does not say that recording has resumed.
+N2. In lib/auth.ts a doc comment now sits above the wrong function. Cosmetic.
+
+Register: O3-F1, F2, F3, F6, F7, F8, F9, F10, F11, F14, F17, F18, F22 fixed; O3-F3 now proven by dutyRefusal.test.ts and pingTracker.test.ts (verified by running).
+
+Coordinator's ruling on the new minors (2026-11-13): N1 goes into P2b-1's Scope (that phase rewrites the parked-item copy: a parked clock-out must say the technician is still on duty and location recording continues until the clock-out is accepted); N2 is fixed by whichever mobile phase next touches lib/auth.ts. Mergeable at 62cabae.

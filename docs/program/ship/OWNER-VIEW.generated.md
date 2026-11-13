@@ -10,12 +10,12 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 
 ## Phases by state
 
-- **done** (3): P0a-prep, P1, L1
-- **running now** (7): P2a, P12a, P6a, P7a, P9-0a, L2, L3
-- **starting next** (1): P3a
+- **done** (4): P0a-prep, P1, P2a, L1
+- **running now** (6): P12a, P6a, P7a, P9-0a, L2, L3
+- **starting next** (2): P2b-1, P3a
 - **waiting on you** (1): P0a
 - **held (may be built, may not merge yet)** (16): P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
-- **not started** (28): P0b, P2a-2, P2b-1, P2b-2, P2c, P3a-2, P3b, P3c, P12, P4a, P4b, P4c, P4r, P5-spike, P5c, P5d-1a, P5d-1b, P5d-2, P7b-2, P8a, P8b, P8b-2, P9-0b, P10b, P13e, P14-fleet, P14-log, L4
+- **not started** (27): P0b, P2a-2, P2b-2, P2c, P3a-2, P3b, P3c, P12, P4a, P4b, P4c, P4r, P5-spike, P5c, P5d-1a, P5d-1b, P5d-2, P7b-2, P8a, P8b, P8b-2, P9-0b, P10b, P13e, P14-fleet, P14-log, L4
 
 ## Phases
 
@@ -25,9 +25,9 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-13. Do not
 | P0a | Your pre-flight: cut off, archive, dump, evidence, decisions | OWN | A | waiting on you | - | - |
 | P0b | Buy: domain, host (VPS), internet, UPS | OWN | later | not started | P0a | - |
 | P1 | Backend first-boot gate | B-core | A | done | - | - |
-| P2a | Offline engine honesty (phone app) | M | A | running now | - | - |
+| P2a | Offline engine honesty (phone app) | M | A | done | - | - |
 | P2a-2 | Offline engine, second half (only if the size hatch is taken) | M | later | not started | P2a | - |
-| P2b-1 | Drain tooling and fleet profile (phone app) | M | B | not started | P2a, P0b | - |
+| P2b-1 | Drain tooling and fleet profile (phone app) | M | B | starting next | P2a, P0b | - |
 | P2b-2 | Drain audit script (backend) | B-tools | B | not started | P2b-1 | - |
 | P2c | Fleet app v1: build, signature, install proof | M | later | not started | P2b-1, P0b, P2a-2 | - |
 | P3a | Self-host repository changes | O | B | starting next | P1 | - |

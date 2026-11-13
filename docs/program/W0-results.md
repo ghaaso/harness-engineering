@@ -94,7 +94,7 @@ by P4c. Until then their Done-when ends at "merged; deploy-train row added".
 | Lane | Phase | Session | Branch | PR | State | Since |
 | --- | --- | --- | --- | --- | --- | --- |
 | B-core | P1 backend first-boot gate | `p1-boot-gate` (local_9616a4f6-0e4f-423f-8939-57b041ff3979) | `claude/p1-backend-boot-gate-e5a6e7` | #187 | **merged 2026-11-13 as `87bbe88`** (binding review PASS on `73738d1`; 931 tests, 0 skipped; cold-resume trial 10/10) | 2026-11-13 |
-| M | P2a offline engine honesty | `p2a-engine-honesty` (local_25d6f554-9f47-46e9-b5f4-4d66ba12bddb) | `claude/p2a-mobile-engine-honesty-13ca22` | #189 | running | 2026-11-13 |
+| M | P2a offline engine honesty | `p2a-engine-honesty` (local_25d6f554-9f47-46e9-b5f4-4d66ba12bddb) | `claude/p2a-mobile-engine-honesty-13ca22` | #189 | **merged 2026-11-13 as `5cd29b1`** (binding review: PASS-WITH-FIXES at `c770de8`, two major findings fixed, re-read PASS at `62cabae`; 512 tests) | 2026-11-13 |
 | L | L2 local Android compile gate | `l2-android-compile` (local_95a45d7c-489d-4341-8aae-898e6a4713fb) | `claude/l2-android-compile-gate-3d0bf0` | #188 | running | 2026-11-13 |
 | B-jobs | P7a authorization and money guards (built ahead of P1) | `p7a-authz-money` (local_e8309ceb-a4b6-4bae-be38-23550a12de18) | `claude/p7a-authz-money-guards-00cb4d` | #191 | running | 2026-11-13 |
 | B-att | P6a attendance truth (built ahead of P1) | `p6a-attendance-truth` (local_aa29532d-569a-4548-a9d9-af8be9c9d436) | `claude/p6a-attendance-truth-d088d0` | #192 | running | 2026-11-13 |

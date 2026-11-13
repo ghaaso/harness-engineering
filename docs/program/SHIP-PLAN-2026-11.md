@@ -1925,6 +1925,10 @@ correct.
 | C6 | P12a binding review (PR #193, finding 1) | The idempotency key survived a retry but not a page reload or a second tab, so a partial payment could still be recorded twice | Sent back as must-fix: unconfirmed attempts persist in `localStorage` for 24 h with a discard control |
 | C7 | P12a binding review (finding 3) | A genuinely separate payment identical to an unanswered-but-landed one reuses its key and the server silently returns the earlier row | **P8a's Scope gains:** the payment response says when it is a deduplicated replay, so the web can tell "confirmed the earlier payment" from "recorded a new one" |
 | C8 | P2a binding review (unverified) | A `drainAll` pass started for one technician may keep sending after another signs in on a shared phone | P2a verifies and fixes or journals it; P2b-1's shared-phone work (`O10-F10`) inherits whatever is left |
+| C9 | P2a binding review, second pass (finding N1) | After a clock-out the server refuses while it still has the technician clocked in, location sampling correctly resumes, but the parked clock-out does not tell the technician so | **P2b-1's Scope gains:** a parked clock-out says the technician is still on duty and location recording continues until the clock-out is accepted |
+| C10 | P1 binding review (finding 1) | A legacy-secret token can replay an idempotent POST and read its response (a signed media URL; a job with the customer's phone). It needs the old secret and the ids | Accepted as the residual of ruling R10 (default OFF; a supervised window only; the secret is sealed in P0a and destroyed at P4c). **P7b-1's Scope gains:** correct the docstring and return no playback URL to a legacy principal |
+
+**Merged so far (2026-11-13):** P1 as `87bbe88` (binding review PASS at `73738d1`) and P2a as `5cd29b1` (PASS at `62cabae` after a fix round). Verdicts are filed under `docs/program/evidence/reviews/`.
 
 **What the binding reviews were worth.** Three lanes reported READY with green gates, green CI and a
 clean self-check; the two binding reviews that have returned each found a defect the self-check had
