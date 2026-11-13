@@ -50,11 +50,13 @@ clock out > /dev/null 2>&1
 fresh_app || die "no fresh app process: it kept coming back headless"
 
 srv_count() { lab_sql "$1" 2> /dev/null | tail -n1; }
-punches_srv() { srv_count "select count(*) from attendance_event where tech_id='t2'"; }
-presence_srv() { srv_count "select count(*) from attendance_presence_event where tech_id='t2'"; }
-pings_srv() { srv_count "select count(*) from attendance_ping where tech_id='t2'"; }
+punches_srv() { srv_count "select count(*) from attendance_event where tech_id='$LAB_TECH_ID'"; }
+presence_srv() { srv_count "select count(*) from attendance_presence_event where tech_id='$LAB_TECH_ID'"; }
+pings_srv() { srv_count "select count(*) from attendance_ping where tech_id='$LAB_TECH_ID'"; }
 note_srv() { srv_count "select count(*) from job_event where kind='note' and text like '%$1%'"; }
-stub_hits() { docker logs "$C_STUB" 2>&1 | grep -c " $1"; } # path fragment
+# POSTs the stub saw whose path contains the fragment (GETs are not writes; /notes sits under
+# /api/jobs/<id>/, so the fragment may be anywhere in the path)
+stub_hits() { docker logs "$C_STUB" 2>&1 | grep -cE "POST [^ ]*$1"; }
 db_up() { docker inspect -f '{{.State.Running}}' "$C_DB" 2> /dev/null | grep -q true; }
 
 tap_clock_button() { # in|out ; taps without requiring the screen to change state
@@ -121,10 +123,9 @@ phase_control() {
   record control-punch control "a clock-in against the live backend lands" \
     "server punches $p0 -> $(punches_srv); queue: $(qsummary attendance.queue.v1)" \
     "$([ "$(punches_srv)" -gt "$p0" ] && echo reproduced || echo not_reproduced)" state-control-after.json
-  # pings (on duty; 1-min interval)
+  # pings (on duty; 1-min interval): counted over the whole phase, below (a batch often goes out
+  # only at the next sync, e.g. the next foreground; binding review, MAJOR 2)
   sleep 150
-  record control-pings control "on-duty pings land" "server pings $g0 -> $(pings_srv) in ~170 s; queue: $(qsummary attendance.pings.queue.v1)" \
-    "$([ "$(pings_srv)" -gt "$g0" ] && echo reproduced || echo not_reproduced)" backend-control-after.txt
   # crossing
   # in the FOREGROUND: with the Activity stopped in the background the geofence handler hangs
   # (O01-F19, protocol-tracker.sh f19); this phase tests the queue contract, not delivery
@@ -146,6 +147,10 @@ phase_control() {
   ui="$(add_note "$n")"
   record control-note control "a job note tapped online lands" "server notes with '$n': $(note_srv "$n"); UI: $ui; outbox: $(qsummary jobs.outbox.v2)" \
     "$([ "$(note_srv "$n")" -ge 1 ] && echo reproduced || echo not_reproduced)" "ui-note-$n.xml"
+  launch_app # one more foreground so a waiting ping batch can go out before the count
+  sleep 20
+  record control-pings control "on-duty pings land" "server pings over the whole control phase (on duty ~8 min): $g0 -> $(pings_srv); ping queue now: $(qsummary attendance.pings.queue.v1)" \
+    "$([ "$(pings_srv)" -gt "$g0" ] && echo reproduced || echo not_reproduced)" backend-control-after.txt
   clock out
   sleep 10
   snap control-after
@@ -169,14 +174,8 @@ phase_edge404() {
     "kept but parked at capture ('rejected (404)'); the screen says not clocked in while the sampler runs on the parked clock_in" \
     "queue: $(qsummary attendance.queue.v1 clock_in); screen: $(ui_has 'DID NOT SYNC' '~' && echo 'DID NOT SYNC shown' || echo 'no DID NOT SYNC'), $(ui_has 'Not clocked in' && echo 'Not clocked in' || echo 'On duty'); sampler FGS=$fg; stub saw $(stub_hits /api/attendance/punches) punch POSTs" \
     "$(qsummary attendance.queue.v1 clock_in | grep -q 'parked=1' && echo reproduced || echo not_reproduced)" ui-edge-clock.xml
-  # pings
-  local g_before
-  g_before="$(stub_hits /api/attendance/pings)"
+  # pings: on duty from here; counted over the whole phase at its end (MAJOR 2)
   sleep 150
-  g_hits=$(($(stub_hits /api/attendance/pings) - g_before))
-  record edge-pings "O-03 (4)" "pings are dropped: every batch marked done on the 404" \
-    "ping batches POSTed to the stub in 150 s: $g_hits; ping queue now: $(qsummary attendance.pings.queue.v1)" \
-    "$([ "$g_hits" -ge 1 ] && qsummary attendance.pings.queue.v1 | grep -q 'total=0' && echo reproduced || echo inconclusive)" logcat.txt
   # crossing
   # in the FOREGROUND: with the Activity stopped in the background the geofence handler hangs
   # (O01-F19, protocol-tracker.sh f19); this phase tests the queue contract, not delivery
@@ -210,6 +209,15 @@ phase_edge404() {
   record edge-punch-out "O-03 (2)" "a clock-out against the dead edge is parked too" \
     "Clock Out tapped: $tapped; queue: $po" \
     "$(if echo "$po" | grep -q 'parked=[1-9]'; then echo reproduced; elif echo "$po" | grep -q 'total=0'; then echo inconclusive; else echo not_reproduced; fi)" state-edge-after.json
+  # the stub was started for this phase, so its whole log is this phase
+  launch_app
+  sleep 20
+  g_hits="$(stub_hits /api/attendance/pings)"
+  local pq
+  pq="$(qsummary attendance.pings.queue.v1)"
+  record edge-pings "O-03 (4)" "pings are dropped: every batch marked done on the 404" \
+    "ping batch POSTs the stub answered 404 over the whole edge404 phase: $g_hits; ping queue at the end of the phase: $pq" \
+    "$(if [ "$g_hits" -lt 1 ]; then echo inconclusive; elif echo "$pq" | grep -q 'total=0'; then echo reproduced; else echo not_reproduced; fi)" stub-edge404.log
   docker logs "$C_STUB" > "$EV/stub-edge404.log" 2>&1
   snap edge-after
   rec_roll

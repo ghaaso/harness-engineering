@@ -108,6 +108,7 @@ proto_begin() { # name
   : > "$EV/timeline.txt"
   # the trap goes first, so anything started below is undone however the script dies
   trap proto_cleanup EXIT
+  lab_busy # the emulator keeper does not idle-stop while a protocol runs
   trap 'exit 130' INT TERM HUP
   # the installed app must be a LAB build: same host + Firebase check as app.sh install
   local apk_dev
@@ -146,10 +147,14 @@ proto_cleanup() {
   rec_collect 2> /dev/null
   # $LOGCAT_PID is the subshell running the adb_ function: kill its adb child too, or the
   # stream outlives the protocol and keeps appending to logcat.txt
+  # (adb-processes.txt: every adb.exe with its command line before and 3 s after, as evidence)
+  { echo "before stopping the logcat stream:"; adb_procs; } > "$EV/adb-processes.txt" 2>&1
   if [ -n "$LOGCAT_PID" ]; then
     kill $(ps -ef | awk -v p="$LOGCAT_PID" '$3 == p { print $2 }') 2> /dev/null
     kill "$LOGCAT_PID" 2> /dev/null
   fi
+  sleep 3
+  { echo "3 s after:"; adb_procs; } >> "$EV/adb-processes.txt" 2>&1
   [ -f "$EV/.result.tmp" ] && rm -f "$EV/.result.tmp"
   # never leave location switched off or the device forced into doze
   ash cmd location set-location-enabled true > /dev/null 2>&1
@@ -162,8 +167,9 @@ proto_cleanup() {
     bash "$LAB_DIR/lab-backend.sh" up > /dev/null 2>&1 || true
   fi
   if [ -s "$EV/results.ndjson" ]; then
-    finish_results "{\"protocol\":\"$(basename "$EV")\",\"finished\":\"$(date -Is)\",\"exit_code\":$rc,\"note\":\"stock Android 14 emulator: says nothing about the fleet's phones (plan standing rule 2)\"}" 2> /dev/null
+    finish_results "{\"protocol\":\"$(basename "$EV")\",\"finished\":\"$(date -Is)\",\"exit_code\":$rc,\"lab_tech\":\"$LAB_TECH_ID\",\"app_ref\":\"$LAB_APP_REF\",\"note\":\"stock Android 14 emulator: says nothing about the fleet's phones (plan standing rule 2)\"}" 2> /dev/null
   fi
+  lab_idle
   echo "evidence: $EV (exit $rc)" >&2
   exit "$rc"
 }

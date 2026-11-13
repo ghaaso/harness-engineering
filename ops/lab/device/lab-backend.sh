@@ -23,16 +23,21 @@
 # (the database keeps its rows) and starts the stub, or the reverse: that is how the lab
 # simulates an outage, a revival and a flaky edge for a phone that bakes one host and port.
 #
-# The backend image is built from the worktree's COMMITTED backend tree (`git archive
-# HEAD:backend`), so a stray backend/.env never enters it, and is tagged with that tree's hash.
+# The backend image is built from the COMMITTED backend tree of the app under test (`git archive
+# <FF_LAB_APP_REF>:backend`, default a31924a, the fleet's commit, the same commit as the lab APK),
+# so a stray backend/.env never enters it and this checkout's newer backend/ does not pair with
+# an older app; it is tagged with that tree's hash.
 # It runs with the scheduler and backups OFF and every external integration (R2, FCM, WhatsApp,
 # Sentry) unset: the lab backend reaches no outside service. FIXFLOW_ENVIRONMENT=lab.
 #
-# Seeded state (by the backend's own API, never SQL): the migrations' roster (manager m1, techs
-# t2..t5, seed PIN from migration 0004), then as m1: the shop geofence set ACTIVE at the lab
-# coordinate below, lab tech t2's PIN set to the lab PIN, and one home-visit job assigned to t2
-# with a customer pin ~2 km from the fence (the travel-leg check needs one). Values are
-# lab-only; the database lives only in the container.
+# Seeded state. The emulator signs in only as the lab-only technician lab1 ("LAB technician"),
+# never a roster technician (plan 7.5). The app under test has no API that creates a
+# technician, so lab1 is the ONE row written by SQL, with an unusable PIN hash; its PIN is then
+# set through the app's own policy path (PUT /api/technicians/lab1/pin as the seeded manager).
+# Everything else goes through the API as the migrations' manager m1 (seed PIN from migration
+# 0004, used host-side only, never on the emulator): the shop geofence set ACTIVE at the lab
+# coordinate below and one home-visit job assigned to lab1 with a customer pin ~2 km from the
+# fence. Values are lab-only; the database lives only in the container.
 #
 # No slot is taken for this stack: it is two small containers (512 MB caps), not a gate run.
 #
@@ -47,11 +52,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
 
 WT="${FF_LAB_WT:-$(git -C "$(winpath "$HERE")" rev-parse --show-toplevel)}"
-PG_IMAGE="postgres:16-alpine"
+PG_IMAGE="postgres:17-alpine" # main and the gates are on Postgres 17 since P3a
 
 # Lab-only seed values (a local, throwaway database; never a real account or place).
-LAB_TECH_ID="t2"
-LAB_TECH_PIN="2580"
 SEED_PIN="1234" # migration 0004/0012 seed PIN, as committed in the repository
 LAB_MANAGER_ID="m1"
 FENCE_LAT="24.900000"
@@ -62,8 +65,9 @@ JOB_LNG="67.100000"
 # The attendance and media services build an R2 client at request time and an EMPTY account id
 # is an invalid endpoint (HTTP 500 on PUT /geofences). A dummy id makes signing work (signing is
 # local); --add-host (on the database container, which owns the shared network namespace and its
-# /etc/hosts) pins that hostname to loopback so the backend can never
-# reach Cloudflare. A phone would only receive such a signed URL by uploading a selfie or media,
+# /etc/hosts) pins that hostname, and the bucket-style one, to loopback so the backend can never
+# reach Cloudflare (storage.py builds https://<account>.r2.cloudflarestorage.com; boto3 may sign
+# either path-style or <bucket>.<account>... URLs). A phone would only receive such a signed URL by uploading a selfie or media,
 # which the lab protocols never do (CAMERA is denied and user-fixed by app.sh grant).
 R2_DUMMY="fixflow-lab-no-r2"
 
@@ -75,7 +79,7 @@ usage() {
 
 api_image() {
   local tree
-  tree="$(git -C "$WT" rev-parse HEAD:backend)" || die "cannot read HEAD:backend in $WT"
+  tree="$(git -C "$WT" rev-parse "$LAB_APP_REF:backend")" || die "cannot read $LAB_APP_REF:backend in $WT"
   echo "fixflow-$LAB_LANE-labapi:${tree:0:12}-lf"
 }
 
@@ -91,6 +95,7 @@ ensure_db() {
       -e POSTGRES_PASSWORD=lab -e POSTGRES_DB=fixflow \
       -p "127.0.0.1:$LAB_PORT:8000" \
       --add-host "$R2_DUMMY.r2.cloudflarestorage.com:127.0.0.1" \
+      --add-host "job-media.$R2_DUMMY.r2.cloudflarestorage.com:127.0.0.1" \
       "$PG_IMAGE" > /dev/null || die "cannot start $C_DB (port $LAB_PORT taken?)"
   fi
   local i
@@ -105,8 +110,8 @@ build_api() {
   local tag
   tag="$(api_image)"
   if ! docker image inspect "$tag" > /dev/null 2>&1; then
-    log "building $tag from $(git -C "$WT" rev-parse --short HEAD):backend (committed tree only)"
-    git -C "$WT" -c core.autocrlf=false -c core.eol=lf archive --format=tar HEAD:backend | docker build -q -t "$tag" - > /dev/null ||
+    log "building $tag from $LAB_APP_REF:backend (committed tree only)"
+    git -C "$WT" -c core.autocrlf=false -c core.eol=lf archive --format=tar "$LAB_APP_REF:backend" | docker build -q -t "$tag" - > /dev/null ||
       die "backend image build failed"
   fi
   echo "$tag"
@@ -170,6 +175,9 @@ seed() {
     -H "Authorization: Bearer $mt" -H 'Content-Type: application/json' \
     -d "{\"name\":\"LAB fence (not a real place)\",\"center_lat\":$FENCE_LAT,\"center_lng\":$FENCE_LNG,\"radius_m\":$FENCE_RADIUS_M,\"is_active\":true}")
   [ "$code" = 200 ] || die "geofence seed failed: HTTP $code"
+  # the lab-only technician (the one SQL write, see the header); never a roster row
+  lab_sql "insert into technician (id, name, specialty, role, pin_hash) values ('$LAB_TECH_ID', '$LAB_TECH_NAME', 'lab only', 'tech', '!unusable-until-set-by-api') on conflict (id) do nothing" > /dev/null ||
+    die "cannot create the lab technician $LAB_TECH_ID"
   code=$(lab_curl -o /dev/null -w '%{http_code}' -X PUT "$LAB_HOST_URL/api/technicians/$LAB_TECH_ID/pin" \
     -H "Authorization: Bearer $mt" -H 'Content-Type: application/json' -d "{\"pin\":\"$LAB_TECH_PIN\"}")
   [ "$code" = 204 ] || die "lab PIN for $LAB_TECH_ID failed: HTTP $code"

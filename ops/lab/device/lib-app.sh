@@ -86,16 +86,37 @@ qcount() {
 # ---- process / services ----------------------------------------------------------------------
 app_pid() { ash pidof "$APP_PKG"; }
 
-# The app's services as dumpsys sees them: one line per ServiceRecord with isForeground.
-fgs_lines() { ash dumpsys activity services "$APP_PKG"; }
+# The app's services as dumpsys sees them (one block per ServiceRecord), then the app's posted
+# notifications that carry the location service's id. Both halves go into every services-*.txt.
+FGS_NOTIF_ID=481756 # expo-location's LocationTaskService foreground notification id
+fgs_lines() {
+  ash dumpsys activity services "$APP_PKG"
+  echo "--- notification records of $APP_PKG with id=$FGS_NOTIF_ID (dumpsys notification)"
+  notif_dump | grep -E "NotificationRecord\(.*pkg=$APP_PKG .*id=$FGS_NOTIF_ID " || echo "(none)"
+}
 # expo-location runs BOTH location tasks (on-duty pings and job travel) in one service class,
-# expo.modules.location.services.LocationTaskService (HARNESS-REVIEW: O01-F20). These read only
-# that ServiceRecord block in `dumpsys activity services`.
-# "yes" when the location service is in the foreground right now.
-# Only a record bound to a LIVE process counts: after a kill the record keeps
-# isForeground=true with app=null (and a "Restarting" copy), which is not a running service.
+# expo.modules.location.services.LocationTaskService (HARNESS-REVIEW: O01-F20).
+# "yes" when the location service is in the foreground right now, which needs BOTH:
+#  - its ServiceRecord bound to a LIVE process with isForeground=true (after a kill the record
+#    keeps isForeground=true with app=null, plus a "Restarting" copy), and
+#  - its foreground notification (id 481756) posted for the package. A process restored by the
+#    system after a kill can carry the old record's isForeground=true while the service never
+#    called startForeground (logcat: "Foreground location task cannot be started while the app
+#    is in the background!"); the notification exists only when it really is in the foreground
+#    (binding review of #194, MAJOR 1). check_probe shows this probe saying "no" on such a
+#    restored process before check a relies on it.
 fgs_up() {
   fgs_lines | awk '
+    /^--- notification records/ { inb = 0; notif = 1; next }
+    notif && /NotificationRecord\(/ { n = 1 }
+    /ServiceRecord\{/ { inb = ($0 ~ /LocationTaskService/ && $0 !~ /Restarting/); live = 0 }
+    inb && /app=ProcessRecord\{/ { live = 1 }
+    inb && live && /isForeground=true/ { f = 1 }
+    END { print ((f && n) ? "yes" : "no") }'
+}
+# The record half alone (for the evidence text: what the old probe would have said).
+fgs_record_up() {
+  ash dumpsys activity services "$APP_PKG" | awk '
     /ServiceRecord\{/ { inb = ($0 ~ /LocationTaskService/ && $0 !~ /Restarting/); live = 0 }
     inb && /app=ProcessRecord\{/ { live = 1 }
     inb && live && /isForeground=true/ { f = 1 }
@@ -246,7 +267,12 @@ finish_results() { # meta-json
     const fs = require("fs");
     const lines = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean).map(JSON.parse);
     const meta = JSON.parse(process.argv[3]);
-    fs.writeFileSync(process.argv[2], JSON.stringify({ ...meta, checks: lines }, null, 2) + "\n");
+    // screen recordings stay in the cache folder; result.json carries their sha256 so a bundle
+    // without them can still name exactly which recording belongs to the run
+    const dir = require("path").dirname(process.argv[2]);
+    const recordings = fs.readdirSync(dir).filter((f) => /^screen-\d+\.mp4$/.test(f)).sort()
+      .map((f) => ({ file: f, sha256: require("crypto").createHash("sha256").update(fs.readFileSync(dir + "/" + f)).digest("hex") }));
+    fs.writeFileSync(process.argv[2], JSON.stringify({ ...meta, recordings, checks: lines }, null, 2) + "\n");
   ' "$(winpath "$EV/results.ndjson")" "$(winpath "$EV/result.json")" "$1"
 }
 

@@ -40,6 +40,7 @@ source "$HERE/lib-proto.sh"
 load_android_env
 
 REPEAT="${FF_REPEAT:-3}"
+PROBE_RESTORED_OK=0 # set by check_probe once the FGS probe said "no" on a restored process
 DOZE_MIN="${FF_DOZE_MIN:-4}"
 CHECKS=("$@")
 [ "${#CHECKS[@]}" -eq 0 ] && CHECKS=(probe d f19 f14 a c b)
@@ -53,7 +54,7 @@ sleep 5
 
 presence_count() { # kind -> rows on the server + items still in the phone's queue
   local srv q
-  srv="$(lab_sql "select count(*) from attendance_presence_event where tech_id='t2' and kind='$1'" | tail -n1)"
+  srv="$(lab_sql "select count(*) from attendance_presence_event where tech_id='$LAB_TECH_ID' and kind='$1'" | tail -n1)"
   q="$(kv attendance.presence.queue.v1 | node -e '
     let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
       let v = []; try { v = JSON.parse(s || "[]"); } catch {}
@@ -62,61 +63,94 @@ presence_count() { # kind -> rows on the server + items still in the phone's que
   echo $((srv + q))
 }
 notif_count() { notif_dump | grep -c "$1"; }
-ping_count() { lab_sql "select count(*) from attendance_ping where tech_id='t2'" | tail -n1; }
+ping_count() { lab_sql "select count(*) from attendance_ping where tech_id='$LAB_TECH_ID'" | tail -n1; }
 
 # ---- probe: the FGS probe reports both outcomes ---------------------------------------------
+# probe-on (on duty: yes), probe-restored (the measured negative the binding review asked for: a
+# process the system restored in the background after kill -9, which logs that the foreground
+# task cannot be started: no), probe-off (clocked out: no). check a relies on the second.
+FGS_BG_REFUSED="Foreground location task cannot be started while the app is in the background"
 check_probe() {
-  mark "CHECK probe: FGS probe on duty and off duty"
+  mark "CHECK probe: FGS probe on duty, on a restored process, off duty"
   clock in || {
-    record probe-on "O01-F01" "probe sees the sampler FGS while on duty" "could not clock in via UI" inconclusive "timeline.txt"
+    record probe-on control "probe sees the sampler FGS while on duty" "could not clock in via UI" inconclusive "timeline.txt"
     return
   }
-  local on off
+  local on rs off pid M line
   on="$(wait_fgs yes 30)"
   fgs_lines > "$EV/services-probe-on.txt"
+  record probe-on control "on duty: LocationTaskService in the foreground (live record + its notification)" "fgs=$on" "$([ "$on" = yes ] && echo reproduced || echo not_reproduced)" "services-probe-on.txt"
+  go_home
+  sleep 2
+  pid="$(app_pid)"
+  M="probe kill -9 pid=$pid"
+  mark "$M"
+  ash kill -9 "$pid"
+  line="$(wait_lc "$M" "$FGS_BG_REFUSED" 90)"
+  sleep 3
+  rs="$(fgs_up)"
+  { echo "pid_now=$(app_pid) (killed $pid); record half alone (the old probe): $(fgs_record_up)"; echo "logcat: $line"; fgs_lines; } > "$EV/services-probe-restored.txt"
+  if [ -z "$line" ]; then
+    record probe-restored control "a process restored in the background after kill -9 (logs '$FGS_BG_REFUSED'): fgs=no" \
+      "precondition failed: no restored process logged the refusal within 90 s (pid now: $(app_pid))" inconclusive "services-probe-restored.txt"
+  else
+    record probe-restored control "a process restored in the background after kill -9 (logs '$FGS_BG_REFUSED'): fgs=no" \
+      "fgs=$rs (the record half alone says $(fgs_record_up)); $line" "$([ "$rs" = no ] && echo reproduced || echo not_reproduced)" "services-probe-restored.txt"
+  fi
+  [ -n "$line" ] && [ "$rs" = no ] && PROBE_RESTORED_OK=1
+  launch_app
+  sleep 8
   clock out
   off="$(wait_fgs no 30)"
   fgs_lines > "$EV/services-probe-off.txt"
-  record probe-on control "on duty: LocationTaskService isForeground=true" "fgs=$on" "$([ "$on" = yes ] && echo reproduced || echo not_reproduced)" "services-probe-on.txt"
   record probe-off control "clocked out: no LocationTaskService in the foreground" "fgs=$off" "$([ "$off" = no ] && echo reproduced || echo not_reproduced)" "services-probe-off.txt"
 }
 
 # ---- a: O01-F01 ---------------------------------------------------------------------------
+# On duty, kill -9 with the app in the background, let the system restore the process, reopen.
+# The register predicts the sampler comes back without its FGS: expo-location starts the
+# foreground service only from LocationTaskConsumer's start path, which refuses in the
+# background, and nothing retries it on resume (pingTracker skips once the task is "running").
+P01="after a process kill and reopen, the sampler returns without its FGS"
 check_a_once() { # run-no
-  local n="$1" pre pid mid present post pid2
+  local n="$1" pre pid M line mid post pid2 obs v=inconclusive
   mark "CHECK a#$n O01-F01 kill -9 on duty, reopen"
   clock in || {
-    record "a#$n" O01-F01 "after a process kill and reopen, the sampler returns without its FGS" "could not clock in" inconclusive timeline.txt
+    record "a#$n" O01-F01 "$P01" "could not clock in" inconclusive timeline.txt
     return
   }
   pre="$(wait_fgs yes 30)"
   fgs_lines > "$EV/services-a$n-pre.txt"
   if [ "$pre" != yes ]; then
-    record "a#$n" O01-F01 "after a process kill and reopen, the sampler returns without its FGS" "precondition failed: no FGS on duty before the kill (fgs=$pre)" inconclusive "services-a$n-pre.txt"
+    record "a#$n" O01-F01 "$P01" "precondition failed: no FGS on duty before the kill (fgs=$pre)" inconclusive "services-a$n-pre.txt"
     return
   fi
   go_home
   sleep 2
   pid="$(app_pid)"
-  mark "a#$n kill -9 pid=$pid"
+  M="a#$n kill -9 pid=$pid"
+  mark "$M"
   ash kill -9 "$pid"
-  sleep 15
+  line="$(wait_lc "$M" "$FGS_BG_REFUSED" 60)"
   mid="$(fgs_up)"
-  present="$(loc_svc_present)"
-  { echo "pid_after_kill=$(app_pid)"; fgs_lines; } > "$EV/services-a$n-killed.txt"
+  { echo "pid_after_kill=$(app_pid)"; echo "logcat: $line"; fgs_lines; } > "$EV/services-a$n-killed.txt"
   launch_app
   mark "a#$n reopened"
   sleep 15
   post="$(fgs_up)"
   pid2="$(app_pid)"
-  { echo "pid_after_reopen=$pid2"; fgs_lines; } > "$EV/services-a$n-reopened.txt"
+  { echo "pid_after_reopen=$pid2; record half alone (the old probe): $(fgs_record_up)"; fgs_lines; } > "$EV/services-a$n-reopened.txt"
+  lc_since "$M" "$FGS_BG_REFUSED|LocationTaskConsumer|FFLAB" > "$EV/a$n-logcat.txt"
   dump_state "$EV/state-a$n-reopened.json"
-  local obs="fgs before kill=$pre; 15 s after kill (app closed): service record=$present fgs=$mid; 15 s after reopen: fgs=$post (pid $pid -> $pid2)"
-  if [ "$post" = no ]; then
-    record "a#$n" O01-F01 "after a process kill and reopen, the sampler returns without its FGS" "$obs" reproduced "services-a$n-reopened.txt"
+  obs="fgs before kill=$pre; restored process logged the background refusal: $([ -n "$line" ] && echo "yes ($(echo "$line" | cut -c1-18))" || echo no); fgs while closed=$mid; 15 s after reopen: fgs=$post (pid $pid -> $pid2)"
+  if [ "$post" = yes ]; then
+    v=not_reproduced
+  elif [ -n "$line" ] && [ "${PROBE_RESTORED_OK:-0}" = 1 ]; then
+    v=reproduced
   else
-    record "a#$n" O01-F01 "after a process kill and reopen, the sampler returns without its FGS" "$obs" not_reproduced "services-a$n-reopened.txt"
+    obs="$obs; cannot decide: $([ "${PROBE_RESTORED_OK:-0}" = 1 ] || echo 'the probe has not been shown saying no on a restored process in this run (run probe first); ')$([ -n "$line" ] || echo 'no background refusal logged')"
   fi
+  record "a#$n" O01-F01 "$P01" "$obs" "$v" "services-a$n-reopened.txt"
   rec_roll
 }
 check_a() {
@@ -142,11 +176,11 @@ GEOFENCE_JOB="Handling job with task name 'fixflow-attendance-geofence'"
 GEOFENCE_DONE="Finished task 'fixflow-attendance-geofence'"
 BLOCKED_PERM="Background activity launch blocked.*REQUEST_PERMISSIONS"
 latest_row() { # kind since-epoch -> the newest presence row of that kind captured after since-epoch
-  lab_sql "select kind, lat, lng, accuracy_m, inside_geofence, round(distance_m::numeric, 1) as distance_m, confirmed, is_mock_location, device_time, extract(epoch from device_time)::int as device_epoch from attendance_presence_event where tech_id='t2' and kind='$1' and device_time >= to_timestamp(${2:-0}) order by server_time desc limit 1" | tail -n +2 | head -n1
+  lab_sql "select kind, lat, lng, accuracy_m, inside_geofence, round(distance_m::numeric, 1) as distance_m, confirmed, is_mock_location, device_time, extract(epoch from device_time)::int as device_epoch from attendance_presence_event where tech_id='$LAB_TECH_ID' and kind='$1' and device_time >= to_timestamp(${2:-0}) order by server_time desc limit 1" | tail -n +2 | head -n1
 }
 dev_now() { ash date +%s; } # the emulator's clock (the app stamps device_time with it)
 # Presence rows on the server of this kind captured after since-epoch.
-rows_since() { lab_sql "select count(*) from attendance_presence_event where tech_id='t2' and kind='$1' and device_time >= to_timestamp($2)" | tail -n1; }
+rows_since() { lab_sql "select count(*) from attendance_presence_event where tech_id='$LAB_TECH_ID' and kind='$1' and device_time >= to_timestamp($2)" | tail -n1; }
 # The LAST "Finished task" for the geofence task within $2 s after the job line $1 (each crossing
 # also yields a quick debounced duplicate job; the first Finished can be that one's).
 last_finish() { # job-line seconds
@@ -527,8 +561,14 @@ fence_registered() { # file -> yes|no|unknown
   fi
   if grep -q "Geofence\[CIRCLE id:workshop.*$APP_PKG" "$1"; then echo yes; else echo no; fi
 }
+# O01-F03's mechanism needs Play services to deliver a geofence ERROR when location goes off
+# (GEOFENCE_NOT_AVAILABLE, typically after network location is disabled). This rig has no
+# network location provider, so the check first asks whether any geofence event or error
+# reached the app while location was off; without one it says nothing (binding review, MAJOR 3).
+GEOFENCE_ERR="GEOFENCE_NOT_AVAILABLE|[Gg]eofenc[a-z]*.*([Ee]rror|errorCode)"
+P03="a location toggle removes the fence; nothing re-registers it until the app is opened"
 check_b() {
-  local r0 r1 d0 M job td obs v=inconclusive
+  local r0 r1 d0 M MOFF err job td obs v=inconclusive
   mark "CHECK b O01-F03 location toggle with the app not open"
   clock out > /dev/null 2>&1
   geo_set "$FENCE_LAT" "$FENCE_LNG"
@@ -540,12 +580,15 @@ check_b() {
   r0="$(fence_registered "$EV/fence-b-before.txt")"
   # headless from here: a stopped Activity would hang the handler (f19), which is not this check
   kill_app || mark "b app process did not die"
-  mark "b location OFF"
+  MOFF="b location OFF"
+  mark "$MOFF"
   ash cmd location set-location-enabled false
-  sleep 15
+  sleep 60
   mark "b location ON"
   ash cmd location set-location-enabled true
   sleep 20
+  # a geofence event or error delivered to the app while location was off (or as it came back)
+  err="$(lc_since "$MOFF" "$GEOFENCE_JOB|$GEOFENCE_ERR" | head -n3 | cut -c1-200)"
   fence_dump "$EV/fence-b-after.txt"
   r1="$(fence_registered "$EV/fence-b-after.txt")"
   wait_debounce depart
@@ -557,20 +600,49 @@ check_b() {
   job="$(wait_lc "$M" "$GEOFENCE_JOB" 120)"
   td="$(wait_presence depart "$d0" 60)"
   dump_state "$EV/state-b.json"
-  obs="fence in Play services before the toggle=$r0, after=$r1; a depart after the toggle without opening the app: EXIT delivered=$([ -n "$job" ] && echo yes || echo no), row after ${td}s (-1 = none)"
+  { echo "geofence event/error while location was off: ${err:-none}"; lc_since "$MOFF" "$GEOFENCE_JOB|$GEOFENCE_ERR|FFLAB|GeofencingTaskConsumer"; } > "$EV/b-logcat.txt"
+  obs="location off 60 s; a geofence event or error delivered meanwhile: $([ -n "$err" ] && echo yes || echo no); fence in Play services before=$r0, after=$r1; a depart afterwards without opening the app: EXIT delivered=$([ -n "$job" ] && echo yes || echo no), row after ${td}s (-1 = none)"
   if [ "$r0" != yes ]; then
     obs="$obs; precondition failed (no fence before the toggle)"
+  elif [ -z "$err" ]; then
+    obs="$obs; precondition failed: no geofence error was delivered, so the mechanism was never exercised (this rig has no network location provider, the documented trigger)"
   elif [ "$r1" = no ] && [ -z "$job" ]; then
     v=reproduced
   elif [ "$r1" = yes ] && [ -n "$job" ]; then
     v=not_reproduced
   fi
-  record b O01-F03 "a location toggle removes the fence; nothing re-registers it until the app is opened" "$obs" "$v" "fence-b-after.txt"
+  record b O01-F03 "$P03" "$obs" "$v" "b-logcat.txt"
   launch_app
   sleep 8
   fence_dump "$EV/fence-b-reopened.txt"
   mark "b app reopened: fence in dumpsys=$(fence_registered "$EV/fence-b-reopened.txt")"
   rec_roll
+}
+
+# The fence probe's other outcome (binding review, MAJOR 3: fence_registered had never said
+# "no"): wipe the app's data, which removes its geofences from Play services, and read the dump.
+# Then sign the lab technician back in (the app re-registers the fence on its own).
+check_fneg() {
+  local r0 r1 r2
+  mark "CHECK fneg: the fence probe after the app's data is wiped"
+  launch_app
+  sleep 8
+  fence_dump "$EV/fence-neg-before.txt"
+  r0="$(fence_registered "$EV/fence-neg-before.txt")"
+  bash "$LAB_DIR/app.sh" clear > /dev/null 2>&1
+  sleep 20
+  fence_dump "$EV/fence-neg-after.txt"
+  r1="$(fence_registered "$EV/fence-neg-after.txt")"
+  bash "$LAB_DIR/app.sh" login > "$EV/fneg-login.txt" 2>&1 || mark "fneg: re-login failed (see fneg-login.txt)"
+  sleep 10
+  fence_dump "$EV/fence-neg-relogin.txt"
+  r2="$(fence_registered "$EV/fence-neg-relogin.txt")"
+  if [ "$r0" != yes ]; then
+    record fneg control "after pm clear the fence is gone from Play services' dump: fence_registered=no" "precondition failed: no fence before (=$r0)" inconclusive fence-neg-before.txt
+  else
+    record fneg control "after pm clear the fence is gone from Play services' dump: fence_registered=no" \
+      "before=$r0; 20 s after pm clear=$r1; after signing in again=$r2" "$([ "$r1" = no ] && echo reproduced || echo not_reproduced)" fence-neg-after.txt
+  fi
 }
 
 # ---- c: O01-F20 ---------------------------------------------------------------------------
@@ -585,7 +657,7 @@ fresh_lab_job() { # -> prints the customer name
   [ -n "$mt" ] || return 1
   code="$(lab_curl -o /dev/null -w '%{http_code}' -X POST "$LAB_HOST_URL/api/jobs" \
     -H "Authorization: Bearer $mt" -H 'Content-Type: application/json' \
-    -d "{\"job_type\":\"home-visit\",\"customer_name\":\"$name\",\"customer_address\":\"LAB address\",\"customer_lat\":$JOB_LAT,\"customer_lng\":$JOB_LNG,\"appliance_type\":\"AC\",\"problem\":\"lab travel job\",\"assigned_tech_id\":\"t2\"}")"
+    -d "{\"job_type\":\"home-visit\",\"customer_name\":\"$name\",\"customer_address\":\"LAB address\",\"customer_lat\":$JOB_LAT,\"customer_lng\":$JOB_LNG,\"appliance_type\":\"AC\",\"problem\":\"lab travel job\",\"assigned_tech_id\":\"$LAB_TECH_ID\"}")"
   case "$code" in 2*) echo "$name" ;; *) return 1 ;; esac
 }
 open_lab_job() { # [customer name]
@@ -683,9 +755,13 @@ check_doze() {
   clock in || return
   wait_fgs yes 30 > /dev/null
   go_home
-  local p0 p1
+  local p0 pa p1 v=inconclusive obs
   sleep 70
+  # the same sampler for the same length without doze first: in a rig whose sampler barely
+  # receives fixes, "few pings in doze" says nothing (binding review, MAJOR 4)
   p0="$(ping_count)"
+  sleep $((DOZE_MIN * 60))
+  pa="$(ping_count)"
   ash dumpsys battery unplug
   ash dumpsys deviceidle force-idle | tee "$EV/doze.txt" > /dev/null
   sleep $((DOZE_MIN * 60))
@@ -693,9 +769,15 @@ check_doze() {
   p1="$(ping_count)"
   ash dumpsys deviceidle unforce > /dev/null
   ash dumpsys battery reset
-  record doze "O01 (doze; no register row)" "stock doze throttles the on-duty sampler" \
-    "pings received during ${DOZE_MIN} min of forced deep idle at a 1-min interval: $((p1 - p0)) (pings sync on the next fix, so a delayed batch can land after unforce)" \
-    "$([ $((p1 - p0)) -lt $((DOZE_MIN / 2)) ] && echo reproduced || echo not_reproduced)" doze.txt
+  obs="pings received in ${DOZE_MIN} min on duty without doze: $((pa - p0)); during ${DOZE_MIN} min of forced deep idle: $((p1 - pa)) (1-min lab interval; pings sync on the next fix, so a delayed batch can land after unforce)"
+  if [ $((pa - p0)) -lt $((DOZE_MIN / 2)) ]; then
+    obs="$obs; cannot decide: the sampler did not show at least $((DOZE_MIN / 2)) pings without doze"
+  elif [ $((p1 - pa)) -lt $((DOZE_MIN / 2)) ]; then
+    v=reproduced
+  else
+    v=not_reproduced
+  fi
+  record doze "O01 (doze; no register row)" "stock doze throttles the on-duty sampler" "$obs" "$v" doze.txt
   clock out > /dev/null 2>&1
 }
 check_reboot() {
@@ -724,7 +806,7 @@ check_reboot() {
   fgs_lines > "$EV/services-reboot-opened.txt"
   record reboot O01-F01 "after a reboot the sampler returns without its FGS (and isRunning() never repairs it)" \
     "3 min after boot, app not opened: fgs=$f1, pings received=$((p1 - p0)); 20 s after opening the app: fgs=$f2" \
-    "$([ "$f2" = no ] && echo reproduced || echo not_reproduced)" services-reboot-opened.txt
+    "$(if [ "$f2" = yes ]; then echo not_reproduced; elif [ "${PROBE_RESTORED_OK:-0}" = 1 ]; then echo reproduced; else echo inconclusive; fi)" services-reboot-opened.txt
   clock out > /dev/null 2>&1
 }
 check_revoke() {
@@ -755,6 +837,7 @@ for c in "${CHECKS[@]}"; do
     probe) check_probe ;;
     a) check_a ;;
     b) check_b ;;
+    fneg) check_fneg ;;
     c) check_c_all ;;
     d) check_d ;;
     f19) check_f19 ;;

@@ -21,7 +21,12 @@
 # build (weight 2) cannot run: stop the emulator whenever no check is running.
 #
 # Knobs (env): FF_EMU_GPU (host; set it to skip the fallback), FF_EMU_MEM (2048), FF_EMU_BOOT_TIMEOUT (600 s, after the slot is held),
-# FF_EMU_SLOT_TIMEOUT (1800 s), FF_EMU_SERIAL (emulator-5554), FF_EMU_PORT (5554).
+# FF_EMU_SLOT_TIMEOUT (1800 s), FF_EMU_SERIAL (emulator-5554), FF_EMU_PORT (5554),
+# FF_EMU_IDLE_MIN (20: the keeper stops an emulator no lab script has driven for that long; 0 = never).
+#
+# One instance per AVD: the emulator refuses a second instance of ff34 while one runs (and this
+# script only ever drives port 5554). The swiftshader fallback is software rendering: it boots
+# and runs slower, so timing results from a swiftshader run are not comparable with -gpu host.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
@@ -38,6 +43,7 @@ EMU_PORT="${FF_EMU_PORT:-5554}"
 case "$GPU" in *angle*) die "ANGLE GPU modes are not allowed on this machine (antivirus blocks d3dcompiler_47.dll)" ;; esac
 BOOT_TIMEOUT="${FF_EMU_BOOT_TIMEOUT:-600}"
 SLOT_TIMEOUT="${FF_EMU_SLOT_TIMEOUT:-1800}"
+IDLE_MIN="${FF_EMU_IDLE_MIN:-20}"
 KEEPER_PID_F="$LAB_RUN/emu-keeper.pid"
 EMU_PID_F="$LAB_RUN/emu.pid"
 KEEPER_LOG="$LAB_RUN/emu-keeper.log"
@@ -72,6 +78,20 @@ if [ "${1:-}" = "_keeper" ]; then
   emu_pid=$!
   echo "$emu_pid" > "$EMU_PID_F"
   echo "[$(date +%H:%M:%S)] EMULATOR STARTED pid=$emu_pid args=$*"
+  # Idle stop: the slot is held for as long as this keeper lives, so an emulator nobody drives
+  # is stopped after FF_EMU_IDLE_MIN minutes (scripts that drive it leave a busy marker,
+  # lib.sh lab_busy; 0 disables the stop).
+  idle_s=0
+  while alive "$emu_pid"; do
+    sleep 10
+    if lab_any_busy; then idle_s=0; else idle_s=$((idle_s + 10)); fi
+    if [ "$IDLE_MIN" -gt 0 ] && [ "$idle_s" -ge $((IDLE_MIN * 60)) ]; then
+      echo "[$(date +%H:%M:%S)] idle for $IDLE_MIN min with no lab script running: stopping the emulator"
+      adb_ emu kill > /dev/null 2>&1
+      for _ in $(seq 1 30); do alive "$emu_pid" || break; sleep 2; done
+      break
+    fi
+  done
   wait "$emu_pid"
   echo "[$(date +%H:%M:%S)] emulator exited rc=$?"
   emu_pid=""

@@ -18,6 +18,7 @@ source "$HERE/lib.sh"
 source "$HERE/lib-app.sh"
 load_android_env
 require_emulator
+lab_busy
 OUTD="$LAB_OUT/calib-f04-$(stamp)"
 mkdir -p "$OUTD"
 gs() { ash su 2000 cmd location providers "$@"; }

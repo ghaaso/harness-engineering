@@ -25,8 +25,6 @@ source "$HERE/lib.sh"
 source "$HERE/lib-app.sh"
 load_android_env
 
-LAB_TECH_ID="${FF_LAB_TECH_ID:-t2}"
-LAB_TECH_PIN="${FF_LAB_TECH_PIN:-2580}" # lab-backend.sh seeds this; a throwaway local DB
 
 # Refuse an APK that could reach a real server. Exits non-zero with the reason.
 check_apk_hosts() { # apk
@@ -145,6 +143,7 @@ do_login() {
 
 cmd="${1:-}"
 [ -n "$cmd" ] && shift
+lab_busy # dead markers are swept by the keeper
 case "$cmd" in
   install)
     apk="${1:?usage: app.sh install <apk>}"
