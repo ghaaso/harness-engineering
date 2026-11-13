@@ -88,9 +88,16 @@ app_pid() { ash pidof "$APP_PKG"; }
 
 # The app's services as dumpsys sees them: one line per ServiceRecord with isForeground.
 fgs_lines() { ash dumpsys activity services "$APP_PKG"; }
-# "yes" when any of the app's services is in the foreground right now.
+# expo-location runs BOTH location tasks (on-duty pings and job travel) in one service class,
+# expo.modules.location.services.LocationTaskService (HARNESS-REVIEW: O01-F20). These read only
+# that ServiceRecord block in `dumpsys activity services`.
+# "yes" when the location service is in the foreground right now.
 fgs_up() {
-  if fgs_lines | grep -q "isForeground=true"; then echo yes; else echo no; fi
+  fgs_lines | awk '/ServiceRecord{/{inb=($0 ~ /LocationTaskService/)} inb && /isForeground=true/{f=1} END{print (f ? "yes" : "no")}'
+}
+# "yes" when a LocationTaskService record exists at all (foreground or not).
+loc_svc_present() {
+  if fgs_lines | grep -q "ServiceRecord{.*LocationTaskService"; then echo yes; else echo no; fi
 }
 
 notif_dump() { ash dumpsys notification --noredact; }
@@ -247,14 +254,32 @@ backend_rows() { # out-file
     echo "## attendance_event"
     lab_sql "select client_id, tech_id, kind, device_time, server_time from attendance_event order by server_time" 2>&1
     echo "## attendance_presence_event"
-    lab_sql "select client_id, tech_id, kind, lat, lng, accuracy_m, confirmed, device_time from attendance_presence_event order by device_time" 2>&1
+    lab_sql "select client_id, tech_id, kind, lat, lng, accuracy_m, inside_geofence, distance_m, confirmed, is_mock_location, device_time from attendance_presence_event order by device_time" 2>&1
     echo "## attendance_ping (count, latest)"
     lab_sql "select count(*), max(captured_at) from attendance_ping" 2>&1
     echo "## job_event (latest 20)"
-    lab_sql "select seq, job_id, kind, created_at from job_event order by seq desc limit 20" 2>&1
+    lab_sql "select seq, job_id, kind, left(coalesce(text, ''), 40), created_at from job_event order by seq desc limit 20" 2>&1
     echo "## job_location"
-    lab_sql "select job_id, kind, created_at from job_location order by created_at" 2>&1
+    lab_sql "select job_id, kind, lat, lng, accuracy_m, device_time from job_location order by device_time" 2>&1
     echo "## job_travel_sample (count)"
     lab_sql "select count(*) from job_travel_sample" 2>&1
   } > "$1"
+}
+
+# One-line summary of a queue key: total, done, parked (with reasons), queued, max attempts.
+# Works for both shapes: attendance queues (done / failed_reason / attempts) and the jobs
+# outbox v2 (status queued|failed / failedReason / attempts).
+qsummary() { # key [kind-filter]
+  kv "$1" | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      let v = []; try { v = JSON.parse(s || "[]"); } catch { console.log("unparseable"); return; }
+      let items = Array.isArray(v) ? v : (v && Array.isArray(v.items) ? v.items : []);
+      const k = process.argv[1]; if (k) items = items.filter((i) => i.kind === k);
+      const parked = items.filter((i) => !i.done && (i.failed_reason !== undefined || i.status === "failed"));
+      const done = items.filter((i) => i.done === true).length;
+      const queued = items.length - done - parked.length;
+      const att = Math.max(0, ...items.map((i) => i.attempts || 0));
+      const reasons = [...new Set(parked.map((i) => i.failed_reason || i.failedReason))].join(" | ");
+      console.log(`total=${items.length} done=${done} parked=${parked.length}${reasons ? " [" + reasons + "]" : ""} queued=${queued} max_attempts=${att}`);
+    });' "${2:-}"
 }

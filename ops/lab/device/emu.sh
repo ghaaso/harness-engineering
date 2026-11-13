@@ -7,8 +7,11 @@
 #
 # start: headless by default (-no-window); --window shows it so the owner can watch; --cold
 # ignores the quick-boot snapshot (a cold boot). The emulator runs natively on Windows on the
-# Windows Hypervisor Platform (Docker has no /dev/kvm here) with `-gpu host` (FF_EMU_GPU
-# overrides). It blocks until `sys.boot_completed=1`, records the boot time in
+# Windows Hypervisor Platform (Docker has no /dev/kvm here) with `-gpu host`; if the emulator
+# dies before booting on `host` it is retried once with `-gpu swiftshader_indirect` (software).
+# The ANGLE modes are never used: this PC's antivirus blocks lib64/gles_angle/d3dcompiler_47.dll
+# (coordinator ruling, 2026-11-13). RAM is capped at 2048 MB (-memory) because free host RAM is
+# the binding resource. Never run it together with a Gradle build. It blocks until `sys.boot_completed=1`, records the boot time in
 # $LAB_RUN/boot-times.log, enables `adb root`, and prints the GPU renderer actually in use.
 #
 # Slot: ONE slot of the machine-wide lock (ff-slot.sh) for as long as the emulator runs. A
@@ -17,7 +20,7 @@
 # reaps the slot if the keeper is killed outright. While the emulator holds a slot the Android
 # build (weight 2) cannot run: stop the emulator whenever no check is running.
 #
-# Knobs (env): FF_EMU_GPU (host), FF_EMU_BOOT_TIMEOUT (600 s, after the slot is held),
+# Knobs (env): FF_EMU_GPU (host; set it to skip the fallback), FF_EMU_MEM (2048), FF_EMU_BOOT_TIMEOUT (600 s, after the slot is held),
 # FF_EMU_SLOT_TIMEOUT (1800 s), FF_EMU_SERIAL (emulator-5554), FF_EMU_PORT (5554).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +29,9 @@ source "$HERE/lib.sh"
 load_android_env
 
 GPU="${FF_EMU_GPU:-host}"
+EMU_MEM="${FF_EMU_MEM:-2048}"
+[ "$EMU_MEM" -le 2048 ] || die "FF_EMU_MEM=$EMU_MEM exceeds the 2048 MB cap"
+case "$GPU" in *angle*) die "ANGLE GPU modes are not allowed on this machine (antivirus blocks d3dcompiler_47.dll)" ;; esac
 EMU_PORT="${FF_EMU_PORT:-5554}"
 BOOT_TIMEOUT="${FF_EMU_BOOT_TIMEOUT:-600}"
 SLOT_TIMEOUT="${FF_EMU_SLOT_TIMEOUT:-1800}"
@@ -58,7 +64,7 @@ if [ "${1:-}" = "_keeper" ]; then
   echo "[$(date +%H:%M:%S)] waiting for 1 slot as $holder"
   bash "$SLOT_SH" acquire "$holder" 1 $$ || exit 4
   echo "[$(date +%H:%M:%S)] SLOT ACQUIRED"
-  "$FF_EMULATOR" -avd "$FF_AVD" -port "$EMU_PORT" -gpu "$GPU" -no-audio -no-boot-anim \
+  "$FF_EMULATOR" -avd "$FF_AVD" -port "$EMU_PORT" -gpu "$GPU" -memory "$EMU_MEM" -no-audio -no-boot-anim \
     -netdelay none -netspeed full "$@" > "$EMU_LOG" 2>&1 &
   emu_pid=$!
   echo "$emu_pid" > "$EMU_PID_F"
@@ -74,6 +80,8 @@ cmd="${1:-}"
 
 case "$cmd" in
   start)
+    [ -f "$ANDROID_AVD_HOME/$FF_AVD.avd/config.ini" ] || [ -f "$(cygpath -u "$ANDROID_AVD_HOME")/$FF_AVD.avd/config.ini" ] ||
+      die "AVD $FF_AVD not installed yet ($ANDROID_AVD_HOME/$FF_AVD.avd/config.ini missing)"
     window=0
     cold=0
     for a in "$@"; do
@@ -122,7 +130,15 @@ case "$cmd" in
         bash "$HERE/emu.sh" stop > /dev/null 2>&1
         die "not booted within ${BOOT_TIMEOUT}s"
       fi
-      alive "$(keeper_pid)" || die "emulator died during boot: $(tail -n 5 "$EMU_LOG")"
+      if ! alive "$(keeper_pid)"; then
+        cp "$EMU_LOG" "$LAB_RUN/emulator-failed-gpu-$GPU.log" 2> /dev/null
+        echo "$(date -Is) boot=FAILED gpu_flag=$GPU log=emulator-failed-gpu-$GPU.log" >> "$LAB_RUN/boot-times.log"
+        if [ "$GPU" = host ] && [ -z "${FF_EMU_GPU:-}" ]; then
+          log "emulator died during boot with -gpu host; retrying once with swiftshader_indirect"
+          FF_EMU_GPU=swiftshader_indirect exec bash "$HERE/emu.sh" start "$@"
+        fi
+        die "emulator died during boot (gpu=$GPU): $(tail -n 5 "$EMU_LOG")"
+      fi
     done
     kill "$wpid" 2> /dev/null
     secs=$(($(date +%s) - t0))
