@@ -1,0 +1,59 @@
+VERDICT: PASS-WITH-FIXES
+PR #195 at f9d4a5bfa62f056eaa96334e77c3d640385861e7
+Binding review dispatched by the coordinator, 2026-11-13 16:58 (Opus, fresh context; PR-reviewer, self-host-architect and recovery-operator definitions; own detached checkout). The head was confirmed with gh pr view and tested merged with origin/main 02af3cc (merged tree 4316bce), which pulls in P7a and the L2 follow-up.
+
+Findings
+
+1. MAJOR. The stub writes its own 400 when a request has no Host header (breaks standing rule 5). ops/hang-stub/server.mjs:297 builds the server without requireHostHeader: false. Node (default true on the image's Node 22, checked with node:22-alpine) writes "HTTP/1.1 400 Bad Request" itself for a Host-less HTTP/1.1 request; that reply skips clientError and the request handler. Reproduced on a raw socket in both hang and proxy mode. No test covers it. The README claim at line 33 ("all intercepted") is false. Reach: Railway's edge always sets Host, so phones probably cannot trigger it; it is still the one place the stub answers by itself, and phones park a bare 4xx. Fix: requireHostHeader: false, plus a raw-socket test "no Host gets no 400".
+2. MAJOR. The restore gate misses YAML-style lines, so backend.env can beat a forced key. docker-compose.prod.yml:93 only matches "key=". Compose's env_file parser also accepts "key: value". With lowercase fixflow_environment and fixflow_enable_dispatcher lines in that form, docker compose config passed both lowercase keys into the backend environment, and a copy of the gate logic printed OPEN. In a test container both spellings were present, ordered by Docker rather than sorted; a lower-casing loader that keeps the last value would read the hostile one (that pydantic-settings keeps the last duplicate is inferred, not run). Result: the backend can boot as dev (rule 3) or with the dispatcher on (rule 4): exactly what the gate exists to stop. Fix: match [=:], or better refuse any line whose key equals a forced name ignoring case but is not the exact NAME= form; add the colon case to smoke S4b.
+3. MAJOR. Runbook 10.6's STOP remedy creates the failure it guards against. docs/RUNBOOK-SELFHOST.md:1941 says to remove the deployment's public route before doing anything else. Once the route is gone, Railway's edge answers every phone with its own markerless 404; the field APK parks queued records on that bare 4xx, fleet-wide. Line 10.9 of the same runbook admits removal gives a 404, and 10.0 forbids a 404 page. Fix: on STOP, set STUB_MODE=hang and roll back to the previous good deployment, keeping the fleet offline; never detach the domain while any roster phone lacks a row.
+4. MAJOR. R3 reuses section 6, which drops the live schema before the dump is proven or the live data saved. docs/RUNBOOK-SELFHOST.md:1319 (6.6 DROP SCHEMA public CASCADE) runs before 6.7's pg_restore -l and list checks. Section 6 has no step that dumps the current database first, yet R3 (lines 2384 and 2414) sends a live host there, including after T_open; manager-side writes made since the dump are in no phone manifest, so they are lost. 6.2's provenance check (line 1277) cannot be met for a later R2 dump, and R3 gives no way to fetch one (only R7.2 does). Fix: move the TOC, list and TABLE DATA count checks before 6.6; add "if public has tables: pg_dump --format=custom the live database, then put it to archive/pre-restore/"; in R3 point to R7.2 for the fetch and use the hourly or nightly receipt's sha256.
+5. MINOR. CI does not guard the compose rules. "No published port", the restore gate and the forced env keys are checked only by the local smoke; CI never renders docker-compose.prod.yml (a port-publish break showed up only in docker compose config). Fix: a CI step that runs docker compose config and checks for published ports and the restore gate.
+6. MINOR. CLAUDE.md:100 gives a port check that always fails: it says docker ps --format '{{.Ports}}' "must be empty", but Postgres always prints 5432/tcp. The PR's own journal 17 and runbook 4.5 use "no ->". Fix the wording.
+7. MINOR. The stub README does not say when the stub is not a guarantee: the assumption that Railway's edge waits longer than the app's 15 s abort (10.6's 30 s curl tests it, the README does not say so); that a process crash, an out-of-memory kill or a Railway incident yields an edge 5xx (a strike toward parking); and that in proxy mode a marker-carrying 401 passes, on which a field build without the v2 outbox drops queued job writes (O10-F15). The test title at server.test.mjs:333 ("the app pauses") is true only for the new app.
+8. MINOR. Dockerfiles are not hardened: the backend image runs as root (no USER); caddy:2-alpine, node:22-alpine and python:3.12-slim float within their major, digests only recorded at install (runbook 4.4). Acknowledged in the PR body.
+
+Deliberate breaks (each restored; tree confirmed clean before the next)
+
+| Break | What caught it |
+| --- | --- |
+| Markerless upstream response passes through | 9 stub tests |
+| Stub writes its own 400 in clientError | 4 tests (malformed, slow headers 408, oversized headers 431, proxy malformed) |
+| Marked 5xx passes through | 4 tests |
+| Truncated-body guards removed | not caught; Node never emits end on an aborted body, so a truncated 2xx still cannot pass (the guards are redundant) |
+| Hang floor (20 s) removed | 1 test |
+| checkContinue listener removed | 1 test |
+| Pruning deletes every dump | 7 tests in test_backup.py |
+| archive/ guard removed in both places | 1 test |
+| Port published | no CI test; only smoke S1/S13 |
+| Restore gate removed | no CI test; only smoke S3 |
+
+The eight plan defects the lane reported
+1. Ping ceiling 240 vs O-10's 48: real (the code default is 240); removing the override lines is right.
+2. A curl -f healthcheck stays green over a dead database: real; reading the database component is right.
+3. Restore stops on CREATE SCHEMA public and the plan's line lacks --no-owner: real; the TOC-list fix is right (smoke S7 includes the control run).
+4. R9 "byte for byte" would copy the sign-off file: real; the tar --exclude is right.
+5. The heartbeat would page every minute while api. is on the 503 route: real; installing the cron after 5.9 is right.
+6. release/drain-web has no tag, and CI does not run on release/drain: real (CI triggers only on main); the proposal is fine but needs a coordinator ruling.
+7. ff-gates.sh still defaults to PG16: real; outside this PR's files.
+8. The deploy-train table's extra "Rehearsal (L4)" column: cosmetic, not a plan defect.
+
+Tried and could not break
+- Stub, raw socket: HTTP/1.0, pipelined requests, duplicate Host, TE+CL smuggling, HTTP/2.0 and the h2 preface, absolute-form target, OPTIONS *, Upgrade, CONNECT, unknown Expect. Proxy mode: a duplicated marker becomes "1, 1" and hangs; an oversized body is never buffered past 2 MiB.
+- Compose: environment: beats env_file: for all four forced keys, proven with a hostile backend.env. No published port. The db network is internal. The healthcheck reads the database component.
+- keys_to_prune: only keys directly under the prefix, never archive/, the newest 3 always kept. The nightly job's default call is unchanged apart from now also keeping the 3 newest and ignoring sub-folders.
+- The cursor re-seed seeds at COALESCE(MAX(seq),0) with GREATEST, so it never moves backwards.
+- Section 11 matches plan 7.7 (cut at a31924a, P1 then P2b-2 then P3a by cherry-pick, never merge). The drain tree simulated as a31924a + P1 + the P3a diff applied cleanly and its backend gate passed.
+- The diff contains no real hostname, IP address, email or token; only placeholders.
+- CI changes only the Postgres image and adds the stub tests; no gate is weakened.
+- The CSP covers the R2 host pattern for img/media, the map tiles, the self-hosted font and Sentry ingest. The web app makes no PUT to R2.
+
+Runs (merged tree 4316bce): backend gate on Postgres 17, SUMMARY FAIL=0, all 7 gates exit 0, 0 of 1199 skipped; web gate, SUMMARY FAIL=0; stub tests 47 pass, 0 fail; smoke (one run, inside a light slot) 67 PASS, SMOKE FAILS=0, TEARDOWN containers_left=0, with the negative controls among the 67 (closed gate, lowercase-key refusal, wrong-token 401, the plain-restore control, the heartbeat database-down case); drain tree (a31924a + P1 + P3a) backend gate SUMMARY FAIL=0.
+
+Unverified
+- Railway's actual upstream timeout and what its edge returns while a redeploy is draining.
+- Whether pydantic-settings really keeps the last of two duplicate keys (inferred from its lower-casing step).
+
+Cleanup: both review worktrees removed (the second held only a local, unpushed simulation commit), git worktree prune run, all the reviewer's containers gone.
+
+Coordinator's ruling (2026-11-13): sent back to the lane. Must fix before merge: findings 1 to 4 (each one a way to lose or strand records, or to boot the drain server in the wrong mode, with the owner's hands on the keyboard), and 5, 6 and 7. Finding 8: a non-root user in the backend image is done now if the image allows it without touching the application; digest pinning stays the runbook's install step and is journaled. Rulings on the lane's plan defects: 6: the web image for the drain window is tagged drain-web-image, and CI runs on release/drain and release/drain-web (the branch filter is added in this PR, so the cherry-pick carries it); 7: the gate script's default moves to Postgres 17 when this PR merges; 8: the extra column stays (it is the coordinator's table). Not mergeable at f9d4a5bfa62f056eaa96334e77c3d640385861e7.
