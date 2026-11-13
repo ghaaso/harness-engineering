@@ -104,8 +104,14 @@ case "$cmd" in
           *) tw=1 ;;
         esac
         tt=$(( ${t%%-*} / 1000000000 ))
-        if [ "$w" -eq 1 ] && [ "$tw" -ge 2 ] && [ $(( $(date +%s) - tt )) -lt "$PATIENCE" ]; then
-          continue   # a short job may pass a heavy one that has not waited long yet
+        if [ "$w" -eq 1 ] && [ "$tw" -ge 2 ]; then
+          # A short job may pass a heavy one that has not waited long yet, or that could not run
+          # anyway: while an emulator session holds a slot (it is long-lived and an exclusive job
+          # needs every slot), making the short jobs wait would help nobody. That stalled the whole
+          # queue with two slots idle on 2026-11-13 14:38.
+          if [ $(( $(date +%s) - tt )) -lt "$PATIENCE" ] || grep -qs -- '-emulator-' "$D"/slot-*/holder; then
+            continue
+          fi
         fi
         my_turn=0; break
       done
