@@ -28,6 +28,9 @@ own networks (in the stand-in host's own daemon, so this PC's exhausted address 
 touched). A bare repository inside it, `/srv/origin.git`, filled from a bundle of `origin/main` (for the train,
 also the annotated tag `drain-pick-tz-fix` that 11.1 and 11.3a fetch, ruling C32),
 plays GitHub: `git clone <repo-url>`, `fetch origin --tags` and section 11's `push` go there.
+To build that bundle the entry script reads from GitHub once: it fetches `main` (and, for the
+train, the tag, without `--force`, into this checkout's `refs/tags/`) before the stand-in
+host goes offline. Nothing is pushed to GitHub.
 
 **Typing the runbook.** `lib/runbook.py` cuts a step's fenced blocks or inline `code` spans out of
 the runbook by step number (`6.6`, `11.3a`, `R5.4`, section `0`). The restore reads the copy in

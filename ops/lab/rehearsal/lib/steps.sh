@@ -274,7 +274,7 @@ sec6() {
     note="RUNBOOK DEFECT CANDIDATE: everything else as expected, but the cursor check expects whatsapp|<max job_event.seq> and reads $cur with max(seq)=$maxseq. Nothing between 6.7 and 6.9 moves the cursor: migration 0046 is already applied in this dump, so it does not re-seed, and the re-seed is 8.8 (at T_close)."
   fi
   row "6.9 $tag" "$verdict" "write restore-signed-off; ffc \$P_DB --profile app up -d (exit $up_rc)" \
-    "gate-log 'signed off' x$gate; healthy=$([ $healthy = 0 ] && echo yes || echo no); environment=$env dispatcher=$dsp backup=$bk prefix=$pfx git_sha=$( [ "$gsha" = "$head" ] && echo HEAD || echo "$gsha") database=$db migrations=$mig; cursor=$cur max(seq)=$maxseq" "$note"
+    "gate-log 'signed off' x$gate; healthy=$([ $healthy = 0 ] && echo yes || echo no); environment=$env dispatcher=$dsp backup=$bk prefix=$pfx git_sha=$( [ "$gsha" = "$head" ] && echo "the checkout HEAD ${head:0:7}" || echo "$gsha") database=$db migrations=$mig; cursor=$cur max(seq)=$maxseq" "$note"
 }
 
 sec6_8() { # <tag>  Appendix B against the source's facts
@@ -310,6 +310,7 @@ sec6_8() { # <tag>  Appendix B against the source's facts
   # below max(seq) leaves the step AMBIGUOUS (the same reading makes 6.9 stop; finding D1)
   local cseq mseq; cseq="${curs##*|}"; mseq="$(echo "$o" | awk '/job_event_seq/{print $3; exit}')"
   [ $ok = yes ] && [ -n "$cseq" ] && [ "$cseq" != "$mseq" ] && ok=amb
+  [ "$ver" = 0046 ] && [ -z "$cseq" ] && ok=no   # check 6: a 0046 dump has the whatsapp row
   row "6.8 $tag" "$(case $ok in yes) echo DONE ;; amb) echo AMBIGUOUS ;; *) echo FAILED ;; esac)" "appendix-b.sql; the sequence query" \
     "queries exit=0: $qexit; $ntab tables, count lines differing from the source: $diffc; version $ver; payments $pay_dst (source $pay_src); ledger|chain|head $led_dst (source $led_src); sequences at/above max: $seqok; cursor $curs; geofence: $(awk '/center_lat/{getline; getline; print; exit}' "$af" | tr -s ' ')" \
     "check 6 reads 'a 0046 dump has the whatsapp row at or near max(job_event.seq)': here $curs vs max $(echo "$o" | awk '/job_event_seq/{print $3}')"

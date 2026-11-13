@@ -20,7 +20,8 @@ case "${1:?online|offline}" in
     echo "lab: /etc/cron.d created on the (Alpine) stand-in host; cron files are installed and listed, never run by a cron" >> "$OUT/deviations.log"
     RB_FILE=/srv/prep/docs/RUNBOOK-SELFHOST.md   # /opt/fixflow does not exist before 1.11
     sec1 /srv/origin.git "$REF"
-    RB_FILE=/opt/fixflow/docs/RUNBOOK-SELFHOST.md
+    # the train reads main's runbook throughout; a restore reads the copy it checked out
+    [ "${PHASE:-}" = train-host ] || RB_FILE=/opt/fixflow/docs/RUNBOOK-SELFHOST.md
     sec3
     sec4
     ;;

@@ -14,7 +14,8 @@ host against the backend's container address (no tunnel):
                                            "closed": id of a closed job,
                                            "unclaimed": id of an open unassigned job}
 PINs come from the environment: L4_PIN_M1, L4_PIN_T1, L4_PIN_T2. Prints one JSON object:
-{"result": "PASS"|"FAIL", "items": [[name, ok, evidence], ...]}.
+{"result": "PASS"|"FAIL"|"PARTIAL (cannot run here: ...)", "items": [[name, ok, evidence], ...]}
+(ok None = cannot run here). Modes: p6a-setup, p6a <setup json>, p7a <jobs json>, p204.
 """
 
 from __future__ import annotations

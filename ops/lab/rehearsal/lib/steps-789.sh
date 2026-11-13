@@ -49,7 +49,7 @@ lab probe: deep health with postgres stopped answered $probe"
   # slow answer may come from this offline host's DNS (see the probe), which a real host lacks.
   local amb=no
   [ $ok = no ] && echo "$o2" | grep -q 'UNHEALTHY http=000' && echo "$o2" | grep -qx 'exit=1' \
-    && [ "$(echo "$o1" | tr -d ' ')" = exit=0 ] && [ "$(echo "$o3" | tr -d ' ')" = exit=0 ] && amb=yes
+    && [ "$(echo "$o1" | tr -d ' ')" = exit=0 ] && [ "$(echo "$o3" | tr -d ' ')" = exit=0 ] && [ "$after" -gt "$before" ] && amb=yes
   row 7.2 "$( [ $ok = yes ] && echo DONE || { [ $amb = yes ] && echo AMBIGUOUS || echo FAILED; })" "heartbeat by hand at the container address; then with postgres stopped; then again" \
     "healthy: [$o1] pings $before->$after; db down: [$(echo "$o2" | grep -o 'UNHEALTHY http=[0-9]*' | head -n 1) $(echo "$o2" | grep '^exit=')]; again: [$o3]; $(echo "$o2" | grep '^lab probe')" \
     "network name fixflow_app confirmed (the VERIFY line)$( [ $amb = yes ] && echo "; the alarm fired (exit=1, no ping) but the Expected 'http=200' was not seen: with postgres stopped, /api/ops/health did not answer within the heartbeat's curl -m 20, so it printed http=000. The lab probe shows whether this host's offline DNS explains the delay (a real host gets a fast NXDOMAIN). Either way the alarm fires; settle on the real host. If it recurs there, the smallest fix is the Expected text: 'http=000 or http=200 with database not ok'")"

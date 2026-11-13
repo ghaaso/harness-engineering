@@ -49,7 +49,7 @@ $FIX_FULL"
   rb_run 11.3a "$(rb_span 11.3a 'cherry-pick -x')"
   rc3a="$RC"; o3a="$(out_of | head -n 1)"
   # the Check compares `git show --stat`; the file lists are compared by name (--stat shortens paths)
-  same="$( [ "$(git show --name-only --format= HEAD | sort)" = "$(git show --name-only --format= "$FIX_TAG" | sort)" ] && echo yes || echo no)"
+  same="$( [ "$(git show --name-only --format= HEAD | sort)" = "$(git show --name-only --format= "$FIX_TAG^{commit}" | sort)" ] && echo yes || echo no)"
   nfiles="$(git show --name-only --format= HEAD | grep -c .)"
   trailer="$(git log -1 --format=%B HEAD | grep 'cherry picked from')"
   row 11.3a "$( [ "$rc3a" = 0 ] && ! has CONFLICT && [ "$trailer" = "(cherry picked from commit $FIX_FULL)" ] && [ "$same" = yes ] && [ "$nfiles" = 4 ] && echo DONE || echo FAILED)" \
@@ -92,18 +92,19 @@ $FIX_FULL"
   git cherry-pick -x "$SQ" > "$OUT/wt7-pick.log" 2>&1; rcsq=$?
   [ "$rcsq" = 0 ] || git cherry-pick --abort >/dev/null 2>&1
   git cherry-pick -x "$P3A" >/dev/null 2>&1 || git cherry-pick --abort >/dev/null 2>&1
-  sqfiles="$( [ "$(git show --name-only --format= HEAD~1 | sort)" = "$(git show --name-only --format= "$FIX_TAG" | sort)" ] && echo "the same four files as the tag" || echo "other files than the tag")"
+  sqfiles="$( [ "$(git show --name-only --format= HEAD~1 | sort)" = "$(git show --name-only --format= "$FIX_TAG^{commit}" | sort)" ] && echo "the same four files as the tag" || echo "other files than the tag")"
   echo "lab WT7: 11.6 and 11.7 run with 'release/drain' read as the throwaway branch wt7-drain" >> "$OUT/deviations.log"
   rb_run wt7-11.6 "$(rb_fence 11.6 1)" "release/drain=wt7-drain"
   o76="$(out_of)"
   oldcount="$(git log a31924a..wt7-drain --format=%B | grep -c 'cherry picked from commit')"
   rb_run wt7-11.7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A" "release/drain=wt7-drain"
   o77="$(out_of)"
-  caught=no; echo "$o76" | grep -qF "(cherry picked from commit $SQ_FULL)" && [ "$(echo "$o76" | grep 'cherry picked from')" != "$srcexp" ] && caught=yes
+  s117="$( [ "$(echo "$o77" | grep -c '^[<>]')" = 0 ] && echo "silent (no file outside the commits)" || echo "lists files")"
+  caught=no; [ "$rcsq" != 0 ] && caught=notrun; echo "$o76" | grep -qF "(cherry picked from commit $SQ_FULL)" && [ "$(echo "$o76" | grep 'cherry picked from')" != "$srcexp" ] && caught=yes
   wt WT7 "11.3a picks main's squash f192fee (PR #204) instead of the tag drain-pick-tz-fix (3810e42)" \
     "the pick: exit $rcsq, no conflict$( [ "$rcsq" = 0 ] || echo ' (CONFLICT)'), $sqfiles. 11.6 log: $(echo "$o76" | grep -v 'cherry picked' | tr '\n' ';') 11.6 sources: $(echo "$o76" | grep 'cherry picked' | sed 's/(cherry picked from commit \(.......\)[0-9a-f]*)/\1/' | tr '\n' ' '). 11.7: $(echo "$o77" | tr '\n' ';' | cut -c1-160). The pre-#206 Check (a count of trailers) would read $oldcount and pass" \
-    "$( [ $caught = yes ] && echo "11.6 as merged at 7bf9f49 (C32): its source list names f192fee97d… where the Check wants 3810e420…, so the text says STOP and how to recover. 11.7 is silent (same files). The subject line differs too ([P7a] follow-up: … (#204) vs fix(jobs): …), but only an operator comparing it notices" || echo "nothing: 11.6 and 11.7 both looked as expected")" \
-    "$( [ $caught = yes ] && echo "no new guard: 11.6's source check (C32) is the guard, though it is a comparison the operator reads, not a test that stops; the smallest scripted form is diff <(git log --reverse … | grep 'cherry picked from') <(expected lines) || echo STOP" || echo "YES: compare the -x trailers to the expected full shas")"
+    "$( [ $caught = yes ] && echo "11.6 as merged at 7bf9f49 (C32): its source list names f192fee97d… where the Check wants 3810e420…, so the text says STOP and how to recover. 11.7 is $s117. The subject line differs too ([P7a] follow-up: … (#204) vs fix(jobs): …), but only an operator comparing it notices" || { [ $caught = notrun ] && echo "wrong turn not reproduced: f192fee did not apply on P1 (see wt7-pick.log)" || echo "nothing: 11.6 and 11.7 both looked as expected"; })" \
+    "$( [ $caught = yes ] && echo "no new guard: 11.6's source check (C32) is the guard, though it is a comparison the operator reads, not a test that stops; the smallest scripted form is diff <(git log --reverse … | grep 'cherry picked from') <(expected lines) || echo STOP" || { [ $caught = notrun ] && echo "not judged" || echo "YES: compare the -x trailers to the expected full shas"; })"
   git switch -q release/drain && git branch -q -D wt7-drain
   ;;
 
@@ -169,7 +170,7 @@ deploy)
   row R5.8 "$( echo "$NEW_IMG" | grep -q '^sha256:' && echo DONE || echo FAILED)" "record the image id" "image $(echo "$NEW_IMG" | cut -c1-19); was $(echo "$PREV_IMG" | cut -c1-19)"
   rb_run 12.4-check "$(rb_fence 12.4 2)"
   # the expected head is the one CLAUDE.md declares at TARGET, never a number written here
-  tgthead="$(git -C /opt/fixflow show "$TARGET:CLAUDE.md" 2>/dev/null | grep -o 'head = \*\*[0-9]\{4\}\*\*' | head -n 1 | grep -o '[0-9]\{4\}')"
+  tgthead="$( [ -n "$TARGET" ] && git -C /opt/fixflow show "$TARGET:CLAUDE.md" 2>/dev/null | grep -o 'head = \*\*[0-9]\{4\}\*\*' | head -n 1 | grep -o '[0-9]\{4\}')"
   row 12.4 "$( [ -n "$tgthead" ] && [ "$(out_of)" = "$tgthead" ] && echo DONE || echo FAILED)" "select version_num from alembic_version" \
     "$(out_of); CLAUDE.md at TARGET says head ${tgthead:-(not found)}"
 
