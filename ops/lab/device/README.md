@@ -44,6 +44,15 @@ bash ops/lab/device/emu.sh stop             # always: a running emulator holds a
 bash ops/lab/device/lab-backend.sh down     # the two lab containers (protocol-offline revives them on exit)
 ```
 
+**Resumable runs.** Long sessions go through `run-steps.sh <ledger> <step>...`: one protocol
+invocation per step, each with its own evidence folder and `result.json`, e.g.
+`tracker:probe tracker:a-warm#1 tracker:a-cold#1 tracker:a-fstop#1 ... offline:control,edge404,revival,5xx,airplane`.
+`tracker:<check>#<n>` runs repeat _n_ only (`FF_RUN_NO`). The ledger
+(`C:/Users/User/.fixflow-cache/lab/l3a/run/<ledger>.ledger`) records each finished step; after
+an interruption (a reboot, Docker restarting) bring the rig back, sign in, and run the same
+command again: steps that ended with exit 0 are skipped, the cut one runs again, and the cut
+run's folder is never cited. The offline phases depend on each other, so they are one step.
+
 Evidence lands in `C:/Users/User/.fixflow-cache/lab/l3a/<protocol>-<stamp>/`, never in this
 branch: `logcat.txt`, `timeline.txt` (every step, also written to logcat under tag
 `FFLAB`), `services-*.txt` (`dumpsys activity services`), `state-*.json` (the queue keys),

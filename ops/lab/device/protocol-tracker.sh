@@ -46,6 +46,8 @@ source "$HERE/lib-proto.sh"
 load_android_env
 
 REPEAT="${FF_REPEAT:-3}"
+# FF_RUN_NO=<n> runs only repeat n (one invocation per repeat, see run-steps.sh)
+runs() { if [ -n "${FF_RUN_NO:-}" ]; then echo "$FF_RUN_NO"; else seq 1 "$REPEAT"; fi; }
 PROBE_RESTORED_OK=0 # set by check_probe once the FGS probe said "no" on a restored process
 DOZE_MIN="${FF_DOZE_MIN:-4}"
 CHECKS=("$@")
@@ -272,10 +274,12 @@ on_duty_in_background() { # -> 0 when on duty, FGS up, with the Activity in the 
   go_home
   sleep 5
 }
-check_a_once() { # run-no
-  local n="$1" pre M a_v obs pid fence later
+want() { case " $which " in *" $1 "*) return 0 ;; esac; return 1; }
+check_a_once() { # run-no [stop kinds: "warm cold fstop"]
+  local n="$1" which="${2:-warm cold fstop}" pre M a_v obs pid fence later
   mark "CHECK a#$n O01-F01: kill -9 warm, kill -9 cold, force-stop; each closed, then reopened"
   # warm
+  if want warm; then
   if ! on_duty_in_background; then
     record "a#$n-closed" O01-F01 "$P01A" "precondition failed: no FGS on duty before the kill" inconclusive timeline.txt
     return
@@ -298,7 +302,9 @@ check_a_once() { # run-no
   else
     record "a#$n-warm" O01-F01 "$P01B" "no restored process to reopen into" inconclusive "a$n-warm-closed.txt"
   fi
+  fi
   # cold
+  if want cold; then
   if on_duty_in_background; then
     pre="$(chain_state)"
     M="a#$n cold kill -9 pid=$(app_pid)"
@@ -319,7 +325,9 @@ check_a_once() { # run-no
   else
     record "a#$n-cold" O01-F01 "$P01B" "precondition failed: no FGS on duty before the kill" inconclusive timeline.txt
   fi
+  fi
   # fstop
+  if want fstop; then
   if on_duty_in_background; then
     pre="$(chain_state)"
     M="a#$n fstop am force-stop pid=$(app_pid)"
@@ -336,12 +344,13 @@ check_a_once() { # run-no
   else
     record "a#$n-fstop" O01-F01 "$P01B (stopped by am force-stop)" "precondition failed: no FGS on duty before the stop" inconclusive timeline.txt
   fi
+  fi
   dump_state "$EV/state-a$n-reopened.json"
   rec_roll
 }
 check_a() {
   local i
-  for i in $(seq 1 "$REPEAT"); do check_a_once "$i"; done
+  for i in $(runs); do check_a_once "$i"; done
   clock out > /dev/null 2>&1
 }
 
@@ -495,7 +504,7 @@ check_d_control() {
 check_d() {
   local i
   check_d_control
-  for i in $(seq 1 "$REPEAT"); do check_d_once "$i"; done
+  for i in $(runs); do check_d_once "$i"; done
   geo_set "$FENCE_LAT" "$FENCE_LNG"
 }
 
@@ -601,7 +610,7 @@ check_f19_headless_once() {
 }
 check_f19() {
   local i
-  for i in $(seq 1 "$REPEAT"); do
+  for i in $(runs); do
     check_f19_once "$i"
     check_f19_headless_once "$i"
   done
@@ -727,7 +736,7 @@ check_f14_once() { # run-no test|control
 }
 check_f14() {
   local i
-  for i in $(seq 1 "$REPEAT"); do
+  for i in $(runs); do
     check_f14_once "$i" test
     check_f14_once "$i" control
   done
@@ -933,7 +942,7 @@ check_c() { # [run-no]
 
 check_c_all() {
   local i
-  for i in $(seq 1 "$REPEAT"); do check_c "$i"; done
+  for i in $(runs); do check_c "$i"; done
 }
 
 # ---- doze / reboot / revoke ---------------------------------------------------------------
@@ -1034,6 +1043,7 @@ for c in "${CHECKS[@]}"; do
   case "$c" in
     probe) check_probe ;;
     a) check_a ;;
+    a-warm | a-cold | a-fstop) for i in $(runs); do check_a_once "$i" "${c#a-}"; done ;;
     b) check_b ;;
     fneg) check_fneg ;;
     c) check_c_all ;;
