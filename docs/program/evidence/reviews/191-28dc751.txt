@@ -1,0 +1,48 @@
+VERDICT: PASS
+PR #191 at 28dc75139178ffbc9ecb93227457691f2679cca3 (the head did not move; base is `main` at 9b2e8f5)
+
+The rebase changed nothing I approved: `git range-diff` shows the eight rebased commits identical (`=`) to 76a5128. Every item from the first pass is fixed or journaled, the new code survived the attacks below, and both gate runs behaved as expected.
+
+**Findings.** No blocker, major or minor. Two notes for the journal, neither needing another round:
+- **Completion first submission is still not locked.** Only a resubmit takes the job row lock (`jobs/service.py:1509`, `if completion is not None:`). A first submission racing an abandon (a close that needs no completion) could still land on the abandoned job. Close itself requires a completion, and a payment cannot freeze a first submission. Worth a journal line for P8a.
+- **Media delete on another technician's closed job answers "evidence is frozen", not "not assigned".** The router lets a forbidden caller through when the job is closed (`media/router.py:192`, `if access == "forbidden" and job_status != "closed"`). The service's frozen check then refuses every non-manager. Still a 403; only the wording differs.
+
+**The seven items**
+
+| # | Status | Evidence | Test (first-pass source → this head) |
+|---|---|---|---|
+| 1. Token range | FIXED | `_parse_token` (`jobs/service.py:795`) accepts only 1..2^31-1; it is the first thing `access_by_token` and `ref_by_token` do, before any query. Jobs and messaging routes take a UUID, so a bad id is a 422 | `test_media_write_routes_answer_404_for_an_out_of_range_token[oversized, just_past_int4]` and the list variant: asyncpg `value out of int32 range` → 404 / empty gallery. This also confirms the first-pass 500 by running it |
+| 2. Media delete | FIXED | `media/router.py:186` calls `access_by_token(write=True)` | `test_capturer_delete_after_reassignment_is_403` and `..._null_created_by_row_on_another_techs_job_is_403` (204 → 403) |
+| 3. Replay before the closed refusal | FIXED | `_closed_unclaimed` (`service.py:1053`) consults the write's own replay check | `test_replayed_close_on_a_closed_unclaimed_job_is_an_idempotent_success[3 cases]` and `test_replayed_punch_...` (409 → 200). The four `..._still_409` cases pass on both, as they should |
+| 4. Payment replay | FIXED | `service.py:1919` answers `_replay_detail` (the read rule) | both payment-replay tests fail on first pass, pass now |
+| 5. Completion resubmit lock | FIXED | `try_lock_unclosed` at `service.py:1515` | both resubmit race tests fail on first pass, pass now |
+| 6. Words | FIXED | the discount-cap description in `tenancy/specs.py:176`; the deploy notes carry findings 6 and 3 | reading |
+| 7. Rebase checks | FIXED | (a) the actor check (`:2064`) runs before the `get_location_by_client` replay check (`:2066`) and P6a's `punch_verdict`; (b) both keys are in the `tenancy/service.py` imports and `__all__`, and the registry keys are unique; (c) `lint-imports` EXIT=0 in my run; (d) telemetry has no job id | full gate |
+
+**Changed expectations since the first pass:** none. Two test files gained tests (`tests/test_p7a_review_fixes_integration.py` is new, plus two resubmit cases in `tests/test_money_close_race_integration.py`). No assertion was removed and there is no new skip or xfail.
+
+**Tried and could not break**
+- **A crafted replay by another technician.** It only reaches the new path on a job that is closed and unclaimed. It writes nothing, claims nothing, and answers through `_read_access`, so it returns exactly what that technician's GET returns (full, or minimised with the setting on). A replay with another job's `client_id` is refused by `event.job_id == row.id` and by the location `job_id` check. The negotiate-figure probe only reveals bill fields, which minimisation already leaves visible.
+- **Delete as an implicit claim.** On an unclaimed job, delete claims it; R11 intends that. A refused delete (not the capturer, or frozen) raises before the commit, so the claim rolls back.
+- **Lock order.** Resubmit, payment, negotiate, void, close and the claim all take the job row first, and the resubmit re-locks the same row it already claimed. I found no deadlock. A byte-identical resubmit still takes its idempotent-success branch after the lock; it only bumps `updated_at`.
+- **The rebase.** The three original race tests pass in both runs, and the field replay and minimisation tests pass in the full run.
+
+**Gates (my runs)**
+- **Full gate on 28dc751, tree clean** (`gate-logs/p7a-rev/backend-20261113-163350`): ruff format, ruff check, mypy, lint-imports, alembic upgrade and alembic check all EXIT=0; pytest EXIT=0, 1181 tests, 0 skipped, 0 integration skipped; SUMMARY FAIL=0.
+- **New tests against the first-pass source** (`service.py`, `media/router.py` and `specs.py` checked out from 22ec719, the rebased 76a5128; `backend-20261113-164320`, RUN partial): 14 fail and 15 pass, exactly the split described above.
+- **Cleanup:** the worktree was restored to the head and clean, then removed. There were no `fixflow-p7a-rev-*` containers.
+
+**Deploy-train row as the PR body states it**
+
+| Phase | PR | Migration | Post-deploy check |
+|---|---|---|---|
+| P7a | #191 | none | (1) A tech token: `GET /api/jobs/{id}` on another tech's job returns 403. (2) A payment on a closed job returns 409 ending `(current status: closed)`. (3) A tech's note on an unclaimed job returns 201, and the job is now assigned to that tech with one claim event. (4) `GET /api/jobs/99999999999/media` does not return a 500. |
+
+Its deploy notes:
+- Creates that landed before this deploy carry no actor, so a replay of one after a reassignment answers 409 and parks (fails closed).
+- On a job that is closed and unclaimed, notes, follow-ups, completion, WhatsApp send-log and Cloud send, customer pin and travel breadcrumbs answer 409; media reserve and delete answer 403.
+- Replays of transitions, negotiate, GPS punches and payments there stay idempotent successes.
+- R11 can still be overruled by the owner before this deploys.
+- Whether a manager may record money on a closed job is still the owner's open question; it is one predicate, `_closed_job_refuses_money_write`.
+
+Coordinator's ruling (2026-11-13): second pass of the binding review (same reviewer; first pass PASS-WITH-FIXES at 76a5128, file 191-76a5128.txt). Mergeable at 28dc75139178ffbc9ecb93227457691f2679cca3. The reviewed head sits on main at 9b2e8f5; main has since gained only the four files of PR #188 under ops/lab/ (34f1dcd), which no backend gate reads, and main's own CI is green on that commit, so the merged state is covered by the reviewer's full run plus main's run. Notes routed: the completion's FIRST submission is not locked against an abandon (P8a's Scope); the wording of the 403 on a media delete on another technician's closed job is journaled. The owner's two open points are unchanged by this merge and can still be applied before the deploy train: ruling R11 may be overruled, and whether a manager may record money on a closed job is one predicate, _closed_job_refuses_money_write.
