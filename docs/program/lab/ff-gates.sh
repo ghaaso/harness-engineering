@@ -141,7 +141,9 @@ PY
       || { echo "SETUP[gates] RUN FAILED" | tee -a "$L/gates.log"; finish 2; }
     docker wait "$N-gates" > "$L/gates.exit"
     docker logs "$N-gates" >> "$L/gates.log" 2>&1
-    docker cp "$N-gates:/work/logs" "$L/gate-logs" > /dev/null 2>&1
+    # docker is a native binary and path conversion is off: give it the C:/ form
+    docker cp "$N-gates:/work/logs" "$(cygpath -m "$L")/gate-logs" > /dev/null 2>&1 \
+      || echo "SETUP[logs] per-gate logs could not be copied out" >> "$L/gates.log"
     rc="$(cat "$L/gates.exit")"
     echo "container exit: $rc" >> "$L/gates.log"
     finish "$rc"
