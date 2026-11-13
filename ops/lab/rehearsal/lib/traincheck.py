@@ -11,7 +11,7 @@ host against the backend's container address (no tunnel):
   traincheck.py <base url> p6a           the P6a row's check (manager token)
   traincheck.py <base url> p7a <json>    the P7a row's four checks; <json> names the jobs:
                                           {"other": id of a job assigned to t2,
-                                           "closed": id of a closed job,
+                                           "closed": id of a closed job assigned to t1,
                                            "unclaimed": id of an open unassigned job}
 PINs come from the environment: L4_PIN_M1, L4_PIN_T1, L4_PIN_T2. Prints one JSON object:
 {"result": "PASS"|"FAIL"|"PARTIAL (cannot run here: ...)", "items": [[name, ok, evidence], ...]}
@@ -135,11 +135,22 @@ def p7a(jobs: dict[str, str]) -> None:
     items = []
     st, b = call("GET", f"/api/jobs/{jobs['other']}", t1)
     items.append(["(1) tech token on another tech's job: 403", st == 403, f"{st} {str(b)[:120]}"])
+    # (2) P7a's 409 is the refusal for everyone but a manager since ruling R12 (P8a, 16e154e:
+    # "managers only" may record a payment on a closed job, with a reason). So the 409 is asked of
+    # the job's own technician, and the manager is asked without a reason: before R12 that is the
+    # same 409, after it a 422 "needs a reason". Either is a refusal; nothing is written.
+    st, b = call("POST", f"/api/jobs/{jobs['closed']}/payments", t1,
+                 {"amount_paisa": 1000, "method": "cash", "client_id": str(uuid.uuid4())})
+    detail = b.get("detail") if isinstance(b, dict) else str(b)
+    items.append(["(2) payment on a closed job by its technician: 409 ending (current status: closed)",
+                  st == 409 and str(detail).endswith("(current status: closed)"), f"{st} {str(detail)[:160]}"])
     st, b = call("POST", f"/api/jobs/{jobs['closed']}/payments", m1,
                  {"amount_paisa": 1000, "method": "cash", "client_id": str(uuid.uuid4())})
     detail = b.get("detail") if isinstance(b, dict) else str(b)
-    items.append(["(2) payment on a closed job: 409 ending (current status: closed)",
-                  st == 409 and str(detail).endswith("(current status: closed)"), f"{st} {str(detail)[:160]}"])
+    pre_r12 = st == 409 and str(detail).endswith("(current status: closed)")
+    r12 = st == 422 and "needs a reason" in str(detail)
+    items.append(["(2b) the same by a manager, no reason: refused (409 before R12, 422 'needs a reason' after)",
+                  pre_r12 or r12, f"{st} {str(detail)[:160]} ({'R12' if r12 else 'before R12' if pre_r12 else 'neither'})"])
     # The stand-in data has no unclaimed open job, so one is made the way the shop makes one: a
     # manager intake with no technician (POST /api/jobs). Its id is printed for the claim-event count.
     unclaimed = jobs.get("unclaimed") or ""

@@ -449,7 +449,8 @@ deploy)
   trow P6a "sampler_state, last_ping_at, pings_today on the board; clocked in without a recent ping is stale/silent; day view effective time; shift before midnight on duty; two retired keys ignored and absent from the template" \
     "$res6" "fixture: $(echo "$setup" | cut -c1-300) | check: $r6 | backend booted healthy with both retired keys set: $([ $hb = 0 ] && echo yes || echo no); template lines naming them: $tmpl"
   J_OTHER="$(psql_app -c "select id from job where assigned_tech_id='t2' and status in ('open','waiting','ready') order by token limit 1")"
-  J_CLOSED="$(psql_app -c "select id from job where status='closed' order by token limit 1")"
+  # a closed job of t1's: the tech must be the job's actor to reach the closed-job refusal
+  J_CLOSED="$(psql_app -c "select id from job where status='closed' order by (assigned_tech_id = 't1') desc, token limit 1")"
   J_UNCL="$(psql_app -c "select id from job where assigned_tech_id is null and status='open' order by token limit 1")"
   l4_mut p7a-open-job && J_CLOSED="$(psql_app -c "select id from job where status='open' order by token desc limit 1")"
   r7="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p7a "{\"other\": \"$J_OTHER\", \"closed\": \"$J_CLOSED\", \"unclaimed\": \"$J_UNCL\"}" 2>&1)"
@@ -457,7 +458,7 @@ deploy)
   claims="$(psql_app -c "select count(*) from job_event where job_id='$J_UNCL' and kind='claim' and actor='t1'" 2>/dev/null)"
   res7="$(echo "$r7" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null || echo FAIL)"
   [ "$claims" = 1 ] || res7=FAIL
-  trow P7a "(1) tech GET another tech's job 403; (2) payment on a closed job 409 '(current status: closed)'; (3) tech note on an unclaimed job 201 + assigned + one claim event; (4) GET /api/jobs/99999999999/media not 500" \
+  trow P7a "(1) tech GET another tech's job 403; (2) payment on a closed job by its tech 409 '(current status: closed)', by a manager with no reason refused (R12); (3) tech note on an unclaimed job 201 + assigned + one claim event; (4) GET /api/jobs/99999999999/media not 500" \
     "$res7" "$r7 | claim events by t1 on that job: $claims"
   r204="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p204 2>&1)"
   res204="$(echo "$r204" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null || echo FAIL)"
