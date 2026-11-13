@@ -1,0 +1,42 @@
+VERDICT: PASS
+PR #198 at c70ae783c0372589b0a2a342a8cc22824c5100e9 (I confirmed this is the current head; it was rebased onto newer main, so I compared only the PR's own files at 67a68ae and c70ae78)
+
+Both findings are fixed, and the money logic is unchanged. Two minor notes remain, neither a money risk.
+
+**Notes**
+
+1. MINOR, existed before this PR: the dashboard's "revenue this week" tile (`Dashboard.jsx:85-89`) counts only jobs whose detail has loaded, because a list row has no timeline or payments. It under-reports rather than showing a wrong per-job balance, and it cannot lead to a payment being logged. For P12.
+2. MINOR, existed before this PR: if the manager leaves job A with the payment form open (for example with the browser's back button), `modal` stays set to "payment". The form is held closed on job B until B's payments load (`JobDetail.jsx:735`), then opens by itself on B with B's real figures. It is keyed per job and submits nothing. It is surprising, not harmful.
+
+**Two-item table**
+
+| Item | Status | Evidence |
+|---|---|---|
+| 1. No figures and no Log Payment until the job's payments load | FIXED | `AppContext.jsx` `replaceFromDetail` sets `hasDetail: true`. `JobDetail.jsx` `ledgerState` drives three things: Log Payment shows only when ready (`:557-558`), the Owed / Received / Balance grid is replaced by "Loading payments…" or "Payments not loaded…" with Retry, and the payment form cannot open (`:735`). Tests in `JobDetail.paymentsLoad.test.jsx`: "a detail read that times out shows no figures, no Log Payment, and a Retry that loads them", "a detail read refused with a 5xx shows the same, not a zero", "a detail read that succeeds shows the ledger and Log Payment as before". |
+| 2. `apiGet` cannot be turned into another method | FIXED | `api.js`, `apiGet` now takes only the `signal` from its options. Test in `api.test.js`: "apiGet takes only an abort signal from its options: always a plain GET", which passes `method: "DELETE"`, a body and a forged auth header, and checks none of them is sent. |
+
+**Tried and could not break**
+
+- **Other places showing a paid amount or balance:** `amountPaid`, `balance` and `revenueEntries` are used only on `JobDetail` and the dashboard tile (note 1). I found no list page, receipt or "paid in full" display.
+- **Void without loaded payments:** the void controls belong to ledger entries, and a list row has none.
+- **Negotiate:** it uses bill fields, which list rows do carry, not payment figures.
+- **Deep link or switching job:** the form's `open` is held closed until that job's payments load. I found no keyboard shortcut.
+- **Where `hasDetail` comes from:** only `replaceFromDetail`. All 14 callers pass an answer from an endpoint that returns the full job detail. The only endpoints that return list-shaped rows are list and create, and neither goes through `replaceFromDetail`. A late list keeps `hasDetail`, because it is in `DETAIL_ONLY_FIELDS`.
+- **Retry and the re-read counter:** Retry goes through `loadJobDetail`, so it keeps the counter. If both reads are overtaken, the promise resolves without applying anything. `hasDetail` then stays false and the card shows "not loaded" with Retry, never a zero. The Retry button is hidden while a retry is loading, so clicks don't stack in practice.
+- **A job with no payments:** once its detail has loaded, `hasDetail` is true and the grid renders Rs 0 received.
+- **Unconfirmed-payment notice:** it lives in the payment form, which opens once the payments have loaded.
+- **Money logic:** unchanged. `paymentAttempts.js` and `jobsApi.js` are not in this diff; under `src/features/jobs/data` and `src/app/providers` only `AppContext.jsx` changed.
+
+**Gates** (tree = head c70ae78 merged with origin/main 02af3cc, local merge commit 660e78d, clean)
+
+```
+GATE[1 npm run lint] EXIT=0
+GATE[2 npm run format:check] EXIT=0
+GATE[3 npm test -- --maxWorkers=4] EXIT=0
+GATE[4 npm run build] EXIT=0
+SUMMARY FAIL=0
+```
+
+I removed the review worktree. I did not push, comment on or edit the PR.
+
+Coordinator's ruling (2026-11-13): second pass on the P12a follow-up by the reviewer of PR #193 (first pass PASS-WITH-FIXES at 67a68ae, file 198-67a68ae.txt). Mergeable at c70ae783c0372589b0a2a342a8cc22824c5100e9. Both notes predate this PR and go to P12: the dashboard's revenue tile counts only jobs whose detail has loaded, and a payment form left open reopens on the next job once its payments have loaded. With this merge the condition of ruling C16 is met: the web image for the drain window may be cut from a main that contains it.
