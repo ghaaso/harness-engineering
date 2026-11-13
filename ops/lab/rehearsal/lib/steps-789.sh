@@ -50,6 +50,8 @@ lab probe: deep health with postgres stopped answered $probe"
   local amb=no
   [ $ok = no ] && echo "$o2" | grep -q 'UNHEALTHY http=000' && echo "$o2" | grep -qx 'exit=1' \
     && [ "$(echo "$o1" | tr -d ' ')" = exit=0 ] && [ "$(echo "$o3" | tr -d ' ')" = exit=0 ] && [ "$after" -gt "$before" ] && amb=yes
+  # the runbook batch's 7.2 counts http=000 as the alarm too (both forms exit 1)
+  [ $amb = yes ] && rb_text_has 7.2 'Two forms count' && { ok=yes; amb=no; }
   row 7.2 "$( [ $ok = yes ] && echo DONE || { [ $amb = yes ] && echo AMBIGUOUS || echo FAILED; })" "heartbeat by hand at the container address; then with postgres stopped; then again" \
     "healthy: [$o1] pings $before->$after; db down: [$(echo "$o2" | grep -o 'UNHEALTHY http=[0-9]*' | head -n 1) $(echo "$o2" | grep '^exit=')]; again: [$o3]; $(echo "$o2" | grep '^lab probe')" \
     "network name fixflow_app confirmed (the VERIFY line)$( [ $amb = yes ] && echo "; the alarm fired (exit=1, no ping) but the Expected 'http=200' was not seen: with postgres stopped, /api/ops/health did not answer within the heartbeat's curl -m 20, so it printed http=000. The lab probe shows whether this host's offline DNS explains the delay (a real host gets a fast NXDOMAIN). Either way the alarm fires; settle on the real host. If it recurs there, the smallest fix is the Expected text: 'http=000 or http=200 with database not ok'")"
@@ -208,7 +210,12 @@ sec8() {
   # 8.5: a stand-in manifest event (a phone's first authenticated call), landed by SQL: no phone here
   psql_app -c "insert into app_event (client_id, actor_kind, actor_id, name, props) values (gen_random_uuid(), 'tech', 't1', 'drain_manifest', '{\"versionCode\": 9, \"lab\": \"L4 stand-in\"}')" >/dev/null 2>&1
   echo "lab: 8.5 a stand-in drain_manifest app_event for t1 inserted by SQL (no phone here)" >> "$OUT/deviations.log"
-  rb_run 8.5 "$(rb_fence 8.5 1)" "<tech id signed in on that phone>=t1" "<versionCode>=9"
+  if rb_anch 8.5 export; then
+    rb_run 8.5-export "$(rb_fence 8.5 @export)" "<tech id signed in on that phone>=t1" "<versionCode>=9"
+    rb_run 8.5 "$(rb_fence 8.5 @upload)"
+  else
+    rb_run 8.5 "$(rb_fence 8.5 1)" "<tech id signed in on that phone>=t1" "<versionCode>=9"
+  fi
   row 8.5 "$(v sh -c "grep -q '1 manifest event(s)' '$OLOG' && grep -q 'uploaded key=archive/manifests/t1-9.json' '$OLOG'")" \
     "manifest export to json; count; r2-put" "$(out_of | tail -n 2 | tr '\n' ' ')" "a stand-in manifest event"
   if rb_anch 8.6 close; then
@@ -276,7 +283,7 @@ sec8_c42() { # <T_open>
 
 sec8_8() {
   local before; before="$(psql_app -c "select last_seq from dispatch_cursor where consumer='whatsapp'" 2>/dev/null)"
-  rb_run 8.8-do "$(rb_fence 8.8 1)"
+  rb_run 8.8-do "$(rb_fence 8.8 @reseed/1)"
   local drc="$RC"
   l4_mut 8.8-new-event && psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', 'L4 mutation: an event after the re-seed', 'm1', nextval('job_event_seq') from job limit 1" >/dev/null 2>&1
   rb_run 8.8-check "$(rb_span 8.8 'select (select last_seq')"

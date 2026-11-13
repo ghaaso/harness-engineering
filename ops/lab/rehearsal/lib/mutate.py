@@ -87,11 +87,15 @@ def report(res: str, muts: str, which: str) -> int:
         if m["rehearsal"] != which:
             continue
         phase, label = m["target"].split("|", 1)
-        if phase == "train":
-            got = [r["result"] for r in trows if r["row"] == label]
+        # a train row's check (train.tsv: PASS/FAIL/PARTIAL) or a runbook step's row (rows.tsv)
+        tgot = [r["result"] for r in trows if r["row"] == label] if phase == "train" else []
+        if tgot:
+            got, want = tgot, "FAIL"
         else:
             got = [r["verdict"] for r in rows if r["phase"] == phase and r["step"] == label]
-        want = "MOVED" if m["type"] == "moved" else ("FAIL" if phase == "train" else "FAILED")
+            want = "FAILED"
+        if m["type"] == "moved":
+            want = "MOVED"
         g = got[-1] if got else "(row absent)"
         ran = m["id"] in applied
         caught = "yes" if (g == want and ran) else "NO"

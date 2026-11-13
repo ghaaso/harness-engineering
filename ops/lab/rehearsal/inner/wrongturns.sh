@@ -148,7 +148,7 @@ if [ $MARKERS = yes ]; then
   before_jobs="$(psql_app -c 'select count(*) from job')"
   ffc --profile l4s3 stop l4-s3 >/dev/null 2>&1
   six6 wt5 "$NIGHTLY" "$(grep " $NIGHTLY\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
-  ffc --profile l4s3 up -d l4-s3 >/dev/null 2>&1
+  ffc --profile l4s3 up -d l4-s3 >/dev/null 2>&1; lab_s3_bucket >/dev/null && echo "lab WT5: the stand-in bucket (in memory) was created again after its restart; its earlier objects are gone" >> "$OUT/deviations.log"
   rb_run wt5-67 "$G67"
   o67="$(out_of | tr '\n' ' ' | cut -c1-200)"; after_jobs="$(psql_app -c 'select count(*) from job')"
   wt "WT5 (C27 note 2)" "6.6 (b)'s upload fails (stand-in bucket stopped) and the owner goes on to 6.7, in the same shell" \
@@ -161,7 +161,7 @@ rb_run wt5-66b-count "$(rb_fence 6.6 2 1p)"
 cnt="$(out_of)"
 rb_run wt5-66b-copy "$(rb_fence 6.6 2 '3,$p')"
 o="$(out_of | tail -n 3 | tr '\n' ' ')"
-ffc --profile l4s3 up -d l4-s3 >/dev/null 2>&1
+ffc --profile l4s3 up -d l4-s3 >/dev/null 2>&1; lab_s3_bucket >/dev/null && echo "lab WT5: the stand-in bucket (in memory) was created again after its restart; its earlier objects are gone" >> "$OUT/deviations.log"
 # the live database before the experiment
 before_jobs="$(psql_app -c 'select count(*) from job')"
 cp "/srv/l4/dumps/$NIGHTLY" "/var/lib/fixflow/restore/$NIGHTLY"

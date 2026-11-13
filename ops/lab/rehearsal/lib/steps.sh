@@ -338,9 +338,12 @@ sec6() {
     # the corrected 6.9 (ruling C42): once healthy, 8.8's forward-only re-seed, then the exact check
     before="$(psql_app -c "select last_seq from dispatch_cursor where consumer = 'whatsapp'" 2>/dev/null)"
     rb_run 6.9-reseed "$(rb_fence 6.9 @reseed)"
+    local ins=no; has 'INSERT 0 1' && ins=yes
+    # the check's two selects are their own block in the batch's later text (6.9-reseed-check)
+    rb_anch 6.9 reseed-check && rb_run 6.9-reseed-check "$(rb_fence 6.9 @reseed-check)"
     cur="$(out_of | grep '^whatsapp|' | tr -d '\r')"
     maxseq="$(out_of | grep -xE '[0-9]+' | tail -n 1)"
-    has 'INSERT 0 1' || cur="$cur (no 'INSERT 0 1')"
+    [ $ins = yes ] || cur="$cur (no 'INSERT 0 1')"
     mk=gone; { [ -e $RD/ready-to-drop ] || [ -e $RD/proven ]; } && mk=PRESENT
   else
     rb_run 6.9-cursor "$(rb_span 6.9 'select consumer, last_seq')"
@@ -353,7 +356,10 @@ sec6() {
     && [ "$bk" = False ] && [ "$pfx" = backups/db-selfhost/ ] && [ "$gsha" = "$head" ] && [ "$db" = ok ] && [ "$mk" != PRESENT ] && base_ok=yes
   local verdict=FAILED note=""
   [ -n "$before" ] && note="the re-seed moved the cursor from $before to ${cur#whatsapp|} (max(seq) $maxseq); 6.6's marker and proof: $mk"
-  if [ $base_ok = yes ] && [ "$cur" = "whatsapp|$maxseq" ]; then verdict=DONE
+  # the batch's later 6.9 text: a cursor ABOVE max(seq) is the safe direction (record, continue)
+  local above=no
+  rb_text_has 6.9 'A cursor above' && [ -n "$maxseq" ] && [ "${cur#whatsapp|}" -gt "$maxseq" ] 2>/dev/null && above=yes
+  if [ $base_ok = yes ] && { [ "$cur" = "whatsapp|$maxseq" ] || [ $above = yes ]; }; then verdict=DONE
   elif [ $base_ok = yes ]; then
     verdict=FAILED
     note="RUNBOOK DEFECT (D1): everything else as expected, but the cursor check expects whatsapp|<max job_event.seq> and reads $cur with max(seq)=$maxseq. 0046 seeded the cursor at the head when the migration ran; events kept arriving with the dispatcher off, and nothing between 6.7 and 6.9 moves it (the re-seed is 8.8, at T_close). Production was deployed at 0046 on 2026-08-02 (docs/RUNBOOK-BACKUPS.md:141), so the real dump most likely shows the same. Fix (binding review, finding 1): 6.9 runs 8.8's forward-only re-seed (GREATEST) once the backend is healthy and keeps this check exact. Loosening the check to 'any N up to max(seq)' would pass a dangerously low cursor."
@@ -465,13 +471,17 @@ sec6_13() {
     "the interactive prompt was answered through a pty (lib/typist.py) at each prompt; PINs are random stand-ins kept in no file"
 }
 
+# The stand-in bucket is moto, which keeps its objects in memory: a stop loses the bucket itself.
+lab_s3_bucket() {
+  sleep 3
+  ffc --profile db --profile app run --rm --no-deps -T --entrypoint python backend -c \
+    "from app.core.storage import get_storage; s=get_storage(); s._client.create_bucket(Bucket=s._bucket, CreateBucketConfiguration={'LocationConstraint': 'auto'}); print('bucket', s._bucket)" \
+    >> "$OUT/s3-up.log" 2>&1 || { echo "stand-in bucket could not be created"; tail -5 "$OUT/s3-up.log"; return 1; }
+}
 # The stand-in dead-man listener and the stand-in bucket (lab setup, not runbook steps).
 lab_up() {
   nohup python3 /srv/l4/kit/lib/deadman.py "$OUT/deadman.log" >/dev/null 2>&1 &
   : > "$OUT/deadman.log"
   ffc --profile l4s3 up -d l4-s3 > "$OUT/s3-up.log" 2>&1
-  sleep 3
-  ffc --profile db --profile app run --rm --no-deps -T --entrypoint python backend -c \
-    "from app.core.storage import get_storage; s=get_storage(); s._client.create_bucket(Bucket=s._bucket, CreateBucketConfiguration={'LocationConstraint': 'auto'}); print('bucket', s._bucket)" \
-    >> "$OUT/s3-up.log" 2>&1 || { echo "stand-in bucket could not be created"; tail -5 "$OUT/s3-up.log"; return 1; }
+  lab_s3_bucket
 }

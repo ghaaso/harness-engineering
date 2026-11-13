@@ -213,7 +213,7 @@ $FIX_FULL"
   # ---- WT8: SHA left empty in a new terminal. Every line of 11.8 and 11.9 that uses SHA, pasted into
   # a fresh interactive bash where SHA was never set (continuation lines joined, as a paste is one command)
   wt8="$OUT/wt8.log"; : > "$wt8"; nlines=0; nguard=0
-  wt8src="$(rb_fence 11.8 1; rb_fence 11.8 3; rb_fence 11.8 4; rb_fence 11.9 1)"
+  wt8src="$(rb_fence 11.8 1; rb_fence 11.8 3; rb_fence 11.8 4; rb_fence 11.9 @tag/1)"
   rb_moved_check WT8 "$wt8src" || wt8src=""
   printf '%s\n' "$wt8src" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' \
     | grep 'SHA' | grep -v '^SHA=' > "$OUT/wt8-lines.txt"
@@ -230,7 +230,7 @@ $FIX_FULL"
     "$( [ "$nguard" = "$nlines" ] && echo "no: already scripted (C34)" || echo "YES: the unguarded lines in wt8.log")"
 
   # ---- 11.9 tag that sha; 11.10 push the tag alone
-  rb_run 11.9 "$(rb_fence 11.9 1)" " P2b-2 <p2b2>,=" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
+  rb_run 11.9 "$(rb_fence 11.9 @tag/1)" " P2b-2 <p2b2>,=" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
   local_ok=no
   [ "$(git cat-file -t drain-image)" = tag ] && [ "$(git rev-parse 'drain-image^{commit}')" = "$SHA" ] && has 'drain-image = SHA = origin/release/drain' \
     && git tag -n1 drain-image | grep -q "$P1" && git tag -n1 drain-image | grep -q "$FIX" && git tag -n1 drain-image | grep -q "$P3A" && local_ok=yes
@@ -311,7 +311,7 @@ $FIX_FULL"
   git switch -q release/drain
   echo "lab 11.13: the window fix is a stand-in commit (one new file, ops/lab/L4-STANDIN-WINDOW-FIX.txt) on top of main, not pushed to the stand-in origin's main" >> "$OUT/deviations.log"
   OLDSHA="$SHA"
-  rb_run 11.13-sync "$(rb_fence 11.13 1)"
+  rb_run 11.13-sync "$(rb_fence 11.13 @fetch/1)"
   row 11.13-sync "$(has 'release/drain = origin/release/drain' && echo DONE || echo FAILED)" "fetch; switch release/drain; local = origin" "$(out_of | tail -n 1)"
   rb_run 11.13-pick "$(rb_fence 11.13 2)" "<fix-sha>=$WFIX"
   row 11.13-pick "$( [ "$RC" = 0 ] && ! has CONFLICT && echo DONE || echo FAILED)" "git cherry-pick -x <fix-sha> (the stand-in fix)" "exit $RC; $(out_of | head -n 1)"
@@ -332,7 +332,7 @@ $FIX_FULL"
   rb_run 11.13-remove "$(rb_fence 11.8 4)"
   row 11.13-worktree "$( [ "$rcwa" = 0 ] && [ "$wth" = "$SHA" ] && [ "$wdet" = yes ] && [ "$RC" = 0 ] && [ -z "$(out_of)" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" \
     "11.8's worktree for the new sha, then removed" "path $wtp at $wth, detached $wdet; remove printed [$(out_of | tr '\n' ' ')]; removed: $([ -e "$wtp" ] && echo no || echo yes)"
-  rb_run 11.13-tag "$(rb_fence 11.13 3)" "<fix-sha>=$WFIX" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
+  rb_run 11.13-tag "$(rb_fence 11.13 @tag/3)" "<fix-sha>=$WFIX" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
   l4_mut 11.13-tag-gone && git push -q origin :refs/tags/drain-image-2 >/dev/null 2>&1
   pel2="$(git ls-remote origin 'refs/tags/drain-image-2*' | awk '$2=="refs/tags/drain-image-2^{}"{print $1}')"
   row 11.13 "$( [ "$RC" = 0 ] && [ "$(git rev-parse 'drain-image-2^{commit}')" = "$SHA" ] && [ "$(git rev-parse origin/release/drain)" = "$SHA" ] && [ "$pel2" = "$SHA" ] \
@@ -346,10 +346,10 @@ $FIX_FULL"
 
   # ---- WT10: the re-cut started from a clone that is behind (made before the re-cut was pushed)
   cd /srv/behind || exit 1
-  rb_run wt10 "$(rb_fence 11.13 1)"
+  rb_run wt10 "$(rb_fence 11.13 @fetch/1)"
   o10="$(out_of)"; l10="$(git rev-parse --short release/drain)"; r10="$(git rev-parse --short origin/release/drain)"
   rm -rf /srv/fresh && git clone -q /srv/origin.git /srv/fresh && cd /srv/fresh || exit 1
-  rb_run wt10-fresh "$(rb_fence 11.13 1)"
+  rb_run wt10-fresh "$(rb_fence 11.13 @fetch/1)"
   of="$(out_of | tail -n 1)"
   cd /srv/dev || exit 1
   wt WT10 "11.13 started in a clone made before the last cut was pushed (its release/drain is behind origin's)" \
