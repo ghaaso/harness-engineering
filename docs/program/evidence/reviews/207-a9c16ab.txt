@@ -1,0 +1,39 @@
+VERDICT: PASS-WITH-FIXES
+PR #207 at a9c16abb228979efd60cc8e1353e465d56d1f148
+Binding review by the reviewer of P3a (PRs #195, #205, #206), resumed by the coordinator 2026-11-13 20:38; base `main` at 7bf9f49, one file, +110 -41. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The new order is right, and every new command tried with `SHA` empty stops with an error. One fix is needed before merge: the web branch step (11.12) takes `SHA` from the wrong branch. Three smaller items follow it.
+
+Findings
+
+1. MAJOR: 11.12 gets the web sha from the wrong branch (`docs/RUNBOOK-SELFHOST.md:2303-2307`, with `:2229`). 11.12 says to read the web branch's CI "with 11.8's commands and `--branch release/drain-web`". But 11.8's commands set `SHA=$(git rev-parse release/drain)`, so changing only `--branch` leaves `SHA` at the backend branch's commit. Typed that way: `gh run list --branch release/drain-web --commit "$SHA"` prints nothing, because no run exists for that branch and sha, and the text then sends the owner to the wrong cause ("the P3a cherry-pick is missing"); "a detached worktree at that sha" would run the web gates on `release/drain`'s tree, and the gates' `HEAD <short $SHA>` check would still match; "tag that sha `drain-web-image` as in 11.9" would tag the backend commit. The empty CI result is the only step that stops it. Fix: write the block out in 11.12, starting with `SHA=$(git rev-parse release/drain-web)`, and give the worktree its own path.
+2. MINOR: a re-cut cannot create the gates worktree (`:2257`, `:2326`). Nothing in section 11 removes `../ff-release-drain`. In 11.13, running 11.8 again gives `fatal: '../ff-release-drain' already exists`, exit 128. That stops safely, but the text gives no next step, and the old worktree is still at the old commit. Fix: `git worktree remove ../ff-release-drain` after 11.8's gates, or a path that includes the sha.
+3. MINOR: the reset acts on whatever branch is checked out (`:2188-2191`). The block prints `git branch --show-current` but does not check it. Run while on another branch, it found the P1 pick on `release/drain` and reset the other branch. Nothing is lost that cannot be recovered (local, unpushed; `main` can be restored from `origin`). Fix: start the reset line with `[ "$(git branch --show-current)" = release/drain ] &&`.
+4. MINOR: `gh` is not a precondition (11.1, `:2101-2115`). Neither `gh` being installed nor being signed in is checked before 11.8 needs it. Add `gh auth status` to 11.1.
+
+Answers
+
+1. 11.1 prints the right exit code in all states: tag present: `tag`, the full sha, `parents=81c7a4f fix(jobs)...`, then `is-ancestor exit=1`; tag absent: `fatal:` lines, then `is-ancestor exit=128`; a local lightweight tag on `f192fee`: `is-ancestor exit=0`; `origin/main` deleted: `exit=128`. The wording given for each code is accurate.
+2. The recovery block resets only when the count is 1. Pasted exactly into `bash --norc -i`, no `set -e`, in three states. One P1 pick (after the wrong `f192fee` pick): `count=1` and `HEAD is now at ... [P1]`; then picking the tag and P3a gives tree `f89914452623...`, identical to a correct cut made in the same clone. No P1 pick: `count=0` and the STOP line; HEAD does not move. P1 picked twice: two shas, `count=2` and the STOP line; HEAD does not move. In every case the lines after the reset line are read-only `git log` calls; no line of the block picks anything.
+3. 11.8 reads the run for that exact sha. `--commit` filters by sha, so older runs on the branch in a re-cut are excluded. A sha with no run printed nothing, exit 0; the text tells the owner to wait, and to STOP only if nothing appears "a few minutes" after the push: adequate, but it names only one cause (a missing trigger). The expected output matches run 43450900616 on `main` exactly; the job names match `ci.yml` and come back in any order. The old worktree form really is broken (`fatal: 'release/drain' is already used by worktree`, exit 128); the `--detach "$SHA"` form puts the gates on the commit CI read.
+4. With `SHA` empty, every command that uses it fails:
+
+| Step | Result with `SHA` empty |
+|---|---|
+| 11.8 gates (`worktree add`) | `fatal: invalid reference:`, exit 128, nothing created |
+| 11.9 tag | `fatal: Failed to resolve '' as a valid ref.`, exit 128, no tag |
+| 11.13 tag | same as 11.9 |
+| 11.10, 11.11 | the commands do not use `SHA`; only the by-eye comparison does, and an empty value cannot match |
+| 11.8 `gh run list` | `--commit ""` is ignored and up to 20 runs are listed |
+
+For the last row the risk is small: `SHA` is set two lines earlier in the same block, and the "more than one run line" STOP covers it. `gh run view` takes a typed run id, not `$SHA`.
+5. The tag goes on the checked commit and is pushed alone. 11.9 tags `"$SHA"` with no branch name, and 11.10 pushes only the tag. Section 11 has no force push, no `tag -f` and no `tag -d`. Its only `branch -D` deletes the local branch before anything is pushed.
+6. 11.12 and 11.13 follow the same order, apart from 11.12's sha (finding 1). The 11.13 recovery `git reset --hard origin/release/drain` is safe: the failed picks were never pushed (the push comes after 11.6 and 11.7), and `origin/release/drain` is updated by the owner's own 11.8 push or set when a fresh clone is made. One gap: no `git fetch` before a re-cut done from an older clone; that case still fails safe (the push is rejected as not a fast-forward).
+7. The claim that a tag push triggers no CI is true. On `main` and on the cut drain tree, `ci.yml` triggers on `push: branches: [main, release/drain, release/drain-web]` and on pull requests; it has no `tags:` filter. `deploy.yml` runs only when started by hand.
+8. Every hunk is inside section 11 (lines 2078-2359), and nothing outside it refers to the old order. No secret, no real hostname.
+
+What the reviewer ran: `gh pr view 207`; `git diff 7bf9f49 a9c16ab`; in a throwaway clone (`--no-tags`, push URL set to `DISABLED`), with blocks extracted from the runbook as written: the four 11.1 states; the wrong cut, the recovery block in three states, and a comparison of trees against a correct cut; the old and new worktree forms and the re-cut worktree case; the commands that use `SHA`, with `SHA` unset; `gh run list` and `gh run view` against `main`. The clone is deleted. No `release/*` branch or `drain-image*` tag remains locally, no worktree is left, and nothing was pushed.
+
+Still unverified: a real push to `release/drain` and the CI run it would start; the "few minutes" with no run, timed live; the P2b-2 trailer line (P2b-2 is not merged); the web gates (`ff-gates.sh web`) on a detached worktree.
+
+Coordinator's ruling (2026-11-13 20:50): sent back to the lane; all four findings are fixed in this PR, with three hardenings the answers point to: every use of the variable is written `"${SHA:?...}"` so an empty value stops with a message (this also closes the `gh run list --commit ""` row); 11.13 starts with a fetch and a check that the local branch equals the remote one; the no-run STOP names what to check besides the trigger. The same reviewer re-reads the range. Not mergeable at a9c16abb228979efd60cc8e1353e465d56d1f148.
