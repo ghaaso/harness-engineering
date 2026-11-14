@@ -1,0 +1,106 @@
+VERDICT: PASS
+PR #213 at 7b0580a21788f8ca877e67217b319f9fca666274
+Binding review by the reviewer of PR #201 (records `201-a27b2a1-part1.txt`, `201-8c2383e.txt`); dispatched by the coordinator on 2026-11-14 at 14:50, returned at 15:36. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The PR head is unchanged (checked with `gh pr view 213` at the end), and the base is `main` 6f430ce. No MAJOR and no MINOR, only four NITs, and all of them can wait for a follow-up.
+
+PR 211 REHEARSAL: CONDITION MET for 11cf740c92d9b0aa571a955355f978434a148ee2
+
+- Runs (rig at 7b0580a, from the review tree, `--ref origin/claude/p3a-followup-5`, which resolves to 11cf740):
+  - `20261114T100559Z-restore`: DONE 53, NRH 9, N/A 1. No MOVED, no FAILED. Self-test 45 ok, 0 FAIL.
+  - `20261114T101831Z-train`: DONE 75, AMBIGUOUS 1 (12.6, the board in a browser), NRH 8, N/A 5. 11.13 DONE. f192fee PASS (Pacific/Kiritimati).
+- Typed from #211's own blocks (step logs show its text):
+  - 6.6 (b): the B5 save (`056-6.6b-save.log`) types `DX=refused; ... { pg_dump ...; DX=$?; printf 'copy=%s\n' "$P" >> .../proven; }`. It printed `dump exit=0`, 43 tables, the upload line and `marker: standin-b5-... (pre-restore copy uploaded)`. Because the marker line requires `copy=$P` in `proven`, the written marker shows the `copy=` line was there.
+  - 6.7 (`057-6.7.log`): the three anchored lines with the live test. DROP and restore exit 0.
+  - 6.12: the row reads "no restart: the text says none follows". Only the here-document was typed (`027-6.12-do.log`), and the check read `24.86|67|80`.
+  - 6.13: `--report`, then `set_pin --tech t4` and `t5` through the pty. Afterwards 0 accounts on a seed PIN.
+  - 6.4: DONE, matching `<rev> (head)` against 0047.
+- Wrong turns. Every one stopped, and every write survived:
+
+| Turn | First line that refused | Writes kept |
+|---|---|---|
+| WT16 | 6.6 (b)'s dump line: `STOP: no copy taken (the restore gate is signed off ...)`. The marker line then stops at `L: not set`, as the text predicts. Then 6.7's DROP line refuses. | both, 1->1 |
+| WT13 (b) | 6.7's DROP line, sign-off reason (`048-wt13-67-stale-same.log`). Its 6.6 (b) had written the marker on the stopped host. (b2), sign-off removed with the backend running: `the backend is up` (`049`). | 1->1->1 |
+| WT17 | the dump line (`053`), then 6.7 on the live host. After the reasons were cleared by hand (sign-off absent, backend exited, no marker): `no 6.6 marker names ...` (`055`). | 1->1->1 |
+| WT18 | 6.7's DROP line `the backend is up ...`, backend `paused` when typed (`060`) | 1->1 |
+| WT19 | the same, backend `restarting` when typed (`065`) | 1->1 |
+| WT20 | 6.6 (b)'s marker line, typed alone: `STOP: no marker written (...pre-restore-20261114T101629Z.pgdump was not taken in this attempt (proven names no such copy) ...)` (`075`). Then 6.7: `no 6.6 marker names ...` | 1->1 |
+
+  On 6f430ce every one of these rows reads NOTHING. The verdict columns are identical to the lane's runs on both texts.
+- No row MOVED in either #211 run. Both runs' `results.md` show no MOVED count.
+- Still not rehearsed in #211's text. Nothing seen that can stop or hurt a restore:
+  - (i) The paste of 6.6 (b) without its first line on a database that is not live: a new copy under the old name, the upload refusing the key, the scp line as the only way out. The text only describes it. Its guards are the ones WT15 and WT20 exercise.
+  - (ii) The 6.12 claim that "nothing on the server caches the row". The rig reads the table, never `/geofence/active`. A grep at 11cf740 finds no cache in `attendance/` or `jobs/`; the fence is read through `repository.py:381 get_active_geofence`, called from `service.py:156,543,723,1093,1140`. That is VERIFIED-IN-CODE by grep, not by a run.
+  - (iii) The 11cf740 NIT at l.1484: if the `>> proven` append fails after a good dump, the line prints a misleading "no copy taken". It still fails safe, because no `copy=` line means no marker.
+
+A. THE #201 REVIEW'S FOUR MINOR AND TWO NIT
+
+| Item | State | Where / test |
+|---|---|---|
+| MINOR 1, selector | Closed for B, C, D and E, plus comments, here-document bodies and `--opt=`/`--opt-x` | `runbook.py:108` `first_word`, `:122` `command_hit`, `:422`. Self-test cases B, C, D and E and their twins: 45 ok on #211, 42 ok on main. The decoys tried are in NIT-1. |
+| MINOR 2, 6.12 skip | Closed | `harness.sh:96-100` `rb_up_plan`, `steps.sh:449-459`. A missing line is MOVED unless the anchor and "No restart follows" are both present. A line that is present is always typed. Self-test plan cases (fence anchor gone, prose gone, here-document mention) all pass. |
+| MINOR 3, WT16 verdict | Closed | `harness.sh:106-114` `drop_verdict` needs `restore exit=`, the post-(b) write at 0, at least one running sample and the sign-off present. The 6 self-test `dv` cases pass. |
+| MINOR 4, Kiritimati | Closed | `20261114T100259Z-train` f192fee, started 10:02:59 UTC: `timezone=Pacific/Kiritimati`, `to_date=2026-11-15` against UTC date 2026-11-14, PASS. Also Kiritimati in `20261114T101831Z-train`. |
+| NIT `mutations.md` baseline | Closed | `mutate.py:97-101`. The runs print `Baseline (the paired normal run): 20261114T095121Z-restore` / `...100259Z-train`. |
+| NIT `s3_sum` private attributes | Documented, not changed (acceptable) | `steps.sh:502-507` says a rename gives FAILED, which is loud. |
+
+Reverse tests on the new selector (scratch, `python:3.12-slim`, `--network none`):
+- A comment, an `echo`/`printf` of the line, `--report=json` (MOVED), and two commands on one line with a comment all behave correctly.
+- `X=1 ffc ...` is picked correctly.
+- A `<<EOF` inside quotes hides the real line. That gives MOVED, which is the safe direction.
+
+B. BOTH TEXTS
+- Shape decisions: `wrongturns.sh:33` and `steps.sh:197`: MARKERS, from the `6.7-drop-restore` anchor. `wrongturns.sh:39`: LIVE, from G67 containing "this database is live". `steps.sh:452`: noup (anchor plus prose). `harness.sh:96`: `rb_up_plan`. The 6.4 literal. `six6`'s branch on `live tables: 0` (`wrongturns.sh:68`). `first_stop`'s `no copy taken` substring.
+- Can a decision be wrong without a MOVED? Mostly no: noup=yes over a text that still has an up line still types it. LIVE wrong only drops WT13 (b2), silently. MARKERS=no on a marker text with a renamed anchor would make WT13 to WT20 read N/A instead of MOVED. That predates this PR. It is INFERRED, not run, and goes to the backlog.
+- Runs: main 6.12 reads "force-recreate backend typed after block 1", typing `ffc $P_DB --profile app up -d --force-recreate backend`. On #211, 6.12 reads "no restart".
+- WT2: on both texts all eight spellings type `ffc $P_RUN up -d --force-recreate backend` (8.1, 8 of 8 step logs). Six are refused at the 3.6 check (backend not running) and two are allowed, with the compose override holding (`environment=production dispatcher=False backup=False prefix=backups/db-selfhost/`).
+
+C. STARTING STATE
+- `wt_state` (`wrongturns.sh:47-60`) sets and measures the sign-off and the backend for every turn.
+- `ready-to-drop` and `proven` are reset by 6.6 (a)-prove on both texts (6f430ce l.1407, 11cf740 l.1435) or by an explicit `rm`. `D` is set by `six6` or by hand (WT12 unsets and restores it).
+- Two things are not set: the database contents, and P/L/DX/U.
+- No turn's verdict depended on the turn before it in any run. All four wrong-turn verdict columns equal the lane's.
+- Turns were not reordered. That needs a write to the review tree or a new worktree, so the dependence below is INFERRED (NIT-2).
+
+D. NEW AND CHANGED TURNS
+- Set-up, typing and measurement match the claims. WT17's hand clearing is measured (`sign-off absent, backend exited, marker absent`). WT18 and WT19 measure `paused` / `restarting` at the moment 6.7 is typed. WT19 reaches RestartCount >= 5 before typing.
+- Carrying into the next attempt. `rb_run` evals in the rig's shell (`harness.sh:192`). Lines with a `${X:?}` guard run in a subshell whose upper-case assignments are carried back (`guardwrap.py:80-86`). P carried: the row reads "P=the first attempt's". L and DX carried: the #211 marker line got past `${L:?}` and `${DX:?}` to the `proven` test. U carried: on main the same line passed its receipt test using the first attempt's `U`.
+
+E. THE RUNBOOK LANE'S PATCH
+- Taken: the state reset, widened to every turn (this also covers the patch's untested WT3 case); WT13 (b)'s hand start and (b2); 6.12's anchor plus prose; `<rev> (head)`.
+- Not taken, each a deliberate choice: the patch's 6.4 order (the rig checks the seed head before DONE, which is stricter); WT2 from 8.6 (8.1's line is used, present on both texts); the self-test rewrite (replaced by a copy with main's up line added, so the line cases still run on #211).
+- Gap: none.
+
+F. REPRODUCTION (all on rig 7b0580a, light slot)
+
+| Run | Ref / sha | Counts | Wall | Same as lane |
+|---|---|---|---|---|
+| 20261114T095121Z-restore | main 6f430ce | DONE 51, AMB 2 (6.4 x2, `0046 (head)`), NRH 9, N/A 1 | 11m31s | yes (rows and WT columns) |
+| 20261114T100259Z-train | main 6f430ce | DONE 75, AMB 1, NRH 8, N/A 5; f192fee Kiritimati | 2m40s | yes |
+| 20261114T100559Z-restore | #211 11cf740 | DONE 53, NRH 9, N/A 1 | 12m08s | yes |
+| 20261114T101831Z-train | #211 11cf740 | DONE 75, AMB 1, NRH 8, N/A 5 | 3m45s | yes |
+| 20261114T102239Z-restore-mutate | main, baseline ...095121Z | 13/13 caught | 9m00s | yes |
+| 20261114T103152Z-train-mutate | main, baseline ...100259Z | 5/5 caught | 3m33s | yes |
+
+The only differences from the lane are timing values: main WT19 "after it: restarting" against the lane's "running". No verdict changed. No extra rig mutation was run: the useful ones (a decoy in the text, an empty database before WT20) need edits the read-only rule forbids. The decoys were shown with the selector alone instead.
+
+FINDINGS (all NIT, can wait for a follow-up)
+- NIT-1 (`runbook.py:138`): only `echo`/`printf` are excluded as command words. These still pick a decoy: a quoted assignment `CMD="ffc ... up ..."`, the `:` no-op `: "ffc ..."`, `sudo echo ffc ...`, the second here-document on a `<<A ... <<B` line. No such decoy exists in either text for any `rb_line` substring. Note that 11.12's `WHY="SHA is not ...` match relies on matching inside an assignment. Smallest fix: add `:` and `sudo echo` to the excluded words, and note that assignment values are matched on purpose.
+- NIT-2 (`wrongturns.sh:47-60`, `:68`, `:517`): `wt_state` does not set or measure whether the schema holds tables. If a turn ever leaves it empty, `six6` takes b-empty. WT20's `carried` would then compare against a stale P from WT19 and still say "the first attempt's". Fix: add `tables=$(ntables)` to `WTSTATE`, and have WT20 print which (b) branch its first attempt took.
+- NIT-3 (`wrongturns.sh:121-131`): on #211, 6.7 refuses in 0.26 s, so WT16's 0.2 s poller records "samples during 6.7: 0". The backend's state at that moment is only the start state. The verdict does not use it. Fix: read `backend_state` once just before typing 6.7, as `odd_backend` does.
+- NIT-4 (`wrongturns.sh:517`): `carried` tests P only. Fix: print whether `L`, `DX` and `U` are set as well.
+
+Backlog: mutate.py counts an alternative caught by any FAILED at that row (M11 lands on 8.6 on main, which is correct today); MARKERS=no on a renamed anchor (see B).
+
+G. CONVENTIONS AND SAFETY: pass.
+- Only 8 files under `ops/lab/rehearsal/` change, and `bash -n` passes on every script.
+- The secret grep over the diff exits 1 (no hits). The port / socket / `gh`-write grep finds 0.
+- Self-test: 42 ok on main, 45 ok on #211, 0 FAIL.
+
+Unverified: the turn reorder (C); the backend serving the new fence without a restart (code grep only); the MARKERS=no path on a renamed anchor.
+
+WHAT THE REVIEWER RAN: `git diff`, `git show`, `git grep`, `git rev-parse`, `gh pr view` (read-only); the selector reverse test in a `--rm`, `--network none` container; the six rig runs above, one at a time, never `--purge`. Free RAM was 5.9 to 9.0 GB and commit 38.7 to 40.9 GB before each start.
+
+Cleanup: no `fixflow-l4*` or `rv213*` container is left, and the volume `fixflow-l4-host-docker` is kept. Six run folders were added, each under `C:/Users/User/.fixflow-cache/lab/l4/` and under `C:/Users/User/.fixflow-cache/handoff/evidence/l4/`: `20261114T095121Z-restore`, `20261114T100259Z-train`, `20261114T100559Z-restore`, `20261114T101831Z-train`, `20261114T102239Z-restore-mutate`, `20261114T103152Z-train-mutate`. Scratch is in the coordinator's scratchpad, `rv213/` (run logs, the diffs, `sel/`). No commits, pushes or PR comments.
+
+COORDINATOR (2026-11-14, 15:38). PASS at 7b0580a21788f8ca877e67217b319f9fca666274. `main` moved to `e4426c7` at 15:36 (PR 212, files under `src/` only), so this PC's three checks run on a local merge of exactly `origin/main` and this head (`e283d06`, never pushed; lane id `lc213`), then the merge under ruling C60. The PR 211 condition of ruling C64 is met by the block above: once this PR is on `main`, the hold on PR 211 is lifted and PR 211 is checked on its own merge with the new `main`. The four nits and the two backlog items go to the rig's next follow-up; they change nothing that the rehearsal of PR 211 relies on.
