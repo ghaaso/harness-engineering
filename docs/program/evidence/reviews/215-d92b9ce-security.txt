@@ -1,0 +1,39 @@
+VERDICT: PASS
+PR #215 at d92b9ce51b3eeb6e81f05912cb37283335fa3d84
+Second security delta re-read (`e125847..d92b9ce`: rulings C93 and C94, after the rebase on f425ede) by the PR's security reviewer; dispatched by the coordinator on 2026-11-14 at 21:40, returned at 21:43. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+D1 is closed. Nothing on this head needs to change. What is left are two wording overstatements (one in CLAUDE.md, one in the PR body), one storage note for the follow-ups, and labels. The head had not moved between the start and the end; the shared tree is clean.
+
+1. D1: THE STORAGE EXTENSION. Fixed (VERIFIED-IN-CODE; PurePosixPath behaviour INFERRED, no Python here).
+- `service.py:619-629` `_storage_ext` tests `ext.isascii()` before `.lower()`, then `fullmatch` against `[a-z0-9]{1,10}` (`:64`). In a Python `str` pattern `0-9` is a literal ASCII range, and `fullmatch` cannot be fooled by a trailing newline.
+- Each named case gives the type's default extension: the Kelvin sign and fullwidth letters (not ASCII; the ASCII check runs before lowercasing); a trailing dot (`suffix` is `""`, or `"."` on Python 3.14, which `lstrip` turns into `""`); a name that is only a suffix (`.jpg`: `suffix` is `""`); an empty suffix; NUL (ASCII, but fails the pattern); a path separator (`suffix` reads only the last path part). Several dots (`a.tar.gz`) give `gz`, which is safe.
+- The lane's test covers these: `test_the_storage_extension_is_never_caller_text`, 15 cases, the Kelvin sign at `test_service.py:182`, the trailing dot at `:185`.
+- Audio's default is `jpg` (`:632-633`): a wrong label only. The object's Content-Type is the signed `effective_type` (`:196`), and the validator ties it to the media type; playback is a signed R2 GET that serves the stored type. Nothing a caller can use (INFERRED). NIT: give audio its own default, for example `m4a`.
+
+2. THE LOGS
+- "media purge failed:" (`service.py:286-293`): the uuid, `job_id` printed with `%r`, the phase enum, and `type(e).__name__`. The exception message is gone and so is `exc_info`, so no storage message, URL or key reaches the line.
+- The finalize's row-deletion line (`:335-339`) and "row kept" line (`:327-331`): ids, plus `job_id` with `%r`. `_log_deletion` (`:593`): `job_id` and `path` with `%r`.
+- NIT, raw `%s` sites: three older log sites still print the path raw: `:371` (delete endpoint), `:495` (sweep listing failed), `:515` (sweep purge failed). Their job segment can be the token as it arrived (for example `12` followed by a newline, because `int()` accepts surrounding whitespace). That breaks the line but cannot add text after the newline. Rows stored before C93 can still carry an extension with text. Making all three `%r` would finish the job.
+- NIT, overstated wording, because of the same job segment: CLAUDE.md:258 ("no caller text reaches the stored path, the R2 key or a log") and `service.py:62` ("No caller-chosen text then reaches ..."). Neither carries caller letters (the PR body's own P13b follow-up admits as much).
+
+3. THE STATUS READ UNDER THE JOB'S ROW LOCK (C94)
+- Who reaches it: the who-may-finalize check (`service.py:250-251`) runs before the HEAD and the oversized branch; only the job's actor or the row's reserver gets there. The lock is taken only when the purge succeeded and the job was open at the first read (`router.py:162-164`, `if not e.row_kept`).
+- How long: `FOR SHARE` (`jobs/repository.py:257-269`), then one `DELETE` and a log line, then commit (`router.py:164-167`). No client or storage I/O in between, and the commit comes before the response. A slow client cannot hold it.
+- Can a caller use it to block a job: each new hold needs a new reservation and a PUT over 64 MiB, because each success deletes the row. `FOR SHARE` does not block inserts that reference the job (`FOR KEY SHARE`). Claims and closes wait milliseconds.
+- One stall (INFERRED, NIT): the 413 `DELETE` waits if the sweep's open page has already deleted the same row; since the sweep commits per page, the job lock would then last one page (storage calls included). That needs the caller's own row to be at least 48 h old, finalized during the 03:45 run. No deadlock: the sweep never locks the job row.
+
+4. A PURGE THAT FAILS ON PURPOSE
+- The purge is a single `DeleteObject` with the server's credentials, and a missing key still answers success. No way for a caller to make it fail was found (INFERRED).
+- It would buy nothing anyway: a pending closing row passes the close gate by design (offline tolerance); reserving a closing clip and never uploading it has the same effect today. The evidence-gaps report shows both.
+
+5. THE TEXTS
+- True as written (VERIFIED-IN-CODE): the switch-on sentences in `config.py:63-78` and CLAUDE.md (the phone code they cite matches the head: `errorClass` falls through to `"server"`, `syncClassification.ts:191-199`; `"upload-failed"`, `closeJobWithVideo.ts:95-99`; the voice note dropped in a bare `catch`, `CompleteJobScreen.tsx:192-195`); CLAUDE.md's media bullet ("A declared size is bounded before the reservation exists ... today nothing bounds a PUT before it lands").
+- The residual is honest, with one addition for the follow-ups (NEW-6, MINOR, INFERRED): the upload URL outlives its row. After a 413 that deletes the row, after a technician deletes their own media, or after the delete endpoint's storage call fails (`:366-374`), a PUT inside the remaining 600 s leaves an object with no row. Neither the stale sweep nor finalize can find it. So "an oversized object nothing can find", which C94 avoids on the purge-failed path, still happens on these paths. Requiring a declared size bounds its size, but only an orphan-object pass over the bucket removes it.
+
+6. THE FOLLOW-UPS: accurate: sweep starvation by one account (body line 270); the Latin-1 bytes in the ops lock line (272); the raw token stored on the row (273); the close gate counting before it takes the lock (275), which is the race the C94 lock cannot cover. NIT: line 271 ("`job_closed` is read before the rollback ...") is overtaken by this head's re-read under the lock; what remains of that race is line 275; line 271 can go.
+
+WHAT THE REVIEWER READ AND RAN: `gh pr view` for the head (start and end) and the body; `git log` / `git diff e125847..d92b9ce`; line reads at the head in `media/{service,router}.py`, `jobs/repository.py:257-269`, `jobs/service.py:2749`, `test_service.py:162-206`, and the three phone files the sentences cite. No gate, no test, no probe.
+
+NOT VERIFIED: `PurePosixPath` and Starlette behaviour (traced from source, not run); whether Postgres has a `lock_timeout` or `statement_timeout` set; the lane's new tests and the red-on-base claims (another reviewer runs the gates); R2's `DeleteObject` behaviour.
+
+COORDINATOR (2026-11-14). PASS for security on the exact head. Kept for the PR's follow-up list and the P13b backlog, none holding this head: NEW-6 (an upload URL outlives its row; to be read against the existing `media-orphan-sweep` job before anything is built); the three older log sites that still print the path with `%s`; the two sentences that say "no caller text" where the job segment can still carry whitespace; audio's default extension; the overtaken follow-up line in the PR body. The merge waits for the whole-PR re-read of the same head and for this PC's three checks.

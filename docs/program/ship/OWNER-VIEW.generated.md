@@ -112,6 +112,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 
 | Id | Decision | Blocks | Default |
 | --- | --- | --- | --- |
+| N7 (new) | Add one sentence to the project's instruction file for the AI agents (CLAUDE.md): the server must keep accepting a phone's drain upload of at least 8 MiB? | nothing: a test in the drain audit's change already fails if someone adds a smaller size limit | not added. The lane that built the test will not change that file because another session asked, which is the right caution; only you can say yes |
 | N6 (new) | GitHub has stopped running the automatic checks on every pull request (since 03:43 on 2026-11-14). The cause is in your GitHub account: Settings, Billing and plans. Either a payment failed, or the month's included Actions minutes are used up and the spending limit is zero. Restore them when you can. Until then: may I merge on the same checks run on this PC? | every merge from now on (the first one waiting is the money phase's follow-up, PR #210) | DECIDED 2026-11-14: Yes, local checks. |
 | N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | DECIDED 2026-11-13: Yes for #185 (the reviewer and skill definitions). |
 | N4 (new) | Close the old draft PR #180 (an earlier geofence approach the plan replaces) | nothing; it can be mistaken for live work | DECIDED 2026-11-13: Close it. |

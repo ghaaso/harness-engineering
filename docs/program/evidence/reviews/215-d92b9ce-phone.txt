@@ -1,0 +1,45 @@
+VERDICT: PASS
+PR #215 at d92b9ce51b3eeb6e81f05912cb37283335fa3d84
+Second phone-side delta re-read (`e125847..d92b9ce`: rulings C93 and C94, after the rebase on f425ede) by the PR's phone-side reviewer; dispatched by the coordinator on 2026-11-14 at 21:40, returned at 21:42. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Nothing on this head needs to change. The extension rule changes no stored path for any phone path. The new switch-on sentences are true against the phone's code (one cited line range is off by one: a nit). The failed-purge and lock changes give a phone nothing new on the first answer or on a retry. There is no new 4xx on reserve, upload or finalize. The head was the same at the start and at the end. The phone code is the same as `main`'s: `git diff --stat e125847..d92b9ce -- technician-app` and `git diff --stat f425ede d92b9ce -- technician-app` are both empty (VERIFIED-BY-COMMAND). Server paths are under `backend/app/` at d92b9ce; phone paths under `technician-app/src/`.
+
+1. THE EXTENSION RULE (C93)
+- `_storage_ext` keeps the suffix only when it is ASCII and, lowercased, fully matches `[a-z0-9]{1,10}`; otherwise it uses `_default_ext` (`features/media/service.py:64`, `:194`, `:619-629`, `:632`). VERIFIED-IN-CODE. The old rule was the lowercased suffix, or the default when there was none; the two differ only for a suffix that is non-ASCII, longer than 10 characters, or not letters and digits.
+- Every name the phone sends ends in `.jpg`, `.mp4`, `.m4a` or `.jpeg`; all four pass the new rule and are stored exactly as before (VERIFIED-IN-CODE, path by path):
+  - Arrival wizard, every slot: a name built from the slot, `Date.now()` and `jpg`, `mp4` or `m4a` chosen from the content-type prefix (`features/jobs/arrival-job/ArrivalJobWizard.tsx:191-196`); the same names if the capture is queued (`:216-224`).
+  - Intake and estimate voice notes, through pending media: `problem-<time>.m4a` and `estimate-<time>.m4a` (`features/jobs/create-job/CreateJobWizard.tsx:105-124`).
+  - The completion's voice note: `"remark.m4a"` (`features/jobs/CompleteJobScreen.tsx:188`).
+  - The closing clip: `asset.fileName`, else `closing-<time>.mp4` (`features/jobs/closeJobWithVideo.ts:82`).
+  - Pending media sends the stored `filename` unchanged (`features/media/pendingMedia.ts:207-214`).
+- The closing clip's `asset.fileName`, in expo-image-picker 16.0.6 (installed, matching the lockfile): the camera writes into a temp file created with `.mp4` for videos and `.jpeg` otherwise (`ImagePickerModule.kt:73`; `ImagePickerOptions.kt:81-86`); that file is passed to the camera as a FileProvider URI (`ImagePickerModule.kt:76`; `contracts/CameraContract.kt:34`); a video's `fileName` is that URI's `DISPLAY_NAME` (`MediaHandler.kt:101`, `:109`), so it ends in `.mp4`; if it is null, the phone falls back to `closing-....mp4`. VERIFIED-IN-CODE in the library source; INFERRED that `DISPLAY_NAME` is the temp file's own name.
+- No phone path sends a name without an extension or with an odd one, so the `jpg` default for audio (`service.py:632`, unchanged by this PR) is never reached from a phone.
+- Nothing reads the extension back: the phone's tile picks the player by `item.type` (`features/media/MediaTile.tsx:27`); the web gallery by `item.type` (`src/features/media/components/JobMediaGallery.jsx:25`); a search for `storage_path` and extension parsing in `technician-app/src` and `src/` finds no consumer (VERIFIED-BY-COMMAND). INFERRED: playback serves the Content-Type stored with the object, because the PUT signs it (`core/storage.py:114`).
+
+2. N1 REWRITTEN (`core/config.py:63-73`; CLAUDE.md, the same text)
+- "Every phone in the fleet": closes N1's first point.
+- "No error class for 429 (a 429 counts as server)": true (`lib/syncClassification.ts:191-199`). VERIFIED-IN-CODE.
+- "The closing clip turns it into upload-failed, so the job cannot close": true (`closeJobWithVideo.ts:95-100`; the close is at `:113-121`). VERIFIED-IN-CODE.
+- "The completion's voice note is dropped silently": true. Nit: the cited range `CompleteJobScreen.tsx:193-196` starts one line late; the `catch` is at `:192` and its block ends at `:195`.
+- "Free retry on every upload path" also covers the live wizard, which queues a 429 today (`features/jobs/arrival-job/evidenceUpload.ts:25-27`) and whose drain then counts it toward parking (`pendingMedia.ts:228-233`). VERIFIED-IN-CODE.
+
+3. THE FAILED PURGE (C94)
+- When the R2 delete throws, `purged = False` (`service.py:285`) and the error carries `row_kept=job_closed or not purged` (`:300`); `discard_oversized` then returns without deleting (`:313-325`); the answer is still a marked 413 (`router.py:168`). VERIFIED-IN-CODE.
+- The phone sees the same status and marker as at b57f811: the wizard marks the slot "failed"; pending media parks (`syncClassification.ts:169`; `pendingMedia.ts:221-226`); the closing clip returns "too large". A retry always reserves a new row (`uploadMedia.ts:35`) and never touches the kept one. VERIFIED-IN-CODE.
+- Outside this lens, INFERRED: a kept pending closing row whose oversized object survived still counts toward the server's close gate until the sweep purges the object. The phone never closes after a 413 (`closeJobWithVideo.ts:89-93`), so this cannot arise from the phone.
+
+4. THE LOCK (C94)
+- On the 413 path: the R2 calls happen inside `complete_upload`, before the error is raised; the router then rolls back (`router.py:161`), reads the status under `FOR SHARE` (`router.py:164`; `features/jobs/service.py:2749`; `features/jobs/repository.py:257-270`, `.with_for_update(read=True)`), runs one `DELETE` on `job_media` (`router.py:166`) and commits. The lock lasts two statements and a commit, with no network call inside. VERIFIED-IN-CODE.
+- A technician's close (`try_transition`, a single conditional `UPDATE`) or claim waits at most those milliseconds, far under the phone's 15 s timeout (`lib/api.ts:114`). INFERRED. A payment's insert takes `FOR KEY SHARE`, which does not conflict with `FOR SHARE`.
+- No deadlock path found: the finalize locks the job row, then a media row; the jobs service writes no `job_media` row (a search for media writes and for `with_for_update` in `features/jobs/service.py`, `repository.py` and `core/db.py` finds only the new lock). VERIFIED-BY-COMMAND.
+- The reverse wait, a finalize queued behind an in-flight close, delays only the finalize; past 15 s the phone would get a plain `Error`, which is a `free_retry`. INFERRED.
+
+5. NO NEW 4xx VERSUS b57f811
+- Reserve: the extension rule never refuses, it only chooses the stored extension (`service.py:194`). The cap is still 0 (`core/config.py:73`) and `media_require_declared_size` is still `False` (`:79`). VERIFIED-IN-CODE. Upload: the URL is unchanged, and the phone still declares no size (`lib/api.ts:54-59`). Finalize: the 413 on an oversized object is unchanged; the new branches only decide whether a row is kept, never the status.
+- The only new failure is a database error in the lock read (a lock wait or a deadlock report), which would be a marked 500; on the media row that is counted and retried, not a 4xx. INFERRED.
+
+WHAT THE REVIEWER READ AND RAN: `gh pr view 215` at the start and the end; `git diff --stat` and `git diff e125847..d92b9ce` (server files and the CLAUDE.md lines); `grep`, `sed` and reads in the head tree; the expo-image-picker 16.0.6 Android source in the main checkout's `technician-app/node_modules`. No tests, no gate, no writes.
+
+NOT VERIFIED: that the camera's FileProvider `DISPLAY_NAME` is the temp file's name on the fleet's Android versions; that R2 serves the PUT's Content-Type on a signed GET; lock timing and the absence of deadlocks under real concurrency on Postgres (the other reviewer runs the integration gate); any filename the web manager app sends (not the phone, outside this lens).
+
+COORDINATOR (2026-11-14). PASS for the phones on the exact head. The off-by-one line citation in the switch-on sentence is a nit that changes nothing; it can ride any later text change. The merge waits for the security and whole-PR re-reads of the same head and for this PC's three checks.

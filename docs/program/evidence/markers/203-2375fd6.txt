@@ -1,0 +1,57 @@
+PR 203 (P2b-2 drain audit) ready for both binding reviewers at 2375fd67aed3548e0bf8b3785d03b69f41be5d78 (rulings C75, C78, C81, C86 to C88 and C91; plan-v9.79). One push, fast-forward 3f1e07e -> 2375fd6 (one commit). PR body updated (Plan @ plan-v9.79 on the first line, a scope checkbox, decision 39, break rows B99-B126 with the re-runs, gates, self-check line); decisions 31 to 36 moved verbatim to a PR comment (https://github.com/Tempest-Zero/EMS_workshop1/pull/203#issuecomment-6881004614) for the 65,536-character cap. Not rebased (still on main e6f85c5). Not merged. CI did not run (Actions refused, billing); the two local gate runs below are the evidence.
+
+AS DIRECTED: both reviewers re-read 3f1e07e..2375fd6 only. Everything in 203-3f1e07e stands as written there (decision 38 in the PR body).
+
+FILES CHANGED SINCE 3f1e07e (git diff --name-only 3f1e07e..2375fd6):
+- backend/scripts/drain_audit.py
+- backend/scripts/drain_audit_report.py
+- backend/tests/drain_fixture.py
+- backend/tests/test_drain_audit_integration.py
+- backend/tests/test_drain_audit_rules.py
+- backend/tests/test_drain_fixture.py
+
+GATES (full runs, clean trees):
+- Branch 2375fd6 (main e6f85c5, schema head 0047), lane p2b2: gate log backend-20261114-213940, GATE[1..8] EXIT=0, SKIPS total=1684 skipped=0 integration_skipped=0, SUMMARY FAIL=0
+- Drain tree bd5353e = f8a5984 + cherry-pick -x 2375fd6 (schema head 0046), lane p2b2-drain; the seven drain files are identical to 2375fd6: gate log backend-20261114-214805, GATE[1..8] EXIT=0, SKIPS total=1200 skipped=0 integration_skipped=0, SUMMARY FAIL=0
+- C81 on the drain tree: test_c81_one_drain_manifest_and_one_after_report_of_8_mib_are_stored passes there too (no body cap on /api/events on either tree: BODY_LIMITS, backend/app/main.py:81, names only login and the webhook).
+
+WHAT CHANGED, BY RULING (decision 39 has the full text):
+- C75: a discard is identified by entry_id (queue_discard props, drain_after.discards[], the manifest's new top-level discards). One entry_id clears one row once across traces and entries (Server.entries_used). It counts only when the row's manifest did not hold that entry_id (Row.held_discards). C72's bound is by entry_id (the content multiset is gone). Never while the newest report lists a slot row's slot (a trace taken earlier is given back). A manifest without its list is a problem (exit 4). A trace or entry without an entry_id, and a trace received at or before the manifest, are never evidence; each is named.
+- C78: a manifest whose discard list cannot be trusted (storage.unreadable_stores or unreadable_keys names fleet.drain.discards.v1; preserved_corrupt holds fleet.drain.discards.v1.corrupt*; unreadable_parts not empty) is a problem naming each sign, with a clears line. No discard is evidence for its rows (Row.discards_untrusted, first in _not_evidence); the server still settles what it can. A merged row is untrusted when any listing manifest is. An after-report whose list cannot be trusted bounds no version owner's entry (a warning, its listing still judges). "" is no id.
+- C91: _not_judged (drain_audit.py:2669, the last step of apply_after_reports) turns a would-be missing or residue row whose list is absent or untrusted into not_judged: exit 4, never failing, exit 3 still outranks it; not for the droppable queues, not for rows the server settles or a report judges. The note names the install and the sign. --ack-unreadable INSTALL_ID:discards (C78 only) moves the manifest's problem to a warning (run_audit, drain_audit.py:3575) and makes those rows unreadable_reviewed (manual entry, noted as possibly entered by hand already); the discards stay unused. An absent list is cleared by hand from the phone's Drain Report only. The acknowledgment was a token and a branch, nothing more.
+- C86/C87: no code change; pinned.
+- C88: one note on the trace path (drain_audit.py:2302).
+- C81: one integration test, no code change.
+- Fixture: the phone's shapes at PR #197 d1ae31d (manifest discards before records, entry_id first, the list read from fleet.drain.discards.v1 like discardLog.ts discardRecords).
+
+THE C87 ANSWER (held_discards): set in parse_manifest per manifest on the rows that manifest lists (drain_audit.py:1117, held = frozenset(d["entry_id"] for d in discards if d["entry_id"])), and united in merge_rows only across the manifests that list the row (drain_audit.py:1284, out[k].held_discards |= r.held_discards). Before: held_discards did not exist at 3f1e07e; C75 introduced it in this round, per listing manifest from the start, and the C87 work changed nothing. Untrusted plus trusted twins: the merged row is untrusted (discards_untrusted united the same way), so a row that would be missing or residue is not_judged (exit 4). B117 (twins split) and B118 (held united per install) are caught.
+
+THE C88 WALK (test_c88_a_discard_under_the_losing_install_id, test_drain_audit_rules.py:2777): the parser stamps every report entry with the carrying document's install id and never reads the entry's own, so an entry under the losing id inside the stored id's report clears the row: discarded, exit 0 (unchanged; an entry already counts by the report that carries it, so there is nothing to propose). A trace under the losing id is never counted; it is now named beside the row ("a discard for this record under another install id ... not counted (ruling C88)"), and is still listed once in the leftover list, which changes no exit code.
+
+READINGS (all on the safe side, journaled in decision 39):
+- An absent list also refuses every discard for its rows (discards_untrusted set), not only by the empty held list.
+- A trace with no receipt time is not evidence.
+- A merged row holds the entry_ids of every manifest listing it.
+- The unreadable_parts finding: before this round unreadable_parts was a storage issue for every queue that --ack-unreadable INSTALL:all turned into a warning, after which the manifest's discards and traces WERE used; an unreadable discard store was read as an unknown queue store (same ack); a kept .corrupt copy of the list was only a warning. All three are now C78 signs; no queue is marked unreadable for the discard list.
+
+CHANGED EXPECTED VALUES / CHANGED TEST INPUT:
+- test_a_discard_outranks_residue_and_prints_the_refusal_the_server_proves: the negotiate row listed in the report AND discarded is now residue, the entry unused (C75 point 4).
+- test_c72_an_entry_the_showing_report_carried_is_about_an_earlier_version: by entry_id; the multiset case replaced by two identity cases.
+- test_c72_* (all) and older tests: traces and entries now carry an entry_id.
+- Integration: test_discards_are_attributed_and_a_shared_phone_is_flagged now expects each discard in the leftover list once (the report lists the traces' discards again).
+- Fixture key order: test_manifest_key_order_and_shape and test_after_report_discards_are_the_queue_discard_fields_install_and_at follow the phone's order (discards before records; entry_id first).
+- test_no_manifest_is_incomplete_and_a_mismatch_outranks_it (integration): makes its manifest incomplete by another queue's kept corrupt copy instead of unreadable_parts (which would now make its punch not_judged); it still proves a mismatch outranks incomplete.
+
+BREAKS (each red without its rule; judged from each break's own gate output and junit):
+- C75 round on 0f42d58 (226 tests): B99 test_c75_one_discard_seen_twice_clears_one_row; B100 test_c75_g1_a_discard_the_manifest_already_held_never_clears_the_row + test_c75_an_own_entry_the_manifest_held_is_named_and_not_used; B101 test_c75_an_own_entry_the_manifest_held_is_named_and_not_used; B102 test_c75_no_discard_is_taken_while_the_slot_is_listed + test_a_discard_outranks_residue_and_prints_the_refusal_the_server_proves; B103 test_c75_no_discard_is_taken_while_the_slot_is_listed; B104 test_c75_a_manifest_without_its_discard_list_cannot_be_judged; B106 test_c75_a_discard_without_an_entry_id_is_named_never_used; B107 test_discards_are_attributed_and_a_shared_phone_is_flagged; B96 (re-cut) test_c72_an_entry_the_showing_report_carried_is_about_an_earlier_version; re-runs B39 B43 B61 B62 B77 B78 B80 B95 B98 all red.
+- SURVIVE, subsumed: B14 (a discard used more than once) by entries_used (B99); B97 (entry used while the slot is listed) by step 2's not listed_slot guard (B102). Both re-run on 2375fd6: still green.
+- C78/C91 round on 84715f0 (249 tests): B105 (re-cut, "" too) test_c75_a_discard_without_an_entry_id_is_named_never_used + test_c78_an_empty_entry_id_is_no_id; B108 the four sign tests + three C91 tests; B109 both sign-1 tests + the after-report bound + the real-missing C91 test; B110 test_c78_sign_1_a_discard_key_the_phone_could_not_read_is_not_judged; B111 sign 2 + the C91 integration + the acknowledgment test; B112 sign 3; B113 four sign tests + the C91 integration; B114 test_c78_a_merged_row_is_untrusted_when_any_manifest_listing_it_is; B115 test_c78_a_showing_report_whose_list_cannot_be_trusted_bounds_nothing; B116 test_c78_an_empty_entry_id_is_no_id; B117 four C86 + C87 + 6 more; B118 test_c87_a_row_is_held_only_against_the_manifests_that_list_it; B119 test_c88_a_discard_under_the_losing_install_id; B120 four sign tests + four C91 tests; B121 test_c91_residue_whose_discards_cannot_be_read_is_not_judged; B122 the C91 integration + the acknowledgment test; B123 the C91 integration; B124 and B125 test_c91_a_manifest_without_its_list_leaves_an_unsettled_row_not_judged.
+- B126 (NOT_JUDGED out of the cannot-judge set) survived on 84715f0: every not_judged row came with a manifest problem. Fixed by pinning a not_judged row alone (exit 4, not for manual entry) in test_c91_residue_whose_discards_cannot_be_read_is_not_judged; red on 2375fd6.
+
+THE SERVER RE-READ OF 3f1e07e (PASS-WITH-FIXES): F1 pinned as test_c75_server_f1_an_entry_carried_before_the_manifest_never_clears_its_row (entry and trace variants). The two notes are kept as notes, not changed: the refused notes print in the final missing branch (and the branches this round added), and test_c72_one_entry_clears_one_row pins a safe-side missing.
+
+FOR THE OWNER (C81, CLAUDE.md, NOT in this PR: this lane does not edit CLAUDE.md on another session's request):
+> The events route must keep accepting one `drain_manifest` or `drain_after` event of at least 8 MiB, because a refused manifest keeps a phone from ever draining.
+
+FOR THE RUNBOOK §8 (the PR that fills <p2b2>):
+- The new outcome not_judged (exit 4): a row whose phone's discard list is absent or cannot be trusted. Clearing: for an untrusted list, the owner examines the preserved bytes on that phone, then reruns with --ack-unreadable INSTALL_ID:discards, which lists those rows for manual entry (unreadable_reviewed; each may already have been entered by hand); for an absent list, by hand from that phone's Drain Report, and the owner rules.
