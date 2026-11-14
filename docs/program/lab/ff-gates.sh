@@ -187,6 +187,12 @@ case "$KIND" in
           n=$((n+1)); [ "$n" -ge 60 ] && { echo "SETUP[db] TIMEOUT"; exit 2; }; sleep 1; done
         FAIL=0; i=0
         g(){ i=$((i+1)); "$@" > "/work/logs/gate-$i.log" 2>&1; rc=$?; echo "GATE[$i $*] EXIT=$rc"; [ "$rc" -ne 0 ] && FAIL=1; return 0; }
+        # CI parity (2026-11-14, ruling C60): the backend job runs the CLAUDE.md facts check from the
+        # repo root before ruff. It runs when the ci.yml of this tree names it, on the read-only
+        # mount. (No apostrophe may appear in this block: it is one single-quoted string.)
+        if [ -f /src/.github/scripts/check_claude_md.py ] && grep -q "check_claude_md.py" /src/.github/workflows/ci.yml 2>/dev/null; then
+          g sh -c "cd /src && python .github/scripts/check_claude_md.py"
+        fi
         g ruff format --check .; g ruff check .; g mypy app; g lint-imports
         g alembic upgrade head; g alembic check
         g pytest -p no:cacheprovider -q -rs --junitxml=/work/logs/junit.xml $FF_PYTEST_ARGS
@@ -243,6 +249,20 @@ PY
     g npm run format:check
     g npm test -- --maxWorkers="${FF_VITEST_WORKERS:-4}"
     g npm run build
+    # CI parity (2026-11-14, ruling C60): the frontend job has three more steps since P3a. Each
+    # runs when this tree's own ci.yml names it. The compose rules need `docker compose` (they
+    # start nothing); the restore-gate fixture runs under dash and mawk, as on the CI runner,
+    # in the image the backend gate already uses, on a read-only mount.
+    CI_YML="$WTU/.github/workflows/ci.yml"
+    if grep -q "ops/hang-stub/server.test.mjs" "$CI_YML" 2>/dev/null; then
+      g node --test ops/hang-stub/server.test.mjs
+    fi
+    if grep -q "ops/selfhost/smoke/compose-rules.mjs" "$CI_YML" 2>/dev/null; then
+      g node ops/selfhost/smoke/compose-rules.mjs
+    fi
+    if grep -q "ops/selfhost/smoke/restore-gate.test.sh" "$CI_YML" 2>/dev/null; then
+      g docker run --rm -v "$WTW:/src:ro" python:3.12-slim sh /src/ops/selfhost/smoke/restore-gate.test.sh
+    fi
     echo "SUMMARY FAIL=$FAIL" >> "$L/gates.log"
     finish "$FAIL"
     ;;
