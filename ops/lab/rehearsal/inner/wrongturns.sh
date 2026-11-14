@@ -220,6 +220,103 @@ wt "WT12 (N1)" "6.7 typed in a new shell (the variable D from 6.6 is empty)" \
   "$( [ "${nt12:-1}" = 0 ] && echo "NOTHING: the DROP runs, then pg_restore cannot find /restore/.list and the schema is left empty" || { [ $MARKERS = yes ] && echo "the \${D:?} guard on 6.7's DROP line (bash drops the rest of the line, as in the owner's interactive shell)" || echo "something stopped the DROP: see the step log"; })" \
   "$( [ "${nt12:-1}" = 0 ] && echo "$MARKER_GUARD (the \${D:?} on the DROP line is what stops this one)" || echo "no$( [ $MARKERS = yes ] && echo ': scripted (N1 as the batch fixed it)')")"
 
+# ---- WT13-WT15: the batch's marker chain under the remaining wrong turns (ruling C51) -------------
+# Each needs the marker chain (6.6 (b)'s ready-to-drop and its scp fallback), which only the batch's
+# text has; on a text without it they are N/A.
+if [ $MARKERS = yes ]; then
+  sumof() { grep " $1\$" "$OUT/dumps.sha256" | cut -d' ' -f1; }
+  ev() { psql_app -c "select count(*) from job_event where text = '$1'" 2>/dev/null | tr -d ' '; }
+  addev() { psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', '$1', 'm1', nextval('job_event_seq') from job limit 1" >/dev/null 2>&1; }
+  cp "/srv/l4/dumps/$NIGHTLY" "$RD/$NIGHTLY"
+  # as after 6.1: the backend is stopped while 6.6 and 6.7 run
+  ffc $P_DB --profile app stop backend >/dev/null 2>&1
+
+  # WT13 (a): a restore that went through 6.9 leaves no marker, so 6.7 typed again for the same dump,
+  # 6.6 skipped, drops nothing. Shown by the state the completed restore left, then 6.7.
+  rm -f $RD/ready-to-drop $RD/proven
+  addev 'WT13 write after the earlier restore'
+  m0="$(ev 'WT13 write after the earlier restore')"; D="$NIGHTLY"
+  rb_run wt13-67-after-signoff "$G67"
+  o13a="$(out_of | tr '\n' ' ' | cut -c1-160)"; m1="$(ev 'WT13 write after the earlier restore')"
+  # WT13 (b): an attempt abandoned after 6.6 leaves a marker for the same dump; the backend is then
+  # started by hand (outside the runbook) and a manager writes; 6.7 is typed later for the same dump.
+  six6 wt13 "$NIGHTLY" "$(sumof "$NIGHTLY")"
+  addev 'WT13 write after an abandoned 6.6'
+  n0="$(ev 'WT13 write after an abandoned 6.6')"
+  rb_run wt13-67-stale-same "$G67"
+  o13b="$(out_of | tr '\n' ' ' | cut -c1-160)"; n1="$(ev 'WT13 write after an abandoned 6.6')"
+  wt "WT13" "a marker left by an earlier restore: (a) one that went through 6.9, then 6.7 again with 6.6 skipped; (b) one abandoned after 6.6, the backend started by hand and a manager write made, then 6.7 for the same dump" \
+    "(a) 6.7: $o13a; a later write: $m0 before, $m1 after. (b) 6.6: $W66A / $W66B; 6.7: $o13b; the write made after 6.6: $n0 before, $n1 after" \
+    "(a) $( [ "$m1" = "$m0" ] && echo '6.9 removed the marker, so the DROP line refused (a script)' || echo 'NOTHING: dropped') ; (b) $( [ "$n1" = "$n0" ] && echo 'refused' || echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)")" \
+    "$( [ "$m1" = "$m0" ] && echo 'no for (a)' || echo 'YES for (a)'); (b): $( [ "$n1" = "$n0" ] && echo no || echo 'by design the marker vouches for the dump and the copy, not for the database after it; a write needs the backend running, which the restore gate refuses until 6.9 (WT1). Optional: (b) also records max(job_event.seq) and the DROP line compares it')"
+  rm -f $RD/ready-to-drop $RD/proven
+
+  # WT14: a dump damaged BEFORE its sum was recorded (cut at 99 %, its own sum as SUM) passes 6.6 (a)
+  # as the text warns; 6.7 drops and the load stops half-way; 6.7 is run again; then the way back.
+  T14="damaged99-$NIGHTLY"
+  head -c "$(( $(stat -c %s "/srv/l4/dumps/$NIGHTLY") * 99 / 100 ))" "/srv/l4/dumps/$NIGHTLY" > "$RD/$T14"
+  addev 'WT14 live write before the failed restore'
+  j0="$(psql_app -c 'select count(*) from job_event' 2>/dev/null | tr -d ' ')"
+  six6 wt14 "$T14" "$(sha256sum "$RD/$T14" | cut -d' ' -f1)"
+  o14p="$W66A / $W66B"; P14="${P:-}"; L14="${L:-}"
+  rb_run wt14-67-first "$G67"
+  o14a="$(out_of | tail -n 2 | tr '\n' ' ')"; t14a="$(ntables)"
+  rb_run wt14-67-again "$G67"
+  o14b="$(out_of | tail -n 2 | tr '\n' ' ')"; t14b="$(ntables)"
+  # the way back as 6.7 writes it: D = the pre-restore copy 6.6 (b) just made, SUM = its L
+  if [ -n "$P14" ] && [ -f "$P14" ]; then
+    six6 wt14-back "$(basename "$P14")" "$L14"
+    o14c="$W66A / $W66B"
+    rb_run wt14-back-67 "$G67"
+    o14d="$(out_of | tail -n 2 | tr '\n' ' ')"
+  else
+    o14c="no pre-restore copy was made (P empty)"; o14d="-"
+  fi
+  j1="$(psql_app -c 'select count(*) from job_event' 2>/dev/null | tr -d ' ')"
+  w14="$(ev 'WT14 live write before the failed restore')"
+  wt "WT14" "a dump damaged before its sum was recorded (cut at 99 %): 6.7 stops half-way; 6.7 run again in the same shell; then back to the database as it was (6.7's last paragraph)" \
+    "6.6: $o14p; 6.7: $o14a (tables after: $t14a); 6.7 again: $o14b (tables after: $t14b); way back 6.6: $o14c; 6.7: $o14d; job_event rows $j0 before, $j1 after; the live write: $w14" \
+    "$( echo "$o14a" | grep -q 'restore exit=0' && echo 'NOTHING: the damaged dump loaded' || echo "6.7's pg_restore --exit-on-error stopped part-way, after the DROP, as 6.6 (a) says it would; the second 6.7 did the same (the text allows it: list and marker unchanged); the backend stays stopped (6.1)")$( [ "$j1" = "$j0" ] && [ "$w14" = 1 ] && echo '; the way back restored every row, the live write included' || echo '; the way back did NOT restore the database as it was')" \
+    "$( [ "$j1" = "$j0" ] && [ "$w14" = 1 ] && echo 'no: the copy 6.6 (b) put off the host is the net, and the route back works as written (downtime, not loss)' || echo 'YES: see the step logs')"
+
+  # WT15: the scp fallback. (a) after a FAILED dump (pg_dump exits non-zero part-way); (b) after a
+  # good dump whose upload failed, with the laptop's sum right; (c) the same with a wrong laptop sum.
+  scp15() { # <id> <laptop sum or 'same'>: the laptop copy is a cp on this host (no laptop here)
+    mkdir -p /srv/l4/laptop; cp "$P" /srv/l4/laptop/ 2>/dev/null
+    local s; s="$(sha256sum "/srv/l4/laptop/$(basename "$P")" 2>/dev/null | cut -d' ' -f1)"; [ "$2" = same ] || s="$2"
+    rb_run "$1" "$(rb_fence 6.6 @b-scp)" "<the sha256 the laptop printed>=$s"
+    out_of | tail -n 1
+  }
+  echo "lab WT15: the laptop of 6.6 (b)'s scp fallback is a directory on the stand-in host (/srv/l4/laptop); its sha256sum stands in for the laptop's" >> "$OUT/deviations.log"
+  D="$NIGHTLY"; SUM="$(sumof "$NIGHTLY")"
+  rb_run wt15-66a "$(rb_fence 6.6 @a-list)" "<dump file name>=$D" "<the recorded sha256 of that file>=$SUM"
+  rb_run wt15-66a-prove "$(rb_fence 6.6 @a-prove)"
+  p15="$(out_of | tail -n 1)"
+  # (a) pg_dump fails part-way: a wrapper earlier on the postgres container's PATH (removed after)
+  ffc exec -T postgres sh -c 'printf "#!/bin/sh\n/usr/lib/postgresql/17/bin/pg_dump \"\$@\" | head -c 65536\nexit 1\n" > /usr/local/bin/pg_dump && chmod +x /usr/local/bin/pg_dump' </dev/null
+  echo "lab WT15 (a): pg_dump in the postgres container was made to fail part-way (a wrapper on its PATH that stops after 64 KiB and exits 1), then removed" >> "$OUT/deviations.log"
+  rb_run wt15a-save "$(rb_fence 6.6 @b-save)"
+  s15a="$(out_of | grep -E '^dump exit=|^STOP|^marker' | tr '\n' ' ')"
+  l15a="$(scp15 wt15a-scp same)"
+  ffc exec -T postgres rm -f /usr/local/bin/pg_dump </dev/null
+  m15a="$( [ -e $RD/ready-to-drop ] && echo present || echo absent)"; rm -f $RD/ready-to-drop
+  # (b) a good dump, the upload fails (stand-in bucket stopped), the laptop's sum equals L
+  ffc --profile l4s3 stop l4-s3 >/dev/null 2>&1
+  rb_run wt15b-save "$(rb_fence 6.6 @b-save)"
+  s15b="$(out_of | grep -E '^dump exit=|^STOP|^marker' | tr '\n' ' ')"
+  l15b="$(scp15 wt15b-scp same)"; m15b="$(grep -c 'checked-on-laptop' $RD/ready-to-drop 2>/dev/null)"; rm -f $RD/ready-to-drop
+  # (c) the same, the laptop printing another sum (a copy that went wrong on the way)
+  l15c="$(scp15 wt15c-scp 0000000000000000000000000000000000000000000000000000000000000000)"
+  m15c="$( [ -e $RD/ready-to-drop ] && echo present || echo absent)"; rm -f $RD/ready-to-drop $RD/proven
+  ffc --profile l4s3 up -d l4-s3 >/dev/null 2>&1; lab_s3_bucket >/dev/null
+  wt "WT15" "6.6 (b)'s scp fallback: (a) after a failed pg_dump; (b) after a good dump whose upload failed, laptop sum = L; (c) the same, laptop sum wrong" \
+    "6.6 (a): $p15. (a) save: $s15a; scp line: $l15a; marker $m15a. (b) save: $s15b; scp line: $l15b; marker lines naming the laptop: ${m15b:-0}. (c) scp line: $l15c; marker $m15c" \
+    "(a) $( [ "$m15a" = absent ] && echo "the fallback line's own test refuses (pg_dump exit not 0)" || echo 'NOTHING: a marker was written for a cut dump'); (b) $( [ "${m15b:-0}" = 1 ] && echo 'marker written, copy on the laptop (the intended path)' || echo 'the intended path did NOT write the marker'); (c) $( [ "$m15c" = absent ] && echo "refused (the laptop's sum is not L)" || echo 'NOTHING: a marker was written on a wrong sum')" \
+    "$( [ "$m15a" = absent ] && [ "${m15b:-0}" = 1 ] && [ "$m15c" = absent ] && echo 'no: scripted (the batch'"'"'s fallback line)' || echo 'YES: see the step logs')"
+else
+  for w in WT13 WT14 WT15; do wt "$w" "needs 6.6's marker chain and scp fallback line" "not in this runbook text" "N/A" "-"; done
+fi
+
 # ---- the way back: the pre-restore copy, by the runbook's own route ---------------------------
 PRE="$(basename "$(cat "$OUT/pre-restore-file.txt" 2>/dev/null)")"
 if [ -n "$PRE" ] && [ -f "/var/lib/fixflow/restore/$PRE" ]; then
