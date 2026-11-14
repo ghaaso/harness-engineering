@@ -1,0 +1,79 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at d1ae31d2a66742a8b2a71f3cdc4314ef1bcd44a2
+Delta re-read (`8cb84f1..d1ae31d`: ruling C75, the phone half) by the PR's reviewer; dispatched by the coordinator on 2026-11-14 at 18:49, returned at 18:56. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The three new fields are right, and the trace carries the entry's id on every discard path. One boundary case breaks the commit's own guarantee (finding 1), and the audit will rely on that guarantee. Finding 1 is what forces a change to this head. The head was d1ae31d by `gh pr view 197 --json headRefOid` at the start and at the end. Line numbers are at d1ae31d.
+
+FINDINGS
+
+1. MINOR, forces the change. After a failed first snapshot, a later retry can land between a discard's entry and its row's removal. The audit would then halt the fleet on a row the technician really discarded.
+- The claim. `discardLog.ts:19-21` says: "an entry is never written between the snapshot's read and the removal of its row". That holds only while the snapshot has never failed.
+- Why it fails. `beforeQueueWrite` lets the write through when the snapshot attempt failed (`lib/syncGate.ts:48-53`). `ensureSnapshot` retries 30 s later, on whatever write asks next (`drainGate.ts:77`, `:411-422`). So once attempt 1 has failed, `appendDiscard` (`discardLog.ts:108`) writes its entry without waiting. A retry that starts before the row is removed (for example `outbox.ts:251` then `:259`) reads both the entry and the row.
+- The sequence (scratch PROBE G, passed): (1) attempt 1 fails: the record parts cannot be written; (2) `discardItem("pay-1")` appends entry E, and the trace write is slow, for example because the app went to the background mid-discard; (3) 30 s later, any queue write retries the snapshot, and the retry succeeds; (4) the removal runs; (5) the stored manifest now holds `discards: [E]` and `records.outbox: ["pay-1"]`, and the row is gone from the phone.
+- What the audit does with it. Under point 9, E is "held by the manifest", so it is never evidence for that row. The row is not on the server and not in the after-report, so it reads `missing`: exit 3.
+- Two other ways to reach the same state (INFERRED, not tested): a snapshot that wrote its parts but not its head; and a headless context taking its snapshot while the foreground discards (two contexts, two memos).
+- Smallest fix: refuse a discard until this build's snapshot is stored. Add a strict variant of the seam, for example `snapshotHeld(): Promise<boolean>`; `appendDiscard` throws when it is false. The row stays, and the screens already show `DISCARD_NOT_RECORDED`. `removePendingMedia` already parks a deleted clip when its entry is refused (C48). Test: attempt 1 fails, then a discard leaves no entry and keeps its row.
+- If the coordinator rules it a residual instead, the comment at `discardLog.ts:19-21` and contract point 9 must name it.
+
+2. NOTE, audit side; no phone change. The phone names every case in which its discard list cannot be trusted. The audit has to read those names:
+- `storage.unreadable_stores` or `unreadable_keys` containing `fleet.drain.discards.v1` (`manifest.ts:389-399`, `:414`);
+- a `preserved_corrupt` key `fleet.drain.discards.v1.corrupt*`, which appears in later manifests once `readQueueStore` has moved the corrupt bytes aside;
+- any `unreadable_parts`. Their key names do not say which group they held, and the discards are one of the record-part groups (`drainGate.ts:379`, `:244-258`).
+In each case, older discards are missing from the list. Their traces (with ids) would then count as "made after", which is the unsafe direction. The audit should exit 4 for that install in all three cases. Also, `discardRecords` maps a missing `entry_id` to `""` (`discardLog.ts:77-89`). The audit must treat `""` as having no id. No entry written by this code lacks one.
+
+1. THE THREE FIELDS
+- Names: match the field names at plan-v9.69. `queue_discard` props are the six version-1 fields plus `install_id` and `entry_id` (`telemetry.ts:139-148`). `drain_after.discards[]` and `drain_manifest.discards` share one type and one mapper (`DiscardRecord` / `discardRecords`, `discardLog.ts:54-89`, used by `afterReport.ts:66` and `manifest.ts:414`). Fields: `entry_id`, `queue`, `kind`, `reason_class`, `owner_tech`, `discarded_by`, `record_id`, `install_id`, `at`.
+- `[]` never absent: `buildManifest` always sets it (`:582`). The head stores `[]` (`drainGate.ts:398`), and the loader rebuilds the list from the parts (`:256`). The one exception is question 4.
+- Sanitiser: `sanitizeDeep` runs on the manifest upload (`drainGate.ts:561`), on the after-report (`afterSend.ts:149`), and on the trace at append (`telemetry.ts`, `appendEvent`).
+- No free text: the list is whitelisted. The lane's `manifest.test` drops a `note` field.
+- `entry_id`: `Crypto.randomUUID()` (`discardLog.ts:109`).
+
+2. THE BOUNDARY
+- Discard while the snapshot is being taken: it waits (`:108`). Pinned by the lane test "the data layer writes no entry while this build's snapshot is still being taken".
+- Killed between the append and the trace, or between the snapshot and its storage: if the entry was appended under an earlier build N and the app died before the removal, build N+1's manifest holds both the entry and the row; the row stays listed, so the listing judges it (safe). If the snapshot was read but not stored, the next attempt re-reads (safe, except for finding 1).
+- `removeDiscard` after a trace that could not be stored: the id appears in no later document (lane test). Only under finding 1 could a stored manifest hold it. Even then it only stops that id counting as evidence, and the row stays listed, so it is harmless.
+- The next build: v42's manifest holds v41's discard by the same id (lane test "a discard after the snapshot is not in that manifest...").
+- Relaunch: the list is rebuilt from the parts with the same ids and no retake (same lane test). The mapper gives the same result when run twice.
+- Corrupt list: `[]` plus `unreadable_stores` (lane test). The audit must refuse to judge it (finding 2).
+- Safe direction (finding 1): a discard made after the snapshot ends up in the list.
+
+3. THE TRACE
+All six paths go through `recordQueueDiscard`, which passes `entry_id: entryId` (`discardEvent.ts:70`). That is the same id `appendDiscard` returned (`:52`): `outbox.ts:251`; `attendance/sync.ts:159`; `presenceQueue.ts:150`; `pendingMedia.ts:231`, in both of its modes. `recordDiscard` has no other caller. The six `discardEvents` tests assert that the trace props equal the contract fields plus the entry's own id.
+
+4. A HEAD WITHOUT THE KEY
+Scratch PROBE H passed: such a head loads without `discards`, is uploaded without it, and is never retaken (no write to `fleet.drain.manifest*`).
+- Which heads: only heads written by a build of this PR before d1ae31d, under the same versionCode. Those exist only on lab devices; no fleet build exists.
+- Effect: that install is stuck at "incomplete" (exit 4) for that versionCode until a build with a new versionCode. If its receipt was already held, nothing is re-uploaded.
+- No fleet phone can be in this state. Whether any lab device shares the final versionCode depends on the owner's value.
+
+5. WHAT THE COMMIT COULD HAVE BROKEN
+- Gate order: unchanged. The only new wait is `appendDiscard` awaiting the snapshot, which adds no send.
+- After-report: the same builder. The fingerprint now includes `entry_id`, so it changes once after the update.
+- Drain Report counts: they do not read `discards`. `drainReport.test` only gains a `discards: []` in its fixture.
+- Head size: the head keeps `[]`, and the list lives in the parts (lane test with 50 entries).
+- Telemetry queue: about 50 bytes more per trace.
+
+6. TESTS ON 8cb84f1, AND CHANGED EXPECTATIONS
+- Failing on the base sources: the six source files were reverted to 8cb84f1 in a scratch copy and the six changed suites run. 17 tests failed (120 passed). The lane reported 16. The 17 are every test the lane named, plus `discardItem` of a queued item. Log: the coordinator's scratchpad, `c75-base-jest.log`.
+- Changed expectations: every one adds `entry_id`: in `expectOneDiscard`, the trace now equals the fields plus `entry_id: log[0].entry_id`; the telemetry key list; the afterReport case; drainGate point 6; the drainGate test helper `manifestOf` now reads the `discards` part group.
+- Nothing is weakened, and there is no skip, `.only` or `todo`.
+
+7. GATE
+- Clean tree at d1ae31d: typecheck EXIT=0; Jest EXIT=0, 65 suites, 764 tests; `expo export` EXIT=0; SUMMARY FAIL=0.
+- Log: `C:/Users/User/.fixflow-cache/gate-logs/rv197/mobile-20261114-185120/` (wrapper output in the scratchpad, `gate-rv197-d1ae31d.log`).
+
+WHAT THE REVIEWER RAN
+- Free RAM and commit charge before each heavy step (8.8 to 9.7 GB free, 34 to 35 GB commit).
+- The gate, once, in the background.
+- `npm test` on the six changed suites in the scratch copy (sources reverted to 8cb84f1, `node_modules` through a junction).
+- `npm test` on one scratch probe file in the review tree (PROBE G and H, both passed). Log: the scratchpad, `c75-probes.log`.
+- Read-only `git diff`, `git show`, grep and `gh pr view`.
+
+NOT VERIFIED
+- Finding 1 through two JS contexts (a headless snapshot during a foreground discard) on a device.
+- How the P2b-2 audit treats `""` ids, `unreadable_parts`, and the discard key in `unreadable_stores` or `preserved_corrupt`.
+- The server ingest's body cap for a manifest carrying up to 3,000 discards.
+
+CLEANUP: the scratch probe was removed from the review tree, and `git status` is empty at d1ae31d. The scratch copy was removed: junction first, and the review tree's `node_modules` is intact. Only the logs remain in the scratchpad.
+
+COORDINATOR (2026-11-14, 18:56; ruling C78). Finding 1 is a fix, not a residual: the audit's rule rests on "held by the manifest" meaning "made before the snapshot", so the phone must make that true in every order of failure. Ruled: the phone refuses a discard until this build's snapshot is stored, head included, and the check reads what is stored and not a per-context memo (so a headless task and the foreground cannot disagree); the comment at `discardLog.ts:19-21` is corrected. Finding 2 goes to the audit (the P2b-2 lane, in its open C75 commit): a manifest whose discard list the phone marks as unreadable, as preserved corrupt, or with any unreadable part is not judged (exit 4 for that install), and an `entry_id` of `""` is no id. One question is put to the phone lane because nobody has verified it: how large a manifest upload can get against the server's limit on one event, and what the phone does if it is refused for size. Sent to both lanes at 18:58 and 18:59; the same reviewer re-reads the phone's delta.
