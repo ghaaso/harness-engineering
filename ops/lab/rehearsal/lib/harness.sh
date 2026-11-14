@@ -87,12 +87,15 @@ rb_text_has() { # <step> <text>
   python3 "$KIT/lib/runbook.py" text "$f" "$1" 2>/dev/null | tr '\n' ' ' | tr -s ' ' | grep -qF -- "$2"
 }
 # How a command line chosen by content relates to the block typed before it (6.12's up line):
-# "moved" when either text is missing (the row is then MOVED, nothing typed for it), "in-block"
-# when the block holds exactly that line (typed with the block), else "own" (typed after it). A
-# line in the block that merely mentions the command (a here-document line, a comment) is not
-# that line (review 201-8c2383e MINOR 2). Pure: lib/selftest-runbook.py calls it.
-rb_up_plan() { # <block text> <line text>
-  case "$1$2" in *__RB_MISSING__*) echo moved; return 0 ;; esac
+# "moved" when the block is missing, or the line is missing where the text does not say none
+# follows (the row is then MOVED, nothing typed for it); "none" when the line is missing and the
+# text says none follows (<none ok> = yes: ruling C61's 6.12); "in-block" when the block holds
+# exactly that line (typed with the block); else "own" (typed after it). A line in the block that
+# merely mentions the command (a here-document line, a comment) is not that line (review
+# 201-8c2383e MINOR 2). Pure: lib/selftest-runbook.py calls it.
+rb_up_plan() { # <block text> <line text> [<none ok: yes|no>]
+  case "$1" in *__RB_MISSING__*) echo moved; return 0 ;; esac
+  case "$2" in *__RB_MISSING__*) [ "${3:-no}" = yes ] && echo none || echo moved; return 0 ;; esac
   if printf '%s\n' "$1" | grep -qxF -- "$2"; then echo in-block; else echo own; fi
 }
 # WT16's verdict from what was measured, never from one printed line (review 201-8c2383e MINOR 3:

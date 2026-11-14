@@ -98,9 +98,13 @@ and with `<end>` runs through the one later line containing it (`$`: the block's
 or several matches are MOVED. Only command text counts: a comment, a here-document's body, an
 `echo` or `printf` of the command and a longer word (`--report-json` for `--report`) never match,
 so they can neither stand in for a missing command nor compete with the real one. So 6.12's up
-line, 6.13's report and set lines, WT1's and WT2's up lines and 11.8's push are typed from either
-text. 6.12's up line is typed after block 1 unless block 1 holds exactly that line, and a missing
-up line makes the row MOVED. An anchor name used twice in a step is MOVED,
+line, 6.13's report and set lines, WT1's up line and 11.8's push are typed from either text, and
+WT2's up line is 8.1's (`--force-recreate backend`), which every text has (6.12's is gone from the
+runbook lane's C61 text, 8.6's from the older ones). 6.12's up line is typed after the fence block
+unless that block holds exactly that line; a missing up line makes the row MOVED unless the text
+says none follows (the block anchored `6.12-fence` and the prose "No restart follows", ruling C61:
+both, or MOVED). 6.4's Check is DONE on `<n> (head)` or the literal `<rev> (head)`, after the
+printed head is checked against the dump's. An anchor name used twice in a step is MOVED,
 never the later block. Where the batch rewrote a step, the rig has
 both readings: it asks the runbook under rehearsal whether the anchor exists (`rb_anch`) and
 follows that text (6.1, 6.6, 6.7, 6.9, 8.2, 8.5a-8.7, 11.12, 11.13a, 9.2's expected time, 6.8's
@@ -109,8 +113,9 @@ check 6), so main and a runbook PR are rehearsed by the same rig. `lib/selftest-
 block added in front, a `</dev/null` added, an inserted line, a changed first line, a duplicate
 first line, an anchor, an anchor fallback, a missing anchor, a renamed step, a duplicate anchor,
 and the line selector across blocks, moved, doubled and absent, and against a comment, an echo, a
-here-document line and a longer option; 6.12's up-line decision; WT16's verdict; no Docker
-needed); both
+here-document line and a longer option; 6.12's up-line decision, including "none" only when the
+text says so; WT16's verdict; no Docker needed). On a text whose 6.12 has no up line, the line
+cases run on a copy with main's line added after the fence; both
 rehearsals run it on every run, and its result is the row `selftest` (FAILED when a case fails). After a runbook change merges, regenerate the pins
 (`python3 lib/runbook.py pins <runbook>`, with the two header lines) in the same change that
 teaches the rig any new text.
@@ -133,8 +138,18 @@ mutation inserts a line while keeping the committed pin. `mutations.md` lists, p
 row it targets, the verdict that row got, the same row in the paired normal run (`--baseline`),
 and whether the check caught it. A mutation is caught only when `mutations-applied.log` says it was
 **applied** (its id matched exactly; a state hook logs "applied" only after its change succeeded),
-its target row reads the wanted verdict, and the baseline row did not already read it. The kinds no mutation
+its target row reads the wanted verdict, and the baseline row did not already read it. A target
+may name alternatives (`drain-window|8.7,drain-window|8.6`) when the texts check that fact in
+different rows; each is judged against its own baseline row. The kinds no mutation
 covers are named in the PR that last ran it.
+
+**Wrong turns start from a stated state.** Before each wrong turn `wt_state` sets the restore
+sign-off (present or absent) and the backend (running or stopped), measures both, and writes them
+into the row's "what happened" as `[start: ...]` (and to `deviations.log`), so no turn inherits
+the previous one's host. WT16 and WT1 start present and running (the live host); each WT2 spelling
+present and stopped; the others absent and stopped. WT13 (b) starts the backend by hand after
+6.6 (`up -d`, sign-off written by hand) before typing 6.7; on a text whose DROP line refuses on
+its own (C61), (b2) then removes the sign-off and types 6.7 again with the backend still running.
 
 **Lab substitutions** (each is written to `deviations.log` when it happens):
 

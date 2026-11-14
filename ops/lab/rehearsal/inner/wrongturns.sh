@@ -18,6 +18,8 @@ WT="$OUT/wrongturns.tsv"
 printf 'id\twrong turn\twhat happened\twhat stopped it\tscripted guard needed?\n' > "$WT"
 wt() {
   local what="$3"
+  # the host state the turn started from, as wt_state set and measured it
+  [ -n "$WTSTATE" ] && { what="[start: $WTSTATE] $what"; WTSTATE=""; }
   # a wrong turn whose runbook text moved typed nothing: say so instead of judging it
   [ -n "$RB_MOVED" ] && { what="MOVED (runbook moved under: $RB_MOVED; nothing typed for it) $what"; RB_MOVED=""; }
   printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$what" 700)" "$(clean "$4" 300)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"
@@ -30,7 +32,32 @@ ntables() { psql_app -c "select count(*) from pg_tables where schemaname = 'publ
 # with that text (MARKERS=yes) each wrong turn below types the guarded blocks, by their anchors.
 MARKERS=no; rb_anch 6.7 drop-restore && MARKERS=yes
 RD=/var/lib/fixflow/restore
+SO=/etc/fixflow/restore-signed-off
 G67="$(rb_fence 6.7 @drop-restore/1)"
+# Ruling C61 adds a live test to 6.7's lines: they refuse while the sign-off exists or the backend
+# runs. LIVE says whether the text under rehearsal has it (it only changes what a row can expect).
+LIVE=no; case "$G67" in *'this database is live'*) LIVE=yes ;; esac
+
+# Every wrong turn starts from a host state it states and sets here, so that no turn inherits
+# what the one before it left (the coordinator's C64 point 3: with C61's live test, WT2's sign-off
+# would otherwise stop WT3-WT14 at 6.7's live test before their own guards). Most turns start as
+# 6.1 leaves the host during a restore: no sign-off, the backend stopped. The row's "what
+# happened" column begins with the state measured after setting it.
+WTSTATE=""
+wt_state() { # <id> <sign-off: present|absent> <backend: running|stopped>
+  if [ "$3" = running ]; then
+    # the compose gate refuses a backend without the sign-off (WT1), so it is written first
+    [ -s "$SO" ] || printf '%s\n' "signed-off case=a dump=$NIGHTLY by=l4-rehearsal for=$1" > "$SO"
+    backend_running || { ffc $P_DB --profile app up -d >/dev/null 2>&1; wait_backend_healthy 150 >/dev/null 2>&1; }
+  else
+    ! backend_running || ffc $P_DB --profile app stop backend >/dev/null 2>&1
+  fi
+  if [ "$2" = absent ]; then rm -f "$SO"
+  elif [ ! -s "$SO" ]; then printf '%s\n' "signed-off case=a dump=$NIGHTLY by=l4-rehearsal for=$1" > "$SO"; fi
+  local got; got="sign-off $( [ -s "$SO" ] && echo present || echo absent), backend $(backend_running && echo running || echo stopped)"
+  WTSTATE="$got$( [ "$got" = "sign-off $2, backend $3" ] || echo " (NOT the state wanted: sign-off $2, backend $3)")"
+  echo "lab $1: set to its starting state (sign-off $2, backend $3); measured: $got" >> "$OUT/deviations.log"
+}
 # 6.6 (a) with its one-line proof, then (b): the count and the branch it takes; sets D and SUM
 six6() { # <id> <dump file> <recorded sha256>
   D="$2"; SUM="$3"
@@ -48,12 +75,7 @@ six6() { # <id> <dump file> <recorded sha256>
 # The owner then types 6.6 (a) and (b) for a good dump and 6.7, in one shell, never 6.1 (which
 # removes the sign-off and the markers and stops the backend). Runs first, on both texts: it needs
 # the live state the restore left, which the later wrong turns take apart.
-SO=/etc/fixflow/restore-signed-off
-if [ ! -s "$SO" ] || ! backend_running; then
-  printf '%s\n' "signed-off case=a dump=$NIGHTLY by=l4-rehearsal at=$(date -u +%FT%TZ)" > "$SO"
-  ffc $P_DB --profile app up -d >/dev/null 2>&1; wait_backend_healthy 150 >/dev/null
-  echo "lab WT16: the backend was not running with a sign-off after the restore part, so the rig wrote the sign-off and started it (as 6.9 does) before WT16" >> "$OUT/deviations.log"
-fi
+wt_state WT16 present running
 so16="$( [ -s "$SO" ] && echo present || echo absent)"; run16="$(backend_running && echo running || echo 'NOT running')"
 ev16() { psql_app -c "select count(*) from job_event where text = '$1'" 2>/dev/null | tr -d ' '; }
 add16() { psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', '$1', 'm1', nextval('job_event_seq') from job limit 1" >/dev/null 2>&1; }
@@ -122,9 +144,10 @@ wt "WT16 (C58)" "6.6 (a) and (b) for a good dump, then 6.7, in one shell with 6.
 # as 6.9 would leave it: the markers WT16's 6.6 wrote are removed, so they vouch for nothing later
 rm -f $RD/ready-to-drop $RD/proven
 echo "lab WT16: after WT16 the rig removed the markers its 6.6 wrote (as 6.9 does); the database now holds the nightly dump's rows" >> "$OUT/deviations.log"
-wait_backend_healthy 120 >/dev/null 2>&1
-
 # ---- WT1: skip the sign-off (start the app with no restore-signed-off) ----------------------
+# from a live host, as a completed restore leaves it: 6.1 closes it, then 6.9's up without 6.9's
+# printf
+wt_state WT1 present running
 rb_run wt1-close "$(rb_fence 6.1 @close/1)"
 rb_run wt1-up "$(rb_line 6.9 @signoff/1 'profile app up')"            # only the `up` line of 6.9, no printf / chmod
 o="$(out_of | tail -n 3 | tr '\n' ' ')"; rc="$RC"
@@ -136,21 +159,27 @@ wt WT1 "6.9's 'up' without writing /etc/fixflow/restore-signed-off" "up exit $rc
 
 # ---- WT2: forced keys in backend.env, the spellings the P3a review tried --------------------
 cp /etc/fixflow/backend.env /srv/l4/backend.env.good
-printf '%s\n' "$(date -u +%FT%TZ) wt" > /etc/fixflow/restore-signed-off   # the gate's sign-off half open
 ENVCHK="$(rb_line 3.6 1 'restore-gate.sh --env-only')"
+# The up line: 8.1's `ffc $P_RUN up -d --force-recreate backend`, the one start-after-an-env-edit
+# command every text has (main, the runbook batches, 53c6046). 6.12's was used until ruling C61
+# removed it (the fence needs no restart).
+UP2="$(rb_line 8.1 '*' 'force-recreate backend')"
 kelvin="$(printf 'FIXFLOW_BAC\xe2\x84\xaaUP_PREFIX=backups/db/')"
 for spelling in 'fixflow_environment=dev' 'FIXFLOW_ENVIRONMENT: dev' 'export FIXFLOW_ENABLE_DISPATCHER=true' \
   ' FIXFLOW_ENVIRONMENT = dev' 'Fixflow_Backup_Enabled=true' "$kelvin" 'FIXFLOW_ENVIRONMENT=dev' 'FIXFLOW_ENABLE_DISPATCHER=true'; do
+  # each spelling from the same state: the sign-off written (the gate otherwise refuses every
+  # start, WT1), the backend stopped, backend.env as it was plus this one line
+  wt_state "WT2 [$spelling]" present stopped
   cp /srv/l4/backend.env.good /etc/fixflow/backend.env
   printf '%s\n' "$spelling" >> /etc/fixflow/backend.env
   rb_run wt2-envcheck "$ENVCHK"
   chk="$(out_of | tr '\n' ' ' | cut -c1-160)"
-  rb_run wt2-up "$(rb_line 6.12 '*' 'force-recreate backend')"   # 6.12's up line, in whichever block holds it
+  rb_run wt2-up "$UP2"
   urc="$RC"
   if [ "$urc" = 99 ]; then
-    # the up line was not typed (the runbook moved under 6.12): nothing started, so nothing is judged
+    # the up line was not typed (the runbook moved under 8.1): nothing started, so nothing is judged
     wt "WT2 [$spelling]" "backend.env gains: $spelling" "3.6 check: $chk | up line not typed (moved.log)" \
-      "MOVED: 6.12's block changed shape, so its up line was not typed" "not judged (MOVED)"
+      "MOVED: 8.1's up line was not found, so it was not typed" "not judged (MOVED)"
     continue
   fi
   [ "$urc" = 0 ] && wait_backend_healthy 120 >/dev/null 2>&1
@@ -170,12 +199,12 @@ for spelling in 'fixflow_environment=dev' 'FIXFLOW_ENVIRONMENT: dev' 'export FIX
   ffc $P_DB --profile app stop backend >/dev/null 2>&1
 done
 cp /srv/l4/backend.env.good /etc/fixflow/backend.env
-ffc $P_DB --profile app up -d >/dev/null 2>&1; wait_backend_healthy 150
 
 # ---- WT3: a truncated dump, cut early (60 %) and late (99 %: only the tail of the data lost) ----
 psql_super() { ffc exec -T postgres psql -U postgres -v ON_ERROR_STOP=1 "$@"; }
 want="$(grep " $NIGHTLY\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
 for pct in 60 99; do
+  wt_state "WT3 ($pct %)" absent stopped   # as 6.1 leaves the host during a restore
   T="trunc$pct-$NIGHTLY"
   head -c "$(( $(stat -c %s "/srv/l4/dumps/$NIGHTLY") * pct / 100 ))" "/srv/l4/dumps/$NIGHTLY" > "/var/lib/fixflow/restore/$T"
   rb_run "wt3-$pct-62" "$(rb_span 6.2 'sha256sum')" "<dump>=$T"
@@ -208,6 +237,7 @@ for pct in 60 99; do
 done
 
 # ---- WT4: a dump whose list is empty (a dump of an empty database) ---------------------------
+wt_state WT4 absent stopped
 E="empty-$NIGHTLY"
 psql_super -c 'CREATE DATABASE fixflow_empty OWNER fixflow_app' >/dev/null 2>&1
 ffc exec -T postgres pg_dump -U fixflow_app -d fixflow_empty --format=custom > "/var/lib/fixflow/restore/$E"
@@ -231,6 +261,7 @@ wt WT4 "a dump whose restore list is empty" "6.6 (a): $o66" \
 fi
 
 # ---- C27 note 2 (WT5): the pre-restore copy fails to leave the host; does anything stop 6.7? --
+wt_state "WT5 (C27 note 2)" absent stopped
 if [ $MARKERS = yes ]; then
   cp "/srv/l4/dumps/$NIGHTLY" "$RD/$NIGHTLY"
   before_jobs="$(psql_app -c 'select count(*) from job')"
@@ -262,6 +293,7 @@ wt "WT5 (C27 note 2)" "6.6 (b)'s upload fails (stand-in bucket stopped) and the 
 fi
 
 # ---- C27 note 1 (WT6): drop before the checks (6.7 first, 6.6 never run) ----------------------
+wt_state "WT6 (C27 note 1)" absent stopped
 psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', 'WT6 manager write after the dump', 'm1', nextval('job_event_seq') from job limit 1" > "$OUT/wt6-insert.log" 2>&1
 marker="$(psql_app -c "select count(*) from job_event where text = 'WT6 manager write after the dump'")"
 if [ $MARKERS = yes ]; then
@@ -290,6 +322,7 @@ wt "WT6 (C27 note 1)" "6.7 typed before 6.6 (the owner skips 'prove' and 'save')
 fi
 
 # ---- N1 (WT12): 6.7 in a new or reconnected shell, where D is empty -----------------------------
+wt_state "WT12 (N1)" absent stopped
 D_SAVED="${D:-}"; unset D
 jobs12="$(psql_app -c 'select count(*) from job' 2>/dev/null)"
 rb_run wt12-67-no-d "$G67"
@@ -309,33 +342,49 @@ if [ $MARKERS = yes ]; then
   ev() { psql_app -c "select count(*) from job_event where text = '$1'" 2>/dev/null | tr -d ' '; }
   addev() { psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', '$1', 'm1', nextval('job_event_seq') from job limit 1" >/dev/null 2>&1; }
   cp "/srv/l4/dumps/$NIGHTLY" "$RD/$NIGHTLY"
-  # as after 6.1: the backend is stopped while 6.6 and 6.7 run
-  ffc $P_DB --profile app stop backend >/dev/null 2>&1
 
-  # WT13 (a): a restore that went through 6.9 leaves no marker, so 6.7 typed again for the same dump,
-  # 6.6 skipped, drops nothing. Shown by the state the completed restore left, then 6.7.
+  # WT13 (a): a restore that went through 6.9 leaves no marker. A later attempt for the same dump
+  # starts at 6.1 (the host as 6.1 leaves it), skips 6.6 and types 6.7: only the marker guard is
+  # in question, so it must name the missing marker.
+  wt_state WT13 absent stopped
+  st13a="$WTSTATE"; WTSTATE=""
   rm -f $RD/ready-to-drop $RD/proven
   addev 'WT13 write after the earlier restore'
   m0="$(ev 'WT13 write after the earlier restore')"; D="$NIGHTLY"
   rb_run wt13-67-after-signoff "$G67"
   o13a="$(out_of | tr '\n' ' ' | cut -c1-160)"; m1="$(ev 'WT13 write after the earlier restore')"
-  # WT13 (b): an attempt abandoned after 6.6 leaves a marker for the same dump; the backend is then
-  # started by hand (outside the runbook) and a manager writes; 6.7 is typed later for the same dump.
+  # WT13 (b): an attempt abandoned after 6.6 (from the same state) leaves a marker for the same
+  # dump. The backend is then started BY HAND, outside the runbook: the compose gate refuses a
+  # backend without the sign-off (WT1), so the hand start writes the sign-off and runs `up`, as an
+  # owner would have to. A manager writes; 6.7 is typed later for the same dump, on that live host.
   six6 wt13 "$NIGHTLY" "$(sumof "$NIGHTLY")"
+  printf '%s\n' "signed-off case=a dump=$NIGHTLY by=hand (WT13 b)" > "$SO"
+  ffc $P_DB --profile app up -d >/dev/null 2>&1; wait_backend_healthy 150 >/dev/null 2>&1
+  run13="$(backend_running && echo running || echo 'NOT running')"
+  echo "lab WT13 (b): the backend was started by hand as an owner would have to: the sign-off written by hand (the compose gate refuses without it, WT1), then up; measured: backend $run13" >> "$OUT/deviations.log"
   addev 'WT13 write after an abandoned 6.6'
   n0="$(ev 'WT13 write after an abandoned 6.6')"
-  so13="$( [ -s /etc/fixflow/restore-signed-off ] && echo present || echo absent)"
+  so13="$( [ -s "$SO" ] && echo present || echo absent)"
   rb_run wt13-67-stale-same "$G67"
   o13b="$(out_of | tr '\n' ' ' | cut -c1-160)"; n1="$(ev 'WT13 write after an abandoned 6.6')"
   stop13="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
-  wt "WT13" "a marker left by an earlier restore: (a) one that went through 6.9, then 6.7 again with 6.6 skipped; (b) one abandoned after 6.6, the backend started by hand and a manager write made, then 6.7 for the same dump" \
-    "(b) the sign-off file when 6.7 was typed: $so13; the write made after 6.6: $n0 before, $n1 after. (a) a later write: $m0 before, $m1 after; 6.7: $o13a. (b) 6.6: $W66A / $W66B; 6.7: $o13b" \
-    "(a) $( [ "$m1" = "$m0" ] && echo '6.9 removed the marker, so the DROP line refused (a script)' || echo 'NOTHING: dropped') ; (b) $( if [ "$n1" = "$n0" ] && [ -n "$stop13" ]; then echo "stopped by the DROP line's own test (a script): $stop13; the write is still there"; elif [ "$n1" = "$n0" ]; then echo 'UNCLEAR: the write is still there but no STOP line was printed; read the step log (wt13-67-stale-same)'; else echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)"; fi)" \
-    "$( [ "$m1" = "$m0" ] && echo 'no for (a)' || echo 'YES for (a)'); (b): $( [ "$n1" = "$n0" ] && echo no || echo 'by design the marker vouches for the dump and the copy, not for the database after it; a write needs the backend running, which the restore gate refuses until 6.9 (WT1). Optional: (b) also records max(job_event.seq) and the DROP line compares it')"
+  # (b2), only where 6.7 carries ruling C61's live test and (b) was refused: the sign-off removed
+  # again while the backend still runs, so the test's other half (a running backend) is shown too
+  n2="$n1"; stop13c=""
+  if [ $LIVE = yes ] && [ "$n1" = "$n0" ]; then
+    rm -f "$SO"
+    rb_run wt13-67-running "$G67"
+    stop13c="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"; n2="$(ev 'WT13 write after an abandoned 6.6')"
+  fi
+  wt "WT13" "a marker left by an earlier restore: (a) one that went through 6.9, then a new attempt from 6.1 that skips 6.6 and types 6.7; (b) one abandoned after 6.6, the backend started by hand and a manager write made, then 6.7 for the same dump" \
+    "(a) start: $st13a; a later write: $m0 before, $m1 after; 6.7: $o13a. (b) when 6.7 was typed: sign-off $so13, backend $run13; the write made after 6.6: $n0 before, $n1 after$( [ -n "$stop13c" ] && echo ", $n2 after 6.7 again with the sign-off removed and the backend still running ($stop13c)"). (b) 6.6: $W66A / $W66B; 6.7: $o13b" \
+    "(a) $( if [ "$m1" = "$m0" ] && echo "$o13a" | grep -q 'no 6.6 marker'; then echo '6.9 removed the marker, so the DROP line refused (a script)'; elif [ "$m1" = "$m0" ]; then echo 'refused, but not by the marker test: read the step log (wt13-67-after-signoff)'; else echo 'NOTHING: dropped'; fi) ; (b) $( if [ "$n1" = "$n0" ] && [ -n "$stop13" ]; then echo "stopped by the DROP line's own test (a script): $stop13; the write is still there$( [ -n "$stop13c" ] && [ "$n2" = "$n0" ] && echo "; with the sign-off removed and the backend running, again: $stop13c")"; elif [ "$n1" = "$n0" ]; then echo 'UNCLEAR: the write is still there but no STOP line was printed; read the step log (wt13-67-stale-same)'; else echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)"; fi)" \
+    "$( [ "$m1" = "$m0" ] && echo 'no for (a)' || echo 'YES for (a)'); (b): $( if [ "$n1" = "$n0" ] && [ -n "$stop13" ]; then echo 'no: scripted (ruling C61: the DROP line refuses while the sign-off exists or the backend runs)'; elif [ "$n1" = "$n0" ]; then echo 'read by the owner: the step log decides'; else echo 'by design the marker vouches for the dump and the copy, not for the database after it; a write needs the backend running, which the restore gate refuses until 6.9 (WT1). Optional: (b) also records max(job_event.seq) and the DROP line compares it'; fi)"
   rm -f $RD/ready-to-drop $RD/proven
 
   # WT14: a dump damaged BEFORE its sum was recorded (cut at 99 %, its own sum as SUM) passes 6.6 (a)
   # as the text warns; 6.7 drops and the load stops half-way; 6.7 is run again; then the way back.
+  wt_state WT14 absent stopped
   T14="damaged99-$NIGHTLY"
   head -c "$(( $(stat -c %s "/srv/l4/dumps/$NIGHTLY") * 99 / 100 ))" "/srv/l4/dumps/$NIGHTLY" > "$RD/$T14"
   addev 'WT14 live write before the failed restore'
@@ -370,6 +419,7 @@ if [ $MARKERS = yes ]; then
     rb_run "$1" "$(rb_fence 6.6 @b-scp)" "<the sha256 the laptop printed>=$s"
     out_of | tail -n 1
   }
+  wt_state WT15 absent stopped
   echo "lab WT15: the laptop of 6.6 (b)'s scp fallback is a directory on the stand-in host (/srv/l4/laptop); its sha256sum stands in for the laptop's" >> "$OUT/deviations.log"
   D="$NIGHTLY"; SUM="$(sumof "$NIGHTLY")"
   rb_run wt15-66a "$(rb_fence 6.6 @a-list)" "<dump file name>=$D" "<the recorded sha256 of that file>=$SUM"
@@ -401,6 +451,8 @@ else
 fi
 
 # ---- the way back: the pre-restore copy, by the runbook's own route ---------------------------
+# 6.7's last paragraph: every route back is before 6.9, so the host is as 6.1 leaves it
+wt_state BACK absent stopped
 PRE="$(basename "$(cat "$OUT/pre-restore-file.txt" 2>/dev/null)")"
 if [ -n "$PRE" ] && [ -f "/var/lib/fixflow/restore/$PRE" ]; then
   if [ $MARKERS = yes ]; then

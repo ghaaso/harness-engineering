@@ -20,13 +20,16 @@ Against mutated copies of <runbook>, in a temporary folder, it checks that:
     longer option (`--report-json` for `--report`) never stand in for a missing command (MOVED)
     and never compete with the real one (review 201-8c2383e MINOR 1);
   - 6.12's up line is typed unless block 1 holds exactly that line, and a missing up line is
-    MOVED (lib/harness.sh rb_up_plan; MINOR 2);
+    MOVED (lib/harness.sh rb_up_plan; MINOR 2), unless the text says none follows: the fence
+    block anchored AND the prose "No restart follows" (ruling C61); either half alone is MOVED;
   - WT16's verdict follows what was measured, not one printed line (lib/harness.sh drop_verdict;
     MINOR 3): a lost write needs the backend seen running and the sign-off present, a STOP needs
     both writes kept, and anything else is UNCLEAR;
   - a renamed step is refused as missing (exit 3).
-Each case uses a block the rig really types and that main and the runbook batch both keep (6.8,
-6.4, 6.12's up line), so the test holds on either text.
+Each case uses a block the rig really types and that every text it follows keeps (6.8, 6.4,
+6.13's report line). The 6.12 up-line cases need an up line: on a text without one (#211, ruling
+C61) they run on a copy with main's line added in a block of its own after the fence, and the
+plan cases then check that the unchanged text reads "none". So the test holds on every text.
 Exit 0 when every case holds. Runs anywhere with Python 3.10+; no network, no Docker.
 """
 
@@ -82,6 +85,28 @@ def duplicate_anchor(body: list[str]) -> list[str]:
 
 
 UP = "force-recreate backend"
+# main's 6.12 up line, added to a text that has none so the cutter's line cases still run there
+MAIN_UP = "ffc $P_DB --profile app up -d --force-recreate backend"
+NOUP = "No restart follows"
+
+
+def add_block_after_first(body: list[str], line: str) -> list[str]:
+    i = first_fence(body)
+    j = next(k for k in range(i + 1, len(body)) if body[k].startswith("```"))
+    return body[: j + 1] + ["", "```bash", line, "```"] + body[j + 1 :]
+
+
+def rb(cmd: str, path: str, step: str) -> str:
+    return subprocess.run([sys.executable, os.path.join(HERE, "runbook.py"), cmd, path, step],
+                          capture_output=True, text=True).stdout
+
+
+def none_ok(path: str) -> str:
+    # the rig's rule (lib/steps.sh 6.12): no up line is right only when the fence block is
+    # anchored and the prose says no restart follows
+    a = "6.12-fence" in rb("anchors", path, "6.12").split()
+    t = NOUP in " ".join(rb("text", path, "6.12").split())
+    return "yes" if a and t else "no"
 
 
 def up_line_alone(body: list[str]) -> list[str]:
@@ -106,12 +131,19 @@ def into_heredoc(new: str):
 
 def main() -> int:
     src, pins = sys.argv[1], sys.argv[2]
-    text = open(src, encoding="utf-8").read()
-    # the real lines as the unedited runbook has them (the first two `line` cases below assert
-    # that these resolve); each mutation below edits around them
-    up = cut(src, pins, "6.12", "*\t" + UP)[1].strip()
-    rep = cut(src, pins, "6.13", "*\tset_pin --report")[1].strip()
-    want68 = cut(src, pins, "6.8", "1")[1]
+    orig = open(src, encoding="utf-8").read()
+    has_up = cut(src, pins, "6.12", "*\t" + UP)[0] == 0
+    # 6.12 with an up line: the text itself, or (no up line, ruling C61) a copy with main's line
+    # in a block of its own after the fence. Every case below cuts from `text`.
+    text = orig if has_up else edit_step(orig, "6.12", lambda b: add_block_after_first(b, MAIN_UP))
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        fh.write(text)
+        tsrc = fh.name
+    # the real lines as the runbook (or that copy) has them (the `line ... by content` cases
+    # below assert that these resolve); each mutation below edits around them
+    up = cut(tsrc, pins, "6.12", "*\t" + UP)[1].strip()
+    rep = cut(tsrc, pins, "6.13", "*\tset_pin --report")[1].strip()
+    want68 = cut(tsrc, pins, "6.8", "1")[1]
     first68 = want68.split(NL)[0]
     cases = [
         ("unchanged 6.8", text, "6.8", "1", 0, want68),
@@ -162,27 +194,29 @@ def main() -> int:
         def plan(body: str) -> str:
             p = os.path.join(d, "plan.md")
             open(p, "w", encoding="utf-8").write(body)
-            b = cut(p, pins, "6.12", "1")
+            b = cut(p, pins, "6.12", "@fence/1")
             u = cut(p, pins, "6.12", "*\t" + UP)
             blk = b[1].rstrip(NL) if b[0] == 0 else "__RB_MISSING__"
             ln = u[1].rstrip(NL) if u[0] == 0 else "__RB_MISSING__"
-            r = subprocess.run(["bash", "-c", '. "$0"; rb_up_plan "$1" "$2"', os.path.join(HERE, "harness.sh"), blk, ln],
-                               capture_output=True, text=True)
+            r = subprocess.run(["bash", "-c", '. "$0"; rb_up_plan "$1" "$2" "$3"', os.path.join(HERE, "harness.sh"),
+                                blk, ln, none_ok(p)], capture_output=True, text=True)
             return r.stdout.strip() or r.stderr.strip()[:80]
 
         base = plan(text)
-        blk0 = cut(src, pins, "6.12", "1")[1].rstrip(NL).split(NL)
+        blk0 = cut(tsrc, pins, "6.12", "@fence/1")[1].rstrip(NL).split(NL)
         e_text = edit_step(text, "6.12", into_heredoc("-- then " + up))
         with open(os.path.join(d, "e.md"), "w", encoding="utf-8") as f:
             f.write(e_text)
-        e_blk_ok = cut(os.path.join(d, "e.md"), pins, "6.12", "1")[0] == 0
+        e_blk_ok = cut(os.path.join(d, "e.md"), pins, "6.12", "@fence/1")[0] == 0
+        # with the up line gone the text reads "moved", unless it says none follows (#211: "none")
+        gone = "none" if none_ok(src) == "yes" else "moved"
         pcases = [
             ("6.12 plan, unchanged text", base, "in-block" if up in blk0 else "own"),
             ("6.12 plan, a here-document line naming the up line (E)", plan(e_text), base if e_blk_ok else "moved"),
             ("6.12 plan, the up line gone, a comment naming it (B)",
-             plan(edit_step(text, "6.12", replace_line(up, ["# needs: ffc ... --force-recreate backend first"]))), "moved"),
+             plan(edit_step(text, "6.12", replace_line(up, ["# needs: ffc ... --force-recreate backend first"]))), gone),
             ("6.12 plan, the up line gone, an echo of it left (D)",
-             plan(edit_step(text, "6.12", replace_line(up, [f'echo "now: {up}"']))), "moved"),
+             plan(edit_step(text, "6.12", replace_line(up, [f'echo "now: {up}"']))), gone),
             ("rb_up_plan, a block that only mentions the line",
              subprocess.run(["bash", "-c", '. "$0"; rb_up_plan "$1" "$2"', os.path.join(HERE, "harness.sh"),
                              "psql <<'SQL'" + NL + "-- then " + up + NL + "SQL", up], capture_output=True, text=True).stdout.strip(), "own"),
@@ -190,6 +224,18 @@ def main() -> int:
              subprocess.run(["bash", "-c", '. "$0"; rb_up_plan "$1" "$2"', os.path.join(HERE, "harness.sh"),
                              "psql <<'SQL'" + NL + "SQL" + NL + up, up], capture_output=True, text=True).stdout.strip(), "in-block"),
         ]
+        # ruling C61: a text whose 6.12 has no up line reads "none" only when it says so
+        if has_up:
+            pcases.append(("6.12 plan, the real text has an up line", plan(orig), base))
+        else:
+            pcases += [
+                ("6.12 plan, unchanged text: no up line, the text says none follows", plan(orig), "none"),
+                ("6.12 plan, no up line, the prose 'No restart follows' gone",
+                 plan(edit_step(orig, "6.12", lambda b: [l.replace(NOUP, "A restart follows") for l in b])), "moved"),
+                ("6.12 plan, no up line, the fence anchor gone",
+                 plan(edit_step(orig, "6.12", lambda b: [l for l in b if l != "<!-- block: 6.12-fence -->"])), "moved"),
+                ("6.12 plan, main's up line added after the fence", plan(text), "own"),
+            ]
         # review 201-8c2383e MINOR 3: WT16's verdict (lib/harness.sh drop_verdict) rests on what
         # was measured, never on `restore exit=` alone
         def dv(*a: str) -> str:
@@ -223,6 +269,8 @@ def main() -> int:
             bad += not ok
             last = out.strip().splitlines()[-1][:150] if out.strip() else ""
             print(f"{'ok  ' if ok else 'FAIL'} {name}: exit {rc} (want {want}){'' if rc == 0 else ': ' + last}")
+    os.unlink(tsrc)
+    print(f"6.12 up line: {'the text' + chr(39) + 's own' if has_up else 'none in the text: main' + chr(39) + 's line added for the line cases'}")
     return 1 if bad else 0
 
 
