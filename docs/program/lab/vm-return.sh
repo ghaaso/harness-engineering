@@ -21,7 +21,11 @@ LOG="${FF_VM_RETURN_LOG:-/c/Users/User/.fixflow-cache/gate-logs/vm-return.log}"
 mkdir -p "$(dirname "$LOG")"
 
 host_free_mb() { awk '/^MemFree:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null; }
-vm_free_mb() { MSYS_NO_PATHCONV=1 docker run --rm alpine:3 sh -c "free -m | awk 'NR==2 {print \$4}'" 2>/dev/null; }
+# What the VM could give back: its free pages PLUS its disk cache (columns 4 and 6 of `free -m`).
+# Counting free pages only was wrong: on 2026-11-14 at 14:04 an image build had filled the VM with
+# 12 GB of cache, its "free" read 275 MB, and this script concluded there was nothing to give
+# back while the host was down to 1.6 GB.
+vm_free_mb() { MSYS_NO_PATHCONV=1 docker run --rm alpine:3 sh -c "free -m | awk 'NR==2 {print \$4 + \$6}'" 2>/dev/null; }
 
 give_back() {
   local before after vmf
