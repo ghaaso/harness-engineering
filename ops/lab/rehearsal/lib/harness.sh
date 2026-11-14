@@ -86,6 +86,43 @@ rb_text_has() { # <step> <text>
   eff="$(rb_eff)"; f="${eff% *}"
   python3 "$KIT/lib/runbook.py" text "$f" "$1" 2>/dev/null | tr '\n' ' ' | tr -s ' ' | grep -qF -- "$2"
 }
+# How a command line chosen by content relates to the block typed before it (6.12's up line):
+# "moved" when the block is missing, or the line is missing where the text does not say none
+# follows (the row is then MOVED, nothing typed for it); "none" when the line is missing and the
+# text says none follows (<none ok> = yes: ruling C61's 6.12); "in-block" when the block holds
+# exactly that line (typed with the block); else "own" (typed after it). A line in the block that
+# merely mentions the command (a here-document line, a comment) is not that line (review
+# 201-8c2383e MINOR 2). Pure: lib/selftest-runbook.py calls it.
+rb_up_plan() { # <block text> <line text> [<none ok: yes|no>]
+  case "$1" in *__RB_MISSING__*) echo moved; return 0 ;; esac
+  case "$2" in *__RB_MISSING__*) [ "${3:-no}" = yes ] && echo none || echo moved; return 0 ;; esac
+  if printf '%s\n' "$1" | grep -qxF -- "$2"; then echo in-block; else echo own; fi
+}
+# WT16's verdict from what was measured, never from one printed line (review 201-8c2383e MINOR 3:
+# `restore exit=` is printed even after a failed DROP). "lost": restore printed, the write made
+# after 6.6 (b) gone, the backend running in at least one sample and the sign-off present when 6.7
+# was typed. "stopped": a STOP line and both writes still there (the DROP line's own test).
+# "unclear": anything else. Pure: lib/selftest-runbook.py calls it.
+drop_verdict() { # <6.7 output> <STOP line> <before-6.6 write: before> <after> <after-6.6(b) write: before> <after> <running samples> <sign-off when typed>
+  if printf '%s' "$1" | grep -q 'restore exit=' && [ "$6" = 0 ] && [ "${7:-0}" -gt 0 ] 2>/dev/null && [ "$8" = present ]; then
+    echo lost
+  elif [ -n "$2" ] && [ -n "$3" ] && [ "$4" = "$3" ] && [ -n "$5" ] && [ "$6" = "$5" ]; then
+    echo stopped
+  else
+    echo unclear
+  fi
+}
+# What stopped a DROP that did not run, naming the line that refused first: 6.6 (b)'s marker line
+# (C65, no marker for a live database) or 6.7's DROP line (C61)
+first_stop() { # <6.6 (b) STOP line> <marker written|not written> <6.7 STOP line>
+  if [ -n "$1" ] && [ "$2" = "not written" ]; then
+    # eadafda's 6.6 (b) runs the live test on its dump line too: "STOP: no copy taken" is that line
+    case "$1" in
+      *'no copy taken'*) echo "first 6.6 (b)'s dump line (a script): it took no copy of a live database ($1), so no marker was written; then 6.7's DROP line refused as well${3:+ ($3)}" ;;
+      *) echo "first 6.6 (b)'s marker line (a script): it refused to write the marker on a live database ($1); then 6.7's DROP line refused as well${3:+ ($3)}" ;;
+    esac
+  else echo "the DROP line's own test (a script)${3:+: $3}$( [ "$2" = written ] && echo '; 6.6 (b) had written its marker')"; fi
+}
 # Text cut but not handed to rb_run (typed line by line elsewhere) records a move the same way.
 rb_moved_check() { # <id> <text>
   case "$2" in *__RB_MISSING__*) rb_moved "$1" "$2"; return 1 ;; esac

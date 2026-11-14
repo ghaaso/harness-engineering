@@ -53,6 +53,102 @@ HEAD_MD = re.compile(r"^###\s+(\d+\.\d+[a-z]?)\s")
 HEAD_BOLD = re.compile(r"^\*\*((?:R\d+|\d+)\.\d+[a-z]?)\s")
 SECTION = re.compile(r"^##\s")
 NL, TAB = chr(10), chr(9)
+# a here-document opener (`<<'SQL'`, `<<EOF`, `<<-X`), never a here-string (`<<<`)
+HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+WORDCH = re.compile(r"[A-Za-z0-9_]")
+ASSIGN = re.compile(r"""\s*[A-Za-z_]\w*=(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s;&|]*)""")
+KEYWORDS = ("then", "do", "else", "!", "{")
+
+
+def heredoc_body(lines: list[str]) -> set[int]:
+    """Indexes of the lines that are a here-document's body or its closing delimiter: text fed to
+    a command, never a command itself."""
+    body: set[int] = set()
+    i = 0
+    while i < len(lines):
+        m = None if lines[i].lstrip().startswith("#") else HEREDOC.search(lines[i])
+        i += 1
+        if m:
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                body.add(i)
+                i += 1
+            if i < len(lines):
+                body.add(i)
+                i += 1
+    return body
+
+
+def shell_marks(line: str) -> tuple[list[int], int]:
+    """A light shell reading of one line: where each command begins (the line's start, after an
+    unquoted ; & | ( or backtick, and after `$(` outside single quotes) and where an unquoted
+    comment begins (len(line) when there is none)."""
+    starts, sq, dq, i = [0], False, False, 0
+    while i < len(line):
+        c = line[i]
+        if c == "\\" and not sq:
+            i += 2
+            continue
+        if sq:
+            sq = c != "'"
+        elif c == "'" and not dq:
+            sq = True
+        elif c == '"':
+            dq = not dq
+        elif c == "$" and line[i + 1 : i + 2] == "(":
+            starts.append(i + 2)
+            i += 1
+        elif not dq and c in ";&|(`":
+            starts.append(i + 1)
+        elif not dq and c == "#" and (i == 0 or line[i - 1] in " " + TAB):
+            return starts, i
+        i += 1
+    return starts, len(line)
+
+
+def first_word(seg: str) -> str:
+    """The command word of a command: leading VAR=value assignments and keywords skipped."""
+    while True:
+        m = ASSIGN.match(seg)
+        if m and m.end() > 0:
+            seg = seg[m.end() :]
+            continue
+        w = seg.split(None, 1)
+        if w and w[0] in KEYWORDS:
+            seg = w[1] if len(w) > 1 else ""
+            continue
+        return w[0] if w else ""
+
+
+def command_hit(line: str, sub: str) -> bool:
+    """True when <sub> occurs in <line> as part of a command (review 201-8c2383e MINOR 1): not in a
+    comment, not in an echo or printf of the command, and at word boundaries (an option's
+    continuation counts as a word: `--report` does not match `--report-json`). Here-document
+    bodies are excluded by the caller."""
+    if line.lstrip().startswith("#"):
+        return False
+    starts, comment = shell_marks(line)
+    pos = line.find(sub)
+    while pos != -1:
+        end = pos + len(sub)
+        ok = end <= comment
+        if ok and WORDCH.match(sub[0]) and pos > 0 and WORDCH.match(line[pos - 1]):
+            ok = False
+        if ok and WORDCH.match(sub[-1]) and end < len(line) and (WORDCH.match(line[end]) or line[end] == "-"):
+            ok = False
+        if ok and first_word(line[max(s for s in starts if s <= pos) :]) in ("echo", "printf"):
+            ok = False
+        if ok:
+            return True
+        pos = line.find(sub, pos + 1)
+    return False
+
+
+def command_lines(block: str) -> list[tuple[int, str]]:
+    """(index, text) of every line of a block that may be chosen by content: here-document bodies
+    and their delimiters are left out."""
+    bl = block.split(NL)
+    skip = heredoc_body(bl)
+    return [(i, l) for i, l in enumerate(bl) if i not in skip]
 
 
 def section_lines(lines: list[str], num: str) -> list[str]:
@@ -321,9 +417,11 @@ def main(argv: list[str]) -> int:
                 sys.stderr.write(out)
                 return rc
             blocks = [out]
-        hits = [(b, i) for b, blk in enumerate(blocks) for i, l in enumerate(blk.split(NL)) if sub in l]
+        # only command text counts: a comment, a here-document body or an echo of the command
+        # that names <sub> is not the command (review 201-8c2383e MINOR 1)
+        hits = [(b, i) for b, blk in enumerate(blocks) for i, l in command_lines(blk) if command_hit(l, sub)]
         if len(hits) != 1:
-            sys.stderr.write(f"runbook.py: MOVED: {len(hits)} line(s) of step {step} block {sel} contain {sub!r}; want exactly 1{NL}")
+            sys.stderr.write(f"runbook.py: MOVED: {len(hits)} command line(s) of step {step} block {sel} contain {sub!r}; want exactly 1{NL}")
             return 5
         b, i = hits[0]
         bl = blocks[b].split(NL)
@@ -332,9 +430,9 @@ def main(argv: list[str]) -> int:
         elif end == "$":
             j = len(bl) - 1
         else:
-            ends = [x for x in range(i, len(bl)) if end in bl[x]]
+            ends = [x for x, l in command_lines(blocks[b]) if x >= i and command_hit(l, end)]
             if len(ends) != 1:
-                sys.stderr.write(f"runbook.py: MOVED: {len(ends)} line(s) from {sub!r} on in step {step} block {sel} contain {end!r}; want exactly 1{NL}")
+                sys.stderr.write(f"runbook.py: MOVED: {len(ends)} command line(s) from {sub!r} on in step {step} block {sel} contain {end!r}; want exactly 1{NL}")
                 return 5
             j = ends[0]
         print(NL.join(bl[i : j + 1]))

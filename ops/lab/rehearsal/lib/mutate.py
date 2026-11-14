@@ -14,7 +14,8 @@
 
 mutations.tsv columns: id, rehearsal, type (runbook | moved | state), step, old, new, target,
 kind, what it simulates. `\\n` in old/new is a line break. target is `<phase>|<step label>` for
-a step row, or `train|<row>` for a train-table row.
+a step row, or `train|<row>` for a train-table row; several, comma-separated, when the texts the
+rig follows check that fact in different rows (each judged against its own baseline row).
 """
 
 from __future__ import annotations
@@ -93,9 +94,13 @@ def report(res: str, muts: str, which: str, base: str | None = None) -> int:
     d = Path(res)
     applied = (d / "mutations-applied.log").read_text(encoding="utf-8") if (d / "mutations-applied.log").exists() else ""
     bd = Path(base) if base else None
+    # the paired run's name as --baseline gave it (run.txt's "baseline: <run>", written by
+    # l4_baseline), not the folder it was copied to inside the host (review 201-8c2383e NIT)
+    rt = (d / "run.txt").read_text(encoding="utf-8", errors="replace") if (d / "run.txt").exists() else ""
+    bname = next((l.split(":", 1)[1].strip() for l in rt.splitlines() if l.startswith("baseline:")), "")
     out_tsv = ["id\tkind\ttarget\twant\tgot\tbaseline\tcaught"]
     md = [
-        f"Baseline (the paired normal run): `{bd.name if bd else 'NONE'}`",
+        f"Baseline (the paired normal run): `{(bname or bd.name) if bd else 'NONE'}`",
         "",
         "| Id | Kind of check | Mutation | Target row | Wanted | Got | Baseline | Applied | Caught |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -103,27 +108,38 @@ def report(res: str, muts: str, which: str, base: str | None = None) -> int:
     for m in load(muts):
         if m["rehearsal"] != which:
             continue
-        phase, label = m["target"].split("|", 1)
-        # a train row's check (train.tsv: PASS/FAIL/PARTIAL) or a runbook step's row (rows.tsv)
-        got, want = verdicts(d, phase, label)
-        if m["type"] == "moved":
-            want = "MOVED"
-        g = got[-1] if got else "(row absent)"
-        if bd:
-            bgot, _ = verdicts(bd, phase, label)
-            b = bgot[-1] if bgot else "(row absent)"
-        else:
-            b = "(no baseline)"
         if m["type"] == "state":
             ran = re.search(rf"\tstate mutation {re.escape(m['id'])} \([^)]*\) applied$", applied, re.M) is not None
         else:
             ran = re.search(rf"^runbook mutation {re.escape(m['id'])} applied to step ", applied, re.M) is not None
-        # the baseline must have read something else (DONE, or AMBIGUOUS/PARTIAL), never the
-        # wanted verdict, and never be absent: otherwise the mutation proved nothing
-        based = bd is not None and b not in (want, "(row absent)", "FAILED", "FAIL", "MOVED")
-        caught = "yes" if (g == want and ran and based) else "NO"
-        out_tsv.append("\t".join([m["id"], m["kind"], m["target"], want, g, b, caught]))
-        md.append(f"| {m['id']} | {m['kind']} | {m['what']} | `{m['target']}` | {want} | {g} | {b} | {'yes' if ran else 'NO'} | {caught} |")
+        # target may name alternatives, `a|b,c|d`: the row that checks this fact where each text
+        # puts it (M11: 8.7 on main's order, 8.6 in the runbook batch's, where 8.6 recreates the
+        # backend and reads the ceilings). Each alternative is judged on its own, against its own
+        # baseline row; the first one that is caught is reported, else the first one present.
+        res = []
+        # a label may hold a comma ("6.2 (B5 form, over the live database)"): split only where
+        # a comma is followed by the next alternative's `<phase>|`
+        for tgt in re.split(r",(?=[\w.-]+\|)", m["target"]):
+            phase, label = tgt.split("|", 1)
+            # a train row's check (train.tsv: PASS/FAIL/PARTIAL) or a runbook step's row (rows.tsv)
+            got, want = verdicts(d, phase, label)
+            if m["type"] == "moved":
+                want = "MOVED"
+            g = got[-1] if got else "(row absent)"
+            if bd:
+                bgot, _ = verdicts(bd, phase, label)
+                b = bgot[-1] if bgot else "(row absent)"
+            else:
+                b = "(no baseline)"
+            # the baseline must have read something else (DONE, or AMBIGUOUS/PARTIAL), never the
+            # wanted verdict, and never be absent: otherwise the mutation proved nothing
+            based = bd is not None and b not in (want, "(row absent)", "FAILED", "FAIL", "MOVED")
+            res.append((tgt, want, g, b, g == want and ran and based))
+        pick = next((r for r in res if r[4]), next((r for r in res if r[2] != "(row absent)"), res[0]))
+        tgt, want, g, b, ok = pick
+        caught = "yes" if ok else "NO"
+        out_tsv.append("\t".join([m["id"], m["kind"], tgt, want, g, b, caught]))
+        md.append(f"| {m['id']} | {m['kind']} | {m['what']} | `{tgt}` | {want} | {g} | {b} | {'yes' if ran else 'NO'} | {caught} |")
     (d / "mutations-result.tsv").write_text(NL.join(out_tsv) + NL, encoding="utf-8")
     (d / "mutations.md").write_text(NL.join(md) + NL, encoding="utf-8")
     print(NL.join(md))
