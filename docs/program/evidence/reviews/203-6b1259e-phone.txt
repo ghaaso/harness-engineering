@@ -1,0 +1,113 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at 6b1259eeff62a95189ea2bd414fcaf312b5ebd2d, phone side
+Second pass, part 2, by the first-pass phone-side reviewer; dispatched by the coordinator on 2026-11-14 at 11:45, returned at 11:57. Part 1 (the reading at bceeb47) is `203-bceeb47-phone-part1.txt`. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+All seven part-1 items are closed, and every mutation the reviewer ran turns its named test red. But one hole lets a write that is still on the phone, or was refused, read as accounted for with exit 0, and it has to be fixed before merge (E1 below). It was already in the code at bceeb47; it was missed in part 1. The rest can ride a follow-up.
+
+The reader is `backend/scripts/drain_audit.py` and the tests are `backend/tests/test_drain_audit_rules.py` ("rules"), in the review tree `.claude/worktrees/rv203-head-phone`. Phone citations are at 56329bf, which is identical to 8cb84f1 for the files cited.
+
+A. N1 TO N7 AT 6b1259e
+
+| id | status | where | test (and the mutation it turns red) |
+|---|---|---|---|
+| N1 | closed | `_take_discard_from` 2069-2074: for a media row, an entry with no owner clears it when `discarded_by` is a technician of that install. `_shared_note` 2170-2174 prints that the discard named no owner | rules:1332, rules:1361, integration:1823. The reviewer's mutation (old owner check put back) turns rules:1332 red |
+| N1 reverse | holds | A discard with `discarded_by=None`, one from another install, one with no install, or one by a stranger: all stay `missing`, on both the after-report path and the trace path. Two documents listing the same clip id merge into one row (media is not a slot kind, `row_key` 1142-1145), so one entry clears exactly one row | the reviewer's probes P1 |
+| N2 | closed | `_create_unsettled` 2361-2379, used at 2249-2253 and 2270-2274 | rules:1546. Mutation (`_create_unsettled` always None) turns it red |
+| N3 | closed | `_superseded` 1168-1196 orders by document receipt, never the device clock, and applies only to slot rows (1178). A unique-id row is matched by id alone (2316-2323) | rules:1581, rules:1601. Mutation (device-clock order put back) turns rules:1601 red; mutation (every outbox kind treated as a slot) turns rules:1581 red |
+| N4 | closed | `drain_audit_report.py:352-370` | rules:1646 |
+| N5 | closed | `drain_audit_report.py:425` (`if code in (3, 4)`) | rules:1646 |
+| N6 | closed | `drain_audit_report.py:260` (`discard_class=`) | rules:1659 |
+| N7 | closed as ruled | `_later_write` 2513-2518: the row stays `missing`, its note names t2's write, and the write is never consumed as evidence (`evidence_used` stays empty) | rules:1619 |
+| M4 | closed as ruled | 2478-2482 adds the note. The "technician of that install" set is built at 3060-3067 | rules:1619, rules:555 |
+
+The remaining mutations from part 1 also turn their tests red: install check removed -> rules:409 red; owner check removed -> rules:721 red; `_by_owner` widened to any technician of the phone -> rules:392 red.
+
+B. THE THREE RULINGS BUILT AFTER PART 1
+
+C54 (point 19): built.
+- The outcome is named `retry_pending` (313).
+- `gave_up_5xx`, `gave_up_other`, `server_status` and `unreachable` map to it (376).
+- It counts as exit 4 (350), is never manual entry (359), and is counted on its own in the per-install line (`_install_counts`).
+- Its advice is at 2418-2425 and in the report at 425-435.
+- The one exception, where a version no server judged still ends in exit 0, is E1 below.
+
+C56 (point 10): built.
+- Any later document of the install counts (1188-1195), not only the newest after-report.
+- Both technicians are printed when the two versions have different owners (`_version_note` 1210-1214).
+- A unique-id kind is never superseded, and it is matched by id in the merge (1142-1165) and in the listing (2319-2323).
+- The slot signature no longer includes `job_ref` (1092-1108).
+- Every field the phone fills in later was tried: none can make a listed row look unlisted.
+Two contract notes, not defects:
+- `DOC_SLOT_KINDS` (386) also covers location and void. That is harmless: field-APK location rows can no longer be replaced, because P2a makes a new id per tap (`travelState.ts:25`).
+- Pending-media slots are left off the document path (`_is_slot` 1111-1113), although point 10 names them. The effect is on the safe side: a re-captured clip that is still listed reads `in_progress`, and point 15 decides once it has uploaded. NIT: say this in decision 35.
+
+Fixture at 8cb84f1:
+- Part-1 difference 1 is fixed: `after_discard` now takes `discarded_by: str | None`.
+- Difference 3 is down to one line. The phone's `uploadProps` adds `install_id: stored.manifest.install_id || (await installId())`, and the fixture's `upload_props` has no such fallback. The two are equivalent, because a v2 stored manifest always carries an install id. NIT.
+- The reviewer's round trip through the fixture (phone store -> manifest -> after-report with an owner-less entry -> audit) gives `{outbox: landed, media: discarded}`.
+
+C. PROBES: WANTED / GOT (all ten scratch tests passed, 0.20 s)
+
+| probe | wanted | got |
+|---|---|---|
+| N1, after-report entry and trace with no owner | discarded | discarded, both paths |
+| N1 reverse (4 cases x 2 paths) | not discarded | missing in all 8 |
+| P3: payment, note or create; a later listing parked with other content | `still_parked` | `still_parked` |
+| P3: an older report shows other content, the newest is empty | `missing`, never `superseded` | `missing` |
+| N2: create pending | both `in_progress` | both `in_progress` |
+| N2: create parked `gave_up_5xx` | `retry_pending` + clip `in_progress` | as wanted |
+| N2: create parked `app_detail` | `still_parked` + clip `residue` | as wanted |
+| N2: create discarded | create `discarded`, clip `residue` | as wanted |
+| N7 | `missing`, note names the write, evidence not used | as wanted |
+| M4 | `missing`, note names c3 | as wanted |
+| Fixture round trip | create landed, clip discarded | as wanted |
+| Clock set back, version B only in an after-report | `superseded` | `superseded` |
+| 7 mutations + 1 control | red; control green | all red; control green |
+| E1: a newer slot version that appears only in the after-report, pending / parked `app_detail` / parked `gave_up_5xx` | not exit 0 | `superseded`, exit 0, "ALL ACCOUNTED FOR" in all three |
+| E2: a payment discard of a row in no manifest | named in the verdict | exit 0, "ALL ACCOUNTED FOR" |
+
+D. WHAT THE OWNER READS
+- The `retry_pending`, `discard_pending` and `still_parked` lines ("enter it by hand, then tap Discard") agree with what the phone can do.
+- So does the discarded-payments line ("each to be checked against its manual entry").
+- The exceptions are E1 and E2 below, plus one NIT: a clip whose create was refused or discarded is counted as a manual-entry "other row", and a voice note cannot be entered by hand.
+
+E. CAN THE DELTA TURN A REAL LOSS INTO AN ACCOUNTED ROW, OR A ROW STILL ON THE PHONE INTO `missing`?
+
+A row still on the phone into `missing`: no. Tried: N2 in every state; unique ids listed under other content; the clock set back; one write shared by two rows; a re-captured clip. All of them end where they should.
+
+A real loss, or a row still on the phone, into an accounted row: yes (E1).
+
+FINDINGS
+
+E1 MAJOR, fix before merge. A slot version that appears only in an after-report is never judged.
+- Code. `apply_after_reports` 2335-2339 marks the manifest row `superseded` from any later document. The newer version found in an after-report is not a row: `rows = merge_rows(parsed)` (3068) takes manifests only. So nothing checks whether that version ever landed.
+- Contract. Point 10 says "The newer version is judged on its own."
+- Phone path. `enqueue` replaces by id (`outbox.ts:162-168`). For example: a re-negotiation after the last manifest, or a completion redone after its queued copy parked. `completionPrefill` blocks only a queued completion, not a failed one.
+- Got. Whether the newer version is pending, refused (`app_detail`) or given up on (`gave_up_5xx`), the result is exit 0, "ALL ACCOUNTED FOR", with nothing for manual entry. The `superseded` note does not say the newer version is still on the phone. That breaks C54's "never exit 0 for a row no server judged", and a refused completion's content is lost silently.
+- Smallest fix. When `found` comes from an after-report:
+  - if the newest usable report still lists that version, judge the row with `_judge_listed(res, newer, ...)` (so `in_progress`, `still_parked`, `retry_pending`), keeping the "replaced in its slot" note;
+  - if it is not listed, keep `superseded` only when `_later_write` or a discard accounts for it;
+  - otherwise `missing`, naming the version.
+- Pin. The reviewer's probe `test_e1_newer_version_only_in_after_report_is_never_judged` in the coordinator's scratchpad, `rv203probe/test_scratch_rv203_phone3.py`, turned into an assertion.
+
+E2 MINOR, follow-up. A payment discarded on the phone that is in no manifest never reaches the verdict line.
+- A payment taken during the drain and then discarded gives "ALL ACCOUNTED FOR". It is listed only under "unmatched discards" (`drain_audit_report.py:296`).
+- The discard entry carries no amount, so the sum cannot be stated, but the count can.
+- Fix: add "N payment discard(s) in no manifest, amount unknown" to the verdict (`AuditReport.verdict` 2740-2773).
+
+Smaller, for the follow-up (NIT): the pending-media document-path note for decision 35; the `upload_props` install-id fallback; the wording for a clip counted as manual entry.
+
+STILL UNVERIFIED
+- The integration tests (integration:1823, :1866). Their full and drain-tree gates belong to the server reviewer.
+- Jest on the phone side (not run).
+- `_cap_evictions` was not re-derived.
+- C54 advice text against point 19 beyond what was read: its tail was cut off in the reviewer's read.
+
+WHAT THE REVIEWER RAN
+- `git diff a43f8b2 6b1259e`, and reads of the reader, the report renderer, the tests and the fixture at 6b1259e.
+- `git show` at 8cb84f1 and 56329bf for `drainGate.ts`, plus a `--stat` diff of the phone files.
+- One partial gate run, lane `rv203phone`: `bash docs/program/lab/ff-gates.sh backend rv203phone <tree> tests/test_scratch_rv203_phone3.py -s -p no:cacheprovider`; pytest exit 0, 10 passed; ruff failed on the scratch file only; log `C:/Users/User/.fixflow-cache/gate-logs/rv203phone/backend-20261114-114916/`.
+- The scratch file was moved out of the tree; the tree is clean and no `rv203phone` container is left. No commits, pushes or PR comments.
+- Files in the coordinator's scratchpad, `rv203probe/`: `test_scratch_rv203_phone3.py`, `probes-6b1259e.log`.
+
+COORDINATOR (2026-11-14, 11:58; ruling C62). Not mergeable at 6b1259e. E1 goes back to the lane with contract point 10 amended (a newer version known only from an after-report is no row of its own, so the manifest row carries its judgement). E2 is ruled into the same round, not a follow-up: point 12 exists so that discarded cash cannot hide, and a payment taken and thrown away during the drain is exactly that. The three nits ride the same round. The same reviewer re-reads the delta.
