@@ -1,0 +1,134 @@
+VERDICT: PASS
+PR #201 at 8c2383e467f062d3028af02c37e7ecd8443804a2
+Second pass, part 2, by the first-pass reviewer; dispatched by the coordinator on 2026-11-14 at 10:38, returned at 11:30. Part 1 (the reading at a27b2a1) is `201-a27b2a1-part1.txt`. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The four MINOR and two NIT notes below can wait for a follow-up rig PR. None of them changes a result from the reviewer's eight runs.
+
+PR 209 REHEARSAL: CONDITION MET for bcbf50699a89b400b2804442abd0ebee9330f4c4
+
+- Runs. Restore `20261114T055411Z-restore` and train `20261114T060507Z-train`, both with rig 8c2383e. Each `run.txt` reads "rehearsed ref: origin/claude/p3a-followup-4 = bcbf50699a89... (read before bundling, checked in the host)", with 0 uncommitted files.
+- Counts. Restore: DONE 53, NRH 9, N/A 1. Train: DONE 76, AMBIGUOUS 1 (12.6), NRH 8, N/A 5. No row is MOVED in either run and neither run has a `moved.log`. Both match the lane's runs row for row.
+- 6.12, from the step logs (restore, and the same in the train):
+  - `027-6.12-do.log` typed #209's 8-line here-document and nothing else; it ends at `SQL`, exit 0.
+  - `028-6.12-up.log` typed `ffc $P_DB --profile app up -d --force-recreate backend`, exit 0, with output "Container fixflow-backend-1 Recreate / Recreated".
+  - `029-6.12-check.log` printed `24.86|67|80`. The 6.12 row is DONE and says "(the up line typed as its own block)".
+- 6.13, from the step logs:
+  - `030-6.13-report.log` typed `... set_pin --report </dev/null`. The `</dev/null` is #209's own form. It listed t4 and t5 on the DEFAULT PIN.
+  - `031-6.13-set-t4.log` and `032-6.13-set-t5.log` typed `... set_pin --tech <id> --apply` through the pty typist ("PIN set for t4 (tech)").
+  - `033-6.13-report2.log` shows every account ok. The 6.13 row is DONE.
+- WT2, from the step logs. All eight spellings were judged. Steps `010`-`024-wt2-up.log` each typed the up line. The six non-plain spellings were refused by the gate (exit 1, "restore gate: CLOSED"). The two exact spellings started with "environment=production dispatcher=False backup=False": the compose override held.
+- Still unrehearsed in #209's text.
+  - Nothing found that could stop or harm a restore.
+  - 6.12's Check reads only `attendance_geofence`, so it would not notice an owner who skipped the separate up block. No cache of the geofence was found on the server, so this is probably harmless (INFERRED).
+  - WT16 shows that 6.6 then 6.7, typed on a live host with 6.1 skipped, drops the live database, on #209 as on `main`. That is a known gap in the runbook (ruling C58, for the next runbook PR), not something #209 introduced.
+
+A. PART-1 ITEMS AT 8c2383e
+
+| Item | Status | Where |
+|---|---|---|
+| M1 two runs | closed | `lib/host.sh:52-73` refuses a running host it did not start; `:75` `L4_HOST_MINE=1`; `:194-213` `l4_finish` collects, files and removes only when that is set; `:36` holder `l4-<kind>-$$`. Run by the reviewer (mutation 10) |
+| M2 ranges | closed; all 12 sites plus 3.9, 6.6b and WT5 now use `rb_line` | `harness.sh:59` (`rb_fence` refuses a range), `:63` `rb_line`; `runbook.py:308-338`. Every site resolves on both texts. Reverse cases: see MINOR 1 |
+| m1 duplicate anchor | closed | `runbook.py:206`, `:268`. Decoy test: exit 5 |
+| m2 caught rule | closed | `harness.sh` `l4_mut_done`; `mutate.py:118-123`. Exact id match, applied only after the hook succeeds, baseline pairing |
+| m3 empty lsum | closed | `steps.sh:282-285`, `:301-303`, plus the bucket's own sum `s3_sum`. Run by the reviewer (mutation 7) |
+| m4 self-test | closed | `host.sh:248-258`: the `selftest` row is DONE, 16 ok, in all eight of the reviewer's runs |
+| m5 run.txt | closed | `host.sh:162-165` |
+| m6 R5.6 | closed | `train.sh:76-97`. Run by the reviewer (mutation 8) |
+| m7 f192fee by the clock | closed | `train.sh:494-503`. PASS at 05:53 and 06:07 UTC with item (4) true. The zone was put back; there is no "NOT put back" line |
+| Nit R5.9 note | closed | `train.sh:147` |
+| Nit R5.9.2 label | closed | `train.sh:137` |
+| Nit guardwrap | closed another way: it logs, does not carry back | `guardwrap.py:38-51`. 0 such lines in the reviewer's runs |
+
+M1 and the unique slot holder, case by case:
+- "This run's host" means `docker run` succeeded in this process (`L4_HOST_MINE`).
+- An exited host left by a reboot is removed (`:69-71`).
+- A `--keep` host is removed only with `--replace-kept` and the `/l4-kept` mark. `--replace-kept` against a live, unmarked host: refused (run by the reviewer).
+- Two starts in the same second: the second `docker run` fails on the container name, so that run dies without being marked as the owner and removes nothing.
+
+FINDINGS
+
+MINOR (follow-up)
+
+1. `runbook.py line` takes the only match even when it is not the command. Checked with a scratch test script (`p2/t2.sh`), on edited copies of #209's runbook:
+   - (B) with the real up line gone and a comment naming it, it returns `# needs: ffc ... --force-recreate backend first`, exit 0;
+   - (C) `set_pin --report` returns a `--report-json` line;
+   - (D) it returns an `echo "now: ffc $P_DB --profile app up -d"`.
+   Two matching lines (case A, or an SQL comment, case E) correctly give MOVED. Today's texts resolve correctly.
+   Smallest fix: in `runbook.py:324`, skip lines whose stripped text starts with `#` and lines inside a here-document body, and match the substring at word boundaries.
+
+2. 6.12 can skip the up line with the row still DONE (`steps.sh:443-449`, with pin `9,8`).
+   - Trigger: a 9th line inside #209's 8-line here-document that mentions `force-recreate backend`. The block then matches the pin, the `case` sees the substring, and the up line is never typed. `up612` comes out MOVED and is ignored, and the row stays DONE (case E).
+   - Fix: when `up612` is `__RB_MISSING__`, record the row as MOVED. Otherwise type `up612` unless block 1 contains exactly that line.
+
+3. WT16's "what stopped it" sentence does not test everything it states (`wrongturns.sh:102-105`). It depends only on `restore exit=` being printed. `main` prints that line even after a failed DROP.
+   - The measured values in the "what happened" column do support it on both texts:
+     - `main`: tables 0, both writes 1->0, 2 of 2 samples running, http=200, database=ok;
+     - #209: the NOTICE "drop cascades to 46 other objects", tables 0, both writes 1->0, 3 of 3 samples running.
+   - Fix: also require `w16b1=0`, `nrun>0` and sign-off present.
+
+4. The f192fee zone switch is shown for Pacific/Pago_Pago only. All the reviewer's runs and the lane's ran before 10:00 UTC, so the Kiritimati branch (`train.sh:497`) has not run yet. The reasoning holds: at UTC+14 the local date differs from 10:00 UTC on.
+
+NIT
+- `mutations.md` names the baseline folder, not the run. Its header says `baseline`, the in-host folder. It does not mislead about results: the Baseline column is read from the right rows, and `run.txt` ends `baseline: 20261114T054121Z-restore`. It just does not say which run. Fix: write `$L4_BASELINE` into the header.
+- `s3_sum` reads private attributes. It uses `s._client` and `s._bucket` of the app's storage (`steps.sh:490-494`). A storage refactor would turn 6.6b FAILED, which is loud, not silent.
+
+REPRODUCTION (the reviewer's, one at a time, warm, light slot)
+
+| Run | Ref / sha | Counts | Wall | Peak memory |
+|---|---|---|---|---|
+| 20261114T054121Z-restore | main e6f85c5 | DONE 45 FAILED 3 AMB 5 NRH 8 N/A 1 | 9.5 min | 667 MiB |
+| 20261114T055103Z-train | main e6f85c5 | DONE 73 FAILED 1 AMB 2 NRH 8 N/A 4; P6a, P7a, f192fee, P3a PASS | 2.5 min | 994 MiB |
+| 20261114T055411Z-restore | #209 bcbf506 | DONE 53 NRH 9 N/A 1 | 10.8 min | 653 MiB |
+| 20261114T060507Z-train | #209 bcbf506 | DONE 76 AMB 1 NRH 8 N/A 5; all four train rows PASS | 2.6 min | 587 MiB |
+| 20261114T060751Z-restore-mutate | main, baseline 054121Z | 13/13 caught | 7.6 min | 606 MiB |
+| 20261114T061533Z-train-mutate | main, baseline 055103Z | 5/5 caught | 2.9 min | 644 MiB |
+| 20261114T061834Z-restore | main, scratch kit (mutation 7) | 6.6b (B5 form) FAILED | 7.8 min | 669 MiB |
+| 20261114T062633Z-train | main, scratch kit (mutation 8) | R5.6 and 12.4b (migration row) FAILED | 2.4 min | 617 MiB |
+
+- `main` against the lane's 16e154e set: identical row for row (no verdict differs; the wrong turns' "guard needed?" column is the same). #210 touched no runbook or ops file, so that was expected.
+- Peak memory. The train peaked at 994 MiB, above the 720 MiB in C42; everything else stayed under 670 MiB. 5-second samples of `docker stats`.
+
+MUTATIONS (wanted / got)
+
+- M01-M13: each wanted FAILED (M13 wanted MOVED) and got it. Each was "applied", and no baseline row already read the wanted verdict (M06's baseline was AMBIGUOUS).
+- T01-T05: the same; T02 went from PASS to FAIL.
+- The reviewer's part-1 list:
+  1. `--repin` is refused: "--repin is gone (ruling C57)", exit 1.
+  2. An extra line in 6.9's sign-off block: the up line is still chosen.
+  3. A line inserted into `11.12-web-ci`: the guarded line is still chosen.
+  4. A duplicate anchor: MOVED.
+  5. R5.3's lines swapped: the right line is still chosen.
+  6. A mutation that never ran, or whose baseline row already failed: NO, exit 1 (synthetic report test).
+  7. An empty `lsum`: FAILED, with "local sha256 EMPTY".
+  8. A migration stamped but never run: R5.6 FAILED ("'Running upgrade 0047 -> ' seen: no") and 12.4b FAILED. 12.4 stays DONE, as expected.
+  9. A wrong pin: the self-test exits 1, which `l4_selftest` turns into the FAILED row.
+  10. A second start while the reviewer's `main` restore was up was refused with "nothing collected, filed or removed". The first host's Id and StartedAt were unchanged and its run finished normally.
+  Items 2-5 and 9 are scratch-copy tests of `runbook.py` and the self-test, not rig runs.
+
+CONVENTIONS
+- Only files under `ops/lab/rehearsal/` change (0 outside since 90ea88d).
+- `bash -n` passes on all 10 scripts.
+- The self-test passes 16/16 on both texts, and it is a row in every run.
+- Every commit has the repo-local author.
+- The secret grep over the delta finds nothing.
+- CI did not run (billing); ruling C60 allows merging on local runs.
+
+STILL UNVERIFIED
+- The Kiritimati branch (after 10:00 UTC).
+- A host that has exited, and `--replace-kept` on a kept host. Both read in the code, not run.
+- Two starts in the same second, also read in the code only.
+
+WHAT THE REVIEWER RAN
+- Read-only git: `git diff`, `git log`, `git show` over `a27b2a1..8c2383e`.
+- Offline tests. Python containers with no network, on scratch copies: `p2/t1.sh` to `t4.sh`.
+- Rig runs. The eight runs in the table. The two mutation runs used a throwaway `--shared` clone in scratch, now deleted; its patch is kept at `C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/49260710-db37-438a-9bb3-1a4eebcd87dc/scratchpad/rv201/runs/rv201-mutations-7-8.patch`.
+- Second-start tests. Three refused starts: two with `L4_SLOT=/nonexistent`, and one with `--repin`.
+
+CLEANUP
+- No `fixflow-l4*` container is left. The `fixflow-l4-host-docker` volume is kept.
+- Run folders added under `C:/Users/User/.fixflow-cache/lab/l4/` and `C:/Users/User/.fixflow-cache/handoff/evidence/l4/`, one per run in the table above. The last two (20261114T061834Z-restore, 20261114T062633Z-train) are scratch-kit mutation runs, and their `run.txt` shows "2 uncommitted file(s)". They are not to be cited as clean runs.
+- Scratch files are in the coordinator's scratchpad, `rv201/` (folders `p2/` and `runs/`).
+
+No commits, pushes or PR comments. The drain-audit lane's containers, `kge-A1` and the owner's containers were not touched.
+
+COORDINATOR (2026-11-14; ruling C61). PASS at 8c2383e467f062d3028af02c37e7ecd8443804a2: merged after this PC's three checks on the head as it will sit on main (ruling C60). The four MINOR and two NIT go to an immediate follow-up PR by the lane, re-read by this reviewer. The hold on PR #209 is lifted on the block above.
