@@ -101,7 +101,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 8. **Item 7: Photos of what is stuck, per phone, today**. Airplane mode on and Wi-Fi off, open FixFlow, photograph the clock screen's DID-NOT-SYNC list and every job banner, close the app, airplane mode off. 'Not reachable' only for a phone whose login is gone.
 9. **Item 8: Sentry**. Backend project: date of last event. Mobile project: does it still receive events? Uses: Sentry dashboard.
 10. **Item 9: Workshop location and fence size**. The workshop's coordinates and the fence radius you want (at least 100 m).
-11. **Item 11: Decisions**. Answer every decision row (the board further down) or leave it to its default. Includes the chain-anchor address and mail relay (or 'unanchored'), geofence thresholds, drain host, SDK spike, shift reminder, Odoo plan and version. Uses: the decisions board on this page.
+11. **Item 11: Decisions**. Answer every decision row (the board further down) or leave it to its default. Includes the address for the daily tamper-check email and a mail account to send it through (you chose email on 2026-11-14; both are typed on the server later, so have them ready, do not send them to me), geofence thresholds, drain host, SDK spike, shift reminder, Odoo plan and version. Uses: the decisions board on this page.
 12. **Item 12: Cut the app's network, every phone** (needed for done). In system settings, turn off FixFlow's Wi-Fi and mobile data (or background data off plus Wi-Fi blocked by a named method, or airplane mode if nothing else works). Record method and date per phone.
 13. **Item 13: Restrict the committed client keys**. In the Maps, Firebase and Sentry consoles, restrict each client key to the app's package name and SHA-1. Record done per key. Uses: Google Cloud, Firebase, Sentry consoles.
 14. **Item 14: Workshop Wi-Fi facts**. Does the workshop have Wi-Fi the technicians' phones join during shifts? Its name (SSID), the access point id(s) (BSSID), and which phones join it. 'No Wi-Fi' is a valid answer.
@@ -140,7 +140,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 | T22 | Negotiation below the original price | P7a | allowed for the assigned tech, flagged, never required (the note is optional); manager beyond the cap once set |
 | T23 | Hide personal data of unclaimed jobs from technicians (list and detail) | P7a setting; P7b-1 turns it on | off until v2 is fleet-wide (the list shows addresses techs use before claiming), then on |
 | T24 | Second approver / self-approval | P9a-1 | flag, do not block (single-manager shop, ruling R9) |
-| T25 | Chain anchor channel and mail relay credentials | P8b | email to you via core/mailer.py; without credentials the chain is labelled 'unanchored' and P8b still completes |
+| T25 | Chain anchor channel and mail relay credentials | P8b | DECIDED 2026-11-14: Email it. |
 | T26 | Error tracking | already decided | Sentry SaaS; P0a confirms the mobile project ingests; a change needs a new app build |
 | T27 | Dead-man monitor location and paging | P3a | external heartbeat service paging you by email |
 | T28 | Recovery point target; who is on call | P3c, P13b | 1 h from the first drain until P13e (hourly dumps), 24 h after; you |
