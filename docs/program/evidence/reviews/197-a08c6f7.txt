@@ -1,0 +1,83 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at a08c6f77af07fd9d29cba5c1a4d94d856d4f765f
+Second delta re-read (`d1ae31d..a08c6f7`: ruling C78, the phone half) by the PR's reviewer; dispatched by the coordinator on 2026-11-14 at 19:07, returned at 19:15. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The earlier finding is closed for one context. Each order of failure named before (a failed attempt, parts written without the head, a headless task mid-snapshot) is now refused. But when two contexts each take their own snapshot, the boundary still breaks (finding 1). Ruling C78 promises the same set "in every order of failure", so this head must change. The head was a08c6f7 by `gh pr view 197 --json headRefOid` at the start and at the end. Line numbers are at a08c6f7.
+
+FINDINGS
+
+1. MINOR, forces the change. Two contexts that both take a snapshot can still store a manifest holding both a discard entry and the row it removed.
+- Why the check does not catch it. `takeOrLoad` checks for a head only once, at the start (`drainGate.ts:327`). It then reads (`:365`), writes the parts under keys that do not depend on the manifest (`:379`), and writes the head (`:403`). Nothing stops a second context that passed the check before the first context's head existed. `snapshotStoredNow` (`:489`) sees the faster context's head and allows the discard.
+- The sequence (scratch PROBE I, passed): (1) the headless context starts its snapshot, sees no head, and stalls in its read; (2) the foreground starts, sees no head, and takes and stores its own head (manifest F); (3) a discard in the foreground passes `snapshotStored` and appends entry E; (4) the headless read finishes now, so it sees E and the row; (5) the headless context overwrites the same part keys and the head (manifest S, a different `manifest_id`); (6) the foreground removes the row.
+- Result: the stored manifest S holds `discards: [E]` and `records.outbox: ["pay-1"]`. Under point 9 this reads `missing`, exit 3.
+- The same race also costs: the slower context overwrites the faster one's parts under the same keys. If F was already uploaded, the phone's stored head now has another id.
+- How real it is: it needs two JS contexts both starting their first snapshot of a build together. The bootstrap expects exactly that: a headless task on MY_PACKAGE_REPLACED (`lib/syncGate.ts:5-7`). It is still a device unknown, and the discard has to fall inside the slower snapshot's few seconds.
+- Smallest fix: in `takeOrLoad`, read the head key again after `readAllRaw` and before writing any part. If a head now exists, give up this snapshot and load that head instead. Any discard needs a stored head, so a snapshot that gets through this check did its read before any discard could happen. It also stops the part keys being clobbered. A gap of a few ms remains between the check and the head write, because AsyncStorage has no compare-and-set; name it in the comment. Test: PROBE I's sequence ends with the manifest holding the row and not E (or with the faster head kept).
+
+2. NOTE (wording; no change needed). On a refusal the screens show `DISCARD_NOT_RECORDED`: "could not store the record of this discard (its storage may be full)... Free some space or ask your manager". For `SnapshotNotStoredError` the cause is the missing manifest, not space. "May be" keeps the text from being false, and "nothing was deleted" is true.
+
+1. FINDING 1 OF THE LAST REVIEW
+- Closed for one context. `appendDiscard` throws unless the head is stored (`discardLog.ts:125`), and the check reads storage (`drainGate.ts:489`).
+- PROBE G (the earlier sequence) at this head: the discard is refused, the row stays, no entry. It passed.
+- Parts written, head not: refused (lane test "parts written and the head not: refused").
+- Headless task mid-snapshot, foreground discarding: refused while only the headless task is taking the snapshot (lane test "two contexts..."). Not closed when both contexts take one (finding 1).
+- Tests failing on d1ae31d: `syncGate.ts`, `drainGate.ts` and `discardLog.ts` reverted in a scratch copy, four suites run. Exactly the lane's 10 failed, and 106 passed. Log: the coordinator's scratchpad, `c78-base-jest.log`.
+
+2. THE NEW RULE'S OWN EDGES
+After the snapshot but in the list:
+- A failed attempt, a retry, or parts without a head: refused.
+- A relaunch: a parsing head is never retaken.
+- Killed mid-discard and then updated to the next versionCode: the old build's entry and row both sit in the new manifest. The row stays listed, so the listing judges it. That is safe.
+- A head that stops parsing between the check and the removal: a window of a few ms; not probed.
+- Two contexts that both snapshot: finding 1.
+Refused for ever?
+- No head and every attempt fails (store full): discards are refused for that build. The gate is shut too, so this is consistent. The way out is freeing space or a new build.
+- A head that stops parsing with no receipt: refused in that context until a relaunch, because its memo says the snapshot is ok. A relaunch keeps the bytes aside, retakes, and the discard is then allowed (PROBE J, passed). So not for ever.
+- A head that stops parsing with a receipt: counts as stored, so discards are allowed.
+What the technician sees on each path:
+- Outbox (JobDetail, Needs attention), punch and presence (Clock screen), and media (Needs attention): `DISCARD_NOT_RECORDED`, and the row is kept. Each discard function calls `recordQueueDiscard` before any removal, for example `discardPunch` (`attendance/sync.ts:159`, selfie file deleted only after it).
+- The wizard's delete: the clip is parked as `deleted`, and the card says "the phone could not record the deletion".
+- The lane's test "a failed first attempt: a discard on every path..." pins all of them.
+
+3. FAIL-CLOSED
+- No gate installed: `snapshotStored` returns false (`syncGate.ts:64-65`).
+- A read that throws: caught, so false.
+- A head being written at that instant: the check sees either no head (refused) or the finished head, which was written after the read (allowed).
+- The lane's seam tests pin all three.
+
+4. WHAT THE COMMIT COULD HAVE BROKEN
+- Ordinary case: one `getItem` per discard, then the discard goes through (gate green).
+- C48 delete path: the clip is parked before the append, so a refusal leaves it parked as deleted.
+- Trace: unchanged.
+- Jest always-open gate (`jest.setup.ts`: `snapshotStored: true`): this hides refusals from the other suites. Real refusals are tested where the real gate is installed: `drainGate.test` (through bootstrap) and the `discardEvents` seam tests.
+- Older tests: two older drainGate tests now discard through a launched registry. A registry with no hooks now refuses, so this is an adaptation, not a weakening. No skip.
+
+5. THE SIZE ANSWER
+- No byte cap on `/api/events` on main at 27c9e04. Verified: `BODY_LIMITS` holds only `/api/auth/login` (4 KiB) and `/api/webhooks/whatsapp` (256 KiB) (`backend/app/main.py:80-83`), and the middleware caps exact paths only. `EventIn.props` is an unbounded `dict[str, Any]`; `name` is 1 to 64 characters; a batch is 1 to 100 events (`backend/app/features/telemetry/schemas.py:18-28`).
+- Discard list size: one entry is about 335 B with typical values, and 366 B with the longest strings (computed). A full list of 3,000 is about 1.0 to 1.1 MB. The lane's record-size figures were not re-measured.
+- Timeout rule: 15 s plus 1 s per 2,000 B, capped at 300 s (`receipt.ts:40-44`). The cap is reached at 570,000 B.
+- Slowest link that still gets the largest manifest through: with the cap, the body must cross in 300 s. The lane's 2.97 MB worst case needs 9.9 KB/s (about 80 kbps). With the longest discard strings it is about 3.07 MB, which needs 10.2 KB/s (about 82 kbps). The "heavy" phone's 1.66 MB needs about 5.5 KB/s (about 44 kbps).
+- Below that rate, every try times out and nothing is lost. Wi-Fi finishes it.
+- What can leave a phone unable ever to open its gate: a snapshot that can never be stored (a full store), or a link that is always slower than these rates. A size refusal from the app cannot happen.
+
+6. GATE
+- Clean tree at a08c6f7: typecheck EXIT=0; Jest EXIT=0, 65 suites, 774 tests; `expo export` EXIT=0; SUMMARY FAIL=0.
+- Log: `C:/Users/User/.fixflow-cache/gate-logs/rv197/mobile-20261114-190859/`
+
+WHAT THE REVIEWER RAN
+- Free RAM and commit charge before each heavy step (6.9 to 8.9 GB free, 36 to 38 GB commit).
+- The gate, once, in the background.
+- The four changed suites in a scratch copy with the three sources reverted.
+- One scratch probe file in the review tree (PROBE G, I and J, all passed). Log: the scratchpad, `c78-probes.log`.
+- Read-only `git` and `gh`, and one `node` size computation.
+
+NOT VERIFIED
+- Whether two JS contexts really snapshot at the same time on the fleet's Android versions (finding 1 is shown in Jest only).
+- The lane's memo mutation.
+- Cloudflare's request-body limit (not fetched).
+- The drain image's own body-limit table: no `release/drain` branch exists locally or on the remote.
+- The lane's record-size figures.
+
+CLEANUP: the scratch probe was removed and the review tree is clean at a08c6f7. The scratch copy was removed (junction first; the review tree's `node_modules` is intact). Only the logs remain.
+
+COORDINATOR (2026-11-14, 19:18; ruling C83). Finding 1 is fixed as the reviewer proposes: a snapshot gives way to a head that appeared while it was reading (the head key read again after the storage read and before any part is written), so the faster context's manifest is never overwritten and a snapshot that gets through did its read before any discard could happen. What is left is a gap of a few milliseconds between that check and the head's write, which the phone's storage cannot close; it is named in the code and in contract point 9, and its outcome is the safe one (the row reads `missing`). Sent to the lane at 19:14; the same reviewer re-reads. A point for the drain image: this reviewer could not check the drain image's own body-limit table because no `release/drain` branch exists yet; ruling C81's test in PR #203 runs on that lane's drain tree too, which covers it.

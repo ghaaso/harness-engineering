@@ -1,0 +1,159 @@
+VERDICT: PASS-WITH-FIXES
+PR #216 at bd6a10393f442d73339b38add25eb132b8200893
+Binding migration and storage review by a fresh fixflow-migration-reviewer; dispatched by the coordinator on 2026-11-14 at 19:02, returned at 19:19. One of two reviews of this head (the whole-PR review is a separate record). This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+`gh pr view 216 --json headRefOid` gave that SHA at 19:01 and again at 19:13. The head did not move and the review tree stayed clean. Three findings force a change to this head: F1 (MAJOR), F2 (MINOR) and F3 (MINOR). The migration itself is sound: it cannot raise on real data, its constraint shapes follow the rule, and its locks match the lane's figures.
+
+MIGRATION-REVIEW (one row: `backend/alembic/versions/0048_bill_revision_and_money_chain.py`)
+- revision: 0048
+- down_revision: 0047. Chain at head: 0046<-0045, 0047<-0046, 0048<-0047, one head, no duplicates (VERIFIED-BY-COMMAND, grep).
+- statements, in order:
+  - `:97` SET LOCAL lock_timeout '3s'
+  - `:105-143` CREATE TABLE job_bill_revision: 17 columns; foreign keys to shop, job and technician valid inline; CHECK kind; CHECK rev >= 1; UNIQUE (job_id, rev)
+  - `:147-155` ADD COLUMN subject_type varchar(24) NOT NULL DEFAULT 'staff_ledger'
+  - `:156` ALTER ledger_id DROP NOT NULL
+  - `:157-158` ADD COLUMN payment_id uuid, ADD COLUMN bill_revision_id uuid
+  - `:160-170` 2 foreign keys added NOT VALID
+  - `:171-172` 2 VALIDATEs
+  - `:174` DROP the old event_type CHECK
+  - `:175-189` 3 CHECKs, each added NOT VALID then VALIDATEd
+  - `:191-196` 2 UNIQUEs
+  - `:199-213` reads: now(), the billed jobs LEFT JOIN completion, their material lines
+  - `:282-283` INSERT revisions in batches of 1000
+  - `:308-316` read payments JOIN job
+  - `:319-331` per shop: advisory lock, then read the head
+  - `:341-342` INSERT chain entries in batches of 1000
+- table populated? Yes. `staff_ledger_chain`, `job`, `job_payment`, `job_completion` and `job_material` hold real data. The 2026-08-02 drill had 9 payments and an empty staff ledger (lane handoff; not re-checked).
+- two-step shape: all five are "same-migration VALIDATE" (`:159` "New, all-NULL columns: provably clean, so NOT VALID + VALIDATE in one go"). Each one is provably clean (section 2).
+- locks: VERIFIED-BY-COMMAND on Postgres 17.11 (section 5). The comment at `0048...py:47-52` matches.
+- can raise on real data? No (section 3). Probes on seeded shapes and on 5,000 and 50,000 rows passed.
+- CHECKs and their @integration test: five new or changed CHECKs, and none has a test that writes a value it must refuse (F2).
+- downgrade body: `:345-359` deletes the non-staff chain entries, restores the old CHECK, drops the columns and the table. It is destructive and documented as for scratch databases only (note N4).
+- CLAUDE.md head updated: yes. `CLAUDE.md:29` "head = **0048**; 43 tables" and `:147-148` "Head is **0048**; the next free slot is **0049**" (VERIFIED-IN-CODE).
+- open questions: F3 needs an owner or coordinator call: rename the columns, or write an exception into CLAUDE.md.
+
+FINDINGS THAT FORCE A CHANGE
+
+F1, MAJOR: one kind of tampering crashes the verify instead of being reported.
+- `backend/app/features/attendance/chain.py:775` "elif bill_revision_payload(rev) != create.payload:" rebuilds the payload from the stored `materials` JSONB. `:169-171` `_material_int` then raises "a material quantity or price must be an int".
+- VERIFIED-BY-COMMAND: `chain.py` loaded by path in a throwaway `python:3.12-slim`, `verify_chain` called with a revision whose materials had been edited. `[["Relay","2",100]]` raises TypeError. `[["Relay",2.0,100]]` raises TypeError. `[["Relay",2]]` raises IndexError. `{"a":1}` raises IndexError. The same revision untampered verifies `ok`.
+- Consequence (INFERRED from code): `UPDATE job_bill_revision SET materials='[["Relay",2.0,100]]'` makes `GET /api/attendance/ledger/verify` return 500. The daily job also stops: `main.py:218` -> `chain_verify.py:101-104` raises before the anchor mail and before the `money_chain_verified` app_event. The alarm goes silent, which contradicts `chain_verify.py` "An ``ok: false`` chain is still anchored and recorded".
+- Smallest fix: in `_reconcile_bills` (and defensively in `_reconcile_payments` and `_reconcile_ledger`), catch `(TypeError, ValueError, IndexError, KeyError)` around the payload rebuild and report `row_tampered`. Add one unit test per input above.
+
+F2, MINOR, forced by the repo rule: no test writes a value any new CHECK must refuse.
+- The five CHECKs are `job_bill_revision_kind_check`, `job_bill_revision_rev_positive`, `staff_ledger_chain_event_type_check` (changed), `staff_ledger_chain_subject_type_check` and `staff_ledger_chain_subject_fk_check`.
+- `tests/test_migration_0048_integration.py:313` only asserts `convalidated`. A grep of `backend/tests` and `app/**/tests` finds no refused-value write (VERIFIED-BY-COMMAND). `alembic check` cannot see CHECKs.
+- The predicate strings in the model and the migration were compared by eye: identical (VERIFIED-IN-CODE). A test would keep it that way.
+- Fix: in the 0048 scratch-DB test, after the upgrade, five INSERTs that must each raise CheckViolation: kind 'x'; rev 0; event_type 'x'; subject_type 'x'; subject 'job_payment' with ledger_id set.
+
+F3, MINOR: the five new money columns break the CLAUDE.md naming rule.
+- `CLAUDE.md:144-145` "Existing columns keep their `*_paisa` names (no churn on a live ledger); **new** money columns are named `*_minor`".
+- The new columns are `job_bill_revision.original_paisa`, `negotiated_paisa`, `labour_rate_paisa`, `fuel_paisa` and `fuel_rate_paisa_per_km` (`0048...py:120-128`; `jobs/models.py:561-573`). The O-06 design text uses `_paisa`, but CLAUDE.md wins over prose docs.
+- Renaming now is cheap, and the chain payloads are positional, so no hash changes. After the deploy it becomes churn on a live ledger.
+- Fix: rename to `*_minor` in the migration, the model and the code; or have the owner record the exception next to the rule in CLAUDE.md.
+
+NOTES (no change needed)
+- N1 NIT: the backfill bytes differ from run to run. `0048...py:233` `id=uuid.uuid4()` and `:249` `created_at=now`; all revisions share one instant, so they are ordered by random id (`chain.py:935`). VERIFIED-BY-COMMAND: "same bytes across runs: False". There is no harm: the transaction is atomic, and the verify rebuilds payloads from the stored rows. `uuid5(job_id)` would make the output reproducible.
+- N2 NIT: the docstring at `chain.py:904` says a pre-0047 void comes "directly after its own create". That is false when another payment shares the instant. VERIFIED-BY-COMMAND: order create#1, create#2, void#1. The order is still deterministic.
+- N3 NIT: the NOT VALID/VALIDATE split protects nothing here. The ADD COLUMN at `:147` already holds ACCESS EXCLUSIVE on `staff_ledger_chain` until commit, so it is equivalent to adding the constraints valid inline.
+- N4 NIT: the downgrade at `:346` deletes the non-staff entries. Any staff-ledger entry appended after 0048 then links through deleted entries, so a 0041-style verify would report seq gaps and hash mismatches. Add that sentence to the docstring.
+- N5 NIT: the verify compares only `(bill_original_paisa, bill_negotiated_paisa, bill_sent_at)` (`chain.py:792`). A direct edit of `bill_status`, `job_completion` or `job_material` is not reported; the revision still keeps what the customer saw.
+- N6 NIT, INFERRED: the verify reads in several READ COMMITTED statements. It is consistent only because every service writer needs the chain lock before it commits. A REPEATABLE READ transaction would give one snapshot whatever the writers do.
+- N7, INFERRED: 0041 and 0048 both import runtime code from `chain.py` (`0041...py:33`; `0048...py:75-79`). A later change to the payment or revision payload functions changes the backfill and the verify together. The golden-byte tests (`test_money_chain.py:221-347`) are the guard.
+
+1. THE DDL AGAINST THE MODELS (VERIFIED-IN-CODE, plus gate runs)
+- `alembic check` passed (GATE[7] EXIT=0) in both runs.
+- Model and migration agree on: every column, type, nullability and server default ('default', `'[]'`, `now()`, `gen_random_uuid()`, 'staff_ledger'); the named foreign keys `fk_staff_ledger_chain_payment` / `_bill_revision`; the UNIQUE names; the five CHECK strings (`jobs/models.py:548-556`, `attendance/models.py:508-535`).
+- None of the new constraints is NOT VALID after the upgrade; the test asserts all five are validated.
+- Indexes: the existing UNIQUE (job_id, rev) covers job_id, and the UNIQUEs (payment_id, event_type) and (bill_revision_id, event_type) cover the foreign-key columns. Nothing else is indexed; `job_bill_revision.actor` has no index (NIT).
+- Things `alembic check` cannot see (CHECKs, server defaults, NOT VALID state) were matched by reading; F2 is the missing test.
+
+2. NOT VALID THEN VALIDATE, FIVE TIMES
+Each one is clean by construction (VERIFIED-IN-CODE):
+
+| Constraint | Why it is clean |
+| --- | --- |
+| payment foreign key | new all-NULL column; validated before the backfill, so backfilled rows are checked on insert |
+| revision foreign key | same as above |
+| event_type CHECK | the 0041 CHECK `IN ('create','void')` was valid inline (`0041...py:73`), and the new set contains it |
+| subject_type CHECK | constant default, so every existing row holds 'staff_ledger' |
+| subject_fk CHECK | `ledger_id` was NOT NULL until `:156` (`0041...py:61`), and the two new columns are NULL |
+
+- The rule allows a same-migration VALIDATE for all five; none sits on months of human data.
+- Locks, VERIFIED-BY-COMMAND on 17.11 in a probe database on the gate's server:
+
+| Statement | Lock |
+| --- | --- |
+| ADD COLUMN ... DEFAULT | AccessExclusive |
+| ADD FOREIGN KEY NOT VALID | ShareRowExclusive on both tables |
+| VALIDATE foreign key | ShareUpdateExclusive on the child, RowShare on the parent |
+| ADD CHECK NOT VALID | AccessExclusive |
+| VALIDATE CHECK | ShareUpdateExclusive |
+| ADD UNIQUE | AccessExclusive + Share |
+
+- All are held to commit, behind the AccessExclusive from `:147`.
+- If a row did violate a CHECK, the error names the constraint and the table but not the row: `check constraint "ck2" of relation "ch" is violated by some row` (VERIFIED-BY-COMMAND). The whole boot transaction rolls back, `start.sh` stops at `set -e`, and the container restart-loops. For a constraint that only catalog tampering could violate, that is the right failure.
+
+3. THE BACKFILL
+Order of work (VERIFIED-IN-CODE): (1) jobs with any bill column, `ORDER BY j.id` (`:211`), LEFT JOIN completion; (2) material lines; (3) revisions inserted, sorted by (name, qty, unit), the same order as the runtime `sorted()` at `jobs/service.py:1693-1696`; (4) all payments, unordered (`:313`); the builder sorts them; (5) per shop: advisory lock, head read, events built.
+Ordering key (`chain.py:935`): (UTC time, create 0 / void 1, subject, id). That is a total order. A void's time is `voided_at`, or `recorded_at` when it is NULL (`:918`). Time zones: asyncpg returns aware datetimes; `_fmt_dt` writes fixed `%f` UTC. Money is ints end to end: BigInteger and Integer columns, `int()`, `json.dumps` ints, no floats.
+Edge cases (all VERIFIED-BY-COMMAND by the passing 0048 test unless marked): a job with a bill but no completion gets `materials []` and NULL labour; voided payments, stamped and pre-0047 unstamped; a shop with no chain head starts at genesis, seq 1; a chain that 0041 backfilled is continued at seq 4, the 0041 bytes unchanged; an empty database inserts nothing, and the gate's empty-DB upgrade passed; payments on closed jobs are chained like any other (INFERRED: no special case in the code); another shop: its shop comes from `job.shop_id`, with its own head (INFERRED).
+Cannot raise (VERIFIED-IN-CODE): `uq_job_completion_job` (`jobs/models.py:286`) prevents join fan-out, so no duplicate rev 1; qty and unit are NOT NULL ints (`:365-366`); `recorded_at` and `client_id` are NOT NULL; seq continues from max(seq); there is at most one create and one void per payment.
+Idempotence: a crashed boot rolls everything back, `alembic_version` included, because `env.py:50-51` runs one transaction; a dump taken after the migration is already at 0048, so the migration does not run again; a dump taken before it runs it once.
+
+4. PINNED SERIALISATION
+- `chain.py` is still stdlib-only (imports at `:49-55`; VERIFIED-IN-CODE).
+- `CHAIN_VERSION`, `canonical_create_payload`, `canonical_void_payload`, `compute_row_hash` and `build_backfill_events` are untouched by the diff. `LedgerRowView` is unchanged; `ChainEventView` only gained a field with a default.
+- Runtime equals migration bytes: the verify rebuilds the payloads of the migration-written entries with the runtime functions, and it returns ok (VERIFIED-BY-COMMAND). The 0041 entries are byte-identical: `_ledger_entries == before` passed.
+- A verify taken before the upgrade stays valid: the old head stays an ancestor.
+- One semantic change: the new `void_reverted` flags a staff-ledger void event on a row that is not voided, which the 0041 verify passed. Only a direct-DB edit can produce that state.
+
+5. LOCKS AND BOOT TIME
+Measured with the lane's sampler plus an in-container `pg_locks` sampler (about 70 ms granularity), Postgres 17.11:
+
+| Size | Wall time | Locks held |
+| --- | --- | --- |
+| 5,000 billed jobs + 5,000 payments | 2.42 s (lane: 2.57 s) | about 1.3 s (seen from 0.93 s to 2.23 s) |
+| 50,000 + 50,000 (105,000 chain entries) | 16.04 s | about 14.7 s |
+
+- At both sizes the lock set confirms the lane's list. `staff_ledger_chain` holds AccessExclusive, ShareRowExclusive, Share and ShareUpdateExclusive; `job`, `job_payment`, `shop` and `technician` hold ShareRowExclusive.
+- `job_bill_revision`'s AccessExclusive is invisible to both samplers (the table is created inside the open transaction; INFERRED). A one-sample ExclusiveLock on the chain is a relation-extension lock (INFERRED).
+- Phases at 50,000: billed-jobs read 0.17 s; materials read 1.05 s; revision inserts 3.2 s; payments read 0.4 s; building the events about 1.3 s; chain inserts 8.1 s.
+- What the operator sees on failure: an alembic traceback, no uvicorn, a restart loop, and the tunnel's 503. Nothing is left half-applied.
+- If a stray client (a pg_dump, an old container, a script) holds a chain lock at boot, the boot fails after 3 s and retries (INFERRED).
+- Deadlocks: every job path takes the job row lock, then the chain lock. Staff-ledger paths take only the chain lock. The verify takes the chain lock and then plain reads. The P8a script takes a voided payment's row lock, then the chain lock. A live void's `voided = false` UPDATE never waits on an already-voided row. So there is no cycle (INFERRED). The migration can only collide with a process running at the same time as the boot.
+
+6. THE UNIQUES AND CONCURRENCY (INFERRED from code; the lane says no real-race test exists)
+- seq is head+1 under the advisory lock, and a rollback removes the entry with its row, so there are no gaps.
+- Replays return before any append (`jobs/service.py` payment replay paths). The `IntegrityError` path rolls back before the chain append.
+- A void appends only when the row was flipped; the script appends only when rowcount is non-zero.
+- A second `void_attributed` for one payment is refused by `(payment_id, event_type)`. A second script run finds no candidates.
+- A payment and its void at once: both take the job row lock, and the void needs the payment to be committed.
+
+7. THE VERIFY'S QUERIES
+- What it reads: the chain, the ledger, the shop's payments, its revisions, and the jobs with a bill or a revision, all on one session after `lock_ledger_chain` (`attendance/service.py:290-312`).
+- Cost: the chain lock was held about 6.9 s at 50,000. That blocks every money write in the shop for that long; at real sizes it is trivial.
+- What it reports:
+
+| Direct-database edit | Result |
+| --- | --- |
+| payment amount changed | `row_tampered` (integration test passed) |
+| bill figure changed | `bill_tampered` (integration test passed) |
+| void flag flipped / un-voided | `void_flip` / `void_reverted` (unit tests) |
+| payment or revision row deleted | refused by the new foreign keys, unless the chain entry is deleted too, which shows as a seq gap |
+| revision `materials` edited to a non-int | the verify crashes (F1) |
+| completion, material line or `bill_status` edited | not reported (N5) |
+
+8. THE NEXT MIGRATION AND THE REBASE
+- PR #215 (head 40bfcfa) touches no migration, no model and no `chain.py`; its overlaps are CLAUDE.md, `config.py`, `main.py`, `test_scheduler_timezone.py` and `tests/conftest.py`. 0048 reads nothing from them.
+- 0048 depends on main only through `down_revision` 0047 and 0047's columns. A rebase changes it only if main gains a migration (then renumber and update `CLAUDE.md:29,147`) or `chain.py` changes.
+
+WHAT THE REVIEWER RAN
+- `ff-gates.sh backend rv216m <tree>` with `FIXFLOW_P8B_BACKFILL_JOBS=5000` on the four 0048 and chain test files: SUMMARY FAIL=0, 47 passed, 0 skipped, `alembic check` EXIT=0. The same with `=50000`, `-k scale`: FAIL=0, 1 passed. Logs: `C:/Users/User/.fixflow-cache/gate-logs/rv216m/backend-20261114-190544` and `-191210`.
+- The lock-level and error-message probe SQL in `rv216m_probe` on the gate's database server (created, then dropped). The `chain.py` probe in `rv216m-pyprobe` (256 MB, `--rm`).
+- RAM before the runs: 8.6 GB free, 35.9 GB commit.
+- Every container is gone and the review tree is clean. Scratch keeps only logs under the coordinator's scratchpad, `rv216/mig/logs/`.
+
+NOT VERIFIED: a real two-session race on the chain lock; the foreign-key VALIDATE error text; the compose healthcheck's start period against a slow boot; whether `lock_timeout` covers the advisory-lock wait; the full gate (the other reviewer's); the real dump's row counts.
+
+COORDINATOR (2026-11-14, 19:18; ruling C84). The three findings are fixed in this PR's next round, with ruling C82 and whatever the whole-PR review asks: (1) the verify reports any stored row it cannot rebuild as tampered and never crashes, in all three reconcilers, with the run still recorded and anchored as not ok; (2) each new CHECK gets a test that writes a refused value; (3) the five new money columns are renamed to `*_minor` now, since CLAUDE.md's rule is plain and the rename is free before a deploy (the chain's payloads are positional, so no hash changes); fields clients already read keep their names. The notes stay notes. One for the host-setup checklist: the compose healthcheck's start period against a boot that carries this migration (16 s at ten times the tried size).
