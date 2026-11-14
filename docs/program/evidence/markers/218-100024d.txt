@@ -1,0 +1,36 @@
+PR 218 (P8b follow-up, ruling C95) is ready for a fresh reviewer at 100024d.
+- Branch claude/p8b-cap-followup, one commit on main f425ede (#216's merge). Draft opened, then `gh pr ready`; the body starts "Plan @ plan-v9.82". One push.
+- Backend only. No migration (head stays 0048). Not merged. CI did not run (C52).
+
+GATES (memory checked before each run: 8.7 to 10.1 GB free, 35.5 to 36.9 GB commit; one gate at a time):
+- Full, head 100024d, clean tree, no extra arguments: C:/Users/User/.fixflow-cache/gate-logs/p8b/backend-20261114-210858  SUMMARY FAIL=0, 1504 passed, 0 skipped, integration ran.
+- The changed test files over f425ede: gate-logs/p8bbase/backend-20261114-211754 (6 failed, 50 passed).
+- The launder break applied to 100024d (any revision a manager wrote restarts the cap): gate-logs/p8bbreak/backend-20261114-212001 (1 failed of 14, the named test).
+
+WHAT CHANGED:
+1. The cap. jobs/repository.py cap_reference_original restarts at the latest revision in which a manager set the bill:
+   - kind override (only a manager writes one), or
+   - kind completion whose actor is in (SELECT id FROM technician WHERE role='manager').
+   A manager's send or negotiate does not restart it. The reference is still max(current original, that first original).
+   - The actor's role is read as it is now, not as it was at the write (a note in the PR body).
+   - The jobs/tests/conftest.py fake follows the rule, with t1 as the manager.
+   - Texts: CLAUDE.md, tenancy/specs.py's description and the negotiate docstring.
+2. The row_tampered detail. attendance/chain.py:
+   - _rebuilt returns _Unencodable(detail), and the void branch's except builds the same detail.
+   - The detail ends with "[<ExceptionType>]", the type name only, never the message.
+3. The 0048 test's fifth CHECK insert:
+   - It now uses a fresh staff_ledger row and a fresh job_payment with no chain entry.
+   - subject 'job_payment' with both ids set breaks staff_ledger_chain_subject_fk_check alone.
+
+EACH TEST AGAINST f425ede:
+- FAILS: tests/test_bill_revision_integration.py::test_a_managers_resubmit_before_the_send_restarts_the_cap. The reviewer's probe: 403 "a discount of Rs 3,200 is above the shop's limit of Rs 500".
+- FAILS: app/features/attendance/tests/test_money_chain.py::test_an_unencodable_revision_is_row_tampered_not_a_crash x4 and ::test_an_unencodable_ledger_row_is_row_tampered_not_a_crash. The detail had no type name.
+- PASSES: tests/test_bill_revision_integration.py::test_a_managers_send_or_negotiate_does_not_launder_a_technicians_lowering.
+  - It pins behaviour that already held.
+  - Under the launder break it fails: the technician's 100000 after the manager's send answers 200, not 403.
+- PASSES: tests/test_migration_0048_integration.py::test_0048_backfills_revisions_and_chains_existing_money. The CHECK already held; the insert is narrowed to one rule.
+- Unchanged and green: the C13, C89 and larger-of-two cap tests.
+
+CHANGED EXPECTATIONS: the unit test's parameters gain an expected type name. Nothing is removed, skipped or xfailed.
+
+DEPLOY-TRAIN ROW: P8b follow-up (C95) | #218 | none | the same check as P8b (verify_ledger_chain gives ok).
