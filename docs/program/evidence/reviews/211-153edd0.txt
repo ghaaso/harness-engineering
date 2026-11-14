@@ -1,0 +1,105 @@
+VERDICT: PASS-WITH-FIXES
+PR #211 at 153edd0698b424469e283ceca667ed8c348af3e0
+Binding review by the reviewer of PR #209 and PR #201; dispatched by the coordinator on 2026-11-14 at 12:29, returned at 12:51. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head is 153edd0 and the base is `6f430ce`; `gh pr view` still showed that head at the end. Line 1 of the PR body is `Plan @ plan-v9.54` (cb41f37), which contains C58, C59 and C61. THE RIG REHEARSAL OF THIS HEAD IS STILL OUTSTANDING: the rig was not run. Line numbers below are at the head.
+
+The guard stops every route the brief names. It does not stop four things: a live state cleared by hand after 6.6 wrote its marker, a paused or restarting backend, a writer under another name or project, and a stale tag push in 11.13/11.13a.
+
+A. ROUTES INTO 6.7
+
+Method: pasted by anchor into `bash --norc -i`, with the real `ops/selfhost/bin/ffc` running `docker compose` (project `rv211`). Postgres 17-alpine held 46 tables. The backend was a stand-in that writes a row every 2 s, behind the real `restore-gate.sh`.
+
+| # | Route | What was pasted | What happened |
+|---|---|---|---|
+| 1 | WT16: 6.1 skipped, live host | 6.6 a-list, a-prove, b-save, then 6.7, then `echo NEXT-LINE-RAN` | Both lines printed `STOP: ... (the restore gate is signed off: this database is live; start again at 6.1)`. Still 46 tables, writes kept (rows 14 -> 16), the next line ran. 6.6 (b) STILL WROTE A MARKER ON THE LIVE DATABASE (see MAJOR-1) |
+| 2 | Sign-off removed by hand, backend running | `rm` sign-off, then 6.7 | `STOP: nothing dropped (the backend is running: ...)`; writes kept |
+| 2b | Route 1 or 2, then the owner clears each named reason by hand (`ffc stop backend`, not 6.1) | 6.7 | `DROP SCHEMA` RAN. The copy 6.6 (b) took had 14 rows of the test table; the live database had 26 at the DROP. 12 WRITES ARE IN NO COPY |
+| 3 | WT13 (b): abandoned after 6.6 (marker left), sign-off recreated by hand, `up -d` | 6.7 | STOP (signed off); writes kept. With the sign-off removed again: STOP (backend running). With an empty sign-off made by `touch`: 6.7 STOPs and the gate stays CLOSED |
+| 4 | `ffc ps` fails | `DOCKER_HOST=tcp://127.0.0.1:1`; also `FF_ENV` missing (ffc exits 2) | `STOP: ... (ffc ps failed)` on both lines; nothing dropped. The `RUNNING=$(...)` assignment carries ffc's exit status |
+| 5 | First restore: empty volume, no backend container | `down -v`, db only; 6.1, 6.6 a, b-count, b-empty, 6.7 | `ffc stop backend` is silent with no container; `marker: ... (nothing to save)`, DROP, `restore exit=0` |
+| 6 | Entered properly at 6.1 on a live host | 6.1, 6.6 in full, 6.7 | DROP, then `restore exit=0` with 46 tables |
+| 7 | 6.7 typed again after a load that stopped half-way | Dump cut to 45 kB inside the container, 6.7; full file put back, 6.7 again | 1st: `pg_restore: error: ... end of file`, `restore exit=1`. 2nd: the guard passed, DROP, `restore exit=0` |
+| 8 | Way back to the pre-restore copy | `D=pre-restore-<S>.pgdump`, `SUM=L`; 6.6 a and b-save, then 6.7 | `proven`, then `marker: pre-restore-... (pre-restore copy uploaded)`, DROP, `restore exit=0`; that copy's 10 rows are back |
+| 9 | R-operations (read, not pasted) | - | R3.5 reaches 6.1 ("section 6 from 6.1", l.3099). R7 never reaches 6.7: R7.5 has its own unguarded DROP on `fixflow_drill`. R8.4 says "section 6 (case by case ...)" with no entry step named; it runs on a new host whose sign-off is not copied (R8.2) -> passes. R9.6 enters at 6.6 ("exactly as 6.6-6.8"); there is no sign-off (R9.3) and no backend container (R9.5) -> passes |
+| 10 | 6.7 typed again after 6.9 | 6.9-signoff (backend comes up), then 6.7 | STOP (signed off) on both lines; 46 tables |
+
+Attempts to get past the guard (sign-off absent, marker present):
+
+| Attempt | Result |
+|---|---|
+| Backend paused (`docker pause`) | `ps --status running --services` printed `postgres` only -> DROP RAN |
+| Backend restarting (crash-loop under `restart: unless-stopped`; the daemon restarts it without asking the gate) | During backoff, `--status running` leaves it out -> DROP RAN. The same moment, `ffc ps --services` without `--status` lists `backend`, and also lists it while paused |
+| Second compose project (`rv211b-backend-1`) or plain `docker run` writer on the same database | Not listed -> DROP RAN |
+| Service under another name (`backend-canary`, from `FF_EXTRA_COMPOSE`) | Listed even without the extra file, but `grep -qx backend` does not match it -> DROP RAN |
+| Scaled backend (`--scale backend=2`) or a one-off `ffc run backend` | Listed as `backend` -> STOP |
+| Sign-off is a directory | 6.7 refuses. Separately, the gate's `-s` is true for a directory, so the gate opens (backlog) |
+| Sign-off is a dangling symlink | 6.7 passes and the gate is CLOSED: consistent |
+| Sign-off is unreadable | Root always passes `-e`, so 6.7 refuses |
+| `D` set, marker names another dump | `STOP: ... (no 6.6 marker names fixflow-db-rv211.dump)` on both lines: the old guard holds behind the new one |
+| `D` unset | `bash: D: not set ...`, rest of the line dropped, the next line runs. Marker is a directory: STOP |
+| A test failing for a reason other than "live" | Every test is joined by `&&`, and a failing `ffc ps` stops the line (route 4). The only inversion is `! printf | grep -qx backend`: a grep error (exit 2) would pass. Not reachable in practice; nothing to fix |
+
+B. THE LANE'S CHOICE
+
+"Sign-off absent and backend not running" is NOT exactly "not live" on this stack. It is a test of one moment, and it looks only at containers named `backend` in project `fixflow` that are in state `running`.
+- What it misses: a paused or restarting backend (shown above); any writer under another name or project (shown above); and writes made between 6.6 (b)'s copy and 6.7 by a backend that has since stopped (route 2b).
+- What `max(job_event.seq)` would catch that this misses: past writes in that window (route 2b), and a writer under any name, but only when the write touches `job_event`.
+- What this catches that `max(seq)` misses: writes to every other table (punches, pings, travel, the staff ledger, settings, customers, PINs, telemetry); a backend that is running at the DROP but has not written yet; and a first restore, which has no `job_event`.
+The lane's choice is the better primary test. One line to add: put the same live test in front of 6.6 (b)'s three marker lines, and drop `--status running`, so that no marker can exist for a live database and a paused or restarting backend counts as live.
+
+C. 6.12 WITHOUT ITS `up` BLOCK
+
+Dropping the block is correct: nothing on the server caches the fence.
+- Every reader calls `AttendanceRepository.get_active_geofence` (`backend/app/features/attendance/repository.py:381`), a fresh `select` each time: `/geofence/active` -> `service.py:1093`; punch and crossing -> `_evaluate_geofence` at `:1140` (called from `:385` and `:464`); the ping batch -> `:543`, one read per batch; the board's `fence_active` -> `:723`; jobs' `workshop_circle` -> `:156` (via `jobs/service.py:1335`).
+- Sessions are per request (`core/db.py:24-39`). `expire_on_commit=False` does not matter because no session outlives its request.
+- The only `lru_cache`s are the payment rail and storage singletons (`core/payment_rail.py:71`, `core/storage.py:172`); the other module-level dicts are a metrics template cache, the PIN-default hash cache and the notifications token cache. No geofence value is read at start-up (`main.py` and `core/` have none).
+- The PHONE does cache `ActiveGeofence` (`core/config.py:95`), but a server restart never refreshed that.
+NIT: 6.12's list of readers (l.1679-1682) leaves out the board's `fence_active` (`service.py:723`). It also reads through the same function, so the claim holds.
+
+D. THE REST
+
+- Anchors. All 35 are unique. The list in section 0 (l.86-87) matches the anchored steps exactly. An awk scan finds no guarded block (`${VAR:?` or `WHY=`) without an anchor. The sentence "and every other block a rehearsal types, is preceded by" an anchor (l.85) is false: the rig types many unanchored blocks by content pin (`rb_fence 6.3 1`, `6.4 1`, `6.8 1`, `11.6 1`, `11.7 1`, `11.13 2`, `3.x`, `7.x` ...), and `ops/lab/rehearsal/README.md:84` says "Every other block is chosen by its content". The base text limited the claim to named steps; the new text drops that limit (NIT-1).
+- apt-get. Every `apt-get` line carries the flags (l.193, 194, 261, 304, 341, 485), and both `update` lines read `</dev/null`. `--force-confdef` takes dpkg's default where there is one; otherwise `--force-confold` keeps the installed file. The text simplifies this correctly enough. `NEEDRESTART_MODE=a` restarts services without asking; harmless here, because every one of these lines runs before the stack exists. Nothing left reads the terminal: `curl -o` writes the key with no gpg prompt, and `lsb_release` and `timedatectl` do not prompt. A "Release info changed" question in `apt-get update` reads EOF and fails rather than taking the next pasted line. INFERRED, not checked against package metadata: `smartmontools` Recommends `bsd-mailx`, which pulls an MTA (postfix on Ubuntu); under `noninteractive` that MTA is now configured silently instead of asking (NIT-2).
+- Section 8 vs C59. C59 says "during a phone's drain only the technician being drained signs in on it". l.1903-1909 says that, and adds the rule that on a shared phone the next technician signs in only after the previous one's after-report is sent; 8.5 (l.2010) matches. The gap: the after-report is sent BEFORE 8.5a's audit. An audit exit `3` "halts the fleet: no further phone drains" (8.5a), so the second technician on a shared phone may already be draining when the halt arrives (MINOR-3).
+- 6.4. `alembic heads` prints `<rev> (head)`. Deep health's `migrations` detail is `head {db_head}` (`ops/health.py:112`), so 6.9's comparison is consistent.
+- 11.13 and 11.13a, trials in a scratch bare origin (`git` in a scratch directory, outside the repo): the right `SHA` -> `tagged`, `pushed drain-image-2`; branch not pushed -> both lines STOP, and nothing reaches the remote; `SHA` unset -> both `:?` messages, the next line runs; the tag exists on another commit -> STOP / STOP; the tag already on `SHA` from a push that failed earlier -> line 1 `STOP: no tag (git tag failed)`, line 2 pushes, a good retry. A STALE `SHA` (pre-fix) WITH AN UNPUSHED LOCAL `drain-image-2` LEFT ON IT FROM AN EARLIER ATTEMPT -> line 1 `STOP: no tag (SHA is not release/drain's tip)`, then line 2 `pushed drain-image-2`, AND THE REMOTE TAG LANDS ON THE PRE-FIX COMMIT. That contradicts "a block pasted whole never pushes a tag the first line refused" (l.2743) (MINOR-2). A lightweight tag on `SHA` is also pushed. 11.13a has the same structure; it was not pasted.
+
+E. OTHER TEXT THE DIFF TOUCHES
+
+- 6.6 (b)'s "the backend is stopped since 6.1, so nothing writes" (l.1459-1460) is a guard written only in prose, on the very lines that write the marker (MAJOR-1).
+- 6.7's Check and the way-back paragraph match their blocks (routes 7 and 8).
+- 6.1's Check, 6.5, 6.8 check 2 and 6.9 agree with 6.4's new reading.
+- No other runbook text refers to 6.12's removed `up` line (the other `--force-recreate backend` lines are 8.x and R-steps). The rig still types that line: `README.md:98`, `rb_line 6.12`.
+
+FINDINGS
+
+- MAJOR-1 (l.1453/1463/1484; prose at l.1459). 6.6 (b)'s three marker lines write a marker on a live database. 6.7's live test checks only the moment it runs, so clearing each reason it names by hand (remove the sign-off, `ffc stop backend`) lets the DROP through. In route 2b, 12 writes were lost. Fix: put the same live test in front of b-empty, b-save and b-scp, after `: "${D:?...}"`:
+  `WHY="the database is live" && [ ! -e /etc/fixflow/restore-signed-off ] && RUNNING=$(ffc ps --services </dev/null) && ! printf '%s\n' "$RUNNING" | grep -qx backend && ...`
+- MINOR-1 (l.1507 and l.1509). `ffc ps --status running --services` leaves out a paused or restarting backend, and the DROP ran in both cases. Fix: drop `--status running`. Verified: the plain form lists `backend` while paused and while restarting, and lists it no longer after `ffc stop`.
+- MINOR-2 (l.2741, l.2791; claim at l.2743). The push line pushes a pre-existing tag on a stale `SHA`. Fix: repeat line 1's two tip tests (`[ "$SHA" = "$(git rev-parse release/drain)" ] && [ "$SHA" = "$(git rev-parse origin/release/drain)" ]`; for the web line, `release/drain-web`) in front of the push.
+- MINOR-3 (l.1907-1908, l.2010). The next technician on a shared phone is gated on the after-report, not on the audit. Fix: "only then, and only when that technician's 8.5a did not exit `3`, does the next one sign in."
+- NIT-1 (l.85). Fix: "...and every block a rehearsal types from a text the batches rewrote; the rig types the others by content (`ops/lab/rehearsal/README.md`)."
+- NIT-2 (l.485). Fix: add `--no-install-recommends` to the SMART tools line.
+- NIT-3 (l.1679). Fix: add "the attendance board's fence flag" to 6.12's list of readers.
+
+Backlog (outside the diff):
+- `restore-gate.sh:29` treats a directory as signed off; `-f` together with `-s` would close that.
+- R9.6 runs 6.6 (a), which copies `/var/lib/fixflow/restore/$D`, but R9.4 left the dump in `/var/lib/fixflow/drain/`. The prove step stops; it is an obstacle, not a hole.
+- R7.5's DROP has no guard against a mistyped `-d`.
+- 11.10's first tag push is in prose with no guard.
+
+NOT VERIFIED
+- The rig rehearsal of this head is outstanding. By the lane's own self-check, `main`'s rig reports selftest FAILED, 6.12 MOVED, WT2 MOVED x8 and 6.4 AMBIGUOUS on this text, and the wrong turns after WT2 now stop on the live test.
+- Whether `NEEDRESTART_MODE` is honoured on a real Ubuntu host with needrestart installed (the runbook's own VERIFY; the lane's `ubuntu:24.04` trial had no needrestart).
+- The host's compose version: `--status` and the plain-`ps` listing were tested on Docker Compose v5.6.1 only.
+- The real backend's connection-pool behaviour. A `pg_stat_activity` test is a possible extra layer, but cron dumps would trip it, so it is not recommended.
+- 11.13a and 6.13 were not pasted. CI shows the three jobs failing after 2 s (GitHub's billing stop, C52), so per C60 the merge needs the local-checks gate.
+
+WHAT THE REVIEWER RAN
+- `git show`, `git grep`, `git diff` and `git log` at `153edd0` and `6f430ce`; `gh pr view 211` and `gh pr checks 211`.
+- Paste trials through the real `ffc` against Docker containers `rv211-postgres-1`, `rv211-backend-1`, `rv211-backend-2`, `rv211-restore-gate-1`, `rv211-backend-run-*`, `rv211-backend-canary-1`, `rv211-x-writer`, `rv211b-backend-1` and `rv211-sem`. All were removed (`down -v --remove-orphans`, then a listing shows no `rv211*`).
+- Scratch git repos for 11.13, removed afterwards. No other container was touched and nothing was written to the repository.
+- Scratch kit and trial inputs: the coordinator's scratchpad, `rv211/` (`t1.in` to `t8.in`, `t1113.blk`, `blk.sh`, `mk.sh`, `run.sh`, `live.sh`, `diff.txt`, `plan.md`).
+
+COORDINATOR (2026-11-14, 12:52; ruling C65). Not mergeable at 153edd0. All seven findings go back to the lane for one round: the live test also stands in front of 6.6 (b)'s three marker lines and loses `--status running`; the tag push repeats the tip tests; the next technician on a shared phone waits for the audit, not only the after-report; the three nits. The text must also say what the live test cannot see (a writer outside this stack's `backend` service). The four backlog items join the runbook PR that fills `<p2b2>` (the restore gate's directory case is a script change with its fixture test). The same reviewer re-reads the delta; the rig rehearsal block follows when the rig's follow-up is merged.
