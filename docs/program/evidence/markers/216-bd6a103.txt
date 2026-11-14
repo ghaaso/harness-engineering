@@ -1,0 +1,70 @@
+PR 216 (P8b, money integrity 2) is ready for both binding reviewers at bd6a103.
+- First ready: `gh pr ready` was run, and the PR body starts "Plan @ plan-v9.67". One push.
+- The branch is based on main 1f25479. #210 was already merged (e6f85c5 is an ancestor), so nothing is stacked. main has since moved to 27c9e04, which touches src/ only. No rebase yet; P7b-2 (#215) merges first, then I rebase and write a new marker.
+- Five commits: 3e0d772, d2e386b, 9ffff6b, 616fa28, bd6a103 (read in that order).
+- Migration 0048 (down_revision 0047). Not merged. CI did not run (C52).
+
+GATES (head bd6a103, clean tree, no extra arguments, after a memory check of 10.0 GB free and 33.8 GB commit):
+- backend: C:/Users/User/.fixflow-cache/gate-logs/p8b/backend-20261114-184924  SUMMARY FAIL=0, 1484 passed, 0 skipped, integration ran.
+- The lock measurement is from the partial run backend-20261114-183026 (pytest -s; the 0048 migration code is identical at this head).
+
+WHAT CHANGED, BY ITEM (each test fails on 1f25479 and passes on head; full table in the PR body "By item"):
+- O6-F09 revisions:
+  - New append-only job_bill_revision: one row per real completion, override, negotiate or send; "backfill" for bills 0048 found.
+  - Each row holds figures, sorted material lines, labour, time, fuel, actor, and a note column of its own.
+  - A replay writes none.
+  - Tests: tests/test_bill_revision_integration.py (6).
+- O6-F09 reasons:
+  - A manager's real correction of a frozen bill needs a reason (≤256 characters, else 422).
+  - A manager's post-send negotiate needs a note (422). A technician's does not (deployed phones).
+  - Tests: ::test_a_manager_override_needs_a_reason_and_keeps_the_bill_it_replaces, ::test_a_negotiation_after_the_send_needs_a_managers_note, test_jobs_integration.py::test_completion_resubmit_is_frozen_once_the_bill_was_sent.
+- HR-A4 single writer:
+  - JobService._write_bill is the only writer of job.bill_*. repository.try_negotiate is removed.
+  - Tests: tests/test_bill_single_writer.py (an AST tripwire: assignment, keyword, dict key, setattr, SQL UPDATE/INSERT; plus a not-vacuous control) and ::test_a_bill_written_around_the_one_writer_is_caught (the verify reports bill_tampered or bill_unrevisioned).
+- C13: the discount cap is measured against max(first original, current). Test: ::test_the_discount_cap_is_measured_against_the_first_original (403 on head, 200 on base).
+- C35/C31:
+  - The reason and note are kept on the revision only.
+  - The guard test now drives a marked override reason and a marked post-send note.
+  - _WRITERS is unchanged: no new job_event write site, and the guard's tripwire passes.
+- O6-F07 and O6-F08, one chain:
+  - staff_ledger_chain (name kept) gains subject_type and payment_id / bill_revision_id.
+  - Payment create, void and void_attributed, and every bill revision, are appended under the per-shop advisory lock, in the same transaction as the row.
+  - The verify reconciles the chain against the ledger, payments, revisions and job.bill_*.
+  - Tests: tests/test_money_chain_integration.py (5); unit app/features/attendance/tests/test_money_chain.py (34: golden bytes, every finding, backfill builder).
+- Verify job and mailer (C74):
+  - app/chain_verify.py, core/mailer.py (stdlib smtplib), ledger-chain-verify daily at 04:00 shop time behind chain_verify_enabled, scripts/verify_ledger_chain.py, and the money_chain_verified app_event.
+  - Unset relay: "unanchored". A failed send: "failed", NOT delivered, error type only.
+  - The settings are named only in ops/selfhost/env/backend.env.example, with empty values.
+  - Tests: ::test_the_daily_verify_anchors_the_head_and_records_the_run, ::test_a_broken_chain_is_still_anchored_and_recorded, test_scheduler_timezone.py.
+
+MIGRATION 0048:
+- A new table, three new chain columns, and five constraints added NOT VALID then VALIDATEd in the same migration (new all-NULL columns, or existing rows that are all staff-ledger entries).
+- Two uniques that refuse a second create or void per subject.
+- The backfill: one backfill revision per billed job, then the chain continued from each shop's head. Inserts are batched 1000 at a time, all in the boot's single transaction.
+- Locks measured at 5000 billed jobs and 5000 payments (2.57 s wall): staff_ledger_chain ACCESS EXCLUSIVE, and job, job_payment, shop, technician SHARE ROW EXCLUSIVE, for about 1.6 s.
+- The real database at the last drill had 9 payments and an empty staff ledger, so this is an upper bound.
+- The 0041 entries are byte-identical across the upgrade (test_0048_backfills_revisions_and_chains_existing_money).
+- alembic check is clean. No downgrade is ever run.
+
+EVERY CHANGED EXPECTATION (no assertion removed, no skip or xfail):
+- test_lifecycle.py::test_a_manager_may_correct_a_frozen_bill: no reason → JobReasonRequiredError; with a reason → an override revision (O6-F09).
+- test_jobs_integration.py::test_completion_resubmit_is_frozen_once_the_bill_was_sent: the manager's correction is 422 without a reason, then 200 with one (O6-F09).
+- test_service.py, test_lifecycle.py, test_money_guards.py, test_evidence_gaps.py, test_tech_metrics.py: the try_negotiate fakes are removed (the method is gone) and in-memory revision fakes are installed. No assertion changed.
+- jobs/tests/conftest.py: an autouse FakeMoneyChain.
+- attendance/tests/test_router.py: get_jobs_service is overridden; it asserts load_money == jobs.money_chain_rows.
+- test_scheduler_timezone.py: the ledger-chain-verify 04:00 row.
+- test_messaging_integration.py: one added assertion that the automated send writes a send revision and stamps bill_sent_at.
+
+FILES THAT MOVED FOR A REASON:
+- pyproject.toml: one new edge, attendance.router -> jobs.deps (the verify endpoint reads jobs' money rows in the request session).
+- scripts/backfill_payment_voided_at.py (P8a): it chains its stamp as void_attributed.
+- telemetry/service.py: record_chain_verify.
+- tenancy/specs.py: the cap text now says "first original".
+
+BREAK TABLE: in the PR body, section "Break table" (22 rows, each with its catching test). Not covered by a test: the verify's advisory lock under a real race, and SmtpMailer against a real relay.
+
+PLAN DEFECTS: in the PR body. The main one: the web half of O6-F09 has no owning phase. src/features/jobs/data/jobsApi.js sends no completion reason, and sends `note || null` for negotiate, so after deploy a web manager gets a 422 on a frozen-bill correction or on a post-send negotiate with no note.
+
+OVERLAP WITH P7b-2 (#215): main.py (one import pair and one add_daily_job block), config.py (one P8b block), CLAUDE.md (four spots), test_scheduler_timezone.py (one job row). tests/conftest.py is not touched.
+
+Self-checks: not run by this lane, because the coordinator dispatches the PR reviewer and the migration reviewer (newer instruction).
