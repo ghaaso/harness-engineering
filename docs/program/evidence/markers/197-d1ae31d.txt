@@ -1,0 +1,39 @@
+PR 197 head d1ae31d (one commit on 8cb84f1; base main 16e154e; main is now 27c9e04, not rebased)
+ruling C75 (phone half): queue_discard gains entry_id; drain_after.discards[] entries gain entry_id; drain_manifest gains a top-level discards (the durable list as it stood at the snapshot, the after-report's shape, [] when empty, never absent). No version rename.
+
+CHANGED FILES
+- technician-app/src/features/drain/discardLog.ts   DiscardRecord + discardRecords (one mapper for both documents); appendDiscard awaits beforeQueueWrite (the snapshot)
+- technician-app/src/features/drain/discardEvent.ts  trace carries entry_id
+- technician-app/src/lib/telemetry.ts                DiscardEvent.entry_id, passed into the queue_discard props
+- technician-app/src/features/drain/afterReport.ts    AfterDiscard = DiscardRecord (entry_id added)
+- technician-app/src/features/drain/manifest.ts       DrainManifest.discards, read from DISCARD_LOG_KEY in the same kv read as the records (unparseable -> [] + unreadable_stores)
+- technician-app/src/features/drain/drainGate.ts      discards stored in the record parts (group "discards"), head keeps []; loader rebuilds it; a head without the key loads without the field
+- CLAUDE.md                                           drain-gate row: entry_id and the manifest's discards
+- tests: afterReport.test, discardEvents.test, drainGate.test, manifest.test, telemetry.test, drainReport.test (fixture)
+
+TESTS FAILING ON 8cb84f1 (16 with the six source files reverted to 8cb84f1, tests kept)
+- telemetry.test: recordDiscard > props are exactly the queue_discard contract
+- discardEvents.test: discardItem (outbox, parked) / discardItem queued / discardPunch / discardPresence / discardPendingMedia / removePendingMedia  (trace props include the entry's id)
+- discardEvents.test: C75 > a trace that cannot be stored takes its entry back, and its id appears in no later document (manifest, after-report, telemetry queue)
+- discardEvents.test: C75 > the data layer writes no entry while this build's snapshot is still being taken (fails with discardLog.ts alone reverted)
+- afterReport.test: discards: every entry ... (entry_id included, C75); also asserts manifest.discards has the same shape
+- drainGate.test: point 6 > lists every discard ... across a restart (entry_id)
+- drainGate.test: C75 > an empty list is [] in the stored manifest and in the upload, never absent
+- drainGate.test: C75 > a discard after the snapshot is not in that manifest; the next build's manifest holds it, with the trace's entry id (v41 stored + uploaded = []; v42 stored + uploaded hold it; v42 relaunch loads it from parts, no rewrite)
+- drainGate.test: C75 > the head stays small: the discards live in the record parts
+- manifest.test: C75 > is [] when nothing was discarded / is the durable list as read with the records (whitelisted) / a list that cannot be parsed is [] and named in unreadable_stores
+
+EXAMPLES (made-up values)
+queue_discard props:
+  {"queue":"outbox","kind":"payment","reason_class":"server_refused","owner_tech":"t1","discarded_by":"t2","install_id":"5f0c9a1e-2b7d-4c3e-9a61-0d8e4f2b7c11","record_id":"pay-7","entry_id":"b3e1d0c2-6a4f-4e8b-9d27-1f5c3a8e9b40"}
+drain_after.discards[0]:
+  {"entry_id":"b3e1d0c2-6a4f-4e8b-9d27-1f5c3a8e9b40","queue":"outbox","kind":"payment","reason_class":"server_refused","owner_tech":"t1","discarded_by":"t2","record_id":"pay-7","install_id":"5f0c9a1e-2b7d-4c3e-9a61-0d8e4f2b7c11","at":"2026-11-14T09:12:44.501Z"}
+drain_manifest props (new part only):
+  "discards":[{"entry_id":"b3e1d0c2-6a4f-4e8b-9d27-1f5c3a8e9b40","queue":"outbox","kind":"payment","reason_class":"server_refused","owner_tech":"t1","discarded_by":"t2","record_id":"pay-7","install_id":"5f0c9a1e-2b7d-4c3e-9a61-0d8e4f2b7c11","at":"2026-11-14T09:12:44.501Z"}]
+  with none: "discards":[]
+
+GATE
+mobile gate on a clean tree, head d1ae31d: typecheck, jest 65 suites / 764 tests, expo export: FAIL=0
+gate id / log: /c/Users/User/.fixflow-cache/gate-logs/p2b1/mobile-20261114-184441
+CI: not run (Actions minutes exhausted); local gate is the evidence
+build config unchanged since c5eadbd; not merged; values commit still to come (domain, fleet max versionCode)
