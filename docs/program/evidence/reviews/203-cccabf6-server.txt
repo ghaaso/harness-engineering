@@ -1,0 +1,49 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at cccabf6d7fa70af50d7108fa4d0e35c1da6c7e3d
+Second server-side delta re-read (`2375fd6..cccabf6`: ruling C100) by the PR's server-side reviewer, with both full gates; dispatched by the coordinator on 2026-11-14 at 23:54, returned at 00:30 on 2026-11-15. This file is the coordinator's record of the reviewer's report, written from the notification text. The phone-lens review of the same head is `203-cccabf6-phone.txt` (PASS-WITH-FIXES, one text fix).
+
+The head was cccabf6 at the start and at the end. Both full gates are green and both findings of the last round are now pinned. There is one small code fix (F1) and three readings that no test pins (F2). Everything else tried held.
+
+FINDINGS
+
+F1 (minor, code and a test). An acknowledged manifest sign wins over a newest after-report that has no discard list.
+- The rule says `--ack-unreadable INSTALL_ID:discards` never clears a report with no list. But the report is read only when the row's own manifest is trusted: `backend/scripts/drain_audit.py:2731` (`why, unlisted, whose = row.discards_untrusted, row.discards_unlisted, "its manifest's"`), `:2732` (`if why is None:  # ruling C100: the newest usable after-report's list`). So the acknowledgment check at `:2744` (`if not unlisted and (install, DISCARDS_ACK) in acks:`) never sees that report's missing list.
+- The probe on the head: a manifest with a kept corrupt copy (a C78 sign), acknowledged, and a newest after-report with no `discards` field: the row reads `unreadable_reviewed` and the run exits 0 with "1 row(s) left for manual entry". It should stay `not_judged`, exit 4, cleared by hand only. The same mix without the acknowledgment: `not_judged`, exit 4, but its clears line points the owner at the acknowledgment.
+- How reachable: only when a build that sends no list uploads after a manifest that has one.
+- Fix: when the row's own reason is a C78 sign, also check the newest usable report. If that report has no list and does not list the row, treat the row as having no list. Add a test for this mix.
+
+F2 (tests only). Three readings of the round survive a break, with all 260 drain tests green:
+- OB13: at `:2832`, `if why is None and showing.discards_untrusted:` changed to ignore a report with no list. Nothing caught it. The marker claims "a report with no list is also untrusted for C72's bound" (`:1103`) as part of this round, but no test checks it.
+- OB8: `or rep.problems` removed (`:2736`). Nothing caught it. "The newest usable report" is the lane's reading; on the head, a residue row whose newest report is unusable but shows a sign stays `residue` (probe), and no test checks that.
+- OB11: the "does it list the row" check at `:2738` made to also compare content. Nothing caught it (the gate fails, but only on ruff format). The reading "any version of the slot listed means the listing judges" fits C75 point 4. On the head, a residue slot row with another version listed stays `residue` (probe), and no test checks that either.
+
+THE COORDINATOR'S ITEMS
+
+1. The last round's two findings: confirmed. On the head, OB6 fails only `test_c100_the_command_line_takes_the_discards_acknowledgment`, and OB3 fails only `test_c100_a_merged_row_keeps_that_a_listing_manifest_had_no_discard_list`. Both tests pass on the head (full gate), and also on 2375fd6's two scripts, so each goes red only when its rule is removed.
+
+2. The new rule.
+- Which report counts: `newest_after_report` (`:2463`) takes the install's newest report received after the row's manifest. If that report has problems, a row that would be `missing` becomes `no_after_report` (exit 4), even when an older report is fine. A newer fine report beats an older one with a sign: the row stays `missing`. Both follow the ruling's word "newest usable".
+- "Does not list": right for slot rows (while the slot is listed, C75 point 4 takes no discard, so a missing or unreadable list cannot be what closed the row). Droppable queues are skipped first (`:2728`).
+- Exit codes, from the probe: a report sign alone: `not_judged`, 4. A report sign plus a real `missing` elsewhere: 3. A report sign, acknowledged: `unreadable_reviewed`, manual entry, 0. A report with no list, acknowledged: `not_judged`, 4. A trusted report, acknowledged: `missing`, 3. A manifest sign and a report sign, no acknowledgment: `not_judged`, 4. A manifest sign and a report sign, acknowledged: `unreadable_reviewed`, 0. A manifest sign acknowledged, a report with no list: `unreadable_reviewed`, 0 (this is F1).
+- Can it hide a real loss, or reach exit 0 wrongly? Without a sign or a missing list it never fires; the trusted-report row stays at exit 3. Besides the acknowledgment path C91 intends, the only wrong exit 0 that could be built is F1.
+- C72's bound: treating a report with no list as untrusted is the right half of the same rule, consistent with how C78 already treats an untrusted showing report. It is unpinned (OB13).
+
+3. The C88 note: `installs` only picks which text is printed. Both branches `continue` (`:2337-2348`), so no discard is counted either way. `s.installs` is set (`:3656`) before `match_rows` runs (`:3667`). The field does not change which discards count.
+
+4. Clearing texts: a grep for "examin" and "preserved bytes" across the scripts, tests and fixture finds only the comment at `:664`, which says nobody examines the bytes. No promise of that kind is left in code or in any test's expected text.
+
+5. The lane's claims: with 2375fd6's two scripts and this head's tests, exactly the 8 tests the marker names fail. Lane breaks rerun, all red as claimed: B129 (5 tests), B130 (1), B132 (3), B133 (2). The reviewer's own: OB8, OB11 and OB13 survive (F2); OB14 also survives and is text only (backlog).
+
+6. Conventions: still one `REPEATABLE READ, READ ONLY` transaction (`:3968`). No new `job_event` write site in the delta. Only the four files changed. The body's first line is `Plan @ plan-v9.86`; C100 is in that tag. The body is 59,041 bytes; decisions 37 and 38 are linked from the body.
+
+7. Full gates, both in the background, one at a time: the head cccabf6 (`C:/Users/User/.fixflow-cache/gate-logs/rv203/backend-20261114-235406`): GATE[1..8] EXIT=0, SKIPS total=1695 skipped=0 integration_skipped=0, SUMMARY FAIL=0. The drain tree d216fd9 (`C:/Users/User/.fixflow-cache/gate-logs/rv203-drain/backend-20261115-000124`): GATE[1..8] EXIT=0, SKIPS total=1211 skipped=0 integration_skipped=0, SUMMARY FAIL=0. Both match the lane's counts. The drain tree's tree object equals 4341ae9's, and all 11 C100 tests ran on each tree.
+
+BACKLOG: OB14: if `s.installs` is taken after the `--tech` / `--manifest-id` scope, nothing catches it. It only changes the note text in a scoped run.
+
+NOT VERIFIED: B127, B128, B131, B134, B135 and the re-cut and re-run rows not sampled; the phone side; the PR comment's text itself.
+
+HOW IT WAS RUN: a scratch worktree at cccabf6 on lane `rv203s`, the four drain test files, each break applied alone and reverted, then one run with 2375fd6's two scripts. RAM read before every run (at or above 7 GB free, at or under 38.3 GB commit). The probe run's SUMMARY FAIL=1 is only ruff flagging the scratch file; its pytest gate passed 3 of 3.
+
+CLEANUP: the scratch worktree is removed and pruned; scratch scripts, diffs, plan copy, body copy and probe are deleted. No `fixflow-rv203*` container and no rv203 lock is left. Both review trees are clean: `rv203-head-server` at cccabf6, `rv203-drain2` at d216fd9. Logs kept in the coordinator's scratchpad folder `pr203/`.
+
+COORDINATOR (2026-11-15, ruling C103). One last small round, ruled from both reviews of this head: the code fix of F1 with its test; a test for each of the three readings of F2; the clearing texts corrected (the phone-lens reviewer's finding, which goes back to the coordinator's own wording in C100); the test comment; the PR body's plan tag. OB14 stays a note. The last delta is read by one fresh reviewer against the two records, and the coordinator runs the full checks, the drain tree included, before any merge.

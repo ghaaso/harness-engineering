@@ -67,6 +67,19 @@ backed up by Android, so a reinstalled phone starts empty and signs in again.
 Check and say in the marker: whether anything else in the build sets or overrides the attribute (a library manifest,
 `tools:replace`), and whether `fullBackupContent` or `dataExtractionRules` is set anywhere.
 
+## 4c. The after-report reads its discard list once (ruling C103, added 2026-11-15)
+
+Found by the phone-lens reviewer of PR #203: `afterSend.ts:122-138` builds the report's `storage` facts from
+`readAllRaw` and `buildManifest`, and then reads the discard list separately with `readDiscardLog()`. If the list goes
+bad at storage level between those two reads of one attempt, that one report carries `discards: []` with no sign that
+the list is unreadable, and the audit reads a discarded row as `missing` (exit 3, the code that halts the fleet) until
+the next report, which carries the sign and heals it.
+
+In the values commit: the after-report takes its discard list from the same raw read as its storage facts, so a
+report whose list could not be read always carries the sign. A test for the interleaving (the list readable at the
+first read and unreadable at the second: the report must carry the sign, or the list as first read). Nothing else in
+`afterSend.ts` changes; the shape of the report does not change.
+
 ## 5. The marker
 
 One commit with the two values and the above. In the marker: the mutation that the new K2 line kills; the gate

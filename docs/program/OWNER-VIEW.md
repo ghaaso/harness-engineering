@@ -1,12 +1,12 @@
 # FixFlow ship program: owner view (generated)
 
-_Generated from `program.json` by `build.js.txt`; state as of 2026-11-14. Do not edit by hand; edit program.json and rebuild. The page is `index.html` in this folder._
+_Generated from `program.json` by `build.js.txt`; state as of 2026-11-15. Do not edit by hand; edit program.json and rebuild. The page is `index.html` in this folder._
 
 ## Right now
 
-- Production is still dead: both old Railway addresses answer Railway's own 404. Thirteen phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P7b-2, P8a, P8b, P9-0a, P12a, P12, L2, L4); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-14)
+- Production is still dead: both old Railway addresses answer Railway's own 404. Thirteen phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P7b-2, P8a, P8b, P9-0a, P12a, P12, L2, L4); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-15)
 - Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. The drain tooling is built and reviewed and waits only for those two. New on 2026-11-14: GitHub has stopped running the automatic checks (billing: the month's included minutes are used up or a payment failed), and on 2026-11-14 you allowed merging on this PC's own runs of the same checks meanwhile, so merges continue. Restoring GitHub's checks is still worth doing when you can. I used far more of those minutes than I should have: every note I saved to the plan started a full run. That is stopped. On 2026-11-14 you started the web defects phase (the drain needs it) and the ops hardening phase; and at 15:59 the next money phase (P8b). The web defects phase is merged (15:36). Five sessions were working at once after that, more than the three I normally allow on this PC; each one checks free memory before any heavy step. 37 of 56 phases wait behind it.
-- Checks on main's code, run on this PC on 2026-11-14 at the merge of PR #219: backend 1573 tests (0 skipped), phone 512 tests, web 402 tests and build, all green. (measured 2026-11-14)
+- Checks on main's code, run on this PC on 2026-11-14 at the merge of PR #219: backend 1573 tests (0 skipped), phone 512 tests, web 402 tests and build, all green. (measured 2026-11-15)
 
 ## Phases by state
 
