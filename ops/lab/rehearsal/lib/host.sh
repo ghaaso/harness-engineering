@@ -33,8 +33,10 @@ l4_slot_acquire() { # holds one slot for this script's lifetime
   docker volume inspect "$L4_VOL" >/dev/null 2>&1 || L4_POOL=heavy
   if [ -f "$L4_SLOT" ]; then
     echo "L4: taking a slot of the $L4_POOL pool ($( [ $L4_POOL = light ] && echo warm || echo 'cold: no image cache'))"
-    FF_POOL=$L4_POOL bash "$L4_SLOT" acquire "l4-$1" 1 "$$" || l4_die "could not take a slot"
-    L4_SLOT_HOLDER="l4-$1"
+    FF_POOL=$L4_POOL bash "$L4_SLOT" acquire "l4-$1-$$" 1 "$$" || l4_die "could not take a slot"
+    # unique per run: ff-slot.sh releases every slot whose holder name matches, so two runs of
+    # one kind sharing a name would free each other's slot
+    L4_SLOT_HOLDER="l4-$1-$$"
   else
     echo "L4: no ff-slot.sh at $L4_SLOT; running without the shared lock" >&2
     L4_SLOT_HOLDER=""

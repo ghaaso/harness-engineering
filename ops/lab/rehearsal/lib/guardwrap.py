@@ -32,9 +32,14 @@ STATE = "/srv/l4/.guardwrap.state"
 CD = re.compile(r"(?:^|[;&|(]\s*|\s)cd(?:\s|$)")
 
 
+QUOTED = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+
+
 def note_lost(line: str) -> None:
-    lost = sorted({n for n in ASSIGN.findall(line) if not n.isupper()})
-    has_cd = CD.search(line) is not None
+    # only the shell words count: `name=` inside a quoted string (echo "exit=$?") is text
+    bare = QUOTED.sub("''", line)
+    lost = sorted({n for n in ASSIGN.findall(bare) if not n.isupper()})
+    has_cd = CD.search(bare) is not None
     if not lost and not has_cd:
         return
     what = ", ".join(([f"lowercase assignment(s) {' '.join(lost)}"] if lost else []) + (["a cd"] if has_cd else []))

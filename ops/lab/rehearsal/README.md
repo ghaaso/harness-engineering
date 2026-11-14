@@ -12,13 +12,14 @@ bash ops/lab/rehearsal/train-rehearsal.sh        # the owner's P4c: section 11, 
 
 Options (both scripts):
 
-| Option        | What                                                                                                                                                                                                                                                          |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--ref <ref>` | The code and runbook under rehearsal, default `origin/main`. It becomes the stand-in origin's `main`, so a runbook change is rehearsed from its PR branch **before** it merges (`--ref origin/<branch>`). A branch or tag name; a bare sha cannot be bundled. |
-| `--repin`     | Find blocks by pins made from the runbook itself instead of the committed ones (see "Choosing a block"); `pins-diff-*.txt` lists every unanchored block the ref under rehearsal changed. Only for reading a diff: a repinned run checks less.                 |
-| `--mutate`    | The negative run (see "Every kind of check, shown failing"). The restore skips its wrong turns.                                                                                                                                                               |
-| `--keep`      | Leave the stand-in host running at the end.                                                                                                                                                                                                                   |
-| `--purge`     | Also drop the image cache volume at the end.                                                                                                                                                                                                                  |
+| Option           | What                                                                                                                                                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--ref <ref>`    | The code and runbook under rehearsal, default `origin/main`. It becomes the stand-in origin's `main`, so a runbook change is rehearsed from its PR branch **before** it merges (`--ref origin/<branch>`). A branch or tag name; a bare sha cannot be bundled. |
+| `--mutate`       | The negative run (see "Every kind of check, shown failing"). The restore skips its wrong turns.                                                                                                                                                               |
+| `--baseline`     | `<run name>`: the paired normal run (same ref, same rig, no `--mutate`) a `--mutate` run is compared with. Without it no mutation counts as caught.                                                                                                           |
+| `--keep`         | Leave the stand-in host running at the end. A later run refuses it unless given `--replace-kept`.                                                                                                                                                             |
+| `--replace-kept` | Remove a host a `--keep` run left running (only one carrying `--keep`'s mark), then run.                                                                                                                                                                      |
+| `--purge`        | Also drop the image cache volume at the end.                                                                                                                                                                                                                  |
 
 Each run writes `C:/Users/User/.fixflow-cache/lab/l4/<UTC stamp>-restore|train/` (`results.md`,
 `rows.tsv`, `wrongturns.tsv`, `train.tsv`, `run.txt`, one log per runbook command under
@@ -26,6 +27,14 @@ Each run writes `C:/Users/User/.fixflow-cache/lab/l4/<UTC stamp>-restore|train/`
 the results table, the raw TSVs, the small logs, and `cited.txt` (the output each row that is
 not DONE read; no full logs). The coordinator commits the bundles on the plan branch under
 `docs/program/evidence/lab/` (ruling C33). Then the stand-in host is torn down.
+
+**Two runs at once.** The light pool has two slots, so two runs can hold slots together, but
+there is one `fixflow-l4-host`. A run that finds that host running and did not start it refuses
+and names it; it never removes it (one that exited, as after a reboot, is removed). A run
+collects, files evidence for and removes only a host it started itself (`L4_HOST_MINE`), so a
+refused run touches nothing of the other run's. Each run's slot holder is `l4-<kind>-<pid>`.
+Pins are never re-cut by a run (`--repin` is gone, ruling C57): re-cutting
+`lib/runbook-pins.tsv` is a reviewed commit.
 
 **Slots and cost.** Each run takes one slot of the shared lock (`docs/program/lab/ff-slot.sh`)
 for its lifetime: the **light** pool when the image cache volume exists (warm: the stand-in host
@@ -77,18 +86,26 @@ the rig names block `n` of `lib/runbook-pins.tsv` (recorded from the runbook the
 against; its first line names the sha), and the cutter takes the step's block whose first line
 equals that pin's (whitespace collapsed; a `</dev/null` stdin redirect, which the batch adds to
 `ffc exec` lines runbook-wide, is ignored), wherever it now stands. When no block, or more blocks
-than pinned, begin that way, when the block's line count differs from the pin (an inserted line;
-the rig also picks some lines by a `sed` range), or when a range selects nothing, the step is
+than pinned, begin that way, or when the block's line count differs from the pin (an inserted
+line; a pin may list a reviewed second count, as 6.12's here-document does: 9 lines on `main`, 8 in
+the runbook batch), the step is
 **MOVED**: nothing is typed, the row's verdict is MOVED, `moved.log` names the block, and the run
 says so on stderr. A changed command that keeps its first line and length is typed as changed,
-which is the point of cutting instead of retyping. Where the batch rewrote a step, the rig has
+which is the point of cutting instead of retyping. **Part of a block is chosen by content too**,
+never by line number: `rb_line <step> <n|@name|*> <substring> [<end>]` (`runbook.py line`) takes the
+one line containing the substring, from the selected block or from every block of the step (`*`),
+and with `<end>` runs through the one later line containing it (`$`: the block's last line). Zero
+or several matches are MOVED. So 6.12's up line, 6.13's report and set lines, WT1's and WT2's up
+lines and 11.8's push are typed from either text. An anchor name used twice in a step is MOVED,
+never the later block. Where the batch rewrote a step, the rig has
 both readings: it asks the runbook under rehearsal whether the anchor exists (`rb_anch`) and
 follows that text (6.1, 6.6, 6.7, 6.9, 8.2, 8.5a-8.7, 11.12, 11.13a, 9.2's expected time, 6.8's
 check 6), so main and a runbook PR are rehearsed by the same rig. `lib/selftest-runbook.py
 <runbook> <pins>` is the mutation test of the cutter (an unchanged block, a same-length change, a
 block added in front, a `</dev/null` added, an inserted line, a changed first line, a duplicate
-first line, an anchor, an anchor fallback, a missing anchor, a renamed step; no Docker needed);
-the restore runs it on every run. After a runbook change merges, regenerate the pins
+first line, an anchor, an anchor fallback, a missing anchor, a renamed step, a duplicate anchor,
+and the line selector across blocks, moved, doubled and absent; no Docker needed); both
+rehearsals run it on every run, and its result is the row `selftest` (FAILED when a case fails). After a runbook change merges, regenerate the pins
 (`python3 lib/runbook.py pins <runbook>`, with the two header lines) in the same change that
 teaches the rig any new text.
 
@@ -107,7 +124,10 @@ value, a ref on the remote, a train row's API item, the applied head against CLA
 tag, and the shape guard). A `runbook` mutation edits the copy of the runbook the run reads; a
 `state` mutation changes the stand-in's state at one hook (`l4_mut` in the step code); a `moved`
 mutation inserts a line while keeping the committed pin. `mutations.md` lists, per mutation, the
-row it targets, the verdict that row got, and whether the check caught it. The kinds no mutation
+row it targets, the verdict that row got, the same row in the paired normal run (`--baseline`),
+and whether the check caught it. A mutation is caught only when `mutations-applied.log` says it was
+**applied** (its id matched exactly; a state hook logs "applied" only after its change succeeded),
+its target row reads the wanted verdict, and the baseline row did not already read it. The kinds no mutation
 covers are named in the PR that last ran it.
 
 **Lab substitutions** (each is written to `deviations.log` when it happens):
@@ -194,7 +214,7 @@ stack stays on the target, healthy).
 | `restore-rehearsal.sh`, `train-rehearsal.sh`                                            | entry points (this PC)                                                                                           |
 | `lib/host.sh`                                                                           | the stand-in host: slot, start, origin bundle, kit, results, evidence                                            |
 | `lib/runbook.py`, `lib/runbook-pins.tsv`, `lib/selftest-runbook.py`, `lib/guardwrap.py` | cuts step text out of the runbook; the pinned first lines; the self-test; guard lines as in an interactive shell |
-| `lib/harness.sh`                                                                        | substitute, log, eval, mask, record a row; MOVED; the mutate/repin modes                                         |
+| `lib/harness.sh`                                                                        | substitute, log, eval, mask, record a row; MOVED; `rb_line`; the mutate mode                                     |
 | `lib/mutate.py`, `lib/mutations.tsv`                                                    | the negative run's mutations and its report                                                                      |
 | `lib/steps.sh`, `lib/steps-789.sh`                                                      | sections 1, 3, 4, 6 and 7-9, one function per section                                                            |
 | `lib/traincheck.py`                                                                     | the train rows' post-deploy checks as API calls                                                                  |

@@ -313,7 +313,7 @@ if [ $MARKERS = yes ]; then
   rb_run wt13-67-stale-same "$G67"
   o13b="$(out_of | tr '\n' ' ' | cut -c1-160)"; n1="$(ev 'WT13 write after an abandoned 6.6')"
   wt "WT13" "a marker left by an earlier restore: (a) one that went through 6.9, then 6.7 again with 6.6 skipped; (b) one abandoned after 6.6, the backend started by hand and a manager write made, then 6.7 for the same dump" \
-    "(a) 6.7: $o13a; a later write: $m0 before, $m1 after. (b) 6.6: $W66A / $W66B; 6.7: $o13b; the write made after 6.6: $n0 before, $n1 after; the sign-off file when 6.7 was typed: $so13" \
+    "(b) the sign-off file when 6.7 was typed: $so13; the write made after 6.6: $n0 before, $n1 after. (a) a later write: $m0 before, $m1 after; 6.7: $o13a. (b) 6.6: $W66A / $W66B; 6.7: $o13b" \
     "(a) $( [ "$m1" = "$m0" ] && echo '6.9 removed the marker, so the DROP line refused (a script)' || echo 'NOTHING: dropped') ; (b) $( [ "$n1" = "$n0" ] && echo 'refused' || echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)")" \
     "$( [ "$m1" = "$m0" ] && echo 'no for (a)' || echo 'YES for (a)'); (b): $( [ "$n1" = "$n0" ] && echo no || echo 'by design the marker vouches for the dump and the copy, not for the database after it; a write needs the backend running, which the restore gate refuses until 6.9 (WT1). Optional: (b) also records max(job_event.seq) and the DROP line compares it')"
   rm -f $RD/ready-to-drop $RD/proven
