@@ -93,9 +93,13 @@ def report(res: str, muts: str, which: str, base: str | None = None) -> int:
     d = Path(res)
     applied = (d / "mutations-applied.log").read_text(encoding="utf-8") if (d / "mutations-applied.log").exists() else ""
     bd = Path(base) if base else None
+    # the paired run's name as --baseline gave it (run.txt's "baseline: <run>", written by
+    # l4_baseline), not the folder it was copied to inside the host (review 201-8c2383e NIT)
+    rt = (d / "run.txt").read_text(encoding="utf-8", errors="replace") if (d / "run.txt").exists() else ""
+    bname = next((l.split(":", 1)[1].strip() for l in rt.splitlines() if l.startswith("baseline:")), "")
     out_tsv = ["id\tkind\ttarget\twant\tgot\tbaseline\tcaught"]
     md = [
-        f"Baseline (the paired normal run): `{bd.name if bd else 'NONE'}`",
+        f"Baseline (the paired normal run): `{(bname or bd.name) if bd else 'NONE'}`",
         "",
         "| Id | Kind of check | Mutation | Target row | Wanted | Got | Baseline | Applied | Caught |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",

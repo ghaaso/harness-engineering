@@ -86,6 +86,29 @@ rb_text_has() { # <step> <text>
   eff="$(rb_eff)"; f="${eff% *}"
   python3 "$KIT/lib/runbook.py" text "$f" "$1" 2>/dev/null | tr '\n' ' ' | tr -s ' ' | grep -qF -- "$2"
 }
+# How a command line chosen by content relates to the block typed before it (6.12's up line):
+# "moved" when either text is missing (the row is then MOVED, nothing typed for it), "in-block"
+# when the block holds exactly that line (typed with the block), else "own" (typed after it). A
+# line in the block that merely mentions the command (a here-document line, a comment) is not
+# that line (review 201-8c2383e MINOR 2). Pure: lib/selftest-runbook.py calls it.
+rb_up_plan() { # <block text> <line text>
+  case "$1$2" in *__RB_MISSING__*) echo moved; return 0 ;; esac
+  if printf '%s\n' "$1" | grep -qxF -- "$2"; then echo in-block; else echo own; fi
+}
+# WT16's verdict from what was measured, never from one printed line (review 201-8c2383e MINOR 3:
+# `restore exit=` is printed even after a failed DROP). "lost": restore printed, the write made
+# after 6.6 (b) gone, the backend running in at least one sample and the sign-off present when 6.7
+# was typed. "stopped": a STOP line and both writes still there (the DROP line's own test).
+# "unclear": anything else. Pure: lib/selftest-runbook.py calls it.
+drop_verdict() { # <6.7 output> <STOP line> <before-6.6 write: before> <after> <after-6.6(b) write: before> <after> <running samples> <sign-off when typed>
+  if printf '%s' "$1" | grep -q 'restore exit=' && [ "$6" = 0 ] && [ "${7:-0}" -gt 0 ] 2>/dev/null && [ "$8" = present ]; then
+    echo lost
+  elif [ -n "$2" ] && [ -n "$3" ] && [ "$4" = "$3" ] && [ -n "$5" ] && [ "$6" = "$5" ]; then
+    echo stopped
+  else
+    echo unclear
+  fi
+}
 # Text cut but not handed to rb_run (typed line by line elsewhere) records a move the same way.
 rb_moved_check() { # <id> <text>
   case "$2" in *__RB_MISSING__*) rb_moved "$1" "$2"; return 1 ;; esac

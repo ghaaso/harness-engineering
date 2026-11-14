@@ -90,20 +90,35 @@ w16a0="$(ev16 'WT16 write before 6.6')"; w16b0="$(ev16 'WT16 write after 6.6 (b)
 rm -f /srv/l4/.wt16-stop; : > "$OUT/wt16-poll.log"
 poll16 & p16=$!
 sleep 1
+so16b="$( [ -s "$SO" ] && echo present || echo absent)"   # at the moment 6.7 is typed
 t16a="$(date -u +%T.%N | cut -c1-12)"
 rb_run wt16-67 "$G16"
 t16b="$(date -u +%T.%N | cut -c1-12)"
-o16c="$(out_of | tail -n 2 | tr '\n' ' ')"
+o16c="$(out_of | tail -n 2 | tr '\n' ' ')"; stop16="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
 sleep 1; touch /srv/l4/.wt16-stop; wait "$p16" 2>/dev/null; rm -f /srv/l4/.wt16-stop /srv/l4/.wt16-body
 w16a1="$(ev16 'WT16 write before 6.6')"; w16b1="$(ev16 'WT16 write after 6.6 (b)')"
 during="$(awk -v a="$t16a" -v b="$t16b" '$1>=a && $1<=b' "$OUT/wt16-poll.log")"
 nd="$(printf '%s\n' "$during" | grep -c .)"; nrun="$(printf '%s\n' "$during" | grep -c 'running=yes')"
 answers="$(printf '%s\n' "$during" | awk '{print $3" "$4}' | sort | uniq -c | sed 's/^ *//' | tr '\n' ';')"
-dropped="$(echo "$o16c" | grep -q 'restore exit=' && echo yes || echo no)"
+# The verdict states only what was measured (review 201-8c2383e MINOR 3; `restore exit=` alone is
+# printed even after a failed DROP):
+#   lost    - restore printed, the write made after 6.6 (b) gone, the backend seen running during
+#             6.7 and the sign-off present when 6.7 was typed;
+#   stopped - a STOP line printed and both writes still there (the DROP line's own test, C61);
+#   unclear - anything else: the row says so and points at the step log.
+v16="$(drop_verdict "$o16c" "$stop16" "$w16a0" "$w16a1" "$w16b0" "$w16b1" "$nrun" "$so16b")"
 wt "WT16 (C58)" "6.6 (a) and (b) for a good dump, then 6.7, in one shell with 6.1 never typed, on a live host (sign-off $so16, backend $run16, writes landing)" \
-  "6.6 (a): $o16a; 6.6 (b): $o16b; 6.7 ($t16a to $t16b UTC): $o16c; the write made before 6.6: $w16a0 -> $w16a1 row(s); the write made after 6.6 (b)'s copy: $w16b0 -> $w16b1; samples during 6.7: $nd, backend running in $nrun; deep health during 6.7 (http database): $answers" \
-  "$( [ "$dropped" = yes ] && echo "NOTHING: the DROP ran with the backend running and the sign-off in place$( [ "$w16b1" = 0 ] && echo '; the write made after 6.6 (b) is gone (only 6.6 (b)'"'"'s copy, taken before it, holds the earlier write)')" || echo "the DROP did not run: see the step log")" \
-  "$( [ "$dropped" = yes ] && echo "YES, for the next runbook PR (ruling C58): 6.7's DROP line refuses while $SO exists ('this database is live: start at 6.1'), or 6.6 (b) records max(job_event.seq) and the DROP line compares it" || echo no)"
+  "6.6 (a): $o16a; 6.6 (b): $o16b; 6.7 ($t16a to $t16b UTC, sign-off $so16b when typed): $o16c${stop16:+; STOP line: $stop16}; the write made before 6.6: $w16a0 -> $w16a1 row(s); the write made after 6.6 (b)'s copy: $w16b0 -> $w16b1; samples during 6.7: $nd, backend running in $nrun; deep health during 6.7 (http database): $answers" \
+  "$(case $v16 in
+      lost) echo "NOTHING: the DROP ran with the backend running ($nrun of $nd samples) and the sign-off in place; the write made after 6.6 (b) is gone$( [ "$w16a1" = 0 ] && echo ', and so is the one made before 6.6 (only 6.6 (b)'"'"'s copy, taken before it, holds that one)')" ;;
+      stopped) echo "the DROP line's own test (a script): $stop16; both writes are still there" ;;
+      *) echo "UNCLEAR: neither a lost write with the backend running and the sign-off present, nor a STOP with both writes kept; read the step log (wt16-67)" ;;
+    esac)" \
+  "$(case $v16 in
+      lost) echo "YES, for the next runbook PR (ruling C58): 6.7's DROP line refuses while $SO exists ('this database is live: start at 6.1'), or 6.6 (b) records max(job_event.seq) and the DROP line compares it" ;;
+      stopped) echo "no: scripted (the DROP line's own test)" ;;
+      *) echo "read by the owner: the step log decides" ;;
+    esac)"
 # as 6.9 would leave it: the markers WT16's 6.6 wrote are removed, so they vouch for nothing later
 rm -f $RD/ready-to-drop $RD/proven
 echo "lab WT16: after WT16 the rig removed the markers its 6.6 wrote (as 6.9 does); the database now holds the nightly dump's rows" >> "$OUT/deviations.log"
@@ -312,9 +327,10 @@ if [ $MARKERS = yes ]; then
   so13="$( [ -s /etc/fixflow/restore-signed-off ] && echo present || echo absent)"
   rb_run wt13-67-stale-same "$G67"
   o13b="$(out_of | tr '\n' ' ' | cut -c1-160)"; n1="$(ev 'WT13 write after an abandoned 6.6')"
+  stop13="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
   wt "WT13" "a marker left by an earlier restore: (a) one that went through 6.9, then 6.7 again with 6.6 skipped; (b) one abandoned after 6.6, the backend started by hand and a manager write made, then 6.7 for the same dump" \
     "(b) the sign-off file when 6.7 was typed: $so13; the write made after 6.6: $n0 before, $n1 after. (a) a later write: $m0 before, $m1 after; 6.7: $o13a. (b) 6.6: $W66A / $W66B; 6.7: $o13b" \
-    "(a) $( [ "$m1" = "$m0" ] && echo '6.9 removed the marker, so the DROP line refused (a script)' || echo 'NOTHING: dropped') ; (b) $( [ "$n1" = "$n0" ] && echo 'refused' || echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)")" \
+    "(a) $( [ "$m1" = "$m0" ] && echo '6.9 removed the marker, so the DROP line refused (a script)' || echo 'NOTHING: dropped') ; (b) $( if [ "$n1" = "$n0" ] && [ -n "$stop13" ]; then echo "stopped by the DROP line's own test (a script): $stop13; the write is still there"; elif [ "$n1" = "$n0" ]; then echo 'UNCLEAR: the write is still there but no STOP line was printed; read the step log (wt13-67-stale-same)'; else echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)"; fi)" \
     "$( [ "$m1" = "$m0" ] && echo 'no for (a)' || echo 'YES for (a)'); (b): $( [ "$n1" = "$n0" ] && echo no || echo 'by design the marker vouches for the dump and the copy, not for the database after it; a write needs the backend running, which the restore gate refuses until 6.9 (WT1). Optional: (b) also records max(job_event.seq) and the DROP line compares it')"
   rm -f $RD/ready-to-drop $RD/proven
 

@@ -95,8 +95,12 @@ which is the point of cutting instead of retyping. **Part of a block is chosen b
 never by line number: `rb_line <step> <n|@name|*> <substring> [<end>]` (`runbook.py line`) takes the
 one line containing the substring, from the selected block or from every block of the step (`*`),
 and with `<end>` runs through the one later line containing it (`$`: the block's last line). Zero
-or several matches are MOVED. So 6.12's up line, 6.13's report and set lines, WT1's and WT2's up
-lines and 11.8's push are typed from either text. An anchor name used twice in a step is MOVED,
+or several matches are MOVED. Only command text counts: a comment, a here-document's body, an
+`echo` or `printf` of the command and a longer word (`--report-json` for `--report`) never match,
+so they can neither stand in for a missing command nor compete with the real one. So 6.12's up
+line, 6.13's report and set lines, WT1's and WT2's up lines and 11.8's push are typed from either
+text. 6.12's up line is typed after block 1 unless block 1 holds exactly that line, and a missing
+up line makes the row MOVED. An anchor name used twice in a step is MOVED,
 never the later block. Where the batch rewrote a step, the rig has
 both readings: it asks the runbook under rehearsal whether the anchor exists (`rb_anch`) and
 follows that text (6.1, 6.6, 6.7, 6.9, 8.2, 8.5a-8.7, 11.12, 11.13a, 9.2's expected time, 6.8's
@@ -104,7 +108,9 @@ check 6), so main and a runbook PR are rehearsed by the same rig. `lib/selftest-
 <runbook> <pins>` is the mutation test of the cutter (an unchanged block, a same-length change, a
 block added in front, a `</dev/null` added, an inserted line, a changed first line, a duplicate
 first line, an anchor, an anchor fallback, a missing anchor, a renamed step, a duplicate anchor,
-and the line selector across blocks, moved, doubled and absent; no Docker needed); both
+and the line selector across blocks, moved, doubled and absent, and against a comment, an echo, a
+here-document line and a longer option; 6.12's up-line decision; WT16's verdict; no Docker
+needed); both
 rehearsals run it on every run, and its result is the row `selftest` (FAILED when a case fails). After a runbook change merges, regenerate the pins
 (`python3 lib/runbook.py pins <runbook>`, with the two header lines) in the same change that
 teaches the rig any new text.

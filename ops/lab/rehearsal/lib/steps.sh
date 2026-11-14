@@ -437,15 +437,18 @@ sec6_tail() { # 6.10-6.14 after a case-a restore
     "the roster list stands in for P0a item 5"
   # Block 1 is the here-document (pinned 9 lines with main's up line, or 8 as the runbook batch
   # has it, the up line then its own block after "Then:"). The up line is chosen by its content
-  # across the step's blocks, so it is typed exactly once on either text (ruling C57).
-  local blk612 up612
+  # across the step's blocks, so it is typed exactly once on either text (ruling C57). A missing up
+  # line makes the row MOVED; it is typed after block 1 unless block 1 holds exactly that line
+  # (review 201-8c2383e MINOR 2: a here-document line naming it no longer stands in for it).
+  local blk612 up612 plan612
   blk612="$(rb_fence 6.12 1)"
   up612="$(rb_line 6.12 '*' 'force-recreate backend')"
+  plan612="$(rb_up_plan "$blk612" "$up612")"
   rb_run 6.12-do "$blk612" "<lat>=24.8600" "<lng>=67.0000"
   local frc="$RC"
-  case "$blk612" in
-    *__RB_MISSING__*|*'force-recreate backend'*) ;;
-    *) rb_run 6.12-up "$up612"; [ "$frc" = 0 ] && frc="$RC" ;;
+  case "$plan612" in
+    moved) rb_moved_check 6.12-up "$up612" ;;
+    own) rb_run 6.12-up "$up612"; [ "$frc" = 0 ] && frc="$RC" ;;
   esac
   wait_backend_healthy 120
   rb_run 6.12-check "$(rb_fence 6.12 2)"
@@ -454,7 +457,7 @@ sec6_tail() { # 6.10-6.14 after a case-a restore
 rows = [l.strip().split("|") for l in sys.stdin if l.strip()]
 print("yes" if len(rows) == 1 and [float(x) for x in rows[0]] == [24.86, 67.0, 80.0] else "no")' 2>/dev/null)"
   row 6.12 "$( [ "$frc" = 0 ] && [ "$fence_ok" = yes ] && echo DONE || echo FAILED)" \
-    "fence update + force-recreate backend$(case "$blk612" in *'force-recreate backend'*) ;; *) echo ' (the up line typed as its own block)' ;; esac)" "rows: [$(out_of | tr '\n' ' ')] (exit $frc)" \
+    "fence update + force-recreate backend ($(case "$plan612" in in-block) echo 'the up line typed with block 1' ;; own) echo 'the up line typed after block 1' ;; *) echo 'no up line found: nothing typed for it' ;; esac))" "rows: [$(out_of | tr '\n' ' ')] (exit $frc)" \
     "typed 24.8600 / 67.0000; Postgres prints them as numbers (24.86|67|80), compared numerically"
   sec6_13
   row 6.14 NRH "route api. to the backend (5.9)" "-" "needs the Cloudflare tunnel"
@@ -489,6 +492,11 @@ sec6_13() {
 
 # The sha256 of an object as the stand-in bucket holds it (read back through the app's own
 # storage client): 6.6 (b)'s upload is checked against the bucket's copy, not only the local file.
+# It reads two PRIVATE attributes of backend/app/core/storage.py's R2Storage, `_client` and
+# `_bucket` (review 201-8c2383e NIT): the storage Protocol has no read method, and its public
+# signed GET (mint_playback_url) would need the stand-in endpoint's TLS trust outside botocore.
+# A storage refactor that renames them makes this print nothing, so 6.6 (b) reads FAILED (an empty
+# bucket sum never equals lsum): loud, never a silent pass.
 s3_sum() { # <key>
   ffc --profile db --profile app run --rm --no-deps -T --entrypoint python backend -c \
     "import hashlib, sys; from app.core.storage import get_storage; s=get_storage(); print(hashlib.sha256(s._client.get_object(Bucket=s._bucket, Key=sys.argv[1])['Body'].read()).hexdigest())" "$1" 2>/dev/null | tail -n 1
