@@ -48,6 +48,25 @@ first mint. The two test names that say "a single context mints once" are alread
 Point 9 is amended once the audit lane has walked it; if that has happened by the time of the values commit, make the
 pointer say what point 9 then says, in one clause. If not, leave it.
 
+## 4b. Android backup off (ruling C98, added 2026-11-14 22:15)
+
+Found by the phone-side reviewer of PR #203 and confirmed by the coordinator: `technician-app/app.json` has no
+`expo.android.allowBackup` key, and Expo's default is true (`@expo/config-plugins/build/android/AllowBackup.js`:
+`config.android?.allowBackup ?? true`). So Android Auto Backup is on: a reinstall, or a replacement phone restored from a
+Google backup, gets the app's storage back as of the backup: the install id, the queues, the discard list, the drain
+manifest head and its receipt, and the sign-in token. A restored queue replays old writes, a row that was discarded
+after being entered by hand comes back as pending, and contract point 1 ("a cleared or reinstalled app mints a new
+id") is not true while backup is on.
+
+In the values commit: set `expo.android.allowBackup` to `false` in `technician-app/app.json` (the key and that one
+value only; nothing else in the file changes). It is an Expo config field handled at prebuild, not a config plugin.
+Prove it with the Android compile gate: the merged manifest of the built APK carries `android:allowBackup="false"`.
+Say in the marker where that line was read. CLAUDE.md's Mobile section gains one sentence: the app's data is not
+backed up by Android, so a reinstalled phone starts empty and signs in again.
+
+Check and say in the marker: whether anything else in the build sets or overrides the attribute (a library manifest,
+`tools:replace`), and whether `fullBackupContent` or `dataExtractionRules` is set anywhere.
+
 ## 5. The marker
 
 One commit with the two values and the above. In the marker: the mutation that the new K2 line kills; the gate
