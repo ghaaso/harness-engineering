@@ -1,0 +1,143 @@
+VERDICT: PASS-WITH-FIXES
+PR #212 at e434f415987434509151c9cd83dfcc2a6148392e
+Binding review by a fresh reviewer (the fixflow-pr-reviewer definition; clean review tree `.claude/worktrees/rv212-head`); dispatched by the coordinator on 2026-11-14 at 14:15, returned at 14:47. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head did not move: `gh pr view 212 --json headRefOid` gave `e434f41...` at the start and at the end. Base is `6f430ce` (= `origin/main`). Line 1 of the PR body is `Plan @ plan-v9.59`. Nothing in this PR blocks the merge to `main`. One MAJOR finding must be settled before `release/drain-web` is cut. The other fixes can ride a follow-up.
+
+A. SCOPE ITEMS: DOES EACH TEST FAIL ON BASE AND PASS ON HEAD?
+
+How it was checked: the 13 head test files were copied into a detached worktree at `6f430ce` and run there. 78 tests failed and 52 passed; the 52 are the older tests in the edited files plus the controls. On head, all 269 tests pass in the reviewer's gate.
+
+| Item | Verdict | Test that fails on base and passes on head |
+|---|---|---|
+| A3 revenue tile + C23 note 1 | CONFIRMED | `Dashboard.revenue.test.jsx`: all 5 fail on base |
+| L3 polling | CONFIRMED | `AppContext.polling.test.jsx`: the 5 L3 timer tests and "re-reads the detail when the list's updated_at moves" fail on base. The 4 merge-order guards pass on base only because base never polls; on head they are real tests |
+| T44-web-1, the bare `catch {}` mutators | CONFIRMED | `AppContext.mutators.test.jsx`: 25 of 25 fail on base. `api.test.js` "failed requests carry the server's reason": 5 of 5 fail |
+| T44-web-1, Haul on a ready visit | CONFIRMED | `JobDetail.haul.test.jsx` "is not offered on a ready home visit" fails on base; the open-visit control passes |
+| T44-web-2, voice note | CONFIRMED | `CompletionForm.test.jsx` "renders no voice-note recorder" fails on base |
+| T44-web-3, labour rate | CONFIRMED | `CompletionForm.test.jsx`: the 4 rate tests fail on base |
+| T44-web-4, Add Part | CONFIRMED | `TroubleshootGuide.addPart.test.jsx`: 2 of 2 fail on base |
+| O08-F13, token on an outage | CONFIRMED | `AuthContext.session.test.jsx`: 4 fail on base; the 401 and non-manager controls pass |
+| R12, web half | CONFIRMED on `main`; PARTIALLY on the drain image (MAJOR-1) | `JobDetail.closedJob.test.jsx`: 6 fail on base; the open-job and technician controls pass |
+| C16 note 2, landing hint | CONFIRMED | `paymentAttempts.test.js`: 7 new tests and 3 changed ones fail on base. `closedJob` "a payment already in the books ... is not pointed out" fails on base; its two "pointed out" controls pass |
+| F1, completion form opened blank | CONFIRMED | `JobDetail.completionForm.test.jsx`: 2 of 2 fail on base |
+| F2, read ordering | CONFIRMED | `polling` F2 block: 2 fail on base; "a list asked for before the read..." passes on base only because base never polls |
+| C23 note 2, form follows to next job | CONFIRMED | `closedJob` "the payment form open on one job is closed on the next" fails on base |
+
+Changed expectations, removed tests and skips. There is no new skip, xfail or `.only` (grepped). Each change has a reason in the PR, and each reason holds:
+- `paymentAttempts.test.js`: three expectations gain `firstAt`, and the storage-dump test is renamed with `firstAt: 42` added (C16).
+- `AppContext.payments.test.jsx`: two expectations gain `firstAt`.
+- `AppContext.reread.test.jsx` "the job list answering late...": the late list's status no longer applies; a second list applies `waiting`. The P12a assertions (ledger and completion kept) are still there. This follows from the L3 merge rule.
+- `AudioRecorder.jsx` and its 2 tests are deleted. Its only user was `CompletionForm.jsx:14` on base, and `git grep AudioRecorder e434f41` finds nothing.
+- `JobDetail.payment.test.jsx` was edited in `b76f68e` and restored in `e434f41`; the net diff is empty. That is right, because the time filter it was edited for was replaced by the id filter.
+
+B. POLLING AND MERGE ORDER (`AppContext.jsx`)
+
+Every rule holds. Several had no test in the PR, so the reviewer wrote reviewer-only tests in a scratch copy (not in the review tree) and checked that they fail when the code they guard is removed.
+
+| Rule | Where in the code | What pins it |
+|---|---|---|
+| A list asked for before a job's latest answer never overwrites it | `mergeJobsList` keeps the held job when its sequence number is newer than the list's (`:98`); a mutation's answer stamps the job (`markWritten`, `:196`) | PR test "a list asked for before a close's answer does not reopen the job" |
+| A job created during a list is kept | `newer` filter `:107`; `addJob` stamps the job before `setJobs` | PR tests "created while a list is in flight", "not shown twice" |
+| No request storm | one shared in-flight request `:212`; 10 s freshness `:209`; no poll while hidden `:238` | PR test "share one request". Probe P3 (20 focus and 20 visibility events during a poll give one fetch; failed when the shared request was removed) |
+| An answer after sign-out is dropped | sign-out bumps an epoch `:251`; the answer checks it `:217` | No PR test. Probe P1 passes; with the epoch check removed, P1 failed and the whole PR polling suite still passed (MINOR-2) |
+| Timers and listeners gone after unmount | cleanup `:247-254` | No PR test. Probe P2 passes |
+| A 401 during polling signs out once | `api.js` clears the token and calls the handler | No PR test. Probe A1 (real `AuthProvider`, `AppProvider`, `api.js`, mocked fetch): signed out, token cleared, no more fetches, no second `/auth/me`, no toast |
+| A 5xx or no answer neither signs out nor toasts | the poll's `.catch(() => {})` `:239` | No PR test. Probes A2 and P4: session kept, 0 toasts, one request per tick |
+
+No sequence was found that breaks the merge order. Detail read, list, mutation and stale re-read in every interleaving tried come out right, and the stale-detail effect at `JobDetail.jsx:117` cannot loop: a mutation's answer sets both stamps equal.
+
+C. MONEY
+
+Revenue tile.
+- Paisa become rupees only for display (`Dashboard.jsx:72`), and only after a `Number.isInteger` check.
+- The sum is done on the server, which leaves voided payments out (`repository.py:432`) and filters on `recorded_at`.
+- The window is the Monday of this week through today. The server treats the end day as inclusive (`service.py` adds one day to the end).
+- No new float arithmetic on money. The bill preview's rupee arithmetic (`shared/lib/job.js:72`) predates this PR.
+
+Labour rate. The preview uses the completion's snapshotted rate, then the shop's `labour_rate_paisa` setting, then shows "—" with "Labour rate not loaded". It never prices with `DEFAULT_RATE` (`job.js:54`), because a missing rate is caught by the `rateKnown` check. The units match: rupees on both paths.
+
+D. P12a STILL HOLDS
+
+- The key a payment is sent with is still chosen only from the stored attempts. `prior` is kept only when a new key is minted, and a joined double-click ignores it.
+- P12a's tests for a double click, a reload and a second tab pass on head.
+- `priorIds` is captured before the key exists, so the attempt's own landing cannot be in it; the hint cannot hide a real landing. Entries without the list still over-match, which errs on the safe side.
+- `firstAt` is only shown; it never chooses a key.
+- One new edge, MINOR-3: `isEntry` now drops a whole stored attempt, key included, when an optional field is malformed (`paymentAttempts.js:94-95`).
+
+E. R12, WEB HALF
+
+- Role: the role comes from the server's `/auth/me` answer, and `AuthContext` already refuses any non-manager, so a technician's token never reaches the page. The page checks it again at `JobDetail.jsx:81` and `:160`, and the server refuses a technician anyway.
+- Payment reason: asked for only on a closed job. It is trimmed, blank keeps Record disabled, and the field is capped at 256 (`:1132`). `jobsApi.js:125` leaves out a blank reason, so an open job sends none.
+- Void reason: capped at 256 (`:1285`).
+- Refusals: a refused payment shows `serverReason` (`AppContext.jsx:615`); a refused void goes through `reportFailure`.
+- The `(current status: X)` string: the web never regex-matched it, on base or on head (`git grep` finds it only as test data). It shows the server's `detail` word for word, so nothing there can break.
+
+F. TOKEN ON AN OUTAGE
+
+- Only a 401 drops the token (`AuthContext.jsx:42`).
+- A 5xx or no answer keeps it and shows the retry screen. Probe A3 confirms there is no automatic retry loop.
+- A non-manager token is still refused.
+- Sign out clears the token.
+- NIT: if `/auth/me` answers 200 after the manager clicked Sign out, `setUser(principal)` (`:38`) signs back in with no token, until the first 401 sends them out again.
+
+G. SAFETY
+
+- `git grep` at the head finds no `dangerouslySetInnerHTML`, `innerHTML` or `console.*` anywhere in `src/`.
+- The server's `detail` is rendered as text.
+- The secret scan of the diff is empty.
+- ESLint is green.
+- Feature-to-feature imports go by a specific path (`@features/jobs/data/jobsApi`), as `Dashboard.jsx:21` already does. Under SKILL 1.8 the barrel question is unruled, so that check is marked not_applicable.
+
+H. WEB-ONLY AND CHERRY-PICKABLE
+
+- Everything changed is under `src/`; `package.json` and `package-lock.json` are untouched.
+- Drain-web build (scratch clone, since removed):
+  - `release/drain` = `a31924a` + `87bbe88` + `drain-pick-tz-fix` (`3810e42`) + `90ea88d`. P2b-2 is not merged, so it is absent.
+  - `release/drain-web` = that + `15df06d` + `fa860f9` + this PR's three commits squashed into one.
+  - Every pick was clean, and nothing changed under `backend/`.
+  - Lint, format and build exit 0; 249 tests pass. That is 20 fewer than head: P6a's attendance tests are not on drain.
+- What the runbook is missing (for its lane):
+  - 11.12 says `git cherry-pick -x <p12a> <p12>`, "two commits", and its check expects exactly two. P12a is two squash commits on `main`, `15df06d` and `fa860f9`, and C23 requires `fa860f9`. 11.13a's list of pick sources has the same gap.
+  - 11.4's `<p2b2>` is still a placeholder (known, C37), so 11.12 cannot be run yet.
+
+FINDINGS
+
+MAJOR-1 (drain path; settle before the drain-web cut, not before the merge). On the drain backend the closed-job reason the web now requires is thrown away, while the form says it is kept. `a31924a:backend/app/features/jobs/schemas.py:153-159`: `PaymentRequest` has only `amount_paisa`, `method` and `client_id`; pydantic ignores the extra `reason`. `log_payment` (`service.py:1437`) accepts a payment on a closed job from anyone and stores no reason. The server half of R12 is P8a (`16e154e`), which is not on `release/drain`. Meanwhile `JobDetail.jsx:1127` says "Recorded with the payment and shown on the job's timeline". The money itself lands; the audit reason is silently lost. Smallest fixes:
+- (a) Reword the hint so it promises nothing the server may not do; or
+- (b) on a closed job, also post the reason as a job note through `addNote`; or
+- (c) the coordinator rules that drain-window closed-job payments carry no stored reason and tells the owner.
+
+MINOR-2. No PR test pins four of the B rules: an answer after sign-out is dropped, timers and listeners are gone after unmount, a 401 during polling signs out once, a 5xx or no answer raises no toast. Fix: add probes P1, P2, A1 and A2 to `AppContext.polling.test.jsx`. Follow-up.
+
+MINOR-3. `paymentAttempts.js:94-95`: a malformed `firstAt` or `priorIds` drops the whole stored attempt, so a retry would mint a new key. Only a corrupted store can trigger it. Fix: drop the bad field and keep the entry. Follow-up.
+
+MINOR-4 (runbook lane). The 11.12 and 11.13a P12a commit count, described in H.
+
+NIT.
+- The branch is `claude/brave-pike-8fb70a`; the plan says `fix/web-manager-defects` (plan line 1217).
+- The race in F, where an `/auth/me` answer after Sign out signs back in.
+- A missing labour rate (`null`) is cached for 60 s, and the cache is not invalidated when the rate is edited.
+- `TODAY` is the browser's date, not the shop's.
+
+GATE, WHAT IS UNVERIFIED, WHAT THE REVIEWER RAN
+
+Gate. `C:/Users/User/.fixflow-cache/gate-logs/rv212/web-20261114-142448/summary.txt`: head `e434f41`, tree clean, all 7 steps exit 0 (lint, format, 33 files and 269 tests, build, hang-stub, compose rules, restore gate), `SUMMARY FAIL=0`.
+
+Still unverified:
+- A real browser against a real backend.
+- The poll's cost on a populated database (the lane's F4).
+- The backend and phone gates that C60 needs before a merge; this PR touches only `src/`, and those runs are the coordinator's merge-ready step.
+- GitHub CI: all three jobs end in 2 s because Actions is stopped (C52).
+
+What was run: `gh pr view` and `gh pr checks`; git reads and greps; one `git fetch origin main` (it did not move `origin/main`); the web gate; the base run; the reviewer probes; a mutation run; the drain-web lint, format, test and build.
+
+RAM: commit charge sat at 42.0 to 42.8 GB, so every test run waited for 4 GB free and at most 42 GB commit. The exception: one `npm ci` into the scratch folder ran at 42.8 GB, because the figures were read in the same command instead of waited on.
+
+Cleanup: both scratch worktrees, the clone and the scratch `node_modules` are removed. The review tree is clean at `e434f41`; it keeps the gate's git-ignored `node_modules`. Run logs remain in the coordinator's scratchpad, `rv212/`.
+
+COORDINATOR (2026-11-14, 14:49; ruling C70). Not merged at e434f41: one fix round, because the PR is on the drain path and the fixes are small.
+- MAJOR-1, ruled: the form must not promise what the server may not do, and the reason must not be lost. After a payment on a closed job has landed, when the server's answer carries no `payment_receipt` (a server older than P8a, which is what runs during the drain window), the web saves the reason as a note on the job, and says so; when that note cannot be saved, the manager is told the payment is recorded and the reason is not. The same for a void's reason if the drain backend drops it too. The hint text says what happens on both kinds of server.
+- MINOR-2 and MINOR-3 in the same round (the reviewer's four probes become tests; a malformed optional field no longer drops an attempt's key). The sign-out race of F as well.
+- MINOR-4 and the branch-name nit go to the runbook's lane and the plan. The other nits and the lane's six left-out items make a follow-up after the merge.
+The same reviewer re-reads the delta.
