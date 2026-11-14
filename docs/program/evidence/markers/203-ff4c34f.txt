@@ -1,0 +1,43 @@
+PR 203 (P2b-2 drain audit) is ready at ff4c34f (ff4c34f236750d0d51a6ab7fc1c518bc5febedf8) (rulings C104 and C105, plan-v9.91). The branch was rebased onto main 8c0c74c, and one force-push replaced ba7952b with ff4c34f. PR body updated: Plan @ plan-v9.91 on the first line, a scope checkbox, decision 42, break rows B141-B145 (B140's row marked as superseded), the gates, the base sentence and the self-check line. Decision 39 moved verbatim to a PR comment (https://github.com/Tempest-Zero/EMS_workshop1/pull/203#issuecomment-6884159216) for the 65,536-character cap; the body is now 55,731 characters. Not merged. CI did not run (Actions are refused because of billing); the two local gate runs below are the evidence.
+
+OLD AND NEW COMMIT IDS (git range-diff e6f85c5..6f6cbb2 8c0c74c..165463a: all 22 commits are "=", no patch changed):
+- previously pushed head ba7952b -> 8c24c8e (C103)
+- 6f6cbb2 (C104, never pushed) -> 165463a
+- ff4c34f (C105) is new, on top
+- also: cccabf6 -> fe1b234, 2375fd6 -> 757bdcd, 3f1e07e -> 546f891, d2227ec -> e98bef5; the first commit 54bf917 -> a884d7b
+- old base e6f85c5 -> new base 8c0c74c (schema head 0047 -> 0048)
+
+WHAT THE REBASE TOUCHED BEYOND CONTEXT: nothing in the branch's own files. No conflicts. No file is changed by both main (e6f85c5..8c0c74c) and the branch (comm of the two name lists is empty). Its one effect was main's new tripwire (P8b, PR #216) flagging scripts/drain_audit.py snapshot_fuel, answered by C105 below. In the PR body, BODY_LIMITS moved from main.py:80 to :83 on the branch.
+
+FILES CHANGED SINCE ba7952b (by content, ba7952b -> ff4c34f, excluding main's own changes):
+- backend/scripts/drain_audit.py (C104, text only)
+- backend/scripts/drain_audit_report.py (C104, text only)
+- backend/tests/test_drain_audit_rules.py (C104)
+- backend/tests/test_bill_single_writer.py (C105; main's file from PR #216)
+
+GATES (full runs, clean trees):
+- Branch ff4c34f (main 8c0c74c, schema head 0048, main's suite included), lane p2b2, gate log backend-20261115-014905: GATE[1..8] EXIT=0, SKIPS total=1838 skipped=0 integration_skipped=0, SUMMARY FAIL=0. test_only_write_bill_writes_the_bill_columns, test_the_drain_audit_read_site_runs_in_a_read_only_transaction and the C81 test pass.
+- Drain tree b5fa9e2 = 19c6d14 + cherry-pick -x 6f6cbb2 (C104; schema head 0046), lane p2b2-drain. The seven drain files are identical to ff4c34f. C105 is not picked: the drain tree predates P8b and has no test_bill_single_writer.py. Gate log backend-20261115-015831: GATE[1..8] EXIT=0, SKIPS total=1215 skipped=0 integration_skipped=0, SUMMARY FAIL=0. The C81 test passes.
+
+C104, THE CLAUSE (text only; the fresh review's point 1, record 203-ba7952b.txt):
+- _ASK_THE_PHONE (used by _CLEARS_STORAGE, _CLEARS_DISCARDS, the point-17 note and _not_judged's clears text), the module docstring at both places, and both clears lines of drain_audit_report.py (UNREADABLE_STORE, NOT_JUDGED) now say: "the owner reads that phone's Drain Report (its storage card lists the stores and the kept copies that were unreadable when the snapshot was taken; anything else, a list or a store that went bad later, unreadable record parts, a key the phone could not read, is on no screen and is named only in this note), asks the technician what was discarded or pending there; then". The docstring and report say "the audit's note" and "the row's note" where they are not the note itself. "By the after-report's event id" is dropped. The code comment above _ASK_THE_PHONE says the same (C104 added; the card lists only unreadable stores and kept corrupt copies).
+- Test: test_c100_an_untrusted_after_report_leaves_a_row_it_does_not_list_not_judged follows the new sentence (and asserts that "shows what was unreadable" is gone). It also gains one check: a manifest with unreadable record parts gets, in both its texts (parsed.discards_problem, and the parts storage issue + _CLEARS_STORAGE), "its storage card lists the stores and the kept copies" and "unreadable record parts, a key the phone could not read, is on no screen", and never "shows what was unreadable".
+- On ba7952b's scripts (with 6f6cbb2's tests, lane p2b2-brk, the four drain test files): 1 failed, 263 passed. The failure is that test.
+- Breaks on 6f6cbb2 (264 drain tests), each red at gate 8 through that test: B141, the sentence reverted to C103's; B142, the record parts dropped from "on no screen" (caught by the new parts check); B143, "a list or a store that went bad later" dropped.
+
+C105, THE ALLOWANCE (backend/tests/test_bill_single_writer.py):
+- ALLOWED stays the one writer. READ_SITES is a separate table: {("scripts/drain_audit.py", "snapshot_fuel"): its reason, which is that it builds the fuel snapshot's output record (the 'bill_status' key is read from the row) and the script's one transaction is REPEATABLE READ, READ ONLY}. test_only_write_bill_writes_the_bill_columns subtracts READ_SITES from the stray sites, fails on a READ_SITES entry whose site no longer exists (stale), and still requires set(sites) == ALLOWED | READ_SITES.
+- New test_the_drain_audit_read_site_runs_in_a_read_only_transaction: exactly one text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY") call in scripts/drain_audit.py (AST), so the allowance cannot outlive the property.
+- The tripwire's docstring says the table exists and what an entry must show: the (file, function), the reason it is a read, and an assertion in that file of the property that makes it safe. A stale entry fails.
+- The snapshot's field is not renamed and its dict is unchanged.
+- The test that fails without the allowance: main's own test_bill_single_writer.py on the rebased head (lane p2b2-brk, gate log backend-20261115-014533) gives 1 failed, 1 passed: test_only_write_bill_writes_the_bill_columns, with ('scripts/drain_audit.py', 'snapshot_fuel'): [3831] (3827 on the coordinator's merge; C104 added four lines above it).
+- Breaks on ff4c34f, the tripwire's file only: B144, a stale entry, fails test_only_write_bill_writes_the_bill_columns (backend-20261115-014631); B145, the transaction no longer READ ONLY, fails test_the_drain_audit_read_site_runs_in_a_read_only_transaction (backend-20261115-014730; that edit also fails ruff format).
+
+GATE RUNS THIS ROUND (per the disk request): the two full gates above; one partial gate on the four drain test files before the C104 commit (green, 264 tests; a first attempt named a wrong file and pytest exited 4 at once); the C104 base run and B141-B143; the C105 base run and B144-B145. No earlier break row was re-run: their code did not change (C104 is text only in strings and docstrings; C105 touches only the tripwire test).
+
+KEPT AS NOTES, AS RULED: OB14, the transient window, the first-mint residual. The review's nit (the event-id phrase inside a manifest problem) is resolved by C104's dropping of that phrase.
+
+FOR THE RUNBOOK §8 (the PR that fills <p2b2>): the C103 wording in 203-ba7952b, with the storage card's clause replaced by C104's: its storage card lists the stores and the kept copies that were unreadable when the snapshot was taken; anything else, a list or a store that went bad later, unreadable record parts, a key the phone could not read, is on no screen and is named only in the audit's note.
+
+FOR THE OWNER (C81, CLAUDE.md, NOT in this PR, unchanged):
+> The events route must keep accepting one `drain_manifest` or `drain_after` event of at least 8 MiB, because a refused manifest keeps a phone from ever draining.

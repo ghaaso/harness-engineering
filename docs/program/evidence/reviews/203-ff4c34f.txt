@@ -1,0 +1,63 @@
+VERDICT: PASS
+PR #203 at ff4c34f236750d0d51a6ab7fc1c518bc5febedf8
+Narrow binding review of the last delta (`8c24c8e..ff4c34f`: rulings C104 and C105, 4 files, +83 -26) and of the rebase onto main 8c0c74c, by the fresh reviewer who read `cccabf6..ba7952b`; resumed by the coordinator on 2026-11-15 at 02:11, returned at 02:16. This file is the coordinator's record of the reviewer's report, written from the notification text. The whole PR at cccabf6 is covered by `203-cccabf6-server.txt` and `203-cccabf6-phone.txt`, the delta to ba7952b by `203-ba7952b.txt`.
+
+Nothing in this delta needs to change. Under 3 there are three notes: two residuals for the record and one optional one-line pin. The head was ff4c34f at the start and at the end (`gh pr view 203 --json headRefOid`). The review tree is clean at ff4c34f, and the phone tree (`rv197-head`) is clean at dbc95a2.
+
+THE REBASE, each check re-run by the reviewer (VERIFIED-BY-COMMAND)
+- `git range-diff e6f85c5..ba7952b 8c0c74c..ff4c34f`: 21 commits "=", and two new ones on top, 165463a (C104) and ff4c34f (C105).
+- The tree of 8c24c8e (the rebased twin of ba7952b) is 9b98251a..., the same tree as the coordinator's local merge 7934d2a of main 8c0c74c and ba7952b.
+- `git diff --name-only 8c0c74c ff4c34f` lists eight files, all under `backend/`.
+- The delta `8c24c8e..ff4c34f` is four files, +83 -26.
+
+1. C104, THE CLAUSE
+- The gap is closed everywhere the owner reads (VERIFIED-BY-COMMAND). The new sentence is in `_ASK_THE_PHONE` at `backend/scripts/drain_audit.py:674` and in its four users (`_CLEARS_STORAGE` :683, `_CLEARS_DISCARDS` :691, the point-17 note :2668, `_not_judged` :2774); in the module docstring at :80-83 and :171-174; and in both clears lines of `drain_audit_report.py` (:458-463 and :469-474). A `git grep` at ff4c34f over `backend/` for "shows what was unreadable", "names the unreadable" and "by the after-report" finds them only in the tests' negative assertions (:2979, :2980, :2990). "By the after-report's event id" is gone, so no text names an event id where no after-report is involved.
+- (a) The card claim is true of the phone at dbc95a2 (VERIFIED-IN-CODE). The card is `storage: stored ? storageReport(stored) : null` (`drainReport.ts:351`). Its only unreadable-related warnings come from `m.storage.unreadable_stores` (:233-237) and `m.storage.preserved_corrupt` (:239-241): those two and nothing more. Its other contents are the bytes summary and the near-cap warning (:224-231), neither about unreadable data. Nothing is less either: every unreadable store and every kept copy of the stored snapshot is listed, the discard list's key and its `.corrupt` copies included.
+- (b) The three things the sentence calls "on no screen":
+  - Record parts and unreadable keys (VERIFIED-BY-COMMAND). In `technician-app/src` at dbc95a2, outside tests, `unreadable_parts` occurs only in `drainGate.ts`; `unreadable_keys` and `unreadableKeys` occur only in `afterReport.ts`, `manifest.ts`, `afterSend.ts` and `drainGate.ts`. None is a screen, and `drainReport.ts` reads neither field. A grep of every `.tsx` for "could not be read", "unreadable", "damaged" and ".corrupt" finds only `DrainReportScreen.tsx:130`, "The live count could not be read.", which shows when the whole live read is null and names nothing.
+  - A list or a store that went bad later (VERIFIED-IN-CODE). The live read feeds only `groupNow` (:203-221), which reads `live.counts` and no storage field. The after-report line (`afterLine`, :290-306) shows only the pending, parked and discards counts.
+  - What stays inferred: that no other module builds a user-visible string from these fields that a screen then renders. The grep makes this unlikely.
+  - A nuance, no change needed: a key that is in `unreadable_keys` and also in `unreadable_stores` is on the card as a store; the sentence's "anything else" covers that.
+
+2. C104'S TEST (INFERRED from reading the assertions; the breaks were not applied)
+`test_c100_an_untrusted_after_report_leaves_a_row_it_does_not_list_not_judged`, `backend/tests/test_drain_audit_rules.py:2974-2991`: B141 (C103's sentence back) fails :2976, :2977, :2978 and :2988. B142 (record parts dropped from the sentence) fails :2989, the new parts check, which covers both texts a parts manifest gets (`parts.discards_problem`, and the parts issue text plus `_CLEARS_STORAGE`). B143 ("a list or a store that went bad later" dropped) fails :2977.
+- Note: no test pins the wording of the report's two clears lines. `test_drain_audit_integration.py:1746` and :2109 check only the "clears UNREADABLE_STORE" and "clears NOT_JUDGED" headers, so reverting those two strings alone would stay green. This is text and needs no change in this round.
+
+3. C105, THE ALLOWANCE (`backend/tests/test_bill_single_writer.py`, read whole)
+- (a) What the key lets through (VERIFIED-IN-CODE). The key `("scripts/drain_audit.py", "snapshot_fuel")` admits every write-shaped hit whose innermost enclosing `def` is named `snapshot_fuel` in that file (:78-84, :149), on any number of lines, a second function of the same name included. A nested `def` inside it is not covered, because it is scanned under its own name. This is the same function-level granularity as `ALLOWED`. Today the key matches one hit: the dict that opens at :3831 and holds `"bill_status": r["bill_status"]` at :3835. Optional pin: `assert len(sites[("scripts/drain_audit.py", "snapshot_fuel")]) == 1` would narrow the key to that one site.
+- (b) Is READ ONLY enough? Safe as built, with two residuals.
+  - What makes it safe (VERIFIED-IN-CODE): every database statement in `drain_audit.py` goes through the `session` argument, and `readonly_session` (:3973-3999) is the only engine in the file. That engine connects with `default_transaction_read_only=on` (:3978), runs `SET TRANSACTION ... READ ONLY` (:3985-3987), checks it with `SHOW` (:3988-3994), rolls back (:3997), and asserts `txid_current_if_assigned()` is NULL before it leaves (:4002-4006). `snapshot_fuel` runs only inside it (:4163-4164 and :4176-4177). The file has no `.commit` and no `.begin(`. The app calls it makes (`_fuel_rate` to `effective_int`, `workshop_circle`, `list_locations`, `list_travel_samples`) use the same session, and `jobs/repository.py`, `attendance/repository.py` and `tenancy/service.py` contain no `commit()`. `test_the_audit_transaction_cannot_write` (`test_drain_audit_integration.py:1444-1450`) proves the session refuses a write (SQLSTATE 25006).
+  - Residual 1, a commit (INFERRED). A commit followed by more statements would end the REPEATABLE READ snapshot. The next transaction would still be read-only through the connection default, so a write would still be refused, but contract point 13's single snapshot would be lost silently. `assert_no_write` sees only the last transaction, and nothing catches the commit.
+  - Residual 2, a second connection (INFERRED). A second engine created without that connect argument would not be read-only. The AST test (:161-178) checks only that the `SET TRANSACTION` string occurs exactly once in the file; it does not tie it to the session `snapshot_fuel` uses. A write placed in `snapshot_fuel` over such a connection would pass both tests.
+  - Both residuals take a deliberate, contrived edit. A note, not a pin.
+- (c) B144 and B145 fail as claimed (INFERRED from the code; not run). B144: an entry whose site is gone fails `stale` at :154-155, and the equality at :157 as well. B145: a changed string leaves `opened` empty, so the length check at :175 fails; a duplicated string also fails it, because the check wants exactly one.
+- (d) Main's test is loosened by that one key only (VERIFIED-BY-COMMAND). `git diff 8c0c74c ff4c34f` for this file removes only `assert set(sites) == ALLOWED`. The stray filter subtracts only `READ_SITES` (:149). The equality becomes `ALLOWED | set(READ_SITES)` (:157), which also requires the read site to be found. `len(...) >= 4` and every scanner-shape test are unchanged.
+- (e) `snapshot_fuel` is unchanged (VERIFIED-BY-COMMAND). `git diff ba7952b ff4c34f -- backend/scripts/drain_audit.py` touches only the docstring, the comment and `_ASK_THE_PHONE`. The record still has `"bill_status": r["bill_status"]` at :3835.
+
+4. THE REBASE, A BOUNDED LOOK
+- Migration 0048 (VERIFIED-BY-COMMAND) creates `job_bill_revision` and widens `staff_ledger_chain` (adds `subject_type`, `payment_id` and `bill_revision_id`, makes `ledger_id` nullable). It does not touch `job`, `job_event`, `job_payment` or `job_completion`. The audit reads none of the changed tables: its `FROM` and `JOIN` tables are app_event, attendance_*, job, job_completion, job_event, job_location, job_media, job_payment and job_travel_sample.
+- The one event text the audit parses is unchanged (VERIFIED-BY-COMMAND): "Bill negotiated ...", read by `_BILL_FIGURE` at :485 and the `LIKE 'Bill negotiated%'` at :1660; it is the same at `e6f85c5:...service.py:1905-1907` and at `8c0c74c:...:2193-2195`.
+- P8b's new override texts ("Completion corrected by a manager...", "Bill corrected by a manager...") do not match that `LIKE` (INFERRED: no effect).
+- No payload change was found.
+
+5. CONVENTIONS (VERIFIED-BY-COMMAND)
+- The body's first line is `Plan @ plan-v9.91`, and the body is 55,746 characters.
+- Line 44 points to issue comment 6884159216. That comment exists, by the repository's owner account, 14,291 characters, and says it is decision 39 moved verbatim. Whether it is verbatim was not checked.
+- The secret scan over the delta found nothing, and the delta has no `job_event` write site.
+- Both new commits are by the repo identity with the noreply address and carry the `Co-Authored-By` trailer. Their `[P2b-2]` subjects follow the branch's own style.
+
+CHANGED EXPECTATIONS
+- `test_bill_single_writer.py:157`: `set(sites) == ALLOWED` became `ALLOWED | set(READ_SITES)` (a changed expected value; reason: C105).
+- `test_drain_audit_rules.py`: `assert "shows what was unreadable when the snapshot was taken" in note` was removed and replaced by stronger checks at :2976-2980 (a removed assertion; reason: C104).
+- No skip, xfail or `.only` was added.
+
+WHAT THE REVIEWER READ AND RAN: the marker; rows C104 and C105 at plan-v9.91; the delta; `test_bill_single_writer.py` whole; in `drain_audit.py` at ff4c34f `snapshot_fuel`, `readonly_session`, `assert_no_write` and `_main`; the app calls `snapshot_fuel` makes; migration 0048 and main's diff of `jobs/models.py` and `jobs/service.py`; at dbc95a2 `drainReport.ts`, `DrainReportScreen.tsx` and greps over the app source; the PR body and the decision-39 comment. Only read-only git and gh commands. No gate run.
+
+NOT VERIFIED: breaks B141 to B145 (not applied); the lane's two full gates and the drain tree b5fa9e2; that the decision-39 comment is verbatim; what the device actually renders.
+
+CLEANUP: no container or volume is left, both trees are clean, the reviewer's temporary files in the scratchpad are deleted, and nothing was added to the repo.
+
+COORDINATOR (2026-11-15).
+What the coordinator checked itself before the review: the range-diff (21 "=", two new) and the tree identity of 8c24c8e with the tested merge 7934d2a; the PR's eight files are seven additions and one modification (`backend/tests/test_bill_single_writer.py`); the coordinator's drain tree, rebuilt by picking 165463a onto 92a4eeb, is 15061d7 with tree 4054a4d8..., identical to the lane's drain tree b5fa9e2; the seven drain files are byte-identical on the drain tree and on the head.
+The three notes are kept as notes and none is asked of the lane in this PR (ruling C106 records them): the optional one-line pin on the read site's hit count, the two residuals of the READ ONLY tie (a commit that would end the snapshot; a second connection), and the unpinned wording of the report's two clears lines. They go to the backlog for the next change to those files.
+A consequence of C105 that this review was not asked about, found by the coordinator while it ran (ruling C106): the PR now modifies a file that `release/drain` does not have, so the runbook's pick of the PR's squash (section 11.4) would stop on a modify/delete conflict. The drain branch takes P2b-2 from a pick commit with the seven added files only, named by an annotated tag, as it takes the timezone fix. Nothing in the PR changes for this.
