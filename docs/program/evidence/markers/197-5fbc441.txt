@@ -1,0 +1,30 @@
+PR 197 head 5fbc441 (one commit on a08c6f7; base main 16e154e; main is now 27c9e04, not rebased). Plan @ plan-v9.73 in the PR body.
+ruling C83 (phone half): a snapshot reads the head key again after its storage read and before any part write; if a head appeared (not the corrupt one this context set aside), it drops its snapshot and loads that head.
+
+CHANGED FILES
+- technician-app/src/features/drain/drainGate.ts     takeOrLoad: second head check (C83) + the residual named in the comment; parseHead/loadHead extracted (no behaviour change for one context)
+- technician-app/src/features/drain/discardCopy.ts   DISCARD_NOT_RECORDED: names "still saving its record list after an update" as well as full storage (note 2)
+- technician-app/src/features/drain/drainGate.test.ts  a one-shot hold on getAllKeys (a read in flight); describe "ruling C83" (3 tests)
+- CLAUDE.md                                          drain-gate row: the C83 rule
+
+TESTS FAILING ON a08c6f7 (with drainGate.ts reverted to a08c6f7, tests kept: 2 failed / 55)
+- drainGate.test C83 > the reviewer's sequence: the faster head is kept, and the manifest holds the row and not the discard
+  (slow context stalls in getAllKeys; fast stores head F; fast discard appends E with its trace write held and the row still there; slow read finishes; slow loads F; final head = F, manifest has pay-edge and discards [])
+- drainGate.test C83 > the slower context writes no part and no head once a head exists
+- regression guard, passes on both (stated plainly, it cannot fail on a08c6f7): C83 > a single context is unchanged (takes, stores, relaunch loads without writing)
+
+WHAT IS LEFT (also in the code comment and the PR body)
+From the second check to the head's write (the part writes, a few ms, longer on a heavy phone) the other context can still store its head, and the two can interleave their parts under the same keys; AsyncStorage has no compare-and-set. Both reads then precede every discard: a removed row reads `missing` and a person looks; never a discard the manifest wrongly holds.
+
+RECORD SIZES: HOW MEASURED (re-measured at 5fbc441; replaces the item-8 figures, which predate contract v2)
+One line: utf8 byte length of a real drain_manifest request body ({events:[{client_id,name,props:sanitizeDeep(manifest),device_time}]}) built by buildManifest from realistic rows (36-char uuids, 18-char slugs, ISO times, parked reasons), per record = (body with 200 rows - body with 100) / 100, in a throwaway Jest file (not committed).
+Per record (B): punch 361, presence 316, outbox 417, media 340, ping 141, travel 206, telemetry 114, discard entry 335.
+Empty manifest 1,006 B. Heavy phone (punch 120, presence 240, outbox 200, media 60, ping/travel/telemetry 1,000 each) 686,121 B; with 3,000 discards 1,691,120 B; the full discard list alone adds 1,005,005 B.
+The "extreme" ~2.97 MB quoted under C78 was NOT re-measured (its counts were from the item-8 run); any total = per-record x counts + ~1 KB.
+ONE EVENT IN ONE REQUEST: confirmed. uploadOnce sends one POST /api/events whose events holds exactly one drain_manifest (drainGate.ts uploadOnce; pinned by drainGate.test "uploads the manifest as drain_manifest ... events toHaveLength(1)").
+
+GATE
+mobile gate on a clean tree, head 5fbc441: typecheck, jest 65 suites / 777 tests, expo export: FAIL=0
+gate id / log: /c/Users/User/.fixflow-cache/gate-logs/p2b1/mobile-20261114-191759
+CI: not run (Actions minutes exhausted); local gate is the evidence
+build config unchanged since c5eadbd; not merged; values commit still to come (domain, fleet max versionCode)
