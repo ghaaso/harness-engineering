@@ -1,0 +1,139 @@
+VERDICT: PASS
+PR #214 at 56e9623d2f6ad6dfcc01e5f1f2918aff38a4bc78
+Binding review by a fresh reviewer (fixflow-pr-reviewer); dispatched by the coordinator on 2026-11-14 at 15:51, returned at 16:00. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was checked with `gh pr view 214 --json headRefOid` at 15:51 and again at 15:59 local time, and it did not move. GitHub's base is `e29b064`; the branch is one commit on `e4426c7`, which is the merge base. Plan @ plan-v9.65, which resolves to `0e33c51`.
+
+All five items are fixed on this head, and every claimed test fails on `e4426c7` and passes here. Nothing found forces a change before merge. What is left is two MINOR display issues and some NITs, all fine as follow-ups.
+
+A. THE FIVE ITEMS, AND THE FAIL-ON-BASE RUN
+
+Fail-on-base: a scratch worktree at `e4426c7`, the head's nine test files copied onto it, `npm ci`, then `npx vitest run` on those files. Result: exit 1, "16 failed | 45 passed". `LabourRateCard.test.jsx` could not load at all ("Failed to resolve import ./LabourRateCard"), so its 5 tests also fail. That makes 21 failing tests on base. The PR body's "16" is vitest's count without that file. Log: the coordinator's scratchpad, `rv214/base-run.log`.
+
+1. Job create errors are shown: closed. `src/features/jobs/pages/JobsBoard.jsx:92-98`: a 401 shows nothing, a 4xx shows the server's reason, anything else says "please retry". The form only closes on success (`:84`).
+   - Test: `JobsBoard.create.test.jsx`, 3 tests. On base the 422 test failed with `expected 'Couldn't create job — try again' to contain 'customer phone is invalid'`, the no-answer test failed on `/please retry/`, and the 401 test failed because base raised a toast.
+2. No made-up labour rate: closed. `src/shared/lib/job.js:56-58` returns no rate when none is known; `:73` keeps zero minutes at Rs 0; `:82-84` makes the total null when labour is unknown. `JobDetail.jsx:366-370` shows "Labour rate unknown".
+   - Tests: `job.test.js` "unknown, not guessed" failed on base with `expected 1800 to be null`. `JobDetail.labourRate.test.jsx` failed on base because it could not find "Labour rate unknown".
+3. Bounded session check: closed. `src/app/providers/AuthContext.jsx:11` sets 15 s; `:42-46` starts the timer and passes the abort signal; `:72` clears the timer. `authApi.js` `me(init)` passes the signal on, and `api.js:98-104` uses only the signal from `init`.
+   - Test: `AuthContext.session.test.jsx` "never answers". On base it failed because `me` was called without `ObjectContaining{signal}`.
+4. Live labour-rate card: closed. `src/features/settings/components/LabourRateCard.jsx`, plus `Settings.jsx`, which removes the demo field and mounts the card.
+   - Tests: `LabourRateCard.test.jsx` (5, the module does not exist on base) and `Settings.labourRate.test.jsx` (on base, `expected <input> to be null`: the demo field was still there).
+5. Rate cache and the shop's day: closed. `jobsApi.js:178-215` (the cache keeps only a known rate, and a save clears it), `jobsApi.js:166-176` (`fetchShopTimezone`, cached 1 h), `date.js` `isoDateInZone`, and `Dashboard.jsx:74-83`.
+   - Tests: on base, `jobsApi.test.js` failed 4 times (2x "called 2 times, but got 1", 2x "is not a function"); `isoDateInZone.test.js` 3x "is not a function"; the Dashboard Kiritimati test got the wrong arguments.
+   - The tile's "zone read fails" test is not a clean fail-on-base: on base it fails with `Cannot read properties of undefined (reading 'then')`. The PR body says so itself.
+
+B. ITEM 4, THE MONEY WRITE
+
+Server side (VERIFIED-IN-CODE):
+- The setting is `labour_rate_paisa`, kind int, unit "paisa/hour", default "120000", `min_int=0`, no upper bound (`backend/app/features/tenancy/specs.py:76-87`).
+- GET and PUT are manager-only (`router.py:36`, `:52`).
+- A PUT appends a row and never edits; it is idempotent on `client_id`: a repeat returns the original row, including after a race (`service.py:166-197`).
+- Text that does not parse as an integer is refused with 422 (`specs.py` `canonicalize`).
+- A completion copies the rate at its first submission (`jobs/service.py:1664-1676`, column BigInteger at `models.py:302`).
+
+Tried against the card (VERIFIED-BY-COMMAND, probe tests run on head source in scratch, `npx vitest run src/zz_probe`; the run exits 1 only because one probe expected `" 1200 "` to survive jsdom's number-field cleanup):
+
+| Input | What happened |
+|---|---|
+| `1200.5` | sends 120050 |
+| `1200.555` | sends 120056 |
+| `1e3` | sends 100000 |
+| `0`, `-5`, `0.001`, empty, `1,200`, non-Latin digits | Save stays disabled, nothing sent |
+| `99999999999999999999` | sends `{"value":1e+22}` |
+
+- Retry after no answer, same value: same key (the lane's test, and the 500 probe: `sameKey=true`).
+- After a refusal: the next save gets a new key (`newKey=true`).
+- A new value: a new key.
+- Double click: two sends with one key, which the server collapses into one row.
+- A refusal keeps what the manager typed ("1800") and still shows the server's "Current rate: Rs 1,500".
+- No save is possible while the first read is in flight: there is no input until it loads.
+- A failed read shows no field and no figure, only "could not be loaded" and Retry.
+- No floating-point maths reaches the request except the shared helper at the display edge, `rupeesToPaisa` (`Math.round(n*100)`); the body is always an integer.
+- What a rate change does to an open job: a completion keeps its server-copied `labourRate` (`mapJob.js:137`). `CompletionForm.jsx:27` prefers that copied rate, and the bill figures come from the server's `job.bill`. A new rate only affects previews of completions that do not exist yet.
+
+Findings:
+- MINOR: the confirmation rounds the saved rate to whole rupees. `LabourRateCard.jsx:61` and `:102` use `formatPKR`, which rounds. Typing `1200.5` saves 120050 paisa but shows "Saved: Rs 1,201 per hour." The stored value is right; the message is wrong. Smallest fix: accept whole rupees only (`Number.isInteger(rupees)` in `valid` at `:46`, plus `step="1"`), or show the figure with paisa.
+- MINOR: a stored or copied rate of 0 is called "unknown" or "not set". The server allows 0 (`min_int=0`) and bills labour at Rs 0.
+  - `job.js:58` `r > 0` makes a completion copied at 0 show "Labour rate unknown". Base showed Rs 0 here (probe: `labour=null total=null`).
+  - `jobsApi.js:182` reads 0 as null, so the card says "Not set — completions cannot be priced until it is." (`LabourRateCard.jsx:99`).
+  - Only reachable by setting 0 directly through the API; the card itself refuses 0.
+  - Fix: treat a copied `completion.labourRate` of 0 or more as known in `rateFor`, and keep the `> 0` rule for the preview rate only.
+- NIT: no upper bound or confirmation on a money setting. `1e+22` gets sent; the server is expected to refuse it with 422 (INFERRED, not run). A realistic typo such as 120000 rupees saves with no check, and the server has no maximum either. This is a product-level guard, not this PR's defect.
+- NIT: a 5xx is described as unreachable. `LabourRateCard.jsx:70` says "could not be reached" for a server error as well.
+- NIT: the card never re-reads after a save (`:60`), so a second tab shows a stale "Current rate".
+- NIT: misplaced doc comments. At `jobsApi.js:148-153` the comment for `fetchLabourRatePaisa` sits above the constants, and at `:157-159` the comment for `fetchLabourRateSetting` sits on top of `fetchShopTimezone`'s.
+
+C. ITEM 1, DUPLICATE JOBS ON RETRY
+
+The create already carries a stable idempotency key. `NewJobForm.jsx:25` mints one key per form; `mapJob.js:204` sends it as `client_id`. The server returns the existing job for a known key, including in a race (`jobs/service.py:1203-1219`). The form stays mounted on failure (`Overlay.jsx:24`; `JobsBoard.jsx:84` closes only on success), so the "please retry" this PR adds re-sends the same key. It creates no duplicate.
+
+Risks that were already there, not new: closing and reopening the form mints a new key; and a retry with edited fields after a create that did land silently returns the original job without the edits (backlog, NIT).
+
+D. ITEM 2, WHERE A NULL LABOUR OR TOTAL CAN FLOW
+
+- `completionTotal` is used only in `CompletionForm.jsx:66`, guarded by `rateKnown`.
+- `completionLabor` is used in `CompletionForm.jsx:67` (guarded) and `JobDetail.jsx:367` (null check).
+- Nothing sums them; the revenue tile uses the server report; `onSave` sends only materials, time, fuel and remarks.
+- No path to `NaN` or "Rs null" on screen was found. No web path prices with an unknown rate any more.
+- The only regression is the copied-rate-0 case in B.
+
+E. ITEM 3, AGAINST PR #212'S SESSION RULES
+
+Probes, all VERIFIED-BY-COMMAND:
+
+| Case | Result |
+|---|---|
+| Timeout fires | `unreachable=true`, token kept; an aborted fetch cannot answer later |
+| Retry gets a 401 after the timeout | `token=null auth=false unreachable=false` |
+| Sign out while the check hangs, then the timeout fires | the epoch drops it: `unreachable=false token=null` |
+| Retry called twice at once | both settle, `checking` ends false, token kept |
+| Server answers at 14.9 s | accepted |
+
+No state was found that is signed in without a token or signed out with one, apart from the intended retry screen, which keeps the token.
+- NIT: a server that always takes more than 15 s loops on the retry screen.
+
+F. ITEM 5, THE SHOP'S DAY
+
+- `isoDateInZone` throws a `RangeError` on an invalid or empty zone. In the Dashboard that is caught at `:83`, and the tile reads "Revenue This Week—Not loaded" with no metrics call; the page does not crash (probe). An undefined zone falls back to the browser's zone, but `fetchShopTimezone` rejects one anyway.
+- Zones ahead and behind work: 2026-11-15T10:30Z is the 16th in Kiritimati; 2026-11-16T05:00Z is the 15th in Pago Pago. The Monday is then worked out from that date string.
+- If the zone cannot be fetched, the tile says "Not loaded" on screen. It does not silently use the browser's day.
+- Cost: one extra bare tech-metrics report: four aggregate queries plus a directory lookup over 7 days (`jobs/service.py:2541-2553`). The 1 h cache lives in the page's memory, so it is per page load, not per hour across reloads. NIT.
+- Leaving the other `TODAY` uses browser-local (labels and aging counts, not a money window) is reasonable.
+
+G. CHANGED EXPECTATIONS
+
+- `Dashboard.revenue.test.jsx`: the removed line `expect(fetchTechMetrics).toHaveBeenCalledWith({ start: mondayOf(TODAY), end: TODAY })` is replaced by a pinned clock with Kiritimati expecting `2026-11-16..2026-11-16`. The reason is given in the PR body and in a test comment. The unused `mondayOf` helper was removed.
+- No new skip, xfail, `.only` or `.todo`; no loosened matchers.
+
+H. CONVENTIONS
+
+| Check | Result |
+|---|---|
+| Paths | pass: all 19 files under `src/`; no package files, `src/ops`, `src/features/ops`, `backend/`, `technician-app/`, and no `DRAIN WINDOW` text in the diff |
+| `@app/` imports from features | pass: only test files import `@app/providers` |
+| settings -> `@features/jobs/data/jobsApi` | not applicable: a feature-to-feature import, the same pattern as `GeofenceCard` -> attendance data; no cycle (jobs does not import settings). Open question: the barrel-rule conflict in the conventions skill, section 1.8, still needs the owner's ruling |
+| Secret scan | pass: no hits |
+| Test data | pass: synthetic only |
+| PR body | pass: Plan line, Scope checkboxes matching the diff, journal heading |
+| Commit | pass: author is the repo-local identity, Conventional subject, Co-Authored-By trailer |
+| CI | not run: the three jobs failed in 2 s because GitHub Actions is stopped (ruling C52) |
+
+I. THE REVIEWER'S GATE
+
+- Log: `C:/Users/User/.fixflow-cache/gate-logs/rv214/web-20261114-155513/summary.txt`
+- `HEAD 56e9623 tree=clean`; GATE[1 npm run lint] EXIT=0; GATE[2 npm run format:check] EXIT=0; GATE[3 npm test -- --maxWorkers=4] EXIT=0 (41 test files, 313 tests passed); GATE[4 npm run build] EXIT=0; GATE[5 node --test ops/hang-stub/server.test.mjs] EXIT=0; GATE[6 node ops/selfhost/smoke/compose-rules.mjs] EXIT=0; GATE[7 restore-gate.test.sh] EXIT=0; SUMMARY FAIL=0. This matches the lane's 7/7 and 313.
+
+WHAT THE REVIEWER RAN
+- `gh pr view` (head checked at start and end), `gh pr checks`, `git diff`, `git show`, `git grep`, `git log`.
+- Free RAM and commit charge read before each heavy step. It waited once while commit was above 42 GB; the readings when work started were 8.4 GB free / 39.7 GB commit, and later 7.7 to 8.3 GB / 39.6 to 40.1 GB.
+- The gate above.
+- Scratch worktree at `e4426c7` + `npm ci` + head tests (exit 1, the expected failures). Then head `src` laid over it with `git archive`, plus the probe tests (`npx vitest run src/zz_probe`).
+- The scratch worktree is removed; only logs and probe sources remain in the coordinator's scratchpad, `rv214/`. The review tree is clean.
+
+NOT VERIFIED
+- What the server actually does with `1e+22` or an integer above the 64-bit range (no Python run; the 422 is inferred).
+- Real-browser double-click timing (jsdom only).
+- The report's cost on a populated database.
+- That a `release/drain` backend's report carries `timezone` (no drain branch locally; this PR is not picked into the drain web image).
+
+COORDINATOR (2026-11-14, 16:03; ruling C73). The verdict is PASS at 56e9623, and I am still not merging this head. The labour-rate card is the first way to change a price parameter from the console, so it does not reach `main` able to misreport what it saved or to save a slip of the finger; one round on this PR costs one check cycle less than a second follow-up. Ruled: exact figures on the card (no rounding formatter); zero is a rate, not "unknown"; a save is confirmed with both figures before anything is sent; the request body is a safe integer of paisa or the card refuses; after a save the card shows the server's value and a server error is not called unreachable; the two doc comments move. Sent to the lane at 16:01; the same reviewer re-reads the delta. Notes that stay notes: a server slower than 15 s loops on the retry screen; the shop-zone cache is per page load; closing and reopening the create form mints a new key; the barrel-rule question for a feature-to-feature import.
