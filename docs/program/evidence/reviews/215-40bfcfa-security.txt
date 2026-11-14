@@ -1,0 +1,93 @@
+VERDICT: PASS
+PR #215 at 40bfcfaced34914486519be04b97ebbbb8860bb1
+Binding application-security review by a fresh fixflow-appsec-reviewer; dispatched by the coordinator on 2026-11-14 at 18:32, returned at 18:45. One of three reviews of this head (the whole PR and the phone-upload side are separate records). This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was checked at 18:31 and again at 18:43 and had not moved. The shared tree is still clean. Nothing in the security scope requires this head to change before merge. Every defence the PR claims held when attacked. What is left are notes, two minor gaps to fix later, and owner steps.
+
+1. THE OPS LOGIN (`ops-server.mjs`)
+
+Held under attack, all run against the server started locally (Node v24.22.1); log in the coordinator's scratchpad, `rv215/sec/logs/probe.log`.
+- Lock after five failures. After five wrong passwords from one IP, the right password got 429 with Retry-After (VERIFIED-BY-COMMAND). Code: `ops-server.mjs:656-661`, `:207-214`.
+- No race. 30 parallel requests from one IP, each with its full body, got exactly 5 x 401 and 25 x 429 (VERIFIED-BY-COMMAND). Between the second lock check, the password check and recording the failure there is no `await` (`:673-681`), so the whole step runs in one go.
+- Password compare. Both sides are hashed with sha256, then compared with `timingSafeEqual` (`:165-170`). This is the Node twin of the backend's `compare_secret`. A non-ASCII password, a number, or a `null` body each got 401, never 500 (VERIFIED-BY-COMMAND).
+- Session token compare. `timingSafeEqual` sits inside a `try` (`:147-151`). A non-hex or short signature returns false. Changing `exp` gave 401 (VERIFIED-BY-COMMAND).
+- Body cap. A declared `Content-Length` of 16385 got 413 before any read (VERIFIED-BY-COMMAND; `:559-563`).
+- Boot refusals. These refused to start: password unset, password of 15 characters, password of 8 two-byte characters, session secret of 31 characters. No run printed any value (VERIFIED-BY-COMMAND; `:53-58`, `:63-68`).
+- Nothing leaks. The 401 body is `{"error":"wrong password"}`: no length, no secret. The server's output never contained the password (VERIFIED-BY-COMMAND).
+- Unauthenticated reach. Only static files and `POST /api/ops/login` are reachable without a token. `/api/ops/health`, `/api/ops/metrics` and `/api/ops/railway/logs` all got 401 (VERIFIED-BY-COMMAND; `:688`).
+- Session storage. There is no cookie, so cookie flags do not apply. The token is a Bearer token kept in localStorage under `fixflow_token` (`src/shared/lib/api.js:15`, `:32`), with a 12-hour lifetime (`ops-server.mjs:69`) (VERIFIED-IN-CODE).
+
+Who can set `CF-Connecting-IP`:
+- From the internet, only Cloudflare's edge sets it (INFERRED from Cloudflare's documented behaviour; not checked here).
+- Inside the compose, the backend, web and cloudflared share `opsnet` with ops (`docker-compose.prod.yml:120`, `:158`, `:200`) and can send any value.
+- A compromised backend or web container could therefore guess without limit by changing the header each time. It could also lock the owner out by sending five failures with the owner's IP, which the backend sees in its own requests. That needs a compromise first (INFERRED).
+- A header longer than 64 characters falls back to the socket peer (`:184`). Five such failures locked the header-less peer key, and other IPs were unaffected (VERIFIED-BY-COMMAND).
+
+Findings:
+- NEW-5 (the lane's own journal entry), MINOR, `ops-server.mjs:182-186` and `:215-219`. The per-IP lock is no limit for an attacker with many addresses. Input: lock IP A with five failures, then send one failure from each of 10,000 new IPv6 addresses. That took 0.8 s locally, after which A got five more guesses (401 x5). With 9,990 addresses, A stayed locked (429 x5) (VERIFIED-BY-COMMAND, `rv215/sec/logs/evict.log`). Eviction removes the entry that failed longest ago, so pushing a locked entry out costs no more than switching addresses, which an IPv6 /64 already allows. The 16-character minimum password and Access in front keep this from mattering. Smallest fix, later: key IPv6 addresses by their /64 prefix in `clientIp`.
+- NEW-1, MINOR, `ops-server.mjs:207-224` and `:679-684`. Login events are never logged. A failed login, a lock engaging and a success all write nothing. The only `console.*` calls are at boot and in the error handlers (`:54`, `:64`, `:748`, `:758`, `:761`, `:770`). A spray against `ops.` would leave no trace for the owner (VERIFIED-IN-CODE). Fix: one `console.warn` when a lock engages, with the IP, the failure count and the lock seconds.
+- NEW-2, NIT, `:144-148`. The token's hex signature can carry junk. `Buffer.from(sig, "hex")` stops at the first non-hex character, so a valid token with `zz` appended still gets 200 (VERIFIED-BY-COMMAND). No security effect, because the valid signature is still required.
+- NEW-3, NIT, `:53`, `:63`. The boot rules check length only. A password of 16 spaces and a secret of 32 `a` characters both start the server (VERIFIED-BY-COMMAND).
+- Slow requests (NOTE). `requestTimeout` and `headersTimeout` are set at `:766-767`. In four later runs a slow-header or idle socket got a 408 after 24.5 to 28.6 s. A body trickled under the cap got a 408 after 17.6 s (VERIFIED-BY-COMMAND, `rv215/sec/logs/slowhdr*.log`). Node only checks these timeouts every 30 s, so the real limit is about 10 to 45 s. In the first run, one slow-header socket was still open after 70 s; that could not be reproduced, including after 10,050 earlier requests, and is unexplained. The image runs `node:22-alpine` (`Dockerfile.ops:30`); the probes ran on Node 24.
+
+Backlog, unchanged by this PR (the lane already journaled it): the 12-hour token cannot be revoked short of rotating the secret; a 500 on an authenticated route returns the upstream error text (`:737`, `:503`, `:521`, `:730`); the log `limit` parameter has no ceiling (`:708`); no security headers on any response.
+
+Tests that fail on base and pass on head, per the lane: `tests/ops-server.test.mjs` "locks an IP after five wrong passwords...", "refuses a locked IP before reading its body", "holds under a burst whose bodies arrive after the lock check", the body-cap tests, and the `OPS_SESSION_SECRET` / `OPS_PASSWORD` boot tests. The lane's web gate log for 40bfcfa shows `Test Files 37 passed`, `Tests 306 passed`, `SUMMARY FAIL=0`. The reviewer could not run the file itself: it imports vitest, and `npm ci` was barred. Base was not run.
+
+2. EXPOSURE
+
+- No published port, ops on internal networks only (VERIFIED). The compose rules in the lane's log `web-20261114-181436/gate-6.log` read "ok ops: no published port", "ok ops is attached to internal networks only", "ok the tunnel shares a network with ops", "ok ops health targets are internal URLs".
+- Networks (VERIFIED-IN-CODE). `docker-compose.prod.yml:184` puts ops on `networks: [opsnet]` only; `:208-209` makes `opsnet` `internal: true`.
+- What else can reach ops. Only backend:8000, web:80 and cloudflared share `opsnet`. Web's Caddyfile has no `reverse_proxy` (`ops/selfhost/web/Caddyfile`), so web adds no forwarding path into ops (VERIFIED-IN-CODE).
+- The backend's IP rule is unchanged. It still trusts the last `X-Forwarded-For` hop from any peer (`backend/app/core/client_ip.py:20-22`). Ops is a new peer of the backend, but it only sends fixed headers (`ops-server.mjs:420-423`), so this is not a new way to fake an address (VERIFIED-IN-CODE).
+- The tunnel catch-all is still `http_status:503` and still last (`ops/selfhost/cloudflared/config.example.yml:31`, VERIFIED-IN-CODE).
+- The Access guard on `ops.` is commented out, lines 20-30. Its keys (`required`, `teamName`, `audTag`) could not be checked. If the owner uncommented the route without Access: the internet reaches the console's static files and the login; the per-IP lock still works, because Cloudflare sets the header; the only credential is the shared password, at least 16 characters; after login, the attacker sees the backend's deep-health rows (database, migrations, r2, scheduler, config details) and the API metrics; Railway and Sentry stay unreachable, because `opsnet` has no route out; there is no CSP or frame-ancestors, and the token sits in localStorage for 12 hours (INFERRED).
+- The example env file holds only placeholders (VERIFIED-BY-COMMAND, key names and lengths only). `ops/selfhost/env/ops.env.example:7` `OPS_PASSWORD` is 10 characters and `:9` `OPS_SESSION_SECRET` is 10, so boot refuses both. `:11` is `OPS_PROXY_TOKEN`. `:14` `OPS_HEALTH_TARGETS` names only the hosts `backend` and `web`. Lines 17-19 hold the Sentry keys, commented out.
+
+3. MEDIA AS AN ABUSE SURFACE
+
+Held (VERIFIED-IN-CODE, plus the lane's backend gate log for 40bfcfa: 1462 tests passed, 0 skipped, integration ran; `test_parallel_reservations_cannot_overshoot_the_cap` and `test_a_declared_length_is_a_signed_header` both passed):
+- The cap is per principal. `created_by` is always set, because `Principal.tech_id` is `str` (`identity/schemas.py:45`) and the router passes it (`media/router.py:102`).
+- The cap is counted under the lock. `media/service.py:153-163` and `repository.py` `lock_reservations` take `pg_advisory_xact_lock(hashtext('media_reservation'), hashtext(:who))`.
+- A 413 for a declared oversize comes before any row (`service.py:149-152`). A declared size is signed into the URL (`:181-183`; `core/storage.py` `params["ContentLength"]`).
+- No one can lock a technician out through someone else's actions. Only that principal's own pending rows from the last 600 s count (`repository.py:118`).
+- There is no re-presign route. The router has four routes, at `router.py:60`, `:118`, `:162`, `:190`.
+- Another principal's media id at finalize gets 403 unless the caller is the job's actor (`service.py:217-218`).
+- The stale sweep cannot be steered into deleting someone else's evidence. Storage keys are built by the server as `{job_id}/{phase}/{uuid4}.{ext}` (`:167`); only the extension comes from the client, and it cannot contain `/`. The sweep only selects `PENDING` rows (`repository.py:146`). The canary keys come from the database. A client cannot create a key that collides with or prefixes another row's key (INFERRED from uuid4).
+
+Findings:
+- NEW-4, MINOR, already present before this PR but touched by it, `service.py:216-242` and `router.py:132-155`. After finalize, the upload URL still works for the rest of its 600 s, which lets the uploader replace or destroy evidence on a closed job.
+  - Input: reserve a closing clip without `size_bytes`, PUT it, finalize, close the job. Then, within 600 s of the reservation, PUT any bytes to the same URL. A replacement of any size up to R2's single-PUT limit (about 5 GiB, INFERRED) stays forever: the sweep reads only pending rows, and finalize never looks again.
+  - Or PUT more than 64 MiB and call `/complete` again. Finalize does not check the row's status, and the router does not check whether the job is closed (only reserve does, at `router.py:92`). The object is purged and, because of this PR's commit at `router.py:154`, the uploaded row is now deleted for good. That gets around the closed-job evidence freeze in `delete` (`service.py:276-277`).
+  - Before this PR the same move purged the bytes and left a phantom uploaded row. The PR makes the loss visible to the evidence-gaps report rather than hiding it, so it does not weaken anything (INFERRED).
+  - Only the person who made the reservation can do this, using their own token.
+  - Smallest fix, as a follow-up: in `complete_upload`, return the item unchanged when `media.status` is already uploaded (no re-HEAD, no delete). Record the ETag at finalize. Switching `media_require_declared_size` on bounds the size of a re-PUT.
+- Residual, not a fix for this head (5.2.4, an ASVS L3 item). The cap limits how many uploads are open at once, not how much one account can store. One account with no declared size can leave 20 reservations per 10 minutes unfinalized: 120 an hour, 2,880 a day. Each PUT has no size limit, and those objects stay until the first 03:45 run after 48 h. Reserve, PUT up to 64 MiB, finalize can repeat without limit. Six compromised accounts would make about 17,280 stale rows a day; that is more than the 10,000 rows a run examines (`SWEEP_PAGE_SIZE` 500 x `SWEEP_MAX_PAGES` 20), so the sweep would fall behind and report `truncated` (INFERRED).
+- The size binding holds only when a size is declared. The deployed APKs declare none and the setting ships OFF (`core/config.py`, `media_require_declared_size: bool = False`). Whether R2 actually refuses a PUT of a different length is not verified; that is an owner step.
+
+Tests that fail on base and pass on head, per the lane: `test_the_live_reservation_cap`, `test_parallel_reservations_cannot_overshoot_the_cap`, `test_a_declared_size_is_bound_or_refused`, `tests/test_storage.py::test_a_declared_length_is_a_signed_header`, `test_an_oversized_finalize_leaves_no_pending_row`. O05-13 has no new test; its fix was already on main from P7a.
+
+4. THE REACT-ROUTER BUMP (O05-18)
+
+- `package.json` goes from `^7.17.0` to `^7.18.5`.
+- The lock changes exactly six version lines, i.e. three packages: react-router and react-router-dom 7.17.0 -> 7.18.5, and set-cookie-parser 2.7.2 -> 2.7.3. All resolve from registry.npmjs.org (VERIFIED-BY-COMMAND).
+- set-cookie-parser 2.7.3 sits inside react-router's own `^2.6.0` range. It moved because npm re-resolved it, not because the bump required it.
+- `tests/react-router-version.test.mjs` names GHSA-wrjc-x8rr-h8h6 (fixed in 7.18.0) and GHSA-chx6-hx7r-mcp5, with the range "6.0.0 - 7.18.1". It sets the floor at 7.18.2, and 7.18.5 is above it.
+- The advisories, their fixed versions and the lock's integrity hashes could not be checked (no web access for the reviewer).
+
+5. WHAT STAYS OPEN, RANKED BY WHEN IT HURTS, AND WHAT GOT WEAKER
+
+Weakened: nothing. The `main.py` diff is one import plus one `add_daily_job`. The `core/` diff is the P7b-2 settings block in `config.py` and the `content_length` change in `storage.py`. Still present at head: `BodySizeLimitMiddleware` (`main.py:29`), the origin marker `FixFlowAPI` (`:33`), docs routes gated (`:325-327`), and `CORSMiddleware` (`:336`) (VERIFIED-IN-CODE).
+- Before the drain: nothing in the security scope. Ops is not routed, and declared sizes are OFF.
+- At cutover, owner steps: create the Access application for `ops.` (and `app.`), and check the `originRequest.access` keys against the cloudflared version in use; put an `OPS_PASSWORD` of at least 16 random characters and an `OPS_SESSION_SECRET` of at least 32 in `/etc/fixflow/ops.env`; test on a test object that R2 refuses a PUT whose length differs from the signed length; the Cloudflare rate rule.
+- Later: NEW-4 (make the finalize step idempotent and record the ETag); switch on `media_require_declared_size` once the APK declares sizes; NEW-1 (log login events); NEW-5 (key IPv6 by /64); security headers and a revocable token on ops-server; a storage quota per principal.
+
+WHAT THE REVIEWER RAN
+- `gh pr view` twice (the head SHA and the PR body); `git diff` / `git show` read-only on the shared tree; key-name and length-only `grep`/`awk` on `ops.env.example`; a free-RAM check (9.37 GB free, 33.44 GB commit).
+- A scratch worktree at 40bfcfa, removed at the end. `node --test tests/ops-server.test.mjs` failed to start there (vitest missing).
+- Its own zero-dependency probes against a local ops-server (`probe.mjs`, `slowhdr.mjs`, `slowhdr2.mjs`, `evict.mjs`, `boot.mjs`). The scripts are deleted; the logs are kept in the coordinator's scratchpad, `rv215/sec/logs/`.
+- Read the lane's gate logs. Extra files read: `backend/app/core/client_ip.py`, `backend/app/features/jobs/service.py:1056-1100`, `backend/app/features/identity/schemas.py:42-46`, `src/ops/data/opsAuthApi.js`, `src/shared/lib/api.js`, `vite.ops.config.js`, `vitest.config.js`, `Dockerfile.ops`, `ops/selfhost/web/Caddyfile` (grep only).
+
+NOT VERIFIED: that R2 enforces the signed Content-Length; the cloudflared Access keys, and whether cloudflared opens a metrics port on `opsnet`; the timeout behaviour on Node 22 (tested on Node 24); the ops-server vitest suite itself (the lane's log was relied on); the react-router advisories; any test on the base commit.
+
+COORDINATOR (2026-11-14, 18:46; ruling C77). PASS on the security side. The head changes anyway for ruling C76 (the phone-upload review's finding), so two of this review's items join that round, each a few lines: (1) a finalize of a row that is already uploaded is an idempotent success that reads, purges and deletes nothing, which closes the way NEW-4 lets an uploader delete finished evidence, on a closed job too, since this PR made that deletion durable; (2) a lock that engages is logged once, with the IP key, the count and the seconds, never a secret (NEW-1). Notes for later: replacing the bytes within the URL's 600 s until an ETag is recorded and checked; the per-IP lock against many addresses (NEW-5); the two nits; the storage quota; the owner's cutover steps. Note that the whole-PR reviewer was asked whether `tests/ops-server.test.mjs` runs in any gate; this reviewer found it imports vitest and the lane's web gate log counts 37 files and 306 tests.
