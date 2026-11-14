@@ -1,0 +1,55 @@
+VERDICT: PASS
+PR #216 at 3d9696e211d135046dded913068131e019cba553
+Whole-PR delta re-read (`10f939a..3d9696e`: rulings C82, C84, C89; commits 6f98b24, 2f2a66f, 3d9696e) by the PR's reviewer, with the full backend gate; dispatched by the coordinator on 2026-11-14 at 20:24, returned at 20:54. This file is the coordinator's record of the reviewer's report, written from the notification text. The migration re-read of the same head is `216-3d9696e-migration.txt` (VERDICT: PASS).
+
+The head was 3d9696e at the start and at the end, both by `gh pr view 216 --json headRefOid`. The rebase changed nothing of the PR: `git diff bd6a103 10f939a` is identical, byte for byte, to `git diff 1f25479 41946a8`. Nothing on this head needs to change. One minor gap is left in the C89 rule itself (item 1); it needs a ruling, not a fix to this head.
+
+1. C89 (the reviewer's B1): THE CAP RESTARTS AT A MANAGER'S CORRECTION
+- The code matches the rule. `jobs/repository.py:344-366` finds the latest `override` revision (or uses 0 when there is none) and returns the first original at or after it. `jobs/service.py:2167-2170` uses the larger of that and the current original.
+- Each order traced: completion, send, override, then a technician negotiates: the reference is the override's figure, and the earlier example is now allowed (`test_the_cap_restarts_at_a_managers_correction` passes). A second override: the reference restarts again. Negotiate or send revisions after an override carry the same original, so nothing moves. A payment voided after an override, then the technician resubmits lower: the reference stays at the override's figure.
+- A technician cannot lower the reference. Only `submit_completion` writes `kind="override"`, and only for a manager on a frozen bill (`service.py:1893-1909`).
+- Break C89 (the `rev >= latest_override` filter removed): `test_the_cap_restarts_at_a_managers_correction` fails with `403 == 200`. The C13 test still passes under that break.
+- FINDING, MINOR: a manager's correction of a bill that is NOT YET FROZEN does not restart the cap. On an unfrozen bill a manager's resubmit is written as `kind="completion"`, not `override` (`service.py:1840`, `:1909`). Probe: a technician completes at 450000, cap 50000, the manager corrects to 135000 before any send; the revisions are `[('completion','t2',450000), ('completion','t1',135000)]`; a technician's negotiate to 130000 then gets `403 == 200` with "a discount of Rs 3,200 ...". The code follows the ruling's wording ("latest `override` revision"), not its stated intent ("a manager's correction is the new figure"). It only matters when a shop sets the cap (the default is 0); then the phone parks the refused negotiate. Smallest fix: restart at the latest revision written by a manager, for example `JobBillRevision.actor IN (SELECT id FROM technician WHERE role = 'manager')` in `cap_reference_original`. For the coordinator to rule on; it does not block this head.
+
+2. C82 WITH B2: A MANAGER'S CORRECTION IS NAMED IN THE JOB'S HISTORY
+- `service.py:1985-2002` writes one `complete` event. Its text is either "Bill corrected by a manager - Rs ... - <reason>" or, when no revision is written, "Completion corrected by a manager - bill unchanged at Rs ... - <reason>". The payload gains only `"override": kind == "override"` (`:2019`).
+- The reason is at most 256 characters, and `job_event.text` holds 1024 (`jobs/models.py:262`).
+- `test_event_payload_free_text_integration.py` still sends the override with a marker in its reason.
+- Break C82 (the reason put into the payload): 3 tests fail. The free-text guard fails with the marker in the payload; both history tests fail too.
+- Nothing in `src/` or `technician-app/src` parses this event's text (searched for "Work completed", the `complete` kind, and text matching). The only text test in either client is a marker lookup (`AppContext.jsx:137`).
+- `customer_messaging` reads the `complete` kind only to choose which message to send (`customer_messaging/service.py:59`), never its text. No token-based (non-staff) route returns events. The lane's new messaging test covers the preview, the Cloud send and the stored messages.
+- A replay of the identical correction writes no event and no revision (`:1891-1892`, pinned by the test).
+
+3. THE THREE NEW TESTS FOR B3, B5 AND D2 (each break alone on a scratch copy of the head; the full head gate passes all three)
+- O2 (material lines dropped from the nothing-changed comparison): `test_new_material_lines_at_the_same_total_are_a_revision` fails (one revision, not two); `test_replays_write_no_revision` still passes.
+- O3 (the first original alone, no larger-of-two): `test_the_cap_reference_is_the_larger_of_the_current_and_the_first` fails (`200 == 403`); the C13 test still passes.
+- O4 (`sent_at` ignored in the bill check, `chain.py:838`, `:851`): `test_a_sent_bill_unsent_in_the_database_is_caught` fails (`True is False`).
+
+4. O1: THE WIDENED TRIPWIRE
+- The write shape `update(Job).values({Job.bill_status: "x"})` is now caught: the run names `_stray_bill_writer` at line 642 (`test_bill_single_writer.py:46-52`, `:98-109`).
+- The shapes its docstring lists as still unseen (`:19-28`) are the real remainder as far as the reviewer can tell: names built at run time, mappings passed by name or `**`, dicts filled key by key, a column held in a variable, SQL assembled from pieces, `__dict__`, and writes outside these directories. The verify's `bill_tampered` and `bill_unrevisioned` checks catch the effect of any of those afterwards, and break O4 shows that check is pinned.
+
+5. C84: AN UNREADABLE STORED ROW IS REPORTED, NEVER A CRASH
+- Every reconcile step rebuilds stored rows through `_rebuilt` (`attendance/chain.py:575-591`). The payment void check is wrapped (`:778-783`). A row it cannot encode is reported as `row_tampered` with its own detail text.
+- Break C84 (`except _UNENCODABLE` replaced by `except ()`): 11 tests fail, every one a new C84 test (the four revision cases on the endpoint, the daily job, and the unit tests for revision, payment and ledger rows), with the expected TypeError and IndexError.
+- The `*_minor` rename runs consistently through the model (`jobs/models.py:561-573`), `chain.py`, the service and the conftest fake. Payloads are positional, and the golden tests' expected bytes are unchanged in the diff. API field names did not change. Alembic check is clean and mypy passes.
+- NIT, outside C84: if a revision's `materials` is edited in the database to a bare number, `_BillParts.of` (`service.py:780-788`) would raise on that job's next completion, negotiate or send. Only a direct database edit can cause this.
+
+6. THE TEXTS
+- `CLAUDE.md:444-447` states the grace: an hour for daily and weekly jobs, one interval for interval jobs. This matches `scheduler.py:67`, `:86` and `:109`.
+- `backend.env.example` has `FIXFLOW_CHAIN_VERIFY_ENABLED`, `_HOUR` and `_MINUTE`, commented out, with the defaults and a warning that an out-of-range or blank value stops the boot (names only were printed).
+- The setting description in `tenancy/specs.py` and the negotiate docstring match the new rule.
+
+7. CHANGES OUTSIDE THE THREE RULINGS
+- The suite grew from 1484 to 1502. Every removed assertion in this round has a renamed `_minor` replacement on the next line. Nothing is skipped or xfailed. The conftest fake was renamed to `cap_reference_original` and follows the new rule. The migration's own changes are the migration reviewer's part.
+
+8. FULL GATE ON THE HEAD
+- `ff-gates.sh backend rv216` on the clean review tree: `C:/Users/User/.fixflow-cache/gate-logs/rv216/backend-20261114-202448/summary.txt`. Gates 1 to 8 all EXIT=0. `SKIPS total=1502 skipped=0 integration_skipped=0`, and 1502 passed in 8m06s. This matches the lane's count.
+
+WHAT THE REVIEWER RAN: read-only `git` and `gh` commands; the full gate above; eight targeted runs under lane `rv216p`, one at a time, each after a memory check (6.5 to 7.2 GB free, about 37 GB committed), logs in `C:/Users/User/.fixflow-cache/gate-logs/rv216p/backend-20261114-...`: O1 `203423`, O2 `203709`, O3 `203915`, O4 `204146`, C89 `204343`, C82 `204646`, C84 `204835`, probe `205018`.
+
+NOT VERIFIED: `SmtpMailer` against a real relay; a real race between the verify and a payment; the migration, its DDL, backfill and lock times (the other reviewer's part); the web and mobile gates.
+
+CLEANUP: each scratch worktree was removed straight after its run; `git worktree list` shows none left. No `rv216` or `rv216p` containers are running, and the review tree is clean at 3d9696e. Only the runner script and logs remain in the coordinator's scratchpad folder `rv216/pr2/`. One process note: the full gate was started with a shell `&` rather than as a tracked background task; it survived and finished normally.
+
+COORDINATOR (2026-11-14, ruling C95). PASS on the exact head from both reviewers (this record and `216-3d9696e-migration.txt`): the merge gate's review half is met. `origin/main` (41946a8) is an ancestor of the head, so this PC's three checks run on the head itself. The reviewer's finding is a gap in my rule C89, not in the head: the rule named the `override` kind where it meant a manager setting the bill. It is closed by a small follow-up PR of the same lane after this merge, as PR #214 was for P12, because another round here would cost two more re-reads of a large PR and hold PR #215's rebase: the cap restarts at the latest revision of kind `completion` or `override` written by a manager; a manager's send or negotiate does not restart it, since neither sets the bill. Until that follow-up merges the gap is live only where a shop sets the cap, which ships at 0.

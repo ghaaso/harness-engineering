@@ -1,0 +1,52 @@
+VERDICT: PASS-WITH-FIXES
+PR #215 at b57f81163d0790f83727428ee963401bf1f86ae7
+Whole-PR delta re-read (`40bfcfa..b57f811`: rulings C76, C77, C80) by the PR's reviewer, with both full gates; dispatched by the coordinator on 2026-11-14 at 20:24, returned at 20:52. This file is the coordinator's record of the reviewer's report, written from the notification text. The security and phone-side re-reads of the same head are `215-b57f811-security.txt` and `215-b57f811-phone.txt`.
+
+One finding forces a change, D1 (MINOR): when the purge of an oversized object fails, the finalize path still writes a "media deletion" line and deletes the row. The reviewer's probe shows both on this head. Everything else in the round held. The head was confirmed with `gh pr view` at the start and at the end.
+
+1. C80 F1: A CLOSED JOB KEEPS ITS ROW
+- `router.py:145` passes `job_closed=ref[1] == "closed"`; `service.py:281` sets `row_kept=job_closed`.
+- On an open job the oversized row is deleted, so the close gate never counts a phantom. On a closed job it stays pending, so evidence-gaps still shows the job. Right for both: the gate reads closing rows only on open jobs and the gaps report only on closed ones. No path keeps the row on an open job; statuses never reopen.
+- D3 MINOR: a closed job can still lose its row through a race. `job_closed` comes from the job read in `access_by_token`, before the rollback, and is never read again. If a close lands between that read and the router's delete, the row the close gate just counted is deleted (`router.py:158-160`; `repository.py:116` checks only `status='pending'`). The window is milliseconds. Fix: make the delete also require the job not to be closed, or re-read the status after the rollback.
+- NIT: for non-closing phases on a closed job, "frozen" lasts only until the sweep. The sweep deletes those rows when their bytes are absent and deletes oversized ones with their object. Harmless, since neither the gate nor the gaps report reads those phases.
+
+2. C80 F4: THE 413 ORDER (the service purges, the router rolls back, deletes, commits)
+- The rollback drops only what should go. Nothing else in the request writes: authentication only reads, and the R11 claim and its claim event are meant to go.
+- Failure of each step. Rollback, delete or commit raises: the response is a 500, the object is already gone and the row stays pending; a retry then gets 409 (HEAD 404); the sweep reaps the row unless it is a closing row; a closing row on an open job stays forever, the old phantom. The delete matches 0 rows: nothing is logged and the 413 still goes out.
+- D1 MINOR, FORCES THE FIX. At `service.py:270-276` the purge is best-effort, but `_log_deletion("finalize", "object", media)` runs whether or not it worked, and `row_kept` stays False. So a failed R2 delete writes `media deletion: source=finalize outcome=object ...` for an object that still exists, and then deletes the row on an open job, leaving an oversized object with no row, which no sweep can ever reach. The sweep handles the same case correctly ("keep the row so the object stays reachable").
+  - Probe: `C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/49260710-db37-438a-9bb3-1a4eebcd87dc/scratchpad/rv215/pr2/test_rv215_probe2.py`, run with `storage.delete` raising. On the head both tests fail: the first shows the false log line; the second shows `delete_pending` was awaited. Log: `C:/Users/User/.fixflow-cache/gate-logs/rv215brk/backend-20261114-203258`.
+  - Fix: log "object" only after a successful delete, and set `row_kept=True` when the purge failed. The probe can become the test.
+
+3. F2, F3, THE PER-PAGE COMMIT, THE FLOOR
+- An empty canary aborts once there are candidates (`service.py:410`), and a run with no candidates is simply empty. B22 is caught.
+- The floor clamps with a warning (`service.py:381`).
+- `on_page_done` runs after each page (`service.py:434`). The per-page commit is safe: `expire_on_commit=False`, and the keyset cursor is read before any delete.
+- NIT, X2 not caught: removing `on_page_done=session.commit` at `sweep.py:33` passes every test, so the scheduled entry's per-page commit is unpinned.
+- NIT, the log is not free of client text: F3's comment says the path is server-built so no free text reaches the log, but the extension comes from the client's filename (`service.py:187`), which can contain a newline. So can `job_id` (`int(" 12")` parses). Fix: format the path with `%r`, or sanitise the extension.
+
+4. C76: THE CAP OFF
+- At 0 there is no lock and no count (`service.py:174`). B17 is caught by 15 tests. Deep health carries both facts (`ops/health.py`, `ops/schemas.py`).
+- The `config.py` and CLAUDE.md sentences are true at this head. NIT: CLAUDE.md says `ops.env.example` "carries no token", but it does carry the proxy token's key. The sentence means a Railway or Sentry token.
+
+5. C77: AN UPLOADED ROW'S FINALIZE IS IDEMPOTENT
+- The return comes after the who-may-finalize check and before any storage read. `test_a_second_finalize_by_a_stranger_is_still_forbidden` pins the order. B19 is caught.
+- The ops lock's log line is JSON-quoted, carries no password or token, and has its test.
+
+6. THE LANE'S CLAIMS
+- The lane's five tests on 40bfcfa's code were not rerun; their logs stand.
+- Changed expectations: the router commit assertion became an order assertion, two service `repo.delete` asserts moved to the router, and the canary test lost `list_stale_pending.assert_not_awaited()`. That last one is a removed assertion the marker does not list. Its replacement, `(aborted, examined) == (True, 0)`, is stronger.
+- Breaks rerun, each alone: B20 (the router never says the job is closed): caught, 2 tests. B21 (no rollback before the row delete): caught, 2 tests. B22 (the 40bfcfa shape: no finalized key skips the canary): caught, 1 test. B17 (the cap at 0 still locks and counts): caught, 15 tests. B19 (an uploaded row judged again): caught, 2 tests. X1 (the reviewer's: `delete_pending` without its pending filter): NOT caught; NIT, the "only while still pending" rule has no test. X2 (the reviewer's: the per-page commit wiring removed from `sweep.py`): NOT caught; NIT, as in point 3.
+
+7. CONVENTIONS
+- No `job_event` write site and no payload in the delta. `main.py`, `conftest.py` and `test_scheduler_timezone.py` are untouched. `check_claude_md.py` exits 0; `lint-imports` keeps 4 contracts. Secret scan: no hits. 3 commits under the repo identity, with the trailer.
+
+8. GATES (clean tree, no extra arguments, one at a time)
+- backend: `C:/Users/User/.fixflow-cache/gate-logs/rv215/backend-20261114-202408/summary.txt`: GATE 1-8 all exit 0; `SKIPS total=1477 skipped=0 integration_skipped=0`; 1477 passed; `SUMMARY FAIL=0`.
+- web: `C:/Users/User/.fixflow-cache/gate-logs/rv215/web-20261114-203159/summary.txt`: GATE 1-7 exit 0; 37 files, 307 tests; `SUMMARY FAIL=0`.
+- Probe and break runs are under `C:/Users/User/.fixflow-cache/gate-logs/rv215brk/backend-20261114-2032*` to `-204954`, partial by design.
+
+NOT VERIFIED: the 5-red-on-40bfcfa run; the merge onto 41946a8 (checked by the coordinator); the D3 race by test (found by reading); everything R2-side, as before.
+
+CLEANUP: the scratch worktree is removed, no rv215 containers remain, and the review tree is clean at b57f811. Records and probe are under the coordinator's scratchpad folder `rv215/pr2/`.
+
+COORDINATOR (2026-11-14, ruling C94). Both findings are taken into the round the lane started under C93, one push. D1: the object's deletion is logged only after the delete succeeded, and when the purge failed the row stays pending so the sweep still reaches the object; the reviewer's probe becomes the test. D3: the row is deleted only if the job is not closed at that moment, in a way a concurrent close cannot slip past (one conditional statement, or a re-read under the job's row lock after the rollback). Tests for the two unpinned rules (X1, X2). Two texts (the "no token" sentence; the removed assertion listed). The log's client text is the security reviewer's finding, already ruled in C93. Queued for the lane at 20:53.
