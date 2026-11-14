@@ -137,7 +137,7 @@ sec3() {
   local repl; repl="$(grep -E '\.env:[0-9]+$' "$OLOG" | grep -vc ':0$')"
   row 3.8 "$( [ "$five" = 5 ] && [ "$repl" = 0 ] && echo DONE || echo FAILED)" "chown/chmod" \
     "stat: $five of 5 '600 root:root'; files with a REPLACE count above 0: $repl ($(grep -E '\.env:[0-9]+$' "$OLOG" | tr '\n' ' '))"
-  rb_run 3.9-check "$(rb_fence 3.9 2 1p)"
+  rb_run 3.9-check "$(rb_line 3.9 2 'sha256sum /etc/fixflow/')"
   row 3.9 NRH "scp the env files to the laptop, password-manager vault, printed sheet" \
     "host half of the check ran: $(out_of | wc -l) fingerprints of 12 characters" "needs the owner's laptop and vault"
 }
@@ -153,7 +153,7 @@ sec4() {
   rb_run 4.1 "$(rb_fence 4.1 1)"
   row 4.1 "$( [ "$(out_of)" = "exit=0" ] && echo DONE || echo FAILED)" "ffc \$P_ALL config -q" "$(out_of | tr '\n' ';')"
   local m04=no
-  l4_mut 4.2-backup-on && { m04=yes; env_set /etc/fixflow/compose.env FIXFLOW_BACKUP_ENABLED true; }
+  l4_mut 4.2-backup-on && { m04=yes; env_set /etc/fixflow/compose.env FIXFLOW_BACKUP_ENABLED true && l4_mut_done 4.2-backup-on; }
   rb_run 4.2 "$(rb_fence 4.2 1)"
   [ $m04 = yes ] && env_set /etc/fixflow/compose.env FIXFLOW_BACKUP_ENABLED false
   local ok=no
@@ -191,7 +191,7 @@ sec4_5() { # <label>
 sec6() {
   local tag="$1" DUMPF="$2" CASE="$3"
   local want_sha; want_sha="$(grep " $DUMPF\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
-  [ "$PHASE" = restore-2 ] && l4_mut 6.2-recorded-sum && want_sha="$(printf '%064d' 0)"
+  [ "$PHASE" = restore-2 ] && l4_mut 6.2-recorded-sum && want_sha="$(printf '%064d' 0)" && l4_mut_done 6.2-recorded-sum
   # MARKERS: the runbook batch's marker chain (6.6 writes proven and ready-to-drop, 6.7's DROP
   # line requires them, 6.1 and 6.9 remove them); main's text before it has none
   MARKERS=no; rb_anch 6.7 drop-restore && MARKERS=yes
@@ -263,7 +263,7 @@ sec6() {
     rb_run 6.6b-count "$(rb_fence 6.6 @b-count)"
     live="$(out_of | sed -n 's/^live tables: *//p' | tr -d ' \r')"
   else
-    rb_run 6.6b-count "$(rb_fence 6.6 2 1p)"
+    rb_run 6.6b-count "$(rb_line 6.6 2 "from pg_tables where schemaname")"
     live="$(out_of | tr -d ' \r')"
   fi
   if [ $MARKERS = yes ] && [ "$live" = 0 ]; then
@@ -278,29 +278,33 @@ sec6() {
     td="$(echo "$o" | grep -A1 '^dump exit=' | sed -n 2p)"
     up="$(echo "$o" | grep '^uploaded key=archive/pre-restore/pre-restore-')"
     lsum="$(echo "$o" | grep -xE '[0-9a-f]{64}' | head -n 1)"
-    ok=no
-    echo "$o" | grep -qx 'dump exit=0' && [ "${td:-0}" -gt 30 ] && [ -n "$up" ] && echo "$up" | grep -q "sha256=$lsum" \
-      && has "marker: $DUMPF (pre-restore copy uploaded)" && grep -qsx "dump=$DUMPF" $RD/ready-to-drop && ok=yes
     PRE_KEY="$(echo "$up" | sed -n 's/^uploaded key=\([^ ]*\).*/\1/p')"
+    local bsum=""; [ -n "$PRE_KEY" ] && bsum="$(s3_sum "$PRE_KEY")"
+    ok=no
+    # review m3: an empty sum must not pass, and the bucket's copy is hashed too
+    echo "$o" | grep -qx 'dump exit=0' && [ "${td:-0}" -gt 30 ] && [ -n "$up" ] && [ -n "$lsum" ] && echo "$up" | grep -q "sha256=$lsum" \
+      && [ "$bsum" = "$lsum" ] && has "marker: $DUMPF (pre-restore copy uploaded)" && grep -qsx "dump=$DUMPF" $RD/ready-to-drop && ok=yes
     PRE_FILE="$(ls -t $RD/pre-restore-*.pgdump 2>/dev/null | head -n 1)"
     row "6.6b $tag" "$( [ $ok = yes ] && echo DONE || echo FAILED)" "count $live live tables; pg_dump; TABLE DATA count; sha256; fixflow-r2-put.sh; the marker on one line" \
-      "$(echo "$o" | grep '^dump exit='); TABLE DATA $td; $(echo "$up" | cut -c1-110); $(echo "$o" | tail -n 1)" "the marker: $(tr '\n' ' ' < $RD/ready-to-drop 2>/dev/null)"
+      "$(echo "$o" | grep '^dump exit='); TABLE DATA $td; local sha256 ${lsum:-EMPTY}; the bucket's copy ${bsum:-UNREADABLE}; $(echo "$up" | cut -c1-110); $(echo "$o" | tail -n 1)" "the marker: $(tr '\n' ' ' < $RD/ready-to-drop 2>/dev/null)"
   elif [ "$live" = 0 ]; then
     row "6.6b $tag" DONE "count live tables" "count 0: 'pre-restore: empty, no copy'"
     PRE_KEY=""
   else
-    rb_run 6.6b-copy "$(rb_fence 6.6 2 '3,$p')"
+    rb_run 6.6b-copy "$(rb_line 6.6 2 'S=$(date -u' '$')"
     o="$(out_of)"
     local td up
     td="$(echo "$o" | grep -A1 '^dump exit=' | sed -n 2p)"
     up="$(echo "$o" | grep '^uploaded key=archive/pre-restore/pre-restore-')"
     local lsum; lsum="$(echo "$o" | grep -E '^[0-9a-f]{64} ' | cut -d' ' -f1)"
-    ok=no
-    echo "$o" | grep -qx 'dump exit=0' && [ "${td:-0}" -gt 30 ] && [ -n "$up" ] && echo "$up" | grep -q "sha256=$lsum" && ok=yes
     PRE_KEY="$(echo "$up" | sed -n 's/^uploaded key=\([^ ]*\).*/\1/p')"
+    local bsum=""; [ -n "$PRE_KEY" ] && bsum="$(s3_sum "$PRE_KEY")"
+    ok=no
+    echo "$o" | grep -qx 'dump exit=0' && [ "${td:-0}" -gt 30 ] && [ -n "$up" ] && [ -n "$lsum" ] && echo "$up" | grep -q "sha256=$lsum" \
+      && [ "$bsum" = "$lsum" ] && ok=yes
     PRE_FILE="$(ls -t /var/lib/fixflow/restore/pre-restore-*.pgdump 2>/dev/null | head -n 1)"
     row "6.6b $tag" "$( [ $ok = yes ] && echo DONE || echo FAILED)" "count $live live tables; pg_dump; TABLE DATA count; sha256; fixflow-r2-put.sh" \
-      "$(echo "$o" | grep '^dump exit='); TABLE DATA $td; $(echo "$up" | cut -c1-120)" "uploaded to the stand-in bucket"
+      "$(echo "$o" | grep '^dump exit='); TABLE DATA $td; local sha256 ${lsum:-EMPTY}; the bucket's copy ${bsum:-UNREADABLE}; $(echo "$up" | cut -c1-120)" "uploaded to the stand-in bucket; the bucket's copy hashed back through the app's storage client"
   fi
 
   if [ $MARKERS = yes ]; then rb_run 6.7 "$(rb_fence 6.7 @drop-restore)"; else rb_run 6.7 "$(rb_fence 6.7 1)"; fi
@@ -315,7 +319,7 @@ sec6() {
     for t in app_event attendance_ping customer_phone; do
       n="$(psql_app -c "select count(*) from $t" 2>/dev/null)"
       [ "${n:-0}" -gt 0 ] && psql_app -c "delete from $t where ctid = (select ctid from $t limit 1)" >/dev/null 2>&1 \
-        && { echo "state mutation 6.8-lost-row: one row of $t deleted" >> "$OUT/mutations-applied.log"; break; }
+        && { echo "6.8-lost-row: one row of $t deleted" >> "$OUT/mutations-applied.log"; l4_mut_done 6.8-lost-row; break; }
     done
   fi
 
@@ -431,8 +435,18 @@ sec6_tail() { # 6.10-6.14 after a case-a restore
   row 6.11 "$( [ "$miss" = t7 ] && [ "$crc" = 0 ] && [ -z "$(out_of)" ] && echo DONE || echo FAILED)" \
     "roster check (roster t1..t7, t7 never synced); create t7" "missing before: [$miss]; create exit $crc; missing after: [$(out_of | tr '\n' ' ')]" \
     "the roster list stands in for P0a item 5"
-  rb_run 6.12-do "$(rb_fence 6.12 1)" "<lat>=24.8600" "<lng>=67.0000"
+  # Block 1 is the here-document (pinned 9 lines with main's up line, or 8 as the runbook batch
+  # has it, the up line then its own block after "Then:"). The up line is chosen by its content
+  # across the step's blocks, so it is typed exactly once on either text (ruling C57).
+  local blk612 up612
+  blk612="$(rb_fence 6.12 1)"
+  up612="$(rb_line 6.12 '*' 'force-recreate backend')"
+  rb_run 6.12-do "$blk612" "<lat>=24.8600" "<lng>=67.0000"
   local frc="$RC"
+  case "$blk612" in
+    *__RB_MISSING__*|*'force-recreate backend'*) ;;
+    *) rb_run 6.12-up "$up612"; [ "$frc" = 0 ] && frc="$RC" ;;
+  esac
   wait_backend_healthy 120
   rb_run 6.12-check "$(rb_fence 6.12 2)"
   local fence_ok
@@ -440,17 +454,17 @@ sec6_tail() { # 6.10-6.14 after a case-a restore
 rows = [l.strip().split("|") for l in sys.stdin if l.strip()]
 print("yes" if len(rows) == 1 and [float(x) for x in rows[0]] == [24.86, 67.0, 80.0] else "no")' 2>/dev/null)"
   row 6.12 "$( [ "$frc" = 0 ] && [ "$fence_ok" = yes ] && echo DONE || echo FAILED)" \
-    "fence update + force-recreate backend" "rows: [$(out_of | tr '\n' ' ')] (exit $frc)" \
+    "fence update + force-recreate backend$(case "$blk612" in *'force-recreate backend'*) ;; *) echo ' (the up line typed as its own block)' ;; esac)" "rows: [$(out_of | tr '\n' ' ')] (exit $frc)" \
     "typed 24.8600 / 67.0000; Postgres prints them as numbers (24.86|67|80), compared numerically"
   sec6_13
   row 6.14 NRH "route api. to the backend (5.9)" "-" "needs the Cloudflare tunnel"
 }
 
 sec6_13() {
-  rb_run 6.13-report "$(rb_fence 6.13 1 1p)"
+  rb_run 6.13-report "$(rb_line 6.13 '*' 'set_pin --report')"
   local before; before="$(grep 'DEFAULT PIN' "$OLOG" | awk '{print $1}' | tr '\n' ' ')"
-  [ "$PHASE" = restore-1 ] && l4_mut 6.13-skip-one && before="${before#* }"
-  local set_line; set_line="$(rb_fence 6.13 1 2p)"
+  [ "$PHASE" = restore-1 ] && l4_mut 6.13-skip-one && before="${before#* }" && l4_mut_done 6.13-skip-one
+  local set_line; set_line="$(rb_line 6.13 '*' 'set_pin --tech')"
   local id rc_all=0
   for id in $before; do
     local pin; pin="$(python3 -c 'import secrets; print("".join(str(secrets.randbelow(10)) for _ in range(6)))')"
@@ -463,7 +477,7 @@ sec6_13() {
     grep -q "PIN set for $id" "$OLOG" || rc_all=1
     unset L4_PIN
   done
-  rb_run 6.13-report2 "$(rb_fence 6.13 1 1p)"
+  rb_run 6.13-report2 "$(rb_line 6.13 '*' 'set_pin --report')"
   local after; after="$(grep -c 'DEFAULT PIN' "$OLOG")"
   deep_health > "$OUT/deep-health-6.13.json"
   local dflt; dflt="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum(1 for a in d.get("accounts",[]) if a["active"] and a["default_pin_active"]))' "$OUT/deep-health-6.13.json" 2>/dev/null)"
@@ -471,6 +485,13 @@ sec6_13() {
     "set_pin --report; set_pin --tech <id> --apply (interactive, twice) for: $before" \
     "report after: $after on a seed PIN; deep health active accounts with default_pin_active: $dflt" \
     "the interactive prompt was answered through a pty (lib/typist.py) at each prompt; PINs are random stand-ins kept in no file"
+}
+
+# The sha256 of an object as the stand-in bucket holds it (read back through the app's own
+# storage client): 6.6 (b)'s upload is checked against the bucket's copy, not only the local file.
+s3_sum() { # <key>
+  ffc --profile db --profile app run --rm --no-deps -T --entrypoint python backend -c \
+    "import hashlib, sys; from app.core.storage import get_storage; s=get_storage(); print(hashlib.sha256(s._client.get_object(Bucket=s._bucket, Key=sys.argv[1])['Body'].read()).hexdigest())" "$1" 2>/dev/null | tail -n 1
 }
 
 # The stand-in bucket is moto, which keeps its objects in memory: a stop loses the bucket itself.

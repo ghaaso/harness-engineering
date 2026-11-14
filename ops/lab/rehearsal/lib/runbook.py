@@ -14,6 +14,13 @@ and runs until the next step heading of either kind (or the next `##` section).
   runbook.py fence <file> <step> @<name>         the block under <!-- block: <step>-<name> -->
   runbook.py fence <file> <step> @<name>/<n>     that, or pinned block n when there is no anchor
   runbook.py fence <file> <step> <n>             pinned block n of the step, found by content
+  runbook.py line  <file> <step> <sel> <sub> [<end>]
+                                                 the one line of the selected block (sel as for
+                                                 fence, or * for every block of the step) that
+                                                 contains <sub>; with <end>, from that line to the
+                                                 one line after it containing <end> (or to the
+                                                 block's last line when <end> is $). Exit 5 when
+                                                 no line or more than one contains <sub> (or <end>)
   runbook.py span  <file> <step> <substring> [k] the k-th inline `code` span of the step that
                                                   contains <substring> (default k=1)
   runbook.py text  <file> <step>                 the step's whole text (for the record)
@@ -27,9 +34,12 @@ carrying an anchor comment is chosen by that anchor. Any other block is chosen b
 rig was written against), and the cutter takes the step's block whose first line equals that
 pin's first line (whitespace collapsed, a `</dev/null` stdin redirect ignored), wherever it now
 stands. It refuses with exit 5 ("moved") when no block or more blocks than pinned begin that way,
-or when the block's line count differs from the pin (an inserted line); the rehearsal then
+or when the block's line count differs from the pin (an inserted line; a pin may list a second
+accepted count, `9,8`, for a reviewed second shape); the rehearsal then
 records the row as MOVED and types nothing. A changed command that keeps its first line and its
-line count is typed as changed; that is the point of cutting instead of retyping.
+line count is typed as changed; that is the point of cutting instead of retyping. An anchor name
+that appears twice in a step is refused (exit 5), never resolved to either block. Part of a block
+is chosen by content too (`line`), never by line number.
 """
 
 from __future__ import annotations
@@ -182,7 +192,8 @@ def key(first: str) -> str:
 
 
 def anchors(lines: list[str]) -> dict[str, int]:
-    """name -> 1-based index of the fenced block that follows `<!-- block: <name> -->`."""
+    """name -> 1-based index of the fenced block that follows `<!-- block: <name> -->`, or -1 when
+    the name anchors more than one block (a duplicate is never resolved to either)."""
     out: dict[str, int] = {}
     pending: str | None = None
     n = 0
@@ -192,7 +203,7 @@ def anchors(lines: list[str]) -> dict[str, int]:
             if not in_fence:
                 n += 1
                 if pending:
-                    out[pending] = n
+                    out[pending] = -1 if pending in out else n
                     pending = None
             in_fence = not in_fence
             continue
@@ -216,7 +227,7 @@ def pick_pinned(pins_path: str, step: str, n: int, lines: list[str]) -> tuple[in
                 continue
             f = row.split(TAB, 4)
             if f[0] == step and f[2] != "-":
-                want[int(f[2])] = (int(f[3]), key(f[4]))
+                want[int(f[2])] = (f[3], key(f[4]))
     if not want:
         return None, f"step {step} is not in the pin file {pins_path}"
     if n not in want:
@@ -230,7 +241,7 @@ def pick_pinned(pins_path: str, step: str, n: int, lines: list[str]) -> tuple[in
     if len(hits) != pinned_same:
         return None, f"{len(hits)} block(s) of step {step} begin {kk!r}; pinned {pinned_same}"
     i, lc = hits[rank]
-    if lc != k:
+    if str(lc) not in k.split(","):
         return None, f"the block of step {step} that begins {kk!r} has {lc} line(s); pinned {k}"
     return i, ""
 
@@ -242,6 +253,34 @@ def check_pin(pins_path: str, step: str, n: int, lines: list[str]) -> str | None
     if i is None:
         return why
     return None if i == n else f"pinned block {n} of step {step} is now block {i}"
+
+
+def select(step: str, sel: str, lines: list[str]) -> tuple[int, str]:
+    """(0, block text) or (exit code, why): the block `fence` and `line` select."""
+    fs = fences(lines)
+    anch = anchors(lines)
+    if sel.startswith("@"):
+        # @name: the block under <!-- block: <step>-<name> -->; @name/n falls back to pinned
+        # block n when the runbook has no such anchor (a runbook from before the anchors)
+        name, _, fallback = sel[1:].partition("/")
+        full = f"{step}-{name}"
+        if anch.get(full) == -1:
+            return 5, f"runbook.py: MOVED: the anchor <!-- block: {full} --> appears more than once in step {step}{NL}"
+        if full in anch:
+            return 0, fs[anch[full] - 1]
+        if not fallback:
+            return 5, f"runbook.py: MOVED: no anchor <!-- block: {full} --> in step {step}{NL}"
+        sel = fallback
+    n = int(sel)
+    if not 1 <= n <= len(fs):
+        return 3, f"runbook.py: step {step} has {len(fs)} fenced block(s), not {n}{NL}"
+    pins = os.environ.get("RB_PINS", "")
+    if pins:
+        i, why = pick_pinned(pins, step, n, lines)
+        if i is None:
+            return 5, f"runbook.py: MOVED: {why}{NL}"
+        n = i
+    return 0, fs[n - 1]
 
 
 def main(argv: list[str]) -> int:
@@ -263,33 +302,42 @@ def main(argv: list[str]) -> int:
         print(NL.join(sorted(anchors(lines))))
         return 0
     if cmd == "fence":
-        sel = argv[4]
-        fs = fences(lines)
-        anch = anchors(lines)
-        if sel.startswith("@"):
-            # @name: the block under <!-- block: <step>-<name> -->; @name/n falls back to pinned
-            # block n when the runbook has no such anchor (a runbook from before the anchors)
-            name, _, fallback = sel[1:].partition("/")
-            full = f"{step}-{name}"
-            if full in anch:
-                print(fs[anch[full] - 1])
-                return 0
-            if not fallback:
-                sys.stderr.write(f"runbook.py: MOVED: no anchor <!-- block: {full} --> in step {step}{NL}")
+        rc, out = select(step, argv[4], lines)
+        (print if rc == 0 else sys.stderr.write)(out)
+        return rc
+    if cmd == "line":
+        if len(argv) < 6:
+            sys.stderr.write(__doc__ or "")
+            return 2
+        sel, sub, end = argv[4], argv[5], (argv[6] if len(argv) > 6 else None)
+        if sel == "*":
+            blocks = fences(lines)
+            if not blocks:
+                sys.stderr.write(f"runbook.py: step {step} has no fenced block{NL}")
+                return 3
+        else:
+            rc, out = select(step, sel, lines)
+            if rc:
+                sys.stderr.write(out)
+                return rc
+            blocks = [out]
+        hits = [(b, i) for b, blk in enumerate(blocks) for i, l in enumerate(blk.split(NL)) if sub in l]
+        if len(hits) != 1:
+            sys.stderr.write(f"runbook.py: MOVED: {len(hits)} line(s) of step {step} block {sel} contain {sub!r}; want exactly 1{NL}")
+            return 5
+        b, i = hits[0]
+        bl = blocks[b].split(NL)
+        if end is None:
+            j = i
+        elif end == "$":
+            j = len(bl) - 1
+        else:
+            ends = [x for x in range(i, len(bl)) if end in bl[x]]
+            if len(ends) != 1:
+                sys.stderr.write(f"runbook.py: MOVED: {len(ends)} line(s) from {sub!r} on in step {step} block {sel} contain {end!r}; want exactly 1{NL}")
                 return 5
-            sel = fallback
-        n = int(sel)
-        if not 1 <= n <= len(fs):
-            sys.stderr.write(f"runbook.py: step {step} has {len(fs)} fenced block(s), not {n}\n")
-            return 3
-        pins = os.environ.get("RB_PINS", "")
-        if pins:
-            i, why = pick_pinned(pins, step, n, lines)
-            if i is None:
-                sys.stderr.write(f"runbook.py: MOVED: {why}{NL}")
-                return 5
-            n = i
-        print(fs[n - 1])
+            j = ends[0]
+        print(NL.join(bl[i : j + 1]))
         return 0
     if cmd == "span":
         needle = argv[4]

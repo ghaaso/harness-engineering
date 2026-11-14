@@ -12,10 +12,15 @@ the guard drops the rest of the line and nothing else. Variables that line assig
 `FX=$?`) are carried back to the rig's shell only when the line ran to its end, as they would be
 interactively. Every other line is passed through unchanged. The step log shows the runbook's own
 text, never this form.
+
+What the subshell cannot carry back: a lowercase assignment and a `cd` on a wrapped line. Neither
+runbook has one today; when a wrapped line holds either, a line goes to deviations.log (env
+GUARDWRAP_LOG, default /srv/l4/out/deviations.log), so a rehearsal that typed one says so.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 
@@ -24,6 +29,21 @@ GUARD = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:\?")
 HEREDOC = re.compile(r"<<-?\s*'?\"?([A-Za-z_][A-Za-z0-9_]*)'?\"?")
 ASSIGN = re.compile(r"(?:^|[;&|(\s])([A-Za-z_][A-Za-z0-9_]*)=(?!=)")
 STATE = "/srv/l4/.guardwrap.state"
+CD = re.compile(r"(?:^|[;&|(]\s*|\s)cd(?:\s|$)")
+
+
+def note_lost(line: str) -> None:
+    lost = sorted({n for n in ASSIGN.findall(line) if not n.isupper()})
+    has_cd = CD.search(line) is not None
+    if not lost and not has_cd:
+        return
+    what = ", ".join(([f"lowercase assignment(s) {' '.join(lost)}"] if lost else []) + (["a cd"] if has_cd else []))
+    first = line.split(NL)[0][:120]
+    try:
+        with open(os.environ.get("GUARDWRAP_LOG", "/srv/l4/out/deviations.log"), "a", encoding="utf-8") as fh:
+            fh.write(f"guardwrap: a guarded line holds {what}, which its subshell does not carry back to the next line (the owner's shell would keep it): {first}{NL}")
+    except OSError:
+        pass
 
 
 def logical_lines(text: str) -> list[tuple[str, bool]]:
@@ -68,6 +88,7 @@ def main() -> int:
     out = []
     for piece, is_cmd in logical_lines(text):
         if is_cmd and GUARD.search(piece) and not HEREDOC.search(piece):
+            note_lost(piece)
             out.append(wrap(piece))
         else:
             out.append(piece)

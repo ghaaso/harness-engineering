@@ -170,19 +170,26 @@ def p7a(jobs: dict[str, str]) -> None:
     print(json.dumps({"result": verdict(items), "items": items, "unclaimed": unclaimed}))
 
 
-def p204() -> None:
+def p204(zone: str = "", offset_h: int = 5) -> None:
     """The f192fee row (PR #204): with a manager token and no dates, the tech-metrics window ends
     on the shop-local today (and spans seven shop-local days). The old code took the UTC date, so
     the check tells the fix from its absence only while the UTC date and the shop-local date
-    differ (19:00-24:00 UTC); at any other hour the item that would catch the defect cannot run."""
+    differ. Asia/Karachi (UTC+5) differs only 19:00-24:00 UTC, so train.sh sets the stand-in
+    shop's zone for this item alone to one whose date differs from UTC's at the hour it runs
+    (review m7): Pacific/Kiritimati (UTC+14, no DST) from 10:00 UTC, Pacific/Pago_Pago (UTC-11,
+    no DST) before 11:00 UTC. <zone> and its fixed offset are passed in; the API must echo the
+    zone back."""
     m1 = login("m1", "L4_PIN_M1")
+    tz = timezone(timedelta(hours=offset_h))
     now = datetime.now(UTC)
-    local_today, utc_today = now.astimezone(SHOP_TZ).date(), now.date()
+    local_today, utc_today = now.astimezone(tz).date(), now.date()
     st, b = call("GET", "/api/jobs/reports/tech-metrics", m1)
     to_d = b.get("to_date") if isinstance(b, dict) else None
     from_d = b.get("from_date") if isinstance(b, dict) else None
+    got_zone = b.get("timezone") if isinstance(b, dict) else None
     items = [
-        ["(1) 200 with a manager token and no dates", st == 200, f"{st} timezone={b.get('timezone') if isinstance(b, dict) else b}"],
+        ["(1) 200 with a manager token and no dates", st == 200, f"{st} timezone={got_zone if isinstance(b, dict) else b}"],
+        [f"(1b) the report resolved the shop's zone {zone or 'Asia/Karachi'}", st == 200 and got_zone == (zone or "Asia/Karachi"), f"timezone={got_zone}"],
         ["(2) to_date is the shop-local today", st == 200 and to_d == local_today.isoformat(), f"to_date={to_d} shop-local today={local_today}"],
         ["(3) from_date is six days before it", st == 200 and from_d == (local_today - timedelta(days=6)).isoformat(), f"from_date={from_d}"],
     ]
@@ -197,7 +204,7 @@ def p204() -> None:
 if __name__ == "__main__":
     mode = sys.argv[2]
     if mode == "p204":
-        p204()
+        p204(sys.argv[3] if len(sys.argv) > 3 else "", int(sys.argv[4]) if len(sys.argv) > 4 else 5)
         raise SystemExit(0)
     if mode == "p6a-setup":
         p6a_setup()

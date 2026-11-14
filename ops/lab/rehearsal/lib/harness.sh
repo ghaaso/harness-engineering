@@ -5,7 +5,11 @@
 # is eval'd in THIS shell, so a variable set in one block (D, S, P_RUN) is still set in the next,
 # exactly as in the owner's single SSH session.
 #
-#   rb_fence <step> <n> [sed-range]      print a fenced block (optionally only some lines)
+#   rb_fence <step> <n>                  print a fenced block (chosen by anchor or by content)
+#   rb_line  <step> <n|*> <sub> [<end>]  the one line of that block (or of any block of the step,
+#                                        *) containing <sub>; with <end>, through the one line
+#                                        containing <end> ($: the block's last line). Zero or
+#                                        several matches: MOVED. Never a line number.
 #   rb_span  <step> <substring> [k]      print an inline `code` span
 #   rb_run   <id> <text> [<from>=<to>]...  substitute, log, eval; sets RC and LOG (output file)
 #   row <step> <verdict> <what was run> <check and its result> [note]
@@ -13,9 +17,8 @@
 # shape changed under a step the rig types (lib/runbook-pins.tsv), so nothing was typed for it.
 #
 # Modes (environment, set by the entry scripts):
-#   L4_REPIN=1   check the runbook under test against pins made from itself instead of the
-#                committed ones; the difference is written to $OUT/pins-diff-*.txt, and a reader
-#                must check the rig's choice of every block listed there
+# (Pins are re-cut only by a reviewed commit of lib/runbook-pins.tsv, from `runbook.py pins`;
+# no run reads pins made from the runbook it is judging: ruling C57.)
 #   L4_MUTATE=1  negative run: the runbook is read from a copy with lib/mutations.tsv's runbook
 #                mutations applied, and l4_mut hooks change the stand-in's state (README, "Every
 #                kind of check, shown failing")
@@ -43,13 +46,6 @@ rb_eff() { # prints "<file> <pins>"
         >> "$OUT/mutations-applied.log" 2>&1 || echo "L4: runbook mutation of $RB_FILE failed (mutations-applied.log)" >&2
     fi
     echo "$d/$key.mut.md $d/$key.mut.md.pins"
-  elif [ "${L4_REPIN:-0}" = 1 ]; then
-    if [ ! -s "$d/$key.pins" ]; then
-      python3 "$KIT/lib/runbook.py" pins "$RB_FILE" > "$d/$key.pins"
-      diff <(grep -v '^#' "$KIT/lib/runbook-pins.tsv") "$d/$key.pins" > "$OUT/pins-diff-$key.txt"
-      echo "$RB_FILE" >> "$OUT/pins-diff-$key.txt"
-    fi
-    echo "$RB_FILE $d/$key.pins"
   else
     echo "$RB_FILE $KIT/lib/runbook-pins.tsv"
   fi
@@ -60,9 +56,16 @@ rb_fence() {
   if ! t="$(RB_PINS="$pins" python3 "$KIT/lib/runbook.py" fence "$f" "$1" "$2" 2>"$OUT/.rb.err")"; then
     echo "__RB_MISSING__ $1 fence $2: $(tr '\n' ' ' < "$OUT/.rb.err")"; return 3
   fi
-  if [ -n "${3:-}" ]; then t="$(printf '%s\n' "$t" | sed -n "$3")"; fi
-  # a line range that selects nothing is a moved block too
-  [ -n "$t" ] || { echo "__RB_MISSING__ $1 fence $2 lines ${3:-}: selected nothing"; return 3; }
+  [ -z "${3:-}" ] || { echo "__RB_MISSING__ $1 fence $2: a line range ($3) is positional; use rb_line"; return 3; }
+  [ -n "$t" ] || { echo "__RB_MISSING__ $1 fence $2: selected nothing"; return 3; }
+  printf '%s\n' "$t"
+}
+rb_line() { # <step> <n|@name|*> <substring> [<end substring>|$]
+  local t eff f pins
+  eff="$(rb_eff)"; f="${eff% *}"; pins="${eff#* }"
+  if ! t="$(RB_PINS="$pins" python3 "$KIT/lib/runbook.py" line "$f" "$1" "$2" "$3" ${4:+"$4"} 2>"$OUT/.rb.err")"; then
+    echo "__RB_MISSING__ $1 line $2 '$3'${4:+ to '$4'}: $(tr '\n' ' ' < "$OUT/.rb.err")"; return 3
+  fi
   printf '%s\n' "$t"
 }
 rb_span() {
@@ -94,14 +97,19 @@ rb_moved() { # <id> <text>
   echo "L4: RUNBOOK MOVED under step $1: $(printf '%s' "$2" | tr '\n' ' ' | cut -c1-200)" >&2
 }
 
-# State mutations (negative run only): true when <id> is a state mutation listed in mutations.tsv
+# State mutations (negative run only): true when <id> is a state mutation listed in mutations.tsv.
+# l4_mut only selects; the hook calls l4_mut_done once its change has succeeded, and only that
+# "applied" line counts for mutate.py's report (review m2: a mutation that never ran is not caught).
+l4_mut_id() { awk -F'\t' -v h="$1" -v r="${L4_REHEARSAL:-}" '$4==h && $3=="state" && (r=="" || $2==r){print $1; exit}' "$KIT/lib/mutations.tsv"; }
 l4_mut() { # <hook name: the step column of a state mutation>
   [ "${L4_MUTATE:-0}" = 1 ] || return 1
-  local id
-  id="$(awk -F'\t' -v h="$1" -v r="${L4_REHEARSAL:-}" '$4==h && $3=="state" && (r=="" || $2==r){print $1; exit}' "$KIT/lib/mutations.tsv")"
+  local id; id="$(l4_mut_id "$1")"
   [ -n "$id" ] || return 1
-  printf '%s\t%s\tstate mutation %s (%s) applied\n' "$(date -u +%FT%TZ)" "$PHASE" "$id" "$1" >> "$OUT/mutations-applied.log"
+  printf '%s\t%s\tstate mutation %s (%s) selected\n' "$(date -u +%FT%TZ)" "$PHASE" "$id" "$1" >> "$OUT/mutations-applied.log"
   return 0
+}
+l4_mut_done() { # <hook name>: the change succeeded
+  printf '%s\t%s\tstate mutation %s (%s) applied\n' "$(date -u +%FT%TZ)" "$PHASE" "$(l4_mut_id "$1")" "$1" >> "$OUT/mutations-applied.log"
 }
 
 # Exact-string placeholder substitution: rb_sub <text> [<from>=<to>]...

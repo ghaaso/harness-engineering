@@ -47,12 +47,30 @@ l4_slot_release() {
 
 l4_host_up() {
   docker info >/dev/null 2>&1 || l4_die "Docker is not running"
-  docker rm -f "$L4_HOST" >/dev/null 2>&1
+  # Two runs can hold slots at once (the light pool has two; a cold run draws on the heavy pool).
+  # A host this run did not start belongs to another run, or to a --keep, and is never removed
+  # while it runs. One that exited (a reboot left it) may go. A kept host goes only with
+  # --replace-kept, and only when it carries the mark --keep left in it.
+  local st; st="$(docker inspect -f '{{.State.Running}}' "$L4_HOST" 2>/dev/null)"
+  if [ "$st" = true ]; then
+    if [ "${L4_REPLACE_KEPT:-0}" = 1 ] && docker exec "$L4_HOST" test -e /l4-kept 2>/dev/null; then
+      echo "L4: removing the kept $L4_HOST (--replace-kept)"
+      docker exec "$L4_HOST" sh -c 'ids=$(docker ps -aq); [ -z "$ids" ] || docker rm -f $ids' >/dev/null 2>&1
+      docker rm -f "$L4_HOST" >/dev/null 2>&1
+    else
+      l4_die "$L4_HOST is running and this run did not start it (another rehearsal holds it, or a --keep host: --replace-kept removes a kept one); refusing, nothing removed"
+    fi
+  elif [ -n "$st" ]; then
+    echo "L4: removing an exited $L4_HOST that an earlier run left"
+    docker rm -f "$L4_HOST" >/dev/null 2>&1
+  fi
   # --privileged is what Docker-in-Docker needs; the daemon listens on its unix socket only
   # (no TCP listener, so nothing on the bridge can drive it). No port is published.
   docker run -d --privileged --name "$L4_HOST" --hostname l4-host --memory "${L4_MEMORY:-6g}" \
     -v "$L4_VOL:/var/lib/docker" "$L4_DIND_IMAGE" dockerd --host=unix:///var/run/docker.sock >/dev/null \
-    || l4_die "could not start $L4_HOST"
+    || l4_die "could not start $L4_HOST (another run may have started one at the same moment)"
+  # from here on the host is this run's: finish collects, files and removes only when this is set
+  L4_HOST_MINE=1
   local i
   for i in $(seq 1 60); do
     l4_dx docker info >/dev/null 2>&1 && break
@@ -119,15 +137,19 @@ l4_origin() { # <checkout> <ref> [tag:<name> | <branch name>]... extra refs of t
   # Other sessions share this repository's object store and refs: a fetch or bundle can meet
   # their lock for a moment, so each is tried three times and the last error is shown. A tag is
   # fetched without --force: one that moved on the real remote fails here instead of being copied.
+  # The sha is read BEFORE the bundle is made, and the stand-in origin's main is compared with it
+  # inside the host afterwards: other sessions update this repository's refs, so a ref read after
+  # bundling could name a commit other than the one bundled.
   local i ok=0
   for i in 1 2 3; do
     # shellcheck disable=SC2086
-    { [ -z "$fetch" ] || git -C "$co" fetch -q origin $fetch > "$b.err" 2>&1; } && git -C "$co" bundle create "$(l4_win "$b")" $refs >> "$b.err" 2>&1 \
+    { [ -z "$fetch" ] || git -C "$co" fetch -q origin $fetch > "$b.err" 2>&1; } \
+      && L4_REF_SHA="$(git -C "$co" rev-parse "$full^{commit}" 2>>"$b.err")" \
+      && git -C "$co" bundle create "$(l4_win "$b")" $refs >> "$b.err" 2>&1 \
       && { ok=1; break; }
     sleep 5
   done
   [ "$ok" = 1 ] || { cat "$b.err" >&2; l4_die "git fetch/bundle failed"; }
-  L4_REF_SHA="$(git -C "$co" rev-parse "$full^{commit}")"
   echo "L4: rehearsing $ref ($L4_REF_SHA) as the stand-in origin's main"
   l4_dx mkdir -p /srv/in
   docker cp "$(l4_win "$b")" "$L4_HOST:/srv/in/l4.bundle" >/dev/null || l4_die "docker cp of the bundle failed"
@@ -135,6 +157,10 @@ l4_origin() { # <checkout> <ref> [tag:<name> | <branch name>]... extra refs of t
     && git -C /srv/origin.git fetch -q /srv/in/l4.bundle $maps \
     && git -C /srv/origin.git symbolic-ref HEAD refs/heads/main" || l4_die "origin repo failed"
   rm -rf "$(dirname "$b")"
+  local got; got="$(l4_dx git -C /srv/origin.git rev-parse main)"
+  [ "$got" = "$L4_REF_SHA" ] || l4_die "the bundle's main is $got, not $L4_REF_SHA (the ref moved while it was bundled); run again"
+  # every other ref the bundle carried, as the stand-in origin holds it (run.txt records them)
+  L4_EXTRA_REFS="$(l4_dx git -C /srv/origin.git for-each-ref --format='%(refname) %(objectname)' | grep -v ' refs/heads/main$' | grep -v '^refs/heads/main ' | tr '\n' ';')"
 }
 
 l4_copy_kit() { # <rehearsal dir>
@@ -161,10 +187,32 @@ l4_host_down() { # [--purge]
   echo "TEARDOWN containers_left=[${left}] volume_kept=$(docker volume ls -q --filter "name=^$L4_VOL$" | wc -l | tr -d ' ')"
 }
 
+# What every entry script's EXIT trap runs. A run that never started the host collects nothing,
+# files nothing and removes nothing: the host and its /srv/l4/out may be another run's.
+l4_finish() { # <rc> <run name> <keep 0|1> [--purge]
+  local rc="$1" run="$2" keep="$3" purge="${4:-}" dst
+  if [ "${L4_HOST_MINE:-0}" = 1 ]; then
+    dst="$(l4_collect "$run")"
+    if [ "$keep" = 1 ]; then
+      l4_dx touch /l4-kept >/dev/null 2>&1
+      echo "L4: $L4_HOST kept running (--keep); a later run refuses it unless --replace-kept"
+    else
+      l4_host_down $purge
+    fi
+    l4_slot_release
+    echo "RESULTS $dst"
+    echo "EVIDENCE $(l4_evidence "$dst" "$run")"
+  else
+    l4_slot_release
+    echo "L4: this run did not start $L4_HOST: nothing collected, filed or removed" >&2
+  fi
+  exit "$rc"
+}
+
 # The run's modes, read by harness.sh inside the stand-in host.
 l4_mode() { # <restore|train>
-  l4_dx sh -c "mkdir -p /srv/l4 && printf 'export L4_REHEARSAL=%s L4_MUTATE=%s L4_REPIN=%s L4_REF=%s L4_REF_SHA=%s\n' \
-    '$1' '${L4_MUTATE:-0}' '${L4_REPIN:-0}' '$L4_REF' '$L4_REF_SHA' > /srv/l4/mode.env"
+  l4_dx sh -c "mkdir -p /srv/l4 && printf 'export L4_REHEARSAL=%s L4_MUTATE=%s L4_REF=%s L4_REF_SHA=%s\n' \
+    '$1' '${L4_MUTATE:-0}' '$L4_REF' '$L4_REF_SHA' > /srv/l4/mode.env"
 }
 
 # The evidence bundle the coordinator commits on the plan branch (ruling C33): the results table,
@@ -192,15 +240,43 @@ l4_evidence() { # <results dir> <run name>
   echo "$dst"
 }
 
+# The shape guard's own mutation test (lib/selftest-runbook.py) against the runbook under
+# rehearsal and the committed pins. It is a row: FAILED when any case fails, so a run whose
+# selector is broken cannot read as clean.
+l4_selftest() { # <runbook path inside the host>
+  local rc
+  l4_dx sh -c "python3 /srv/l4/kit/lib/selftest-runbook.py '$1' /srv/l4/kit/lib/runbook-pins.tsv > /srv/l4/out/selftest-runbook.txt 2>&1"
+  rc=$?
+  l4_dx sh -c "f=/srv/l4/out/rows.tsv; [ -f \$f ] || printf 'phase\tstep\tverdict\trun\tcheck\tnote\n' > \$f;
+    printf 'selftest\tshape guard\t%s\tlib/selftest-runbook.py on the runbook under rehearsal and the committed pins\t%s\tselftest-runbook.txt\n' \
+      '$( [ $rc = 0 ] && echo DONE || echo FAILED)' \"\$(grep -c '^ok' /srv/l4/out/selftest-runbook.txt) ok, \$(grep -c '^FAIL' /srv/l4/out/selftest-runbook.txt) FAIL\" >> \$f"
+  [ $rc = 0 ] || echo "L4: the shape guard's self-test FAILED (selftest-runbook.txt; row 'selftest')" >&2
+}
+
+# --mutate's report compares each target row with the paired normal run (--baseline <run name>,
+# a results folder under L4_RESULTS_ROOT: same ref, same rig, no --mutate).
+l4_baseline() {
+  [ -n "${L4_BASELINE:-}" ] || { echo "L4: no --baseline: no mutation can count as caught" >&2; return 0; }
+  local b="$L4_RESULTS_ROOT/$L4_BASELINE" f
+  [ -f "$b/rows.tsv" ] || l4_die "--baseline $L4_BASELINE: no rows.tsv in $b"
+  l4_dx mkdir -p /srv/l4/baseline
+  for f in rows.tsv train.tsv run.txt; do
+    [ -f "$b/$f" ] && docker cp "$(l4_win "$b/$f")" "$L4_HOST:/srv/l4/baseline/$f" >/dev/null
+  done
+  l4_dx sh -c "printf 'baseline: %s\\n' '$L4_BASELINE' >> /srv/l4/out/run.txt"
+}
+
 # What this run rehearsed, for the record (run.txt in the results and the evidence bundle).
 l4_run_record() { # <checkout> <rehearsal dir>
   local rig dirty
   rig="$(git -C "$1" rev-parse HEAD)"
   dirty="$(git -C "$1" status --porcelain -- "$(l4_win "$2")" | grep -c .)"
   docker exec -i "$L4_HOST" sh -c "mkdir -p /srv/l4/out && cat > /srv/l4/out/run.txt" <<RUN
-rehearsed ref: $L4_REF = $L4_REF_SHA (the stand-in origin's main)
+rehearsed ref: $L4_REF = $L4_REF_SHA (the stand-in origin's main; read before bundling, checked in the host)
+other refs bundled: ${L4_EXTRA_REFS:-none}
+checkout bundled from: $1
 rig: ops/lab/rehearsal at $rig ($dirty uncommitted file(s) under it)
-modes: mutate=${L4_MUTATE:-0} repin=${L4_REPIN:-0}; slot pool: ${L4_POOL:-none}
+modes: mutate=${L4_MUTATE:-0}; slot pool: ${L4_POOL:-none}
 started: $(date -u +%FT%TZ)
 RUN
 }

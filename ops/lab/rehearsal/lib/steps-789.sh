@@ -16,7 +16,7 @@ sec7() {
     sleep 2
   done
   wait_backend_healthy 120
-  rb_run 7.2-again "$(rb_fence 7.2 1 '$p')"
+  rb_run 7.2-again "$(rb_line 7.2 1 'fixflow-heartbeat.sh')"
   local o3; o3="$(out_of | tr '\n' ' ')"
   rb_run 7.2-clean "$(rb_fence 7.2 3)"
   local ok=no
@@ -63,7 +63,7 @@ lab probe: deep health with postgres stopped answered $probe"
   env_set /etc/fixflow/heartbeat.env FIXFLOW_HEARTBEAT_HEALTH_URL "http://$bip:8000/api/ops/health"
   echo "lab: from 7.4 on, heartbeat.env's FIXFLOW_HEARTBEAT_HEALTH_URL is the backend's container address (no tunnel), so the cron heartbeat can be healthy" >> "$OUT/deviations.log"
   rb_run 7.4-do "$(rb_fence 7.4 1)"
-  local m74=no; l4_mut 7.4-no-cron && { pkill -x crond; m74=yes; }
+  local m74=no; l4_mut 7.4-no-cron && { pkill -x crond && l4_mut_done 7.4-no-cron; m74=yes; }
   local hb0 hb1; hb0="$(grep -c ' /ping/heartbeat' "$OUT/deadman.log")"
   rb_run 7.4-check "$(rb_fence 7.4 2)"    # its own 'sleep 130'
   hb1="$(grep -c ' /ping/heartbeat' "$OUT/deadman.log")"
@@ -73,7 +73,7 @@ lab probe: deep health with postgres stopped answered $probe"
     "install the heartbeat cron file; cronie runs it" "$(out_of | tr '\n' ';'); heartbeat pings at the stand-in dead-man service during the 130 s: $((hb1 - hb0)) (at $times)" \
     "cronie reads /etc/cron.d with the user field as Debian's cron does; the ping URL is the stand-in listener"
   row 7.5 NRH "test paging once" "-" "needs the monitoring service's e-mail"
-  local m76=no; l4_mut 7.6-deadman-down && { pkill -f lib/deadman.py; m76=yes; }
+  local m76=no; l4_mut 7.6-deadman-down && { pkill -f lib/deadman.py && l4_mut_done 7.6-deadman-down; m76=yes; }
   rb_run 7.6 "$(rb_fence 7.6 1)"
   [ $m76 = yes ] && { nohup python3 /srv/l4/kit/lib/deadman.py "$OUT/deadman.log" >/dev/null 2>&1 & sleep 1; }
   local h; h="$(out_of)"
@@ -120,7 +120,7 @@ sec9_1() {
   # setup: the stand-in bucket holds older dumps under the self-host prefix, under the Railway-era
   # prefix, in a sub-folder and under archive/, so 9.1's prune has something to prune and to leave
   local old="backups/db-selfhost/fixflow-db-20260801T023000Z.dump backups/db-selfhost/fixflow-db-20260901T023000Z.dump backups/db-selfhost/fixflow-db-20260915T023000Z.dump backups/db-selfhost/fixflow-db-20261001T023000Z.dump backups/db/fixflow-db-20260701T023000Z.dump archive/pre-selfhost/fixflow-db-20260701T023000Z.dump backups/db-selfhost/sub/fixflow-db-20260101T000000Z.dump"
-  l4_mut 9.1-plant && old="${old#backups/db-selfhost/fixflow-db-20260801T023000Z.dump }"
+  l4_mut 9.1-plant && old="${old#backups/db-selfhost/fixflow-db-20260801T023000Z.dump }" && l4_mut_done 9.1-plant
   # shellcheck disable=SC2086
   s3_put_old $old
   echo "lab: planted in the stand-in bucket before 9.1: $old" >> "$OUT/deviations.log"
@@ -237,6 +237,8 @@ sec8() {
   if ! l4_mut 8.7-forgot-edit; then
     sed -i 's/^\(FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=\)/# \1/; s/^\(FIXFLOW_JOBS_GPS_BACKDATE_CEILING_HOURS=\)/# \1/' $f
     echo "edited $f: commented the two ceilings out again" >> "$OUT/editor.log"
+  else
+    l4_mut_done 8.7-forgot-edit
   fi
   rb_run 8.7 "$(rb_fence 8.7 1)"
   wait_backend_healthy 150
@@ -259,6 +261,8 @@ sec8_c42() { # <T_open>
   if ! l4_mut 8.7-forgot-edit; then
     sed -i 's/^\(FIXFLOW_ATTENDANCE_DEVICE_TIME_BACKDATE_CEILING_HOURS=\)/# \1/; s/^\(FIXFLOW_JOBS_GPS_BACKDATE_CEILING_HOURS=\)/# \1/' $f
     echo "edited $f: commented the two ceilings out again (8.6)" >> "$OUT/editor.log"
+  else
+    l4_mut_done 8.7-forgot-edit
   fi
   rb_run 8.6 "$(rb_fence 8.6 @close)"
   local t_close; t_close="$(out_of | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | tail -n 1)"
@@ -285,7 +289,7 @@ sec8_8() {
   local before; before="$(psql_app -c "select last_seq from dispatch_cursor where consumer='whatsapp'" 2>/dev/null)"
   rb_run 8.8-do "$(rb_fence 8.8 @reseed/1)"
   local drc="$RC"
-  l4_mut 8.8-new-event && psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', 'L4 mutation: an event after the re-seed', 'm1', nextval('job_event_seq') from job limit 1" >/dev/null 2>&1
+  l4_mut 8.8-new-event && psql_app -c "insert into job_event (job_id, kind, text, actor, seq) select id, 'note', 'L4 mutation: an event after the re-seed', 'm1', nextval('job_event_seq') from job limit 1" >/dev/null 2>&1 && l4_mut_done 8.8-new-event
   rb_run 8.8-check "$(rb_span 8.8 'select (select last_seq')"
   local t; t="$(out_of)"
   rb_run 8.8-compose "$(rb_span 8.8 "grep -n 'FIXFLOW_ENABLE_DISPATCHER'")"

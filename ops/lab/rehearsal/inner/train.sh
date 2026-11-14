@@ -63,7 +63,7 @@ r5() { # <row suffix>
   rb_run R5.5 "$(rb_span R5.5 'build backend web')"
   local brc="$RC"
   local m55=no
-  [ -z "$s" ] && l4_mut R5.5-no-tag && { docker rmi -f "fixflow/backend:$TARGET" >/dev/null 2>&1; m55=yes; }
+  [ -z "$s" ] && l4_mut R5.5-no-tag && { docker rmi -f "fixflow/backend:$TARGET" >/dev/null 2>&1 && l4_mut_done R5.5-no-tag; m55=yes; }
   rb_run R5.5-check "$(rb_span R5.5 'docker images')"
   row "R5.5$s" "$( [ "$brc" = 0 ] && has "fixflow/backend:$TARGET" && echo DONE || echo FAILED)" "ffc \$P_RUN build backend web" "exit $brc; $(out_of | head -n 1)" \
     "built offline from the build cache (the same build ran online in the prebuild step); the tags were removed first"
@@ -71,8 +71,30 @@ r5() { # <row suffix>
   rb_run R5.6 "$(rb_span R5.6 'up -d')"
   wait_backend_healthy 150; hb=$?
   rb_run R5.6-logs "$(rb_span R5.6 'logs --tail 60 backend')"
-  row "R5.6$s" "$( [ $hb = 0 ] && has 'alembic' && has 'Application startup complete' && echo DONE || echo FAILED)" "ffc \$P_RUN up -d (start.sh migrates, then serves)" \
-    "healthy=$([ $hb = 0 ] && echo yes || echo no); alembic lines $(grep -ci alembic "$OLOG"); startup complete $(grep -c 'Application startup complete' "$OLOG"); $(grep -o 'Running upgrade [0-9a-z_]* -> [0-9a-z_]*' "$OLOG" | tr '\n' ' ')"
+  # review m6: when TARGET's head (the end of its down_revision chain) is above the database's
+  # head that R5.3 read, a migration must be seen running FROM that head, not only alembic's
+  # context line
+  local th mig=yes
+  th="$(python3 - /opt/fixflow/backend/alembic/versions <<'PY'
+import pathlib, re, sys
+revs, downs = set(), set()
+for f in pathlib.Path(sys.argv[1]).glob("*.py"):
+    t = f.read_text(encoding="utf-8")
+    r = re.search(r'^revision[^=]*=\s*["\']([^"\']+)', t, re.M)
+    d = re.search(r'^down_revision[^=]*=\s*["\']([^"\']+)', t, re.M)
+    if r:
+        revs.add(r.group(1))
+    if d:
+        downs.add(d.group(1))
+heads = sorted(revs - downs)
+print(heads[0] if len(heads) == 1 else "")
+PY
+)"
+  if [ -n "$th" ] && [ -n "$dbhead" ] && [ "$th" != "$dbhead" ]; then
+    has "Running upgrade $dbhead -> " || mig=no
+  fi
+  row "R5.6$s" "$( [ $hb = 0 ] && has 'alembic' && has 'Application startup complete' && [ $mig = yes ] && [ -n "$th" ] && echo DONE || echo FAILED)" "ffc \$P_RUN up -d (start.sh migrates, then serves)" \
+    "healthy=$([ $hb = 0 ] && echo yes || echo no); TARGET head ${th:-UNREAD}, database head before $dbhead$( [ "$th" != "$dbhead" ] && echo "; 'Running upgrade $dbhead -> ' seen: $mig"); alembic lines $(grep -ci alembic "$OLOG"); startup complete $(grep -c 'Application startup complete' "$OLOG"); $(grep -o 'Running upgrade [0-9a-z_]* -> [0-9a-z_]*' "$OLOG" | tr '\n' ' ')"
   rb_run R5.7 "$(rb_fence R5.7 1)"
   row "R5.7$s" "$( has "git_sha= $TARGET" && has "'status': 'ok'" && echo DONE || echo FAILED)" "deep health git_sha and database" "$(out_of | tr '\n' ' ' | cut -c1-200)" \
     "the curl through api.<domain> half is NRH (no tunnel)"
@@ -82,7 +104,7 @@ r5() { # <row suffix>
   local m124=no v124
   if [ -z "$s" ] && l4_mut 12.4-head; then
     v124="$(psql_app -c 'select version_num from alembic_version')"
-    psql_app -c "update alembic_version set version_num = '$(printf '%04d' $((10#$v124 - 1)))'" >/dev/null; m124=yes
+    psql_app -c "update alembic_version set version_num = '$(printf '%04d' $((10#$v124 - 1)))'" >/dev/null && l4_mut_done 12.4-head; m124=yes
   fi
   rb_run 12.4-check "$(rb_fence 12.4 2)"
   [ $m124 = yes ] && psql_app -c "update alembic_version set version_num = '$v124'" >/dev/null
@@ -99,7 +121,7 @@ r59() { # <row suffix>
   rb_run R5.9-1 "$(rb_span R5.9 "show <PREV>:CLAUDE.md")" "<PREV>=$PREV"
   local prevhead; prevhead="$(out_of | grep -o '[0-9]\{4\}' | head -n 1)"
   # step 1's "the database's applied head (..., as in R5.3)": R5.3's third line
-  rb_run R5.9-1b "$(rb_fence R5.3 1 '3p')"
+  rb_run R5.9-1b "$(rb_line R5.3 1 'select version_num from alembic_version')"
   local dbh; dbh="$(out_of | grep -xE '[0-9]{4}' | head -n 1)"
   row "R5.9.1$s" "$( [ -n "$prevhead" ] && [ -n "$dbh" ] && echo DONE || echo FAILED)" "previous head from CLAUDE.md at PREV; DB head" "PREV head $prevhead; DB head $dbh" \
     "the VERIFY on 'head = **NNNN**' existing at the previous sha: $( [ -n "$prevhead" ] && echo present || echo ABSENT)"
@@ -112,7 +134,7 @@ r59() { # <row suffix>
     gs="$(jget facts.git_sha < "$OUT/deep-health-r59$(echo "$s" | tr -cd 'a-z').json")"
     db_ok="$(jget components < "$OUT/deep-health-r59$(echo "$s" | tr -cd 'a-z').json" | jget database.status)"
     row "R5.9.2$s" "$( [ "$gs" = "$TARGET" ] && [ "$db_ok" = ok ] && [ "$(git -C /opt/fixflow rev-parse HEAD)" = "$TARGET" ] && echo DONE || echo FAILED)" \
-      "database head above the previous version's: STOP, no rollback" "$dbh > $prevhead; still serving git_sha ${gs:0:7} (TARGET ${TARGET:0:7}), database $db_ok, checkout at $(git -C /opt/fixflow rev-parse --short HEAD)" \
+      "the heads were read and ordered: the database's is above the previous version's, so R5.9 says STOP (no command is typed)" "$dbh > $prevhead; still serving git_sha ${gs:0:7} (TARGET ${TARGET:0:7}), database $db_ok, checkout at $(git -C /opt/fixflow rev-parse --short HEAD)" \
       "the refusal branch: an image below the database's head is never started, and alembic downgrade is never run"
   else
     row "R5.9.2$s" DONE "heads equal: rollback allowed" "$dbh = $prevhead"
@@ -122,7 +144,7 @@ r59() { # <row suffix>
     wait_backend_healthy 150
     rb_run R5.9-r57 "$(rb_fence R5.7 1)"
     row "R5.9$s" "$( has "git_sha= $PREV" && has "'status': 'ok'" && echo DONE || echo FAILED)" "checkout PREV; build; up -d; R5.7" "$(out_of | tr '\n' ' ' | cut -c1-200)" \
-      "rolled back to the drain-image commit; describe: $(git -C /opt/fixflow describe --tags --exact-match HEAD 2>&1)"
+      "rolled back to PREV ${PREV:0:7}; describe: $(git -C /opt/fixflow describe --tags --exact-match HEAD 2>&1)"
   fi
 }
 
@@ -193,7 +215,7 @@ $FIX_FULL"
   row 11.7 "$( [ "$RC" = 0 ] && [ "$(out_of | sed 1d | grep -c .)" = 0 ] && echo DONE || echo FAILED)" "diff --name-only vs the commits' files" "$(out_of | head -n 3 | tr '\n' ';')"
 
   # ---- 11.8 (ruling C34): push the branch alone, SHA, CI for that sha, the gates in a detached worktree
-  rb_run 11.8-push "$(rb_fence 11.8 1 '1,2p')"
+  rb_run 11.8-push "$(rb_line 11.8 1 'git push origin release/drain' 'SHA=$(git rev-parse release/drain)')"
   seen="$(out_of | grep -xE '[0-9a-f]{40}' | tail -n 1)"; lsr="$(git ls-remote origin refs/heads/release/drain | cut -f1)"
   ntag="$(git ls-remote origin 'refs/tags/drain-image*' | grep -c .)"
   row 11.8-push "$( [ "$RC" = 0 ] && [ -n "${SHA:-}" ] && [ "$SHA" = "$seen" ] && [ "$lsr" = "$SHA" ] && [ "$ntag" = 0 ] && echo DONE || echo FAILED)" \
@@ -201,7 +223,7 @@ $FIX_FULL"
     "SHA=${SHA:-}; origin's release/drain $lsr; drain-image* tags on origin: $ntag" "the push goes to the stand-in origin; on the real remote it would start CI"
   row "11.8 CI" NRH "gh run list --commit \"\${SHA:?...}\"; gh run view <run-id>" "-" \
     "reads the GitHub Actions run of the pushed sha: needs gh, the owner's login and a push to the real remote (all forbidden here). The SHA guard on that line is exercised in WT8"
-  rb_run 11.8-worktree "$(rb_fence 11.8 3 '1p')"
+  rb_run 11.8-worktree "$(rb_line 11.8 3 'git worktree add --detach')"
   wtp="/srv/ff-rdrain-${SHA:0:7}"; wth="$(git -C "$wtp" rev-parse HEAD 2>/dev/null)"; wtd="$(git -C "$wtp" status --porcelain 2>/dev/null | grep -c .)"
   wdet="$(git -C "$wtp" symbolic-ref -q HEAD >/dev/null 2>&1 && echo no || echo yes)"
   row 11.8-worktree "$( [ "$RC" = 0 ] && [ "$wth" = "$SHA" ] && [ "$wdet" = yes ] && [ "$wtd" = 0 ] && echo DONE || echo FAILED)" \
@@ -255,7 +277,7 @@ $FIX_FULL"
   if rb_anch 11.12 web-ci; then
     # the batch checks the web sha BEFORE the push (ruling C37): its check-and-push line, with SHA
     # still holding 11.8's value, must push nothing
-    rb_run wt11b "$(rb_fence 11.12 @web-ci '2p')"
+    rb_run wt11b "$(rb_line 11.12 @web-ci 'WHY="SHA is not release/drain-web')"
     wt WT11b "11.12's check-and-push line run with SHA still holding 11.8's value" \
       "printed: $(out_of | tr '\n' ' ' | cut -c1-200); origin's release/drain-web afterwards: $(git ls-remote origin refs/heads/release/drain-web | grep -c .)" \
       "$(has 'STOP: not pushed' && [ -z "$(git ls-remote origin refs/heads/release/drain-web)" ] && echo "the line's own test: STOP, nothing pushed" || echo "NOTHING: see the step log")" \
@@ -322,12 +344,12 @@ $FIX_FULL"
 (cherry picked from commit $WFIX)" ] && echo DONE || echo FAILED)" "11.6 again" "$(out_of | tr '\n' ';' | cut -c1-400)" "three commits and the fix (P2b-2 absent); the trailer list is 11.6's lines followed by the fix's full sha"
   rb_run 11.13-7 "$(rb_fence 11.7 1)" "87bbe88 3810e42 <p2b2> 90ea88d=$P1 $FIX $P3A $WFIX"
   row 11.13-7 "$( [ "$RC" = 0 ] && [ "$(out_of | grep -c '^[<>]')" = 0 ] && echo DONE || echo FAILED)" "11.7 again with the fix" "$(out_of | head -n 2 | tr '\n' ';')"
-  rb_run 11.13-push "$(rb_fence 11.8 1 '1,2p')"
+  rb_run 11.13-push "$(rb_line 11.8 1 'git push origin release/drain' 'SHA=$(git rev-parse release/drain)')"
   lsr="$(git ls-remote origin refs/heads/release/drain | cut -f1)"
   row 11.13-push "$( [ "$RC" = 0 ] && ! has 'forced update' && ! has rejected && [ "$SHA" != "$OLDSHA" ] && [ "$lsr" = "$SHA" ] && [ "$(git rev-parse "$SHA~1")" = "$OLDSHA" ] && echo DONE || echo FAILED)" \
     "11.8's push (a fast-forward) and SHA again" "SHA $OLDSHA -> $SHA; origin's release/drain $lsr; $(out_of | grep -E '\.\.|->' | head -n 1)"
   row "11.13 CI" NRH "11.8's gh run list/view for the new SHA" "-" "as 11.8 CI: needs gh, the owner's login and a push to the real remote"
-  rb_run 11.13-worktree "$(rb_fence 11.8 3 '1p')"
+  rb_run 11.13-worktree "$(rb_line 11.8 3 'git worktree add --detach')"
   rcwa="$RC"; wtp="/srv/ff-rdrain-${SHA:0:7}"; wth="$(git -C "$wtp" rev-parse HEAD 2>/dev/null)"
   wdet="$(git -C "$wtp" symbolic-ref -q HEAD >/dev/null 2>&1 && echo no || echo yes)"
   row "11.13 gates" N/A "11.8's ff-gates.sh for the new SHA" "-" "as 11.8 gates: the coordinator's gate run"
@@ -343,7 +365,7 @@ $FIX_FULL"
     rb_run 11.13-tag-push "$(rb_span 11.13 'git push origin drain-image-2')"
     [ "$trc" = 0 ] || RC="$trc"
   fi
-  l4_mut 11.13-tag-gone && git push -q origin :refs/tags/drain-image-2 >/dev/null 2>&1
+  l4_mut 11.13-tag-gone && git push -q origin :refs/tags/drain-image-2 >/dev/null 2>&1 && l4_mut_done 11.13-tag-gone
   pel2="$(git ls-remote origin 'refs/tags/drain-image-2*' | awk '$2=="refs/tags/drain-image-2^{}"{print $1}')"
   row 11.13 "$( [ "$RC" = 0 ] && [ "$(git rev-parse 'drain-image-2^{commit}')" = "$SHA" ] && [ "$(git rev-parse origin/release/drain)" = "$SHA" ] && [ "$pel2" = "$SHA" ] \
       && [ "$(git rev-parse 'drain-image^{commit}')" = "$OLDSHA" ] && [ "$(git log --oneline a31924a..release/drain | grep -c .)" = 4 ] && echo DONE || echo FAILED)" \
@@ -460,7 +482,7 @@ deploy)
   # a closed job of t1's: the tech must be the job's actor to reach the closed-job refusal
   J_CLOSED="$(psql_app -c "select id from job where status='closed' order by (assigned_tech_id = 't1') desc, token limit 1")"
   J_UNCL="$(psql_app -c "select id from job where assigned_tech_id is null and status='open' order by token limit 1")"
-  l4_mut p7a-open-job && J_CLOSED="$(psql_app -c "select id from job where status='open' order by token desc limit 1")"
+  l4_mut p7a-open-job && J_CLOSED="$(psql_app -c "select id from job where status='open' order by token desc limit 1")" && [ -n "$J_CLOSED" ] && l4_mut_done p7a-open-job
   r7="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p7a "{\"other\": \"$J_OTHER\", \"closed\": \"$J_CLOSED\", \"unclaimed\": \"$J_UNCL\"}" 2>&1)"
   J_UNCL="$(echo "$r7" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin).get("unclaimed",""))' 2>/dev/null)"
   claims="$(psql_app -c "select count(*) from job_event where job_id='$J_UNCL' and kind='claim' and actor='t1'" 2>/dev/null)"
@@ -468,9 +490,19 @@ deploy)
   [ "$claims" = 1 ] || res7=FAIL
   trow P7a "(1) tech GET another tech's job 403; (2) payment on a closed job by its tech 409 '(current status: closed)', by a manager with no reason refused (R12); (3) tech note on an unclaimed job 201 + assigned + one claim event; (4) GET /api/jobs/99999999999/media not 500" \
     "$res7" "$r7 | claim events by t1 on that job: $claims"
-  r204="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p204 2>&1)"
+  # review m7: the item that tells the fix from its absence needs the shop-local date to differ from
+  # UTC's. The stand-in shop's zone is set for this check alone and put back right after (9.2 and
+  # the payroll rows need Asia/Karachi), so the row discriminates at any hour.
+  z204="" o204="" tz0=""
+  if [ "$((10#$(date -u +%H)))" -ge 10 ]; then z204=Pacific/Kiritimati; o204=14; else z204=Pacific/Pago_Pago; o204=-11; fi
+  tz0="$(psql_app -c "select timezone from shop where id = 'default'")"
+  psql_app -c "update shop set timezone = '$z204' where id = 'default'" >/dev/null
+  echo "lab f192fee: the stand-in shop's timezone was $tz0; set to $z204 (UTC$( [ $o204 -ge 0 ] && echo +)$o204, no DST) for the tech-metrics check alone at $(date -u +%H:%M) UTC, so the shop-local date differs from the UTC date; put back right after" >> "$OUT/deviations.log"
+  r204="$(python3 /srv/l4/kit/lib/traincheck.py "$BASE" p204 "$z204" "$o204" 2>&1)"
+  psql_app -c "update shop set timezone = '${tz0:-Asia/Karachi}' where id = 'default'" >/dev/null
+  [ "$(psql_app -c "select timezone from shop where id = 'default'")" = "${tz0:-Asia/Karachi}" ] || echo "lab f192fee: the shop's timezone was NOT put back" >> "$OUT/deviations.log"
   res204="$(echo "$r204" | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null || echo FAIL)"
-  trow "f192fee (#204)" "GET /api/jobs/reports/tech-metrics as a manager with no dates: the window ends on the shop-local today (no migration). In the drain tree the same fix is the original 3810e42 (11.3a, ruling C30)" \
+  trow "f192fee (#204)" "GET /api/jobs/reports/tech-metrics as a manager with no dates: the window ends on the shop-local today (no migration), with the stand-in shop's zone set to $z204 for this check so the local and UTC dates differ at $(date -u +%H:%M) UTC. In the drain tree the same fix is the original 3810e42 (11.3a, ruling C30)" \
     "$res204" "$r204"
   deep_health > "$OUT/deep-health-train.json"
   d="$OUT/deep-health-train.json"

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -73,34 +74,56 @@ def apply(src: str, dst: str, muts: str, pins: str) -> int:
     return 0
 
 
-def report(res: str, muts: str, which: str) -> int:
-    d = Path(res)
+def verdicts(d: Path, phase: str, label: str) -> tuple[list[str], str]:
+    """The target row's results in a results folder, and the verdict that means "caught"."""
     rows = load(str(d / "rows.tsv")) if (d / "rows.tsv").exists() else []
     trows = load(str(d / "train.tsv")) if (d / "train.tsv").exists() else []
+    tgot = [r["result"] for r in trows if r["row"] == label] if phase == "train" else []
+    if tgot:
+        return tgot, "FAIL"
+    return [r["verdict"] for r in rows if r["phase"] == phase and r["step"] == label], "FAILED"
+
+
+def report(res: str, muts: str, which: str, base: str | None = None) -> int:
+    """A mutation is caught when (1) mutations-applied.log says it was APPLIED (its id matched
+    exactly: a runbook mutation by apply(), a state mutation only after its hook's change
+    succeeded); (2) its target row reads the wanted verdict; and (3) in the paired normal run
+    (<base>: the same ref, same rig, no --mutate) that row did not already read it. Without a
+    baseline no mutation counts as caught."""
+    d = Path(res)
     applied = (d / "mutations-applied.log").read_text(encoding="utf-8") if (d / "mutations-applied.log").exists() else ""
-    out_tsv = ["id\tkind\ttarget\twant\tgot\tcaught"]
+    bd = Path(base) if base else None
+    out_tsv = ["id\tkind\ttarget\twant\tgot\tbaseline\tcaught"]
     md = [
-        "| Id | Kind of check | Mutation | Target row | Wanted | Got | Caught |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        f"Baseline (the paired normal run): `{bd.name if bd else 'NONE'}`",
+        "",
+        "| Id | Kind of check | Mutation | Target row | Wanted | Got | Baseline | Applied | Caught |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for m in load(muts):
         if m["rehearsal"] != which:
             continue
         phase, label = m["target"].split("|", 1)
         # a train row's check (train.tsv: PASS/FAIL/PARTIAL) or a runbook step's row (rows.tsv)
-        tgot = [r["result"] for r in trows if r["row"] == label] if phase == "train" else []
-        if tgot:
-            got, want = tgot, "FAIL"
-        else:
-            got = [r["verdict"] for r in rows if r["phase"] == phase and r["step"] == label]
-            want = "FAILED"
+        got, want = verdicts(d, phase, label)
         if m["type"] == "moved":
             want = "MOVED"
         g = got[-1] if got else "(row absent)"
-        ran = m["id"] in applied
-        caught = "yes" if (g == want and ran) else "NO"
-        out_tsv.append("\t".join([m["id"], m["kind"], m["target"], want, g, caught]))
-        md.append(f"| {m['id']} | {m['kind']} | {m['what']} | `{m['target']}` | {want} | {g} | {caught} |")
+        if bd:
+            bgot, _ = verdicts(bd, phase, label)
+            b = bgot[-1] if bgot else "(row absent)"
+        else:
+            b = "(no baseline)"
+        if m["type"] == "state":
+            ran = re.search(rf"\tstate mutation {re.escape(m['id'])} \([^)]*\) applied$", applied, re.M) is not None
+        else:
+            ran = re.search(rf"^runbook mutation {re.escape(m['id'])} applied to step ", applied, re.M) is not None
+        # the baseline must have read something else (DONE, or AMBIGUOUS/PARTIAL), never the
+        # wanted verdict, and never be absent: otherwise the mutation proved nothing
+        based = bd is not None and b not in (want, "(row absent)", "FAILED", "FAIL", "MOVED")
+        caught = "yes" if (g == want and ran and based) else "NO"
+        out_tsv.append("\t".join([m["id"], m["kind"], m["target"], want, g, b, caught]))
+        md.append(f"| {m['id']} | {m['kind']} | {m['what']} | `{m['target']}` | {want} | {g} | {b} | {'yes' if ran else 'NO'} | {caught} |")
     (d / "mutations-result.tsv").write_text(NL.join(out_tsv) + NL, encoding="utf-8")
     (d / "mutations.md").write_text(NL.join(md) + NL, encoding="utf-8")
     print(NL.join(md))
@@ -108,8 +131,8 @@ def report(res: str, muts: str, which: str) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 5 and sys.argv[1] == "report":
-        sys.exit(report(sys.argv[2], sys.argv[3], sys.argv[4]))
+    if len(sys.argv) in (5, 6) and sys.argv[1] == "report":
+        sys.exit(report(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5] if len(sys.argv) == 6 else None))
     if len(sys.argv) == 5:
         sys.exit(apply(*sys.argv[1:5]))
     sys.stderr.write(__doc__ or "")

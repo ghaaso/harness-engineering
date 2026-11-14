@@ -13,9 +13,12 @@ Against mutated copies of <runbook>, in a temporary folder, it checks that:
     first line are each refused as MOVED (exit 5), so nothing is typed;
   - an anchor comment selects its block wherever it stands, `@name/n` falls back to the pinned
     block when the runbook has no anchor, and a missing anchor without a fallback is MOVED (5);
+  - an anchor name used twice in a step is MOVED (5), never the later block (review m1);
+  - `line` takes the one line containing a substring, from one block or from every block of the
+    step (*), whichever block it stands in; zero or two matches are MOVED (5) (review M2);
   - a renamed step is refused as missing (exit 3).
 Each case uses a block the rig really types and that main and the runbook batch both keep (6.8,
-6.4), so the test holds on either text.
+6.4, 6.12's up line), so the test holds on either text.
 Exit 0 when every case holds. Runs anywhere with Python 3.10+; no network, no Docker.
 """
 
@@ -32,7 +35,8 @@ NL = chr(10)
 
 def cut(path: str, pins: str, step: str, n: str) -> tuple[int, str]:
     env = dict(os.environ, RB_PINS=pins)
-    p = subprocess.run([sys.executable, os.path.join(HERE, "runbook.py"), "fence", path, step, n],
+    args = ["line", path, step] + n.split("\t") if "\t" in n else ["fence", path, step, n]
+    p = subprocess.run([sys.executable, os.path.join(HERE, "runbook.py")] + args,
                        capture_output=True, text=True, env=env)
     return p.returncode, p.stdout + p.stderr
 
@@ -63,6 +67,23 @@ def anchor_after_added(body: list[str]) -> list[str]:
     return body[:i] + ["```bash", "echo an added block", "```", "", "<!-- block: 6.8-appendix -->", ""] + body[i:]
 
 
+def duplicate_anchor(body: list[str]) -> list[str]:
+    i = first_fence(body)
+    return (body[:i] + ["<!-- block: 6.8-appendix -->", "```bash", "echo first", "```", "",
+                        "<!-- block: 6.8-appendix -->", "```bash", "echo decoy", "```", ""] + body[i:])
+
+
+UP = "force-recreate backend"
+
+
+def up_line_alone(body: list[str]) -> list[str]:
+    # the up line moved out of its block into one of its own, after the next prose line
+    up = next(l for l in body if UP in l)
+    rest = [l for l in body if l is not up]
+    i = max(k for k, l in enumerate(rest) if l.startswith("```") and k < next(j for j, x in enumerate(rest) if x.startswith("**Check")))
+    return rest[:i + 1] + ["", "Then:", "", "```bash", up, "```"] + rest[i + 1:]
+
+
 def main() -> int:
     src, pins = sys.argv[1], sys.argv[2]
     text = open(src, encoding="utf-8").read()
@@ -84,6 +105,12 @@ def main() -> int:
         ("6.8, no anchor: @appendix/1 falls back to the pinned block", text, "6.8", "@appendix/1", 0, want68),
         ("6.8, no anchor and no fallback", text, "6.8", "@appendix", 5, None),
         ("6.8 renamed", text.replace("### 6.8 ", "### 6.8x ", 1), "6.8", "1", 3, None),
+        ("6.8, an anchor name used twice", edit_step(text, "6.8", duplicate_anchor), "6.8", "@appendix", 5, None),
+        ("6.12, line * by content", text, "6.12", "*\t" + UP, 0, "up -d"),
+        ("6.12, the up line in a block of its own", edit_step(text, "6.12", up_line_alone), "6.12", "*\t" + UP, 0, "up -d"),
+        ("6.12, the up line twice", edit_step(text, "6.12", lambda b: add_block_before_first(b, next(l for l in b if UP in l))),
+         "6.12", "*\t" + UP, 5, None),
+        ("6.12, no line contains the substring", text, "6.12", "*\tno such text in 6.12", 5, None),
     ]
     bad = 0
     with tempfile.TemporaryDirectory() as d:
