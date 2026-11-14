@@ -1,0 +1,58 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at 4f3d89a39f0891ec57c1b4d12d05ed8c7b63551e
+Fourth delta re-read (`5fbc441..4f3d89a`: ruling C86) by the PR's reviewer; dispatched by the coordinator on 2026-11-14 at 19:36, returned at 19:47. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The code on this head behaves as C86 intends. The lane's two test claims hold, and the gate passes. Two pieces of text are still wrong: the gap comment names too narrow a trigger, and the stated install-id residual is too small. Both need a wording change only. The head was 4f3d89a by `gh pr view 197` at the start and at the end. Line numbers are at 4f3d89a.
+
+FINDING 1 (item a): the gap comment's trigger, "if the other one was already uploaded", is too narrow.
+- The text is at `technician-app/src/features/drain/drainGate.ts:398-401`: "What the gap can cost is a SECOND manifest ... if the other one was already uploaded, the stored head no longer matches its receipt (`validReceipt`), and the next launch uploads this one too."
+- An upload is not needed before the overwrite. The upload sends this context's in-memory snapshot, not the stored head: `uploadOnce` uses `const { manifest } = snap.stored;` (`:612`) and `client_id: manifest.manifest_id` (`:617`); `validReceipt` requires `held === receipt.manifest_id` (`:556`).
+- PROBE K2 (VERIFIED-BY-COMMAND, scratch test): (1) the slow context is held at its first part write; (2) the fast context stores head F; (3) the slow context overwrites it with head S; (4) `manifestUpload` had not been called by then; (5) the fast context then drains and uploads F, and a later drain uploads S. Result: uploads `["uuid-3","uuid-2"]`, two manifests.
+- PROBE K3: when the overwriting context uploads first, there is one manifest (`["uuid-2"]`).
+- Only `drainAll` reaches the upload (`lib/drainAll.ts:93` -> `openSyncGateForDrain` -> `drainGate.ts:661-670`), and only `lib/useDrainAll.ts` (lines 20, 28, 32) calls it (VERIFIED-IN-CODE). So a headless task never uploads.
+- The real condition: the foreground stored its head first and then uploads it, before or after the overwrite. "The next launch" is right when the headless task is the one that overwrites.
+- The rest of the comment matches the code and C86/C87: both reads precede every discard; a discarded row reads `discarded`; the rows are the same rows; the audit merges twins (`row_key` at `drain_audit.py:1166`: `base = (r.install_id, r.queue, r.key)`).
+- Fix sketch: replace "if the other one was already uploaded" with "if the other context uploads its own manifest (it keeps it in memory) before this one's receipt is stored, before or after this write". The PR body's "It is uploaded once the receipt stops matching the head" is already right.
+
+FINDING 2 (items b, c, f): the named install-id residual is bigger than "one call".
+- Where the claim is made: `technician-app/src/features/drain/installId.ts:19-23` ("leave A's one call with A's id; every later call in A reads B's ... its upload carries the stored id"); `drainGate.ts:589-590` ("every document and trace carries the same id"); the CLAUDE.md row ("so every document and trace carries the stored id"); the PR body's C86 "What is left" ("One call of the earlier context keeps its own id").
+- PROBE X1 (VERIFIED-BY-COMMAND), with the hold model the lane's own C86 tests use: (1) B's id write is in flight; (2) A mints, reads back its own id, stores its head, and discards `p-app`; (3) then B's write lands. Result: `idA uuid-2`, durable entry `uuid-2`, stored `uuid-1`, upload `uuid-1`.
+- So the discard's durable entry and its trace both carry the id that lost (`discardEvent.ts:47`: `const install = await installId();`). Only the manifest upload is corrected (`drainGate.ts:591`).
+- The audit then drops that trace for the row: `drain_audit.py:2134-2136`: `if d.get("install_id") != row.install_id: continue`. The row would then likely read `missing` / exit 4 (INFERRED; the audit was not run).
+- How likely: B's write must still be in flight across A's whole snapshot plus a technician's discard tap. If Android's AsyncStorage runs every operation in order (assumed, not checked in this run), that needs B's JS to stall between its re-read and its write. INFERRED rare.
+- This is a wrong statement about the gap, which is the coordinator's bar for a finding.
+- Fix sketch: the four texts should say "every call A makes before B's write lands keeps A's id, including a discard's entry and trace, which the audit's install match then drops". Alternatively, narrow the claim to storage that runs every operation in order.
+
+ITEM b: THE MINT
+- A read error propagates and nothing is written (VERIFIED-IN-CODE `installId.ts:57`, `:45`, `:49`). PROBE T1: an id exists and the outer read throws; the call rejects, there is no write, and the next call returns the existing id. PROBE T2: there is no id and the re-read inside the mint throws; nothing is written, `minting` is cleared, and the next call mints.
+- A null returned for an id that exists. PROBE N1: one transient null is absorbed by the re-read in the mint (`:45-46`), with no write. PROBE N2: two nulls in a row overwrite the id (one write). Note only: a null for a key that exists is not a known AsyncStorage failure; its exposure is now every call, where it used to be one call per context.
+- One mint at a time per context: `minting` is the in-flight promise (`:35`), cleared by `.finally` (`:60-62`). PROBE M1: three concurrent calls share one write; changing the stored value afterwards changes the next result, so it is not a memo.
+
+NOTE: TESTS (item e)
+- Lane claims, both VERIFIED-BY-COMMAND: with `installId.ts` and `drainGate.ts` reverted to 5fbc441, 3 failed / 58, exactly the three C86 tests; the mutation `install_id: stored.manifest.install_id || (await installId())`: 1 failed / 58 ("two contexts at an update...").
+- Two surviving mutants, each passing 58/58: (M3) removing the re-read inside the mint (`installId.ts:45-46`); PROBE R1 shows the re-read does real work: B's first read saw no id, A minted meanwhile, and without the re-read B writes a second id (2 writes, `idB` different from `idA`; on the head 1 write). (M2) returning the written UUID instead of reading it back (`:49`).
+- Neither is pinned by a test. Suggest adding R1 as a test.
+
+ITEM c: THE AUDIT PAIRING
+- The audit reads the event's props, not the document's own field: `drain_audit.py:659` (`p = ev.props if isinstance(ev.props, dict) else None`), `:701` (`install_id = norm_id(p.get("install_id"))`); `_install_of` at `:618-621` does the same.
+- `uploadProps` overrides the install id spread from the stored manifest with the stored id (`drainGate.ts:588-591`). The residual manifest is therefore paired on its upload; it is not exit 4 / `missing`.
+- `validReceipt` keys on `manifest_id` only (`:552-557`). The manifest id does not depend on the install id.
+- The after-report takes `installId()` when it is built (`afterSend.ts:121`). The traces do too (`discardEvent.ts:47`); see Finding 2 for the exception.
+
+ITEM d: COST AND REACH
+- One `getItem` per `installId()` once an id exists: per discard 1 (`discardEvent.ts:47`); per manifest upload 1 (`drainGate.ts:591`), plus 1 when the snapshot is taken (`:370`); per after-report 1 (`afterSend.ts:121`); per Drain Report open 1 (`:735`, `DrainReportScreen.tsx:30`).
+- No loop over rows calls it. Every discard entry point acts on one row at a time: `discardItem`, `discardPunch`, `discardPresence` and `discardPendingMedia`, the last including `removePendingMedia` (`pendingMedia.ts:158`).
+- A headless task reaches it only through taking the snapshot (`:370`). Upload, after-report and the report screen are foreground only.
+
+ITEM f
+- The C83 "What is left" bullet as corrected is true. The C86 section is true except the "What is left" sentence (Finding 2). The gate line and "the comment change has no test" are accurate. The CLAUDE.md row is true except "every document and trace carries the stored id" (Finding 2).
+
+ITEM g: GATE (VERIFIED-BY-COMMAND)
+- `ff-gates.sh mobile rv197` on the clean tree at 4f3d89a: typecheck, Jest and `expo export` all exit 0, `SUMMARY FAIL=0`; 65 suites and 780 tests passed.
+- Log: `C:/Users/User/.fixflow-cache/gate-logs/rv197/mobile-20261114-193933`.
+
+NOT VERIFIED: the audit was not run on the K2 twins or the X1 trace (read only); whether Android's AsyncStorage runs every operation in order, and whether a headless task really runs in a separate JS runtime; `beforeQueueWrite` -> snapshot reach was not re-read this round (from earlier rounds); no device run.
+
+CLEANUP: the probe file was removed from the review tree; the scratch copy was removed, with its node_modules junction unlinked first (the real node_modules is intact, 659 entries); `plan-v975.md` and `pr197-body.md` were removed. Kept in the coordinator's scratchpad: `gate-4f3d89a.log`. `git status` in the review tree shows no changes.
+
+COORDINATOR (2026-11-14, 19:52; ruling C88). Both findings are taken, as text and tests only: no behaviour of the phone changes. The coordinator read the phone's side of finding 2 itself: a discard record carries its own `install_id` into the manifest's and the after-report's `discards` (`discardLog.ts:63-73`, `:83-95`; `afterReport.ts:66-68`), so an entry made in the window keeps the earlier id inside every later report, while the report's own `install_id` is the stored one (`afterSend.ts:121`). What the audit makes of such an entry and of its trace is not written into any text until the audit lane has walked it on its current code (the lesson of C86): the phone's texts state what the phone does and point at the contract. Ruled: (1) the gap comment states when two manifests arise (the context whose head was overwritten uploads the snapshot it holds in memory, before or after the overwrite) and when one does (the overwriting context uploads first); (2) the four texts state the install-id window at its real size; (3) five tests pin the sequences the texts describe (K2, K3, X1, R1 and the read-back), so the two surviving mutants fail; (4) the null-read exposure stays a note. For the contract: a document's install is the `install_id` of the event that carries it (the audit already reads it so; the phone's corrected upload relies on it), and the audit lane pins that and says what it does with a discard entry or trace under another install id. Sent to both lanes; the same reviewer re-reads the phone's delta.
