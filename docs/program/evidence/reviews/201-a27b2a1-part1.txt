@@ -1,0 +1,151 @@
+PART 1 OF 2 (NO VERDICT): PR #201 at a27b2a14ba2989b36983ef381f94fac82fe7703b, reading only
+Second pass by the first-pass reviewer, dispatched by the coordinator on 2026-11-14 at 05:55 while the lane was still adding wrong turns (local commit 5fafe85, not judged here). No rehearsal was run in this part: a second run's start would have ended the lane's run. The verdict comes with part 2, at the lane's final head. This file is the coordinator's record of the reviewer's report, written from the notification text at 06:16.
+
+Base read: main 16e154e8 (merge-base 90ea88d6). The marker 201-a27b2a1 and the PR body say "Plan @ plan-v9.41", and that tag carries C42 and C47.
+
+FINDINGS
+
+MAJOR
+
+M1. Two runs at once destroy each other's host and cross their evidence. Lane should fix before its final head.
+- `lib/host.sh:50`: `docker rm -f "$L4_HOST"` runs unconditionally. The light pool has two slots (`docs/program/lab/ff-slot.sh:48`, `N="${FF_LIGHT_SLOTS:-2}"`), so the slot lock does not serialise two warm runs. A cold run and a warm run can also overlap, because they draw from different pools.
+- It is worse than the brief's item B8 describes. `finish` (`restore-rehearsal.sh:40-49`, `train-rehearsal.sh:45-54`) runs on every exit, including a die before or inside `l4_host_up`.
+  - It runs `l4_collect`, which copies the OTHER run's `/srv/l4/out` into this run's results folder.
+  - It runs `l4_host_down`, which removes the other run's stack and host. With `--purge` it also removes the shared volume.
+  - It runs `l4_evidence`, which files a bundle under the wrong run name. Only the `run.txt` inside that bundle would show the mix-up. (VERIFIED-IN-CODE)
+- Smallest fix:
+  1. In `l4_host_up`, before line 50: `[ -z "$(docker ps -aq --filter name=^fixflow-l4-host$)" ] || l4_die "fixflow-l4-host exists: another rehearsal (or a --keep host) holds it"`.
+  2. Set `L4_HOST_MINE=1` right after the `docker run` succeeds.
+  3. `finish` calls collect, down and evidence only when `L4_HOST_MINE=1`.
+
+M2. Line ranges are positional and unchecked under anchors and under `--repin`, and the PR body offers `--repin` as #209's way through. Lane should fix before its final head, at least for the call sites below.
+- `rb_fence` applies `sed -n "$3"` after selection (`lib/harness.sh:63`). An anchored selection has no shape check at all (`lib/runbook.py:274-276`). Under `L4_REPIN=1`, pins come from the runbook under test (`harness.sh:46-53`), so the count check checks nothing.
+- What was seen (VERIFIED-BY-COMMAND, `t1.sh` and `t3.sh`, exit 0):
+  - #209 + repin. `6.12 1 '$p'` yields `SQL`, the here-document terminator. `wrongturns.sh:67` types it, RC=127 (not 99), nothing starts, and all eight WT2 spellings come out "no: refused" while nothing was tried. This is a false pass on the forced-key guard.
+  - `6.12 2` yields the `up` line, which `steps.sh:437` types as 6.12's Check, so 6.12 comes out FAILED (loud).
+  - `6.13 1 2p` selects nothing, so 6.13 comes out MOVED (loud).
+  - Anchored + range. Append one line to #209's `6.9-signoff` block and `@signoff/1 '$p'` returns `echo "signed off"`. WT1 (`wrongturns.sh:48-54`) would then report "the compose gate: the backend never starts / no: already scripted", which is false.
+  - Insert a first line in `11.12-web-ci` and `'2p'` returns `SHA=$(git rev-parse release/drain-web)...` instead of the guarded push line. That is a false alarm in WT11b.
+- PR body line 135, "or the rig's pins re-cut with `--repin` after #209 merges", is unsound for these steps.
+- Smallest fix: add `runbook.py line <file> <step> <block-sel> <substring>`. It returns the one fenced line containing the substring and exits 5 when there are zero or several matches. Use it at the 12 sub-range sites:
+  - `steps-789.sh:19`
+  - `steps.sh:292`
+  - `train.sh:102,196,204,258,325,330`
+  - `wrongturns.sh:48,59,67,169`
+  Also drop the `--repin` route from the body. Re-pinning is a reviewed commit of `runbook-pins.tsv`.
+
+MINOR
+
+m1. A duplicate anchor silently takes the later block. Lane fix: one line plus a self-test case.
+  - `runbook.py:194-196`: `out[pending] = n` overwrites. A decoy block after 6.7 carrying `<!-- block: 6.7-drop-restore -->` makes `fence 6.7 @drop-restore` print `echo decoy`, exit 0 (VERIFIED-BY-COMMAND, `t4.sh`).
+  - Fix: on a repeated name, record it, and have `fence @name` exit 5.
+m2. The caught rule can count a mutation that never ran. Lane fix: the id match.
+  - `mutate.py:100`: `ran = m["id"] in applied` is a substring test. `T01`..`T05` match timestamp text `T01:`..`T05:` in `mutations-applied.log`.
+  - `l4_mut` (`harness.sh:98-105`) logs "applied" before the hook acts.
+  - Nothing compares against a baseline run.
+  - Demonstrated (`t5.sh`): T03 was never applied (only T04 was logged, at `03:12Z`), and its target row FAILED for another cause. The report said `caught yes`, exit 0.
+  - Fix: match `state mutation <id> (` or `runbook mutation <id> applied`; log after the hook succeeds; require the target row to be DONE in the paired normal run. In the six final runs no target row was FAILED at baseline. M06's target was AMBIGUOUS, which is a real change.
+m3. An empty `lsum` makes the 6.6 (b) sha check vacuous. Lane fix.
+  - `steps.sh:282` and `:299`: `echo "$up" | grep -q "sha256=$lsum"` with no `[ -n "$lsum" ]`. `steps-789.sh:201` has that guard.
+  - Both hashes are also taken from the same local file. The bucket copy is proven only by the go-back route.
+m4. A failed self-test changes nothing in the results. Lane fix: small.
+  - `restore-rehearsal.sh:60-63` only echoes to stderr. There is no row, the run's exit is unchanged, and the train never runs it.
+  - Fix: add a `selftest` row (FAILED on non-zero), or `l4_die`.
+m5. `run.txt` can misstate what was bundled, and it leaves out the extra refs and the checkout path.
+  - `host.sh:125-130` reads `L4_REF_SHA` after the bundle, from shared refs that other sessions also update.
+  - Fix: `rev-parse` before bundling, then check `git -C /srv/origin.git rev-parse main` = `L4_REF_SHA` inside the host. Record `drain-pick-tz-fix`'s sha and `$REPO`.
+m6. R5.6 cannot tell that a migration ran.
+  - `train.sh:74`: `has 'alembic'` is true on alembic's context line alone. Only 12.4b's data check catches a stamped-but-unrun migration, and only on the stand-in row.
+  - Fix: when the head at TARGET is above R5.3's database head, require `Running upgrade <dbh> -> `.
+m7. f192fee's blindness is the rig's own check, not the runbook's. See C. The item can be made to discriminate at any hour (INFERRED).
+
+NIT
+- `train.sh:124` hard-codes "rolled back to the drain-image commit", which is wrong for the second r5.
+- R5.9.2's refusal row (`train.sh:107-116`) checks state that no typed command could change. Label it "the heads were read and ordered".
+- `guardwrap.py` drops lowercase assignments and `cd` on a wrapped line. Neither runbook has one, but guardwrap should log a deviation when it meets one.
+
+A. FIRST-PASS ITEMS AT a27b2a1
+
+| Item | Status | Where |
+|---|---|---|
+| 1 D1 wording | closed. Body, README and scripts agree | body:35 and :59; `README.md:170-177`; `steps.sh:365` ("Loosening ... would pass a dangerously low cursor"); `steps.sh:410-416` exact check 6 |
+| 2 marker guard | closed. The same form in all three | body:36 and :60; `wrongturns.sh:26` MARKER_GUARD |
+| 3 seed at drain-image | closed | `train-rehearsal.sh:63-64` (cut, then `prep.sh drain-image`); `prep.sh:79-83`; `steps.sh:64-67,229-239` |
+| 4 index selection | PARTLY. Blocks are chosen by content (`runbook.py:209-235`); line ranges are not (M2, m1) | |
+| 5 WT1 hard-coded | closed | `wrongturns.sh:52-54` |
+| 6 R5.5 | closed | `train.sh:57-61`; T04 caught |
+| 7 R5.9 refusal | closed. Both r5 runs on main refuse. The allowed branch ran only on #209's train | train rows R5.9.2 |
+| 8 failing once | closed another way: 18 mutations | weakened by m2 |
+| 9 cron, 1.14 | closed | `host.sh:76-85`; rows 7.4, 7.7, 1.14 DONE |
+| 10 D10 | closed | `steps-789.sh:167`; body:44 |
+| 11 fetch into refs | closed another way: kept and disclosed | `host.sh:119-125`; see m5 |
+| 12 PIN masking | closed | `harness.sh` `l4_mask` (whole tokens of 4-11 characters) |
+| C42 t_close | closed | `steps-789.sh:226-236` |
+| C42 cold -> heavy | closed | `host.sh:28-36` |
+| C42 evidence | closed | `host.sh:173-193` (see M1) |
+| C42 guards as typed | closed | `guardwrap.py`; `harness.sh` `rb_run` |
+| C42 take a ref | closed, with m5 | |
+
+B items not covered above
+- B2. Ten cases were compared against `bash -i` (guard at line start, mid-line, before a here-document, in a redirection, in `$( )`, with a backslash continuation, exit status). Output was identical in each. The only differences are when the guard passes: a lowercase variable and `cd` are lost (cases 4 and 9).
+- B5. No head number is left in the rig. `steps.sh:418`'s `-ge 46` is the fixed revision that seeds the cursor, not a head. The plan's 7.5 L4 condition is met: R5.6 runs 0046->0047 and the stand-in row 0047->0048 on populated data, and every train row has a rehearsal row.
+- B7. Every push goes to `/srv/origin.git`, through clones of it (`train.sh:135-136,266,269`). The host holds no credentials.
+
+C. THE f192fee ROW
+
+- `1eed8af..a27b2a1` (407390f, a27b2a1) changes only `inner/train.sh:337-345` and `inner/wrongturns.sh:68-75`.
+  - The 11.13 branch runs only when the tag block lacks `git push origin drain-image-2`. main's block has that push at line 2409 of the 16e154e runbook. In main's train 20261114T002041Z there is no `11.13-tag-push` step; #209's train has `031-11.13-tag-push.log`.
+  - WT2's branch runs only on RC 99 (`harness.sh:130`). main's restore 20261114T002354Z judged all eight WT2 rows. (VERIFIED, by code and by the bundles.)
+- The blind window is the rig's own check (`lib/traincheck.py:173-193`). The runbook checks the fix by provenance: the full sha `3810e420...` in 11.3a and 11.6. It has no behavioural tech-metrics check after the deploy, so it is not clock-blind and this is not a runbook finding.
+- The rig could discriminate at any hour (INFERRED). 3810e42 computes `datetime.now(UTC).astimezone(tz).date()` with the shop's timezone (`tenancy/models.py:49` `timezone`). Setting the stand-in shop to a zone whose date differs from UTC's at run time would do it, for example Pacific/Kiritimati when the UTC hour is 10 or later, Pacific/Pago_Pago before 11.
+
+D. PR #209 THROUGH THE RIG
+
+1. No. The reviewer's #209 paste tests typed 6.6, 6.7, 6.9, 8.2, 8.5a, 11.12, 11.13 and 11.13a by anchor (`rv209/blk.sh`, `mk.sh`). 6.12 and 6.13 were never typed. What was established there is that compose `up` does not take a paste and `exec` does.
+2. `--ref ... --repin` is not sound (M2: WT2 types `SQL` and reports false "refused" verdicts). Anchors alone would not help either: the rig selects 6.12 and 6.13 by number (`steps.sh:434-455`, `wrongturns.sh:67`) and never asks for `@name` there.
+   - Without changing #209, the rig needs two things:
+     - The content line selector from M2: the up line by `--force-recreate backend`, the report by `set_pin --report`, the set line by `set_pin --tech`.
+     - 6.12-do types block 1 and then, if block 1 lacks the up line, the selected up line. This is the a27b2a1 pattern for 11.13.
+   - The pins need a reviewed second accepted shape, or the line selector, so that 6.12's heredoc block (8 lines on #209, 9 on main) is still checked exactly on both texts.
+3. Nothing found that would stop or harm the restore.
+   - The commands are byte-identical to main's, apart from ` </dev/null` on `--report`. `set_pin --report` reads no stdin. On main the rig typed them DONE (restore 20261114T002354Z: 6.12 DONE, 6.13 DONE, WT2 judged x8).
+   - Not rehearsed:
+     - the paste boundaries themselves;
+     - the owner skipping the separate up block after "Then:". 6.12's Check reads only the database, so it would not notice. No server-side cache of the geofence was found, so the effect is likely nil (INFERRED).
+
+MUTATIONS TO RUN IN PART 2 (they need the lane's run to have ended, and its slot)
+1. #209 restore with `--repin`. Expect WT2 to type `SQL`, giving false "refused" rows.
+2. A scratch ref whose `6.9-signoff` block has one line appended. Expect WT1 to come out MOVED; today it gives a false "no".
+3. `11.12-web-ci` with an inserted first line (WT11b).
+4. A duplicate `6.7-drop-restore` anchor on a decoy block. Expect MOVED; today the decoy is typed.
+5. Two lines of R5.3 swapped (same count).
+6. A no-op hook with a target row that fails for another cause, during 01-05 UTC (m2 in the rig).
+7. A sha256sum shim that prints nothing in 6.6 (b). Expect FAILED; today DONE.
+8. `alembic_version` stamped to NEXTREV before R5.6. Expect only 12.4b to catch it.
+9. A pins file with one wrong count. Expect the self-test to fail with no row recorded.
+10. After M1's guard lands, and with the lane's agreement: a second restore while a host is up. Expect a refusal, and the first run untouched.
+
+COULD NOT JUDGE WITHOUT A RUN
+- M1 end to end. Trying it would end the lane's run.
+- m2, m3 and m6 inside the stack.
+- Whether `RB_MOVED` leaks into the next row in any real path. No instance found.
+- The in-progress lane run on `l4-base-53c6046`. Its clean clone was not located; its `run.txt` names 53c6046d with rig a27b2a1.
+- 5fafe85.
+
+WHAT THE REVIEWER RAN
+- Read-only git: `git log`, `diff`, `show`, `grep`, `merge-base` at a27b2a1, 1eed8af and 16e154e. Plan tags: `git show plan-v9.41|plan-v9.49:docs/program/SHIP-PLAN-2026-11.md`.
+- Read-only bundle reads under `C:/Users/User/.fixflow-cache/lab/l4/`: 20261114T001140Z-restore, 000836Z-train, 002354Z-restore, 002041Z-train, 003714Z-restore-mutate, 003405Z-train-mutate.
+- `docker run --rm --network none python:3.12-slim`, on copies in `C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/49260710-db37-438a-9bb3-1a4eebcd87dc/scratchpad/rv201/p1/`:
+  - `t1.sh`: `selftest-runbook.py` 11/11 ok on both main and #209 (exit 0); repin and anchor trials.
+  - `t2.sh`: guardwrap against `bash -i`, 10 cases.
+  - `t3.sh`: repin on main gives 0 differing lines.
+  - `t4.sh`: the duplicate anchor.
+  - `t5.sh`: the caught rule.
+- Not done: no rehearsal script started, no `fixflow-l4*` object touched, nothing written outside the scratch folder.
+
+COORDINATOR (2026-11-14, 06:16; ruling C57)
+- Sent to the lane at once, for the same head: M1, M2, m1 to m7, the three nits, and D2 (the rig types 6.12 and 6.13 and judges WT2 from PR #209's text through the line selector, never through `--repin`).
+- M1's guard, one refinement: a RUNNING host the run did not start is never removed (refuse, name it); an exited one left by a reboot may be removed. Removing a kept host needs an explicit flag.
+- A row that reads MOVED is not rehearsed. C51's condition for PR #209 is therefore not met yet: #209 stays unmerged at bcbf506 until the rig has typed 6.12 and 6.13 and judged WT2 from its text. #209's head does not change.
+- For the next runbook PR (the `<p2b2>` one): anchors for the halves of 6.12 and 6.13; 6.12's Check must notice a skipped `up` block, or the text says why none is needed.
+- Part 2 at the lane's final head: the delta from a27b2a1 (5fafe85 included), the reviewer's own runs and the ten mutations above, then the verdict.
