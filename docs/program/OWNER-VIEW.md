@@ -5,16 +5,16 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-15. Do not
 ## Right now
 
 - Production is still dead: both old Railway addresses answer Railway's own 404. Thirteen phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P7b-2, P8a, P8b, P9-0a, P12a, P12, L2, L4); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-15)
-- Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. The drain tooling is built and reviewed and waits only for those two. New on 2026-11-14: GitHub has stopped running the automatic checks (billing: the month's included minutes are used up or a payment failed), and on 2026-11-14 you allowed merging on this PC's own runs of the same checks meanwhile, so merges continue. Restoring GitHub's checks is still worth doing when you can. I used far more of those minutes than I should have: every note I saved to the plan started a full run. That is stopped. On 2026-11-14 you started the web defects phase (the drain needs it) and the ops hardening phase; and at 15:59 the next money phase (P8b). The web defects phase is merged (15:36). Five sessions were working at once after that, more than the three I normally allow on this PC; each one checks free memory before any heavy step. 37 of 56 phases wait behind it.
+- Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. Both halves of the drain tooling are built, reviewed and checked: the phone side waits only for those two values, and the audit script merges right after it, as the plan orders. GitHub still does not run the automatic checks (billing); since your decision of 2026-11-14, merges go on this PC's own runs of the same checks. This PC's disk is short (about 17 GB free on 15 Nov): the test runs had been leaving their throwaway databases behind, which I fixed and cleared, but the largest remaining items only you can free: an old session's scratch folder (51 GB), Docker's data file (about 40 GB once compacted) and the hibernation file (12 GB). 37 of 56 phases wait behind it.
 - Checks on main's code, run on this PC on 2026-11-14 at the merge of PR #219: backend 1573 tests (0 skipped), phone 512 tests, web 402 tests and build, all green. (measured 2026-11-15)
 
 ## Phases by state
 
 - **done** (15): P0a-prep, P1, P2a, P3a, P12a, P12, P6a, P7a, P7b-2, P8a, P8b, P9-0a, L1, L2, L4
-- **running now** (2): P2b-2, L3
+- **running now** (1): L3
 - **starting next** (0): 
 - **waiting on you** (2): P0a, P2b-1
-- **held (may be built, may not merge yet)** (16): P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
+- **held (may be built, may not merge yet)** (17): P2b-2, P5a, P5b-1, P5b-2, P6b-1, P6b-2, P7b-1, P9a-1, P9a-2, P9b, P10a, P11, P13a, P13b, P13c, P13d, P14-n
 - **not started** (21): P0b, P2a-2, P2c, P3a-2, P3b, P3c, P4a, P4b, P4c, P4r, P5-spike, P5c, P5d-1a, P5d-1b, P5d-2, P8b-2, P9-0b, P10b, P13e, P14-fleet, P14-log
 
 ## Phases
@@ -28,7 +28,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-15. Do not
 | P2a | Offline engine honesty (phone app) | M | A | done | - | - |
 | P2a-2 | Offline engine, second half (only if the size hatch is taken) | M | later | not started | P2a | - |
 | P2b-1 | Drain tooling and fleet profile (phone app) | M | B | waiting on you | P2a, P0b | - |
-| P2b-2 | Drain audit script (backend) | B-tools | B | running now | P2b-1 | - |
+| P2b-2 | Drain audit script (backend) | B-tools | B | held (may be built, may not merge yet) | P2b-1 | - |
 | P2c | Fleet app v1: build, signature, install proof | M | later | not started | P2b-1, P0b, P2a-2 | - |
 | P3a | Self-host repository changes | O | B | done | P1 | - |
 | P3a-2 | Self-host stub and heartbeat (only if P3a takes its size hatch) | O | later | not started | P3a | - |
@@ -112,6 +112,7 @@ Done when items 1-4, 6 (every roster phone), 10 and 12 have values; the rest hav
 
 | Id | Decision | Blocks | Default |
 | --- | --- | --- | --- |
+| N8 (new) | The runbook lets you tag the drain image only on a version that passed the checks twice: on this PC and on GitHub (step 11.8). GitHub still refuses to start its checks; its own message names failed payments or the spending limit (your GitHub account: Settings, Billing and plans). Will you restore them before the cut, or should this PC's runs of the same three checks stand in there too, as they do for merges? | cutting the drain image (runbook section 11), and with it the server setup that runs that image. Nothing tonight: it matters on the day of the cut | the rule stays as it is, and the runbook stops at step 11.8 until GitHub's checks run again. I recommend restoring them: the drain image works on the only copy of the data, so two independent runs are worth having there, and it also ends the stand-in for merges |
 | N7 (new) | Add one sentence to the project's instruction file for the AI agents (CLAUDE.md): the server must keep accepting a phone's drain upload of at least 8 MiB? | nothing: a test in the drain audit's change already fails if someone adds a smaller size limit | not added. The lane that built the test will not change that file because another session asked, which is the right caution; only you can say yes |
 | N6 (new) | GitHub has stopped running the automatic checks on every pull request (since 03:43 on 2026-11-14). The cause is in your GitHub account: Settings, Billing and plans. Either a payment failed, or the month's included Actions minutes are used up and the spending limit is zero. Restore them when you can. Until then: may I merge on the same checks run on this PC? | every merge from now on (the first one waiting is the money phase's follow-up, PR #210) | DECIDED 2026-11-14: Yes, local checks. |
 | N3 (new) | Merge the docs-only PRs #182 (the plan) and #185 (the skills) into main | nothing hard: lanes read the plan from the plan branch until then (section 7.1) | DECIDED 2026-11-13: Yes for #185 (the reviewer and skill definitions). |
