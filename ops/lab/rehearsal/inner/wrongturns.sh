@@ -22,7 +22,7 @@ wt() {
   [ -n "$WTSTATE" ] && { what="[start: $WTSTATE] $what"; WTSTATE=""; }
   # a wrong turn whose runbook text moved typed nothing: say so instead of judging it
   [ -n "$RB_MOVED" ] && { what="MOVED (runbook moved under: $RB_MOVED; nothing typed for it) $what"; RB_MOVED=""; }
-  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$what" 700)" "$(clean "$4" 300)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(clean "$2")" "$(clean "$what" 700)" "$(clean "$4" 700)" "$(clean "$5" 400)" >> "$WT"; echo "WT $1: $(clean "$4" 120)"
 }
 # The guard the binding review gives for D5/D6 (finding 2) and N1, quoted by WT5, WT6 and WT12
 MARKER_GUARD="YES. The binding review's form: 6.6 (b) writes a marker in BOTH branches ('tables=0', or 'key=... sha256=...' after the upload) together with 'dump=\$D'; 6.9 deletes it, and 6.1 too; 6.7's DROP line itself begins ': \"\${D:?...}\" && test -s <marker> && grep -qx \"dump=\$D\" <marker> &&', so one line carries the guard (the C34 \${SHA:?} pattern; a separate 'test || exit 1' line under 'sudo -i' would close the root shell instead). The scp fallback of 6.6 (b) needs a hand-written marker carrying the sha checked on the laptop. Owned by the runbook's lane"
@@ -107,7 +107,7 @@ poll16() {
 }
 if [ $MARKERS = yes ]; then
   six6 wt16 "$NIGHTLY" "$(grep " $NIGHTLY\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
-  o16a="$W66A"; o16b="$W66B${W66STOP:+ (STOP: $W66STOP)}; marker $W66MK"; G16="$G67"
+  o16a="$W66A"; o16b="$W66B${W66STOP:+ ($W66STOP)}; marker $W66MK"; G16="$G67"
 else
   W66STOP=""; W66MK=n/a
   rb_run wt16-66a "$(rb_fence 6.6 1)" "<dump file name>=$NIGHTLY"
@@ -416,7 +416,7 @@ if [ $MARKERS = yes ]; then
   fi
   if [ "$k1" != "$k0" ]; then v17=lost1; elif [ "$k2" != "$k0" ]; then v17=lost2; elif [ -n "$stop17c" ]; then v17=stopped; else v17=unclear; fi
   wt "WT17 (C65)" "6.6 (a) and (b) on a live host, 6.7 refused; the owner then clears each reason it named by hand (removes the sign-off, ffc stop backend; never 6.1) and types 6.7 again" \
-    "start: $st17. 6.6 (b): $o17b${stop17b:+ (STOP: $stop17b)}; marker $mk17. 6.7 on the live host: $o17a; after the hand clearing ($hand17): $o17c; the write made after 6.6 (b)'s copy: $k0 before, $k1 after the first 6.7, $k2 after the second" \
+    "start: $st17. 6.6 (b): $o17b${stop17b:+ ($stop17b)}; marker $mk17. 6.7 on the live host: $o17a; after the hand clearing ($hand17): $o17c; the write made after 6.6 (b)'s copy: $k0 before, $k1 after the first 6.7, $k2 after the second" \
     "$(case $v17 in
         lost1) echo "NOTHING: the first 6.7 dropped the live database (this text has no live test); the write made after 6.6 (b)'s copy is gone" ;;
         lost2) echo "NOTHING after the hand clearing: 6.7 refused the live host (${stop17a}), but 6.6 (b) had written its marker on it, so with the sign-off removed and the backend stopped by hand the DROP ran; the write made after 6.6 (b)'s copy is in no copy" ;;
@@ -492,6 +492,43 @@ if [ $MARKERS = yes ]; then
   }
   odd_backend WT18 paused
   odd_backend WT19 restarting
+
+  # ---- WT20 (the 211-eadafda re-read's sequence): a full restore, then a second attempt that types
+  # 6.1 and 6.6 (a) but, of 6.6 (b), only its marker line. P, L, DX and U are still in the shell from
+  # the first attempt (every typed line runs in this one shell, as in the owner's), so the marker
+  # line would vouch for the first attempt's copy, taken before the writes made since. 11cf740's
+  # marker line requires `proven` (written afresh by this attempt's 6.6 (a)) to name the copy.
+  wt_state WT20 absent stopped
+  st20="$WTSTATE"; WTSTATE=""
+  rm -f $RD/ready-to-drop $RD/proven
+  six6 wt20 "$NIGHTLY" "$(sumof "$NIGHTLY")"
+  P20="${P:-}"; mk20a="$W66MK"
+  rb_run wt20-67-first "$G67"
+  o20a="$(out_of | tail -n 1 | cut -c1-120)"
+  rb_run wt20-69 "$(rb_fence 6.9 @signoff/1)" "<a|b|c>=a" "<file or none>=$NIGHTLY" "<sum or none>=$(sumof "$NIGHTLY")" "<owner>=l4-rehearsal"
+  wait_backend_healthy 150 >/dev/null 2>&1
+  addev 'WT20 write after the first restore'
+  x0="$(ev 'WT20 write after the first restore')"
+  rb_run wt20-61 "$(rb_fence 6.1 @close/1)"
+  rb_run wt20-66a "$(rb_fence 6.6 @a-list)" "<dump file name>=$NIGHTLY" "<the recorded sha256 of that file>=$(sumof "$NIGHTLY")"
+  rb_run wt20-66a-prove "$(rb_fence 6.6 @a-prove)"
+  pr20="$(out_of | tail -n 1 | cut -c1-120)"
+  carried="P=$( [ -n "${P:-}" ] && [ "$P" = "$P20" ] && echo "the first attempt's ($(basename "$P"))" || echo "NOT carried")"
+  rb_run wt20-66b-marker "$(rb_line 6.6 @b-save 'ready-to-drop')"
+  o20m="$(out_of | tail -n 1 | cut -c1-200)"
+  mk20="$(grep -qsx "dump=$NIGHTLY" $RD/ready-to-drop && echo written || echo 'not written')"
+  rb_run wt20-67-second "$G67"
+  o20b="$(out_of | tail -n 2 | tr '\n' ' ' | cut -c1-200)"; stop20="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
+  x1="$(ev 'WT20 write after the first restore')"
+  wt "WT20 (211 re-read)" "a full restore (6.6, 6.7, 6.9), a write, then a second attempt: 6.1, 6.6 (a), and of 6.6 (b) only its marker line, with P, L, DX and U still in the shell from the first attempt; then 6.7" \
+    "start: $st20; first attempt: marker $mk20a, 6.7: $o20a; second attempt: 6.6 (a): $pr20; $carried; the marker line: $o20m (marker $mk20); 6.7: $o20b; the write made after the first restore: $x0 before, ${x1:-?} after" \
+    "$( if [ "$x1" = "$x0" ] && [ "$mk20" = "not written" ]; then echo "6.6 (b)'s marker line (a script): $o20m; then 6.7's DROP line refused (no marker for this attempt)${stop20:+: $stop20}; the write is still there"
+        elif [ "$x1" = "$x0" ]; then echo "UNCLEAR: the write is still there but the marker was written; read the step logs (wt20-66b-marker, wt20-67-second)"
+        else echo "NOTHING: the marker line vouched for the first attempt's copy (taken before the write), so the DROP ran; the write made after the first restore is in no copy"; fi)" \
+    "$( if [ "$x1" = "$x0" ] && [ "$mk20" = "not written" ]; then echo "no: scripted (the marker line requires proven, written afresh by this attempt's 6.6 (a), to name the copy)"
+        elif [ "$x1" = "$x0" ]; then echo "read by the owner: the step logs decide"
+        else echo "YES (the 211-eadafda re-read): the marker line must vouch only for a copy taken in this attempt, e.g. proven names it"; fi)"
+  rm -f $RD/ready-to-drop $RD/proven
 
   # WT14: a dump damaged BEFORE its sum was recorded (cut at 99 %, its own sum as SUM) passes 6.6 (a)
   # as the text warns; 6.7 drops and the load stops half-way; 6.7 is run again; then the way back.
