@@ -162,7 +162,7 @@ l4_origin() { # <checkout> <ref> [tag:<name> | <branch name>]... extra refs of t
   local got; got="$(l4_dx git -C /srv/origin.git rev-parse main)"
   [ "$got" = "$L4_REF_SHA" ] || l4_die "the bundle's main is $got, not $L4_REF_SHA (the ref moved while it was bundled); run again"
   # every other ref the bundle carried, as the stand-in origin holds it (run.txt records them)
-  L4_EXTRA_REFS="$(l4_dx git -C /srv/origin.git for-each-ref --format='%(refname) %(objectname)' | grep -v ' refs/heads/main$' | grep -v '^refs/heads/main ' | tr '\n' ';')"
+  L4_EXTRA_REFS="$(l4_dx git -C /srv/origin.git for-each-ref --format='%(refname) %(objectname)%(if)%(*objectname)%(then) (commit %(*objectname))%(end)' | grep -v ' refs/heads/main$' | grep -v '^refs/heads/main ' | tr '\n' ';')"
 }
 
 l4_copy_kit() { # <rehearsal dir>
