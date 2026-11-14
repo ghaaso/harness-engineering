@@ -1,0 +1,56 @@
+VERDICT: PASS
+PR #211 at 11cf740c92d9b0aa571a955355f978434a148ee2
+Second delta re-read by the same reviewer (earlier passes: `211-153edd0.txt`, `211-eadafda.txt`); dispatched by the coordinator on 2026-11-14 at 13:31, returned at 13:38. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+MINOR-A and NIT-A are both closed. The name test refuses the reproduced sequence and held against every attempt to beat it. The one thing found is a nit, below. The delta from `eadafda` is one commit, `docs/RUNBOOK-SELFHOST.md` only (+26 -11), and the head was unchanged at the end.
+
+1. MINOR-A AND NIT-A
+
+- MINOR-A: closed, another way than the reviewer's fix.
+  - The dump line now appends `copy=<P>` to `proven` (l.1484).
+  - The b-save marker line (l.1488) and the b-scp marker line (l.1516) refuse unless `grep -qsx "copy=$P"` matches it.
+  - The prose is at l.1473-1478, and the Check now covers both ways of pasting.
+  - Comparing a name instead of a file time works: 6.6 (a) writes `proven` from scratch in each attempt, and 6.1 and 6.9 delete it.
+- NIT-A: closed in the section 8 intro (l.1936-1939) and in 8.5 (about l.2043): "...`audit exit=0`, or the owner has ruled on its exit `4`".
+
+2. TRIALS
+
+Same method as before: blocks cut by anchor, pasted into `bash --norc -i`, real `ffc` and compose, Postgres 17. The `r2put` stub now refuses a key that already exists, as the real script does (`fixflow-r2-put.sh:44-45`).
+
+| Trial | What happened |
+|---|---|
+| The reproduced sequence: 6.1, 6.6 in full (copy 1), 6.9 with 12 writes, 6.1, 6.6 (a), then only the marker line, then 6.7 | `STOP: no marker written (...pre-restore-...083219Z.pgdump was not taken in this attempt (proven names no such copy)...)`, then `STOP: nothing dropped (no 6.6 marker names ...)`. All 12 writes kept |
+| The block pasted again without its first line, database quiet (the lane's case: old `P`) | The dump line takes a new copy under the old name (`dump exit=0`), and `proven` names it. The upload prints `... already exists; archive objects are never overwritten`, and the marker line refuses on the receipt. The scp line then gives `marker: ... (copy on the laptop)`, followed by DROP and `restore exit=0`. That copy holds all 12 writes: it really is this attempt's copy, taken while nothing wrote |
+| The same paste on a live host | `STOP: no copy taken (... signed off ...)`, `dump exit=refused`. The old file is uploaded only because its earlier upload never landed, as the Check says. The marker line refuses (signed off) |
+| `pg_dump` fails (postgres paused) | `copy=` IS still appended (for a 0-byte file), with `dump exit=1`. Both marker lines refuse with `pg_dump exit 1`. `DX` can only become 0 by running the dump line again, which takes a new dump |
+| The block pasted whole twice in one attempt | Two `copy=` lines and two markers. Setting `P` back to the first copy also passes. That is acceptable: both copies were taken in this attempt from a database that was not live |
+| A `P` with characters that make `grep` match too much or too little | Not reachable. `P` comes from the fixed `P=` line, and the only regex character in it is `.`, which cannot match any other line in `proven`. `dump=$D` already used the same form |
+| scp after a failed upload (R2 down) | `could not tell ... nothing uploaded`, the upload line refuses, then `marker: ... (copy on the laptop)`. A wrong laptop sum gives `STOP: ... (the laptop's sha256 is not L)` |
+| Route 2b (6.1 skipped on a live host) | Refused (signed off). After both reasons are cleared by hand, 6.7 refuses for lack of a marker. Step 4 (b-save again) then gives a marker, DROP and `restore exit=0` |
+| The way back (`D` = the pre-restore copy) | `proven`, a new copy, the marker, DROP and `restore exit=0`: all 16 writes back |
+| First restore on an empty volume, entered at 6.6 | `proven` holds only `dump=`/`sha256=`. b-empty gives `marker: ... (nothing to save)`, then DROP and `restore exit=0`. It still passes because b-empty checks only `dump=$D` |
+
+3. WHO READS `proven`
+
+The extra `copy=` line breaks no reader:
+- Runbook: b-empty, b-save and b-scp read it with `grep -qsx "dump=$D"`, which matches one whole line, so an extra line is harmless. 6.7 reads only `ready-to-drop`. 6.1 (l.1318) and 6.9 (l.1598) only delete it.
+- Rig: `lib/steps.sh:254` checks `grep -qsx "dump=$DUMPF"` right after 6.6 (a), before any `copy=` exists. `wrongturns.sh` only deletes it or greps output for `proven:`. No reader expects the file to hold exactly two lines.
+
+4. ANYTHING THE ROUND BROKE
+
+- No Check or Expected disagrees with its block. Every sentence of the rewritten Check (l.1493-1506) was confirmed by trial, including the old-name copy and the case where the earlier upload never landed.
+- In the old-name case, the archive object and the laptop file share a key name but differ in content. The marker records the laptop's sha256, so the two can be told apart. The text says so.
+
+NIT (l.1484), wrong reason printed. The brace group now returns the status of the `printf ... >> proven`. If that append fails (an unwritable restore folder, a full disk) after `pg_dump` succeeded, the line prints `STOP: no copy taken (the backend is up: ...)`. That reason is false, and a copy does exist. It still fails safe, because the marker line then refuses with "not taken in this attempt".
+Smallest fix: inside the group, set the reason before the append: `DX=$?; WHY="could not name the copy in proven"; printf 'copy=%s\n' "$P" >> ...`
+
+The rig rehearsal of this head is still outstanding and was not part of this pass.
+
+WHAT THE REVIEWER RAN
+- `git diff eadafda..11cf740`, `git grep` of `proven` in `ops/` and the runbook at this head, and `gh pr view 211` (head unchanged).
+- The trials above, through the real `ffc` against `rv211-postgres-1`, `rv211-backend-1` and `rv211-restore-gate-1`, with a `pg_restore` into a scratch database to count the writes in a copy. Everything was removed with `down -v --remove-orphans`; a final listing shows no `rv211*` container.
+- Peak use was one 256 MB Postgres and one 64 MB backend; free RAM was 4.0 GB at the start.
+- No commits, pushes or PR comments.
+- Scratch: the coordinator's scratchpad, `rv211/` (`diff3.txt`, `v1.in`, `v3.in`, `v6.in`, `bin/r2put`).
+
+COORDINATOR (2026-11-14, 13:37; ruling C69). PASS at 11cf740c92d9b0aa571a955355f978434a148ee2: the head stays where it is. The nit rides the runbook PR that fills `<p2b2>`. The merge still needs what ruling C64 set: the rig's follow-up on main first, then the rig's rehearsal of this head by ref with the reviewer's block, then this PC's three checks.
