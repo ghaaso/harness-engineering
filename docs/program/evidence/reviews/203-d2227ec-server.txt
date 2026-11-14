@@ -1,0 +1,111 @@
+VERDICT: PASS
+PR #203 at d2227ec56990df3a2778e3300a143e1451576961
+Server-side delta re-read (`6b1259e..d2227ec`: rulings C62, C63, C68) with both full gates, by the same reviewer (earlier records: `203-bceeb47-server-part1.txt`, `203-6b1259e-server.txt`); dispatched by the coordinator on 2026-11-14 at 15:10, returned at 15:52. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+`gh pr view 203` gave `d2227ec... OPEN` at the start and at the end, so the head did not move. The reviewer read the delta `6b1259e..d2227ec`, the marker `203-d2227ec` and plan-v9.63 (C62, C63, C68, points 8, 10, 12). The marker `203-3a8afb3` was no longer in `ready/`, so the break table was taken from the PR body. Nothing needs a fix before merge; one docstring nit is in item 1.
+
+1. THE REVIEWER'S FINDINGS AT 6b1259e
+
+| Finding | Status | Where at head | Test that fails without the fix |
+|---|---|---|---|
+| MAJOR-P (one pin answers two rows through `prior_state`) | Closed | `drain_audit.py:2095`, `elif job.has_pin and not any(e.kind == "pin" and _since_receipt(e, row) for e in events):` | B87 puts back the base line `elif job.has_pin:`. With it, both `test_one_pin_written_since_the_manifests_answers_one_installs_row` (rules :2066) and `test_one_pin_answers_one_of_two_installs_rows` (integration :1908) fail. |
+| NIT: negotiate with the same amount reads `prior_state` | Kept as ruled (C63) | `:2080-2090`; the note now names the bill event and the row it answered (`_holder_note` `:1751-1765`) | B88 (note removed) fails `test_a_negotiate_whose_amount_the_job_holds_stays_prior_state_and_names_the_event` (:2080). |
+| NIT: fuel count ignores jobs gone since the baseline | Closed | `:2871-2878`; verdict wording at `:2921-2925` | B89 fails `test_the_verdict_states_discarded_payments_the_restore_gap_and_changed_jobs` (:1687). |
+| Asked: a Q4 test | Done | `test_a_payment_that_landed_and_carries_a_discard_trace_is_never_discarded_money` (:1718) | |
+| Asked: an I3 test | Done | `test_an_after_report_and_a_trace_landing_mid_run_are_not_seen` (integration :1940) | |
+
+- New NIT (docstring drift): `drain_audit.py:223` still reads "``customer_pin``: a ``pin`` event since the receipt; or a pin already set (``prior_state``; ...". The smallest fix is to add "set before the manifest, with no pin written since (ruling C63)".
+
+2. C63 AND C68 AGAINST THE ROWS (REFUTED BY DEFAULT)
+
+- What "received" is read from. Both clocks are Postgres `now()`, the start time of the writing transaction, so they are the same clock.
+  - Documents: `app_event.server_time`, set by `server_default=text("now()")` (`app/features/telemetry/models.py:63-65`; the ingest at `service.py:47-59` sets no time).
+  - Writes: `job_event.created_at`, also `server_default=sa_text("now()")` (`app/features/jobs/models.py:275-277`).
+- Same instant falls on the safe side (checked in code and by probe P2):
+  - `_later_write` skips `e.created_at <= row.receipt` (`:2607`).
+  - The C68 path needs `e.created_at > shown`, strictly later (`:2611`).
+  - `_last_seen` needs `a.receipt > row.receipt` (`:1220`).
+  - The C63 pin check uses `>=` (`:1748`), so a pin at the manifest's own instant counts as a write, not as prior state.
+  - Probe results: a write at the report's instant gives `missing`; the owner's write at the manifest's instant with another amount gives `missing`; a pin at the manifest's instant gives `missing`.
+- The direction of the risk.
+  - A write whose transaction started after the report was received started after the phone built that report, so it came after the phone listed the version.
+  - The opposite race lands on the safe side. If the version's own send was in flight while the phone built the report, its transaction can start before the report was received. The write is then rejected, the row reads `missing`, exit 3, and the note says "received before after-report ... showed that version still on the phone" (probe P4 "c68-early").
+  - That is a look for the owner, never a wrong `superseded`. Whether the phone can build its report during an in-flight send is a phone-side question; not checked here (INFERRED).
+- One write per row (`s.evidence_used`):
+  - It is cleared once in `match_rows` (`:1817`), so state matches take evidence before point 15 or C68 can.
+  - Rows are then judged in `_judge_order` (`:2437`: receipt, manifest, install, queue, key).
+  - Events are sorted by `(created_at, id)` (`:2603`), and `_last_seen` sorts reports by `(receipt, event_id)` (`:1219`).
+  - Probe P1 ran three installs over 6 row orders x 24 report orders x 2 event orders, once with distinct receipts and once with equal ones. Every run gave the same outcome set.
+  - The lane's `test_c68_one_write_by_the_versions_owner_answers_one_row` covers the case of scarce evidence.
+- No crossing to another job, kind or slot.
+  - Only events of the row's own job are read (`:2598-2603`).
+  - A version has the same key as its row, and the key already names the kind, the job and, for a transition, the action (`transition:${action}:${id}`).
+  - The `version.owner` path matches on the version's own kind through `_in_slot`, and an untagged action is refused (`:2536`).
+  - Probe P3 results: a bill on another job, a `complete`, `pin` or untagged bill event, and a `closed` event against a `wait` version all read `missing`. Only `on_hold` read `superseded`.
+- Voided payment, job closed since, reopened state.
+  - `payment` and `void` are not in `SLOT_KINDS` (`:398`), so they never reach point 15 or C68.
+  - A job closed since the manifest leaves the row `missing` and judged as any other row; closed before the manifest stays `residue`.
+  - Reopen has its own tag, so it never matches another action.
+- Read-only and bounded. The delta adds no SQL. The reads are still the existing `ANY(:ids)` / `t_open`-bounded queries inside the one read-only snapshot.
+- Tried and could not break: a wrong `superseded` through C68. The after-report lists every queued record of the install, whatever its owner (docstring `:192-195`), and the outbox never deletes. So a version gone from the newest report either landed or was discarded.
+- Backlog (not a fix):
+  - When the row's own owner's write wins under point 15 before the C68 path is reached (`:2609`), the shown version's fate is not examined.
+  - If that version was discarded by its other owner, the discard appears only in `unmatched_discards`. It is a negotiate or completion, not money, and C68 allows this.
+
+3. EXIT CODES AND VERDICT LINES (probe P4, word for word)
+
+| Case | Outcome | Exit | Verdict line |
+|---|---|---|---|
+| C68 superseded | `superseded` | 0 | `ALL ACCOUNTED FOR` |
+| C68, write received before the report | `missing` | 3 | `MISMATCH` |
+| C62, version pending | `in_progress` | 4 | `CANNOT JUDGE YET` (note: "sign in as t2") |
+| C62, version parked with app reason | `still_parked` | 0 | `ACCOUNTED FOR, 1 row(s) left for manual entry: 0 payment(s) of 0 minor units, 1 other row(s)` |
+| C62, gave up after 5xx | `retry_pending` | 4 | `CANNOT JUDGE YET` |
+| Newest report unreadable | `no_after_report` | 4 | `CANNOT JUDGE YET` (the note names the version last seen) |
+
+- The lane's tests pin the payment discard in no manifest, the clip wording, and the fuel count including gone jobs. None of these changes the exit code (`exit_code` `:2825-2830`).
+- No free text in the output. Notes carry the version's `amount_minor`, `method`, `action` and `location_kind`, technician ids, event ids and times (`_version_note` `:1236-1252`; `_event_note` `:1743`). Discard entries carry ids, classes and technicians (`:1006-1020`). No customer or note text appears.
+
+4. CHANGED EXPECTATIONS, REMOVED ASSERTIONS, SKIPS
+
+- The lane's flagged test (integration :1779) is renamed `..._is_named_through_...`. Net from 6b1259e it is still `SUPERSEDED` / `EXIT_OK`: C62 had made it `missing`, exit 3, and C68 brought it back. It gains assertions on the note text: "replaced by the later write of t16...", the bill event, and "carries its judgement".
+- Rules tests, outcome changes:
+  - `test_a_newer_version_in_the_after_report_is_judged...`: SUPERSEDED -> IN_PROGRESS (C62).
+  - `test_a_later_document_of_the_install_names_the_version...`: SUPERSEDED -> MISSING (C62). Its "early report" input changed from `T0-1min` to `OPEN`; the equal-receipt boundary is tested in neither version.
+  - `test_the_document_path_follows_the_receipt...`: `_judge(a,[later])` SUPERSEDED -> IN_PROGRESS (C62), plus a new manifest-row case.
+- Rules tests, other changes:
+  - `test_a_unique_id_kind_is_never_superseded...`: `_superseded` signature change, plus a new `_last_seen` assertion.
+  - Verdict wording: "changed since" -> "changed or gone since" (C63).
+- Fixture: `upload_props` gains the install-id fallback, with new assertions in `test_upload_props_shape`.
+- Nine assertions were removed (diff lines 177-249), and each has a replacement on the new outcome or on the carried note.
+- No skips or xfails were added.
+
+5. BREAKS, each applied alone to a scratch worktree at d2227ec, with the named tests run by node id. Per-test results come from each run's junit.
+
+| Break | Gate log folder | Result |
+|---|---|---|
+| B92 `if mine:` | `rv203s/backend-20261114-152622` | 3/3 failed, including the integration test |
+| B93 `if mine or theirs:` | `...-152433` | 1/1 failed |
+| B94, the reviewer's variant (`mine` widened to any tech of the install) | `...-152721` | the first c68 test failed, `test_c68_one_write...` passed. The edit differs from the lane's; it is still caught. |
+| B29 (any actor) | `...-152818` | 4/4 failed |
+| B32 (`_in_slot` negotiate -> `True`) | `...-152920` | `[completion]`, `[negotiate]` and `[negotiate-bill-None-None]` failed |
+| B58 (guard in `_in_slot` and early return both removed) | `...-153240` | failed. Removing only one guard is not caught, because the other still holds (`:2536`, `:2601`). |
+| B75 (C62 path reverted) | `...-153613` | 6/6 failed |
+| B76 | `...-153711` | failed |
+| B80 | `...-153809` | failed |
+| B87, B88, B89 | `...-154524`, `...-154629`, `...-154748` | all failed |
+
+6. FULL GATES, run one after the other, both on clean trees with no extra arguments.
+
+- Machine checks: before the head gate 7.6 GB free / 39.3 GB commit. Before the drain gate 42.8 GB commit, so the reviewer waited; at 15:16:45 it read 7.0 / 41.0 and started. Each break run checked first: at least 7.0 GB free, at most 41.3 GB commit.
+- Head gate: d2227ec, log `C:/Users/User/.fixflow-cache/gate-logs/rv203/backend-20261114-150911`. `GATE[1..8] EXIT=0`; `SKIPS total=1648 skipped=0 integration_skipped=0`; `SUMMARY FAIL=0` (1648 passed).
+- Drain gate: e9a5a32, schema 0046, the drain files identical to d2227ec. Log `C:/Users/User/.fixflow-cache/gate-logs/rv203-drain/backend-20261114-151659`. `GATE[1..8] EXIT=0`; `SKIPS total=1164 skipped=0 integration_skipped=0`; `SUMMARY FAIL=0` (1164 passed).
+
+CLEAN-UP
+- The scratch worktree is removed. The only files left in the coordinator's scratchpad `pr203/` are logs (`gate3-head.out`, `gate3-drain.out`, `breaks3.out`, `breaks3b.out`, `probe3-gate8.log`, and the earlier `.out` files).
+- Both review trees are clean at their SHAs.
+- No `fixflow-rv203*` container and no rv203 lock are left.
+- No commits, pushes or PR comments.
+- While the reviewer worked, the P2b-2 lane was running breaks "B95 B96" on `p2b2-brk`, so the head may move after this.
+
+COORDINATOR (2026-11-14, 15:53). PASS on the server side at d2227ec; the phone side at the same head is PASS-WITH-FIXES (`203-d2227ec-phone.txt`, ruling C72), so this head does not merge: the lane makes one more commit (C72, the docstring nit at `:223`, and a test for the backlog case above, which C72 now answers: the version owner's discard entry is tried as a discard before any later write). Forwarded to the lane at 15:52. Both reviewers then re-read `d2227ec..<head>` only, and this reviewer reruns both gates.

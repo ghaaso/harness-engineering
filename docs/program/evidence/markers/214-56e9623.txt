@@ -1,0 +1,13 @@
+[P12] follow-up - PR #214, head 56e9623d2f6ad6dfcc01e5f1f2918aff38a4bc78 (branch claude/p12-followup, cut from main e4426c7). Plan @ plan-v9.65.
+Gate: ff-gates.sh web p12f at 56e9623, 7/7 green, 313 tests: C:/Users/User/.fixflow-cache/gate-logs/p12f/web-20261114-154758/summary.txt
+19 files, all under src/; no package file, no src/ops or src/features/ops, no backend file, no migration. CI did not run (C52).
+What changed:
+ 1 src/features/jobs/pages/JobsBoard.jsx  create failure: 4xx shows the server's reason, no answer/5xx "please retry", 401 silent, form stays open.
+ 2 src/shared/lib/job.js, JobDetail.jsx  DEFAULT_RATE 1200 removed; labour/total null when time spent and no rate; summary shows "Labour rate unknown".
+ 3 src/app/providers/AuthContext.jsx, features/auth/data/authApi.js  /auth/me bounded by SESSION_CHECK_TIMEOUT_MS (15 s) -> retry screen, token kept.
+ 4 src/features/settings/components/LabourRateCard.jsx (new), settings/pages/Settings.jsx  demo 1200 field replaced by a live card on GET/PUT /api/shop/settings (paisa; client_id per value kept across retry; server refusal text).
+ 5a src/features/jobs/data/jobsApi.js  only a known rate cached; saveLabourRatePaisa invalidates the cache.
+ 5b src/shared/lib/date.js isoDateInZone, jobsApi fetchShopTimezone (zone from the tech-metrics report, cached 1 h), Dashboard.jsx  revenue week is the shop's day.
+Tests failing on e4426c7 (16): JobsBoard.create.test.jsx (3); job.test.js "unknown, not guessed"; JobDetail.labourRate.test.jsx "Labour rate unknown"; AuthContext.session.test.jsx bounded check; LabourRateCard.test.jsx (5, missing module on base); Settings.labourRate.test.jsx; jobsApi.test.js (unset/zero rate re-asked, save invalidates, fetchShopTimezone); isoDateInZone.test.js (3); Dashboard.revenue Kiritimati Monday window. Controls: zero-minutes, given/snapshotted rate, set rate cached.
+Changed expectation (1): Dashboard.revenue.test.jsx "asks for Monday of this week through today" -> the shop's day.
+Out (in the PR body with reasons): Recent Activity (backend feed), poll cost (coordinator measurement), drain rule 1 reads any event (drain-only), other TODAY uses stay browser-local (labels/aging, not a money window).
