@@ -31,3 +31,16 @@ The reviewer's own runs for the verdict (`docs/program/evidence/reviews/201-8c23
 
 `L4-c51-209-vs-53c6046.md` is the lane's row-by-row comparison of PR #209 with its base (ruling C51).
 The FAILED rows on `main` before PR #209 are the runbook defects that PR #209 fixed.
+
+The reviewer's runs for PR #213 (the rig's follow-up, at `7b0580a`; verdict `docs/program/evidence/reviews/213-7b0580a.txt`), all with the rig as that PR has it:
+
+| Run | Ref | Result |
+| --- | --- | --- |
+| `20261114T095121Z-restore` | main `6f430ce` | DONE 51, AMBIGUOUS 2 (6.4 twice), not rehearsed 9 |
+| `20261114T100259Z-train` | main `6f430ce` | DONE 75, AMBIGUOUS 1 (12.6); the timezone check ran under Pacific/Kiritimati |
+| `20261114T100559Z-restore` | PR #211 `11cf740` | DONE 53, no FAILED and no MOVED: **the run that met the rehearsal condition for PR #211** (ruling C64) |
+| `20261114T101831Z-train` | PR #211 `11cf740` | DONE 75, AMBIGUOUS 1 (12.6) |
+| `20261114T102239Z-restore-mutate` | main `6f430ce` | 13 of 13 mutations caught |
+| `20261114T103152Z-train-mutate` | main `6f430ce` | 5 of 5 mutations caught |
+
+On PR #211's text every deliberate mistake around the restore (WT13 (b), WT16 to WT20) stopped with the writes kept; on `main` at `6f430ce` the delete ran in each.
