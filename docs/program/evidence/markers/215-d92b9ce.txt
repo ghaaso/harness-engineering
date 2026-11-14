@@ -1,0 +1,76 @@
+PR 215 (P7b-2) is ready for re-review at d92b9ce. This is the C93 + C94 round, in one push. The branch was rebased onto main f425ede (#216, P8b) first. The PR body's first line is "Plan @ plan-v9.82"; C93 is journal item 17 and C94 is item 18. No migration (the head stays main's 0048). Not merged. The PR was already ready, so `gh pr ready` was not run again.
+
+GATES (head d92b9ce, clean tree, no extra arguments, one at a time after a memory check):
+- web:     C:/Users/User/.fixflow-cache/gate-logs/p7b2/web-20261114-212703      SUMMARY FAIL=0, vitest 46 files, 402 tests (main's P8b web tests included)
+- backend: C:/Users/User/.fixflow-cache/gate-logs/p7b2/backend-20261114-212803  SUMMARY FAIL=0, 1568 tests, 0 skipped, integration ran
+
+REBASE (main 1f25479 -> f425ede):
+- The one conflict was backend/tests/test_scheduler_timezone.py: both PRs add a scheduler job. In all four hunks (CRON_JOBS, the expected local times, the fixed-moment next runs, the deep-health detail) the resolution keeps both rows, ledger-chain-verify then media-stale-pending-sweep.
+- The rebase touched nothing else of this PR. For each of the 32 files the PR changes, the added and removed lines against f425ede are identical to those against 1f25479; only context moved.
+- CLAUDE.md, config.py and main.py merged by themselves. CLAUDE.md keeps P8b's head (0048, 43 tables), and its scheduler table holds both ledger-chain-verify and media-stale-pending-sweep.
+- Rebased commit ids: db82e02->b320927, 58c84e6->357bf65, ba3e0a3->62eeb46 (web), 63e6914->c2ae28b, 762f2af->de22025, 022cb3e->1b9dd29, 6669db7->5fc532c, 40bfcfa->654d87a, 62cdf95->5fa8eaa, cc8637a->c0cea08, b57f811->e125847. Then 521e2ed (C93; built as 918a138 before the rebase, never pushed) and d92b9ce (C94).
+
+FILES CHANGED SINCE THE LAST MARKER (b57f811 -> d92b9ce, beyond the rebase):
+CLAUDE.md
+backend/app/core/config.py (its P7b-2 block's comments only)
+backend/app/features/jobs/{repository,service}.py (one new method each: share_lock_status_by_token, lock_status_by_token)
+backend/app/features/media/{router,service}.py
+backend/app/features/media/tests/{test_router,test_service}.py, backend/app/features/media/tests/test_sweep.py (new)
+backend/tests/test_media_hardening_integration.py
+
+WHAT CHANGED, BY RULING AND REGISTER ID:
+- C93 D1 (security), O05-12 / T44-media-1/2: the storage extension is never caller text. request_upload goes through _storage_ext: the suffix is kept only when it is ASCII and, lowercased, fully matches [a-z0-9]{1,10}; otherwise the type's default is used. The deletion log prints job_id and path with %r. The F3 "no free text" claim is corrected (journal items 16 and 17, the docstring).
+- No phone's extension changes. Every phone path either builds a fixed name ending .jpg, .mp4 or .m4a, or passes asset.fileName from launchCameraAsync. expo-image-picker 16.0.6 (the lock's version) names camera output .jpeg, .png or .mp4 (ImagePickerOptions.kt:83-84, ImagePickerUtils.kt:61-76, MediaHandler.kt:51 and :92). The same names go back to the first camera upload commits (952cb4d, 71aa4ad, 2881b7e), so the deployed APKs send them too (INFERRED for any build whose commit is not recorded).
+- C93 N1 (phone): in config.py and CLAUDE.md, both switches wait until EVERY phone in the fleet runs a release that does the work. The text names the two live paths that do not queue a 429: the closing clip (closeJobWithVideo.ts:95-100) and the completion's voice note (CompleteJobScreen.tsx:193-196). It also says errorClass has no class for 429: it counts as "server".
+- C93: CLAUDE.md's media bullet opens "A declared size is bounded before the reservation exists", and says an undeclared size is bounded only at finalize.
+- C94 D1 (whole-PR), T44-media-1: a failed purge is not logged as a deletion. The row stays pending (row_kept=True, on an open job too), so the sweep can reach the object. One "media purge failed:" line carries ids, the phase and the error class only. The answer stays 413. Accepted side effect, journaled: a failed purge of a closing clip on an open job keeps a pending closing row that the close gate counts.
+- C94 D3 (whole-PR), T44-media-1: after the rollback the router reads the job's status under its row lock (jobs.lock_status_by_token, SELECT ... FOR SHARE) and keeps the row when the job is closed now. FOR SHARE conflicts with the close's FOR NO KEY UPDATE, so it waits behind an in-flight close and returns the committed status; a later close waits for our commit. It writes nothing.
+  - Not covered, journaled and listed as a follow-up: a close that has counted but not yet reached its UPDATE. That is the close gate's own count-then-set (count_phase, then try_transition), shared by every media delete path. The fix belongs in the jobs slice: take the lock before counting.
+- C94 X1, X2: delete_pending deletes only a row still pending (real Postgres); the scheduled sweep commits after each page (test_sweep.py).
+- C94 texts: CLAUDE.md says ops.env.example carries no Railway or Sentry token, and its media bullet states both C94 rules. The finalize's row-deletion line prints job_id with %r.
+- PR body follow-ups added: the four from C93 (sweep starvation a caller can cause; job_closed read before the rollback, now fixed by D3; Latin-1 bytes in the ops lock line; the raw job token in the row, for P13b), plus:
+  - audio's default extension is jpg;
+  - the close gate's count-then-set;
+  - the closing-row phantom after a failed purge;
+  - "frozen" lasts only until the sweep for non-closing phases.
+
+TESTS AND THEIR RESULT ON b57f811 (run directly over b57f811's production code; for C94 its rebased twin e125847):
+- C93 (gate-logs/p7b2/backend-20261114-205705, 9 red):
+  - test_the_storage_extension_is_never_caller_text: 7 cases red (the injected line, a space, a tab, é, the Kelvin sign, eleven characters, %0a). 6 cases green, as they should be: .jpg, .JPG, .jpeg, .m4a, .mp4, ten characters. no-ext and trailing. are green as well.
+  - test_a_deletion_log_line_never_carries_a_raw_newline: red.
+  - test_the_sweep_decides_each_row_by_what_r2_lists: red (its expectation is now %r).
+- C94 (backend-20261114-211516, 16 red):
+  - test_a_failed_purge_is_not_logged_as_a_deletion: red
+  - test_a_failed_purge_keeps_the_row_so_the_object_stays_reachable: red
+  - test_a_job_closed_during_the_finalize_keeps_the_row: red
+  - test_router: test_complete_too_large_commits_the_row_delete, test_a_job_closed_since_the_read_keeps_the_oversized_row, test_a_row_the_service_keeps_needs_no_lock: red
+  - test_a_close_that_lands_during_a_refused_finalize_keeps_the_row (real Postgres, deterministic hold): red
+  - test_delete_pending_leaves_an_uploaded_row_alone: GREEN on b57f811. It pins a rule the code already had; B32 shows it red.
+  - test_the_scheduled_entry_commits_after_each_page: GREEN on b57f811, for the same reason; B33 shows it red.
+
+CHANGED EXPECTATIONS, AND THE REMOVED ASSERTION:
+- test_the_sweep_decides_each_row_by_what_r2_lists reads job_id=%r and path=%r (C93).
+- test_complete_too_large_commits_the_row_delete expects the order rollback, lock, discard, commit, and discard_oversized(err, job_closed_now=False) (C94).
+- Not listed in the last marker: in b57f811 the C80 canary test test_the_sweep_deletes_nothing_when_the_canary_is_not_listed lost repo.list_stale_pending.assert_not_awaited(). The canary is now checked after the first page is read. Its replacement, (result.aborted, result.examined) == (True, 0), is stronger.
+
+BREAKS: each was applied alone and the tests were run; every one was caught.
+- B27 and B28 (C93) ran on 918a138 before the rebase; the code is the same.
+- B29-B33 (C94) ran on d92b9ce, over the media unit tests and the media integration file.
+- The full table is in the PR body under "Deliberate breaks". The new rows:
+
+| Id | Break | Caught by |
+| --- | --- | --- |
+| B27 | C93 D1: the extension taken from the caller's suffix again, the `b57f811` line (`…210001`) | 7 cases of `test_the_storage_extension_is_never_caller_text` (the injected line, a space, a tab, `é`, the Kelvin sign, eleven characters, `%0a`) |
+| B28 | C93 D1: the deletion log back to `%s` for the job id and the path (`…210250`) | `test_a_deletion_log_line_never_carries_a_raw_newline`, `test_the_sweep_decides_each_row_by_what_r2_lists` |
+| B29 | C94 D1: a failed purge logged as a deletion (`if purged:` made `if True:`; on `d92b9ce`, `…211730`) | `test_a_failed_purge_is_not_logged_as_a_deletion` |
+| B30 | C94 D1: a failed purge on an open job deletes the row (`row_kept=job_closed`; `…211851`) | `test_a_failed_purge_keeps_the_row_so_the_object_stays_reachable` |
+| B31 | C94 D3: no status read under the lock after the rollback (`…212038`) | `test_a_close_that_lands_during_a_refused_finalize_keeps_the_row` (real Postgres), `test_complete_too_large_commits_the_row_delete`, `test_a_job_closed_since_the_read_keeps_the_oversized_row` |
+| B32 | C94 X1: `delete_pending` without its `status='pending'` filter, the reviewer's X1 (`…212305`) | `test_delete_pending_leaves_an_uploaded_row_alone` (real Postgres) |
+| B33 | C94 X2: `on_page_done=session.commit` removed from `sweep.py`, the reviewer's X2 (`…212434`) | `test_the_scheduled_entry_commits_after_each_page` |
+
+NOT VERIFIED:
+- Unchanged: R2 refusing a wrong-length PUT; R2's listing key encoding (now relevant only to rows stored before C93); smoke.sh with opsnet; the cloudflared Access keys; Cloudflare's body buffering.
+- The D3 lock is tested by a deterministic hold (a second session holding the close's UPDATE uncommitted), not by a real close request racing a real finalize.
+- The close gate's own count-then-set is not fixed here (a follow-up, in the jobs slice).
+
+The scratch worktree used for the runs is removed after this marker.
