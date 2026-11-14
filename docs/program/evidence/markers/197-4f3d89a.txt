@@ -1,0 +1,24 @@
+PR 197 head 4f3d89a (one commit on 5fbc441; base main 16e154e; main is now 27c9e04, not rebased). Plan @ plan-v9.74 in the PR body.
+ruling C86 (phone half): the gap comment says what really happens; the install id is read from storage on every call, never a per-context memo.
+
+CHANGED FILES
+- technician-app/src/features/drain/drainGate.ts     takeOrLoad comment: both reads precede every discard, a discarded row reads `discarded`; the gap can cost a second manifest under another id (same install, same versionCode, same rows), uploaded once the receipt stops matching the head. uploadProps: install_id = the id stored at upload time (was the snapshot's own).
+- technician-app/src/features/drain/installId.ts     no memo: every call reads storage; one mint at a time per context (re-read, write, read back, use what is stored); the residual named in the header comment
+- technician-app/src/features/drain/drainGate.test.ts  Launch gains `install`; describe "ruling C86" (3 tests)
+- CLAUDE.md                                          drain-gate row: the install id read from storage (C86)
+- PR body: the C83 "What is left" bullet corrected in place ("Corrected under C86"), plus a C86 section
+
+TESTS FAILING ON 5fbc441 (installId.ts + drainGate.ts reverted to 5fbc441, tests kept: 3 failed / 58)
+- drainGate.test C86 > two contexts that mint at once both use the id storage kept (A's write held; B mints and reads back its own; A's lands last; every later call in both = stored; B's one crossing call keeps its own = the named residual)
+- drainGate.test C86 > two contexts at an update: the manifest upload, a discard trace and the after-report all carry the stored id (the stored head was built with the id that lost; upload props, after-report, trace and durable entry all = stored)
+- drainGate.test C86 > a single context mints once, never rewrites it, and reads what is stored on every call (one write across a relaunch; a value stored by another context is taken on the next call)
+mutation: the upload using the snapshot's own id (stored.manifest.install_id || installId()) fails 1
+
+WHAT IS LEFT (in installId.ts)
+Two mints that cross inside one read-back (A writes, A reads back its own, then B writes): that one call of A keeps A's id; every later call reads B's. A manifest built by that call has its own install_id field differ; its upload carries the stored id.
+
+GATE
+mobile gate on a clean tree, head 4f3d89a: typecheck, jest 65 suites / 780 tests, expo export: FAIL=0
+gate id / log: /c/Users/User/.fixflow-cache/gate-logs/p2b1/mobile-20261114-192955
+CI: not run (Actions minutes exhausted); local gate is the evidence
+build config unchanged since c5eadbd; not merged; values commit still to come (domain, fleet max versionCode)

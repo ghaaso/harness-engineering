@@ -1,0 +1,39 @@
+[P8b] web half, ruling C85 round - PR #217, head 698b19fb068275d401cb8720c724d0765523124f (branch claude/p8b-web; two commits on c2279f5: ae77663 source, 698b19f tests). Plan @ plan-v9.74.
+Gate: ff-gates.sh web p8bw at 698b19f, tree clean, 7/7 green, 384 tests: C:/Users/User/.fixflow-cache/gate-logs/p8bw/web-20261114-193038/summary.txt
+Delta c2279f5..698b19f: source in AppContext.jsx, CompletionForm.jsx, JobDetail.jsx; tests in two new files plus two edited. All under src/; no package file, src/ops, src/features/ops, backend file or DRAIN WINDOW code. CI did not run (C52). PR body: item 5 plus journal entries for C82, C85 and the changed expectations.
+What changed:
+ F1 AppContext.jsx handOverRefusal: the provider takes a refusal only when opts.onRefused(...) returns exactly true; otherwise reportFailure as before (toast with the server's sentence, job re-read). CompletionForm and NegotiateModal keep a mounted ref; onRefused returns false once unmounted.
+ F2 JobDetail.jsx: NegotiateModal is rendered only while modal === "negotiate", with key negotiate-<job.id> (per opening and per job, like CompletionForm).
+ N1 A negotiate 422 sets the note required only when /\bnote\b|\bsent\b/i matches the sentence.
+ N2 Both forms close themselves on success, and only while still mounted. JobDetail's onSave just returns the mutator's promise, so a late success cannot close a newer form.
+ N3 Negotiate note: counted in code points, hint "n/256" (plus "too long" over the limit), no maxLength (nothing cut), Save disabled over 256.
+ Amount: type="text", parseRupeesExact; an error, or 0 ("A negotiated bill of Rs 0 cannot be saved here."), shows words in data-testid negotiate-amount-problem, Save disabled, nothing sent; a valid figure is sent as amountPaisa (integer paisa); setNegotiatedBill prefers a safe-integer amountPaisa over rupeesToPaisa(amount).
+Tests failing on c2279f5 (20; head's test files copied onto c2279f5 src):
+ JobDetail.refusal.test.jsx:
+  - F1 completion: Cancel while pending, then 409 -> toast, no alert
+  - F1 negotiate: same
+  - F2: 422 on j1, Cancel, go to j2 (unsent): no alert, "Note (optional)", no "already sent" hint
+  - F2: 422, Cancel, reopen on the same job: no alert
+  - N1: two unrelated 422 sentences keep "Note (optional)"
+  - N2 completion: submit, Cancel, reopen, first resolves: the reopened form stays
+  - N2 negotiate: same
+  - N3: 257 emoji show "257/256", value not cut, Save disabled; 256 allowed
+  - amounts 1e309, abc, 12,5 and -5 refused in words, nothing sent (4)
+  - 1200.555 gets the two-decimals words
+  - 0 gets the Rs 0 words
+ AppContext.refusal.test.jsx:
+  - onRefused returning false, undefined or "yes" gives a toast, submitCompletion (3)
+  - onRefused returning false or undefined gives a toast, setNegotiatedBill (2)
+  - {amount: 1, amountPaisa: 120050} sends 120050
+Controls (8, pass on c2279f5 too):
+ - an open form shows a 409 and raises no toast
+ - a 422 naming the note makes it required
+ - a plain success closes the form
+ - onRefused true gives no toast and re-reads the job
+ - a non-integer amountPaisa falls back to rupees
+ - 1200.5 and 1200.55 reach the wire as 120050 and 120055 (the old path gave the same numbers)
+Changed expectations:
+ - JobDetail.billReason.test.jsx (2): toHaveValue(1500) -> "1500" (the amount field is now text)
+ - AppContext.billReason.test.jsx (2): onRefused = vi.fn(() => true) (the exact-true rule)
+C82 (no field on the job answer; the history line tells the manager the reason was kept): nothing to build; the toast wording stands, and the web reads no event text.
+Notes kept as notes, in the PR body: N4 replay toast; no timeout on the two sends; JavaScript trim versus Python strip.
