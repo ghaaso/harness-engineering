@@ -1,0 +1,39 @@
+VERDICT: PASS-WITH-FIXES
+PR #219 at d117e5fb8ad76682350eec2f6209737aed9aa636
+Delta re-read (`d1c2371..d117e5f`: ruling C101, one text-only commit, `docs/RUNBOOK-SELFHOST.md`, +73 -25) by the PR's reviewer; dispatched by the coordinator on 2026-11-14 at 23:20, returned at 23:27. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was d117e5f at the start and at the end. The six fixes of the last round hold. Two items still need a change before merge: one of the newly added blocks cannot work as written, and the new weekly check can raise a false alarm after a restore. Line numbers are the runbook's at d117e5f unless a file is named.
+
+FIXES BEFORE MERGE
+- F1 (MINOR): the R2 length test in 12.5a cannot print what its Check expects. `mint_upload_url` returns the `SignedUpload` dataclass, not a URL string (`backend/app/core/storage.py:73-77`, `:102-124`). So `print(...)` puts its repr into `url`. Fed to curl, it printed `curl: (3) URL rejected ...` and `a 5-byte PUT on a 4-byte URL: 000` (VERIFIED-BY-COMMAND): neither the expected `403` nor the `2xx` STOP. Harmless (nothing is uploaded, and the error does not echo the URL), but a dead step. Fix: `print(get_storage().mint_upload_url(sys.argv[1], content_length=4).signed_url)`.
+- F2 (MINOR): R0.7's weekly check can raise a false alarm after a restore. The monthly check is limited to the oldest mail since the last restore, but the weekly one is not: within seven days of a restore, "a kept mail at least seven days old" can be a pre-restore mail. R10.2's restore exception (:3937-3939) covers only a restore from a dump taken before 0048; a restore from any older dump taken after 0048 loses the chain entries made after that dump, and the new writes reuse those seq numbers with other hashes. So an old mail's head can be missing or hash differently, R10.2 reads that as a rewrite and sends the reader to R10.3 to alarm the owner about a restore the owner already knows of. Fix: in R0.7, "a kept mail at least seven days old, sent after the last restore's first verify"; in R10.2, "after any restore of the live database, compare only with mails sent after that restore's first verify" (the pre-0048 sentence stays as the reason in that case); and say that "restore" means the live database (section 6, R3), not an R7 drill.
+
+NIT: the 11.12 sentence (:2783-2786) is now ungrammatical ("... is not picked, nor is the web half of P7b-2 (...) and the web half of P8b (...) are NOT picked"). The meaning is clear.
+
+1. M1 TO M6
+- M1: closed. :784 (3.6a) and :3017 (12.4) read "a 5xx (`502` expected, 5.9)", consistent with 5.9 (:1217).
+- M2: closed. R10.4 (:3973-3976) says a start after 04:00 does not catch up, matching the APScheduler 3.11.3 run of the last round. The wrong code comment at `main.py:214-218` stays in the backlog.
+- M3: closed. R10.2 Check (:3935-3937): "a different hash, or no row at <n>", plus the cut-tail case; true by `chain.py:470-480`. The restore exception is too narrow (F2).
+- M4: mostly closed. The command (R10.2's block), a match (it prints <h>), a mismatch (another hash or no row) and what to do (R10.3) are all followable. The monthly "since the last restore" avoids the false alarm; the weekly does not (F2).
+- M5: closed. The Expected says seven names, with PORT and STARTTLS left at the template's values; uncommenting only the anchor block gives exactly seven names.
+- M6: closed. 6.9 (:1709-1713) matches the code: the backfill's revisions carry the boot's time (`0048...py:209`, `:256`), their ids are uuid5 of the job id (`:240`), and the payment entries come first.
+
+2. THE SMALL ADDITIONS
+- 3.6a's third Check line, pasted into `bash --norc -i` on ubuntu:24.04 with fake values, followed by one more pasted line: it flags hour 24 and minute 60 (and `abc`, `-1`), prints nothing for `07` and `59` or for the template's values, and prints whole lines only for those two keys. No fake secret appeared anywhere in the output, including a password holding `$`. The next pasted line ran every time. VERIFIED-BY-COMMAND.
+- The env-file sentence: every claim is true for Docker Compose v5.6.1 (VERIFIED-BY-COMMAND, `docker compose config` on a scratch file): `ab$cd` arrives as `ab`, and `$$` as `$`; `ab #cd` arrives as `ab`, while `ab#cd` is kept; double quotes interpolate; single quotes keep every character; a lone quote inside an unquoted value is kept; an odd quote sequence is a parse error. The restore gate's parser accepts a single-quoted value (`restore-gate.sh:52-54` reads only the key). The VERIFY mark sits right after the claims and only checks the version, which is the safe choice.
+- 3.7a with `grep -P`: works on the target host's OS (Ubuntu Server LTS, :144). GNU grep 3.11 printed nothing for the template's targets, nothing for `http://web/` without a port, and the line for `http://203.0.113.9/...`; `http://backendx.evil/...` is also caught. VERIFIED-BY-COMMAND.
+- `unexpected_attribution` matches `chain.py:725` and `:808`. The FAILED line is quoted in full (`chain_verify.py:80-81`). VERIFIED-IN-CODE.
+- The rollup read: the runbook's exact `node -e` line against the real `ops-server.mjs` in node:22-alpine (`--network none`, fake values) printed the expected rows for a host with no backend; after five wrong logins from 127.0.0.1 it printed `login 429` and exited 1, as the Check describes. The password is never typed or printed. VERIFIED-BY-COMMAND.
+- The network read uses single quotes and prints `no ops container` when there is none; its Check names `fixflow_opsnet`. VERIFIED-IN-CODE.
+- The R2 test's VERIFY mark is present; the block itself is F1.
+- 11.12 names `27c9e04` (#214) as not picked (the grammar is the NIT).
+
+3. NOTHING ELSE CHANGED: the diff is runbook text only, with the repo-local author. Fences: 386, an even number. The secret grep over the diff has no hits. Pins: `runbook.py pins` on `main`, d1c2371 and d117e5f: against `main` only the section-level rows 3, 12 and 13 changed, which the rig never selects; every step-level pin the rig types is unchanged.
+
+WHAT THE REVIEWER RAN: `git diff`, `git show`, `git log`, `gh pr view` (read-only); throwaway containers, each removed: ubuntu:24.04 (paste trials), node:22-alpine (the ops server and the rollup line), python:3.12-slim (the dataclass print, and the pins); `docker compose config` on a scratch compose file, nothing started. Free memory about 7.1 GB and commit 39.1 GB before the first run.
+
+NOT VERIFIED: R2's real answer to a PUT of the wrong length; compose's env-file behaviour on the host's own plugin version; R10.2's query against a real chain.
+
+CLEANUP: no `rv219*` container is left, the scratch copies are deleted, the review tree is clean. No commits, pushes or comments.
+
+COORDINATOR (2026-11-14, ruling C102). Both fixes and the grammar are taken as worded. One more text-only commit by the lane. Everything else on this head has passed twice, so the last delta is read by a fresh reviewer with a narrow brief (the three changes against this record, and that nothing else changed) instead of resuming a reviewer whose context has grown to several hundred thousand tokens; this record and that verdict together cover the head that merges. This PC's three checks, which were started on d117e5f, are repeated on the new head.
