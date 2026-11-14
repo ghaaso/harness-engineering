@@ -1,0 +1,39 @@
+PR 203 (P2b-2 drain audit) is ready for the fresh reviewer at ba7952b25a08f01107c8a48da1d9a65cad106c77 (ruling C103, plan-v9.89). One push, a fast-forward cccabf6 -> ba7952b (one commit). PR body updated: Plan @ plan-v9.89 on the first line, a scope checkbox, decision 41, break rows B136-B140 plus the re-cut and re-run rows, the gates, and the self-check line (body is now 64,355 characters). Not rebased (still on main e6f85c5). Not merged. CI did not run (Actions are refused because of billing); the two local gate runs below are the evidence.
+
+AS DIRECTED: one fresh reviewer reads cccabf6..ba7952b against the two records. Everything in 203-cccabf6 stands as written there, except the clearing wording and the runbook wording, corrected below.
+
+FILES CHANGED SINCE cccabf6 (git diff --name-only cccabf6..ba7952b):
+- backend/scripts/drain_audit.py
+- backend/scripts/drain_audit_report.py
+- backend/tests/test_drain_audit_integration.py
+- backend/tests/test_drain_audit_rules.py
+
+GATES (full runs, clean trees):
+- Branch ba7952b (main e6f85c5, schema head 0047), lane p2b2, gate log backend-20261115-010644: GATE[1..8] EXIT=0, SKIPS total=1699 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+- Drain tree 19c6d14 = 4341ae9 + cherry-pick -x ba7952b (schema head 0046), lane p2b2-drain. The seven drain files are identical to ba7952b. Gate log backend-20261115-011420: GATE[1..8] EXIT=0, SKIPS total=1215 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+- C81: test_c81_one_drain_manifest_and_one_after_report_of_8_mib_are_stored passes in both junit files. BODY_LIMITS (backend/app/main.py:80 on the branch, :81 on the drain tree) names only login and the webhook.
+
+WHAT CHANGED, BY POINT OF C103:
+1. The clearing texts. _ASK_THE_PHONE (used by _CLEARS_STORAGE and _CLEARS_DISCARDS), the module docstring, the --ack-unreadable help and the report's two clears lines (UNREADABLE_STORE, NOT_JUDGED in drain_audit_report.py) now say: "the owner reads that phone's Drain Report (its storage card shows what was unreadable when the snapshot was taken; a list or a store that went bad later is named only in this note, by the after-report's event id), asks the technician what was discarded or pending there; then" acknowledges. The rest is unchanged: manual entry, each row possibly entered by hand already, and the kept bytes staying on the phone. "names the unreadable store and the kept copy" appears nowhere.
+2. An acknowledgment never clears a missing list (server F1). _not_judged now reads newest_after_report(row, afters) for every row, and uses it only when it has no problems and lists no row with the same queue and key. When the row's own reason is a C78 sign (row.discards_untrusted set, discards_unlisted false) and that report carries no list (rep.discards_unlisted), the row is treated as having no list: unlisted = True, the reason gets "; its newest after-report (<event id>) carries no discard list", and the row is not_judged and cleared by hand only, even with --ack-unreadable INSTALL_ID:discards. The C100 path (manifest fine, report untrusted) is unchanged.
+3. Three readings pinned, with no code change: OB13, OB8 and OB11, one test each (below).
+4. The two-phone integration test's comment now says what it builds: "The first phone holds a parked punch; the second phone, which uploaded a manifest of its own, sends a discard trace under the same record id...". No text says "downgraded"; decision 41 says "a build that sends no list".
+
+NEW TESTS AND THEIR RESULT ON cccabf6 (cccabf6's drain_audit.py and drain_audit_report.py with this head's tests, the four drain test files, lane p2b2-brk: 2 failed, 262 passed):
+- test_c103_a_c78_manifest_whose_newest_report_has_no_list_is_cleared_by_hand_only (with and without the acknowledgment, plus the control where the report has a sign of its own): FAILS on cccabf6 (the acknowledged row reads unreadable_reviewed). Kills B136 (F1), and B122 and B124.
+- test_c103_a_showing_report_with_no_list_bounds_no_owners_entry: PASSES on cccabf6 (the reading held but was unpinned). Kills B137 = OB13, and B115.
+- test_c103_an_unusable_newest_report_leaves_residue_as_residue: PASSES on cccabf6 (same). Kills B138 = OB8 (that edit also fails ruff format).
+- test_c103_a_report_listing_another_version_of_the_slot_leaves_residue_as_residue: PASSES on cccabf6 (same). Kills B139 = OB11 and B130 (both edits also fail ruff format).
+- test_c100_an_untrusted_after_report_leaves_a_row_it_does_not_list_not_judged, extended to check the corrected wording ("shows what was unreadable when the snapshot was taken" is present, "names the unreadable store" is absent): FAILS on cccabf6 (the old wording). Kills B140 (the wording reverted), and B121, B126, B129 and B130.
+
+BREAKS ON ba7952b (264 tests; each applied alone and judged from its own gate output and junit): all 14 are red at gate 8.
+- New: B136 (the C103 fix off), B137 (OB13), B138 (OB8), B139 (OB11), B140 (the wording reverted); each is caught by the test named above.
+- Re-cut: B130, for the moved listing check (2 tests).
+- Re-run, because C103 touched their code: B115 (2 tests), B120 (15), B121 (2), B122 (6), B124 (4), B126 (3), B129 (5), B132 (1).
+
+KEPT AS NOTES, AS RULED: OB14 (installs taken before the scope; text only). The phone reviewer's transient window, a list going bad between two reads of one after-report attempt: phone-side (P2b-1), and the next report heals it. The first-mint residual: a trace under the losing id is named "another phone" when a manifest under that id is in the run.
+
+FOR THE RUNBOOK §8 (the PR that fills <p2b2>), corrected wording: not_judged (exit 4) is a row whose phone's discard list is absent or cannot be trusted, in its manifest or in the newest usable after-report that does not list it. Clearing, for C78's signs: the owner reads that phone's Drain Report (its storage card shows what was unreadable when the snapshot was taken; a list or a store that went bad later is named only in the audit's note, by the after-report's event id), asks the technician what was discarded or pending there, then reruns with --ack-unreadable INSTALL_ID:discards. The rows are listed for manual entry (unreadable_reviewed), each possibly entered by hand already, and the kept bytes stay on the phone for a later release. With no list at all, in the manifest or in that newest usable report (even when the manifest shows only a C78 sign), clearing is by hand from that phone's Drain Report, and the owner rules. The same wording applies to --ack-unreadable INSTALL_ID:QUEUE (point 17).
+
+FOR THE OWNER (C81, CLAUDE.md, NOT in this PR, unchanged):
+> The events route must keep accepting one `drain_manifest` or `drain_after` event of at least 8 MiB, because a refused manifest keeps a phone from ever draining.
