@@ -265,6 +265,8 @@ def main() -> int:
         pcases += [
             ("first line to refuse, 6.6 (b) wrote no marker on a live database",
              fs("STOP: no marker (live)", "not written", "STOP: live").startswith("first 6.6 (b)'s marker line"), True),
+            ("first line to refuse, 6.6 (b)'s dump line took no copy",
+             fs("STOP: no copy taken (the backend is up)", "not written", "STOP: live").startswith("first 6.6 (b)'s dump line"), True),
             ("first line to refuse, 6.6 (b) wrote its marker (6.7 alone refused)",
              fs("", "written", "STOP: live").startswith("the DROP line's own test"), True),
             ("first line to refuse, a STOP from 6.6 (b) but a marker written anyway",

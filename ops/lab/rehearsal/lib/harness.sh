@@ -116,7 +116,11 @@ drop_verdict() { # <6.7 output> <STOP line> <before-6.6 write: before> <after> <
 # (C65, no marker for a live database) or 6.7's DROP line (C61)
 first_stop() { # <6.6 (b) STOP line> <marker written|not written> <6.7 STOP line>
   if [ -n "$1" ] && [ "$2" = "not written" ]; then
-    echo "first 6.6 (b)'s marker line (a script): it refused to write the marker on a live database ($1); then 6.7's DROP line refused as well${3:+ ($3)}"
+    # eadafda's 6.6 (b) runs the live test on its dump line too: "STOP: no copy taken" is that line
+    case "$1" in
+      *'no copy taken'*) echo "first 6.6 (b)'s dump line (a script): it took no copy of a live database ($1), so no marker was written; then 6.7's DROP line refused as well${3:+ ($3)}" ;;
+      *) echo "first 6.6 (b)'s marker line (a script): it refused to write the marker on a live database ($1); then 6.7's DROP line refused as well${3:+ ($3)}" ;;
+    esac
   else echo "the DROP line's own test (a script)${3:+: $3}$( [ "$2" = written ] && echo '; 6.6 (b) had written its marker')"; fi
 }
 # Text cut but not handed to rb_run (typed line by line elsewhere) records a move the same way.

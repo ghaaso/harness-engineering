@@ -155,8 +155,8 @@ clears each reason by hand (removes the sign-off, `ffc stop backend`, never 6.1)
 again. WT18 and WT19 run 6.6 on the stopped host, bring the backend up by hand, then pause it
 (WT18, with a 120 s watchdog that unpauses it should the DROP hang) or put it in a crash loop
 (WT19: an invalid setting appended to `backend.env`, removed afterwards), remove the sign-off and
-type 6.7. A refusal names the line that refused first: 6.6 (b)'s marker line when it printed a
-STOP and wrote no marker, else 6.7's DROP line.
+type 6.7. A refusal names the line that refused first: 6.6 (b)'s dump line (`STOP: no copy taken`) or
+its marker line when (b) printed a STOP and wrote no marker, else 6.7's DROP line.
 
 **Lab substitutions** (each is written to `deviations.log` when it happens):
 
