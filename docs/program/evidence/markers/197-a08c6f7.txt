@@ -1,0 +1,42 @@
+PR 197 head a08c6f7 (one commit on d1ae31d; base main 16e154e; main is now 27c9e04, not rebased)
+ruling C78 (phone half): no discard until this build's snapshot is stored, head included; the check reads storage, never a per-context memo.
+
+CHANGED FILES
+- technician-app/src/lib/syncGate.ts                 new required hook snapshotStored + exported snapshotStored() (fail-closed: no hooks or a read error -> false)
+- technician-app/src/features/drain/drainGate.ts     snapshotStoredNow(): no head -> false; head parses -> true; head unparseable -> true only with this build's receipt (never retaken then); installed as the hook
+- technician-app/src/features/drain/discardLog.ts    appendDiscard: beforeQueueWrite, then throws SnapshotNotStoredError unless stored; header comment states the rule (replaces the C75 sentence the review flagged)
+- technician-app/jest.setup.ts                       the always-open Jest gate also answers snapshotStored: true
+- CLAUDE.md                                          drain-gate row: the C78 rule
+- tests: drainGate.test (new describe; Launch gains sync/presence/media/discardEvent; a held-write mock; two older tests discard through a launched registry), discardEvents.test (new seam describe), pendingMedia.test + telemetry.test (hook field only)
+
+TESTS FAILING ON d1ae31d (10 with syncGate.ts, drainGate.ts, discardLog.ts reverted to d1ae31d, tests kept)
+- drainGate.test C78 > a failed first attempt: a discard on every path leaves no entry, no trace, and keeps its row (outbox, punch, presence, pending media, the seam; a deleted clip parked as deleted)
+- drainGate.test C78 > the reviewer's sequence: refused while the snapshot failed; after the retry stores it the discard works, and the manifest holds the row, not the entry
+- drainGate.test C78 > parts written and the head not: refused
+- drainGate.test C78 > two contexts: a foreground discard is refused while a headless task is mid-snapshot, and works once the head is stored (foreground memo still "failed")
+- drainGate.test C78 > a head that no longer parses counts as stored only once this build's receipt is held
+- drainGate.test C78 > a context that skipped the bootstrap records no discard (fail-closed)
+- discardEvents.test C78 seam > the snapshot is not stored / the check cannot read the store / no gate is installed: recordQueueDiscard throws, no entry, no trace
+- discardEvents.test C78 seam > through a queue (the outbox): the row stays
+mutation: a memo-based check (snapshotStored = this context's ensureSnapshot().ok) fails 2
+
+THE QUESTION: largest drain_manifest upload, the server's limit on main, the phone on a size refusal
+- size: one discard entry uploads at 335 B (real-length uuids and slugs); the full list (3,000) = 1,005,000 B.
+  records (binding-review item 8): empty 1,038 B; caps alone 432,413 B; heavy phone 651,523 B; extreme 1,968,533 B.
+  with a full discard list: heavy ~1.66 MB, extreme ~2.97 MB. The never-delete queues have no cap; the bound is Android's 6 MB store, shared by those queues and the discard list. One event in one POST.
+- server on main 27c9e04: NO byte cap on /api/events. BODY_LIMITS covers only /api/auth/login (4 KiB) and /api/webhooks/whatsapp (256 KiB) (backend/app/main.py:80-83).
+  per request: 1..100 events; per event: name <= 64 chars, props an unbounded dict (telemetry/schemas.py), one JSONB value.
+  api. goes tunnel -> backend:8000 with no Caddy; the backend container has no memory limit.
+  edge: Cloudflare's request-body limit, 100 MB on Free/Pro per Cloudflare's docs (not re-fetched in this session).
+- phone on a refusal: any non-receipt (app-marked 413/422/5xx, or a markerless edge 413) -> recordUploadFailure(describeNonReceipt); the gate stays shut; nothing deleted or parked; retried on every drain pass.
+  PLAINLY: a manifest refused for ever would keep that phone from ever draining under this build.
+  A size refusal cannot happen today (no app cap; ~3 MB is far below 100 MB). The realistic "never" is a slow link:
+  the manifest POST waits 15 s + 1 s per 2 KB, capped at 5 min (reached at ~570 KB);
+  1.66 MB needs ~5.5 KB/s (~45 kbps), 2.97 MB needs ~10 KB/s (~80 kbps).
+  On 2G every try times out, nothing is lost, the report says the connection is slow, and Wi-Fi finishes it. The discard list adds at most ~1.0 MB to that.
+
+GATE
+mobile gate on a clean tree, head a08c6f7: typecheck, jest 65 suites / 774 tests, expo export: FAIL=0
+gate id / log: /c/Users/User/.fixflow-cache/gate-logs/p2b1/mobile-20261114-190121
+CI: not run (Actions minutes exhausted); local gate is the evidence
+build config unchanged since c5eadbd; not merged; values commit still to come (domain, fleet max versionCode)

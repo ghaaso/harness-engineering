@@ -1,0 +1,59 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at 3f1e07e2667dbff31971e06268f279aaaf460729
+Server-side delta re-read (`d2227ec..3f1e07e`: ruling C72) with both full gates, by the same reviewer (earlier records: `203-6b1259e-server.txt`, `203-d2227ec-server.txt`); dispatched by the coordinator on 2026-11-14 at 18:24, returned at 19:09. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+C72 is built as ruled, and the two items from `d2227ec` are closed. The one finding that forces a change is F1. It is not in this delta: it sits on the row's own discard path, which C72 point 3 keeps unchanged, and it was missed at `d2227ec`. If F1 is ruled a follow-up, this head is PASS. `gh pr view 203` gave `3f1e07e... OPEN` at the start and at the end.
+
+1. THE `d2227ec` ITEMS
+- Docstring nit: closed. `drain_audit.py:226-228` now reads "a pin already set before the manifest, with no pin written since (``prior_state``, ruling C63 ...)". It is text only, so no test covers it.
+- Backlog case: closed. The row owner's later write is on the server and the version owner has a new entry. The row ends `discarded`, the returned `used` is `{"a2#0"}`, and `evidence_used` stays empty. Test: `test_c72_the_versions_owner_discard_clears_the_row` (rules :1988). The equal-receipt case is now pinned too, at rules :1923 (`tied ... MISSING`).
+
+F1 (fix, unsafe direction): an own-owner discard made before the manifest clears a slot row it cannot be about.
+- Where: `_take_discard_from` (`drain_audit.py:2130-2150`) never asks whether a trace or entry could predate the row's manifest. It is called for traces (`:2127`) and for report entries (`:2337`). Slot ids recur, so an old discard of the same slot matches. That is the "cumulative list" problem C72 fixed only for the version owner.
+- Input (probe Q1, run): t1's entry E0 for `negotiate:J` on install i1, `at` 05:00Z, is already carried by report `a0`, received at T0-30m. Manifest m1 is received at T0 and lists A (t1, 100). The newest report a1 (T0+1h) no longer lists the slot, and as a cumulative list it still carries E0. The server holds nothing.
+- Result: A is `discarded` with `a1#0`, exit 0, `ALL ACCOUNTED FOR`. It should be `missing`, exit 3. The trace variant (one `queue_discard` trace with `server_time` T0-30m, no reports) also gives `discarded`, in `match_rows`.
+- How it happens on a phone (INFERRED): a negotiate parks, is entered by hand and discarded; the tech negotiates again, and that version is listed in m1; a live send of the same id removes the queued copy and is refused with a 4xx.
+- Smallest fix, for slot rows (`_is_slot`) only: in `_take_discard`, skip a trace with `server_time < row.receipt`; in step 2, before `_take_discard_from`, cancel own-owner entries that a usable report of the same install received before `row.receipt` already carried (compared by content as a multiset, reusing `_discard_content`, `:2473`). Both land on the safe side.
+- What the fix cannot catch: an earlier discard that has neither an earlier report nor a trace. Catching that needs the phone's manifest to carry its discard list, or the owner rules.
+
+2. C72 AGAINST THE ROWS AND THE OUTPUT
+- No SQL. `_slot_gone` and `_versions_owner_discard` (`:2456-2545`) read only `rep`, `afters`, `by_id` and `by_key`, which are already loaded.
+- What each entry does to `unmatched_discards` and the verdict line (probe Q4, with `unmatched` rebuilt the way `run_audit` builds it): a used entry is added to `used`, so it is not in `unmatched_discards`; exit 0, `ALL ACCOUNTED FOR`. A cancelled ("already carried") entry is listed in `unmatched_discards` (`['a2#0']`); the row is `missing`, exit 3, `MISMATCH`, and the note names the entry.
+- Note for the new `discarded`, word for word (Q4 / Q3): "discarded on the phone (after-report a2 received 2026-11-20T08:00:00Z) by t2: the entry of t2, the owner of the version last seen (ruling C72)", then the carried note naming a1, amount_minor=200 and "this version is t1's, the newer one t2's". The notes carry only ids, technicians, times and amounts; no free text.
+- One entry, one row (Q5): three rows, two slots, two installs, every order of rows (6) x order of reports (6), each with the report's entry list both ways round. Every order gave the same outcome set and the same entry ids. Reversing the order of entries inside one report changes which of two equal t2 entries is used (`a2#0` or `a2#2`), but never the outcomes. That order is the stored report's own JSON order, so a re-run on the same database gives the same result.
+- RESIDUE cleared this way (Q3): the row ends `discarded` and still prints "the server proves it would refuse it: its job is not on the server". The verdict then reads `ALL ACCOUNTED FOR`, so the row no longer counts for manual entry. That follows from C59/C72; no change asked.
+- Not fixes: the `refused` notes print only in the final `missing` branch (`:2452`); a row that stays residue (`:2361`) or ends superseded drops them, though the entry is still listed. `test_c72_one_entry_clears_one_row` pins a safe-side `missing`, exit 3: row b's own entry is taken even though m2 shows a replaced b before a1 was received; per C72 point 3 that is as ruled.
+
+3. WRONG `discarded` THROUGH C72: TRIED AND COULD NOT BREAK (probe Q2)
+
+| Input | Outcome |
+|---|---|
+| An entry the showing report carried | `missing` (also in the lane's test) |
+| An entry for another record id | `missing` |
+| An entry for another queue | `missing` |
+| The newest report still lists the slot | `in_progress` |
+| An unidentified `reopen` row | `unidentified` |
+| A newer version held by a later manifest | m1 `superseded`; m2 cleared by its own entry |
+
+4. BREAKS, each applied alone on a scratch worktree at `3f1e07e`, with the named tests run by node id:
+
+| Break | What it does | Named tests failed | Log |
+|---|---|---|---|
+| B95 | `elif False:` | 3/3 | `rv203s/backend-20261114-184857` |
+| B96 | carried check off | 1/1 | `...-185058` |
+| B97 | "still listed" condition removed | 1/1 | `...-185527` |
+| B98 | `used` ignored on the C72 path | 1/1 | `...-185833` |
+| B14 | `used` ignored in `_take_discard_from` | 2/2 | `...-190029` |
+| B62 | residue outranks the discard | 1/1 | `...-190230` |
+
+The probes ran in `...-184411`: 5 passed. Ruff fails in that run because of the probe file.
+
+5. BOTH FULL GATES, run one after the other on clean trees with no extra arguments. Memory before the head gate was 10.9 GB free / 31.4 GB commit, and before the drain gate 11.7 / 31.4, so neither had to wait.
+- Head (`3f1e07e`): log folder `C:/Users/User/.fixflow-cache/gate-logs/rv203/backend-20261114-182427`. `GATE[1..8] EXIT=0`, the skip-aware integration check `EXIT=0`; `SKIPS total=1653 skipped=0 integration_skipped=0`; `SUMMARY FAIL=0`.
+- Drain (`3dbea11`, schema head 0046; its five drain files match the head's): log folder `C:/Users/User/.fixflow-cache/gate-logs/rv203-drain/backend-20261114-183309`. `GATE[1..8] EXIT=0`, the skip-aware integration check `EXIT=0`; `SKIPS total=1169 skipped=0 integration_skipped=0`; `SUMMARY FAIL=0`. It waited 398 s for a slot.
+
+The test delta removes no assertion, changes no expected value and adds no skip.
+
+CLEAN-UP: the scratch worktree is removed. Only logs are left in the coordinator's scratchpad `pr203/`, including `breaks4.out`, `gate4-head.out`, `gate4-drain.out` and `probe4-gate8.log`. Both review trees are clean at `3f1e07e` / `3dbea11`. No `fixflow-rv203*` container or lock is left. No commits, pushes or PR comments.
+
+COORDINATOR (2026-11-14, 19:10; rulings C75, C78, C81). F1 here is the hole the phone-side reviewer reported as G1 an hour earlier; both reviewers reached it independently, and this one names what a server-only fix cannot catch (an earlier discard with neither an earlier report nor a trace), which is why ruling C75 closed it on both halves: every discard carries an id and the phone's manifest carries the discard list as it stands at its snapshot, so the audit counts a discard for a row only when the row's manifest does not already hold its id. The lane's hold is lifted: its round is C75, C78 (a manifest whose discard list the phone marks as not trustworthy is not judged) and C81 (one integration test and one CLAUDE.md sentence that the events route keeps accepting a manifest of at least 8 MiB). Forwarded at 19:09. Both reviewers re-read `3f1e07e..<head>`.

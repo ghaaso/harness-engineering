@@ -1,0 +1,106 @@
+VERDICT: PASS-WITH-FIXES
+PR #215 at 40bfcfaced34914486519be04b97ebbbb8860bb1
+Binding review of the whole PR by a fresh fixflow-pr-reviewer; dispatched by the coordinator on 2026-11-14 at 18:32, returned at 19:08. One of three reviews of this head (application security: `215-40bfcfa-security.txt`, PASS; the phone-upload side: `215-40bfcfa-phone.txt`, PASS-WITH-FIXES). This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was checked at 18:31 and 19:05 and did not move; base 1f254799; plan line `Plan @ plan-v9.59`. One finding forces a change: F1 (MAJOR, section C). Ruling C76 (cap off by default) will move this head anyway. F5 is a trap for that change.
+
+A. REGISTER IDS (fail-on-base run by the reviewer unless marked otherwise)
+
+- O05-09: PARTIALLY. Done at the head: `ops-server.mjs:52` (password at least 16 characters) and `:61` (session secret at least 32) refuse boot; body cap at `:74`, backoff at `:80`, client IP at `:182`; the lock checked before the body (`:656`) and again after it (`:673`); timeouts at `:766-767`. Not done: the register title's "12 h unrevocable tokens"; the PR backlogs it and the plan's Scope does not ask for it. Fails on base, passes on head (VERIFIED-BY-COMMAND, vitest exit 1 on base): `tests/ops-server.test.mjs` "locks an IP after five wrong passwords...", both body-cap tests, the boot refusals, and "holds under a burst...".
+- O6-F17: CONFIRMED. Same tests. Cloudflare Access in front of `ops.` stays an owner step.
+- O08-F08: CONFIRMED. The throttle is above. `ops` sits only on `opsnet`, which is internal (`docker-compose.prod.yml:184`, `:208-209`). `listen()` still binds every interface, which is harmless on an internal network (journal item 1). compose-rules "ops is attached to internal networks only" fails on base's compose (lane's claim; re-broken on the head, section E).
+- O08-F09: CONFIRMED. `ops-server.mjs:472`, `:477` report `not_configured`. The UI shows it as a neutral pill (`src/features/ops/components/StatusPill.jsx:16`). Fails on base: "is ok when every configured component is ok and Railway/Sentry are unset".
+- O05-12: PARTIALLY. Done: cap at `media/service.py:156-161`; declared-size 413 at `:149`; signed length at `:182` and `core/storage.py:116`; the sweep. Still open: a caller who simply omits `size_bytes` still gets an unbounded URL, because `media_require_declared_size` is off by default. Until that flag flips, "size-uncapped" holds for every attacker; only the sweep bounds how long junk stays (up to about 48 h plus a day). Ruling C76 also turns the cap off. Behavioural fail on base: `test_a_declared_size_is_bound_or_refused` (201, expected 413). The cap tests fail on base only through an `AttributeError` on the new setting. The real-Postgres overshoot test proves the lock on the head (K4 below).
+- O05-13: CONFIRMED, already fixed by #191 (6ff6039). Base `media/service.py:126-127` already holds the ownership guard, and `tests/test_media_messaging_authz_integration.py:138` (on base) passed in the head gate. This PR adds no fail-before test, and needs none. The register's "only while the job is open" was deliberately not built. F1 now uses that open door.
+- T44-media-1: PARTIALLY. `router.py:154` commits before raising the 413. Fails on base: `test_router.py::test_complete_too_large_commits_the_row_delete` ("Awaited 0 times") and `test_media_hardening_integration.py::test_an_oversized_finalize_leaves_no_pending_row` (the row survives). Correct for open jobs. On a closed job it opens F1.
+- T44-media-2: CONFIRMED, with F2 and F3. On base the sweep tests fail because `sweep_stale_pending` and the job do not exist. `test_scheduler_timezone` (3 tests) fails on base on the missing `media-stale-pending-sweep`.
+- O05-18: CONFIRMED. `package.json` and the lock move to 7.18.5. Fails on base: `tests/react-router-version.test.mjs`, both cases, against 7.17.0 installed.
+
+B. THE SWEEP
+
+Could not break:
+- Paged or truncated listing: `list_keys` (`storage.py:169-181`) follows the continuation tokens, and the check is exact membership with the full key as prefix.
+- Clock: the 48 h cutoff is the app's UTC clock against `created_at`, which is the database's `now()` at reservation. Skew does not matter at that scale.
+- Upload in flight: impossible on a row older than 48 h, because the upload URL lives 600 s and nothing re-mints a URL for an existing row (grep).
+- Finalized between read and delete: the delete is an unconditional delete by primary key. A finalize can land only if the bytes exist (then the row is kept) or the size lookup transiently fails, so at worst a phantom row is removed.
+- Close-gate evidence: closing rows are never deleted. K2 confirms the guard and that the evidence-gaps report keeps working.
+- Wrong bucket with finalized rows: the canary aborts the run (K3).
+- Overlap: `add_daily_job` uses APScheduler's default single instance, on one replica.
+- Page ceiling: 20 pages of 500, then `truncated`.
+- Key encoding: INFERRED safe, because botocore both sets and decodes `EncodingType=url`. Not verified against R2.
+
+Findings:
+- F2 MINOR. `service.py:333-334`: `if canaries and not ...`. With no uploaded rows (a new install), the canary is skipped and a wrong or empty bucket deletes every stale non-closing pending row. The CLAUDE.md scheduler row ("aborts unless R2 lists a recently finalized key") is then false. Fix: abort when `canaries` is empty and candidates exist, or reword CLAUDE.md.
+- F3 MINOR. No deletion is logged per row. There is one INFO count line after commit (`sweep.py:595-608`) and warnings on abort. A run is distinguishable from a no-op only by its counts; which rows or keys went is recorded nowhere. Fix: log id, job_id, phase, storage_path and outcome for each delete.
+- NIT. One transaction covers the whole run (up to 10k rows and 20k R2 calls): locks are held until the end, and a late error loses every decided delete; commit per page. A truncated run restarts from the oldest row, so 10k or more kept rows starve the rest again. `media_stale_pending_hours` has no floor; a value under 600 s deletes reservations whose upload is still in flight.
+
+C. CAP, PRESIGN, AND THE 413 COMMIT
+
+- What the cap counts: pending rows with `created_by` equal to the principal and `created_at` within the last 600 s, across all jobs (`repository.py:110-123`).
+- The lock: `pg_advisory_xact_lock(hashtext('media_reservation'), hashtext(who))` is taken in the request transaction, before the count and the insert. The router's commit or the session close releases it. K4 shows the real-Postgres test catches its removal.
+- What a refusal leaves: no row and no lock. The R11 claim is rolled back too, since there is no commit.
+- No size declared: the URL is unbound, as before.
+
+Findings:
+- F1 MAJOR (forces the change). `router.py:154` together with `service.py:239`: an oversized finalize on a CLOSED job now commits the deletion of that job's only pending closing row. Two effects: a technician can delete frozen evidence (the same tech's DELETE on that row is refused with 403); and the job silently drops off `/api/jobs/evidence-gaps`, whose `total > 0` test needs that row. The sweep's own `SWEEP_ROW_KEPT_PHASES` exists precisely to avoid this.
+  Concrete input: (1) tech t8, assigned, reserves a closing clip; (2) the job closes while the upload is in flight; (3) the tech uploads 64 MiB + 1 byte; (4) `POST .../complete` returns 413; (5) evidence-gaps then returns `[]`.
+  The probe `test_rv215_closed_gap_probe.py` passes on base, fails on the head (`assert 1062 in []`), and passes again under break K5 (commit removed).
+  Fix: pass the job status into `complete_upload`. On a closed job (at least for the closing phase), delete the oversized object but leave the row pending, as the sweep does. Add the probe as a test.
+- F4 MINOR. The 413 commit also commits an R11 claim and its `claim` job_event created by `access_by_token` (`jobs/service.py:1124-1131`). The docstring there says "a refused write rolls the claim back". Input: a manager unassigns job J; tech B finalizes an oversized object on J; the response is 413 and B now holds J. Fix: say so in the docstring, or fold it into F1's fix.
+- F5 MINOR, a trap for C76. `service.py:161` `if live >= self._max_live_reservations`: at this head a value of 0 refuses every reservation (429 with Retry-After 600). C76 wants 0 to mean "no cap", so that comparison must change and get a test.
+
+D. DO THE TWO JS TEST FILES RUN IN A GATE?
+
+Yes, through `npm test`. `vitest.config.js:23` includes `tests/**/*.{test,spec}.mjs`, and CI's frontend job runs `npm test` (`ci.yml:43`). `npx vitest list --filesOnly` lists both files among 42 (VERIFIED-BY-COMMAND). They are not a separate `node --test` step, which exists only for the hang stub (`ci.yml:51`). No finding.
+
+E. COMPOSE AND TUNNEL
+
+- compose-rules passes on the head. Each rule was re-broken on a scratch copy and each one failed (exit 1): a published port on `ops` fails "ops: no published port"; `ops` on the `app` network fails "internal networks only"; edge off `opsnet` fails "tunnel shares a network"; a public health target fails "internal URLs".
+- The backend healthcheck still targets `/api/ops/health` (unchanged, rule ok).
+- The tunnel's catch-all is still `http_status:503` (`config.example.yml:31`).
+- NIT: the health-target rule reads only the example env, not the real `/etc/fixflow/ops.env`.
+
+F. DEPENDENCY BUMP
+
+- The lock diff holds only react-router, react-router-dom (7.17.0 to 7.18.5) and set-cookie-parser (2.7.2 to 2.7.3); the commit touches only `package.json`, the lock and `tests/`.
+- Combined with PR 214: main 27c9e04 plus this PR's diff (`git apply`, no file overlap) passes all 7 web gates, 42 files and 350 tests. Log: `C:/Users/User/.fixflow-cache/gate-logs/rv215mix/web-20261114-184205/summary.txt`.
+
+G. CLAUDE.md
+
+- `check_claude_md.py` exits 0 (head 0047; the 2 unresolved-path warnings were already there).
+- The new sentences are true at the head, except: F2's "aborts unless R2 lists a recently finalized key" (false when there are no finalized keys); NIT: "an `OPS_PASSWORD` of at least 16 that is not the example placeholder" (since 40bfcfa only the length rule exists).
+- NIT: the existing sentence "it holds the Railway/Sentry tokens" is stale for self-host.
+
+H. EXPECTATIONS AND CONVENTIONS
+
+- Changed expected values, all with reasons in the PR: `test_service.py:110` gains `content_length=None`; the scheduler test's job set and times gain the sweep; `ops-server.test.mjs` `post()` sends `CF-Connecting-IP`, and its secret changed; the fakes' signatures gain `content_length`.
+- No removed assertion, no skip, xfail or `.only`.
+- `lint-imports`: 4 contracts kept. Secret scan of the diff: no hits.
+- Commits: 8, all under the repo identity, Conventional subjects, Co-Authored-By trailer.
+- Scope boxes match the diff. The Cloudflare item is unticked and deferred, as stated. The journal heading is present.
+- C76 (on the plan branch) records that the PR body's "a parked item is visible and retryable" is false.
+
+I. THE REVIEWER'S GATES (clean tree, no extra arguments, run one after the other)
+
+| Gate | Summary | Result |
+|---|---|---|
+| backend | `C:/Users/User/.fixflow-cache/gate-logs/rv215/backend-20261114-183302/summary.txt` | GATE 1-8 all exit 0; `SKIPS total=1462 skipped=0 integration_skipped=0`; 1462 passed; `SUMMARY FAIL=0` |
+| web | `C:/Users/User/.fixflow-cache/gate-logs/rv215/web-20261114-184021/summary.txt` | GATE 1-7 exit 0; 37 files, 306 tests; `SUMMARY FAIL=0` |
+
+J. BREAKS (each alone on a scratch copy; logs under `C:/Users/User/.fixflow-cache/gate-logs/rv215brk/`)
+
+| Break | What was changed | Caught by |
+|---|---|---|
+| K1 (sweep) | keyset filter removed from the repository | integration `test_the_sweep_pages_past_rows_it_keeps` only (40 kept, `truncated`); the unit test cannot see it |
+| K2 (sweep) | closing row deleted when its bytes are absent | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_reaps_only_what_can_never_become_evidence` |
+| K3 (sweep) | canary skipped | both canary tests |
+| K4 (cap) | advisory lock removed | `test_parallel_reservations_cannot_overshoot_the_cap` only (real Postgres) |
+| K5 (413) | 413 commit removed | both T44-media-1 tests |
+
+WHAT THE REVIEWER RAN: gh/git reads; the two gates; a base scratch tree with the PR's tests laid over it (vitest, then a backend partial gate, lane `rv215base`: 16 failed, 26 passed, the probe passed); the probe and the five breaks; compose-rules breaks; the main-plus-PR web gate; memory checks before every heavy run. Scratch worktrees are removed (the node_modules junctions first; both link targets checked afterwards).
+
+NOT VERIFIED: that R2 enforces a signed Content-Length; that R2 handles `encoding-type`; `smoke.sh` with `opsnet`; cloudflared's `originRequest.access` keys; the security side of the ops login (the appsec reviewer's).
+
+Files: the probe, in the coordinator's scratchpad, `rv215/pr/probe/test_rv215_closed_gap_probe.py`; the break record, `rv215/pr/breaks.txt` (a Windows file lock dropped some of its lines; the gate logs are complete).
+
+COORDINATOR (2026-11-14, 19:10; ruling C80). All three reviews of this head are in: security PASS, the phone side and the whole PR PASS-WITH-FIXES. The head changes in one round that carries rulings C76, C77 and C80. C80, from this review: (1) F1: on a closed job an oversized finalize deletes the object and leaves the row pending, with the reviewer's probe as a test; (2) F4: the 413 path commits the row's deletion and nothing else of the request, so a refused finalize keeps no claim; (3) F2: with candidates and no canary key the sweep aborts; (4) F3: every deletion is logged, one line each; (5) the sweep commits per page; (6) the age threshold has a floor of one hour whatever the setting; (7) F5: with C76, 0 means no cap, so the comparison changes and is tested; (8) two CLAUDE.md sentences are made true. Notes for the PR body: starvation on a truncated run, the compose rule reading only the example env, the open parts of O05-09 and O05-12, and what nobody verified. Sent to the lane at 19:08; all three reviewers re-read the delta.
