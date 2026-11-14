@@ -1,0 +1,58 @@
+PR 203 (P2b-2 drain audit) ready for both binding reviewers at 3f1e07e2667dbff31971e06268f279aaaf460729 (ruling C72, plan-v9.65). One push, fast-forward d2227ec -> 3f1e07e (one commit). PR body updated (Plan @ plan-v9.65 on the first line, decision 38, breaks B95-B98 and the re-run rows, gates). Not rebased (still on main e6f85c5). Not merged.
+
+AS DIRECTED: both reviewers re-read d2227ec..3f1e07e only, and the server side reruns both gates. Everything in 203-d2227ec stands as written there (decisions 36 and 37 in the PR body).
+
+FILES CHANGED SINCE d2227ec (git diff --name-only d2227ec..3f1e07e):
+- backend/scripts/drain_audit.py
+- backend/tests/test_drain_audit_rules.py
+
+WHAT CHANGED (drain_audit.py):
+- C72 (points 9 and 10), F1 of the phone re-read. In apply_after_reports step 2, when the row's own entry is not found, a MISSING or RESIDUE row passing _slot_gone gets _versions_owner_discard. _slot_gone means: a slot row, the newest usable report lists the slot with no content at all, that report read the queue, and _superseded finds no later-manifest row.
+- The entry is taken from the newest report for the same queue and record id. Its owner_tech must be the owner of the version last seen (_last_seen), and that owner must differ from the row's.
+- Entries the showing report (the one that held that version) already carries are compared by content (queue, record_id, owner_tech, discarded_by, at, kind) as a multiset, with no clock, and are cancelled. Each cancelled entry is named "already carried ... about an earlier version" and never used.
+- One entry clears one row. A new dict, took, names the row that cleared each entry; it is filled by both the own-entry path and the C72 path.
+- It outranks a later write. Printed: "discarded on the phone (after-report a2 ...) by t2: the entry of t2, the owner of the version last seen (ruling C72)", plus the carried note (a1, both technicians), plus the server's refusal when there is one.
+- If no entry is used, the row ends missing. Its notes name the version and the owner's entries that were not used.
+- The row's own entry is tried first, unchanged. Traces are unchanged.
+- READINGS, all on the safe side (decision 38): an unreadable queue in the newest report is not "no longer lists" (the row stays unreadable_store); a newer version held as a later manifest's row is judged there with its own entries; unidentified rows are never cleared this way.
+- The server's docstring nit: the customer_pin line of the module docstring now says "a pin already set before the manifest, with no pin written since (prior_state, ruling C63 ...)".
+
+TESTS (test_drain_audit_rules.py):
+- test_c72_the_versions_owner_discard_clears_the_row:
+  - F1's input gives discarded, exit 0, naming a1, a2, t1 and t2.
+  - still_parked while a1 is the newest report.
+  - It outranks t2's later write.
+  - SERVER BACKLOG NOTE: with t1's own later write (point 15) plus t2's new entry, the row is discarded, the entry is in the returned used set (so never in unmatched_discards), and evidence_used stays empty.
+- test_c72_an_entry_the_showing_report_carried_is_about_an_earlier_version:
+  - The unsafe direction gives missing, with E named.
+  - A new entry beside E clears the row.
+  - Multiset: E twice where a1 carried it once leaves one new copy.
+- test_c72_a_slot_the_newest_report_still_lists_is_judged_by_the_listing: identical content queued again gives in_progress, entry unused. Other content gives in_progress.
+- test_c72_one_entry_clears_one_row: t2's own row (older manifest) takes it. t1's row is missing and names it (manifest m1). used == {a2#0}.
+- test_c72_a_technician_no_document_showed_never_clears_the_row: a t3 entry is never used (N7). A t2 entry with no report showing t2's version is never used.
+- THE NIT: test_c68_a_version_last_seen_is_judged_under_its_own_owner gains the equal-receipt case. A t2 write received at exactly a1's receipt is MISSING.
+- No expected value changed this round.
+
+GATES (one at a time, clean tree, full runs on the final head, both after the PC restart):
+- Branch 3f1e07e, schema head 0047, lane p2b2, MERGE-READINESS run (clean tree, no extra arguments), log backend-20261114-181035: GATE[1..8] EXIT=0, SKIPS total=1653 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+- Drain tree f8a5984, schema head 0046 = d150a9a (last round's drain tree) + cherry-pick -x 3f1e07e; the six drain files are identical to 3f1e07e (git diff empty). Lane p2b2-drain, log backend-20261114-181734: GATE[1..8] EXIT=0, SKIPS total=1169 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+- The run cut by the stop (p2b2/backend-20261114-160440) wrote no summary and does not count.
+- CI DID NOT RUN on 3f1e07e (Actions refused, billing). The two local gates above are the evidence. CI was last green on adc2792.
+
+BREAKS (lane p2b2-brk, the four drain test files, each applied alone and reverted; judged from each run's own gate output (gate-8 pytest EXIT=1 in all 8) and names from each run's junit):
+- They ran on c7d2050 (218 tests). That is the C72 commit before two later items were folded into it. 3f1e07e differs from it only by the docstring line above and the one added test case (git diff c7d2050 3f1e07e: drain_audit.py docstring only, plus 9 lines of the test file). No code a break touches changed.
+- NEW, C72:
+  - B95 (point 1): the version owner's entry is never tried. Caught by test_c72_the_versions_owner_discard_clears_the_row, test_c72_an_entry_the_showing_report_carried_is_about_an_earlier_version and test_c72_one_entry_clears_one_row.
+  - B96 (point 2): an entry the showing report already carried is used. Caught by test_c72_an_entry_the_showing_report_carried_is_about_an_earlier_version.
+  - B97 (point 3): the entry is used while the newest report still lists the slot. Caught by test_c72_a_slot_the_newest_report_still_lists_is_judged_by_the_listing.
+  - B98: one entry clears two rows. Caught by test_c72_one_entry_clears_one_row.
+- RE-RUN, because C72 touched the discard step; all still caught:
+  - B14: 2 tests.
+  - B39: 3 tests.
+  - B43: also fails ruff check.
+  - B62.
+- Every row is in the PR body's break table.
+
+PR BODY: Plan @ plan-v9.65 on the first line, a scope checkbox for C72, decision 38 (C72, the phone re-read's F1 and nit, the server re-read's PASS with its docstring nit and backlog note), the breaks intro and rows B95-B98 plus the re-run rows, gates for 3f1e07e and f8a5984, and the self-check line. 64,434 characters, under the cap. Decisions 1 to 27 and 28 to 30 stay in their PR comments.
+
+CLEANUP: worktree p2b2-brk removed; no fixflow-p2b2* containers left; no lane lock taken by hand (ff-slot.sh reaps).

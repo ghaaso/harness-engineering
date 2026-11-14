@@ -1,0 +1,107 @@
+VERDICT: PASS
+PR #214 at 08b7cf1530cd32c9ff525f7f0c33e7ab41861b73
+Delta re-read by the same reviewer (first pass: `214-56e9623.txt`), after the round of ruling C73; dispatched by the coordinator on 2026-11-14 at 18:14, returned at 18:19. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was the same at the start (18:15) and the end (18:18). The delta is one commit on `56e9623`: 11 files, all under `src/`. It touches no package file, no `src/ops` or `src/features/ops`, nothing in `backend/` or `technician-app/`, and no drain-window code. All six C73 requirements are met. What is left is four NITs, none of which needs a change before merge.
+
+Fail-on-base. The head's six changed test files were copied onto a scratch checkout of `56e9623`, `npm ci`, then vitest. Result: exit 1, "26 failed | 47 passed".
+- 20 of the 26 are the lane's new tests: card 10, jobsApi 5, job 1, JobDetail 1, currency 3.
+- The other 6 are this PR's own earlier tests whose expectations changed (listed in section 4).
+- The lane's control "a stored 0 is a rate: Rs 0 per hour" passes on `56e9623`, as its marker says; the jobsApi tests carry that fix.
+- Log: the coordinator's scratchpad, `rv214/base2-run.log`.
+
+1. THE SIX REQUIREMENTS
+
+1. Exact figures: met. The card uses only `formatPaisaExact`, `paisaToRupeeText` and `parseRupeesExact` (`LabourRateCard.jsx:18`). A grep finds no `formatPKR`, `rupeesToPaisa` or `paisaToRupees` in the card. `formatPaisaExact` (`currency.js:31`) is integer-only. Fails on base: "typing 1200.5 ... shows Rs 1,200.50, not Rs 1,201" and "a stored 120050 is shown with its paisa" (on base: Current rate text not found; `toHaveValue(1500)`).
+2. Zero is a rate: met. `job.js:59` uses `r >= 0`, `CompletionForm.jsx:66` uses `Number.isFinite(rate) && rate >= 0`, and `jobsApi.js:172` (`toLabourRate`) accepts any non-negative safe integer. The card shows "Current rate: Rs 0 per hour." and refuses to save a new 0 in words (`LabourRateCard.jsx:62-66`). Fails on base: job.test "a rate of 0 is known" (`expected null to be +0`), JobDetail "copied at rate 0", jobsApi "a zero rate is a known rate, and is cached" and "paisa 0 for a stored 0".
+3. Confirm before saving: met. The confirm text is at `LabourRateCard.jsx:160-180`. The field is disabled while the confirm is open (`:149`), and the key is minted only at Confirm, only for a new value (`:82-84`). Fails on base: the confirm, Cancel, "Confirm sends exactly once" and retry-key tests (the Confirm button and the group are not found).
+4. Safe integer or refusal in words: met. `parseRupeesExact` (`currency.js:54-67`): a regex, then `whole * 100 + frac` with `whole` capped. Both are integer Number operations, exact below 2^53. There is no float multiplication by 100. Second guard in `saveLabourRatePaisa` (`jobsApi.js:197-198`): it rejects without sending a request. Fails on base: "beyond the safe range is refused in words" and jobsApi "refuses ... sending nothing" (on base: `promise resolved "{}" instead of rejecting`).
+5. Server's value after a save, and a 5xx is not "unreachable": met. `jobsApi.js:202-207` returns the PUT answer's value, or re-reads when the answer has none. The card sets the current rate and the field from that value (`LabourRateCard.jsx:90-98`). A 5xx reads "the server had an error (status)" (`:108-110`). Fails on base: "shows the ANSWER's value", the two jobsApi save tests, and "a 500 is not called unreachable".
+6. Doc comments moved: met. `fetchLabourRateSetting`'s comment sits at `:180-182`, just above `:183`. `fetchLabourRatePaisa`'s comment is at `:211-216`, but with a blank line before `:218` (NIT d).
+
+2. THE HARMFUL DIRECTIONS
+
+Probe tests ran on the head's source in scratch. Each result below is verified by command.
+
+A wrong value sent: none found.
+- `1200.5` and `1200.50` give 120050. `0.01` gives 1, and `00012` gives 1200. Spaces at either end are trimmed: `" 1200 "` gives 120000. `0` and `0.00` give 0, which the card refuses with its zero sentence. `90071992547409.91` gives 9007199254740991, the largest safe integer.
+- Refused with "Use at most two decimal places (paisa).": `1200.505`.
+- Refused with "Use digits only...": `.5`, `5.`, `1,200`, `1 200`, `+5`, `-5`, `1e3`, Arabic-Indic, Persian and full-width digits.
+- Refused with "That figure is too large to save.": the 20-digit figure, `90071992547409.92` and `90071992547410`.
+- `saveLabourRatePaisa(9007199254740992)` throws a RangeError and sends nothing.
+
+The confirm says one figure and sends another: no.
+- The field is disabled while the confirm is open (`fieldDisabled=true`), and Confirm sends the captured `confirming` value, not the field's text.
+- Two clicks on Confirm in one act gave 2 calls with the same key (`180000:ffe42d54` twice), which the server collapses into one row (`tenancy/service.py:182-196`). In a browser the confirm group is gone before a second click can land.
+- While a send is in flight, the button reads "Saving..." and is disabled, there is no Confirm, the field is disabled, and there is 1 call.
+
+A second row: none. The key sequence observed:
+
+| Step | Key |
+|---|---|
+| No answer | K1 |
+| Cancel | (nothing sent) |
+| 503 | K1, kept |
+| 422 | K1 sent, then cleared |
+| Same value again | K2, new |
+| Changed value | K3, new |
+
+- After a lost answer, opening the confirm for another value, cancelling it, then confirming the first value again reuses K1.
+
+An unknown rate priced as zero: none reachable from our server.
+- A failed settings read, an unset row, or a value of `"120000"`, `1.5`, `-1` or `null` all give `null` and are not cached (2 fetches each).
+- A completion with no copied rate gives null labour.
+- The one path to Rs 0 is `mapJob.js:137`, where `paisaToRupees` turns `"abc"` or `""` into 0 (`true` into 0.01). The server makes that unreachable: `labour_rate_paisa: int` is required in `backend/app/features/jobs/schemas.py:267`, and the column is NOT NULL BigInteger. See NIT a.
+
+3. WHAT THE CARD SAYS IN EACH BRANCH, WORD FOR WORD
+- Saved and read back: "Saved: Rs 1,800 per hour." The hint then reads "Current rate: Rs 1,800 per hour."
+- Saved but not read back: "Saved, but the rate could not be read back. Reload the page to see it." The hint reads "The current rate could not be read — completions cannot be priced until it is." (NIT b).
+- Refused: "Not saved — nope" (the server's own reason).
+- Server error: "Not saved — the server had an error (503). Please retry."
+- Unreachable: "Not saved — the server could not be reached. Please retry."
+- Zero typed: "This card does not save a rate of Rs 0: all labour would be billed at nothing."
+- Too large: "That figure is too large to save."
+- Stored 0: "Current rate: Rs 0 per hour."
+- Confirm: "Change the labour rate from Rs 1,500 to Rs 1,800 per hour?" then "Bills already made keep the rate they were made with."
+All of these matched what actually happened.
+
+4. CHANGED EXPECTATIONS IN THE DELTA
+- `LabourRateCard.test.jsx`: two `toHaveValue(1500)` became `"1500"` because the field is now text. Each save clicks Confirm, and the save mock now echoes the server's value instead of returning `{}`.
+- `jobsApi.test.js`: "a zero rate is unset too" (`toBeNull`) became "a zero rate is a known rate, and is cached" (`0`, one fetch).
+- `Settings.labourRate.test.jsx`: `1500` became `"1500"`.
+- The commit and the marker give the reason for each.
+- Nothing is skipped and there is no `.only`.
+- One weak assertion: the JobDetail "Rs 0" check uses `getAllByText("Rs 0").length > 0`. Its `queryByText("Labour rate unknown")` assertion is what carries the test.
+
+5. WHAT THE ROUND COULD HAVE BROKEN
+- Cache: a known rate is cached (1 fetch), a save invalidates it and the next read is fresh (2 fetches, value 180000). A stored 0 is now cached, which is intended.
+- Session check, create path and shop's day: the delta does not touch `AuthContext.jsx`, `JobsBoard.jsx`, `Dashboard.jsx` or `date.js`. Their tests pass in the gate.
+- Settings page: its test passes.
+- CompletionForm: only `rateKnown` changed.
+- CompletionForm hint (the coordinator's ruling): "Labour @ Rs X/hr" via `formatPKR` (`CompletionForm.jsx:160`) misleads only by paisa, since 1200.50 shows as Rs 1,201. The extreme case is a sub-rupee rate, which the card accepts (for example `0.40`): the hint would say "Labour @ Rs 0/hr" while labour is charged. That is a NIT; the reviewer agrees with keeping `formatPKR` there.
+
+NITS (none blocks the merge)
+- a. `mapJob.js:137`: a non-numeric `labour_rate_paisa` maps to a known rate of 0. Unreachable from our server. Fix: `Number.isSafeInteger(c.labour_rate_paisa) ? c.labour_rate_paisa / 100 : null`.
+- b. `LabourRateCard.jsx:120`: "completions cannot be priced until it is" is not true, because the server prices from its own setting; only the web preview cannot. Also, after "Saved, but ... not read back", Save stays enabled, so saving the same value again mints a new key and adds a second row with the same value. Harmless, since the table is append-only. Fix: say "the bill preview cannot price labour until it is read".
+- c. The confirm's "from" figure is the card's last read. If another tab changed the rate, it shows a stale figure ("from Rs 1,500" when the server holds Rs 2,000). Acceptable; the fix would be to re-read on Save before opening the confirm.
+- d. `jobsApi.js:216`: a blank line separates `fetchLabourRatePaisa`'s doc comment from the function.
+
+6. GATE
+- Log: `C:/Users/User/.fixflow-cache/gate-logs/rv214/web-20261114-181613/summary.txt`
+- `head=08b7cf1 tree=clean`. GATE[1 lint] through GATE[7 restore-gate] all EXIT=0; SUMMARY FAIL=0.
+- 41 test files, 333 tests passed, matching the lane's 333.
+
+WHAT THE REVIEWER RAN
+- Free RAM and commit read before each heavy step: 8.8 to 9.2 GB free, 30.0 to 30.6 GB commit.
+- The gate in the background on the review tree.
+- A scratch worktree at `56e9623` with the delta's tests, `npm ci`, and vitest (exit 1, 26 expected failures).
+- Then the head's `src` laid over it with `git archive`, plus the probes. One probe failed only because its button matcher looked for "save rate" while the button read "Saving..."; re-run correctly, it passed.
+- A secret scan of the delta (0 hits), and checks for paths, imports and skips.
+- The scratch worktree is removed; only logs and probe sources remain under `rv214/`. The review tree is clean.
+
+NOT VERIFIED
+- Real-browser click timing (jsdom only).
+- That the server's PUT answer always carries `value` (read in code, `tenancy/router.py` `response_model=EffectiveSetting`; not run against a live server).
+- Whether editors attach the doc comment across the blank line in NIT d.
+
+COORDINATOR (2026-11-14, 18:21). PASS at 08b7cf1530cd32c9ff525f7f0c33e7ab41861b73: the head stays where it is. `main` is `1f25479` and the branch was cut from `e4426c7`, so this PC's three checks run on a local merge of exactly `origin/main` and this head (`5a57f86`, never pushed; lane id `lc214`), then the merge under ruling C60. The four nits are backlog for the web's next change: a non-numeric rate from the server mapped to 0 (`mapJob.js:137`), the "cannot be priced" sentence (`LabourRateCard.jsx:120`), the stale "from" figure across tabs, the blank line at `jobsApi.js:216`; and a rate under one rupee shows as "Rs 0/hr" in the completion form's preview label.

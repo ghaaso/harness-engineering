@@ -1,0 +1,90 @@
+PR 215 (P7b-2: ops console, media, web dependencies, Cloudflare rules) is ready for both binding reviewers at 40bfcfa. First ready: `gh pr ready` was run, and the PR body starts "Plan @ plan-v9.59". One push. The branch is rebased onto main 1f25479, with no file overlaps with #211, #212 or #213. Eight commits: db82e02..40bfcfa. No migration (head stays 0047). Not merged. GitHub Actions shows 3 failures: the jobs never started because of billing (0 steps), so the local gates below stand in for them (N6).
+
+GATES (head 40bfcfa, clean tree, no extra arguments, one at a time after a memory check):
+- web:     C:/Users/User/.fixflow-cache/gate-logs/p7b2/web-20261114-181436      SUMMARY FAIL=0 (P12's merged src/ together with the router bump)
+- backend: C:/Users/User/.fixflow-cache/gate-logs/p7b2/backend-20261114-181516  SUMMARY FAIL=0, 1462 tests, 0 skipped, integration ran
+
+FILES CHANGED (git diff --name-only 1f25479...40bfcfa):
+CLAUDE.md
+backend/app/core/config.py, backend/app/core/storage.py, backend/app/main.py (import plus the add_daily_job registration only)
+backend/app/features/media/{deps,repository,router,schemas,service,sweep}.py
+backend/app/features/media/tests/{test_router,test_service}.py
+backend/tests/{conftest,test_backup,test_media_hardening_integration,test_scheduler_timezone,test_storage}.py
+docker-compose.prod.yml, ops-server.mjs, ops/selfhost/cloudflared/config.example.yml, ops/selfhost/env/ops.env.example
+ops/selfhost/smoke/{compose-rules.mjs,docker-compose.smoke.yml}
+package.json, package-lock.json, tests/ops-server.test.mjs, tests/react-router-version.test.mjs
+Overlap with P8b's announced files: main.py (scheduler block: one registration added), config.py (its own "P7b-2" block), CLAUDE.md, backend/tests/conftest.py, backend/tests/test_scheduler_timezone.py (the sweep added to the job set). Left as they are.
+
+WHAT CHANGED, BY REGISTER ID (each test fails on main and passes on head):
+- O05-09 / O6-F17 / O08-F08 (ops-server exposure and login):
+  - Per-IP backoff keyed on CF-Connecting-IP, falling back to the socket peer. Five free failures, then 30 s doubling to 15 min, with 429 + Retry-After.
+  - A locked IP is refused before its body is read, and the lock is checked again after the body.
+  - A success forgets the IP's failures. The map is bounded at 10k entries.
+  - 16 KB body cap: a declared length over it is refused up front; a chunked body is refused as it crosses the cap (413).
+  - requestTimeout 15 s, headersTimeout 10 s.
+  - Boot refuses an OPS_SESSION_SECRET under 32 characters, and an OPS_PASSWORD that is unset or under 16 characters. The example placeholder is shorter than 16; the test reads it from the file. Neither value is ever printed.
+  - ops sits only on opsnet (internal: true), shared with cloudflared, backend and web. Its health targets are internal URLs.
+  - The tunnel template's commented ops. route carries a commented originRequest.access guard, marked VERIFY.
+  - Tests: tests/ops-server.test.mjs (22 tests). compose-rules.mjs gains three rules.
+- O08-F09: an unset Railway or Sentry row reports not_configured and does not degrade the rollup. Test: "is ok when every configured component is ok and Railway/Sentry are unset".
+- O05-12 (media reservation):
+  - Per-principal cap: media_max_live_reservations = 20 pending reservations within the 600 s URL lifetime. Past it: 429 + Retry-After.
+  - The count is taken under pg_advisory_xact_lock(hashtext('media_reservation'), hashtext(created_by)).
+  - A declared size_bytes over the ceiling gets 413 before any row exists. Otherwise it is signed into the PUT URL as its Content-Length (botocore puts it in X-Amz-SignedHeaders).
+  - media_require_declared_size defaults OFF.
+  - Tests: test_service.py, test_router.py, test_storage.py (real botocore), and test_media_hardening_integration.py (real Postgres, including the parallel overshoot).
+- O05-13: finalize ownership was already on main (P7a, #191). This PR adds only the commit on the 413 path.
+- T44-media-1: the finalize 413 commits its row delete before raising. Tests: test_complete_too_large_commits_the_row_delete, test_an_oversized_finalize_leaves_no_pending_row.
+- T44-media-2: media-stale-pending-sweep, daily at 03:45 Asia/Karachi, threshold 48 h.
+  - Keyset pages of 500, at most 20 per run; it reports truncated beyond that.
+  - It decides each row by the R2 listing: bytes absent, the row goes; an oversized object, the object and the row go; bytes present within the ceiling, the row is kept.
+  - A closing row is never deleted, but its oversized object is.
+  - It aborts on an unreadable listing, or when none of the 3 most recently finalized keys is listed (the wrong-bucket canary).
+  - Storage calls run in asyncio.to_thread.
+  - Tests: the sweep tests in test_service.py and test_media_hardening_integration.py, plus test_scheduler_timezone.py.
+- O05-18: react-router-dom ^7.17.0 -> ^7.18.5. The lock moves react-router and react-router-dom to 7.18.5 and set-cookie-parser to 2.7.3. Commit ba3e0a3 touches only package.json, package-lock.json and tests/, so it can be cherry-picked onto release/drain-web. Test: tests/react-router-version.test.mjs.
+- Cloudflare rules documented: NOT in this PR, by agreement. The runbook text is in the notes folder as P7b-2-runbook-followup.md. It applies after #211 (merged) and this PR merge.
+
+NEW SINCE THE LAST REPORT: break O11 (empty the placeholder set) was NOT caught. The set was dead code, because every entry was shorter than the 16-character minimum. Fixed in 40bfcfa:
+- the set is removed and length is the whole rule;
+- the test boots with the placeholder read from ops.env.example;
+- new O11 (a placeholder of 16+ characters in the example) and O12 (minimum lowered to 8) are both caught.
+
+BREAKS: every break listed was caught. O and C ran on 40bfcfa. B1-B13 ran on dbf5abc and B14-B15 on 40bfcfa; backend/ is identical between the two (0 diff lines). The full table, with the failing test names and each B run's log id, is in the PR body under "Deliberate breaks", and is repeated here:
+
+| Id | Break | Caught by |
+| --- | --- | --- |
+| O1 | body cap set to `Infinity` | "refuses a declared Content-Length over the cap before reading it", "refuses a chunked body the moment it crosses the cap" |
+| O2 | pre-body lock check removed | "refuses a locked IP before reading its body" |
+| O3 | lock read as 0 (password checked first) | "refuses a locked IP before reading its body" |
+| O4 | unset Railway reports `degraded` | "is ok when every configured component is ok and Railway/Sentry are unset" |
+| O5 | `OPS_SESSION_SECRET` optional | "refuses to start when it is unset", "refuses a short one and never prints it" |
+| O6 | secret minimum 32 → 16 | "refuses a short one and never prints it" |
+| O7 | `CF-Connecting-IP` ignored (socket peer only) | six tests that share one IP run into the lock |
+| O8 | a success keeps the IP's failures | "forgets an IP's failures after it logs in" |
+| O9 | lock not re-checked after the body | "holds under a burst whose bodies arrive after the lock check" |
+| O10 | `OPS_PASSWORD` optional | "refuses to start when it is unset", the placeholder/short test |
+| O11 | `ops.env.example` placeholder lengthened to 16+ characters | the placeholder/short test (the first O11, emptying a placeholder set, was **not** caught: the set was dead code, removed in `40bfcfa`) |
+| O12 | password minimum 16 → 8 | the placeholder/short test |
+| C1 | `ops` also on the `app` network | compose-rules: ops is attached to internal networks only |
+| C2 | `opsnet` not `internal` | compose-rules: ops is attached to internal networks only |
+| C3 | a public health target in `ops.env.example` | compose-rules: ops health targets are internal URLs |
+| C4 | cloudflared off `opsnet` | compose-rules: the tunnel shares a network with ops |
+| B1 | the 413 path does not commit (`backend-20261114-154858`) | `test_complete_too_large_commits_the_row_delete`, `test_an_oversized_finalize_leaves_no_pending_row` |
+| B2 | cap off by one, `>` (`…155141`) | `test_the_live_reservation_cap_refuses_with_a_retry_time`, `test_the_live_reservation_cap`, `test_parallel_reservations_cannot_overshoot_the_cap` |
+| B3 | declared size not passed to the presign (`…155516`) | `test_a_declared_size_is_signed_into_the_upload_url`, `test_a_declared_size_is_bound_or_refused` |
+| B4 | `ContentLength` not signed (`…155643`) | `test_a_declared_length_is_a_signed_header` (real botocore) |
+| B5 | closing rows deletable (`…155801`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_reaps_only_what_can_never_become_evidence` |
+| B6 | HEAD instead of the listing (`…155923`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_stops_at_the_first_unreadable_listing`, `test_the_sweep_pages_past_rows_it_keeps` |
+| B7 | sweep not registered in `main.py` (`…160050`) | ruff (unused import), and five `test_scheduler_timezone` tests |
+| B8 | oversized objects kept (`…160215`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_reaps_only_what_can_never_become_evidence` |
+| B9 | declared size unchecked (`…160333`) | `test_a_declared_size_over_the_ceiling_is_refused_before_any_row`, `test_a_declared_size_is_bound_or_refused` |
+| B10 | cap window unbounded (`…160454`) | `test_the_live_reservation_cap_refuses_with_a_retry_time`, `test_the_live_reservation_cap` |
+| B11 | 429 without Retry-After (`…160613`) | `test_reserve_over_the_live_cap_is_429_with_retry_after`, `test_the_live_reservation_cap` |
+| B12 | advisory lock removed (`…160720`) | `test_the_cap_takes_the_principals_lock_before_counting`, `test_parallel_reservations_cannot_overshoot_the_cap` (real Postgres) |
+| B13 | one page only (`…160829`) | `test_the_sweep_pages_past_rows_it_keeps` (unit and integration), `test_the_sweep_stops_at_its_page_ceiling` |
+| B14 | canary check removed (`…182314`) | `test_the_sweep_deletes_nothing_when_the_canary_is_not_listed`, `test_the_sweep_deletes_nothing_when_the_bucket_lacks_the_finalized_keys` |
+| B15 | a closing row's oversized object kept (`…182422`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_reaps_only_what_can_never_become_evidence` |
+| W1 | react-router 7.17.0 back in `node_modules` (shown before the rebase; the lock change is the same) | `tests/react-router-version.test.mjs` |
+
+NOT VERIFIED: that R2 enforces a signed Content-Length (owner test); the full smoke.sh with opsnet; the cloudflared originRequest.access keys; how far Cloudflare buffers bodies through the tunnel; the react-router advisory vector.
