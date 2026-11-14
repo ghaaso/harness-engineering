@@ -1,0 +1,41 @@
+VERDICT: PASS
+PR #215 at b57f81163d0790f83727428ee963401bf1f86ae7
+Phone-side delta re-read (`40bfcfa..b57f811`: rulings C76, C77, C80) by the PR's phone-side reviewer; dispatched by the coordinator on 2026-11-14 at 20:24, returned at 20:26. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Nothing on this head needs to change. Against `main`'s phone and the deployed APKs, the delta takes server behaviours away (the default cap, and a 4xx on a repeated finalize) and adds none that can park, drop, block or loop a queued file. N1 is a note: the switch-on sentence for the cap is necessary but not sufficient; a text fix that changes nothing at merge. The head was the same at the start and at the end. Server paths are under `backend/app/` at b57f811; phone paths under `technician-app/src/`; the delta touches no file under `technician-app/` (`git diff --stat 40bfcfa..b57f811 -- technician-app` is empty, VERIFIED-BY-COMMAND).
+
+1. A SECOND FINALIZE OF AN UPLOADED ROW (C77)
+- The server returns the row unchanged and does not read storage (`features/media/service.py:246`). VERIFIED-IN-CODE.
+- The phone never sends a second finalize for the same `media_id`: a finalize that times out is a plain `Error` (`lib/api.ts:134-136`), which the classifier calls `free_retry` (`lib/syncClassification.ts:195`), and the drain stops (`features/media/pendingMedia.ts:235-236`); the next attempt calls `uploadMedia` from the start, with a new reservation, a new PUT and a new finalize (`features/media/uploadMedia.ts:35-57`); `PendingMediaItem` stores no `media_id` (`pendingMedia.ts:30-46`). VERIFIED-IN-CODE.
+- So the phone always settles by uploading again. Already true before this PR: a finalize that landed but timed out on the phone leaves an uploaded row, and the retry adds a second uploaded copy. INFERRED.
+
+2. OVERSIZED FINALIZE ON AN OPEN JOB (C80 F4)
+- The server: the object is purged and the deletion logged (`service.py:281`); the router rolls the request back, deletes the row only while it is still pending, commits, and answers 413 (`features/media/router.py:151-161`; `discard_oversized`; `repository.py` `delete_pending`); the 413 carries the app marker. VERIFIED-IN-CODE.
+- The phone sees the same marked 413 as at 40bfcfa and at 1f25479. Arrival clip and arrival voice note: `too_large` is `park`, the slot shows "failed" and the technician can recapture (`features/jobs/arrival-job/evidenceUpload.ts:25-27`; `syncClassification.ts:169`, `:197`). A file the pending-media drain sends: it parks at once (`pendingMedia.ts:221-226`); that park is invisible, no screen and no Retry (O3-F5); rare for audio and photos, because the drain checks the size before reserving (`pendingMedia.ts:145-155`). Completion-form voice note: the error is swallowed and the completion is sent without the audio (`features/jobs/CompleteJobScreen.tsx:193-195`), not new. Closing clip: "upload-failed", "too large - try a shorter clip", and the close is not attempted (`features/jobs/closeJobWithVideo.ts:89-93`). VERIFIED-IN-CODE.
+- A retry of the same clip is always a fresh reservation (`uploadMedia.ts:35`). The phone never finalizes the deleted row.
+
+3. OVERSIZED FINALIZE ON A CLOSED JOB (C80 F1)
+- The phone gets the same marked 413; the object is purged and the pending row stays (`service.py:281`). It cannot loop: the media row parks a 413 on the first answer, the wizard marks the slot failed, and the close path returns; any later attempt reserves again, and on a closed job a technician's reservation is a marked 403 (`router.py:94`), which parks; the kept row is never finalized again by the phone. VERIFIED-IN-CODE. The 403 on a closed job existed before this PR.
+
+4. NOTHING NEW ON RESERVE, UPLOAD OR FINALIZE; THE CAP SHIPS OFF (C76)
+- `media_max_live_reservations: int = 0` (`core/config.py:67`), and `if created_by is not None and self._max_live_reservations > 0:` (`service.py:174`): no lock, no count, no 429. `media_require_declared_size: bool = False` (`core/config.py:72`). VERIFIED-IN-CODE.
+- Against 40bfcfa: a repeated finalize is now always 200; the oversized finalize stays a 413, on a closed job too; the cap's 429 is gone at the default; the upload URL is unchanged, since the phone declares no size (`lib/api.ts:54-59`).
+- The only new failure mode: if `discard_oversized` itself throws after the rollback, the answer is a marked 500 instead of a 413; on the media row that is `count_and_retry`, and the next attempt goes back to the 413. Negligible. INFERRED.
+
+5. THE SWITCH-ON CONDITION (`core/config.py:63-66`, mirrored in CLAUDE.md): NOTE N1
+- Necessary, but not sufficient against today's phone code.
+- "A phone release" should read "every phone runs a release". The deployed APKs count our 429 toward parking (`syncClassification.ts:196-199`; `pendingMedia.ts:228-233`); they stay in the fleet until each phone is reinstalled. The `media_require_declared_size` comment (`core/config.py:68-71`) has the same gap.
+- Two live paths are not queued, and the condition does not cover them: the closing clip turns our 429 into "upload-failed" (`closeJobWithVideo.ts:96-99`), so a capped technician cannot close for up to Retry-After, at most 600 s; the completion's voice note is dropped silently on a 429 (`CompleteJobScreen.tsx:193-195`). Add: those paths wait on, or queue, a 429; or exempt `closing` reservations from the cap.
+- The free retry needs a new error class on the phone: today `errorClass` has no class for 429 (`syncClassification.ts:191-199`).
+- None of this affects the fleet at merge, because the cap ships at 0.
+
+6. THE SWEEP: ONE-HOUR FLOOR, A COMMIT PER PAGE, AN EMPTY CANARY ABORTS
+- The sweep deletes only pending rows whose key the R2 listing does not show; never a closing row; never a row under 1 h old (`service.py:57`, `:381`; the abort on an empty canary at `:410`). VERIFIED-IN-CODE.
+- The phone finalizes only inside one `uploadMedia` call: the reservation, then the PUT (which must start within the URL's 600 s life), then an immediate finalize bounded by the 15 s timeout (`uploadMedia.ts:35-57`; `lib/api.ts:114`; `core/storage.py:66`). `uploadAsync` sets no timeout, so the oldest row a phone can legitimately finalize is about 600 s plus the PUT's duration plus 15 s. INFERRED.
+- A row whose PUT finished has its bytes listed and is kept, however old. So the sweep can remove a row the phone will later finalize only if a PUT is still uploading at sweep time and is older than the threshold: unreachable at the 48 h default; at the 1 h floor it needs a PUT running for more than about 50 minutes at 03:45; the finalize would then be a marked 404, which parks or fails the wizard slot. Theoretical. INFERRED.
+
+WHAT THE REVIEWER READ AND RAN: `gh pr view 215 --json headRefOid` at the start and the end; `git log` / `git diff 40bfcfa..b57f811` (server files and the CLAUDE.md lines); `grep` in the head tree for the citations, and the phone files cited, unchanged since the first record. No tests, no gate, no writes.
+
+NOT VERIFIED: that R2 rejects a PUT whose URL expired after the transfer started; that R2's listing is immediately consistent after a PUT; upload durations on real devices; that `delete_pending`'s rowcount and the rollback-then-delete sequence behave the same on real Postgres (the other reviewer runs the integration gate); the `ops-server.mjs` and health-facts changes (outside this lens); the lane's ready file and the plan rows were not read, the code and its comments only.
+
+COORDINATOR (2026-11-14, ruling C93). PASS for the phones. N1 is taken into the round the security re-read forces anyway: the two switch-on sentences say "every phone in the fleet runs a release that ...", name the two live paths that do not queue a 429 (the closing clip, the completion's voice note), and say that the phone has no error class for 429 yet.

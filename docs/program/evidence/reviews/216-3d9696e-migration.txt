@@ -1,0 +1,56 @@
+VERDICT: PASS
+PR #216 at 3d9696e211d135046dded913068131e019cba553
+Migration delta re-read (`10f939a..3d9696e`: ruling C84, and what C82 and C89 change in the migration, the models, `chain.py` and the queries) by the PR's migration reviewer; dispatched by the coordinator on 2026-11-14 at 20:24, returned at 20:38. This file is the coordinator's record of the reviewer's report, written from the notification text. The whole-PR re-read of the same head is a separate record.
+
+The head was the same at the start and at the end, and the review tree is clean. All three findings are fixed. Nothing on this head has to change; the rest are notes.
+
+1. F1, FIXED: the verify reports a row it cannot rebuild instead of crashing
+- `attendance/chain.py:582`: `_UNENCODABLE = (TypeError, ValueError, IndexError, KeyError, AttributeError, OverflowError)`.
+- `chain.py:586-590` (`_rebuilt`) wraps the rebuild of a ledger create or void, a payment create and a revision. `chain.py:780` wraps `_payment_void_issue`, which covers the void and its later attribution. Each failure becomes a `row_tampered` issue that names the row, with the detail "row holds a value the chain cannot encode".
+- Tested by the reviewer (VERIFIED-BY-COMMAND): `chain.py` loaded by path in a throwaway `python:3.12-slim` container, `verify_chain` fed stored values beyond the lane's tests. Each of these is reported as `row_tampered`, never raised: a nested quantity `[["R",[1],100]]`; `materials` set to None; a material line that is None; `rev` set to None; `created_at` set to None; a string where `original_minor` belongs (also reported as `bill_tampered`).
+- A huge integer (10**40), a negative figure and an infinity `sent_at` all encode fine; they are reported as a mismatch plus `bill_tampered`. A timestamp with no zone is read as UTC (the same rule `_fmt_dt` applies when writing), so it encodes and verifies ok.
+- Still raises, NIT, no change needed. Two places outside the wrapper: `chain.py:832` `if job_key not in latest or rev.rev > latest[job_key].rev:` raises TypeError when a second revision of the same job has `rev` NULL; `chain.py:838` `_fmt_opt_dt(job.sent_at)` raises AttributeError when `job.sent_at` is a string. Neither value can be stored in the real column types (`rev` is Integer NOT NULL with CHECK `rev >= 1`; `bill_sent_at` is timestamptz, which asyncpg always returns as an aware datetime). Reaching either needs a schema change, not a row edit.
+- Could the catch hide a programming error? Not silently: a bug in a payload builder would mark every affected row `row_tampered`, so the verify reports BROKEN and still sends its anchor mail and app_event. The bug would be loud, but labelled as tampering. NIT: the issue detail does not carry the exception type; adding `type(exc).__name__` would tell a bug from an edit.
+
+2. F2, FIXED: each new CHECK is proven on the upgraded schema
+`tests/test_migration_0048_integration.py:339` and `:354-392` insert five rows and require each to be refused as a CheckViolation that names the expected constraint. These are the right five (VERIFIED-IN-CODE by evaluating each predicate):
+- `job_bill_revision_kind_check`: kind 'x', rev 99; breaks no other.
+- `job_bill_revision_rev_positive`: rev 0, kind 'send'; breaks no other.
+- `staff_ledger_chain_event_type_check`: event 'x', subject 'staff_ledger', ledger_id set; breaks no other.
+- `staff_ledger_chain_subject_type_check`: subject 'x', no FK column set; breaks no other.
+- `staff_ledger_chain_subject_fk_check`: subject 'job_payment' with both `ledger_id` and `payment_id` set; also breaks `uq_staff_ledger_chain_ledger_event` and `uq_staff_ledger_chain_payment_event`. The test still holds, because Postgres checks CHECK constraints before it inserts index entries, and the test requires the CheckViolation and the constraint name (INFERRED from executor order; the test passed). NIT: a ledger and payment with no `create` entry would make it break exactly one rule.
+
+3. F3, FIXED: the revision money columns are `*_minor`
+- Renamed in the migration (`0048...py:127-135`, the backfill at `:240-252`, the INSERT text and the bind keys), the model (`jobs/models.py:561-573`), `chain.py` (the payload function's arguments and `BillRevisionView`), the service (`_BillParts.of`, `_revision_view`, `_write_bill`) and the query (`repository.cap_reference_original`) (VERIFIED-IN-CODE).
+- No `_paisa` attribute of a revision is left (grep). `JobBillView` keeps `original_paisa`/`negotiated_paisa` on purpose: it mirrors `job.bill_*_paisa`, which keep their names under the CLAUDE.md rule.
+- By hand, model against migration: same names, types and nullability. No constraint names change, because no CHECK refers to these columns.
+- The payload is a positional JSON array, so the names are not inside the hash. In the `test_money_chain.py` delta only keyword names changed; no golden string changed. The golden-byte tests pass (64 passed).
+
+4. N1, FIXED: backfill revision ids are reproducible
+- `0048...py:99` defines `_BACKFILL_NAMESPACE`, and `:240` sets `id=uuid.uuid5(_BACKFILL_NAMESPACE, str(j["job_id"]))`. Two runs over the same data give the same ids. Every revision shares the migration's `now()`, so ties are broken by `(rank, subject, id)`, and the chain order is reproducible too (VERIFIED-IN-CODE).
+- The hashes still depend on when the migration ran, through `created_at`. That is stated in the migration docstring at `0048...py:35-38`; N2's wording is corrected at `:42-43` and `chain.py:950-954`.
+- NIT, where an operator reads it: CLAUDE.md and the runbooks do not mention it. A restore drill that starts from a pre-0048 dump will produce different chain hashes than production did; a drill from a post-0048 dump is unaffected. One sentence in the restore runbook's chain-anchor check would cover it.
+- NIT: the docstring lines at `0048...py:43` (120 characters) and `chain.py:954` (124) were not re-wrapped; ruff ignores E501 and the formatter leaves docstrings alone, so the gate stays green.
+
+5. C89: `repository.cap_reference_original` (`jobs/repository.py:344-363`)
+- SQL: a scalar subquery takes `coalesce(max(rev), 0)` over the job's `kind = 'override'` revisions. The outer query picks the first non-NULL `original_minor` with `rev >=` that value, `ORDER BY rev ASC LIMIT 1`.
+- Ordering by `rev`, not `created_at`; `rev` is unique per job (`uq_job_bill_revision_job_rev`), so ties are impossible.
+- The override's own row has `rev` equal to the subquery value, so its original is the first one picked. With no override the answer is the first original the job ever had, which is the C13 rule.
+- Both queries are served by the `(job_id, rev)` unique index; `kind` is filtered on a handful of rows per job. No new index is needed.
+- C82 changes no storage: it adds one event-payload flag, `"override": kind == "override"`.
+
+6. THE CHAIN AND THE RUNS ON REAL POSTGRES
+- 0048's `down_revision` is 0047 and the chain has one head (grep at this head). The rebase brought in only `src/` changes; 0048's statements are unchanged apart from the renames and the ids.
+- The migration re-run on a populated database: the data-bearing test and the scale test passed, with locks unchanged: 5,000 billed jobs and 5,000 payments in 2.55 s wall. `staff_ledger_chain` holds AccessExclusive; `job`, `job_payment`, `shop` and `technician` hold ShareRowExclusive, seen from 1.04 s to 2.38 s. That matches the earlier 2.42 s / about 1.3 s.
+
+7. CLAUDE.md
+- `CLAUDE.md:29` says "head = 0048; 43 tables", and the model files hold 43 `__tablename__` entries (grep). `:147` says "Head is 0048".
+- The sentences this round added: `:307-312` (the C82/C89 correction text; the payload carries only the `override` flag, consistent with the payload rule); `:321-325` (the cap measured from the latest override; matches `cap_reference_original` and the service's `max(original, reference)`); `:444-447` (scheduler grace; outside the migration, not checked against `main.py`).
+
+WHAT THE REVIEWER RAN: `ff-gates.sh backend rv216m <tree>` with `FIXFLOW_P8B_BACKFILL_JOBS=5000`, on `tests/test_migration_0048_integration.py`, `tests/test_money_chain_integration.py`, `tests/test_bill_revision_integration.py` and `app/features/attendance/tests/test_money_chain.py`, with `-s`: every gate passed, including the CLAUDE.md check, ruff, mypy, lint-imports, `alembic upgrade head` and `alembic check`: 64 passed, 0 skipped, SUMMARY FAIL=0. Log: `C:/Users/User/.fixflow-cache/gate-logs/rv216m/backend-20261114-202630`. The `chain.py` probe in a throwaway `rv216m-pyprobe` container (256 MB, `--rm`). RAM before the runs: 7.67 GB free, 37.1 GB commit.
+
+NOT VERIFIED: the full gate (the other reviewer runs it); a 50,000-row re-run (the backfill logic is unchanged apart from the names and the ids); a real two-session race on the chain lock; the scheduler-grace sentence at `CLAUDE.md:444-447`.
+
+CLEANUP: `docker ps -a` shows nothing with rv216m. The probe script is deleted. Scratch keeps only logs under the coordinator's scratchpad folder `rv216/mig/logs/`. The review tree has no changes.
+
+COORDINATOR (2026-11-14). PASS on the exact head for the migration lens. Notes kept for later, none holding this head: the exception's type name in the `row_tampered` detail; the fifth CHECK insert breaking one rule only; and one sentence for the restore runbook's chain-anchor check (a drill from a dump taken before 0048 gives other chain hashes than production; added to the runbook follow-up list for the P3a lane). The merge waits for the whole-PR re-read of the same head and this PC's three checks.

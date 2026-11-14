@@ -1,0 +1,139 @@
+PR 215 (P7b-2: ops console, media, web dependencies, Cloudflare rules) is ready for re-review at b57f811. This is the fix round for rulings C76, C77 and C80, in one push: 40bfcfa..b57f811, three commits (62cdf95 C76, cc8637a C77, b57f811 C80). The PR body's first line is "Plan @ plan-v9.72", and the three rulings are journal items 14, 15 and 16. It is not rebased: the base is still main 1f25479, and you check the merge onto 27c9e04 locally. No migration (head stays 0047). Not merged. The PR is already ready (not a draft), so `gh pr ready` was not run again. GitHub Actions jobs still never start (billing); the local gates below stand in for them (N6).
+
+GATES (head b57f811, clean tree, no extra arguments, one at a time after a memory check):
+- web:     C:/Users/User/.fixflow-cache/gate-logs/p7b2/web-20261114-200809      SUMMARY FAIL=0, vitest 37 files, 307 tests
+- backend: C:/Users/User/.fixflow-cache/gate-logs/p7b2/backend-20261114-200904  SUMMARY FAIL=0, 1477 tests, 0 skipped, integration ran
+
+FILES CHANGED SINCE THE LAST MARKER (git diff --stat 40bfcfa b57f811: 16 files, +627 -75):
+CLAUDE.md
+backend/app/core/config.py (its own P7b-2 block only: the cap default 0 with the switch-on rule; the declared-size comment)
+backend/app/features/media/{repository,router,service,sweep}.py
+backend/app/features/media/tests/{test_router,test_service}.py
+backend/app/features/ops/{health,schemas}.py
+backend/app/features/ops/tests/{test_health,test_router}.py
+backend/tests/{test_media_hardening_integration,test_ops_health_integration}.py
+ops-server.mjs, tests/ops-server.test.mjs
+Not touched this round: main.py, conftest.py, test_scheduler_timezone.py (all three are in P8b's announced files). config.py and CLAUDE.md changed only inside this PR's own lines.
+
+WHAT CHANGED, BY RULING AND REGISTER ID:
+- C76 / O05-12 (reservation cap):
+  - The cap ships OFF: media_max_live_reservations = 0, meaning no cap. With the cap at 0 the service takes no lock and runs no count (F5 too).
+  - The lock, the count, the 429 + Retry-After and their tests stay, run with the cap set.
+  - config.py and CLAUDE.md say when the cap may be switched on: after a phone release that treats our 429 as a free retry and waits for Retry-After, and that shows the pending-media list with Retry (O3-F5). The value must be far above what one phone's own failed attempts leave in 10 minutes.
+  - media_require_declared_size stays OFF until a phone release declares the size; the comment says why (every upload would get a 422 and park).
+  - /api/ops/health facts carry media_max_live_reservations and media_require_declared_size as they are in effect.
+- C77 / T44-media-1 + O05-13 (finalize):
+  - A finalize of a row already uploaded is an idempotent success. It returns the row unchanged, after the who-may-finalize check, and never reads, purges or deletes again. That holds on a closed job too.
+  - Open (journaled): replacing the bytes inside the URL's 600 s until the ETag is recorded at finalize.
+- C77 / O05-09, O6-F17, O08-F08 (ops lock):
+  - One console.warn per engaged lock: ip=<JSON-quoted key> failures=<n> lock_seconds=<s>.
+  - Never a password, token or body.
+- C80 F1 / T44-media-1:
+  - An oversized finalize on a CLOSED job purges the object and keeps the row pending (frozen evidence; the evidence-gaps report still shows the gap).
+  - Chosen rule: "closed job", every phase, mirroring the freeze in delete. Why not "closing phase": the close gate counts closing rows only while the job is open, where deleting the oversized row is right; the gaps report reads closing rows of closed jobs only, and those are kept.
+- C80 F4 / T44-media-1:
+  - The service purges the object and raises MediaUploadOversizedError.
+  - The router rolls back (the access_by_token claim and its claim event go), then deletes that one row by id while it is still pending, commits, and answers 413.
+- C80 F2 / T44-media-2: an empty canary never passes. With candidates and no finalized key, the run aborts and logs why.
+- C80 F3 / T44-media-2: every deletion, by the sweep or a finalize, logs one "media deletion:" line: source, outcome (row/object/both), media_id, job_id, phase and the server-built path. No free text.
+- C80 per-page commit: sweep_stale_pending(on_page_done=...); the scheduled entry passes session.commit.
+- C80 floor: SWEEP_MIN_AGE is 1 h. A lower setting is clamped with a warning; the boot does not fail.
+- C80 point 8: CLAUDE.md says length is the whole OPS_PASSWORD rule, and that the self-hosted stack sets no Railway or Sentry token.
+- O08-F09, O05-13, O05-18: no change this round.
+
+TESTS RED ON 40bfcfa:
+- Run directly: head's integration tests over 40bfcfa's production code (backend/app without its tests), log backend-20261114-200639, give 5 red and 14 green. Red:
+  - test_an_oversized_finalize_on_a_closed_job_keeps_the_gap (F1, the reviewer's probe)
+  - test_a_refused_finalize_keeps_no_claim (F4)
+  - test_a_second_finalize_of_an_uploaded_row_keeps_the_row_and_the_object (C77)
+  - test_with_the_default_settings_the_21st_and_200th_live_reservations_are_accepted (C76, F5)
+  - test_health_facts_and_request_echo_over_http (C76)
+- The new unit tests cannot import on 40bfcfa (new names), so each is shown red by the break that restores 40bfcfa's behaviour:
+  - B16: test_the_cap_setting_ships_off, test_deployment_facts_defaults
+  - B17: test_with_the_cap_off_nothing_is_locked_counted_or_refused
+  - B18: test_deployment_facts_reflect_every_exposed_setting
+  - B19: test_a_second_finalize_of_an_uploaded_row_returns_it_and_touches_nothing
+  - B20: test_complete_tells_the_service_when_the_job_is_closed
+  - B21: test_complete_too_large_commits_the_row_delete (now checks rollback, delete, commit in that order)
+  - B22: test_the_sweep_never_passes_on_an_empty_canary
+  - B23: test_the_sweep_threshold_has_a_one_hour_floor
+  - B25: test_the_sweep_decides_each_row_by_what_r2_lists (the log lines)
+  - B26: test_the_sweep_hands_back_after_each_page
+  - O13: "logs one line when a lock engages, with no secret in it"
+
+CHANGED EXPECTATIONS (each with its reason in the diff):
+- Two service tests asserted that the service deletes the oversized row; the router now deletes it after its rollback (F4).
+- The sweep's unit fixture carries a listed canary, because an empty one aborts (F2).
+- Two integration sweep tests finalize a canary row first.
+- The default-settings integration test went from 21 to 200 reservations.
+No assertion was removed and no skip was added.
+
+BREAKS: every break was caught. One first form, of B22, was not, and that was correct; its row says why and gives the redefined form that is caught. The reruns asked for (B1, B2, B5, B8, B10-B15) and the new breaks (F1 = B20, F2 = B22, F4 = B21, the floor = B23, "default not off" = B16; also B17-B19, B25, B26, O13) are in this table. It is also in the PR body under "Deliberate breaks". Log ids are gate-logs/p7b2/backend-20261114-<id>; where a row has two ids, the second ran on b57f811.
+
+| Id | Break | Caught by |
+| --- | --- | --- |
+| O1 | body cap set to `Infinity` | "refuses a declared Content-Length over the cap before reading it", "refuses a chunked body the moment it crosses the cap" |
+| O2 | pre-body lock check removed | "refuses a locked IP before reading its body" |
+| O3 | lock read as 0 (password checked first) | "refuses a locked IP before reading its body" |
+| O4 | unset Railway reports `degraded` | "is ok when every configured component is ok and Railway/Sentry are unset" |
+| O5 | `OPS_SESSION_SECRET` optional | "refuses to start when it is unset", "refuses a short one and never prints it" |
+| O6 | secret minimum 32 → 16 | "refuses a short one and never prints it" |
+| O7 | `CF-Connecting-IP` ignored (socket peer only) | six tests that share one IP run into the lock |
+| O8 | a success keeps the IP's failures | "forgets an IP's failures after it logs in" |
+| O9 | lock not re-checked after the body | "holds under a burst whose bodies arrive after the lock check" |
+| O10 | `OPS_PASSWORD` optional | "refuses to start when it is unset", the placeholder/short test |
+| O11 | `ops.env.example` placeholder lengthened to 16+ characters | the placeholder/short test (the first O11, emptying a placeholder set, was **not** caught: the set was dead code, removed in `40bfcfa`) |
+| O12 | password minimum 16 → 8 | the placeholder/short test |
+| C1 | `ops` also on the `app` network | compose-rules: ops is attached to internal networks only |
+| C2 | `opsnet` not `internal` | compose-rules: ops is attached to internal networks only |
+| C3 | a public health target in `ops.env.example` | compose-rules: ops health targets are internal URLs |
+| C4 | cloudflared off `opsnet` | compose-rules: the tunnel shares a network with ops |
+| O13 | the lock's `console.warn` removed (C77; on `cc8637a`) | "logs one line when a lock engages, with no secret in it" |
+| B1 | the 413 path does not commit (`…154858`; on `b57f811`: `…191933`) | `test_complete_too_large_commits_the_row_delete`, `test_an_oversized_finalize_leaves_no_pending_row`, `test_a_refused_finalize_keeps_no_claim` |
+| B2 | cap off by one, `>` (`…155141`; `…192227`) | `test_the_live_reservation_cap_refuses_with_a_retry_time`, `test_the_live_reservation_cap`, `test_parallel_reservations_cannot_overshoot_the_cap` |
+| B3 | declared size not passed to the presign (`…155516`) | `test_a_declared_size_is_signed_into_the_upload_url`, `test_a_declared_size_is_bound_or_refused` |
+| B4 | `ContentLength` not signed (`…155643`) | `test_a_declared_length_is_a_signed_header` (real botocore) |
+| B5 | closing rows deletable (`…155801`; `…192442`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_reaps_only_what_can_never_become_evidence` |
+| B6 | HEAD instead of the listing (`…155923`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_stops_at_the_first_unreadable_listing`, `test_the_sweep_pages_past_rows_it_keeps` |
+| B7 | sweep not registered in `main.py` (`…160050`) | ruff (unused import), and five `test_scheduler_timezone` tests |
+| B8 | oversized objects kept (`…160215`; `…192626`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_reaps_only_what_can_never_become_evidence` |
+| B9 | declared size unchecked (`…160333`) | `test_a_declared_size_over_the_ceiling_is_refused_before_any_row`, `test_a_declared_size_is_bound_or_refused` |
+| B10 | cap window unbounded (`…160454`; `…192949`) | `test_the_live_reservation_cap_refuses_with_a_retry_time`, `test_the_live_reservation_cap` |
+| B11 | 429 without Retry-After (`…160613`; `…193307`) | `test_reserve_over_the_live_cap_is_429_with_retry_after`, `test_the_live_reservation_cap` |
+| B12 | advisory lock removed (`…160720`; `…193619`) | `test_the_cap_takes_the_principals_lock_before_counting`, `test_parallel_reservations_cannot_overshoot_the_cap` (real Postgres) |
+| B13 | one page only (`…160829`; `…193925`) | `test_the_sweep_pages_past_rows_it_keeps` (unit and integration), `test_the_sweep_stops_at_its_page_ceiling`, `test_the_sweep_hands_back_after_each_page` |
+| B14 | canary listing check removed (`…182314`; `…194242`) | `test_the_sweep_deletes_nothing_when_the_canary_is_not_listed`, `test_the_sweep_deletes_nothing_when_the_bucket_lacks_the_finalized_keys` |
+| B15 | a closing row's oversized object kept (`…182422`; `…194544`) | `test_the_sweep_decides_each_row_by_what_r2_lists`, `test_the_sweep_reaps_only_what_can_never_become_evidence` |
+| B16 | default not off: the cap defaults to 20, as on `40bfcfa` (C76; `…185747`; `…194753`) | `test_the_cap_setting_ships_off`, `test_deployment_facts_defaults`, `test_health_exposes_facts_accounts_and_request_echo`, `test_with_the_default_settings_the_21st_and_200th_live_reservations_are_accepted`, `test_health_facts_and_request_echo_over_http` |
+| B17 | cap 0 still locks and counts (C76, F5; `…185947`) | `test_with_the_cap_off_nothing_is_locked_counted_or_refused[None]` and `[0]`, plus the integration tests that reserve with default settings |
+| B18 | the two media facts dropped from deep health (C76; `…190133`) | `test_deployment_facts_reflect_every_exposed_setting` |
+| B19 | a finalize of an uploaded row reads and judges it again (C77; `…195306`) | `test_a_second_finalize_of_an_uploaded_row_returns_it_and_touches_nothing`, `test_a_second_finalize_of_an_uploaded_row_keeps_the_row_and_the_object` |
+| B20 | F1: the router never says the job is closed, so the row is deleted (`…195503`) | `test_complete_tells_the_service_when_the_job_is_closed`, `test_an_oversized_finalize_on_a_closed_job_keeps_the_gap` (the reviewer's probe) |
+| B21 | F4: no rollback before the row delete, so the claim is kept (`…195628`) | `test_complete_too_large_commits_the_row_delete`, `test_a_refused_finalize_keeps_no_claim` |
+| B22 | F2: the `40bfcfa` shape, where no finalized key skips the canary (`…200514`) | `test_the_sweep_never_passes_on_an_empty_canary`. A first form of B22 (only the empty-canary branch turned off, `…195757`) was **not** caught, and correctly so: the listing check after it still aborts, because no listed key is found among none. The branch is there to say why in the log |
+| B23 | no age floor (`…195915`) | `test_the_sweep_threshold_has_a_one_hour_floor` |
+| B25 | F3: a sweep row deletion not logged (`…200034`) | `test_the_sweep_decides_each_row_by_what_r2_lists` (asserts the log lines) |
+| B26 | no hand-back after a page, so no per-page commit (`…200147`) | `test_the_sweep_hands_back_after_each_page` |
+| W1 | react-router 7.17.0 back in `node_modules` (shown before the rebase; the lock change is the same) | `tests/react-router-version.test.mjs` |
+
+NOT VERIFIED (unchanged, and in the PR body):
+- That R2 refuses a PUT whose length differs from the signed one (an [owner] test on a test object).
+- R2's listing key encoding.
+- smoke.sh with opsnet.
+- The cloudflared originRequest.access keys (marked VERIFY).
+- How far Cloudflare buffers request bodies through the tunnel.
+
+OPEN LIST (in the PR body under Follow-ups):
+- NEW-5, NEW-2, NEW-3; the Node timeout granularity.
+- The backlog items, and the residual (the cap never bounded storage per account).
+- The ETag at finalize.
+- The sweep cursor across runs.
+- compose-rules reading only the example env.
+- The owner's cutover steps.
+
+RUNBOOK TEXT: the notes-folder file P7b-2-runbook-followup.md is updated for C76/C77. It covers:
+- the §5.14 route, POST /api/jobs/{job_id}/media;
+- FIXFLOW_MEDIA_MAX_LIVE_RESERVATIONS=0 and the switch-on rule;
+- force-recreate, then read the facts back;
+- the lock log line.
+It is applied after this PR merges.

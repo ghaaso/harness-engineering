@@ -1,0 +1,64 @@
+PR 216 (P8b, money integrity 2) is ready for both binding reviewers at 3d9696e: the one round of C82, C84 and C89.
+- The PR body starts "Plan @ plan-v9.77". One push (a force-push over bd6a103, because of the rebase).
+- Rebased on main 41946a8 (#217, the web half; src/ only). Per C89 it did not wait for #215, which is still OPEN.
+- Eight commits on 41946a8: e55444d, b7db92e, cef17fe, bd690b0, 10f939a (= bd6a103, the head both reviews read), then 6f98b24 (C82), 2f2a66f (C84), 3d9696e (C89).
+- The diff to read for this round is 10f939a..3d9696e. Migration 0048 (down_revision 0047). Not merged. CI did not run (C52).
+
+GATES (memory checked before each run, at 8.2 to 10.4 GB free and 34.5 to 35.9 GB commit; one gate at a time):
+- Full, head 3d9696e, clean tree, no extra arguments: C:/Users/User/.fixflow-cache/gate-logs/p8b/backend-20261114-201028  SUMMARY FAIL=0, 1502 passed, 0 skipped, integration ran.
+- Partials before the rebase: backend-20261114-192506 (C84, 108 passed) and backend-20261114-200305 (C89, 64 passed). Both FAIL=0.
+- New tests against bd6a103: gate-logs/p8bbase/backend-20261114-200533 (15 failed, 71 passed). The six changed test files were copied onto a bd6a103 checkout, with the revision columns renamed back to *_paisa so the run measures behaviour, not the rename.
+- Breaks O1 to O4 applied together to 3d9696e: gate-logs/p8bbreak/backend-20261114-200827 (4 failed, 10 passed; each failure is its named test).
+- The lock measurement is still backend-20261114-183026. The migration has changed since then only in its backfill revision ids (uuid5 of the job id) and its column names.
+
+C82 (a manager's correction in the job's history):
+- On a frozen-bill correction, submit_completion's one complete event now reads "Bill corrected by a manager — Rs <amount> — <reason>". The payload gains only override: true|false. _WRITERS is unchanged.
+- A post-send negotiate note was already in that event's text. Nothing customer-facing is built from event text: checked in compose_message, template_params and the dispatcher.
+
+C84 (the migration review):
+- F1: every reconciler rebuilds stored rows through chain._rebuilt. A row it cannot encode is row_tampered, named, with the detail "row holds a value the chain cannot encode (edited outside the app)". The endpoint answers 200 and the daily job completes, records its app_event and mails the anchor.
+- F2: the 0048 test ends with five CHECK-violation inserts, each naming its constraint.
+- F3: the revision columns are original_minor, negotiated_minor, labour_rate_minor, fuel_minor and fuel_rate_minor_per_km. Payloads are positional, so the hashes do not change and the golden tests are unchanged and green. API fields are not renamed, and no response exposes revision columns.
+- N1: the backfill revision ids are uuid5 of the job id.
+- N2: the docstrings say a pre-0047 void sorts after every create of its instant.
+- N4: the downgrade docstring names the broken link.
+- N3, N5, N6 and N7, and what the reviewer did not verify, are notes in the PR body.
+
+C89 (the whole-PR review):
+- B1: repository.first_bill_original becomes cap_reference_original, the first original at or after the latest override revision (all revisions when there is none). The reference is max(current, that).
+- B2: a correction of a frozen completion that changes only the remarks or codes still needs a reason, writes no revision, and its line reads "Completion corrected by a manager — bill unchanged at Rs <amount> — <reason>". CLAUDE.md now says the reason is kept on the revision when the bill changes, and in the history line always.
+- O1: the tripwire flags attribute dict keys ({Job.bill_status: ..}, {t.c.bill_sent_at: ..}) and ordered_values pairs. Its docstring lists the shapes it still cannot see.
+- Texts:
+  - CLAUDE.md: the scheduler's grace (an hour for daily and weekly jobs, one interval for interval jobs), and the cap rule.
+  - backend.env.example: FIXFLOW_CHAIN_VERIFY_ENABLED, _HOUR and _MINUTE, commented out with their defaults.
+  - tenancy/specs.py: the setting's description.
+  - The negotiate docstring.
+- E1, E2 and B4 are left as notes (C89).
+
+EACH NEW TEST AGAINST bd6a103 (and why):
+- FAILS:
+  - test_bill_revision_integration.py::test_a_correction_names_itself_and_its_reason_in_the_history: the line was "Work completed — bill Rs 1,350", with no reason and no override flag.
+  - test_messaging_integration.py::test_no_customer_message_carries_a_reason_from_the_jobs_history: the timeline did not carry the reason (1 == 2). The customer-facing half already passed.
+  - test_money_chain_integration.py::test_an_unencodable_revision_is_reported_not_a_500 x4: the verify raised TypeError ("2", 2.0) or IndexError (["Relay",2], {"a":1}), so the endpoint answered 500.
+  - test_money_chain_integration.py::test_the_daily_job_records_and_anchors_a_chain_it_cannot_encode: TypeError inside the job, before its app_event and its anchor.
+  - test_money_chain.py::test_an_unencodable_revision_is_row_tampered_not_a_crash x4: the same TypeError or IndexError.
+  - test_money_chain.py::test_an_unencodable_payment_create_and_void_are_row_tampered_not_a_crash: ValueError on amount_paisa "x".
+  - test_money_chain.py::test_an_unencodable_ledger_row_is_row_tampered_not_a_crash: AttributeError on a str time.
+  - test_bill_revision_integration.py::test_the_cap_restarts_at_a_managers_correction: 403, "a discount of Rs 3,200 is above the shop's limit of Rs 500".
+  - test_bill_revision_integration.py::test_a_correction_that_leaves_the_bill_alone_keeps_its_reason_in_the_history: the line was "Work completed — bill Rs 4,500", so the reason was stored nowhere.
+- PASSES (the behaviour already held; each test pins it):
+  - test_bill_revision_integration.py::test_the_cap_reference_is_the_larger_of_the_current_and_the_first (B5): caught break O3, the first original alone. A 460000 discount after a raise to 550000 answers 200.
+  - test_bill_revision_integration.py::test_new_material_lines_at_the_same_total_are_a_revision (B3): caught break O2, lines, labour and fuel dropped from the nothing-changed comparison. One revision is written, not two.
+  - test_bill_revision_integration.py::test_a_sent_bill_unsent_in_the_database_is_caught (D2): caught break O4, sent_at ignored in the bill check. The verify says ok.
+  - test_migration_0048_integration.py::test_0048_backfills_revisions_and_chains_existing_money, its five CHECK inserts (F2): the CHECKs existed at bd6a103, and alembic check cannot see them. Dropping one lets its insert through. This is by reading; that break was not run.
+- TEST-ONLY:
+  - test_bill_single_writer.py (O1): bd6a103's scanner missed update(Job).values({Job.bill_status: "x"}) (the reviewer's rv216p/backend-20261114-191429). The widened scanner names _stray_bill_writer (p8bbreak run).
+
+CHANGED EXPECTATIONS IN THIS ROUND:
+- conftest's fake is renamed: repo.first_bill_original becomes repo.cap_reference_original, with the C89 rule.
+- The C13 test is unchanged; it covers the no-correction case.
+- No assertion was removed, and nothing is skipped or xfailed.
+
+DEPLOY-TRAIN ROW: P8b | #216 with #217 (merged 41946a8) | 0048 | ffc --profile app exec -T backend python -m scripts.verify_ledger_chain gives ok, exit 0, and anchor mailed or unanchored.
+
+PLAN DEFECTS: the one about the web half is answered by #217 (C79). Still open from the first marker: the post-deploy command form, the branch name, and the card's stale entry.

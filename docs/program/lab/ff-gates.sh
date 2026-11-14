@@ -103,7 +103,10 @@ fi
 
 cleanup() {
   if [ "$KIND" = backend ]; then
-    docker rm -f "fixflow-$LANE-gates" "fixflow-$LANE-db" >/dev/null 2>&1
+    # -v: the database container has an anonymous data volume (the postgres image declares one), and
+    # without -v every run left it behind: 605 dangling volumes, 69 GB, measured on 2026-11-14. The named
+    # pip cache volume is not anonymous and stays.
+    docker rm -f -v "fixflow-$LANE-gates" "fixflow-$LANE-db" >/dev/null 2>&1
     # Give the run's disk cache back to Windows: the Docker VM keeps page cache it no longer needs
     # (4.4 GB measured on 2026-11-13 while the host had 5.5 GB free). Cache only; no data is touched.
     docker run --rm --privileged alpine:3 sh -c "sync; echo 1 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory" >/dev/null 2>&1
@@ -165,7 +168,7 @@ case "$KIND" in
     # start lean: hand the VM's unused disk cache back to Windows before this run adds its own
     docker run --rm --privileged alpine:3 sh -c "sync; echo 1 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory" >/dev/null 2>&1
     # we hold the lane lock, so anything with these names is a leftover of a dead run
-    docker rm -f "$N-db" "$N-gates" >/dev/null 2>&1
+    docker rm -f -v "$N-db" "$N-gates" >/dev/null 2>&1
     docker run -d --name "$N-db" --memory 1g \
       -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=fixflow_test "$PG" > /dev/null \
       || { echo "SETUP[db] RUN FAILED" | tee -a "$L/gates.log"; finish 2; }
