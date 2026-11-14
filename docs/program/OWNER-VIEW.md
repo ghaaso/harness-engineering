@@ -6,7 +6,7 @@ _Generated from `program.json` by `build.js.txt`; state as of 2026-11-14. Do not
 
 - Production is still dead: both old Railway addresses answer Railway's own 404. Nine phases are merged on GitHub (P1, P2a, P3a, P6a, P7a, P8a, P9-0a, P12a, L2); none is deployed, because nothing reaches a server or a phone before your pre-flight. (measured 2026-11-14)
 - Your pre-flight (P0a) has not started. It is the critical path: nothing reaches a phone or a server until it is done. Its first two answers are already needed: the domain name you will use, and the highest app version number on any technician's phone. The drain tooling is built and reviewed and waits only for those two. New on 2026-11-14: GitHub has stopped running the automatic checks (billing: the month's included minutes are used up or a payment failed), and on 2026-11-14 you allowed merging on this PC's own runs of the same checks meanwhile, so merges continue. Restoring GitHub's checks is still worth doing when you can. I used far more of those minutes than I should have: every note I saved to the plan started a full run. That is stopped. Two new sessions are proposed and wait for your click on their cards: the web defects phase, which the drain needs, and the next money phase. 37 of 56 phases wait behind it.
-- Gate harness baseline green on main's code: backend 757 tests (0 skipped, 7.4 minutes), web 106 tests, mobile 334 tests. (measured 2026-11-14)
+- Checks on main's code, run on this PC on 2026-11-14 at the merge of PR #210: backend 1435 tests (0 skipped, 5.4 minutes), phone 512 tests, web tests and build, all green. (measured 2026-11-14)
 
 ## Phases by state
 

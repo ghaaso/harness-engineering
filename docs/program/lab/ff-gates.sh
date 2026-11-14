@@ -267,3 +267,9 @@ PY
     finish "$FAIL"
     ;;
 esac
+
+# Every branch above ends in finish, which exits. Reaching this line means the script itself is
+# broken (on 2026-11-14 an apostrophe inside the single-quoted container block re-paired the
+# quotes, the mobile branch vanished, and the run exited 0 without running a gate).
+echo "ff-gates.sh: no gate ran for kind=$KIND (script error)" >&2
+exit 9
