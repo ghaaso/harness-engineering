@@ -1,0 +1,51 @@
+PR 203 (P2b-2 drain audit) ready for both binding reviewers at cccabf6d7fa70af50d7108fa4d0e35c1da6c7e3d (ruling C100, plan-v9.86). One push, fast-forward 2375fd6 -> cccabf6 (one commit). PR body updated: Plan @ plan-v9.86 on the first line, a scope checkbox, decision 40, break rows B127-B135 plus the re-cut and re-run rows, gates, the self-check line; decisions 37 and 38 moved verbatim to a PR comment (https://github.com/Tempest-Zero/EMS_workshop1/pull/203#issuecomment-6882504287) for the 65,536-character cap (body now 59,026). Not rebased (still on main e6f85c5). Not merged. CI did not run (Actions refused, billing); the two local gate runs below are the evidence.
+
+AS DIRECTED: both reviewers re-read 2375fd6..cccabf6 only. Everything in 203-2375fd6 stands as written there (decision 39 in the PR body).
+
+FILES CHANGED SINCE 2375fd6 (git diff --name-only 2375fd6..cccabf6):
+- backend/scripts/drain_audit.py
+- backend/scripts/drain_audit_report.py
+- backend/tests/test_drain_audit_integration.py
+- backend/tests/test_drain_audit_rules.py
+
+GATES (full runs, clean trees):
+- Branch cccabf6 (main e6f85c5, schema head 0047), lane p2b2, gate log backend-20261114-233728: GATE[1..8] EXIT=0, SKIPS total=1695 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+- Drain tree 4341ae9 = bd5353e + cherry-pick -x cccabf6 (schema head 0046), lane p2b2-drain; the seven drain files are identical to cccabf6; gate log backend-20261114-234516: GATE[1..8] EXIT=0, SKIPS total=1211 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+
+WHAT CHANGED (drain_audit.py), BY POINT OF C100:
+1. No code: tests only (see below).
+2. The after-report's list (phone F1). parse_manifest: an after-report with no `discards` field now sets ParsedManifest.discards_unlisted (new field) and adds the sign "the after-report carries no discard list" to its discards_untrusted (so it is also untrusted for C72's bound: the server's backlog item); its warning now also says a row of its install it does not list, that would be missing or residue, is not judged. _not_judged(results, acks, afters) (called at the end of apply_after_reports): for a row whose own manifest's list is fine, it reads newest_after_report(row, afters); when that report is usable (no problems), has discards_untrusted (a C78 sign or no list), and lists no row with the same queue and key, a row that would end missing or residue (not droppable) is not_judged. --ack-unreadable INSTALL_ID:discards makes it unreadable_reviewed unless the report has no list (by hand only). Notes name the after-report's event id, the sign, and cite rulings C91 and C100.
+3. The C88 note. Server.installs (new field) is set in run_audit from every manifest and after-report read, before any --tech/--manifest-id scope. _take_discard_from(..., installs): a trace under another install id that a document of the run carries is named "a discard on another phone (install X, which a document of this run carries): not counted"; otherwise "... under another install id (X), which no document of this run carries: not counted (ruling C88)". Neither is counted.
+4. The clearing texts. New constants _ASK_THE_PHONE and _KEPT_BYTES; _CLEARS_STORAGE, _CLEARS_DISCARDS, the unreadable_store note, the unreadable_reviewed note (point 17), the not_judged note, the report's two clears lines (drain_audit_report.py), the module docstring and the --ack-unreadable help now say: the owner reads that phone's Drain Report, which names the unreadable store and the kept copy, asks the technician what was discarded or pending there, then acknowledges; the rows are listed for manual entry, each possibly entered by hand already; the kept bytes stay on the phone for a later release that can export them. No text promises an examination any more.
+5. Plan @ plan-v9.86 on the PR body's first line and in this marker.
+
+NEW TESTS AND THEIR RESULT ON 2375fd6 (2375fd6's drain_audit.py and drain_audit_report.py with this head's tests, the four drain test files, lane p2b2-brk: 8 failed, 252 passed):
+- test_c100_the_command_line_takes_the_discards_acknowledgment (integration): PASSES on 2375fd6 (the rule was there, unpinned). Kills B127 = OB6.
+- test_c100_a_merged_row_keeps_that_a_listing_manifest_had_no_discard_list: PASSES on 2375fd6 (same). Kills B128 = OB3; also B124.
+- test_c100_an_untrusted_after_report_leaves_a_row_it_does_not_list_not_judged: FAILS on 2375fd6 (missing, not not_judged). Kills B129, B130, B135, and B121, B126.
+- test_c100_an_after_report_with_no_discard_list_is_cleared_by_hand_only: FAILS (no discards_unlisted on ParsedManifest). Kills B129, B131, B132, B124.
+- test_c100_the_owners_acknowledgment_lists_the_row_for_manual_entry: FAILS (missing, not unreadable_reviewed). Kills B129, B122.
+- test_c100_a_row_the_report_lists_is_judged_by_the_listing: PASSES on 2375fd6 (a control: in_progress either way).
+- test_c100_a_trusted_list_still_leaves_an_unlisted_undiscarded_row_missing: FAILS on 2375fd6 only because it reads the new discards_unlisted attribute; its outcome there is missing, as asserted (a control).
+- test_c100_a_real_missing_in_another_install_still_halts: FAILS (its first row is missing, not not_judged). Kills B129.
+- test_c100_a_trace_under_another_install_id_is_named_for_what_it_is: FAILS (Server has no installs). Kills B133, B119.
+- test_c100_an_after_report_whose_list_went_corrupt_leaves_an_unlisted_row_not_judged (integration, end to end incl. the acknowledgment): FAILS (missing). Kills B129, B122, B126.
+- test_c100_a_trace_from_another_phone_of_the_run_is_named_as_that_phones (integration): FAILS (the note cites C88). Kills B133, B134.
+- The listed-residue case (a row the report lists stays residue) is part of the C100 untrusted test above; it is what kills B130.
+
+BREAKS ON cccabf6 (260 tests; each applied alone, judged from each break's own gate output and junit): all 19 red at gate 8.
+- New: B127 (OB6) test_c100_the_command_line_takes_the_discards_acknowledgment; B128 (OB3) test_c100_a_merged_row_keeps_that_a_listing_manifest_had_no_discard_list; B129 (the after-report never read) five C100 tests; B130 (a listed row not judged anyway) the untrusted test's listed-residue case (also fails ruff format); B131 (no-list after-report trusted) and B132 (the ack clears a no-list report) test_c100_an_after_report_with_no_discard_list_is_cleared_by_hand_only; B133 (another phone's trace named under C88) both C88-note tests; B134 (Server.installs never set) the two-phone integration test (also fails ruff check); B135 (the note promises an examination again) the untrusted test.
+- Re-cut to the moved code, same rules: B104, B119, B120 (14 tests), B121, B122 (5), B124 (3), B125. Re-run: B113 (5), B115, B126 (3).
+- B14 and B97 stay as noted (subsumed), not re-run this round.
+
+READINGS (on the safe side):
+- "The newest usable after-report": the install's newest report after the row's manifest (newest_after_report), and only when it has no problems; an unusable newest report already gives no_after_report.
+- "Does not list": no row of that report with the same queue and record id, whatever its content (for a slot row, any version listed means the listing judges).
+- run_installs is taken before the --tech / --manifest-id scope, so a scoped run still names another phone as another phone.
+
+NOT CHANGED, AS RULED: B14 and B97 notes; the first-mint-window residual (contract only); Android backup (PR #197, C98). The C88 walk goes into contract point 9 as reported.
+
+FOR THE RUNBOOK §8 (the PR that fills <p2b2>), updated wording: not_judged (exit 4) is a row whose phone's discard list is absent or cannot be trusted, in its manifest or in the newest after-report that does not list it. Clearing: for C78's signs, the owner reads that phone's Drain Report (it names the unreadable store and the kept copy), asks the technician what was discarded or pending there, then reruns with --ack-unreadable INSTALL_ID:discards; the rows are listed for manual entry (unreadable_reviewed), each possibly entered by hand already; the kept bytes stay on the phone for a later release. With no list at all, by hand from that phone's Drain Report, and the owner rules. The same Drain Report / ask the technician wording for --ack-unreadable INSTALL_ID:QUEUE (point 17).
+
+FOR THE OWNER (C81, CLAUDE.md, NOT in this PR, unchanged from 203-2375fd6):
+> The events route must keep accepting one `drain_manifest` or `drain_after` event of at least 8 MiB, because a refused manifest keeps a phone from ever draining.
