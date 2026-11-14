@@ -1,0 +1,45 @@
+PR 203 (P2b-2 drain audit) ready for both binding reviewers at 3a8afb3346d74b9ccc9e72b923cc06080933a229 (ruling C63, plan-v9.56). One push, fast-forward 6b1259e -> 3a8afb3 (973c89e = ruling C62, 3a8afb3 = ruling C63). PR body updated (Plan @ plan-v9.56, decision 36, breaks B74-B91 and the re-run rows, gates). Not rebased (main e3b0894 touches no file of this PR). Not merged.
+
+FILES CHANGED SINCE 6b1259e (git diff --name-only 6b1259e..3a8afb3; drain_audit_report.py and test_drain_audit_report.py are unchanged):
+- backend/scripts/drain_audit.py
+- backend/tests/drain_fixture.py
+- backend/tests/test_drain_audit_rules.py
+- backend/tests/test_drain_audit_integration.py
+- backend/tests/test_drain_fixture.py
+
+GATES (one at a time, clean tree, full runs on the final head):
+- Branch 3a8afb3, schema head 0047, lane p2b2, MERGE-READINESS run (clean tree, no extra arguments), log backend-20261114-121526: GATE[1..8] EXIT=0, SKIPS total=1646 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+- Drain tree f405ba5, schema head 0046 = a96ddb8 (last round's drain tree) + cherry-pick -x 973c89e (5af10c2) + cherry-pick -x 3a8afb3 (f405ba5); the six drain files are identical to 3a8afb3 (git diff empty). Lane p2b2-drain, log backend-20261114-122236: GATE[1..8] EXIT=0, SKIPS total=1162 skipped=0 integration_skipped=0, SUMMARY FAIL=0.
+- CI DID NOT RUN on 3a8afb3 (Actions refused, billing). The two local gates above are the evidence. CI was last green on adc2792.
+
+EACH FINDING WITH ITS TEST (all in test_drain_audit_rules.py unless named):
+- E1 (MAJOR, point 10 amended by C62): test_e1_newer_version_only_in_after_report_is_never_judged[pending|app_detail|gave_up_5xx] (the reviewer's probe: in_progress exit 4, still_parked, retry_pending exit 4), test_a_version_no_longer_listed_is_superseded_only_by_the_owners_write (owner's write -> superseded; discard -> discarded; neither -> missing naming the version; another technician's write -> missing), test_the_newest_reports_version_is_the_one_judged_and_named, test_a_shared_phones_newer_version_is_judged_under_its_own_technician, test_an_unreadable_newest_report_never_lets_an_older_ones_version_settle_the_row. Breaks B74-B80.
+- E2 (MINOR, point 12): test_a_payment_discarded_in_no_manifest_is_counted_in_the_verdict ("N payment discard(s) in no manifest, amount unknown: ask the technician"; JSON unmanifested_payment_discards; trace + entry count once; other kinds and manifest-listed payments not counted). Breaks B81-B84.
+- NIT clip wording: test_a_clip_left_for_manual_entry_is_worded_as_what_the_owner_can_do. Break B85.
+- NIT upload_props install-id fallback: test_upload_props_shape (test_drain_fixture.py). Break B86.
+- NIT pending media off the document path: on purpose, said in the module docstring (decision 36); no code change.
+- MAJOR-P (C63, point 8): test_one_pin_written_since_the_manifests_answers_one_installs_row (probe Q2; a pin before the manifest is still prior_state), test_one_pin_answers_one_of_two_installs_rows (integration, probe I2). Break B87.
+- Negotiate kept as built (C63): stays prior_state; its note names the bill event holding the amount and the row it answered. Pinned by test_a_negotiate_whose_amount_the_job_holds_stays_prior_state_and_names_the_event (probe Q3). Break B88.
+- Fuel count (C63, Q5): fuel_changed_jobs = changed + gone_since_baseline, verdict "changed or gone since the fuel baseline"; in test_the_verdict_states_discarded_payments_the_restore_gap_and_changed_jobs. Break B89.
+- Q4: test_a_payment_that_landed_and_carries_a_discard_trace_is_never_discarded_money. Break B90.
+- I3 (one snapshot): test_an_after_report_and_a_trace_landing_mid_run_are_not_seen (integration). Break B91 (a commit before the after-report read).
+
+CHANGED EXPECTED VALUES (E1, as ruled; each in decision 36):
+- test_a_newer_version_in_the_after_report_is_judged_and_never_lands_it (renamed from ..._supersedes_...): superseded -> in_progress.
+- test_a_later_document_of_the_install_names_the_version_through_any_after_report (renamed): superseded -> missing, the version named.
+- test_the_document_path_follows_the_receipt_when_the_clock_went_back: B is now a manifest row too, so A superseded and B in_progress; with B only in the report, A in_progress with the carried note.
+- test_a_unique_id_kind_is_never_superseded_by_a_later_listing: now asserts on the manifest-only _superseded and on _last_seen returning None.
+- test_the_verdict_states_..._changed_jobs: wording "changed or gone since the fuel baseline", plus the Q5 gone case.
+- INTEGRATION, FOR THE COORDINATOR: test_a_shared_phones_version_is_named_through_an_older_after_report (renamed) went superseded, exit 0 -> MISSING, EXIT 3. That is C62's consequence on a shared phone: b's version replaced a's in the slot, was in no manifest, and landed; the server's write is b's, not a's, and point 15 takes only the owner's own write (N7), so a's row is missing for the owner to rule (b's version, the report and both technicians named). On a real shared phone this halts the fleet (O-10 R7) until the owner rules. If that is not wanted, it needs a ruling; nothing in this PR softens it.
+
+BREAKS (lane p2b2-brk, on 3a8afb3, the four drain test files, 211 tests, each applied alone and reverted; judged from each run's own gate output, pytest EXIT=1 in all 34; names from each run's junit):
+- C62 E1: B74 listed-newer judging off (7 tests), B75 usable branch supersedes from _last_seen (10), B76 no-usable branch supersedes from _last_seen, B77 _last_seen oldest first, B78 missing note without the version last seen (4), B79 sign-in advice names the row's owner, B80 no_after_report without the carried note.
+- C62 E2: B81 verdict part off, B82 trace + entry counted twice, B83 manifest-listed payment discards counted (also fails ruff), B84 any kind counted. All caught by test_a_payment_discarded_in_no_manifest_is_counted_in_the_verdict.
+- C62 nits: B85 clip wording, B86 fixture install-id fallback.
+- C63: B87 pin guard removed (Q2 + I2), B88 holder note off (Q3), B89 gone jobs not counted (Q5), B90 landed payments counted as discarded (Q4 + E2 test), B91 commit before the after-report read (I3 + the MAJOR-1 snapshot test).
+- Re-run on this code, all still caught: B5 (re-cut: point 10 off at both manifest-only sites) B6 B9 B19 B21 B24 B29 B30 B45 (re-cut: _last_seen reads only the newest report) B52 B54 B56 B57 B62 B64 B65.
+- B1 to B73 were caught at bceeb47 / 65738ff (previous markers). Every row is in the PR body's break table.
+
+PR BODY: Plan @ plan-v9.56, scope checkbox for C62/C63, decision 36, breaks intro + rows B74-B91 + the re-run rows, gates for 3a8afb3 and f405ba5, self-check line. The body hit GitHub's 65,536-character cap, so decisions 1 to 27 (pre-review, at or before 5576c65) were moved verbatim to PR comment https://github.com/Tempest-Zero/EMS_workshop1/pull/203#issuecomment-6874596239, linked from the body; decisions 28 to 36 stay in the body.
+
+CLEANUP: worktree p2b2-brk removed; no fixflow-p2b2* containers left; no lane lock left.
