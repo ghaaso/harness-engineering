@@ -68,7 +68,15 @@ six6() { # <id> <dump file> <recorded sha256>
   if [ "$(out_of | sed -n 's/^live tables: *//p')" = 0 ]; then rb_run "$1-66b-empty" "$(rb_fence 6.6 @b-empty)"
   else rb_run "$1-66b-save" "$(rb_fence 6.6 @b-save)"; fi
   W66B="$(out_of | tail -n 2 | tr '\n' ' ')"
+  # ruling C65 puts 6.7's live test in front of 6.6 (b)'s marker lines too: whether (b) refused,
+  # and whether a marker naming this dump exists afterwards
+  W66STOP="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
+  W66MK="$(grep -qsx "dump=$2" $RD/ready-to-drop && echo written || echo 'not written')"
 }
+# the backend container's own state (running, paused, restarting, exited, or none)
+backend_state() { local c; c="$(docker ps -aq --filter label=com.docker.compose.project=fixflow --filter label=com.docker.compose.service=backend | head -n 1)"
+  [ -n "$c" ] && docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo none; }
+backend_cid() { docker ps -aq --filter label=com.docker.compose.project=fixflow --filter label=com.docker.compose.service=backend | head -n 1; }
 
 # ---- WT16 (ruling C58): 6.6 and 6.7 typed with 6.1 skipped, on a live host --------------------
 # The state a finished restore leaves: the sign-off present, the backend RUNNING, writes landing.
@@ -99,8 +107,9 @@ poll16() {
 }
 if [ $MARKERS = yes ]; then
   six6 wt16 "$NIGHTLY" "$(grep " $NIGHTLY\$" "$OUT/dumps.sha256" | cut -d' ' -f1)"
-  o16a="$W66A"; o16b="$W66B"; G16="$G67"
+  o16a="$W66A"; o16b="$W66B${W66STOP:+ (STOP: $W66STOP)}; marker $W66MK"; G16="$G67"
 else
+  W66STOP=""; W66MK=n/a
   rb_run wt16-66a "$(rb_fence 6.6 1)" "<dump file name>=$NIGHTLY"
   o16a="$(out_of | tail -n 3 | tr '\n' ' ')"
   rb_run wt16-66b "$(rb_fence 6.6 2)"
@@ -133,12 +142,12 @@ wt "WT16 (C58)" "6.6 (a) and (b) for a good dump, then 6.7, in one shell with 6.
   "6.6 (a): $o16a; 6.6 (b): $o16b; 6.7 ($t16a to $t16b UTC, sign-off $so16b when typed): $o16c${stop16:+; STOP line: $stop16}; the write made before 6.6: $w16a0 -> $w16a1 row(s); the write made after 6.6 (b)'s copy: $w16b0 -> $w16b1; samples during 6.7: $nd, backend running in $nrun; deep health during 6.7 (http database): $answers" \
   "$(case $v16 in
       lost) echo "NOTHING: the DROP ran with the backend running ($nrun of $nd samples) and the sign-off in place; the write made after 6.6 (b) is gone$( [ "$w16a1" = 0 ] && echo ', and so is the one made before 6.6 (only 6.6 (b)'"'"'s copy, taken before it, holds that one)')" ;;
-      stopped) echo "the DROP line's own test (a script): $stop16; both writes are still there" ;;
+      stopped) echo "$(first_stop "$W66STOP" "$W66MK" "$stop16"); both writes are still there" ;;
       *) echo "UNCLEAR: neither a lost write with the backend running and the sign-off present, nor a STOP with both writes kept; read the step log (wt16-67)" ;;
     esac)" \
   "$(case $v16 in
       lost) echo "YES, for the next runbook PR (ruling C58): 6.7's DROP line refuses while $SO exists ('this database is live: start at 6.1'), or 6.6 (b) records max(job_event.seq) and the DROP line compares it" ;;
-      stopped) echo "no: scripted (the DROP line's own test)" ;;
+      stopped) echo "no: scripted ($( [ -n "$W66STOP" ] && [ "$W66MK" = "not written" ] && echo "6.6 (b)'s marker lines and 6.7's DROP line both refuse a live database, rulings C61 and C65" || echo "the DROP line's own test, ruling C61"))" ;;
       *) echo "read by the owner: the step log decides" ;;
     esac)"
 # as 6.9 would leave it: the markers WT16's 6.6 wrote are removed, so they vouch for nothing later
@@ -378,9 +387,111 @@ if [ $MARKERS = yes ]; then
   fi
   wt "WT13" "a marker left by an earlier restore: (a) one that went through 6.9, then a new attempt from 6.1 that skips 6.6 and types 6.7; (b) one abandoned after 6.6, the backend started by hand and a manager write made, then 6.7 for the same dump" \
     "(a) start: $st13a; a later write: $m0 before, $m1 after; 6.7: $o13a. (b) when 6.7 was typed: sign-off $so13, backend $run13; the write made after 6.6: $n0 before, $n1 after$( [ -n "$stop13c" ] && echo ", $n2 after 6.7 again with the sign-off removed and the backend still running ($stop13c)"). (b) 6.6: $W66A / $W66B; 6.7: $o13b" \
-    "(a) $( if [ "$m1" = "$m0" ] && echo "$o13a" | grep -q 'no 6.6 marker'; then echo '6.9 removed the marker, so the DROP line refused (a script)'; elif [ "$m1" = "$m0" ]; then echo 'refused, but not by the marker test: read the step log (wt13-67-after-signoff)'; else echo 'NOTHING: dropped'; fi) ; (b) $( if [ "$n1" = "$n0" ] && [ -n "$stop13" ]; then echo "stopped by the DROP line's own test (a script): $stop13; the write is still there$( [ -n "$stop13c" ] && [ "$n2" = "$n0" ] && echo "; with the sign-off removed and the backend running, again: $stop13c")"; elif [ "$n1" = "$n0" ]; then echo 'UNCLEAR: the write is still there but no STOP line was printed; read the step log (wt13-67-stale-same)'; else echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)"; fi)" \
+    "(a) $( if [ "$m1" = "$m0" ] && echo "$o13a" | grep -q 'no 6.6 marker'; then echo '6.9 removed the marker, so the DROP line refused (a script)'; elif [ "$m1" = "$m0" ]; then echo 'refused, but not by the marker test: read the step log (wt13-67-after-signoff)'; else echo 'NOTHING: dropped'; fi) ; (b) $( if [ "$n1" = "$n0" ] && [ -n "$stop13" ]; then echo "stopped by $(first_stop "$W66STOP" "$W66MK" "$stop13") (6.6 ran on the stopped host the abandoned attempt left, so it may write its marker; the backend was started only after it); the write is still there$( [ -n "$stop13c" ] && [ "$n2" = "$n0" ] && echo "; with the sign-off removed and the backend running, again: $stop13c")"; elif [ "$n1" = "$n0" ]; then echo 'UNCLEAR: the write is still there but no STOP line was printed; read the step log (wt13-67-stale-same)'; else echo "the marker names this dump, so the DROP ran and the write made after 6.6 is gone: what prevents (b) is the text alone (6.1 stops the backend, and only 6.9 writes the sign-off that lets it start)"; fi)" \
     "$( [ "$m1" = "$m0" ] && echo 'no for (a)' || echo 'YES for (a)'); (b): $( if [ "$n1" = "$n0" ] && [ -n "$stop13" ]; then echo 'no: scripted (ruling C61: the DROP line refuses while the sign-off exists or the backend runs)'; elif [ "$n1" = "$n0" ]; then echo 'read by the owner: the step log decides'; else echo 'by design the marker vouches for the dump and the copy, not for the database after it; a write needs the backend running, which the restore gate refuses until 6.9 (WT1). Optional: (b) also records max(job_event.seq) and the DROP line compares it'; fi)"
   rm -f $RD/ready-to-drop $RD/proven
+
+  # ---- WT17 (C65, the reviewer's route 2b): 6.6 typed on a live host, 6.7 refused, then the owner
+  # clears each reason 6.7 named BY HAND (removes the sign-off, stops the backend; never 6.1) and
+  # types 6.7 again. A write made after 6.6 (b)'s copy is in no copy if the DROP then runs. On a
+  # text whose 6.6 (b) refuses a live database there is no marker, so 6.7 must refuse until 6.6 is
+  # run again on the stopped host.
+  wt_state WT17 present running
+  st17="$WTSTATE"; WTSTATE=""
+  rm -f $RD/ready-to-drop $RD/proven
+  six6 wt17 "$NIGHTLY" "$(sumof "$NIGHTLY")"
+  o17b="$W66B"; stop17b="$W66STOP"; mk17="$W66MK"
+  addev 'WT17 write after 6.6 (b)'
+  k0="$(ev 'WT17 write after 6.6 (b)')"
+  rb_run wt17-67-live "$G67"
+  o17a="$(out_of | tail -n 2 | tr '\n' ' ' | cut -c1-200)"; stop17a="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
+  k1="$(ev 'WT17 write after 6.6 (b)')"; k2="$k1"; stop17c=""; o17c="not typed: the first 6.7 was not refused"; hand17="-"
+  if [ "$k1" = "$k0" ] && [ -n "$stop17a" ]; then
+    rm -f "$SO"; ffc $P_DB --profile app stop backend >/dev/null 2>&1
+    hand17="sign-off $( [ -e "$SO" ] && echo present || echo absent), backend $(backend_state), marker $(grep -qsx "dump=$NIGHTLY" $RD/ready-to-drop && echo present || echo absent)"
+    echo "lab WT17: the owner's hand cleared the reasons 6.7 named (rm $SO, ffc stop backend; never 6.1); measured: $hand17" >> "$OUT/deviations.log"
+    rb_run wt17-67-cleared "$G67"
+    o17c="$(out_of | tail -n 2 | tr '\n' ' ' | cut -c1-200)"; stop17c="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
+    k2="$(ev 'WT17 write after 6.6 (b)')"
+  fi
+  if [ "$k1" != "$k0" ]; then v17=lost1; elif [ "$k2" != "$k0" ]; then v17=lost2; elif [ -n "$stop17c" ]; then v17=stopped; else v17=unclear; fi
+  wt "WT17 (C65)" "6.6 (a) and (b) on a live host, 6.7 refused; the owner then clears each reason it named by hand (removes the sign-off, ffc stop backend; never 6.1) and types 6.7 again" \
+    "start: $st17. 6.6 (b): $o17b${stop17b:+ (STOP: $stop17b)}; marker $mk17. 6.7 on the live host: $o17a; after the hand clearing ($hand17): $o17c; the write made after 6.6 (b)'s copy: $k0 before, $k1 after the first 6.7, $k2 after the second" \
+    "$(case $v17 in
+        lost1) echo "NOTHING: the first 6.7 dropped the live database (this text has no live test); the write made after 6.6 (b)'s copy is gone" ;;
+        lost2) echo "NOTHING after the hand clearing: 6.7 refused the live host (${stop17a}), but 6.6 (b) had written its marker on it, so with the sign-off removed and the backend stopped by hand the DROP ran; the write made after 6.6 (b)'s copy is in no copy" ;;
+        stopped) echo "$(first_stop "$stop17b" "$mk17" "$stop17a"); after the hand clearing 6.7 refused again: $stop17c (6.6 must run again on the stopped host); the write is still there" ;;
+        *) echo "UNCLEAR: the write is still there but the second 6.7 printed no STOP line; read the step log (wt17-67-cleared)" ;;
+      esac)" \
+    "$(case $v17 in
+        lost*) echo "YES (C65, review 211-153edd0 MAJOR-1): the same live test in front of 6.6 (b)'s three marker lines, so no marker can exist for a live database" ;;
+        stopped) echo "no: scripted (C65: 6.6 (b) writes no marker for a live database, so 6.7 refuses until 6.6 runs on the stopped host)" ;;
+        *) echo "read by the owner: the step log decides" ;;
+      esac)"
+  rm -f $RD/ready-to-drop $RD/proven
+
+  # ---- WT18 and WT19 (C65, review 211-153edd0 MINOR-1): a backend that is PAUSED, or RESTARTING in
+  # a crash loop, when 6.7 is typed. Each starts as 6.1 leaves the host and runs 6.6 there (so the
+  # marker is written as the text intends); then the backend comes up by hand (sign-off written,
+  # up), a manager writes, the backend is paused (WT18) or put into a crash loop (WT19: an invalid
+  # setting, which the daemon restarts under `restart: unless-stopped` without asking the gate),
+  # and the sign-off is removed. 6.7 is then typed with the backend in that state.
+  odd_backend() { # <id> <paused|restarting>
+    local id="$1" want="$2" lid c i rc0="" st x0 x1 stop o bs bs2 nt st0 mk label
+    lid="$(echo "$id" | tr 'A-Z' 'a-z')"
+    wt_state "$id" absent stopped
+    st0="$WTSTATE"; WTSTATE=""
+    rm -f $RD/ready-to-drop $RD/proven
+    six6 "$lid" "$NIGHTLY" "$(sumof "$NIGHTLY")"
+    mk="$W66MK"
+    printf '%s\n' "signed-off case=a dump=$NIGHTLY by=hand ($id)" > "$SO"
+    ffc $P_DB --profile app up -d >/dev/null 2>&1; wait_backend_healthy 150 >/dev/null 2>&1
+    addev "$id write while live"; x0="$(ev "$id write while live")"
+    if [ "$want" = paused ]; then
+      docker pause "$(backend_cid)" >/dev/null 2>&1
+    else
+      printf 'FIXFLOW_ENABLE_SCHEDULER=l4-not-a-bool\n' >> /etc/fixflow/backend.env
+      ffc $P_DB --profile app up -d --force-recreate backend >/dev/null 2>&1
+      # wait until the daemon's back-off is long enough to type 6.7 inside it, and it is in it
+      for i in $(seq 1 240); do
+        c="$(backend_cid)"; rc0="$(docker inspect -f '{{.RestartCount}}' "$c" 2>/dev/null || echo 0)"
+        st="$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null)"
+        [ "${rc0:-0}" -ge 5 ] && [ "$st" = restarting ] && break; sleep 0.5
+      done
+    fi
+    rm -f "$SO"
+    bs="$(backend_state)"
+    echo "lab $id: the backend was brought up by hand (sign-off written, up), a write made, then the backend $want and the sign-off removed$( [ "$want" = restarting ] && echo " (FIXFLOW_ENABLE_SCHEDULER=l4-not-a-bool appended to backend.env, up --force-recreate; restart count ${rc0:-?})"); measured when 6.7 was typed: backend $bs" >> "$OUT/deviations.log"
+    # a paused backend holding a lock would hang the DROP for ever (rb_run has no timeout): a
+    # watchdog unpauses it after 120 s and the row says so
+    rm -f "/srv/l4/.$lid-wd"
+    [ "$want" = paused ] && { sleep 120; [ -e "/srv/l4/.$lid-done" ] || { docker unpause "$(backend_cid)" >/dev/null 2>&1; touch "/srv/l4/.$lid-wd"; }; } &
+    local wdp=$!
+    rb_run "$lid-67" "$G67"
+    touch "/srv/l4/.$lid-done"; kill "$wdp" 2>/dev/null; wait "$wdp" 2>/dev/null
+    local wd=""; [ -e "/srv/l4/.$lid-wd" ] && wd=" (THE WATCHDOG UNPAUSED THE BACKEND after 120 s: 6.7 had not returned)"
+    rm -f "/srv/l4/.$lid-wd" "/srv/l4/.$lid-done"
+    o="$(out_of | tail -n 2 | tr '\n' ' ' | cut -c1-200)"; stop="$(out_of | grep -m 1 -o 'STOP.*' | cut -c1-200)"
+    bs2="$(backend_state)"
+    [ "$want" = paused ] && docker unpause "$(backend_cid)" >/dev/null 2>&1
+    if [ "$want" = restarting ]; then
+      sed -i '/^FIXFLOW_ENABLE_SCHEDULER=l4-not-a-bool$/d' /etc/fixflow/backend.env
+      ffc $P_DB --profile app rm -sf backend >/dev/null 2>&1
+    fi
+    x1="$(ev "$id write while live")"; nt="$(ntables)"
+    label="the backend $want"; [ "$want" = restarting ] && label="the backend in a crash loop (restarting)"
+    wt "$id (C65)" "6.6 on the stopped host, then $label and the sign-off absent when 6.7 is typed" \
+      "start: $st0; marker $mk; backend when 6.7 was typed: $bs, after it: $bs2$wd$( [ "$bs" = "$want" ] || echo " (NOT $want: the state wanted was not reached)"); 6.7: $o; the write made while it was live: $x0 before, ${x1:-?} after; public tables after: ${nt:-?}" \
+      "$( if [ "$x1" = "$x0" ] && [ -n "$stop" ]; then echo "the DROP line's own test (a script): $stop; the write is still there"
+          elif [ "$x1" = "$x0" ]; then echo "UNCLEAR: the write is still there but no STOP line was printed; read the step log ($lid-67)"
+          else echo "NOTHING: the DROP ran with the backend $bs; the write made while it was live is gone"; fi)" \
+      "$( if [ "$x1" = "$x0" ] && [ -n "$stop" ]; then echo "no: scripted (C65: ffc ps --services without --status lists a $want backend)"
+          elif [ "$x1" = "$x0" ]; then echo "read by the owner: the step log decides"
+          else echo "YES (C65, review 211-153edd0 MINOR-1): drop --status running from the live test, so a paused or restarting backend counts as live"; fi)"
+    rm -f $RD/ready-to-drop $RD/proven
+  }
+  odd_backend WT18 paused
+  odd_backend WT19 restarting
 
   # WT14: a dump damaged BEFORE its sum was recorded (cut at 99 %, its own sum as SUM) passes 6.6 (a)
   # as the text warns; 6.7 drops and the load stops half-way; 6.7 is run again; then the way back.

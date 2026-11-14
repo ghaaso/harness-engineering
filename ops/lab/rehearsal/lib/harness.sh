@@ -112,6 +112,13 @@ drop_verdict() { # <6.7 output> <STOP line> <before-6.6 write: before> <after> <
     echo unclear
   fi
 }
+# What stopped a DROP that did not run, naming the line that refused first: 6.6 (b)'s marker line
+# (C65, no marker for a live database) or 6.7's DROP line (C61)
+first_stop() { # <6.6 (b) STOP line> <marker written|not written> <6.7 STOP line>
+  if [ -n "$1" ] && [ "$2" = "not written" ]; then
+    echo "first 6.6 (b)'s marker line (a script): it refused to write the marker on a live database ($1); then 6.7's DROP line refused as well${3:+ ($3)}"
+  else echo "the DROP line's own test (a script)${3:+: $3}$( [ "$2" = written ] && echo '; 6.6 (b) had written its marker')"; fi
+}
 # Text cut but not handed to rb_run (typed line by line elsewhere) records a move the same way.
 rb_moved_check() { # <id> <text>
   case "$2" in *__RB_MISSING__*) rb_moved "$1" "$2"; return 1 ;; esac

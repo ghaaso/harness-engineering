@@ -150,6 +150,13 @@ the previous one's host. WT16 and WT1 start present and running (the live host);
 present and stopped; the others absent and stopped. WT13 (b) starts the backend by hand after
 6.6 (`up -d`, sign-off written by hand) before typing 6.7; on a text whose DROP line refuses on
 its own (C61), (b2) then removes the sign-off and types 6.7 again with the backend still running.
+WT17 (ruling C65, review route 2b) types 6.6 on the live host, then 6.7; when 6.7 refuses, it
+clears each reason by hand (removes the sign-off, `ffc stop backend`, never 6.1) and types 6.7
+again. WT18 and WT19 run 6.6 on the stopped host, bring the backend up by hand, then pause it
+(WT18, with a 120 s watchdog that unpauses it should the DROP hang) or put it in a crash loop
+(WT19: an invalid setting appended to `backend.env`, removed afterwards), remove the sign-off and
+type 6.7. A refusal names the line that refused first: 6.6 (b)'s marker line when it printed a
+STOP and wrote no marker, else 6.7's DROP line.
 
 **Lab substitutions** (each is written to `deviations.log` when it happens):
 

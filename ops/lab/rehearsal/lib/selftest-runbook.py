@@ -24,7 +24,8 @@ Against mutated copies of <runbook>, in a temporary folder, it checks that:
     block anchored AND the prose "No restart follows" (ruling C61); either half alone is MOVED;
   - WT16's verdict follows what was measured, not one printed line (lib/harness.sh drop_verdict;
     MINOR 3): a lost write needs the backend seen running and the sign-off present, a STOP needs
-    both writes kept, and anything else is UNCLEAR;
+    both writes kept, and anything else is UNCLEAR; and a refusal names 6.6 (b)'s marker line
+    first only when it printed a STOP and wrote no marker (first_stop, ruling C65);
   - a renamed step is refused as missing (exit 3).
 Each case uses a block the rig really types and that every text it follows keeps (6.8, 6.4,
 6.13's report line). The 6.12 up-line cases need an up line: on a text without one (#211, ruling
@@ -255,6 +256,19 @@ def main() -> int:
              dv("STOP: this database is live", "STOP: this database is live", "1", "1", "1", "1", "3", "present"), "stopped"),
             ("WT16 verdict, a STOP line but a write lost",
              dv("STOP: x", "STOP: x", "1", "1", "1", "0", "3", "present"), "unclear"),
+        ]
+        # ruling C65: the row names the line that refused first
+        def fs(*a: str) -> str:
+            return subprocess.run(["bash", "-c", '. "$0"; first_stop "$@"', os.path.join(HERE, "harness.sh"), *a],
+                                  capture_output=True, text=True).stdout.strip()
+
+        pcases += [
+            ("first line to refuse, 6.6 (b) wrote no marker on a live database",
+             fs("STOP: no marker (live)", "not written", "STOP: live").startswith("first 6.6 (b)'s marker line"), True),
+            ("first line to refuse, 6.6 (b) wrote its marker (6.7 alone refused)",
+             fs("", "written", "STOP: live").startswith("the DROP line's own test"), True),
+            ("first line to refuse, a STOP from 6.6 (b) but a marker written anyway",
+             fs("STOP: odd", "written", "STOP: live").startswith("the DROP line's own test"), True),
         ]
         for name, got, want in pcases:
             ok = got == want
