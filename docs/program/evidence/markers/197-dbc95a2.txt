@@ -1,0 +1,25 @@
+PR 197 head dbc95a2 (one commit on 4f3d89a; base main 16e154e; main is now 27c9e04, not rebased). Plan @ plan-v9.76 in the PR body.
+ruling C88: text and tests only; the phone's behaviour does not change (the mint, the upload and the null-read exposure untouched).
+
+CHANGED FILES
+- technician-app/src/features/drain/drainGate.ts      comments only: the takeOrLoad gap comment (each context uploads the snapshot it holds in memory; two manifests whenever the overwritten context uploads its own, before or after the overwrite; one when the overwriting context uploads first; only drainAll uploads, a headless task never does, so "the next launch" holds when the headless task overwrote; contract point 9 for the audit) and the uploadProps comment (the id stored when the upload is sent; a discard's entry keeps the id stored when the discard was made)
+- technician-app/src/features/drain/installId.ts      header comment only: the window is every call of the earlier context before the other write lands, a discard's entry and trace included (the entry keeps that id inside later `discards`); documents' own install_id and the upload carry the stored id; needs the other write in flight across this context's snapshot and a discard; in-order storage assumed, not checked on a device; contract point 9
+- CLAUDE.md                                           drain-gate row: a document takes the id stored when it is sent, a discard's entry and trace the id stored when the discard is made (C86, C88)
+- technician-app/src/features/drain/drainGate.test.ts  a getItem hold in the AsyncStorage mock (mockHoldGetItem, reset in beforeEach); describe "ruling C88" (5 tests)
+- PR body: line 1 Plan @ plan-v9.76; gate block at dbc95a2; C86 "What is left" corrected in place, plus its "uploaded once the receipt stops matching" and "the audit treats ..." bullets (marked "Corrected under C88"); the C83 bullet points at C86 and C88; a C88 section
+
+TESTS (all five pass on dbc95a2; with drainGate.ts + installId.ts at 4f3d89a and the tests kept, all five also pass: 5/5)
+- K2   pins today's behaviour: slow held at its first part write after its second look; fast stores F; slow overwrites with S; fast.drainAll uploads F from memory; a later launch uploads S. Two uploads [F, S], same records, same install_id.
+- K3   pins today's behaviour: same state; slow.drainAll uploads S first; fast.drainAll and a later launch upload nothing more. One upload [S].
+- X1   pins today's behaviour: B's install-id write held; A mints, stores its head, discards p-app; B's write lands. Durable entry and trace = A's id; manifest upload props.install_id and after-report install_id = stored (B's); after-report discards[0].install_id = A's.
+- R1   kills mutation "remove the re-read inside mint()" (the first `getItem(INSTALL_ID_KEY)` + its return in mint): 1 failed / 63 in drainGate.test, and with -t "R1:" 1 failed / 1 (R1 itself). Passes on 4f3d89a.
+- read-back  kills mutation "the mint returns the UUID it wrote" (`const minted = Crypto.randomUUID(); await setItem(..., minted); if (minted) return minted;`): 1 failed / 63, and with -t "the read-back" 1 failed / 1. Passes on 4f3d89a.
+
+NOTED, NOT CHANGED (outside the four places C88 names)
+- The PR body's contract table, point 1, still says the install id "is never rewritten". Under the crossing-mints window B's write does replace A's stored id once; C86/C88 text says so, the contract row does not. Left for the reviewer/coordinator to rule on.
+
+GATE
+mobile gate on a clean tree, head dbc95a2: typecheck, jest 65 suites / 785 tests, expo export: FAIL=0
+gate id / log: /c/Users/User/.fixflow-cache/gate-logs/p2b1/mobile-20261114-195833
+CI: not run (Actions minutes exhausted); local gate is the evidence
+build config unchanged since c5eadbd; not merged; values commit still to come (domain, fleet max versionCode)
