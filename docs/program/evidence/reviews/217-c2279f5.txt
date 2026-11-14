@@ -1,0 +1,98 @@
+VERDICT: PASS-WITH-FIXES
+PR #217 at c2279f5ef1643fcede76853cd9cd25a49ed22634
+Binding review by a fresh fixflow-pr-reviewer; dispatched by the coordinator on 2026-11-14 at 19:14, returned at 19:25. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+Head checked with `gh pr view 217 --json headRefOid` at 19:14 and again at 19:23. It did not move. Base is 27c9e04975be356c9fd08f6fde00c716c8bd9f9b. Line 1 of the PR body is `Plan @ plan-v9.71` (01d6b6b). Server rules were read on PR #216 at bd6a10393f442d73339b38add25eb132b8200893. Two findings force a change before merge. Both are MINOR and both are new in this head (F1 and F2 in section C). Everything else holds up.
+
+A. RULES: BUILT, WHERE, AND THE TESTS THAT FAIL ON BASE
+
+The head's three test files were copied onto a scratch checkout of 27c9e04 and `npx vitest run` run on them. Exit 1: 13 failed, 22 passed (log: the coordinator's scratchpad, `rv217/base-newtests.log`). The 13 failures are exactly the ones the lane named; its controls passed on base, as it said. All 13 pass on head (gate, section I).
+
+1. Reason on a frozen-bill correction. Built. `src/shared/lib/job.js:37-40`: `isBillFrozen`. `src/features/jobs/components/CompletionForm.jsx:44`, `askReason = (isManager && isBillFrozen(job)) || reasonDemanded`; `:46-47` count and limit; `:102`, `...(askReason ? { reason: reasonText } : {})`. `src/app/providers/AppContext.jsx:581` puts `reason` on the wire only when it is a string. Fails on base: `JobDetail.billReason.test.jsx` "cannot be sent without a reason, and sends it trimmed, when ..." (x3, one per freeze condition) and "shows the count and keeps Submit disabled over 256 characters"; `AppContext.billReason.test.jsx` "sends the reason and says it was sent with the correction". On base the form has no reason field, so the label lookup throws.
+2. Note on a manager's negotiate after the send. Built. `JobDetail.jsx:817`, `requireNote={isManager && isBillSent(job)}`; `:1266`, `note: note.trim()`; `jobsApi.js:90`, `note || null` (unchanged). Fails on base: "cannot be saved without a note, then sends the trimmed note".
+3. The server is the judge. Built. `AppContext.jsx:492-500` (`handOverRefusal`); `CompletionForm.jsx:105-108`; `JobDetail.jsx:1268-1271`. Fails on base: the three "a refusal comes back to the open form" tests, plus the provider's "hands a 422 to the form" for completion and for negotiate.
+4. No reason when the form did not ask. Controls (first completion, resubmit with only a voided payment, plain resubmit, technician x3) pass on both commits, as expected.
+5. Wording. `AppContext.jsx:588`, "Bill corrected — your reason was sent with the correction". The provider toast test fails on base.
+
+B. THE WEB'S FREEZE TEST AGAINST THE SERVER'S (PR #216 `service.py:1858-1878`, `:2141`)
+
+- Negotiated amount 0 vs none: they agree. `paisaToRupees(0)` is 0 (`currency.js:21-25`), and `0 != null` counts as frozen; the server tests `bill_negotiated_paisa is not None`. Null or absent maps to null, which is not frozen on either side.
+- Payments: they agree. `mapPayments` sets `voided: Boolean(p.voided)` (`mapJob.js:64`), and `job.js:40` tests `.some((p) => !p.voided)`, the same as the server's `any(not p.voided ...)`. Voided only: not frozen. Non-voided, or both: frozen.
+- No completion: they agree. `job.js:38` returns false; the server checks the freeze only when `completion is not None` (`:1842`). A first submission sends no `reason`; PR #216 ignores one anyway.
+- `bill_sent_at` set, page copy stale: web unfrozen, server frozen: the web asks nothing, the server answers 422 "...needs a reason", the form shows the sentence and reveals the field (tested by the "422 naming the reason on an unfrozen page" test). Web frozen, server not (for example, a payment voided elsewhere): the web is stricter; it asks for a reason the server ignores, and the toast "your reason was sent with the correction" is still literally true. Identical-form replay: on PR #216 the server accepts it with no reason (`:1891`), while the web still asks; the web is stricter here too.
+- Closed job: the form cannot be opened. "Edit" sits behind `!closed` (`JobDetail.jsx:329`), and Negotiate is behind `!closed && hasBill` (`:533`). The manager sees the "Submitted" card with no Edit button. If the job closes while the form is open, the server's 409 "...(current status: closed)" shows in the form (probe P6).
+- Who counts as a manager: `JobDetail.jsx:82` reads `useAuth()?.user?.role === "manager"`. AuthContext refuses any non-manager at boot and at login (`AuthContext.jsx:53`, `:97`), and takes the role from the server's principal or the login answer. The server checks `principal.role == "manager"`. They are equivalent; the technician branches in the web are effectively unreachable.
+
+C. HANDING A REFUSAL TO THE FORM
+
+Probes are jsdom tests in a scratch copy of head (file `rv217/probe.test.jsx.txt`, output `rv217/probe-out.txt` in the coordinator's scratchpad).
+
+What holds (P6): 403, 404, 409: "Not saved — <sentence>", no reason field, form open, nothing typed lost, no toast, one send. Field-error 422 ("Input should be less than or equal to 1440"): shown in the form, no reason field. 401: no alert, no toast; `api.js:48-50` clears the token and signs out. 503 and no answer: toast "Couldn't submit completion — please retry", form kept, one send. A technician's frozen-resubmit 409: its sentence does not contain "reason", so it is shown without the field. Re-read racing the form: form state is plain `useState`, so a re-read never overwrites what was typed; if the re-read shows the bill frozen, the field appears and Submit locks until a reason is typed.
+
+F1 (MINOR, forces fix): a refusal that arrives after the form closed is swallowed.
+- Where: `AppContext.jsx:495-497` hands over whenever `onRefused` is a function, and `:594` then raises no toast. Closing the form does not cancel the request.
+- Input (P3): Submit -> Cancel (or Escape, or backdrop click) during "Submitting..." -> server answers 409. Result: `toasts: []`, no alert. The manager is never told the correction was refused. Leaving the page has the same effect. On base the same refusal raised a toast.
+- Fix: have the form's `onRefused` report whether it is still mounted (a ref) and return `true` only then; in `handOverRefusal`, `if (opts.onRefused(...) !== true) return false` so `reportFailure` toasts. Add one test: cancel while pending, then a 4xx, and a toast appears.
+
+F2 (MINOR, forces fix): the negotiate form's refusal and its required note outlive the opening and the job.
+- Where: `JobDetail.jsx:811` renders `<NegotiateModal open={modal === "negotiate"} ...>` always mounted with no key, and the route reuses the page across job ids (`:85-93`). The new state at `:1253-1257` (`saving`, `refusal`, `noteDemanded`) never resets.
+- Seen: P1: after a 422 -> Cancel -> reopen on the same job, "Not saved — the bill was already sent..." is shown before any save. P2: navigating to job j2, whose bill was never sent, shows j1's sentence, labels the note "Note (required)", and shows the hint "The bill was already sent to the customer..."; that is a false statement on that job, plus a requirement the server does not have. P4: a negotiate left hanging on j1 leaves j2's Save stuck at "Saving..." (disabled) until reload.
+- Fix: mount it per opening and per job, as CompletionForm already is: `{modal === "negotiate" && <NegotiateModal key={`negotiate-${job.id}`} open .../>}`. This also clears the stale amount and note, which base already had (see backlog). Add one test: 422, Cancel, go to an unsent job, open Negotiate, and expect no alert and "Note (optional)".
+
+NIT N1: every negotiate 422 sets `noteDemanded` (`JobDetail.jsx:1270`), including a validation 422 with list detail. P8: "Input should be a valid integer" then shows the "already sent" hint. It is hard to reach from this form (note capped at 256, amount positive). Fix: require the field only when the sentence names a note or the send.
+
+D. BEHAVIOUR CHANGE: BOTH FORMS NOW WAIT FOR THE ANSWER
+
+- On 27c9e04, `onSave` fired the mutator and closed the form at once.
+- On head: Save is disabled while waiting and reads "Submitting..." / "Saving..." (`CompletionForm.jsx:130`, `JobDetail.jsx:1286`). A triple click on Submit or a double click on Save sends once (P5); the `if (saving)` guard at `CompletionForm.jsx:93` / `JobDetail.jsx:1262` is a second line of defence. Enter cannot submit: there is no `<form>` in `Overlay.jsx` (`Modal`, `SlideOver`). There is no timeout on these two sends (`jobsApi.js:82-92`), so if no answer ever comes, the button waits indefinitely; Cancel still works.
+- A second completion can still go out (Cancel, reopen, submit while the first is pending), exactly as on base. The server serialises it with `try_lock_unclosed` and the replay check.
+- A second negotiate cannot go out until the first answers. On head that wrongly includes other jobs (F2, P4).
+
+NIT N2: a success that lands after Cancel runs `setModal(null)` (`JobDetail.jsx:787`, `:820`) and closes whatever modal is open by then. P7: an "Add Note" modal opened in the meantime was closed. Fix: `setModal((m) => (m === "negotiate" ? null : m))`, and the same with `"completion"`.
+
+E. WHAT IS SENT
+
+- `reason` is sent only when the form asked (`CompletionForm.jsx:102`), trimmed.
+- Counted in code points (`:46`), like Python's `len()` (`service.py:1905`): 256 combining-mark code points allowed; 257: Submit disabled (P9). The PR's own test covers 256 vs 257 emoji. Whitespace only, including NBSP and ideographic space: blocked (P9).
+- JS `trim` keeps U+001C to U+001F and U+0085, which Python's `strip` removes. So the server's count is never higher than the web's; the web never under-counts.
+- Sent body keys: `materials, time_spent_mins, fuel_paisa, remarks_text, reason`. Materials go as integer `unit_paisa` (P9). Nothing else changed.
+- The negotiate note: `note.trim()`, and empty becomes `null` (the PR's wire test asserts `{amount_paisa:150000, note:null}`).
+
+NIT N3: `JobDetail.jsx:1323` adds `maxLength={256}` to the note. That counts UTF-16 units, so it is stricter than the server's `max_length=256` in code points (`schemas.py:154`), and a long paste is cut silently. It is not mentioned in the PR body.
+
+F. THE WORDS THE MANAGER CAN SEE
+
+Completion form: "Reason for correcting the bill (required)"; "The customer has seen, agreed or paid against this bill. Say why it changes. n/256"; placeholder "e.g. compressor relay was billed twice"; "Submitting..." / "Submit Completion"; "Not saved — <server sentence>" (or "...— the server refused it"). Toasts: "Bill corrected — your reason was sent with the correction" / "Completion submitted — bill generated" / "Couldn't submit completion — please retry".
+Negotiate form: "Note (required)" / "Note (optional)"; "The bill was already sent to the customer — say why the figure changes."; "Saving..." / "Save Negotiated Bill"; "Not saved — ..."; "Negotiated amount recorded" (that is the amount, which is true on both servers).
+On main's server the reason is ignored: main's `CompletionRequest` has no `extra="forbid"`, and the manager's resubmit takes the unfrozen path (`main service.py:1613`). Nothing on the page claims the reason was recorded on either server.
+Exceptions: F2 (the "already sent" hint on an unsent job is false). NIT N4: on PR #216 an identical-form replay writes nothing (`:1891-1892`), yet the toast says "Bill corrected"; the base toast overclaimed the same way.
+C82 (the reason in the history line): the Timeline card renders each event's `text` verbatim (`JobDetail.jsx:694-707`, `mapJob.js:21-29`). The submit answer is a JobDetail carrying `events`, merged by `replaceFromDetail` (`AppContext.jsx:584`). So the server's new text will show without further web work. The negotiate note already shows today: PR #216 `service.py:2167-2171` appends `({note})` to the bill event's text.
+
+G. WHAT THE PR COULD HAVE BROKEN (all untouched)
+- Provider payment path and drain-window blocks: the AppContext hunks end at head line 620, and the blocks marked DRAIN WINDOW ONLY start at `:634`, `:761` and `:772` (another marker sits at `:113`, far above the hunks). `JobDetail.jsx:1211`'s block is context only. `logPayment` and `PaymentModal` are unchanged, so R12's payment reason is untouched.
+- PR #212 polling and merge order: `loadJobDetail` (`:350-375`) and the `replaceFromDetail` calls are unchanged. A refusal re-read uses the same `loadJobDetail(...).catch` as `reportFailure`.
+- PR #214 labour-rate card and completion preview: only the import and the new blocks changed in `CompletionForm.jsx`.
+- Technician paths: the controls pass. Lint passed.
+
+H. CHANGED EXPECTATIONS AND CONVENTIONS
+Changed expected values: `src/features/jobs/data/mapJob.test.js:41`: `{original:null,negotiated:null,status:"none"}` became the same object plus `sentAt:null`. `mapJob.test.js:89-94`: `sentAt:"2026-06-07T11:00:00Z"` added, with `bill_sent_at` added to the input at `:59`. Reason given in the PR journal and in the commit c2279f5: the mapped bill now carries `sentAt`. No removed assertion, skip, xfail or `.only`.
+Conventions: migrations and integration checks not applicable (no backend); slice edges pass (no new feature-to-feature import; the features import only `@app/providers/AppContext`, allowed, lint passed); changed expectations pass with reasons; PR body passes (line 1 is `Plan @`, Scope is a checkbox list, the journal heading is there); CI not run (GitHub Actions is stopped, C52; the box is honestly unticked and the local gate stands in); commits pass (repo-local identity, Conventional subjects, trailer present); drain scope not applicable (web only, not picked into the drain image); secrets pass, no hits.
+Scope against the diff: 8 files, all under `src/`. No `package*.json`, `ops-server.mjs`, `src/ops/`, `src/features/ops/`, `backend/` or `technician-app/`. The Scope boxes match the diff, apart from the unmentioned `maxLength` (N3).
+
+I. THE REVIEWER'S GATE
+- Free RAM 8.01 GB, commit 36.60 GB at 19:16; 8.80 GB and 36.91 GB before the scratch runs.
+- `ff-gates.sh web rv217 <the review tree>` in the background. Exit 0, tree clean.
+- Summary: `C:/Users/User/.fixflow-cache/gate-logs/rv217/web-20261114-191703/summary.txt`
+- All seven GATE lines exited 0; SUMMARY FAIL=0. Test Files 43 passed; Tests 356 passed. This matches the lane's 7 of 7 and 356.
+
+WHAT THE REVIEWER RAN: `gh pr view 217` (head, base, files, body, start and end); `git diff`, `git log` and `git show` on 27c9e04, c2279f5, PR #216 at bd6a103 and plan-v9.72; the gate above; two scratch worktrees under the scratchpad's `rv217/`, each borrowing the review tree's `node_modules` through a junction (base with the head's tests: exit 1, 13 failed; head plus probes: exit 0, 15 probes). The junctions were deleted first, then both worktrees removed with `git worktree remove`. Only logs are left. The review tree is clean at c2279f5.
+
+BACKLOG (on base already, not this PR's)
+- `rupeesToPaisa(Infinity)` is 0 (`currency.js:14-16`), and the Save check `!val || val <= 0` lets "1e309" through, which would record Rs 0.
+- NegotiateModal's `amount` and `note` already outlived the opening and the job on base. A stale note can now satisfy a required note on the next job; the F2 fix also fixes this.
+
+NOT VERIFIED: no backend was run (the server's behaviour comes from reading its code); real browser behaviour (jsdom only); that a 401 sign-out unmounts the page (auth was mocked in the probes); CI (it did not run).
+
+The reviewer's open question for the coordinator: whether F1 and F2 go back to the lane before PR #216's hold is lifted.
+
+COORDINATOR (2026-11-14, 19:26; ruling C85). They go back now: one round on this PR. (1) F1: the form's `onRefused` says whether the form is still there, and when it is not the provider reports the refusal as before. (2) F2: the negotiate form is mounted per opening and per job. (3) N1: the note becomes required after a 422 only when the sentence names a note or the send. (4) N2: a late success closes only its own modal. (5) N3: the note is counted in code points with the count shown, and nothing is cut silently. (6) The reviewer's backlog item is taken now, because the lane is in that form: the negotiated amount is parsed exactly (`parseRupeesExact` from PR #214), so `1e309` can no longer record a bill of Rs 0. N4 and the missing timeouts stay notes. The same reviewer re-reads. The hold on PR #216 stays until this PR has passed.

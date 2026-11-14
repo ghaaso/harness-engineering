@@ -1,0 +1,64 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at 5fbc44157f5accdec13b406df348ec124ec16c7d
+Third delta re-read (`a08c6f7..5fbc441`: ruling C83) by the PR's reviewer; dispatched by the coordinator on 2026-11-14 at 19:21, returned at 19:27. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The two-contexts finding is closed: a slower snapshot now gives way to the faster context's head. The comment describing the remaining gap still says the wrong thing about what happens in it (finding 1). Under C83 that is a finding, and the comment is on this head, so the head must change (a comment-only edit). The head was 5fbc441 by `gh pr view 197 --json headRefOid` at the start and at the end. Line numbers are at 5fbc441.
+
+FINDINGS
+
+1. MINOR, forces the change (comment only). The comment misdescribes the gap; contract point 9 repeats the mistake.
+- The comment (`drainGate.ts:392-397`): "Both reads then precede every discard, so the outcome is the audit's safe one: a removed row reads `missing` and a person looks; never a discard the manifest wrongly holds."
+- The first and last clauses are true. A context that passes the second look (`:398-399`) found no head after its read. A discard needs a stored head (C78), so no discard can come before either read.
+- So the gap does not break the same-set rule. The stored list never holds a discard made after its snapshot, whichever head wins.
+- What actually happens. Scratch PROBE K, which passed, follows this sequence: (1) the slow context is held at its first part write, after its second look; (2) the fast context looks twice, finds no head, and stores its own head (id F); (3) the fast context uploads F and stores a receipt for F; (4) a discard runs and appends entry E; (5) the slow context resumes and overwrites the parts and the head (id S).
+- What the phone then holds: the stored manifest S has `discards: []` and the row, so E is evidence and the row reads `discarded`. That is correct, not `missing`. The head names S and the receipt names F, so `validReceipt` fails (`:545-550`). A fresh launch uploads S. Two manifests, F and S, reach the server for one install and versionCode (uploads `[F, S]`). After-reports then follow S, the new receipt.
+- Where `missing` can appear: only through the second manifest. The same row is listed in both F and S, and one discard is "used once" (point 9). That depends on how the audit pairs the same row across two manifests of one install; it is a halt that a person resolves.
+- The comment never names the second manifest under another id.
+- Smallest fix: rewrite the comment along these lines: "Both reads precede every discard, so the stored list never holds a later discard, and a discarded row reads `discarded`. What the gap can cost is a second manifest under another id for the same install and versionCode, uploaded once the receipt stops matching the head; its rows are the same rows."
+- For the coordinator (not this head): point 9 at plan-v9.73 says "the same set in every order of failure but one ... the row reads `missing`". It should say the set holds in the gap too. The audit lane needs a rule for two manifests of one install and versionCode: the same row key is one row, and one discard clears it.
+
+2. NOTE, not this delta, not probed. `installId` has the same two-contexts race at its first mint (`installId.ts:28-34`: read, write, read back, then a per-context memo).
+- If both contexts mint within the same few milliseconds, each keeps its own id in memory. Storage ends with the last one written.
+- A manifest or trace from the other context would then carry an id the after-reports never use. The audit could not pair them: exit 4 or `missing`. That is still the safe side.
+- The window is far narrower than the snapshot's. For the coordinator to rule on.
+
+1. THE EARLIER FINDING: CLOSED
+- The second look is at `drainGate.ts:398-402`.
+- PROBE I at this head (passed): the slower context loads the faster head (same `manifest_id`), and the stored list is `[]` with the row present.
+- Tests failing on a08c6f7: with `drainGate.ts` reverted in a scratch copy, exactly two fail, and the guard passes on both, as the lane said: "the reviewer's sequence: the faster head is kept..." and "the slower context writes no part and no head once a head exists". Log: the coordinator's scratchpad, `c83-base-jest.log`.
+
+2. THE SECOND CHECK
+- Where it sits: after `readAllRaw` and `buildManifest` (`:372` onward), before the first part write (`:406`). Earlier writes are only the install-id mint and the set-aside copy of a corrupt head (`:359`).
+- The exclusion `appeared !== existing`: `existing` is non-null only when it failed `parseHead`. Identical bytes cannot parse differently, so the exclusion can never let a snapshot overwrite a good head. A different but also unparseable head is overwritten, which is correct.
+- The head it loads is the same key `snapshotStoredNow` reads, so the discard check sees the same head.
+- A head that appears and is then removed: no code removes a head. The only `removeItem` in `drainGate.ts` is the archive parts (`:419`).
+- Three contexts: the same, pairwise. Only contexts that all looked before any head existed can share the gap.
+
+3. THE GAP'S INTERLEAVINGS
+- Neither context has stored its head: no discard can happen.
+- The first head is stored, and the second writes its parts and head afterwards or interleaved: the part keys are the same; both reads precede any queue write, because each context's writes wait for its own snapshot, so the contents are the same rows; mixing parts is harmless. The last head written wins (its id, its `taken_at`). A row removed by a discard reads `discarded`. A row that landed reads landed.
+- The stored head can end with another id than the one already uploaded: yes (PROBE K). The receipt then names the overwritten id, and `validReceipt` fails in every fresh context. The uploading context keeps `open = true` in memory. The next launch uploads the stored head. After-reports then follow the stored manifest. The server holds both manifests (finding 1).
+
+4. THE EXTRACTION, FOR ONE CONTEXT
+- `parseHead` and `loadHead` (`:324`, `:333`) are the old code moved into functions, with the same behaviour.
+- First launch, relaunch (lane guard "a single context is unchanged"), and the next versionCode (another key) all behave as before.
+- Head that no longer parses, without a receipt: set aside, then retaken. The second look sees the same bytes, so the retake proceeds.
+- Head that no longer parses, with a receipt: throws, unchanged.
+- All 777 tests pass.
+
+5. THE REFUSAL TEXT (`discardCopy.ts:130`)
+- True for both causes. "May still be saving its record list after an update" covers a snapshot not yet stored or failed. "Storage may be full" covers a store that is full or a discard list at its cap.
+- "Nothing was deleted" is true on every path.
+- One small gap: a head that stops parsing within a running context is cleared only by a relaunch, which "try again in a minute" does not say. "Ask your manager" covers it.
+
+6. GATE
+- Clean tree at 5fbc441: typecheck EXIT=0; Jest EXIT=0, 65 suites, 777 tests; `expo export` EXIT=0; SUMMARY FAIL=0.
+- Log: `C:/Users/User/.fixflow-cache/gate-logs/rv197/mobile-20261114-192257/`
+
+WHAT THE REVIEWER RAN: free RAM and commit charge before each heavy step (8.9 to 10.6 GB free, 33.5 to 35.4 GB commit); the gate, once, in the background; `drainGate.test` in a scratch copy with `drainGate.ts` reverted to a08c6f7; one scratch probe file in the review tree (PROBE I and K, both passed; log `c83-probes.log` in the scratchpad); read-only `git` and `gh`.
+
+NOT VERIFIED: how the P2b-2 audit treats two manifests of one install and versionCode; the `installId` mint race (finding 2), not probed; whether two JS contexts really run at once on fleet devices (Jest only); the lane's re-measured record sizes.
+
+CLEANUP: the scratch probe was removed and the review tree is clean at 5fbc441. The scratch copy was removed (junction first; the review tree's `node_modules` is intact). Only the logs remain.
+
+COORDINATOR (2026-11-14, 19:28; ruling C86). The reviewer is right about my own text as well: contract point 9 said the gap ends in `missing`; it does not. Corrected on all three sides. (1) The phone's comment and PR body say what the gap really costs: a second manifest under another id for the same install and version code, with the same rows. (2) The audit (P2b-2, in its open round) treats two manifests of one install and one version code as one snapshot taken twice: rows with the same key and content are one row, judged once, and their discard lists are taken together; anything else is judged as before. (3) The reviewer's note 2 is taken too, because the lane is in that code: the install id is read from storage for every document and trace, never from a per-context memo, so one install does not appear under two ids. Sent to both lanes at 19:28 and 19:29; the same reviewer re-reads the phone's delta.
