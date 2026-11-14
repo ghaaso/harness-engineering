@@ -157,6 +157,9 @@ again. WT18 and WT19 run 6.6 on the stopped host, bring the backend up by hand, 
 (WT19: an invalid setting appended to `backend.env`, removed afterwards), remove the sign-off and
 type 6.7. A refusal names the line that refused first: 6.6 (b)'s dump line (`STOP: no copy taken`) or
 its marker line when (b) printed a STOP and wrote no marker, else 6.7's DROP line.
+WT20 runs a full restore (6.6, 6.7, 6.9) and a write, then a second attempt (6.1, 6.6 (a)) that
+types only 6.6 (b)'s marker line, with `P`, `L`, `DX` and `U` still in the shell from the first
+attempt: the rig types every line in one shell, as the owner does, so variables carry over.
 
 **Lab substitutions** (each is written to `deviations.log` when it happens):
 
