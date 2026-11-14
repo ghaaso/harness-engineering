@@ -1,0 +1,45 @@
+VERDICT: PASS-WITH-FIXES
+PR #197 at dbc95a2866e715415fea6dde07aa2509f91a8d9f
+Fifth delta re-read (`4f3d89a..dbc95a2`: ruling C88) by the PR's reviewer; dispatched by the coordinator on 2026-11-14 at 20:03, returned at 20:09. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The code did not change, and the five tests do what the PR says. Two pieces of text are still wrong or overstated: the storage-order sentence (Finding 1) and two "minted once" statements the C90 alignment misses (Finding 2). The head was dbc95a2 by `gh pr view 197` at the start and at the end. Line numbers are at dbc95a2.
+
+FINDING 1 (item a): the sentence about storage order names the wrong assumption.
+- `technician-app/src/features/drain/installId.ts:27-30`: "The window needs B's write to stay in flight across A's snapshot and a technician's discard. It also assumes the storage runs every operation in the order it was asked for, which was not checked on a device." The PR body's C88 section repeats it ("It assumes the storage runs every operation in the order asked").
+- What the storage library actually does (VERIFIED-IN-CODE, `@react-native-async-storage/async-storage` 1.23.1 as installed): `android/.../AsyncStorageModule.java:66`: `this.executor = new SerialExecutor(executor);`, one serial queue per module instance; `:69`: `ReactDatabaseSupplier.getInstance(reactContext)`, one database for the whole process. So the operations of one context run in order, but the operations of two contexts are not ordered against each other.
+- If storage ran every operation in order, a write already issued could not still be in flight while A's later operations run. The window would then need B's JS to stall between its re-read and its write.
+- So the window does not depend on that assumption; it exists because two contexts' operations are not ordered against each other. It is the reviewer's earlier note's imprecision, carried into C88.
+- Fix sketch, text only: replace that sentence with "The storage runs one context's operations in order (one serial executor per module instance) but does not order two contexts' operations against each other; whether a headless task and the foreground hold two module instances was not checked on a device." The same change to the PR body bullet.
+
+FINDING 2 (item d): two more places still say the absolute that is false for two contexts. Neither is `constants.ts:36` nor PR-body row 1.
+- `technician-app/src/features/drain/installId.ts:4-5`: "A UUID minted once per install ... and NEVER rewritten by a later read". Lines 13-14 of the same header say two contexts "both find no id and mint at once; storage keeps the last one written".
+- `CLAUDE.md:78`: "an install id minted once (`features/drain/installId.ts`; ...".
+- Already scoped to one context, so true: the test names `drainGate.test.ts:1025` and `:1692` ("a single context mints once"), and PR body line 626.
+- These two lines can go into the values commit alongside C90's two, if the coordinator rules it so.
+
+ITEM a: EVERY OTHER SENTENCE IS TRUE
+- The gap comment in `drainGate.ts:392-410`: each context uploads its own in-memory snapshot (`:620` `const { manifest } = snap.stored;`); K2 and K3 stand under the "two manifests / one manifest" sentences. "Only `drainAll` uploads": `openForDrain` (`:669`) has one caller, `lib/drainAll.ts:93`, and `drainAll` is called only from `lib/useDrainAll.ts`. "Contract point 9 says how the audit reads two manifests": true (twins are one snapshot taken twice, plan-v9.78).
+- The new sentence ("the stored one then goes up at the drain of a later launch (a context whose gate is already open in memory does not look again)") is true in the code: `open = true` is set on upload (`:653`); `isGateOpen` returns at once while `open` is set (`:574`), and so does `openForDrain` (`:670`); at a later launch `validReceipt` sees the receipt for F against the head S and returns null (`:563`), so S is uploaded.
+- The "later launch" half is pinned by K2 (`drainGate.test.ts:1744-1752`).
+- No test stands under the parenthetical. Mutating `:574` to look again and deleting `:670` leaves all 63 passing, and with that mutation S would go up in the same launch. A note, not a fix: one line in K2 would pin it (a second `fast.drainAll("t1")` before the relaunch, asserting the uploads are still `[F]`).
+- `uploadProps` comment (`:596-598`): true. `discardRecords` keeps each entry's own `install_id` (`discardLog.ts:92`).
+- `installId.ts` header, the rest: lines 12-26 are true; X1 covers the after-report half. The "and manifest" half of "every later after-report and manifest" is true in code only (`manifest.ts:414`); no C88 test covers it. Lines 30-31 ("How the audit reads such an entry or trace: drain contract point 9"): point 9 answers it today only through its "same install" rule; point 1 as amended says the specific reading is added to point 9 after P2b-2 walks it. The pointer is not false, but it points ahead of the contract.
+- CLAUDE.md row: true apart from "minted once" (Finding 2).
+- PR body: the corrected C83 and C86 bullets and the C88 section are true apart from Finding 1. The test descriptions match the tests, and the gate block matches the lane's log.
+
+ITEM b: THE FIVE TESTS (VERIFIED-BY-COMMAND, `drainGate.test` 63/63 on the head)
+- K2 (`:1744`) reproduces the reviewer's K2. It asserts the uploads are `[F, S]` and that both have the same records and the same `install_id`. It is more faithful than the probe: S goes up from a new launch, not from the slow context.
+- K3 (`:1754`) asserts `[S]`.
+- X1 (`:1762`) asserts: the entry and the trace carry the earlier id; the upload and the after-report's own `install_id` carry the stored one; `discards[0].install_id` is the earlier id.
+- The mutations (scratch copy of the head): removing the re-read inside the mint fails only R1 (1 failed / 63); the mint returning the UUID it wrote fails only "the read-back" (1 failed / 63). Both tests pass without the mutation.
+- `mockHoldGetItem`: reset in `beforeEach` (`:424`); R1 holds only the first install-id read and sets it back to null at `:1808`, before any other read; if R1 failed early, the next `beforeEach` would clear it, and `afterEach` (`:410`) reads no install id while it is set. It cannot leak into another test.
+
+ITEM c: NO BEHAVIOUR CHANGED (VERIFIED-BY-COMMAND). `drainGate.ts` and `installId.ts` at 4f3d89a and at dbc95a2, printed through the TypeScript printer with `removeComments: true`: both pairs are identical (555 and 28 lines), while the raw files differ.
+
+ITEM e: WHAT THE REVIEWER RAN. In the review tree: `npm run typecheck` exited 0, and `npx jest --ci src/features/drain/drainGate.test.ts` passed 63/63. The lane's full gate log `C:/Users/User/.fixflow-cache/gate-logs/p2b1/mobile-20261114-195833` shows head dbc95a2, a clean tree, FAIL=0, 65 suites and 785 tests. Nothing gave reason to doubt it, so the full gate was not run again.
+
+NOT VERIFIED: whether a headless task and the foreground get two `AsyncStorageModule` instances on a device; whether the build uses the "next" storage backend (a gradle flag; the default `AsyncStorageModule` path was read); what the audit does with an entry under the earlier id (P2b-2's to walk per C88; the audit was not run).
+
+CLEANUP: the scratch copy was removed (node_modules junction unlinked first; the real node_modules is intact, 659 entries), with the strip folder and the plan and PR-body extracts. Two logs kept in the coordinator's scratchpad: `c88-typecheck.log` and `c88-jest-head.log`. `git status` in the review tree shows no changes.
+
+COORDINATOR (2026-11-14, 20:10; ruling C92). Both findings and both notes are taken, as text and two test lines, and none gets a round of its own. The code has been right for three rounds; the wrong sentence in finding 1 came from the reviewer's earlier note through my ruling C88, so the lane wrote what it was told. The corrections ride in the values commit, word for word, listed in `C:/Users/User/.fixflow-cache/handoff/notes/197-values-commit.md`: the storage-order sentence replaced by the reviewer's own (with the library's version named); the four places that say "minted once" or "never rewritten" take contract point 1's wording; K2 gains the line that pins the parenthetical; X1 gains an assertion on a later manifest's `discards`. The last re-read covers `dbc95a2` to the values commit. PR #197 is otherwise review-clean and waits for the owner's two values.
