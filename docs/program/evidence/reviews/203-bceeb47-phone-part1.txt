@@ -1,0 +1,170 @@
+PART 1 OF 2 (NO VERDICT): PR #203 at bceeb47f6afc80dc27c24dad1b2e84f885d5b51f, phone side, reading
+Second pass by the first-pass phone-side reviewer, dispatched by the coordinator on 2026-11-14 at 06:34 while the lane was adding rulings C53, C54 and C56 (their absence is not a finding). The verdict comes with part 2, at the lane's final head. This file is the coordinator's record of the reviewer's report, written from the notification text at 06:55.
+
+Paths: the reader is `backend/scripts/drain_audit.py` at bceeb47 (review tree `.claude/worktrees/rv203-head-phone`). The tests are in `backend/tests/test_drain_audit_rules.py`. Phone files are read at 56329bf with `git show`.
+
+FINDINGS
+
+N1 MAJOR, fix before the final head. When a clip is discarded after its create has left the outbox, the discard never clears the clip's row. The row ends `missing`, exit 3, and nothing on the phone can clear it.
+- Reader. `drain_audit.py:1876-1878`: `if row.owner: if d.get("owner_tech") != row.owner: continue`
+- Where the row's owner comes from. The manifest copies the owner from the queued create: `manifest.ts:480`, `owner: createOwner.get(jobClientId) ?? null`.
+- Where the discard's owner comes from. The phone writes no owner, or derives it again at discard time, and gets null once the create has landed:
+  - `pendingMedia.ts:149`: `discardPendingMedia(id, { deleteFile: false, traceRequired: false, uri: item.uri })` (no owner passed)
+  - `pendingMedia.ts:229`: `ownerTech: opts.ownerTech ?? null`
+  - `needsAttention.ts:96`: `const owner = createOwner.get(m.jobClientId) ?? null`
+- Sequence.
+  1. The manifest lists `create:c1` and the clip `intake:c1`, both owned by t1.
+  2. The create lands and leaves the outbox. The clip parks, or the technician deletes it.
+  3. The technician taps Discard. The entry is stored with `owner_tech=null` and `discarded_by=t1`.
+  4. The reader skips that entry, the clip is not in the after-report, and there is no upload. Result: `missing`.
+- The reader's own advice leads there. The advice for `discard_pending` ("tap Discard", `drain_audit.py:2140-2141`, `drain_audit_report.py:391`) turns an exit 4 into a permanent exit 3 for such a row.
+- Evidence. VERIFIED-IN-CODE, and VERIFIED-BY-COMMAND in a scratch probe:
+  - entry with a null owner -> `missing ['not on the phone ... clears: nothing a re-run can, the owner rules']`, `exit: 3 MISMATCH`
+  - the same entry with owner t1 -> `discarded`
+- Test that pins it: none. Every media test uses a non-null owner on both sides.
+- Smallest fix. In `_take_discard_from`, when `row.queue == "media"`, apply the owner-less rule: `discarded_by` must be a technician of the row's install. Add a test for each of the two phone paths.
+
+N2 MINOR, fix before the final head. A clip still waiting for its create reads `residue`, and step 3 lets that outrank the after-report listing it as pending.
+- Reader:
+  - `drain_audit.py:1930-1933`: `if (s.job(row.job_token) or s.job(row.job_ref)) is None: res.outcome = RESIDUE`
+  - `drain_audit.py:2031`: `if res.outcome == RESIDUE:  # 3.`
+- Phone. Waiting for the create is by design: `pendingMedia.ts:361`, `if (!token) continue; // its create hasn't synced yet`.
+- Effect.
+  - The clip is counted as manual entry while the phone will still upload it.
+  - The exit stays 4 only because the create row itself reads `in_progress`.
+  - The scratch probe printed `residue ['its job is not on the server']` and `ACCOUNTED FOR, 1 row(s) left for manual entry`.
+- Smallest fix. When the same install's manifest or after-report still holds `create:<job_ref>` unlanded, leave the clip `missing` for the after-report.
+
+N3 MINOR, will collide with C56. Point 10 is ordered by the phone clock, not by document.
+- Reader:
+  - `drain_audit.py:1026-1029`: `and r.device_time > row.device_time`
+  - the same condition in the listed fallback at `2092-2095`
+- Why it breaks. The phone keeps one item per id (`outbox.ts:162-168` replaces by id). A later document of the same install listing different content under the same id is therefore proof on its own.
+- Failing condition. The clock is corrected between version A and version B, so B is stamped earlier than A. While B is still pending, A reads `missing` (exit 3).
+- Also. Neither site excludes the unique-id kinds. Today that cannot be reached (see B4), but C56 needs that exclusion at exactly these two sites.
+
+N4 MINOR, wording, fix before the final head. The run-level advice for `missing` contradicts the row's own note.
+- Run-level: `drain_audit_report.py:327-329`: "the row lands (its owner signs in on that phone and it syncs) and a re-run finds it".
+- Row note: `drain_audit.py:2113-2115`: "not on the phone ... and not on the server ...; clears: nothing a re-run can, the owner rules".
+- The owner may wait for a sync that cannot come. Smallest fix: when every `missing` row carries the "not on the phone" note, print only the owner-rules line.
+
+N5 NIT. In a mixed run, exit 3 hides every exit-4 "clears" line.
+- `drain_audit_report.py:373-376`: `if code == 3: ... elif code == 4:`
+- The row notes still carry their own text.
+
+N6 NIT. A discard's `reason_class` is in a different vocabulary from the row's, and the two print side by side.
+- The discard uses the discard classes (`reasonClass.ts` `discardClass`): `server_refused`, `could_not_reach`, `server_error`, `too_large`, `not_sent`.
+- The row uses the reason classes. `report_data` prints the discard dict as is (`drain_audit.py:2539-2545`).
+- An owner reading `status_only` beside `could_not_reach` may take them as a conflict.
+
+N7 MINOR, shared phones only. A live send deletes any queued copy with the same id, whoever owns it and whether or not it is parked.
+- `outboxSync.ts:311`: `await removeItem(item.id);`, with no owner or status check. `outbox.ts:184-193` filters by id only.
+- Sequence.
+  1. t1's `negotiate:J` is queued or parked.
+  2. t2 negotiates J live on the same phone. t1's row is removed, with no discard.
+  3. `_later_write` accepts only t1's write (`drain_audit.py:2201`), so t1's row ends `missing`, exit 3.
+- C56's "any later document" does not help: the write that replaced it is in no document.
+- In a supervised drain with one phone and one technician this cannot happen.
+
+A. THE TWELVE FIRST-PASS FINDINGS AT bceeb47
+
+| id | status | where (bceeb47) | test that pins it |
+|---|---|---|---|
+| F1 | closed | `_by_owner` 1494-1502 (`actor == row.owner if row.owner else actor in row.phone_techs`); `_take` 1713; note group keyed by owner 1857 and filtered 1629; `_later_write` 2201. Media still uses `phone_techs` (1646). That is right: the phone's media drain has no owner check (`pendingMedia.ts:343-400`). | `test_another_technicians_event_never_answers_an_owned_row` (test file :385) |
+| F3 | closed for outbox, punch and presence; NOT closed for media (N1) | `_take_discard_from` 1868-1883 checks install, owner and use-once. The trace now carries the install (`telemetry.ts:142` at 56329bf). | `test_a_discard_trace_answers_only_its_owners_row_and_only_once` (:409), `test_an_after_report_discard_clears_one_row_of_its_owner` (:714) |
+| F2 | closed | `_superseded` 1023-1024 (same install required) | `test_only_the_same_install_supersedes` (:755) |
+| F4 | closed another way | 2340-2341: ping and travel go to `sample_before_snapshot` (listed apart); punch and presence stay `unexpected` | `test_a_fix_older_than_the_snapshot_is_listed_apart_but_a_crossing_still_fails` (:458) |
+| F5 | closed another way (by the after-report) | 2076-2079 and `_judge_listed` 2134-2166 | `test_a_parked_row_is_judged_by_its_reason_class` (:859) |
+| M1 | closed | verdict 2424-2425: "ACCOUNTED FOR, N row(s) left for manual entry" | `test_parked_money_is_never_all_accounted_for` (:507) |
+| M2 | closed | phone `manifest.ts:340` exports the location client_id; reader 805 and 1845-1855 match by identity | name not re-located in this pass |
+| M3 | not closed (kept, decision 29) | 1841-1843: `elif job.has_pin: res.outcome = PRIOR_STATE` | none |
+| M4 | not closed (proposed) | 1646: `m["created_by"] in row0.phone_techs` | none |
+| M5 | closed | 694-707 (an un-park record older than `taken_at` is ignored) | `test_an_earlier_builds_unpark_record_is_ignored` |
+| M6 | closed (N4 is the wording caveat) | clears texts at 2050-2052, 2113-2115, 2140-2157; `_clears_mismatch` in `drain_audit_report.py:321-341`, 376-410 | not traced |
+| M7 | limitation, unchanged | - | none |
+
+B. DOES THE READER READ WHAT THE PHONE WRITES
+
+B1. `drain_fixture.py` against the phone at 56329bf.
+- Record field names, types and optional fields match `manifest.ts` for all seven queues. That includes the location `client_id` (fixture 432-433), `deleted_unrecorded` taken from the row's flag (627-631), travel `leg || "sample"` and the telemetry tuple.
+- The owners list matches. The count key matches `_count_key` (`drain_audit.py:486-498`).
+- The count order uses `localeCompare` on the phone and code-point order in the fixture. This is documented at fixture 680-685, and the reader compares counts as a `Counter`, so order cannot matter.
+- `build_after` against `afterReport.ts` `afterRecords`: the fixture filters `r.get("state","pending")`, so telemetry, which has no state, is kept. That is the same result as the phone.
+- Differences:
+  1. `after_discard` types `discarded_by: str`, but the phone allows null (`discardLog.ts`, `discarded_by: string | null`). No fixture scenario gives media `owner_tech: null`, which is why N1 went unseen.
+  2. `_below(None)` treats a missing `attempts` as 0, where JS `undefined < 3` is false. This cannot happen on a real phone: `pendingMedia.ts:99` always writes `attempts: 0`.
+  3. The fixture's `upload_props` (868-) was not compared with `drainGate.ts:514-522`.
+
+B2. Does 56329bf..8cb84f1 change an emitted document? No. That range is wording and comments only. The meaning of `deleted` widened (C50: the entry was stored but the removal failed), and step 2 handles that through the entry, except for the N1 case.
+
+B3. Row identity: what can change between the manifest and a later after-report. Each case below was tried; none produces a wrong `missing` or a wrong match through `_signature`, apart from N1.
+- Outbox `createdAt` is kept by every in-place change, each of which spreads `...i`: `bumpAttempts` (`outbox.ts:195-205`), `markFailed` (210-218), `resetParkedItems` (222-232), `retryItem` (235-243). It changes only through a fresh `makeItem` (172-182), which is a genuinely new version.
+- The job id is never rewritten at send time (`outboxSync.ts:112-139` sends `item.jobId` as is).
+- The v1->v2 merge changes `owner` from null to the technician (127, 263-265) and `legacy_v1` from true to false. Neither is in the signature. For an owner-less row the discard rule uses `discarded_by in phone_techs`, which still works.
+- Attempts are not in the signature.
+- Media `jobToken` is resolved on each pass and never written back (`pendingMedia.ts:360`).
+- Media `createdAt` is reset only by a re-capture (99-105), which is a real new version.
+- Media `owner` is derived and goes to null once the create lands. It is outside the signature, but it is exactly what breaks discard matching (N1).
+- Location ids have been per tap since P2a (`travelState.ts:25`).
+
+B4. Slot kinds and unique-id kinds.
+- Unique ids on the phone: create (`CreateJobWizard.tsx:161`); payment, a fresh UUID per tap (`ArrivalJobBillScreen.tsx:250`); note (`JobDetailScreen.tsx:258`); location since P2a.
+- Slot ids on the phone: completion (`CompleteJobScreen.tsx:217`, `ArrivalJobWizard.tsx:242`); negotiate (`ArrivalJobBillScreen.tsx:172`); customer_pin (`TravelScreen.tsx:309`); ready (`JobDetailScreen.tsx:282`); transition, per action (`JobDetailScreen.tsx:353,389`; `closeJobWithVideo.ts:116`); void, per payment (`JobDetailScreen.tsx:422`).
+- Reader. `SLOT_KINDS` (321) leaves out void, which is harmless: a void is judged by the payment's voided state (1757-1763); and field-APK location ids, also harmless: no new write can reuse one.
+- Can a payment or note become `superseded`? Not reachable today: the content under their ids never changes. But `_superseded` (1014) and the fallback at 2089 have no kind check (see N3). Pending-media slots are covered by point 10 (`_superseded` is not filtered by queue) and point 15 (2173-2193).
+
+B5. Points 15-18 against what the phone can do.
+- A newer write under a stable id, in both orders: re-queued before it was sent -> `superseded` (2089-2107); sent live, removing the queued copy (`outboxSync.ts:311`) -> `_later_write` (2194-2210), pinned by `test_the_owners_later_write_in_the_slot_supersedes_a_row_gone_from_the_phone` (:901). The gaps are N3 (clock) and N7 (another technician).
+- Droppable queues never end `missing`: tried, and could not break. The cap is 1000 (239-241), handled by `_cap_evictions`. Not listed -> `dropped` (2082-2088). Listed -> `in_progress`. No after-report -> `no_after_report`. Supersede is skipped for droppables (2036).
+- A store that turned unreadable: 2055-2074, plus `_unreadable_for` 2120-2131.
+- `deleted_unrecorded`: a parked row and a pending row both go to `discard_pending` (2137-2142), pinned at :877. On the phone such a row is always parked (`pendingMedia.ts:160-163`).
+
+B6. The reason-class table (decision 33) against `reasonClass.ts` and `unparkRules.ts`.
+- The table covers the phone's union exactly.
+- `status_only` that is still parked after the un-park is this build's answer to a marked server response. The phone's un-park resets every older `status_only` row. The exception is media `rejected by the server (413)`, and `still_parked` is right for it.
+- `gave_up_5xx` outside the outage window -> `retry_on_phone`.
+- A parked row with no class -> `unknown_reason`. No real phone park path writes one: `outbox.ts:214` and `pendingMedia.ts:272,286` always write a reason; `parkDeleted` sets the flag.
+- The test at :838 compares against a hard-coded `PHONE_REASON_CLASSES`, so it will not notice if the phone gains a class.
+
+C. M4: DOES "TECHNICIAN OF THAT INSTALL" ANSWER IT?
+
+Mostly yes. Clips upload under whoever is signed in, after the outbox in each drain pass (`drainAll.ts:11-13`; no owner check in `pendingMedia.ts` `drainOnce`). Widening `phone_techs` to every owner and uploader in all of the install's manifests and after-reports covers any technician who later sends a report or owns a row.
+
+The sequence that still ends `missing`:
+1. A third technician, t3, signs in on the drain phone after the last report and owns no rows.
+2. That drain pass uploads the clip as t3.
+3. t3 signs out before an automatic after-report goes. The automatic report is limited to one per 5 minutes (`afterSend.ts` `AFTER_AUTO_MIN_INTERVAL_MS`).
+4. The next report is sent by t1.
+The upload's `created_by` is t3, who is in no document, so the clip reads `missing`, exit 3.
+- Likelihood: very low in a supervised drain with one phone.
+- Is the lane's proposed rule safe? It does not add a new kind of false accounting. The existing risk grows slightly: a co-technician's own-phone upload of the same job/phase/type after the receipt could account for this phone's lost clip. That risk already exists with `phone_techs`.
+- A cheap extra: the actors of `queue_discard` traces carrying that install id.
+
+D. WHAT THE OWNER COULD READ WRONGLY
+- N4, N5 and N6 above.
+- "ACCOUNTED FOR, N row(s) left for manual entry" with exit 0 is correct to the contract. But N2's in-flight clips inflate N.
+- After the phone's last pass, telemetry rows still listed read `in_progress` (exit 4) until the next automatic report, up to 5 minutes later.
+
+PROBES AND MUTATIONS WANTED FOR PART 2
+1. N1 as a pinning test, on both paths: an after-report entry and a server trace with the job present.
+2. Mutations, each of which should fail the named test: drop the install check at 1874 -> the test at :409; drop the owner check at 1876-1878 -> the tests at :409 and :714; change `_by_owner` to `in phone_techs` -> the test at :385; remove the device-time conjunct (1026-1029) -> shows which tests C56 will change.
+3. After C56: a payment row and a note row, each with a later listing under the same id, must never be `superseded`.
+4. N2 run end to end: the create `in_progress` (expect exit 4), then the create parked (both rows manual entry), then the create discarded.
+5. The N7 sequence, and the M4 sequence with t3.
+6. A fixture round trip for N1: the store holds the create and the clip, then the create is removed and the clip parked and discarded. Then `build_manifest`, `build_after` and `parse_manifest`.
+7. The N3 sequence with the clock set back.
+
+WHAT THE REVIEWER COULD NOT JUDGE
+- Code for C53, C54 and C56 (being built).
+- `upload_props` against `drainGate.ts`.
+- The `_cap_evictions` arithmetic (not re-derived).
+- The SQL in `load_server`: no run against Postgres.
+- A crossing stamped before `taken_at` but queued after the snapshot (`geofence.ts:186-191`, `presenceQueue.ts:62`). INFERRED. It needs the snapshot to start after the GPS read, which looks unlikely.
+
+WHAT THE REVIEWER RAN
+- Read-only `git show 56329bf:<path>` on these phone files: manifest, afterReport, afterSend, discardEvent, discardLog, reasonClass, unparkRules, installId, sanitize; outbox, outboxSync, pendingMedia, telemetry, needsAttention; drainGate, geofence, presenceQueue.
+- `git grep` at 56329bf to find every outbox id format.
+- One targeted gate run (lane `rv203phone`, tree `rv203-head-phone`, untracked `backend/tests/test_scratch_rv203_phone2.py`): `bash docs/program/lab/ff-gates.sh backend rv203phone <tree> tests/test_scratch_rv203_phone2.py -k probe -s -p no:cacheprovider`; pytest exit 0, 2 passed (the probes print rather than assert); ruff gates 1-2 failed on the scratch file only; log `C:/Users/User/.fixflow-cache/gate-logs/rv203phone/backend-20261114-064243/`.
+- No full gate, no drain-tree gate, no git writes.
+
+COORDINATOR (2026-11-14, 06:56; ruling C59). Sent to the lane for the same head: N1 to N6 to fix; N7 and M4 ruled (the row stays `missing`, its note names the other technician's write or upload when one exists; neither is built as evidence). The contract's points 7, 9, 12, 15 and 18 are amended in the plan at `plan-v9.52`. Part 2 at the lane's final head: the delta, the full gates on the squash and on the four-pick drain tree, the probes above, then the verdict.

@@ -1,0 +1,173 @@
+PART 1 OF 2 (NO VERDICT): PR #203 at bceeb47f6afc80dc27c24dad1b2e84f885d5b51f, server side, reading
+Second pass by the first-pass server-side reviewer, dispatched by the coordinator on 2026-11-14 at 06:34 while the lane was adding rulings C53, C54 and C56 (their absence is not a finding). The verdict comes with part 2, at the lane's final head. This file is the coordinator's record of the reviewer's report, written from the notification text at 06:55.
+
+Paths are under `backend/` at bceeb47 (review tree `.claude/worktrees/rv203-head-server`). "FIX" means the lane should fix it before its final head.
+
+FINDINGS
+
+MAJOR-A (FIX). Point 15 lets one landed write account for two rows, including a row from another install.
+- `scripts/drain_audit.py:2200-2201`: `for e in s.events_by_job.get(job.id, []): if e.created_at <= row.receipt or not _by_owner(e.actor, row): continue`.
+- `_later_write` (2169-2210) never sees the evidence that `match_rows` already used. That set is `used` at 1568, and it is not passed to `apply_after_reports` at 2691. `_later_write` also has no install condition.
+- Probe P1 (VERIFIED-BY-COMMAND): technician a1 has two installs, each with a queued completion for job J. One `complete` event by a1 landed. Result: `[('i1','landed_by_state'), ('i2','superseded')]`, no failing rows, exit 0. One of the two writes is lost.
+- This breaks point 15 ("never across installs") and point 8. The same gap applies to media (2177-2188).
+- Smallest fix:
+  - Return `used` (event ids and media ids) from `match_rows` and pass it to `apply_after_reports`.
+  - `_later_write` skips evidence that is already used and marks what it takes, so one write stands for one row.
+  - When the row's owner is also a technician of another install in scope (`install_techs`, 2651-2654), leave the row `missing` with a note naming both installs. A server write carries no install id.
+- The second half may need a coordinator ruling. (Ruled: see the coordinator's block.)
+
+MINOR-B (FIX, one line). A transition with an unknown action is superseded by any untagged event.
+- `drain_audit.py:2207`: `or (row.kind in ("ready", "transition") and e.tag == _ACTION_TAG.get(action))`.
+- An action outside `_ACTION_TAG` (341-348) gives `None`. `note`, `complete`, `pin` and payment events also have tag `None` (`_tag`, 1117-1136). `_identifiable` (974-975) accepts any action that is not None.
+- Probe P2 (VERIFIED-BY-COMMAND): action `reopen` was `superseded` by a note, by a completion and by a pin event. A loss reads as accounted for.
+- Fix: in `_later_write`, `tag = _ACTION_TAG.get(action); if tag is None: return None`. Better, also make an unknown action a "cannot be identified" problem (exit 4), as point 19 does for unknown values.
+
+MINOR-C (needs a ruling first, then a test). A discard entry turns `residue` into `discarded`.
+- `drain_audit.py:2021-2032` runs the discard check before `if res.outcome == RESIDUE: continue` (2031). Discard traces also come before the residue rules (1890-1899, then 1930-1955).
+- Point 7 says residue stays "whatever the report says". Point 18 does not mention residue. The test comment at `tests/test_drain_audit_rules.py:749` says "A server-settled outcome is never revisited."
+- Probe P3 (VERIFIED-BY-COMMAND): `discarded`. A refused row drops out of the verdict's manual-entry count.
+- No test pins this either way (only `rules.py:750-752` uses RESIDUE, with no discard), so moving the check would go uncaught. INFERRED from grep.
+
+MINOR-D (FIX). One malformed digit `job_ref` stops the whole run with exit 5.
+- The lane journaled this as backlog (PR body decision 30).
+- `drain_audit.py:1275-1276` (`tokens.add(int(ref))`, bound as `ARRAY(Integer)`), and the same `int(ref)` at 1111.
+- Probe P5 (VERIFIED-BY-COMMAND): 11 digits gives `DBAPIError ... value out of int32 range`; 5000 digits gives `ValueError (4300 digits)`. `main` turns both into exit 5.
+- Any signed-in user can post a manifest (the comment in `test_drain_audit_integration.py:1467-1468`), so one bad event blocks every phone's verdict. That is the MINOR-3 problem again.
+- Fix: `_identifiable` / `parse_manifest_safe` treat a digit ref longer than 10 characters, or above 2147483647, as "cannot be identified" (exit 4). Guard `Server.job` the same way.
+
+NIT-E. `--snapshot-fuel` silently accepts `--tech`, `--manifest-id`, `--manifest-file` and `--ack-unreadable`, because `_validate` 3049-3052 refuses only t_open, fuel_baseline, test_window and json. Fix: add them to the refusal at 3050.
+
+NIT-F. An output file that already exists is refused only after the whole read (`_write` 3099-3100). Fix: check it in `_validate`. The runbook form uses stdout, so this rarely bites.
+
+THINGS IN THE CODE THAT WILL COLLIDE WITH C53, C54 AND C56
+
+C53 (test window)
+- The window check sits in `run_audit` 2663-2672, after `read_server`. The new unscoped-window refusal belongs in `_validate` 3059-3066, before the database is touched.
+- The docstring at 21-24 shows an unscoped `--test-window` ("for the whole window"). C53 will refuse that form.
+- `tests/test_drain_audit_integration.py:1563-1565` runs unscoped with a window and expects `EXIT_OK`. It will flip.
+- `find_extras` 2331-2335 relabels any technician's extra that falls in the window before the out-of-scope test. A run scoped with `--tech` will label other technicians' extras `test_window`.
+- Relabelled extras are only counted (`drain_audit_report.py:252-257`), not listed one by one as C53 requires.
+
+C54 (`retry_pending`)
+- The literal `retry_on_phone` appears at: `drain_audit.py` 261, 281, 294, and the note at 2154-2159; docstring line 50. `drain_audit_report.py` 27, 56 (`"RETRY"`), 76, 384-388. The `test_a_parked_row_is_judged_by_its_reason_class[gave_up_*]` cases and `test_every_phone_reason_class_has_a_decision`. The JSON `outcome` values.
+- No conflict with C54's counting: `MANUAL_ENTRY` (302) already excludes it and `UNJUDGED` (291-300) includes it.
+
+C56 (any later document)
+- `by_key` is built from manifest rows only (2007-2009).
+- Listings are read from the newest report only (2076-2098).
+- The branch for "no usable report" (2033-2053) checks manifests only, so a newer version that sits in an older usable report is not read.
+
+A. FIRST-PASS FINDINGS AT bceeb47
+
+| id | status | where (bceeb47) | test that pins it |
+|---|---|---|---|
+| MAJOR-1 | closed | `readonly_session` 2950-2976: `default_transaction_read_only` on (2955), `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY` (2963), both `SHOW` checks (2965-2970), `txid_current_if_assigned` (2979-2983), always rolled back. One session covers the fuel snapshot and `run_audit` (3123-3140). After-reports (2623-2625), discard traces (1373-1398) and point-15 evidence (`s`) are read inside it. Baseline and manifest files are read before it (3119-3120), but they are stdin, not the database. Ceilings are environment only (2740-2750). The `--ack-unreadable` check runs before any database use (3069-3077). The report is written after the session closes (3141-3157), with no reads. VERIFIED-IN-CODE | `test_drain_audit_integration.py:1430` (B24). Gap: it interleaves only a manifest and a punch (see H) |
+| MINOR-2 | closed | `workshop_circle` called directly (2771-2773) | `:1492` |
+| MINOR-3 | closed, except the int overflow (MINOR-D) | `parse_manifest_safe` (531) | `:1466` |
+| MINOR-4 | closed | docstring 9-35: the `ffc exec -T` form, stdin/stdout only, `echo "exit $?"` and a JSON parse check (18-19). Runbook edit proposed only (owner action) | docstring only |
+| MINOR-5 | closed | - | `:1514-1577` (host guard, billed diff, CLI window) |
+| MINOR-6 | closed another way | the outbox reader takes no `reason` (791-816); NUL/surrogates are the phone's half | - |
+
+No skip or xfail in any drain test file. The changed expected values the lane declares are e6 negotiate `missing`->`superseded` and ping/travel `missing`->`dropped`.
+
+B. POINT 18 PRECEDENCE AS BUILT
+
+The order:
+1. Server outcomes are never revisited (2012).
+2. A trace (1890) or a report entry (2021).
+3. Residue (2031).
+4. No usable report: point 10, otherwise `no_after_report` (2033-2053).
+5. Unreadable queue (2055).
+6. The report's listing (2076-2080).
+7. Droppable (2082).
+8. Point 10 (2089).
+9. Point 15 (2108).
+10. `missing`.
+
+Found:
+- Double claim: MAJOR-A.
+- Unsettled state: none. Media must be `uploaded` (2181) and events are committed rows in the snapshot.
+- A real loss ending something other than `missing`: P1 and P2. Residue plus a discard (MINOR-C) is not a loss, but it hides manual entry.
+- 3 outranks 4: yes (2392-2397, pinned at `rules.py:779`).
+- 3 only from loss, conflict or unexpected: `FAILING` (289) plus unexpected extras. One known false 3 on the safe side: a completion replay after a later freeze (comment 1813-1817).
+
+C. POINT 15 PER SLOT KIND
+
+- "Received" timestamp: the server's. `job_event.created_at` has `server_default now()` (`app/features/jobs/models.py:275-277`), `job_media.created_at` likewise (`media/models.py:95-97`), and no app writer sets either (grep). Because `now()` is the transaction start, a write that began before the receipt reads as earlier, which leaves the row `missing` (safe side).
+- Same owner from another install: yes, it stands in (P1).
+- Void: not counted.
+- Manager correction: not counted (`_by_owner`, 2201).
+- Replayed identical completion: an unfrozen identical resubmit writes a `complete` event, so it counts. A frozen one writes nothing.
+- Job closed in between: closed before the receipt -> `residue` (1948-1955; customer_pin is not in that list). Closed after -> a parked listing (`still_parked`), or not listed -> `missing`. A close event never stands for completion, negotiate or pin, and `"closed" != "ready"`.
+
+D. SCHEMAS (0046 / 0047)
+
+- The audit reads by raw SQL only (1202-1454).
+- The `job_payment` read (1313-1315) uses only columns present at 0046 (the drain tree's `JobPayment` has `recorded_by`, `recorded_at`, `voided`).
+- The ORM is used only by `snapshot_fuel`: `list_locations` / `list_travel_samples`, `_fuel_rate`, `workshop_circle`, all imported lazily from the running image.
+- The drain tree's `drain_audit.py` and `drain_audit_report.py` are byte-identical to bceeb47 (`cmp`). The drain tree has `workshop_circle` (service.py:133), the same `derive_route` signature, the repository methods (233, 270) and the settings names.
+- So the 0046 image runs its own models. Not executed at 0046 in this part; that is part 2.
+
+E. READ-ONLY AND REFUSALS
+
+- `check_host` runs before any connection (3109).
+- Read-only is enforced as in table A.
+- Every refusal is one line with error classes only (3161-3191). Exceptions raised inside the transaction pass through the rollback to those handlers.
+- `--ack-unreadable` is checked before the database (3069-3077).
+- The overflow ends in exit 5 (P5).
+- New arguments: see NIT-E and NIT-F.
+
+F. COST
+
+- Reads go through unique `client_id` arrays or `ix_job_event_job_time` (`alembic/versions/0006_create_job_event.py:37`).
+- Two linear sequential scans: `attendance_ping` by `received_at` (its indexes are on `captured_at`, `0019_attendance_ping.py:77-86`), and `job_travel_sample` by `received_at` with no shop filter (`0035_job_travel_sample.py:70-74`).
+- `snapshot_fuel` makes two queries per closed or billed job (2787-2788). That is linear, probably seconds (INFERRED, not measured on real data).
+- Python matching is quadratic per install (2076): measured 0.12 s for 10x500 rows and 2.61 s for 10x2,500 rows (VERIFIED-BY-COMMAND). Not a finding.
+
+G. REPORT AND MACHINE OUTPUT
+
+- Outcome names match the contract except `retry_on_phone` (C54).
+- Each result adds 1 to `expected` and 1 to its outcome (2479-2485), so the counts add up.
+- `manual_entry` (302, 2400-2406) contains no exit-4 outcome.
+- The fuel JSON is stable: sorted keys, ASCII, integers only (2836-2839), with a round-trip test at `integration.py:1291-1301`.
+
+H. BREAKS
+
+- B24 (MAJOR-1). A subtler break would pass: reading after-reports or discard traces in their own earlier transaction. Add an interleave test that lands an after-report and a `queue_discard` trace mid-run. Running `snapshot_fuel` in a second session is also uncaught, but it does not feed the exit code.
+- B29/B30 (point 15). They cover owner and time only. Add B45: install ignored / evidence reused (P1 as the test). Add B46: no `tag is None` guard (P2).
+- B39/B42 (point 18). Add a test that pins residue vs a discard entry once ruled. Moving 2031 above 2021 is uncaught today.
+- B25 (3 over 4). Swapping the order in `exit_code` would be caught by `rules.py:779`.
+- B16. Unclear whether adding `RETRY_ON_PHONE` to `MANUAL_ENTRY` is caught. That is a part-2 probe.
+
+PROBES WANTED IN PART 2
+- P1 end to end through `/api/events`: two installs, one technician, one completion.
+- P2 and P3 as tests.
+- The C53 unscoped refusal with an unreachable URL: it must refuse before any connection.
+- The C54 rename in JSON and text.
+- C56: a newer version that sits only in an older usable report.
+- The extended RR interleave.
+- `--snapshot-fuel` on the drain tree at 0046.
+
+WHAT THE REVIEWER COULD NOT JUDGE
+- Whether a pin is refused on a closed job (1949 leaves `customer_pin` out of residue). (Coordinator: it is not. `jobs/service.py` `set_customer_pin`, 2272-2317 at bceeb47, has no status guard; it refuses only a carry-in job and an unassigned technician. The list is right as built.)
+- Whether the fuel diff should affect the exit code (a contract question). (Coordinator: no. The plan's ruling R2 says changed closed or billed jobs are listed for the manager.)
+- `snapshot_fuel` timing on real data.
+- The phone side, left to the second reviewer.
+
+WHAT THE REVIEWER RAN
+One partial gate: `bash docs/program/lab/ff-gates.sh backend rv203s <rv203-head-server> -k rv203s -s`.
+- Log: `C:/Users/User/.fixflow-cache/gate-logs/rv203s/backend-20261114-064320/` (gate-7: 7 passed). GATE 1 and 2 (ruff) failed on the probe file only.
+- Probe file: `C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/49260710-db37-438a-9bb3-1a4eebcd87dc/scratchpad/pr203/test_rv203s_probe.py`. It was removed from the tree afterwards; the tree is clean at bceeb47 and no `fixflow-rv203s-*` container remains.
+
+BACKLOG
+- `drain_audit.py:1890` / `2025`: one physical discard (its trace plus its report entry) can clear two rows with the same install, owner, queue and record id. Benign in the cases the reviewer could build.
+- `drain_audit.py:1906`: `restore_gap` is exit 0 and not manual entry, which agrees with the contract's "settled by the server". Confirm that is intended. (Coordinator: the exit code is intended, O-10 B1; the silence is not. See the block below.)
+
+COORDINATOR (2026-11-14, 06:56; ruling C59). Sent to the lane for the same head:
+- MAJOR-A: one piece of server evidence stands for one row across both paths (state matching and point 15); the row left without evidence is `missing`, and its note names the row that took it. No blanket refusal for an owner known on two installs: the write carries no install id, and for a slot the owner's later write is the slot's value wherever it was typed. Point 15's last sentence is amended to say this.
+- MINOR-B: both halves (no evidence for an unknown action; an unknown action is "cannot be identified", exit 4).
+- MINOR-C: the built order stands, a discard outranks `residue`, because the discard is what closes a refused row after its manual entry. Points 7 and 18 are amended; a test pins the order; the discarded row is printed with the refusal the server proves.
+- Verdict line (point 12): it also states the discarded payments (count and sum) and the rows lost in the restore gap (count), so neither can hide behind "ALL ACCOUNTED FOR".
+- MINOR-D, NIT-E, NIT-F: fix. The C53, C54 and C56 collision lists go to the lane as written.
+- The fuel diff never changes the exit code (R2); the summary states how many closed or billed jobs changed.
+Part 2 at the lane's final head: the delta, the full gates on the squash and on the four-pick drain tree, the probes above, then the verdict.
