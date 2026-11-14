@@ -1,0 +1,64 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at 3f1e07e2667dbff31971e06268f279aaaf460729
+Phone-side delta re-read (`d2227ec..3f1e07e`: ruling C72) by the same reviewer (earlier records: `203-6b1259e-phone.txt`, `203-d2227ec-phone.txt`); dispatched by the coordinator on 2026-11-14 at 18:24, returned at 18:34. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was 3f1e07e at the start and at the end (`gh pr view 203`). The delta itself (`d2227ec..3f1e07e`) does what C72 asks, and no wrong `discarded` could be produced from it. One change is still needed before merge, and it is not in the delta: G1, under item 5. A discard made before the row's manifest still clears the row. That is a wrong `discarded`, it was already there at d2227ec, and the reviewer missed it in the last pass. If G1 is routed to a ruling or a follow-up instead, this head is a PASS.
+
+1. F1 AND THE EQUAL-RECEIPT NIT: BOTH CLOSED
+- F1. The code is step 2 at `backend/scripts/drain_audit.py:2341`, `elif res.outcome in (MISSING, RESIDUE) and _slot_gone(row, rep, by_id, by_key):`, which calls `_versions_owner_discard` (`:2482`). With that call disabled, `test_c72_the_versions_owner_discard_clears_the_row` (`backend/tests/test_drain_audit_rules.py:1988`) went red. The ruling's other parts each have a test that goes red without them:
+
+  | Part of C72 | Mutation | Test that went red |
+  |---|---|---|
+  | Point 2 (earlier-version entry) | carried check off (`:2528`) | `:2016` |
+  | Point 2 (multiset) | count treated as a set | `:2016` |
+  | Point 3 (slot still listed) | listed check off | `:2037` |
+  | Point 4 (one entry, one row) | used check off (`:2536`) | `:2052` |
+  | N7 | owner check off | `:2070` |
+
+- The nit. The strict comparison `e.created_at > shown` is at `:2724`. With `>=`, the new case at `test_drain_audit_rules.py:1923` (`tied = ...`, expects MISSING) went red.
+
+2. TRYING TO GET A WRONG `discarded`: TRIED AND COULD NOT BREAK IT
+Every probe below gave the expected result.
+- Entry made before the version was shown. In the showing report, or in an earlier report and the showing report: `missing`. Twice in the showing report and twice in the newest: `missing`. Twice in the showing report and three times in the newest: one `discarded`.
+- Entries that differ only in `at`: the new one is used.
+- `at` missing on both copies: the multiset count works (one copy in each report gives `missing`; one then two gives `discarded`).
+- Two reports showing different versions: a1 shows V2 by t2, t2 discards it (E), a2 shows V3 by t2 and carries E, then t3's live send lands: `missing` (the code uses the last report that showed the version). V3 owned by t3: t2's E is not used; a new t3 entry gives `discarded`. a1 and a2 received at the same time: `missing`.
+- A report in between that could not read the outbox: an entry made after a1 clears the row. That is right: an entry owned by t2 can only be about t2's own content in the slot.
+- Other inputs: an entry of another queue or another record id: `missing`. An N7 entry (t3), and an owner-less entry on an outbox slot: `missing`. The slot listed again in the newest report, with identical or other content: `in_progress`. One entry and two rows, in both input orders: the same result, and the loser names the winner.
+- Two inputs that clear the row, but no phone can produce them (read in the P2b-1 phone code at d3c2091, which is not on main): an entry in a0 that is missing from the showing report a1 but back in a2; a showing report with an all-queues storage issue, followed by an old entry in the newest report. Why neither can happen: the discard list `fleet.drain.discards.v1` is append-only and never evicted (`discardLog.ts`); `removeDiscard` only takes an entry back; `readQueueStore` throws on a read error, so no report is sent; a corrupt list reads as `[]` and is then overwritten, so an old entry can never come back.
+- Test gaps (the code is right). These mutations stayed green against all five `test_c72_*` tests:
+  - Using the oldest showing report instead of the last. The V2/V3 probe went red under it, and that is the unsafe direction. Fix: add that probe as a test.
+  - The `_slot_gone` unreadable check removed (`:2468`). See reading 1 below.
+  - The `_superseded` check removed (`:2469`). See reading 2 below.
+  - The `install_id` check removed. That one is redundant, because the newest report is always the row's own install.
+
+3. THE THREE READINGS: ALL ON THE SAFE SIDE, AND ALL PRODUCIBLE
+- Reading 1: an unreadable outbox in the newest report is not "no longer lists". The row ends `unreadable_store`, also with an all-queues issue. The phone produces this through `storage.unreadable_stores`. No test pins it. Fix: add an unreadable-outbox case to `test_c72_a_slot_the_newest_report_still_lists_...`, expecting `UNREADABLE_STORE` and `discard is None`.
+- Reading 2: a newer version held as a later manifest's row is judged there. A later build writes its own manifest (`drainGate.ts`: "written ONCE per versionCode"). With the check removed, the older row would take the newer row's entry and the newer row would end `missing`. That is wrong, but on the safe side. No test pins it.
+- Reading 3: unidentified rows are never cleared this way. Safe, because they stay `unidentified`.
+
+4. THE MEDIA QUEUE
+The new step never runs for media: `_is_slot` (`drain_audit.py:1133`) covers outbox kinds only. A media row stays on the C59 rule in `_take_discard_from`, where an owner-less entry counts when `discarded_by` is a technician of the install. Nothing new can clear a media row, so this is the safe side.
+
+5. ANYTHING ELSE THE DELTA CHANGED, AND WHAT IT BREAKS
+- Beyond C72 there is only the customer_pin docstring line and the `took` dict, which only feeds notes.
+- No expected value changed: the test diff adds 118 lines and removes none.
+- Nothing passed at d2227ec broke: all 109 rules tests pass.
+
+G1 (FORCES THE CHANGE; UNSAFE DIRECTION; IT PREDATES THE DELTA)
+- What happens. Neither a row's own discard entry nor a discard trace is checked against the row's manifest: entries in `_take_discard_from`, `:2130-2150`, where `elif row.owner:` needs only `owner_t == row.owner`; traces in `_settle_unlanded`, `:2158`. So a discard of an earlier version of the same slot, made before the manifest, clears the row.
+- Input that reproduces it. Under build N, t1 discards `negotiate:J` (trace tr0, entry e0), then queues 100 again. Build N+1 snapshots manifest m2, which lists that row. t2's live negotiate on the same phone removes the queued row and lands (N7). The newest report lists nothing and carries e0. Result: the row is `discarded` (by e0, and also by tr0 through the trace path), exit 0. It should be `missing`.
+- Owner-less rows have the same hole. The own-entry path takes t2's entry even when the showing report carried it, so C72's carried rule is never asked.
+- Smallest fix. Traces: ignore a trace with `server_time <= row.receipt` (the phone sends nothing before the manifest's receipt, `drainGate.ts` step 4, so the server's clock alone is enough). Entries: cancel any entry already carried by an after-report of the same install received before the row's manifest, as a multiset, the way C72 does. A trace of a pre-manifest discard still unsent at the update has no server-side fix. That needs a ruling: for example, the manifest could carry the discard list's length, or the log's local `entry_id`.
+
+BACKLOG (NOT FORCING)
+The multiset key includes `at` and `kind`. If a later build ever changed how it writes out stored entries, an old entry would look new: probes with `at` dropped, or `kind` renamed, both gave `discarded`. Sending `entry_id` (already in the phone's log, local only) would make the match exact across builds.
+
+WHAT THE REVIEWER RAN
+- RAM and commit were read in a command of their own first: 11.1 GB free, 31.2 GB commit.
+- One run: `ff-gates.sh backend rv203phone <review tree> tests/test_scratch_rv203_phone5.py tests/test_drain_audit_rules.py`. The pytest gate exited 0 with 114 passed. The ruff gates failed only on the scratch file.
+- Log: the coordinator's scratchpad, `rv203probe/probes-3f1e07e-run6.log`.
+- The phone code was read read-only with `git show d3c2091` (`discardLog.ts`, `queueStore.ts`, `drainGate.ts`, `afterReport.ts`), and the plan with `git show plan-v9.67`.
+- Cleanup: the scratch test, plan copy and diff are removed, and only logs are left. The review tree is clean and detached at 3f1e07e. No `rv203phone` container is left, and `fixflow-rv203-*` was not touched.
+
+COORDINATOR (2026-11-14, 18:40; ruling C75). G1 is fixed in this PR, and by identity instead of by inference, because the phone's half (PR #197) is still open and no fleet build exists. The phone's documents gain three fields: `entry_id` on the discard trace and on every after-report discard entry, and the manifest carries the discard list as it stands at its snapshot. The audit then treats a discard as one piece of evidence identified by its id (a trace and an entry with the same id are the same discard, used once), counts it for a row only when the row's manifest does not already hold that id, uses the same id test for C72's showing report (the multiset by content goes), never takes a discard for a slot row while the newest report lists that slot, and refuses the old shapes (a manifest without the list is incomplete; a discard without an id is never evidence). The three test gaps become tests. Sent to both lanes at 18:39 and 18:40; the P2b-2 lane holds its push for the server-side re-read of 3f1e07e.
