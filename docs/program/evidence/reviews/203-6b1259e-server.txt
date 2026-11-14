@@ -1,0 +1,174 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at 6b1259eeff62a95189ea2bd414fcaf312b5ebd2d, server side
+Second pass, part 2, by the first-pass server-side reviewer; dispatched by the coordinator on 2026-11-14 at 11:45, returned at 12:02. Part 1 (the reading at bceeb47) is `203-bceeb47-server-part1.txt`. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+All part-1 findings are closed and both full gates are green. One new MAJOR (MAJOR-P) should be fixed before merge: the one-write-per-row rule (C59) is still broken through the `prior_state` branch for a customer pin. The other two notes can ride a follow-up.
+
+FINDINGS
+
+MAJOR-P (fix before merge). A pin written once still answers two installs' rows, through `prior_state`.
+- `backend/scripts/drain_audit.py:2034`: `elif job.has_pin:` -> `res.outcome = PRIOR_STATE`.
+- The `prior_state` branches never look at `evidence_used` and never check WHEN the state was set.
+- What happens: one technician has two installs, each with a queued `customer_pin` for the same job, and one pin lands. The earlier install's row takes the pin event by state. The other row reads "the job has a pin" and ends `prior_state`.
+- Run end to end through the real endpoints (probe I2): `landed_by_state` + `prior_state`, exit 0, `ALL ACCOUNTED FOR`. The rules-level probe Q2 gives the same.
+- The second phone's coordinates are lost. Point 15 as amended says the row left over is `missing`, naming the row that took the write.
+- Smallest fix: at 2034, use `elif job.has_pin and not any(e.kind == "pin" and _since_receipt(e, row) for e in events):`. A pin written since the manifest arrived is a write, not a prior state. The row then reaches point 15, which already finds the used event and names the row that took it.
+- Add Q2/I2 as tests, and a break that removes the guard.
+
+NIT / question for the coordinator. The same shape for `negotiate` (`drain_audit.py:2026`).
+- Probe Q3: a second install's identical-amount negotiate reads `prior_state` from the bill event another row took.
+- No money is lost, because the amounts are equal. Read literally, C59 makes it `missing` (exit 3), which would halt the fleet for no loss.
+- Ruling needed: keep it as is, or apply the same guard. (Ruled: keep; see the coordinator's block.)
+
+NIT (follow-up). A job gone since the fuel baseline still allows "ALL ACCOUNTED FOR".
+- `drain_audit.py:2734-2738`: `fuel_changed_jobs` counts only `changed`, not `gone_since_baseline`.
+- Probe Q5: `diff_fuel` reports `clean=False`, `fuel_changed_jobs=0`, verdict `ALL ACCOUNTED FOR`.
+- Fix: count `changed + gone_since_baseline`. The exit code is unaffected either way.
+
+A. PART-1 FINDINGS AT 6b1259e
+
+| id | status | where | test |
+|---|---|---|---|
+| MAJOR-A | closed for state matching and point 15. MAJOR-P remains through `prior_state` | `Server.evidence_used` 1282, cleared at 1763; `_later_write` 2435- skips used evidence, marks what it takes, and notes the row that took it; `apply_after_reports` loop sorted at 2240 by `_judge_order` (2353) | `test_one_landed_write_answers_one_row_across_both_paths[False/True]`, `test_point_fifteen_takes_a_write_once_for_events_and_uploads`, `test_one_completion_answers_one_of_two_installs_rows` |
+| MINOR-B | closed | `_unidentified` 1060; `_later_write` returns nothing for an action with no tag; `_settle_unlanded` gives `unidentified` (exit 4) | `test_an_unknown_transition_action_cannot_be_identified_and_is_never_superseded` |
+| MINOR-C | closed as ruled: a discard outranks residue, and the refusal is printed on both paths | `_settle_unlanded` 2085; `apply_after_reports` discard step | `test_a_discard_outranks_residue_and_prints_the_refusal_the_server_proves` |
+| MINOR-D | closed | `job_token` 1050 (at most 10 digits, int4); `Server.job`, `read_server` and media evidence all use it | `test_an_impossible_digit_job_ref_is_its_installs_problem_never_a_crash[3 refs]` |
+| NIT-E | closed | `_validate` 3457- | `test_the_fuel_snapshot_refuses_every_option_it_would_ignore[4]` |
+| NIT-F | closed | `_validate`: existing output file refused first | `test_an_existing_output_file_is_refused_before_anything_is_read` |
+| backlog (one physical discard clears two rows) | left as filed; benign in every case built | - | - |
+
+Which row takes the evidence.
+- Matching (1772-1782) orders rows: replaced versions last, then manifest receipt, manifest id, device time, queue, record id.
+- Judging (2353) orders rows by receipt, manifest id, install, queue, record id, device time.
+- So the earliest-received manifest takes the evidence. The order rows are passed in never matters.
+
+Reorder attack (VERIFIED-BY-COMMAND).
+- Q1: three installs, two events, all 6 row permutations, with reversed results and reversed after-reports, once with distinct receipts and once with equal receipts. Every run gave the same single outcome set (one `missing`) and exit 3.
+- I1: through `/api/events`, uploading the two phones' manifests in both orders. Exit 3 both times, and the earlier upload takes the completion.
+
+B. THE COLLISION LISTS
+
+C53 (`--test-window`)
+- The unscoped refusal is in `_validate` (3488-3496), before any connection, and repeated in `run_audit` (3015-3025).
+- Probe Q7: no scope, two `--tech`, and two `--manifest-id`, each with an unreachable host and `--allow-remote-host`. Every run printed the one-line window refusal with exit 5; no database error, and the host and password were not printed.
+- Scope is now decided before the window (`find_extras` 2639; `test_a_scoped_window_never_relabels_another_technicians_extra`).
+- Every relabelled row is printed: `test_window_rows` in the JSON (2971) and `_window_lines` in the text. The integration test asserts "2 row(s) relabelled" and each row's line.
+- The docstring now shows two commands.
+
+C54 (`retry_pending`)
+- `grep -rni retry_on_phone` finds nothing in `backend/` or `docs/`, in either tree.
+- It is renamed in the outcomes, JSON, text, clears line and tests. `UNJUDGED` and `MANUAL_ENTRY` are consistent with C54, and `per_install` counts it apart from manual entry.
+
+C56 (document path)
+- `_superseded` (1168) reads later manifests plus every usable after-report received after the row's manifest.
+- Probe Q6: a newer version that sits only in an older usable report supersedes the row, both when the newest report is usable and lists nothing and when the newest is unusable. Its note names after-report r1. (Coordinator: this is the path ruling C62 changes: such a version is judged through the row.)
+
+C. POINT 18 PRECEDENCE AS BUILT
+
+The order:
+1. Server outcomes are never revisited.
+2. A discard trace (`_settle_unlanded`, before `unidentified` and residue) or a report entry. Either one outranks residue, `unidentified` and drops; for residue the refusal is printed.
+3. `unidentified` stays.
+4. Residue stays, unless it is a clip whose create is unsettled (`_create_unsettled` 2361). That clip goes back to `missing` and is judged from the report.
+5. No usable report: the document path, otherwise `no_after_report`.
+6. Unreadable queue.
+7. The report's listing (a slot row by id and content; any other row by id).
+8. Dropped.
+9. The document path.
+10. Point 15.
+11. `missing`.
+
+Found:
+- Two branches claiming one row: MAJOR-P (pin), plus the negotiate NIT. The pre-existing completion `prior_state` under a freeze (decisions B4/B7) is the same shape, already accepted as a leniency.
+- 3 outranks 4 (`exit_code` 2703).
+- What gives 3: only `FAILING` (`missing`, `conflict`) or an unexpected extra. Nothing new in this round gives 3.
+
+D. POINT 12 (probe Q4, a mixed run)
+
+- The run held: one payment landed AND traced as discarded; one discarded by trace (15000); one discarded by report entry (2500); one `still_parked` (1000); one restore-gap punch; and a fuel diff.
+- Results: the landed payment reads `landed`, not discarded money; `discarded_payments = {payments: 2, payment_minor: 17500}`; `restore_gap_rows = 1`, `fuel_changed_jobs = 0`; manual entry 1000; exit 0; the verdict reads "ACCOUNTED FOR, ..." and the text never says "ALL ACCOUNTED FOR".
+- None of the three changes the exit code (`exit_code` 2703 reads only failing rows, unexpected extras and the incomplete check). The one exception to the verdict wording is the Q5 NIT.
+
+E. ONE SNAPSHOT
+
+- The only database reads are `read_manifests` (twice), `read_server` and `snapshot_fuel`, all on the one session from `readonly_session` (3359).
+- This round's new inputs need no new reads: the N7/M4 notes read `s.events_by_job` / `s.media`; the media discard matching reads `s.discards`; the N2 create lookup reads manifest and report rows.
+- Probe I3: an after-report landed between the manifest read and the after-report read, and a `queue_discard` trace landed before `read_server`. Neither was seen: `no_after_report`, 0 after-reports, exit 4. A fresh run then reads `discarded`.
+
+F. GATES AND PROBES
+
+Full gates (both trees clean, no extra arguments)
+
+| run | tree | result |
+|---|---|---|
+| rv203s `backend-20261114-114539` | head 6b1259e, 0047 | GATE[1..8] EXIT=0 (incl. the CLAUDE.md check); SKIPS total=1632, skipped=0, integration_skipped=0; SUMMARY FAIL=0 |
+| rv203d `backend-20261114-115321` | drain2 0e8be9c, 0046 | GATE[1..8] EXIT=0; SKIPS total=1148, skipped=0, integration_skipped=0; SUMMARY FAIL=0 |
+
+Probes (partial runs: rv203s `backend-20261114-115331`, 15 tests, 4 failing by design; rv203d `backend-20261114-115831`, 1 test). In both runs ruff failed on the probe files only.
+
+| probe | wanted | got |
+|---|---|---|
+| I1: P1 end to end, both upload orders | one `missing`, exit 3 | yes |
+| P2 / P3 as the lane's tests | pass | pass, inside the 1632 |
+| Q7: unscoped window, unreachable URL | exit 5 window refusal, no connection | yes |
+| D1: `--snapshot-fuel` to stdout on the drain tree | exit 0, valid JSON | exit 0; stderr empty; stdout byte-identical to `dump_fuel`; the billed job has both `billed` and `derived`; `job_payment` has none of the 0047 columns |
+| Q1, Q4, Q6, I3 | as wanted | pass |
+| Q2, I2 | one `missing` | `prior_state` (MAJOR-P) |
+| Q3 | one `missing` | `prior_state` (negotiate NIT) |
+| Q5 | not "ALL ACCOUNTED FOR" | "ALL ACCOUNTED FOR" (fuel NIT) |
+
+G. THE RUNBOOK CHECK (against `origin/main`)
+
+The lane's five differences are all right:
+1. A replay reads after-reports only from the export, so the 8.5 export needs `name IN ('drain_manifest','drain_after')` and must emit `name`. Addition: the export filters by `actor_id`, so an after-report uploaded by another technician on a shared phone needs that technician's export too.
+2. The exit-0 verdict now carries discarded payments, the restore gap and changed jobs.
+3. 8.5a only ever runs scoped, so the unseen-technician check never runs.
+4. Exit-4 causes the runbook lacks, including `--ack-unreadable`.
+5. Exit 1 also comes from `No module named scripts.drain_audit`.
+
+Missed:
+6. 8.5a passes `--fuel-baseline` on every per-phone run against the pre-route baseline. Every later phone's verdict therefore repeats the jobs earlier phones changed. The runbook should say the count is cumulative since 8.2.
+7. The runbook has no block for the O-01 protocol run, which the docstring now shows as its own scoped call: `--tech <PROTOCOL_TECH> --test-window`.
+8. After manual entry, the `still_parked` advice is "tap Discard, then run again". The runbook should include that re-run, and the step of checking `discarded_payments` against the manual entries.
+
+H. THE BREAKS
+
+- B54-B56: their tests catch a subtler variant in which point 15 reads `used` but never marks it (both rows reach point 15). They miss the `prior_state` path -> add a break for MAJOR-P.
+- B57: caught only for "order passed in". A wrong-but-fixed sort key (for example by install) would pass, which is acceptable because Q1 shows the verdict is the same in every order.
+- B58/B59: each is caught alone; together they cover both halves.
+- B60: all three length/range variants are caught.
+- B62: both paths are asserted.
+- B64/B65: no break counts a landed-and-discarded payment -> add Q4's row to the point-12 test.
+- B24: a break that reads after-reports or traces in their own transaction is not caught -> add I3 as a test.
+
+DELTA: CHANGED EXPECTATIONS, REMOVED ASSERTIONS, SKIPS
+
+Changed expected values
+- `_superseded(neg1, older)`: was `None`, now `older` (C56: the device clock is no longer compared).
+- The JSON `dropped` block is now `per_install` (`dropped_with_reason` / `dropped_without_reason`) in the integration and report tests.
+- `retry_on_phone` -> `retry_pending` across the decision table and report tests, with the new clears text.
+- The DISCARDED line: `reason_class=poison` -> `discard_class=- (row reason_class=poison)`.
+- Integration window runs are now scoped with `techs=["t4"]` / `--tech t5`.
+- The comment at rules :749 is corrected.
+
+Removed tests
+- `test_the_drop_counts_are_per_install_with_and_without_a_reason`, replaced by `test_the_per_phone_counts_keep_retry_and_discard_apart_from_manual_entry` (rules :1023).
+
+Skips: no new skip or xfail.
+
+STILL UNVERIFIED
+- MAJOR-P's fix, which does not exist yet.
+- CI did not run on 6b1259e (GitHub Actions is stopped for billing).
+- Cost on real data.
+- The phone side, left to the other reviewer.
+
+WHAT THE REVIEWER RAN
+Two full gates, then two partial probe runs, one per lane. The probe files are in the coordinator's scratchpad, `pr203/`: `test_rv203s_p2_probe.py`, `test_rv203s_p2_int_probe.py`, `test_rv203d_probe.py`. They were removed from the trees afterwards. Both trees are clean at their shas, and no `fixflow-rv203*` container remains.
+
+COORDINATOR (2026-11-14, 12:04; ruling C63). Not mergeable at 6b1259e.
+- MAJOR-P: the reviewer's fix is the ruling. Contract point 8 gains the rule behind it: state answers a row as prior state only when it predates the row's manifest, or when the row carries the value and the server holds the same one. A customer pin's coordinates are not in the manifest, so a pin written since the manifest is a write: evidence, used once.
+- The negotiate NIT: keep as built. The row carries its amount, the server holds the same amount, so nothing that row wanted is missing; a halt of the fleet for no loss is the worse error. The note says which bill event holds the amount.
+- The fuel NIT is ruled into this round: a job gone since the baseline counts with the changed ones, and "ALL ACCOUNTED FOR" is not printed with either.
+- Tests to add: Q2/I2 and a break for MAJOR-P; Q4's landed-and-discarded payment in the point-12 test; I3 as a test.
+- Runbook items 6 to 8 and the shared-phone export join the lane's five for the PR that fills `<p2b2>`.
+The same reviewer re-reads the delta and reruns both gates.
