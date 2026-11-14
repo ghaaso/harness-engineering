@@ -1,0 +1,82 @@
+VERDICT: PASS
+PR #212 at 465864238f672ceb89b4f7223b3b044dcc42ff36
+Second delta re-read by the same reviewer (earlier passes: `212-e434f41.txt`, `212-7a160d9.txt`); dispatched by the coordinator on 2026-11-14 at 15:21, returned at 15:27. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was the same at the start and the end. MINOR-A, B and C are closed as C71 rules them. The reviewer could not make any rule skip a note that should have been written. The lane's two test files fail on `7a160d9` and pass here. What is left are notes that need no change to this head.
+
+1. THE THREE FINDINGS AGAINST C71
+
+To check fail-on-base, the reviewer put the two test files on a checkout of `7a160d9`: 9 of 13 fail. The 4 that pass are the tests that were already there before this round.
+
+- MINOR-A, two notes for one payment: closed.
+  - The rule-1 check is at `AppContext.jsx:633`, using `eventsNamePayment` (`:134`) with the marker `(payment <id>)`. On a match the manager sees: "Payment recorded. A note giving this payment's reason is already on the job." (`:636`).
+  - The Save path follows the same rule at `:679-685`.
+  - Tests that fail on `7a160d9`: closedPaymentReason "A" and "F".
+- MINOR-B, a retry's note named no payment: closed.
+  - `landedPaymentId` (`:120`) names a payment only when exactly one fits.
+  - It uses the first send's list: `submit` takes it before the attempt is retired (`paymentAttempts.js:274`, `:285`) and `logPayment` passes it on (`AppContext.jsx:732`, `:746`).
+  - Tests: "B" and "C".
+- MINOR-C, the failed note could not be seen or acted on: closed.
+  - The toast at `:654` now reads: "Payment recorded, but its reason could not be saved yet. It is held on this job's page: save it from there. Do not record the payment again." "By hand" is gone.
+  - The held reasons live in the provider and are shown by `HeldReasons` (`JobDetail.jsx:1205`) with "Save the reason as a note" and "Drop this reason".
+  - Tests: "D", "E", "G" and `JobDetail.heldReason.test.jsx`, which covers leaving the job and coming back, and asserts the payment API is called once.
+  - The pre-round test "when only the note fails..." also fails on `7a160d9`, because its expected wording changed with this fix.
+
+2. REFUTE BY DEFAULT (THE HARMFUL DIRECTION FIRST)
+
+Seven probes (R1 to R5, R7 and R7's second half) on a scratch copy of this head; all pass.
+
+Can rule 1 skip a note that should have been written? No way found.
+- The marker text appears only in this fallback's own notes. The drain image's payment event ("Payment Rs 500 (cash)") and void event ("Payment voided — ...") do not match, nor does a note that mentions the id without the marker (R1).
+- An id that starts with this payment's id does not match, because the marker ends in `)` (R2).
+- The only false match is an event whose free text a person typed with the exact `(payment <uuid>)` marker. That includes a void's reason, because the check reads any event, not only notes. This is a note, not a finding.
+
+Rule 2 names a payment only when it must be the one that landed.
+- A voided payment of the same figure is not a candidate (R4).
+- With the first list unknown: one payment of the figure is named (R3a); two are not (R3b).
+- An id that is not a string is never named (R5).
+- Why this is safe: the landed payment is always in the drain server's answer, so when exactly one fits it is that one.
+
+Rule 3, branch by branch. The UI and toast sentences, word for word (R7):
+
+| What happened | What the manager sees | True? |
+|---|---|---|
+| Note failed after the payment landed | The toast at `:654` (above), and on the job page "The Rs 500 cash payment is recorded, but its reason is not saved yet." with `Reason: "..."` | Yes. The reason is rendered as JSX text (`JobDetail.jsx:1219`) |
+| Save: the job read fails but the note write succeeds | "The payment's reason was saved as a note on the job." (`:689`) | Yes |
+| Save: both fail | The reason stays held, marked failed, with "The note could not be saved again. The payment is safe." (`JobDetail.jsx:1221`) | Yes |
+| Save: the note is already on the job | "This payment's reason is already on the job as a note." (`:683`) | Yes |
+
+- Two held reasons on one job are independent rows.
+- Neither Save nor Drop can send a payment: Save calls only `addJobNote` (through `writeReasonNote`), Drop only changes local state, and the call count in R7 confirms it.
+- The block is shown to whoever opens that job's page in this tab. The console admits only managers.
+- A held reason that names no payment has nothing but the busy guard against a second note. If that note's write lands but its answer is lost, a second Save writes a second, correct note. With no id, rule 1 has nothing to match, and C71 already accepts two notes for one payment, so this is a note.
+
+3. WHAT THE ROUND COULD HAVE BROKEN
+
+Nothing.
+- `submit`'s result: it only gains `priorIds` on success. Its one caller is `AppContext.jsx:719`. The joined path still returns before any note is written, and the attempt is still retired after its key is read.
+- P12a's key choice: unchanged.
+- Merge order: untouched.
+- R12 form: unchanged.
+- Open job: no reason is sent, so no note is written.
+
+4. THE PR BODY
+
+- The two accepted limits are written. One of them is slightly wrong in the safe direction: it says a sign-out loses a held reason, but the provider stays mounted, so the reason survives a sign-out in that tab. A manager who signs in next in that tab would see it, which is harmless. No change needed.
+- Line 1 still reads `Plan @ plan-v9.59` while the work builds C70 and C71. The journal names both rulings and their rounds, so the record is complete. The line only sets where a resume diff starts; it does not affect the merge.
+
+5. GATES
+
+- Web gate on this head: `/c/Users/User/.fixflow-cache/gate-logs/rv212/web-20261114-152317/summary.txt`. Head `4658642`, tree clean, all 7 steps exit 0, 36 test files with 289 tests.
+- Drain-web, rebuilt in a scratch clone:
+  - Picks: `a31924a` + `87bbe88` + `drain-pick-tz-fix` + `90ea88d` + `15df06d` + `fa860f9` + `b76f68e..4658642` squashed into one commit. Every pick was clean and nothing changed under `backend/`.
+  - Lint, format and build exit 0; 35 files with 269 tests pass.
+- The timezone pick: the tag `drain-pick-tz-fix` is the annotated tag object `d7b71d1`, which points to the commit `3810e4209ea4bf8fde7ce500cea0458d3e7ff701`, and the pick's trailer reads `(cherry picked from commit 3810e42...)`. The lane's `3810e42` and the tag are the same change.
+
+WHAT THE REVIEWER RAN
+- `gh pr view` at the start and the end; git reads of `7a160d9` and `4658642`.
+- The web gate, started after reading RAM in its own command (7.0 GB free, 41.2 GB commit).
+- `npm ci` into the scratch folder; the two test files on `7a160d9`; its seven probes on this head; the drain-web lint, format, test and build. Every run was preceded by its own RAM read, all under the limits.
+- The scratch worktrees, the clone and the scratch `node_modules` are removed; the logs stay in the coordinator's scratchpad, `rv212/`. The review tree is clean at `4658642`. No commits, pushes or comments.
+
+COORDINATOR (2026-11-14, 15:29). PASS at 465864238f672ceb89b4f7223b3b044dcc42ff36: the head stays where it is. `main` (`6f430ce`) is its ancestor, so this PC's three checks run on the head itself (lane id `lc212`), then the merge under ruling C60. The notes go to the follow-up with the lane's six left-out items: the rule-1 match reads any event and could be narrowed to notes; the PR body's sign-out limit is stricter than the code.

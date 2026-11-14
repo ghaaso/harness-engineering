@@ -1,0 +1,70 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at d2227ec56990df3a2778e3300a143e1451576961
+Phone-side delta re-read (`6b1259e..d2227ec`: rulings C62, C63, C68) by the same reviewer (earlier records: `203-bceeb47-phone-part1.txt`, `203-6b1259e-phone.txt`); dispatched by the coordinator on 2026-11-14 at 15:10, returned at 15:24. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was d2227ec at the start and at the end (`gh pr view 203`). One MINOR item, on the safe side: a discard by the owner of the version last seen does not clear the row, so it comes out `missing` instead of `discarded`. No way was found to get a wrong `superseded`. Everything passed at 6b1259e still holds.
+
+1. ITEMS RAISED AT 6b1259e
+- E1 (MAJOR): closed. VERIFIED-IN-CODE and by run. `backend/scripts/drain_audit.py:2412`, `if listed:  # point 10 (C62)`, followed by `_judge_listed(res, listed[-1], tag, who)` and `_carried_note`. `_last_seen` at `:1211` covers the case where the slot is no longer listed.
+  - Test that fails without the fix: `backend/tests/test_drain_audit_rules.py:1825` `test_e1_newer_version_only_in_after_report_is_never_judged`. With `if listed:` changed to `if False:`, this test went red.
+  - Probe at head: pending gives in_progress (exit 4); gave_up_5xx gives retry_pending (exit 4); app_detail gives still_parked (exit 0, counted as a manual-entry row), which is what C62 says.
+- E2 (MINOR): closed. `drain_audit.py:2852` `unmanifested_payment_discards`; the verdict text is at `:2916`, `payment discard(s) in no manifest, amount unknown: ask the`.
+  - Test: `test_drain_audit_rules.py:1992`. With `if k not in in_manifest:` changed to `if False:`, it went red.
+  - The probe printed the verdict `ACCOUNTED FOR, 1 payment discard(s) in no manifest, amount unknown: ask the technician`.
+- NITs: closed. The fixture's `install_id` fallback (`drain_fixture.py` `upload_props`). The clip wording, `:2900`, `clip(s) to play on the phone and record on its job by`; test at `:2028`.
+- N1, N2, N7 and M4: unchanged. `_take_discard_from` (`:2126`) and `_create_unsettled` (`:2443`) are not in the diff. The part-2 probes re-run at d2227ec all matched their 6b1259e results. The N1 mutations against `_take_discard_from` are still red, which means the tests still guard that rule.
+
+2. C68, REFUTE BY DEFAULT (PHONE SIDE)
+Tried and could not break:
+- Two after-reports with different versions. Setup: report a1 shows t2's version, a2 shows t3's version, a3 lists nothing. A t2 write between a1 and a2 gives `missing` with an N7 note. A t3 write after a2 gives `superseded`. A t3 write after a1 but before a2 gives `missing`. `_last_seen` (`:1219`) walks the reports newest first, so only the last owner's later write counts.
+- The version's owner signed out or replaced. `_later_write` (`:2605-2611`) needs `e.actor == version.owner` and `e.created_at > shown`. If the version was replaced, the new owner is the one shown in the newer report (see above). A write by the owner from another install also counts, because no install is checked, the same as point 15. No way was found for the phone's version to vanish with no write and no trace on the same install: a 401 does not clear queues, and a wiped phone gets a new install id.
+- The version shown parked or failed. If it is still listed, `_judge_listed` judges it. Once it is no longer listed, a later t2 write gives `superseded`. That matches point 10.
+- Equal receipt times. A write at exactly the report's receipt gives `missing`, the safe side, because `>` is strict.
+  - NIT (test gap): no test pins this. The `>` to `>=` mutation stayed green against `:1904`. Smallest fix: add a `_bill("t2", 60)` case, at the receipt of a1, to `test_c68_a_version_last_seen_is_judged_under_its_own_owner` and assert MISSING.
+- The slot mapping (`_slot_tag` / `_in_slot`, `:2520-2537`). Every case below came out right:
+
+  | Row's slot | Write by t2 | Outcome |
+  |---|---|---|
+  | wait | close | missing |
+  | wait | `on_hold` | superseded (`_ACTION_TAG` at `:424` maps wait to on_hold) |
+  | completion | pin | missing |
+  | negotiate with no amount | bill with a figure | superseded |
+  | negotiate | bill with no figure | missing |
+
+  Each transition action has its own id, so a version's kind and action always equal the row's.
+- One write claimed by two rows. Both input orders, with figure 200 and with figure 100, gave the same result: `superseded` for the older manifest's row and `missing` for the other. The order is stable through `_judge_order` (`:2435`), and the loser names the winner (`:2614-2617`, "already answered"). The bill figure does not pick which row wins. That can only produce a `missing` (exit 3), never a silent loss.
+- A third technician (N7). t3 was reached through every probe above. A t3 write is used only when a document showed t3's version. Otherwise it is named and not used; the `test_drain_audit_rules.py:1930-1934` assertions cover this.
+
+Mutations that went red, so the tests guard these rules: removing the time check; removing `e.actor == version.owner`; making `_last_seen` read only the newest report (it raised an error inside `_carried`).
+
+FINDING F1 (MINOR, wrong `missing`, safe side, contract text not fully met)
+- Claim. Point 10 says that once the slot is no longer listed, the row is "`discarded` with a discard entry". C68 says the version is "judged as that version, under its own owner". The code does not do this: a discard entry made by the version's owner never clears the row.
+- Where. Step 2 calls `_take_discard_from(row, entries, used)` (`:2328`), which requires `owner_t != row.owner -> continue` (`:2140-2142`).
+- Input. t1's `negotiate:J` row (100). a1 shows t2's version (200, parked app_detail). a2 lists nothing and has the discard entry `{"queue":"outbox","record_id":"negotiate:J","owner_tech":"t2","discarded_by":"t2"}`. The server has no write.
+- Result. `missing`, and no note mentions the discard entry. The expected result is `discarded`.
+- Smallest fix. In step 2, when the first `_take_discard_from` returns None and `_is_slot(row)` holds: call `seen = _last_seen(row, afters)`; if `seen[0].owner` differs from `row.owner`, retry `_take_discard_from` with `dataclasses.replace(row, owner=seen[0].owner)`; add `_carried_note`. Add the input above as a test.
+- If the owner reads "a discard entry" as meaning only the row owner's entry, F1 falls away and this is a PASS.
+
+3. C62 AND C63 AS BUILT
+- C62 matches point 10 and point 12, with no more and no less, except F1. `_superseded` now reads later manifests only. An after-report version is never a row; it is only a note or a judgement the row carries.
+- C63 matches point 8: the pin is prior state only with no pin since the manifest (`:2095`), test `:2066`, reverting to `elif job.has_pin:` went red; the negotiated amount is kept, with `_holder_note` (`:2080-2088`), test `:2080`; the fuel count includes `gone_since_baseline` (`:2877`, `:3476`). Side effect: a pin written by another technician since the manifest now gives `missing` with an N7 note instead of `prior_state`. That is the safe direction.
+
+4. CHANGED EXPECTATIONS, EACH FOLLOWING A RULING
+- `test_a_newer_version_in_the_after_report_..._is_judged_...`: SUPERSEDED became IN_PROGRESS (C62).
+- `test_a_later_document_of_the_install_..._names_the_version_...`: SUPERSEDED became MISSING with the carried note (C62).
+- In `test_a_unique_id_kind_is_never_superseded_by_a_later_listing`, `_superseded` lost its third argument and `_last_seen is None` was added (C62).
+- `test_the_document_path_follows_the_receipt_when_the_clock_went_back`: when B is only in a report, A is IN_PROGRESS with the carried note (C62).
+- The verdict fuel text became "changed or gone" (C63).
+- In the integration file, the test was renamed `..._is_named_...`. It still asserts SUPERSEDED, now with "replaced by the later write of t16, the owner of the version" (C68 brought this back).
+- No removed assertion and no new skip or xfail. The gate reported `skipped=0` on both runs.
+
+5. WHAT THE DELTA BREAKS FROM 6b1259e
+Nothing. All 112 tests in `test_drain_audit_rules.py` passed at d2227ec. The only failure was in the reviewer's own scratch mutation harness, which still called `_superseded` with three arguments (the old signature).
+
+WHAT THE REVIEWER RAN (free RAM and commit charge read in a command of their own before each run: 7.6 GB free / 39.7 GB commit, then 6.5 GB free / 41.2 GB commit)
+- `ff-gates.sh backend rv203phone <tree> tests/test_scratch_rv203_phone4.py`: the C68, slot and two-row probes plus 7 mutations. Log: the coordinator's scratchpad, `rv203probe/probes-d2227ec-run4.log`.
+- `ff-gates.sh backend rv203phone <tree> tests/test_drain_audit_rules.py tests/test_scratch_rv203_phone3.py`: 112 passed, plus the part-2 re-probes. Log: `rv203probe/probes-d2227ec-run5.log`.
+- In both runs, the ruff gates failed only on the scratch files.
+- Cleanup: the scratch tests and the scratch `.py`, diff and plan files are removed, and only logs are left; `git status` in the review tree `rv203-head-phone` is clean at d2227ec; no `rv203phone` container is left. The server reviewer's `fixflow-rv203-*` containers were not touched.
+
+COORDINATOR (2026-11-14, 15:27; ruling C72). F1 is a fix and not a reading. While the report that shows the other technician's parked version is the newest, the row is `still_parked` (manual entry, exit 0); the prescribed way to close a parked row is the manual entry and then the discard on the phone (C59); on a shared phone that same act now turns exit 0 into exit 3 and halts the fleet. Ruled (points 9 and 10 amended): once the newest usable report no longer lists the slot, a discard entry of the owner of the version last seen clears the row, used once, but only when the report that last showed that version does not already carry that entry (the phone's list is cumulative; an entry the showing report carries is about an earlier version: never evidence, named). The reviewer's smallest fix alone would open that unsafe case. Sent to the lane at 15:27 with the nit's test; the lane holds its push for the server-side re-read of d2227ec.
