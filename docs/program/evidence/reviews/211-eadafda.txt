@@ -1,0 +1,91 @@
+VERDICT: PASS-WITH-FIXES
+PR #211 at eadafdaa509f4cd09ce38ea4d0ec99d703b97d0b
+Delta re-read by the same reviewer (the first pass at 153edd0 is `211-153edd0.txt`); dispatched by the coordinator on 2026-11-14 at 13:01, returned at 13:12. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+All seven findings are closed, and every route pasted behaves as written. One new MINOR remains: pasting 6.6 (b)'s marker line on its own can vouch for a copy taken in an earlier attempt, and 12 lost writes were reproduced that way. It has a one-test fix.
+
+The delta from `153edd0` is one commit, `docs/RUNBOOK-SELFHOST.md` only (+49 -30). No `--status running` is left anywhere in the runbook. Line numbers below are at this head.
+
+1. THE SEVEN FINDINGS
+
+| Finding | State | Where at this head |
+|---|---|---|
+| MAJOR-1: 6.6 (b) wrote a marker on a live database | Closed | The live test now leads the dump line (l.1480) and the three marker lines (b-empty l.1466, b-save l.1484, b-scp l.1503). The prose is at l.1386-1400, with the "what it cannot see" paragraph at l.1397 |
+| MINOR-1: a paused or restarting backend was not seen | Closed | Every live test now reads `ffc ps --services`. Paused and restarting are listed; stopped and created-only containers are not (checked with a container left `created` by a refused `up`) |
+| MINOR-2: the tag push could push a stale local tag | Closed | 11.13's push line repeats line 1's tip tests (prose l.2762). 11.13a's (l.2810) repeats all three |
+| MINOR-3: the next technician on a shared phone was gated on the after-report only | Closed, a different way, and stricter than the reviewer's fix (l.1923, l.2028) | See the judgment below |
+| NIT-1: section 0's anchor sentence | Closed | l.85-87; now agrees with the rig's README |
+| NIT-2: SMART tools pulled a mail server | Closed | l.487, `--no-install-recommends` |
+| NIT-3: 6.12's list of readers | Closed | l.1696 |
+
+On MINOR-3, the lane's "exit 0" is right.
+- An exit 4 means the first technician's rows have not all landed, or the after-report is missing. The phone sends only for the technician who is signed in, so letting the next one sign in would leave those rows unable to land.
+- An exit 5 or any other code means nothing was judged at all.
+- So "exit 0" is "not 3, not 4, and the audit ran", which is what "did not exit 3" left out.
+- The one gap is an exit 4 the first technician cannot clear (a manifest problem): the text gives that shared phone no way out. That is NIT-A below.
+
+2. THE REVIEWER'S TRIALS
+
+Method: the changed blocks were cut by anchor and pasted into `bash --norc -i`. `ffc` was the real script running `docker compose` (project `rv211`), against Postgres 17-alpine with 46 tables, a stand-in backend writing a row every 2 s, and the real `restore-gate.sh`.
+
+| Trial | What was pasted | What happened |
+|---|---|---|
+| Route 2b, step 1: 6.1 skipped on a live host | 6.6 a-list, a-prove, b-count, b-save, then 6.7 | `STOP: no copy taken (the restore gate is signed off: ...)` and `dump exit=refused`. No file was written; the count and sum lines failed, `r2put` said "missing or empty", and the marker line stopped at `L: not set`. No marker. 6.7 printed STOP (signed off) on both lines; writes kept |
+| Route 2b, step 2: sign-off removed by hand | b-save, then 6.7 | `STOP: no copy taken (the backend is up: ...)`, then 6.7 STOP (backend up) |
+| Route 2b, step 3: backend stopped by hand | 6.7 | `STOP: nothing dropped (no 6.6 marker names ...)` |
+| Route 2b, step 4: 6.6 (b) again | b-save, then 6.7 | `dump exit=0`, then the marker, then DROP, then `restore exit=0`. The new copy holds ALL 16 writes |
+| Paused backend | b-save dump line, b-save marker line, b-scp marker line, b-empty, both 6.7 lines | Every line STOPped with "the backend is up" |
+| Restarting backend | The same six lines, each pasted only once the backend's state was `restarting` | Every line STOPped with "the backend is up" |
+| Docker unreachable (`DOCKER_HOST` pointing nowhere), and `ffc`'s env file missing | The same six lines | `STOP: ... (ffc ps failed)` on every line; `dump exit=refused` |
+| `pg_dump` fails (postgres paused) | b-save | `dump exit=1` with no `no copy taken` line. A 0-byte file was left; the upload refused it; the marker line printed `STOP: no marker written (pg_dump exit 1)` |
+| Entered at 6.1 on a live host | 6.1, 6.6 in full, 6.7 | `dump exit=0`, marker, DROP, `restore exit=0` |
+| Half-way load, then 6.7 again | 6.7 with the dump cut inside the container, then the full file back and 6.7 again | `restore exit=1`, then DROP and `restore exit=0` |
+| Way back | `D=$(basename "$P0")`, `SUM=$L0`; 6.6 a and b, then 6.7 | `proven`, marker, DROP, `restore exit=0`; the 4 live writes are back |
+| Empty volume, no backend container | Entered at 6.6 without 6.1 (the R8.4/R9.6 shape), and again entered at 6.1: a-prove, b-count, b-empty, 6.7 | Both times: `marker: ... (nothing to save)`, DROP, `restore exit=0` |
+| 11.13 | Stale `SHA` with a leftover local `drain-image-2` on it; normal run; retry when the tag is already on the tip; branch not pushed | Stale: both lines STOP (`SHA is not release/drain's tip`), nothing pushed. Normal: `tagged`, `pushed`. Retry: line 1 STOP (`git tag failed`), line 2 pushes the tag on the tip. Not pushed: both STOP |
+| 11.13a | Normal; stale `SHA` with a leftover tag; `SHA` = `release/drain`'s tip | Normal: `tagged`, `pushed`. Stale: both lines STOP (not the web tip). Drain's tip: both STOP (`SHA is release/drain's commit`) |
+| NEW: the marker line pasted on its own | 6.1, 6.6 in full (copy 1); 6.9 (backend up, 12 writes); 6.1, 6.6 (a), then only b-save's last line; then 6.7 | `marker: ... (pre-restore copy uploaded)` naming COPY 1, then DROP and `restore exit=0`. THE 12 WRITES ARE IN NO COPY |
+
+3. THE NEW 6.6 (b) LINES AS SHELL
+
+- `DX` on the dump line (l.1480):
+  - When the live test refuses: `DX=refused`, the line prints `STOP: no copy taken (<the reason that fired>)` and `dump exit=refused`, and the redirect never runs, so no file is created.
+  - When `pg_dump` fails: the brace group returns the status of `DX=$?`, which is 0, so no STOP line prints; `DX` is the real code (`dump exit=1`) and the marker line refuses with `pg_dump exit 1`.
+  - On success: `DX=0`.
+  - `DX=refused` is set before `${P:?}`, so a stale `DX=0` from an earlier pass cannot survive a run of this line.
+  - Nothing can take `refused` for success: both marker lines test `[ "$DX" = 0 ]`, and `DX` is assigned nowhere else in the runbook.
+- Every `WHY` printed was the reason that actually stopped the line, in every trial. After a `pg_dump` failure the leftover `WHY` is never printed.
+- A failing `ffc ps` refuses on every new line (both forms tested).
+- Skipping the copy by pasting in parts: NOT CLOSED (MINOR-A). The marker line checks that `L`, `P`, the receipt and `DX=0` are consistent with EACH OTHER, not that they belong to this attempt. Shell variables outlive 6.9 and 6.1, so pasting the marker line alone vouches for an older copy.
+- A wording detail in the Check (l.1491-1493). "the marker line stops at `L: not set`" holds only when the block is pasted whole. Pasted without its first line, an old `P` is counted and uploaded again; the marker still refuses, on `pg_dump exit refused`.
+
+4. WHAT THE ROUND COULD HAVE BROKEN
+
+- No Check or Expected disagrees with its block. That covers Check (b)'s new `STOP: no copy taken` sentence, 6.7's Do, b-scp's "the database is not live", and 11.13/11.13a's "repeats the first line's tests".
+- R8.4 and R9.6 (a new host, no sign-off, no backend container, entering at 6.6) still pass through every new test. R3.5 enters at 6.1 and passes.
+- The new paragraph (l.1397-1400) says nothing false. One subtlety: a one-off `ffc run backend` container IS seen, because it belongs to the `backend` service, so it causes a harmless refusal rather than a miss.
+- C65 says "did not end in exit 3"; the text says "exit 0". The plan's wording is now the looser of the two (see MINOR-3 above).
+
+FINDINGS
+
+MINOR-A: the b-save marker line (l.1484) and the b-scp marker line (l.1503) can vouch for a copy from an earlier attempt when pasted on their own (reproduced above). The same was true on the base.
+Smallest fix, in front of the `DX` test on both lines:
+`WHY="$P was taken before this attempt's 6.6 (a); run (b) from its first line" && [ "$P" -nt /var/lib/fixflow/restore/proven ] &&`
+`proven` is rewritten by 6.6 (a) in every attempt and always before (b). In the reproduced case, copy 1 is older than `proven` and is refused. In route 2b step 4 and in the way back, the copy comes after `proven` and passes.
+
+NIT-A: l.1922-1925. The shared-phone gate has no way out of an exit 4 the technician cannot clear.
+Fix: "...ends in `audit exit=0`, or the owner has ruled on its exit 4".
+
+STILL UNVERIFIED
+- The rig rehearsal of this head is outstanding and was not part of this pass.
+- `NEEDRESTART_MODE` on a real Ubuntu host with needrestart installed.
+- Compose versions other than v5.6.1.
+- A lightweight tag on `SHA` is still pushed by 11.13/11.13a; not tested again (low).
+
+WHAT THE REVIEWER RAN
+- `git diff 153edd0..eadafda`, `git show` at `eadafda` and at `plan-v9.58` (C65), and `gh pr view 211` (head unchanged at the end).
+- Paste trials with the real `ffc` against containers `rv211-postgres-1`, `rv211-backend-1`, `rv211-restore-gate-1` and `rv211-probe`. All were removed; a final listing shows no `rv211*` container.
+- Scratch git repos, each with a bare origin, for 11.13/11.13a; removed afterwards. No commits, pushes or PR comments to the repository.
+- Scratch: the coordinator's scratchpad, `rv211/` (`diff2.txt`, `u1.in`, `u3.in`, `u5.in`, `t1113.blk`, `t1113a.blk`).
+
+COORDINATOR (2026-11-14, 13:12; ruling C66). Not mergeable at eadafda. MINOR-A and NIT-A go back to the lane for one small round, with the Check's wording detail. The lane's "exit 0" for the shared-phone gate stands over the looser wording of ruling C65. The same reviewer re-reads the delta; the rig rehearses the head after that.
