@@ -1,0 +1,100 @@
+VERDICT: PASS
+PR #216 at bd6a10393f442d73339b38add25eb132b8200893
+Whole-PR binding review (P8b: bill revisions, one writer, the money chain, the daily verify and its mail, the discount cap) by a fresh reviewer; dispatched by the coordinator on 2026-11-14 at 19:00, returned at 19:54. This file is the coordinator's record of the reviewer's report, written from the notification text. The migration review of the same head is `216-bd6a103-migration.txt` (PASS-WITH-FIXES, ruling C84), so the head changes before any merge and this PASS is not a merge verdict for a later head.
+
+The head was bd6a103 by `gh pr view 216 --json headRefOid` at 19:00 and again at 19:52. Base on the PR is 27c9e04; the branch is built on 1f25479. The PR body's first line is `Plan @ plan-v9.67`. Nothing below requires a change to this head before it merges. Item C1 must be settled before P8b is deployed, not before it merges. Items A3, B3, B5, D2 and J are small and could ride the round the lane already plans.
+
+A. EACH CLAIM: BUILT OR NOT, AND A TEST THAT FAILS ON 1f25479
+The head's test files over a scratch checkout of 1f25479 (log: `C:/Users/User/.fixflow-cache/gate-logs/rv216p/backend-20261114-191038`): 15 failed, 3 passed, 1 collection error.
+- O6-F09, revisions: built. Code: the `JobBillRevision` model at `jobs/models.py:520-584`, the writer at `jobs/service.py:1706-1783`, and the three callers at `:1985`, `:2164` and `:2240`. On base, `test_bill_revision_integration.py::test_a_completion_writes_one_revision_holding_the_whole_bill` and `::test_replays_write_no_revision` fail only because the table does not exist: a structural failure, not a behavioural one.
+- O6-F09, reason and note required: built. Code: `service.py:1899-1909` (completion reason) and `:2141-2144` (negotiate note); the router maps both to 422 at `jobs/router.py:326-327` and `:359-360`. Fails on base for the right reason: `test_jobs_integration.py::test_completion_resubmit_is_frozen_once_the_bill_was_sent` gives `assert 200 == 422`; `::test_a_manager_override_needs_a_reason_and_keeps_the_bill_it_replaces` and `::test_a_negotiation_after_the_send_needs_a_managers_note` (`200 == 422`) also fail there.
+- HR-A4, one writer: built. Base had three writers: `repository.py:155-177` (`try_negotiate`), `service.py:1736-1737` and `service.py:1968`. The head routes all three through `_write_bill`, and `try_negotiate` is gone. Fails on base for the right reason: `test_bill_single_writer.py::test_only_write_bill_writes_the_bill_columns` lists the base's write sites; `::test_a_bill_written_around_the_one_writer_is_caught` gives `assert True is False`, because the base verify does not look at bills.
+- O6-F07 and O6-F08, one chain: built. Code: `attendance/service.py:183-375` (`_append_chain_entry`, `MoneyChain`, `_verify_money_chain`), `chain.py:443-817`, and the payment hooks at `service.py:2367` and `:2452`. On base, `tests/test_money_chain_integration.py` cannot be collected (no `app.chain_verify`): structural; the behaviour is shown by the breaks in J.
+- Daily verify job and mailer (C74): built. Code: `app/chain_verify.py`, `core/mailer.py`, `main.py:207-224` and `:275-282`, `config.py:250-264` and `:274-278`. On base, all six `test_scheduler_timezone.py` tests that read the new settings fail with AttributeError on `chain_verify_hour`.
+- C13, discount cap against the first original: built. Code: `service.py:2146-2160` and `repository.py:344-357`. Fails on base for the right reason: `::test_the_discount_cap_is_measured_against_the_first_original` gives `assert 200 == 403`.
+
+B. THE BILL RULES AGAINST THE NEW WRITER
+Every bill write takes the job row lock first (`try_lock_unclosed` or `lock_job_status`). `_write_bill` then reads the latest revision under that lock and adds the revision, then the chain entry (which takes the chain lock), all in one transaction. A refused call raises before `_write_bill`; the router commits only on success (`router.py:333`) and `get_session` closes, which rolls back.
+- First completion: writes revision 1, kind `completion` (`:1911-1924`, `:1985`).
+- Resubmit by a technician: frozen means 409, as before (`:1893-1894`). A free resubmit writes a `completion` revision only if something in the bill changed.
+- Correction by a manager: an `override` revision with the reason (`:1899-1909`). The closed check still comes first (`:1823` and `:1835`). The revision before it keeps the lines the customer was shown (the integration test asserts this).
+- Identical replay: on a frozen bill it returns at `:1891-1892`, no revision and no event, for both roles. On an unfrozen bill there is no revision, but a second `complete` event is written; base does the same, and the messaging test pins that the customer gets one bill message.
+- Negotiate: the replay check runs before and after the lock (`:2125`, `:2134`), then a `negotiate` revision. The two-session test against a close (`test_money_close_race_integration.py:145`) is unchanged and green.
+- Send: for both the manual endpoint (`customer_messaging/router.py:98`, `:153`) and the automated dispatcher (`customer_messaging/service.py:479`), a `send` revision is written on the first send only (`:2236-2240`). The dispatcher still calls `log_customer_message`, and `test_messaging_integration.py` now asserts `["completion","send"]` and that `bill_sent_at` is stamped.
+- Scripts: none write `job.bill_*` (grep at the head).
+Findings:
+- B1 MINOR: a lowered bill can refuse a technician's small discount. `repository.py:344-357` takes the earliest revision with an original, whatever its kind; `service.py:2148` uses the larger of that and the current original. Example in paisa: completion 450000, bill sent, manager override to 135000 ("compressor not fitted"), cap 50000. The technician then negotiates 130000 (a Rs 50 discount). `capped = 450000 - 130000 = 320000 > 50000`, so the answer is 403; base answered 200. The phone parks a definitive 403. It only happens when a shop sets the cap; the default is 0 (`tenancy/specs.py:170`). Smallest fix: measure from the first original at or after the latest `override` revision. The ruling's own wording gives the same result, so this is a call for the coordinator.
+- B2 NIT: a required reason can be thrown away. A manager who changes only the remarks, fault code or action code of a frozen completion must give a reason (`:1891-1904`). The money is unchanged, so `_write_bill` writes nothing (`:1742-1749`) and the reason is not stored anywhere; the event text never carries it. CLAUDE.md says the reason is "kept on its revision". Fix: require the reason only when the bill would change, or put it in the event text.
+- B3 MINOR: a change to the material lines alone is not pinned by any test (break O2). Real changes to the bill are recorded correctly at this head. The gap: if the material lines, labour and fuel are dropped from the "nothing changed" comparison (`:1747`), the full suite still passes 1484 of 1484; a swap of parts at the same total would then write no revision and nothing would notice. Fix: one integration test that resubmits different lines at the same total and expects two revisions.
+- B4 NIT: a manager's identical frozen resubmit no longer re-prices fuel. It is now a replay. The PR body discloses this.
+- B5 MINOR: the larger-of-two rule in C13 is not pinned by any test (break O3). Measuring against the first original alone still passes 1484 of 1484. Fix: a test where an override raises the bill.
+
+C. WHAT DEPLOYED CLIENTS WILL NOW GET
+- Technician app: no request is newly refused except the C13 cases in B1, and only when a cap is set. Negotiate sends `note: selectedDiscount ?? undefined` (`technician-app/src/features/jobs/arrival-job/ArrivalJobBillScreen.tsx:175`); the note is required only from a manager. Completion sends no `reason`, which only a manager needs. Payments, voids and send-log gain a chain append and no new 4xx. Managers are filtered out of the login roster (`technician-app/src/features/auth/LoginScreen.tsx:44`). Older APKs are INFERRED to be the same.
+- C1 MINOR (must be settled before deploy, not before merge): the web manager is newly refused. Confirmed on `main` 27c9e04: `jobsApi.js:82-84` posts the completion body unchanged, built at `AppContext.jsx:544-558` with no `reason`; any change to a frozen bill now gets a 422, and the web has no reason field, so a manager can no longer correct a frozen bill from the web at all. Negotiate sends `note: note || null` (`jobsApi.js:87-92`) from `NegotiateModal`, whose field is labelled "Note (optional)"; a post-send negotiate with that field blank gets a 422. What the web must send: a non-blank `reason` of at most 256 characters on a completion when the bill is sent, negotiated, or has a non-voided payment; a non-blank `note` on a negotiate once `bill_sent_at` is set. This needs an owning web phase before P8b reaches a deploy-train row.
+
+D. THE CHAIN AS BEHAVIOUR
+The integration tests and the reviewer's breaks show the verify catches: for a payment, a changed amount, a deleted row (orphan_create), an inserted row (missing_create), a void flipped on (void_flip) and a void flipped off (void_reverted); for a revision, a tampered row and a deleted row; for a bill, `bill_tampered` or `bill_unrevisioned`. The staff ledger now also reports `void_reverted`; base only reported void flips (`base:chain.py:288-297`). The ledger's balances and endpoints are otherwise as before, and the response only gains fields with defaults.
+Appends cannot be skipped or doubled: a payment replay by `client_id` returns before the chain call (`:2313-2331`, and the race path at `:2353-2362`); a void of a voided row returns early (`:2439`), or appends only when the row was actually flipped (`:2449`); the P8a script appends only when its conditional UPDATE matched (`backfill_payment_voided_at.py:263-277`), and a second run finds nothing to propose; unique constraints stop a second create or void per subject.
+Locks: the advisory lock is per shop. The verify holds it while it reads every money table, so payments and revisions wait for that read (milliseconds at this shop's size). The daily job releases it before mailing (`chain_verify.py:101-108`). Lock order is always job row, then chain; no cycle found.
+What the verify does not catch: a truncated head with its rows (only the anchor catches that, and the anchor ships unconfigured); a full recompute of the chain; edits to `job_material` or `job_completion` after the last revision; `bill_status`.
+- D2 MINOR: tampering with `bill_sent_at` is caught by the code but no test pins it (break O4). Ignoring `sent_at` in the bill check still passes 330 of 330 chain, migration, revision, messaging and jobs tests. Setting `bill_sent_at` to NULL in the database lifts the freeze, so this is worth a test.
+
+E. THE VERIFY JOB AND THE MAILER
+- It runs at 04:00 in the shop's time zone (`scheduler.py:82`), and `test_scheduler_timezone` checks Karachi times.
+- The `app_event` holds counts, flags, the head seq and hash, the anchor status, and the error's type name only (`chain_verify.py:138-150`).
+- The manual command prints one of three anchor lines (`:69-74`) and exits 0, 1 or 2. No setting value is ever logged or returned.
+- A failed send is recorded as `failed` with the chain result intact; the test also checks the relay's text stays out of the log.
+- With nothing configured the server boots (the mailer is never touched at boot) and reports "unanchored".
+- The mailer's 30-second timeout applies per socket operation (`config.py:262`, `mailer.py:41`) and the send runs off the event loop, so a dead relay cannot block the scheduler.
+- E1 NIT: there is no overall deadline. A relay that drips bytes could hold the job, and APScheduler's default single instance would then skip later days. Port 465 (implicit TLS) is unsupported; it simply reports `failed`.
+- E2 NIT: `FIXFLOW_CHAIN_VERIFY_HOUR=25` or an empty `FIXFLOW_SMTP_PORT=` would stop the boot. That is the same unvalidated pattern as `backup_hour`. The example file does not list the hour, and its port line is commented out.
+
+F. C13 ARITHMETIC
+All integer paisa: `capped = max(original, first) - amount`, and the request is refused only when `cap > 0 and capped > cap`. With cap 50000 and reference 450000, an amount of 400000 is allowed and 399999 is refused. A figure above the reference is never capped. Managers are never capped. It affects technicians negotiating on the phone, and only with a cap set. The message rounds down to whole rupees (base did the same).
+
+G. CHANGED EXPECTATIONS, FAKES AND FIXTURES
+- `test_lifecycle.py:556-580`: changed expected value (422 without a reason, then an `override` revision): O6-F09.
+- `test_jobs_integration.py:822-834`: changed expected value (422, then 200 with a reason): O6-F09.
+- `try_negotiate` fakes in four unit files: removed (the method is gone).
+- `install_bill_revision_fakes`: new fake (in-memory revision store).
+- `jobs/tests/conftest.py:48-67`, `FakeMoneyChain`: new autouse fixture, stated in the PR body.
+- `attendance/tests/test_router.py`: override of `get_jobs_service` (the verify reads jobs rows).
+- `test_scheduler_timezone.py`: new job row (the 04:00 job).
+- `test_messaging_integration.py`: added assertion (the automated send writes a `send` revision).
+No assertion was removed, and nothing was skipped, xfailed or marked `.only`. `FakeMoneyChain` cannot hide a real chain failure: it only applies under `app/features/jobs/tests/`, which has no database tests; no file in `backend/tests` imports it; every real chain path runs against Postgres in the integration tests.
+
+H. CONVENTIONS
+- Pass: the new import edge `attendance.router -> jobs.deps` is needed, targets `deps`, carries a comment (`pyproject.toml:137-141`), and lint-imports reports 4 contracts kept.
+- Pass: free text in event payloads. No new `JobEvent(` or `INSERT INTO job_event` site in `app/` or `scripts/`; the only hit is the migration test's fixture. `_WRITERS` needed no new entry.
+- Pass: CLAUDE.md facts. Head 0048 and 43 tables match the code; the chain is linear with no duplicates; the facts check passes.
+- NIT: CLAUDE.md scheduler line (CLAUDE.md:437-438) says a missed run "is skipped, not caught up". It leaves out the hour's grace (`scheduler.py:86`), which `main.py`'s docstring does state.
+- NIT: the example env file has no empty assignments: the seven SMTP and anchor names are commented out, and two of them show the code defaults. The PR body says the `CHAIN_VERIFY_*` names are listed there; they are not.
+- Pass: commits (author identity, attribution trailer, the program's `[P8b]` subjects). Pass: secrets (none in the diff). Pass: each of the eight checked Scope boxes matches the diff.
+- NIT: the plan's branch name was not used; the PR body discloses this.
+
+I. THE REVIEWER'S FULL GATE
+- `ff-gates.sh backend rv216` on the review tree: clean, bd6a103, no extra arguments. Summary: `C:/Users/User/.fixflow-cache/gate-logs/rv216/backend-20261114-190111/summary.txt`.
+- Gates 1 to 8 (CLAUDE.md check, ruff format, ruff check, mypy, lint-imports, alembic upgrade head, alembic check, pytest) all EXIT=0. `SKIPS total=1484 skipped=0 integration_skipped=0`; 1484 passed in 7m00s. This matches the lane's run.
+
+J. BREAKS, EACH ALONE ON A SCRATCH COPY OF THE HEAD (logs under `C:/Users/User/.fixflow-cache/gate-logs/rv216p/`)
+Six of the lane's breaks, each caught by its named test:
+- L1, a second writer via `.values(bill_status=...)`: the tripwire names `_stray_bill_writer` (`backend-20261114-191225`).
+- L2, the replay short-circuit at `service.py:1749` removed: `test_replays_write_no_revision` gives `2 == 1` (`backend-20261114-191517`).
+- L3b, the override reason replaced with a placeholder: the override test gives `200 == 422` (`backend-20261114-194447`). (A first version, L3, failed through a TypeError instead and was discarded.)
+- L4, the payment create not chained: the chain test finds an empty chain (`backend-20261114-191913`).
+- L5, void_flip suppressed: the edit test lacks `void_flip` (`backend-20261114-192130`).
+- L6, a failed send recorded as sent: `'sent' == 'failed'` (`backend-20261114-192327`).
+Four of the reviewer's own, none caught by any test:
+- O1 MINOR: the tripwire misses a common write shape. `update(Job).values({Job.bill_status: "x"})` passes the tripwire and every other gate (`backend-20261114-191429`). The dict check only accepts string keys (`test_bill_single_writer.py:82-85`), and this blind spot is not in its docstring. Fix: also flag dict keys that are attributes named after a bill column.
+- O2: described in B3 (`backend-20261114-192531`, 1484 passed).
+- O3: described in B5 (`backend-20261114-193616`, 1484 passed).
+- O4: described in D2 (`backend-20261114-194644`, 330 passed).
+
+WHAT THE REVIEWER RAN: read-only `git`/`gh` commands; the full gate above; 12 targeted gate runs under lane `rv216p`, one at a time, each after a free-RAM and commit check (7.9 to 8.9 GB free, 36 to 37 GB committed). Scratch worktrees are removed; the scripts and logs remain in the coordinator's scratchpad folder `rv216/pr/`. No `rv216` containers are left running, and the review tree is clean. One slip: when printing the env-example diff, the redaction missed the commented lines, so the two code defaults (port, STARTTLS) were shown on screen; neither is a secret, both are in `config.py`.
+
+NOT VERIFIED: `SmtpMailer` against a real relay (not allowed here); a real race between the verify and a payment; the migration, its backfill, the DDL and lock times (the other reviewer's part); the web and mobile gates (this diff changes no `src/` or `technician-app/` files); whether older deployed APKs let a manager sign in.
+
+OPEN QUESTIONS FROM THE REVIEWER: (1) which web phase owns the reason and note fields, and should P8b's deploy-train row wait for it (C1)? (2) Should C13 reset its reference after a manager's override (B1)?
+
+COORDINATOR (2026-11-14, ruling C89). Question 1 was answered by ruling C79 before this report: the web half is PR #217, which passed its review and is merged as `41946a8`; the deploy-train row for P8b names both. Question 2: yes. C13 meant that a technician cannot lower the figure the cap is measured from; a manager's correction is the new figure. Ruled for the lane's one round, with C82 and C84: the cap is measured against the larger of the current original and the first original at or after the latest `override` revision; B2 is closed by C82 (the reason is in the job's history line whether or not a revision is written); a test for each of the four unpinned behaviours (B3, B5 under the new rule, D2, O1's write shape, with the tripwire's remaining blind spots named); the two texts corrected. E1, E2 and B4 stay notes. For P9a-1: what is posted to the books is read from the chained revision, or the verify learns to compare the live material lines with it.
