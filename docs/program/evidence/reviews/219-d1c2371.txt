@@ -1,0 +1,81 @@
+VERDICT: PASS-WITH-FIXES
+PR #219 at d1c237197af2ab67d61d1d99357fc2fedc82a4fd
+Binding review (the runbook follow-up of ruling C99: one commit on `main` b3fd9c9, `docs/RUNBOOK-SELFHOST.md` only, +258 -17) by the reviewer of PRs #211 and #213; dispatched by the coordinator on 2026-11-14 at 22:57, returned at 23:13. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was d1c2371 at the start and at the end; the base is b3fd9c9. Most of what the PR adds holds against the code. Six statements are false or would mislead an operator and should be fixed before the merge; none of them can lose data. Line numbers are the runbook's at d1c2371 unless a file is named.
+
+FIXES BEFORE MERGE (MINOR)
+- M1. The tunnel's answer during a boot loop. Runbook :783 (3.6a) and :3000 (12.4) say "the tunnel answers 503". The runbook's own 5.9 (:1217) says a stopped backend in normal routing answers a 5xx, "expected `502`". The 503 is the tunnel's catch-all for hostnames it has no route for; a route whose backend is down gets a gateway error from cloudflared. The 502 itself is INFERRED; the contradiction is in the text. Fix: "a 5xx (502 expected, 5.9)" at both places.
+- M2. R10.4's "down past 05:00 (the job's grace is an hour)" is false. VERIFIED-BY-COMMAND with APScheduler 3.11.3: `CronTrigger(hour=4).get_next_fire_time(None, 04:30)` returns the next day's 04:00, and a job added after its time has passed does not run. A backend not running at 04:00 skips that day, even if it is back by 04:10. The one-hour grace only covers a late run inside a scheduler that is already running. The sentence comes from the code comment at `backend/app/main.py:214-218`, which is wrong too (backlog). Fix: "the backend was not running at 04:00 shop time".
+- M3. R10.2's Check misses the usual rewrite. Runbook :3825-3826 counts "nothing while today's head seq is at or above <n>" as a rewrite. The chain has no gaps, so a missing row at <n> with today's head at or above <n> is already a `seq_gap` (`chain.py:470-480`). The realistic rewrite (cut the tail, recompute) gives a lower head and no row, and the Check does not flag it. Fix: "a different hash, or no row at <n>, means rewritten (outside the restore case below)".
+- M4. No routine step performs the anchor check. R10 says "the kept mails are the check against that". But R0.7 only compares the seq with yesterday's, and R10.2 (comparing a kept mail's hash) is reached only from BROKEN, a lower seq or no mail. A rewrite that recomputes the chain with the same or a higher seq passes the verify and R0.7 every day. Fix: R0.7 adds a periodic R10.2 against an older kept mail.
+- M5. 3.6a's Expected says "the five anchor names". The Do says to uncomment the template's anchor block, which includes `FIXFLOW_SMTP_PORT=587` and `FIXFLOW_SMTP_STARTTLS=true` (`backend.env.example:40-46`). Done that way, line 1 of the Check prints seven names (VERIFIED-BY-COMMAND). Fix: say seven, or say to delete those two lines.
+- M6. 6.9's "Its ids and times are minted at this boot" is half wrong. The backfill's revision ids are uuid5 of the job id; only the revisions' `created_at` is the boot's `now()` (`0048...py:209`, `:240`, `:256`). The payment entries come first in the chain and hash the same as production's; the head differs from the first revision entry on. The conclusion (the head hash differs) still holds whenever any job is billed. Fix: "the backfill's revisions carry this boot's time".
+
+NITS (can wait for a follow-up)
+- 3.6a's Check does not flag `FIXFLOW_CHAIN_VERIFY_HOUR=24`, although the text names it as a boot-stopper.
+- 3.7a catches only `https://` or the domain; `http://203.0.113.9/...` passes (VERIFIED-BY-COMMAND). `compose-rules.mjs:145-149` uses `https?://(?!backend[:/]|web[:/])`; the check could use the same pattern.
+- `unexpected_attribution` is described too narrowly: the code raises it for an attribution on a void that was already chained stamped, or for an attribution with no void (`chain.py:725`, `:808`).
+- The quoted FAILED line drops its tail, "; this run is not anchored" (`chain_verify.py:80-81`).
+- `docker inspect` prints `fixflow_opsnet`, not `opsnet`. With no ops container running, `$(ffc ps -q ops)` is empty and the command errors.
+- 12.5a gives no command for reading the ops console's rollup, and none for the R2 length-refusal test; the second is marked VERIFY.
+- Body line 1 says `Plan @ plan-v9.84`, but C99 first appears at plan-v9.85.
+
+1. P7b-2
+- The lock count: the lock starts at the fifth wrong password; the lane is right. VERIFIED-IN-CODE: `ops-server.mjs:80` `LOGIN_FREE_FAILURES = 5`, `:209-214` (`failures += 1`, then lock when `failures >= 5`). Wrong passwords 1 to 5 each get a 401, the fifth one sets the lock, and the sixth attempt is the first refused (429). This matches C77's "exactly five 401 and twenty-five 429". The code comment at `:678` ("the sixth failure locks") is the one that is off.
+- The lock's other claims, VERIFIED-IN-CODE: 30 s, doubling, capped at 15 min (`:81-82`, `:213`); a correct password is refused while locked (`:663-668`, `:680-685`); the log line (`:218-220`).
+- The ops boot refusals, VERIFIED-IN-CODE: 16 and 32 characters, exit 1, key named and value never printed (`:52-68`).
+- Ops networking and targets, VERIFIED-IN-CODE: `ops` sits only on `opsnet`, which is internal (`docker-compose.prod.yml:184`, `:208-209`); the template's internal targets (`ops.env.example:14`); an unreachable target reads `down`, and `not_configured` does not degrade the rollup (`ops-server.mjs:407-415`, `:475-490`).
+- R0.3: the backend has no Railway or Sentry row (`backend/app/features/ops/__init__.py:8-9`, `health.py:115-131`). VERIFIED-IN-CODE.
+- 5.14: the backend's 429 with `Retry-After` on `POST .../jobs/{job_id}/media` is real (`media/router.py:53`, `:107-112`), and a cap of 0 means no cap (`service.py:183`). VERIFIED-IN-CODE.
+- 3.6a's media rows: defaults 0 / false / 48 (`config.py:73-83`), the 1-hour floor (`media/service.py:58`), the facts in deep health (`ops/health.py:154-155`). VERIFIED-IN-CODE.
+- 12.5a's log lines and schedule: `media/sweep.py:39-49` (`aborted=%s`), `media/service.py:288`, `:337`, `:594` (`%r`), the 03:45 job (`main.py:272-278`). VERIFIED-IN-CODE.
+- 5.16: the `originRequest.access` keys are in `cloudflared/config.example.yml:20-30`. VERIFIED-IN-CODE.
+
+2. P8b SETTINGS (B1, B2)
+- Names and defaults match `config.py:280-294`; the anchor counts as configured with host, from and to (`:304-308`). VERIFIED-IN-CODE.
+- What stops the boot, VERIFIED-BY-COMMAND (python:3.12-slim, pydantic 2.14.3, pydantic-settings 2.16.3, APScheduler 3.11.3, loading the tree's own `Settings`): a blank port, blank STARTTLS, blank hour or blank media cap each fail loading; a blank host loads (unanchored); an hour of 24 loads, and `CronTrigger` then raises `ValueError` for hour 24 and minute 60.
+- The Check prints key names only, VERIFIED-BY-COMMAND, pasted into `bash --norc -i` with fake values: line 1 printed names ending in `=` and no value; line 2 printed only the blank and `465` lines, and the next pasted line still ran.
+- The [owner] step and ruling C74: clear ("typed at the host's SSH, never through a chat ... never sent to an agent, committed or pasted into a chat (ruling C74): an agent is told only which names are set", :802-807). The secrets table row says the same.
+- Port 465: `mailer.py:41-43` opens a plain `smtplib.SMTP` and then STARTTLS, so a relay that only speaks implicit TLS fails (INFERRED).
+
+3. THE MANUAL VERIFY AND THE DAILY JOB (B3)
+- Output and exit codes: the lines and the 0/1/2 exit codes match `scripts/verify_ledger_chain.py:34-42` and `chain_verify.py:59-82`. VERIFIED-IN-CODE.
+- Where the job shows: the scheduler detail format is `{job.name}→{%Y-%m-%d %H:%M %Z}` (`ops/health.py:76-81`) with the name `ledger-chain-verify` (`main.py:291`); `%Z` gives `PKT` for Asia/Karachi (VERIFIED-BY-COMMAND).
+- One event per run, a mail only when configured: `chain_verify.py:110-150`, `mailer.py:57-61`. VERIFIED-IN-CODE.
+
+4. OPERATIONS (R0.7, R10)
+- The mail: subject and body, line by line, match `anchor_message()` (`chain_verify.py:85-98`). VERIFIED-IN-CODE.
+- The issue kinds: all twelve exist (`chain.py:470-880`). The `<table>` values are right. "A direct edit of `bill_status` ... is not reported" is right: only the three bill columns are compared (`:856`).
+- The SQL reads: both are read-only and correct against the schema: `app_event` with JSONB `props`, `name` and `server_time` (0031:49-54); `staff_ledger_chain` with `shop_id`, `seq` and `row_hash` (0041:52-65), none renamed by 0048. VERIFIED-IN-CODE; neither query was run.
+- Damage paths: no R10 step leads into damage: no UPDATE, delete or "fix"; "never re-run a backfill" is stated. R10.3's "read the named rows read-only" gives no command (NIT).
+- The R10 gaps are M2, M3 and M4.
+
+5. RESTORE DRILLS AND THE BOOT (B5, B6)
+- Healthcheck and waits: `start_period` 90 s, interval 30 s, retries 3 (`docker-compose.prod.yml:138-141`). The only `depends_on` is the backend's own (`:106-110`), so no service waits on the backend's health. `lock_timeout '3s'` is at `0048...py:104`. VERIFIED-IN-CODE.
+- "No compose change" holds. The timings match review `216-bd6a103-migration.txt` §5.
+- The one exposure (a stray chain lock making the boot fail after 3 s) is marked as inference in the text.
+- R7.6: the drill boots no backend, and the chain line is compared by count (`appendix-b.sql:16`). VERIFIED-IN-CODE.
+- The wording of 6.9 is M6.
+
+6. THE DEPLOY TRAIN
+- The three picks: the three shas and the full shas in the trailer list match `git rev-parse` exactly, and all three are on `main` (VERIFIED-BY-COMMAND). The fallback that ruling C70 requires is inside `e4426c7`: 4 `DRAIN WINDOW ONLY` markers in `AppContext.jsx` and 1 in `JobDetail.jsx`, the same as on the head.
+- Not picked: `62eeb46` is a branch commit inside #215, and `41946a8` is on `main`; both are named as not picked.
+- 12.7: the grep finds the 5 marked sites today.
+- Nothing else in the runbook or CLAUDE.md still says two picks.
+- Open question: 11.12 says "These three are the only picks" but never names `27c9e04` (#214, P12's own follow-up, web only, merged on `main`). A sentence saying #214 is not picked would stop an operator from wondering.
+
+7. FORM AND THE RIG'S PINS
+- Pins, VERIFIED-BY-COMMAND: `runbook.py pins` on the base and the head, then diffed. Every step-level pin the rig selects is unchanged (3.1-3.8, 6.x, 11.12, 11.13a, 12.4, R5.x). Only the section-level rows 3, 12 and 13 changed (11 to 13, 3 to 5 and 29 to 31 blocks), and the rig never selects those positionally. The rest are new steps.
+- Fences: 382, balanced. The secret grep over the diff has no hits. [owner] marks are present on 3.6a, R0.7 and the 12.5a cutover step.
+- For the rig lane: `train.sh:271` still says "P12a and P12 are not merged".
+
+8. SCOPE AGAINST THE DIFF: every Scope item is in the diff, nothing outside the Scope is, and nothing about the drain audit is in it.
+
+WHAT THE REVIEWER RAN: `git show`, `git grep`, `git log`, `git rev-parse` and `merge-base`; `gh pr view` (read-only); four throwaway `python:3.12-slim` containers, all `--rm`: the settings and CronTrigger probe, the scheduler's handling of a missed time, the interactive paste of 3.6a and 3.7a, and the pins diff.
+
+NOT VERIFIED: the real 502 or 503 at the edge; port 465 against a real relay; the two SQL reads against a migrated 0048 database; that `lock_timeout` covers the advisory-lock wait; that INFO lines reach `ffc logs` under uvicorn; that the ops rollup reads `ok` on a real host; that a relay password containing `$` or ` #` survives compose's env_file parsing (worth a sentence in 3.6a).
+
+CLEANUP: no `rv219*` container is left, the scratch copies are deleted, and the review tree is clean. No commits, pushes or comments.
+
+COORDINATOR (2026-11-14, 23:13; ruling C101). All six fixes are taken as the reviewer worded them, and the nits ride in the same commit because the lane is in the file: the Check for the hour and the minute, 3.7a's pattern, the description of `unexpected_attribution`, the FAILED line's tail, what `docker inspect` prints, commands or VERIFY marks in 12.5a, a sentence that PR #214 is not picked, a sentence on a relay password with `$`, `#` or a quote, and the plan tag. One commit, a fast-forward; the same reviewer re-reads the delta. Backlog, not this PR: the comment at `backend/app/main.py:214-218` and the one at `ops-server.mjs:678` are wrong (CLAUDE.md's sentence on the scheduler's grace should be read again with M2 in mind); `ops/lab/rehearsal/train.sh:271` still says P12a and P12 are not merged (the rig lane).
