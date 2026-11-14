@@ -334,7 +334,15 @@ $FIX_FULL"
   rb_run 11.13-remove "$(rb_fence 11.8 4)"
   row 11.13-worktree "$( [ "$rcwa" = 0 ] && [ "$wth" = "$SHA" ] && [ "$wdet" = yes ] && [ "$RC" = 0 ] && [ -z "$(out_of)" ] && [ ! -e "$wtp" ] && echo DONE || echo FAILED)" \
     "11.8's worktree for the new sha, then removed" "path $wtp at $wth, detached $wdet; remove printed [$(out_of | tr '\n' ' ')]; removed: $([ -e "$wtp" ] && echo no || echo yes)"
-  rb_run 11.13-tag "$(rb_fence 11.13 @tag/3)" "<fix-sha>=$WFIX" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
+  tagblk="$(rb_fence 11.13 @tag/3)"
+  rb_run 11.13-tag "$tagblk" "<fix-sha>=$WFIX" "<run-id>=$NOTRUN_CI" "<summary path>=$NOTRUN_GATES" "<date UTC>=$(date -u +%F)"
+  # the batch's 11.13 (#209) pushes the tag in the prose, "only after `tagged`": typed when the
+  # block itself has no push and printed `tagged`; main's block pushes on its own last line
+  if ! printf '%s' "$tagblk" | grep -q 'git push origin drain-image-2' && has tagged; then
+    trc="$RC"
+    rb_run 11.13-tag-push "$(rb_span 11.13 'git push origin drain-image-2')"
+    [ "$trc" = 0 ] || RC="$trc"
+  fi
   l4_mut 11.13-tag-gone && git push -q origin :refs/tags/drain-image-2 >/dev/null 2>&1
   pel2="$(git ls-remote origin 'refs/tags/drain-image-2*' | awk '$2=="refs/tags/drain-image-2^{}"{print $1}')"
   row 11.13 "$( [ "$RC" = 0 ] && [ "$(git rev-parse 'drain-image-2^{commit}')" = "$SHA" ] && [ "$(git rev-parse origin/release/drain)" = "$SHA" ] && [ "$pel2" = "$SHA" ] \
