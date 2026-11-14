@@ -1,0 +1,87 @@
+VERDICT: PASS-WITH-FIXES
+PR #212 at 7a160d92c49d868f4a2c83a449cdd84111e97a28
+Delta re-read by the same reviewer (first pass: `212-e434f41.txt`); dispatched by the coordinator on 2026-11-14 at 14:58, returned at 15:05. This file is the coordinator's record of the reviewer's report, written from the notification text.
+
+The head was the same at the start and the end (`gh pr view` and the review tree's HEAD). The round closes all five earlier findings, and nothing passed at `e434f41` is broken. The reviewer's probes found three small defects in the drain fallback itself. None of them touches money.
+
+1. EARLIER FINDINGS
+
+To check fail-on-base, the reviewer put the round's six test files on a checkout of `e434f41`: 6 fail, 67 pass.
+
+| Finding | Status at this head | Test that fails on `e434f41` |
+|---|---|---|
+| MAJOR-1, drain reason lost | Closed. The hint at `JobDetail.jsx:1127` is now true on both servers; the fallback is `AppContext.jsx:580-614`, called at `:654` | `AppContext.closedPaymentReason.test.jsx`: "a drain server (no payment_receipt)...", "the note is written once across a retry...", "when only the note fails...". The P8a-server and open-job tests are controls and pass on both |
+| MINOR-2, untested polling rules | Closed | `polling` P1 and P2 and the new `AppContext.poll401.test.jsx` pass on `e434f41` too. That is expected: they guard behaviour that was already right. At `e434f41` the reviewer removed the sign-out check and only its P1 caught it, and P1 is now in the suite |
+| MINOR-3, malformed field drops the key | Closed. `paymentAttempts.js:101` `normalize` drops the bad field and keeps the entry and its key | The 2 changed `paymentAttempts.test.js` cases fail on `e434f41` |
+| NIT, `/auth/me` answer after Sign out | Closed. Answers are dropped at `AuthContext.jsx:37` and `:49`; the epoch is bumped by the server sign-out handler (`:67`), by login (`:81`) and by logout (`:94`) | `AuthContext.session.test.jsx` "a 200 landing after Sign out does not sign the manager back in" |
+| MINOR-4, runbook counts P12a as one commit | Open; it was never this PR's | C70 sends it to the runbook PR that fills `<p2b2>` |
+
+Changed expectations in this round, each with its reason:
+- `JobDetail.closedJob.test.jsx` "sends the trimmed reason": the mocked answer now carries `payment_receipt`, as a P8a server's does. Without it, the test would write a note.
+- `paymentAttempts.test.js`: two expectations are reversed, from "the entry is ignored" to "the entry and its key are kept" (MINOR-3).
+- No skip, xfail or `.only`.
+
+2. THE FALLBACK, REFUTE BY DEFAULT
+
+How it tells the servers apart
+- A new server never looks old. On this head every way `log_payment` returns wraps `_with_receipt` (`service.py:2046`, `:2050`, `:2059`, `:2090` (the duplicate-key race), `:2115`). `JobDetail.payment_receipt` (`schemas.py:529`) is in the response model. So a new server's 2xx always carries a receipt, and a refusal never writes a note. Probe Q5 confirms a P8a replay writes no note.
+- The drain image never looks new. `a31924a`, `87bbe88` and `90ea88d` have no `payment_receipt` field anywhere in their schemas, and FastAPI's response model filters out anything else.
+
+Harm scenarios
+- A payment that did not land: no note. The note is written only after `result.ok` (`:654`), which needs a 2xx.
+- Double click: no second note. The joined caller returns before the note code.
+- Retry of an attempt whose answer was lost: it writes one note; the lane's test covers this. Probe Q2 adds the case where the failure's re-read already shows the landed payment. The retry's own `prior` list then contains that payment's id, so the note names no payment: "Reason for the Rs 500 cash payment recorded on this closed job: found later" (MINOR-B).
+- Two tabs: probe Q1 sends the same key from two tabs and the server replays it. The result is two notes for one payment, both naming `payment p1-new`, each with its own tab's reason text (MINOR-A).
+- Reason text: probe Q4 used `<b>x</b> "q" é 你` plus 200 characters. It reaches the note unchanged after the trim. The note is 298 characters, under the drain server's 1024 cap (`a31924a schemas.py:109`). The form's input is single-line, so there are no line breaks. Notes are shown as plain text, and there is no `dangerouslySetInnerHTML` anywhere in `src`.
+- Open job: the page sends no reason, so nothing is trimmed into the note and no note is written (lane test plus reading).
+
+The manager's message in each branch, word for word
+
+| Branch | Message | True? |
+|---|---|---|
+| P8a server | "Payment recorded" | True |
+| Drain server, note saved | "Payment recorded. This server cannot store a payment's reason, so the reason was saved as a note on the job." | True. The drain image's `add_note` (`a31924a service.py:972-981`) has no closed-job guard, so the note does land |
+| Drain server, note failed (`:608`) | "Payment recorded, but its reason was NOT saved. Add the reason to this job as a note by hand. Do not record the payment again." | Sentences one and three are true. The middle one cannot be done from the web: both Note buttons are hidden on a closed job (`JobDetail.jsx:294` `!closed &&` and the action bar at `:701`) (MINOR-C) |
+| 401 between the payment and the note | The note fails and the same danger toast is queued | No one sees it. The 401 signs the manager out, `ToastHost` renders only inside the signed-in tree (`App.jsx:48`), and every toast expires after 3.2 s (`AppContext.jsx:349`). The reason is lost silently (part of MINOR-C) |
+
+3. THE VOID CLAIM
+
+True. On `a31924a`:
+- The route `POST /{job_id}/payments/{payment_id}/void` takes a `VoidRequest` whose field is `reason` (`schemas.py:162-163`, max 256).
+- `router.py:380` passes `reason=body.reason` on to the service.
+- `service.py:1508` stores it as `payment.void_reason = reason`.
+- `service.py:1513` repeats it in the event text: `"Payment voided — {reason}"`.
+The web sends `{ reason }` (`jobsApi.js:167-171`), the same field name. So the void needs no fallback.
+
+4. WHAT THE ROUND COULD HAVE BROKEN
+
+Nothing.
+- Merge order: the `AppContext.jsx` diff touches only the payment path.
+- P12a's key choice: `submit` is unchanged; `normalize` keeps the key; the joined path returns early; the lane's retry test asserts the second send uses the same `client_id`.
+- R12 form: only the hint text changed.
+
+FINDINGS (the reviewer: all can ride the planned follow-up PR)
+
+- MINOR-A, two notes for one payment from two tabs (`AppContext.jsx:580-614`). Smallest fix: before writing, skip the note when `answer.events` already holds a note containing `(payment <landed.id>)`.
+- MINOR-B, a retry's note may name no payment (`:583`, which uses this call's `prior`). Smallest fix: use the stored attempt's `priorIds` from the first send; `submit` can return them with its result.
+- MINOR-C, the failure branch's instruction cannot be followed and can go unseen (`:608`):
+  - The web hides Add Note on closed jobs.
+  - On a 401 the toast never shows, and any toast lasts only 3.2 s.
+  - Smallest fix: make this toast stay until dismissed and replace "add it as a note by hand" with something possible; or show Add Note to managers on closed jobs while the drain fallback lives.
+
+5. GATES
+
+- Web gate on this head: `/c/Users/User/.fixflow-cache/gate-logs/rv212/web-20261114-150134/summary.txt`. Head `7a160d9`, tree clean, all 7 steps exit 0, 35 test files with 281 tests, `SUMMARY FAIL=0`.
+- Drain-web, rebuilt in a scratch clone:
+  - `release/drain` = `a31924a` + `87bbe88` + `drain-pick-tz-fix` + `90ea88d`. P2b-2 is still unmerged.
+  - `release/drain-web` = that + `15df06d` + `fa860f9` + `b76f68e..7a160d9` squashed into one commit.
+  - Every pick was clean and nothing changed under `backend/`.
+  - Lint, format and build exit 0; 34 files with 261 tests pass.
+
+WHAT THE REVIEWER RAN
+- `gh pr view` at the start and the end; git reads and greps of `a31924a`, `90ea88d`, `e434f41` and `7a160d9`.
+- The web gate, started only after reading RAM in a separate command: 8.9 GB free, 38.5 GB commit.
+- `npm ci` into the scratch folder; the round's six test files on `e434f41`; its four fallback probes (Q1, Q2, Q4, Q5) on a scratch copy of this head; the drain-web lint, format, test and build. RAM stayed above 8 GB free and below 39.5 GB commit throughout.
+- The scratch worktrees, the clone and the scratch `node_modules` are removed; the logs stay in the coordinator's scratchpad, `rv212/`. The review tree is clean at `7a160d9`. No commits, pushes or comments.
+
+COORDINATOR (2026-11-14, 15:11; ruling C71). The verdict is PASS-WITH-FIXES, so the head does not merge. The three findings are fixed in this PR and not in the follow-up: the fallback exists only for the drain window and the drain's web image takes this PR as one commit; a later fix would be one more pick that nobody has cut and tested. What the round must do is in ruling C71 (plan table 7.9): one note per payment judged by the job's own events; the payment named only against the first send's list and only when exactly one fits; a failed note stays on the screen with the typed reason and one action that sends the note and never the payment. Accepted and to be written in the PR body: two answers that cross can leave two notes naming one payment; a reload, a closed tab or a sign-out before the manager acts loses the reason. The same reviewer re-reads.
