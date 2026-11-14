@@ -65,7 +65,14 @@ for spelling in 'fixflow_environment=dev' 'FIXFLOW_ENVIRONMENT: dev' 'export FIX
   rb_run wt2-envcheck "$ENVCHK"
   chk="$(out_of | tr '\n' ' ' | cut -c1-160)"
   rb_run wt2-up "$(rb_fence 6.12 1 '$p')"       # `ffc $P_DB --profile app up -d --force-recreate backend`
-  urc="$RC"; [ "$urc" = 0 ] && wait_backend_healthy 120 >/dev/null 2>&1
+  urc="$RC"
+  if [ "$urc" = 99 ]; then
+    # the up line was not typed (the runbook moved under 6.12): nothing started, so nothing is judged
+    wt "WT2 [$spelling]" "backend.env gains: $spelling" "3.6 check: $chk | up line not typed (moved.log)" \
+      "MOVED: 6.12's block changed shape, so its up line was not typed" "not judged (MOVED)"
+    continue
+  fi
+  [ "$urc" = 0 ] && wait_backend_healthy 120 >/dev/null 2>&1
   if backend_running; then
     deep_health > "$OUT/deep-health-wt2.json"
     facts="environment=$(jget facts.environment < "$OUT/deep-health-wt2.json") dispatcher=$(jget facts.enable_dispatcher < "$OUT/deep-health-wt2.json") backup=$(jget facts.backup_enabled < "$OUT/deep-health-wt2.json") prefix=$(jget facts.backup_prefix < "$OUT/deep-health-wt2.json")"
