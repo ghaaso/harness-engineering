@@ -1,0 +1,53 @@
+VERDICT: PASS-WITH-FIXES
+PR #203 at 2375fd67aed3548e0bf8b3785d03b69f41be5d78
+Server-side delta re-read (`3f1e07e..2375fd6`: rulings C75, C78, C81, C86 to C88 and C91) by the PR's server-side reviewer, with both full gates; dispatched by the coordinator on 2026-11-14 at 21:56, returned at 22:48. This file is the coordinator's record of the reviewer's report, written from the notification text. The phone-side re-read of the same head is `203-2375fd6-phone.txt` (VERDICT: PASS, with items ruled in C100).
+
+The head was 2375fd6 at the start, in the middle and at the end. The production code is right on every point asked about. Two rules have no test: two of the reviewer's own eight breaks (OB3, OB6) leave all 249 drain tests green. Both fixes are tests only.
+
+FINDINGS
+
+F1 (test only). The command line accepts `INSTALL_ID:discards`, but no test checks that.
+- The rule: `backend/scripts/drain_audit.py:4034` (`for ack in args.ack_unreadable:`); `:4039` (`DISCARDS_ACK,`).
+- Break OB6 took `DISCARDS_ACK` out of that allowed list. All 249 tests stayed green. With that break the script refuses (exit "cannot run") the one command the report prints for clearing a C78 row.
+- Why nothing caught it: the C91 integration test passes the acknowledgment straight into the audit (`backend/tests/test_drain_audit_integration.py:2111`: `rep = await audit(t_open, acks=[(phone.install_id, "discards")])`); `test_an_acknowledgement_names_one_install_and_one_queue` (`backend/tests/test_drain_audit_rules.py:1227`) only checks refusals.
+- Fix: a case where `main()` accepts `<uuid>:discards` and does not exit "cannot run" on it, next to the existing `:all` case.
+
+F2 (test only). When rows merge, "this row's manifest had no discard list" (`discards_unlisted`) is carried over, but no test checks that.
+- The rule: `backend/scripts/drain_audit.py:1286` (`out[k].discards_unlisted = out[k].discards_unlisted or r.discards_unlisted`).
+- Break OB3 deleted that line. All 249 tests stayed green.
+- What goes wrong without it: one install whose earlier manifest has an untrusted list (C78) and whose later twin has no list (C75); the merged row keeps the untrusted text but loses the no-list flag; `--ack-unreadable INSTALL:discards` then turns it into `unreadable_reviewed` and counts it in "left for manual entry". It should stay `not_judged`, because a missing list is cleared only by hand (`:2684`). The run still exits 4, because the twin's own problem stays, but the row is offered for manual entry, which is the double-entry risk C91's docstring warns about.
+- `test_c78_a_merged_row_is_untrusted_when_any_manifest_listing_it_is` (`backend/tests/test_drain_audit_rules.py:2583`) runs both orders but only checks `discards_untrusted`.
+- Fix: in both orders, give one twin no list and assert `merged.discards_unlisted`.
+
+THE COORDINATOR'S ITEMS
+
+1. C75 and the reviewer's own F1 of the last round. `test_c75_server_f1_...` is the rule meant, in both forms: the entry form (the manifest's held list is checked by `entry_id`, `:1117`, `:2271`) and the trace form (a trace received at or before the manifest is refused, `:2283`, `received <= row.receipt`). Both are stronger than the earlier-report count suggested before. Breaks: OB1 (time check removed): red. OB1b (`<=` changed to `<`): red. OB4 (held union removed): red, two tests. OB7 (giving back the trace while the slot is listed disabled): red.
+
+2. C78 and C91 exit codes, each mix run by the reviewer's probe (the first three unacknowledged): untrusted list alone: 4. Plus a real `missing`: 3. Plus another problem: 4. Acknowledged: 0, "1 row(s) left for manual entry". Acknowledged plus a real `missing`: 3. `:all` only: 4. No list plus acknowledgment: 4. A fine list plus acknowledgment, real `missing`: stays `missing`, 3.
+- With unreadable record parts, `:discards` alone still leaves the storage problem (`:3565-3573` need `:all`); both acknowledgments are needed.
+- Tried and could not break: the acknowledgment reaches exit 0 only where C91 means it to (manual entry). It does nothing for a fine list and never clears a missing list.
+- B126 is confirmed as pinned: red on the head.
+
+3. Unreadable parts, stores and kept corrupt copies (`:770-790`): all three follow C78's own text. Before this round `:all` unlocked the discards; now `:discards` is also needed. Nothing that was judged before becomes unjudgeable without a ruling behind it. Every changed expectation listed in the marker traces to C75, C78 or C91.
+
+4. C86 and C87: code at `:1117` and `:1284` as the marker says. B117 is red with 11 tests failing; B118 was not rerun. The `discards_unlisted` union next to it is F2.
+
+5. C88: the test is red under B119. The parser stamps each entry with the install id of the document that carries it (`:1098`, `"install_id": install_id,`) and never reads the entry's own; the probe confirmed this. Cases built: a report from another install naming this row's record id: `missing`; other installs' reports are never consulted. A manifest's own `discards` list: only ever "held", never evidence. A later build's report under the same stored id: `discarded`; safe because held entries protect anything from before the snapshot. A trace under another install id: refused and named (`:2302`). Counting an entry by the document that carries it is safe in every case the reviewer could build.
+
+6. C81: `test_c81_one_drain_manifest_and_one_after_report_of_8_mib_are_stored` passed on the head (2.143 s) and on the drain tree (1.622 s).
+
+7. Breaks: the lane's sample is all red as claimed: B99, B100, B104, B117, B119 and B126. B14 and B97 survive (0 of 249 fail); the marker calls both subsumed by B99 and B102; B99 is confirmed red, B102 was not rerun. The reviewer's own: OB1, OB1b, OB2, OB4, OB5 and OB7 are red; OB3 and OB6 survive, which gives F1 and F2.
+
+8. Conventions: no new `job_event` write site in the diff. Still one REPEATABLE READ, READ ONLY transaction (`:3905`). Only the six files changed. Decisions 31 to 36 are linked from the PR body (comment 6881004614). One stale line: the body's first line, and the marker, say `Plan @ plan-v9.79`, while the rulings are at `plan-v9.82`.
+
+9. Full gates, both in the background, one at a time: the head 2375fd6 (`C:/Users/User/.fixflow-cache/gate-logs/rv203/backend-20261114-215601`): GATE[1..8] EXIT=0, SKIPS total=1684 skipped=0 integration_skipped=0, SUMMARY FAIL=0. The drain tree 51e53c0 (`C:/Users/User/.fixflow-cache/gate-logs/rv203-drain/backend-20261114-220438`): GATE[1..8] EXIT=0, SKIPS total=1200 skipped=0 integration_skipped=0, SUMMARY FAIL=0. Both match the lane's counts.
+
+BACKLOG (not findings): an after-report with no `discards` field reads as an empty list and bounds nothing for C72 (reachable only by downgrading the build). The C88 note at `:2302` says "another install id" for any other phone's trace of the same slot.
+
+NOT VERIFIED: B118, B102 and the other lane breaks outside the sample; the phone side of PR #197's shapes.
+
+HOW IT WAS RUN: a scratch worktree at 2375fd6, lane `rv203s`, the four drain test files; each break applied alone and reverted; RAM checked before every run (lowest 6.6 GB free, 39.2 GB commit). The probe run's SUMMARY FAIL=1 is only ruff flagging the unformatted scratch probe file; its pytest gate passed 3 of 3.
+
+CLEANUP: the scratch worktree is removed and pruned; scratch scripts, diffs and probe deleted. No `fixflow-rv203*` container and no rv203 lock is left. Both review trees are clean: `rv203-head-server` at 2375fd6, `rv203-drain2` at 51e53c0. Logs are kept in the coordinator's scratchpad folder `pr203/`.
+
+COORDINATOR (2026-11-14, ruling C100). One more small round, ruled from both re-reads together: the two missing tests (F1, F2); the phone reviewer's F1 as a fix (an after-report whose discard list carries one of C78's signs, or has no list, leaves the rows it does not list and that would end `missing` or `residue` as `not_judged`; the reviewer's backlog item about a report with no `discards` field is the same rule's second half); the C88 note cited only when no document in the run carries that install id; the clearing texts no longer promise an examination of bytes a release phone does not expose; the PR body's plan tag. The C88 walk is confirmed by both reviewers and goes into contract point 9. Both reviewers re-read the delta.
