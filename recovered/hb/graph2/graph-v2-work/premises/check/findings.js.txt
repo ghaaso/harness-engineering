@@ -1,0 +1,30 @@
+// Finding-level shares with own Wilson 95 % intervals, from findings-classified.json.
+const fs=require('fs');const E=process.argv[2];
+const F=JSON.parse(fs.readFileSync(E+'/findings-classified.json','utf8')).findings;const n=F.length;
+const wil=(k,n,z=1.959964)=>{const p=k/n,d=1+z*z/n,c=p+z*z/(2*n),h=z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n));return [+(100*(c-h)/d).toFixed(1),+(100*(c+h)/d).toFixed(1)];};
+const has=(f,k)=>(f.premises[k]||0)>0;const kinds=f=>Object.keys(f.premises).filter(k=>f.premises[k]>0);
+const chk=f=>kinds(f).filter(k=>k!=='f');
+const only=(f,S)=>chk(f).length>0&&chk(f).every(k=>S.includes(k));
+const T=['a','b'];
+const defs={
+ tracked_checkable:f=>only(f,T),
+ tracked_strict:f=>kinds(f).every(k=>T.includes(k)),
+ folder_checkable:f=>only(f,['a','b','c_repo']),
+ any_vc_or_pinned:f=>only(f,['a','b','ax','bx','epin']),
+ content_hashed_cf:f=>only(f,['a','b','c_repo','c_scratch','c_other','ax','bx','epin']),
+ has_d_or_f:f=>has(f,'d')||has(f,'f'),
+ type_Q:f=>f.type==='Q',
+ type_Q_and_tracked:f=>f.type==='Q'&&only(f,T),
+ Q_or_M:f=>f.type==='Q'||f.type==='M',
+ r9_expressible:f=>f.r9==='new'||f.r9==='typed',
+ r9_interp:f=>f.r9==='interp',
+ type_I:f=>f.type==='I'};
+const out={n};for(const [k,fn] of Object.entries(defs)){const c=F.filter(fn).length;out[k]=[c,+(100*c/n).toFixed(1),wil(c,n)];}
+const kindShares={};for(const k of ['a','ax','b','bx','c_repo','c_scratch','c_other','d','e','epin','f']){const c=F.filter(f=>has(f,k)).length;kindShares[k]=[c,+(100*c/n).toFixed(0),wil(c,n)];}
+out.kindShares=kindShares;
+const cnt=F.map(f=>Object.values(f.premises).reduce((a,b)=>a+b,0)).sort((a,b)=>a-b);const tot=cnt.reduce((a,b)=>a+b,0);
+out.premises={total:tot,mean:+(tot/n).toFixed(2),median:cnt[n/2-1]===cnt[n/2]?cnt[n/2]:[cnt[n/2-1],cnt[n/2]],max:cnt[n-1]};
+const pk={};for(const f of F)for(const [k,v] of Object.entries(f.premises))pk[k]=(pk[k]||0)+v;for(const k in pk)pk[k]=+(100*pk[k]/tot).toFixed(0);out.premiseShares=pk;
+const det=F.filter(f=>f.type==='Q').map(f=>f.id[0]);out.detSourceLetters=det.join('');
+out.stale=F.filter(f=>f.staleness).map(f=>f.id+':'+f.staleness.status).join(' ');
+console.log(JSON.stringify(out));fs.writeFileSync('findings.json',JSON.stringify(out,null,1));

@@ -1,0 +1,20 @@
+const fs=require("fs");const root=process.cwd();
+const wc=s=>s.trim().split(/\s+/).length;
+const f=root+"/../../library-pathways/cases.json";
+const d=JSON.parse(fs.readFileSync(f,"utf8"));
+const split=t=>t.match(/[^.?!]+[.?!]+(\s|$)|[^.?!]+$/g).map(x=>x.trim());
+function trim(t,lim){
+ if(wc(t)<=lim)return t;
+ const ss=split(t);let best=null;
+ for(let i=0;i<ss.length;i++){const r=ss.filter((_,j)=>j!==i);const txt=r.join(" ");
+  if(r.length&&wc(txt)<=lim){const lost=wc(ss[i]);if(!best||lost<best.lost)best={lost,txt}}}
+ if(best)return best.txt;
+ for(let i=0;i<ss.length;i++)for(let j=i+1;j<ss.length;j++){const r=ss.filter((_,k)=>k!==i&&k!==j);const txt=r.join(" ");
+  if(r.length&&wc(txt)<=lim){const lost=wc(ss[i])+wc(ss[j]);if(!best||lost<best.lost)best={lost,txt}}}
+ return best?best.txt:t;}
+let n=0;
+for(const c of d.cases){
+ const lim=[["story",35],["entry",60],["worked",25]];
+ for(const [k,l] of lim){const t=trim(c[k],l);if(t!==c[k]){console.log(c.id,k,"=>",t);c[k]=t;n++}}
+ for(const s of c.steps){const t=trim(s.note,25);if(t!==s.note){console.log(c.id,s.step,"=>",t);s.note=t;n++}}}
+fs.writeFileSync(f,JSON.stringify(d,null,1));console.log("trimmed",n);

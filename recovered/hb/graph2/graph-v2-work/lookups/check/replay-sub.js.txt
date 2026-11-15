@@ -1,0 +1,10 @@
+// Replay sub-counts from per-truth replay labels; and "C strongest on almost every form" from result.json rows.
+const fs=require('fs'),rl=require('readline');
+(async()=>{const o2={};const r=rl.createInterface({input:fs.createReadStream('../out/instances-v.jsonl')});
+for await(const l of r){const o=JSON.parse(l);const c=o2[o.cls]=o2[o.cls]||{chg:0,unt:0,untFiles:new Set()};
+ if(o.truth.some(t=>t.replay==='changed-since-frozen'||t.replay==='added-after-frozen'))c.chg++;
+ const u=o.truth.filter(t=>t.replay==='untracked-current-only');if(u.length)c.unt++;u.forEach(t=>c.untFiles.add(t.f));}
+for(const k in o2)o2[k].untFiles=o2[k].untFiles.size;console.log(JSON.stringify(o2));
+const R=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));let cBest=0,n=0,notC=[];
+for(const b of R.baselines.by){if(b.form==='ALL'||b.seeds!=='all'||b.scorable<5)continue;n++;const v=['A','B','C'].map(a=>b.arms[a].span_hit10_pct);if(v[2]>=Math.max(...v))cBest++;else notC.push(b.cls+':'+b.form+':'+b.scorable);}
+console.log('forms(seeds=all,scorable>=5)',n,'C best or tied',cBest,'not C',notC.join(' '));})();

@@ -1,0 +1,435 @@
+// Builds index.html and ../GRAPH-V2-DESIGN-2026-11.md from data/data.json (+ data/extras.json when present,
+// + the three pending measurement files when they exist). Run from this folder:  node - < build.js.txt
+// Every number on the page is read from those files; nothing is typed by hand.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const REPO = path.resolve(HERE, '..', '..', '..');
+const d = JSON.parse(fs.readFileSync(path.join(HERE, 'data', 'data.json'), 'utf8'));
+const XP = path.join(HERE, 'data', 'extras.json');
+const X = fs.existsSync(XP) ? JSON.parse(fs.readFileSync(XP, 'utf8')) : { pending: {} };
+const GF = X.graphify || null;
+const css = fs.readFileSync(path.join(HERE, 'src', 'page.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]+/gm, '').replace(/\n+/g, '\n');
+const client = fs.readFileSync(path.join(HERE, 'src', 'client.js.txt'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '').replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n');
+
+/* ---------- pending measurements: re-checked on every build, so a re-run fills the slot with no code edit ---------- */
+const PEND_DEFAULT = {
+  embeddings: 'docs/program/evidence/harness-bottlenecks/graph2/embeddings/RESULT.md',
+  lookup_testset: 'docs/program/evidence/harness-bottlenecks/graph2/graph-v2/lookup-testset/NOTES.md',
+  premise_measure: 'docs/program/evidence/harness-bottlenecks/graph2/graph-v2/premise-measure/NOTES.md' };
+
+/* ---------- format helpers ---------- */
+const MINUS = '−';
+const rnd = (a, n) => { const m = Math.pow(10, n); return (Math.round(a * m + 1e-7) / m).toFixed(n); };
+const f = (x, n = 3) => (x < 0 && +rnd(Math.abs(x), n) !== 0 ? MINUS : '') + rnd(Math.abs(x), n);
+const sg = (x, n = 3) => { const s = rnd(Math.abs(x), n); if (+s === 0) return s; return (x > 0 ? '+' : MINUS) + s; };
+const p1 = x => rnd(x * 100, 1) + ' %';
+const p0 = x => Math.round(x * 100) + ' %';
+const num = n => Number(n).toLocaleString('en-US');
+const Mt = n => rnd(n / 1e6, 1) + 'M';
+const kt = n => num(Math.round(n / 1e3)) + 'k';
+const nm = s => +String(s).replace(/,/g, '');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------- plain names for internal ids ---------- */
+const CQS = { CQ1: 'earlier conclusions', CQ2: 'my assignment in the plan', CQ3: 'how a subsystem works', CQ4: 'which rule applies', CQ5: 'where X is defined', CQ6: 'what a change set changes', CQ7: 'which tests exercise X', CQ8: 'who uses X', CQ9: 'where an item ID is defined', CQ10: 'what changed here recently', CQ11: 'which file is X', CQ12: 'the sections of a document', CQ13: 'the other half of a contract', CQ14: 'does a citation still hold', CQ15: 'the table, migration or setting behind X', CQ16: 'what the build and CI scripts do' };
+const CN = { N1: 'the test set of real lookups', N2: 'the index-only arm', N3: 'the scripted-search arm', N4: 'the lookup-level replay', N5: 'the leak and cut rules', N6: 'the brief competitors', N7: 'the task-context store', N8: 'the edit-time warning hook', Q1: 'the question registry', K6: 'the quality card', M3: 'the document layer', K5: 'the document extractor', A1b: 'the session-start brief', A1: 'the agent tool', T5: 'the citation check', M6: 'identity over time', A2: 'the output format', A3: 'the description budget', ST1: 'the storage choice', M4: 'the conclusion ledger', T2: 'dependency recording', T4: 'ledger re-checking', M1: 'the code layer', K1: 'the framework export', K2: 'type-aware call resolution', M2: 'the contract layer', M5: 'change sets as one node', R1: 'the two-stage ranker', R2: 'weighted changed-together counts', R4: 'keyword entry', S2: 'the value-per-token stop rule', S3: 'level of detail per node', T6: 'the since-view', T1: 'snapshots and validity sets', M7: 'evidence and confidence', R5: 'the what-breaks ranker', R3: 'the depth-3 tier', K3: 'the extraction audit', S4: 'the Steiner-tree connect', T3: 'the kind-level filter', S5: 'the redundancy audit', S1: 'calibration', K4t3: 'field contracts, tier 3', K4: 'field contracts', E1: 'the embeddings trial' };
+const IDS = Object.keys(CN).sort((a, b) => b.length - a.length);
+const cqName = id => 'the question “' + CQS[id] + '”';
+function pl(s) {
+  s = String(s == null ? '' : s);
+  s = s.replace(/\bCQ(\d+)\s*\/\s*CQ(\d+)/g, (m, a, b) => cqName('CQ' + a) + ' and ' + cqName('CQ' + b));
+  s = s.replace(/\bCQ(\d+)(?:\s*(?:,|and|to)\s*CQ(\d+))+/g, m => m.match(/CQ\d+/g).map(cqName).join(', '));
+  s = s.replace(/\bCQ(\d+)\b/g, (m) => CQS[m] ? cqName(m) : m).replace(/\bCQs\b/g, 'competency questions').replace(/\bCQ\b/g, 'competency question');
+  for (const id of IDS) {
+    const nmx = CN[id].replace(/^the /, '');
+    s = s.replace(new RegExp('\\b([Tt])he ' + id + '(?![\\w-])', 'g'), (m, t) => t + 'he ' + nmx);
+    s = s.replace(new RegExp('(?<![\\w-])' + id + '(?![\\w-])', 'g'), CN[id]);
+  }
+  return s.replace(/`/g, '').replace(/\bTKGs?\b/g, 'temporal knowledge graph').replace(/\bK0\b/g, 'the cache replay').replace(/\bPPR\b/g, 'rooted PageRank').replace(/\bJTMS\b/g, 'justification-based truth maintenance');
+}
+// graphify texts use the first test's task-set names
+const plG = s => String(s).replace(/\(T1, /g, '(change completion, ').replace(/on T1, T2 and T3/g, 'on all three task sets (change completion, tests to update, documented chains)')
+  .replace(/opposite sign on T3/g, 'opposite sign on documented chains').replace(/\bT1 reference files/g, 'reference files of change completion').replace(/\bthe T1\b/g, 'the change-completion').replace(/\bG-1 to G-4\b/g, 'the four paired differences')
+  .replace(/`([^`]+)`/g, '$1');
+const e = s => esc(pl(s));
+
+/* ---------- pending measurements: re-checked on every build, so a re-run fills the slot with no code edit ---------- */
+function headlineOf(txt) {
+  // priority: a paragraph that opens with a bold Answer; then the first prose paragraph under a heading named
+  // what-this-changes, then verdict/answer/result/summary, then headline; else the first prose paragraph
+  const paras = txt.split(/\r?\n\s*\r?\n/).map(p => p.trim()).filter(Boolean);
+  const prose = p => !/^(#|\||```)/.test(p) && !/^Every number/i.test(p) && !/^Intervals:/i.test(p);
+  const clean = p => p.replace(/\s*\r?\n\s*/g, ' ').replace(/^[-*]\s+/, '');
+  let h = paras.find(p => /^\*\*Answer/i.test(p));
+  if (!h) for (const re of [/^#+\s*(\d+\.\s*)?what this (changes|means)/i, /^#+\s*(\d+\.\s*)?(verdict|answer|result|summary)/i, /^#+\s*(\d+\.\s*)?headline/i]) {
+    const i = paras.findIndex(p => re.test(p)); if (i < 0) continue;
+    const body = paras[i].split(/\r?\n/).slice(1).join('\n').trim();
+    const cand = [body, ...paras.slice(i + 1)].filter(Boolean).find(p => prose(p)); if (cand) { h = cand; break; } }
+  if (!h) h = paras.find(prose) || '';
+  h = clean(h).replace(/\*\*/g, '').replace(/`/g, '');
+  return h.length > 900 ? h.slice(0, 900).replace(/\s\S*$/, '') + ' …' : h;
+}
+const plH = t => String(t).replace(/use-cases\.md R(\d+)/g, 'recommendation $1 of use-cases.md').replace(/\bR9 of/g, 'recommendation 9 of').replace(/\bCQ(\d+)\b/g, m => 'the question “' + CQS[m] + '”');
+const PEND = {};
+for (const k of Object.keys(PEND_DEFAULT)) {
+  const p = Object.assign({ path: PEND_DEFAULT[k], label: 'being measured in another session' }, (X.pending || {})[k] || {});
+  const abs = path.join(REPO, p.path);
+  p.exists = fs.existsSync(abs);
+  p.head = p.exists ? plH(headlineOf(fs.readFileSync(abs, 'utf8'))) : null;
+  PEND[k] = p;
+}
+
+/* ---------- small html helpers ---------- */
+const tag = (k, w) => `<span class="tag ${k}">${{ meas: 'measured', ill: 'illustration', sim: 'simulation', real: 'real data', out: 'outside source', rul: 'ruling' }[k]}${w ? ': ' + w : ''}</span>`;
+const sec = (id, letter, q, how, body, shows) => `<section class="sec" id="${id}"><h2><span class="letter">${letter}</span>${q}</h2><p class="how"><b>How to read it.</b> ${how}</p>${body}<p class="shows"><b>What it shows.</b> ${shows}</p></section>`;
+const fold = (title, inner, open) => `<details class="fold"${open ? ' open' : ''}><summary>${title}</summary><div class="in">${inner}</div></details>`;
+const MARKW = { graph: 'graph question', partly: 'partly a graph question', index: 'index question', reading: 'reading' };
+const mk = m => `<span class="mkw"><span class="mk m-${m}" aria-hidden="true"></span><span class="mword">${MARKW[m]}</span></span>`;
+const bar = (lab, v, max, txt, cls, lw) => `<div class="hbar"${lw ? ` style="--lw:${lw}px"` : ''}><div class="lab">${lab}</div><div class="track"><div class="fill ${cls || ''}" style="width:${Math.max(0.3, 100 * v / max).toFixed(2)}%"></div><div class="val" style="left:${Math.min(100 * v / max, 78).toFixed(2)}%">${txt}</div></div></div>`;
+const slot = (p, what) => p.exists
+  ? `<div class="slot filled"><div class="slh">${tag('meas', esc(p.path))} ${what}</div><p>${esc(p.head)}</p></div>`
+  : `<div class="slot pending"><div class="slh"><b>Being measured in another session.</b> ${what}</div><p>This slot fills from <code>${esc(p.path)}</code> when the page is rebuilt.</p></div>`;
+
+/* ---------- the finished measurements, drawn from extras.json pending.<k>.structured ---------- */
+const MZ = require(path.join(HERE, 'src', 'measured.js.txt'))({ esc, e: s => esc(plH(String(s).replace(/`/g, '').replace(/\bCQ(\d+) to CQ(\d+)\b/g, (m, a, b) => { const r = []; for (let i = +a; i <= +b; i++) r.push('CQ' + i); return r.slice(0, -1).join(', ') + ' and ' + r[r.length - 1]; }).replace(/\(E1 to E3\)/g, '(three of the sampled findings)')).replace(/\b([Tt])he the question/g, '$1he question')).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'), tag, fold, num, CQS });
+const headOnly = p => Object.assign({}, p, { head: null });
+const LTS = (PEND.lookup_testset.structured || null), PMS = (PEND.premise_measure.structured || null);
+const ltC = LTS ? (LTS.baselines || []).find(b => b.cls === 'product' && b.seeds === 'all' && b.arm === 'C') : null;
+const ltCp = LTS ? (LTS.baselines || []).find(b => b.cls === 'program' && b.seeds === 'all' && b.arm === 'C') : null;
+const sayLT = LTS ? ` Measured since: the test set holds ${num(LTS.instances.all)} recorded lookups; ${LTS.confirmed.all_pct} % have a span a later edit, citation or quote used, and ${LTS.replayable.all_pct} % replay against the frozen commit with no leak.` : '';
+const sayLTI = LTS && ltC && ltCp ? ` The arm a graph must beat is already measured: keyword search over names, paths and headings found the needed span in its top 10 for ${ltC.hit10_pct} % of scorable product lookups and ${ltCp.hit10_pct} % of program ones.` : '';
+const pmLoc = w => PMS ? (PMS.reads_by_location || []).find(r => r.where.startsWith(w)) : null;
+const sayPM = PMS && pmLoc('scratch') && pmLoc('tracked') && (PMS.findings_rows || [])[0] ? ` Measured for earlier conclusions: ${pmLoc('scratch').carried_pct} % of their carried read tokens come from scratch folders outside the repository and ${pmLoc('tracked').carried_pct} % from tracked files; ${PMS.findings_rows[0].k} of ${PMS.findings_rows[0].n} sampled findings have all their checkable premises tracked.` : '';
+
+/* ---------- shared numbers ---------- */
+const U = d.usecases, DR = d.derived, PR = U.product, PG = U.program, SS = U.session_start;
+const SRC = { uc: 'use-cases.md, ' + num(U.n_transcripts) + ' recorded sessions', v1: 'v1-audit.md', k0: 'cache replay, widen/k0', tok: 'TOKEN-BOTTLENECK-2026-11.md', ref: 'REFUTE.md', des: 'DESIGN.md', pw: 'protocol-v2-power.txt', gf: 'graphify/RESULT.md' };
+const GROUPS = ['docs', 'ledger', 'codemap', 'coderel', 'index', 'reading'];
+const GCLS = { docs: 'g-docs', ledger: 'g-ledger', codemap: 'g-codemap', coderel: 'g-coderel', index: 'g-index', reading: 'g-reading' };
+const GN = d.group_names;
+const firstRow = PR.rows.find(r => r.key === U.first_test_form);
+const ctxP = PR.totals.ctx, ctxG = PG.totals.ctx;
+const labC = DR.label_counts, stC = DR.comp_counts, fc = DR.find_counts;
+const cqNo = d.cq_v1.no, cqPart = d.cq_v1.partly, nCQ = d.cqs.length;
+const R = id => d.rulings.find(r => r.id === id);
+const pol = id => d.cache.policies.find(p => p.id === id);
+
+/* ================= header ================= */
+const header = `<header class="top"><div class="wrap">
+<h1>Graph v2: the knowledge graph your agents' lookups call for</h1>
+<p class="lede">This page shows the design of the second code-and-document graph as a system: what the agents actually look up (measured on ${num(U.n_transcripts)} recorded sessions), the model derived from those questions, one lookup stepped through on real data, the loop that keeps cached conclusions honest, where each part comes from, what was cut, and how small the prize may be. The judge's rulings on the refuter's attack (R-1 to R-8) are applied throughout and shown as the current state.</p>
+<div class="legend"><span>Every number carries a tag:</span>${tag('meas', 'where')}${tag('real', 'computed here on real data, to explain')}${tag('ill', '')}${tag('sim', 'you set the unknowns')}${tag('out', 'published elsewhere')}</div>
+<div class="legend"><span>Question marks (colour, pattern and word):</span>${mk('graph')}${mk('partly')}${mk('index')}${mk('reading')}</div>
+<div class="themebar"><span>Theme:</span><div class="seg" role="group" aria-label="Theme" data-ctl="theme"><button type="button" data-v="auto" aria-pressed="true">follow system</button><button type="button" data-v="light" aria-pressed="false">light</button><button type="button" data-v="dark" aria-pressed="false">dark</button></div></div>
+</div></header>`;
+const TOC = [['a', 'A · The answer'], ['b', 'B · What agents look up'], ['c', 'C · The model'], ['d', 'D · One lookup, step by step'], ['e', 'E · Cached conclusions'], ['f', 'F · Where each part comes from'], ['g', 'G · Not at this size'], ['h', 'H · The refuter'], ['i', 'I · The prize'], ['j', 'J · What was wrong before'], ['k', 'K · Yours to decide']];
+const toc = `<nav class="toc" aria-label="Sections"><div class="wrap">${TOC.map(([i, t]) => `<a href="#${i}">${t}</a>`).join('')}</div></nav>`;
+
+/* ================= A ================= */
+const stackRow = (lab, gr, total, unit) => `<div class="stackrow"><div class="lab"><b>${lab}</b><br><small>${unit}</small></div><div class="stack">${GROUPS.map(g => { const s = gr[g].share; return `<div class="${GCLS[g]}${g === 'coderel' || g === 'index' ? '' : ''}" style="width:${(s * 100).toFixed(2)}%" title="${esc(GN[g])}: ${p1(s)}">${s >= 0.06 ? p0(s) : ''}</div>`; }).join('')}</div></div>`;
+const groupLegend = `<div class="glegend">${GROUPS.map(g => `<span><i class="sw ${GCLS[g]}"></i>${esc(GN[g])}</span>`).join('')}</div>`;
+const vcard = (n, head, big, small, tags, inner, text, go) => `<div class="vcard"><div class="vn">${n}</div><div class="vh">${head}</div>${big ? `<div class="vnum">${big}${small ? ' <small>' + small + '</small>' : ''}</div>` : ''}<div>${tags}</div>${inner || ''}<div class="vt">${text}</div><div class="vgo"><a href="#${go[0]}">${go[1]}</a></div></div>`;
+const docsLedgerProg = DR.program_docs_ledger_share;
+const coderelProd = DR.product.groups.coderel.share;
+const cardA = [
+  vcard('1 · What the agents look up', 'Reading code to learn a subsystem, looking up definitions, documents and rules: the first test scored a sliver', p1(DR.first_test), 'of product lookup cost', tag('meas', SRC.uc),
+    `<div class="mini2">${bar('what changed here recently (scored by the first test)', DR.first_test, 1, p1(DR.first_test), 'hl', 150)}${bar('everything else agents looked up', 1 - DR.first_test, 1, p1(1 - DR.first_test), 'g-reading', 150)}</div>`,
+    `Cost here is carried tokens: what a lookup's result costs because every later call in the same window reads it again. Product work carried ${Mt(PR.totals.carried)} such tokens, program and document work ${Mt(PG.totals.carried)}.`, ['b', 'B: the question forms']),
+  vcard('2 · The graph this use calls for', 'Mostly documents, decisions, rules and earlier conclusions, anchored on code', p1(docsLedgerProg), 'of program lookup cost is documents and earlier conclusions', tag('meas', SRC.uc),
+    `<div class="mini2">${stackRow('Product', DR.product.groups, PR.totals.carried, Mt(PR.totals.carried) + ' carried')}${stackRow('Program', DR.program.groups, PG.totals.carried, Mt(PG.totals.carried) + ' carried')}${groupLegend}</div>`,
+    `Code relations (uses, tests, contracts, change sets) are ${p1(coderelProd)} of product cost. The current graph had no path at all for ${cqNo.length} of the ${nCQ} question forms and only part of one for ${cqPart.length}.`, ['c', 'C: the model']),
+  vcard('3 · What the theory buys at this size', 'It buys structure and honest invalidation, not speed or learned embeddings', '', '', tag('meas', SRC.k0) + tag('meas', SRC.gf),
+    `<ul><li><b>Buys:</b> one node for things that join more than two parts (a change set, a rule with roles, a claim with its premises); re-checking a cached answer against the facts it rests on: ${f(pol('fact').stale_all, 0)} % of served answers wrong at fact level against ${rnd(pol('file').stale_all, 1)} % at file level, on ${num(d.cache.lookups)} replayed lookups.</li>
+<li><b>Does not buy here:</b> a graph database for speed (milliseconds at ${num(d.scale.nodes)} nodes), reachability indexes, or embeddings and graph neural models (about ${d.scale.density_here[0]} facts per entity here against about ${d.scale.density_here[1]}; an argued position, not measured on this graph).</li>
+${GF ? `<li><b>The popular tool, measured:</b> graphify's code layer showed ${f(GF.primary.graphify)} of the changed files and definitions against ${f(GF.primary.typed)} for the first test's typed graph, on ${num(GF.primary.tasks)} held-out tasks.</li>` : ''}</ul>`,
+    'At this size, for this workload. Section G says at what scale each would start to pay.', ['g', 'G: not at this size']),
+  vcard('4 · The size of the prize, as exposure', 'What a tool could reach: an exposure, not a forecast', p1(DR.product.served_ctx), 'of product context sits in question forms a graph can serve', tag('meas', SRC.uc),
+    `<div class="mini2">${bar('product, graph and partly-graph forms', DR.product.served_ctx, 0.3, p1(DR.product.served_ctx), 'g-docs', 150)}${bar('product, graph forms only', DR.product.graph_only_ctx, 0.3, p1(DR.product.graph_only_ctx), 'g-coderel', 150)}${bar('program, graph and partly-graph forms', DR.program.served_ctx, 0.3, p1(DR.program.served_ctx), 'g-ledger', 150)}</div>`,
+    `These are exposures: the share of all context tokens that lookups of these forms carry. A tool moves only a part of it, and can add tokens too. An agent pilot of about ${d.power.n} tasks can see only savings of about ${d.power.ruling_band[0]} to ${d.power.ruling_band[1]} %.`, ['i', 'I: run the token model']),
+  vcard('5 · Not from a source, cut, or missing', 'Shown with honest labels, after the rulings', '', '', tag('meas', SRC.ref) + tag('rul', 'R-1 to R-5'),
+    `<ul><li><b>${labC['our own choice, no source']}</b> of ${d.components.length} parts are our own choice with no source (thresholds, the role vocabulary); <b>${labC['simplified from a named source']}</b> are simplified from a source; <b>${labC['from a named source']}</b> come from a named source; <b>${labC['measured here']}</b> were measured here.</li>
+<li><b>${stC.cut}</b> parts cut, <b>${stC.deferred}</b> deferred, <b>${stC.trial}</b> trials only.</li>
+<li><b>${fc.missing}</b> things the refuter found missing (a test set of real lookups, an index-only arm, two histories, a push hook…) are now part of the design; <b>${fc.cannotfail}</b> tests that could not fail were given cut rules.</li></ul>`,
+    'Nothing is hidden: section F lists all parts with their labels, section H every finding.', ['f', 'F: every part'])
+];
+const secA = sec('a', 'A', 'What is the answer, on one screen?',
+  'Five cards, one per question the owner asked. The large number on each card is measured; the tag says where. Each card links to the section that shows the system behind it.',
+  `<div class="cards5">${cardA.join('')}</div>`,
+  `The agents spend their lookup tokens on documents, rules, earlier conclusions and orientation reads far more than on the code relation the first test scored (${p1(DR.first_test)}). Graph v2 is shaped around those questions, and its prize is bounded by these exposures and still unmeasured.`);
+
+/* ================= B ================= */
+// rows joined by question form (CQ id), non-graph reads by key
+const formRows = (() => {
+  const m = new Map();
+  for (const [side, rows] of [['product', PR.rows], ['program', PG.rows]]) for (const r of rows) {
+    const k = r.cq || r.key; if (!m.has(k)) m.set(k, { k, cq: r.cq, mark: r.mark, group: r.group, labels: new Set(), product: null, program: null, first: false });
+    const x = m.get(k); x.labels.add(r.label); x[side] = r; if (r.key === U.first_test_form) x.first = true;
+  }
+  return [...m.values()].sort((a, b) => ((b.product ? b.product.carried : 0) + (b.program ? b.program.carried : 0)) - ((a.product ? a.product.carried : 0) + (a.program ? a.program.carried : 0)));
+})();
+const maxCar = Math.max(...formRows.map(x => Math.max(x.product ? x.product.carried : 0, x.program ? x.program.carried : 0)));
+const fbar = (r, side) => { if (!r) return `<div class="track"><div class="val">not a form here</div></div>`; const w = 100 * r.carried / maxCar;
+  return `<div class="track" data-car="${r.carried}" data-share="${r.share}"><div class="fill m-${r.mark}b" style="width:${Math.max(w, 0.25).toFixed(3)}%"></div><div class="val" style="left:${Math.min(w, 70).toFixed(2)}%">${Mt(r.carried)} · ${p1(r.share)}</div></div>`; };
+const formList = `<div class="frow head"><div class="lab">Question form (what the agent was trying to find out)</div><div>Product work: carried tokens · share</div><div>Program and document work</div></div>` +
+  formRows.map(x => `<div class="frow${x.first ? ' first' : ''}"><div class="lab">${esc([...x.labels].join(' / '))}${x.first ? ' <span class="badge">the first test scored this</span>' : ''}<small>${mk(x.mark)}${x.cq ? ' · ' + esc(CQS[x.cq]) : ''}${x.product ? ` · ${num(x.product.calls)} product calls` : ''}${x.program ? ` · ${num(x.program.calls)} program calls` : ''}</small></div>${fbar(x.product, 'product')}${fbar(x.program, 'program')}</div>`).join('');
+const ssMax = Math.max(...SS.sessions.map(s => s.carried_all));
+const ssRows = SS.sessions.map(s => `<div class="hbar" style="--lw:230px"><div class="lab">${esc(s.name)}</div><div class="track"><div class="fill g-reading" style="width:${(100 * s.carried_all / ssMax).toFixed(2)}%"></div><div class="fill g-docs" style="width:${(100 * s.carried_before / ssMax).toFixed(2)}%"></div><div class="val" style="left:${Math.min(100 * s.carried_all / ssMax, 72).toFixed(2)}%">${Mt(s.carried_before)} before of ${Mt(s.carried_all)} · ${p0(s.share_carried)}</div></div></div>`).join('');
+const repMax = Math.max(...U.repeated.map(r => r.carried));
+const repRows = U.repeated.map(r => bar(esc(r.what), r.carried, repMax, `${Mt(r.carried)} carried · ${num(r.calls)} calls in ${num(r.transcripts)} sessions`, 'g-docs', 300)).join('');
+const viewRows = side => { const T = U[side].totals, D = DR[side];
+  return bar('fetched (the results themselves)', D.fetched_of_ctx, 0.5, `${Mt(T.fetched)} · ${p1(D.fetched_of_ctx)} of context`, 'g-index', 260) +
+    bar('carried (results re-read by every later call)', D.carried_of_ctx, 0.5, `${Mt(T.carried)} · ${p1(D.carried_of_ctx)} of context`, 'g-docs', 260) +
+    bar('window re-read by lookup steps (overlaps carried)', D.step_of_ctx, 0.5, `${Mt(T.step)} · ${p1(D.step_of_ctx)} of context`, 'g-reading', 260); };
+const secB = sec('b', 'B', 'What do the agents actually look up?',
+  `Each row is one question form. The two bars share one scale in millions of carried tokens, so the program column (${num(PG.totals.transcripts)} sessions) dwarfs the product column (${num(PR.totals.transcripts)} sessions); the label on each bar gives the share within its own column. The pattern and word say whether a graph helps: <i>graph question</i> (typed relations answer it), <i>index question</i> (a symbol, file or outline index answers it; relations add nothing), or <i>reading</i>.`,
+  `<div class="card"><div class="tagline">${tag('meas', SRC.uc + ', ' + num(U.n_calls_all) + ' lookup calls')} Forms were assigned by a classifier checked by hand: ${esc(U.accuracy.product)} product and ${esc(U.accuracy.program)} program samples right.</div>
+<div class="seg" role="group" aria-label="Bar scale" data-ctl="bscale"><button type="button" data-v="common" aria-pressed="true">one scale (tokens)</button><button type="button" data-v="share" aria-pressed="false">share within each column</button></div>
+<div id="b-forms">${formList}</div></div>
+<div class="grid2" style="margin-top:18px">
+<div class="card panel"><h3>The session start is where the tokens go</h3><p class="sub">Per main product session: carried tokens of lookups made before the first code edit (dark) inside the whole session's lookup cost (light). ${tag('meas', SRC.uc + ', ' + SS.n_sessions + ' sessions')}</p>${ssRows}
+<p class="tokline">Sum: ${Mt(SS.sum.carried_before)} of ${Mt(SS.sum.carried_all)} carried tokens before the first edit = ${p0(SS.share_carried)}; fetched ${kt(SS.sum.fetched_before)} of ${kt(SS.sum.fetched_all)} = ${p0(SS.share_fetched)}.</p></div>
+<div class="card panel"><h3>The repeated reads behind it</h3><p class="sub">The same orientation reads, issued again by session after session (by command text, product sessions). ${tag('meas', SRC.uc)}</p>${repRows}
+<p class="note">Together ${Mt(U.repeated_total)} carried tokens. Over-read is structural: an orientation call prints whole files (about 5,000 tokens) and the later edit touches a few functions. Waste in the narrow sense is small: empty searches ${U.waste.empty_product} % and same-window re-reads ${U.waste.reread_product} % of product lookups.</p></div></div>
+<div class="grid2" style="margin-top:18px">
+<div class="card panel"><h3>Three ways to count the cost</h3><p class="sub">Share of all context tokens of each kind of work, all bars on one scale from 0 to 50 %. The third view overlaps the second (a lookup step's context contains earlier results), so they are never added. ${tag('meas', SRC.uc)}</p>
+<h4>Product work (${Mt(PR.totals.ctx)} context tokens)</h4>${viewRows('product')}<h4>Program and document work (${Mt(PG.totals.ctx)})</h4>${viewRows('program')}</div>
+<div class="card panel"><h3>The test set of real lookups (ruling R-4 a)</h3><p class="sub">Recorded lookups with the seed the agent had and the spans it went on to use, weighted by carried tokens: the primary test set from now on.</p>${slot(PEND.lookup_testset, 'Test set of real lookups taken from recorded sessions.')}${PEND.lookup_testset.structured ? '<p class="small">The measured numbers are drawn below.</p>' : ''}</div></div>
+${PEND.lookup_testset.structured ? `<div class="card" style="margin-top:18px"><h3>The test set of real lookups, measured</h3>${MZ.ltB(Object.assign(headOnly(PEND.lookup_testset), { skipDesign: !!(PEND.lookup_testset.head && LTS && LTS.design_change && PEND.lookup_testset.head.slice(0, 30) === LTS.design_change.slice(0, 30)) }))}</div>` : ''}`,
+  `Documents, rules, the plan and earlier conclusions carry most lookup cost; ${p0(SS.share_carried)} of product lookup cost is spent before the first edit, much of it the same orientation reads repeated. The form the first test scored is ${p1(DR.first_test)} of product cost.${sayLT}`);
+
+/* ================= C ================= */
+const naryPic = (i) => {
+  // small illustrations (k = 5): one node with k touches against k(k-1)/2 pair edges
+  const k = 5, cx = 90, cy = 80, r = 52, pts = [...Array(k)].map((_, j) => [cx + r * Math.cos(2 * Math.PI * j / k - Math.PI / 2), cy + r * Math.sin(2 * Math.PI * j / k - Math.PI / 2)]);
+  const pairs = []; for (let a = 0; a < k; a++) for (let b = a + 1; b < k; b++) pairs.push([pts[a], pts[b]]);
+  const L = ['change set', 'rule', 'claim'][i], P = ['file', 'anchor', 'premise'][i];
+  const right = pts.map(p => [p[0] + 180, p[1]]);
+  return `<svg class="svgbox nary" viewBox="0 0 360 170" role="img" aria-label="Pairwise edges against one node for a ${L}">
+<text x="90" y="160" text-anchor="middle" class="mut">pairwise: ${pairs.length} edges</text>${pairs.map(([a, b]) => `<line class="ln" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"/>`).join('')}${pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="7" class="box"/>`).join('')}
+<text x="270" y="160" text-anchor="middle" class="mut">one ${L} node: ${k} edges</text>${right.map(p => `<line class="ln" x1="270" y1="80" x2="${p[0].toFixed(1)}" y2="${p[1].toFixed(1)}"/>`).join('')}${right.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="7" class="box"/>`).join('')}<rect x="228" y="67" width="84" height="26" rx="5" class="boxhi"/><text x="270" y="85" text-anchor="middle">${L}</text>
+<text x="180" y="14" text-anchor="middle" class="mut">${k} ${P}s (illustration)</text></svg>`; };
+const NC = d.nary_counts;
+const naryMeas = [
+  `Measured: ${p0(DR.big_commit_share)} of changed-together edges (${num(NC.big_commit_edges)} of ${num(NC.cochange_edges)}) rest only on commits of 10 or more files; commits of 16 to 30 files hold ${NC.pair_share_16[2]} % of pair incidences (${NC.pair_share_16[0]} of ${NC.pair_share_16[1]}). ${tag('meas', 'lane-modelling.md')}`,
+  `The current graph's “constrains” edge says only that a rule mentions a symbol; it cannot tell the server guard from the client half or an example. ${tag('meas', SRC.v1)}`,
+  `Replay of cached answers: ${f(pol('fact').stale_all, 0)} % of served answers wrong on ${num(d.cache.lookups)} lookups with fact-level premises, against ${rnd(pol('file').stale_all, 1)} % with file-level ones. ${tag('meas', SRC.k0)}`];
+const naryCards = d.nary.map((x, i) => `<div class="card"><h3>${esc(x.fact)}</h3>${naryPic(i)}<p class="small"><b>Joins:</b> ${e(x.participants)}</p><p class="small"><b>Pairwise edges lose:</b> ${e(x.loses).replace(/\*/g, '')}</p><p class="small">${naryMeas[i]}</p></div>`).join('');
+const secC = sec('c', 'C', 'What model do those questions call for?',
+  `Pick a question on the left. The node and relation kinds it needs light up in the layers on the right, and the box below says whether the current graph had that path, the shape of the answer and its token ceiling. The thin bar under each question is its product plus program carried tokens on one scale.`,
+  `<div class="cq-wrap"><div><div class="cqlist" id="cq-list" role="group" aria-label="Question forms"></div><p class="note">Current graph: <span class="v1 no">no path</span> for ${cqNo.length} of ${nCQ}, <span class="v1 partly">partly</span> for ${cqPart.length}, <span class="v1 yes">yes</span> for ${DR.cq_v1.yes}. ${tag('meas', SRC.v1)}</p></div>
+<div class="cqright"><div class="cqinfo card" id="cq-info"></div><div class="layers" id="cq-layers"></div></div></div>
+<h3 class="subh">Where a relation joins more than two things, a pairwise edge loses information</h3>
+<div class="grid3">${naryCards}</div>`,
+  `The layers that the costly questions need are documents, items, rules and decisions, and the conclusion ledger; code structure and contracts serve the smaller code-relation forms. Three facts join more than two parts and are modelled as one node each.`);
+
+/* ================= D ================= */
+const EX = d.examples;
+const secD = sec('d', 'D', 'How does one lookup run, step by step?',
+  `Pick one of three real lookups, then step through: entry (find the seed) → the candidate pool → ranking → selection under a token budget → the answer, as a grouped tree and as raw triples. Token counts at every step use the shared tokenizer. The examples were drawn by a stated seeded rule (${esc(EX.prng)}, seed ${EX.seed}) from the facts of the frozen commit.`,
+  `<div class="card"><div class="tagline">${tag('real', 'tuning-era graph of the frozen commit, shown to explain the mechanism, not a result')}</div>
+<div class="seg" role="group" aria-label="Example" data-ctl="dex">${EX.examples.map((x, i) => `<button type="button" data-v="${i}" aria-pressed="${i === 0}">${esc(x.question)}</button>`).join('')}</div>
+<div class="steps" role="group" aria-label="Step" id="d-steps">${['1 Entry', '2 Candidate pool', '3 Ranking', '4 Selection under a budget', '5 The answer'].map((s, i) => `<button type="button" data-v="${i}" aria-pressed="${i === 0}">${s}</button>`).join('')}</div>
+<div class="stepbox" id="d-box"></div></div>`,
+  `A typed walk turns a whole neighbourhood of files (tens to hundreds of thousands of tokens if read) into a ranked list of short lines; the budget and stop decide how much of it reaches the agent. Whether that list holds what the agent needed is exactly what the lookup-level replay must measure.`);
+
+/* ================= E ================= */
+const CP = d.cache.policies.filter(p => p.id !== 'none' && p.id !== 'repo');
+const polRows = set => CP.map(p => { const h = set === 'all' ? p.hit_all : p.hit_changing, s = set === 'all' ? p.stale_all : p.stale_changing;
+  return `<div class="prow${p.id === 'fact' || p.id === 'cutoff' ? ' hlr' : ''}"><div class="lab">${esc(p.name)}${p.extra ? ' <small>(extra variant)</small>' : ''}</div>
+<div class="track"><div class="fill g-docs" style="width:${h}%"></div><div class="val" style="left:${Math.min(h, 72)}%">served ${rnd(h, 1)} %</div></div>
+<div class="track"><div class="fill bad" style="width:${Math.max(s, 0.3)}%"></div>${set === 'all' && p.stale_upper != null ? `<div class="whisk" style="left:${s}%;width:${Math.max(p.stale_upper - s, 0.4)}%"></div>` : ''}<div class="val" style="left:${Math.min(s + 1, 72)}%">${rnd(s, set === 'all' ? 2 : 1)} % wrong${set === 'all' && p.stale_upper != null ? ` (upper bound ${p.stale_upper} %)` : ''}</div></div></div>`; }).join('');
+const pol2 = `<div class="prow head"><div class="lab">Invalidation rule</div><div>Lookups served from the cache (0 to 100 %)</div><div>Wrong among served (0 to 100 %, same scale)</div></div>`;
+const loop = `<div class="loop" role="img" aria-label="The invalidation loop">
+<div class="lstep"><b>1 · Record</b><span>a conclusion with the facts it rests on, including “nothing else matches” patterns</span></div><div class="larr">→</div>
+<div class="lstep"><b>2 · The code changes</b><span>a commit (code) or a new content hash (documents)</span></div><div class="larr">→</div>
+<div class="lstep"><b>3 · Re-check the premises</b><span>only conclusions whose premises the change touches; validation took ${d.cache.validation_ms[0]} to ${d.cache.validation_ms[1]} ms per lookup</span></div><div class="larr">→</div>
+<div class="lstep out"><b>4 · Status</b><span>still valid · valid by early cutoff (recomputed, same answer) · suspect · unverifiable (premise outside the repository)</span></div>
+<div class="lback">↺ back to 1: a suspect conclusion is recomputed and recorded again</div></div>`;
+const ncv = d.cache.never_change;
+const secE = sec('e', 'E', 'How do cached conclusions stay true as the code changes?',
+  `The loop is the mechanism. Below it, the replay: ${d.cache.questions} deterministic questions looked up again at each later saved snapshot (${num(d.cache.lookups)} lookups over ${d.cache.snapshots} snapshots); an answer was reused only if the rule said it still held, and the true answer was recomputed every time to count wrong reuses. Switch between all questions and the ${d.cache.changing_questions} whose answer ever changes.`,
+  `${loop}
+<p class="note"><b>Which sense of “temporal knowledge graph”.</b> In the representation sense, facts carry validity over time, here over the branching commit history for code and over content hashes for documents; in that representation sense graph v2 counts as a temporal knowledge graph. It is not one in the forecasting or completion sense: it predicts no future or missing facts. ${tag('meas', SRC.ref)}</p>
+<div class="card" style="margin-top:14px"><div class="tagline">${tag('meas', SRC.k0)}</div>
+<div class="seg" role="group" aria-label="Question set" data-ctl="eset"><button type="button" data-v="all" aria-pressed="true">all ${d.cache.questions} questions (${num(d.cache.lookups)} lookups)</button><button type="button" data-v="changing" aria-pressed="false">the ${d.cache.changing_questions} whose answer changes (${num(d.cache.changing_lookups)} lookups)</button></div>
+<div id="e-all">${pol2}${polRows('all')}</div><div id="e-changing" hidden>${pol2}${polRows('changing')}</div>
+<p class="note">${ncv[0]} of ${d.cache.questions} questions (${ncv[1]} %) never change their answer, and ${ncv[4]} % of lookups are of them; every rule is right on those. ${d.cache.dep_new_relation} of ${d.cache.dep_cases} cases behind wrong answers under the file-level rule were a new relation in another file (a new caller, test, reader, rule or route): that is what the “nothing else matches” premises catch.</p></div>
+<div class="card" style="margin-top:14px"><h3>One question through real history</h3><p class="sub" id="e-sub"></p><div id="e-slice"></div></div>
+<div class="grid2" style="margin-top:14px">
+<div class="callout"><b>Two limits.</b> (1) A conclusion made by a model can be re-checked only through the premises it recorded; its prose is never compared. A wrong conclusion with valid premises stays wrong, and “zero wrong” above is judged against the extractor's own facts, not against the code. (2) Most earlier conclusions in this program rest on things outside version control: ${d.refute.docs_untracked} program files are untracked against ${d.refute.docs_tracked} tracked, and many premises are papers, web pages and scratch measurements, which can only be marked unverifiable.</div>
+<div class="card panel"><h3>What share of earlier conclusions rest on things inside the repository? (ruling R-5)</h3><p class="sub">The ledger is built only after this is measured.</p>${slot(PEND.premise_measure, 'Share of earlier conclusions whose premises are inside the repository.')}${PEND.premise_measure.structured ? '<p class="small">The measured numbers are drawn below.</p>' : ''}</div></div>
+${PEND.premise_measure.structured ? `<div class="card" style="margin-top:14px"><h3>Where earlier conclusions come from, measured</h3>${MZ.pmE(headOnly(PEND.premise_measure))}</div>` : ''}`,
+  `Re-checking the facts an answer rests on, including the absence of other matches, served ${rnd(pol('fact').hit_all, 1)} % of lookups with no wrong answer in this replay, where file-level invalidation served wrong answers ${rnd(pol('file').stale_all, 1)} % of the time. This holds for deterministic answers; for model-made conclusions it holds only as far as their premises were recorded.${sayPM}`);
+
+/* ================= F ================= */
+const STN = { 'build-first': 'build first', build: 'build', 'build-later': 'build after the premise measure', trial: 'trial', infrastructure: 'infrastructure', folded: 'folded in', deferred: 'deferred', cut: 'cut' };
+const secF = sec('f', 'F', 'Where does each part come from?',
+  `One row per part of the design after the rulings (${d.components.length} parts). Filter by status, source label or layer. The source label follows ruling R-1: <i>from a named source</i>, <i>simplified from a named source</i> (what was simplified is said), <i>our own choice, no source</i>, or <i>measured here</i>. Cut parts stay listed, struck through.`,
+  `<div class="card"><div class="ctl" id="f-ctl"></div><p class="tokline" id="f-count"></p><div id="f-table"></div></div>`,
+  `${stC['build-first']} parts are built first (the test set, the index-only and scripted-search arms, the replay, the leak and cut rules, the question registry, the quality card); ${labC['our own choice, no source']} parts still have no source and say so.`);
+
+/* ================= G ================= */
+const NW = d.notworth;
+const lx = (v, lo, hi) => 100 * (Math.log10(v) - lo) / (hi - lo);
+const nodeItems = NW.filter(x => x.at_nodes_exp), comItems = NW.filter(x => x.at_commits), noScale = NW.filter(x => !x.at_nodes_exp && !x.at_commits);
+const scaleChart = (title, lo, hi, here, hereLab, items, posOf, unit) => `<div class="scl"><h4>${title}</h4><div class="sclrow head"><div></div><div class="sclaxis">${[...Array(hi - lo + 1)].map((_, i) => `<span class="cmp" style="left:${100 * i / (hi - lo)}%">${num(Math.pow(10, lo + i))}</span>`).join('')}</div><div class="small">why not now</div></div>
+<div class="sclrow here"><div class="scln"><b>${hereLab}</b></div><div class="sclt"><i class="here" style="left:${lx(here, lo, hi).toFixed(2)}%"></i></div><div></div></div>
+${items.map(x => { const ps = posOf(x); return `<div class="sclrow"><div class="scln"><b>${esc(x.name)}</b><br><span class="small">starts to pay at ${esc(x.revisit)}</span></div><div class="sclt"><i class="here" style="left:${lx(here, lo, hi).toFixed(2)}%"></i>${ps.length > 1 ? `<i class="rng" style="left:${lx(ps[0], lo, hi).toFixed(2)}%;width:${(lx(ps[1], lo, hi) - lx(ps[0], lo, hi)).toFixed(2)}%"></i>` : ''}${ps.map(p => `<i class="dot" style="left:${lx(p, lo, hi).toFixed(2)}%"></i>`).join('')}</div><div class="sclr">${e(x.reason)}</div></div>`; }).join('')}</div>`;
+const gScale = scaleChart('By graph size (nodes, log scale)', 3, 7, d.scale.nodes, `here: ${num(d.scale.nodes)} nodes`, nodeItems, x => x.at_nodes_exp.map(k => Math.pow(10, k)), 'nodes') +
+  scaleChart('By history length (non-merge commits, log scale)', 2, 4, d.scale.commits_nonmerge, `here: about ${num(d.scale.commits_nonmerge)} commits`, comItems, x => [x.at_commits], 'commits');
+const noScaleList = `<ul class="nsl">${noScale.map(x => `<li><b>${esc(x.name)}</b>: ${e(x.reason)}${x.revisit ? `; revisit at ${esc(x.revisit)}` : '; no scale named'}</li>`).join('')}</ul>`;
+const r6 = R('R-6');
+const embedBlock = `<div class="grid2"><div class="ruling"><b>Ruling R-6, the argued position</b> ${tag('rul', 'R-6')}<p>${esc(r6.text)}</p><p class="small">Density: about ${d.scale.density_here[0]} triples per entity here against about ${d.scale.density_here[1]} in the FB15k-237 benchmark. ${esc(d.scale.density_note)} The trial would install PyKEEN 1.11.1 (MIT) and PyTorch for CPU (about ${d.scale.pykeen} MB, per the lane notes).</p></div>
+${PEND.embeddings.exists ? `<div class="slot filled"><div class="slh">${tag('meas', esc(PEND.embeddings.path))} <b>The measured trial, which now replaces the argued position above.</b></div><p>${esc(PEND.embeddings.head)}</p></div>` : `<div class="slot pending"><div class="slh"><b>Being measured in another session.</b> A small measured embeddings trial on this graph.</div><p>This slot fills from <code>${esc(PEND.embeddings.path)}</code> when the page is rebuilt; until then the position beside it is argued, not measured.</p></div>`}</div>`;
+let gfBlock = '';
+if (GF) {
+  const all = [...GF.diffs.map(x => ({ lab: 'graphify minus ' + x.vs, d: x.diff, lo: x.lo, hi: x.hi, v: x.verdict, note: x.note, grp: 'all held-out tasks' })),
+    ...GF.by_seed.flatMap(s => [{ lab: `${s.where}: graphify minus typed graph`, d: s.vs_typed[0], lo: s.vs_typed[1], hi: s.vs_typed[2], v: 'subgroup, no verdict', grp: s.where }, { lab: `${s.where}: graphify minus scripted search`, d: s.vs_search[0], lo: s.vs_search[1], hi: s.vs_search[2], v: 'subgroup, no verdict', grp: s.where }])];
+  const lo = Math.floor(Math.min(...all.map(x => x.lo)) * 10) / 10, hi = Math.ceil(Math.max(...all.map(x => x.hi)) * 10) / 10;
+  const xp = v => (100 * (v - lo) / (hi - lo)).toFixed(2);
+  const ticks = []; for (let t = Math.round(lo * 10); t <= Math.round(hi * 10); t++) ticks.push(t / 10);
+  const dots = `<div class="dotc"><div class="dotaxis">${ticks.map(t => `<span class="cmp" style="left:${xp(t)}%">${sg(t, 1)}</span>`).join('')}</div>${all.map(x => `<div class="drow"><div class="dlab">${esc(x.lab)}<small><b>${sg(x.d)} [${sg(x.lo)}, ${sg(x.hi)}]</b> · ${esc(x.v)}${x.note ? '; ' + esc(plG(x.note)) : ''}</small></div><div class="dtrack"><i class="zero" style="left:${xp(0)}%"></i><i class="ci" style="left:${xp(x.lo)}%;width:${(xp(x.hi) - xp(x.lo))}%"></i><i class="pt" style="left:${xp(x.d)}%"></i></div></div>`).join('')}<div class="dfoot"><span>← lower for graphify</span><span>difference in share of the change found within ${num(GF.primary.budget_tokens)} tokens</span><span>higher for graphify →</span></div></div>`;
+  const P = GF.primary, prim = [['graphify (code layer, its own query)', P.graphify], ['typed graph of the first test', P.typed], ['scripted search', P.search], ['changed-together floor', P.cochange_floor], ['same-folder floor', P.folder_floor]];
+  const LK = GF.links, NV = GF.native, Q = GF.questions;
+  gfBlock = `<div class="card gf"><h3>The popular tool, measured on the same tasks: graphify's code layer</h3><p class="sub">${esc(plG(GF.what))}</p><div class="tagline">${tag('meas', 'graphify/RESULT.md, re-scored independently (AUDIT-RUN.md)')}</div>
+<div class="grid2"><div><h4>Share of the real change shown within ${num(P.budget_tokens)} tokens (${num(P.tasks)} held-out tasks, ${num(P.commits)} commits)</h4>${prim.map(([l, v]) => bar(l, v, 1, f(v), l.startsWith('graphify') ? 'hl' : 'g-reading', 240)).join('')}
+<h4>Paired differences, 95 % intervals, one scale</h4>${dots}<p class="small">The four seed rows are subgroups at ${num(P.budget_tokens)} tokens only, with no verdict. The mobile-app difference against scripted search does not hold at 2,000 or 4,000 tokens, on top-10 ranking, or after dropping five commits (graphify/RESULT.md).</p></div>
+<div><h4>What it adds and what it lacks</h4><ul class="gfl">${GF.headline_text.slice(3).map(t => `<li>${esc(plG(t))}</li>`).join('')}<li>The questions above were given as raw question text: ${esc(Q.qualifier)}.</li></ul>
+<h4>What the refuters say it shows</h4><ul class="gfl">${GF.what_it_says.map(t => `<li>${esc(plG(t))}</li>`).join('')}</ul>
+<h4>What it does not show</h4><ul class="gfl">${GF.does_not_say.map(t => `<li>${esc(plG(t))}</li>`).join('')}</ul>
+${fold('Audit of the run', `<p class="small">${esc(plG(GF.audit_run_verdict))}</p>`)}</div></div></div>`;
+} else gfBlock = `<div class="slot pending"><div class="slh"><b>graphify block not built:</b> data/extras.json is missing.</div><p>Run <code>node - &lt; data/extras.js.txt</code>, then rebuild.</p></div>`;
+const secG = sec('g', 'G', 'What is not worth it at this size, and when would it be?',
+  `Each item sits at the size where its sources say it starts to pay, on a log scale, with today's size marked. Items with no scale are listed under the charts with their reason. Then ruling R-6 on embeddings, with the slot for its measured trial, and the popular tool measured on the same tasks.`,
+  `<div class="card"><div class="tagline">${tag('meas', 'storage, ranking and modelling lanes; ' + SRC.des)} The adjacency of the whole graph is ${d.scale.adjacency_kb} KB; GRAIL's own small test graphs had ${d.scale.grail_small[0]} to ${d.scale.grail_small[1]} nodes.</div>${gScale}<h4>Not worth it, no size named</h4>${noScaleList}</div>
+<h3 class="subh">Embeddings and graph neural models (ruling R-6 in full)</h3>${embedBlock}
+<h3 class="subh">What the popular tool adds and lacks</h3>${gfBlock}`,
+  `At ${num(d.scale.nodes)} nodes and about ${num(d.scale.commits_nonmerge)} commits, speed, compression and learned rankers have nothing to win; that holds at this size, for this workload, and the scale at which each would start to pay is drawn. The ranking question these would improve is ${p1(d.scale.ranking_share)} of product lookup cost.`);
+
+/* ================= H ================= */
+const CAT = { source: 'Sources cited for what they do not say', nosource: 'Choices with no source', cannotfail: 'Tests that could not fail', leak: 'Leak paths', missing: 'Missing arms and parts' };
+const fl = Object.keys(CAT).map(c => { const F = d.refute.findings.filter(x => x.cat === c);
+  return `<div class="fgroup"><h3>${CAT[c]} <span class="cnt">(${F.length})</span></h3>${F.map(x => `<div class="finding"><div><b>${e(x.title)}</b>${x.detail ? `<br><span class="small">${e(x.detail)}</span>` : ''}</div><div class="rl"><b>Ruling:</b> ${e(x.ruling)}</div></div>`).join('')}</div>`; }).join('');
+const rc = d.refute.counts, rcT = rc.survives + rc.qualify + rc.refuted;
+const claimBar = `<div class="stack tally"><div class="t-ok" style="width:${100 * rc.survives / rcT}%">survives ${rc.survives}</div><div class="t-warn" style="width:${100 * rc.qualify / rcT}%">needs qualification ${rc.qualify}</div><div class="bad" style="width:${100 * rc.refuted / rcT}%">refuted ${rc.refuted}</div></div>`;
+const RES = { survives: 'survives', 'needs qualification': 'needs qualification', refuted: 'refuted' };
+const claims = d.refute.claims.map(c => `<div class="finding"><div><b>${e(c.claim)}</b><br><span class="small">${e(c.detail)}</span></div><div class="rl"><span class="chip res-${c.result.replace(/ /g, '-')}">${RES[c.result] || esc(c.result)}</span></div></div>`).join('');
+const secH = sec('h', 'H', 'What did the refuter find, and what was ruled on each?',
+  `The judge's eight rulings first: they are the current state of the design. Then every finding, grouped by kind, with the ruling that answers it beside it. The refuter also tested ${rcT} claims of the design one by one (the bar; the list is folded).`,
+  `<div class="rulings">${d.rulings.map(r => `<div class="ruling"><b>${esc(r.id)} · ${esc(r.title)}</b><p>${esc(r.text)}</p></div>`).join('')}</div>
+<div class="card" style="margin-top:16px"><div class="tagline">${tag('meas', SRC.ref + ' (claims tested against the lane notes and sources)')}</div>${claimBar}<div data-quote="refuter">${fold('All ' + rcT + ' claims and the refuter\'s verdict on each', claims)}</div></div>
+<div class="card" style="margin-top:16px" data-quote="refuter">${fl}</div>`,
+  `The refuter's main points: about a dozen thresholds and the role vocabulary had no source, three sources were cited for what they do not say, ${fc.cannotfail} tests could not fail, ${fc.leak} leak paths were open, and the test set of real lookups was missing. Each is now ruled on: labelled, cut, given a cut rule, or added.`);
+
+/* ================= I ================= */
+const PW = d.power;
+const secI = sec('i', 'I', 'How big is the prize?',
+  `A runnable token model. The stock is what sits in a context window; a lookup fetches tokens into it, and every later call re-reads them until the window ends. Fixed inputs are the measured shares from section B; the four sliders are what nobody knows yet. The output is the share of all context tokens that would move. This is a simulation, not a forecast.`,
+  `<div class="flow" role="img" aria-label="Stock and flow of a context window">
+<div class="fbox in"><b>Lookup fetches</b><span id="i-f1"></span></div><div class="farr">→ valve: answer size ÷ reads replaced →</div>
+<div class="fbox stock"><b>STOCK · context window</b><span id="i-f2"></span></div><div class="farr">→</div><div class="fbox out"><b>Window ends or is compacted</b><span>the only outflow</span></div>
+<div class="floop"><b>R</b> every later call re-reads the whole stock: carried tokens = fetched × later calls in the window <span id="i-f3"></span></div></div>
+<div class="model" style="margin-top:14px"><div class="card"><div class="tagline">${tag('sim', 'inputs measured in section B, controls set by you')}</div><div id="i-model"></div></div>
+<div class="card"><div id="i-out"></div>
+<div class="callout">A graph tool can also cost tokens: one published system (CodexGraph) used ${d.tokens.codexgraph[0]} to ${d.tokens.codexgraph[1]} times the tokens of keyword search. ${tag('out', 'arXiv 2408.03910')}</div>
+<h4>What each kind of test can detect</h4><p class="small">Smallest per-task token saving that an agent pilot of ${PW.n} tasks would detect, under the eight conditions of the power script (spread and paired correlation vary): below 95 % of baseline and below 100 %. ${tag('meas', SRC.pw)}</p><div id="i-power"></div>
+<p class="small">A lookup-level replay (recorded lookups answered by each arm, scored on whether the needed span is in the answer and on tokens) has thousands of items instead of ${PW.n}, so it can see effects of a few percent. That is why ruling R-7 puts it first.</p></div></div>
+${PEND.lookup_testset.structured ? MZ.ltI(PEND.lookup_testset) : ''}
+<div class="grid2" style="margin-top:14px"><div class="card panel"><h3>The two larger levers (for scale)</h3><p class="small">${tag('meas', SRC.tok)} Capping the orchestrator window at ${esc(d.tokens.cap_lever[0])}: ${esc(d.tokens.cap_lever[1])}. Stripping the fixed prefix: ${esc(d.tokens.strip_lever)}. Fetched content is ${d.tokens.fetched_share_fixflow} % of FixFlow context tokens.</p></div>
+<div class="card panel"><h3>Ruling R-7: the two-step test</h3><p class="small">${esc(R('R-7').text)}</p></div></div>`,
+  `The share that moves is a fraction of the exposure. At the starting settings it sits well below what an agent pilot of ${PW.n} tasks can detect; only settings near the extremes (the agent uses the tool almost always, and answers are a small fraction of the reads they replace) reach that range. A lookup-level replay is the test that can see effects of this size.${sayLTI}`);
+
+/* ================= J ================= */
+const V = d.v1, cmax = Math.max(...V.calls_how.map(c => c.rows));
+const secJ = sec('j', 'J', 'What was wrong in what you were told before?',
+  'Ruling R-8, three corrections, each with the measured picture behind it.',
+  `<div class="grid3">
+<div class="card panel"><h3>(a) The current graph does not link calls by name alone</h3><p class="sub">Each call edge by how it was resolved; the number after each bar is how many of its targets share a name with another definition. ${tag('meas', SRC.v1)}</p>${V.calls_how.map(c => bar(esc(c.how), c.rows, cmax, `${num(c.rows)} · ${num(c.shared_name)} shared names`, 'g-coderel', 210)).join('')}
+<p class="tokline">${V.by_name} of ${num(V.calls_total)} call edges were made by name alone, so “replace name matching” was wrong. What is true: ${V.no_node[2]} % of changed definitions (${V.no_node[0]} of ${V.no_node[1]}) had no node, mostly variables and object members (${V.no_node[3]}, ${V.no_node[4]} %).</p></div>
+<div class="card panel"><h3>(b) The first test scored a small question</h3><p class="sub">${tag('meas', SRC.uc)}</p>${bar('what changes together (the first test)', V.first_test_share, 1, p1(V.first_test_share), 'hl', 200)}${bar('all other product lookup cost', 1 - V.first_test_share, 1, p1(1 - V.first_test_share), 'g-reading', 200)}</div>
+<div class="card panel"><h3>(c) The ranking could not matter where it was compared</h3><p class="sub">${tag('meas', SRC.v1)}</p>${bar('median answer used of the budget', nm(V.median_used), nm(V.budget), `${V.median_used} of ${V.budget} tokens`, 'g-docs', 200)}${bar('walk at the chosen depth reached', nm(V.reach[0]), nm(V.reach[1]), `${V.reach[0]} of ${V.reach[1]} nodes (${V.reach[2]} %)`, 'bad', 200)}
+<p class="small">The ${V.configs} configurations were compared where every candidate fitted in the answer, so ranking modes moved recall by at most +${V.rank_move[0]} (standard error ${V.rank_move[1]}), and the eight rankings spanned only ${V.unbounded_span}. At the depth finally chosen the walk reached two thirds of the graph (${V.giant} % of nodes sit in one connected piece) and its answer selected nothing useful from it.</p></div></div>`,
+  `The earlier story overstated one weakness (name matching), and the first test answered a question worth ${p1(V.first_test_share)} of product lookup cost at a setting where the ranking could not show.`);
+
+/* ================= K ================= */
+const DEC = d.decisions;
+const ddec = (t, body, tags) => `<div class="card"><h3>${t}</h3>${tags || ''}${body}</div>`;
+const decOf = s => DEC.find(x => x.decision.startsWith(s));
+const decRow = x => `<p class="opt"><b>Options:</b> ${e(x.options)}</p><p class="opt"><b>The design recommends:</b> ${e(x.recommendation)}</p><p class="opt"><b>Cost:</b> ${e(x.cost)}</p>`;
+const E1 = d.components.find(c => c.id === 'E1'), K3 = d.components.find(c => c.id === 'K3');
+const secK = sec('k', 'K', 'What is yours to decide?',
+  'Each card is one decision, with the options, what the design recommends and its cost. None is taken on your behalf.',
+  `<div class="dec">
+${ddec('1 · Does the question list match your sense of the work?', `<p class="opt">The ${nCQ} question forms in section C come from ${num(U.n_transcripts)} recorded sessions; the main product sessions are ${SS.n_sessions} sessions of one plan. If a question you ask often is missing, it is missing from the model too.</p>`, tag('meas', SRC.uc))}
+${ddec('2 · Include the program documents that are not in version control?', `<p class="opt">${d.refute.docs_untracked} program files are untracked and ${d.refute.docs_tracked} tracked. Program work carries ${Mt(PG.totals.carried)} lookup tokens, almost five times product work.</p>${decRow(decOf('Scope of program documents'))}`, tag('meas', SRC.ref))}
+${ddec('3 · Optional installs', `<p class="opt"><b>The embeddings trial:</b> ${e(E1.installs)}. ${e(E1.what)}</p><p class="opt"><b>The indexers for the extraction audit (deferred, ruling R-3):</b> ${e(K3.installs)}.</p>${decRow(decOf('Install indexers'))}${decRow(decOf('Later tier 1'))}`, tag('rul', 'R-3, R-6'))}
+${ddec('4 · Order against the two larger token levers', `<p class="opt">Capping the orchestrator window: ${esc(d.tokens.cap_lever[1])}. Stripping the fixed prefix: ${esc(d.tokens.strip_lever)}. This track touches no product code.</p>${decRow(decOf('Order against other work'))}`, tag('meas', SRC.tok))}
+${ddec('5 · The two-step test (ruling R-7)', `<p class="opt">Step 1, a lookup-level replay on the test set of real lookups (no agent, can see small effects). Step 2, a focused agent test on the session start, where ${p0(SS.share_carried)} of product lookup cost sits before the first edit.</p>${decRow(decOf('Run the agent pilot'))}`, tag('rul', 'R-7'))}
+${ddec('6 · Smaller choices', [decOf('Send repository content'), decOf('Rule IDs'), decOf('Tool form'), decOf('Pin the FastAPI')].map(x => `<h4>${e(x.decision)}</h4>${decRow(x)}`).join(''), tag('meas', SRC.des))}
+</div>`,
+  'Six decisions, the first five named by the brief. The build order of ruling R-5 runs without any of them until the agent test.');
+
+/* ---------- payload for the page script (only what it uses) ---------- */
+const P = {
+  cq: d.cqs.map(c => ({ id: c.id, name: CQS[c.id], q: c.question, level: pl(c.level), mp: c.metapath, shape: c.answer_shape, v1: c.v1, op: pl(c.op), ceil: c.ceiling, kinds: c.kinds, mark: c.mark, by: pl(c.served_by), pc: c.product_carried, gc: c.program_carried })),
+  layers: d.layers,
+  ex: EX.examples.map(x => ({ kind: x.kind, q: x.question, rule: x.rule, cand: x.candidates, seed: x.seed, entry: x.entry, pool: x.pool, graph: x.graph || null, def: x.def || null, inv: x.invariants_total || null, invTok: x.invariants_file_tokens || null,
+    items: x.items.map(i => ({ p: i.path, n: i.name || null, hop: i.hop, co: i.co || null, ppr: i.ppr, pr: i.ppr_rank, cr: i.co_rank, hr: i.hop_rank || null, rrf: i.rrf, rank: i.rank, ft: i.file_tokens, tree: i.tree, tt: i.tree_tok, tri: i.triples, trt: i.triples_tok })) })),
+  slice: d.cache.slice, polNames: Object.fromEntries(d.cache.policies.map(p => [p.id, p.name])),
+  comps: d.components.map(c => ({ name: pl(c.name), layer: c.layer, what: pl(c.what), cqs: pl(c.cqs), status: c.status, stn: STN[c.status], order: c.order, label: c.label, ln: pl(c.label_note), refs: c.ref_list, rep: pl(c.replaces), test: pl(c.test), inst: pl(c.installs), rul: c.ruling })),
+  forms: { product: PR.rows.map(r => ({ l: r.label, m: r.mark, c: r.carried, s: r.step, sh: r.share, cpe: r.calls / r.episodes })), program: PG.rows.map(r => ({ l: r.label, m: r.mark, c: r.carried, s: r.step, sh: r.share, cpe: r.calls / r.episodes })) },
+  tot: { product: PR.totals, program: PG.totals }, der: { product: { car: DR.product.carried_of_ctx, step: DR.product.step_of_ctx }, program: { car: DR.program.carried_of_ctx, step: DR.program.step_of_ctx } },
+  ptr: DR.pointer_ratio, power: PW.detectable, band: PW.ruling_band, markw: MARKW
+};
+const dataJson = JSON.stringify(P).replace(/</g, '\\u003c');
+
+const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Graph v2 design</title><style>${css}</style></head><body>
+${header}${toc}<main class="wrap">${secA}${secB}${secC}${secD}${secE}${secF}${secG}${secH}${secI}${secJ}${secK}</main>
+<footer><div class="wrap">Built ${esc(d.meta.date)} from <code>docs/program/graph-v2/data/data.json</code>${GF ? ' and <code>data/extras.json</code>' : ''} by <code>build.js.txt</code>; the record <code>docs/program/GRAPH-V2-DESIGN-2026-11.md</code> comes from the same data. Sources: ${Object.values(d.meta.built_from).filter(s => !/AppData/.test(s)).map(s => `<code>${esc(s)}</code>`).join(', ')}.</div></footer>
+<script>const P=${dataJson};
+${client}</script></body></html>`;
+fs.writeFileSync(path.join(HERE, 'index.html'), html);
+
+/* ---------- the record (under 150 lines) ---------- */
+const L = [];
+L.push('# Graph v2 design: the record behind the owner page', '');
+L.push(`Generated from \`docs/program/graph-v2/data/data.json\`${GF ? ' and `data/extras.json`' : ''} by \`docs/program/graph-v2/build.js.txt\`, the script that builds \`docs/program/graph-v2/index.html\`. Built ${d.meta.date}. Do not edit by hand. Every number is measured unless marked.`, '');
+L.push('## A. The answer', '');
+L.push(`1. **What agents look up** (measured, ${num(U.n_transcripts)} sessions, ${num(U.n_calls_all)} lookup calls). Product lookups carried ${Mt(PR.totals.carried)} tokens, program and document lookups ${Mt(PG.totals.carried)}. The form the first test scored (what changed together) is ${p1(DR.first_test)} of product cost.`);
+L.push(`2. **The graph this use calls for.** Documents and earlier conclusions are ${p1(docsLedgerProg)} of program cost; code relations ${p1(coderelProd)} of product cost. The current graph had no path for ${cqNo.length} of ${nCQ} forms, partly for ${cqPart.length}.`);
+L.push(`3. **What theory buys at this size.** One node for n-ary facts (change sets, rules with roles, claims with premises); fact-level invalidation: ${f(pol('fact').stale_all, 0)} % wrong served on ${num(d.cache.lookups)} replayed lookups against ${rnd(pol('file').stale_all, 2)} % at file level (deterministic answers, judged against the extractor's facts). Not at this size, for this workload: graph databases for speed, reachability indexes, embeddings (argued, ruling R-6).`);
+L.push(`4. **Prize as exposure, not forecast.** Forms a graph can serve carry ${p1(DR.product.served_ctx)} of product context (graph forms only ${p1(DR.product.graph_only_ctx)}) and ${p1(DR.program.served_ctx)} of program context. A ${PW.n}-task agent pilot detects only savings of about ${PW.ruling_band[0]} to ${PW.ruling_band[1]} %.`);
+L.push(`5. **Not from a source, cut, missing.** Of ${d.components.length} parts: ${labC['our own choice, no source']} our own choice, ${labC['simplified from a named source']} simplified from a source, ${labC['from a named source']} from a source, ${labC['measured here']} measured here. Cut ${stC.cut}, deferred ${stC.deferred}, trial ${stC.trial}.`, '');
+L.push('## B. Lookup cost by question form (carried tokens, millions)', '');
+L.push('| Form | Mark | Product | Program |', '|---|---|---|---|');
+formRows.forEach(x => L.push(`| ${[...x.labels].join(' / ')}${x.first ? ' (first test)' : ''} | ${MARKW[x.mark]} | ${x.product ? Mt(x.product.carried) + ' (' + p1(x.product.share) + ')' : '–'} | ${x.program ? Mt(x.program.carried) + ' (' + p1(x.program.share) + ')' : '–'} |`));
+L.push('', `Session start: ${Mt(SS.sum.carried_before)} of ${Mt(SS.sum.carried_all)} carried product lookup tokens (${p0(SS.share_carried)}) before the first edit, over ${SS.n_sessions} sessions. Cost views (product): fetched ${p1(DR.product.fetched_of_ctx)}, carried ${p1(DR.product.carried_of_ctx)}, lookup-step window ${p1(DR.product.step_of_ctx)} of context (the last overlaps carried).`);
+L.push(`Test set of real lookups: ${PEND.lookup_testset.exists ? PEND.lookup_testset.head : 'being measured (' + PEND.lookup_testset.path + ').'}`, '');
+if (LTS) L.push(`Measured (extras.json):${sayLT}${sayLTI}`, '');
+L.push('## C. Model layers', '');
+d.layers.forEach(l => L.push(`- **${l.name}:** ${l.kinds.join(', ')}. ${l.note}`));
+L.push('', '## D. One lookup step by step', '', `Three real lookups on the frozen commit's facts (seeded draw, ${EX.prng} ${EX.seed}); an explanation, not a result: ${EX.examples.map(x => `"${x.question}" (pool ${x.pool.n}, ${num(x.pool.tree_tokens_all)} tree tokens against ${num(x.pool.file_tokens_all)} file tokens)`).join('; ')}.`, '');
+L.push('## E. Cached-answer replay (deterministic answers)', '');
+L.push('| Rule | Served, all | Wrong among served, all | Served, changing | Wrong, changing |', '|---|---|---|---|---|');
+CP.forEach(p => L.push(`| ${p.name} | ${rnd(p.hit_all, 1)} % | ${rnd(p.stale_all, 2)} % | ${rnd(p.hit_changing, 1)} % | ${rnd(p.stale_changing, 1)} % |`));
+L.push('', `Limits: a model-made conclusion is re-checked only through recorded premises; ${d.refute.docs_untracked} program files are untracked. Premise share: ${PEND.premise_measure.exists ? PEND.premise_measure.head : 'being measured (' + PEND.premise_measure.path + ').'}`, '');
+if (PMS) L.push(`Measured (extras.json):${sayPM}`, '');
+L.push('## F. Parts by status', '');
+Object.keys(STN).forEach(s => { const C = d.components.filter(c => c.status === s); if (C.length) L.push(`- **${STN[s]} (${C.length}):** ${C.map(c => c.name + ' [' + c.label + ']').join('; ')}`); });
+L.push('', '## G. Not at this size, for this workload', '');
+NW.forEach(x => L.push(`- ${x.name}: ${pl(x.reason)}${x.revisit ? '; pays at ' + x.revisit : ''}.`));
+L.push(`- Embeddings (R-6): ${PEND.embeddings.exists ? 'measured: ' + PEND.embeddings.head : 'argued position; measured trial pending (' + PEND.embeddings.path + ').'}`);
+if (GF) { L.push('', '**graphify, code layer, same tasks (measured):**'); GF.headline_text.forEach(t => L.push('- ' + plG(t))); L.push('- Does not show: ' + GF.does_not_say.map(plG).join(' ')); }
+L.push('', '## H. Refuter', '', `Claims: ${rc.survives} survive, ${rc.qualify} need qualification, ${rc.refuted} refuted. Findings: ${Object.keys(CAT).map(c => CAT[c].toLowerCase() + ' ' + fc[c]).join(', ')}. Rulings R-1 to R-8 are on the page in full.`, '');
+L.push('## I. Prize', '', `Runnable model on the page (simulation). Pilot of ${PW.n} tasks detects savings of ${DR.det_min} to ${DR.det_max} % (below 95 %) across the eight conditions of the power script. A tool can also add tokens (CodexGraph ${d.tokens.codexgraph[0]} to ${d.tokens.codexgraph[1]} times keyword search).`, '');
+L.push('## J. Corrections (R-8)', '', `(a) ${V.by_name} of ${num(V.calls_total)} call edges by name; ${V.no_node[2]} % of changed definitions had no node. (b) The first test scored ${p1(V.first_test_share)} of product lookup cost. (c) Median ${V.median_used} of ${V.budget} tokens used, so ranking could not matter; at the chosen depth the walk reached ${V.reach[2]} % of nodes.`, '');
+L.push('## K. Owner decisions', '');
+DEC.forEach(x => L.push(`- **${x.decision}:** ${x.recommendation} (cost: ${x.cost}).`));
+const md = L.join('\n') + '\n';
+fs.writeFileSync(path.join(REPO, 'docs', 'program', 'GRAPH-V2-DESIGN-2026-11.md'), md);
+const sz = fs.statSync(path.join(HERE, 'index.html')).size;
+console.log('index.html bytes', sz, sz < 500000 ? 'OK' : 'TOO BIG');
+console.log('record lines', md.split('\n').length);
+console.log('pending:', Object.entries(PEND).map(([k, p]) => k + '=' + (p.exists ? 'filled' : 'pending')).join(', '), '| graphify:', GF ? 'yes' : 'no');

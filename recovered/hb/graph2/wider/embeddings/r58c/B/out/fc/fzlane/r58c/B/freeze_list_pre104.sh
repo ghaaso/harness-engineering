@@ -1,0 +1,92 @@
+#!/bin/sh
+# END-ORDER step 3: print the code-freeze list (host, Git Bash; not hashed itself until listed). Four blocks:
+#   1. `<sha256>  <path relative to the lane>` for every file a later step reads (no comment line in this block);
+#   1b. `# test output`, then `<sha256>  <path relative to the lane>` for every file under train/report/ and
+#      train/selectB-test/ at the freeze (*.part excluded): the test outputs there (report.py --test, selectB.py --test),
+#      so it is plain which files there are test output (the coordinator, round 3); freeze_check checks them as block 1;
+#   2. `# outside`, then `<sha256>  <absolute path>` for the files outside the lane;
+#   3. `# images`, then `<image ID>  <tag>` for the CPU and the GPU image.
+# usage: sh freeze_list.sh <STAGING MANIFEST> <GRAPHS MANIFEST> <TUNE STAGING MANIFEST> <TUNE GRAPHS MANIFEST>
+#          > orchestrator/freeze-list.txt.part
+#   (then mv to orchestrator/freeze-list.txt only on exit 0). The four manifests are step 2f's, lane-relative (the
+#   held-out staging, the held-out graphs, the tuning staging of ruling 94(b), and, round 8 (C11), the tuning
+#   checkpoints' graphs: `node train/heldout_inputs.js export-manifest --plan r58c/B/frozen/tune-graphs-plan.json
+#   --export export --out <it>`, called as it is; every file it names is listed in block 1, so every freeze check
+#   hashes it); exit 2 when one is missing, 3 when an image ID is not the expected one, 4 when a listed file is
+#   missing, 5 when the tuning graphs no longer match their manifest (verify-export), 6 (round 8, C4) when a path
+#   component in the lane is named `sealed` or a file in the lane matches *reference*.jsonl (the leak audit's
+#   is_heldout_truth would flag it). Round 8 also lists both stage-B mount captures (C7, ruling 101 (e)), agent A's
+#   mounts.js (C10), the guard starter of ruling 98 (ruling 101 (d)) and, in `# outside`, every facts file of the 70
+#   held-out parents (C16: step 7's --facts check compares the staging with them). Ruling 103(d) (C21): exit 7 when a
+#   real output of steps 4 to 9 already exists (train/selectB, train/heldout, train/leak_audit, train/report/answer_level,
+#   train/report/e5_route, train/report/tune.json, train/report/item22.json, or a file directly under grader-returns/).
+#   C28 (ii): exit 8 when a saved mount record in r58c/mounts/ (every kept one too) differs from its container's current
+#   entry (r58c/B/record_check.js, listed in block 1); nothing is moved or deleted, the coordinator rules.
+#   The check is r58c/B/freeze_check.sh (prints nothing, exit 0).
+W=C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/r58c/B/out/fc/fzlane
+GB=C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/r58c/B/out/fc/fzlane/gb
+PROTO=C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/r58c/B/out/fc/fzlane/proto.md
+CPU_ID=sha256:55715543bc43c85e8426eb6934d9ba8196307b0ef0b0ccd357da85350ac97711
+GPU_ID=sha256:a890c54808c11c460d910945c4bf981390f7de43c8dfc5840269b76f5861cbe7
+[ $# -eq 4 ] || { echo "usage: sh freeze_list.sh <STAGING MANIFEST> <GRAPHS MANIFEST> <TUNE STAGING MANIFEST> <TUNE GRAPHS MANIFEST>" >&2; exit 2; }
+cd "$W" || exit 2
+for m in "$1" "$2" "$3" "$4"; do [ -s "$m" ] || { echo "freeze_list: manifest $m missing or empty (step 2f)" >&2; exit 2; }; done
+# C4 (round 8): nothing in the lane the leak audit would take for held-out truth
+sl=$(find . \( -name sealed -o -name '*reference*.jsonl' \) -print 2>/dev/null | head -5 | tr '\n' ' ')
+[ -z "$sl" ] || { echo "freeze_list: a path named sealed or a *reference*.jsonl file in the lane: $sl" >&2; exit 6; }
+# ruling 103(d) (round 8, C21): no real output of steps 4 to 9 exists before the freeze (they all run after it); a
+# real grader return is any file directly under grader-returns/ (test returns live in grader-returns/test/)
+ro_=$(for p in train/selectB train/heldout train/leak_audit train/report/answer_level train/report/e5_route train/report/tune.json train/report/item22.json; do
+  [ -e "$p" ] && echo "$p"; done; find grader-returns -maxdepth 1 -type f 2>/dev/null)
+[ -z "$ro_" ] || { echo "freeze_list: a real output of steps 4 to 9 exists before the freeze (ruling 103(d)): $(echo $ro_)" >&2; exit 7; }
+# C28 (ii) (round 8, from ruling 103(c)): every saved mount record in r58c/mounts/ (every kept one too) still equals the
+# current entry of its container; the leak audit judges each against the list as frozen here. A difference stops the
+# freeze: report it; the coordinator rules on the earlier record, and no record is moved or deleted without that ruling.
+rk_=$(MSYS_NO_PATHCONV=1 node r58c/B/record_check.js r58c/mounts r58c/A/mounts-A.json r58c/B/mounts-B.json 2>&1) || {
+  echo "freeze_list: a saved mount record differs from its container's current entry (C28; stop and report to the coordinator, who rules on the earlier record; nothing is moved or deleted): $rk_" >&2; exit 8; }
+# C11 (round 8): the tuning checkpoints' graphs still match their manifest (heldout_inputs.js verify-export, as it is)
+TGP=r58c/B/frozen/tune-graphs-plan.json
+ve=$(node train/heldout_inputs.js verify-export --plan $TGP --export export --manifest "$4" 2>&1)
+echo "$ve" | grep -q '"ok": *true' || { echo "freeze_list: the tuning graphs do not match $4: $ve" >&2; exit 5; }
+c=$(docker image inspect -f '{{.Id}}' graphtest-kge:1 2>/dev/null | tr -d '\r'); g=$(docker image inspect -f '{{.Id}}' graphtest-kge-gpu:1 2>/dev/null | tr -d '\r')
+[ "$c" = "$CPU_ID" ] && [ "$g" = "$GPU_ID" ] || { echo "freeze_list: image IDs $c / $g are not $CPU_ID / $GPU_ID" >&2; exit 3; }
+# selected stage-A configs (train/stageA/top3.json): their meta.json and reps.pt
+SEL=$(node -e "const t=require('./train/stageA/top3.json');for(const a of Object.keys(t).sort())for(const c of t[a].top3)for(const f of ['meta.json','reps.pt'])console.log('train/stageA/'+a+'/'+c.config_id+'/'+f)")
+{
+  ls train/*.py train/*.js train/*.sh 2>/dev/null
+  echo train/HANDOFF-FORMAT.md train/stageA_configs.json train/stageB/plan.json train/stageA/top3.json train/stageA/refs.json | tr ' ' '\n'
+  echo "$SEL"
+  ls eval/evalcore.py eval/tune_tasks.jsonl eval/comparators/* export/*.py export/*.jsonl
+  for f in assemble_checks.py end_of_run.sh guard-prelaunch.js guard-stageB.sh guard-stageB-r92.sh memgate.sh END-ORDER.md grader-interface-v2.md rerun_unit.py rerun_compare.py \
+           start-guard-r98.sh kge-B1-inspect-20261114T190928Z.json kge-B1-inspect-20261115T073116Z.json; do echo orchestrator/$f; done  # round 8: ruling 101 (d), (e)
+  echo r58c/A/mounts.js r58c/B/frozen/tune-graphs-plan.json | tr ' ' '\n'  # C10; C11's plan file
+  cut -d' ' -f3- "$4"  # C11: every tuning graph file the manifest names
+  ls train/stageB/tables/*
+  echo r58c/write_audit_claims.py r58c/B/rerun/rerun_check.py r58c/B/e5_route_audit.py | tr ' ' '\n'  # e5_route_audit.py: ruling 97, step 9.2a
+  ls train/r58/tests/*.py r58c/tests/*.py fixes/tests/test_select_report.py parallel/tests/test_assemble_checks.sh r58c/B/tests/* r58c/B/*.sh
+  # end-order-changes-2 changes 1 and 8 (commands:F5, F6, rulings:F8): agent A's scripts and tests (precheck_handoff.py runs
+  # after the freeze), the end_of_run test, both mount lists and their reader, and every stage-B part file
+  ls r58c/A/*.py r58c/A/*.sh
+  find r58c/B/eor -maxdepth 1 -type f
+  echo r58c/B/mounts.js r58c/B/mounts-B.json r58c/A/mounts-A.json r58c/B/record_check.js | tr ' ' '\n'
+  find train/stageB/parts -type f ! -name '*.part'
+  echo "$1"; echo "$2"; echo "$3"; echo "$4"
+} | tr -d '\r' | grep -v '^$' | sort -u > /tmp/freeze-files.$$
+miss=$(while read -r f; do [ -f "$f" ] || echo "$f"; done < /tmp/freeze-files.$$)
+[ -z "$miss" ] || { echo "freeze_list: listed files missing: $miss" >&2; rm -f /tmp/freeze-files.$$; exit 4; }
+tr '\n' '\0' < /tmp/freeze-files.$$ | xargs -0 sha256sum | sed 's/ \*/  /'
+rm -f /tmp/freeze-files.$$
+echo "# test output"
+for d in train/report train/selectB-test; do [ -d "$d" ] && find "$d" -type f ! -name '*.part'; done | tr -d '\r' | sort | while read -r f; do sha256sum "$f" | sed 's/ \*/  /'; done
+echo "# outside"
+for f in "$GB/results/frozen/relational/95e990307da3b42b.json" "$GB/tasks/tasks.jsonl" "$GB"/arms/common/*.js "$PROTO"; do
+  [ -f "$f" ] || { echo "freeze_list: outside file $f missing" >&2; exit 4; }
+  sha256sum "$f" | sed 's/ \*/  /'
+done
+# C16 (round 8): every facts file of the plan's 70 held-out parents (step 7's --facts check reads them)
+HP=$(node -e "console.log(Object.keys(require('./train/stageB/plan.json').heldout.assignment).sort().join(' '))")
+[ -n "$HP" ] || { echo 'freeze_list: no held-out parents in train/stageB/plan.json' >&2; exit 4; }
+for P in $HP; do [ -d "$GB/facts/cache/$P" ] || { echo "freeze_list: facts of $P missing" >&2; exit 4; }; find "$GB/facts/cache/$P" -type f; done | tr -d '\r' | sort | while read -r f; do sha256sum "$f" | sed 's/ \*/  /'; done
+echo "# images"
+echo "$CPU_ID  graphtest-kge:1"
+echo "$GPU_ID  graphtest-kge-gpu:1"

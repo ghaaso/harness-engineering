@@ -1,0 +1,109 @@
+// Check (2): recompute two of section D's real-data examples (the "uses" and the "changes together" lookups)
+// from the frozen-commit facts with code written for this check, and compare pools, orders and token counts
+// with what the page carries (graph-v2/data/data.json -> examples). Reads only. Imports the shared tokenizer.
+// Run: cd EVID/page-v2/check && node - < recompute-d.js.txt   -> writes recompute-d.out.txt
+'use strict';
+const fs = require('fs'), path = require('path');
+const BUILD = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build';
+const SHA = 'a31924a3818f4ac94b695906d107c72c912792b2';
+const FD = path.join(BUILD, 'facts', 'cache', SHA);
+const tok = require(path.join(BUILD, 'arms', 'common', 'tokenizer.js')).countTokens;
+const PAGE = path.resolve(process.cwd(), '../../../../../graph-v2/data/data.json');
+const page = JSON.parse(fs.readFileSync(PAGE, 'utf8')).examples;
+const log = []; const say = s => { log.push(s); console.log(s); };
+
+const lines = f => fs.readFileSync(path.join(FD, f), 'utf8').split(/\r?\n/).filter(x => x.length).map(x => JSON.parse(x));
+const nodes = lines('nodes.jsonl'); const node = {}; nodes.forEach(n => { node[n.id] = n; });
+// edges: drop unknown endpoints and self loops; co_changed undirected; one edge per (kind, ends) keeping the max confidence/support
+const emap = {};
+for (const e of lines('edges.jsonl')) {
+  if (!node[e.src] || !node[e.dst] || e.src === e.dst) continue;
+  let a = e.src, b = e.dst; if (e.kind === 'co_changed' && b < a) [a, b] = [b, a];
+  const key = e.kind + '\u0000' + a + '\u0000' + b; const sup = (e.attrs && e.attrs.support) || 0; const c = e.confidence == null ? 1 : e.confidence;
+  const o = emap[key];
+  if (!o) emap[key] = { a, b, kind: e.kind, c, sup, ep: e.evidence_path, el: e.evidence_line };
+  else { o.c = Math.max(o.c, e.confidence || 0); o.sup = Math.max(o.sup, sup); }
+}
+const E = Object.values(emap);
+const fileOf = {}; nodes.forEach(n => { if ((n.kind === 'file' || n.kind === 'doc') && n.path) fileOf[n.path] = n.id; });
+const own = new Set(['invariant', 'invariant_group', 'doc_section', 'doc_id', 'missing_ref', 'ambiguous_ref', 'runtime', 'slice']);
+const up = id => own.has(node[id].kind) ? id : (node[id].path && fileOf[node[id].path]) || id;
+const codeFile = id => node[id] && node[id].kind === 'file';
+// file-collapsed undirected typed graph, no co_changed, no membership containment, no document relations
+const G = new Map(); const link = (x, y) => { if (x === y) return; (G.get(x) || G.set(x, new Set()).get(x)).add(y); (G.get(y) || G.set(y, new Set()).get(y)).add(x); };
+for (const e of E) { if (e.kind === 'co_changed') continue; if (e.kind === 'contains' && ['runtime', 'slice', 'invariant_group'].includes(node[e.a].kind)) continue; if (['cites', 'mentions', 'constrains'].includes(e.kind)) continue; link(up(e.a), up(e.b)); }
+const CO = new Map(); for (const e of E) if (e.kind === 'co_changed') for (const [x, y] of [[e.a, e.b], [e.b, e.a]]) (CO.get(x) || CO.set(x, new Map()).get(x)).set(y, { conf: e.c, support: e.sup });
+// rooted PageRank by power iteration over an index; dangling mass returns to the root
+function rootedPR(root, alpha, iters) {
+  const ids = [...G.keys()]; const ix = new Map(ids.map((x, i) => [x, i])); const nb = ids.map(x => [...G.get(x)].map(y => ix.get(y)));
+  let p = new Float64Array(ids.length); const r = ix.get(root); p[r] = 1;
+  for (let t = 0; t < iters; t++) { const q = new Float64Array(ids.length); q[r] += alpha;
+    for (let i = 0; i < ids.length; i++) { if (!p[i]) continue; if (!nb[i].length) { q[r] += (1 - alpha) * p[i]; continue; } const s = (1 - alpha) * p[i] / nb[i].length; for (const j of nb[i]) q[j] += s; }
+    p = q; }
+  const out = new Map(); ids.forEach((x, i) => { if (p[i]) out.set(x, p[i]); }); return out;
+}
+function hops(root, max) { const h = new Map([[root, 0]]); let f = [root]; for (let d = 1; d <= max; d++) { const n = []; f.forEach(u => (G.get(u) || []).forEach(v => { if (!h.has(v)) { h.set(v, d); n.push(v); } })); f = n; } return h; }
+const rank = (ids, sc) => { const s = [...ids].sort((x, y) => (sc(y) - sc(x)) || (x < y ? -1 : x > y ? 1 : 0)); return new Map(s.map((x, i) => [x, i + 1])); };
+const nm = id => { const h = id.indexOf('#'); return (id.startsWith('sym:') || id.startsWith('const:')) && h > 0 ? id.slice(h + 1) : node[id].kind + ':' + node[id].name; };
+function render(seedSet, it, seedLabel, seedFile) {
+  const rel = [];
+  for (const e of E) { if (['co_changed', 'contains', 'defines', 'cites', 'mentions', 'constrains'].includes(e.kind)) continue;
+    if (seedSet.has(e.a) && up(e.b) === it.id) rel.push({ back: false, kind: e.kind, other: e.b, mine: e.a, ep: e.ep, el: e.el });
+    else if (seedSet.has(e.b) && up(e.a) === it.id) rel.push({ back: true, kind: e.kind, other: e.a, mine: e.b, ep: e.ep, el: e.el }); }
+  rel.sort((x, y) => (x.ep || '').localeCompare(y.ep || '') || (x.el || 0) - (y.el || 0));
+  const top = rel.slice(0, 3);
+  let tree = node[it.id].path + '\n';
+  top.forEach(l => { tree += '  ' + (l.back ? '<-' : '') + l.kind + ' ' + nm(l.other) + (l.ep ? ' @' + l.ep.split('/').pop() + ':' + l.el : '') + '\n'; });
+  if (rel.length > 3) tree += '  +' + (rel.length - 3) + ' more\n';
+  if (it.co) tree += '  changed together in ' + it.co.support + ' commits\n';
+  if (!rel.length && !it.co && it.via) tree += '  via ' + node[it.via].path + '\n';
+  let tri = '';
+  top.forEach(l => { tri += (l.back ? l.other + ' ' + l.kind + ' ' + l.mine : l.mine + ' ' + l.kind + ' ' + l.other) + (l.ep ? ' @' + l.ep + ':' + l.el : '') + '\n'; });
+  if (it.co) tri += (seedFile || seedLabel) + ' co_changed ' + it.id + ' support=' + it.co.support + '\n';
+  if (!rel.length && !it.co && it.via) tri += seedLabel + ' reaches ' + it.via + '\n' + it.via + ' reaches ' + it.id + '\n';
+  return { tree_tok: tok(tree), triples_tok: tok(tri), n_rel: rel.length };
+}
+function lookup(seedFile, seedSet, seedLabel) {
+  const h = hops(seedFile, 2); const co = CO.get(seedFile) || new Map();
+  const pool = new Set([...h].filter(([v, d]) => d >= 1 && codeFile(v)).map(([v]) => v)); [...co.keys()].filter(codeFile).forEach(v => pool.add(v));
+  const pr = rootedPR(seedFile, 0.15, 25); const ids = [...pool];
+  const rP = rank(ids, x => pr.get(x) || 0); const coIds = ids.filter(x => co.has(x)); const rC = rank(coIds, x => co.get(x).conf + co.get(x).support * 1e-6);
+  const fuse = x => 1 / (60 + rP.get(x)) + (rC.has(x) ? 1 / (60 + rC.get(x)) : 0); const rF = rank(ids, fuse);
+  const items = ids.map(id => { let via = null; if (h.get(id) === 2) for (const u of G.get(id) || []) if (h.get(u) === 1 && codeFile(u)) { via = u; break; }
+    const it = { id, hop: h.has(id) ? h.get(id) : null, co: co.get(id) || null, via, ppr_rank: rP.get(id), co_rank: rC.get(id) || null, rank: rF.get(id), file_tokens: node[id].tokens || 0 };
+    return Object.assign(it, render(seedSet, it, seedLabel, seedFile)); }).sort((x, y) => x.rank - y.rank);
+  return { items, pool: { n: items.length, hop1: items.filter(x => x.hop === 1).length, hop2: items.filter(x => x.hop === 2).length, co_only: items.filter(x => x.hop == null).length, co_any: coIds.length,
+    tree_tokens_all: items.reduce((s, x) => s + x.tree_tok, 0), file_tokens_all: items.reduce((s, x) => s + x.file_tokens, 0) } };
+}
+function entry(name) { const m = nodes.filter(n => n.name === name && n.path); const t = m.slice(0, 8).map(n => n.path + ':' + (n.line_start || 1) + ' ' + n.kind + ' ' + (n.signature ? n.signature.split('\n')[0].slice(0, 100) : n.name)).join('\n') + '\n'; return { matches: m.length, tokens: tok(t) }; }
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const R = mulberry32(20261113); const draw = a => a[Math.floor(R() * a.length)];
+function compare(name, mine, theirs) {
+  const pk = ['n', 'hop1', 'hop2', 'co_only', 'co_any', 'tree_tokens_all', 'file_tokens_all'];
+  pk.forEach(k => say(name + ' pool.' + k + ': mine ' + mine.pool[k] + ' page ' + theirs.pool[k] + (mine.pool[k] === theirs.pool[k] ? ' OK' : ' DIFF')));
+  const shown = theirs.items; let bad = 0;
+  shown.forEach((t, i) => { const m = mine.items[i]; const f = ['id', 'hop', 'ppr_rank', 'co_rank', 'rank', 'file_tokens', 'tree_tok', 'triples_tok'];
+    const d = f.filter(k => JSON.stringify(m[k]) !== JSON.stringify(t[k])); if (d.length) { bad++; if (bad <= 5) say('  item ' + (i + 1) + ' differs in ' + d.map(k => k + ' mine=' + m[k] + ' page=' + t[k]).join(', ')); } });
+  say(name + ': ' + shown.length + ' shown items compared in order (id, hop, PageRank rank, changed-together rank, fused rank, file, tree and triple tokens): ' + (bad ? bad + ' differ' : 'all equal'));
+  const sum = (a, k) => a.reduce((s, x) => s + x[k], 0);
+  say(name + ': top-60 tree tokens mine ' + sum(mine.items.slice(0, 60), 'tree_tok') + ' page ' + sum(shown, 'tree_tok') + '; triples mine ' + sum(mine.items.slice(0, 60), 'triples_tok') + ' page ' + sum(shown, 'triples_tok'));
+}
+// draw 1: production functions/methods used from 3+ other files whose file has changed-together history
+const users = new Map();
+for (const e of E) if (['calls', 'renders', 'passes_callable', 'depends_injects', 'uses_constant', 'imports'].includes(e.kind)) { const t = node[e.b]; if (t.kind !== 'function' && t.kind !== 'method') continue; const sp = node[e.a].path; if (!sp || sp === t.path) continue; (users.get(e.b) || users.set(e.b, new Set()).get(e.b)).add(sp); }
+const c1 = [...users.keys()].filter(id => { const n = node[id]; return !n.is_test && ['backend', 'web', 'mobile'].includes(n.runtime) && users.get(id).size >= 3 && fileOf[n.path] && CO.has(fileOf[n.path]); }).sort();
+const d1 = draw(c1); say('draw 1: ' + c1.length + ' candidates (page ' + page.examples[0].candidates + '), drawn ' + d1 + ' (page ' + page.examples[0].def.id + ')');
+const ex1 = lookup(fileOf[node[d1].path], new Set([d1]), d1); const en1 = entry(node[d1].name);
+say('entry 1: matches ' + en1.matches + ' tokens ' + en1.tokens + ' (page ' + page.examples[0].entry.matches + ', ' + page.examples[0].entry.tokens + ')');
+compare('uses', ex1, page.examples[0]);
+// draw 2 is the rules example (not recomputed here), drawn to keep the sequence
+{ const inFile = new Set(); for (const e of E) if (e.kind === 'constrains' && node[e.a].kind === 'invariant') { const t = node[e.b]; if (!t.path || !fileOf[t.path]) continue; const f = fileOf[t.path]; if (!codeFile(f) || node[f].is_test) continue; inFile.add(f); }
+  const c2 = [...inFile].sort(); const d2 = draw(c2); say('draw 2: ' + c2.length + ' candidates (page ' + page.examples[1].candidates + '), drawn ' + d2 + ' (page ' + page.examples[1].seed.id + ')'); }
+// draw 3: production code files with 3+ changed-together code neighbours
+const c3 = nodes.filter(n => n.kind === 'file' && !n.is_test && ['backend', 'web', 'mobile'].includes(n.runtime) && CO.has(n.id) && [...CO.get(n.id).keys()].filter(codeFile).length >= 3).map(n => n.id).sort();
+const d3 = draw(c3); say('draw 3: ' + c3.length + ' candidates (page ' + page.examples[2].candidates + '), drawn ' + d3 + ' (page ' + page.examples[2].seed.id + ')');
+const ex3 = lookup(d3, new Set(nodes.filter(n => n.path === node[d3].path).map(n => n.id)), d3); const en3 = entry(node[d3].name);
+say('entry 3: matches ' + en3.matches + ' tokens ' + en3.tokens + ' (page ' + page.examples[2].entry.matches + ', ' + page.examples[2].entry.tokens + ')');
+compare('cochange', ex3, page.examples[2]);
+say('collapsed graph nodes ' + G.size + ' (page ' + page.examples[0].graph.collapsed_nodes + ')');
+fs.writeFileSync('recompute-d.out.txt', log.join('\n') + '\n');

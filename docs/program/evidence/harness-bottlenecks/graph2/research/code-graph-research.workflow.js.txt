@@ -1,0 +1,153 @@
+export const meta = {
+  name: 'code-graph-research',
+  description: 'Research the best way to build a code-and-document graph for coding agents and the fairest way to test it against a relational store, then verify the findings',
+  phases: [
+    { title: 'Research', detail: 'six lanes: agent code graphs, engines, algorithms and hops, schema for this repo, scoring protocol, production systems' },
+    { title: 'Verify', detail: 'three verifiers re-check the claims that would steer the design' },
+    { title: 'Critic', detail: 'what is missing, what conflicts, is it enough to design from' },
+  ],
+}
+
+const B = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const HEAD = `First read ${B}/brief.md in full: it gives the question, your stance, the project, the machine and the rules. Your lane folder is ${B}/research/`
+
+const RESEARCH_SCHEMA = {
+  type: 'object',
+  properties: {
+    lane: { type: 'string' },
+    findings: { type: 'array', items: { type: 'object', properties: {
+      claim: { type: 'string' },
+      detail: { type: 'string' },
+      source: { type: 'string' },
+      source_date: { type: 'string' },
+      fetched: { type: 'boolean' },
+      favours: { type: 'string', enum: ['graph', 'relational', 'neither', 'depends'] },
+      confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+    }, required: ['claim', 'detail', 'source', 'fetched', 'favours', 'confidence'] } },
+    tables: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, rows: { type: 'array', items: { type: 'string' } } }, required: ['title', 'rows'] } },
+    recommendations_for_the_build: { type: 'array', items: { type: 'string' } },
+    recommendations_for_the_test: { type: 'array', items: { type: 'string' } },
+    open_questions: { type: 'array', items: { type: 'string' } },
+    not_covered: { type: 'array', items: { type: 'string' } },
+    report_path: { type: 'string' },
+  },
+  required: ['lane', 'findings', 'recommendations_for_the_build', 'recommendations_for_the_test', 'open_questions', 'not_covered', 'report_path'],
+}
+
+const VERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    checked: { type: 'array', items: { type: 'object', properties: {
+      lane: { type: 'string' },
+      claim: { type: 'string' },
+      verdict: { type: 'string', enum: ['confirmed', 'partly', 'not confirmed', 'contradicted', 'could not check'] },
+      what_you_did: { type: 'string' },
+      correction: { type: 'string' },
+    }, required: ['lane', 'claim', 'verdict', 'what_you_did'] } },
+    biggest_errors: { type: 'array', items: { type: 'string' } },
+    lean_or_bias_found: { type: 'array', items: { type: 'string' } },
+    report_path: { type: 'string' },
+  },
+  required: ['checked', 'biggest_errors', 'lean_or_bias_found', 'report_path'],
+}
+
+const CRITIC_SCHEMA = {
+  type: 'object',
+  properties: {
+    missing: { type: 'array', items: { type: 'object', properties: { what: { type: 'string' }, why_it_matters: { type: 'string' }, how_to_fill: { type: 'string' } }, required: ['what', 'why_it_matters', 'how_to_fill'] } },
+    conflicts_between_lanes: { type: 'array', items: { type: 'string' } },
+    design_implications: { type: 'array', items: { type: 'string' } },
+    fairness_risks_in_the_planned_test: { type: 'array', items: { type: 'string' } },
+    enough_to_design_from: { type: 'string' },
+  },
+  required: ['missing', 'conflicts_between_lanes', 'design_implications', 'fairness_risks_in_the_planned_test', 'enough_to_design_from'],
+}
+
+const LANES = [
+  { key: 'agent-graphs', model: 'sonnet', effort: 'high', prompt: `${HEAD}agent-graphs
+Lane: code graphs built for coding agents. Find the strongest existing ways to build and use a graph of a codebase so that an agent spends fewer tokens or finds the right code more often.
+Cover at least: repository maps ranked by a graph algorithm (for example the tree-sitter tag graph with PageRank used by one well-known open-source coding assistant); research systems that give agents a repository graph (RepoGraph, CodexGraph, LocAgent, CoSIL, OrcaLoca, AutoCodeRover, Agentless as the non-graph comparison, GraphRAG-style approaches for code, and anything from 2025 and 2026 on SWE-bench-style localisation); language-server and symbol-index based tools exposed to agents (LSP tools, SCIP, stack graphs, semantic code search servers, MCP servers that expose a code graph or a knowledge graph of a repo); and what the builders of major coding agents have said about indexes against search on demand.
+For each: what the nodes and edges are, how they are extracted (parser, compiler, language server, model), what algorithm picks what to show the model, what the model actually receives (paths, signatures, snippets, summaries), how many hops, and every measured result you can find: tokens, cost, steps, localisation accuracy, task success, against which baseline, on which benchmark, with which model. Record negative and null results and criticisms too. Say which results are on small repositories (hundreds of files) like this one.
+End with the design choices that the evidence most supports for a 500-file three-runtime monorepo, and those it argues against.` },
+
+  { key: 'engines', model: 'sonnet', effort: 'high', prompt: `${HEAD}engines
+Lane: graph storage and query engines that could run on one Windows 11 PC for a graph of 10^3 to 10^6 nodes, and how they compare with an established relational engine.
+Build a table of candidates with, for each: what it is (embedded library, local server, extension), its state in November 2026 (maintained, archived, forked, licence), how it installs on Windows and how big the download and memory footprint are, its query language (Cypher, GQL, SQL/PGQ, Datalog, Gremlin, API), its built-in graph algorithms (variable-length paths, shortest path, PageRank, community detection, centrality), its storage layout (index-free adjacency, CSR, adjacency lists, relational tables), and bindings for Node and Python.
+Candidates to check, plus any you find: Kuzu and its successors or forks; FalkorDB and its embedded form; Memgraph; Neo4j Community; DuckDB with the property-graph (SQL/PGQ) extension; SQLite with recursive queries, closure tables or graph extensions; PostgreSQL with Apache AGE and SQL/PGQ support (the project already uses PostgreSQL in production); CozoDB; SurrealDB; ArcadeDB; TypeDB; Oxigraph or another RDF store; in-process libraries (graphology for JavaScript; NetworkX, igraph, rustworkx for Python).
+Then the evidence on graph against relational: published benchmarks and studies on traversal speed, storage size and query expressiveness (LDBC, studies asking whether specialised graph databases are needed, vendor and independent comparisons), with the graph sizes and hop depths where each wins. Be exact about what is the same and what differs: given identical nodes and edges and the same query, do the two return the same answer; where does a graph engine make a query possible or cheap that is impractical in SQL (variable-length paths with filters, all shortest paths, built-in ranking algorithms); what does the storage size look like for the same data.
+End with: the two or three engines that would be the fairest "established graph engine" contenders for this use on this machine, what installing each would involve (name, source, size), and the strongest relational design to compare them against.` },
+
+  { key: 'algorithms', model: 'sonnet', effort: 'high', prompt: `${HEAD}algorithms
+Lane: what to compute on the graph. The owner's point is that the type of graph, the algorithms and the number of hops decide the value of the answer.
+Research, with measured evidence where it exists:
+1. Change-impact analysis on dependency and call graphs: precision and recall of impact sets against hop depth; how fast k-hop neighbourhoods grow; techniques that keep impact sets small and accurate (edge-type filtering, direction, hub damping or degree normalisation, transitive reduction, dominators, slicing).
+2. Ranking a neighbourhood for a token budget: personalised PageRank and random walk with restart seeded on the files or symbols in play, edge weights by type, recency and co-change weights, betweenness or centrality as a hub signal, and packing ranked items into a fixed token budget.
+3. History as edges: co-change mining (association rules, logical coupling), how much history it needs, and results on small repositories of a few hundred commits.
+4. Test selection from a graph: regression test selection and test-impact analysis by static dependencies, with their measured safety and precision.
+5. Summarising a graph for a reader: community detection (Louvain, Leiden) and module summaries, skeleton or signature views, and which output forms cost the fewest tokens for the same usefulness to a language model (paths only, path plus signature, snippet, summary).
+6. Hop count: evidence on the best depth for code retrieval and for impact analysis, and why (precision collapses, hubs, cost).
+7. Keeping a graph fresh: incremental update against full rebuild, and validity by content hash.
+End with a concrete proposal: for the questions "what could break if I change this", "what do I need to read to do this task" and "where is the thing that does X", which algorithm, which edge types, which hop limit, which ranking and which output form the evidence supports, and what should be treated as a parameter to sweep in a test.` },
+
+  { key: 'production', model: 'sonnet', effort: 'high', prompt: `${HEAD}production
+Lane: how production code-intelligence and code-analysis systems store and query their code graphs, and why they chose that store. This bears directly on graph against relational.
+Cover: CodeQL (relational database with a Datalog-style language), Joern and the code property graph (a graph store), Glean (a fact store with its own query language), Kythe, SCIP and the Sourcegraph indexers, stack graphs, Google-style cross-reference indexes, IDE indexes (JetBrains, language servers), dependency-graph tools (Bazel query, Nx and Turborepo project graphs, import-linter, dependency-cruiser, madge, pydeps), and build-system test selection. For each: the data model, the store, the query language, the typical queries, and any stated reason for choosing a graph store or a relational or fact store.
+Also cover fair-comparison method: how careful published comparisons of graph and relational systems are designed (same data, tuned on both sides, indexes, warm and cold runs, query classes by hop depth), and the usual ways such comparisons are unfair.
+End with what this implies for a small monorepo: which data model is the common ground, where a property graph adds real value over tables, and what a strong relational design for code relations looks like (so the comparison is against a good relational design, not a weak one).` },
+
+  { key: 'schema', model: 'opus', effort: 'high', prompt: `${HEAD}schema
+Lane: the graph catered to THIS repo. Read the repo at ${REPO} (read-only): CLAUDE.md, docs/CODE-MAP.md, ARCHITECTURE.md, backend/pyproject.toml (import-linter contracts), backend/app/main.py, a few feature slices end to end, technician-app/src/lib (api, jobsApi, outbox, outboxSync), src/features and src/shared, the Alembic versions folder, and docs/. A first naive graph and its accuracy check are in C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph/ (build.js.txt, verify/check.txt): read check.txt for the list of connection kinds that graph could not see.
+Propose a typed property-graph schema for this repo, measured not guessed:
+- Node types (file, symbol at function, class and method level, route, client call site, table and column, migration, settings key, outbox kind, test, doc section, invariant, slice, runtime, commit) with a count of each from quick scripts, and the properties worth storing (path, line range, signature, slice, runtime, size in tokens, churn).
+- Edge types (imports, calls, defines, inherits, depends-injects, registers-route, calls-url, reads-table and writes-table, foreign key, migration order, reads-setting, enqueues and handles outbox kind, tests, cites, constrains for an invariant, co-changed, same-capability across runtimes) with counts, and for each the extraction method using only tools already on the machine (the TypeScript compiler API in technician-app/node_modules/typescript, Python's ast module through the interpreter named in the brief, Node for the rest, parsers present in the root node_modules) and how reliable that extraction would be. Try the hard ones on a small sample and report what you measured: Python function-level calls through ast, TypeScript calls through the compiler API, client URL to route matching.
+- The repo-specific questions the graph should answer, each as a traversal pattern with its hop count, for example a phone screen to the table it ends up writing (screen -> api client -> URL -> route -> service -> repository -> table), "what could break if this service function changes", "which invariants constrain this file", "which tests reach this function", "what is the other half of this rule on the client". Show where hop count matters here and where hubs (config, db, api clients) would flood an answer, and how to damp them.
+- Documents: the sessions in this repo are mostly document work, so say what a document graph should hold (sections, identifiers such as decision and finding ids, cross-references, citations of files, supersedes links) and measure the corpus under docs/ including untracked files.
+- Anything in this repo that argues against a graph (dynamic wiring, string dispatch, small size).
+End with the schema as tables, the extraction plan in order of value for effort, and the build cost in time for a full rebuild.` },
+
+  { key: 'scoring', model: 'opus', effort: 'high', prompt: `${HEAD}scoring
+Lane: how to score the answers and the value they carry, fairly. The owner asked: "are you properly scoring the two answers and the value they carry?" Design the test protocol and measure what ground truth this repo can supply.
+1. Measure the ground truth available in ${REPO} (read-only): from git history on main (368 commits), the distribution of files per commit, how many commits change two or more code files, how many cross runtimes (backend with web or mobile), how many change code together with tests, how many are fixes; the documented defect chains in docs/lifecycle-audit-followups-2026-07.md, docs/HANDOFF-2026-07-28-open-work.md and the invariants in CLAUDE.md (each names files that must change together or a connection that was missed); and the recorded sessions (see the brief: for this repo they are document work; say what tasks they can still supply, for example document lookups, and count them from the transcripts under C:/Users/User/.claude/projects/ in the folders whose names contain "EMS-workshop1").
+2. Design the task sets, sealed before anything is built: for each, the question put to the store, the reference answer and where it comes from, the size of the set, and the leakage controls (build the graph at the parent commit, never use the test commit's own co-change, split history in time).
+3. Define the arms so the comparison is fair on both sides: (a) what sessions do today (text search and reading); (b) a relational store with a good relational design and the queries natural to it; (c) the same typed graph in a real graph engine with graph-native queries and algorithms; (d) the same retrieval design run in both engines, to separate the effect of the design from the effect of the engine. Say what "tuned on both sides" must mean.
+4. Define the metrics: recall and precision of the needed files and symbols at a fixed token budget; tokens returned; number of lookups a model would need; rank quality; a value-per-token measure; time and storage as secondary. Define how hop count (1 to 5), edge-type sets, ranking and granularity are swept, and how the best setting is chosen without fitting to the test set (a tuning split and a held-out split).
+5. Statistics: paired comparisons, intervals, how many tasks are needed to see a difference of a given size, and what result would count as the graph winning, the relational store winning, or no difference.
+6. Read the validation contract the other project froze and never ran: search C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/ (sweep-cards.txt and sweep.json) for "A6-10" and the cards near it, and carry its rules over (sealed references, equal budgets, blind scoring, fewer tokens with a missing prerequisite is not a win).
+7. Threats to validity, stated plainly, including what a retrieval test cannot show about real sessions.
+End with the protocol as numbered steps that a script could run at zero model tokens, and the part, if any, that needs a model in the loop.` },
+]
+
+phase('Research')
+const research = await parallel(LANES.map(l => () =>
+  agent(l.prompt, { label: `research: ${l.key}`, phase: 'Research', model: l.model, effort: l.effort, agentType: 'general-purpose', schema: RESEARCH_SCHEMA })
+    .then(r => r ? { key: l.key, ...r } : null)))
+const done = research.filter(Boolean)
+log(`research lanes returned: ${done.map(r => r.key + ' (' + r.findings.length + ' findings)').join(', ')}`)
+if (done.length < LANES.length) log(`MISSING lanes: ${LANES.map(l => l.key).filter(k => !done.find(r => r.key === k)).join(', ')}`)
+
+const VERIFIERS = [
+  { key: 'verify-agents-algorithms', lanes: ['agent-graphs', 'algorithms'], how: 'Re-fetch the cited sources yourself and read the passages. Check every number against its source: the benchmark, the baseline, the model, the repository size. Look for results the lane left out that point the other way.' },
+  { key: 'verify-engines-production', lanes: ['engines', 'production'], how: 'Re-fetch the cited sources yourself. Check each engine\'s state in November 2026 (maintained, archived, forked), its Windows install path and size, and each benchmark claim with its graph size and hop depth. Check the statements about which production systems use which store and why against primary sources.' },
+  { key: 'verify-schema-scoring', lanes: ['schema', 'scoring'], how: `These two lanes measured the repo at ${REPO} (read-only) and designed the test. Re-run or re-derive their counts with your own scripts. Then attack the protocol as a refuter for BOTH sides: find every way it could be unfair to the graph (weak graph, wrong hop limit, ground truth that only rewards files changed together) and every way it could be unfair to the relational store or to plain search (strawman baseline, tuning only one side, leakage from history).` },
+]
+
+phase('Verify')
+const checks = await parallel(VERIFIERS.map(v => () => {
+  const mine = done.filter(r => v.lanes.includes(r.key))
+  return agent(`First read ${B}/brief.md in full. Your lane folder is ${B}/research/${v.key}
+You are a verifier. Two research lanes reported the findings below; their full reports are at ${mine.map(r => r.report_path).join(' and ')} (read them). Choose the claims that would most steer how the graph is built or how the test is run (at least ten per lane, and every claim marked high confidence that carries a number) and check each one. ${v.how}
+Default to "not confirmed" when you cannot reach the source or the passage does not say what the claim says. Note any lean in the lane's selection of evidence, in either direction.
+Findings as reported:
+${JSON.stringify(mine.map(r => ({ lane: r.key, findings: r.findings, recommendations_for_the_build: r.recommendations_for_the_build, recommendations_for_the_test: r.recommendations_for_the_test })), null, 1).slice(0, 60000)}`,
+    { label: v.key, phase: 'Verify', model: 'opus', effort: 'high', agentType: 'general-purpose', schema: VERIFY_SCHEMA })
+    .then(r => r ? { key: v.key, ...r } : null)
+}))
+
+phase('Critic')
+const critic = await agent(`First read ${B}/brief.md in full. Your lane folder is ${B}/research/critic
+You are the completeness critic for a research round on how to build a code-and-document graph for coding agents and how to test it fairly against a relational store. Six lane reports are in ${B}/research/<lane>/report.md for lanes: ${done.map(r => r.key).join(', ')}. Three verifier reports are in ${B}/research/verify-*/report.md. Read all of them.
+Say: what is missing (a system, an algorithm, an engine, a kind of edge, a 2025 or 2026 development, an evaluation method) and how to fill it; where lanes contradict each other; what the research implies for the design (the graph's schema, the algorithms, hop limits as a swept parameter, the engines to compare, the relational design to compare against); the fairness risks that remain in the planned test, for either side; and whether this is enough to design from or what one more round must cover. Be specific and brief. Do not restate the lanes.`,
+  { label: 'critic: completeness', phase: 'Critic', model: 'opus', effort: 'high', agentType: 'general-purpose', schema: CRITIC_SCHEMA })
+
+return { research: done, checks: checks.filter(Boolean), critic }

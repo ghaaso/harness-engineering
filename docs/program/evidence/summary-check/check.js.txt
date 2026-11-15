@@ -1,0 +1,912 @@
+// check.js.txt — hand-over fidelity of the compaction summaries on record (FixFlow and the clinic testbed).
+// Record: docs/program/SUMMARY-CHECK-2026-11.md (part 1 is the scoring this script implements).
+// Makes no model calls. Reads main-session transcripts of the two project groups only.
+//
+//   node - index <cacheDir>            < check.js.txt   find summaries, pull out claims, scan what each session saw -> <cacheDir>/index.json
+//   node - check <cacheDir>            < check.js.txt   git + gh lookups, verdicts -> <cacheDir>/checked.json and the hand-read work files
+//   node - table <cacheDir> [outDir]   < check.js.txt   counts, rates, ranges -> check-table.txt, check.json (reads <outDir>/audit.json if present)
+//
+// <cacheDir> holds summary sentences (the context of each claim, for the hand read). Keep it OUTSIDE the repository
+// and delete it when done. Nothing written to [outDir] holds a sentence from a summary or a message.
+//
+// The reader reuses the split replay's index rules (docs/program/evidence/split-replay/replay.js.txt): a compact
+// boundary marker with its size, then the user line flagged as a compaction summary; request blobs and file-history
+// lines skipped; sidechain lines left out; a copied line (its sessionId is not the file's) loses to the original.
+'use strict';
+const fs = require('fs'), path = require('path'), os = require('os'), readline = require('readline'), crypto = require('crypto');
+const { spawnSync } = require('child_process');
+const [stage, a1, a2] = process.argv.slice(2);
+const ROOT = process.env.CLAUDE_PROJECTS || path.join(os.homedir(), '.claude', 'projects');
+const REPOS = { fixflow: process.env.FIXFLOW_REPO || 'C:/Users/User/Documents/projects/EMS_workshop1', clinic: process.env.CLINIC_REPO || 'C:/Bilal_Migration/User/Downloads/20_PROJECTS/24_Clinic_Workshop' };
+const REPLAY_CUT = '2026-11-14T05:12';      // the split replay's cut (calls made up to 05:12 UTC on 14 November)
+
+// ---------- shared ----------
+const groupOf = (store) => /EMS-workshop1|23-FixFlow/.test(store) ? 'fixflow' : /24-Clinic-Workshop/.test(store) ? 'clinic' : 'other';
+const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
+const EXT = 'py|pyi|ts|tsx|js|jsx|mjs|cjs|json|jsonl|md|mdx|yml|yaml|toml|sh|ps1|bat|cmd|txt|html|htm|css|scss|sql|ini|cfg|conf|lock|gradle|kts|kt|java|xml|png|jpg|jpeg|svg|pdf|csv|tsv|env|example|log|apk|aab|zip|gz|tgz|db|sqlite|sqlite3|properties|ipynb|docx|xlsx|pptx|mp4|webp|gif|ico|wav|mp3|m4a|patch|diff|rs|go|rb|php|mako|j2|snap|map|plist|pem|dump|bak|tmp|out|err';
+const EXT_RE = new RegExp('\\.(?:' + EXT + ')$', 'i');
+const HOME = os.homedir().replace(/[\\/]+/g, '/').toLowerCase().replace(/^([a-z]):\//, '/$1/');
+// one spelling per path: forward slashes, lower case, "C:/x" and "/c/x" the same, "~" expanded
+const normPath = (s) => s.replace(/[\\/]+/g, '/').replace(/^\.\//, '').toLowerCase().replace(/^~\//, HOME + '/').replace(/^([a-z]):\//, '/$1/');
+const toFs = (p) => p.replace(/^\/([a-z])\//, '$1:/');
+const baseKey = (p) => p.slice(p.lastIndexOf('/') + 1).replace(/^\.+/, '');
+const numNorm = (s) => s.replace(/,/g, '');
+const collectStrings = (v, acc) => { if (typeof v === 'string') acc.push(v); else if (Array.isArray(v)) for (const x of v) collectStrings(x, acc); else if (v && typeof v === 'object') for (const k in v) collectStrings(v[k], acc); return acc; };
+
+// ---------- claim patterns (scoring 1.4) ----------
+const SHA = '([0-9a-f]{7,40})';
+const REF = '((?:origin\\/)?[A-Za-z0-9._\\-]+(?:\\/[A-Za-z0-9._\\-]+)+|main|master)';
+const RX = {
+  hex: /(?<![0-9A-Za-z_\-\/\\.#:=])([0-9a-f]{7,40})(?![0-9A-Za-z_\-\/\\]|\.[A-Za-z0-9])/g,
+  headA: new RegExp('(?<![\\w\\/.\\-])' + REF + '\\s*[,(]?\\s*(?:(?:is|now|is now|sits|stands)\\s+)?(?:at|@)\\s+' + SHA + '(?![0-9A-Za-z])', 'g'),
+  headB: new RegExp('(?<![\\w\\/.\\-])' + REF + '\\s*\\(\\s*' + SHA + '\\s*[),]', 'g'),
+  headC: new RegExp('#(\\d{1,4})\\b[^.;\\n#]{0,24}?\\b(?:head|HEAD|tip|at|@)\\s*(?:is|=|:|now)?\\s*' + SHA + '(?![0-9A-Za-z])', 'g'),
+  headD: new RegExp('\\b(?:head|HEAD|tip)\\s*(?:SHA\\s*|sha\\s*)?(?:is|=|:|at|now at|now)?\\s*' + SHA + '(?![0-9A-Za-z])', 'g'),
+  // a state word counts only when it sits right beside the number (repair R4 after the first count)
+  prA: /(?<![\w&\/])#(\d{1,4})\b\)?\s*(?:\(|,|:|—|–|-)?\s*(?:(?:is|was|are|now|still|already|has been|got|stays|remains)\s+){0,2}(merged|open|closed|draft)(?![\w-])/gi,
+  prB: /(?<![\w-])(merged|open|closed|draft)\s+(?:(?:draft|PR|PRs|pull request)\s+){0,2}#(\d{1,4})\b/gi,
+  prGuard: /\b(not|never|no longer|isn't|wasn't|aren't|unmerged|until|once|after|when|whenever|if|unless|will|would|should|must|may|might|can|could|to be|before|awaits?|awaiting|pending|waits?|waiting|needs?|needed|ready to|then|whether|either|cannot|can't|replacing|wording)\b/i,
+  mergedAs: new RegExp('(?<![\\w&\\/])#(\\d{1,4})\\b\\)?\\s*(?:\\(|,|:|—|–|-)?\\s*(?:(?:is|was|got|already|now)\\s+){0,2}(?:squash-)?merged\\s+(?:(?:to|into|on)\\s+main\\s+)?as\\s+(?:commit\\s+)?' + SHA + '(?![0-9A-Za-z])', 'gi'),
+  narr: /\b(reviews?|reviewed|verdict|PASS|FAIL|pass|second-pass|first-pass|round|earlier|originally|previously|formerly|old|initial|initially|was|were|had been|then|before|from|base|based|cut|branched|off|rebased|onto|merge-base|parent|forked|since|after|when|merge|merged|merging|rehears\w*|answers?|bound)\b/,
+  t1: /(?<![\w.,\/=-])(\d{1,3}(?:,\d{3})+|\d+)\s+(passed|failed|skipped|passing|failing)\b(?!\s*[=:]\s*\d)/gi,
+  t2: /(?<![\w.,\/=-])(\d+)\s*\/\s*(\d+)\s+(?:tests?\s+)?(passing|passed|pass|green)\b/gi,
+  t3: /(?<![\w.,\/=-])(\d{1,3}(?:,\d{3})+|\d+)\s+(?:[A-Za-z\-]+\s+)?tests?\s+(pass|passed|passing|green)\b/gi,
+  tObsA: /(?:^|[\s#])(pass|fail|skipped)(?:ed)?\s+(\d+)\b/gim,
+  tObsB: /\b(passed|failed|skipped)\s*[:=]\s*(\d+)\b/gi,
+  tCtx: /\b(tests?|checks?|gates?|suite|pytest|jest|vitest|unittest|specs?|CI)\b/i,
+  instr: /\b(must|should|needs? to|has to|have to|requires?|required|expects?|until|never|to pass|ensure|only if|unless)\b[^.;]{0,40}$/i,
+  cnt: /(?<![\w.,\/#=-])(\d{1,3}(?:,\d{3})+|\d+)\s+(files?|rows?)\b/gi,
+  cntLabel: /\b(item|step|phase|part|section|wave|round|stage|task|commit|check|row|table|figure|page|lines?)\s$/i,
+  barePath: new RegExp('(?<![\\w`\\\\/.\\-@~])((?:[A-Za-z]:[\\\\/])?(?:[\\w.@~+\\-]+[\\\\/])+[\\w.@+\\-]+\\.(?:' + EXT + '))(?::\\d+(?:-\\d+)?)?(?![\\w\\\\/\\-]|\\.[A-Za-z0-9])', 'gi'),
+};
+const UNIT = { passed: 'passed', passing: 'passed', pass: 'passed', green: 'passed', failed: 'failed', failing: 'failed', fail: 'failed', skipped: 'skipped' };
+const SECTION_RE = /^\s*(?:#{1,4}\s*)?(?:\*\*)?(\d)\.\s+(?:Primary Request|Key Technical|Files and Code|Errors and [Ff]ixes|Problem Solving|All [Uu]ser [Mm]essages|Pending Tasks|Current Work|Optional Next Step)/;
+const isRefNotPath = (r) => !EXT_RE.test(r) && !/^\d+(\.\d+)*$/.test(r);
+function pathFromTick(c) {
+  let s = c.trim().replace(/(?::\d+(?:-\d+)?|#L\d+(?:-L?\d+)?)$/, '');
+  if (!/[\\/]/.test(s) || /[<>*?{}|$"'`…,;=]|\.\.\.|^https?:|^\w+:\/\/|^-/.test(s) || !EXT_RE.test(s)) return null;
+  const abs = /^[A-Za-z]:[\\/]/.test(s);
+  if (/\s/.test(s) && !abs) return null;
+  const segs = s.split(/[\\/]+/).filter((x, i) => x !== '' || i > 0);
+  for (const g of segs) if (g !== '' && !/^[\w.@~+\- ()\[\]:]+$/.test(g)) return null;
+  const last = segs[segs.length - 1];
+  if (!/^[\w.@+\-]+\.[A-Za-z0-9]+$/.test(last)) return null;
+  // repair R3 after the first count: shorthand for several files is not one path
+  if (/[^\\/.]\.\.[^\\/.]/.test(s)) return null;                                                  // a range, "006..010"
+  if (/XX|NN|(?<![A-Za-z])N(?![A-Za-z])|[a-z]N\.[A-Za-z0-9]+$/.test(s)) return null;               // a placeholder name
+  for (let i = 0; i < segs.length - 1; i++) if (EXT_RE.test(segs[i])) return null;                // "a.md/b.md": two names
+  for (let i = 1; i < segs.length - 1; i++) if (segs[i].length === 1) return null;                // "name-a/b/c.md"
+  const stem = last.replace(/\.[^.]+$/, ''), prev = segs.length > 1 ? segs[segs.length - 2] : '';
+  if ((/^\d+$/.test(stem) || stem.length === 1) && /(\d|-[A-Za-z])$/.test(prev)) return null;      // "ref-1/2.md"
+  return s;
+}
+// One claim = kind + subject + value, once per summary.
+function extractClaims(text, sid8s) {
+  const out = new Map(), lines = text.split('\n'); let sec = 0;
+  const add = (kind, subj, val, li, col, len, extra) => {
+    const key = kind + '|' + subj + '|' + val; if (out.has(key)) return;
+    const L = lines[li], a = Math.max(0, col - 230), b = Math.min(L.length, col + len + 230);
+    out.set(key, Object.assign({ kind, subj, val, sec, li, ctx: (a > 0 ? '…' : '') + L.slice(a, b) + (b < L.length ? '…' : '') }, extra || {}));
+  };
+  for (let li = 0; li < lines.length; li++) {
+    const raw = lines[li]; const hm = SECTION_RE.exec(raw); if (hm) sec = +hm[1];
+    if (/read the full transcript at:|\.claude[\\/]projects[\\/]/.test(raw)) continue;          // the harness's own footer
+    // ---- file paths: backticked tokens first, then bare tokens outside backticks
+    let bare = raw.replace(/`([^`\n]+)`/g, (m, c, off) => { const p = pathFromTick(c); if (p) add('path', normPath(p), '', li, off, m.length, { shown: p }); return ' '.repeat(m.length); });
+    for (const m of bare.matchAll(RX.barePath)) { const p = pathFromTick(m[1]); if (p && !/\s/.test(p)) add('path', normPath(p), '', li, m.index, m[0].length, { shown: p }); }
+    // ---- everything else works on the line without backticks and bold marks
+    const pl = raw.replace(/[`*]/g, '');
+    for (const m of pl.matchAll(RX.hex)) {
+      const h = m[1]; if (!/\d/.test(h) || !/[a-f]/.test(h)) continue;
+      if (!(h.length <= 12 || h.length === 40)) continue;
+      if (sid8s.has(h.slice(0, 8)) && h.length <= 8) continue;                                     // a session id's first group
+      const before = pl.slice(Math.max(0, m.index - 16), m.index);
+      if (/(sha-?256|sha-?1|md5|digest|checksum)\W{0,4}$/i.test(before) || /(session|sessions|agent|task|local_)\W{0,2}$/i.test(before)) continue;
+      add('commit', h, '', li, m.index, h.length);
+    }
+    if (sec === 6) continue;                                // "All user messages" quotes what was said then; the kinds below state where things stand (repair R5)
+    const narr = (idx) => RX.narr.test(pl.slice(Math.max(0, idx - 50), idx));
+    const later = (end) => /^\W{0,3}(or later|or newer)\b/.test(pl.slice(end, end + 16));
+    for (const m of pl.matchAll(RX.headA)) if (isRefNotPath(m[1]) && !narr(m.index) && !later(m.index + m[0].length)) add('head', m[1], m[2], li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.headB)) if (isRefNotPath(m[1]) && !narr(m.index)) add('head', m[1], m[2], li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.headC)) if (!narr(m.index) && !/review|PASS|FAIL|verdict|round|second-pass/i.test(m[0])) add('head', '#' + m[1], m[2], li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.headD)) {
+      if (narr(m.index)) continue;
+      const pre = pl.slice(Math.max(0, m.index - 120), m.index); let subj = null, at = -1;
+      for (const r of pre.matchAll(/#(\d{1,4})\b/g)) if (r.index > at) { at = r.index; subj = '#' + r[1]; }
+      for (const r of pre.matchAll(new RegExp('(?<![\\w\\/.\\-])' + REF + '(?![\\w\\/])', 'g'))) if (r.index > at && isRefNotPath(r[1])) { at = r.index; subj = r[1]; }
+      if (subj && /[0-9a-f]{7,40}/.test(pre.slice(at + subj.length))) continue;                       // another id sits between the ref and this one
+      add('head', subj || '@own', m[1], li, m.index, m[0].length);                                    // no branch named: the session's own branch (addition A1)
+    }
+    const prGuarded = (idx) => RX.prGuard.test(pl.slice(Math.max(0, idx - 40), idx));
+    for (const m of pl.matchAll(RX.prA)) { if (prGuarded(m.index)) continue; const st = m[2].toLowerCase(); add('pr', '#' + m[1], st === 'draft' ? 'open' : st, li, m.index, m[0].length); }
+    for (const m of pl.matchAll(RX.prB)) { if (prGuarded(m.index)) continue; const st = m[1].toLowerCase(); add('pr', '#' + m[2], st === 'draft' ? 'open' : st, li, m.index, m[0].length); }
+    for (const m of pl.matchAll(RX.mergedAs)) if (!prGuarded(m.index)) add('merge', '#' + m[1], m[2], li, m.index, m[0].length);   // addition A2
+    const tCtx = RX.tCtx.test(pl) || /\d\s+passed\b/.test(pl), instr = (idx) => RX.instr.test(pl.slice(Math.max(0, idx - 60), idx));
+    if (tCtx) {
+      for (const m of pl.matchAll(RX.t1)) if (!instr(m.index)) add('test', UNIT[m[2].toLowerCase()], numNorm(m[1]), li, m.index, m[0].length);
+      for (const m of pl.matchAll(RX.t2)) if (!instr(m.index)) add('test', 'passed', numNorm(m[1]), li, m.index, m[0].length);
+      for (const m of pl.matchAll(RX.t3)) if (!instr(m.index)) add('test', 'passed', numNorm(m[1]), li, m.index, m[0].length);
+    }
+    for (const m of pl.matchAll(RX.cnt)) {
+      const n = numNorm(m[1]), plural = /s$/i.test(m[2]); if ((n === '1') === plural) continue;        // "USER-15 row", "Item 3 file": a label, not a count
+      if (RX.cntLabel.test(pl.slice(Math.max(0, m.index - 12), m.index))) continue;
+      add('count', m[2].toLowerCase().replace(/s$/, '') + 's', n, li, m.index, m[0].length);
+    }
+  }
+  return [...out.values()];
+}
+
+// ---------- what a tool result or message shows about heads, pull requests and test runs ----------
+function headObsFromOutput(cmd, text, push) {
+  const c = cmd || '';
+  for (const m of text.matchAll(/^\[([^\s\]]+)(?: \(root-commit\))? ([0-9a-f]{7,40})\]/gm)) if (m[1] !== 'detached') push(m[1], m[2], 'commit');
+  for (const m of text.matchAll(/^\s*[ +*!=\-]?\s*([0-9a-f]{7,40})\.\.\.?([0-9a-f]{7,40})\s+(\S+)\s+->\s+(\S+)/gm)) {
+    if (/^origin\//.test(m[4])) push(m[4], m[2], 'fetch'); else { push('origin/' + m[4], m[2], 'push'); if (m[3] !== 'HEAD') push(m[3], m[2], 'push'); }
+  }
+  if (/\bgit\b[^|;&]*\bbranch\b/.test(c)) for (const m of text.matchAll(/^[*+ ]\s+(\S+)\s+([0-9a-f]{7,40})\s/gm)) if (!/^\(/.test(m[1])) push(m[1].replace(/^remotes\//, ''), m[2], 'branch');
+  if (/worktree\s+list/.test(c)) for (const m of text.matchAll(/^\S.*?\s+([0-9a-f]{7,40})\s+\[([^\]]+)\]/gm)) push(m[2], m[1], 'worktree');
+  for (const m of text.matchAll(/^\*?\s*(?:commit\s+)?([0-9a-f]{7,40})\s+\(([^)\n]+)\)/gm)) for (let r of m[2].split(',')) { r = r.trim().replace(/^HEAD -> /, ''); if (!r || r === 'HEAD' || /^tag:/.test(r)) continue; push(r, m[1], 'log'); }
+  for (const m of text.matchAll(/^([0-9a-f]{40})\s+refs\/(heads|remotes)\/(\S+)/gm)) push(m[2] === 'remotes' ? m[3] : (/ls-remote/.test(c) ? 'origin/' + m[3] : m[3]), m[1], 'refs');
+  const rp = /\bgit\b(?:\s+-C\s+\S+)?\s+rev-parse\s+(?:--short(?:=\d+)?\s+|--verify\s+)*([A-Za-z0-9._\/\-]+)\s*$/.exec(c.trim());
+  if (rp && rp[1] !== 'HEAD' && !/^-/.test(rp[1])) { const t = text.trim(); if (/^[0-9a-f]{7,40}$/.test(t)) push(rp[1], t, 'rev-parse'); }
+}
+function ghObs(text, pushHead, pushPr) {
+  if (!/"(?:headRefOid|state|number)"/.test(text)) return;
+  // walk JSON-ish objects loosely: split on object boundaries and read the fields that sit together
+  for (const chunk of text.split(/\}\s*,\s*\{|\n\s*\n/)) {
+    const num = /"number"\s*:\s*(\d+)/.exec(chunk), st = /"state"\s*:\s*"(OPEN|MERGED|CLOSED)"/.exec(chunk), oid = /"headRefOid"\s*:\s*"([0-9a-f]{40})"/.exec(chunk), ref = /"headRefName"\s*:\s*"([^"]+)"/.exec(chunk), mg = /"merged(?:At)?"\s*:\s*(true|"[0-9T:\-Z.]+")/.exec(chunk);
+    if (num && (st || mg)) pushPr(+num[1], st ? st[1].toLowerCase() : 'merged', 'gh-json');
+    if (oid && num) pushHead('#' + num[1], oid[1], 'gh-json');
+    if (oid && ref) pushHead('origin/' + ref[1], oid[1], 'gh-json');
+  }
+}
+function prObsFromOutput(cmd, text, pushPr) {
+  for (const m of text.matchAll(/(?:Merged|Squashed and merged|Rebased and merged) pull request [^\n#]*#(\d+)/g)) pushPr(+m[1], 'merged', 'gh-merge');
+  for (const m of text.matchAll(/Pull request [^\n#]*#(\d+)[^\n]*was already merged/g)) pushPr(+m[1], 'merged', 'gh-merge');
+  for (const m of text.matchAll(/Closed pull request [^\n#]*#(\d+)/g)) pushPr(+m[1], 'closed', 'gh-close');
+  if (/\bgh\b[^|;&]*\bpr\s+create\b/.test(cmd || '')) for (const m of text.matchAll(/github\.com\/[^\s\/]+\/[^\s\/]+\/pull\/(\d+)/g)) pushPr(+m[1], 'open', 'gh-create');
+  if (/\bgh\b[^|;&]*\bpr\s+list\b/.test(cmd || '')) for (const m of text.matchAll(/^(\d+)\t[^\n]*\t(OPEN|MERGED|CLOSED|DRAFT)\b/gm)) pushPr(+m[1], m[2] === 'DRAFT' ? 'open' : m[2].toLowerCase(), 'gh-list');
+  if (/\bgh\b[^|;&]*\bpr\s+view\b/.test(cmd || '')) { const n = /^number:\t(\d+)/m.exec(text), s = /^state:\t(OPEN|MERGED|CLOSED|DRAFT)/m.exec(text); if (n && s) pushPr(+n[1], s[1] === 'DRAFT' ? 'open' : s[1].toLowerCase(), 'gh-view'); }
+}
+function testCounts(text) {
+  const out = [];
+  for (const m of text.matchAll(RX.t1)) out.push(UNIT[m[2].toLowerCase()] + '|' + numNorm(m[1]));
+  for (const m of text.matchAll(RX.t2)) out.push('passed|' + numNorm(m[1]));
+  for (const m of text.matchAll(RX.t3)) out.push('passed|' + numNorm(m[1]));
+  for (const m of text.matchAll(RX.tObsA)) out.push(UNIT[m[1].toLowerCase()] + '|' + m[2]);
+  for (const m of text.matchAll(RX.tObsB)) out.push(UNIT[m[1].toLowerCase()] + '|' + m[2]);
+  return out;
+}
+
+// ---------- stage: index ----------
+async function findSummaries(f, sid, cutoff) {
+  const comps = []; let ln = 0;
+  const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+  for await (const line of rl) {
+    ln++;
+    if (line.startsWith('{"type":"api-request-blob"') || line.startsWith('{"type":"file-history')) continue;
+    const isC = line.includes('"compact_boundary"'), isS = line.includes('"isCompactSummary":true');
+    if (!isC && !isS) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (o.isSidechain) continue;
+    if (cutoff && o.timestamp && o.timestamp > cutoff) continue;
+    if (o.type === 'system' && o.subtype === 'compact_boundary') {
+      const m = o.compactMetadata || {}, ps = m.preservedSegment || {};
+      comps.push({ line: ln, ts: o.timestamp, pre: m.preTokens || 0, post: m.postTokens || 0, ms: m.durationMs || 0, trigger: m.trigger || '?', precomputed: !!m.precomputed, headUuid: ps.headUuid || null, tailUuid: ps.tailUuid || null, branch: o.gitBranch || '', copied: !!(o.sessionId && o.sessionId !== sid), sumLine: 0, sumTs: null, text: null });
+      continue;
+    }
+    if (o.type === 'user' && o.isCompactSummary && o.message && comps.length && !comps[comps.length - 1].sumLine) {
+      const c = comps[comps.length - 1], ct = o.message.content;
+      c.sumLine = ln; c.sumTs = o.timestamp; c.text = typeof ct === 'string' ? ct : Array.isArray(ct) ? ct.filter(b => b && b.type === 'text').map(b => b.text || '').join('\n') : '';
+    }
+  }
+  return comps;
+}
+async function scanTranscript(f, comps, wanted, cutoff) {
+  // one pass over the whole file: what the session saw (tool results, user-role messages, attachments) and what it said
+  const occ = new Map();                                             // token key -> { seen: [lines], said: [lines] }
+  const hit = (key, cls, ln) => { let o = occ.get(key); if (!o) { o = { seen: [], said: [] }; occ.set(key, o); } const a = o[cls]; if (a[a.length - 1] !== ln) a.push(ln); };
+  const headObs = [], prObs = [], runs = [], opened = new Map(), uuidLine = new Map(), tsLines = [], models = [];
+  const tools = new Map();                                           // tool_use id -> { name, cmd, fp }
+  const recent = [];                                                 // the latest calls and messages, for the kept tail (addition A3)
+  const post = [];                                                   // per boundary: the next window's first six calls and model messages (scoring 1.10)
+  const act = (a) => { recent.push(a); if (recent.length > 800) recent.splice(0, 200); if (a.k !== 'message arrived') for (const p of post) if (p.items.length < 6 && a.line > p.c.line) p.items.push(a); return a; };
+  const hex7 = new Map(); for (const h of wanted.hex) { const k = h.slice(0, 7); (hex7.get(k) || hex7.set(k, []).get(k)).push(h); }
+  // tokens that can only have come from one place: task ids, hexadecimal ids, long numbers. Their first line in the
+  // transcript tells whether a summary that holds one saw the kept tail (added with scoring 1.9).
+  const firstTok = new Map();
+  const toks = (text) => { const out = new Set(); if (!text) return out; for (const m of text.matchAll(/(?<![A-Za-z0-9_\-\/\\.])(?:[a-z][a-z0-9]{8}|[0-9a-f]{7,40}|\d{5,})(?![A-Za-z0-9_\-])/g)) { const t = m[0]; if (/^\d+$/.test(t) || (/\d.*\d/.test(t) && /[a-z]/.test(t))) { out.add(t); if (out.size >= 400) break; } } return out; };
+  const noteToks = (text, ln) => { const s = toks(text); for (const t of s) if (!firstTok.has(t)) firstTok.set(t, ln); return s; };
+  const scan = (text, cls, ln, opt) => {
+    if (!text) return;
+    // repair R1: an id that starts a longer hexadecimal string (a 64-character digest, an upper-case hash) counts as seen
+    if (hex7.size) for (const m of text.matchAll(/(?<![0-9a-zA-Z])[0-9a-fA-F]{7,}(?![0-9a-zA-Z])/g)) { const t = m[0].toLowerCase(), c = hex7.get(t.slice(0, 7)); if (c) for (const w of c) if (t === w || t.startsWith(w) || w.startsWith(t)) hit('h|' + w, cls, ln); }
+    if (wanted.base.size) {
+      const t2 = text.replace(/\\+/g, '/').replace(/\/{2,}/g, '/').toLowerCase().replace(/(?<![a-z0-9])([a-z]):\//g, '/$1/');
+      for (const m of t2.matchAll(/[a-z0-9_@+\-][a-z0-9_.@+\-]*\.[a-z0-9]{1,8}(?![a-z0-9_])/g)) {
+        const ps = wanted.base.get(m[0]); if (!ps) continue; const end = m.index + m[0].length;
+        hit('b|' + m[0], cls, ln);                                   // repair R2: the file name alone is on record
+        for (const p of ps) { const st = end - p.length; if (st < 0 || !t2.startsWith(p, st)) continue; const pc = st > 0 ? t2[st - 1] : ''; if (pc && /[a-z0-9_.@+\-]/.test(pc)) continue; hit('p|' + p, cls, ln); }
+      }
+    }
+    const t3 = opt && opt.stripLineNumbers ? text.replace(/^\s*\d+[\t→]/gm, '') : text;
+    for (const k of testCounts(t3)) hit('t|' + k, cls, ln);
+    for (const m of t3.matchAll(RX.cnt)) hit('c|' + m[2].toLowerCase().replace(/s$/, '') + 's|' + numNorm(m[1]), cls, ln);
+    if (wanted.nums.size) for (const m of t3.matchAll(/(?<![\d.,])\d[\d,]*(?![\d]|[.,]\d)/g)) { const n = numNorm(m[0]); if (wanted.nums.has(n)) hit('n|' + n, cls, ln); }
+  };
+  const proseObs = (text, ln) => {                                   // a message that states a head or a pull request state in the summary's own forms
+    for (const c of extractClaims(text, new Set())) { if (c.kind === 'head') headObs.push({ ref: c.subj, sha: c.val, line: ln, form: 'prose' }); else if (c.kind === 'pr') prObs.push({ n: +c.subj.slice(1), state: c.val, line: ln, form: 'prose' }); }
+  };
+  // where the summary's input ended (scoring 1.2), and what lies between that point and the boundary
+  const closeTail = (c) => {
+    const headLine = c.headUuid && uuidLine.has(c.headUuid) ? uuidLine.get(c.headUuid) : c.line;
+    let tsLine = c.line; if (c.precomputed && c.sumTs) for (const [l, ts] of tsLines) { if (l >= c.line) break; if (ts > c.sumTs) { tsLine = l; break; } }
+    c.headLine = headLine; c.inputEnd = Math.min(headLine, tsLine); c.inputEndTs = c.ts;
+    for (const [l, ts] of tsLines) if (l >= c.inputEnd) { c.inputEndTs = ts; break; }
+    const tail = recent.filter(a => a.line >= c.inputEnd && a.line < c.line);
+    // what first appears inside the kept tail, and how much of it the summary holds
+    const only = { said: new Set(), seen: new Set() };
+    for (const a of tail) { for (const t of a.toks || []) if (firstTok.get(t) >= c.inputEnd) only.said.add(t); for (const t of a.rtoks || []) if (firstTok.get(t) >= c.inputEnd) only.seen.add(t); }
+    for (const t of only.seen) only.said.delete(t);
+    const held = (set) => [...set].filter(t => c.text.includes(t));
+    c.tailOnly = { fromResults: only.seen.size, fromResultsInSummary: held(only.seen).length, fromCalls: only.said.size, fromCallsInSummary: held(only.said).length, ex: held(only.seen).slice(0, 4) };
+    // echoes: a run of four words from a tail result that the summary repeats. Pass two drops the ones found earlier in the transcript.
+    const sumFlat = c.text.replace(/\s+/g, ' '), cand = new Set();
+    for (const a of tail) for (const ln2 of (a.rfull || '').split('\n')) {
+      const w = ln2.trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i + 4 <= w.length && cand.size < 12; i++) { const g = w.slice(i, i + 4).join(' '); if (g.length >= 28 && /\d/.test(g) && /^[A-Za-z0-9 =_.,:\/()#%+\-]+$/.test(g) && sumFlat.includes(g)) cand.add(g); }
+    }
+    c.echoCand = [...cand];
+    c.tailKeep = tail.map(a => ({ k: a.k, state: a.state, fp: a.fp, full: a.full }));
+    post.push({ c, items: [] });
+    c.tail = tail.map(a => { const b = Object.assign({}, a); delete b.toks; delete b.rtoks; delete b.rfull; delete b.full; delete b.fp; return b; });
+  };
+  let ln = 0, lastModel = '', ci = 0;
+  const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+  for await (const line of rl) {
+    ln++;
+    while (ci < comps.length && ln >= comps[ci].line) { comps[ci].model = lastModel; closeTail(comps[ci]); ci++; }
+    if (ci >= comps.length && (post[post.length - 1].items.length >= 6 || ln > comps[comps.length - 1].line + 800)) break;   // six steps after the last boundary, then stop
+    if (line.startsWith('{"type":"api-request') || line.startsWith('{"type":"file-history')) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (o.isSidechain) continue;
+    if (cutoff && o.timestamp && o.timestamp > cutoff) continue;
+    if (o.uuid) uuidLine.set(o.uuid, ln);
+    if (o.timestamp) tsLines.push([ln, o.timestamp]);
+    if (o.type === 'assistant' && o.message) {
+      const m = o.message; if (m.model && m.model !== '<synthetic>' && m.usage) lastModel = m.model;
+      if (Array.isArray(m.content)) for (const b of m.content) {
+        if (b.type === 'text') { scan(b.text, 'said', ln); const tk = noteToks(b.text, ln); if ((b.text || '').trim()) act({ line: ln, k: 'model text', state: false, d: b.text.trim().slice(0, 260), toks: tk, full: b.text.slice(0, 6000) }); }
+        else if (b.type === 'thinking') { scan(b.thinking, 'said', ln); noteToks(b.thinking, ln); }
+        else if (b.type === 'tool_use') {
+          const inp = b.input || {}, cl = classifyCall(b.name, inp), all = collectStrings(inp, []).join('\n');
+          const a = act({ line: ln, k: cl.k, state: cl.state, tool: b.name, d: describeCall(b.name, inp), toks: noteToks(all, ln), fp: fingerprint(b.name, inp) });
+          tools.set(b.id, { name: b.name, cmd: typeof inp.command === 'string' ? inp.command : '', fp: inp.file_path || inp.notebook_path || (b.name === 'Read' || b.name === 'Glob' || b.name === 'Grep' ? inp.path : '') || '', a });
+          scan(collectStrings(inp, []).join('\n'), 'said', ln);
+        }
+      }
+      continue;
+    }
+    if (o.type === 'user' && o.message) {
+      const ct = o.message.content;
+      if (o.isCompactSummary) { const st = typeof ct === 'string' ? ct : collectStrings(ct, []).join('\n'); scan(st, 'said', ln); noteToks(st, ln); continue; }   // an earlier summary is the model's own words
+      if (typeof ct === 'string') { scan(ct, 'seen', ln); proseObs(ct, ln); const tk = noteToks(ct, ln); if (ct.trim()) act({ line: ln, k: 'message arrived', state: false, d: arrived(ct), rtoks: tk }); continue; }
+      if (Array.isArray(ct)) for (const b of ct) {
+        if (!b) continue;
+        if (b.type === 'text') { scan(b.text, 'seen', ln); proseObs(b.text || '', ln); const tk = noteToks(b.text, ln); if ((b.text || '').trim()) act({ line: ln, k: 'message arrived', state: false, d: arrived(b.text), rtoks: tk }); }
+        else if (b.type === 'tool_result') {
+          const t = tools.get(b.tool_use_id) || { name: '?', cmd: '', fp: '' }, text = typeof b.content === 'string' ? b.content : collectStrings(b.content, []).join('\n');
+          const echo = t.name === 'Write' || t.name === 'Edit' || t.name === 'NotebookEdit' || t.name === 'MultiEdit';   // the result repeats what the model wrote
+          const rt = noteToks(text, ln);
+          if (t.a) { t.a.rLine = ln; t.a.err = !!b.is_error; t.a.r = text.trim().slice(-240); t.a.counts = testCounts(text).slice(-4); t.a.rtoks = rt; t.a.rfull = echo ? '' : text.slice(0, 8000); }
+          if (t.fp && !b.is_error) { const p = normPath(String(t.fp)); if (!opened.has(p)) opened.set(p, ln); }
+          scan(text, echo ? 'said' : 'seen', ln, { stripLineNumbers: t.name === 'Read' });
+          if (echo) continue;
+          if (t.name === 'Bash' || t.name === 'PowerShell') {
+            headObsFromOutput(t.cmd, text, (ref, sha, form) => headObs.push({ ref, sha, line: ln, form }));
+            prObsFromOutput(t.cmd, text, (n, state, form) => prObs.push({ n, state, line: ln, form }));
+            const tc = testCounts(text); if (tc.length) runs.push({ line: ln, cmd: sha1(t.cmd.replace(/\s+/g, ' ').replace(/\s*\|\s*(tail|head)\b.*$/, '').trim().toLowerCase()).slice(0, 12), counts: [...new Set(tc)] });
+          } else if (t.name === 'Agent' || t.name === 'Task' || /SendMessage|get_status|list_sessions/.test(t.name)) proseObs(text, ln);
+          ghObs(text, (ref, sha, form) => headObs.push({ ref, sha, line: ln, form }), (n, state, form) => prObs.push({ n, state, line: ln, form }));
+        }
+      }
+      continue;
+    }
+    if (o.type === 'attachment' && o.attachment) {
+      const t = collectStrings(o.attachment, []).join('\n'); scan(t, 'seen', ln); const tk = noteToks(t, ln);
+      if (o.attachment.type === 'queued_command' || o.attachment.type === 'task_status' || o.attachment.type === 'hook_additional_context') { proseObs(t, ln); if (o.attachment.type !== 'hook_additional_context') act({ line: ln, k: 'message arrived', state: false, d: arrived(t), rtoks: tk }); }
+      continue;
+    }
+    if (o.type === 'queue-operation' && typeof o.content === 'string') { scan(o.content, 'seen', ln); proseObs(o.content, ln); continue; }
+    if (o.type === 'system' && typeof o.content === 'string') { scan(o.content, 'seen', ln); noteToks(o.content, ln); continue; }
+  }
+  while (ci < comps.length) { comps[ci].model = lastModel; closeTail(comps[ci]); ci++; }
+  // scoring 1.10: did the next window repeat something its kept tail had already done
+  const runs3 = (t) => { const w = (t || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean), out = new Set(); for (let i = 0; i + 3 <= w.length; i++) out.add(w[i] + ' ' + w[i + 1] + ' ' + w[i + 2]); return out; };
+  for (const p of post) {
+    const c = p.c, tk = c.tailKeep || [], r = { state: 0, said: 0, shell: 0, sameFile: 0, mostShared: 0, anyCmd: 0, anyCmdClasses: [] }; c.next = [];
+    for (const a of p.items) {
+      let what = '';
+      if (a.k === 'model text') { const A = runs3(a.full); for (const t of tk) { if (t.k !== 'model text') continue; const B = runs3(t.full); if (A.size < 8 || B.size < 8) continue; let inter = 0; for (const x of A) if (B.has(x)) inter++; r.mostShared = Math.max(r.mostShared, Math.round(100 * inter / A.size)); if (inter / A.size > 0.5) { what = 'said'; break; } } }
+      else if (a.fp && tk.some(t => t.fp === a.fp && t.k === a.k)) what = a.state ? 'state' : a.k === 'shell' ? 'shell' : '';
+      else if (a.fp && a.fp.startsWith('file:') && tk.some(t => t.fp && t.fp.startsWith('file:') && t.fp.slice(0, t.fp.lastIndexOf(':')) === a.fp.slice(0, a.fp.lastIndexOf(':')))) r.sameFile++;   // the same file again with other text: more work on it, not a repeat
+      if (a.fp && a.fp.startsWith('cmd:') && tk.some(t => t.fp === a.fp)) { r.anyCmd++; r.anyCmdClasses.push(a.k); }   // any shell or node command run again with the same text, whatever its class (review T-1)
+      if (what) r[what]++;
+      c.next.push({ k: a.k, state: !!a.state, repeat: what });
+    }
+    c.repeats = r; delete c.tailKeep;
+  }
+  const withCand = comps.filter(c => c.echoCand && c.echoCand.length);
+  if (withCand.length) {
+    const lim = Math.max(...withCand.map(c => c.inputEnd)); let l2 = 0;
+    const live = withCand.map(c => ({ c, left: new Set(c.echoCand) }));
+    const rl2 = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+    for await (const line of rl2) { l2++; if (l2 >= lim) break; if (line.startsWith('{"type":"api-request') || line.startsWith('{"type":"file-history')) continue;
+      for (const x of live) { if (l2 >= x.c.inputEnd || !x.left.size) continue; for (const g of x.left) if (line.includes(g)) x.left.delete(g); } }
+    for (const x of live) x.c.echo = x.left.size;
+  }
+  for (const c of comps) { if (c.echo === undefined) c.echo = 0; delete c.echoCand; }
+  return { occ, headObs, prObs, runs, opened, uuidLine, tsLines };
+}
+// the class of one tool call, for the kept-tail listing (scoring 1.9): which calls change state
+function classifyCall(name, inp) {
+  if (name === 'Bash' || name === 'PowerShell') {
+    const c = String(inp.command || '');
+    // options before the verb are dropped first, so no pattern has to walk through quoted values (a nested one hung the run)
+    const c2 = c.length > 20000 ? c.slice(0, 20000) : c;
+    const flat = c2.replace(/\s-[cC]\s+(?:"[^"\n]{0,300}"|'[^'\n]{0,300}'|[^\s"'=]{1,200}(?:=(?:"[^"\n]{0,300}"|'[^'\n]{0,300}'|[^\s"']{0,300}))?)/g, ' ');
+    const gm = [...flat.matchAll(/\bgit\s+(commit|push|merge|rebase|reset|cherry-pick|tag|pull|revert|am|checkout|switch|branch|worktree|add|stash|fetch|status|log|diff|show|rev-parse|ls-files|ls-remote)\b/g)].map(m => m[1]);
+    const ghm = [...c.matchAll(/\bgh\b\s+pr\s+(create|merge|close|edit|ready|comment|view|list|checks|status)\b/g)].map(m => m[1]);
+    const st = gm.filter(v => /^(commit|push|merge|rebase|reset|cherry-pick|tag|pull|revert|am)$/.test(v)).map(v => 'git ' + v).concat(ghm.filter(v => /^(create|merge|close|edit|ready)$/.test(v)).map(v => 'gh pr ' + v));
+    if (st.length) return { k: [...new Set(st)].join(' + '), state: true };
+    if (/\b(pytest|jest|vitest|npm (run )?test|check\.py|ff-gates|typecheck|ruff|mypy|lint|merge-ready)\b/.test(c)) return { k: 'test or check run', state: false };
+    if (gm.length || ghm.length) return { k: 'git or gh status', state: false };
+    return { k: 'shell', state: false };
+  }
+  if (/^(Write|Edit|NotebookEdit|MultiEdit)$/.test(name)) return { k: 'file write', state: true };
+  if (/^(Read|Grep|Glob|ToolSearch)$/.test(name)) return { k: 'read', state: false };
+  if (/SendMessage|send_message/.test(name)) return { k: 'message sent', state: true };
+  if (/^(Agent|Task|Workflow)$/.test(name) || /start_session|hand_off/.test(name)) return { k: 'agent or session started', state: true };
+  if (/update_plan|wrap_up|mark_chapter|TodoWrite/.test(name)) return { k: 'plan update', state: false };
+  return { k: 'other tool', state: false };
+}
+function arrived(t) {                                                // scratch only: what a message that came in says, shortened
+  const st = /<status>([^<]*)<\/status>/.exec(t), su = /<summary>([\s\S]*?)<\/summary>/.exec(t);
+  if (/<task-notification>/.test(t) && (st || su)) return ('task notification: ' + (st ? st[1] : '') + ' | ' + (su ? su[1] : '')).replace(/\s+/g, ' ').slice(0, 260);
+  return t.trim().replace(/\s+/g, ' ').slice(0, 260);
+}
+function fingerprint(name, inp) {                                    // what makes two calls "the same" (scoring 1.10)
+  if (name === 'Bash' || name === 'PowerShell') return 'cmd:' + sha1(String(inp.command || '').replace(/\s+/g, ' ').trim());
+  if (/^(Write|Edit|NotebookEdit|MultiEdit)$/.test(name)) return 'file:' + normPath(String(inp.file_path || inp.notebook_path || '')) + ':' + sha1(String(inp.content || '') + '|' + String(inp.new_string || '') + '|' + String(inp.new_source || ''));
+  return name + ':' + sha1(collectStrings(inp, []).join('|'));
+}
+function describeCall(name, inp) {                                   // scratch only: for the hand read
+  if (name === 'Bash' || name === 'PowerShell') return String(inp.command || '').replace(/\s+/g, ' ').slice(0, 230);
+  if (inp.file_path || inp.notebook_path) return String(inp.file_path || inp.notebook_path);
+  return (name + ' ' + collectStrings(inp, []).join(' | ').replace(/\s+/g, ' ')).slice(0, 230);
+}
+function lastSections(text) {
+  const out = { 7: [], 8: [], 9: [] }; let sec = 0;
+  for (const l of text.split('\n')) { const hm = SECTION_RE.exec(l); if (hm) sec = +hm[1]; if (/^If you need specific details from before compaction/.test(l)) break; if (out[sec]) out[sec].push(l); }
+  const body = text.split(/\nIf you need specific details from before compaction/)[0];
+  return { s7: out[7].join('\n'), s8: out[8].join('\n'), s9: out[9].join('\n'), end: body.slice(-1100) };
+}
+async function stageIndex(cacheDir) {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const t0 = Date.now(), startedAt = process.env.SUMMARY_CHECK_CUT || new Date(t0).toISOString();   // pass the first count's cut to keep the same summaries
+  const stores = fs.readdirSync(ROOT, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name).sort();
+  const scope = stores.filter(s => groupOf(s) !== 'other');
+  const every = []; for (const s of scope) for (const mf of fs.readdirSync(path.join(ROOT, s)).filter(n => n.endsWith('.jsonl'))) every.push({ g: groupOf(s), store: s, sid: mf.replace(/\.jsonl$/, ''), f: path.join(ROOT, s, mf) });
+  // a transcript started after the cut is not read, so a later run at the same cut counts the same files
+  const firstStamp = (f) => { const fd = fs.openSync(f, 'r'), buf = Buffer.alloc(262144), k = fs.readSync(fd, buf, 0, buf.length, 0); fs.closeSync(fd); const m = /"timestamp":"([^"]+)"/.exec(buf.toString('utf8', 0, k)); return m ? m[1] : ''; };
+  const files = every.filter(x => { const t = firstStamp(x.f); return !t || t <= startedAt; });
+  // a project folder made after the cut is counted apart, so a later run at the same cut prints the same folder counts. Only the folder's own creation time is read; a folder left out is still not opened.
+  const bornBy = (s) => { try { return fs.statSync(path.join(ROOT, s)).birthtime.toISOString() <= startedAt; } catch (e) { return true; } };
+  const keptStores = new Set(files.map(x => x.store));
+  const scopeAtCut = scope.filter(s => keptStores.has(s) || bornBy(s)), otherAtCut = stores.filter(s => groupOf(s) === 'other' && bornBy(s));
+  const sid8s = new Set(files.map(x => x.sid.slice(0, 8)));
+  const out = { startedAt, replayCut: REPLAY_CUT, foldersInScope: scopeAtCut.length, foldersLeftOut: otherAtCut.length, foldersAfterCut: stores.length - scopeAtCut.length - otherAtCut.length, mainTranscripts: files.length, transcriptsAfterCut: every.length - files.length, copiedMarkers: 0, markersWithoutSummary: 0, sessions: [] };
+  for (const it of files) {
+    const all = await findSummaries(it.f, it.sid, startedAt);
+    out.copiedMarkers += all.filter(c => c.copied).length; out.markersWithoutSummary += all.filter(c => !c.copied && !c.sumLine).length;
+    const comps = all.filter(c => !c.copied && c.sumLine); if (!comps.length) continue;
+    const wanted = { hex: new Set(), base: new Map(), nums: new Set() };
+    for (const c of comps) {
+      c.claims = extractClaims(c.text, sid8s); c.chars = c.text.length;
+      for (const cl of c.claims) {
+        if (cl.kind === 'commit') wanted.hex.add(cl.subj); else if (cl.kind === 'head' || cl.kind === 'merge') wanted.hex.add(cl.val);
+        else if (cl.kind === 'path') { const b = baseKey(cl.subj); (wanted.base.get(b) || wanted.base.set(b, []).get(b)).push(cl.subj); }
+        else if (cl.kind === 'test' || cl.kind === 'count') wanted.nums.add(cl.val);
+      }
+    }
+    for (const [b, ps] of wanted.base) wanted.base.set(b, [...new Set(ps)]);
+    const ev = await scanTranscript(it.f, comps, wanted, startedAt);
+    const sess = { g: it.g, sid: it.sid, sid8: it.sid.slice(0, 8), headObs: ev.headObs, prObs: ev.prObs, runs: ev.runs, comps: [] };
+    comps.forEach((c, i) => {
+      const before = (arr, lim) => { let n = 0, first = 0, last = 0; for (const l of arr) { if (l >= lim) break; n++; if (!first) first = l; last = l; } return [n, first, last]; };
+      const stat = (key) => { const o = ev.occ.get(key); if (!o) return { seen: 0, said: 0 }; const [ns, fs1, ls] = before(o.seen, c.line), [nd, fd] = before(o.said, c.line); return { seen: ns, firstSeen: fs1, lastSeen: ls, said: nd, firstSaid: fd }; };
+      for (const cl of c.claims) {
+        if (cl.kind === 'commit') cl.ev = stat('h|' + cl.subj); else if (cl.kind === 'head' || cl.kind === 'merge') cl.ev = stat('h|' + cl.val);
+        else if (cl.kind === 'path') { cl.ev = stat('p|' + cl.subj); let op = 0; for (const [p, l] of ev.opened) { if (l >= c.line) continue; if (p === cl.subj || p.endsWith('/' + cl.subj) || cl.subj.endsWith('/' + p)) { op = op ? Math.min(op, l) : l; } } cl.ev.opened = op; const b = stat('b|' + baseKey(cl.subj)); cl.ev.nameSeen = b.seen; cl.ev.nameSaid = b.said; }
+        else if (cl.kind === 'test') { cl.ev = stat('t|' + cl.subj + '|' + cl.val); cl.ev.num = stat('n|' + cl.val); }
+        else if (cl.kind === 'count') { cl.ev = stat('c|' + cl.subj + '|' + cl.val); cl.ev.num = stat('n|' + cl.val); }
+      }
+      sess.comps.push(Object.assign({ n: i + 1, line: c.line, sumLine: c.sumLine, ts: c.ts, sumTs: c.sumTs, pre: c.pre, post: c.post, ms: c.ms, precomputed: c.precomputed, model: c.model, chars: c.chars, branch: c.branch, headLine: c.headLine, inputEnd: c.inputEnd, inputEndTs: c.inputEndTs, afterReplayCut: c.ts > REPLAY_CUT,
+        footer: /written without seeing them/.test(c.text), tail: c.tail, tailOnly: c.tailOnly, echo: c.echo, next: c.next || [], repeats: c.repeats || { state: 0, said: 0, shell: 0, sameFile: 0, mostShared: 0, anyCmd: 0, anyCmdClasses: [] }, claims: c.claims }, lastSections(c.text)));
+    });
+    out.sessions.push(sess);
+    process.stderr.write(`index ${it.g} ${sess.sid8} summaries=${comps.length} claims=${comps.reduce((a, c) => a + c.claims.length, 0)} (${((Date.now() - t0) / 1000).toFixed(0)}s)\n`);
+  }
+  fs.writeFileSync(path.join(cacheDir, 'index.json'), JSON.stringify(out));
+  const ns = out.sessions.reduce((a, s) => a + s.comps.length, 0), nc = out.sessions.reduce((a, s) => a + s.comps.reduce((x, c) => x + c.claims.length, 0), 0);
+  console.log(`INDEX_DONE transcripts=${files.length} sessions-with-summaries=${out.sessions.length} summaries=${ns} claims=${nc} copied-markers=${out.copiedMarkers} seconds=${((Date.now() - t0) / 1000).toFixed(0)} cut=${startedAt}`);
+}
+
+// ---------- stage: check (repository and GitHub lookups, verdicts) ----------
+function git(repo, args, input) { const r = spawnSync('git', ['-C', repo, ...args], { input, encoding: 'utf8', maxBuffer: 1 << 29 }); return { status: r.status, out: r.stdout || '' }; }
+const sameSha = (a, b) => !!a && !!b && (a.startsWith(b) || b.startsWith(a));
+function loadRepo(g, tokens) {
+  const repo = REPOS[g]; const R = { g, repo, ok: fs.existsSync(repo), full: new Map(), ct: new Map(), pathCt: new Map(), baseIdx: new Map(), refLog: new Map(), anc: new Map(), worktrees: [] };
+  if (!R.ok) return R;
+  const list = [...tokens];
+  const bc = git(repo, ['cat-file', '--batch-check'], list.join('\n') + '\n').out.split('\n');
+  list.forEach((t, i) => { const m = /^([0-9a-f]{40}) (\w+) /.exec(bc[i] || ''); if (m) R.full.set(t, { sha: m[1], type: m[2] }); });
+  for (const l of git(repo, ['log', '--all', '--format=%H %ct']).out.split('\n')) { const [h, c] = l.split(' '); if (h) R.ct.set(h, +c); }
+  let ct = 0;
+  for (const l of git(repo, ['log', '--all', '--name-only', '--format=@%ct']).out.split('\n')) {
+    if (!l) continue; if (l[0] === '@') { ct = +l.slice(1); continue; }
+    const p = normPath(l), prev = R.pathCt.get(p); if (prev === undefined || ct < prev) R.pathCt.set(p, ct);
+  }
+  for (const p of R.pathCt.keys()) { const b = baseKey(p); (R.baseIdx.get(b) || R.baseIdx.set(b, []).get(b)).push(p); }
+  R.worktrees = git(repo, ['worktree', 'list', '--porcelain']).out.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9));
+  R.refs = new Set(git(repo, ['for-each-ref', '--format=%(refname:short)']).out.split('\n').filter(Boolean));
+  R.isAnc = (x, y) => { const k = x + ' ' + y; if (!R.anc.has(k)) R.anc.set(k, git(repo, ['merge-base', '--is-ancestor', x, y]).status === 0); return R.anc.get(k); };
+  R.headAt = (ref, T) => { if (!R.refs.has(ref)) return null; if (!R.refLog.has(ref)) R.refLog.set(ref, git(repo, ['log', '--first-parent', '--format=%H %ct', ref]).out.split('\n').filter(Boolean).map(l => { const [h, c] = l.split(' '); return [h, +c]; })); for (const [h, c] of R.refLog.get(ref)) if (c <= T) return h; return null; };
+  R.pathTime = (p) => { const c = R.baseIdx.get(baseKey(p)); if (!c) return undefined; let best; for (const r of c) if (r === p || r.endsWith('/' + p) || p.endsWith('/' + r)) { const t = R.pathCt.get(r); if (best === undefined || t < best) best = t; } return best; };
+  // repair R2: a path is on disk when it exists as written, or when a file under the project ends with it
+  R.onDisk = (p) => { try { if (/^\/[a-z]\//.test(p)) return fs.existsSync(toFs(p)); for (const root of [repo, ...R.worktrees]) if (fs.existsSync(path.join(root, p))) return true; } catch {} const c = DISK.get(baseKey(p)); if (c) for (const r of c) if (r.endsWith('/' + p)) return true; return false; };
+  R.nameKnown = (p) => R.baseIdx.has(baseKey(p)) || DISK.has(baseKey(p));
+  return R;
+}
+const DISK = new Map();                                              // file name -> paths on disk under the two projects and the lab cache
+function walkDisk(roots) {
+  const skip = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.gradle', '.expo', '.pytest_cache', '.mypy_cache', '.ruff_cache']); let n = 0;
+  const rec = (dir, depth) => { if (n > 600000 || depth > 14) return; let es; try { es = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of es) { if (e.isDirectory()) { if (!skip.has(e.name)) rec(path.join(dir, e.name), depth + 1); } else { n++; const p = normPath(path.join(dir, e.name)), b = baseKey(p); (DISK.get(b) || DISK.set(b, []).get(b)).push(p); } } };
+  for (const r of roots) if (fs.existsSync(r)) rec(r, 0);
+  return n;
+}
+function loadGitHub(cacheDir) {
+  const f = path.join(cacheDir, 'github.json');
+  if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf8'));
+  const r = spawnSync('gh', ['pr', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,state,createdAt,mergedAt,closedAt,isDraft,headRefName,headRefOid,mergeCommit'], { cwd: REPOS.fixflow, encoding: 'utf8', maxBuffer: 1 << 27 });
+  const G = { ok: r.status === 0, at: new Date().toISOString(), prs: {}, commits: {} };
+  if (G.ok) for (const p of JSON.parse(r.stdout)) G.prs[p.number] = p;
+  fs.writeFileSync(f, JSON.stringify(G)); return G;
+}
+function prCommits(G, cacheDir, n) {
+  if (G.commits[n]) return G.commits[n];
+  const r = spawnSync('gh', ['pr', 'view', String(n), '--json', 'commits'], { cwd: REPOS.fixflow, encoding: 'utf8', maxBuffer: 1 << 26 });
+  let c = []; try { c = JSON.parse(r.stdout).commits.map(x => ({ oid: x.oid, t: Math.round(Date.parse(x.committedDate) / 1000) })); } catch {}
+  G.commits[n] = c; fs.writeFileSync(path.join(cacheDir, 'github.json'), JSON.stringify(G)); return c;
+}
+const BANDS = [{ lo: 0, hi: 300000, name: 'under 300k' }, { lo: 300000, hi: 400000, name: '300k to 400k' }, { lo: 400000, hi: 900000, name: '400k to 900k' }, { lo: 900000, hi: Infinity, name: '900k and over' }];
+const bandOf = (pre) => BANDS.findIndex(b => pre >= b.lo && pre < b.hi);
+const claimId = (s, c, cl) => `${s.g}-${s.sid8}-${String(c.n).padStart(2, '0')}|${cl.kind}|${cl.subj}|${cl.val}`;
+const KINDS = ['commit', 'path', 'head', 'pr', 'merge', 'test', 'count'];
+function stageCheck(cacheDir) {
+  const idx = JSON.parse(fs.readFileSync(path.join(cacheDir, 'index.json'), 'utf8'));
+  const tokens = new Set(); for (const s of idx.sessions) { for (const o of s.headObs) tokens.add(o.sha); for (const c of s.comps) for (const cl of c.claims) { if (cl.kind === 'commit') tokens.add(cl.subj); if (cl.kind === 'head' || cl.kind === 'merge') tokens.add(cl.val); } }
+  idx.diskFiles = walkDisk([REPOS.fixflow, REPOS.clinic, path.join(os.homedir(), '.fixflow-cache')]);
+  const RP = { fixflow: loadRepo('fixflow', tokens), clinic: loadRepo('clinic', tokens) };
+  const G = loadGitHub(cacheDir);
+  const resolve = (g, t) => { const a = RP[g].ok && RP[g].full.get(t); if (a) return { g, sha: a.sha, type: a.type }; const og = g === 'fixflow' ? 'clinic' : 'fixflow', b = RP[og].ok && RP[og].full.get(t); return b ? { g: og, sha: b.sha, type: b.type } : null; };
+  const byReason = {};
+  for (const s of idx.sessions) {
+    const g = s.g, prBranch = new Map(); if (g === 'fixflow') for (const p of Object.values(G.prs)) prBranch.set(p.headRefName, p.number);
+    for (const c of s.comps) {
+      const T = Math.round(Date.parse(c.ts) / 1000), has = new Set(c.claims.map(cl => cl.kind + '|' + cl.subj + '|' + cl.val));
+      for (const cl of c.claims) {
+        const ev = cl.ev || {}, set = (verdict, reason, extra) => Object.assign(cl, { verdict, reason, basis: '', cls: '', latest: false, tail: false }, extra || {});
+        if (cl.kind === 'commit') {
+          const r = resolve(g, cl.subj); cl.inRepo = r ? r.type : '';
+          if (ev.seen) set('held', r ? 'seen, and in the repository' : 'seen', { basis: 'transcript', evLine: ev.lastSeen });
+          else if (r) set('held', 'in the repository', { basis: 'repository' });
+          else if (ev.said) set('nc', 'said only', { evLine: ev.firstSaid });
+          else set('wrong', 'named nothing on record', { cls: 'nowhere' });
+        } else if (cl.kind === 'path') {
+          const R = RP[g], pt = R.ok ? R.pathTime(cl.subj) : undefined;
+          if (ev.seen) set('held', 'seen', { basis: 'transcript', evLine: ev.lastSeen });
+          else if (ev.opened) set('held', 'opened by a file tool', { basis: 'transcript', evLine: ev.opened });
+          else if (pt !== undefined && pt <= T) set('held', 'in the repository history', { basis: 'repository' });
+          else if (R.ok && R.onDisk(cl.subj)) set('held', 'on disk', { basis: 'repository' });
+          else if (pt !== undefined) set('nc', 'in the repository only later');
+          else if (ev.said) set('nc', 'said only', { evLine: ev.firstSaid });
+          else if (ev.nameSeen || ev.nameSaid || (R.ok && R.nameKnown(cl.subj))) set('nc', 'the file name is on record, the folder as written is not');
+          else set('wrong', 'named nothing on record', { cls: 'nowhere' });
+        } else if (cl.kind === 'merge') {
+          const n = +cl.subj.slice(1), p = g === 'fixflow' ? G.prs[n] : null, mc = p && p.mergeCommit && p.mergeCommit.oid, mt = p && p.mergedAt ? Math.round(Date.parse(p.mergedAt) / 1000) : null;
+          if (!p) set('nc', g === 'fixflow' ? 'no such pull request on GitHub' : 'no remote');
+          else if (!mc || !mt) set('wrong', 'GitHub records no merge of it', { cls: 'mismatch', basis: 'github' });
+          else if (sameSha(mc, cl.val)) set(mt <= T ? 'held' : 'nc', mt <= T ? 'the merge commit GitHub records' : 'merged after the hand-over', { basis: 'github' });
+          else set('wrong', 'GitHub records another merge commit, ' + mc.slice(0, 7), { cls: 'mismatch', basis: 'github', rec: mc.slice(0, 7) });
+        } else if (cl.kind === 'test' || cl.kind === 'count') {
+          const num = ev.num || {};
+          if (ev.seen) {
+            let sup = null;
+            if (cl.kind === 'test') {
+              const key = cl.subj + '|' + cl.val, runs = s.runs.filter(r => r.line < c.line); let star = null;
+              for (const r of runs) if (r.counts.includes(key)) star = r;
+              if (star) for (const r of runs) { if (r.line <= star.line || r.cmd !== star.cmd) continue; const same = r.counts.filter(k => k.startsWith(cl.subj + '|')); if (same.length && !same.includes(key)) sup = { line: r.line, vals: same.map(k => k.split('|')[1]), starLine: star.line }; }
+              if (sup && sup.vals.some(v => has.has('test|' + cl.subj + '|' + v))) sup = null;       // the summary gives the newer number too: a before-and-after, not a stale value
+            }
+            if (sup) set('wrong', 'a later run of the same command gave ' + sup.vals.join(' and '), { cls: 'latest', latest: true, tail: sup.line >= c.inputEnd, basis: 'transcript', rec: sup.vals.join(','), evLine: sup.starLine, evLine2: sup.line });
+            else set('held', 'seen with its word', { basis: 'transcript', evLine: ev.lastSeen });
+          } else if (num.seen) set('nc', 'the number is seen, not as a result', { evLine: num.lastSeen });
+          else if (ev.said || num.said) set('nc', 'said only', { evLine: ev.firstSaid || num.firstSaid });
+          else set('wrong', 'named nothing on record', { cls: 'nowhere' });
+        } else if (cl.kind === 'pr') {
+          const n = +cl.subj.slice(1), p = g === 'fixflow' ? G.prs[n] : null, obs = s.prObs.filter(o => o.n === n && o.line < c.line), last = obs[obs.length - 1];
+          const iso = (x) => x ? Math.round(Date.parse(x) / 1000) : null;
+          let gh = null; if (p) { const cr = iso(p.createdAt), mg = iso(p.mergedAt), cz = iso(p.closedAt); gh = cr > T ? 'not yet created' : (mg && mg <= T) ? 'merged' : (cz && cz <= T) ? 'closed' : 'open'; }
+          if (last && last.state === cl.val) set('held', 'the last state seen', { basis: 'transcript', evLine: last.line });
+          else if (last) {
+            if (gh === cl.val) set('held', 'GitHub at that time', { basis: 'github', evLine: last.line });
+            else if (!p) set('nc', 'no such pull request on GitHub');
+            else {
+              const wasSeen = obs.some(o => o.state === cl.val), lastSame = obs.filter(x => x.state === cl.val).pop(), first = obs.find(o => o.line > (lastSame ? lastSame.line : 0) && o.state !== cl.val) || last;
+              set('wrong', 'the last state seen was ' + last.state + (gh ? '; GitHub at that time: ' + gh : ''), { cls: wasSeen || cl.val === 'open' ? 'latest' : 'mismatch', latest: wasSeen || cl.val === 'open', tail: first.line >= c.inputEnd, basis: 'transcript', rec: last.state, evLine: last.line });
+            }
+          } else if (!p) set('nc', g === 'fixflow' ? 'no such pull request on GitHub' : 'no remote');
+          else if (gh === cl.val) set('held', 'GitHub at that time', { basis: 'github' });
+          else if (gh === 'not yet created') set('nc', 'created after the hand-over');
+          else set('wrong', 'GitHub at that time: ' + gh, { cls: 'mismatch', basis: 'github', rec: gh });
+        } else if (cl.kind === 'head') {
+          const r = resolve(g, cl.val), X = r ? r.sha : cl.val, R = r ? RP[r.g] : RP[g];
+          const own = cl.subj === '@own', subj = own ? (c.branch && c.branch !== 'HEAD' ? c.branch : '') : cl.subj;   // a bare head is the session's own branch
+          const refs = new Set(subj ? [subj] : []); let prN = null;
+          if (subj[0] === '#') { prN = +subj.slice(1); const p = g === 'fixflow' ? G.prs[prN] : null; if (p) { refs.add('origin/' + p.headRefName); refs.add(p.headRefName); } }
+          else if (subj) { const b = subj.replace(/^origin\//, ''); refs.add(b); refs.add('origin/' + b); const n = prBranch.get(b); if (n) { refs.add('#' + n); prN = n; } }
+          const full = (o) => { const q = resolve(g, o.sha); return q ? q.sha : o.sha; };
+          const obs = s.headObs.filter(o => refs.has(o.ref) && o.line < c.line).map(o => ({ ref: o.ref, sha: full(o), line: o.line, form: o.form }));
+          let done = false;
+          if (obs.length) {
+            const byRef = new Map(); for (const o of obs) (byRef.get(o.ref) || byRef.set(o.ref, []).get(o.ref)).push(o);
+            const lasts = [...byRef.values()].map(a => a[a.length - 1]), same = lasts.find(o => sameSha(o.sha, X));
+            if (same) { set('held', 'the last head seen', { basis: 'transcript', evLine: same.line }); done = true; }
+            else {
+              let allStale = true, firstRep = Infinity;
+              for (const a of byRef.values()) {
+                const lastY = a[a.length - 1]; let li = -1; a.forEach((o, i) => { if (sameSha(o.sha, X)) li = i; });
+                const stale = li >= 0 || (!!r && R.ok && /^[0-9a-f]{40}$/.test(lastY.sha) && R.isAnc(X, lastY.sha));
+                if (!stale) { allStale = false; break; }
+                const rep = li >= 0 ? a[li + 1] : a.find(o => !sameSha(o.sha, X)); if (rep) firstRep = Math.min(firstRep, rep.line);
+              }
+              if (allStale) { set('wrong', 'the session later saw it at ' + lasts.map(o => o.sha.slice(0, 7)).join(' / '), { cls: 'latest', latest: true, tail: firstRep >= c.inputEnd, basis: 'transcript', rec: lasts.map(o => o.sha.slice(0, 7)).join(','), evLine: lasts[0].line }); done = true; }
+            }
+          }
+          if (!done) {
+            let HT = null, basis = 'repository', used = null;
+            const order = [...refs].filter(x => x[0] !== '#').sort((a, b) => ((b.startsWith('origin/') ? 1 : 0) - (a.startsWith('origin/') ? 1 : 0)) * (own ? -1 : 1));   // own branch: the local ref first
+            if (r && R.ok) for (const ref of order) { HT = R.headAt(ref, T); if (HT) { used = ref; break; } }
+            if (!HT && prN && g === 'fixflow' && G.ok) { const cs = prCommits(G, cacheDir, prN).filter(x => x.t <= T); if (cs.length && cs.some(x => sameSha(x.oid, X))) { HT = cs[cs.length - 1].oid; basis = 'github'; } }
+            if (!HT) set('nc', !subj ? 'no branch on record for a bare head' : obs.length ? 'the heads seen do not settle it' : 'no record of that head');
+            else if (sameSha(HT, X)) set('held', 'the head by commit dates at that time', { basis });
+            else if (r && R.ok && R.isAnc(X, HT)) {
+              const L = used ? (R.refLog.get(used) || []) : [], i = L.findIndex(x => x[0] === X), nx = i > 0 ? L[i - 1] : null, endTs = Math.round(Date.parse(c.inputEndTs) / 1000);
+              set('wrong', 'older than the head by commit dates, ' + HT.slice(0, 7), { cls: own ? 'latest' : 'mismatch', latest: own, tail: !!(own && nx && nx[1] >= endTs), basis, rec: HT.slice(0, 7) });
+            } else set('nc', 'the record does not settle it');
+          }
+        }
+        const k = cl.kind + ' / ' + cl.verdict + ' / ' + (cl.verdict === 'wrong' ? cl.cls + (cl.tail ? ' (kept tail)' : '') : cl.reason); byReason[k] = (byReason[k] || 0) + 1;
+      }
+    }
+  }
+  fs.writeFileSync(path.join(cacheDir, 'checked.json'), JSON.stringify(idx));
+  // ---- work files for the hand reads. Scratch only: they hold sentences from summaries.
+  const W = [];
+  for (const s of idx.sessions) for (const c of s.comps) for (const cl of c.claims) if (cl.verdict === 'wrong') W.push(`ID ${claimId(s, c, cl)}\n   ${cl.cls}${cl.tail ? ' (kept tail)' : ''} | sec ${cl.sec} | ${cl.reason} | boundary L${c.line} inputEnd L${c.inputEnd}${cl.evLine ? ' | evidence L' + cl.evLine + (cl.evLine2 ? ' then L' + cl.evLine2 : '') : ''}\n   CTX: ${cl.ctx}\n`);
+  fs.writeFileSync(path.join(cacheDir, 'wrong-candidates.txt'), W.join('\n'));
+  const H = [];
+  for (const k of KINDS) { const pool = []; for (const s of idx.sessions) for (const c of s.comps) for (const cl of c.claims) if (cl.kind === k && cl.verdict === 'held') pool.push({ id: claimId(s, c, cl), cl, c }); pool.sort((a, b) => sha1(a.id) < sha1(b.id) ? -1 : 1); for (const x of pool.slice(0, 10)) H.push(`ID ${x.id}\n   held: ${x.cl.reason} | sec ${x.cl.sec} | boundary L${x.c.line}${x.cl.evLine ? ' | evidence L' + x.cl.evLine : ''}\n   CTX: ${x.cl.ctx}\n`); }
+  fs.writeFileSync(path.join(cacheDir, 'held-sample.txt'), H.join('\n'));
+  // the kept tail beside the summary's last three sections, for the hand read of scoring 1.9 (scratch only)
+  const TR = [], cut = (s, n, fromEnd) => { s = (s || '').replace(/\s+/g, ' ').trim(); return s.length <= n ? s : fromEnd ? '…' + s.slice(-n) : s.slice(0, n) + '…'; };
+  const all = []; for (const s of idx.sessions) for (const c of s.comps) all.push({ s, c, id: `${s.g}-${s.sid8}-${String(c.n).padStart(2, '0')}` });
+  all.sort((a, b) => bandOf(a.c.pre) - bandOf(b.c.pre) || (a.id < b.id ? -1 : 1));
+  for (const { c, id } of all) {
+    const calls = c.tail.filter(a => a.tool), texts = c.tail.filter(a => a.k === 'model text'), msgs = c.tail.filter(a => a.k === 'message arrived');
+    TR.push(`=== ${id} | ${Math.round(c.pre / 1000)}k ${c.model.replace('claude-', '')} | tail L${c.inputEnd}..L${c.line - 1}: ${calls.length} calls (${calls.filter(a => a.state).length} change state), ${texts.length} model texts, ${msgs.length} messages in${c.precomputed ? ' | prepared ahead' : ''} | first seen in the tail: ${c.tailOnly.fromResults} from results (${c.tailOnly.fromResultsInSummary} in the summary${c.tailOnly.ex.length ? ': ' + c.tailOnly.ex.join(' ') : ''}), ${c.tailOnly.fromCalls} from calls (${c.tailOnly.fromCallsInSummary} in the summary); echoes of tail results: ${c.echo}`);
+    if (!calls.length && !texts.length) { TR.push('  (empty tail)' + (msgs.length ? ' message in: ' + cut(msgs[msgs.length - 1].d, 160) : '') + '\n'); continue; }
+    for (const a of c.tail.slice(-10)) TR.push(`  L${a.line} ${a.state ? '[STATE] ' : ''}${a.k}${a.err ? ' (ERROR)' : ''}: ${cut(a.d, a.k === 'model text' || a.k === 'message arrived' ? 230 : 170)}${a.r && a.k !== 'read' && a.k !== 'plan update' && a.k !== 'file write' ? '  =>  ' + cut(a.r, 140, true) : ''}`);
+    if ((c.s8 || '').trim().length > 80) { TR.push(`  S8 end: ${cut(c.s8, 620, true)}`); TR.push(`  S9: ${cut(c.s9, 380)}\n`); } else TR.push(`  END: ${cut(c.end, 950, true)}\n`);
+  }
+  fs.writeFileSync(path.join(cacheDir, 'tail-read.txt'), TR.join('\n'));
+  // the fixed sample of summaries for the full read (scoring 1.6, third check): two per group, in hash order
+  const groups = { 'opus 300k-400k': all.filter(x => /opus/.test(x.c.model) && x.c.pre >= 300000 && x.c.pre < 400000), '400k-900k': all.filter(x => x.c.pre >= 400000 && x.c.pre < 900000), '900k and over': all.filter(x => x.c.pre >= 900000) };
+  const FR = []; for (const [gname, list] of Object.entries(groups)) { list.sort((a, b) => sha1(a.id) < sha1(b.id) ? -1 : 1); for (const x of list.slice(0, 2)) FR.push(`${gname}: ${x.id}`); }
+  fs.writeFileSync(path.join(cacheDir, 'fullread-sample.txt'), FR.join('\n') + '\n');
+  const tot = {}; for (const s of idx.sessions) for (const c of s.comps) for (const cl of c.claims) { const a = tot[cl.kind] || (tot[cl.kind] = { found: 0, held: 0, wrong: 0, nc: 0 }); a.found++; a[cl.verdict]++; }
+  console.log('CHECK_DONE github=' + G.ok + ' prs=' + Object.keys(G.prs).length + ' repos=' + RP.fixflow.ok + '/' + RP.clinic.ok);
+  for (const k of KINDS) console.log('  ', k.padEnd(7), JSON.stringify(tot[k] || {}));
+  for (const [k, v] of Object.entries(byReason).sort()) console.log('     ', String(v).padStart(5), k);
+}
+
+// ---------- stage: table ----------
+const MODEL_NAME = { 'claude-fable-5-1': 'Fable 5.1', 'claude-fable-5-2': 'Fable 5.2', 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5' };
+const Z95 = 1.959964, pct = (x, y) => y ? (100 * x / y).toFixed(1) + ' %' : 'n/a', p1 = (v) => (100 * v).toFixed(1) + ' %';
+function wilson(x, n) { if (!n) return [0, 1]; const p = x / n, d = 1 + Z95 * Z95 / n, c = p + Z95 * Z95 / (2 * n), h = Z95 * Math.sqrt(p * (1 - p) / n + Z95 * Z95 / (4 * n * n)); return [Math.max(0, (c - h) / d), Math.min(1, (c + h) / d)]; }
+const zeroUpper = (n) => n ? 1 - Math.pow(0.05, 1 / n) : 1;          // one-sided 95 % upper bound: the largest rate that would still give no wrong claim in n, one time in twenty
+const up1 = (v) => (Math.ceil(v * 1000 - 1e-9) / 10).toFixed(1) + ' %';   // an upper bound is printed rounded up, never to the nearest (review N-F1)
+function rng32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const perArm = (a, b) => { const pb = (a + b) / 2, x = Z95 * Math.sqrt(2 * pb * (1 - pb)), y = 0.841621 * Math.sqrt(a * (1 - a) + b * (1 - b)); return Math.ceil((x + y) ** 2 / (a - b) ** 2); };
+const med = (a) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };   // the usual median: the mean of the two middle values when the count is even (review N-F4)
+function stageTable(cacheDir, outDir) {
+  outDir = outDir || '.';
+  const idx = JSON.parse(fs.readFileSync(path.join(cacheDir, 'checked.json'), 'utf8'));
+  const audit = fs.existsSync(path.join(outDir, 'audit.json')) ? JSON.parse(fs.readFileSync(path.join(outDir, 'audit.json'), 'utf8')) : null;
+  const first = fs.existsSync(path.join(outDir, 'first-count.json')) ? JSON.parse(fs.readFileSync(path.join(outDir, 'first-count.json'), 'utf8')) : null;
+  const AGREES = new Set(['onDisk', 'composed', 'spelling', 'seen', 'bothGiven']), NOTCLAIM = new Set(['shorthand', 'plan', 'quote', 'misbound', 'digest']);
+  const L = [], out = (s) => L.push(s === undefined ? '' : s), J = {};
+  // ---- rows: one per summary
+  const rows = [];
+  for (const s of idx.sessions) for (const c of s.comps) {
+    const id = `${s.g}-${s.sid8}-${String(c.n).padStart(2, '0')}`, k = {};
+    for (const kind of KINDS) k[kind] = { found: 0, held: 0, wrongScript: 0, wrongHand: 0, nc: 0, notClaim: 0, state: 0 };
+    for (const cl of c.claims) {
+      const a = k[cl.kind]; a.found++; if (cl.sec >= 7) a.state++;
+      if (cl.verdict === 'held') a.held++; else if (cl.verdict === 'nc') a.nc++;
+      else { a.wrongScript++; const code = audit ? audit.secondCount.flagged[claimId(s, c, cl)] : null; if (code === 'confirmed') a.wrongHand++; else if (AGREES.has(code)) a.held++; else if (NOTCLAIM.has(code)) { a.notClaim++; a.found--; } else if (!audit) a.wrongHand++; else a.nc++; }
+    }
+    const calls = c.tail.filter(a => a.tool), tv = audit ? audit.tail[id] : null;
+    rows.push({ id, g: s.g, sid: s.sid8, n: c.n, model: MODEL_NAME[c.model] || c.model, pre: c.pre, band: bandOf(c.pre), prepared: !!c.precomputed, afterCut: !!c.afterReplayCut, chars: c.chars, k,
+      aheadMin: c.precomputed && c.sumTs ? Math.round((Date.parse(c.ts) - Date.parse(c.sumTs)) / 60000) : 0, footer: !!c.footer,
+      afterFirstKeptMin: c.sumTs && c.inputEndTs && c.inputEnd === c.headLine ? Math.round((Date.parse(c.sumTs) - Date.parse(c.inputEndTs)) / 60000) : null,
+      tail: { calls: calls.length, state: calls.filter(a => a.state).length, texts: c.tail.filter(a => a.k === 'model text').length, msgs: c.tail.filter(a => a.k === 'message arrived').length, results: calls.filter(a => a.rLine).length, classes: calls.map(a => a.k) },
+      tailTok: c.tailOnly, echo: c.echo, verdict: tv ? tv[0] : '', what: tv ? tv[1] : '', describes: audit ? audit.describesTail.includes(id) : false, repeats: c.repeats, next: c.next.map(a => a.k) });
+  }
+  const N = rows.length, sum = (f, rs) => (rs || rows).reduce((a, r) => a + f(r), 0), kindSum = (kind, f, rs) => sum(r => r.k[kind][f], rs);
+  const sessions = [...new Set(rows.map(r => r.g + r.sid))];
+  out('SUMMARY CHECK: hand-over fidelity of the compaction summaries on record');
+  out(`generated ${new Date().toISOString()} by check.js.txt (stage table); cut ${idx.startedAt}; tags: [M] measured by the script, [M, hand] measured by this session's hand read, [E] estimated, [G] guess`);
+  out();
+  // ---- A
+  out('A. WHAT WAS READ  [M]');
+  const byG = (g) => rows.filter(r => r.g === g), before = rows.filter(r => !r.afterCut);
+  out(`A1  project folders in scope ${idx.foldersInScope} (FixFlow and the clinic testbed), left out and not opened ${idx.foldersLeftOut}; main transcripts read ${idx.mainTranscripts}${idx.transcriptsAfterCut ? ' (' + idx.transcriptsAfterCut + ' more were started after the cut and are not read)' : ''}${idx.foldersAfterCut ? '; folders made after the cut and not counted: ' + idx.foldersAfterCut : ''}`);
+  out(`A2  compaction summaries ${N} in ${sessions.length} sessions: FixFlow ${byG('fixflow').length}, clinic ${byG('clinic').length}. Up to the split replay's cut (${idx.replayCut} UTC): ${before.length} (FixFlow ${before.filter(r => r.g === 'fixflow').length}, clinic ${before.filter(r => r.g === 'clinic').length}); after it: ${N - before.length}. Copied markers left out: ${idx.copiedMarkers}. Markers without a summary: ${idx.markersWithoutSummary}.`);
+  out(`    the owner's other projects: 8 summaries at the split replay's cut (replay-table.txt, A3 and A6: 117 in session windows, of them 61 FixFlow and 48 clinic), dropped; their folders were not opened, so later ones there are not counted`);
+  out('A3  summaries by window size at compaction and by model (the model of the session\'s last call before the boundary)');
+  const models = ['Opus 5.5', 'Fable 5.1', 'Fable 5.2', 'Sonnet 5.5'];
+  out('    band              ' + models.map(m => m.padStart(11)).join('') + '      all   sessions   prepared ahead   sizes');
+  J.bands = BANDS.map((b, bi) => { const rs = rows.filter(r => r.band === bi), o = { name: b.name, n: rs.length, sessions: new Set(rs.map(r => r.g + r.sid)).size, prepared: rs.filter(r => r.prepared).length, byModel: models.map(m => rs.filter(r => r.model === m).length), min: Math.min(...rs.map(r => r.pre)), max: Math.max(...rs.map(r => r.pre)) };
+    out('    ' + b.name.padEnd(18) + o.byModel.map(v => String(v).padStart(11)).join('') + String(o.n).padStart(9) + String(o.sessions).padStart(11) + String(o.prepared).padStart(17) + `   ${Math.round(o.min / 1000)}k to ${Math.round(o.max / 1000)}k`); return o; });
+  out('    all               ' + models.map(m => String(rows.filter(r => r.model === m).length).padStart(11)).join('') + String(N).padStart(9) + String(sessions.length).padStart(11) + String(rows.filter(r => r.prepared).length).padStart(17));
+  const prep = rows.filter(r => r.prepared), auto = rows.filter(r => !r.prepared);
+  out(`A4  summary length: median ${med(rows.map(r => r.chars)).toLocaleString('en-US')} characters (smallest ${Math.min(...rows.map(r => r.chars)).toLocaleString('en-US')}, largest ${Math.max(...rows.map(r => r.chars)).toLocaleString('en-US')})`);
+  out(`A5  prepared ahead of the boundary (the marker's own flag): ${prep.length} of ${N}; written a median ${med(prep.map(r => r.aheadMin))} min before the boundary (${Math.min(...prep.map(r => r.aheadMin))} to ${Math.max(...prep.map(r => r.aheadMin))} min). The other ${auto.length} were written when the boundary fell.`);
+  out(`    by size: prepared-ahead summaries run from ${Math.round(Math.min(...prep.map(r => r.pre)) / 1000)}k to ${Math.round(Math.max(...prep.map(r => r.pre)) / 1000)}k; summaries written at the boundary: Opus ${auto.filter(r => r.model === 'Opus 5.5').length} between ${Math.round(Math.min(...auto.filter(r => r.model === 'Opus 5.5').map(r => r.pre)) / 1000)}k and ${Math.round(Math.max(...auto.filter(r => r.model === 'Opus 5.5').map(r => r.pre)) / 1000)}k, other models ${auto.filter(r => r.model !== 'Opus 5.5').length} between ${Math.round(Math.min(...auto.filter(r => r.model !== 'Opus 5.5').map(r => r.pre)) / 1000)}k and ${Math.round(Math.max(...auto.filter(r => r.model !== 'Opus 5.5').map(r => r.pre)) / 1000)}k`);
+  { const aft = prep.filter(r => r.afterFirstKeptMin !== null && r.afterFirstKeptMin >= 0);
+    out(`    of the ${prep.length} prepared ahead, ${aft.length} were written after their first kept message (a median ${med(aft.map(r => r.afterFirstKeptMin))} min after it): the kept messages are left out of the summary because the marker keeps them, not because the summary came first`);
+    J.preparedAfterFirstKept = { n: aft.length, of: prep.length, medianMin: med(aft.map(r => r.afterFirstKeptMin)) }; }
+  out('    prepared ahead, by model: ' + models.map(m => `${m} ${prep.filter(r => r.model === m).length} of ${rows.filter(r => r.model === m).length}`).join('; '));
+  out(`A6  summaries that end with the harness's line saying they were written without seeing the kept messages: ${rows.filter(r => r.footer).length} of ${N}`);
+  const perSum = rows.map(r => KINDS.reduce((a, kd) => a + r.k[kd].found, 0));
+  out(`A7  claims found per summary (second count, after the hand read): median ${med(perSum)}, smallest ${Math.min(...perSum)}, largest ${Math.max(...perSum)}`);
+  J.A = { n: N, sessions: sessions.length, fixflow: byG('fixflow').length, clinic: byG('clinic').length, atReplayCut: before.length, afterReplayCut: N - before.length, copied: idx.copiedMarkers, foldersIn: idx.foldersInScope, foldersOut: idx.foldersLeftOut, transcripts: idx.mainTranscripts, prepared: prep.length, preparedMedianMin: med(prep.map(r => r.aheadMin)), preparedMaxMin: Math.max(...prep.map(r => r.aheadMin)), footer: rows.filter(r => r.footer).length, medianChars: med(rows.map(r => r.chars)), cut: idx.startedAt, models };
+  out();
+  // ---- B
+  out('B. THE KEPT TAIL: what lies between the summary\'s input end and the boundary  [M]');
+  const cls = {}; for (const r of rows) for (const c of r.tail.classes) cls[c] = (cls[c] || 0) + 1;
+  const withState = rows.filter(r => r.tail.state), onlyText = rows.filter(r => !r.tail.calls && r.tail.texts), empty = rows.filter(r => !r.tail.calls && !r.tail.texts);
+  out(`B1  tails with at least one call ${rows.filter(r => r.tail.calls).length} of ${N}; with a model message and no call ${onlyText.length}; with neither ${empty.length}. Calls per tail: median ${med(rows.map(r => r.tail.calls))}, largest ${Math.max(...rows.map(r => r.tail.calls))}; ${sum(r => r.tail.calls)} calls in all.`);
+  out(`B2  tails with a call the script classes as changing state ${withState.length} of ${N}. A floor: a shell or node command that edits a file can be classed as a test run, a status call or plain shell (review T-1). Calls by class: ` + Object.entries(cls).sort((a, b) => b[1] - a[1]).map(([k2, v]) => `${k2} ${v}`).join('; '));
+  out(`B3  messages that came in during the tail (the owner, another session, a task notice): in ${rows.filter(r => r.tail.msgs).length} of ${N} tails`);
+  const withRes = rows.filter(r => r.tail.results), tokCould = rows.filter(r => r.tailTok.fromResults > 0), tokDid = rows.filter(r => r.tailTok.fromResultsInSummary > 0), echoDid = rows.filter(r => r.echo > 0), either = rows.filter(r => r.echo > 0 || r.tailTok.fromResultsInSummary > 0);
+  out(`B4  does the summary see its kept tail? Tails holding at least one tool result: ${withRes.length}. In ${tokCould.length} of them a result holds an id or long number found nowhere earlier in the transcript; ${tokDid.length} summaries repeat one. ${echoDid.length} summaries repeat a run of four words from a tail result that is found nowhere earlier. Either: ${either.length} of ${withRes.length} (${either.map(r => r.id).join(', ')}).`);
+  out(`    so at least ${either.length} summaries were written with the kept tail in view. For the rest the test is silent: it can show that a summary saw its tail, not that it did not. The evidence that a summary is written without its tail is the marker's preserved-segment field, which names the kept messages and is how the tail is found here, and the harness's own line (A6).`);
+  J.B = { withCalls: rows.filter(r => r.tail.calls).length, onlyText: onlyText.length, empty: empty.length, medianCalls: med(rows.map(r => r.tail.calls)), maxCalls: Math.max(...rows.map(r => r.tail.calls)), calls: sum(r => r.tail.calls), withState: withState.length, classes: cls, withMsgs: rows.filter(r => r.tail.msgs).length, withResults: withRes.length, tokCould: tokCould.length, tokDid: tokDid.length, echoDid: echoDid.length, sawTail: either.map(r => r.id) };
+  out();
+  // ---- C
+  out('C. CLAIMS A SCRIPT CAN RECHECK');
+  const kindName = { commit: 'commit id', path: 'file path', head: 'head', pr: 'pull request state', merge: 'merged as', test: 'test result', count: 'count' };
+  if (first) {
+    out(`C1  first count, as scored in 1.1 to 1.8, before any repair  [M]   (script kept as check-first-count.js.txt; ${first.summaries} summaries)`);
+    out('    kind                  found    held   wrong   not checkable');
+    let tf = 0, th = 0, tw = 0, tn = 0; for (const kd of ['commit', 'path', 'head', 'pr', 'test', 'count']) { const t = first.totals[kd]; tf += t.found; th += t.held; tw += t.wrong; tn += t.nc; out('    ' + kindName[kd].padEnd(20) + String(t.found).padStart(7) + String(t.held).padStart(8) + String(t.wrong).padStart(8) + String(t.nc).padStart(16)); }
+    out('    all                 ' + String(tf).padStart(7) + String(th).padStart(8) + String(tw).padStart(8) + String(tn).padStart(16) + `     script's own rate: ${tw} of ${th + tw} checked = ${pct(tw, th + tw)}`);
+    const codes = {}; for (const c of Object.values(audit.firstCount.flagged)) codes[c] = (codes[c] || 0) + 1;
+    const conf1 = codes.confirmed || 0, notc = Object.entries(codes).filter(([c]) => NOTCLAIM.has(c)).reduce((a, [, v]) => a + v, 0), agr = Object.entries(codes).filter(([c]) => AGREES.has(c)).reduce((a, [, v]) => a + v, 0);
+    out(`C2  hand read of every claim the first count marked wrong  [M, hand]: ${tw} read; confirmed wrong ${conf1}; not a claim of the kind ${notc}; the record agrees with the claim ${agr}`);
+    out('    by reason: ' + Object.entries(codes).sort((a, b) => b[1] - a[1]).map(([c, v]) => `${c} ${v}`).join('; '));
+    out(`    test 1 of 1.6 (at least 80 % of the script's wrong verdicts survive): ${conf1} of ${tw} survive = ${pct(conf1, tw)}. FAILED. The script's own rate of ${pct(tw, th + tw)} is not a rate of wrong claims.`);
+    const hs = audit.firstCount.heldSample; out('    test 2 of 1.6 (held sample, at most 10 % not claims of the kind): ' + Object.entries(hs).map(([kd, v]) => `${kindName[kd]} ${v.notClaims} of ${v.read}${v.notClaims / v.read > 0.1 ? ' FAILED' : ' passed'}`).join('; '));
+    J.first = { totals: first.totals, found: tf, held: th, wrong: tw, nc: tn, confirmed: conf1, notClaim: notc, agrees: agr, codes, heldSample: hs };
+  }
+  out('C3  what the hand read changed in the script  (repairs R1 to R6. R1, R3, R5 and R6 make the script do what 1.4 says. R2 and R4 narrow 1.4: a path known only by its file name becomes not checkable, and a state word must sit beside the number. Neither can hide a wrong claim, since all 73 first-count flags were read by hand before them.)');
+  out('    R1 an id that starts a longer hexadecimal string, or is in upper case, counts as seen. R2 one spelling per path (drive letter, home folder); a path counts as on disk when a file under the project ends with it; when only the file name is on record the claim is not checkable. R3 a token standing for several files (a/b/c, a range, a placeholder) is not a path.');
+  out('    R4 a pull request state counts only when the word sits beside the number. R5 quoted user messages (section 6) and merge instructions are not head or state claims. R6 a test result needs a test word on its line and is not taken from an instruction; a count is not taken from a label.');
+  out('    added, to find more: a bare head read as the session\'s own branch; "merged as" checked against GitHub\'s merge commit (1.9)');
+  out(`C4  second count, after the repairs  [M]   (${N} summaries)`);
+  out('    kind                  found    held   wrong   not checkable   after the hand read: wrong   held   not a claim');
+  let F2 = 0, H2 = 0, W2 = 0, NC2 = 0, WH = 0, HH = 0, NCL = 0;
+  const kindTot = {};
+  for (const kd of KINDS) { const f = kindSum(kd, 'found') + kindSum(kd, 'notClaim'), ws = kindSum(kd, 'wrongScript'), hh = kindSum(kd, 'held'), wh = kindSum(kd, 'wrongHand'), ncl = kindSum(kd, 'notClaim'), nc = kindSum(kd, 'nc'); const hScript = f - ws - nc; F2 += f; H2 += hScript; W2 += ws; NC2 += nc; WH += wh; HH += hh; NCL += ncl; kindTot[kd] = { found: f, heldScript: hScript, wrongScript: ws, nc, wrongHand: wh, held: hh, notClaim: ncl, state: kindSum(kd, 'state') };
+    out('    ' + kindName[kd].padEnd(20) + String(f).padStart(7) + String(hScript).padStart(8) + String(ws).padStart(8) + String(nc).padStart(16) + String(wh).padStart(29) + String(hh).padStart(7) + String(ncl).padStart(14)); }
+  out('    all                 ' + String(F2).padStart(7) + String(H2).padStart(8) + String(W2).padStart(8) + String(NC2).padStart(16) + String(WH).padStart(29) + String(HH).padStart(7) + String(NCL).padStart(14) + `     script's own rate: ${W2} of ${H2 + W2} = ${pct(W2, H2 + W2)}`);
+  const codes2 = {}; if (audit) for (const c of Object.values(audit.secondCount.flagged)) codes2[c] = (codes2[c] || 0) + 1;
+  out(`C5  hand read of every claim the second count marked wrong  [M, hand]: ${W2} read; confirmed wrong ${WH}; by reason: ` + Object.entries(codes2).sort((a, b) => b[1] - a[1]).map(([c, v]) => `${c} ${v}`).join('; '));
+  out(`    test 1 of 1.6: ${WH} of ${W2} survive. FAILED again. Nothing the script marks wrong is wrong; the count of wrong claims below is the hand-confirmed one.`);
+  const hs2 = audit ? audit.secondCount.heldSample : {}, usable = KINDS.filter(kd => hs2[kd] && hs2[kd].notClaims / hs2[kd].read <= 0.1);
+  out('    test 2 of 1.6 on the second count: ' + KINDS.map(kd => hs2[kd] ? `${kindName[kd]} ${hs2[kd].notClaims} of ${hs2[kd].read}${hs2[kd].notClaims / hs2[kd].read > 0.1 ? ' FAILED' : ' passed'}` : '').join('; '));
+  out(`    kinds that keep a rate (held sample passed): ${usable.map(kd => kindName[kd]).join(', ')}. No rate for: ${KINDS.filter(kd => !usable.includes(kd)).map(kd => kindName[kd]).join(', ')}.`);
+  const chkU = usable.reduce((a, kd) => a + kindTot[kd].held + kindTot[kd].wrongHand, 0), chkAll = KINDS.reduce((a, kd) => a + kindTot[kd].held + kindTot[kd].wrongHand, 0), sumsChecked = rows.filter(r => usable.some(kd => r.k[kd].held + r.k[kd].wrongHand > 0)).length;
+  out(`C6  THE CLAIM RATE  [M, hand]: ${WH} wrong of ${chkU.toLocaleString('en-US')} claims checked in the kinds that keep a rate = ${pct(WH, chkU)}   (all seven kinds: ${WH} of ${chkAll.toLocaleString('en-US')})`);
+  out(`    range. With no wrong claim the resampling of 1.7 has nothing to spread, so two one-sided 95 % upper bounds are given instead, printed rounded up: if claims stand or fall one by one, under ${up1(zeroUpper(chkU))}; if every claim in a summary stands or falls together, under ${up1(zeroUpper(sumsChecked))} (${sumsChecked} summaries); if every claim in a session does, under ${up1(zeroUpper(sessions.length))} (${sessions.length} sessions)  [E]`);
+  out('    this departs from 1.6, which bars a rate when the script\'s flags fail the hand read. The failure shows that the script over-flags, not that held claims are wrong, so an upper bound is given beside the count (review M-F4).');
+  { const idK = usable.filter(kd => kd === 'commit' || kd === 'path'), stK = usable.filter(kd => kd !== 'commit' && kd !== 'path');
+    const nId = idK.reduce((a, kd) => a + kindTot[kd].held + kindTot[kd].wrongHand, 0), nSt = stK.reduce((a, kd) => a + kindTot[kd].held + kindTot[kd].wrongHand, 0);
+    out(`    what held means. ${nId.toLocaleString('en-US')} of the ${chkU.toLocaleString('en-US')} are commit ids and paths, held when the identifier is on record: that tests whether the summary copied it right, not whether what it says about it is true. ${nSt} (${stK.map(kd => (kindTot[kd].held + kindTot[kd].wrongHand) + ' ' + kindName[kd] + 's').join(', ')}) check a value against a state; with none wrong among them the one-sided 95 % bound is under ${up1(zeroUpper(nSt))}  [E]  (review M-F5)`);
+    J.valueClaims = { identifiers: nId, values: nSt, upValues: zeroUpper(nSt) }; }
+  out(`    THE SUMMARY RATE  [M, hand]: ${rows.filter(r => KINDS.some(kd => r.k[kd].wrongHand > 0)).length} of ${sumsChecked} summaries with a checked claim hold a wrong one`);
+  out(`    not checkable and left out of the rate: ${NC2}. Dropped as not claims after the hand read: ${NCL}.`);
+  const basis = {}, ncWhy = {}; for (const s of idx.sessions) for (const c of s.comps) for (const cl of c.claims) { if (cl.verdict === 'held') { const b = cl.kind + ' | ' + cl.reason; basis[b] = (basis[b] || 0) + 1; } else if (cl.verdict === 'nc') { const b = cl.kind + ' | ' + cl.reason; ncWhy[b] = (ncWhy[b] || 0) + 1; } }
+  out('C7  where the held claims were confirmed  [M]:'); for (const [b, v] of Object.entries(basis).sort()) out('      ' + String(v).padStart(5) + '  ' + b);
+  { const b = (k2) => basis[k2] || 0; out(`    in groups: commit ids and paths in the session's own transcript ${b('commit | seen, and in the repository') + b('commit | seen') + b('path | seen') + b('path | opened by a file tool')}; paths in the repository history or on disk ${b('path | in the repository history') + b('path | on disk')}; heads ${b('head | the last head seen') + b('head | the head by commit dates at that time')}; pull request states and merge commits ${b('pr | the last state seen') + b('pr | GitHub at that time') + b('merge | the merge commit GitHub records')} (${b('pr | GitHub at that time') + b('merge | the merge commit GitHub records')} of them against GitHub); test results and counts seen with their word ${b('test | seen with its word') + b('count | seen with its word')}`); }
+  out('    why claims were not checkable  [M]:'); for (const [b, v] of Object.entries(ncWhy).sort()) out('      ' + String(v).padStart(5) + '  ' + b);
+  out(`C8  by band and by model: claims checked in the kinds that keep a rate, all with ${WH} wrong  [M, hand]`);
+  const grp = (name, rs) => { const c = usable.reduce((a, kd) => a + kindSum(kd, 'held', rs) + kindSum(kd, 'wrongHand', rs), 0), w = usable.reduce((a, kd) => a + kindSum(kd, 'wrongHand', rs), 0), ns = new Set(rs.map(r => r.g + r.sid)).size; out('      ' + name.padEnd(34) + `${String(rs.length).padStart(4)} summaries ${String(ns).padStart(3)} sessions ${String(c).padStart(6)} checked  ${w} wrong   under ${up1(zeroUpper(c))} by claim, under ${up1(zeroUpper(rs.length))} by summary${ns < 5 ? '   (fewer than five sessions)' : ''}`); return { name, summaries: rs.length, sessions: ns, checked: c, wrong: w, upClaim: zeroUpper(c), upSummary: zeroUpper(rs.length) }; };
+  J.claimGroups = [];
+  BANDS.forEach((b, bi) => J.claimGroups.push(Object.assign(grp('band ' + b.name, rows.filter(r => r.band === bi)), { type: 'band' })));
+  for (const m of models) J.claimGroups.push(Object.assign(grp('model ' + m, rows.filter(r => r.model === m)), { type: 'model' }));
+  J.claimGroups.push(Object.assign(grp('Fable only, under 400k', rows.filter(r => /Fable/.test(r.model) && r.pre < 400000)), { type: 'fable' }));
+  J.claimGroups.push(Object.assign(grp('Fable only, 400k to 900k', rows.filter(r => /Fable/.test(r.model) && r.pre >= 400000 && r.pre < 900000)), { type: 'fable' }));
+  J.claimGroups.push(Object.assign(grp('Fable only, 900k and over', rows.filter(r => /Fable/.test(r.model) && r.pre >= 900000)), { type: 'fable' }));
+  J.claimGroups.push(Object.assign(grp('FixFlow', byG('fixflow')), { type: 'group' })); J.claimGroups.push(Object.assign(grp('clinic testbed', byG('clinic')), { type: 'group' }));
+  J.claimGroups.push(Object.assign(grp('the 109 at the split replay\'s cut', before), { type: 'cut' }));
+  const stateFound = usable.reduce((a, kd) => a + kindTot[kd].state, 0);
+  out(`C9  claims in the three sections that state where things stand (pending tasks, current work, next step): ${KINDS.reduce((a, kd) => a + kindTot[kd].state, 0)} of ${(F2 - NCL).toLocaleString('en-US')} found after the hand read (${F2.toLocaleString('en-US')} less ${NCL} that were not claims), ${stateFound} of them in the kinds that keep a rate; none wrong`);
+  J.C = { found: F2, heldScript: H2, wrongScript: W2, nc: NC2, wrongHand: WH, held: HH, notClaim: NCL, kinds: kindTot, kindName, codes: codes2, heldSample: hs2, usable, checkedUsable: chkU, checkedAll: chkAll, summariesChecked: sumsChecked, upClaim: zeroUpper(chkU), upSummary: zeroUpper(sumsChecked), upSession: zeroUpper(sessions.length), basis, ncWhy, stateFound: KINDS.reduce((a, kd) => a + kindTot[kd].state, 0) };
+  out();
+  // ---- D
+  out('D. LATEST STATE: the kept tail read beside each summary\'s last three sections  [M, hand]   (scoring 1.9)');
+  const isO = (r) => r.verdict === 'overtaken', ov = rows.filter(isO);
+  // spread between sessions: resample whole sessions
+  const bySess = new Map(); for (const r of rows) { const k = r.g + r.sid; (bySess.get(k) || bySess.set(k, []).get(k)).push(r); }
+  const S = [...bySess.values()], rnd = rng32(20261114), boots = [];
+  for (let b = 0; b < 4000; b++) { const pick = []; for (let i = 0; i < S.length; i++) pick.push(S[Math.floor(rnd() * S.length)]); boots.push(pick); }
+  const rateOf = (pick, f) => { let x = 0, n = 0; for (const s of pick) for (const r of s) if (!f || f(r)) { n++; if (isO(r)) x++; } return n ? x / n : null; };
+  const pAll = ov.length / N, bAll = boots.map(p => rateOf(p)).filter(v => v !== null), mean = bAll.reduce((a, v) => a + v, 0) / bAll.length, varB = bAll.reduce((a, v) => a + (v - mean) ** 2, 0) / (bAll.length - 1), deff = Math.max(1, varB / (pAll * (1 - pAll) / N));
+  const wr = (x, n) => wilson(x / deff, n / deff);
+  const line = (name, rs, extra) => { const x = rs.filter(isO).length, n = rs.length, w = wr(x, n), ns = new Set(rs.map(r => r.g + r.sid)).size, o = { name, n, overtaken: x, not: rs.filter(r => r.verdict === 'not').length, unclear: rs.filter(r => r.verdict === 'unclear').length, rate: n ? x / n : 0, lo: w[0], hi: w[1], sessions: ns, small: ns < 5 };
+    out('      ' + name.padEnd(44) + `${String(x).padStart(3)} of ${String(n).padStart(3)} = ${pct(x, n).padStart(7)}   range ${p1(w[0])} to ${p1(w[1])}   ${ns} sessions${ns < 5 ? ' (fewer than five: the range means little)' : ''}`); return Object.assign(o, extra || {}); };
+  out(`D1  summaries whose last sections were already overtaken in the kept tail: ${ov.length} of ${N} = ${pct(ov.length, N)}; not overtaken ${rows.filter(r => r.verdict === 'not').length}; unclear ${rows.filter(r => r.verdict === 'unclear').length} (counted as not overtaken)`);
+  out(`    range: 95 %, Wilson on an effective number of summaries. Design effect ${deff.toFixed(3)}, from 4,000 resamples of whole sessions (seed 20261114)  [E]`);
+  J.D = { n: N, overtaken: ov.length, not: rows.filter(r => r.verdict === 'not').length, unclear: rows.filter(r => r.verdict === 'unclear').length, rate: pAll, deff, lo: wr(ov.length, N)[0], hi: wr(ov.length, N)[1], groups: [] };
+  out(`      all                                          ${ov.length} of ${N} = ${pct(ov.length, N)}   range ${p1(J.D.lo)} to ${p1(J.D.hi)}`);
+  const whatN = {}; for (const r of ov) whatN[r.what] = (whatN[r.what] || 0) + 1;
+  const whatName = { message: 'a message or report the summary says is still to be written or sent, or is awaited', file: 'a file the summary says is still to be written or changed', commit: 'a commit or push the summary says is still to be made', result: 'a check, test or background result the summary says is awaited', other: 'another step the summary names as next (an agent, a workflow, a session, a stop)' };
+  out('D2  what was overtaken:'); for (const [w, v] of Object.entries(whatN).sort((a, b) => b[1] - a[1])) out(`      ${String(v).padStart(3)}  ${whatName[w]}`);
+  J.D.what = Object.entries(whatN).sort((a, b) => b[1] - a[1]).map(([w, v]) => ({ what: w, n: v, text: whatName[w] }));
+  out('D3  by how the summary was written');
+  J.D.groups.push(line('prepared ahead of the boundary', prep, { type: 'trigger' })); J.D.groups.push(line('written when the boundary fell', auto, { type: 'trigger' }));
+  out('    by window size at compaction');
+  BANDS.forEach((b, bi) => J.D.groups.push(line('band ' + b.name, rows.filter(r => r.band === bi), { type: 'band' })));
+  out('    by model');
+  for (const m of models) J.D.groups.push(line(m, rows.filter(r => r.model === m), { type: 'model' }));
+  out('    like with like: only summaries written when the boundary fell');
+  const opusAuto = auto.filter(r => r.model === 'Opus 5.5' && r.band === 1), bigAuto = auto.filter(r => r.band === 3);
+  J.D.groups.push(line('Opus at its setting, 300k to 400k', opusAuto, { type: 'like' })); J.D.groups.push(line('other models at the default trigger, 900k+', bigAuto, { type: 'like' }));
+  const fA = (r) => !r.prepared && r.model === 'Opus 5.5' && r.band === 1, fB = (r) => !r.prepared && r.band === 3, diffs = boots.map(p => { const a = rateOf(p, fA), b = rateOf(p, fB); return a === null || b === null ? null : b - a; }).filter(v => v !== null).sort((a, b) => a - b);
+  const dLo = diffs[Math.floor(0.025 * diffs.length)], dHi = diffs[Math.floor(0.975 * diffs.length)], dObs = bigAuto.filter(isO).length / bigAuto.length - opusAuto.filter(isO).length / opusAuto.length;
+  out(`      difference (900k and over minus 300k to 400k): ${(100 * dObs).toFixed(1)} points, range ${(100 * dLo).toFixed(1)} to ${(100 * dHi).toFixed(1)} points from the same resampling: ${dLo <= 0 && dHi >= 0 ? 'NOT SHOWN (the range holds zero)' : 'SHOWN'}  [E]`);
+  J.D.diff = { obs: dObs, lo: dLo, hi: dHi, shown: !(dLo <= 0 && dHi >= 0) };
+  { const fab = rows.filter(r => /Fable/.test(r.model)), b3 = [['Fable, under 400k', (r) => r.pre < 400000], ['Fable, 400k to 900k', (r) => r.pre >= 400000 && r.pre < 900000], ['Fable, 900k and over', (r) => r.pre >= 900000]];
+    out('    inside Fable alone, the only model that spans the bands');
+    for (const [nm, f] of b3) J.D.groups.push(line(nm, fab.filter(f), { type: 'fable' }));
+    const smallAuto = fab.filter(r => r.pre < 900000 && !r.prepared).length;
+    out(`      prepared ahead among them: ${b3.map(([nm, f]) => fab.filter(f).filter(r => r.prepared).length + ' of ' + fab.filter(f).length).join('; ')}. Fable summaries under 900k written when the boundary fell: ${smallAuto}${smallAuto ? '' : ', so fill cannot be compared like with like inside one model'}`);
+    J.D.fableSmallAuto = smallAuto; }
+  out('    by project'); J.D.groups.push(line('FixFlow', byG('fixflow'), { type: 'group' })); J.D.groups.push(line('clinic testbed', byG('clinic'), { type: 'group' }));
+  out('    the 109 at the split replay\'s cut'); J.D.groups.push(line('up to the split replay\'s cut', before, { type: 'cut' }));
+  const stTail = rows.filter(r => r.tail.state), noSt = rows.filter(r => !r.tail.state);
+  out(`D4  against the script's own listing (a floor, see B2): tails with a call it classes as changing state ${stTail.length}, of them overtaken ${stTail.filter(isO).length}; tails without one ${noSt.length}, of them overtaken ${noSt.filter(isO).length} (a closing message written, a result or a message that came in, a file changed by a shell command)`);
+  const desc = rows.filter(r => r.describes);
+  out(`D5  summaries that describe their own kept tail, by the hand read: ${desc.length}; overtaken among them: ${desc.filter(isO).length}. The script's test (B4) finds ${either.length} of these ${desc.length}.`);
+  { const perS = [...bySess.entries()].map(([k2, rs]) => ({ id: rs[0].id.replace(/-\d+$/, ''), n: rs.length, o: rs.filter(isO).length })).sort((a, b) => b.n - a.n), top = perS[0];
+    out(`D6  one session supplies ${top.n} of the ${N} summaries (${top.id}): overtaken ${top.o} of ${top.n}, against ${ov.length - top.o} of ${N - top.n} (${pct(ov.length - top.o, N - top.n)}) for the rest`);
+    J.D.topSession = { id: top.id, n: top.n, overtaken: top.o, restN: N - top.n, restOvertaken: ov.length - top.o }; }
+  J.D.stateTail = { withState: stTail.length, withStateOvertaken: stTail.filter(isO).length, without: noSt.length, withoutOvertaken: noSt.filter(isO).length }; J.D.describes = desc.length;
+  out();
+  // ---- E
+  out('E. DID THE NEXT WINDOW REPEAT WHAT ITS KEPT TAIL HAD DONE  [M]   (scoring 1.10; no hand judgement)');
+  const rp = rows.filter(r => r.repeats.state || r.repeats.said);
+  out(`E1  hand-overs with six steps on record after the boundary: ${rows.filter(r => r.next.length >= 6).length} of ${N}`);
+  out(`E2  the next window repeated a call that changes state: ${rows.filter(r => r.repeats.state).length}; said a tail message again: ${rows.filter(r => r.repeats.said).length}; either: ${rp.length} of ${N} = ${pct(rp.length, N)}; among the ${ov.length} overtaken: ${rp.filter(isO).length}. With none found, the one-sided 95 % bound (printed rounded up) is under ${up1(zeroUpper(N))} if hand-overs are taken one by one, under ${up1(zeroUpper(ov.length))} among the overtaken  [E]`);
+  { const anyC = rows.filter(r => r.repeats.anyCmd), acl = {}; for (const r of anyC) for (const k2 of r.repeats.anyCmdClasses) acl[k2] = (acl[k2] || 0) + 1;
+    out(`    counted more widely (review T-1): any shell or node command run again with the same text, whatever class the script gave it: ${anyC.length} of ${N} hand-overs${anyC.length ? ' (by class: ' + Object.entries(acl).map(([k2, v]) => k2 + ' ' + v).join('; ') + '); overtaken among them ' + anyC.filter(isO).length : ''}`);
+    out('    compared in E2: file writes by path and text; commands the script classes as changing state, by text; messages sent, by recipient and text; agents, workflows and sessions started, by description and prompt; model messages, by shared wording. Not compared: plan updates, reads, searches, status calls and test runs (other than by the wider count above), anything reworded, and anything after the sixth step.');
+    J.Eany = { n: anyC.length, classes: acl, overtaken: anyC.filter(isO).length }; }
+  out(`E3  what the check could see: tails holding a file write ${rows.filter(r => r.tail.classes.includes('file write')).length}; next windows whose first six steps hold a file write ${rows.filter(r => r.next.includes('file write')).length}; the same file written again with other text ${rows.filter(r => r.repeats.sameFile).length} (more work on it, not a repeat); the most any next message shares with a tail message ${Math.max(...rows.map(r => r.repeats.mostShared))} % of its three-word runs (a repeat needs more than 50 %); unclassed shell commands run again ${rows.filter(r => r.repeats.shell).length}`);
+  const first0 = {}; for (const r of rows) { const k2 = r.next[0] || '(none)'; first0[k2] = (first0[k2] || 0) + 1; }
+  out('E4  the next window\'s first step, by class: ' + Object.entries(first0).sort((a, b) => b[1] - a[1]).map(([k2, v]) => `${k2} ${v}`).join('; '));
+  J.E = { six: rows.filter(r => r.next.length >= 6).length, state: rows.filter(r => r.repeats.state).length, said: rows.filter(r => r.repeats.said).length, either: rp.length, amongOvertaken: rp.filter(isO).length, up: zeroUpper(N), upOvertaken: zeroUpper(ov.length), tailFileWrite: rows.filter(r => r.tail.classes.includes('file write')).length, nextFileWrite: rows.filter(r => r.next.includes('file write')).length, sameFile: rows.filter(r => r.repeats.sameFile).length, mostShared: Math.max(...rows.map(r => r.repeats.mostShared)), first: first0 };
+  out();
+  // ---- F
+  out('F. THE EXTRACTOR\'S OWN ERROR  (the four tests fixed in 1.6)');
+  if (audit) {
+    const fr = audit.fullRead.map(f => { const r = rows.find(x => x.id === f.id), sc = KINDS.filter(kd => kd !== 'path').reduce((a, kd) => a + r.k[kd].found, 0), ms = Object.values(f.missed).reduce((a, v) => a + v, 0); return Object.assign({}, f, { scriptNonPath: sc, scriptPath: r.k.path.found, missedN: ms }); });
+    out('F1  wrong verdicts: first count ' + (first ? `${J.first.confirmed} of ${J.first.wrong}` : 'n/a') + `, second count ${WH} of ${W2} survive the hand read. FAILED both times: by 1.6 only the hand-confirmed count is reported.`);
+    { const n1 = Object.values(audit.firstCount.heldSample).reduce((a, v) => a + v.read, 0), n2 = Object.values(audit.secondCount.heldSample).reduce((a, v) => a + v.read, 0); out(`F2  held verdicts (fixed sample, ten of each kind in hash order): see C2 and C5. After the repairs four kinds pass and three do not. Read by hand in all: ${(first ? J.first.wrong : 0) + W2} claims the script marked wrong (${first ? J.first.wrong : 0} and ${W2}), ${n1 + n2} sampled held claims (${n1} and ${n2}), ${N} kept tails.`);
+      const k1 = new Set(Object.keys(audit.firstCount.flagged)), both = Object.keys(audit.secondCount.flagged).filter(k => k1.has(k)).length;
+      out(`    the ${(first ? J.first.wrong : 0) + W2} are flags, not different claims: ${both} of the ${W2} second-count flags are claims the first count had marked wrong as well, so ${(first ? J.first.wrong : 0) + W2 - both} different claims were read`);
+      J.flagsBoth = { both, distinct: (first ? J.first.wrong : 0) + W2 - both, flags: (first ? J.first.wrong : 0) + W2 }; }
+    out('F3  missed claims: eight summaries read by hand (two from each of three groups in hash order, and the two hand-checked on 1 November)  [M, hand]');
+    out('      summary               group                          read                    script found: paths, other   missed by the script   wrong among the missed');
+    for (const f of fr) out('      ' + f.id.padEnd(22) + f.group.padEnd(31) + f.mode.padEnd(24) + String(f.scriptPath).padStart(8) + String(f.scriptNonPath).padStart(8) + '          ' + (Object.entries(f.missed).map(([kd, v]) => `${kindName[kd]} ${v}`).join(', ') || 'none').padEnd(44) + f.missedWrong);
+    const mTot = fr.reduce((a, f) => a + f.missedN, 0), sNP = fr.reduce((a, f) => a + f.scriptNonPath, 0), sP = fr.reduce((a, f) => a + f.scriptPath, 0), mKinds = {}; for (const f of fr) for (const [kd, v] of Object.entries(f.missed)) mKinds[kd] = (mKinds[kd] || 0) + v;
+    out(`    missed ${mTot} against ${sNP} found outside paths = ${pct(mTot, mTot + sNP)} of those claims; against ${sNP + sP} found with paths = ${pct(mTot, mTot + sNP + sP)}. Under a third: PASSED, on a narrower read than 1.6 fixed (3 of 8 in full, paths not listed by hand). Missed by kind: ` + Object.entries(mKinds).map(([kd, v]) => `${kindName[kd]} ${v}`).join(', ') + '.');
+    out(`    Paths were not listed by hand; the script's path list was taken as read. Three summaries were read in full; for the other five every line holding a commit id, a pull request number, a test word, a head word, a files or rows count or a state word was read, with the script's own extraction marked. That is less than 1.6 fixed, and is said here.`);
+    out(`F4  missed wrong claims: every missed claim was checked by hand against the transcript, the repository or GitHub: ${fr.reduce((a, f) => a + f.missedWrong, 0)} wrong of ${mTot}. The script flagged no claim that was wrong, and the full reads found none it missed: PASSED, on the same narrower read.`);
+    J.F = { fullRead: fr, missed: mTot, scriptNonPath: sNP, scriptPath: sP, missedKinds: mKinds };
+  }
+  out();
+  // ---- G
+  out('G. THE TWO SUMMARIES CHECKED BY HAND ON 1 NOVEMBER  (register row PR-SUMMARY; docs/program/HARNESS-REVIEW-2026-11-01.md section 6)');
+  J.G = [];
+  for (const id of ['fixflow-e24f17dc-01', 'fixflow-e24f17dc-02']) { const r = rows.find(x => x.id === id); if (!r) continue; const c = KINDS.reduce((a, kd) => a + r.k[kd].held + r.k[kd].wrongHand, 0), w = KINDS.reduce((a, kd) => a + r.k[kd].wrongHand, 0);
+    out(`      ${id}: ${Math.round(r.pre / 1000)}k, ${r.model}${r.prepared ? ', prepared ' + r.aheadMin + ' min ahead' : ', written when the boundary fell'}. Claims checked ${c}, wrong ${w}. Kept tail: ${r.tail.calls} calls (${r.tail.state} change state), ${r.tail.texts} model messages. Tail read: ${r.verdict} (${whatName[r.what] || ''}). Next window repeated: ${r.repeats.state + r.repeats.said}.`);
+    J.G.push({ id, pre: r.pre, model: r.model, prepared: r.prepared, aheadMin: r.aheadMin, checked: c, wrong: w, tailCalls: r.tail.calls, tailState: r.tail.state, tailTexts: r.tail.texts, verdict: r.verdict, what: r.what, repeats: r.repeats.state + r.repeats.said }); }
+  out('    both hand-checked failures are the tail read\'s "overtaken": a commit the summary says is still to be made, and a closing message it says is still to be written. Neither is a claim of the seven kinds, and the dropped open loop of the second is in no measure here.');
+  out();
+  // ---- H
+  out('H. HOW MANY HAND-OVERS PER ARM THE LIVE TRIAL WOULD NEED  [E]   (5 % two-sided, 80 % power; 1.7). The overtaken rate is the summary scored alone, without its kept tail, which favours a brief by construction (review M-F1).');
+  const lowBand = J.D.groups.filter(g => g.type === 'band' && !g.small).sort((a, b) => a.rate - b.rate)[0];
+  out(`H1  on the claim rate: the summaries' rate is ${pct(WH, chkU)}, so there is no difference for a brief to show. No number of hand-overs would show one on claims that name a path, a commit, a pull request or a test result.`);
+  out(`H2  on the overtaken rate (${pct(ov.length, N)} for the summaries; one hand-over is one unit; the design effect of ${deff.toFixed(3)} multiplies each figure when several hand-overs come from one session):`);
+  J.H = [];
+  const trial = (name, p2, tag) => { const n1 = perArm(pAll, p2), o = { name, p2, tag, perArm: n1, perArmDeff: Math.ceil(n1 * deff) }; out(`      ${name.padEnd(78)} ${p1(p2).padStart(7)} [${tag}]   ${String(n1).padStart(5)} per arm, ${String(o.perArmDeff).padStart(5)} with the design effect`); J.H.push(o); };
+  trial(`a brief as good as the lowest band with five sessions (${lowBand.name})`, lowBand.rate, 'E');
+  trial('a brief overtaken half as often as a summary', pAll / 2, 'G');
+  trial('a brief written as the session\'s last act, so that almost nothing can overtake it', 0.05, 'G');
+  out(`    the ten per arm that part 2.5 of the split-rule record names [G] is enough only for the last row`);
+  J.Hbase = { rate: pAll, deff, lowBand: lowBand.name };
+  out();
+  // ---- I
+  out('I. EVERY SUMMARY  [M], hand columns marked');
+  out('    summary                 model       size   ahead   claims: found checked wrong   tail: calls state texts in   saw tail   tail read [hand]   what          repeats');
+  for (const r of [...rows].sort((a, b) => a.band - b.band || (a.id < b.id ? -1 : 1))) { const f = KINDS.reduce((a, kd) => a + r.k[kd].found, 0), c = KINDS.reduce((a, kd) => a + r.k[kd].held + r.k[kd].wrongHand, 0), w = KINDS.reduce((a, kd) => a + r.k[kd].wrongHand, 0);
+    out('    ' + r.id.padEnd(24) + r.model.padEnd(11) + (Math.round(r.pre / 1000) + 'k').padStart(6) + (r.prepared ? r.aheadMin + ' min' : '-').padStart(9) + String(f).padStart(14) + String(c).padStart(8) + String(w).padStart(6) + String(r.tail.calls).padStart(14) + String(r.tail.state).padStart(6) + String(r.tail.texts).padStart(6) + String(r.tail.msgs).padStart(4) + ((r.echo > 0 || r.tailTok.fromResultsInSummary > 0) ? 'script' : r.describes ? 'hand' : '-').padStart(11) + '   ' + r.verdict.padEnd(17) + r.what.padEnd(14) + (r.repeats.state + r.repeats.said)); }
+  J.rows = rows.map(r => ({ id: r.id, g: r.g, model: r.model, pre: r.pre, band: r.band, prepared: r.prepared, aheadMin: r.aheadMin, afterCut: r.afterCut, found: KINDS.reduce((a, kd) => a + r.k[kd].found, 0), checked: KINDS.reduce((a, kd) => a + r.k[kd].held + r.k[kd].wrongHand, 0), wrong: KINDS.reduce((a, kd) => a + r.k[kd].wrongHand, 0), flagged: KINDS.reduce((a, kd) => a + r.k[kd].wrongScript, 0), tailCalls: r.tail.calls, tailState: r.tail.state, tailTexts: r.tail.texts, tailMsgs: r.tail.msgs, sawTail: (r.echo > 0 || r.tailTok.fromResultsInSummary > 0) ? 'script' : r.describes ? 'hand' : '', verdict: r.verdict, what: r.what, repeats: r.repeats.state + r.repeats.said }));
+  out();
+  if (audit && audit.examples) { out('J. WORKED EXAMPLES  (what a claim names and whether it held; no sentence from a summary)'); for (const e of audit.examples) out(`      [${e.measure}] ${e.summary}: ${e.names} -> ${e.verdict}. ${e.why}`); J.examples = audit.examples; out(); }
+  if (audit && audit.review) { const rv = audit.review;
+    out('K. THE CHECK OF THIS DELIVERABLE  (figures quoted from review-2026-11-14.md in this folder; not this script\'s own)');
+    out(`K1  kept tails read a second time, blind, in hash order: ${rv.tails.read}; the two readers agree on ${rv.tails.agree}; each reader found ${rv.tails.eachReader} overtaken, the adjudicator ${rv.tails.adjudicated}; both disagreements were overtaken cases missed by one reader`);
+    out(`K2  flagged claims read a second time: ${rv.flagged.read} (all ${rv.flagged.second} of the second count, ${rv.flagged.first} of the first count's); wrong ${rv.flagged.wrong}`);
+    out(`K3  a hunt by hand through ${rv.hunt.summaries} summaries not read in full before: ${rv.hunt.claims} claims of the non-path kinds, ${rv.hunt.held} held, ${rv.hunt.notCheckable} not checkable, ${rv.hunt.wrong} wrong`);
+    out(`K4  code for what was overtaken, where the kept tail did more than one such thing: ${audit.codeRule}`);
+    if (audit.codeChanges) out(`    the rule was set after the check. Applying it changed ${audit.codeChanges.length} codes and no verdict: ${audit.codeChanges.map(c => c.id + ' ' + c.from + ' to ' + c.to).join('; ')}`);
+    if (rv.firstReaderMiss) { const o1 = rows.filter(r => r.verdict === 'overtaken').length; out(`K5  the tail verdicts in this table are the first reader's, as first given. In the sample of ${rv.tails.read} one of them is a miss by the adjudication: ${rv.firstReaderMiss.id}, read as ${rv.firstReaderMiss.given}, adjudicated ${rv.firstReaderMiss.adjudicated}. With it the count would be ${o1 + 1} of ${N}.`); }
+    if (rv.session11) { const q = rv.session11, o1 = ov.length, k = q.unclearReadAsOvertaken.length;
+      out(`K6  the ${q.read} hand-overs of ${q.session} read a second time, blind (sent by the checking session after its file was written): the two readers agree on ${q.agree} of ${q.read}, on the same ${q.firstOvertaken} overtaken and the same ${q.agree - q.firstOvertaken} not, whose kept tails hold only reads. The ${k} the first reader left unclear (${q.unclearReadAsOvertaken.join(', ')}) the second reader calls overtaken, both as close calls.`);
+      out(`    that session: overtaken in ${q.firstOvertaken} of ${q.read} by the first reader, ${q.secondOvertaken} of ${q.read} by the second, against ${o1 - q.firstOvertaken} of ${N - q.read} for the rest. Kept as reported: ${o1} of ${N}. With those ${k} read as overtaken: ${o1 + k} of ${N}${rv.firstReaderMiss ? '; with the miss of K5 as well: ' + (o1 + k + 1) + ' of ' + N : ''}.`);
+      out(`    hand-overs with a second reading in all: ${rv.tails.read + q.read - q.alsoInSample} of ${N} (${rv.tails.read} in hash order and these ${q.read}, ${q.alsoInSample} of them in both); with one reader only: ${N - (rv.tails.read + q.read - q.alsoInSample)}`); }
+    J.L = rv; out(); }
+  out('L. WHAT THIS DOES NOT SEE');
+  out('    Prose that names nothing: decisions, reasons, what the owner asked, open loops. Whether a described change was made. Anything a summary left out. Whether the next window acted on a stale statement in some way other than redoing a call.');
+  out('    The transcript does not hold the model\'s thinking in every session, so "nowhere in the transcript" is weaker than it reads: a name can come from a plan the transcript does not show.');
+  out('    One reader made every hand verdict in sections C to F. The check of this deliverable read a part a second time, blind (K): 30 of the 117 kept tails in hash order, the 11 of one session, and 35 of the flags. The tail read is a judgement on prose.');
+  J.bandNames = BANDS.map(b => b.name); J.generated = new Date().toISOString(); J.codeText = audit ? audit.codes : {};
+  fs.writeFileSync(path.join(outDir, 'check-table.txt'), L.join('\n') + '\n');
+  fs.writeFileSync(path.join(outDir, 'check.json'), JSON.stringify(J));
+  console.log(`TABLE_DONE summaries=${N} claims=${F2} wrong(hand)=${WH} overtaken=${ov.length} repeats=${rp.length} lines=${L.length}`);
+}
+
+(async () => {
+  if (stage === 'index') return stageIndex(a1);
+  if (stage === 'check') return stageCheck(a1);
+  if (stage === 'table') return stageTable(a1, a2);
+  console.log('stages: index <cacheDir> | check <cacheDir> | table <cacheDir> [outDir]');
+})();

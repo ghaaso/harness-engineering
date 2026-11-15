@@ -1,0 +1,85 @@
+// Map refuter pass (refute-map.md, 2026-11-12) on cases.json. Run from this folder:
+//   node - < patch-cases-refute.js.txt
+// Uses process.cwd(), never __dirname. Safe to run more than once.
+// Applies after build-cases.js.txt, patch-cases.js.txt and trim-notes.js.txt.
+// 1. Names the earlier knowledge-store design wherever a note leaned on it without saying so
+//    ("the other design", "a listed trigger", ...) (MF3, SF6).
+// 2. Marks each step whose walk note relies on that design: ks: true (MF3). The walks were told
+//    to count a step as working when "the existing design documents" had a mechanism for it
+//    (workflows/library-pathway-walkthroughs-wf_da3894a2-ff1.js.txt, line 162).
+// 3. Drops a frequency word the chosen sample cannot carry (MF8).
+// Statuses are not touched; the script checks that.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const FILE = path.join(HERE, '..', '..', 'library-pathways', 'cases.json');
+const d = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+const lanes = JSON.parse(fs.readFileSync(path.join(HERE, 'walkthroughs', 'walkthroughs.json'), 'utf8')).result.lanes;
+const statusBefore = JSON.stringify(d.cases.map(c => c.steps.map(s => s.status)));
+const problems = [];
+const KS = 'the earlier knowledge-store design';
+
+// specific notes: [case, step, old, new]
+const SPECIFIC = [
+  ['f01-C1a', 2, 'The design names no trigger. A shell tool error is not a listed trigger. Only the exit-49 result could start a lookup, after the call.',
+    "The owner's design names no trigger. A shell tool error is not a trigger in " + KS + '. Only the exit-49 result could start a lookup, after the call.'],
+  ['f01-C1a', 9, 'Python was a side stumble. The design needs a fix commit and control pair, which a PC fact lacks. Memory got it 29 days later.',
+    'Python was a side stumble. The earlier knowledge-store design needs a fix commit and a control pair, which a PC fact lacks. Memory got it 29 days later.'],
+  ['f03-C2', 2, 'Nothing triggers while designing. The CI failure is a trigger, so a lookup runs only after one CI round.',
+    // split in two by patch-cases-check2.js.txt (sentences of at most 20 words); kept the same here so a rerun agrees
+    'Nothing triggers while designing. In ' + KS + ', a failure in the shared test run (CI) is a trigger. So a lookup runs only after one CI round.'],
+  ['f06-C3', 2, 'A spec task, no failure. The prescription trigger covers prose registers, not a root brief. The other design is FixFlow-only.',
+    "A spec task, no failure. The earlier knowledge-store design's prescription trigger covers prose registers, not a root brief, and that design is FixFlow-only."],
+  ['f05-5', null, 'In FixFlow the runner is often a subagent in a worktree.', 'In FixFlow the runner can be a subagent in a worktree.']
+];
+const fields = c => [['story', c], ['entry', c], ['worked', c]];
+SPECIFIC.forEach(([cid, step, oldT, newT]) => {
+  const c = d.cases.find(x => x.id === cid);
+  if (!c) { problems.push('no case ' + cid); return; }
+  const slots = step ? [[c.steps[step - 1], 'note']] : c.steps.map(s => [s, 'note']).concat(fields(c).map(([k, o]) => [o, k]));
+  let hit = false;
+  slots.forEach(([o, k]) => {
+    if (o[k].includes(oldT)) { o[k] = o[k].split(oldT).join(newT); hit = true; }
+    else if (o[k].includes(newT)) hit = true;
+  });
+  if (!hit) problems.push('text not found in ' + cid + (step ? ' step ' + step : '') + ': ' + oldT.slice(0, 50));
+});
+
+// generic: "the other design" and "a listed trigger"
+let generic = 0;
+const gen = t => t
+  .replace(/\bThe other design's\b/g, "The earlier knowledge-store design's").replace(/\bthe other design's\b/g, KS + "'s")
+  .replace(/\bThe other design\b/g, 'The earlier knowledge-store design').replace(/\bthe other design\b/g, KS)
+  .replace(/\bnot a listed trigger\b/g, 'not a trigger in ' + KS);
+d.cases.forEach(c => {
+  c.steps.forEach(s => { const n = gen(s.note); if (n !== s.note) { s.note = n; generic++; } });
+  ['story', 'entry', 'worked'].forEach(k => { const n = gen(c[k] || ''); if (n !== (c[k] || '')) { c[k] = n; generic++; } });
+});
+
+// ks marks: the walk note names the knowledge-store design (KS), or the case note now does
+const KS_RE = /\bKS\b|knowledge.store/i;
+let marked = 0;
+d.families.forEach((f, i) => {
+  const famCases = d.cases.filter(c => c.family === f.id);
+  const walks = lanes[i].walks;
+  if (walks.length !== famCases.length) problems.push('walk count differs in family ' + f.id);
+  famCases.forEach((c, j) => {
+    const w = walks[j];
+    const wid = w.case_id.split(' ')[0];
+    if (!c.id.endsWith('-' + wid.replace(/^L\d\d-/, ''))) problems.push('walk order differs at ' + c.id + ' / ' + wid);
+    c.steps.forEach(s => {
+      const ws = w.steps.find(x => x.step === s.step);
+      const relies = (ws && KS_RE.test(ws.note)) || /knowledge-store/.test(s.note);
+      if (relies) { s.ks = true; marked++; } else delete s.ks;
+    });
+  });
+});
+const left = JSON.stringify(d).match(/\bthe other design\b|\blisted trigger\b|\bis often\b/gi);
+if (left) problems.push('still present: ' + left.join(', '));
+if (JSON.stringify(d.cases.map(c => c.steps.map(s => s.status))) !== statusBefore) problems.push('a status changed');
+if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
+fs.writeFileSync(FILE, JSON.stringify(d, null, 1));
+const works = d.cases.reduce((a, c) => a + c.steps.filter(s => s.ks && s.status === 'works').length, 0);
+const allWorks = d.cases.reduce((a, c) => a + c.steps.filter(s => s.status === 'works').length, 0);
+console.log('cases.json: ' + generic + ' generic rewordings this run; ' + marked + ' of ' + d.cases.length * 10 + ' steps marked as relying on the earlier knowledge-store design (' + works + ' of ' + allWorks + ' works cells)');

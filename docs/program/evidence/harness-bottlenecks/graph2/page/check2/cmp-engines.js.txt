@@ -1,0 +1,55 @@
+// Compare the engine table rendered on the page (out/h.txt) with build-f/engines.json and engines_checked.json
+const fs = require('fs');
+const B = '../../build-f/';
+const E = JSON.parse(fs.readFileSync(B + 'engines.json', 'utf8'));
+const C = JSON.parse(fs.readFileSync(B + 'engines_checked.json', 'utf8'));
+const txt = fs.readFileSync('out/h.txt', 'utf8');
+const lines = txt.split(/\r?\n/).filter(l => l.split('\t').length >= 15);
+const engName = { 'SQLite (relational)': 'relational', 'LadybugDB (graph)': 'ladybug', 'DuckDB graph layer': 'duckpgq' };
+const graphName = { 'tuning graph': 'tune', 'frozen graph': 'frozen' };
+const clsName = { 'Selected method': 'primary', '4-hop PageRank variant': 'S1', '2-hop PageRank start': 'base', 'LadybugDB + community prior': 'S2', 'Code-reading questions': 'tq' };
+function sig3(x) { if (x === null || x === undefined) return null; const a = Math.abs(x); if (a >= 1000) return Math.round(x); if (a >= 100) return Math.round(x); if (a >= 10) return Math.round(x * 10) / 10; if (a >= 1) return Math.round(x * 100) / 100; return Math.round(x * 100) / 100; }
+function eq(pageStr, v) { if (pageStr === '–') return v === null || v === undefined; const p = parseFloat(pageStr.replace(/,/g, '')); if (v === null || v === undefined) return false; const r = sig3(v); return Math.abs(p - r) <= Math.max(0.011, Math.abs(r) * 0.006); }
+const coldMap = {}; for (const c of C.checks['5_labels_and_threads'].cold_with_facts_load) coldMap[c.graph + '/' + c.cls] = c.ladybug_cold_plus_facts_wall;
+const tabRes = {}; for (const t of C.table) tabRes[t.row] = t.result;
+let n = 0, bad = [];
+const seen = {};
+for (const l of lines) {
+  const f = l.split('\t');
+  if (f[0] === 'Engine') continue;
+  const eng = engName[f[0]], g = graphName[f[1]], cls = clsName[f[2]];
+  if (!eng || !g || !cls) { if (f.length >= 15) bad.push('unparsed: ' + l.slice(0, 120)); continue; }
+  const setting = /calibration/.test(f[3]) ? 'best' : 'one';
+  const row = E.table.find(r => r.engine === eng && r.graph === g && r.query_class === cls && r.setting === setting);
+  if (!row) { bad.push('no source row: ' + l.slice(0, 100)); continue; }
+  seen[eng + g + cls + setting] = 1;
+  const thr = parseInt((f[3].match(/(\d+) thread/) || [])[1]);
+  const checks = [
+    ['threads', String(row.threads[0]), thr === row.threads[0]],
+    ['warm', f[4], eq(f[4], row.warm_wall_p50_ms.median_over_passes)],
+    ['spread', f[5], eq(f[5], row.warm_wall_p50_ms.spread_between_passes)],
+    ['p95', f[6], eq(f[6], row.warm_wall_p95_ms.median_over_passes)],
+    ['uncached', f[7], eq(f[7], row.warm_uncached_wall_p50_ms.median_over_passes)],
+    ['cold', f[8], eq(f[8], row.cold_wall_ms.median_over_passes)],
+    ['coldfacts', f[9], eng === 'ladybug' ? eq(f[9], coldMap[g + '/' + cls]) : f[9] === '–'],
+    ['coldopen', f[10], eq(f[10], row.cold_open_wall_ms.median_over_passes)],
+    ['stmts', f[11], parseInt(f[11]) === row.statements_per_ranking],
+    ['chars', f[12], parseInt(f[12]) === row.query_text.chars],
+    ['distinct', f[13], parseInt(f[13]) === row.query_text.distinct_statements],
+    ['rss', f[14], Math.abs(parseFloat(f[14]) - Math.round(row.rss_mb)) <= 1],
+  ];
+  const key = (g + '/' + cls + ' ' + ({ relational: 'SQLite', ladybug: 'LadybugDB', duckpgq: 'DuckDB+DuckPGQ' })[eng] + ' ' + setting + ' (threads [' + row.threads.join(', ') + '])');
+  const aud = tabRes[key];
+  checks.push(['audit', f[15], aud === f[15]]);
+  for (const [k, pv, ok] of checks) { n++; if (!ok) bad.push(`${f[0]} | ${f[1]} | ${f[2]} | ${f[3]} : ${k} page=${pv} source=${JSON.stringify(k === 'audit' ? aud + ' key=' + key : k === 'warm' ? row.warm_wall_p50_ms.median_over_passes : k === 'cold' ? row.cold_wall_ms.median_over_passes : k==='coldfacts'?coldMap[g + '/' + cls]: k==='threads'?row.threads:k==='rss'?row.rss_mb:'')}`); }
+}
+const missing = E.table.filter(r => !seen[r.engine + r.graph + r.query_class + r.setting]).map(r => r.engine + ' ' + r.graph + ' ' + r.query_class + ' ' + r.setting);
+// stores
+const sl = txt.split(/\r?\n/).filter(l => l.split('\t').length === 8 && !/^Engine/.test(l));
+let sn = 0;
+for (const l of sl) { const f = l.split('\t'); const eng = engName[f[0]], g = graphName[f[1]]; const s = E.stores.find(x => x.engine === eng && x.graph === g); if (!s) { bad.push('store unparsed ' + l.slice(0, 80)); continue; }
+  const cs = [['size', f[2], Math.abs(parseFloat(f[2]) - s.size_bytes / 1048576) < 0.006], ['build', f[3], Math.abs(parseFloat(f[3]) - Math.round(s.build_wall_ms.median_over_passes)) <= 1], ['bspread', f[4], eq(f[4], s.build_wall_ms.spread_between_passes)], ['upd', f[5], Math.abs(parseFloat(f[5]) - Math.round(s.update_one_file_wall_ms.median_over_passes)) <= 1], ['uspread', f[6], eq(f[6], s.update_one_file_wall_ms.spread_between_passes)]];
+  for (const [k, pv, ok] of cs) { sn++; if (!ok) bad.push('store ' + f[0] + ' ' + f[1] + ' ' + k + ' page=' + pv); } }
+console.log('table rows on page:', lines.length - 1, 'cells checked:', n, 'store cells:', sn);
+console.log('source rows missing from page:', missing);
+console.log('mismatches:', bad.length); bad.forEach(b => console.log(' ' + b));

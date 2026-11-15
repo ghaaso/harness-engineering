@@ -1,0 +1,108 @@
+// Q5: count product and program documents; resolve their backticked file names and symbols at the frozen commit.
+// Read-only: git object reads at a31924a, plain file reads of the live tree's docs, the frozen facts snapshot.
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const FROZEN = 'a31924a3818f4ac94b695906d107c72c912792b2';
+const FACTS = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/facts/cache/' + FROZEN + '/nodes.jsonl';
+const git = (a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', maxBuffer: 1 << 29 });
+const lines = (s) => s.split('\n').filter(Boolean);
+
+const frozenFiles = lines(git(['ls-tree', '-r', '--name-only', FROZEN]));
+const mainFiles = lines(git(['ls-tree', '-r', '--name-only', 'main']));
+const liveFiles = [...new Set(lines(git(['ls-files'])).concat(lines(git(['ls-files', '--others', '--exclude-standard']))))];
+// symbol names at the frozen commit from the facts snapshot (definitions only)
+const sym = new Map();
+for (const l of lines(fs.readFileSync(FACTS, 'utf8'))) {
+  const n = JSON.parse(l);
+  if (!['function', 'class', 'method', 'component', 'constant', 'test', 'setting', 'table', 'column', 'route'].includes(n.kind)) continue;
+  const names = new Set([n.name, String(n.name).split('.').pop()]);
+  for (const nm of names) { if (!sym.has(nm)) sym.set(nm, new Set()); sym.get(nm).add(n.id); }
+}
+function makeResolver(all) {
+  const set = new Set(all);
+  return (tok) => {
+    let t = tok.replace(/^\.?\//, '').replace(/[:#].*$/, '').replace(/\)$/, '');
+    if (!/\.[a-z0-9]{1,5}$/i.test(t) && !t.endsWith('/')) return null; // not file-like (same rule as the earlier docs_extract.js)
+    if (set.has(t)) return [t];
+    const hits = all.filter((f) => f.endsWith('/' + t) || (t.endsWith('/') && f.startsWith(t)));
+    if (t.endsWith('/')) return hits.length ? [t] : [];
+    return hits;
+  };
+}
+function cleanResolve(all, tok) {
+  // cleaned rule: placeholders and globs are not citations; brace groups expand; a directory resolves if any file lies under it
+  if (/[<*]/.test(tok)) return 'placeholder';
+  let t = tok.replace(/^\.?\//, '').replace(/[:#].*$/, '').replace(/\)$/, '');
+  const m = t.match(/^(.*)\{([^}]*)\}(.*)$/);
+  const cands = m ? m[2].split(',').map((x) => m[1] + x + m[3]) : [t];
+  let ok = 0, amb = 0;
+  for (const c of cands) {
+    if (c.endsWith('/')) { if (all.some((f) => f.startsWith(c) || f.includes('/' + c))) ok++; continue; }
+    if (all.includes(c)) { ok++; continue; }
+    const hits = all.filter((f) => f.endsWith('/' + c));
+    if (hits.length === 1) ok++; else if (hits.length > 1) amb++;
+  }
+  if (ok === cands.length) return 'resolved';
+  if (ok + amb === cands.length) return 'ambiguous';
+  return 'none';
+}
+const resFrozen = makeResolver(frozenFiles), resMain = makeResolver(mainFiles), resLive = makeResolver(liveFiles);
+
+function measure(name, docs, getText) {
+  const R = { corpus: name, files: docs.length, bytes: 0, words: 0, est_tokens_bytes_div4: 0,
+    file_tokens: 0, file_unique_frozen: 0, file_ambiguous_frozen: 0, file_none_frozen: 0, file_none_frozen_but_on_main_now: 0, file_none_frozen_but_in_live_tree: 0, file_absolute_or_outside: 0,
+    clean_placeholder: 0, clean_resolved: 0, clean_ambiguous: 0, clean_none: 0, clean_none_examples: [], symbol_tokens: 0, symbol_unique_frozen: 0, symbol_ambiguous_frozen: 0, symbol_none_frozen: 0, examples_none: [] };
+  for (const d of docs) {
+    const txt = getText(d);
+    R.bytes += Buffer.byteLength(txt);
+    R.words += (txt.match(/\S+/g) || []).length;
+    for (const m of txt.matchAll(/`([^`\s]{3,120})`/g)) {
+      const tok = m[1];
+      if (/^([A-Za-z]:[\\/]|\/c\/|~\/|\.\.\/|scratchpad|C:)/.test(tok)) { const r = resFrozen(tok); if (r) { R.file_tokens++; R.file_absolute_or_outside++; continue; } }
+      const r = resFrozen(tok);
+      if (r) {
+        const cr = cleanResolve(frozenFiles, tok); R['clean_' + cr]++; if (cr === 'none' && R.clean_none_examples.length < 15 && Math.random() < 0.15) R.clean_none_examples.push(tok);
+        R.file_tokens++;
+        if (r.length === 1) R.file_unique_frozen++;
+        else if (r.length > 1) R.file_ambiguous_frozen++;
+        else { R.file_none_frozen++; if ((resMain(tok) || []).length) R.file_none_frozen_but_on_main_now++; else if ((resLive(tok) || []).length) R.file_none_frozen_but_in_live_tree++; if (R.examples_none.length < 12 && Math.random() < 0.2) R.examples_none.push(tok); }
+        continue;
+      }
+      const nm = tok.replace(/\(.*$/, '').replace(/^.*[.:]/, '');
+      if (/^[A-Za-z_][A-Za-z0-9_]{3,}$/.test(nm) && /[a-z][A-Z_]|_|[A-Z][a-z]+[A-Z]/.test(nm)) {
+        R.symbol_tokens++;
+        const ids = sym.get(nm);
+        if (!ids) R.symbol_none_frozen++; else if (ids.size === 1) R.symbol_unique_frozen++; else R.symbol_ambiguous_frozen++;
+      }
+    }
+  }
+  R.est_tokens_bytes_div4 = Math.round(R.bytes / 4);
+  return R;
+}
+const productDocs = frozenFiles.filter((f) => f.endsWith('.md') && !f.startsWith('docs/program/'));
+const programDocs = liveFiles.filter((f) => f.endsWith('.md') && f.startsWith('docs/program/'));
+const otherNewDocs = liveFiles.filter((f) => f.endsWith('.md') && !f.startsWith('docs/program/') && !f.startsWith('.claude/') && !f.includes('node_modules') && !frozenFiles.includes(f));
+const productText = (f) => git(['show', FROZEN + ':' + f]);
+const liveText = (f) => { try { return fs.readFileSync(path.join(REPO, f), 'utf8'); } catch { return ''; } };
+const out = {
+  measured_at: new Date().toISOString(), frozen: FROZEN, main_head: git(['rev-parse', 'main']).trim(),
+  rules: 'file-like token = backticked token with a 1-5 char extension or trailing slash (the earlier docs_extract.js rule); resolves = exact path or unique path suffix in the file list of the frozen commit; symbol-like = backticked token whose last segment is 4+ identifier chars with camelCase or underscore (earlier rule), resolved against definition, setting, table, column and route names in the frozen facts snapshot; tokens = bytes/4',
+  product_docs_at_frozen: measure('product documents (tracked .md at the frozen commit, text as of that commit)', productDocs, productText),
+  program_docs_now: measure('program documents (docs/program/**.md in the working tree now, tracked and untracked)', programDocs, liveText),
+  other_docs_added_after_frozen_now: measure('other .md in the working tree now that did not exist at the frozen commit (outside docs/program and .claude)', otherNewDocs, liveText),
+  program_docs_tracked: programDocs.filter((f) => lines(git(['ls-files', f])).length).length,
+  other_new_doc_list: otherNewDocs.slice(0, 40),
+};
+// reads per document from the session scan
+const sess = JSON.parse(fs.readFileSync('q4_sessions.json', 'utf8'));
+const readsBy = (pred) => { let r = 0, docsRead = 0; const top = []; for (const d of sess.doc_reads) if (d.path && pred(d.path)) { r += d.reads; docsRead++; if (top.length < 8) top.push(`${d.path} ${d.reads} reads in ${d.sessions} transcripts`); } return { reads: r, distinct_docs_read: docsRead, top }; };
+out.reads_in_recorded_sessions = {
+  product_docs: readsBy((p) => productDocs.includes(p)),
+  program_docs: readsBy((p) => p.startsWith('docs/program/') && p.endsWith('.md')),
+  program_non_md: readsBy((p) => p.startsWith('docs/program/') && !p.endsWith('.md')),
+  other_repo_docs: readsBy((p) => !p.startsWith('docs/program/') && !productDocs.includes(p)),
+};
+fs.writeFileSync('q5_docs.json', JSON.stringify(out, null, 1));
+console.log(JSON.stringify(out, null, 1));

@@ -1,0 +1,30 @@
+const fs = require('fs');
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing: ' + a.slice(0, 80)); s = s.split(a).join(b); };
+rep("'An exposure is the share a tool could reach, not what it would save; a tool can also add tokens.'", "'An exposure is the share a tool could reach; it is not a measured effect, and a tool can also add tokens.'");
+rep("'<div class=\"card\"><p class=\"tokline\">' + svMeas + ' of ' + svCells.length + ' cells hold a measured number; ' + svNot + ' are not measured yet.</p>'", "'<div class=\"card\"><p class=\"tokline\"><span class=\"cmp\">' + svMeas + '</span> of <span class=\"cmp\">' + svCells.length + '</span> cells hold a measured number; <span class=\"cmp\">' + svNot + '</span> are not measured yet.</p>'");
+fs.writeFileSync('build.js.txt', s);
+let c = fs.readFileSync('check.js.txt', 'utf8');
+const anchor = "if (!/R-8/.test(secOf('j'))) problems.push('section J does not name ruling R-8');";
+if (!c.includes(anchor)) throw new Error('anchor');
+const add = anchor + `
+{ const A2 = secOf('a2'); // the seven measures: section, nav entry, seven columns, no saving under token count or token cost
+  if (!/<section class="sec" id="a2"><h2>/.test(html)) problems.push('section A2 (the seven measures) missing');
+  else { if (!/href="#a2"/.test(html.slice(0, html.indexOf('<main')))) problems.push('section A2 has no nav entry');
+    const order = ['a', 'a2', 'b'].map(l => html.indexOf('<section class="sec" id="' + l + '"')); if (!(order[0] < order[1] && order[1] < order[2])) problems.push('section A2 is not between A and B');
+    const cols = ['through', 'eff', 'tokens', 'cost', 'time', 'quality', 'halluc'];
+    const cells = [...A2.matchAll(/<td data-col="([a-z]+)"[^>]*>([\s\S]*?)<\/td>/g)].map(m => ({ col: m[1], text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }));
+    cols.forEach(k => { if (!cells.some(x => x.col === k)) problems.push('section A2: no column ' + k); });
+    const nm = x => /^○? ?not measured/i.test(x.text);
+    cells.filter(x => (x.col === 'tokens' || x.col === 'cost') && /sav(e|ed|es|ing)|reduc/i.test(x.text) && !nm(x)).forEach(x => problems.push('section A2: a ' + x.col + ' cell speaks of a saving: ' + x.text.slice(0, 90)));
+    cells.filter(x => !nm(x) && !/class="tag /.test(A2.slice(A2.indexOf(x.text.slice(0, 20))))).length;
+    const meas = cells.filter(x => !nm(x)).length;
+    // every number in the section is checked against the data: the same test as the page dump, scoped here
+    const a2txt = A2.replace(/<span class="cmp"[^>]*>[^<]*<\/span>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ');
+    const toks = (a2txt.match(/\d[\d,]*(?:\.\d+)?/g) || []).filter(t => !/^[\d]+$/.test(t) || +t > 9);
+    const bad = [...new Set(toks.filter(t => !inData(t)))]; if (bad.length) problems.push('section A2: numbers not in the data: ' + bad.join(', '));
+    notes.push('A2: ' + cells.length + ' cells, ' + meas + ' measured, ' + (cells.length - meas) + ' not measured; ' + toks.length + ' numbers checked against the data'); } }`;
+c = c.split(anchor).join(add);
+c = c.replace("for (const l of 'abcdefghijk')", "for (const l of 'abcdefghijk')");
+fs.writeFileSync('check.js.txt', c);
+console.log('ok');

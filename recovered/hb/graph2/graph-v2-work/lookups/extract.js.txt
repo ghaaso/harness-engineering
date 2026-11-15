@@ -1,0 +1,531 @@
+// extract: build one test instance per lookup episode from the session transcripts. Local only; nothing leaves the machine.
+// Episodes, transcript classes and question forms reuse the rules of the use-cases lane (scratchpad/usecases/episodes.js,
+// forms.js, qf.js), copied verbatim below, so that form weights match use-cases.md. New here: seeds, read spans with line
+// text, and later use (edit, citation, quote) that confirms a span.
+const fs = require('fs'), path = require('path'), readline = require('readline'), crypto = require('crypto');
+const P = 'C:/Users/User/.claude/projects';
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+const OUT = W + '/out';
+const CUTOFF = Date.parse('2026-11-13T14:13:00Z');
+const CPT = 2.42;
+const sha = (s) => crypto.createHash('sha1').update(s).digest('hex');
+const rd = (f) => fs.readFileSync(OUT + '/' + f, 'utf8').split('\n').map((x) => x.trim()).filter(Boolean);
+const KNOWN = new Set([...rd('files-a31924a.txt'), ...rd('files-index.txt'), ...rd('files-untracked.txt'), ...rd('files-originmain.txt')]);
+const BASECOUNT = new Map(); for (const f of KNOWN) { const b = f.split('/').pop(); BASECOUNT.set(b, (BASECOUNT.get(b) || 0) + 1); }
+
+// ---------------- copied from usecases/parse.js ----------------
+function txt(c) { if (typeof c === 'string') return c; if (Array.isArray(c)) return c.map((x) => (x && x.type === 'text' ? x.text : x && x.type === 'image' ? '[image]' : '')).join('\n'); return ''; }
+function slimInput(name, inp) {
+  inp = inp || {}; const o = {};
+  for (const k of ['file_path', 'path', 'pattern', 'glob', 'type', 'output_mode', 'offset', 'limit', 'command', 'description', 'url', 'query', 'prompt', 'subagent_type', 'old_string', 'skill', 'action', 'notebook_path', 'content']) {
+    if (inp[k] === undefined) continue; let v = inp[k];
+    if (typeof v === 'string') { const cap = k === 'command' ? 600 : k === 'prompt' ? 400 : k === 'content' || k === 'old_string' ? 120 : 300; if (k === 'content' || k === 'old_string') o[k + '_len'] = v.length; v = v.slice(0, cap); }
+    o[k] = v;
+  }
+  return o;
+}
+// ---------------- copied from usecases/episodes.js ----------------
+const CODE_EXT = /\.(py|js|jsx|ts|tsx|mjs|cjs)$/i;
+function relOf(p) {
+  if (!p || typeof p !== 'string') return null;
+  const s = p.replace(/\\/g, '/');
+  const m = s.match(/EMS_workshop1(?:\/\.claude\/worktrees\/[^/]+)?\/(.*)$/i);
+  if (m) return m[1];
+  if (/^(backend|src|technician-app|docs|scripts|\.github|public)\//.test(s) || /^(CLAUDE\.md|ARCHITECTURE\.md|README\.md|package\.json|ops-server\.mjs|vite[\w.]*\.js)$/.test(s)) return s;
+  return null;
+}
+function zone(r, raw) {
+  if (r == null) {
+    const s = String(raw || '').replace(/\\/g, '/');
+    if (/\.claude\/projects\/.*memory/i.test(s)) return 'memory';
+    if (/scratchpad|\/Temp\//i.test(s)) return 'scratch';
+    if (/24_Clinic_Workshop|Clinic/i.test(s)) return 'testbed';
+    if (/\.claude\/projects\//i.test(s)) return 'transcripts';
+    return 'outside';
+  }
+  const low = r.toLowerCase();
+  if (low.startsWith('docs/program/')) return /\.md$/.test(low) ? 'program-doc' : 'program-evidence';
+  if (low === 'claude.md') return 'claude-md';
+  if (/^(backend|src|technician-app)\//.test(low) || low === 'ops-server.mjs' || /^vite/.test(low)) {
+    if (/(^|\/)(tests?|__tests__)\/|\.test\.|\.spec\.|(^|\/)test_[\w]+\.py$|conftest\.py$/.test(low)) return 'test';
+    if (CODE_EXT.test(low)) return 'code';
+    if (/alembic\/versions\//.test(low)) return 'code';
+    if (/\.md$/.test(low)) return 'product-doc';
+    return 'product-config';
+  }
+  if (/\.md$/.test(low)) return 'product-doc';
+  if (/^\.claude\//.test(low)) return 'harness-config';
+  return 'product-config';
+}
+const PRODUCT = new Set(['code', 'test', 'product-config', 'product-doc', 'claude-md']);
+const GIT_HIST = /\bgit\s+(-C\s+\S+\s+)?(-c\s+\S+\s+)*(log|show|blame|shortlog|rev-list|reflog|describe|name-rev|merge-base)\b/;
+const GIT_STATE = /\bgit\s+(-C\s+\S+\s+)?(-c\s+\S+\s+)*(status|diff|branch|ls-files|ls-tree|rev-parse|remote|worktree\s+list|grep|cat-file|stash\s+list)\b/;
+const GH_READ = /\bgh\s+(pr|issue|run|api|repo)\s+(view|list|diff|checks|status|view|api)?/;
+const RUN_VERIFY = /\b(pytest|vitest|jest|npm\s+(run\s+)?(test|lint|build|typecheck|run)|npx\s+(tsc|expo|eslint|prettier|vitest|jest)|tsc\b|ruff|mypy|lint-imports|alembic|eas\s+build|gradlew|docker|uv\s+run|pip\b|node\s+--test)/i;
+const ACT = /\bgit\s+(-C\s+\S+\s+)?(commit|push|checkout|switch|add|merge|rebase|reset|stash(?!\s+list)|cherry-pick|worktree\s+add|tag)\b|\bgh\s+pr\s+(create|merge|edit|comment|ready)|\brailway\b|\b(rm|mv|cp|mkdir|touch)\s|>\s*[\w"'/.]/;
+function shellKind(cmd) {
+  const c = String(cmd || '');
+  if (/\bcat\s*>>?\s*\S|\btee\s+(-a\s+)?\S|\bsed\s+-i|\bprintf\b[^|]*>\s*["$\w/]|\becho\b[^|]*>>?\s*["$\w/]|Set-Content|Out-File|Add-Content/.test(c)) return 'edit-sh';
+  if (/^\s*(until|while)\b[^;]*;\s*do\s+sleep|\bsleep\s+\d+\s*;?\s*$/.test(c) || /until\s+grep\s+-q/.test(c)) return 'wait';
+  if (ACT.test(c) && !/\b2>\s*\/dev\/null|>\s*\/dev\/null|2>&1/.test(c.replace(/>\s*[\w"'/.]/, ''))) { if (/\bgit\s+(commit|push)|gh\s+pr|railway/.test(c)) return 'act'; }
+  if (/\bgit\s+(commit|push)\b|\bgh\s+pr\s+(create|merge|edit|comment|ready)|\brailway\s+(up|run|redeploy|variables)/.test(c)) return 'act';
+  if (RUN_VERIFY.test(c)) return 'run-verify';
+  if (/\b(node|python|python3|py)\b[^|]*\.(js|py|txt)\b|python\.exe|node\s+-e|node\s+-/.test(c)) return 'run-script';
+  if (GIT_HIST.test(c)) return 'look-history';
+  if (GH_READ.test(c)) return 'look-gh';
+  if (GIT_STATE.test(c)) return /\bgit\s+(-C\s+\S+\s+)?grep\b/.test(c) ? 'look-search' : 'look-state';
+  if (/(^|[|;&(\s])(grep|rg|egrep|Select-String|findstr)\b/i.test(c)) return 'look-search';
+  if (/(^|[|;&(\s])(find|ls|tree|Get-ChildItem|gci|dir)\b/i.test(c)) return 'look-list';
+  if (/(^|[|;&(\s])(cat|head|tail|sed\s+-n|Get-Content|wc|awk|jq|type)\b/i.test(c)) return 'look-read';
+  if (/\bcurl\b|Invoke-WebRequest/.test(c)) return 'look-net';
+  return 'run-other';
+}
+function shellPaths(c) { return (String(c || '').match(/[\w.:\\/-]*[\\/][\w.\\/-]+\.[A-Za-z]{1,5}\b|\b[\w-]+\.(py|tsx?|jsx?|mjs|md|json|toml)\b/g) || []).slice(0, 12); }
+const NEUTRAL = new Set(['TodoWrite', 'ToolSearch', 'Skill', 'mcp__ccd_turn__update_plan', 'mcp__ccd_turn__wrap_up', 'mcp__ccd_session__mark_chapter', 'ExitPlanMode', 'StructuredOutput', 'SendUserFile', 'Monitor', 'TaskOutput', 'BashOutput', 'KillShell', 'TaskStop']);
+function classify(c) {
+  const n = c.name, i = c.inp || {};
+  if (n === 'Read') { const r = relOf(i.file_path); return { k: 'look-read', z: zone(r, i.file_path), t: r || i.file_path, part: i.offset != null || i.limit != null }; }
+  if (n === 'Grep') { const r = relOf(i.path); return { k: 'look-search', z: i.path ? zone(r, i.path) : 'cwd', t: r || i.path || '.', q: i.pattern, g: i.glob || i.type, mode: i.output_mode }; }
+  if (n === 'Glob') { const r = relOf(i.path); return { k: 'look-list', z: i.path ? zone(r, i.path) : 'cwd', t: r || i.path || '.', q: i.pattern }; }
+  if (n === 'Edit' || n === 'Write' || n === 'MultiEdit' || n === 'NotebookEdit') { const r = relOf(i.file_path || i.notebook_path); return { k: 'edit', z: zone(r, i.file_path), t: r || i.file_path }; }
+  if (n === 'Bash' || n === 'PowerShell') { const k = shellKind(i.command); const ps = shellPaths(i.command).map((p) => relOf(p) || p); const zs = ps.map((p) => zone(relOf(p) || (/^(backend|src|technician-app|docs)\//.test(p) ? p : null), p)); return { k, z: zs.find((z) => PRODUCT.has(z)) || zs[0] || 'cwd', t: ps[0] || '', q: i.command }; }
+  if (n === 'Agent' || n === 'Task') return { k: 'delegate', z: '-', t: i.subagent_type || '', q: i.description || '' };
+  if (n === 'WebFetch' || n === 'WebSearch') return { k: 'look-web', z: 'web', t: i.url || i.query || '' };
+  if (NEUTRAL.has(n)) return { k: 'neutral', z: '-' };
+  if (/^mcp__Claude_Browser|^mcp__claude-in-chrome/.test(n)) return { k: 'browser', z: '-' };
+  if (n === 'Artifact') return { k: i.action === 'read' || i.action === 'list' ? 'look-artifact' : 'act', z: '-' };
+  if (/ArtifactComments|ArtifactData/.test(n)) return { k: 'look-artifact', z: '-' };
+  if (/mcp__ccd_session_mgmt__(search_session|get_session|list)/.test(n)) return { k: 'look-session', z: '-' };
+  return { k: 'other', z: '-' };
+}
+const isLook = (k) => k.startsWith('look-');
+// ---------------- copied from usecases/forms.js ----------------
+const files = [...new Set([...fs.readFileSync(UCP('files-main.txt'), 'utf8').split('\n'), ...fs.readFileSync(UCP('files-originmain.txt'), 'utf8').split('\n')])].filter(Boolean);
+function UCP(f) { return 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/usecases/out/' + f; }
+const prodFiles = files.filter((f) => /^(backend|src|technician-app|ops|scripts|\.github)\/|^[^/]+$/.test(f));
+const bySuffix = new Map();
+let FALLBACK_CODE = false;
+for (const f of prodFiles) { const parts = f.split('/'); for (let k = 1; k <= Math.min(4, parts.length); k++) { const suf = parts.slice(-k).join('/'); if (!bySuffix.has(suf)) bySuffix.set(suf, f); } }
+const strip = (q) => String(q || '').replace(/^(\s*(cd\s+("[^"]*"|\S+)\s*(&&|;)|[A-Z]\w*=("[^"]*"|\S+);?)\s*)+/, '');
+function pzone(p) {
+  const s = String(p || '').replace(/\\/g, '/');
+  if (/node_modules\/|site-packages\/|\.(kt|java|gradle)$/.test(s)) return 'dependency';
+  if (/\.fixflow-cache|\/tasks\/[\w-]+\.output|\.log$|\/Temp\/|scratchpad/i.test(s)) return 'scratch';
+  if (/\.claude\/projects\/.*memory/i.test(s)) return 'memory';
+  if (/\.claude\/projects\//i.test(s)) return 'transcripts';
+  if (/docs\/program\//.test(s)) return /\.md$/.test(s) ? 'program-doc' : 'program-evidence';
+  if (/(^|\/)\.claude\/(agents|skills)\/|(^|\/)(agents|skills)\/[\w-]+(\/SKILL)?\.md$/.test(s)) return 'harness-instructions';
+  const m = s.match(/EMS_workshop1(?:\/\.claude\/worktrees\/[^/]+)?\/(.*)$/i);
+  let r = m ? m[1] : null;
+  if (!r) { const parts = s.replace(/^\.\//, '').split('/'); for (let k = Math.min(4, parts.length); k >= 1; k--) { const hit = bySuffix.get(parts.slice(-k).join('/')); if (hit && (k > 1 || /\.(py|tsx?|jsx?|mjs|md|json|toml|ya?ml|sh)$/.test(s))) { r = hit; break; } } }
+  if (!r && FALLBACK_CODE && /^(\.\/)?tests\/[\w.\/-]+\.py$/.test(s)) r = 'backend/' + s.replace(/^\.\//, '');
+  if (!r && /^(\.\/)?(backend|src|technician-app|docs|ops|scripts|\.github|app|lib|features)\//.test(s)) r = s.replace(/^\.\//, '');
+  if (!r && /^(CLAUDE|ARCHITECTURE|README|CONTRIBUTING)\.md$/.test(s)) r = s;
+  if (!r && FALLBACK_CODE && /^[\w.-]+\.(tsx?|py|jsx)$/.test(s)) r = (/\.test\.|^test_/.test(s) ? 'technician-app/tests/' : 'src/') + s;
+  if (!r) return /^https?:/.test(s) ? 'web' : 'unknown';
+  if (/^ops\/|\.sh$/.test(r)) return 'config';
+  if (/^(app|lib|features)\//.test(r)) r = (/\.py$/.test(r) ? 'backend/' : 'technician-app/src/') + r;
+  const low = r.toLowerCase();
+  if (/^(backend|src|technician-app)(\/[\w.-]+)*\/?$/.test(low) && !/\.\w{1,5}$/.test(low)) return /(^|\/)(tests?|__tests__)$/.test(low) ? 'test' : 'code';
+  if (/^docs\/?$/.test(low)) return 'product-doc';
+  if (low === 'claude.md') return 'rule-doc';
+  if (/^docs\/.*\.md$|^[^/]+\.md$|^(backend|technician-app)\/[^/]+\.md$/.test(low)) return 'product-doc';
+  if (/(^|\/)(tests?|__tests__)\/|\.test\.|\.spec\.|(^|\/)test_\w+\.py$|conftest\.py$/.test(low)) return 'test';
+  if (/alembic\/versions\/|models\.py$/.test(low)) return 'schema';
+  if (/\.(py|tsx?|jsx?|mjs|cjs)$/.test(low) && /^(backend|src|technician-app|ops-server)/.test(low)) return 'code';
+  return 'config';
+}
+function pathsIn(cmd) { return (cmd.match(/("[^"]+"|'[^']+'|[^\s;|&<>()]+)/g) || []).map((t) => t.replace(/^["']|["']$/g, '')).filter((t) => /[\w-]\.[A-Za-z]{1,5}$|\/$|^(backend|src|technician-app|docs)\b/.test(t) && !/^-/.test(t)); }
+const ZRANK = ['code', 'schema', 'test', 'rule-doc', 'product-doc', 'config', 'dependency', 'harness-instructions', 'program-doc', 'program-evidence', 'memory', 'transcripts', 'scratch', 'web', 'unknown'];
+function byResult(c) { const zs = (c.paths || []).map(pzone).filter((z) => z !== 'unknown'); if (!zs.length) return null; const n = {}; for (const z of zs) n[z] = (n[z] || 0) + 1; return Object.entries(n).sort((a, b) => b[1] - a[1])[0][0]; }
+function callZone(c) {
+  if (c.n === 'WebFetch' || c.n === 'WebSearch') return 'web';
+  if (c.n === 'Read' || c.n === 'Grep' || c.n === 'Glob') { const z = pzone(c.t); if (z !== 'unknown') return z; if (c.n === 'Read') return 'unknown'; return byResult(c) || (/\.(py|tsx?|jsx?)\b|\b(py|ts|js)\b/.test(String(c.g || '')) ? 'code' : 'repo-wide'); }
+  const q = strip(c.q); const zs = pathsIn(q).map(pzone).filter((z) => z !== 'unknown');
+  if (!zs.length) return /\bgit\b|\bgh\b/.test(q) ? 'git' : byResult(c) || 'repo-wide';
+  zs.sort((a, b) => ZRANK.indexOf(a) - ZRANK.indexOf(b)); return zs[0];
+}
+const DEF = /\b(def|class|function|interface|type|const|enum)\s+\w|export\s+(default\s+)?(async\s+)?(function|const|class|type|interface)|\bdef |async def/;
+const CONTRACT = /\/api\/|@router|APIRouter|\bfetch\(|apiFetch|jobsApi|axios|response_model|endpoint|\broute\b|calls_url|\bURL\b|\.(get|post|put|patch|delete)\(\s*["'`]\//i;
+const SETTING = /settings\.|FIXFLOW_|EXPO_PUBLIC_|os\.environ|getenv|process\.env|import\.meta\.env|shop_setting|enable_\w+|\w+_enabled\b/;
+const SCHEMA = /__tablename__|Column\(|ForeignKey|mapped_column|op\.(add_column|create_table|create_index|execute)|alembic|revision|down_revision|\bCHECK\b|unique|index=/i;
+function form(c, z) {
+  const q = strip(c.q || ''); const pat = c.n === 'Grep' ? String(c.q || '') : q;
+  if (z === 'web') return 'external-docs';
+  if (c.k === 'look-gh') return /\bpr\s+(diff|view)/.test(q) && /diff|files/.test(q) ? 'change-under-review' : /\brun\b|checks/.test(q) ? 'ci-or-run-status' : 'pr-or-issue-text';
+  if (c.k === 'look-history') { if (/\bgit\s+(-C\s+\S+\s+)?show\s+[\w~^]+:/.test(q)) return 'change-under-review'; if (/\bblame\b/.test(q) || (/\blog\b/.test(q) && /\s--\s|\s-L|--follow|\.(py|tsx?|jsx?|md)\b/.test(q))) return 'history-of-code'; if (/\bshow\b/.test(q) && !/--stat|--name/.test(q)) return 'change-under-review'; return 'history-of-repo'; }
+  if (c.k === 'look-state') { if (/\bgit\s+(-C\s+\S+\s+)?diff\b/.test(q) && !/--stat|--name-only|--quiet/.test(q)) return 'change-under-review'; return 'repo-state'; }
+  if (c.k === 'look-net') return 'live-service-state';
+  if (c.k === 'look-artifact' || c.k === 'look-session') return 'artifact-or-session';
+  if (z === 'scratch') { const all = (c.t || '') + ' ' + q; if (/handoff|reviews?\/|verdict|report|findings|refute|critic|audit/i.test(all)) return 'prior-conclusions'; if (/\/tasks\/[\w-]+\.output|\.output\b|tool-results/.test(all)) return 'agent-or-job-output'; if (/\.log\b|tail\s|gate|ci-|pytest|jest|lab\//i.test(all)) return 'run-log'; return 'scratch-work-files'; }
+  if (z === 'transcripts') return 'past-session-transcript';
+  if (z === 'memory') return 'memory-notes';
+  if (z === 'program-doc') return /\b(grep|rg)\b|Select-String/.test(q) || c.n === 'Grep' ? 'program-doc-search' : 'program-doc-read';
+  if (z === 'program-evidence') return 'program-evidence';
+  if (z === 'harness-instructions') return 'agent-instructions';
+  if (z === 'rule-doc') return 'invariant-rule';
+  if (z === 'product-doc') return 'product-doc';
+  if (z === 'dependency') return 'library-internals';
+  if (c.k === 'look-list') return 'locate-files';
+  if (!['code', 'schema', 'test', 'config'].includes(z)) { if (c.k === 'look-search') return 'search-unresolved-target'; if (c.k === 'look-list') return 'locate-files'; return 'read-unresolved-target'; }
+  const isSearch = c.k === 'look-search';
+  if (isSearch && CONTRACT.test(pat)) return 'contract-other-half';
+  if (isSearch && SETTING.test(pat)) return 'setting-or-flag';
+  if ((z === 'schema') || (isSearch && SCHEMA.test(pat))) return 'data-model';
+  if (z === 'test') return 'tests-for-code';
+  if (z === 'config') return 'build-or-ci-config';
+  if (isSearch) {
+    if (DEF.test(pat) || /-A\s*\d+|-B\s*\d+|-C\s*\d+/.test(q) && !/\s-r|grep\s+-\w*r/.test(q)) return 'definition-or-body';
+    if (/\s-\w*r|\brg\b|git\s+grep/.test(q) || (c.n === 'Grep' && !/\.\w{1,4}$/.test(String(c.t || '')))) return 'usages-of-symbol';
+    return 'search-in-file';
+  }
+  if (c.k === 'look-read') return c.part || /sed\s+-n|head\s+-|tail\s+-|awk\s+'NR/.test(q) ? 'read-part-of-code' : 'read-whole-code-file';
+  return 'other';
+}
+// ---------------- copied from usecases/qf.js ----------------
+const ID = /\b(?:[A-Z]{1,3}\d{0,2}-[A-Z]{0,2}\d{1,4}|O\d{1,2}-F\d{1,3}|[BCDFGHLR]\d{2,4}|KS-[OP]\d{1,2}|LIM-\d{2})\b/;
+const CITE = /\b[\w.-]+\.(py|tsx?|jsx?|md):\d{1,5}\b|\bs\s+\S+\s+'?\d+(,\d+)?'?\s*;|for\s+(n|l)\s+in\s+\d+\s+\d+\s+\d+/;
+function rangeSize(q) { let n = 0; for (const m of String(q).matchAll(/(\d+),(\d+)p/g)) n += Math.max(0, +m[2] - +m[1]); for (const m of String(q).matchAll(/NR>=(\d+)\s*&&\s*NR<=(\d+)/g)) n += Math.max(0, +m[2] - +m[1]); return n; }
+function qf(c, wcls) {
+  const q = strip(c.q || ''); const pat = c.n === 'Grep' ? String(c.q || '') : q; const f = c.form; const tok = c.rc / CPT;
+  const docLike = ['program-doc-read', 'program-doc-search', 'program-evidence', 'product-doc', 'invariant-rule', 'search-unresolved-target', 'read-unresolved-target', 'scratch-work-files', 'prior-conclusions'];
+  if (docLike.includes(f) || (c.zone2 && /doc|evidence/.test(c.zone2))) {
+    if (CITE.test(q)) return 'Q-cite';
+    if (ID.test(pat.replace(/\S*[\/\\]\S*|\S+\.(md|txt|json|ts|py)\b/g, ' ')) && (c.k === 'look-search' || /grep|awk|Select-String/.test(q))) return 'Q-id';
+  }
+  switch (f) {
+    case 'program-doc-read': case 'program-doc-search': if (/\^#|"\^#|'\^#|\^##/.test(pat)) return 'Q-toc'; return wcls === 'product' ? 'Q-phase' : 'Q-doc';
+    case 'program-evidence': return wcls === 'product' ? 'Q-phase' : 'Q-prior';
+    case 'prior-conclusions': return 'Q-prior';
+    case 'scratch-work-files': return wcls === 'product' ? 'N-ops' : 'Q-prior';
+    case 'invariant-rule': case 'product-doc': return 'Q-rule';
+    case 'agent-instructions': return 'N-instr';
+    case 'change-under-review': return 'Q-diff';
+    case 'history-of-code': case 'history-of-repo': return 'Q-hist';
+    case 'usages-of-symbol': return 'Q-uses';
+    case 'contract-other-half': return 'Q-contract';
+    case 'tests-for-code': return 'Q-tests';
+    case 'data-model': case 'setting-or-flag': return 'Q-model';
+    case 'build-or-ci-config': return 'Q-build';
+    case 'definition-or-body': case 'search-in-file': return 'Q-def';
+    case 'read-part-of-code': return rangeSize(q) >= 150 || tok > 4000 ? 'Q-how' : 'Q-def';
+    case 'read-whole-code-file': return 'Q-how';
+    case 'locate-files': return 'Q-where';
+    case 'library-internals': return 'N-lib';
+    case 'external-docs': return 'N-web';
+    case 'past-session-transcript': return 'N-trans';
+    case 'memory-notes': case 'artifact-or-session': return 'N-mem';
+    case 'repo-state': case 'ci-or-run-status': case 'pr-or-issue-text': case 'run-log': case 'agent-or-job-output': return 'N-ops';
+    case 'search-unresolved-target': case 'read-unresolved-target': return wcls === 'product' ? 'N-ops' : 'Q-prior';
+    default: return 'N-other';
+  }
+}
+const CQ = { 'Q-prior': 'CQ1', 'Q-phase': 'CQ2', 'Q-doc': 'CQ2', 'Q-how': 'CQ3', 'Q-rule': 'CQ4', 'Q-def': 'CQ5', 'Q-diff': 'CQ6', 'Q-tests': 'CQ7', 'Q-uses': 'CQ8', 'Q-id': 'CQ9', 'Q-hist': 'CQ10', 'Q-where': 'CQ11', 'Q-toc': 'CQ12', 'Q-contract': 'CQ13', 'Q-cite': 'CQ14', 'Q-model': 'CQ15', 'Q-build': 'CQ16' };
+const cqOf = (q) => CQ[q] || 'NG-' + q.slice(2);
+
+// ---------------- new: path resolution, read spans, seeds ----------------
+// base is the absolute working directory (forward slashes). Repository paths come back repository-relative; others absolute.
+const isAbs = (s) => /^[A-Za-z]:\//.test(s) || s.startsWith('/') || s.startsWith('~') || s.startsWith('$');
+function absOf(p, base) { let s = String(p || '').replace(/\\/g, '/').replace(/^["']|["']$/g, '').replace(/\/+$/, ''); s = s.replace(/^\/([a-zA-Z])\//, (m, d) => d.toUpperCase() + ':/'); if (!isAbs(s) && base) s = path.posix.normalize(base + '/' + s.replace(/^\.\//, '')); return s; }
+function normPath(p, base) {
+  if (!p) return null;
+  let s = absOf(p, base);
+  const m = s.match(/EMS_workshop1(?:\/\.claude\/worktrees\/[^/]+)?\/(.*)$/i);
+  if (m) { const r = m[1]; if (KNOWN.has(r)) return r; const parts = r.split('/'); for (let k = Math.min(4, parts.length); k >= 2; k--) { const hit = bySuffix.get(parts.slice(-k).join('/')); if (hit && hit.endsWith(r)) return hit; } return r; }
+  if (isAbs(s)) return s;
+  s = s.replace(/^\.\//, '');
+  if (KNOWN.has(s)) return s;
+  const parts = s.split('/'); for (let k = Math.min(4, parts.length); k >= 2; k--) { const hit = bySuffix.get(parts.slice(-k).join('/')); if (hit) return hit; }
+  return s;
+}
+function cwdRelOf(cwd) { if (!cwd) return ''; const s = cwd.replace(/\\/g, '/'); const m = s.match(/EMS_workshop1(?:\/\.claude\/worktrees\/[^/]+)?(?:\/(.*))?$/i); return m ? m[1] || '' : null; }
+function toks(s) { const out = []; const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g; let m; while ((m = re.exec(s))) out.push(m[1] != null ? m[1] : m[2] != null ? m[2] : m[3]); return out; }
+const PATHY0 = (t) => /^[^-][^\s]*\.[A-Za-z0-9]{1,6}$/.test(t) && !/^\d+(,\d+)?p$/.test(t) && !/[*?]/.test(t) && !/^https?:/.test(t);
+const PATHY = (t) => PATHY0(t) && !/[<>|&]/.test(t);
+const NUM = /^\s*(\d+)(?:\t|→)(.*)$/;
+function newAcc() { return new Map(); }
+function ent(acc, f) { let e = acc.get(f); if (!e) { e = { f, lines: new Map(), ranges: [], whole: false, fileOnly: false }; acc.set(f, e); } return e; }
+// split a shell command into segments, tracking cd and simple NAME=value assignments (substituted into later segments)
+// quote-aware split: mode 'seq' splits on ; && || newline; mode 'pipe' splits on a single |
+function splitTop(str, mode) {
+  const out = []; let cur = '', q = null; const s = String(str);
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (q) { cur += ch; if (ch === '\\' && q === '"' && i + 1 < s.length) { cur += s[++i]; continue; } if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+    if (ch === '\\' && i + 1 < s.length) { cur += ch + s[++i]; continue; }
+    if (mode === 'seq') {
+      if (ch === ';' || ch === '\n') { out.push(cur); cur = ''; continue; }
+      if ((ch === '&' && s[i + 1] === '&') || (ch === '|' && s[i + 1] === '|')) { out.push(cur); cur = ''; i++; continue; }
+    } else if (ch === '|' && s[i + 1] !== '|' && s[i - 1] !== '|') { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur); return out.map((x) => x.trim()).filter(Boolean);
+}
+function segmentsOf(cmd, base) {
+  const out = []; let cd = base; const vars = {};
+  for (let seg of splitTop(cmd, 'seq')) {
+    seg = seg.trim(); if (!seg) continue;
+    const mv = seg.match(/^(?:export\s+)?([A-Za-z_]\w*)=("[^"]*"|'[^']*'|\S+)$/); if (mv) { vars[mv[1]] = mv[2].replace(/^["']|["']$/g, ''); continue; }
+    seg = seg.replace(/\$\{?([A-Za-z_]\w*)\}?/g, (m, n) => (vars[n] != null ? vars[n] : m));
+    const mcd = seg.match(/^cd\s+("[^"]+"|'[^']+'|\S+)$/); if (mcd) { cd = absOf(mcd[1], cd); continue; }
+    out.push({ seg, cd });
+  }
+  return out;
+}
+function shellPlan(cmd, base) {
+  const plan = []; plan.cd = base;
+  for (const { seg, cd } of segmentsOf(cmd, base)) {
+    plan.cd = cd;
+    const stages = splitTop(seg, 'pipe'); const pipe = stages[0] || ''; const t = toks(pipe); if (!t.length) continue;
+    let v = t[0].replace(/^.*\//, ''); if (v === 'git' && /show/.test(t[1] || '')) v = 'git-show';
+    const st = { v, files: [], ranges: [], numbered: /\s-\w*n\b/.test(pipe) || v === 'nl' };
+    // the range can sit in the first stage (sed -n 1,9p f) or in a later stage (cat f | sed -n 1,9p; git show r:f | head -40)
+    const rangeSrc = /^(sed|head|awk)$/.test(v) ? pipe : (/^(cat|git-show|nl|Get-Content|type)$/.test(v) ? stages.slice(1).find((x) => /^(sed\s+-n|head|awk)\b/.test(x)) || '' : '');
+    const rv = (toks(rangeSrc)[0] || '').replace(/^.*\//, '');
+    if (rv === 'sed') { for (const m of rangeSrc.matchAll(/(\d+),(\d+)p/g)) st.ranges.push([+m[1], +m[2]]); for (const m of rangeSrc.matchAll(/(?:^|[';\s])(\d+)p/g)) st.ranges.push([+m[1], +m[1]]); }
+    if (rv === 'head') { const m = rangeSrc.match(/-n\s*(\d+)|\s-(\d+)\b/); st.ranges.push([1, m ? +(m[1] || m[2]) : 10]); }
+    if (rv === 'awk') { const m = rangeSrc.match(/NR\s*>=?\s*(\d+)\s*&&\s*NR\s*<=?\s*(\d+)/) || rangeSrc.match(/NR==(\d+)\s*,\s*NR==(\d+)/); if (m) st.ranges.push([+m[1], +m[2]]); }
+    if (v === 'git-show') { const m = pipe.match(/(\S+):([\w./-]+\.\w{1,6})/); if (m) { st.files.push(normPath(m[2], '')); st.rev = m[1].replace(/^.*\s/, ''); } }
+    let skipNext = false; let patSeen = !/^(grep|rg|egrep|Select-String|findstr)$/i.test(v);
+    for (let i = 1; i < t.length; i++) {
+      const a = t[i];
+      if (skipNext) { skipNext = false; continue; }
+      if (/^-[ABCmef]$|^--(include|exclude|glob|type|max-count)$/.test(a)) { if (a === '-e') patSeen = true; skipNext = true; continue; }
+      if (/^-/.test(a)) continue;
+      if (!patSeen) { patSeen = true; continue; }
+      if ((PATHY(a) || /\//.test(a)) && !/[<>|&]/.test(a)) { if (v === 'git-show') continue; st.files.push(normPath(a, cd)); }
+    }
+    if (['sed', 'cat', 'head', 'tail', 'awk', 'grep', 'rg', 'egrep', 'nl', 'Get-Content', 'git-show', 'type', 'Select-String', 'wc', 'less', 'more'].includes(v)) plan.push(st);
+  }
+  return plan;
+}
+function readSpans(c, t, cwdRel) {
+  const acc = newAcc(); const i = c.inpFull || {};
+  if (c.name === 'Read') {
+    const f = normPath(i.file_path, cwdRel); const e = ent(acc, f); let any = false;
+    for (const ln of t.split('\n')) { const m = ln.match(NUM); if (m) { e.lines.set(+m[1], m[2].replace(/\r$/, '')); any = true; } }
+    if (!any) { if (i.offset != null || i.limit != null) e.ranges.push([+(i.offset || 1), +(i.offset || 1) + +(i.limit || 2000) - 1]); else e.whole = true; }
+    return acc;
+  }
+  if (c.name === 'Grep') {
+    const mode = i.output_mode || 'files_with_matches'; const tgt = normPath(i.path || '', cwdRel);
+    for (const ln of t.split('\n')) {
+      if (!ln.trim() || /^Found \d+|^No (matches|files)/.test(ln)) continue;
+      if (mode === 'content') { let m = ln.match(/^(.+?\.[A-Za-z0-9]{1,6}):(\d+)[:-](.*)$/); if (m) { ent(acc, normPath(m[1], cwdRel)).lines.set(+m[2], m[3]); continue; } m = ln.match(/^(\d+)[:-](.*)$/); if (m && tgt) ent(acc, tgt).lines.set(+m[1], m[2]); }
+      else if (mode === 'files_with_matches') { if (/\.[A-Za-z0-9]{1,6}$/.test(ln.trim())) ent(acc, normPath(ln.trim(), cwdRel)).fileOnly = true; }
+    }
+    return acc;
+  }
+  if (c.name === 'Glob') { for (const ln of t.split('\n')) if (/\.[A-Za-z0-9]{1,6}$/.test(ln.trim())) ent(acc, normPath(ln.trim(), cwdRel)).fileOnly = true; return acc; }
+  if (c.name === 'Bash' || c.name === 'PowerShell') {
+    const plan = shellPlan(i.command || '', cwdRel); const B = plan.cd || cwdRel;
+    const numberedFiles = plan.filter((s) => s.numbered || s.v === 'Get-Content').flatMap((s) => s.files);
+    const singleGrep = plan.find((s) => /^(grep|rg|egrep)$/.test(s.v) && s.files.length === 1);
+    let ptr = 0, last = 0, cur = null; let anyNum = false;
+    for (const raw of t.split('\n')) {
+      const ln = raw.replace(/\r$/, '');
+      let m = ln.match(/^==> (.+) <==$/); if (m) { cur = normPath(m[1], B); continue; }
+      m = ln.match(/^((?:[A-Za-z]:)?[^:\s][^:]*?\.[A-Za-z0-9]{1,6}):(\d+):(.*)$/); if (m) { ent(acc, normPath(m[1], B)).lines.set(+m[2], m[3]); anyNum = true; continue; }
+      m = ln.match(/^((?:[A-Za-z]:)?[^:\s]*?\.[A-Za-z0-9]{1,6})-(\d+)-(.*)$/); if (m && KNOWN.has(normPath(m[1], B))) { ent(acc, normPath(m[1], B)).lines.set(+m[2], m[3]); continue; }
+      m = ln.match(NUM); if (m && numberedFiles.length) { const n = +m[1]; if (n <= last && ptr + 1 < numberedFiles.length) ptr++; last = n; ent(acc, cur || numberedFiles[ptr]).lines.set(n, m[2]); anyNum = true; continue; }
+      m = ln.match(/^(\d+)[:-](.*)$/); if (m && singleGrep) { ent(acc, singleGrep.files[0]).lines.set(+m[1], m[2]); anyNum = true; continue; }
+    }
+    for (const s of plan) if (s.rev) for (const f of s.files) ent(acc, f).rev = s.rev;
+    const rangeSegs = plan.filter((s) => s.ranges.length && s.files.length);
+    for (const s of rangeSegs) for (const f of s.files) { const e = ent(acc, f); for (const r of s.ranges) e.ranges.push(r); }
+    if (rangeSegs.length === 1 && rangeSegs[0].files.length === 1 && rangeSegs[0].ranges.length === 1 && !anyNum && plan.length === 1) {
+      const e = ent(acc, rangeSegs[0].files[0]); const a = rangeSegs[0].ranges[0][0]; t.split('\n').forEach((ln, k) => { if (a + k <= rangeSegs[0].ranges[0][1]) e.lines.set(a + k, ln.replace(/\r$/, '')); });
+    }
+    for (const s of plan) if ((s.v === 'cat' || s.v === 'Get-Content' || s.v === 'type' || s.v === 'git-show' || s.v === 'nl') && !s.ranges.length) for (const f of s.files) { const e = ent(acc, f); if (!e.lines.size) { e.whole = true; if (plan.length === 1 && s.files.length === 1 && !s.numbered) t.split('\n').forEach((ln, k) => e.lines.set(k + 1, ln.replace(/\r$/, ''))); } }
+    for (const s of plan) if (/^(grep|rg|egrep|wc|tail)$/.test(s.v)) for (const f of s.files) { const e = ent(acc, f); if (!e.lines.size && !e.ranges.length) e.fileOnly = true; }
+    return acc;
+  }
+  return acc;
+}
+function spansOf(e) {
+  const ns = [...e.lines.keys()].sort((a, b) => a - b); const sp = [];
+  for (const n of ns) { const l = sp[sp.length - 1]; if (l && n <= l[1] + 3) l[1] = Math.max(l[1], n); else sp.push([n, n]); }
+  for (const r of e.ranges) sp.push([r[0], r[1]]);
+  sp.sort((a, b) => a[0] - b[0]); const m = [];
+  for (const s of sp) { const l = m[m.length - 1]; if (l && s[0] <= l[1] + 3) l[1] = Math.max(l[1], s[1]); else m.push([s[0], s[1]]); }
+  return m;
+}
+const IDG = /\b(?:[A-Z]{1,3}\d{0,2}-[A-Z]{0,2}\d{1,4}|O\d{1,2}-F\d{1,3}|[BCDFGHLR]\d{2,4}|KS-[OP]\d{1,2}|LIM-\d{2})\b/g;
+const STOP = new Set(['the', 'and', 'for', 'def', 'class', 'function', 'const', 'export', 'async', 'return', 'import', 'from', 'type', 'interface', 'enum', 'let', 'var', 'self', 'none', 'true', 'false', 'null', 'with', 'this', 'that']);
+function termsOf(pat) {
+  const s = String(pat || ''); const ids = [...new Set(s.match(IDG) || [])];
+  const t = s.replace(/\\[bBsSwWdD]/g, ' ').replace(/\\(.)/g, '$1').replace(/\(\?[:=!<]/g, ' ');
+  const terms = new Set(); const phrases = [];
+  for (const p of t.split('|')) {
+    for (const w of p.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) || []) if (!STOP.has(w.toLowerCase())) terms.add(w);
+    const ph = p.replace(/[\^$*+?()[\]{}]/g, ' ').replace(/\s+/g, ' ').trim(); if (/\s/.test(ph) && ph.length >= 6) phrases.push(ph);
+  }
+  return { ids, terms: [...terms].slice(0, 30), phrases: phrases.slice(0, 10) };
+}
+function seedOf(c, cwdRel) {
+  const i = c.inpFull || {};
+  if (c.name === 'Read') return { kind: 'path', path: normPath(i.file_path, cwdRel), range: i.offset != null ? [+i.offset, +i.offset + +(i.limit || 2000) - 1] : null };
+  if (c.name === 'Grep') return { kind: 'pattern', scope: i.path ? normPath(i.path, cwdRel) : null, glob: i.glob || i.type || null, raw: String(i.pattern || '').slice(0, 300), ...termsOf(i.pattern) };
+  if (c.name === 'Glob') return { kind: 'glob', scope: i.path ? normPath(i.path, cwdRel) : null, raw: String(i.pattern || '').slice(0, 200), ...termsOf(String(i.pattern || '').replace(/[*{}]/g, ' ')) };
+  if (c.name === 'WebFetch' || c.name === 'WebSearch') return { kind: 'web' };
+  if (c.name === 'Bash' || c.name === 'PowerShell') {
+    const q = strip(i.command || ''); const k = c.cl.k;
+    if (k === 'look-history' || k === 'look-state' && /\bgit\s+(-C\s+\S+\s+)?diff/.test(q)) return { kind: 'history', paths: pathsIn(q).map((p) => normPath(p, cwdRel)).slice(0, 6), raw: q.slice(0, 300) };
+    if (k === 'look-gh' || k === 'look-net' || k === 'look-state') return { kind: 'state', raw: q.slice(0, 200) };
+    for (const { seg, cd } of segmentsOf(i.command || '', cwdRel)) {
+      const pipe = splitTop(seg, 'pipe')[0] || ''; const t = toks(pipe); if (!t.length) continue; const v = t[0].replace(/^.*\//, ''); cwdRel = cd;
+      if (/^(grep|rg|egrep|Select-String|findstr)$/i.test(v) || (v === 'git' && t[1] === 'grep')) {
+        let pats = []; let skip = false; let got = false; const scope = [];
+        for (let j = v === 'git' ? 2 : 1; j < t.length; j++) { const a = t[j]; if (skip) { skip = false; continue; } if (a === '-e' || a === '--regexp' || a === '-Pattern') { pats.push(t[j + 1] || ''); j++; got = true; continue; } if (/^-[ABCmf]$|^--(include|exclude|glob|type|max-count)$/.test(a)) { skip = true; continue; } if (/^-/.test(a)) continue; if (!got) { pats.push(a); got = true; continue; } scope.push(normPath(a, cwdRelOf(null) || cwdRel)); }
+        const tt = termsOf(pats.join('|')); return { kind: 'pattern', scope: scope.slice(0, 6), raw: pats.join(' | ').slice(0, 300), ...tt };
+      }
+      if (/^(sed|cat|head|tail|awk|nl|Get-Content|type|wc)$/.test(v)) { const fs2 = t.slice(1).filter((a) => !/^-/.test(a) && (PATHY(a) || /\//.test(a))).map((a) => normPath(a, cwdRel)); if (fs2.length) { const r = (pipe.match(/(\d+),(\d+)p/) || pipe.match(/NR\s*>=?\s*(\d+)\s*&&\s*NR\s*<=?\s*(\d+)/)); return { kind: 'path', path: fs2[0], paths: fs2.slice(0, 6), range: r ? [+r[1], +r[2]] : null }; } }
+      if (/^(ls|find|tree|Get-ChildItem|gci|dir)$/.test(v)) { const fs2 = t.slice(1).filter((a) => !/^-/.test(a)).map((a) => a.replace(/^["']|["']$/g, '')); const nm = (pipe.match(/-i?name\s+["']?([^"'\s]+)/) || [])[1]; return { kind: 'glob', scope: fs2.length ? normPath(fs2[0], cwdRel) : null, raw: pipe.slice(0, 200), ...termsOf(String(nm || '').replace(/[*{}]/g, ' ')) }; }
+    }
+    return { kind: 'other', raw: q.slice(0, 200) };
+  }
+  return { kind: 'other' };
+}
+const CITE_G = /([\w.\-\/]+\.(?:py|tsx?|jsx?|mjs|cjs|md|json|ya?ml|toml|sql|sh|txt|html|css)):(\d{1,5})(?:\s*[-–]\s*(\d{1,5}))?/g;
+const h8 = (s) => sha(s.trim()).slice(0, 8);
+
+// ---------------- main ----------------
+function walk(d, a) { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p, a); else if (e.name.endsWith('.jsonl')) a.push(p); } return a; }
+(async () => {
+  const dirs = fs.readdirSync(P).filter((d) => d.includes('EMS-workshop1'));
+  const wI = fs.createWriteStream(OUT + '/instances.jsonl'); const wT = fs.createWriteStream(OUT + '/transcripts.jsonl');
+  let nT = 0, nE = 0, nSkip = 0; const t0 = Date.now();
+  for (const d of dirs) {
+    const short = d.includes('worktrees-') ? d.split('worktrees-')[1] : '(main)';
+    for (const f of walk(path.join(P, d), [])) {
+      const rel = path.relative(P, f).split(path.sep).join('/');
+      const sub = rel.includes('/subagents/');
+      const steps = []; const byMid = {}; const callById = {}; let ts0 = null, ts1 = null, cwd = null, sid = null, branch0 = null; const compact = []; const prompts = [];
+      const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+      let stop = false; let cwdRel = '';
+      for await (const line of rl) {
+        if (stop) continue;
+        if (line.indexOf('"type":"assistant"') < 0 && line.indexOf('"type":"user"') < 0 && line.indexOf('isCompactSummary') < 0) continue;
+        let o; try { o = JSON.parse(line); } catch { continue; }
+        if (o.timestamp) { const tt = Date.parse(o.timestamp); if (tt > CUTOFF) { stop = true; continue; } if (!ts0) ts0 = o.timestamp; ts1 = o.timestamp; }
+        if (!cwd && o.cwd) { cwd = o.cwd; cwdRel = absOf(cwd, ''); }
+        if (!sid && o.sessionId) sid = o.sessionId; if (!branch0 && o.gitBranch) branch0 = o.gitBranch;
+        if (o.isCompactSummary) { compact.push(steps.length); continue; }
+        if (o.type === 'assistant' && o.message && o.message.id) {
+          const m = o.message; if (m.model === '<synthetic>') continue;
+          let s = byMid[m.id];
+          if (!s) { s = byMid[m.id] = { mid: m.id, ts: o.timestamp, br: o.gitBranch || null, ctx: 0, out: 0, text: '', calls: [] }; steps.push(s); }
+          const u = m.usage || {}; const ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+          if (ctx > s.ctx) s.ctx = ctx; if ((u.output_tokens || 0) > s.out) s.out = u.output_tokens || 0;
+          for (const b of Array.isArray(m.content) ? m.content : []) {
+            if (b.type === 'text' && b.text) s.text += (s.text ? '\n' : '') + b.text.slice(0, 40000);
+            else if (b.type === 'tool_use') {
+              const inp = b.input || {}; const c = { id: b.id, name: b.name, inp: slimInput(b.name, inp), rc: 0, err: false, head: '' };
+              c.inpFull = { file_path: inp.file_path || inp.notebook_path, path: inp.path, pattern: inp.pattern, glob: inp.glob, type: inp.type, output_mode: inp.output_mode, offset: inp.offset, limit: inp.limit, command: inp.command };
+              if (/^(Edit|Write|MultiEdit)$/.test(b.name)) c.ed = { f: inp.file_path, old: inp.old_string || (inp.edits || []).map((x) => x.old_string).join('\n') || '', neu: String(inp.new_string || (inp.edits || []).map((x) => x.new_string).join('\n') || inp.content || '').slice(0, 300000) };
+              else if (/^(Agent|Task|SendMessage|StructuredOutput)$/.test(b.name) || /send_message|SendUserFile/.test(b.name)) c.say = JSON.stringify(inp).slice(0, 200000);
+              s.calls.push(c); callById[b.id] = c;
+            }
+          }
+        } else if (o.type === 'user' && o.message && (typeof o.message.content === 'string' || (Array.isArray(o.message.content) && o.message.content.some((b) => b && b.type === 'text') && !o.message.content.some((b) => b && b.type === 'tool_result')))) { if (!o.isMeta) prompts.push({ at: steps.length, text: txt(o.message.content).slice(0, 600) }); }
+        else if (o.type === 'user' && o.message && Array.isArray(o.message.content)) {
+          for (const b of o.message.content) if (b && b.type === 'tool_result') {
+            const c = callById[b.tool_use_id]; if (!c) continue; const t = txt(b.content);
+            c.rc = t.length; c.err = !!b.is_error; c.head = t.slice(0, 240);
+            if (['Grep', 'Glob'].includes(c.name) || c.name === 'Bash' || c.name === 'PowerShell') { const ps = t.match(/[\w./\\-]+\.(?:py|tsx?|jsx?|mjs|md|json|toml|ya?ml|sql|txt|html)\b/g); if (ps) c.paths = [...new Set(ps)].slice(0, 60); }
+            c.cl = classify(c);
+            if (isLook(c.cl.k) && !c.err) { try { c.acc = readSpans(c, t.length > 2e6 ? t.slice(0, 2e6) : t, cwdRel); } catch (e) { c.acc = null; } }
+          }
+        }
+      }
+      nT++;
+      const S = steps; if (!S.length) { wT.write(JSON.stringify({ file: rel, folder: short, sub, sid, ts0, ts1, branch: branch0, cwdRel, steps: 0, cls: 'empty' }) + '\n'); continue; }
+      // windows (copied rule)
+      const cps = new Set(compact); let win = 0; const winOf = [];
+      for (let i = 0; i < S.length; i++) { if (cps.has(i)) win++; if (i > 0 && S[i - 1].ctx > 60000 && S[i].ctx < S[i - 1].ctx * 0.45) win++; winOf.push(win); }
+      const laterInWin = []; for (let i = S.length - 1; i >= 0; i--) laterInWin[i] = i + 1 < S.length && winOf[i + 1] === winOf[i] ? laterInWin[i + 1] + 1 : 0;
+      // transcript class (copied rule)
+      const edits = {}; const lookTok = {}; let prodEdits = 0; let ctxSum = 0;
+      for (const s of S) { ctxSum += s.ctx; for (const c of s.calls) { if (!c.cl) c.cl = classify(c); if (c.cl.k === 'edit') { edits[c.cl.z] = (edits[c.cl.z] || 0) + 1; if (['code', 'test', 'product-config'].includes(c.cl.z)) prodEdits++; } if (isLook(c.cl.k)) lookTok[c.cl.z] = (lookTok[c.cl.z] || 0) + c.rc; } }
+      const prodLook = ['code', 'test', 'product-config', 'product-doc', 'claude-md'].reduce((a, z) => a + (lookTok[z] || 0), 0);
+      const progLook = ['program-doc', 'program-evidence', 'memory', 'transcripts', 'testbed'].reduce((a, z) => a + (lookTok[z] || 0), 0);
+      const allLook = Object.values(lookTok).reduce((a, b) => a + b, 0); const progEdits = (edits['program-doc'] || 0) + (edits['program-evidence'] || 0) + (edits.memory || 0);
+      const tcls = prodEdits > 0 && prodEdits >= progEdits ? 'product-edit' : prodLook > progLook && prodLook > 20000 && prodLook >= 0.4 * allLook ? 'product-read' : 'program';
+      const wcls = tcls === 'program' ? 'program' : 'product'; FALLBACK_CODE = wcls === 'product';
+      wT.write(JSON.stringify({ file: rel, folder: short, sub, sid, ts0, ts1, branch: branch0, cwdRel, steps: S.length, ctxSum, cls: wcls, tcls, prodEdits }) + '\n');
+      // later content (non-lookup) for citations and quotes; later edits
+      const offs = []; let LC = ''; const EDITS = [];
+      for (let i = 0; i < S.length; i++) {
+        offs.push(LC.length); const s = S[i]; let piece = s.text || '';
+        for (const c of s.calls) {
+          if (c.ed) { piece += '\n' + c.ed.neu; EDITS.push({ i, f: normPath(c.ed.f, cwdRel), old: c.ed.old, write: c.name === 'Write' }); }
+          else if (c.say) piece += '\n' + c.say;
+          else if ((c.name === 'Bash' || c.name === 'PowerShell') && c.cl && (c.cl.k === 'edit-sh' || c.cl.k === 'act')) piece += '\n' + String((c.inpFull || {}).command || '');
+        }
+        LC += piece + '\n';
+      }
+      offs.push(LC.length);
+      // quote index: each trimmed line of later content -> its last position (a quote is a whole read line reappearing as a line)
+      const LCLINE = new Map(); { let pos = 0; for (const ln of LC.split('\n')) { const k = ln.trim().replace(/^[-*>+]\s+|^`|`$/g, '').trim(); if (k.length >= 40) LCLINE.set(k, pos); pos += ln.length + 1; } }
+      const CITES = []; for (const m of LC.matchAll(CITE_G)) CITES.push({ pos: m.index, base: m[1].split('/').pop(), full: m[1], a: +m[2], b: m[3] ? +m[3] : +m[2] });
+      // episodes (copied rule)
+      const EP = []; let cur = null;
+      const close = (endStep, endKind) => { if (cur && cur.calls.length) { cur.end = endKind; cur.endStep = endStep; EP.push(cur); } cur = null; };
+      for (let i = 0; i < S.length; i++) {
+        const s = S[i]; const looks = s.calls.filter((c) => isLook(c.cl.k)); const nonLook = s.calls.filter((c) => !isLook(c.cl.k) && c.cl.k !== 'neutral');
+        if (!cur && looks.length) cur = { start: i, steps: 0, calls: [] };
+        if (cur) {
+          if (looks.length) cur.steps += nonLook.length ? 0 : 1;
+          for (const c of looks) cur.calls.push({ i, c, n: c.name, k: c.cl.k, z: c.cl.z, t: c.cl.t, q: c.cl.q, g: c.cl.g, part: c.cl.part, rc: c.rc, later: laterInWin[i], paths: c.paths, head: c.head, err: c.err });
+          if (nonLook.length) close(i, nonLook[0].cl.k + ':' + (nonLook[0].cl.z || ''));
+          else if (!s.calls.length) close(i, 'answer');
+        }
+      }
+      close(S.length - 1, 'transcript-end');
+      // instances
+      for (const e of EP) {
+        const per = {}; let fetched = 0, carried = 0;
+        for (const x of e.calls) { x.zone2 = callZone(x); x.form = form(x, x.zone2); x.qf = qf(x, wcls); x.cq = cqOf(x.qf); const tok = x.rc / CPT; fetched += tok; carried += tok * (x.later || 0); const p = (per[x.cq] = per[x.cq] || { fetched: 0, carried: 0, calls: 0 }); p.fetched += tok; p.carried += tok * (x.later || 0); p.calls++; }
+        const dom = Object.entries(per).sort((a, b) => b[1].carried - a[1].carried || b[1].fetched - a[1].fetched)[0][0];
+        // merge read spans over the episode
+        const files = new Map();
+        for (const x of e.calls) { if (!x.c.acc) continue; for (const [fp, en] of x.c.acc) { if (!fp) continue; let F = files.get(fp); if (!F) { F = { f: fp, lines: new Map(), ranges: [], whole: false, fileOnly: true, byCall: [] }; files.set(fp, F); } for (const [n, tx] of en.lines) F.lines.set(n, tx); F.ranges.push(...en.ranges); F.whole = F.whole || en.whole; if (en.rev) F.rev = en.rev; F.fileOnly = F.fileOnly && en.fileOnly && !en.lines.size && !en.ranges.length && !en.whole; F.byCall.push(e.calls.indexOf(x)); } }
+        const endOff = offs[Math.min(e.endStep, S.length)] || 0; const endStep = e.endStep;
+        const truth = [];
+        for (const F of files.values()) {
+          const spans = spansOf(F); const z = pzone(F.f);
+          const text2n = new Map(); for (const [n, tx] of F.lines) { const k = tx.trim(); if (k.length >= 16 && /[A-Za-z]{3}/.test(k)) { if (!text2n.has(k)) text2n.set(k, []); text2n.get(k).push(n); } }
+          const conf = { edit: new Set(), cite: new Set(), quote: new Set(), fileEdited: false, fileEditStep: null };
+          for (const ed of EDITS) { if (ed.i < endStep || ed.f !== F.f) continue; conf.fileEdited = true; if (conf.fileEditStep == null) conf.fileEditStep = ed.i - endStep; for (const ol of String(ed.old).split('\n')) { const k = ol.trim(); if (k.length >= 16 && text2n.has(k)) for (const n of text2n.get(k)) conf.edit.add(n); } }
+          const base = F.f.split('/').pop();
+          const ambiguous = (BASECOUNT.get(base) || 0) > 1;
+          for (const ct of CITES) { if (ct.pos < endOff || ct.base !== base) continue; if (ambiguous && !(ct.full.includes('/') && F.f.endsWith(ct.full.replace(/^\.\//, '')))) continue; for (const sp of spans) if (ct.a <= sp[1] + 2 && ct.b >= sp[0] - 2) { for (let n = Math.max(ct.a, sp[0]); n <= Math.min(ct.b, sp[1]); n++) conf.cite.add(n); if (ct.a > sp[1] || ct.b < sp[0]) conf.cite.add(Math.min(Math.max(ct.a, sp[0]), sp[1])); } }
+          const cands = [...text2n.keys()].filter((k) => k.length >= 40 && k.length <= 400 && !/^(import |from \S+ import|#!|\/\/ |# ?-{3,}|\|[-: |]+\|$)/.test(k)).sort((a, b) => b.length - a.length).slice(0, 40);
+          for (const k of cands) if ((LCLINE.get(k) || -1) >= endOff) for (const n of text2n.get(k)) conf.quote.add(n);
+          let lineChars = 0; for (const tx of F.lines.values()) lineChars += tx.length + 1;
+          const smp = []; const ns = [...F.lines.keys()].sort((a, b) => a - b); const step = Math.max(1, Math.floor(ns.length / 24)); for (let k = 0; k < ns.length; k += step) { const tx = F.lines.get(ns[k]); if (tx.trim().length >= 8) smp.push([ns[k], h8(tx)]); }
+          const confLines = [...new Set([...conf.edit, ...conf.cite, ...conf.quote])].sort((a, b) => a - b);
+          const confSpans = spans.filter((sp) => confLines.some((n) => n >= sp[0] && n <= sp[1]));
+          truth.push({ f: F.f, zone: z, rev: F.rev || null, spans, whole: F.whole, fileOnly: F.fileOnly, nLines: F.lines.size, lineTok: Math.round(lineChars / CPT), samples: smp, conf: { edit: conf.edit.size, cite: conf.cite.size, quote: conf.quote.size, lines: confLines.slice(0, 200), spans: confSpans }, fileEdited: conf.fileEdited, fileEditAfterSteps: conf.fileEditStep, level: confLines.length ? 'confirmed' : 'read' });
+        }
+        const fc = e.calls[0];
+        const inst = {
+          id: sha(rel + '#' + e.start).slice(0, 12), file: rel, folder: short, sub, sid, cls: wcls, tcls,
+          date: S[e.start].ts, branch: S[e.start].br || branch0, cwdRel: cwdRelOf(cwd), startStep: e.start, endStep, end: e.end, steps: e.steps, nCalls: e.calls.length,
+          form: dom, formFirst: fc.cq, perForm: Object.fromEntries(Object.entries(per).map(([k, v]) => [k, { calls: v.calls, fetched: Math.round(v.fetched), carried: Math.round(v.carried) }])),
+          fetched: Math.round(fetched), carried: Math.round(carried), laterFirst: fc.later,
+          seed: seedOf(fc.c, cwdRel), firstCall: { tool: fc.n, kind: fc.k, qf: fc.qf, q: String(fc.n === 'Read' ? (fc.c.inpFull.file_path || '') : fc.n === 'Grep' ? fc.c.inpFull.pattern : fc.c.inpFull.command || fc.t || '').slice(0, 300) },
+          calls: e.calls.map((x) => ({ tool: x.n, k: x.k, cq: x.cq, tok: Math.round(x.rc / CPT), later: x.later, q: String(x.n === 'Read' ? (x.c.inpFull.file_path || '') + (x.c.inpFull.offset != null ? ' @' + x.c.inpFull.offset + '+' + (x.c.inpFull.limit || '') : '') : x.n === 'Grep' ? x.c.inpFull.pattern + ' in ' + (x.c.inpFull.path || '.') + ' ' + (x.c.inpFull.output_mode || '') : x.c.inpFull.command || x.t || '').slice(0, 240) })),
+          truth,
+          confirmed: truth.some((t) => t.level === 'confirmed'), anyFileEdited: truth.some((t) => t.fileEdited),
+        };
+        wI.write(JSON.stringify(inst) + '\n'); nE++;
+      }
+      if (nT % 100 === 0) { fs.writeFileSync(W + '/out/extract-progress.json', JSON.stringify({ nT, nE, sec: (Date.now() - t0) / 1000 })); }
+    }
+  }
+  wI.end(); wT.end();
+  fs.writeFileSync(W + '/out/extract-progress.json', JSON.stringify({ done: true, nT, nE, sec: (Date.now() - t0) / 1000 }));
+  console.log('transcripts', nT, 'instances', nE, 'sec', (Date.now() - t0) / 1000);
+})();

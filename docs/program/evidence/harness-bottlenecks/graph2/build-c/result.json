@@ -1,0 +1,1294 @@
+{
+ "harnessFix": {
+  "status": "Done. Every item (a) to (f) is implemented and was re-run inside graphtest:1 on TUNE only. Relational and reference had 0 mismatches. Against the previous answer files, 0 ranked lists changed.",
+  "what_was_done": [
+   "(a) Out-degree 0 in the degree-normalised ranking (SPEC 8.1, addendum 3 A.1). This case only arises in metapath mode. When a node has no arc under the configured direction, its out-degree is now the number of reach-DAG arcs leaving it, counting each (u, v, kind, orientation) once. Code changes: arms/reference/ref.js (degnorm; a diagnostic counter stats.degnorm_od0 records each use) and arms/relational/queries.js (degnorm_od, which uses COUNT(*) over the per-query dag table only when the arc count is 0). Before this fix, the reference arm divided by zero and got infinity, and the relational arm silently dropped the term (SQLite returns NULL for division by zero).",
+   "(a) New self-test, arms/common/selftest.js section 12: a 7-node metapath graph with the scores worked out by hand in a comment. Nodes a, b, c, d, e, f, x get ids 1 to 7; the edges are a->b, a->c, c->f, d->b, e->b, x->b and x->c, all calls. The direction is dependencies and the steps are 'calls out' then 'calls in'. Node b has out-degree 0, so its 3 DAG arcs are used instead. Expected scores: x 2/3, b 1/2, c 1/2, d 1/6, e 1/6. Both arms return exactly these, byte-identical, and also inside a hybrid ranking.",
+   "(b) A metapath step whose edge kinds are all absent at a commit reaches nothing in both arms, without error. The relational arm builds its step table from the (kind, class) pairs present at the commit; the reference arm matches kinds by name. Self-test section 13 covers three cases: a step of the absent kind enqueues_kind (only the hop-1 nodes with emit all, nothing with emit end), and a single step of an absent class (nothing). The focused random cross-check also covered 147 such pairs.",
+   "(c) Answer record, built in arms/common/harness.js: `meta` from rank() is now carried into each answer, with any `ledger` array replaced by `ledger_len`. For search this gives tokens_read, r1_lookups, names, routes, ledger_len and seed_in_tree.",
+   "(c) Lookups are now counted in one place (PAD_LOOKUPS in harness.js). New fields: lookups_head (the arm's own count; 1 when the arm reports nothing; 0 for an empty head), lookups_pad (DIR 1, CO 2, none 0, the same for every arm) and lookups = lookups_head + lookups_pad. The floor arms and the built-in arm 'none' now report 0 for their head.",
+   "(c) Floors on the same task set: sweep.js now accepts a floor's fixed list of 8 configurations (arms/floor-*/configs.js) as its stage-1 list, so `--arms floor-dir,floor-co --sets <set>` runs exactly the tasks of any other arm's sweep of that set. run.js gained `--tasks id,id` and `--tasks-file <ids file or sweep summary.json>`. sweep.js now also groups tasks by (parent, removed documents), as run.js does; before it grouped by parent only.",
+   "(c) One question answer file name: results/tq/<arm>.<split>.answers.jsonl. The duplicates results/tq/relational.tune.jsonl and search.tune.jsonl were moved to tmp/harness-fix2/old_results/tq/. arms/relational/tq.js now writes its diagnostic file to results/relational/tq_diagnostic/.",
+   "(c) The stale padding.js comments were rewritten. paths.js and facts.js no longer fall back to arms/common/frozen-facts; facts are read only from facts/cache/<sha>/.",
+   "(d) Stage 2: `sweep.js --stage 2` loads arms/<arm>/stage2.json. The list must have exactly 20 entries with unique names and configurations, and none may repeat a stage-1 configuration or name. Answers are written beside stage 1, the list hash is logged with stage 2 in sweep/lists.jsonl, and the run writes summary.stage2.json, configs.stage2.json and crosscheck_mismatches.stage2.jsonl.",
+   "(d) `x_` modes: config.normalise accepts them for any arm (an x_ traversal may leave direction out; an x_ part may sit inside a hybrid), and a new helper config.isExtension(cfg) detects them. In arms/relational/rel.js, checkModes replaces specOnly: every native variant is refused, and an x_ mode is refused by name unless registered in EXT_TRAVERSAL or EXT_RANK. The dispatch hooks exist but the registries are empty. In a sweep over a shared list, an x_ entry runs only on the list's own arm and is never cross-checked.",
+   "(d) Stage 2 was tested on a throw-away copy of the build tree with a dummy 20-entry list (19 minConf variants plus one registered x_ rank) on 4 T1 tasks. Result: 20 answer files written beside the stage-1 base, the list hash logged, the x_ entry ran on relational only (4 runs skipped on reference), and 76 pairs were compared with 0 mismatches. The copy was then deleted; no stage2.json exists in any arm folder.",
+   "(e) New arms/common/crosscheck_random.js: a strict relational-versus-reference cross-check on N seeded random (configuration, task) pairs. Its `--focus` option draws only metapath configurations with direction dependents or dependencies and a degree-normalised ranking (alone or in a hybrid), with steps leaning against the configured direction and toward rare edge kinds.",
+   "(e) Re-ran inside graphtest:1 (TUNE only): the 500-pair random cross-check, a further 500-pair focused cross-check, the full stage-1 sweeps (relational with reference under the strict cross-check, search, and both floors through sweep.js) on T1, T1x and T2, and the question answers for relational and search. The old answer files were kept in tmp/harness-fix2/old_results/ (160 MB) and the new ones installed in results/.",
+   "(f) tmp/harness-fix2/verify2.js checked every answer file (budgets, token recomputation, configuration and task completeness, the lookups rule, meta, identical task sets per set, list hashes, question answer files) and compared every new file with the old one. It found 0 problems. Its output is saved as results/sweep/stage1/verify2.json.",
+   "SPEC.md updated in sections 1, 6.3, 8.1, 9.4, 10, 11 and 12. NOTES.md updated in arms/common, arms/relational, arms/reference, arms/search, arms/floor-dir and arms/floor-co."
+  ],
+  "key_numbers": [
+   "Self-test: 69 of 69 checks pass inside the image (49 earlier checks plus 20 new).",
+   "Random cross-check, relational versus reference, seed 20261112: 500 (configuration, task) pairs over 52 parent commits. Every combination of traversal mode (3) x direction (3) x ranking (6) had at least 9 pairs. Result: 0 mismatches (0 ranked lists differ, 0 packed answers differ, 0 equivalence failures, 0 errors). The out-degree-0 rule was exercised in 6 pairs; 26 s wall.",
+   "Focused random cross-check, seed 20261113: 500 pairs over 53 parent commits, all metapath with a degree-normalised ranking, 125 pairs per direction for each of degnorm alone and hybrid. Result: 0 mismatches. The out-degree-0 rule was exercised in 55 pairs, and 147 pairs had an absent step (102 of those reached nothing); 6 s wall.",
+   "Stage-1 sweep, relational versus reference (list hash 5efda93e9c470eb9): 30,880 (task, configuration) pairs (T1 15,520; T1x 5,760; T2 9,600). 0 equivalence failures, 0 ranked-list differences, 0 packed-answer differences.",
+   "Task counts: T1 388, T1x 144, T2 240, so 772 TUNE tasks per configuration. All five arms ran identical task sets in each set.",
+   "Wall times, three processes at once on 6 CPUs (these are not engine measures): relational with reference took T1 1,158 s, T1x 457 s, T2 725 s. Search took T1 180 s, T1x 79 s, T2 120 s. Both floors together took T1 24 s, T1x 9 s, T2 15 s.",
+   "Summed rank time per arm over 25,476 rank calls: relational 1,842 s, reference 351 s, search 316 s. Median rank time (p50) for the base configuration: relational 89 ms, reference 16 ms, search 14 ms. Slowest configuration's p50: relational 320 ms, reference 77 ms.",
+   "Answers per arm: relational, reference and search 30,880 each (40 configurations x 772 tasks); floor-dir and floor-co 6,176 each (8 configurations x 772 tasks). No answer is over its budget, and every token count recomputes.",
+   "Old versus new answer files: 0 ranked lists and 0 packed contents changed (0 of 30,880 each for relational, reference and search; 0 of 6,176 for each floor). 0 of 20 question answers changed for relational and for search.",
+   "Lookups per answer: relational and reference head 1. Search head median 23, maximum 114. Floors total 1 (DIR) and 2 (CO), as before.",
+   "Question answers (20 TUNE questions): 0 errors for both arms. Relational answers have a median of 36 tokens and 1 lookup. Search reports the tokens of everything its searches returned, by design: median 2,839 tokens, at most 3 lookups.",
+   "Held-out lock: 6 attempts, all refused."
+  ],
+  "deviations_from_protocol": [
+   "Padding lookups (1 for DIR, 2 for CO) are counted per configuration whenever it pads, not per budget. lookups_head and lookups_pad are kept as separate fields so the grader can count the tail only where a budget's tail_tok is above 0.",
+   "When an arm's rank() reports no lookup count, the harness records 1 (one query). Before, such records held null. This affects relational and reference, and will affect any graph arm that reports nothing.",
+   "Beyond the 500 random pairs that were asked for, a second, focused set of 500 pairs was added, because the general draw exercised the changed out-degree rule in only 6 pairs.",
+   "The run times come from three processes sharing 6 CPUs and two containers run one after the other. They are not the quiet-machine engine measures of addendum 2 E.22.",
+   "crosscheck_extra.js and relational/bench.js were not re-run in this revision."
+  ],
+  "problems": [
+   "None of the 40 stage-1 entries can exercise the changed out-degree rule: the only degnorm entry uses k-hop, and the one metapath entry uses PPR. That is why 0 ranked lists changed. Only the random cross-checks and the self-test exercise the rule. A stage-2 entry that combines metapath with degnorm would be the first scored use of it.",
+   "The complexity() functions in arms/relational/sweep.js and arms/search/sweep.js predate addendum 3 item 10 (parsimony). They were not changed and are not the selection rule; the grader must apply item 10."
+  ],
+  "needs_from_other_lanes": [
+   "LadybugDB and DuckPGQ lanes: implement the SPEC 8.1 out-degree-0 sentence: when a node has no arc under the configured direction, use the number of reach-DAG arcs leaving it, counting each (u, v, kind, orientation) once. arms/common/crosscheck_random.js exports drawConfig(r, i, focus); calling it with focus = true draws ready-made load-test configurations for this rule, but the script itself only compares relational with reference.",
+   "LadybugDB and DuckPGQ lanes: your tq.js still writes diagnostic files into results/tq/ (ladybug.tune.jsonl, duckpgq.tune.jsonl). The single answer file name is now <arm>.<split>.answers.jsonl, so please move the diagnostics, for example to results/<arm>/tq_diagnostic/. I did not touch your files.",
+   "LadybugDB and DuckPGQ lanes: rank() may return `lookups` (otherwise the harness records 1) and `meta` (kept in the answer record, with any `ledger` array replaced by ledger_len). An x_ entry in a shared stage-2 list runs only on the list's owner arm.",
+   "Grader: every answer record now has lookups_head, lookups_pad and meta, and lookups = lookups_head + lookups_pad. For lookups to reach 80 % recall, use lookups_head, plus lookups_pad once the tail is reached. For search, meta.tokens_read and meta.ledger_len are present, and each item's `via` still carries 'L<k>' (which lookup found it) and 'read<t>' (tokens read so far).",
+   "Grader: the floors now run through sweep.js on exactly the swept arms' tasks. Their configuration hashes did not change; floor list hashes are floor-dir 4d36e676b1fde233 and floor-co 43b5798d088ac9ea."
+  ],
+  "how_to_run": [
+   "Self-test: node arms/common/selftest.js (69 checks).",
+   "Full re-run inside the image, from C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build: MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v \"<build>:/build\" -v \"C:/Users/User/Documents/projects/EMS_workshop1:/repo:ro\" -v gt-relational:/store graphtest:1 bash -lc \"bash /build/tmp/harness-fix2/run_relref.sh\". Then the same command with run_search.sh. Then on the host: bash tmp/harness-fix2/assemble.sh, then verify2.js run in the image (node /build/tmp/harness-fix2/verify2.js <new root> <old root>), then bash tmp/harness-fix2/swap.sh.",
+   "Random cross-check: node arms/common/crosscheck_random.js [--pairs 500] [--seed 20261112] [--focus] [--out <results root>].",
+   "Floors on any sweep's task set: node arms/common/sweep.js --arms floor-dir,floor-co --sets T1 --out <root>. A single configuration: run.js run ... --tasks-file <sweep summary.json>.",
+   "Stage 2: node arms/common/sweep.js --arms relational,reference --list relational --stage 2 --sets T1,T1x,T2. This needs arms/<arm>/stage2.json with exactly 20 entries.",
+   "Main files: arms/common/{harness.js, sweep.js, run.js, config.js, crosscheck_random.js, selftest.js, SPEC.md, NOTES.md}, arms/reference/ref.js, arms/relational/{queries.js, rel.js, tq.js}, arms/floor-*/arm.js. Results are in results/{relational,reference,search,floor-dir,floor-co}/tune, results/sweep/ and results/tq/. The run record and old files are in tmp/harness-fix2/."
+  ]
+ },
+ "ladybugFix": {
+  "status": "Done. All the addendum 3 fixes (sections A, B and C) are in the LadybugDB arm. The cross-checks, stage-1 sweep, TQ answers, answer-file checks and one bench run were all done inside graphtest:1, on TUNE tasks only. Every equivalence check found zero failures. Compared with the previous stage-1 answers, 903 of 30,880 ranked lists changed, all in the two configurations the fixes were expected to change (x_prank and x_comm). HELD-OUT was never run, and sealed/ and audit/ were never opened.",
+  "what_was_done": [
+   "a. Degree-normalised ranking (lb.js scoreFor 'degnorm'). When a node that the reach graph leaves from has out-degree 0 under the configured direction, classes and minConf, its out-degree is now the number of reach-DAG arcs leaving it, each (u, v, kind, orientation) counted once (SPEC 8.1). The old code divided by zero. This also covers the typed-path-pattern metapath variant.",
+   "b. Community prior (store.js commPrior and nativePriors). The Louvain grouping is now stored once per canonical graph in arms/ladybug/priors/<canonical content hash>.json, with labels renumbered by first appearance. The first build of a graph writes the file with an atomic hard link, so it is never overwritten and two processes racing on the same graph end up with the same grouping. Every later build reads the file into N.comm and records how its own Louvain run compares with it. The switch LB_COMM_DRAW=k (1 to 4) selects priors/<hash>.draw<k>.json and a separate store, because the store key includes the draw. If that file is missing, the build draws it with the same louvain() on the same code graph, in a scratch database loaded in a seeded random row order (seed 20261112 + 7919 k). This makes each draw fresh and reproducible. Store version bumped from LB5 to LB6.",
+   "c. x_prank: page_rank now runs on a projection (PR_FILTER) that holds both orientations of every co_changed edge. A toy probe (tmp/ladybug/probe_pr.js) showed how LadybugDB's page_rank behaves: it is directed, teleports uniformly with damping 0.85, and drops the mass of dangling nodes, so the scores sum to less than 1. Its scores are proportional to the textbook version that spreads dangling mass uniformly (a constant ratio of 2.5525 on every node of the toy), so the order of candidates is the same. This is written in NOTES.md.",
+   "d. x_wsp: the cost of an edge is its kind's cost divided by max(confidence, 0.05). A hub-blocked node can end a path but is never passed through: the hub predicate is in the recursive WSHORTEST filter, and each blocked candidate gets min over its unblocked predecessors u of cost(u) + cost(u, v). The kind-cost table is written in NOTES.md for the DuckPGQ lane.",
+   "e. NOTES.md and the bench output (latency._note) now say that the default PageRank runs its iterations in application code over a transition adjacency cached in application code. bench.js now reports first_call (the first answer with no cache) and warm_uncached (repeated calls with the application caches dropped before each), beside cold and warm.",
+   "The TQ diagnostic output moved from results/tq/ladybug.tune.jsonl to results/ladybug/tq_diagnostic/.",
+   "New scripts in arms/ladybug: xrandom.js (seeded random cross-check against the reference arm, reusing common drawConfig), wspcheck.js (x_wsp against a JavaScript Dijkstra), commcheck.js (two fresh builds per parent), verify.js (answer-file checks), compare_old.js (old against new answers), answers_same.js (packed answers compared without meta), and run_checks.sh and run_stage1.sh (the runs of this revision).",
+   "Previous outputs (old stage1, xcheck, dev and logs folders, old TQ answers, old engine.json) were moved to tmp/ladybug/old/. The 54 old LB5 stores were removed from the volume gt-ladybug. The one current stage-1 set is results/ladybug/tune/ (120 files), with its summaries in results/ladybug/sweep/stage1/.",
+   "arms/ladybug/NOTES.md was rewritten for this revision."
+  ],
+  "key_numbers": [
+   "Cross-check against the reference arm on the relational stage-1 list (hash 5efda93e9c470eb9, 40 configurations), all 628 TUNE T1 and T2 tasks: 25,120 comparisons, 0 equivalence failures, 745 s wall. Packed answers were identical in 25,120 of 25,120 once the arm's own meta field is set aside.",
+   "Random cross-check (seed 20261114): 300 (configuration, task) pairs over T1 (145), T1x (49) and T2 (106), across 47 parents: 0 ranked lists differ, 0 packed answers differ, 0 equivalence failures, 0 errors.",
+   "Coverage of the random cross-check: metapath with degnorm in 29 dependents, 29 dependencies and 4 both pairs; metapath with a hybrid ranking in 28, 28 and 3 pairs. The out-degree-0 fallback was used in 18 pairs. 28 pairs had a metapath step whose kinds are absent at the parent (20 of them reached nothing), and 93 pairs reached nothing in all.",
+   "The same random pairs' metapaths run as native typed path patterns: 166 pairs, 0 equivalence failures, 146 byte-identical (the other 20 differ only in the explanation path, which the equivalence rule allows).",
+   "x_wsp against a JavaScript Dijkstra: 135,337 candidate scores (53 parents, 2 tasks each, 13 configurations covering 3 directions x 4 hub rules plus 1 wide configuration), 0 differences above 1e-9. 9,899 of those scores are hub-blocked candidates. 23,028 scores would differ under the old pass-through definition.",
+   "x_comm reproducibility: two fresh store builds of each of 53 parents, 1,544 rankings compared (772 tasks x 2 configurations), 0 differ. On 6 parents a fresh build's own Louvain run differed from the stored grouping (adjusted Rand index 0.61 to 0.89), and on 3 of those the two fresh builds also differed from each other.",
+   "Draw switch test on one parent: draw 1 gave 18 communities (adjusted Rand index 0.685 against draw 0, which has 19 communities) and draw 2 gave 17 (index 0.747). Building draw 1 a second time read its file.",
+   "Stage-1 sweep: list hash 62916d71ad487af9 (unchanged), 40 configurations x 772 TUNE tasks (T1 388, T1x 144, T2 240) = 30,880 answers, 2,141 s wall.",
+   "Old against new stage-1 answers: 903 of 30,880 ranked lists changed (898 packed answers). 747 of 772 are in 'native rank=hybrid ppr+x_prank' (co-change now counted in both directions). 156 of 772 are in 'native rank=hybrid ppr+x_comm', all on 5 parents where the old sweep's per-build Louvain draw differs from the stored canonical grouping. The other 38 configurations are unchanged: no stage-1 entry combines degnorm with a metapath, and no stage-1 x_wsp entry has a hub cut.",
+   "TQ: 20 TUNE questions, 0 errors. All 20 answers are equal to the previous ones and to the relational arm's answer file.",
+   "Answer-file checks (verify.js): 0 problems over 120 files and 30,880 answers. No answer is over its budget, every configuration is present for every task, the task ids match the relational arm's files, the lookups add up, and the logged list hash equals the recomputed one.",
+   "Bench (one run on a shared host, 44.8 min, exit 0). Base PPR p50 is 7.5 ms warm against 40.0 ms with the application caches dropped (first call 50.5 ms, cold 64.9 ms). x_wsp p50 is 53.8 ms warm; with an indeg>10 hub cut, 57.8 ms. One-file update: every table equals a fresh build, and the community column now matches too (adjusted Rand index 1.0); the update's own Louvain run would have given index 0.438.",
+   "Prior files: 54 in arms/ladybug/priors (53 TUNE parents and the frozen commit), 356 KB in all."
+  ],
+  "deviations_from_protocol": [
+   "The kind-cost table for x_wsp is set per class, so every kind of a class has its class's cost. This arm's table is kept as instructed. It differs from the DuckPGQ table in four places: imports, data and config cost 2 there (1, 1.5 and 1.5 here), and experimental is unset there (3 here). The DuckPGQ notes also describe no division by confidence and no hub rule.",
+   "Fresh draws 1 to 4 do not come from separate store builds. In this image, store builds usually reproduce the same Louvain grouping (on 47 of 53 parents), so a draw is made by running louvain() on the same graph with its rows loaded in a seeded random order. This is stated in NOTES.md.",
+   "The stage-1 summaries and list log are written inside results/ladybug/sweep/ rather than the shared results/sweep/, to stay within this lane's folders.",
+   "crosscheck.js (the extra and in-engine PageRank groups of the previous revision) was not re-run. The code those groups exercise changed only in the degnorm fallback, x_wsp and the stored priors, and those changes are covered by the new checks."
+  ],
+  "problems": [
+   "common/sweep.js compares packed answers after removing arm, ms and engine_ms, but not the new meta field (addendum 3, D.12). It therefore reports answers_differ = 25,120 for the reference~ladybug pair even though every packed answer is identical without meta (results/ladybug/xcheck/answers_same.json).",
+   "All latencies in this revision were measured while other containers shared the host. They are indicative only and not the quiet-machine engine measures.",
+   "The addendum's premise that each store build gives a different Louvain grouping held on only 6 of 53 parents in this image. The prior file makes x_comm reproducible either way."
+  ],
+  "needs_from_other_lanes": [
+   "Harness lane: in common/sweep.js, also null the meta field when comparing packed answers, or report the comparison with meta set aside.",
+   "Harness lane: add this arm's stage-1 list line from results/ladybug/sweep/lists.jsonl (list_hash 62916d71ad487af9) to results/sweep/lists.jsonl if a central log is wanted.",
+   "DuckPGQ lane: adopt the LadybugDB kind-cost table in arms/ladybug/NOTES.md. The cost of an edge is the kind cost divided by max(confidence, 0.05), and a hub-blocked node may end a path but never be passed through.",
+   "Grader and later spread run: if a frozen configuration uses x_comm, run HELD-OUT with LB_COMM_DRAW=1..4. Each draw file is created on first use under arms/ladybug/priors/."
+  ],
+  "how_to_run": [
+   "bash arms/ladybug/dk.sh \"bash /build/arms/ladybug/run_checks.sh\"   (relational-list cross-check, xrandom.js, wspcheck.js, commcheck.js; outputs in results/ladybug/xcheck/)",
+   "bash arms/ladybug/dk.sh \"bash /build/arms/ladybug/run_stage1.sh\"   (stage-1 sweep into results/ladybug/tune/ and results/ladybug/sweep/stage1/, then TQ; stores in /store/s1)",
+   "bash arms/ladybug/dk.sh \"cd /build && node arms/ladybug/verify.js --out /build/results/ladybug/sweep/stage1/verify.json\"",
+   "node arms/ladybug/compare_old.js tmp/ladybug/old/stage1/ladybug/tune results/ladybug/tune --out results/ladybug/sweep/stage1/old_vs_new.json",
+   "bash arms/ladybug/dk.sh \"cd /build && node arms/ladybug/bench.js\"   (results/ladybug/engine.json, query_plans.txt)",
+   "Community draws for the spread: prefix any run with LB_COMM_DRAW=k (k = 1 to 4)."
+  ]
+ },
+ "duckpgqFix": {
+  "status": "Done. All six fixes from addendum 3 (items a to f) are in the DuckPGQ arm, which runs on DuckDB 2.0.0 with DuckPGQ extension 9c11bc192a. All TUNE re-runs finished inside graphtest:1 with 6 CPUs and 4 GB: the cross-check against the relational list, 300 random pairs, the stage-1 sweep, the TQ answers and the answer-file checks. Equivalence failures: 0. Errors: 0. bench.js ran once and exited with code 0; its timings are not final. NOTES.md is updated. Nothing ran on HELD-OUT, and sealed/ and audit/ were not opened.",
+  "what_was_done": [
+   "Fix a (degree-normalised ranking): when a node has no arc in the configured direction, its out-degree is now the number of distinct reach-DAG arcs leaving it, as SPEC 8.1 says. Before, such a node dropped out of the activation join.",
+   "Fix b (k-hop): a bounded k-hop no longer computes path lengths beyond the hop limit. The default form is a recursive SQL statement keyed on the node that stops expanding at depth H. A second form ('levels') uses one one-edge PGQ pattern per level, starting from the current frontier. DuckPGQ has no bounded shortest-path routine: iterativelength() always runs to the end of the graph. That is why iterativelength() is now used only for unbounded k-hop.",
+   "Fix c (metapath): a metapath step whose kinds are all absent now matches no arc (its predicate is FALSE). Walk patterns that would pass through that step are dropped, so the SQL 'AND ()' error is gone.",
+   "Fix d (graph built once): two property graphs are now stored inside each store file at build time: g (vertex table node, edge table arc) and gtq (the TQ labels). The store is opened READ_ONLY as the main database. ATTACH could not be kept: a probe (probe/probe10.js) showed that a stored graph is not visible through ATTACH, and a read-only database cannot create a graph. A configuration's projection is no longer a table or a graph; it is an edge-element filter on the stored arc label, or the filtered row source of a CSR. Nothing is declared per connection. DuckDB now uses 6 threads, which is os.availableParallelism() in the container (it was 4). The build time of the connection caches (hub sets, PPR transitions, native results) still counts inside engine time, the same as in the relational arm, and is also reported on its own in meta.setup_ms.",
+   "Fix e (x_wsp): the LadybugDB definition is adopted. Arc cost = class cost / max(confidence, 0.05). The class costs are copied from arms/ladybug/store.js CLASS_COST: structure, imports, calls, http and tests 1; data and config 1.5; history 2; capability, docs and experimental 3; membership 4; any other class 3. A hub-blocked node keeps no out-arc, so no path passes through it (seeds exempt). Score = 1 / (1 + the minimum cost from any seed). The stage-1 entries 'x_wsp' and 'hybrid ppr+x_wsp' now have the same configuration hashes as LadybugDB's entries. A variant with kind costs B is kept as an extra native entry.",
+   "Fix f (metapath names): the two native metapath entries are now ordinary specified metapaths named 'metapath=defs>code0-1>http1-2>code0-1' and 'metapath=defs>code1>history0-1'. Their configuration hashes did not change. The arm's stage-1 list is now 33 specified plus 7 native entries, list hash 0cef37d35583a845.",
+   "Rebuilt all 54 stores as store version D2 on the gt-duckpgq volume (53 TUNE parents plus the frozen commit) and deleted the 54 old D1 store files.",
+   "Cross-check against the reference arm on the relational stage-1 list: all 628 TUNE T1 and T2 tasks.",
+   "Rewrote crosscheck_random.js and ran it: 300 seeded random (configuration, task) pairs over T1, T1x and T2, drawn with the harness's own drawConfig.",
+   "Added dev/wsp_check.js, which checks x_wsp against an independent JavaScript Dijkstra over the canonical graph.",
+   "Ran the full stage-1 sweep over T1, T1x and T2. Exactly one current set of answers is in results/duckpgq/tune/; the sweep's logs are in results/duckpgq/stage1_sweep/. Older copies were moved to build/tmp/duckpgq/old_results/.",
+   "Ran the TQ answers on the 20 TUNE questions: results/tq/duckpgq.tune.answers.jsonl. The diagnostic file is in results/duckpgq/tq_diagnostic/.",
+   "Checked the answer files with dev/verify_answers.js and compared the new ranked lists with the previous stage-1 answers.",
+   "Updated bench.js for the stored graphs, the two bounded k-hop forms and the new x_wsp, and ran it once to prove it works. Output: results/duckpgq/engine/duckpgq.json and query_plans.txt.",
+   "Rewrote arms/duckpgq/NOTES.md: design, layer table, fixes, results, departures, engine limits, how to run, and notes for other lanes.",
+   "Main files changed or added under build = C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build: arms/duckpgq/{pgq.js, store.js, tq.js, arm.js, sweep.js, crosscheck_random.js, bench.js, stores_report.js, dk.sh, NOTES.md, probe/probe10.js, dev/*.js}. Backups of the old store.js, tq.js, sweep.js and bench.js are in build/tmp/duckpgq/*.v1.js.txt."
+  ],
+  "key_numbers": [
+   "Stores (version D2): 54 stores. Build time per store: median 325 ms, 95th percentile 395 ms, maximum 484 ms; 17.8 s for all 54. Size per store: median 14.2 MB, maximum 17.1 MB; 772 MB for all 54.",
+   "Cross-check on the relational list: 628 TUNE T1+T2 tasks x 40 configurations = 25,120 comparisons, with 0 equivalence failures. 25,116 answers are byte-identical to the reference arm's (ignoring arm, timing and meta). 4 answers differ only by a 1e-12 rounding of one PPR score (0.019925463236 vs 0.019925463235). Wall time 1,702 s.",
+   "Random pairs: 300 pairs (T1 140, T1x 68, T2 92) gave 0 equivalence failures, 0 ranked lists that differ, 0 answers that differ and 0 errors. The out-degree-0 rule was used in 19 pairs. A step with all kinds absent appeared in 39 pairs, and 25 of those reached nothing. Metapath with degree-normalised ranking: dependents 38 pairs, dependencies 38, both 3. Metapath with a hybrid ranking: 37, 37 and 3. In all 42 bounded k-hop pairs, the PGQ level form gave the same ranked lists as the default. Wall time 29 s.",
+   "x_wsp against the JavaScript Dijkstra: 60 tasks, 6 configurations, 29,498 node scores, 0 differences.",
+   "Stage-1 sweep: 772 TUNE tasks (T1 388, T1x 144, T2 240) x 40 configurations = 30,880 answers in 120 files. Wall time 1,694 s. Of 123,520 budget checks, 0 were over budget. Every configuration is present for every task.",
+   "Ranked lists changed versus the previous stage-1 answers: 2,236 of 30,880. 2,232 of them are in the three x_wsp entries, because the x_wsp definition changed: 771 of 772 tasks for x_wsp with LadybugDB class costs, 691 for x_wsp with kind costs B, and 770 for hybrid ppr+x_wsp. The other 4 come from the 1e-12 rounding (seed of tasks T1-0345 and T2-0210, in the 'classes=code' and the defs>code1-2>tests metapath entries). The other 35 entries are byte-identical, including the native pagerank, WCC and PageRank-cut entries now computed by scalar functions over a CSR. Fixes a and b changed nothing on this list: no stage-1 entry combines degree-normalised ranking with a metapath, and the hop bound only removes work.",
+   "TQ: 20 TUNE questions with 0 errors. All 20 answers equal this arm's previous answers and the relational arm's answers. Time per question: 3 to 110 ms.",
+   "bench.js (one run on a shared machine, indicative only): exit code 0. Open of a store: median 42.8 ms. Warm median for bounded k-hop with the recursive CTE: 19.9 ms at 1 hop, 25.8 ms at 3 hops, 49.4 ms at 6 hops. The PGQ level form: 19.2 ms, 32.0 ms and 59.5 ms. Unbounded iterativelength: 97.6 ms. x_wsp: median 131.2 ms, 95th percentile 446.3 ms. One-file update: 330.7 ms; all 53 tables equal a fresh build, and 90 of 90 rankings are equal."
+  ],
+  "deviations_from_protocol": [
+   "For a bounded k-hop, the default form is a recursive SQL statement, not a PGQ construct. DuckPGQ has no bounded BFS: iterativelength() and the {1,H} quantifier both explore the whole graph. The PGQ form (one one-edge pattern per level) is kept as the 'levels' option and gives identical answers. In bench.js it was 1.0 to 1.2 times the CTE's median latency.",
+   "The MATCH form of k-hop (ANY SHORTEST with a per-configuration label) was removed. It needs a per-configuration property graph, and a read-only store cannot create one.",
+   "Engine time still includes the first build of the connection caches (hub sets, PPR transitions, native results), for parity with the relational arm. That build time is also reported on its own in each answer's meta.setup_ms.",
+   "An extra native entry is kept: x_wsp with kind costs B. The previous 'class costs A' entry was removed."
+  ],
+  "problems": [
+   "All latencies (sweep engine times and bench.js) were measured on a machine shared with other lanes' containers. They are indicative only; final timings need a quiet-machine run.",
+   "4 of 25,120 cross-check answers differ from the reference arm by a 1e-12 rounding of one PPR score. The cause is DuckDB's parallel summation order. The order of the ranking is unaffected, and the SPEC equivalence passes.",
+   "verify.json lists one 'list hash' problem. It is a false alarm: the script was given the wrong folder for lists.jsonl. The logged hash 0cef37d35583a845 equals the recomputed one.",
+   "x_wsp has a long tail in bench.js: the 95th-percentile warm latency is 446 ms, against a median of 131 ms."
+  ],
+  "needs_from_other_lanes": [
+   "Harness lane: arms/common/sweep.js counts answers_differ with the 'meta' field included. As a result, all 25,120 DuckPGQ answers show as different from the reference arm. It should strip meta, as crosscheck_random.js and dev/compare_xcheck.js do.",
+   "LadybugDB lane: arms/ladybug/NOTES.md says the hub rule is not applied to x_wsp, but addendum 3 A.2 requires that a hub-blocked node cannot be passed through. The DuckPGQ class costs were read from arms/ladybug/store.js CLASS_COST, because LadybugDB's NOTES table was not updated. Both arms now share the configuration hashes for 'x_wsp' and 'hybrid ppr+x_wsp', so their answers can be compared directly once LadybugDB applies the hub rule."
+  ],
+  "how_to_run": [
+   "Run every command from the build root (C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build) through bash arms/duckpgq/dk.sh \"<command>\". dk.sh runs graphtest:1 with --cpus 6 --memory 4g, the /build mount and the gt-duckpgq:/store volume.",
+   "Build the stores: cd /build && node arms/duckpgq/dev/build_stores.js && node arms/duckpgq/stores_report.js",
+   "Cross-check on the relational list: node arms/common/sweep.js --arms reference,duckpgq --list relational --sets T1,T2 --out /build/results/duckpgq/crosscheck && node arms/duckpgq/dev/compare_xcheck.js /build/results/duckpgq/crosscheck",
+   "Random pairs and the x_wsp check: node arms/duckpgq/crosscheck_random.js --pairs 300 --seed 20261112 --out /build/results/duckpgq/crosscheck_random && node arms/duckpgq/dev/wsp_check.js 60",
+   "Stage-1 sweep: node arms/common/sweep.js --arms duckpgq --sets T1,T1x,T2 --out <tmp>, then move its tune/ files to results/duckpgq/tune/ and its sweep/ files to results/duckpgq/stage1_sweep/.",
+   "TQ answers: node arms/common/run.js tq --arm duckpgq --split tune",
+   "Engine measures: node arms/duckpgq/bench.js. The thread count can be overridden with GT_DUCKDB_THREADS."
+  ]
+ },
+ "grade1": {
+  "status": "Done. The gate passed: across 450 random pairs (300 in the main draw and 150 in a focused supplement), no arm failed against the reference. Every stage-1 answer file of every arm is complete and current. Every arm was scored on TUNE with score.js using the content rule, and three of those scores were checked by hand. The four tuner tables, the questions and the leaderboard are written. Nothing ran on HELD-OUT, nothing was selected and nothing was frozen.",
+  "gate_ok": true,
+  "gate_detail": "The gate ran inside graphtest:1. /build was mounted read-only, sealed/ was hidden from the arm code by an empty tmpfs, and all stores were fresh builds on the grader's own volume gt-grader. Main draw (seed 20261120): 300 (configuration, TUNE task) pairs over 45 parent commits, in three parts. Part A, 120 pairs: metapaths with every direction (dependents, dependencies, both) combined with degnorm, hybrids that contain degnorm, hybrids without it, and other single rankings, about 10 pairs per cell; the steps run against the configured direction half the time and often use rare kinds or the class that is never loaded. Part B, 90 pairs: a specified stage-1 entry of the relational, LadybugDB or DuckPGQ list with one or two factors changed, which is what a plausible stage-2 proposal looks like; 20 of these landed exactly on a stage-1 configuration. Part C, 90 pairs: general random configurations. Coverage of the main draw: k-hop 127 pairs, budget 25, metapath 148; rankings bfs 25, degnorm 43, PPR 98, co-change 19, text 21, hybrid 94; hub rules none 180, in-degree 57, transport 63. A metapath step whose kinds were all absent at the commit occurred in 57 pairs, and 45 of those reached nothing. The out-degree-0 fallback was used in 3 pairs. Results of the main draw: relational against reference was strictly identical in 300 of 300 pairs (ranked lists and packed answers). LadybugDB was equivalent in 300 of 300, and DuckPGQ was equivalent in 300 of 300; both graph arms were also byte-identical in ranked list and answer in all 300. LadybugDB's native typed-path-pattern variant was equivalent on all 148 metapath pairs (140 byte-identical; the other 8 differ only in the explanation path, which the equivalence rule allows). There were 0 errors. Focused supplement (seed 20261122): 150 pairs drawn with the harness's own focused generator (metapath with direction dependents or dependencies, ranked by degnorm alone or inside a hybrid). The out-degree-0 fallback was used in 16 pairs and an absent step occurred in 43. All three arms were identical to the reference in 150 of 150 pairs, and the pattern variant was equivalent in 150 of 150. No failure of any kind, so no stage-1 or plausible stage-2 shape is affected. Files: sealed/grader/gate/gate.json, gate_focus.json, *.rows.jsonl, *.pairs.jsonl.",
+  "leaderboard": [
+   {
+    "arm": "relational",
+    "set": "T1",
+    "best_config": "hops=null",
+    "primary": 0.7843,
+    "se": 0.0255,
+    "r2k": 0.4903,
+    "r4k": 0.6462,
+    "r16k": 0.8699,
+    "median_tokens": 7999,
+    "base_primary": 0.6642,
+    "note": "Area under the curve 0.694. The configurations within 1 standard error are hops=6 0.780, budget=B1 0.779, pad=CO 0.771 and hops=4 0.768. The base answer uses a median of 5,010 tokens, because 2 hops reach too little to fill the budget."
+   },
+   {
+    "arm": "relational",
+    "set": "T1x",
+    "best_config": "pad=CO",
+    "primary": 0.6031,
+    "se": 0.0505,
+    "r2k": 0.2768,
+    "r4k": 0.4242,
+    "r16k": 0.7968,
+    "median_tokens": 7999,
+    "base_primary": 0.4467,
+    "note": "Descriptive only (17 commits). The CO floor scores 0.622."
+   },
+   {
+    "arm": "relational",
+    "set": "T2",
+    "best_config": "hops=null",
+    "primary": 0.8453,
+    "se": 0.0284,
+    "r2k": 0.4248,
+    "r4k": 0.623,
+    "r16k": 0.9735,
+    "median_tokens": 7999,
+    "base_primary": 0.6769,
+    "note": "Area under the curve 0.730."
+   },
+   {
+    "arm": "search",
+    "set": "T1",
+    "best_config": "pad=CO",
+    "primary": 0.7394,
+    "se": 0.0261,
+    "r2k": 0.3861,
+    "r4k": 0.5524,
+    "r16k": 0.8579,
+    "median_tokens": 7999,
+    "base_primary": 0.5023,
+    "note": "The best search configuration scores below the CO floor (0.752). The best one without padding is 'bm25 top=100' at 0.654."
+   },
+   {
+    "arm": "search",
+    "set": "T1x",
+    "best_config": "bm25 top=100",
+    "primary": 0.6255,
+    "se": 0.0591,
+    "r2k": 0.2977,
+    "r4k": 0.4374,
+    "r16k": 0.7849,
+    "median_tokens": 7999,
+    "base_primary": 0.4251,
+    "note": "Descriptive only (17 commits)."
+   },
+   {
+    "arm": "search",
+    "set": "T2",
+    "best_config": "pad=CO",
+    "primary": 0.7917,
+    "se": 0.0319,
+    "r2k": 0.4296,
+    "r4k": 0.61,
+    "r16k": 0.9584,
+    "median_tokens": 7999,
+    "base_primary": 0.6157,
+    "note": ""
+   },
+   {
+    "arm": "ladybug",
+    "set": "T1",
+    "best_config": "hops=null",
+    "primary": 0.7843,
+    "se": 0.0255,
+    "r2k": 0.4903,
+    "r4k": 0.6462,
+    "r16k": 0.8699,
+    "median_tokens": 7999,
+    "base_primary": 0.6642,
+    "note": "Identical to the relational arm on all 32 shared configurations. The best native entry is 'hybrid ppr+x_comm' at 0.659, and none of the 8 native entries beats the base."
+   },
+   {
+    "arm": "ladybug",
+    "set": "T1x",
+    "best_config": "pad=CO",
+    "primary": 0.6031,
+    "se": 0.0505,
+    "r2k": 0.2768,
+    "r4k": 0.4242,
+    "r16k": 0.7968,
+    "median_tokens": 7999,
+    "base_primary": 0.4467,
+    "note": "Identical to relational."
+   },
+   {
+    "arm": "ladybug",
+    "set": "T2",
+    "best_config": "hops=null",
+    "primary": 0.8453,
+    "se": 0.0284,
+    "r2k": 0.4248,
+    "r4k": 0.623,
+    "r16k": 0.9735,
+    "median_tokens": 7999,
+    "base_primary": 0.6769,
+    "note": "Identical to relational."
+   },
+   {
+    "arm": "duckpgq",
+    "set": "T1",
+    "best_config": "hops=null",
+    "primary": 0.7843,
+    "se": 0.0255,
+    "r2k": 0.4903,
+    "r4k": 0.6462,
+    "r16k": 0.8699,
+    "median_tokens": 7999,
+    "base_primary": 0.6642,
+    "note": "Identical to the relational arm on all 31 shared configurations. The best native entry is 'ppr + wcc community prior' at 0.661; the global PageRank variant scores 0.615."
+   },
+   {
+    "arm": "duckpgq",
+    "set": "T1x",
+    "best_config": "pad=CO",
+    "primary": 0.6031,
+    "se": 0.0505,
+    "r2k": 0.2768,
+    "r4k": 0.4242,
+    "r16k": 0.7968,
+    "median_tokens": 7999,
+    "base_primary": 0.4467,
+    "note": "Identical to relational."
+   },
+   {
+    "arm": "duckpgq",
+    "set": "T2",
+    "best_config": "hops=null",
+    "primary": 0.8453,
+    "se": 0.0284,
+    "r2k": 0.4248,
+    "r4k": 0.623,
+    "r16k": 0.9735,
+    "median_tokens": 7999,
+    "base_primary": 0.6769,
+    "note": "Identical to relational."
+   },
+   {
+    "arm": "floor-co",
+    "set": "T1",
+    "best_config": "gran=file form=signature",
+    "primary": 0.7521,
+    "se": 0.0279,
+    "r2k": 0.4524,
+    "r4k": 0.6179,
+    "r16k": 0.8682,
+    "median_tokens": 7999,
+    "note": "A floor, with a fixed list of 8 configurations."
+   },
+   {
+    "arm": "floor-co",
+    "set": "T1x",
+    "best_config": "gran=file form=signature",
+    "primary": 0.622,
+    "se": 0.0571,
+    "r2k": 0.2745,
+    "r4k": 0.4534,
+    "r16k": 0.8037,
+    "median_tokens": 7999
+   },
+   {
+    "arm": "floor-co",
+    "set": "T2",
+    "best_config": "gran=file form=signature",
+    "primary": 0.7721,
+    "se": 0.0375,
+    "r2k": 0.3675,
+    "r4k": 0.6125,
+    "r16k": 0.9484,
+    "median_tokens": 7999
+   },
+   {
+    "arm": "floor-dir",
+    "set": "T1",
+    "best_config": "gran=file form=signature",
+    "primary": 0.7191,
+    "se": 0.0272,
+    "r2k": 0.4071,
+    "r4k": 0.5474,
+    "r16k": 0.8496,
+    "median_tokens": 7999,
+    "note": "A floor."
+   },
+   {
+    "arm": "floor-dir",
+    "set": "T1x",
+    "best_config": "gran=file form=signature",
+    "primary": 0.5777,
+    "se": 0.0585,
+    "r2k": 0.2369,
+    "r4k": 0.418,
+    "r16k": 0.7615,
+    "median_tokens": 7999
+   },
+   {
+    "arm": "floor-dir",
+    "set": "T2",
+    "best_config": "gran=file form=signature",
+    "primary": 0.667,
+    "se": 0.0445,
+    "r2k": 0.2569,
+    "r4k": 0.3714,
+    "r16k": 0.8842,
+    "median_tokens": 7999
+   }
+  ],
+  "tq": [
+   {
+    "arm": "relational",
+    "f1": 0.8105,
+    "precision": 0.8465,
+    "recall": 0.8042,
+    "median_tokens": 35,
+    "note": "Macro averages over 20 TUNE questions. Micro F1 is 0.755. The mean is 52.7 tokens and 1 lookup per question. With the 5 TUNE judgement items removed, macro F1 is 0.818 and micro F1 is 0.770."
+   },
+   {
+    "arm": "ladybug",
+    "f1": 0.8105,
+    "precision": 0.8465,
+    "recall": 0.8042,
+    "median_tokens": 35,
+    "note": "All 20 answers and token counts are identical to the relational arm's (addendum 3, F.19). Median 5.0 ms per question, against 1.0 ms for relational. Macro F1 is 0.818 without the judgement items."
+   },
+   {
+    "arm": "duckpgq",
+    "f1": 0.8105,
+    "precision": 0.8465,
+    "recall": 0.8042,
+    "median_tokens": 35,
+    "note": "All 20 answers are identical to the relational arm's. Median 12.2 ms per question. Macro F1 is 0.818 without the judgement items."
+   },
+   {
+    "arm": "search",
+    "f1": 0.7415,
+    "precision": 0.7426,
+    "recall": 0.8325,
+    "median_tokens": 2577,
+    "note": "Micro F1 is 0.705. The mean is 2,743 tokens and 2.3 lookups per question. Without the judgement items, macro F1 is 0.749 and micro F1 is 0.719. Search beats the typed stores on invariants_on_file (macro F1 0.869 against 0.752) and other_half (0.333 against 0.000). It loses on screen_tables (0.648 against 0.889), tests_reach, setting_readers and change_reach."
+   }
+  ],
+  "tables_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/relational.stage1.json",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/relational.stage1.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/search.stage1.json",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/search.stage1.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/ladybug.stage1.json",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/ladybug.stage1.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/duckpgq.stage1.json",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/duckpgq.stage1.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/results/tuner/NOTES.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/grader/complexity.js",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/grader/stage1/leaderboard.json",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/grader/NOTES.md"
+  ],
+  "observations": [
+   "The answer files are current. Every arm has exactly one file per (configuration, set): relational, reference, search, LadybugDB and DuckPGQ have 120 files and 30,880 answers each, and each floor has 24 files and 6,176 answers. Each file holds every TUNE task of its set exactly once (T1 388, T1x 144, T2 240). The list hashes in the sweep summaries equal the hashes recomputed now: relational 5efda93e9c470eb9, search ef02c4a27f96928a, LadybugDB 62916d71ad487af9, DuckPGQ 0cef37d35583a845, floor-dir 4d36e676b1fde233, floor-co 43b5798d088ac9ea. All 53 parent commits have facts from extractor 59da7b753a4d908e, and those facts were written before every answer file. Re-running 24 stored answers per arm on the current facts, in fresh stores, gave identical packed answers in 144 of 144 cases.",
+   "The two graph arms and the relational arm give identical numbers on every configuration that follows the shared specification. In the stored answers, LadybugDB matches relational on all 24,704 answers of the 32 shared configurations. DuckPGQ matches on 23,928 of 23,932 answers of its 31 shared configurations; the 4 others differ only by one stored score rounded at 1e-12, with the same items in the same order. As a result the T1, T1x and T2 tables of these three arms are identical row for row on the shared configurations. The x_wsp entries that both graph engines implement independently also gave identical answers on all 1,544 (configuration, task) pairs.",
+   "In the relational and both graph arms, traversal depth moves the primary most. On T1 it goes from 0.438 at 1 hop, to 0.664 at 2 hops (the base), to 0.727 at 3, 0.768 at 4 and 0.784 unbounded. The ranking mode hardly matters: bfs, degnorm, every PPR setting, co-change, text and both hybrids all score between 0.651 and 0.666, because at 2 hops the whole reach set fits inside 8,000 tokens (the base answer uses a median of 5,010 tokens). Direction dependents or dependencies alone costs about 0.21. A hub cut at in-degree 5 costs 0.065. Snippet form costs about 0.30 against signature form, and symbol granularity costs 0.15.",
+   "In the search arm, padding moves the primary most (T1 +0.237 with CO and +0.235 with DIR). Next come the number of rounds (1 round -0.154, 3 rounds +0.049), BM25 (+0.152 with top=100) and turning off the seed's own imports (-0.143). The other weights move it by 0.03 or less.",
+   "Padding helps each arm by how much of the 8,000 tokens its head leaves empty. On T1, CO padding adds +0.107 to relational and both graph arms (+0.156 on T1x, +0.132 on T2), and +0.237 to search (+0.176 on T1x and T2). At 2,000 tokens padding adds at most 0.012 to relational and 0.044 to search, because the head fills that budget first. The unpadded recall of a padded configuration equals its base, as it should.",
+   "Against the floors on T1: the CO floor scores 0.752 and the DIR floor 0.719. The relational and graph base (0.664) is below both floors. Their best stage-1 configuration (0.784, unbounded k-hop) beats the CO floor by 0.032 on TUNE, which is less than the smallest effect of interest (0.05). The best search configuration (0.739) is below the CO floor, and search without padding peaks at 0.654. On T1x the CO floor (0.622) beats every typed-store configuration (best 0.603). On T2 the typed stores lead clearly (0.845 against 0.772).",
+   "Most of the native graph entries score below their own base: LadybugDB x_core k4 0.568, global PageRank variant (DuckPGQ) 0.615, PageRank top-50 cut 0.618. The LadybugDB pattern metapath entry scores 0.233, but that is a different metapath (its code step runs in the 'in' direction), not an engine effect. None of the 15 native entries beats the base on T1; the best are about 0.66.",
+   "Questions: LadybugDB and DuckPGQ return the same 20 TUNE answers as relational, as addendum 3 F.19 expects. So on questions they differ from relational only in query time: median 5.0 ms for LadybugDB and 12.2 ms for DuckPGQ per question, against 1.0 ms for relational, all taken from the TQ runs and not from engine measures. Against search, the typed stores have the higher macro F1 (0.811 against 0.742) and return about 1/70 of the tokens (median 35 against 2,577 tokens per question).",
+   "Three answers were hand-checked with independent code and by reading them, and all three agree with score.js. Relational base T1-0361 gives recall 1.0 (2 of 2 files, 2 of 2 definitions). Search pad=CO T2-0162 gives 0.5 (2 of 4 files, 1 of 2 definitions). LadybugDB gran=symbol T1x-0034 gives 0.667 (4 of 5 files, 0 of 1 definition). score.js found a reference for every answer (0 missing) and none with 0 units."
+  ],
+  "problems": [
+   "The parsimony tie-break does not separate the top configurations. Almost every content configuration whose head fills its answer uses 7,999 tokens at the 8,000-token budget, so the tie rule 'lower median token use' passes the decision to the configuration name. For example, the relational T1 configurations within 1 standard error of the best (hops=6, budget=B1, pad=CO, hops=4, pad=DIR, hops=null) have complexity 2 or 3 and all use 7,999 tokens. The orchestrator may want to fix a different tie measure (for example tokens to 80% recall, or the tokens of the unpadded head) before selection. Not changed here.",
+   "Addendum 3 item 10 leaves three points open, and complexity.js decides them as follows; the orchestrator may want to confirm them. (1) The depth is the traversal's effective cap: for a budget, the sum of its budgets; for a metapath, the sum of its steps' maxima. (2) An x_ ranking that fuses PPR with a second signal (x_ppr_lift, x_wcc_prior) counts as 2 ranking parts. (3) The search arm's seedImports counts as import following, the same as followImports, and is counted once.",
+   "Only 5 of the 12 shared judgement items belong to TUNE questions. They are Q3 CLAUDE.md:L191 (excluded), Q12 syncClassification.ts::failureReason (included), Q18 CLAUDE.md:L199 and L224 (included) and Q20 ops-server.mjs::backendOps (excluded). The other 7 belong to held-out questions 21, 25, 31 and 39, so the 'without judgement' TUNE score removes 5 items. The search answer lists backendOps under Q13, not Q20, so removing it has no effect.",
+   "The engine milliseconds in the tuner tables come from the builders' stage-1 sweeps, which ran several processes at once. They are not the quiet-machine engine measures of addendum 2 item 22, and the table notes say so.",
+   "In the main draw the out-degree-0 fallback was used in only 3 of 300 pairs. The focused supplement (150 pairs, fallback used in 16) was added to cover that rule under load; both draws passed."
+  ]
+ },
+ "tuners": {
+  "relational": {
+   "status": "Done. The relational (SQLite) arm's stage-2 list holds exactly 20 configurations (list hash 52b3f69b93f01360). All 20 were run inside graphtest:1 on every TUNE task of T1, T1x and T2. The 19 entries that follow the shared specification match the reference arm byte for byte on all 14,668 (task, configuration) pairs, with 0 mismatches. The one new SQL mode (x_wsp) passed a hand check on a toy graph and a check against an independent Dijkstra over 671,390 scores, with 0 differences. All answer files pass the structural check with 0 problems. Nothing was scored, selected or frozen, and no held-out task was run.",
+   "what_was_done": [
+    "Read the protocol, addenda 1 to 3, SPEC.md, the common and relational NOTES.md, and only this arm's own stage-1 score table (results/tuner/relational.stage1.md). I did not open sealed/, audit/ or any other arm's score table. To get the x_wsp definition and the MP_* metapaths I read the sweep.js, NOTES.md and code of the LadybugDB and DuckPGQ arms (definitions only, no scores).",
+    "What stage 1 shows on T1 (primary = recall at 8,000 tokens, signature form). The base (2 hops, PPR) scores 0.664 (standard error 0.033). Reach is the dominant factor: unbounded hops scores 0.784 (se 0.025) and is the stage-1 best at complexity 2. hops=4 scores 0.768, padding CO 0.771, padding DIR 0.764, and membership edges add +0.028. Rankings were flat at 2 hops (0.651 to 0.666) because the whole 2-hop reach fits in 8,000 tokens (median 5,010 tokens used). At unbounded reach the answer is full: recall is 0.870 at 16,000 tokens against 0.784 at 8,000. The order of a large reach is therefore the untested prize, and stage 2 centres on U = base with unbounded hops, plus cheaper shallow-reach and padding combinations that could win on parsimony.",
+    "Wrote arms/relational/stage2.json (20 entries, written by tmp/tune-relational/make_stage2.js) and an identical mirror at arms/reference/stage2.json. Each entry, with its addendum-3 complexity (cx) and reason: (1) s2: hops=null rank=cochange, cx 2: co-changed files first inside the unbounded reach, the simplest ordering that could close the gap between 8,000 and 16,000 tokens. (2) hops=null rank=degnorm, cx 2: best 2k recall at 2 hops, about 1 ms; local spreading activation on a large reach. (3) hops=null ppr r0.50, cx 2: a higher restart keeps mass near the seed, which only matters when the reach is large. (4) hops=null ppr w3, cx 2: co-change weight 3 inside PageRank, retested where order matters. (5) hops=null hybrid ppr+cochange, cx 3: structural plus historical signal. (6) hops=null hybrid ppr+text, cx 3: best top-10 file share and MRR at 2 hops, retested where order decides the primary. (7) hops=null hybrid degnorm+cochange, cx 3: the cheap pair of early-recall rankings. (8) hops=null rank=x_wsp (SQL), cx 3: the graph arms' native weighted-shortest-path ranking written in SQL, so this arm is not denied an algorithm the engines run. (9) hops=null classes=base+membership, cx 2: the largest class gain; under PageRank it acts like DIR padding inside the graph. (10) hops=null classes=base+capability+docs+membership, cx 2: the stage-1 best class set at the best depth. (11) hops=null minConf=0, cx 2: low-confidence edges carried some signal and add reach. (12) hops=null hub=transport, cx 3: may stop mass and reach leaking through shared plumbing. (13) hops=null hub=indeg>15, cx 3: a looser cut, where unbounded hops may recover the reach that cuts lost. (14) hops=null pad=CO, cx 3: CO fills only answers whose reach is under 8,000 tokens. (15) hops=null gran=symbol, cx 3: symbol granularity was starved of reach at 2 hops; one line per definition may be more token-efficient. (16) hops=3 pad=CO, cx 2: the CO tail fills the budget that hops 3 left unused. (17) hops=3 rank=cochange, cx 1: the only complexity-1 candidate. (18) hops=4 pad=CO, cx 3: tests whether two near-best factors add. (19) hops=2 classes=base+membership pad=CO, cx 2: the two best cheap factors at the base depth. (20) hops=null ppr w3 classes=base+membership, cx 2: the two ranking-side changes together at the best depth.",
+    "New mode x_wsp (arm extension). It is registered in arms/relational/rel.js (EXT_RANK.x_wsp) and the SQL is in arms/relational/queries.js (wsp_init, wsp_relax, wsp_score; temp tables wd and wcost). The definition follows LadybugDB, addendum 3 A.2: arc cost = class cost / max(confidence, 0.05), with the class costs copied from the LadybugDB store. Arcs follow the configuration's direction, classes and minConf. A hub-blocked node may end a path but is never expanded. Path length is unbounded. Score = 1/(1+min cost), ordered score desc, hop asc, id asc. It runs as set-based Bellman-Ford in rounds: one upsert relaxation statement per round, driven by a thin loop until a round changes nothing. The written definition is in arms/relational/NOTES.md.",
+    "Hand check of x_wsp (arms/relational/wspcheck.js part A, with the expected values worked out in the file header): a six-node toy graph, 5 cases (both directions; dependencies; minConf 0; in-degree hub cut k=2, which blocks d so e is unreachable; dependents reaching nothing), plus a hybrid. 7 of 7 checks pass in graphtest:1. Part B, on real TUNE tasks: 106 T1/T2 tasks (2 per parent, 53 parents) x 6 configurations = 636 ranked lists and 671,390 candidate scores, compared with an independent JavaScript Dijkstra. Result: 0 score differences above 1e-9, 0 differences in reach set, hop or explanation path against the reference arm, and 0 order violations. 4,425 of the scores were for hub-blocked candidates. 11 of 11 checks pass, in 38 s.",
+    "Ran stage 2 inside graphtest:1 (tmp/tune-relational/run_stage2.sh): the self-test passed 69 of 69, and the held-out lock refused. Then sweep.js --arms relational,reference --list relational --stage 2 ran for T1, T1x and T2 in parallel, with stores reused on the named volume gt-relational.",
+    "Checked the answer files (tmp/tune-relational/verify_stage2.js): 0 problems. There are 20 relational files and 19 reference files per set. Every configuration is present for every task (T1 388 tasks, T1x 144, T2 240), with no duplicate, extra or held-out ids. No answer exceeds any budget, the token accounting recomputes equal, and lookups and meta are correct.",
+    "Installed the 60 relational stage-2 answer files in results/relational/tune/ (180 files in total there). Run records went to results/relational/stage2/: sweep summaries, configs, empty mismatch files, list-hash logs, verify_stage2.json, wspcheck.json and .log, selftest.log and run_stage2.log. Reference answers stay in tmp/tune-relational/out_<set>/reference/tune/.",
+    "Updated arms/relational/NOTES.md with a Stage 2 section: the stage-1 reading, the 20 entries with one-line reasons, the x_wsp definition and both checks, the run, the cross-check counts and times. Appended a short mirror note to arms/reference/NOTES.md, and updated the EXT comment in rel.js."
+   ],
+   "key_numbers": [
+    "Stage-2 list: 20 configurations, list hash 52b3f69b93f01360. 19 follow the shared specification and 1 is an arm extension (x_wsp). Complexities: one entry at 1, ten at 2, nine at 3.",
+    "Stage-1 anchors on T1 TUNE: best primary 0.784 (unbounded hops, se 0.025, cx 2); base 0.664 (se 0.033); hops=3 0.727 (cx 1); pad=CO 0.771; recall at 16,000 tokens for unbounded hops 0.870.",
+    "Cross-check, relational vs reference, on the 19 specified entries: T1 7,372 pairs, T1x 2,736, T2 4,560 = 14,668 (task, configuration) pairs. 0 equivalence failures, 0 ranked-list differences, 0 packed-answer differences.",
+    "x_wsp checks: toy hand check 7 of 7 cases pass. Real tasks: 671,390 candidate scores over 636 lists, 0 differences from Dijkstra, 0 differences in reach, hop or path, 0 order violations, 4,425 hub-blocked candidates covered; at most 21 relaxation rounds per query.",
+    "Answer-file check: 0 problems; 15,132 answers in T1, 5,616 in T1x and 9,360 in T2 (relational plus reference); 0 answers over budget.",
+    "Wall time per set (three sets running at once on 6 CPUs, so these are not quiet-machine measures): T1 966 s, T1x 363 s, T2 680 s; the x_wsp check took 38 s. Summed rank time: relational 1,404 s, reference 306 s.",
+    "Median engine time per query, relational / reference: PPR at unbounded hops about 107 / 23 ms; hybrid ppr+text 141 / 27 ms; membership classes 120 / 27 ms; cochange 10.5 / 3.9 ms; degnorm 14 / 4.8 ms; hybrid degnorm+cochange 17 / 6.6 ms; x_wsp 17 ms relational only (95th percentile 41 ms); hops=3 cochange 2.3 / 0.6 ms."
+   ],
+   "deviations_from_protocol": [
+    "x_wsp is an arm-only x_ mode, so the reference arm cannot cross-check it. In its place it was hand-checked on a toy graph and checked against an independent JavaScript Dijkstra on 106 real TUNE tasks, as addendum 3 D.9 requires for a mode the reference does not cover.",
+    "x_wsp follows LadybugDB's own definition (addendum 3 A.2): the cost path has unbounded length and is not limited by the configuration's hop cap, while candidates are still the traversal's reach. At hops=null, the only way stage 2 uses it, this makes no difference.",
+    "arms/reference/stage2.json is an identical copy of the relational list (20 entries, because the harness needs exactly 20) rather than a 19-entry list. The reference arm refuses the x_wsp entry by design, and the shared sweep runs that entry on relational only."
+   ],
+   "problems": [
+    "None blocking.",
+    "Run times come from three sweep processes plus the x_wsp check running at the same time on 6 CPUs, so they are not quiet-machine engine measures (addendum 2 E.22).",
+    "Two pairs of stage-2 configurations share a ranking key with each other: 'hops=null pad=CO' and 'hops=null gran=symbol' both rank exactly like the stage-1 hops=null entry. The harness reuses that ranked list, so their timing figures are identical by construction; their answers differ only in padding and granularity.",
+    "One run of my verification script crashed on a config-shape bug in the script itself (it called normalise on an already-normalised list entry). I fixed the script and re-ran it: 0 problems."
+   ],
+   "needs_from_other_lanes": [
+    "Grader: score the stage-2 relational answers in results/relational/tune/ (the 20 hashes listed in results/relational/stage2/relational+reference_T1.configs.stage2.json). Entry 's2: hops=null rank=x_wsp (SQL)' (hash 6fdb3cc99ab61346) counts as an engine-only or arm-extension mode for complexity: 1 ranking part + 1 for unbounded hops + 1 for the extension = 3.",
+    "Grader or results owner: the stage-2 list-hash log lines are in results/relational/stage2/*lists.jsonl, not appended to the global results/sweep/lists.jsonl (that file is outside my folders). Reference stage-2 answers (57 files) are in tmp/tune-relational/out_<set>/reference/tune/ if a results/reference copy is wanted.",
+    "Common harness owner: SPEC.md 9.4 and arms/common/NOTES.md still say the relational arm registers no x_ mode ('none yet'). It now registers EXT_RANK.x_wsp (defined in arms/relational/NOTES.md); those two lines need updating."
+   ],
+   "how_to_run": [
+    "Toy hand check of x_wsp (inside graphtest:1): node /build/arms/relational/wspcheck.js",
+    "x_wsp real-task check: GT_STORE=/store/W node /build/arms/relational/wspcheck.js --real --per-parent 2 --out <file.json>",
+    "Full stage 2 (inside graphtest:1 with -v gt-relational:/store): bash /build/tmp/tune-relational/run_stage2.sh, which runs sweep.js --arms relational,reference --list relational --stage 2 --sets <T1|T1x|T2> --out /build/tmp/tune-relational/out_<set>",
+    "Structural check: node /build/tmp/tune-relational/verify_stage2.js /build/tmp/tune-relational",
+    "Regenerate the list: node tmp/tune-relational/make_stage2.js (writes arms/relational/stage2.json and the identical arms/reference/stage2.json)"
+   ]
+  },
+  "search": {
+   "status": "Done. The search arm's 20 stage-2 configurations are written to arms/search/stage2.json (list hash afba6dde623aa616) and were run inside graphtest:1 on TUNE T1, T1x and T2: 15,440 answers, 0 problems in the answer-file checks. I added two modes from the catalogue: a co-change part and reciprocal-rank fusion (RRF). Both passed a toy hand check. Nothing was scored, selected or frozen, and no HELD-OUT task was run.",
+   "what_was_done": [
+    "Read the protocol, addenda 1 to 3, the shared SPEC.md and NOTES.md, the search arm's NOTES.md and its code, and only this arm's own score table (results/tuner/search.stage1.md). No other arm's table was opened, and nothing in sealed/ or audit/ was read or listed.",
+    "What stage 1 shows on T1 TUNE (65 commits). The primary is recall at 8,000 tokens. Padding moves it most: the base scores 0.502 (standard error 0.029), pad=DIR 0.737 and pad=CO 0.739, a gain of about 8 standard errors. The unpadded base fills only a median 4,468 of its 8,000 tokens. BM25 comes next (0.652 to 0.654) and fills the budget itself, so it competes with the padding tail for space. A third round adds 0.05. rounds=1 and seedImports=off each lose about 0.14 to 0.15. Proximity, hit-type weights, countW and idf all change the primary by less than one standard error. File granularity with signature form beats snippet form and symbol granularity.",
+    "Wrote arms/search/stage2.json (generated by tmp/tune-search/make_stage2.js). Every search field is stated explicitly. The 20 entries, with one reason each: (1) pad=CO rounds=1: a short head (median 1,898 tokens) leaves about 6,000 tokens for the CO tail, and it is simpler than pad=CO. (2) pad=CO rounds=1 routes=off: the simplest padded search; tests whether route strings still matter once a tail follows. (3) pad=DIR rounds=1: the same short head with the DIR tail, since DIR and CO were within 0.002 in stage 1. (4) pad=CO rounds=3: does the +0.05 of a third round survive when its larger head pushes the tail out? (5) pad=CO k2=12: a wider second round instead of a third, leaving more room for the tail. (6) pad=CO bm25 top=10: a small BM25 list adds its best files and still leaves about 3,000 tokens of tail. (7) pad=CO bm25 top=20: the middle of the trade-off between BM25 list size and tail room. (8) pad=CO bm25: the stage-1 BM25 setting (top 50) with CO behind it; at 8,000 tokens the head fills the budget, so it shows what the tail adds at 16,000. (9) pad=CO rounds=1 bm25 top=20: two cheap lookups replace round two (median 8 lookups against 26). (10) pad=CO bm25only top=20: BM25 alone, then CO; the cheapest strong candidate. seedImports is written off because bm25only never uses it. (11) bm25 top=100 rounds=3: the strongest unpadded head, combining the two best head factors. (12) pad=CO bm25 top=20 prox=1.5: the proximity prior pulls repo-wide BM25 hits toward the seed's slice. (13) pad=CO prox=1.5: does a slice-local head order add to the CO tail or duplicate it? (14) pad=CO typeW=flat countW=1: the two small weight gains from stage 1 together, under CO. (15) pad=CO gran=symbol: the symbol-granularity head is compact (median 1,724 tokens) and its tail lists every definition. (16) pad=CO rrf bm25 top=20: RRF instead of the summed scores to combine grep and BM25. (17) pad=CO co sum: co-change inside the head, summed with grep. (18) pad=CO co rrf: the same two parts fused by RRF. (19) pad=CO co rrf bm25 top=20: grep, BM25 and co-change fused by RRF. (20) pad=CO co rrf rounds=1: the cheap version of entry 18.",
+    "Added two new modes from the catalogue in the new file arms/search/fuse.js; search.js and engine.js were edited to use them. Mode `co` (true or false) is a co-change part: the output of `git log` for the seed file, over the ancestor commits in commits.jsonl. It uses the same commit-counting rule and order as the shared CO tail (count, then recency, then path), keeps only code, test and migration files that exist at the parent, and costs one lookup whose tokens are the 'count path' lines. It reads commits, not facts edges. Mode `fuse` ('sum' or 'rrf') is how the file rankings are combined: 'sum' is the stage-1 sum of max-normalised scores, 'rrf' is reciprocal-rank fusion with k = 60. Both fields are optional; when absent the behaviour is stage 1, so stage-1 hashes and answers are unchanged.",
+    "Hand check of the new modes (tmp/tune-search/handcheck.js): 19 of 19 checks pass, on the host and in the image, with the expected values worked out by hand in its comments. The toy history of seven commits gives the co order x, z, y with counts 2, 2, 1 and recency weights 1.5, 1.25, 1. RRF of [f1,f2,f3], [f3,f4], [f4] gives f4 = 1/62+1/61, f3 = 1/63+1/61, f1 = 1/61, f2 = 1/62, in that order, and a tie goes to the smaller path. On a four-file toy tree the search returns the file order caller, co, other, with RRF scores 1/61, 1/61, 1/62 and summed scores 1, 1, 0.5, from 3 lookups (the git log is lookup L3). Without the new fields it returns the stage-1 result: 2 lookups, the caller only.",
+    "Stage-1 regression after the code change: base, bm25, pad=CO and bm25only were re-run on all 772 TUNE tasks. All 3,088 answer records are identical to the stored stage-1 answers (wall time and engine time ignored).",
+    "Ran stage 2 in graphtest:1 with `sweep.js --arms search --stage 2 --sets T1,T1x,T2 --out tmp/tune-search/run2`: 20 configurations x 772 tasks = 15,440 answers. The 60 answer files were byte-compared and copied to results/search/tune/<hash>.<set>.jsonl.gz, beside the 120 stage-1 files, and the tmp copies were removed. The summary, configs, an empty mismatch file and the list-hash line went to results/search/stage2/.",
+    "Answer-file checks (tmp/tune-search/verify_stage2.js) found 0 problems: every configuration is present for every task of T1, T1x and T2, with the same task ids as the stage-1 search sweep; there is no duplicate, extra or held-out id; config hash and name match; no answer exceeds any budget (2,000, 4,000, 8,000 or 16,000 tokens); unit counts add up; and lookups = lookups_head + lookups_pad (CO 2, DIR 1) everywhere.",
+    "Updated arms/search/NOTES.md: a new Stage 2 section (stage-1 reading, the 20 entries with my complexity estimate and a one-line reason each, definitions of the new modes, the hand check, the runs and checks), and fuse.js and stage2.json added to the file table. The pre-edit copies of search.js, engine.js and NOTES.md are kept in tmp/tune-search/orig/."
+   ],
+   "key_numbers": [
+    "Stage-1 T1 primary (recall at 8,000 tokens): base 0.502 (standard error 0.029); pad=CO 0.739 (0.026); pad=DIR 0.737; bm25 top=100 0.654; rounds=3 0.551. These are the figures stage 2 is built around.",
+    "Stage-2 list: 20 configurations, list hash afba6dde623aa616. The 20 entries give 19 distinct rankings, because pad=CO rounds=1 and pad=DIR rounds=1 share one.",
+    "Stage-2 run: 15,440 answers (772 TUNE tasks: T1 388, T1x 144, T2 240) across 53 parent commits, 394 s wall time; other lanes' containers ran at the same time.",
+    "Median ranking time per query (wall): 0.65 ms for pad=CO bm25only top=20 up to 27.3 ms for pad=CO rounds=3. The slowest 95th percentile, also pad=CO rounds=3, is 124 ms.",
+    "T1 medians per answer (lookups include the 2 lookups of the CO tail): pad=CO rounds=1 uses 7 lookups and reads 1,438 tokens, with an 8,000-token answer of 1,898 head tokens plus 6,060 tail tokens. pad=CO rounds=3 uses 45 lookups and 12,502 tokens read, with 7,777 head tokens and 234 tail tokens. pad=CO co rrf uses 25 lookups and 6,555 tokens read.",
+    "10,279 of the 15,440 answers reach the padding tail within 8,000 tokens.",
+    "Stage-1 regression: 3,088 answer records, 0 differ. Hand check: 19 of 19 pass. Answer-file checks: 0 problems.",
+    "Equivalence against the reference arm: 0 pairs compared, so 0 failures. No search configuration follows the shared graph specification, since the search has no traversal or graph ranking."
+   ],
+   "deviations_from_protocol": [
+    "No equivalence check against the reference arm was possible: the search arm's configurations are not shared-specification graph configurations, so step D.4's cross-check does not apply to any of the 20.",
+    "The stage-2 list-hash line was logged to results/search/stage2/lists.jsonl, not to the shared results/sweep/lists.jsonl. The sweep ran with --out pointing to tmp/tune-search/run2 so that it would not overwrite shared files in results/sweep/ that other tuners may be writing at the same time, and rule 7 keeps this lane inside its own folders.",
+    "RRF here differs from SPEC 8.5 on purpose: a file absent from a part gets nothing from that part, whereas in SPEC 8.5 every part orders all candidates. This is documented in NOTES.md. Search modes are never cross-checked against the shared specification.",
+    "One earlier full stage-2 run, with list hash 3410d0a3c6809475, was deleted unscored and the whole list re-run. The only difference was entry 10: I set seedImports to false there, which bm25only ignores, so that the configuration states honestly what it uses."
+   ],
+   "problems": [
+    "The complexity values for the new fields are my own reading of addendum 3 item 10: the co-change part counts as one more ranking part, and RRF counts nothing beyond its parts. The grader computes the binding value, and complexity() in arms/search/sweep.js does not know either field.",
+    "Entry 10 (pad=CO bm25only top=20) keeps routes on because route strings feed the BM25 query terms. Module spellings always feed that query, whatever the spellings field says. A complexity count read off the configuration fields may therefore not match what the search actually uses.",
+    "The run times were measured while other lanes' containers shared the machine. They are not quiet-machine engine measures."
+   ],
+   "needs_from_other_lanes": [
+    "Grader or harness lane: append the stage-2 list-hash line from results/search/stage2/lists.jsonl (search, stage 2, count 20, list hash afba6dde623aa616) to the shared results/sweep/lists.jsonl, if the shared log has to hold every list.",
+    "Grader: score stage 2 from results/search/tune/<hash>.<set>.jsonl.gz using the 20 hashes in results/search/stage2/configs.stage2.json. Count `co` as one more ranking part and `fuse: rrf` as nothing beyond its parts, or apply your own rule and record it."
+   ],
+   "how_to_run": [
+    "Inside graphtest:1: MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v \"<build>:/build\" -v \"C:/Users/User/Documents/projects/EMS_workshop1:/repo:ro\" -v gt-search:/store graphtest:1 bash -lc \"bash /build/tmp/tune-search/run_stage2_final.sh\". It runs the hand check, the stage-2 sweep into tmp/tune-search/run2 and verify_stage2.js.",
+    "Hand check only: node C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/tune-search/handcheck.js",
+    "Regenerate the list: node C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/tune-search/make_stage2.js",
+    "Stage-1 regression: the first half of tmp/tune-search/run_stage2.sh, then node tmp/tune-search/regcheck.js <out root>."
+   ]
+  },
+  "ladybug": {
+   "status": "done: stage 2 of the LadybugDB graph arm was proposed and run on TUNE T1, T1x and T2. All 16 configurations that follow the shared specification match the reference arm, with 0 equivalence failures. The answer files passed every check (0 problems). Nothing was scored, selected or frozen, and HELD-OUT was never run.",
+   "what_was_done": [
+    "Read the protocol, addenda 1 to 3, common SPEC.md and NOTES.md, the ladybug NOTES.md and sweep.js, lb.js, and only this arm's own score table (results/tuner/ladybug.stage1.md). I did not open sealed/, audit/ or any other arm's table.",
+    "Analysis of the stage-1 table on T1 (primary = recall at 8,000 tokens, signature form): (1) The hop limit dominates. Primary is 0.664 at 2 hops (the base), 0.727 at 3, 0.768 at 4 and 0.784 unbounded (standard error 0.025), so unbounded is +0.120, about 4.8 standard errors. (2) Padding comes second: CO 0.771 and DIR 0.764. (3) Anything that shrinks the reach loses: one direction only, no history class, minConf 1, the hub cuts, k-core and the metapaths. Symbol granularity and the snippet form also lose. (4) At 2 hops every ranking falls between 0.649 and 0.666, inside one standard error, because the 2-hop reach fits the budget (median 5,010 of 8,000 tokens). The order only matters with an unbounded reach, where recall is 0.870 at 16,000 tokens against 0.784 at 8,000. Stage 1 never tried a ranking in that regime.",
+    "Wrote C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/ladybug/stage2.json: exactly 20 configurations, list hash f8b75c2a4dcfd6a1, generated by tmp/tune-ladybug/gen_stage2.js and validated by harness.loadArmList (no repeat of a stage-1 entry or name). Unless the name says otherwise, each one is the stage-1 best (khop unbounded, PageRank restart 0.30, file granularity, signature form) with one or two factors changed. 16 follow the shared specification and 4 use native engine modes.",
+    "The 20, with one-line reasons (complexity per addendum 3 item 10 in brackets): 1. s2 hops=null pad=CO: the two strongest factors together; the CO tail fills answers whose reach is still under 8,000 tokens [3]. 2. s2 hops=null pad=DIR: the same with the DIR tail [3]. 3. s2 hops=3 pad=CO: tests whether a 3-hop head plus the CO tail matches the unbounded reach at complexity 2 [2]. 4. s2 hops=3 pad=DIR: the same with DIR [2]. 5. s2 hops=4 pad=CO: between the two regimes [3]. 6. s2 hops=null rank=ppr r0.50: a higher restart keeps PageRank mass near the seed when the reach is the whole component [2]. 7. s2 hops=null rank=ppr w3: co-change weight 3 with an unbounded reach; at 2 hops it raised the reference share of the first 10 files on T1 [2]. 8. s2 hops=null rank=degnorm: degree-normalised spreading as a locality order for a deep reach [2]. 9. s2 hops=null rank=cochange: co-changed files first, then by hop [2]. 10. s2 hops=null rank=hybrid ppr+text: had the best first-10 file share (0.550) and MRR (0.612) at 2 hops; with an unbounded reach the top ranks decide what is shown [3]. 11. s2 hops=null rank=hybrid ppr+cochange: graph proximity fused with commit history [3]. 12. s2 hops=null native rank=x_wsp: the engine's weighted shortest path as a graded distance [3]. 13. s2 hops=null native rank=hybrid ppr+x_wsp: PageRank fused with that distance [4]. 14. s2 hops=null native rank=hybrid ppr+x_comm: the stored Louvain community as a locality prior [4]. 15. s2 hops=null hub=transport: stops reach and PageRank leaking through shared helpers [3]. 16. s2 hops=null hub=indeg>10 pad=CO: the cut focuses the head and the CO tail makes up for the reach it removes [4]. 17. s2 native traversal=x_core k6 hops=null: the engine's k-core hub cut with no hop cap [3]. 18. s2 hops=null gran=symbol: symbol granularity lost at 2 hops only because its head was small (2,651 tokens) [3]. 19. s2 hops=null classes=base+capability+docs: these edges can reorder PageRank once the reach exceeds the budget [2]. 20. s2 hops=null rank=hybrid ppr+text pad=CO: the most promising ranking plus the strongest tail [4].",
+    "No new mode was added; it would have counted inside the 20. Reasons: (1) There is no evidence yet that a community prior helps, so a second community algorithm (Leiden or label propagation) would duplicate entry 14. (2) Katz and eigenvector are global centralities like x_prank, which lowered T1 nDCG@10 from 0.467 to 0.373 in stage 1. (3) Counting ALL SHORTEST paths only refines the bfs order, which ranked below PageRank. Typed path patterns return the same answers as the specified metapath, so they cannot change a score. Because no mode was added, no toy-graph hand check was needed.",
+    "Ran stage 2 inside graphtest:1 (6 CPUs, 4 GB; stores in /store/s2/ladybug on the gt-ladybug volume). One script, tmp/tune-ladybug/run_stage2.sh, ran common/sweep.js --arms ladybug,reference --list ladybug --stage 2 --sets T1,T1x,T2, after a 6-task smoke run. Ladybug answers went to results/ladybug/tune/ (60 new files beside the 120 from stage 1). Summaries are in results/ladybug/sweep/stage2/, the list hash was appended to results/ladybug/sweep/lists.jsonl, the log is results/ladybug/logs/stage2.log, and the reference arm's copies were kept in tmp/tune-ladybug/s2root/reference/tune/ (37 MB).",
+    "Added a --stage option to arms/ladybug/verify.js. It checks budgets, that every configuration is present for every task, task ids against the relational arm, recomputed token use, lookups and the list hash. Both stage 1 and stage 2 pass with 0 problems. Updated arms/ladybug/NOTES.md with a 'Stage 2' section (the analysis, the 20 with their reasons, why no new mode, the run, the checks, the timings), plus the files table and run commands."
+   ],
+   "key_numbers": [
+    "Stage-2 list: 20 configurations, hash f8b75c2a4dcfd6a1. 16 follow the shared specification and 4 are native (x_wsp, hybrid ppr+x_wsp, hybrid ppr+x_comm, x_core k6). Complexities: 2 for six entries, 3 for nine, 4 for five.",
+    "Answers: 772 TUNE tasks (T1 388, T1x 144, T2 240; 53 parent commits) x 20 configurations = 15,440 ladybug answers (T1 7,760, T1x 2,880, T2 4,800).",
+    "Cross-check against the reference arm: 12,352 (task, configuration) comparisons for the 16 specification entries on all of T1, T1x and T2, including 10,048 on T1 and T2. Result: 0 equivalence failures, and the packed answers are identical in 12,352 of 12,352 once the arm's own meta field is set aside. 3,088 runs of the native entries were skipped on the reference arm, as designed.",
+    "Answer-file checks: 0 problems for stage 2 (60 files) and 0 problems for stage 1 (120 files).",
+    "Community prior: the arms/ladybug/priors/ folder held 54 files before and after the run, so x_comm read the stored grouping and no new grouping was computed.",
+    "Run time: 1,171 s of sweep wall time (19 min 31 s for the whole container, including the store builds), while two other lanes' containers shared the host.",
+    "Ranking wall time per query, p50 / p95 in milliseconds, including the child-process round trip: unbounded PageRank entries 42 to 47 / 85 to 116; hops=3 8.6 / 20.5; hops=4 12.6 / 32.5; x_wsp 59.4 / 135.5; hybrid ppr+x_wsp 63.8 / 142.5; hybrid ppr+x_comm 47.6 / 97.9; x_core k6 42.6 / 93.3.",
+    "Stage-1 reference points the proposals were built from (T1 primary): base 0.664, hops=null 0.784 (standard error 0.025), budget B1 0.779, pad=CO 0.771, pad=DIR 0.764, hops=4 0.768, hops=3 0.727."
+   ],
+   "deviations_from_protocol": [
+    "The cross-check also covered T1x, which is more than the required T1 and T2. The ladybug answers and the cross-check came from one combined sweep process (ladybug plus reference), so the ladybug wall times include sharing that process with the reference arm. The times are indicative only, not engine measures.",
+    "No new mode was added (allowed, not required); the reasons are recorded in NOTES.md."
+   ],
+   "problems": [
+    "common/sweep.js still reports answers_differ = 12,352 for the ladybug~reference pair because it does not strip the arm's meta field. With meta set aside, answers_same.js shows 0 differences. This is a known harness issue, already noted for the harness lane.",
+    "Other lanes' containers were running during the sweep, so the run times are not quiet-machine measures."
+   ],
+   "how_to_run": [
+    "bash arms/ladybug/dk.sh \"MODE=full bash /build/tmp/tune-ladybug/run_stage2.sh\" (from the build root; stage 2 plus the cross-check, stores in /store/s2)",
+    "bash arms/ladybug/dk.sh \"cd /build && node arms/ladybug/verify.js --stage 2 --out /build/results/ladybug/sweep/stage2/verify.json\"",
+    "node arms/ladybug/answers_same.js tmp/tune-ladybug/s2root/reference/tune results/ladybug/tune",
+    "node tmp/tune-ladybug/gen_stage2.js (regenerates and validates arms/ladybug/stage2.json)"
+   ],
+   "needs_from_other_lanes": [
+    "Grader: score the 60 stage-2 files in results/ladybug/tune/ (the config hashes are listed in results/ladybug/sweep/stage2/ladybug+reference_T1+T1x+T2.configs.json) together with stage 1 for selection. The stage-2 list log is in results/ladybug/sweep/lists.jsonl, not results/sweep/lists.jsonl.",
+    "Harness lane: strip meta in the sweep.js answers_differ comparison."
+   ]
+  },
+  "duckpgq": {
+   "status": "Done. All 20 stage-2 configurations of the DuckDB/DuckPGQ arm are written to arms/duckpgq/stage2.json (list hash 06ca0b6d351fdcf1). They were run inside graphtest:1 on TUNE T1, T1x and T2 and cross-checked against the reference arm on T1 and T2 with 0 failures. The answer files pass every structural check, and NOTES.md is updated. No new mode was added, nothing was scored, and HELD-OUT, sealed/ and audit/ were never touched.",
+   "what_was_done": [
+    "Read the protocol, addenda 1 to 3, common SPEC.md and NOTES.md, the arm NOTES.md, and this arm's own stage-1 score table only (results/tuner/duckpgq.stage1.md). I opened no other table in results/tuner/.",
+    "Stage-1 reading. Reach is the factor that matters. The base (2 hops, personalised PageRank) scored 0.664 on the T1 primary (standard error 0.033) and used a median of only 5,010 of its 8,000 tokens. Adding reach gained 0.06 to 0.12: hops=3 0.727, hops=4 0.768, unbounded hops 0.784 (the best, standard error 0.025), budget B1 0.779, CO padding 0.771, DIR padding 0.764. Every cut in reach lost. Ranking moved the primary by at most 0.015 at 2 hops, because the whole reach usually fitted in the budget. Rankings did differ where the budget binds: recall at 2,000 tokens ranged from 0.465 to 0.500, and the PPR+text hybrid had the best top-10 file share (0.550). The plan was therefore to cross reach (3 hops, 4 hops, unbounded) with ranking, padding, hub cuts and granularity.",
+    "Wrote arms/duckpgq/stage2.json with exactly 20 configurations, generated by tmp/tune-duckpgq/make_stage2.js. The generator checks that no entry repeats a stage-1 configuration or name, and computes complexity by addendum 3 item 10.",
+    "The 20, with complexity (cx) and one-line reasons. (1) s2: hops=3 + pad=CO, cx 2: the simplest way to reach the unbounded level; 3 hops already fill the budget on most tasks and the CO tail covers the rest. (2) s2: hops=4 + pad=CO, cx 3: the same interaction one hop further. (3) s2: hops=null + pad=CO, cx 3: the best reach plus a tail for seeds in small components (on T1x, CO padding scored 0.603 against 0.592 for unbounded hops). (4) s2: hops=3 + rank=degnorm, cx 1: at 3 hops the order decides the cut, and degnorm had the best recall at 2,000 tokens (0.499 against 0.478). (5) s2: hops=3 + rank=cochange, cx 1: co-changed files first; high top-10 share (0.527) and the cheapest ranking. (6) s2: hops=3 + rank=ppr r0.50, cx 1: a more local PageRank for a larger reach (0.491 against 0.478 at 2,000 tokens).",
+    "(7) s2: hops=3 + rank=hybrid ppr+text, cx 2: had the best top-10 share (0.550) and nDCG@10 (0.476); tested where order binds. (8) s2: hops=3 + rank=cochange + pad=CO, cx 2: history in both places, co-change order inside the reach and the co-change tail after it. (9) s2: hops=null + rank=bfs, cx 2: does closest-first order suffice when the reach is the whole component? (10) s2: hops=null + rank=degnorm, cx 2: the best early-recall ranking on the best reach. (11) s2: hops=null + rank=cochange, cx 2: every co-changed file is one hop away, so this is the CO floor order followed by graph order by hop. (12) s2: hops=null + rank=ppr r0.50, cx 2: keeps PageRank mass near the seeds when the reach is about 1,660 nodes.",
+    "(13) s2: hops=null + rank=hybrid ppr+cochange, cx 3: fuses the two strongest single signals. (14) s2: hops=null + rank=hybrid ppr+text, cx 3: the best top-10 ranking on the best reach. (15) s2: hops=null + hub=transport, cx 3: with surplus reach a hub cut can no longer starve the answer. (16) s2: hops=null + hub=indeg>10, cx 3: hop limit with hub cut; this cut lost reach at 2 hops but may focus PageRank at unbounded reach. (17) s2: hops=null + hub=indeg>15, cx 3: a milder cut, so the hub curve has two points. (18) s2: hops=null + gran=symbol, cx 3: symbol granularity was reach-starved at 2 hops (2,651 tokens used). (19) s2: native: hops=null + rank=x_wsp, cx 3: the engine's cheapest-path order where order binds. (20) s2: native: hops=null + rank=ppr lifted by pagerank^0.5, cx 3: had the best recall at 2,000 tokens (0.500).",
+    "Layers. Unbounded k-hop runs through the property-graph (PGQ) layer: DuckPGQ's native iterativelength() function over a CSR (compressed adjacency table) of the projected arcs. Bounded k-hop (entries 1, 2 and 4 to 8) uses the plain-SQL recursive statement; this is labelled as a fallback and kept so that stage-1 and stage-2 answers come from one code path. The PGQ per-level form gives identical answers: 1,164 comparisons on every second TUNE T1 task (194 tasks, 6 distinct rankings, 7 entries), 0 differences; median 50.1 ms for SQL against 59.4 ms for PGQ. The reach DAG is a PGQ pattern. The rankings are plain SQL, because DuckPGQ has no personalised PageRank, BM25 or degree-normalised ranking. x_wsp uses the native cheapest_path_length(), and the PageRank lift uses the native pagerank().",
+    "No new mode was added. The modes this arm lacks (Louvain community prior, core-number cut, engine personalised PageRank) have no routine in the installed DuckPGQ extension. The global PageRank prior already exists here as the native pagerank().",
+    "Ran stage 2 inside graphtest:1 (6 CPUs, 4 GB, store on the gt-duckpgq volume). Reference and DuckPGQ on T1+T2 (628 tasks) took 1,312 s wall. DuckPGQ alone on T1x (144 tasks) took 205 s wall.",
+    "Moved the 60 answer files into results/duckpgq/tune/ beside stage 1 (180 files in total) and the sweep logs into results/duckpgq/stage2_sweep/{T1_T2_crosscheck,T1x}/. Deleted the reference answers from the temporary cross-check run.",
+    "Added a VERIFY_STAGE=2 switch to arms/duckpgq/dev/verify_answers.js and ran it, plus a timing summary (tmp/tune-duckpgq/timing.js). Updated arms/duckpgq/NOTES.md with a Stage 2 section (the stage-1 analysis, a table of the 20 with one-line reasons, layers, new modes, run results) and the run commands."
+   ],
+   "key_numbers": [
+    "Stage-2 list hash: 06ca0b6d351fdcf1, 20 configurations. Complexity: 3 entries at cx 1, 8 at cx 2, 9 at cx 3.",
+    "Equivalence against the reference arm: the 18 configurations that follow the shared specification on all 628 TUNE T1 and T2 tasks, 11,304 comparisons. Result: 0 equivalence failures, 0 ranked lists not byte-identical, 0 packed answers different. The 2 native entries are extensions and are not cross-checked.",
+    "PGQ per-level form against the SQL bounded form: 1,164 ranked-list comparisons, 0 differences.",
+    "Answer-file check: 60 files and 15,440 answers. Every configuration is present for every task (T1 388, T1x 144, T2 240 tasks), with no duplicate, extra or held-out id. 0 of 61,760 budget checks were over budget; 0 problems in total.",
+    "Wall time: 1,312 s for T1+T2 including the reference arm, and 205 s for T1x.",
+    "Median engine time per query on T1 (shared machine, so these are not the final engine measures): 31 to 66 ms for the 3-hop entries; 46 to 85 ms for the unbounded entries; x_wsp 319 ms (95th percentile 1,246 ms).",
+    "Median reach per query: 309 nodes at 3 hops, 568 at 4 hops, 1,660 with unbounded hops."
+   ],
+   "deviations_from_protocol": [
+    "Bounded k-hop in entries 1, 2 and 4 to 8 runs through the plain-SQL recursive statement, not the PGQ per-level form. It is labelled as a fallback in NOTES.md. The PGQ form was shown to give identical answers on 1,164 comparisons.",
+    "The equivalence check against the reference arm covered T1 and T2 as asked. T1x ran on this arm only."
+   ],
+   "problems": [
+    "The complexity() function in arms/duckpgq/sweep.js predates addendum 3 item 10 and gives different values (for example 6 instead of 2). The stage-2 complexities reported here come from item 10 as written; the grader should use the item-10 rule, not that function.",
+    "Entries that share a ranking and differ only in padding or granularity reuse one rank call in the harness, so their logged engine times are identical.",
+    "Every stage-2 answer records meta.native.rank as null, because pgq.js never sets that field. The layer each ranking uses is stated in NOTES.md instead.",
+    "Timings were taken while other lanes' containers ran (three containers at about 120 to 140 % CPU each). They are indicative only."
+   ],
+   "how_to_run": [
+    "bash arms/duckpgq/dk.sh \"cd /build && node arms/common/sweep.js --arms reference,duckpgq --list duckpgq --stage 2 --sets T1,T2 --out /build/tmp/tune-duckpgq/s2xc\"",
+    "bash arms/duckpgq/dk.sh \"cd /build && node arms/common/sweep.js --arms duckpgq --stage 2 --sets T1x --out /build/tmp/tune-duckpgq/s2x\"",
+    "bash arms/duckpgq/dk.sh \"cd /build && VERIFY_STAGE=2 node arms/duckpgq/dev/verify_answers.js /build/results <folder holding sweep/lists.jsonl>\"",
+    "bash arms/duckpgq/dk.sh \"cd /build && node tmp/tune-duckpgq/levels_check.js 2 && node tmp/tune-duckpgq/timing.js /build/results\"",
+    "Outputs: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/duckpgq/stage2.json, .../build/results/duckpgq/tune/<hash>.<set>.jsonl.gz, .../build/results/duckpgq/stage2_sweep/ (verify.json, timing.json, levels_check.json, T1_T2_crosscheck/, T1x/), .../build/arms/duckpgq/NOTES.md"
+   ],
+   "needs_from_other_lanes": [
+    "Grader: score the 20 stage-2 configurations (list hash 06ca0b6d351fdcf1, answer files results/duckpgq/tune/<hash>.<set>.jsonl.gz) and apply the selection rule with addendum 3 item 10 complexity, not the complexity() function in arms/duckpgq/sweep.js."
+   ]
+  }
+ },
+ "selection": {
+  "status": "Done. Every arm's stage-2 answers were checked and scored, the selection rule was applied, and all six arms were frozen through the harness. Nothing was run on HELD-OUT. The same configuration, 'hops=4' (hash 6b70cc1222745385, T1 TUNE primary 0.768), was chosen by relational, LadybugDB and DuckPGQ. The choice was decided by the configuration-name tie-break: 15, 11 and 10 configurations respectively tie at the lowest complexity (2) and at a median of 7,999 tokens. Because the harness keys a frozen record by configuration hash only, results/frozen/ holds 4 harness records for the 6 arms. The held-out lock will refuse LadybugDB and DuckPGQ until the harness lane keys records by arm. The H1 graph arm is ladybug.",
+  "frozen": [
+   {
+    "arm": "relational",
+    "config_name": "hops=4",
+    "hash": "6b70cc1222745385",
+    "primary_tune": 0.7681,
+    "se": 0.0262,
+    "complexity": 2,
+    "median_tokens": 7999,
+    "best_config": "s2: hops=null rank=degnorm",
+    "best_primary_tune": 0.7853,
+    "spec_equivalent": true,
+    "modes": "Shared specification: k-hop traversal of 4 hops, both directions, the 8 base edge classes, minConf 0.5, no hub cut, personalised PageRank (restart 0.3, co-change weight 1), file granularity, signature form, no padding. It uses no engine-only mode and no stored community prior. Stage 1. The selection drew on 60 configurations, 58 of them with a primary. The threshold was 0.7853 - 0.0254 = 0.7599, and 25 configurations were eligible. At complexity 2, 15 tie on median tokens (7,999), and the name decided.",
+    "stage": "1"
+   },
+   {
+    "arm": "ladybug",
+    "config_name": "hops=4",
+    "hash": "6b70cc1222745385",
+    "primary_tune": 0.7681,
+    "se": 0.0262,
+    "complexity": 2,
+    "median_tokens": 7999,
+    "best_config": "s2 hops=null native rank=hybrid ppr+x_comm",
+    "best_primary_tune": 0.7862,
+    "spec_equivalent": true,
+    "modes": "Shared specification, with the same parameters as relational. Its 772 TUNE answers are identical to the relational, reference and DuckPGQ answers (2,316 of 2,316 comparisons). It uses no engine-only mode and no stored community prior. The best configuration (the hybrid with the x_comm community prior, complexity 4) was not chosen. The threshold was 0.7862 - 0.0255 = 0.7608, and 25 configurations were eligible, 11 of them tied at complexity 2. The harness frozen record for this hash names arm relational, so a LadybugDB held-out run is currently refused.",
+    "stage": "1"
+   },
+   {
+    "arm": "duckpgq",
+    "config_name": "hops=4",
+    "hash": "6b70cc1222745385",
+    "primary_tune": 0.7681,
+    "se": 0.0262,
+    "complexity": 2,
+    "median_tokens": 7999,
+    "best_config": "s2: hops=null + rank=degnorm",
+    "best_primary_tune": 0.7853,
+    "spec_equivalent": true,
+    "modes": "Shared specification, with the same parameters as relational. Its answers are identical to relational's. It uses no engine-only mode and no community prior. The threshold was 0.7599, and 21 configurations were eligible, 10 of them tied at complexity 2. The harness record names arm relational, so a DuckPGQ held-out run is currently refused.",
+    "stage": "1"
+   },
+   {
+    "arm": "search",
+    "config_name": "pad=CO rounds=1 routes=off",
+    "hash": "e70177e5807f0252",
+    "primary_tune": 0.7593,
+    "se": 0.0267,
+    "complexity": 3,
+    "median_tokens": 7999,
+    "best_config": "pad=CO co rrf rounds=1",
+    "best_primary_tune": 0.7644,
+    "spec_equivalent": false,
+    "modes": "Search arm, not graph-specification. One round of text search with seed imports and no route strings, plus the co-change padding tail (complexity: ranking 1, import following 1, padding 1). It uses no community prior. Median lookups per T1 answer: 7, which includes the 2 lookups of the CO tail. Stage 2. The threshold was 0.7644 - 0.0269 = 0.7376, and 14 configurations were eligible. It was the only one at complexity 3.",
+    "stage": "2"
+   },
+   {
+    "arm": "floor-dir",
+    "config_name": "gran=file form=signature",
+    "hash": "714a474060653c1f",
+    "primary_tune": 0.7191,
+    "se": 0.0272,
+    "complexity": 1,
+    "median_tokens": 7999,
+    "best_config": "gran=file form=signature",
+    "best_primary_tune": 0.7191,
+    "spec_equivalent": false,
+    "modes": "Floor: same-directory tail only, file granularity, signature form. It was chosen from its fixed 8 configurations, of which 4 have a primary. 1 lookup.",
+    "stage": "floor"
+   },
+   {
+    "arm": "floor-co",
+    "config_name": "gran=file form=signature",
+    "hash": "c4d2f0a60a3d199c",
+    "primary_tune": 0.7521,
+    "se": 0.0279,
+    "complexity": 1,
+    "median_tokens": 7999,
+    "best_config": "gran=file form=signature",
+    "best_primary_tune": 0.7521,
+    "spec_equivalent": false,
+    "modes": "Floor: co-change tail only, file granularity, signature form. It was chosen from its fixed 8 configurations. 2 lookups.",
+    "stage": "floor"
+   }
+  ],
+  "h1_graph_arm": "ladybug",
+  "tune_comparisons": [
+   {
+    "a": "ladybug",
+    "b": "relational",
+    "set": "T1",
+    "metric": "primary (recall at 8,000 tokens), TUNE preview, optimistic",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "ladybug",
+    "b": "relational",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "ladybug",
+    "b": "relational",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "ladybug",
+    "b": "relational",
+    "set": "T1",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "ladybug",
+    "b": "relational",
+    "set": "T1",
+    "metric": "area under recall-tokens curve, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "duckpgq",
+    "b": "relational",
+    "set": "T1",
+    "metric": "primary, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "duckpgq",
+    "b": "relational",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "duckpgq",
+    "b": "relational",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "duckpgq",
+    "b": "relational",
+    "set": "T1",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "duckpgq",
+    "b": "relational",
+    "set": "T1",
+    "metric": "area under recall-tokens curve, TUNE preview",
+    "diff": 0,
+    "ci_low": 0,
+    "ci_high": 0
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T1",
+    "metric": "primary, TUNE preview",
+    "diff": 0.0088,
+    "ci_low": -0.0231,
+    "ci_high": 0.0406
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T1",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0264,
+    "ci_low": -0.0275,
+    "ci_high": 0.0766
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T1",
+    "metric": "area under curve, TUNE preview",
+    "diff": 0.0033,
+    "ci_low": -0.0217,
+    "ci_high": 0.0283
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": -0.0918,
+    "ci_low": -0.1669,
+    "ci_high": -0.0252
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T1x",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0032,
+    "ci_low": -0.0169,
+    "ci_high": 0.0235
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T1x",
+    "metric": "area under curve, TUNE preview",
+    "diff": -0.0783,
+    "ci_low": -0.1315,
+    "ci_high": -0.0268
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0.0315,
+    "ci_low": -0.0302,
+    "ci_high": 0.0928
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T2",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0265,
+    "ci_low": -0.0151,
+    "ci_high": 0.0683
+   },
+   {
+    "a": "ladybug",
+    "b": "search",
+    "set": "T2",
+    "metric": "area under curve, TUNE preview",
+    "diff": 0.0064,
+    "ci_low": -0.0319,
+    "ci_high": 0.0445
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T1",
+    "metric": "primary, TUNE preview",
+    "diff": 0.0489,
+    "ci_low": 0.0117,
+    "ci_high": 0.0858
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T1",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0832,
+    "ci_low": 0.0127,
+    "ci_high": 0.1517
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T1",
+    "metric": "area under curve, TUNE preview",
+    "diff": 0.0423,
+    "ci_low": 0.0124,
+    "ci_high": 0.0718
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": -0.0478,
+    "ci_low": -0.132,
+    "ci_high": 0.0303
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T1x",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0445,
+    "ci_low": -0.01,
+    "ci_high": 0.1035
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T1x",
+    "metric": "area under curve, TUNE preview",
+    "diff": -0.0384,
+    "ci_low": -0.102,
+    "ci_high": 0.0175
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0.1409,
+    "ci_low": 0.0602,
+    "ci_high": 0.2241
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T2",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.1679,
+    "ci_low": 0.0701,
+    "ci_high": 0.2664
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-dir",
+    "set": "T2",
+    "metric": "area under curve, TUNE preview",
+    "diff": 0.1265,
+    "ci_low": 0.0742,
+    "ci_high": 0.1802
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T1",
+    "metric": "primary, TUNE preview",
+    "diff": 0.016,
+    "ci_low": -0.0188,
+    "ci_high": 0.0506
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T1",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0379,
+    "ci_low": -0.0279,
+    "ci_high": 0.1046
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T1",
+    "metric": "area under curve, TUNE preview",
+    "diff": 0.0065,
+    "ci_low": -0.0189,
+    "ci_high": 0.0314
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": -0.0921,
+    "ci_low": -0.1702,
+    "ci_high": -0.0213
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T1x",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0068,
+    "ci_low": -0.0315,
+    "ci_high": 0.0464
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T1x",
+    "metric": "area under curve, TUNE preview",
+    "diff": -0.077,
+    "ci_low": -0.1305,
+    "ci_high": -0.0238
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0.0358,
+    "ci_low": -0.0253,
+    "ci_high": 0.0971
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T2",
+    "metric": "recall at 2,000 tokens, TUNE preview",
+    "diff": 0.0573,
+    "ci_low": -0.0181,
+    "ci_high": 0.1347
+   },
+   {
+    "a": "ladybug",
+    "b": "floor-co",
+    "set": "T2",
+    "metric": "area under curve, TUNE preview",
+    "diff": 0.0121,
+    "ci_low": -0.0271,
+    "ci_high": 0.0498
+   },
+   {
+    "a": "relational",
+    "b": "search",
+    "set": "T1",
+    "metric": "primary, TUNE preview (identical to ladybug - search)",
+    "diff": 0.0088,
+    "ci_low": -0.0231,
+    "ci_high": 0.0406
+   },
+   {
+    "a": "relational",
+    "b": "search",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": -0.0918,
+    "ci_low": -0.1669,
+    "ci_high": -0.0252
+   },
+   {
+    "a": "relational",
+    "b": "search",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0.0315,
+    "ci_low": -0.0302,
+    "ci_high": 0.0928
+   },
+   {
+    "a": "relational",
+    "b": "floor-dir",
+    "set": "T1",
+    "metric": "primary, TUNE preview",
+    "diff": 0.0489,
+    "ci_low": 0.0117,
+    "ci_high": 0.0858
+   },
+   {
+    "a": "relational",
+    "b": "floor-dir",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": -0.0478,
+    "ci_low": -0.132,
+    "ci_high": 0.0303
+   },
+   {
+    "a": "relational",
+    "b": "floor-dir",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0.1409,
+    "ci_low": 0.0602,
+    "ci_high": 0.2241
+   },
+   {
+    "a": "relational",
+    "b": "floor-co",
+    "set": "T1",
+    "metric": "primary, TUNE preview",
+    "diff": 0.016,
+    "ci_low": -0.0188,
+    "ci_high": 0.0506
+   },
+   {
+    "a": "relational",
+    "b": "floor-co",
+    "set": "T1x",
+    "metric": "primary, TUNE preview",
+    "diff": -0.0921,
+    "ci_low": -0.1702,
+    "ci_high": -0.0213
+   },
+   {
+    "a": "relational",
+    "b": "floor-co",
+    "set": "T2",
+    "metric": "primary, TUNE preview",
+    "diff": 0.0358,
+    "ci_low": -0.0253,
+    "ci_high": 0.0971
+   }
+  ],
+  "tq_tune": [
+   {
+    "arm": "relational",
+    "f1": 0.8105,
+    "median_tokens": 35
+   },
+   {
+    "arm": "ladybug",
+    "f1": 0.8105,
+    "median_tokens": 35
+   },
+   {
+    "arm": "duckpgq",
+    "f1": 0.8105,
+    "median_tokens": 35
+   },
+   {
+    "arm": "search",
+    "f1": 0.7415,
+    "median_tokens": 2577
+   }
+  ],
+  "observations": [
+   "Stage-2 inventory (sealed/grader/stage2/inventory2.json): 0 problems. Relational, search, LadybugDB and DuckPGQ each have exactly 20 stage-2 configurations. The list hashes are 52b3f69b93f01360, afba6dde623aa616, f8b75c2a4dcfd6a1 and 06ca0b6d351fdcf1, and each equals the hash in that arm's sweep summaries. Each arm has 60 answer files holding 15,440 answers: T1 7,760, T1x 2,880 and T2 4,800. Each file holds every TUNE task of its set exactly once, and every file is newer than the facts. The stage-1 lists and stage-1 files have not changed since stage-1 grading.",
+   "Scoring followed stage 1 exactly: arms/common/score.js (unchanged since 16:26), rule content, the same 772 TUNE references. It found 0 missing references and 0 zero-unit references.",
+   "Cross-arm identity over stages 1 and 2 together. Relational and LadybugDB share 44 configuration hashes, and all 33,968 of their answers are identical. Relational and DuckPGQ also share 44 hashes, and 33,962 of 33,968 answers are identical. The other 6 differ only by a stored score rounded at 1e-12, with the same items in the same order. The x_wsp ranking, implemented independently in SQL, LadybugDB and DuckPGQ, gives identical answers in all three arms.",
+   "Selection outcome: the best T1 TUNE primaries are 0.785 for relational and DuckPGQ (hops=null with degnorm ranking) and 0.786 for LadybugDB (a PageRank hybrid with the stored community prior). The lowest complexity within one standard error is 2 in all three arms, where 15, 11 and 10 configurations tie. All of them use a median of 7,999 tokens, so the tie-break on median tokens decides nothing and the configuration name decides. 'hops=4' sorts first by name and is the weakest of the tied set on every measure: primary 0.768 against up to 0.785, area under the curve 0.678 against up to 0.698, and median tokens to 80 % recall 7,212 against about 6,100. The stage-1 notes already flagged this tie measure.",
+   "Effect of the name tie-break: H1 and H2 are unaffected, because the three typed arms chose identical configurations and their difference is exactly 0 (addendum 3 F.21). For H3, the typed arms are scored about 0.017 of primary below the best configuration of their own tied set. If the orchestrator changes the tie measure before HELD-OUT, the outcomes differ by measure. Breaking ties by highest primary would choose 'hops=null rank=degnorm' (0.785) in all three typed arms. Breaking ties by median tokens to 80 % recall would choose different configurations in different arms.",
+   "Search: the chosen configuration is 'pad=CO rounds=1 routes=off' (0.759, complexity 3), against the best 'pad=CO co rrf rounds=1' (0.764, complexity 5). The new co-change and RRF modes from stage 2 add 0.025 over the stage-1 best (0.739), but the simpler one-round configuration is within one standard error. The chosen configuration's median is 7 lookups per answer, including the 2 lookups of the CO tail.",
+   "No frozen configuration uses an engine-only native mode or LadybugDB's stored community prior, so the four-draw spread rule of addendum 3 B.5 does not apply. The three typed arms' frozen configuration follows the shared specification, and its 772 TUNE answers are identical across relational, reference, LadybugDB and DuckPGQ (2,316 of 2,316 comparisons). On answer quality the engines can therefore differ only on H5 engine measures.",
+   "Tuning-set preview (optimistic: selected on these same tasks). On T1 the typed arms beat search by +0.009 [-0.023, 0.041] and the CO floor by +0.016 [-0.019, 0.051]; neither interval excludes 0. They beat the DIR floor by +0.049 [0.012, 0.086]. On T2 they beat the DIR floor by +0.141 [0.060, 0.224]; against search and the CO floor the intervals include 0. On the cross-runtime subset T1x (17 commits, descriptive only), the typed arms LOSE to search by -0.092 [-0.167, -0.025] and to the CO floor by -0.092 [-0.170, -0.021]. Recall at 2,000 tokens and the area under the curve follow the same pattern; the T1 recall at 2,000 tokens is +0.026 against search. Nothing beats the CO floor by the 0.05 effect of interest on T1, even on TUNE.",
+   "Questions (20 TUNE) were re-run with the current code inside graphtest:1. All 80 answers are identical to the stored ones, apart from timing fields, so the scores are unchanged. Relational, LadybugDB and DuckPGQ: macro F1 0.810, precision 0.847, recall 0.804, micro F1 0.755, median 35 tokens (mean 52.7), 1 lookup per question; without the judgement items, macro F1 0.818. Search: macro F1 0.741, precision 0.743, recall 0.833, micro F1 0.705, median 2,577 tokens (mean 2,743), 2.3 lookups on average; without the judgement items, macro F1 0.749.",
+   "Complexity rule: complexity.js gained one line before any stage-2 score was read. The search field 'co' adds one ranking part, and 'fuse' adds nothing. All 160 stage-1 complexities are unchanged. Neither this choice nor whether relational's SQL x_wsp counts as a native mode changes any selection. The grader's complexities differ from some tuners' own counts: LadybugDB x_core is 3 here, and DuckPGQ x_ppr_lift is 4 here. Neither entry was chosen either way.",
+   "Files: sealed/grader/selection.json (the full ranked tables), sealed/grader/stage2/ (inventory2, score_arm2, select, preview, tq), sealed/grader/dkf.sh, results/frozen/ (4 harness records, by_arm.json, NOTES.md), sealed/grader/NOTES.md (updated). TQ re-run answers are in tmp/grader/results/tq/."
+  ],
+  "problems": [
+   "HARNESS DEFECT, for the harness lane: run.js freeze writes results/frozen/<hash>.json keyed by configuration hash only, and the first writer is kept. Relational, LadybugDB and DuckPGQ froze the same hash, 6b70cc1222745385, so there is one record naming arm relational and only 4 harness records for 6 arms. harness.js checkSplit (line 26) will therefore REFUSE a ladybug or duckpgq held-out run ('was frozen for arm relational'). Fix: key frozen records by (arm, hash), for example results/frozen/<arm>/<hash>.json, read that path in checkSplit, then re-freeze ladybug and duckpgq. results/frozen/by_arm.json is a pointer only; the lock ignores it. This was read from the code and not tested, because a test would mean invoking the held-out split.",
+   "SELECTION-RULE WEAKNESS, for the orchestrator before HELD-OUT: the declared tie-break (lower median tokens, then name) leaves the typed-arm choice to alphabetical order. Up to 15 configurations tie at complexity 2 and at 7,999 tokens, and the name picks the weakest of them, 'hops=4'. This was applied as written. Changing it is an owner or orchestrator decision, and the stage-1 notes already raised it.",
+   "The 'one standard error' threshold uses the best configuration's standard error over 65 commits (about 0.025). That is wide relative to the spread among the top configurations, so 14 to 25 configurations per arm are eligible."
+  ]
+ },
+ "audit": {
+  "verdict": "The test is not ready for its held-out run.\n\nThe scoring and selection hold up. My own scorer, written from addendum 2 section A, agrees with the grader on 40 of 40 sampled TUNE T1 answers. It also agrees on all 99,680 T1 task rows of the six arms and on every configuration's primary, standard error and median tokens. My own complexity function and selection reproduce all six frozen choices. The choice stays the same under each open reading of addendum 3 item 10. The frozen files hash to their names and equal the chosen configurations.\n\nThe stage-2 specification entries match the reference arm with 0 failures:\n- relational: 1,900 strict comparisons\n- LadybugDB: 1,600 equivalence comparisons\n- DuckPGQ: 1,800 equivalence comparisons\n\nThe arm-only modes pass my own toy-graph hand checks: x_wsp in all three typed arms, x_core, x_comm, and x_ppr_lift (order only; its values are a uniform engine scale away from mine). Three from-scratch store builds per graph arm give identical answers on 30 tasks, including LadybugDB's stored-community configuration. No file holds held-out content, and 42 held-out attempts without the frozen hash were all refused.\n\nTwo things block the held-out run:\n- The frozen record is keyed by configuration hash only, so the LadybugDB and DuckPGQ held-out runs are refused.\n- No TQ implementation is frozen, so held-out TQ is refused for every arm and H4 cannot run.\n\nThe orchestrator also has one decision to make. The tie-break by configuration name chose 'hops=4' (T1 TUNE primary 0.768), the weakest of 15, 11 and 10 tied configurations, over 'hops=null' (0.784) and 'hops=null rank=degnorm' (0.785). This follows the written rule but costs the typed arms about 0.017 in H3. Engine timing (H5) is also not ready.",
+  "ready_for_heldout": false,
+  "checks": [
+   {
+    "what": "1. Scoring: own scorer vs grader",
+    "result": "pass",
+    "detail": "audit/selection/myscore.js was written from addendum 2 section A, without score.js. It reads snippet 'shown' as a [first, last] span, per packer.js. On 40 sampled TUNE T1 answers (seed 20261112; 4 arms x 4 stage-1 + 4 stage-2 answers, plus 4 per floor), it agrees with the grader on 40 of 40. 35 have a primary; 5 are paths-form answers, which have none. Across all 99,680 T1 task rows of relational, search, ladybug, duckpgq, floor-dir and floor-co, recall at 2k, 4k, 8k and 16k and the tokens used are identical. The per-configuration primary, standard error (over commits, n-1) and median 8,000-token use are identical in all 256 configurations. The grader's reference extract equals sealed/references.jsonl on all 772 TUNE lines. Output: audit/selection/scoring_check.json."
+   },
+   {
+    "what": "2. Selection recomputed; counts; frozen files",
+    "result": "pass",
+    "detail": "Relational, search, ladybug and duckpgq have 60 configurations each (40 + 20); each floor has 8. The list hashes equal the grader's. Stage-2 lists were written (22:57 to 23:06 local) after the tuner tables (22:49) and before the stage-2 scores (23:25). With my own complexity function on my own tables, the choices are relational, ladybug and duckpgq 'hops=4' (6b70cc1222745385, 0.7681, complexity 2), search 'pad=CO rounds=1 routes=off' (e70177e5807f0252, 0.7593, complexity 3), and floor-dir and floor-co 'gran=file form=signature' (0.7191 and 0.7521). The choice is unchanged under three alternative readings: depth from the hop limit only, seedImports not counted, and the search co field not counted. Thresholds: relational 0.7853 - 0.0254 = 0.7599 with 25 eligible; ladybug 0.7608 with 25; duckpgq 0.7599 with 21; search 0.7376 with 14. In each frozen file the configuration hashes to its own name and equals the chosen entry. The relational record names arm relational, which fails ladybug and duckpgq (defect)."
+   },
+   {
+    "what": "3. Tuner hygiene",
+    "result": "partial",
+    "detail": "results/tuner holds one 40-row stage-1 table per arm with aggregates only: 0 task ids, 0 commit SHAs, 0 repository paths. The stage-2 lists and arm notes show no sign that another arm's table or sealed content was used. One part fails: arms/{relational,ladybug,duckpgq,search}/NOTES.md contain their own arm's aggregate TUNE scores, copied from the tuner tables. No other file under arms/ or results/ (outside frozen and tuner) holds scores; results/relational/stage2/selftest.log holds synthetic self-test values only."
+   },
+   {
+    "what": "4. Stage-2 correctness against the reference arm, 100 seeded random TUNE tasks per arm",
+    "result": "pass",
+    "detail": "Run inside graphtest:1 with sweep.js --stage 2 on 100 tasks per arm (38 to 39 parents). Relational: 19 specification entries, 1,900 strict comparisons, 0 failures. LadybugDB: 16 entries, 1,600 equivalence comparisons, 0 failures. DuckPGQ: 18 entries, 1,800, 0 failures. Packed answer content (meta set aside) is identical to the reference arm's in all 5,300. Fresh answers equal the stored stage-2 answers: 2,000 of 2,000 (relational), 2,000 of 2,000 (LadybugDB) and 1,998 of 2,000 (DuckPGQ; the other 2 differ by one score at the 12th decimal, with identical shown content)."
+   },
+   {
+    "what": "4b. Toy-graph hand check of arm-only modes",
+    "result": "pass",
+    "detail": "My own toy graphs ran through each arm's harness entry (audit/selection/toy_modes.js); 13 of 14 checks pass exactly. x_wsp is right in relational SQL, LadybugDB and DuckPGQ, with no hub cut and with an in-degree cut where the cheapest path would pass a blocked node (costs 1, 2, 2.5, 3, 3.5). LadybugDB x_core is right at k=1 (reach a, b, h) and k=2 (full order), with core numbers worked by hand. LadybugDB x_comm alone gives communities {s,a,b,c} vs {h,x,y,z}, and the hybrid PPR+x_comm RRF matches my own computation. DuckPGQ x_ppr_lift has the right order, but its values are a uniform 1.0186 times my textbook PageRank^0.5 because the engine's PageRank scale differs. This cannot change an order."
+   },
+   {
+    "what": "5. Reproducibility of frozen graph configurations",
+    "result": "pass",
+    "detail": "Three from-scratch store builds per graph arm (empty container-filesystem store each time) ran 'hops=4' on 30 seeded TUNE T1 tasks (22 parents). Every build is identical to the others and to the stored answers: LadybugDB 30 of 30 and DuckPGQ 30 of 30. LadybugDB's stored-community configuration (hybrid ppr+x_comm) is also 30 of 30 identical across the three builds and the stored answers. The prior folder ran on a copy and stayed at 54 files with no difference."
+   },
+   {
+    "what": "6. Held-out discipline",
+    "result": "pass",
+    "detail": "I scanned 4,580 result, answer, score and log files under results/, tmp/, sealed/grader/, audit/ and arms/. None holds split heldout or held_out, or any of the 797 held-out task ids. The 8 TQ answer files hold 0 held-out questions, and no held-out results folder exists. I made 42 held-out attempts without the frozen hash: 7 arms x 5 run variants, minus 1 skipped for search, plus 8 TQ attempts. All 42 were refused before any task was read, and no file was written. No run with a correct frozen hash was attempted."
+   },
+   {
+    "what": "7. Fairness review",
+    "result": "issues",
+    "detail": "No arm was denied an option. All had 60 configurations, the shared padding and packer, and the open mode catalogue. Relational added x_wsp in SQL and chose not to add x_comm, x_core or x_ppr_lift; none of those was selected. Relational has every specification mode the graph arms used (0 cross-check failures). The frozen typed configuration is visibly weak against its own table: 'hops=4' (0.768) is the lowest primary of its tie set, against hops=null 0.784 and hops=null rank=degnorm 0.785. The name tie-break chose it, because the token tie-measure is inert at 7,999 tokens. It costs about 0.017 (0.6 standard errors) in H3 and affects all three typed arms alike. The graph's best native entry (ppr+x_comm, 0.7862) beats the best specification entry by only 0.0009. The search frozen configuration is a plausible careful-agent search: one round of name search plus imports, then the CO tail, a median of 7 lookups, and 0.005 below its best configuration."
+   },
+   {
+    "what": "8. Engine-timing readiness",
+    "result": "not ready",
+    "detail": "Met: stores on volumes or the container filesystem; application-code caches named (LadybugDB's PPR CSR with first_call and warm_uncached; DuckPGQ's TEMP caches); DuckPGQ bounded k-hop and stored property graph per addendum 3 C.6; LadybugDB bench samples in-process inside its bench child, so no per-query IPC is in its latency. Not met: (a) the machine is not quiet (three unrelated postiz containers have run on the Docker host for more than 10 hours); (b) no bench times the frozen query class, k-hop 4 + PPR; (c) the relational bench is stale (phase A only); (d) DuckPGQ engine_ms includes 10 to 20 statement round trips, not separated as C.7 requires; (e) thread settings differ (LadybugDB 1, DuckDB 6, SQLite 1) and must be reported; (f) labels needed in H5: DuckPGQ's hops=4 is plain recursive SQL, and LadybugDB's PPR runs in application code."
+   }
+  ],
+  "defects": [
+   {
+    "severity": "blocks the held-out run",
+    "where": "arms/common/run.js line 140 (freeze) and arms/common/harness.js line 26 (checkSplit); results/frozen/6b70cc1222745385.json",
+    "what": "Frozen records are keyed by configuration hash only, and the first writer is kept. Relational, LadybugDB and DuckPGQ share hash 6b70cc1222745385, so the record names relational and checkSplit refuses LadybugDB and DuckPGQ held-out runs.",
+    "fix": "Harness lane: key the frozen record by (arm, hash), for example results/frozen/<arm>/<hash>.json, and read that path in checkSplit. Then re-freeze ladybug and duckpgq."
+   },
+   {
+    "severity": "blocks the held-out run",
+    "where": "results/frozen (no tq-<arm>.json); arms/common/run.js tqImplHash",
+    "what": "No TQ implementation is frozen, so held-out TQ (H4) is refused for relational, search, ladybug and duckpgq. tqImplHash also covers only arms/<arm>/*.js, not shared code.",
+    "fix": "Run 'run.js freeze-tq --arm <arm>' for all four arms after their TQ code is final. Optionally include arms/common/*.js in the hash."
+   },
+   {
+    "severity": "biases a result",
+    "where": "sealed/grader/selection.json; addendum 3 item 10 tie rule",
+    "what": "The written rule picks 'hops=4' (T1 TUNE 0.7681), the lowest primary among 15 relational, 11 LadybugDB and 10 DuckPGQ configurations tied at complexity 2 and 7,999 median tokens. The configuration name decides, because '4' sorts before 'n'. 'hops=null' scores 0.7843 and 's2 hops=null rank=degnorm' 0.7853. The name order also sorts every 's2'-prefixed entry after the stage-1 names. This costs the typed arms about 0.017 recall in H3 against search and the floors; H1 and H2 are unaffected.",
+    "fix": "Orchestrator decision before held-out: keep the rule and declare the TUNE gap, or amend the tie measure for every arm alike, stating that it was amended after TUNE tables existed. The 'higher primary' measure would pick hops=null rank=degnorm in all three typed arms."
+   },
+   {
+    "severity": "biases a result",
+    "where": "arms/*/bench.js, results/*/engine*, Docker host",
+    "what": "The quiet-machine engine timing (H5) is not ready. Unrelated containers run on the host. No bench times the frozen class (k-hop 4 + PPR). The relational bench is stale. DuckPGQ engine time includes statement round trips. Thread settings differ (1, 6, 1).",
+    "fix": "Stop the other containers. Add the frozen class to all three benches. Re-run relational/bench.js. Report DuckPGQ client round trips apart from engine time. Report or equalise threads. Label DuckPGQ's bounded k-hop as SQL and LadybugDB's PPR as application code."
+   },
+   {
+    "severity": "minor",
+    "where": "sealed/grader/stage2/preview.js line 18; sealed/grader/NOTES.md S2.5",
+    "what": "The H1 graph-arm tie rule ('then ladybug') is the grader's own; protocol addendum 3 E.13 declares none, though the notes call it declared. There is no numeric effect, because the answers are identical.",
+    "fix": "Declare the H1 tie rule in an addendum before the held-out run."
+   },
+   {
+    "severity": "minor",
+    "where": "arms/relational/NOTES.md, arms/ladybug/NOTES.md, arms/duckpgq/NOTES.md, arms/search/NOTES.md; results/tuner/",
+    "what": "Arm-readable notes contain each arm's own aggregate TUNE scores, and all four tuner tables sit in one shared folder. Isolation relies on instruction alone. No per-task or reference content is involved.",
+    "fix": "Move the score paragraphs out of arms/ (to results/tuner or sealed/). Keep each tuner table readable by its own lane only."
+   },
+   {
+    "severity": "minor",
+    "where": "arms/common/run.js freeze",
+    "what": "The freeze records the configuration but not the arm code, so code edits after the freeze would go unseen. All arm files predate the freeze, and the fresh answers equal the stored ones.",
+    "fix": "Record a hash of arms/<arm>/*.js and arms/common/*.js in the frozen record, and check it in checkSplit."
+   },
+   {
+    "severity": "minor",
+    "where": "arms/duckpgq (multi-threaded DuckDB sums)",
+    "what": "DuckPGQ scores are not bit-stable at 1e-12: 2 of 2,000 fresh stage-2 answers differ only in a last-digit score. One of them (x_ppr_lift) has a different ranked-list hash, but the shown content is identical.",
+    "fix": "Report it. An order can differ only where two scores tie within 1e-12."
+   }
+  ]
+ }
+}

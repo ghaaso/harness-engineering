@@ -1,0 +1,165 @@
+// Checks the built graph v2 page. Run from this folder:  node - < check.js.txt
+// Reads index.html, the record ../GRAPH-V2-DESIGN-2026-11.md, data/data.json, data/extras.json, the pending measurement
+// files that exist, and the text dumps made by the screenshot tool with
+//   EVID/page-v2/work/job-text.json  (alltext.txt: every text node after the page script ran, all folds included,
+//   minus code blocks and the numbers the script computes, class "cmp"; claimtext.txt: the same minus the refuter's
+//   own quoted claims and findings, which are shown with his verdict beside them).
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const REPO = path.resolve(HERE, '..', '..', '..');
+const EVW = path.join(REPO, 'docs', 'program', 'evidence', 'harness-bottlenecks', 'graph2', 'page-v2', 'work');
+const d = JSON.parse(fs.readFileSync(path.join(HERE, 'data', 'data.json'), 'utf8'));
+const xp = path.join(HERE, 'data', 'extras.json');
+const X = fs.existsSync(xp) ? JSON.parse(fs.readFileSync(xp, 'utf8')) : null;
+const html = fs.readFileSync(path.join(HERE, 'index.html'), 'utf8');
+const md = fs.readFileSync(path.join(REPO, 'docs', 'program', 'GRAPH-V2-DESIGN-2026-11.md'), 'utf8');
+const problems = [], notes = [];
+
+/* 1. size, sections, network */
+const size = Buffer.byteLength(html);
+if (size >= 500000) problems.push('index.html is ' + size + ' bytes (limit 500,000)');
+notes.push('index.html ' + size + ' bytes; record ' + md.split('\n').length + ' lines');
+if (md.split('\n').length >= 150) problems.push('record has 150 lines or more');
+for (const l of 'abcdefghijk') if (!new RegExp('<section class="sec" id="' + l + '"><h2>').test(html)) problems.push('section ' + l.toUpperCase() + ' missing');
+{ const hosts = new Set();
+  (function walk(o) { if (o && typeof o === 'object') Object.values(o).forEach(walk); else if (typeof o === 'string') (o.match(/https?:\/\/[^\s"')]+/g) || []).forEach(u => hosts.add(new URL(u).host)); })(d.refs);
+  const links = html.match(/<a [^>]*href="https?:\/\/[^"]+"/g) || [];
+  links.forEach(a => { const h = new URL(a.match(/href="([^"]+)"/)[1]).host; if (!hosts.has(h)) problems.push('link to a host not among the data\'s sources: ' + h); });
+  const stripped = html.replace(/http:\/\/www\.w3\.org\/2000\/svg/g, '').replace(/<a [^>]*href="https?:\/\/[^"]+"/g, '<a').replace(/>[^<]*https?:\/\/[^<]*</g, '><');
+  if (/https?:\/\//.test(stripped)) problems.push('page holds a network address outside source links');
+  if (/<script[^>]+src=|<link[^>]+href=|<img[^>]+src=|@import|url\(\s*["']?https?:|<iframe|fetch\(|XMLHttpRequest/.test(html)) problems.push('page loads something from outside');
+  notes.push(links.length + ' outside-source links, all to hosts named in the data\'s references (nothing is loaded)'); }
+
+/* 2. text dumps */
+const allP = path.join(EVW, 'text', 'alltext.txt'), clP = path.join(EVW, 'text', 'claimtext.txt');
+let all = '', claim = '';
+if (!fs.existsSync(allP) || !fs.existsSync(clP)) problems.push('no text dump: run  cd EVID/page-v2/work && node - job-text.json < ../../../library-pathways/shot.js.txt');
+else { if (fs.statSync(allP).mtimeMs < fs.statSync(path.join(HERE, 'index.html')).mtimeMs) problems.push('text dump is older than index.html: re-run job-text.json');
+  all = fs.readFileSync(allP, 'utf8'); claim = fs.readFileSync(clP, 'utf8'); notes.push('text dump ' + all.length + ' characters'); }
+
+/* 3. every number on the page is in the data (any shown scale or rounding of a data value, or its complement) */
+const vals = [];
+const walkV = o => { if (o == null) return; if (typeof o === 'number') { vals.push(o); return; }
+  if (typeof o === 'string') { (o.replace(/,(?=\d{3})/g, '').match(/\d+(?:\.\d+)?/g) || []).forEach(x => vals.push(+x)); return; }
+  if (Array.isArray(o)) { vals.push(o.length); return o.forEach(walkV); }
+  if (typeof o === 'object') Object.keys(o).forEach(k => { walkV(o[k]); (k.match(/\d+(?:\.\d+)?/g) || []).forEach(x => vals.push(+x)); }); };
+walkV(d); if (X) walkV(X);
+const pend = [];
+if (X && X.pending) for (const [k, p] of Object.entries(X.pending)) { const a = path.join(REPO, p.path); if (fs.existsSync(a)) { walkV(fs.readFileSync(a, 'utf8')); pend.push(k); } }
+notes.push('number corpus: data.json' + (X ? ' + extras.json' : '') + (pend.length ? ' + pending files that exist (' + pend.join(', ') + ')' : ''));
+const ALLOW = new Set([95, 100]); // a 95 % interval; per cent of a whole
+const SC = [1, 100, 0.01, 1e-3, 1e-6, 1e-9];
+const absV = [...new Set(vals.map(Math.abs))];
+function inData(tok) {
+  const x = Math.abs(+tok.replace(/,/g, '')); if (ALLOW.has(x)) return true;
+  const dec = (tok.split('.')[1] || '').length, m = Math.pow(10, dec);
+  const eq = v => Math.abs(Math.round(v * m + 1e-7) / m - x) < 1e-9 || Math.abs(Math.round(v * m - 1e-7) / m - x) < 1e-9 || Math.abs(Math.floor(v * m + 1e-9) / m - x) < 1e-9;
+  for (const v of absV) { for (const s of SC) if (eq(v * s)) return true; if (v <= 1 && (eq((1 - v) * 100) || eq(1 - v))) return true; }
+  return false;
+}
+const bad = new Map(); let checked = 0;
+const scan = (text, where) => text.split('\n').forEach(line => {
+  const clean = line.replace(/[\w./-]+\.(tsx?|jsx?|py|mjs|json|md|txt|html)\b/g, ' ').replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ').replace(/\bv\d+(\.\d+)*\b/g, ' ').replace(/\b(\d+\.){2,}\d+\b/g, ' ').replace(/arXiv \d+\.\d+/g, ' ').replace(/\b[a-z_]+=[\w.]+/gi, ' ').replace(/R-\d/g, ' ').replace(/[A-Za-z]+\d+[A-Za-z\d]*/g, ' ');
+  const re = /(\d[\d,]*(?:\.\d+)?)/g; let mm;
+  while ((mm = re.exec(clean))) { const tok = mm[1].replace(/,$/, ''); checked++; if (!inData(tok)) { if (!bad.has(tok)) bad.set(tok, where + ': ' + line.trim().slice(0, 140)); } } });
+scan(all, 'page'); scan(md.replace(/`[^`]*`/g, ' '), 'record');
+notes.push(checked + ' number tokens checked (page text after the script ran, and the record)');
+for (const [k, l] of bad) problems.push('number not in data: ' + k + '   in ' + l);
+['NaN', 'undefined', 'null', '[object Object]', 'Infinity'].forEach(w => { if (new RegExp('(^|[^\\w])' + w.replace(/[[\]]/g, '\\$&') + '([^\\w]|$)').test(all)) problems.push('page text contains "' + w + '"'); });
+
+/* 4. must-not-claim sentences (refuter's list, graphify lists) and the rule-3 patterns */
+const norm = s => ' ' + String(s).toLowerCase().replace(/[“”"‘’'`]/g, '').replace(/[−–—]/g, '-').replace(/[^a-z0-9%.+-]+/g, ' ').replace(/\s+/g, ' ') + ' ';
+const quoted = s => { const q = String(s).match(/"([^"]+)"/g); return q ? q.map(x => x.slice(1, -1)) : [String(s).replace(/\s*\(.*$/, '')]; };
+const FORBID = [...d.mustnot.from_result.map(s => s.replace(/\s*\(.*$/, '').replace(/,? or (any other|any share|v2 is not one|v1 was not)[^.]*/i, '')), ...d.mustnot.from_refute.flatMap(quoted)];
+if (X && X.graphify) FORBID.push(...X.graphify.mustnot_against, ...X.graphify.mustnot_for);
+const F2 = [...new Set(FORBID.map(s => norm(s.replace(/[.]$/, '')).trim()).filter(s => s.length > 12))];
+const C = norm(claim), Mdn = norm(md);
+let nf = 0; F2.forEach(s => { nf++; if (C.includes(' ' + s + ' ') || C.includes(' ' + s + '.')) problems.push('must-not-claim sentence on the page: "' + s + '"'); if (Mdn.includes(' ' + s + ' ')) problems.push('must-not-claim sentence in the record: "' + s + '"'); });
+notes.push(nf + ' must-not-claim sentences checked (refuter list, graphify lists); the refuter\'s own quoted claims and findings are exempt only inside blocks marked data-quote="refuter"');
+const PAT = [[/\bwill (cut|save|reduce|lower|remove)\b[^.]{0,80}\btokens?\b/i, 'a forecast of a token saving'], [/\b(saves?|cuts?) (about )?\d+(\.\d+)? ?(%|percent) of (agent |product |program )?(tokens|context)/i, 'a saving stated as a number'],
+  [/graph databases? (do|does) not help(?![^.]*at this size)/i, 'graph databases do not help, without "at this size"'], [/can never serve a wrong answer/i, 'the cache can never serve a wrong answer'],
+  [/every (design )?choice (in v2 )?comes from documented theory/i, 'every choice comes from documented theory'], [/ranker is validated|rrf is proven/i, 'ranker validated'], [/pilot will settle/i, 'the pilot will settle it']];
+const plainC = claim.replace(/\s+/g, ' ');
+/* sentence-level qualifiers the graphify claims audit (sections 5 and 6) and the independent check require, page and record alike */
+{ const QUAL = [[/F1 0\.07/i, /raw question text/i, 'graphify F1 without "raw question text, no agent, no vocabulary step, printout scored as an item list"'],
+    [/graphify[^.]*(above|beats?) scripted search|(above|beats?) scripted search[^.]*graphify/i, /no verdict/i, 'graphify above scripted search without "subgroup, no verdict"'],
+    [/decides most of this/i, /^$/, 'causal wording "decides most of this"'], [/found the needed span|needed span in its top/i, /^$/, 'read span presented as the needed span'],
+    [/730 MB/i, /^$/, 'PyTorch size given as 730 MB'], [/(can see|detects?) only savings|detects savings of/i, /^$/, 'pilot power read as a forecast ("can see only savings" / "detects only savings")'], [/\d recorded sessions/i, /^$/, '"recorded sessions" where the sources count transcripts']];
+  const sentsOf = t => t.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+(?=[A-Z(])/);
+  for (const [where, t] of [['page', plainC], ['record', md]]) sentsOf(t).forEach(sn => QUAL.forEach(([re, need, n]) => { if (re.test(sn) && !need.test(sn)) problems.push('qualifier missing in the ' + where + ': ' + n + ' (' + sn.slice(0, 110) + ')'); })); }
+PAT.forEach(([re, n]) => { if (re.test(plainC)) problems.push('rule 3: ' + n + ' (' + (plainC.match(re) || [''])[0] + ')'); if (re.test(md)) problems.push('rule 3 in the record: ' + n); });
+{ const sents = plainC.split(/(?<=[.!?])\s+/).filter(s => /temporal knowledge graph/i.test(s));
+  if (!sents.length) problems.push('the page never says which sense of "temporal knowledge graph" is meant');
+  sents.forEach(s => { if (!/sense/i.test(s)) problems.push('"temporal knowledge graph" without its sense: ' + s.slice(0, 120)); }); }
+const nq = (html.match(/data-quote="refuter"/g) || []).length; notes.push(nq + ' refuter-quote blocks');
+
+/* 5. no internal ids without a plain name */
+{ const ids = new Set(); const re = /(?<![\w@.-])(CQ\d+|ST1|K4t3|A1b|[NKMTSRAQE]\d{1,2}[a-z]?)(?![\w-])/g; let m;
+  // the section label A2 (the seven measures) is a section letter, not component A2: only its badge line and its nav line are exempt
+  const t = all.replace(/^A2( · The seven measures)?$/gm, ' ').replace(/\b[a-z]+\d+[a-z]*\b/g, ' '); while ((m = re.exec(t))) ids.add(m[1]);
+  ['E5', 'I9', 'B5'].forEach(x => ids.delete(x));
+  if (ids.size) problems.push('internal ids on the page without a plain name: ' + [...ids].join(', ')); }
+
+/* 6. structure the brief asks for */
+const secOf = l => { const i = html.indexOf('<section class="sec" id="' + l + '"'); const j = html.indexOf('<section class="sec"', i + 10); return html.slice(i, j < 0 ? html.indexOf('</main>') : j); };
+const nCards = (secOf('a').match(/<div class="vcard">/g) || []).length; if (nCards !== 5) problems.push('section A has ' + nCards + ' cards, not 5');
+const SL = { b: 'lookup_testset', e: 'premise_measure', g: 'embeddings' };
+for (const [l, k] of Object.entries(SL)) { const S = secOf(l); const p = X && X.pending && X.pending[k]; const ex = p && fs.existsSync(path.join(REPO, p.path));
+  if (!/class="slot (filled|pending)"/.test(S)) problems.push('section ' + l.toUpperCase() + ': no slot for ' + k);
+  else if (ex && !/class="slot filled"/.test(S)) problems.push('section ' + l.toUpperCase() + ': ' + k + ' exists but its slot is not filled');
+  else if (!ex && !/Being measured in another session/.test(S)) problems.push('section ' + l.toUpperCase() + ': pending slot for ' + k + ' is not labelled');
+  else notes.push('slot ' + k + ' in ' + l.toUpperCase() + ': ' + (ex ? 'filled from ' + p.path : 'labelled as being measured')); }
+if (!/R-6 in full|Ruling R-6, the argued position/.test(secOf('g')) || !secOf('g').includes(d.rulings.find(r => r.id === 'R-6').text.slice(0, 60).replace(/"/g, '&quot;'))) problems.push('section G: ruling R-6 not shown in full');
+if (X && X.graphify) { const G = secOf('g'); if (!/class="card gf"/.test(G) || !/class="dotc"/.test(G)) problems.push('section G: graphify block or its interval chart missing');
+  X.graphify.does_not_say.forEach((s, i) => { if (!norm(all).includes(norm(s.replace(/`/g, '')).slice(0, 40).trim())) problems.push('graphify: does-not-say item ' + (i + 1) + ' not shown'); }); }
+/* the finished measurements: when extras.json carries their structured fields, each block must be drawn in its
+   section, tagged measured with its NOTES path, with its own could-not-measure list (folded) and caveats in the text */
+{ const MB = { lookup_testset: [['b', 'The test set of real lookups, measured'], ['i', 'The arm to beat: an index with no graph']], premise_measure: [['e', 'Where earlier conclusions come from, measured']] };
+  for (const [k, places] of Object.entries(MB)) { const p = X && X.pending && X.pending[k]; if (!p || !p.structured) { notes.push(k + ': no structured fields, generic slot only'); continue; }
+    const S = p.structured;
+    for (const [l, h] of places) { const T = secOf(l);
+      if (!T.includes(h)) { problems.push('section ' + l.toUpperCase() + ': measured block "' + h + '" missing'); continue; }
+      if (!T.includes(p.path)) problems.push('section ' + l.toUpperCase() + ': ' + k + ' block not tagged with its NOTES path');
+      if (!/What this measurement could not measure \(\d+\)/.test(T)) problems.push('section ' + l.toUpperCase() + ': ' + k + ' could-not-measure list missing'); }
+    (S.could_not_measure || []).forEach((s, i) => { const seg = s.replace(/`/g, '').split(/\bCQ\d+\b|\bE1 to E3\b/).sort((x, y) => y.length - x.length)[0]; if (!norm(all).includes(norm(seg).slice(0, 30).trim())) problems.push(k + ': could-not-measure item ' + (i + 1) + ' not on the page'); });
+    [S.to_beat_caveat, S.not_claimed].filter(Boolean).forEach(s => { if (!norm(all).includes(norm(s).slice(0, 40).trim())) problems.push(k + ': caveat not on the page: ' + s.slice(0, 60)); });
+    notes.push(k + ': measured block(s) in ' + places.map(x => x[0].toUpperCase()).join(' and ') + ', ' + (S.could_not_measure || []).length + ' could-not-measure items shown'); } }
+if (!/R-8/.test(secOf('j'))) problems.push('section J does not name ruling R-8');
+{ const A2 = secOf('a2'); // the seven measures: section, nav entry, seven columns, no saving under token count or token cost
+  if (!/<section class="sec" id="a2"><h2>/.test(html)) problems.push('section A2 (the seven measures) missing');
+  else { if (!/href="#a2"/.test(html.slice(0, html.indexOf('<main')))) problems.push('section A2 has no nav entry');
+    const order = ['a', 'a2', 'b'].map(l => html.indexOf('<section class="sec" id="' + l + '"')); if (!(order[0] < order[1] && order[1] < order[2])) problems.push('section A2 is not between A and B');
+    const cols = ['through', 'eff', 'tokens', 'cost', 'time', 'quality', 'halluc'];
+    const cells = [...A2.matchAll(/<td[^>]*? data-col="([a-z]+)"[^>]*>([\s\S]*?)<\/td>/g)].map(m => ({ col: m[1], raw: m[2], text: m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() }));
+    cols.forEach(k => { if (!cells.some(x => x.col === k)) problems.push('section A2: no column ' + k); });
+    const nm = x => /^○? ?not measured/i.test(x.text);
+    // a negation ("not tokens saved", "not a saving") is the required caveat, not a saving claim
+    const unNeg = t => t.replace(/not (tokens saved|a saving|savings)/gi, ' ');
+    cells.filter(x => (x.col === 'tokens' || x.col === 'cost') && /sav(e|ed|es|ing)|reduc/i.test(unNeg(x.text)) && !nm(x)).forEach(x => problems.push('section A2: a ' + x.col + ' cell speaks of a saving: ' + x.text.slice(0, 90)));
+    cells.filter(x => !nm(x) && !/class="tag (meas|der|sim)/.test(x.raw)).forEach(x => problems.push('section A2: a measured cell without a measured/derived/simulation tag: ' + x.text.slice(0, 90)));
+    // every not-measured cell names one of the four tests defined in the section's legend
+    const TESTN = /agent test|lookup replay|citation audit|edge precision/;
+    if (!/<dl class="svtests">/.test(A2)) problems.push('section A2: the legend of tests is missing');
+    cells.filter(x => nm(x) && !TESTN.test(x.text)).forEach(x => problems.push('section A2: a not-measured cell names no test: ' + x.col + ' ' + x.text.slice(0, 60)));
+    // the cache's stale-answer rate is not a hallucination rate; the ledger's 12 of 60 is reach, not output quality
+    if (/wrong answers served|wrong at fact level/i.test(A2)) problems.push('section A2: stale cached answers called wrong answers');
+    cells.filter(x => x.col === 'halluc' && !nm(x) && /stale cached/i.test(x.text) && !/not a hallucination rate/i.test(x.text)).forEach(() => problems.push('section A2: stale-answer rate without "not a hallucination rate"'));
+    cells.filter(x => x.col === 'quality' && !nm(x) && /tracked premises/.test(x.text) && !/reach/i.test(x.text)).forEach(() => problems.push('section A2: ledger premise share not labelled as reach'));
+    const meas = cells.filter(x => !nm(x)).length;
+    // every number in the section is checked against the data: the same test as the page dump, scoped here
+    const a2txt = A2.replace(/<span class="cmp"[^>]*>[^<]*<\/span>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ');
+    const toks = (a2txt.match(/\d[\d,]*(?:\.\d+)?/g) || []).map(t => t.replace(/,$/, ''));
+    const bad = [...new Set(toks.filter(t => !inData(t)))]; if (bad.length) problems.push('section A2: numbers not in the data: ' + bad.join(', '));
+    notes.push('A2: ' + cells.length + ' cells, ' + meas + ' measured, ' + (cells.length - meas) + ' not measured; ' + toks.length + ' numbers checked against the data'); } }
+const need = [['simulation', 'model tagged simulation'], ['not a forecast', 'no-forecast wording'], ['at this size, for this workload', 'scale qualifier'], ['7 to 15 times', 'a graph tool can also cost tokens'],
+  ['representation sense', 'which sense of temporal'], ['our own choice, no source', 'R-1 labels'], ['two limits', 'E limits'], ['real data', 'D tagged real data']];
+const low = all.toLowerCase(); need.forEach(([p, n]) => { if (!low.includes(p.toLowerCase())) problems.push('missing required wording: ' + n + ' ("' + p + '")'); });
+{ const cnt = (html.match(/class="tag (meas|ill|sim|real|out|rul)/g) || []).length; notes.push(cnt + ' tags in the static page'); }
+
+console.log(notes.join('\n'));
+console.log(problems.length ? '\nPROBLEMS (' + problems.length + '):\n' + problems.join('\n') : '\nPASSED: no problems');
+fs.mkdirSync(EVW, { recursive: true });
+fs.writeFileSync(path.join(EVW, '..', 'check-result.txt'), notes.join('\n') + '\n' + (problems.length ? 'PROBLEMS:\n' + problems.join('\n') : 'PASSED') + '\n');
+process.exitCode = problems.length ? 1 : 0;

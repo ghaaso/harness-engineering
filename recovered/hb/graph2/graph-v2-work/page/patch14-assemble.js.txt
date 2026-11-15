@@ -1,0 +1,18 @@
+// patch14: sampled edge precision of the first test's typed graph (v1-audit.md) and the label sizes the design asks for (DESIGN.md)
+const fs = require('fs');
+let s = fs.readFileSync('data/assemble.js.txt', 'utf8');
+const anchor = "source: 'graphify/AUDIT-CLAIMS.md section 6' };";
+if (!s.includes(anchor)) throw new Error('anchor');
+if (s.includes('d.v1_precision')) { console.log('already'); process.exit(0); }
+const add = anchor + `
+  { const a = flat(T.v1audit), g = flat(T.design);
+    const pr = (re, n) => { const m = must(re, a, n); return [m[1], m[2]]; };
+    d.v1_precision = { calls: pr(/the whole call kind sampled (\\d+) of (\\d+) correct/, 'calls precision'),
+      cites: pr(/cites (\\d+) of (\\d+) strict/, 'cites precision'), constrains: pr(/; constrains (\\d+) of (\\d+);/, 'constrains precision'),
+      mentions: pr(/mentions (\\d+) of (\\d+) strict/, 'mentions precision'), reads_setting: pr(/reads_setting (\\d+) of (\\d+) before the fix/, 'reads_setting precision'),
+      source: 'v1-audit.md (sampled precision of the first test\\'s typed graph)' };
+    const lb = must(/precision on (\\d+) to (\\d+) labels per link type/, g, 'label sizes');
+    d.link_labels = { min: lb[1], max: lb[2], source: 'DESIGN.md' }; }`;
+s = s.split(anchor).join(add);
+fs.writeFileSync('data/assemble.js.txt', s);
+console.log('patched assemble');

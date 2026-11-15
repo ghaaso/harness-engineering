@@ -1,0 +1,202 @@
+# FixFlow production stack for a host the owner controls (a VPS now, the home box after P13e).
+# Design: docs/program/w2/O-08-design.md sections 1-2 and its amendments (ship plan P3a);
+# operating it: docs/RUNBOOK-SELFHOST.md. The repository's docker-compose.yml is DEV ONLY.
+#
+# Always run through the wrapper `ops/selfhost/bin/ffc` (installed as /usr/local/bin/ffc). It
+# pins the project name, reads /etc/fixflow/compose.env and stamps FIXFLOW_GIT_SHA from the
+# checkout, which this file refuses to build without.
+#
+# Profiles (name every profile you want running on every `up`; profiles are not remembered):
+#   db   - postgres alone: the restore runs against this and nothing else
+#   app  - the backend, behind a restore gate (it refuses to start until the owner has signed off
+#          the restore by writing $FIXFLOW_ETC/restore-signed-off)
+#   web  - the manager SPA served by Caddy
+#   ops  - the read-only ops console (optional)
+#   edge - cloudflared, the only way in
+#
+# Rules this file enforces (each was paid for; see the runbook):
+#   * NO service publishes a port. Docker bypasses ufw for published ports, so "no ports:" is the
+#     control (O05-08, O08-F03). The only way in is the outbound-only tunnel.
+#   * postgres sits on an internal network with no route out; only the backend reaches it.
+#   * FIXFLOW_ENVIRONMENT=production and the backup prefix are set HERE, after the env file, so a
+#     stray line in backend.env cannot relax them (O08-F01, O08-F02).
+#   * The dispatcher is forced OFF here. Enabling it is an owner-approved change to this file
+#     after the last re-open (ship plan standing rule 4), never an env edit.
+#   * Backups stay OFF until the owner flips FIXFLOW_BACKUP_ENABLED in compose.env (P3c step 7).
+
+name: fixflow
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    profiles: ["db"]
+    # Debian/glibc, same major as the source dumps (a PG 17 dump into 16 is not guaranteed).
+    # Record the digest at install (runbook); never auto-update.
+    image: postgres:17-bookworm
+    command:
+      - postgres
+      - -c
+      - fsync=on
+      - -c
+      - full_page_writes=on
+      - -c
+      - synchronous_commit=on
+      - -c
+      - max_connections=60
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - archive_mode=off
+    env_file:
+      - ${FIXFLOW_ETC:-/etc/fixflow}/postgres.env
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: fixflow
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # Creates the non-superuser owner role fixflow_app on FIRST init only (an empty volume).
+      - ./ops/selfhost/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    networks: [db]
+    shm_size: 256mb
+    stop_grace_period: 60s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fixflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+
+  # One-shot check the backend waits for. It exits non-zero unless the owner has written the
+  # sign-off file after Appendix B passed (or, in recovery case c, after choosing an empty
+  # schema). Without it, a backend that boots on an empty database runs alembic, builds a schema
+  # and seeds dispatch_cursor, and the restore then collides with it (O-08 section 3).
+  # It also refuses a backend.env that names one of the backend's forced keys in any spelling but
+  # the exact NAME= one (fixflow_environment=dev, FIXFLOW_ENVIRONMENT: dev, export ..., a key that
+  # is not a plain ASCII name): Compose passes each through as its own variable and the settings
+  # loader lowercases every name, so such a line could win over the override below. The rules and
+  # why are in ops/selfhost/bin/restore-gate.sh; its fixture test is
+  # ops/selfhost/smoke/restore-gate.test.sh. It prints line numbers and key names, never a value.
+  restore-gate:
+    profiles: ["app"]
+    image: postgres:17-bookworm
+    network_mode: none
+    entrypoint: ["sh", "/restore-gate.sh"]
+    environment:
+      FIXFLOW_ETC_DISPLAY: ${FIXFLOW_ETC:-/etc/fixflow}
+      GATE_DIR: /gate
+    volumes:
+      - ${FIXFLOW_ETC:-/etc/fixflow}:/gate:ro
+      - ./ops/selfhost/bin/restore-gate.sh:/restore-gate.sh:ro
+    restart: "no"
+    logging: *logging
+
+  backend:
+    profiles: ["app"]
+    image: fixflow/backend:${FIXFLOW_GIT_SHA:?run docker compose through ops/selfhost/bin/ffc}
+    build:
+      context: ./backend
+      args:
+        FIXFLOW_GIT_SHA: ${FIXFLOW_GIT_SHA:?run docker compose through ops/selfhost/bin/ffc}
+    depends_on:
+      restore-gate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ${FIXFLOW_ETC:-/etc/fixflow}/backend.env
+    environment:
+      # After env_file on purpose: these win over anything in backend.env.
+      FIXFLOW_ENVIRONMENT: production
+      FIXFLOW_BACKUP_PREFIX: backups/db-selfhost/
+      FIXFLOW_BACKUP_ENABLED: ${FIXFLOW_BACKUP_ENABLED:-false}
+      FIXFLOW_ENABLE_DISPATCHER: "false"
+    networks: [db, app]
+    # start.sh: alembic upgrade head, then ONE uvicorn process. Never add --workers: the
+    # scheduler, the login limiter and the metrics are per process.
+    stop_grace_period: 30s
+    restart: unless-stopped
+    healthcheck:
+      # /api/ops/health, never /api/health (O08-F07: that one never touches the database). The
+      # route answers 200 even when a component is down, so this reads the database component
+      # itself. The token comes from the container's own environment ($$ = not interpolated here).
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import json,os,sys,urllib.request as u;
+          r=u.Request('http://127.0.0.1:8000/api/ops/health',
+          headers={'X-Ops-Proxy-Token': os.environ['FIXFLOW_OPS_PROXY_TOKEN']});
+          d=json.load(u.urlopen(r, timeout=8));
+          sys.exit(0 if any(c.get('name')=='database' and c.get('status')=='ok'
+          for c in d.get('components', [])) else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging: *logging
+
+  web:
+    profiles: ["web"]
+    image: fixflow/web:${FIXFLOW_GIT_SHA:?run docker compose through ops/selfhost/bin/ffc}
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # Vite bakes this into the bundle: a new domain means a rebuild.
+        VITE_API_URL: https://api.${FIXFLOW_DOMAIN:?set FIXFLOW_DOMAIN in compose.env}
+        VITE_SENTRY_DSN: ${FIXFLOW_WEB_SENTRY_DSN:-}
+    environment:
+      # Read by the Caddyfile's CSP (connect-src).
+      FIXFLOW_API_ORIGIN: https://api.${FIXFLOW_DOMAIN:?set FIXFLOW_DOMAIN in compose.env}
+    networks: [app]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+
+  ops:
+    profiles: ["ops"]
+    image: fixflow/ops:${FIXFLOW_GIT_SHA:?run docker compose through ops/selfhost/bin/ffc}
+    build:
+      context: .
+      dockerfile: Dockerfile.ops
+    env_file:
+      - ${FIXFLOW_ETC:-/etc/fixflow}/ops.env
+    environment:
+      OPS_BACKEND_URL: http://backend:8000
+      # OPS_RAILWAY_* / RAILWAY_* are deliberately absent: the Railway pages render
+      # "not configured" (O08-F09 keeps the overall status degraded until P13c).
+    networks: [app]
+    restart: unless-stopped
+    logging: *logging
+
+  edge:
+    profiles: ["edge"]
+    # Pin a released tag at install and record its digest (runbook); never :latest in production.
+    image: cloudflare/cloudflared:${FIXFLOW_CLOUDFLARED_TAG:?set FIXFLOW_CLOUDFLARED_TAG in compose.env}
+    # Locally managed tunnel: the ingress rules live in config.yml, which ends in the mandatory
+    # catch-all `service: http_status:503` (never 404: a bare 4xx is a definitive refusal to the
+    # phones). api.<domain> goes straight to backend:8000 so X-Forwarded-For stays single-hop
+    # (O08-F04). Templates: ops/selfhost/cloudflared/.
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ${FIXFLOW_ETC:-/etc/fixflow}/cloudflared:/etc/cloudflared:ro
+    networks: [app]
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  db:
+    internal: true
+  app: {}
+
+volumes:
+  pg_data: {}

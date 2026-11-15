@@ -1,0 +1,113 @@
+// Q3: needed-but-not-edited context for the 12 sampled commits, by static means over the parent's facts snapshot.
+// Read-only: git diff of parent..commit, and the frozen facts cache. No model calls.
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const CACHE = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/facts/cache/';
+const git = (a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', maxBuffer: 1 << 28 });
+const S = JSON.parse(fs.readFileSync('sample12.json', 'utf8')).sample;
+const readJsonl = (p) => fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const DEF_KINDS = new Set(['function', 'class', 'method', 'component', 'constant', 'test']);
+const CALLER_KINDS = new Set(['calls', 'renders', 'passes_callable', 'depends_injects', 'inherits', 'navigates', 'registers_screen', 'imports', 'uses_constant', 'overrides']);
+const TEST_REF_KINDS = new Set(['calls', 'renders', 'passes_callable', 'depends_injects', 'imports', 'uses_constant', 'mocks', 'overrides', 'inherits']);
+const isTestPath = (p) => !!p && (/(^|\/)(tests?|__tests__)\//.test(p) || /\.(test|spec)\.[jt]sx?$/.test(p) || /(^|\/)(test_[^/]*|conftest)\.py$/.test(p));
+
+function hunks(parent, sha) {
+  const out = git(['diff', '--no-renames', '-U0', parent, sha]);
+  const files = {}; let cur = null;
+  for (const line of out.split('\n')) {
+    if (line.startsWith('diff --git ')) { const m = line.match(/^diff --git a\/(.*) b\/(.*)$/); cur = m[1]; files[cur] = files[cur] || { ranges: [], status: 'M' }; }
+    else if (line.startsWith('new file mode')) files[cur].status = 'A';
+    else if (line.startsWith('deleted file mode')) files[cur].status = 'D';
+    else if (line.startsWith('@@')) {
+      const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+      const s = +m[1], n = m[2] === undefined ? 1 : +m[2];
+      // pure insertion after line s: touch lines s and s+1 (the code around the insertion point)
+      files[cur].ranges.push(n === 0 ? [s, s + 1, true] : [s, s + n - 1, false]);
+    }
+  }
+  return files;
+}
+const overlap = (a1, a2, b1, b2) => a1 <= b2 && b1 <= a2;
+
+const results = [];
+const kindTable = {};
+for (const c of S) {
+  const dir = CACHE + c.parent + '/';
+  const nodes = readJsonl(dir + 'nodes.jsonl');
+  const edges = readJsonl(dir + 'edges.jsonl');
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const H = hunks(c.parent, c.sha);
+  const edited = new Set(Object.keys(H));
+  // changed definitions: innermost definitions overlapping an old-side hunk
+  const changed = new Set(), sigTouched = new Set();
+  const defsByPath = {};
+  for (const n of nodes) if (DEF_KINDS.has(n.kind) && n.path && n.line_start) (defsByPath[n.path] ||= []).push(n);
+  for (const [p, f] of Object.entries(H)) {
+    if (f.status === 'A') continue;
+    const defs = defsByPath[p] || [];
+    for (const [a, b] of f.ranges) {
+      const hit = defs.filter((d) => overlap(d.line_start, d.line_end, a, b));
+      const inner = hit.filter((d) => !hit.some((o) => o !== d && o.line_start >= d.line_start && o.line_end <= d.line_end && (o.line_end - o.line_start) < (d.line_end - d.line_start)));
+      for (const d of inner) { changed.add(d.id); if (overlap(d.line_start, d.line_start, a, b)) sigTouched.add(d.id); }
+      if (f.status === 'D') for (const d of defs) changed.add(d.id), sigTouched.add(d.id);
+    }
+  }
+  const changedNonTest = [...changed].filter((id) => !byId.get(id).is_test);
+  // changed routes: route whose handler changed, or whose own line range a hunk touches
+  const changedRoutes = new Set();
+  for (const e of edges) if (e.kind === 'registers_route' && changed.has(e.dst)) changedRoutes.add(e.src);
+  for (const n of nodes) if (n.kind === 'route' && H[n.path] && H[n.path].ranges.some(([a, b]) => overlap(n.line_start, n.line_end, a, b))) changedRoutes.add(n.id);
+  const srcPath = (e) => (byId.get(e.src) || {}).path || e.evidence_path;
+  const callerFiles = new Set(), callerFilesSig = new Set(), callerNodes = new Set();
+  const testFiles = new Set(), testFilesEdited = new Set(), testRouteFiles = new Set();
+  const clientFiles = new Set(), clientFilesEdited = new Set();
+  const invTouchedStrict = new Set(), invTouchedFile = new Set();
+  const changedFiles = new Set([...changed].map((id) => byId.get(id).path));
+  for (const e of edges) {
+    const sp = srcPath(e); const sn = byId.get(e.src) || {};
+    const srcIsTest = sn.is_test || isTestPath(sp);
+    if (CALLER_KINDS.has(e.kind) && changed.has(e.dst) && !srcIsTest && sp && !edited.has(sp) && !/\.md$/.test(sp)) {
+      callerFiles.add(sp); callerNodes.add(e.src); if (sigTouched.has(e.dst)) callerFilesSig.add(sp);
+    }
+    if (TEST_REF_KINDS.has(e.kind) && srcIsTest && sp) {
+      const d = byId.get(e.dst) || {};
+      const refChanged = changed.has(e.dst) && !d.is_test;
+      const mockChangedFile = e.kind === 'mocks' && d.kind === 'file' && changedFiles.has(d.path);
+      if (refChanged || mockChangedFile) (edited.has(sp) ? testFilesEdited : testFiles).add(sp);
+    }
+    if (e.kind === 'test_calls_route' && changedRoutes.has(e.dst) && sp) { (edited.has(sp) ? testFilesEdited : testFiles).add(sp); if (!edited.has(sp)) testRouteFiles.add(sp); }
+    if (e.kind === 'calls_url' && changedRoutes.has(e.dst) && sp) (edited.has(sp) ? clientFilesEdited : clientFiles).add(sp);
+    if (e.kind === 'constrains') {
+      const d = byId.get(e.dst) || {};
+      const onLines = changed.has(e.dst) || changedRoutes.has(e.dst) || (d.path && H[d.path] && d.line_start && H[d.path].ranges.some(([a, b]) => overlap(d.line_start, d.line_end || d.line_start, a, b))) || (d.kind === 'file' && edited.has(d.path));
+      if (onLines) invTouchedStrict.add(e.src);
+      if (d.path && edited.has(d.path)) invTouchedFile.add(e.src);
+    }
+  }
+  const neededFiles = new Set([...callerFiles, ...testFiles, ...clientFiles]);
+  const strictFiles = new Set([...callerFilesSig, ...testFiles, ...clientFiles]);
+  const invNodes = nodes.filter((n) => n.kind === 'invariant').length;
+  const constrainsEdges = edges.filter((e) => e.kind === 'constrains').length;
+  const editedCode = [...edited].filter((p) => /\.(py|ts|tsx|js|jsx|mjs|cjs)$/.test(p));
+  const r = {
+    commit: c.sha, parent: c.parent, date: c.cdate, runtimes: c.runtimes, subject: c.subject,
+    edited_files: edited.size, edited_code_files: editedCode.length,
+    changed_definitions: changed.size, changed_nontest_definitions: changedNonTest.length, signature_touched_definitions: sigTouched.size, changed_routes: changedRoutes.size,
+    caller_files_not_edited: callerFiles.size, caller_files_not_edited_signature_touched: callerFilesSig.size, caller_definitions_not_edited: callerNodes.size,
+    test_files_referencing_changed_not_edited: testFiles.size, of_which_via_route: testRouteFiles.size, test_files_referencing_changed_edited: testFilesEdited.size,
+    client_call_site_files_of_changed_routes_not_edited: clientFiles.size, client_call_site_files_edited: clientFilesEdited.size,
+    claude_md_invariants_anchor_on_changed_lines: invTouchedStrict.size, claude_md_invariants_anchor_in_edited_file: invTouchedFile.size,
+    invariant_ids_strict: [...invTouchedStrict],
+    needed_not_edited_files_union: neededFiles.size, strict_items: strictFiles.size + invTouchedStrict.size, invariant_nodes_at_parent: invNodes, constrains_edges_at_parent: constrainsEdges,
+    ratio_needed_to_edited_code: editedCode.length ? +(neededFiles.size / editedCode.length).toFixed(2) : null,
+    examples: { callers: [...callerFiles].slice(0, 5), tests: [...testFiles].slice(0, 5), clients: [...clientFiles].slice(0, 5) },
+  };
+  results.push(r);
+}
+const dist = (k) => { const v = results.map((r) => r[k]).sort((a, b) => a - b); return { zero: v.filter((x) => x === 0).length, median: (v[5] + v[6]) / 2, min: v[0], max: v[11], values: v }; };
+const keys = ['changed_nontest_definitions', 'caller_files_not_edited', 'caller_files_not_edited_signature_touched', 'test_files_referencing_changed_not_edited', 'client_call_site_files_of_changed_routes_not_edited', 'claude_md_invariants_anchor_on_changed_lines', 'claude_md_invariants_anchor_in_edited_file', 'needed_not_edited_files_union', 'strict_items'];
+const summary = Object.fromEntries(keys.map((k) => [k, dist(k)]));
+fs.writeFileSync('q3_needed.json', JSON.stringify({ method: 'see notes; facts snapshot of the parent; diff -U0 parent..commit; innermost definitions overlapping old-side hunks', summary, per_commit: results }, null, 1));
+for (const r of results) console.log(r.commit.slice(0, 8), r.runtimes.join('+'), 'edCode', r.edited_code_files, 'defs', r.changed_nontest_definitions, 'callers', r.caller_files_not_edited, '(sig', r.caller_files_not_edited_signature_touched + ')', 'tests', r.test_files_referencing_changed_not_edited, '/edited', r.test_files_referencing_changed_edited, 'clients', r.client_call_site_files_of_changed_routes_not_edited, 'inv', r.claude_md_invariants_anchor_on_changed_lines, '/', r.claude_md_invariants_anchor_in_edited_file, 'union', r.needed_not_edited_files_union);
+console.log(JSON.stringify(summary));

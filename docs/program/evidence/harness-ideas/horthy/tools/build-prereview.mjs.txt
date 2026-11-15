@@ -1,0 +1,89 @@
+// Builds the pre-review list from the sweep workflow journal.
+// Usage: node build-prereview.mjs <journal.jsonl> <outdir> [jaccard=0.5] [--dry]
+// Writes: readers/<id>.json (verbatim), cards-raw.json, cards-merged.json, PRE-REVIEW-LIST.md, reader-summary.tsv
+import fs from 'node:fs';
+import path from 'node:path';
+
+const [journalPath, outDir, thrArg, dry] = process.argv.slice(2);
+const THR = Number(thrArg || 0.5);
+const lines = fs.readFileSync(journalPath, 'utf8').trim().split('\n').map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean);
+const readers = [];
+for (const e of lines) {
+  if (e.type !== 'result') continue;
+  const r = e.result || e.value || e.data;
+  if (r && r.reader_id && Array.isArray(r.cards)) readers.push(r);
+}
+readers.sort((a, b) => a.reader_id.localeCompare(b.reader_id));
+
+const STOP = new Set(('a an the of to in on for and or is are be as at by with from that this it its into not no do does than then so if your you we our their they he his him who what which when where how can could should would will may might just more most very also any all each one two some such use used using make makes made get gets like because about over out up down off only even still when while before after again there here agent agents coding code dex horthy humanlayer claude model models llm llms').split(' '));
+function stem(w) { return w.replace(/(ingly|ings|ing|edly|ed|ly|ies|es|s)$/, m => (m === 'ies' ? 'y' : '')); }
+function toks(s) { return new Set(String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).map(stem).filter(w => w.length > 2 && !STOP.has(w))); }
+function jacc(a, b) { let i = 0; for (const t of a) if (b.has(t)) i++; const u = a.size + b.size - i; return u ? i / u : 0; }
+
+const all = readers.flatMap(r => r.cards.map(c => ({ ...c, reader: r.reader_id })));
+const merged = [];
+let mergesLog = [];
+for (const c of all) {
+  const ct = toks(c.claim + ' ' + c.quote);
+  let hit = null, best = 0;
+  for (const m of merged) { const j = jacc(ct, m._t); if (j >= THR && j > best) { hit = m; best = j; } }
+  if (hit) {
+    mergesLog.push({ into: hit.id, from: c.id, j: Number(best.toFixed(2)), a: hit.claim, b: c.claim });
+    hit.also.push({ id: c.id, source_title: c.source_title, source_url: c.source_url, source_date: c.source_date, quote: c.quote, evidence_type: c.evidence_type, author: c.author, reader: c.reader, claim: c.claim });
+    if (String(c.source_date) > String(hit.source_date)) {
+      const prev = { id: hit.id, source_title: hit.source_title, source_url: hit.source_url, source_date: hit.source_date, quote: hit.quote, evidence_type: hit.evidence_type, author: hit.author, reader: hit.reader, claim: hit.claim };
+      for (const k of ['id', 'source_title', 'source_url', 'source_date', 'source_type', 'author', 'read_mode', 'quote', 'claim', 'evidence_type', 'evidence_detail', 'reader', 'in_inventory', 'inventory_ref', 'landing']) hit[k] = c[k];
+      hit.also = hit.also.filter(a => a.id !== c.id); hit.also.push(prev);
+      // union tokens so later near-duplicates of either phrasing still merge
+    }
+    for (const t of ct) hit._t.add(t);
+    for (const b of (c.bears_on || [])) if (!hit.bears_on.includes(b)) hit.bears_on.push(b);
+  } else {
+    merged.push({ ...c, _t: ct, also: [], bears_on: [...(c.bears_on || [])] });
+  }
+}
+for (const m of merged) delete m._t;
+merged.sort((a, b) => String(b.source_date).localeCompare(String(a.source_date)) || a.id.localeCompare(b.id));
+merged.forEach((m, i) => { m.card = 'C' + String(i + 1).padStart(4, '0'); });
+
+console.error(`readers=${readers.length} raw=${all.length} merged=${merged.length} (thr ${THR}); merges=${mergesLog.length}`);
+if (dry === '--dry') {
+  // show a sample of merges for eyeballing
+  const sample = mergesLog.filter((_, i) => i % Math.max(1, Math.floor(mergesLog.length / 25)) === 0).slice(0, 25);
+  for (const s of sample) console.error(`  [${s.j}] ${s.a}\n        <= ${s.b}`);
+  process.exit(0);
+}
+
+fs.mkdirSync(path.join(outDir, 'readers'), { recursive: true });
+for (const r of readers) fs.writeFileSync(path.join(outDir, 'readers', r.reader_id + '.json'), JSON.stringify(r, null, 1));
+fs.writeFileSync(path.join(outDir, 'cards-raw.json'), JSON.stringify(all, null, 1));
+fs.writeFileSync(path.join(outDir, 'cards-merged.json'), JSON.stringify(merged, null, 1));
+fs.writeFileSync(path.join(outDir, 'dedupe-merges.json'), JSON.stringify(mergesLog, null, 1));
+
+const tsv = ['reader\tcards\tsources\tread\tpartial\tsummarised\tunreadable\tnot_by_dex\tgaps\tnew_sources'];
+for (const r of readers) {
+  const st = s => r.sources.filter(x => x.status === s).length;
+  tsv.push([r.reader_id, r.cards.length, r.sources.length, st('read'), st('partial'), st('summarised'), st('unreadable'), st('not-by-dex'), r.gaps.length, r.new_sources.length].join('\t'));
+}
+fs.writeFileSync(path.join(outDir, 'reader-summary.tsv'), tsv.join('\n') + '\n');
+
+const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+const md = [];
+md.push('# Pre-review list — every idea card from the sweep, unjudged');
+md.push('');
+md.push(`Built ${new Date().toISOString().slice(0, 10)} from workflow \`wf_5b59f5db-8bc\` (40 Sonnet readers, blind to each other). ${all.length} raw cards from ${readers.length} readers, deduplicated by plain code (token Jaccard ≥ ${THR} on claim+quote, light stemming) into **${merged.length} cards**, sorted newest source first. A merged card keeps the newest source as primary and lists the others under "also in". Nothing here is scored; §2 of the main document carries the scores and dispositions. Raw per-reader outputs are in \`readers/\`; the merge log in \`dedupe-merges.json\`.`);
+md.push('');
+md.push('Columns: card · source date · source (type, author, read/summarised) · claim · quote (≤15 words) · evidence (type: detail) · bears on · reader\'s landing guess · in inventory · also in.');
+md.push('');
+for (const m of merged) {
+  md.push(`### ${m.card} · ${m.source_date} · ${esc(m.source_title)}`);
+  md.push(`- **Source:** ${m.source_type}, ${m.author}, ${m.read_mode} — <${m.source_url}>${m.in_inventory ? ' (inventory: ' + esc(m.inventory_ref) + ')' : ' (not in inventory)'}`);
+  md.push(`- **Claim:** ${esc(m.claim)}`);
+  md.push(`- **Quote:** "${esc(m.quote)}"`);
+  md.push(`- **Evidence:** ${m.evidence_type} — ${esc(m.evidence_detail)}`);
+  md.push(`- **Bears on:** ${(m.bears_on || []).join(', ') || 'none'} · **Landing guess:** ${esc(m.landing)} · **Reader:** ${m.reader} (${m.id})`);
+  if (m.also.length) md.push(`- **Also in:** ${m.also.map(a => `${esc(a.source_title)} (${a.source_date}, ${a.id})`).join('; ')}`);
+  md.push('');
+}
+fs.writeFileSync(path.join(outDir, 'PRE-REVIEW-LIST.md'), md.join('\n'));
+console.error('written to', outDir);

@@ -1,0 +1,110 @@
+// Second-build check (check-second-build.md, 2026-11-12) on cases.json. Run from this folder:
+//   node - < patch-cases-check2.js.txt
+// Uses process.cwd(), never __dirname. Safe to run more than once.
+// Applies after build-cases.js.txt, patch-cases.js.txt, trim-notes.js.txt and patch-cases-refute.js.txt.
+// 1. Splits every sentence over 20 words in the case text (must-fix 11). The facts stay the same.
+// 2. Says in plain words what job_event.seq, EXPO_PUBLIC_SENTRY_DSN and a CSRF token are, where a
+//    case names them (should-fix 14). The page's word list explains the other technical names.
+// Statuses and ks marks are not touched; the script checks that.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const FILE = path.join(process.cwd(), '..', '..', 'library-pathways', 'cases.json');
+const d = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+const marksBefore = JSON.stringify(d.cases.map(c => c.steps.map(s => [s.status, !!s.ks])));
+const problems = [];
+
+// [case, slot (a step number, or story, entry, worked), old text, new text]
+const EDITS = [
+  ['f01-C1b', 'entry', "Same as the python entry, or the memory line: python is not on PATH in Git Bash (Windows Store alias); use node for JSON.",
+    'Same as the python entry, or the memory line. Python is not on PATH in Git Bash (a Windows Store alias); use node for JSON.'],
+  ['f01-C2a', 'entry', "Bash cat heredoc fails 'unexpected EOF while looking for matching quote' at about 9,800 characters, and the file is not written.",
+    "A Bash cat heredoc fails at about 9,800 characters with 'unexpected EOF while looking for matching quote'. The file is not written."],
+  ['f01-C2b', 'story', 'Four Opus agents each wrote four slide files in one cat command of 10 to 11k characters and all failed within six seconds.',
+    'Four Opus agents each wrote four slide files in one cat command of 10 to 11k characters. All failed within six seconds.'],
+  ['f01-C6', 'story', 'Eleven days later in EMS, eight subagents were refused for report.md, while 22 other .md files and 156 .js files were written fine.',
+    'Eleven days later in EMS, eight subagents were refused for report.md. Yet 22 other .md files and 156 .js files were written fine.'],
+  ['f02-C4', 6, 'Applying A2 inverts two tests and opens 4-digit PIN brute force, finished in under an hour by a handful of IPs.',
+    'Applying A2 inverts two tests and opens 4-digit PIN brute force. A handful of IPs would finish it in under an hour.'],
+  ['f03-C2', 2, 'In the earlier knowledge-store design, a failure in the shared test run (CI) is a trigger, so a lookup runs only after one CI round.',
+    'In the earlier knowledge-store design, a failure in the shared test run (CI) is a trigger. So a lookup runs only after one CI round.'],
+  ['f03-C3', 'entry', 'Transactional outbox. job_event.seq gives a gap-free global order. dispatch_cursor holds one row per consumer. run_dispatch_once reads past last_seq and advances only past accepted events.',
+    'Transactional outbox. Each job event carries a running number (job_event.seq), so all events have one order without gaps. The table dispatch_cursor holds one row per consumer. The function run_dispatch_once reads past the last number seen and advances only past accepted events.'],
+  ['f03-C3', 6, 'The hazard exists only in the merge: an old default, a new real sender and a permanent first decision per job and kind.',
+    'The hazard exists only in the merge. It needs an old default, a new real sender, and a permanent first decision per job and kind.'],
+  ['f03-C3', 10, 'After 0046 the earlier knowledge-store design has an action handle, and diff warnings that fired on 13 of 154 past commits.',
+    'After migration 0046, the earlier knowledge-store design has an action handle. Its diff warnings fired on 13 of 154 past commits.'],
+  ['f04-C2', 'entry', "Every eas build fails schema validation: an env value is 'not allowed to be empty'. eas.json carries EXPO_PUBLIC_SENTRY_DSN as an empty string.",
+    "Every eas build fails schema validation: an env value is 'not allowed to be empty'. The file eas.json carries EXPO_PUBLIC_SENTRY_DSN, the crash-report address, as an empty string."],
+  ['f05-1', 10, 'The entry stayed true by its own test while a later fix found it was a door through screens outside its footprint.',
+    'The entry stayed true by its own test. A later fix found it was a door through screens outside its footprint.'],
+  ['f05-3', 'story', 'The related entry from a faster-check session covers a different cause, a crashed worker, and the rerun passed with no fix.',
+    'The related entry from a faster-check session covers a different cause, a crashed worker. The rerun passed with no fix.'],
+  ['f05-3', 3, 'What may matter is not in it: the watchdog reports no test id, and low memory and load show only in load samples.',
+    'What may matter is not in it. The watchdog reports no test id, and low memory and load show only in load samples.'],
+  ['f05-4', 'story', 'Attack tests fail by chance because a number helper reads ids, a CSRF token and random hex tags as money figures.',
+    'Attack tests fail by chance. A number helper reads ids, a CSRF token (a random form value) and random hex tags as money figures.'],
+  ['f05-4', 'entry', 'S09/S07 attack tests fail by chance: a difference of two numbers on a page equals a hidden amount. numbers() reads ids, CSRF token and random hex tags as figures.',
+    'Attack tests S09 and S07 fail by chance when two numbers on a page differ by a hidden amount. The helper numbers() reads ids, the CSRF token and random hex tags as figures.'],
+  ['f05-6', 'entry', "The serial race pass fails with 'No buffer space available (10055)' on loopback connect. connect_retry retries psycopg.connect up to 6 times for that message only.",
+    "The serial race pass fails on loopback connect with 'No buffer space available (10055)'. The helper connect_retry retries psycopg.connect up to 6 times, for that message only."],
+  ['f06-C1b', 9, 'The entry is stored with test ids on pure modules, the old entry superseded and the stable-id race as an open item.',
+    'The entry is stored with test ids on pure modules. The old entry is superseded, and the stable-id race is an open item.'],
+  ['f06-C4', 'entry', '5 failures lock 30 s, doubling to 15 min, self-healing, since one manager account makes a hard lock a DoS gift.',
+    'Five failures lock the account for 30 s, doubling up to 15 min, and the lock heals itself. There is one manager account, so a hard lock would let anyone shut it out.'],
+  ['f07-2', 7, 'The standard it failed, build the strongest form and compare like with like, lived with the owner and in no check.',
+    'The standard it failed was to build the strongest form and compare like with like. That standard lived with the owner and in no check.'],
+  ['f07-3', 4, 'If the v6 entry was stored and the later fix was not recorded as a supersession, the lookup returns v6 marked checked.',
+    'Suppose the v6 entry was stored and the later fix was not recorded as replacing it. Then the lookup returns v6, marked checked.'],
+  ['f07-5', 4, 'It returns a plan for code that did not exist yet: the right topic and the wrong answer for a PIN roster.',
+    'It returns a plan for code that did not exist yet. That is the right topic and the wrong answer for a PIN roster.'],
+  ['f07-6', 6, 'The review priced the idea in its narrowest form, the very mistake the lesson names, 2.5 hours after it was written.',
+    'The review priced the idea in its narrowest form. That is the very mistake the lesson names, made 2.5 hours after it was written.'],
+  ['f08-1', 'worked', 'The memory index pushed the fix to sibling sessions, and one later session used the flag on its first clone with zero failures.',
+    'The memory index pushed the fix to sibling sessions. One later session used the flag on its first clone, with zero failures.'],
+  ['f08-3', 'entry', "The built-in Explore subagent runs on the session's model, so from a Fable session a 'where is X?' search runs on Fable.",
+    "The built-in Explore subagent runs on the session's model. So from a Fable session, a 'where is X?' search runs on Fable."],
+  ['f08-4', 1, 'A Fable 5.2 session with about 380k cached tokens held the library import list and its own 230 s Linux line.',
+    'A Fable 5.2 session held about 380k cached tokens. They included the library import list and its own 230 s Linux line.'],
+  ['f08-5', 'entry', "A long Bash heredoc from a subagent failed: ENAMETOOLONG name too long, and in another agent 'unexpected EOF while looking for matching'.",
+    "A long Bash heredoc from a subagent failed with ENAMETOOLONG, name too long. In another agent it failed with 'unexpected EOF while looking for matching'."],
+  ['f08-5', 1, 'A Fable 5.2 main session had the 8 KB rule in its index, its compaction summary and its own subagent briefs.',
+    'A Fable 5.2 main session had the 8 KB rule in its index. It was also in its compaction summary and its own subagent briefs.'],
+  ['f09-1', 4, 'Later failures share the claim, not the cause: counter row, helper after deferred checks, trigger lock, earlier variant, no single lock.',
+    'Later failures share the claim, not the cause. Their causes differ: a counter row, a helper after deferred checks, a trigger lock. Others were an earlier variant and no single lock.'],
+  ['f09-3', 1, "On 11 Nov the Fable root had 'subagents cannot write files' as an explicit question and had read the memory note.",
+    "On 11 Nov the Fable root had 'subagents cannot write files' as an explicit question. It had also read the memory note."],
+  ['f10-1a', 'entry', 'Cause: expo install added the Sentry config plugin to app.json, wiring a Gradle step that needs an auth token, org and project.',
+    'Cause: expo install added the Sentry config plugin to app.json. That wired in a Gradle step needing an auth token, org and project.'],
+  ['f10-2', 'entry', 'Scheduler: weekly payroll export, nightly backup, daily auto-link scan, daily media-orphan sweep, a 300 s metric rollup, and the dispatcher (default OFF).',
+    'Scheduler jobs: weekly payroll export, nightly backup, daily auto-link scan and daily media-orphan sweep. Also a 300 s metric rollup, and the dispatcher (default OFF).'],
+  ['f10-5', 9, "Three projects, three writers, three scopes: 'no uv' before uv arrived, 'not on PATH, use node', and 'no Python on the machine', false when written.",
+    "Three projects, three writers, three scopes. They wrote 'no uv' before uv arrived, 'not on PATH, use node', and 'no Python on the machine'. The last was false when written."]
+];
+
+let applied = 0;
+EDITS.forEach(([cid, slot, oldT, newT]) => {
+  const c = d.cases.find(x => x.id === cid);
+  if (!c) { problems.push('no case ' + cid); return; }
+  const o = typeof slot === 'number' ? c.steps[slot - 1] : c;
+  const k = typeof slot === 'number' ? 'note' : slot;
+  if (o[k].includes(oldT)) { o[k] = o[k].split(oldT).join(newT); applied++; }
+  else if (!o[k].includes(newT)) problems.push('text not found in ' + cid + ' ' + slot + ': ' + oldT.slice(0, 60));
+});
+
+// The walks wrote three dates as "2026-11-0x". An earlier pass changed them to plain words in
+// cases.json by hand; this keeps that change reproducible from the walk files.
+d.cases.forEach(c => { if (/2026-11-0x/.test(c.when || '')) { c.when = c.when.replace(/2026-11-0x/g, 'early November 2026'); applied++; } });
+
+// every sentence in the case text at most 20 words (the build's own splitter and count)
+const sentenceOf = s => s.replace(/<[^>]*>/g, ' ').replace(/\{\{[^}]+\}\}/g, 'X').replace(/&[a-z]+;/g, ' ');
+const sentences = s => sentenceOf(s).split(/(?<=[.!?])\s+(?=[A-Z'‘“(0-9X])/).map(x => x.trim()).filter(Boolean);
+const wc = s => s.split(/\s+/).filter(t => /[A-Za-z0-9]/.test(t)).length;
+d.cases.forEach(c => {
+  const texts = ['title', 'story', 'entry', 'worked'].map(k => [k, c[k] || '']).concat(c.steps.map(s => ['step ' + s.step, s.note]));
+  texts.forEach(([k, t]) => sentences(t).forEach(x => { if (wc(x) > 20) problems.push(c.id + ' ' + k + ' (' + wc(x) + '): ' + x.slice(0, 80)); }));
+});
+if (JSON.stringify(d.cases.map(c => c.steps.map(s => [s.status, !!s.ks]))) !== marksBefore) problems.push('a status or a ks mark changed');
+if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
+fs.writeFileSync(FILE, JSON.stringify(d, null, 1));
+console.log('cases.json: ' + applied + ' sentences rewritten this run, ' + EDITS.length + ' in all; no sentence over 20 words; statuses and ks marks unchanged');

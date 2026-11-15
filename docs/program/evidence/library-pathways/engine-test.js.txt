@@ -1,0 +1,1506 @@
+// Tests for the pathway engine, map revision 4 (model-brief.md sections 12, 13 and 14).
+// Run from this folder:  node - < engine-test.js.txt
+// Uses process.cwd(), never __dirname, because the script arrives on stdin.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const real = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const lims = JSON.parse(fs.readFileSync(path.join(dir, 'limitations.json'), 'utf8'));
+// The version-1 map, kept as it was before revision 2, for the "previous behaviour" checks.
+const mapV1 = JSON.parse(fs.readFileSync(path.join(here, 'map-v1.json'), 'utf8'));
+// The revision-2 map, table and engine, frozen before revision 3, for the draw-for-draw checks.
+const mapV2 = JSON.parse(fs.readFileSync(path.join(here, 'map-v2.json'), 'utf8'));
+const E2 = require(path.join(here, 'engine-v2.js.txt'));
+// The revision-3 map, table, limitations and engine, frozen before revision 4, for the regression checks.
+const map3 = JSON.parse(fs.readFileSync(path.join(here, 'map-v3.json'), 'utf8'));
+const t3 = JSON.parse(fs.readFileSync(path.join(here, 'params-v3.json'), 'utf8'));
+const lims3 = JSON.parse(fs.readFileSync(path.join(here, 'limitations-v3.json'), 'utf8'));
+const E3 = require(path.join(here, 'engine-v3.js.txt'));
+// The placeholder table predates revisions 3 and 4. In memory only, it gets the new rows (retire_bad,
+// a placeholder range; the three R21 unknowns copied from params.json, with p_promote pinned at 0, so the
+// placeholder checks run with promoted checks off) and the side, good end and group of every row.
+const table = JSON.parse(fs.readFileSync(path.join(here, 'params-placeholder.json'), 'utf8'));
+const realRows = E.tableRows(real);
+table.parameters.retire_bad = { best: 0.1, low: 0, high: 0.5, tag: 'G', source: 'placeholder, added in memory by engine-test.js.txt' };
+['k_promo_exact', 'k_promo_similar'].forEach(id => { table.parameters[id] = { best: realRows[id].best, low: realRows[id].low, high: realRows[id].high, tag: 'G', source: 'copied in memory from params.json' }; });
+table.parameters.p_promote = { best: 0, low: 0, high: 0, tag: 'G', source: 'pinned at 0 in memory by engine-test.js.txt' };
+Object.keys(table.parameters).forEach(id => {
+  table.parameters[id].side = realRows[id].side;
+  if (realRows[id].good_end) table.parameters[id].good_end = realRows[id].good_end;
+  if (realRows[id].lib_group) table.parameters[id].lib_group = realRows[id].lib_group;
+});
+const best = E.paramsFromTable(table, 'best');
+const realBest = E.paramsFromTable(real, 'best');
+
+let run = 0, passed = 0;
+const failures = [];
+function test(name, fn) {
+  run++;
+  try { fn(); passed++; console.log('ok   ' + name); }
+  catch (e) { failures.push(name); console.log('FAIL ' + name + '\n     ' + (e && e.message)); }
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
+function near(a, b, dp, msg) {
+  const tol = 0.5 * Math.pow(10, -dp);
+  if (!(Math.abs(a - b) <= tol)) throw new Error((msg || 'values differ') + ': got ' + a + ', expected ' + b);
+}
+function withP(over) { return Object.assign({}, best, over); }
+function sum(o) { return Object.values(o).reduce((a, b) => a + b, 0); }
+const NEW_IDS = ['s_exact', 's_similar', 's_comp', 's_part', 'ok_coverage_factor', 'fix_on_found'];
+const S_IDS = ['s_exact', 's_similar', 's_comp', 's_part'];
+const LIB_IDS = map.parameters.map(p => p.id).filter(id => realRows[id].side === 'library');
+const R21_IDS = ['p_promote', 'k_promo_exact', 'k_promo_similar'];
+const GROUPS = map.lib_groups.map(g => g.id);
+// the real table with p_promote pinned at 0 (promoted checks off)
+const pinned = JSON.parse(JSON.stringify(real));
+pinned.parameters.forEach(r => { if (r.id === 'p_promote') { r.low = 0; r.best = 0; r.high = 0; } });
+const pinnedBest = E.paramsFromTable(pinned, 'best');
+// one level per group, all from one random stream
+function levelsFrom(random) { const o = {}; GROUPS.forEach(g => { o[g] = random(); }); return o; }
+// the value at the good or the poor end of a library-side row
+const goodEnd = r => r.good_end === 'high' ? r.high : r.low;
+const poorEnd = r => r.good_end === 'high' ? r.low : r.high;
+// A version-2 parameter set read by the version-1 map: drop the new ids, add z_wrongstore.
+function toV1(p, z) {
+  const q = Object.assign({}, p);
+  NEW_IDS.forEach(id => delete q[id]);
+  q.z_wrongstore = z === undefined ? 0.3 : z;
+  return q;
+}
+function randomStocks(random) { return { E_good: random() * 2000, E_bad: random() * 800 }; }
+// Settings under which no bad entry can ever enter the stock: every written entry is good, nothing
+// goes stale, every gate catches (so nothing escapes). Revision 3 then cannot act through the stocks.
+const NO_BAD = { e_right: 1, delta_stale: 0, g_tests_visible: 1, g_tests_latent: 1, retire_bad: 0 };
+function withStocks(m, s) { const c = JSON.parse(JSON.stringify(m)); c.stocks.initial = Object.assign({}, s); return c; }
+function funnelStages(row, fid) {
+  const f = map.funnels.find(x => x.id === fid);
+  return f.stages.map(id => row.library.measures[id]);
+}
+
+// ----------------------------------------------------------------- the map itself
+
+test('map compiles and passes its own checks (labels, meanings, every parameter used, pure costs never reach a chance, all states reachable)', () => {
+  const r = E.checkMap(map);
+  assert(r.ok, r.problems.join('; '));
+  assert(map.version === 4, 'map version');
+});
+
+test('every branch carries an empty limitation list for now', () => {
+  map.branches.forEach(b => assert(Array.isArray(b.limitations) && b.limitations.length === 0, b.id));
+});
+
+test('placeholder table is marked as placeholder and covers every revision-2 parameter with low <= best <= high', () => {
+  const raw = JSON.parse(fs.readFileSync(path.join(here, 'params-placeholder.json'), 'utf8'));
+  assert(raw.PLACEHOLDER === true, 'not marked');
+  map.parameters.filter(p => p.id !== 'retire_bad' && !R21_IDS.includes(p.id)).forEach(p => {
+    const r = raw.parameters[p.id];
+    assert(r, 'missing ' + p.id);
+    assert(r.low <= r.best && r.best <= r.high, 'range out of order for ' + p.id);
+    assert(['M', 'S', 'G'].includes(r.tag), 'bad tag for ' + p.id);
+  });
+  assert(Object.keys(raw.parameters).length === map.parameters.length - 1 - R21_IDS.length, 'placeholder rows');
+});
+
+// ----------------------------------------------------------------- expression whitelist
+
+test('expressions are evaluated against a whitelist only', () => {
+  const ok = E.compileExpr('1 - exp(-a / b) + safediv(a, 0)', new Set(['a', 'b']));
+  near(ok.fn({ a: 2, b: 2 }), 1 - Math.exp(-1), 9, 'parser arithmetic');
+  const bad = ['constructor', 'a.b', 'a[0]', '"x"', 'process', 'alert(1)', 'a; b', 'a ** b', 'this'];
+  bad.forEach(src => {
+    let threw = false;
+    try { E.compileExpr(src, new Set(['a', 'b'])); } catch (e) { threw = true; }
+    assert(threw, 'accepted: ' + src);
+  });
+  near(E.compileExpr('-2 * 3 + 4 / (1 + 1)', new Set()).fn({}), -4, 12, 'precedence');
+});
+
+// ----------------------------------------------------------------- conservation under 1,000 draws
+
+test('conservation over 1,000 draws (untied and tied): branch chances out of every state lie in 0 to 1 and sum to 1, outcomes sum to 1 for every class and policy, class chances sum to 1; stocks never go negative; funnel stages never rise', () => {
+  const random = E.rng(20261112);
+  const shared = E.rng(77);
+  let worst = 0, checks = 0, pathsChecked = 0;
+  const wide = JSON.parse(JSON.stringify(table));
+  // last part: every chance and fraction drawn across the whole of 0 to 1 (retire_bad included)
+  map.parameters.forEach(p => { if (p.kind === 'chance' || p.kind === 'fraction') { wide.parameters[p.id].low = 0; wide.parameters[p.id].high = 1; } });
+  for (let i = 0; i < 1000; i++) {
+    const tb = i < 350 ? table : i < 700 ? real : wide;
+    const tie = [0, 0.5, 1][i % 3];
+    const p = E.drawParams(map, tb, random, { tie, levels: levelsFrom(shared) });
+    const stocks = randomStocks(random);
+    if (i % 50 === 0) { stocks.E_good = 0; stocks.E_bad = 0; }
+    if (i % 50 === 25) { stocks.E_good = 0; }
+    const r = E.conservation(map, p, { stocks });
+    assert(r.ok, 'draw ' + i + ': ' + r.problems.slice(0, 3).join('; '));
+    worst = Math.max(worst, r.maxError);
+    checks += r.checks;
+    if (i % 10 === 0) {
+      const tp = E.timePath(map, p, { lean: true });
+      tp.periods.forEach(row => {
+        assert(row.stocks.E_good >= -1e-9 && row.stocks.E_bad >= -1e-9, 'draw ' + i + ' period ' + row.period + ': a stock went negative');
+        map.funnels.forEach(f => {
+          const v = f.monotone || f.stages;
+          for (let k = 1; k < v.length; k++) assert(row.library.measures[v[k]] <= row.library.measures[v[k - 1]] + 1e-9, 'draw ' + i + ': funnel ' + f.id + ' rose at ' + v[k]);
+        });
+      });
+      assert(tp.finalStocks.E_good >= -1e-9 && tp.finalStocks.E_bad >= -1e-9, 'draw ' + i + ': final stock negative');
+      pathsChecked++;
+    }
+  }
+  console.log('     ' + checks + ' sums checked over 1000 draws, largest error ' + worst.toExponential(2) + '; ' + pathsChecked + ' time paths checked for negative stocks and rising funnels');
+});
+
+// ----------------------------------------------------------------- hand-worked cases
+//
+// Shared numbers for cases 1 to 3 (everything else at the placeholder best values,
+// which these cases never reach):
+//   o_opus 0.7, o_fable 0.6, g_tests_visible 0.5, g_tests_latent 0.5, s_review 0.4,
+//   g_review 0.5, c_review 0.5, m_opus 5, n_opus 2, m_fable 10, n_fable 1,
+//   l_found 0.5, R_rework 2, n_cheap 1, rho_retry 0.25, c_handoff 0.5.
+//   (m_opus 5 lies outside the revision-3 range of 1 to 2. A hand case may use any value
+//   the parameter's kind allows; ranges bind only the draws.)
+//   Gate catch chance g = 1 - (1 - 0.5)(1 - 0.4 * 0.5) = 1 - 0.5 * 0.8 = 0.6.
+//   Review cost per gate pass = 0.4 * 0.5 * 5 = 1.0 (Opus tier), review calls 0.2.
+//   Opus attempt 2 * 5 = 10. Fable attempt 1 * 10 = 10. Rework of a found escape 2 * 5 = 10.
+// Revision 3 changes the stocks (fill, retiring) and the draws, not what happens inside a class
+// at given stocks, so cases 1 to 3 keep their revision-2 values. Cases 4 and 5 are new.
+const H = {
+  o_opus: 0.7, o_fable: 0.6, g_tests_visible: 0.5, g_tests_latent: 0.5, s_review: 0.4,
+  g_review: 0.5, c_review: 0.5, m_opus: 5, n_opus: 2, m_fable: 10, n_fable: 1,
+  l_found: 0.5, R_rework: 2, n_cheap: 1, rho_retry: 0.25, c_handoff: 0.5
+};
+
+// Case 1. top_first, a visible piece of work the cheap model would get wrong.
+//   Opus right 0.7 -> passes -> EQUAL.
+//   Opus wrong 0.3 -> caught 0.6 (0.18) -> Fable; slips 0.4 (0.12) -> escaped.
+//   Fable right 0.6 -> EQUAL (0.108). Fable wrong 0.4 (0.072) -> caught 0.6 -> UNRESOLVED (0.0432);
+//   slips 0.4 -> escaped (0.0288).
+//   EQUAL = 0.7 + 0.108 = 0.808. UNRESOLVED = 0.0432. Escaped = 0.12 + 0.0288 = 0.1488,
+//   half found: ESCAPED_FOUND = ESCAPED_SILENT = 0.0744.
+//   Cost: Opus attempt 10 + Opus gate review 1 + Fable 0.18 * 10 = 1.8 + Fable gate review 0.18 * 1
+//   + rework 0.0744 * 10 = 0.744.  Total 13.724.
+//   By tier: cheap 0; Opus 10 + 1 + 0.18 + 0.744 = 11.924; Fable 1.8.
+//   Calls: Opus 2 + 0.2 + 0.18 * 0.2 + 0.0744 * 2 = 2.3848; Fable 0.18. Total 2.5648.
+test('hand case 1: top_first, visible, cheap model alone wrong', () => {
+  const r = E.evaluateClass(map, withP(H), 'top_first', { kind: 'visible', need: 'cheap_wrong' });
+  near(r.outcomes.EQUAL, 0.808, 6, 'EQUAL');
+  near(r.outcomes.UNRESOLVED, 0.0432, 6, 'UNRESOLVED');
+  near(r.outcomes.ESCAPED_FOUND, 0.0744, 6, 'ESCAPED_FOUND');
+  near(r.outcomes.ESCAPED_SILENT, 0.0744, 6, 'ESCAPED_SILENT');
+  near(r.cost, 13.724, 6, 'cost');
+  near(r.costByTier.cheap, 0, 6, 'cheap cost');
+  near(r.costByTier.opus, 11.924, 6, 'opus cost');
+  near(r.costByTier.fable, 1.8, 6, 'fable cost');
+  near(r.callsByTier.opus, 2.3848, 6, 'opus calls');
+  near(r.callsByTier.fable, 0.18, 6, 'fable calls');
+  near(r.calls, 2.5648, 6, 'calls');
+});
+
+// Case 2. cheap_ladder, the same class. Revision 2, R5: the wrong retry goes through the same gate.
+//   Cheap attempt is wrong with chance 1 (cost 1). Gate review 1.
+//   Slips 0.4 -> escaped (found 0.2, rework 0.2 * 10 = 2.0).
+//   Caught 0.6 -> retry (cost 1 each, 0.6). Retry right 0.25 (0.15) -> gate review -> EQUAL.
+//   Retry wrong 0.75 (0.45) -> gate review. Gate reviews on the retry: 0.6 * 1 = 0.6.
+//     Caught 0.6 (0.27) -> handoff 0.27 * 0.5 = 0.135 -> Opus, then case 1 from there: 0.27 * 13.724 = 3.70548.
+//     Slips 0.4 (0.18) -> escaped, a cheap-tier escape: found 0.09, rework 0.9.
+//   EQUAL = 0.15 + 0.27 * 0.808 = 0.36816. UNRESOLVED = 0.27 * 0.0432 = 0.011664.
+//   Escaped = 0.4 + 0.18 + 0.27 * 0.1488 = 0.620176; found = silent = 0.310088.
+//   Cost = 1 + 1 + 2.0 + 0.6 + 0.6 + 0.135 + 3.70548 + 0.9 = 9.94048.
+//   Tier cheap = 1 + 0.6 + 0.135 = 1.735; Opus = 1 + 2.0 + 0.6 + 0.9 + 0.27 * 11.924 = 7.71948;
+//   Fable = 0.27 * 1.8 = 0.486.
+test('hand case 2: cheap_ladder, visible, cheap model alone wrong (the retry goes through the same gate)', () => {
+  const r = E.evaluateClass(map, withP(H), 'cheap_ladder', { kind: 'visible', need: 'cheap_wrong' });
+  near(r.outcomes.EQUAL, 0.36816, 6, 'EQUAL');
+  near(r.outcomes.UNRESOLVED, 0.011664, 6, 'UNRESOLVED');
+  near(r.outcomes.ESCAPED_FOUND, 0.310088, 6, 'ESCAPED_FOUND');
+  near(r.outcomes.ESCAPED_SILENT, 0.310088, 6, 'ESCAPED_SILENT');
+  near(r.cost, 9.94048, 6, 'cost');
+  near(r.costByTier.cheap, 1.735, 6, 'cheap cost');
+  near(r.costByTier.opus, 7.71948, 6, 'opus cost');
+  near(r.costByTier.fable, 0.486, 6, 'fable cost');
+  near(r.branchFlow.l7_escaped, 0.18, 9, 'wrong retries that escape');
+});
+
+// Case 3. library, a latent piece of work the cheap model would get wrong, the exact problem held,
+// a look-alike retrievable, stocks E_good 4 and E_bad 1 (so the share of bad entries is 0.2).
+//   Extra numbers: t_latent 0.5, f_false 0.2, r_exact 0.8, c_check_share 0.5, a_right 0.8,
+//   a_wrong 0.5, d_deliver 0.9, q_exact 0.6, c_lookup 0.1, c_screen 0.2, c_carry 0.3,
+//   w_write 0.5, e_right 0.8, c_write 0.4, s_exact 0.5 (R1), fix_on_found 0.5 (R4).
+//   Lookup 0.5 (cost 0.05, and 0.05 calls under R8). In the lookup: look-alike 0.2;
+//   exact good 0.8 * 0.8 * 0.8 = 0.512; exact bad 0.8 * 0.8 * 0.2 = 0.128; nothing 0.8 * 0.2 = 0.16.
+//   Screen a good exact entry: 0.256. Screen a wrong one: 0.5 * (0.2 + 0.128) = 0.164.
+//   Good: accepted 0.5 + 0.5 * 0.8 = 0.9 -> deliver 0.2304; screen cost 0.256 * 0.5 * 0.2 = 0.0256.
+//   Wrong: accepted 0.5 * 0.5 = 0.25 -> deliver 0.041; screen cost 0.164 * 0.5 * 0.2 = 0.0164.
+//   Delivered: good 0.20736, wrong 0.0369; carry cost 0.24426 * 0.3 = 0.073278. No entry: 0.75574.
+//   Cheap attempt (R1): no entry 0.75574 * 1 + wrong entry 0.0369 * 1 + good exact 0.20736 * (1 - 0.5)
+//   = 0.89632, cost and calls.
+//   Cheap right only with the good exact entry: 0.20736 * 0.6 = 0.124416. Wrong W = 0.875584.
+//   From a wrong cheap output, per unit of W, the rest is case 2 after its cheap attempt
+//   (9.94048 - 1 = 8.94048), plus writes:
+//     right strong solves: Opus 0.27 * 0.7 = 0.189, Fable 0.27 * 0.3 * 0.6 * 0.6 = 0.02916 (sum 0.21816);
+//     write cost per solve w_write * c_write * price: Opus 0.5 * 0.4 * 5 = 1.0, Fable 2.0 -> 0.24732.
+//     strong escapes (R3): Opus 0.27 * 0.3 * 0.4 = 0.0324, Fable 0.27 * 0.3 * 0.6 * 0.4 * 0.4 = 0.007776
+//     (sum 0.040176); each writes a bad entry with chance 0.5 at the same price -> 0.0324 + 0.015552 = 0.047952.
+//     Per unit of W: 8.94048 + 0.24732 + 0.047952 = 9.235752.
+//   EQUAL = 0.124416 + W * 0.36816 = 0.44677100544.
+//   UNRESOLVED = W * 0.011664 = 0.010212811776.
+//   ESCAPED_FOUND = ESCAPED_SILENT = W * 0.310088 = 0.271508091392.
+//   Cost = 0.05 + 0.042 + 0.073278 + 0.89632 + 0.124416 (review of right outputs) + W * 9.235752 = 9.272690679168.
+//   Cheap cost = 0.05 + 0.042 + 0.073278 + 0.89632 + W * (0.6 retry + 0.135 handoff) = 1.70515224.
+//   Cheap calls = 0.05 + 0.89632 + W * 0.6 = 1.4716704.
+//   Measures: right strong solves W * 0.21816 = 0.19101740544; strong escapes W * 0.040176 = 0.035177462784;
+//   good writes W * 0.21816 * 0.4 = 0.076406962176; bad writes after a right solve W * 0.21816 * 0.1
+//   = 0.019101740544; bad writes after an escape W * 0.040176 * 0.5 = 0.017588731392;
+//   repairs W * 0.040176 * 0.5 * 0.5 (found) * 0.5 (fixed) = 0.004397182848.
+//   Funnel of this one class (revision 3, per 100 of this class since it is cheap_wrong and held):
+//   held 100, looked up 50, right entry back (exact good + exact bad) 100 * 0.5 * 0.64 = 32,
+//   good 25.6, screened 23.04, in the window 20.736, cheap attempt right 12.4416.
+test('hand case 3: library, latent, cheap alone wrong, exact held, look-alike retrievable (and its funnel)', () => {
+  const p = withP(Object.assign({}, H, {
+    t_latent: 0.5, f_false: 0.2, r_exact: 0.8, c_check_share: 0.5, a_right: 0.8, a_wrong: 0.5,
+    d_deliver: 0.9, q_exact: 0.6, c_lookup: 0.1, c_screen: 0.2, c_carry: 0.3,
+    w_write: 0.5, e_right: 0.8, c_write: 0.4, s_exact: 0.5, fix_on_found: 0.5
+  }));
+  const r = E.evaluateClass(map, p, 'library',
+    { kind: 'latent', need: 'cheap_wrong', held: 'exact', distractor: 'yes' }, { E_good: 4, E_bad: 1 });
+  near(r.outcomes.EQUAL, 0.44677100544, 6, 'EQUAL');
+  near(r.outcomes.UNRESOLVED, 0.010212811776, 6, 'UNRESOLVED');
+  near(r.outcomes.ESCAPED_FOUND, 0.271508091392, 6, 'ESCAPED_FOUND');
+  near(r.outcomes.ESCAPED_SILENT, 0.271508091392, 6, 'ESCAPED_SILENT');
+  near(r.cost, 9.272690679168, 6, 'cost');
+  near(r.costByTier.cheap, 1.70515224, 6, 'cheap cost');
+  near(r.callsByTier.cheap, 1.4716704, 6, 'cheap calls');
+  near(r.measures.P_strong_right, 0.19101740544, 6, 'right strong-tier solves');
+  near(r.measures.P_strong_escaped, 0.035177462784, 6, 'strong-tier escapes');
+  near(r.measures.W_good, 0.076406962176, 9, 'good writes');
+  near(r.measures.W_bad_right, 0.019101740544, 9, 'bad writes after a right solve');
+  near(r.measures.W_bad_escape, 0.017588731392, 9, 'bad writes after an escape');
+  near(r.measures.W_repair, 0.004397182848, 9, 'repairs');
+  near(r.stateFlow.L5_exact, 0.20736, 6, 'good exact entry delivered');
+  near(r.stateFlow.L5_wrong, 0.0369, 6, 'wrong entry delivered');
+  const fw = ['fw_held', 'fw_looked_up', 'fw_right_back', 'fw_good', 'fw_screened', 'fw_in_window', 'fw_right'].map(id => r.measures[id]);
+  [100, 50, 32, 25.6, 23.04, 20.736, 12.4416].forEach((v, k) => near(fw[k], v, 9, 'funnel stage ' + (k + 1)));
+});
+
+// Case 4 (revision 3, R11 and R12). Stocks start at E_good 30 and E_bad 10 (a copy of the map with
+// those starting stocks). k_fill 40, delta_stale 0.1, retire_bad 0.2, w_write 0 (nothing is written).
+//   fill = 1 - exp(-(30 + 10) / 40) = 1 - exp(-1) = 0.632120558828558. (Revision 2: 1 - exp(-0.75).)
+//   wrong_share = 10 / 40 = 0.25.
+//   Next good = 30 - 0.1 * 30 = 27. Next bad = 10 - 0.2 * 10 + 0.1 * 30 = 11.
+//   One period later: good 27 - 2.7 = 24.3; bad 11 - 2.2 + 2.7 = 11.5.
+//   With retire_bad 1 instead: next bad = 10 - 10 + 3 = 3; then 3 - 3 + 2.7 = 2.7.
+test('hand case 4: fill counts both stocks, and a share retire_bad of the bad stock leaves each period', () => {
+  const m = withStocks(map, { E_good: 30, E_bad: 10 });
+  const p = withP({ k_fill: 40, delta_stale: 0.1, retire_bad: 0.2, w_write: 0, periods: 3 });
+  const tp = E.timePath(m, p);
+  near(tp.periods[0].stockValues.fill, 1 - Math.exp(-1), 12, 'fill');
+  near(tp.periods[0].stockValues.wrong_share, 0.25, 12, 'bad share');
+  near(tp.periods[0].next.E_good, 27, 12, 'good after one period');
+  near(tp.periods[0].next.E_bad, 11, 12, 'bad after one period');
+  near(tp.periods[1].next.E_good, 24.3, 12, 'good after two periods');
+  near(tp.periods[1].next.E_bad, 11.5, 12, 'bad after two periods');
+  const tp1 = E.timePath(m, Object.assign({}, p, { retire_bad: 1 }));
+  near(tp1.periods[0].next.E_bad, 3, 12, 'all bad retired, then the new stale ones');
+  near(tp1.periods[1].next.E_bad, 2.7, 12, 'all bad retired again');
+});
+
+// Case 5 (revision 3, R16): the funnel by hand. Only visible work (p_visible 1), half of it
+// cheap_wrong (need_visible 0.5). Stocks E_good 90, E_bad 10, k_fill 1e-6 so fill is 1;
+// wrong_share 0.1. v_max 0, so no look-alike. Ceilings 0.2 / 0.3 / 0.1, ok_coverage_factor 0.5.
+// t_visible 0.5, r_exact 0.8, r_similar 0.5, r_comp_full 0.25, r_comp_part 0.5.
+// c_check_share 0.5 and a_right 0.8, so a good entry passes the screen with 0.9. d_deliver 0.9.
+// q 0.6 / 0.4 / 0.2 / 0.1, n_cheap 10, s 0.5 / 0.3 / 0.2 / 0.1.
+//   Work the cheap model would get wrong (coverage factor 1), per 100 such pieces:
+//   (a) held 0.2 + 0.3 + 0.1 = 0.6 -> 60. (b) looked up 0.3 -> 30.
+//   (c) right entry back: exact 0.2 * 0.5 * 0.8 = 0.08; similar 0.3 * 0.5 * 0.5 = 0.075;
+//       composite 0.1 * 0.5 * 0.75 = 0.0375 (full 0.0125, part 0.025). Sum 0.1925 -> 19.25.
+//   (d) good 0.9 of it -> 17.325. (e) screened, 0.9 -> 15.5925. (f) in the window, 0.9 -> 14.03325.
+//   (g) right: 0.729 * (0.08 * 0.6 + 0.075 * 0.4 + 0.0125 * 0.2 + 0.025 * 0.1) = 0.060507 -> 6.0507.
+//   All work, per 100 pieces: cheap_ok half has coverage 0.5.
+//   (a) 0.5 * 0.6 + 0.5 * 0.3 = 0.45 -> 45. (b) 22.5. (c) 0.5 * 0.1925 * 1.5 = 0.144375 -> 14.4375.
+//   (d) 12.99375. (e) 11.694375. (f) 10.5249375.
+//   (g) calls saved = 0.729 * 10 * (exact 0.15 * 0.5 * 0.8 * 0.5 + similar 0.225 * 0.5 * 0.5 * 0.3
+//       + full 0.075 * 0.5 * 0.25 * 0.2 + part 0.075 * 0.5 * 0.5 * 0.1) = 0.36905625 -> 36.905625 per 100.
+test('hand case 5: the funnel for work the cheap model gets wrong, and for all work', () => {
+  const p = withP({
+    p_visible: 1, need_visible: 0.5, k_fill: 1e-6, v_max: 0, u_exact: 0.2, u_similar: 0.3, u_composite: 0.1,
+    ok_coverage_factor: 0.5, t_visible: 0.5, r_exact: 0.8, r_similar: 0.5, r_comp_full: 0.25, r_comp_part: 0.5,
+    c_check_share: 0.5, a_right: 0.8, d_deliver: 0.9, q_exact: 0.6, q_similar: 0.4, q_comp: 0.2, q_part: 0.1,
+    n_cheap: 10, s_exact: 0.5, s_similar: 0.3, s_comp: 0.2, s_part: 0.1
+  });
+  const r = E.evaluatePolicy(map, p, 'library', { E_good: 90, E_bad: 10 });
+  const m = r.overall.measures;
+  [['fw_held', 60], ['fw_looked_up', 30], ['fw_right_back', 19.25], ['fw_good', 17.325], ['fw_screened', 15.5925],
+    ['fw_in_window', 14.03325], ['fw_right', 6.0507],
+    ['fa_held', 45], ['fa_looked_up', 22.5], ['fa_right_back', 14.4375], ['fa_good', 12.99375], ['fa_screened', 11.694375],
+    ['fa_in_window', 10.5249375], ['fa_calls_saved', 36.905625]].forEach(([id, v]) => near(m[id], v, 9, id));
+  // the same funnel through the public funnel function: a map copy that starts at those stocks
+  const f = E.funnel(withStocks(map, { E_good: 90, E_bad: 10 }), Object.assign({}, p, { periods: 1 }), { period: 'first' });
+  near(f.end, 6.0507, 9, 'funnel end');
+  near(f.funnels.all_work[6].value, 36.905625, 9, 'calls saved');
+  // under the two other policies no entry is ever held, so every stage is 0
+  ['top_first', 'cheap_ladder'].forEach(pol => {
+    const q = E.evaluatePolicy(map, p, pol, { E_good: 90, E_bad: 10 }).overall.measures;
+    map.funnels.forEach(fn => fn.stages.forEach(id => near(q[id], 0, 15, pol + ' ' + id)));
+  });
+});
+
+// ----------------------------------------------------------------- revision 2, item by item
+
+test('R1 to R5 off: with all four s at 0 (and the R2 factor at 1), outcomes and costs match version 1 wherever R3 to R5 and revision 3 cannot act (no escape, no wrong retry, no bad entry), over the full time path', () => {
+  const random = E.rng(101);
+  for (let i = 0; i < 40; i++) {
+    const p = Object.assign(E.drawParams(map, i < 20 ? table : real, random),
+      { s_exact: 0, s_similar: 0, s_comp: 0, s_part: 0, ok_coverage_factor: 1 }, NO_BAD);
+    const a = E.timePath(map, p);
+    const b = E.timePath(mapV1, toV1(p));
+    ['top_first', 'cheap_ladder'].forEach(pol => {
+      Object.keys(b[pol].outcomes).forEach(o => near(a[pol].outcomes[o], b[pol].outcomes[o], 12, i + ' ' + pol + ' ' + o));
+      near(a[pol].cost, b[pol].cost, 9, i + ' ' + pol + ' cost');
+    });
+    a.periods.forEach((row, t) => {
+      const old = b.periods[t];
+      Object.keys(old.library.outcomes).forEach(o => near(row.library.outcomes[o], old.library.outcomes[o], 12, i + ' period ' + t + ' ' + o));
+      near(row.library.cost, old.library.cost, 9, i + ' period ' + t + ' cost');
+      near(row.stocks.E_good, old.stocks.E_good, 7, i + ' period ' + t + ' good stock');
+      near(row.stocks.E_bad, old.stocks.E_bad, 7, i + ' period ' + t + ' bad stock');
+      // R8: the only change in calls is the lookup, which now counts c_lookup calls
+      near(row.library.calls - old.library.calls, row.branchFlow.l1_lookup * p.c_lookup, 9, i + ' period ' + t + ' calls');
+    });
+  }
+});
+
+test('R1 off: with all four s at 0, every class of every policy matches version 1 in outcomes and cost when no wrong retry occurs and nothing is written (rho_retry 1, w_write 0), at any gate and any stocks with no bad entry', () => {
+  const random = E.rng(102);
+  for (let i = 0; i < 30; i++) {
+    const p = Object.assign(E.drawParams(map, i < 15 ? table : real, random),
+      { s_exact: 0, s_similar: 0, s_comp: 0, s_part: 0, rho_retry: 1, w_write: 0, p_promote: 0 });
+    // version 1 has no promoted checks, so they are off here (p_promote 0)
+    // revision 3 counts bad entries toward fill, version 1 did not; with none they agree
+    const stocks = { E_good: random() * 2000, E_bad: 0 };
+    ['top_first', 'cheap_ladder', 'library'].forEach(pol => {
+      const a = E.evaluatePolicy(map, p, pol, stocks);
+      const b = E.evaluatePolicy(mapV1, toV1(p), pol, stocks);
+      a.classes.forEach((c, k) => {
+        const o = b.classes[k];
+        assert(c.id === o.id, 'class order differs');
+        Object.keys(o.outcomes).forEach(x => near(c.outcomes[x], o.outcomes[x], 12, i + ' ' + pol + ' ' + c.id + ' ' + x));
+        near(c.cost, o.cost, 9, i + ' ' + pol + ' ' + c.id + ' cost');
+      });
+    });
+  }
+});
+
+test('top_first is untouched by revisions 2 and 3: every class matches version 1 at any parameters and stocks', () => {
+  const random = E.rng(103);
+  for (let i = 0; i < 30; i++) {
+    const p = E.drawParams(map, real, random);
+    const a = E.evaluatePolicy(map, p, 'top_first', randomStocks(random));
+    const b = E.evaluatePolicy(mapV1, toV1(p), 'top_first', {});
+    a.classes.forEach((c, k) => {
+      Object.keys(c.outcomes).forEach(x => near(c.outcomes[x], b.classes[k].outcomes[x], 12, i + ' ' + c.id + ' ' + x));
+      near(c.cost, b.classes[k].cost, 9, i + ' ' + c.id + ' cost');
+      near(c.calls, b.classes[k].calls, 9, i + ' ' + c.id + ' calls');
+    });
+  }
+});
+
+test('R1: a good entry shortens the cheap attempt by its s; raising an s never changes an outcome, never raises cost, and never touches top_first or cheap_ladder', () => {
+  // one class per entry kind: deliver every good entry of that kind with certainty
+  const sure = withP({ t_visible: 1, t_latent: 1, f_false: 0, r_exact: 1, r_similar: 1, r_comp_full: 1, r_comp_part: 0,
+    c_check_share: 1, d_deliver: 1, n_cheap: 4, g_tests_visible: 1, g_tests_latent: 1, s_review: 0 });
+  const cases = [['exact', 's_exact', {}], ['similar', 's_similar', {}], ['composite', 's_comp', {}],
+    ['composite', 's_part', { r_comp_full: 0, r_comp_part: 1 }]];
+  cases.forEach(([held, sid, over]) => {
+    const p = Object.assign({}, sure, over, { s_exact: 0, s_similar: 0, s_comp: 0, s_part: 0 });
+    p[sid] = 0.75;
+    const r = E.evaluateClass(map, p, 'library', { kind: 'visible', need: 'cheap_ok', held, distractor: 'no' }, { E_good: 100, E_bad: 0 });
+    // cheap_ok with a good entry: right first time, the attempt costs 4 * (1 - 0.75) = 1, plus lookup and check
+    near(r.callsByTier.cheap, 1 + p.c_lookup, 9, sid + ' cheap calls');
+    near(r.costByTier.cheap, 1 + p.c_lookup + p.c_screen + p.c_carry, 9, sid + ' cheap cost');
+    // the all-work funnel's last stage counts exactly the calls saved: 4 * 0.75 = 3 per piece, 300 per 100
+    near(r.measures.fa_calls_saved, 300, 9, sid + ' calls saved');
+  });
+  const random = E.rng(104);
+  for (let i = 0; i < 10; i++) {
+    const p = E.drawParams(map, real, random);
+    const base = E.timePath(map, p);
+    S_IDS.forEach(id => {
+      const up = Object.assign({}, p); up[id] = Math.min(1, p[id] + 0.3);
+      const tp = E.timePath(map, up);
+      ['top_first', 'cheap_ladder'].forEach(pol => near(tp[pol].cost, base[pol].cost, 12, id + ' moved ' + pol));
+      tp.periods.forEach((row, t) => {
+        Object.keys(row.library.outcomes).forEach(o => near(row.library.outcomes[o], base.periods[t].library.outcomes[o], 12, id + ' moved an outcome'));
+        assert(row.library.cost <= base.periods[t].library.cost + 1e-12, id + ' raised cost');
+      });
+    });
+  }
+});
+
+test('R1: a wrong accepted entry does not shorten the cheap attempt', () => {
+  const p = withP({ t_visible: 1, f_false: 1, c_check_share: 0, a_wrong: 1, d_deliver: 1, n_cheap: 4,
+    s_exact: 1, s_similar: 1, s_comp: 1, s_part: 1 });
+  const r = E.evaluateClass(map, p, 'library', { kind: 'visible', need: 'cheap_wrong', held: 'nothing', distractor: 'yes' }, { E_good: 50, E_bad: 50 });
+  near(r.stateFlow.L5_wrong, 1, 12, 'wrong entry in hand');
+  near(r.branchFlow.l5_wrong_wrong, 1, 12, 'attempt taken');
+  const att = map.branches.find(b => b.id === 'l5_wrong_wrong');
+  assert(att.cost === 'n_cheap' && att.calls === 'n_cheap', 'the wrong-entry attempt cost changed');
+});
+
+test('R2: for cheap_ok pieces of work the held chances are the cheap_wrong ones times ok_coverage_factor; at 0 a cheap_ok piece never has an entry', () => {
+  const stocks = { E_good: 300, E_bad: 50 };
+  [0, 0.35, 1].forEach(f => {
+    const p = withP({ ok_coverage_factor: f });
+    ['visible', 'latent'].forEach(kind => {
+      ['exact', 'similar', 'composite'].forEach(held => {
+        const ok = E.evaluateClass(map, p, 'library', { kind, need: 'cheap_ok', held, distractor: 'no' }, stocks);
+        const wr = E.evaluateClass(map, p, 'library', { kind, need: 'cheap_wrong', held, distractor: 'no' }, stocks);
+        const pk = kind === 'visible' ? p.p_visible : 1 - p.p_visible;
+        const pnOk = 1 - (kind === 'visible' ? p.need_visible : p.need_latent);
+        // class chance = kind * need * held * distractor; divide out everything but held
+        const hOk = ok.chance / (pk * pnOk), hWr = wr.chance / (pk * (1 - pnOk));
+        near(hOk, f * hWr, 12, 'factor ' + f + ' ' + kind + ' ' + held);
+      });
+    });
+  });
+});
+
+test('R3: z_wrongstore is gone; only Opus and Fable outputs that pass the gate are written; a strong-tier escape writes a bad entry with chance w_write, at c_write times its tier price', () => {
+  assert(!map.parameters.some(p => p.id === 'z_wrongstore'), 'z_wrongstore still in the map');
+  const writes = ['l10_opus_good', 'l10_opus_bad', 'l10_fable_good', 'l10_fable_bad', 'l10_opus_escape_bad', 'l10_fable_escape_bad'];
+  writes.forEach(id => {
+    const b = map.branches.find(x => x.id === id);
+    assert(b, 'missing write branch ' + id);
+    assert(['L10_opus', 'L10_fable', 'L10_opus_escape', 'L10_fable_escape'].includes(b.from), id + ' starts outside capture');
+    assert(b.cost === 'c_write * ' + (b.tier === 'opus' ? 'm_opus' : 'm_fable'), id + ' cost');
+  });
+  ['L10_opus', 'L10_fable', 'L10_opus_escape', 'L10_fable_escape'].forEach(s => {
+    map.branches.filter(b => b.to === s).forEach(b => assert(['L8_right', 'L8_wrong', 'L9_right', 'L9_wrong'].includes(b.from), s + ' reached from ' + b.from));
+  });
+  const p = withP({ w_write: 0.6 });
+  const r = E.evaluatePolicy(map, p, 'library', { E_good: 200, E_bad: 40 });
+  near(r.branchFlow.l10_opus_escape_bad, r.stateFlow.L10_opus_escape * 0.6, 12, 'Opus escape writes');
+  near(r.branchFlow.l10_fable_escape_bad, r.stateFlow.L10_fable_escape * 0.6, 12, 'Fable escape writes');
+  assert(r.stateFlow.L10_opus_escape > 0, 'no Opus escapes to test');
+  ['top_first', 'cheap_ladder'].forEach(pol => {
+    const q = E.evaluatePolicy(map, p, pol, {});
+    writes.forEach(id => near(q.branchFlow[id], 0, 15, pol + ' wrote via ' + id));
+  });
+});
+
+test('R3: a cheap-tier escape never changes the stocks (no route through a cheap escape carries a write; with Opus always right, escapes still happen and only right solves enter the stocks)', () => {
+  const tr = E.routes(map, best, 'library', { stocks: { E_good: 300, E_bad: 60 } });
+  const writeIds = new Set(['l10_opus_good', 'l10_opus_bad', 'l10_fable_good', 'l10_fable_bad', 'l10_opus_escape_bad', 'l10_fable_escape_bad', 'l11_stored_fixed']);
+  let cheapEscapeRoutes = 0;
+  tr.routes.forEach(r => {
+    if (r.branches.includes('l6_escaped') || r.branches.includes('l7_escaped')) {
+      cheapEscapeRoutes++;
+      assert(!r.branches.some(b => writeIds.has(b)), 'a cheap escape route writes: ' + r.id);
+    }
+  });
+  assert(cheapEscapeRoutes > 0, 'no cheap escape routes found');
+  const random = E.rng(105);
+  for (let i = 0; i < 20; i++) {
+    const p = Object.assign(E.drawParams(map, real, random), { o_opus: 1 });
+    const tp = E.timePath(map, p);
+    tp.periods.forEach(row => {
+      const m = row.library.measures;
+      assert(m.P_escaped > 0, 'no escapes in draw ' + i);
+      near(m.W_bad_escape, 0, 15, 'bad writes from escapes');
+      near(m.W_repair, 0, 15, 'repairs');
+      near(row.next.E_bad - row.stocks.E_bad * (1 - p.retire_bad) - p.delta_stale * row.stocks.E_good,
+        p.episodes_per_period * m.P_strong_right * p.w_write * (1 - p.e_right), 9, 'bad inflow, draw ' + i);
+    });
+  }
+});
+
+test('R4: repair moves found strong-tier escapes from bad to good at fix_on_found; the stock equations match the brief\'s formulas (same_as) and the written-branch flows', () => {
+  const allowed = new Set(map.parameters.map(p => p.id).concat(Object.keys(map.stocks.initial),
+    map.stocks.values.map(v => v.id), map.measures.map(m => m.id)));
+  const sameAs = map.stocks.update.map(u => ({ id: u.id, f: E.compileExpr(u.same_as, allowed).fn }));
+  const random = E.rng(106);
+  for (let i = 0; i < 30; i++) {
+    const p = E.drawParams(map, i < 15 ? table : real, random, { tie: i % 2 ? 1 : 0, levels: random() });
+    const tp = E.timePath(map, p);
+    tp.periods.forEach(row => {
+      const m = row.library.measures;
+      const scope = Object.assign({}, p, row.stocks, row.stockValues, m);
+      sameAs.forEach(s => near(s.f(scope), row.next[s.id], 9, 'draw ' + i + ' period ' + row.period + ' ' + s.id + ' same_as'));
+      near(m.W_repair, m.P_strong_escaped * p.l_found * p.w_write * p.fix_on_found, 12, 'repair formula');
+      assert(m.W_repair <= m.W_bad_escape + 1e-15, 'more repairs than escape writes');
+      // total inflow equals every strong-tier pass written at w_write; repair and staleness only move
+      // entries; retiring takes retire_bad of the bad stock out (revision 3)
+      near(row.next.E_good + row.next.E_bad - row.stocks.E_good - row.stocks.E_bad,
+        p.episodes_per_period * p.w_write * (m.P_strong_right + m.P_strong_escaped) - p.retire_bad * row.stocks.E_bad, 9, 'inflow');
+    });
+  }
+  const p0 = withP({ fix_on_found: 0 });
+  const r0 = E.evaluatePolicy(map, p0, 'library', { E_good: 100, E_bad: 20 });
+  near(r0.overall.measures.W_repair, 0, 15, 'repair at 0');
+  const p1 = withP({ fix_on_found: 1, l_found: 1 });
+  const r1 = E.evaluatePolicy(map, p1, 'library', { E_good: 100, E_bad: 20 });
+  near(r1.overall.measures.W_repair, r1.overall.measures.W_bad_escape, 15, 'repair at 1');
+});
+
+test('R5: a wrong retry can escape, at the same gate chance as a wrong first output (g_lib since revision 4), and lands as a cheap-tier escape; the flow into the retry gate is the same as in version 1 and escapes do not fall', () => {
+  const b = map.branches.filter(x => x.from === 'L7_wrong');
+  assert(b.length === 2 && b.find(x => x.id === 'l7_caught').chance === map.branches.find(x => x.id === 'l6_caught').chance && b.find(x => x.id === 'l7_caught').chance === 'g_lib' && b.find(x => x.id === 'l7_escaped').chance === '1 - g_lib', 'retry gate');
+  assert(b.find(x => x.id === 'l7_escaped').to === 'L11_escaped', 'retry escape goes to the stored path');
+  const random = E.rng(107);
+  for (let i = 0; i < 20; i++) {
+    const p = E.drawParams(map, real, random);
+    const a = E.evaluatePolicy(map, p, 'cheap_ladder', {});
+    const v = E.evaluatePolicy(mapV1, toV1(p), 'cheap_ladder', {});
+    assert(a.branchFlow.l7_escaped > 0, 'no retry escapes');
+    near(a.stateFlow.L7_wrong, v.stateFlow.L7_wrong, 12, 'retry gate flow');
+    const esc = a.overall.outcomes.ESCAPED_FOUND + a.overall.outcomes.ESCAPED_SILENT;
+    const escV = v.overall.outcomes.ESCAPED_FOUND + v.overall.outcomes.ESCAPED_SILENT;
+    assert(esc >= escV - 1e-12, 'version 2 escapes less');
+  }
+});
+
+test('R6: the map states its units (a piece of work is about ten cheap calls; a period is 30 days); periods is a run setting, never drawn or swung, tied or not', () => {
+  assert(/ten cheap calls/.test(map.unit), 'size of a piece of work not stated');
+  assert(/30 days/.test(map.period), 'period length not stated');
+  const pr = map.parameters.find(p => p.id === 'periods');
+  assert(pr.run_setting === true, 'periods not a run setting');
+  const random = E.rng(9);
+  for (let i = 0; i < 20; i++) assert(E.drawParams(map, real, random, { tie: i % 2, levels: 0.9 }).periods === realBest.periods, 'periods drawn');
+  assert(!E.swings(map, real).rows.some(r => r.id === 'periods'), 'periods swung');
+});
+
+test('R7: the Opus attempt is right with chance 1 on cheap_ok pieces of work under every policy, even with o_opus 0', () => {
+  const p = withP({ o_opus: 0, t_latent: 1, f_false: 1, c_check_share: 0, a_wrong: 1, d_deliver: 1, h_harm: 1,
+    rho_retry: 0, g_tests_latent: 1, v_max: 1 });
+  const lib = E.evaluateClass(map, p, 'library', { kind: 'latent', need: 'cheap_ok', held: 'nothing', distractor: 'yes' }, { E_good: 1e6, E_bad: 1e6 });
+  assert(lib.stateFlow.L8_opus > 0.99, 'Opus not reached under the library');
+  near(lib.stateFlow.L8_wrong, 0, 15, 'library Opus wrong on cheap_ok');
+  const top = E.evaluateClass(map, p, 'top_first', { kind: 'latent', need: 'cheap_ok' });
+  near(top.stateFlow.L8_wrong, 0, 15, 'top_first Opus wrong on cheap_ok');
+});
+
+test('R8: a lookup counts c_lookup calls; screen judgment costs nothing; lookup, screen, carry and handoff are paid at the cheap tier; a wrong accepted entry acts only at the cheap attempt', () => {
+  const l1 = map.branches.find(b => b.id === 'l1_lookup');
+  assert(l1.calls === 'c_lookup' && l1.tier === 'cheap', 'lookup calls or tier');
+  map.branches.filter(b => /_judged$|_set_aside$/.test(b.id)).forEach(b => assert(b.cost === '0', b.id + ' costs'));
+  map.branches.filter(b => /^l3_.*_check$|_delivered$|^l8_handoff$/.test(b.id)).forEach(b => assert(b.tier === 'cheap', b.id + ' tier'));
+  const wrongStates = map.states.filter(s => s.entry === 'wrong_accepted').map(s => s.id);
+  assert(JSON.stringify(wrongStates) === JSON.stringify(['L4_wrong', 'L5_wrong']), 'wrong entry held beyond L5');
+  map.branches.filter(b => /h_harm/.test(b.chance)).forEach(b => assert(b.from === 'L5_wrong', b.id + ' uses h_harm outside L5'));
+});
+
+test('R9: each period is evaluated on the stocks at its start', () => {
+  const tp = E.timePath(map, best);
+  tp.periods.forEach((row, t) => {
+    const ev = E.evaluatePolicy(map, best, 'library', row.stocks);
+    near(ev.overall.cost, row.library.cost, 12, 'period ' + t + ' cost');
+    near(ev.overall.wrong, row.library.wrong, 12, 'period ' + t + ' wrong');
+    if (t > 0) { near(row.stocks.E_good, tp.periods[t - 1].next.E_good, 12, 'carried good'); near(row.stocks.E_bad, tp.periods[t - 1].next.E_bad, 12, 'carried bad'); }
+  });
+});
+
+// ----------------------------------------------------------------- revision 3, item by item
+
+test('revision 3 off: on the revision-2 map the new engine gives the old engine\'s numbers (the measure rewrite changes nothing); with retire_bad 0 and no bad entry the new map gives the revision-2 map\'s numbers', () => {
+  const random = E.rng(301);
+  for (let i = 0; i < 12; i++) {
+    const p = E.drawParams(map, i < 6 ? table : pinned, random);
+    const a = E.timePath(mapV2, p), b = E2.timePath(mapV2, p);
+    a.periods.forEach((row, t) => {
+      const o = b.periods[t];
+      Object.keys(o.library.outcomes).forEach(x => near(row.library.outcomes[x], o.library.outcomes[x], 12, i + ' ' + t + ' ' + x));
+      near(row.library.cost, o.library.cost, 10, i + ' ' + t + ' cost');
+      Object.keys(o.library.measures).forEach(x => near(row.library.measures[x], o.library.measures[x], 12, i + ' ' + t + ' ' + x));
+      near(row.next.E_good, o.next.E_good, 8, i + ' ' + t + ' good');
+      near(row.next.E_bad, o.next.E_bad, 8, i + ' ' + t + ' bad');
+    });
+    const q = Object.assign({}, p, NO_BAD, { p_promote: 0 });
+    const c = E.timePath(map, q), d = E.timePath(mapV2, q);
+    c.periods.forEach((row, t) => {
+      near(row.library.cost, d.periods[t].library.cost, 10, i + ' ' + t + ' no-bad cost');
+      near(row.library.wrong, d.periods[t].library.wrong, 12, i + ' ' + t + ' no-bad wrong');
+      near(row.stocks.E_good, d.periods[t].stocks.E_good, 8, i + ' ' + t + ' no-bad good stock');
+      near(row.stocks.E_bad, 0, 12, i + ' ' + t + ' bad stock stays empty');
+    });
+  }
+});
+
+test('R10: the Opus price ratio is an unknown from 1 to 2, best 2, tag G, side other; it is drawn, swung and moves the cost against the strong model', () => {
+  const r = realRows.m_opus;
+  assert(r.low === 1 && r.high === 2 && r.best === 2 && r.tag === 'G' && r.side === 'other' && r.good_end === undefined, JSON.stringify(r));
+  const random = E.rng(310);
+  const vals = [];
+  for (let i = 0; i < 200; i++) vals.push(E.drawParams(map, real, random).m_opus);
+  assert(Math.min(...vals) >= 1 && Math.max(...vals) <= 2, 'draw outside 1 to 2');
+  assert(Math.max(...vals) - Math.min(...vals) > 0.8, 'the draw does not vary');
+  const row = E.swings(map, real).rows.find(x => x.id === 'm_opus');
+  assert(row && row.low.last.cost_vs_top > row.high.last.cost_vs_top, 'swing of m_opus missing or the wrong way round');
+  map.reference_settings.forEach(r => near(E.referenceParams(map, real, r.id).m_opus, 2, 15, 'other-side unknowns stay at best in ' + r.id));
+});
+
+test('R11: fill uses both stocks; bad entries alone give coverage; wrong_share still decides good or bad on a hit', () => {
+  const p = withP({ k_fill: 50, k_distract: 80 });
+  const tp = E.timePath(withStocks(map, { E_good: 0, E_bad: 50 }), Object.assign({}, p, { periods: 1 }));
+  near(tp.periods[0].stockValues.fill, 1 - Math.exp(-1), 12, 'fill from bad entries alone');
+  near(tp.periods[0].stockValues.wrong_share, 1, 12, 'bad share');
+  const c = E.evaluateClass(map, p, 'library', { kind: 'visible', need: 'cheap_wrong', held: 'exact', distractor: 'no' }, { E_good: 0, E_bad: 50 });
+  const distract = p.v_max * (1 - Math.exp(-50 / 80));
+  near(c.chance, p.p_visible * p.need_visible * p.u_exact * (1 - Math.exp(-1)) * (1 - distract), 12, 'class chance');
+  near(c.branchFlow.l2_exact_good, 0, 15, 'a hit on a library of bad entries is never good');
+  near(c.branchFlow.l2_exact_bad, p.t_visible * p.r_exact, 12, 'it is bad');
+  const random = E.rng(311);
+  for (let i = 0; i < 50; i++) {
+    const q = E.drawParams(map, real, random);
+    const s = randomStocks(random);
+    const t = E.timePath(withStocks(map, s), Object.assign({}, q, { periods: 1 }));
+    near(t.periods[0].stockValues.fill, 1 - Math.exp(-(s.E_good + s.E_bad) / q.k_fill), 12, 'fill formula, draw ' + i);
+    near(t.periods[0].stockValues.wrong_share, s.E_bad / (s.E_good + s.E_bad), 12, 'bad share formula, draw ' + i);
+    // more bad entries at the same good stock: coverage never falls
+    const t2 = E.timePath(withStocks(map, { E_good: s.E_good, E_bad: s.E_bad + 10 }), Object.assign({}, q, { periods: 1 }));
+    assert(t2.periods[0].shares.held.nothing <= t.periods[0].shares.held.nothing + 1e-12, 'coverage fell with more bad entries');
+  }
+});
+
+test('R12: retire_bad is a library-side guess whose range includes 0; retiring never makes a stock negative and never raises the next bad stock', () => {
+  const r = realRows.retire_bad;
+  assert(r && r.low === 0 && r.low <= r.best && r.best <= r.high && r.high <= 1 && r.tag === 'G', JSON.stringify(r));
+  assert(r.side === 'library' && r.good_end === 'high', 'side or good end');
+  const pm = map.parameters.find(p => p.id === 'retire_bad');
+  const mainStream = map.parameters.filter(p => p.draw_stream !== 'added');
+  assert(pm && pm.kind === 'chance' && mainStream[mainStream.length - 1].id === 'retire_bad', 'retire_bad should be the last unknown of the main stream');
+  const random = E.rng(312);
+  for (let i = 0; i < 300; i++) {
+    const q = E.drawParams(map, i % 3 ? real : table, random);
+    q.retire_bad = [0, 1, random()][i % 3];
+    if (i % 5 === 0) q.delta_stale = 0;
+    const s = randomStocks(random);
+    if (i % 7 === 0) s.E_bad = 0;
+    const one = E.timePath(withStocks(map, s), Object.assign({}, q, { periods: 2 }));
+    one.periods.forEach(row => {
+      assert(row.next.E_good >= -1e-9 && row.next.E_bad >= -1e-9, 'draw ' + i + ': a stock went negative');
+    });
+    const more = E.timePath(withStocks(map, s), Object.assign({}, q, { periods: 1, retire_bad: Math.min(1, q.retire_bad + 0.2) }));
+    assert(more.periods[0].next.E_bad <= one.periods[0].next.E_bad + 1e-9, 'draw ' + i + ': retiring more left more bad entries');
+    near(more.periods[0].next.E_good, one.periods[0].next.E_good, 9, 'retiring moved the good stock');
+  }
+  // with nothing written and nothing going stale, retire_bad 1 empties the bad stock in one period
+  const q = withP({ retire_bad: 1, w_write: 0, delta_stale: 0, periods: 2 });
+  const t = E.timePath(withStocks(map, { E_good: 40, E_bad: 25 }), q);
+  near(t.periods[1].stocks.E_bad, 0, 15, 'bad stock not emptied');
+});
+
+test('R13: every row of params.json has a side; every library-side row has a good end; the sides follow the brief', () => {
+  real.parameters.forEach(r => {
+    assert(r.side === 'library' || r.side === 'other', r.id + ' has no side');
+    if (r.side === 'library') assert(r.good_end === 'high' || r.good_end === 'low', r.id + ' has no good end');
+    else assert(r.good_end === undefined, r.id + ' is other-side but has a good end');
+    const s = E.sideOf(r, r.id);
+    assert(s.side === r.side, r.id + ' read back');
+  });
+  const high = ['t_visible', 't_latent', 'r_exact', 'r_similar', 'r_comp_full', 'd_deliver', 's_exact', 's_similar', 's_comp', 's_part',
+    'e_right', 'fix_on_found', 'retire_bad', 'w_write', 'q_exact', 'q_similar', 'u_exact', 'u_similar', 'u_composite', 'a_right'].concat(R21_IDS);
+  const low = ['f_false', 'h_harm', 'c_lookup', 'c_screen', 'c_carry', 'c_write', 'delta_stale', 'k_fill', 'v_max', 'a_wrong'];
+  const other = ['p_visible', 'need_visible', 'need_latent', 'g_tests_visible', 'g_tests_latent', 's_review', 'g_review', 'c_review',
+    'rho_retry', 'c_handoff', 'n_opus', 'n_fable', 'm_opus', 'm_fable', 'o_opus', 'o_fable', 'l_found', 'R_rework', 'n_cheap',
+    'episodes_per_period', 'periods'];
+  high.forEach(id => assert(realRows[id].side === 'library' && realRows[id].good_end === 'high', id + ' should be library, high'));
+  low.forEach(id => assert(realRows[id].side === 'library' && realRows[id].good_end === 'low', id + ' should be library, low'));
+  other.forEach(id => assert(realRows[id].side === 'other', id + ' should be other'));
+  // a library-side unknown never acts under the two other ways of working
+  const random = E.rng(313);
+  for (let i = 0; i < 10; i++) {
+    const a = E.drawParams(map, real, random), b = E.drawParams(map, real, random);
+    const mix = Object.assign({}, a);
+    LIB_IDS.forEach(id => { mix[id] = b[id]; });
+    ['top_first', 'cheap_ladder'].forEach(pol => {
+      const x = E.evaluatePolicy(map, a, pol, {}).overall, y = E.evaluatePolicy(map, mix, pol, {}).overall;
+      near(x.cost, y.cost, 12, pol + ' cost moved by a library-side unknown');
+      near(x.wrong, y.wrong, 12, pol + ' wrong rate moved by a library-side unknown');
+    });
+  }
+  let threw = 0;
+  [[{ side: 'library' }, 'no end'], [{ side: 'other', good_end: 'high' }, 'other with end'], [{}, 'no side']].forEach(([row]) => {
+    try { E.sideOf(row, 'x'); } catch (e) { threw++; }
+  });
+  assert(threw === 3, 'sideOf accepted a bad row');
+});
+
+test('R14: tie 0 reproduces the earlier ensemble draw for draw (the frozen revision-2 engine on the same table and stream)', () => {
+  const ids = mapV2.parameters.map(p => p.id);
+  [table, real].forEach((tb, k) => {
+    const r1 = E2.rng(4242 + k), r2 = E.rng(4242 + k), r3 = E.rng(4242 + k);
+    for (let i = 0; i < 300; i++) {
+      const old = E2.drawParams(mapV2, tb, r1);
+      const now = E.drawParams(map, tb, r2, { tie: 0, levels: 0.37 });
+      const plain = E.drawParams(map, tb, r3);
+      ids.forEach(id => {
+        assert(now[id] === old[id], 'table ' + k + ' draw ' + i + ' ' + id + ': ' + now[id] + ' vs ' + old[id]);
+        assert(plain[id] === old[id], 'no-tie draw differs at ' + id);
+      });
+      r1(); // the revision-2 map has no retire_bad; it is drawn last now, so skip its number in the old stream
+    }
+  });
+  // the ensemble itself: tie 0 equals no tie, and its kept draws are the revision-2 draws
+  const a = E.ensemble(map, real, { n: 60, seed: 9, keepDraws: true });
+  const b = E.ensemble(map, real, { n: 60, seed: 9, tie: 0, keepDraws: true });
+  assert(JSON.stringify(a) === JSON.stringify(b), 'tie 0 is not the untied ensemble');
+  // Each run of the ensemble is the revision-2 rule applied to the same stream. The new unknown,
+  // retire_bad, is drawn last, so it spends one more number per run: the revision-2 engine, given
+  // the same stream and skipping that one number, gives every other value of every run exactly.
+  const rr = E2.rng(9);
+  a.draws.forEach((d, i) => {
+    const old = E2.prepareParams(mapV2, E2.drawParams(mapV2, real, rr)).values;
+    rr();
+    ids.forEach(id => assert(d.params[id] === old[id], 'ensemble run ' + i + ' ' + id));
+  });
+  // the first run of the revision-2 ensemble itself, same seed: equal value for value
+  const first = E2.ensemble(mapV2, real, { n: 1, seed: 9, keepDraws: true }).draws[0].params;
+  ids.forEach(id => assert(a.draws[0].params[id] === first[id], 'first run ' + id));
+});
+
+test('R18b: at tie 1 every library-side unknown sits at its own group\'s level, counted from its poor end; two groups differ; other unknowns keep their own draws; at tie 0.5 the quantile is half the level plus half the own draw', () => {
+  let differ = 0, runs = 0;
+  [table, real].forEach((tb, k) => {
+    const rows = E.tableRows(tb);
+    const r0 = E.rng(55 + k), r1 = E.rng(55 + k), r5 = E.rng(55 + k), lv = E.rng(99 + k);
+    for (let i = 0; i < 200; i++) {
+      const U = levelsFrom(lv);
+      const d0 = E.drawParams(map, tb, r0);
+      const d1 = E.drawParams(map, tb, r1, { tie: 1, levels: U });
+      const d5 = E.drawParams(map, tb, r5, { tie: 0.5, levels: U });
+      const seen = {};
+      map.parameters.forEach(p => {
+        const row = rows[p.id];
+        if (p.run_setting || row.low === row.high) return;
+        const log = row.dist === 'log';
+        const pos = v => log ? (Math.log(v) - Math.log(row.low)) / (Math.log(row.high) - Math.log(row.low)) : (v - row.low) / (row.high - row.low);
+        if (row.side !== 'library') {
+          assert(d1[p.id] === d0[p.id] && d5[p.id] === d0[p.id], p.id + ' (other side) changed with the tie');
+          return;
+        }
+        const fromPoor = v => row.good_end === 'high' ? pos(v) : 1 - pos(v);
+        near(fromPoor(d1[p.id]), U[row.lib_group], 9, 'tie 1, ' + p.id);
+        near(fromPoor(d5[p.id]), 0.5 * U[row.lib_group] + 0.5 * fromPoor(d0[p.id]), 9, 'tie 0.5, ' + p.id);
+        seen[row.lib_group] = fromPoor(d1[p.id]);
+      });
+      runs++;
+      if (Math.abs(seen.reach - seen.quality) > 1e-6 && Math.abs(seen.recurrence - seen.running_cost) > 1e-6) differ++;
+    }
+  });
+  assert(differ === runs, 'two groups sat at the same level in ' + (runs - differ) + ' runs');
+  // by hand, own draw 0.7 for every row, tie 0.5, levels: recurrence 0.2, reach 0.6, quality 0.9, running cost 0.1.
+  //   k_fill (recurrence, good end low, 10 to 300): quantile from the poor (high) end 0.5 * 0.2 + 0.5 * (1 - 0.7) = 0.25
+  //     -> 300 - 0.25 * 290 = 227.5.
+  //   t_visible (reach, good end high, 0.2 to 1): 0.5 * 0.6 + 0.5 * 0.7 = 0.65 -> 0.2 + 0.65 * 0.8 = 0.72.
+  //   e_right (quality, good end high, 0.35 to 0.95): 0.5 * 0.9 + 0.5 * 0.7 = 0.8 -> 0.35 + 0.8 * 0.6 = 0.83.
+  //   c_lookup (running cost, good end low, 0.1 to 2): 0.5 * 0.1 + 0.5 * (1 - 0.7) = 0.2 -> 2 - 0.2 * 1.9 = 1.62.
+  //   p_visible (other side, 0.1 to 0.8): its own draw, 0.1 + 0.7 * 0.7 = 0.59.
+  const L = { recurrence: 0.2, reach: 0.6, quality: 0.9, running_cost: 0.1 };
+  const one = E.drawParams(map, real, () => 0.7, { tie: 0.5, levels: L, added: () => 0.7 });
+  near(one.k_fill, 227.5, 9, 'k_fill by hand');
+  near(one.t_visible, 0.72, 12, 't_visible by hand');
+  near(one.e_right, 0.83, 12, 'e_right by hand');
+  near(one.c_lookup, 1.62, 12, 'c_lookup by hand');
+  near(one.p_visible, 0.59, 12, 'p_visible by hand');
+  // p_promote (quality, 0 to 1, from the added stream): 0.5 * 0.9 + 0.5 * 0.7 = 0.8
+  near(one.p_promote, 0.8, 12, 'p_promote by hand');
+  let threw = 0;
+  try { E.drawParams(map, real, E.rng(1), { tie: 0.5 }); } catch (e) { threw++; }
+  try { E.drawParams(map, real, E.rng(1), { tie: 0.5, levels: { recurrence: 0.1, reach: 0.2, quality: 0.3 } }); } catch (e) { threw++; }
+  assert(threw === 2, 'a tie above 0 without a level for every group was accepted');
+});
+
+test('R18b: tie 0 equals the frozen revision-3 tie-0 ensemble draw for draw; with p_promote pinned at 0 every reported number is equal too; the R21 unknowns come from their own stream', () => {
+  const a3 = E3.ensemble(map3, t3, { n: 150, seed: 77, tie: 0, keepDraws: true });
+  const a4 = E.ensemble(map, real, { n: 150, seed: 77, tie: 0, keepDraws: true });
+  const p4 = E.ensemble(map, pinned, { n: 150, seed: 77, tie: 0, keepDraws: true });
+  a3.draws.forEach((d, i) => {
+    map3.parameters.forEach(p => {
+      assert(a4.draws[i].params[p.id] === d.params[p.id], 'run ' + i + ' ' + p.id + ' differs from revision 3');
+      assert(p4.draws[i].params[p.id] === d.params[p.id], 'pinned run ' + i + ' ' + p.id);
+    });
+    E.RATIO_IDS.forEach(r => assert(p4.draws[i].last[r] === d.last[r] && p4.draws[i].first[r] === d.first[r], 'pinned run ' + i + ' ratio ' + r));
+  });
+  ['first', 'last'].forEach(at => {
+    Object.keys(a3.spread[at]).forEach(k => assert(JSON.stringify(p4.spread[at][k]) === JSON.stringify(a3.spread[at][k]), 'spread ' + at + ' ' + k));
+    E.RATIO_IDS.forEach(r => assert(JSON.stringify(p4.spearman[at][r].filter(e => !R21_IDS.includes(e.id))) === JSON.stringify(a3.spearman[at][r]), 'rank ' + at + ' ' + r));
+  });
+  assert(JSON.stringify(p4.shareBetterVs) === JSON.stringify(a3.shareBetterVs), 'shares');
+  const pp = a4.draws.map(d => d.params.p_promote);
+  assert(Math.max(...pp) - Math.min(...pp) > 0.8, 'p_promote is not drawn');
+  // without an added stream, drawParams still never reads the main stream for the R21 unknowns
+  const r4 = E.rng(5), r3 = E3.rng(5);
+  for (let i = 0; i < 50; i++) {
+    const a = E.drawParams(map, real, r4), b = E3.drawParams(map3, t3, r3);
+    map3.parameters.forEach(p => assert(a[p.id] === b[p.id], 'draw ' + i + ' ' + p.id));
+  }
+  // each run reads four shared levels, in the order of lib_groups, from the shared stream
+  const t1 = E.ensemble(map, real, { n: 30, seed: 8, tie: 1, keepDraws: true });
+  const sh = E.ensembleStreams(8).shared;
+  t1.draws.forEach((d, i) => GROUPS.forEach(g => assert(d.levels[g] === sh(), 'run ' + i + ' level ' + g)));
+  // drawRun on the ensemble's streams gives the ensemble's draws
+  const st = E.ensembleStreams(8);
+  t1.draws.forEach((d, i) => { const r = E.drawRun(map, real, st, 1); map.parameters.forEach(p => assert(r.raw[p.id] === d.raw[p.id], 'drawRun ' + i + ' ' + p.id)); });
+});
+
+test('R18b: the tied ensemble is deterministic, reports its tie, keeps every share in range, and raises the spread of the library-side unknowns together', () => {
+  const a = E.ensemble(map, real, { n: 120, seed: 21, tie: 1 });
+  const b = E.ensemble(map, real, { n: 120, seed: 21, tie: 1 });
+  assert(JSON.stringify(a) === JSON.stringify(b), 'not deterministic');
+  assert(a.tie === 1, 'tie not reported');
+  const z = E.ensemble(map, real, { n: 120, seed: 21, tie: 0 });
+  ['first', 'last'].forEach(w => ['top_first', 'cheap_ladder'].forEach(pol => {
+    assert(a.shareBetterVs[pol][w] >= 0 && a.shareBetterVs[pol][w] <= 1, 'share out of range');
+  }));
+  assert(a.spread.last.funnel_end && a.spread.last.funnel_end.p95 >= a.spread.last.funnel_end.p5, 'funnel end series missing');
+  assert(a.spread.last.promo && a.spread.last.promo.p95 >= a.spread.last.promo.p5, 'promoted-check series missing');
+  const width = e => e.spread.last.funnel_end.p95 - e.spread.last.funnel_end.p5;
+  assert(width(a) > width(z), 'tying did not widen the funnel end');
+  for (const r of ['top_cost', 'ladder_cost', 'top_wrong', 'ladder_wrong']) {
+    assert(JSON.stringify(a.spread.last[r]) === JSON.stringify(z.spread.last[r]), r + ' changed with the tie');
+  }
+});
+
+test('R18: every library-side unknown has the one lib_group the brief gives it, declared in the map with plain labels; other-side unknowns have none', () => {
+  const want = {
+    recurrence: ['u_exact', 'u_similar', 'u_composite', 'latent_coverage_factor', 'ok_coverage_factor', 'k_fill'],
+    reach: ['t_visible', 't_latent', 'r_exact', 'r_similar', 'r_comp_full', 'r_comp_part', 'd_deliver', 'w_write'],
+    quality: ['v_max', 'k_distract', 'f_false', 'c_check_share', 'a_right', 'a_wrong', 'q_exact', 'q_similar', 'q_comp', 'q_part', 'h_harm',
+      'e_right', 'fix_on_found', 'delta_stale', 'retire_bad', 's_exact', 's_similar', 's_comp', 's_part'].concat(R21_IDS),
+    running_cost: ['c_lookup', 'c_screen', 'c_carry', 'c_write']
+  };
+  assert(JSON.stringify(GROUPS) === JSON.stringify(Object.keys(want)), 'groups or their order: ' + GROUPS.join(','));
+  map.lib_groups.forEach(g => ['label', 'short', 'poor', 'good'].forEach(k => assert(typeof g[k] === 'string' && g[k].length > 0, g.id + ' ' + k)));
+  let lib = 0;
+  real.parameters.forEach(r => {
+    if (r.side === 'library') {
+      lib++;
+      assert(want[r.lib_group] && want[r.lib_group].includes(r.id), r.id + ' is in group ' + r.lib_group);
+      assert(E.groupOf(map, r, r.id) === r.lib_group, r.id + ' read back');
+    } else {
+      assert(r.lib_group === undefined && E.groupOf(map, r, r.id) === null, r.id + ' (other side) has a group');
+    }
+  });
+  assert(lib === Object.values(want).reduce((a, x) => a + x.length, 0), 'library-side count ' + lib);
+  let threw = 0;
+  [{ side: 'library', good_end: 'high' }, { side: 'library', good_end: 'high', lib_group: 'nonsense' }, { side: 'other', lib_group: 'reach' }].forEach(row => {
+    try { E.groupOf(map, row, 'x'); } catch (e) { threw++; }
+  });
+  assert(threw === 3, 'groupOf accepted a bad row');
+});
+
+test('R18a: the reference settings are declared in the map (middle, eight corners, all_good, worst_corner and all_good_costly); "unfavourable" is retired; all_good is at least as good as middle on the funnel\'s last number', () => {
+  const ids = map.reference_settings.map(r => r.id);
+  assert(JSON.stringify(ids) === JSON.stringify(['middle', 'corner_000', 'corner_001', 'corner_010', 'corner_011', 'corner_100', 'corner_101', 'corner_110', 'corner_111', 'all_good', 'worst_corner', 'all_good_costly']), ids.join(','));
+  const ref = E.references(map, real);
+  assert(JSON.stringify(Object.keys(ref)) === JSON.stringify(ids), 'references() order');
+  const LV = ['poor', 'good'];
+  map.reference_settings.forEach(s => {
+    if (/^corner_/.test(s.id)) {
+      const d = s.id.slice(7).split('').map(Number);
+      assert(s.levels.recurrence === LV[d[0]] && s.levels.reach === LV[d[1]] && s.levels.quality === LV[d[2]] && s.levels.running_cost === undefined, s.id + ' levels');
+    }
+    map.parameters.forEach(p => {
+      const r = realRows[p.id];
+      const v = ref[s.id].params[p.id];
+      if (r.side === 'other' || p.run_setting) { near(v, r.best, 15, s.id + ' other side at middle ' + p.id); return; }
+      const lv = s.levels[r.lib_group];
+      near(v, lv === 'good' ? goodEnd(r) : lv === 'poor' ? poorEnd(r) : r.best, 15, s.id + ' ' + p.id);
+    });
+  });
+  assert(JSON.stringify(map.reference_settings.find(s => s.id === 'worst_corner').levels) === JSON.stringify({ recurrence: 'good', reach: 'good', quality: 'poor', running_cost: 'poor' }), 'worst corner');
+  assert(GROUPS.every(g => map.reference_settings.find(s => s.id === 'all_good').levels[g] === 'good'), 'all_good');
+  assert(map.funnel_mark === 'all_good', 'the funnel mark');
+  ['first', 'last'].forEach(w => assert(ref.all_good[w].funnel_end >= ref.middle[w].funnel_end - 1e-12, w + ': all_good below middle'));
+  // the other ways of working are the same in every setting
+  ids.forEach(id => ['top_first', 'cheap_ladder'].forEach(pol => {
+    near(ref[id][pol].cost, ref.middle[pol].cost, 12, id + ' ' + pol + ' cost');
+    near(ref[id][pol].wrong, ref.middle[pol].wrong, 12, id + ' ' + pol + ' wrong');
+  }));
+  // the same order on random tables whose middle values are drawn inside the real ranges
+  const random = E.rng(315);
+  for (let i = 0; i < 15; i++) {
+    const t2 = JSON.parse(JSON.stringify(real));
+    const d = E.drawParams(map, real, random);
+    t2.parameters.forEach(r => { if (!r.run_setting) r.best = Math.min(r.high, Math.max(r.low, d[r.id])); });
+    const f = E.funnel(map, E.referenceParams(map, t2, 'all_good')).end;
+    const b = E.funnel(map, E.referenceParams(map, t2, 'middle')).end;
+    assert(f >= b - 1e-12, 'random middle ' + i + ': all_good ' + f + ' below middle ' + b);
+  }
+  // a numeric level: 0 is the poor end, 1 the good end, 0.5 the midpoint of the range counted from the poor end
+  const a = E.settingParams(map, real, { reach: 0 }), b = E.settingParams(map, real, { reach: 1 }), c = E.settingParams(map, real, { reach: 0.5 });
+  near(a.t_visible, realRows.t_visible.low, 15, 'level 0'); near(b.t_visible, realRows.t_visible.high, 15, 'level 1');
+  near(c.t_visible, (realRows.t_visible.low + realRows.t_visible.high) / 2, 12, 'level 0.5');
+  // retired and undeclared names are refused
+  ['unfavourable', 'favourable', 'best'].forEach(w => { let threw = false; try { E.referenceParams(map, real, w); } catch (e) { threw = true; } assert(threw, w + ' accepted'); });
+  const engineText = fs.readFileSync(path.join(dir, 'engine.js'), 'utf8');
+  [['map.json', JSON.stringify(map)], ['params.json', JSON.stringify(real)], ['limitations.json', JSON.stringify(lims)], ['engine.js', engineText]].forEach(([n, txt]) => {
+    assert(!/unfavourable/i.test(txt), n + ' still says unfavourable');
+  });
+});
+
+test('R16: the funnel is declared in the map as measures over flows; each stage is computed again here from the class-by-class flows; the funnel never rises from one stage to the next', () => {
+  assert(map.funnels.length === 2 && map.funnel_end === 'fw_right', 'funnel declaration');
+  map.funnels.forEach(f => f.stages.forEach(id => assert(map.measures.some(m => m.id === id), id + ' not a declared measure')));
+  const stocks = { E_good: 120, E_bad: 40 };
+  const p = realBest;
+  const ev = E.evaluatePolicy(map, p, 'library', stocks);
+  const pol = map.policies.find(x => x.id === 'library');
+  // independent sum over the 32 classes
+  let wrongShare = 0;
+  const acc = {};
+  const add = (id, v) => { acc[id] = (acc[id] || 0) + v; };
+  const kinds = ['visible', 'latent'], needs = ['cheap_ok', 'cheap_wrong'], helds = ['exact', 'similar', 'composite', 'nothing'], ds = ['yes', 'no'];
+  const goodL2 = ['l2_exact_good', 'l2_similar_good', 'l2_full_good', 'l2_part_good'];
+  const allL2 = goodL2.concat(['l2_exact_bad', 'l2_similar_bad', 'l2_full_bad', 'l2_part_bad']);
+  kinds.forEach(kind => needs.forEach(need => helds.forEach(held => ds.forEach(d => {
+    const c = E.evaluateClass(map, p, 'library', { kind, need, held, distractor: d }, stocks);
+    const w = c.chance;
+    const isHeld = held !== 'nothing' ? 1 : 0;
+    const sumOn = ids => ids.reduce((a, id) => a + c.branchFlow[id], 0);
+    const sumIn = ids => ids.reduce((a, id) => a + c.stateFlow[id], 0);
+    const st = [isHeld, isHeld * c.branchFlow.l1_lookup, sumOn(allL2), sumOn(goodL2), sumIn(['L4_exact', 'L4_similar', 'L4_full', 'L4_part']),
+      sumIn(['L5_exact', 'L5_similar', 'L5_full', 'L5_part'])];
+    st.forEach((v, k) => add('fa' + k, w * v));
+    add('fa6', w * p.n_cheap * (c.stateFlow.L5_exact * p.s_exact + c.stateFlow.L5_similar * p.s_similar + c.stateFlow.L5_full * p.s_comp + c.stateFlow.L5_part * p.s_part));
+    if (need === 'cheap_wrong') {
+      wrongShare += w;
+      st.forEach((v, k) => add('fw' + k, w * v));
+      add('fw6', w * sumOn(['l5_exact_right', 'l5_similar_right', 'l5_full_right', 'l5_part_right']));
+    }
+  }))));
+  assert(pol, 'no library policy');
+  map.funnels.find(f => f.id === 'cheap_wrong').stages.forEach((id, k) => near(ev.overall.measures[id], 100 * acc['fw' + k] / wrongShare, 9, id));
+  map.funnels.find(f => f.id === 'all_work').stages.forEach((id, k) => near(ev.overall.measures[id], 100 * acc['fa' + k], 9, id));
+  // never rising, at every period of tied and untied draws, inside 0 to 100
+  [0, 0.5, 1].forEach(tie => {
+    const en = E.ensemble(map, real, { n: 40, seed: 316, tie, keepDraws: true });
+    en.draws.forEach((d, i) => {
+      const tp = E.timePath(map, d.params);
+      tp.periods.forEach(row => {
+        map.funnels.forEach(f => {
+          const v = (f.monotone || f.stages).map(id => row.library.measures[id]);
+          v.forEach(x => assert(x >= -1e-12 && x <= 100 + 1e-9, 'stage outside 0 to 100'));
+          for (let k = 1; k < v.length; k++) assert(v[k] <= v[k - 1] + 1e-9, 'tie ' + tie + ' draw ' + i + ' period ' + row.period + ' ' + f.id + ' rose at stage ' + (k + 1));
+        });
+      });
+    });
+  });
+  // the funnel function reads the same numbers as the time path
+  const f = E.funnel(map, realBest);
+  const tpb = E.timePath(map, realBest);
+  near(f.end, tpb.periods[tpb.periods.length - 1].library.measures.fw_right, 12, 'funnel end');
+  const fFirst = E.funnel(map, realBest, { period: 'first' });
+  near(fFirst.funnels.cheap_wrong[0].value, 0, 15, 'empty library at the start holds nothing');
+  assert(funnelStages(tpb.periods[3], 'cheap_wrong').length === 7, 'seven stages');
+});
+
+test('R18c: the square is declared in the map and computed by the engine: three sheets of 11 by 11; its corner cells are the declared corners; each cell is the setting at its levels', () => {
+  const sq = E.square(map, real);
+  assert(map.square.x === 'reach' && map.square.y === 'quality' && map.square.steps === 11, 'declaration');
+  assert(sq.sheets.length === 3 && sq.levels.length === 11 && sq.levels[0] === 0 && sq.levels[10] === 1, 'shape');
+  sq.sheets.forEach(s => { assert(s.cells.length === 11, s.id + ' rows'); s.cells.forEach(r => assert(r.length === 11, s.id + ' columns')); });
+  const ref = E.references(map, real);
+  const corner = (sheet, i, j, id) => E.RATIO_IDS.forEach(r => near(sq.sheets.find(s => s.id === sheet).cells[i][j].ratios[r], ref[id].last.ratios[r], 12, sheet + ' ' + i + ',' + j + ' is not ' + id + ' at ' + r));
+  // cells[y][x]: y is quality, x is reach
+  corner('little', 0, 0, 'corner_000'); corner('little', 10, 0, 'corner_001'); corner('little', 0, 10, 'corner_010'); corner('little', 10, 10, 'corner_011');
+  corner('much', 0, 0, 'corner_100'); corner('much', 10, 0, 'corner_101'); corner('much', 0, 10, 'corner_110'); corner('much', 10, 10, 'corner_111');
+  // an inside cell of the middle sheet, by its levels
+  const cell = sq.sheets.find(s => s.id === 'middle').cells[7][3];
+  const tp = E.timePath(map, E.settingParams(map, real, { reach: 0.3, quality: 0.7, running_cost: 'middle', recurrence: 'middle' }));
+  E.RATIO_IDS.forEach(r => near(cell.ratios[r], tp.last[r], 12, 'inside cell ' + r));
+  const one = E.square(map, real, { sheets: ['middle'] });
+  assert(one.sheets.length === 1 && JSON.stringify(one.sheets[0].cells[7][3]) === JSON.stringify(cell), 'one sheet');
+});
+
+// R19 helpers: the score of a parameter set, from the library's cost and wrong rate at the last period
+function libLast(p) { const tp = E.timePath(map, p); const r = tp.periods[tp.periods.length - 1].library; return { cost: r.cost, wrong: r.wrong }; }
+function scorer(tb) {
+  const mid = E.referenceParams(map, tb, 'middle'), all = E.referenceParams(map, tb, 'all_good');
+  const m = libLast(mid);
+  const S = x => ((m.cost - x.cost) / m.cost + (m.wrong - x.wrong) / m.wrong) / 2;
+  return { mid, all, S, full: S(libLast(all)) };
+}
+
+test('R19: alone and last are shares of the full fall; a set with no library-side unknown gets zero; the union of every library-side unknown gets one; the score equals revision 3\'s', () => {
+  const ids = LIB_IDS.filter(id => !map.parameters.find(p => p.id === id).run_setting);
+  const W = E.weights(map, real, [
+    { id: 'NONE', title: 'no unknown', main_step: 1, params: [] },
+    { id: 'GATE', title: 'gate only', main_step: 1, params: ['g_review', 'l_found'] },
+    { id: 'WORK', title: 'mix of work only', main_step: 1, params: ['need_visible'] },
+    { id: 'ALL', title: 'every library-side unknown', main_step: 2, params: ids }
+  ]);
+  const row = id => W.limitations.find(r => r.id === id);
+  ['NONE', 'GATE', 'WORK'].forEach(id => { assert(row(id).alone === 0 && row(id).last === 0 && !row(id).measured, id + ' not zero'); });
+  assert(row('NONE').not_measured === 'no_setting' && row('GATE').not_measured === 'gate_or_ladder' && row('WORK').not_measured === 'other_side_only', 'reasons');
+  assert(JSON.stringify(row('GATE').in_shared_groups) === JSON.stringify(['gate']), 'shared group of the gate row');
+  near(row('ALL').last, 1, 12, 'last of every library-side unknown');
+  near(row('ALL').alone, 1, 12, 'alone of every library-side unknown');
+  near(W.sequence_end.cumulative, 1, 12, 'the sequence ends at the full fall');
+  // the real limitations: rows with no library-side unknown are zero and say why
+  const WR = E.weights(map, real, lims);
+  WR.limitations.filter(r => !r.moved.length).forEach(r => {
+    assert(r.alone === 0 && r.last === 0 && !r.measured, r.id);
+    const l = lims.items.find(x => x.id === r.id);
+    const gl = l.params.some(id => ['gate', 'ladder'].includes(map.parameters.find(p => p.id === id).group));
+    assert(r.not_measured === (!l.params.length ? 'no_setting' : gl ? 'gate_or_ladder' : 'other_side_only'), r.id + ' reason ' + r.not_measured);
+  });
+  // the four groups together are every library-side unknown; each group row moves exactly its members
+  const union = new Set();
+  WR.groups.forEach(g => { g.moved.forEach(id => { assert(realRows[id].lib_group === g.id, id + ' in ' + g.id); union.add(id); }); });
+  assert(union.size === ids.length, 'groups do not cover every library-side unknown');
+  // the score equals revision 3's (mean fall of the four ratios), with p_promote at 0
+  const W4 = E.weights(map, pinned, lims), W3 = E3.weights(map3, t3, lims3);
+  W3.limitations.forEach(r => {
+    const n = W4.limitations.find(x => x.id === r.id);
+    near(n.alone_score, r.holds.score, 9, r.id + ' score');
+    E.RATIO_IDS.forEach(k => near(n.alone_change[k], r.holds[k], 12, r.id + ' ' + k));
+  });
+  near(W4.full.score, W3.favourable.holds.score, 9, 'full fall');
+  // the weight note words it as a measurement, never as advice
+  assert(!/\bshould\b|\bfix(es)?\b|\brecommend|\bmitigat|\bimprove/i.test(map.weight.note), 'weight note reads like advice');
+});
+
+// Hand-worked R19 case on one small set X = { t_latent, d_deliver }, both reach, good end high.
+//   t_latent: 0.02 / 0.15 / 0.6; d_deliver: 0.5 / 0.85 / 0.98 (low / middle / high).
+//   alone(X): the middle setting with t_latent 0.6 and d_deliver 0.98; S of that, over S(all_good).
+//   last(X):  the all-good setting with t_latent 0.15 and d_deliver 0.85; (S(all_good) - S of that) / S(all_good).
+//   S(x) = ((c_mid - c_x) / c_mid + (w_mid - w_x) / w_mid) / 2, with c and w the library's cost and wrong rate
+//   at the last period, read from the time path.
+test('R19 by hand: alone and last for { t_latent, d_deliver } from the definitions; the full fall at p_promote 0 is the 0.290 of section 14', () => {
+  assert(realRows.t_latent.low === 0.02 && realRows.t_latent.best === 0.15 && realRows.t_latent.high === 0.6, 't_latent range');
+  assert(realRows.d_deliver.low === 0.5 && realRows.d_deliver.best === 0.85 && realRows.d_deliver.high === 0.98, 'd_deliver range');
+  const W = E.weights(map, real, [{ id: 'X', title: 'x', main_step: 1, params: ['t_latent', 'd_deliver'] }]);
+  const h = scorer(real);
+  const a = Object.assign({}, h.mid, { t_latent: 0.6, d_deliver: 0.98 });
+  const l = Object.assign({}, h.all, { t_latent: 0.15, d_deliver: 0.85 });
+  near(W.full.score, h.full, 12, 'full fall');
+  near(W.limitations[0].alone, h.S(libLast(a)) / h.full, 12, 'alone');
+  near(W.limitations[0].last, (h.full - h.S(libLast(l))) / h.full, 12, 'last');
+  assert(W.limitations[0].same_set.count === 0, 'same set');
+  near(E.weights(map, pinned, []).full.score, 0.290, 3, 'S(all_good) at p_promote 0');
+});
+
+test('R19: a step moves the union of its limitations\' library-side unknowns; the steps moved one after another pick the largest cumulative score each time and end with the unnamed unknowns; limitations with the same set share a weight and count each other', () => {
+  const W = E.weights(map, real, lims);
+  const steps = [...new Set(lims.items.map(l => l.main_step))].sort((a, b) => a - b);
+  assert(W.steps.length === steps.length, 'one row per step');
+  W.steps.forEach(s => {
+    const ids = new Set();
+    lims.items.filter(l => l.main_step === s.step).forEach(l => l.params.forEach(id => { if (realRows[id].side === 'library') ids.add(id); }));
+    assert(s.moved.length === ids.size && s.moved.every(id => ids.has(id)), 'step ' + s.step + ' moved set');
+  });
+  const h = scorer(real);
+  const cum = ids => { const p = Object.assign({}, h.mid); ids.forEach(id => { p[id] = h.all[id]; }); return h.S(libLast(p)) / h.full; };
+  let so = [];
+  W.sequence.forEach((s, k) => {
+    near(cum(s.moved_so_far), s.cumulative, 10, 'round ' + k + ' cumulative');
+    W.sequence.slice(k + 1).forEach(o => {
+      const st = W.steps.find(x => x.step === o.step);
+      const ids = so.concat(st.moved.filter(id => so.indexOf(id) < 0));
+      assert(cum(ids) <= s.cumulative + 1e-12, 'round ' + k + ': step ' + o.step + ' would have given more');
+    });
+    so = s.moved_so_far;
+  });
+  near(W.unnamed_share, 1 - W.sequence[W.sequence.length - 1].cumulative, 12, 'unnamed share');
+  near(W.sequence_end.cumulative, 1, 12, 'the sequence ends at the full fall');
+  const named = new Set();
+  lims.items.forEach(l => l.params.forEach(id => { if (realRows[id].side === 'library') named.add(id); }));
+  assert(JSON.stringify(W.unnamed.moved.slice().sort()) === JSON.stringify(W.unknowns.map(u => u.id).filter(id => !named.has(id)).sort()), 'unnamed set');
+  // limitations with the same set of library-side unknowns
+  const key = r => r.moved.slice().sort().join(',');
+  W.limitations.filter(r => r.moved.length).forEach(r => {
+    const others = W.limitations.filter(x => x !== r && x.moved.length && key(x) === key(r));
+    assert(r.same_set.count === others.length, r.id + ' same-set count');
+    others.forEach(o => { assert(o.alone === r.alone && o.last === r.last, r.id + ' and ' + o.id + ' differ'); });
+  });
+  assert(W.limitations.some(r => r.same_set && r.same_set.count > 0), 'no shared set to test');
+  // rankings run by last, largest first
+  ['limitations', 'steps', 'groups'].forEach(k => { const L = W.ranking[k]; for (let i = 1; i < L.length; i++) assert(L[i - 1].last >= L[i].last, k + ' not sorted by last'); });
+});
+
+test('R20: the shared table moves the gate and the ladder as declared, at middle and at all_good; each row is that setting\'s time path; the other two ways do not depend on the base', () => {
+  const gate = map.shared_groups.find(g => g.id === 'gate').moves, ladder = map.shared_groups.find(g => g.id === 'ladder').moves;
+  assert(JSON.stringify(gate) === JSON.stringify({ g_tests_visible: 'high', g_tests_latent: 'high', g_review: 'high', s_review: 'high' }), 'gate group');
+  assert(JSON.stringify(ladder) === JSON.stringify({ rho_retry: 'high', o_opus: 'high', o_fable: 'high', c_handoff: 'low' }), 'ladder group');
+  const T = E.sharedTable(map, real);
+  assert(T.rows.length === 8, 'eight rows');
+  T.rows.forEach(r => {
+    const p = E.referenceParams(map, real, r.base);
+    r.moved.forEach(g => { const mv = g === 'gate' ? gate : ladder; Object.keys(mv).forEach(id => { p[id] = realRows[id][mv[id]]; }); });
+    const tp = E.timePath(map, p);
+    const last = tp.periods[tp.periods.length - 1];
+    near(r.library.cost, last.library.cost, 12, r.base + ' ' + r.moved + ' library cost');
+    near(r.library.wrong, last.library.wrong, 12, r.base + ' ' + r.moved + ' library wrong');
+    near(r.top_first.cost, tp.top_first.cost, 12, 'strong cost'); near(r.cheap_ladder.wrong, tp.cheap_ladder.wrong, 12, 'ladder wrong');
+    const twin = T.rows.find(x => x.base !== r.base && x.moved.join() === r.moved.join());
+    near(r.top_first.cost, twin.top_first.cost, 12, 'strong model depends on the base'); near(r.cheap_ladder.cost, twin.cheap_ladder.cost, 12, 'ladder depends on the base');
+  });
+});
+
+// Hand case 6 (R21). Library, visible, cheap model alone wrong, no look-alike, stocks E_good 60 and E_bad 20
+// (bad share 0.25). The shared numbers H of cases 1 to 3, with c_check_share 0.4, p_promote 0.5,
+// k_promo_exact 0.8 and k_promo_similar 0.2.
+//   g = 1 - (1 - 0.5)(1 - 0.4 * 0.5) = 0.6.
+//   exact held:   promo = 0.8 * (1 - 0.25) * 0.4 * 0.5 = 0.12;  g_lib = 0.6 + 0.4 * 0.12 = 0.648 = 1 - 0.4 * 0.88.
+//   similar held: promo = 0.2 * 0.75 * 0.4 * 0.5 = 0.03;         g_lib = 0.6 + 0.4 * 0.03 = 0.612.
+//   composite or nothing held: promo = 0; g_lib = g = 0.6.
+//   More caught at the first gate, per 100 such pieces: 100 * (flow into the first gate's wrong state) * 0.4 * promo.
+//   Under the two other ways nothing is held, so promo is 0 there whatever p_promote is.
+test('hand case 6 (R21): promo and g_lib in one class, at every gate; the promoted-check measures; nothing changes under the two other ways', () => {
+  const p = withP(Object.assign({}, H, { c_check_share: 0.4, p_promote: 0.5, k_promo_exact: 0.8, k_promo_similar: 0.2 }));
+  const stocks = { E_good: 60, E_bad: 20 };
+  const want = { exact: [0.12, 0.648], similar: [0.03, 0.612], composite: [0, 0.6], nothing: [0, 0.6] };
+  Object.keys(want).forEach(held => {
+    const c = E.evaluateClass(map, p, 'library', { kind: 'visible', need: 'cheap_wrong', held, distractor: 'no' }, stocks);
+    [['l6_caught', 'L6_wrong'], ['l7_caught', 'L7_wrong'], ['l8_caught', 'L8_wrong'], ['l9_caught', 'L9_wrong']].forEach(([b, s]) => {
+      if (s === 'L6_wrong' || s === 'L8_wrong') assert(c.stateFlow[s] > 0, held + ': no flow into ' + s);
+      if (!(c.stateFlow[s] > 0)) return;
+      near(c.branchFlow[b] / c.stateFlow[s], want[held][1], 12, held + ' catch chance at ' + s);
+    });
+    near(c.measures.fw_promo_caught, 100 * c.stateFlow.L6_wrong * 0.4 * want[held][0], 12, held + ' more caught at the first gate');
+    near(c.measures.use_promo_strength, 100 * want[held][0], 12, held + ' catch chance added');
+    near(c.measures.use_promo_caught_all, 100 * 0.4 * want[held][0] * (c.stateFlow.L6_wrong + c.stateFlow.L7_wrong + c.stateFlow.L8_wrong + c.stateFlow.L9_wrong), 12, held + ' caught at any gate');
+  });
+  ['top_first', 'cheap_ladder'].forEach(pol => {
+    const a = E.evaluatePolicy(map, Object.assign({}, p, { p_promote: 0 }), pol, stocks).overall, b = E.evaluatePolicy(map, Object.assign({}, p, { p_promote: 1, k_promo_exact: 1 }), pol, stocks).overall;
+    assert(a.cost === b.cost && a.wrong === b.wrong, pol + ' moved by promoted checks');
+    near(b.measures.use_promo_strength, 0, 15, pol + ' has promoted checks');
+  });
+});
+
+test('R21: promoted checks never lower the catch chance; it equals 1 - (1 - g)(1 - promo) in every class; a larger p_promote never lowers it; conservation holds with promotion at its top', () => {
+  const random = E.rng(2121);
+  const wide = JSON.parse(JSON.stringify(real));
+  wide.parameters.forEach(r => { const p = map.parameters.find(x => x.id === r.id); if (p.kind === 'chance' || p.kind === 'fraction') { r.low = 0; r.high = 1; } });
+  const kinds = ['visible', 'latent'], helds = ['exact', 'similar', 'composite', 'nothing'];
+  for (let i = 0; i < 120; i++) {
+    const q = E.prepareParams(map, E.drawParams(map, i % 2 ? wide : real, random, { tie: [0, 0.5, 1][i % 3], levels: levelsFrom(random) })).values;
+    if (i % 10 === 0) Object.assign(q, { p_promote: 1, k_promo_exact: 1, k_promo_similar: 1, c_check_share: 1 });
+    const stocks = randomStocks(random);
+    if (i % 7 === 0) stocks.E_bad = 0;
+    const ws = stocks.E_bad / (stocks.E_good + stocks.E_bad);
+    const r = E.conservation(map, q, { stocks });
+    assert(r.ok, 'draw ' + i + ': ' + r.problems.slice(0, 2).join('; '));
+    kinds.forEach(kind => helds.forEach(held => {
+      const cls = { kind, need: 'cheap_wrong', held, distractor: 'no' };
+      const c = E.evaluateClass(map, q, 'library', cls, stocks);
+      const c0 = E.evaluateClass(map, Object.assign({}, q, { p_promote: 0 }), 'library', cls, stocks);
+      const cUp = E.evaluateClass(map, Object.assign({}, q, { p_promote: Math.min(1, q.p_promote + 0.3) }), 'library', cls, stocks);
+      if (!(c.stateFlow.L6_wrong > 1e-9)) return;
+      const gl = c.branchFlow.l6_caught / c.stateFlow.L6_wrong, g = c0.branchFlow.l6_caught / c0.stateFlow.L6_wrong, gu = cUp.branchFlow.l6_caught / cUp.stateFlow.L6_wrong;
+      assert(gl >= g - 1e-12, 'draw ' + i + ' ' + kind + ' ' + held + ': promoted checks lowered the catch chance');
+      assert(gu >= gl - 1e-12, 'draw ' + i + ' ' + kind + ' ' + held + ': more promotion lowered the catch chance');
+      const k = held === 'exact' ? q.k_promo_exact : held === 'similar' ? q.k_promo_similar : 0;
+      const promo = k * (1 - ws) * q.c_check_share * q.p_promote;
+      near(gl, 1 - (1 - g) * (1 - promo), 10, 'draw ' + i + ' ' + kind + ' ' + held + ' g_lib');
+    }));
+  }
+});
+
+test('R21: with p_promote at 0 every number of revision 3 comes back (time paths of random draws, revision-3 engine and map)', () => {
+  const rr = E3.rng(4405);
+  for (let i = 0; i < 30; i++) {
+    const p3 = E3.drawParams(map3, t3, rr, { tie: [0, 0.5, 1][i % 3], level: rr() });
+    const p4 = Object.assign({}, p3, { p_promote: 0, k_promo_exact: rr(), k_promo_similar: rr() });
+    const a = E.timePath(map, p4), b = E3.timePath(map3, p3);
+    b.periods.forEach((row, t) => {
+      E.RATIO_IDS.forEach(r => assert(a.periods[t].ratios[r] === row.ratios[r], 'draw ' + i + ' period ' + t + ' ' + r));
+      Object.keys(row.library.measures).forEach(m => assert(a.periods[t].library.measures[m] === row.library.measures[m], 'draw ' + i + ' ' + m));
+      Object.keys(row.stocks).forEach(s => assert(a.periods[t].stocks[s] === row.stocks[s], 'draw ' + i + ' stock ' + s));
+    });
+  }
+});
+
+test('R21: the promoted-check pathway is drawn in the map (a link from the good stock to the gate, via promo, with no lookup) and its measure is the class-by-class sum', () => {
+  assert(map.links.length === 1, 'one link');
+  const l = map.links[0];
+  assert(l.id === 'promoted_checks' && l.from_stock === 'E_good' && l.via === 'promo' && l.lookup === false && l.policy === 'library', 'link');
+  const gates = ['l6_caught', 'l6_escaped', 'l7_caught', 'l7_escaped', 'l8_caught', 'l8_escaped', 'l9_caught', 'l9_escaped'];
+  assert(JSON.stringify(l.to_branches) === JSON.stringify(gates), 'the gate branches');
+  gates.forEach(id => assert(map.branches.find(b => b.id === id).chance === (/_caught$/.test(id) ? 'g_lib' : '1 - g_lib'), id));
+  assert(map.derived.find(d => d.id === 'promo').expr === '(held_exact * k_promo_exact + held_similar * k_promo_similar) * (1 - wrong_share) * c_check_share * p_promote', 'promo as written');
+  assert(l.loops.length >= 1 && l.loops.every(x => x.polarity === 'R' || x.polarity === 'B'), 'loops');
+  R21_IDS.forEach(id => { const r = realRows[id]; assert(r.side === 'library' && r.good_end === 'high' && r.lib_group === 'quality' && r.tag === 'G', id); });
+  assert(realRows.p_promote.low === 0 && realRows.p_promote.best === 0.5 && realRows.p_promote.high === 1, 'p_promote range');
+  assert(realRows.k_promo_exact.low === 0.3 && realRows.k_promo_exact.best === 0.7 && realRows.k_promo_exact.high === 0.95, 'k_promo_exact range');
+  assert(realRows.k_promo_similar.low === 0 && realRows.k_promo_similar.best === 0.05 && realRows.k_promo_similar.high === 0.3, 'k_promo_similar range');
+  // no funnel stage counts the gate
+  map.funnels.forEach(f => f.stages.forEach(id => { const m = map.measures.find(x => x.id === id); assert(!JSON.stringify(m).includes('L6_'), id + ' reaches the gate'); }));
+  assert(map.promo_measure === 'fw_promo_caught', 'the promoted-check measure');
+  ['use_promo_caught_first', 'use_promo_caught_all', 'use_promo_strength'].forEach(id => assert(map.usage_measures.includes(id), id + ' not a usage measure'));
+  // a broken link is refused when the map compiles
+  const bad = JSON.parse(JSON.stringify(map));
+  bad.links[0].to_branches = ['l1_lookup'];
+  let threw = false; try { E.compile(bad); } catch (e) { threw = /does not use promo/.test(e.message); }
+  assert(threw, 'a link to a branch that does not use promo was accepted');
+  // the measure, summed class by class here
+  const stocks = { E_good: 120, E_bad: 40 }, p = realBest;
+  const ev = E.evaluatePolicy(map, p, 'library', stocks);
+  const ws = 40 / 160;
+  let num = 0, den = 0, all1 = 0, allAny = 0, str = 0;
+  ['visible', 'latent'].forEach(kind => ['cheap_ok', 'cheap_wrong'].forEach(need => ['exact', 'similar', 'composite', 'nothing'].forEach(held => ['yes', 'no'].forEach(d => {
+    const c = E.evaluateClass(map, p, 'library', { kind, need, held, distractor: d }, stocks);
+    const gt = kind === 'visible' ? p.g_tests_visible : p.g_tests_latent;
+    const g = 1 - (1 - gt) * (1 - p.s_review * p.g_review);
+    const promo = (held === 'exact' ? p.k_promo_exact : held === 'similar' ? p.k_promo_similar : 0) * (1 - ws) * p.c_check_share * p.p_promote;
+    const extra = (1 - g) * promo;
+    if (need === 'cheap_wrong') { num += c.chance * c.stateFlow.L6_wrong * extra; den += c.chance; }
+    all1 += c.chance * c.stateFlow.L6_wrong * extra;
+    allAny += c.chance * extra * (c.stateFlow.L6_wrong + c.stateFlow.L7_wrong + c.stateFlow.L8_wrong + c.stateFlow.L9_wrong);
+    str += c.chance * promo;
+  }))));
+  near(ev.overall.measures.fw_promo_caught, 100 * num / den, 10, 'fw_promo_caught');
+  near(ev.overall.measures.use_promo_caught_first, 100 * all1, 10, 'use_promo_caught_first');
+  near(ev.overall.measures.use_promo_caught_all, 100 * allAny, 10, 'use_promo_caught_all');
+  near(ev.overall.measures.use_promo_strength, 100 * str, 10, 'use_promo_strength');
+  assert(ev.overall.measures.use_promo_caught_all >= ev.overall.measures.use_promo_caught_first, 'any gate below the first gate');
+  assert(ev.overall.measures.fw_promo_caught > 0, 'nothing caught through promoted checks at the middle values');
+});
+
+test('today\'s notes: the map and the table say they are present in every way of working; the ladder is never said to keep no notes', () => {
+  assert(/cancel out/.test(map.todays_notes) && /CLAUDE\.md/.test(map.todays_notes), 'map todays_notes');
+  const lad = map.policies.find(p => p.id === 'cheap_ladder');
+  assert(/[Tt]oday's notes are present/.test(lad.meaning), 'ladder meaning');
+  const txt = JSON.stringify(map) + JSON.stringify(real);
+  assert(!/keeps no notes|no notes of any kind/i.test(txt), 'says the ladder keeps no notes');
+  ['need_visible', 'need_latent', 'u_exact', 'u_similar', 'u_composite'].forEach(id => assert(/today's notes/.test(map.parameters.find(p => p.id === id).meaning), id + ' meaning'));
+  assert(real.assumptions.some(a => /cancel out/.test(a)), 'table assumption');
+});
+
+// ----------------------------------------------------------------- behaviour checks
+
+test('both trigger rates at zero (promoted checks off, since they need no lookup): library matches cheap_ladder in outcomes, every period; the funnel stops at the held stage', () => {
+  const random = E.rng(7);
+  const sets = [withP({ t_visible: 0, t_latent: 0, p_promote: 0 })];
+  for (let i = 0; i < 20; i++) sets.push(Object.assign(E.drawParams(map, i % 2 ? table : real, random), { t_visible: 0, t_latent: 0, p_promote: 0 }));
+  sets.forEach((p, k) => {
+    const tp = E.timePath(map, p);
+    tp.periods.forEach(row => {
+      Object.keys(row.library.outcomes).forEach(o => {
+        near(row.library.outcomes[o], tp.cheap_ladder.outcomes[o], 12, 'set ' + k + ' period ' + row.period + ' ' + o);
+      });
+      near(row.library.measures.fw_looked_up, 0, 15, 'looked up with no trigger');
+    });
+    if (k === 0) assert(tp.periods[tp.periods.length - 1].stocks.E_good > 0, 'library never filled');
+  });
+});
+
+test('every catch and success rate at 1: nothing escapes and nothing is left unresolved', () => {
+  const ones = {
+    g_tests_visible: 1, g_tests_latent: 1, s_review: 1, g_review: 1, c_check_share: 1,
+    rho_retry: 1, o_opus: 1, o_fable: 1, q_exact: 1, q_similar: 1, q_comp: 1, q_part: 1,
+    r_exact: 1, r_similar: 1, a_right: 1, d_deliver: 1, e_right: 1
+  };
+  const random = E.rng(11);
+  const sets = [withP(ones)];
+  for (let i = 0; i < 20; i++) sets.push(Object.assign(E.drawParams(map, table, random), ones));
+  sets.forEach((p, k) => {
+    const tp = E.timePath(map, p);
+    const all = [tp.top_first, tp.cheap_ladder].concat(tp.periods.map(r => r.library));
+    all.forEach((s, j) => {
+      near(s.outcomes.ESCAPED_FOUND + s.outcomes.ESCAPED_SILENT, 0, 12, 'set ' + k + ' row ' + j + ' escaped');
+      near(s.outcomes.UNRESOLVED, 0, 12, 'set ' + k + ' row ' + j + ' unresolved');
+      near(s.outcomes.EQUAL, 1, 12, 'set ' + k + ' row ' + j + ' equal');
+    });
+  });
+});
+
+test('a pure cost parameter never changes an outcome chance; raising a cost raises or keeps cost, raising a saving share lowers or keeps it', () => {
+  const pure = map.parameters.filter(p => p.pure_cost);
+  assert(pure.length === 16, 'expected 16 pure cost parameters (12 costs and 4 saving shares), found ' + pure.length);
+  const random = E.rng(13);
+  const sets = [best];
+  for (let i = 0; i < 5; i++) sets.push(E.drawParams(map, table, random));
+  sets.forEach((p, k) => {
+    const base = E.timePath(map, p);
+    pure.forEach(pp => {
+      const id = pp.id;
+      const saving = pp.kind === 'fraction';
+      const up = Object.assign({}, p); up[id] = saving ? Math.min(1, p[id] + 0.3) : p[id] * 3 + 1;
+      const tp = E.timePath(map, up);
+      const pairs = [[base.top_first, tp.top_first], [base.cheap_ladder, tp.cheap_ladder]]
+        .concat(base.periods.map((r, i) => [r.library, tp.periods[i].library]));
+      pairs.forEach(([a, b], j) => {
+        Object.keys(a.outcomes).forEach(o => near(a.outcomes[o], b.outcomes[o], 12, 'set ' + k + ' ' + id + ' row ' + j + ' ' + o));
+        if (saving) assert(b.cost <= a.cost + 1e-12, 'cost rose when ' + id + ' rose');
+        else assert(b.cost >= a.cost - 1e-12, 'cost fell when ' + id + ' rose');
+      });
+    });
+  });
+});
+
+test('the time path starts from an empty stock', () => {
+  const tp = E.timePath(map, best);
+  const first = tp.periods[0];
+  assert(first.stocks.E_good === 0 && first.stocks.E_bad === 0, 'stocks not empty');
+  near(first.stockValues.fill, 0, 15, 'fill');
+  near(first.stockValues.distract, 0, 15, 'look-alike chance');
+  near(first.stockValues.wrong_share, 0, 15, 'bad share');
+  near(first.shares.held.nothing, 1, 15, 'held nothing');
+  near(first.shares.distractor.no, 1, 15, 'no look-alike');
+  assert(tp.periods.length === best.periods, 'period count');
+  assert(tp.periods[1].stocks.E_good > 0, 'the stock never grows');
+});
+
+test('stock balance: the stock equations use exactly the flows through the drawn write and repair branches, less the retired bad entries', () => {
+  [best, realBest].forEach(P => {
+    const tp = E.timePath(map, P);
+    tp.periods.forEach(row => {
+      const s = row.stocks, n = row.next, fl = row.branchFlow, N = P.episodes_per_period;
+      near(n.E_good, s.E_good * (1 - P.delta_stale) + N * (fl.l10_opus_good + fl.l10_fable_good + fl.l11_stored_fixed), 9, 'good, period ' + row.period);
+      near(n.E_bad, s.E_bad * (1 - P.retire_bad) + P.delta_stale * s.E_good + N * (fl.l10_opus_bad + fl.l10_fable_bad + fl.l10_opus_escape_bad + fl.l10_fable_escape_bad - fl.l11_stored_fixed), 9, 'bad, period ' + row.period);
+    });
+  });
+});
+
+test('cost by tier sums to the total, calls by tier sum to the total, class chances sum to 1', () => {
+  ['top_first', 'cheap_ladder', 'library'].forEach(pol => {
+    const r = E.evaluatePolicy(map, best, pol, { E_good: 300, E_bad: 60 });
+    near(sum(r.overall.costByTier), r.overall.cost, 12, pol + ' cost');
+    near(sum(r.overall.callsByTier), r.overall.calls, 12, pol + ' calls');
+    near(r.classTotal, 1, 12, pol + ' classes');
+    near(sum(r.overall.outcomes), 1, 12, pol + ' outcomes');
+    near(r.overall.wrong, 1 - r.overall.outcomes.EQUAL, 12, pol + ' wrong rate');
+    const expectClasses = pol === 'library' ? 32 : 4;
+    assert(r.classes.length <= expectClasses, pol + ' class count');
+  });
+});
+
+test('routes (tree view): chances sum to 1 and chance-weighted route cost equals the graph cost, for each policy', () => {
+  const stocks = { E_good: 300, E_bad: 60 };
+  ['top_first', 'cheap_ladder', 'library'].forEach(pol => {
+    const tr = E.routes(map, best, pol, { stocks });
+    const ev = E.evaluatePolicy(map, best, pol, stocks);
+    near(tr.totalChance, 1, 10, pol + ' route chances');
+    near(tr.truncatedChance, 0, 12, pol + ' nothing cut by the loop bound');
+    const carried = tr.routes.reduce((a, r) => a + r.carried, 0);
+    near(carried, ev.overall.cost, 9, pol + ' carried cost');
+    const byOutcome = {};
+    tr.routes.forEach(r => { byOutcome[r.outcome] = (byOutcome[r.outcome] || 0) + r.chance; });
+    Object.keys(ev.overall.outcomes).forEach(o => near(byOutcome[o] || 0, ev.overall.outcomes[o], 10, pol + ' ' + o));
+    for (let i = 1; i < tr.routes.length; i++) assert(tr.routes[i - 1].chance >= tr.routes[i].chance, 'not sorted');
+    E.sortRoutes(tr.routes, 'carried');
+    for (let i = 1; i < tr.routes.length; i++) assert(tr.routes[i - 1].carried >= tr.routes[i].carried, 'not sorted by carried');
+    console.log('     ' + pol + ': ' + tr.count + ' routes');
+  });
+  const one = E.routes(map, best, 'library', { stocks, classValues: { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'yes' } });
+  near(one.totalChance, 1, 10, 'one class');
+});
+
+test('every branch carries flow and every state is reached under some policy and stocks', () => {
+  const flowB = {}, flowS = {};
+  const random = E.rng(17);
+  for (let i = 0; i < 20; i++) {
+    const p = E.drawParams(map, real, random);
+    ['top_first', 'cheap_ladder', 'library'].forEach(pol => {
+      const r = E.evaluatePolicy(map, p, pol, { E_good: 200, E_bad: 80 });
+      Object.keys(r.branchFlow).forEach(b => { flowB[b] = (flowB[b] || 0) + r.branchFlow[b]; });
+      Object.keys(r.stateFlow).forEach(s => { flowS[s] = (flowS[s] || 0) + r.stateFlow[s]; });
+    });
+  }
+  map.branches.forEach(b => assert(flowB[b.id] > 0, 'no flow on ' + b.id));
+  map.states.forEach(s => assert(flowS[s.id] > 0, 'no flow into ' + s.id));
+});
+
+test('ensemble: same seed gives the same result; spread is ordered; shares and correlations in range', () => {
+  const a = E.ensemble(map, table, { n: 150, seed: 42 });
+  const b = E.ensemble(map, table, { n: 150, seed: 42 });
+  assert(JSON.stringify(a) === JSON.stringify(b), 'not deterministic');
+  const c = E.ensemble(map, table, { n: 150, seed: 43 });
+  assert(JSON.stringify(a.spread) !== JSON.stringify(c.spread), 'seed has no effect');
+  ['first', 'last'].forEach(w => {
+    E.RATIO_IDS.forEach(r => {
+      const s = a.spread[w][r];
+      assert(s.p5 <= s.p25 && s.p25 <= s.p50 && s.p50 <= s.p75 && s.p75 <= s.p95, w + ' ' + r + ' percentiles out of order');
+      a.spearman[w][r].forEach(e => assert(e.rho >= -1 - 1e-12 && e.rho <= 1 + 1e-12, 'rho out of range'));
+      const list = a.spearman[w][r];
+      for (let i = 1; i < list.length; i++) assert(Math.abs(list[i - 1].rho) >= Math.abs(list[i].rho), 'ranking not sorted');
+      assert(!list.some(e => e.id === 'periods'), 'a fixed parameter was ranked');
+    });
+    ['top_first', 'cheap_ladder'].forEach(pol => {
+      const sh = a.shareBetterVs[pol][w];
+      assert(sh >= 0 && sh <= 1, 'share out of range');
+    });
+    assert(a.shareBetter[w] === a.shareBetterVs.top_first[w], 'shareBetter is the top_first share');
+  });
+});
+
+test('Spearman: monotone gives 1, reversed gives -1, ties are averaged, constant gives null', () => {
+  near(E.spearman([1, 2, 3, 4], [10, 20, 30, 1000]), 1, 12, 'monotone');
+  near(E.spearman([1, 2, 3, 4], [4, 3, 2, 1]), -1, 12, 'reversed');
+  near(E.spearman([1, 2, 2, 3], [1, 2, 2, 3]), 1, 12, 'ties');
+  assert(E.spearman([1, 1, 1], [1, 2, 3]) === null, 'constant');
+  near(E.percentile([1, 2, 3, 4, 5], 50), 3, 12, 'median');
+  near(E.percentile([0, 10], 25), 2.5, 12, 'interpolation');
+});
+
+test('swings: each varying parameter is run at low and high, the base is all best, rankings are sorted', () => {
+  const sw = E.swings(map, table);
+  const varying = map.parameters.filter(p => table.parameters[p.id].low !== table.parameters[p.id].high && !p.run_setting);
+  assert(sw.rows.length === varying.length, 'row count');
+  const tp = E.timePath(map, best);
+  near(sw.base.last.cost_vs_top, tp.last.cost_vs_top, 12, 'base');
+  const list = sw.ranking.last.cost_vs_top;
+  for (let i = 1; i < list.length; i++) assert(list[i - 1].swing >= list[i].swing, 'not sorted');
+  sw.rows.filter(r => map.parameters.find(p => p.id === r.id).pure_cost).forEach(r => {
+    near(r.low.last.wrong_vs_top, r.high.last.wrong_vs_top, 12, r.id + ' moved a wrong-rate ratio');
+  });
+});
+
+test('constraints and bounds: a composite pair above 1 is scaled down and reported; a chance or a fraction above 1 is refused; a missing parameter is named', () => {
+  const p = withP({ r_comp_full: 0.8, r_comp_part: 0.6 });
+  const prep = E.prepareParams(map, p);
+  near(prep.values.r_comp_full + prep.values.r_comp_part, 1, 12, 'sum');
+  near(prep.values.r_comp_full / prep.values.r_comp_part, 0.8 / 0.6, 12, 'proportion kept');
+  assert(prep.adjusted.includes('composite_split'), 'not reported');
+  ['a_right', 's_exact', 'retire_bad'].forEach(id => {
+    let threw = false;
+    try { E.prepareParams(map, withP({ [id]: 1.2 })); } catch (e) { threw = true; }
+    assert(threw, id + ' above 1 was accepted');
+  });
+  let threw = false;
+  const missing = Object.assign({}, best); delete missing.retire_bad;
+  try { E.prepareParams(map, missing); } catch (e) { threw = /retire_bad/.test(e.message); }
+  assert(threw, 'a missing parameter was not named');
+  // the reference settings never break a constraint on the real table
+  map.reference_settings.forEach(r => assert(E.prepareParams(map, E.referenceParams(map, real, r.id)).adjusted.length === 0, r.id + ' was scaled'));
+});
+
+test('the real table (params.json) matches the map row for row, and is read by paramsFromTable, drawParams, swings, ensemble, references and weights', () => {
+  assert(Array.isArray(real.parameters), 'params.json no longer holds a list; this test expects one');
+  assert(real.parameters.length === map.parameters.length, 'row count differs from the map');
+  assert(real.version === 4, 'table version');
+  const b = E.paramsFromTable(real, 'best');
+  map.parameters.forEach(p => assert(typeof b[p.id] === 'number', 'best value missing for ' + p.id));
+  const d = E.drawParams(map, real, E.rng(3), { tie: 0.5, levels: 0.5 });
+  map.parameters.forEach(p => assert(typeof d[p.id] === 'number', 'draw missing ' + p.id));
+  const sw = E.swings(map, real);
+  assert(sw.rows.length > 0, 'no swings');
+  const en = E.ensemble(map, real, { n: 20, seed: 3, tie: 0.5 });
+  assert(en.n === 20, 'ensemble did not run');
+  const tags = {};
+  real.parameters.forEach(r => { tags[r.id] = r.tag; });
+  ['c_carry', 'rho_retry', 'w_write', 'r_exact', 'h_harm', 'm_opus', 'retire_bad'].concat(NEW_IDS, R21_IDS).forEach(id => assert(tags[id] === 'G', id + ' should be tagged G'));
+});
+
+test('a run setting (periods) is held at its best value in every draw and is not swung, even when its row has a range', () => {
+  const t2 = JSON.parse(JSON.stringify(table));
+  t2.parameters.periods = Object.assign({}, t2.parameters.periods, { low: 6, high: 36, best: 12 });
+  const random = E.rng(5);
+  for (let i = 0; i < 50; i++) assert(E.drawParams(map, t2, random, { tie: 1, levels: random() }).periods === 12, 'periods was drawn');
+  assert(!E.swings(map, t2).rows.some(r => r.id === 'periods'), 'periods was swung');
+});
+
+test('every whole-number seed gives its own stream (seeds 0 and 1 differ)', () => {
+  assert(E.rng(0)() !== E.rng(1)(), 'seeds 0 and 1 give the same stream');
+});
+
+console.log('\n' + passed + ' of ' + run + ' tests passed' + (failures.length ? '; failed: ' + failures.join(' | ') : ''));
+process.exitCode = failures.length ? 1 : 0;

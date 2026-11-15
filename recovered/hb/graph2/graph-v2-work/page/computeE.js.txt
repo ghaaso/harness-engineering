@@ -1,0 +1,48 @@
+// Section E of the graph-v2 owner page: a real slice of history from the cache replay (k0), step by step.
+// Run from this folder:  node - < computeE.js.txt      Writes cacheslice.json here. Reads only.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
+const K0 = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/k0';
+const FACTS = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/facts/cache/a31924a3818f4ac94b695906d107c72c912792b2';
+const SEED = 20261113;
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rand = mulberry32(SEED);
+const rows = zlib.gunzipSync(fs.readFileSync(path.join(K0, 'out/final1/lookups_tree.jsonl.gz'))).toString().split('\n').filter(Boolean).map(JSON.parse);
+const R = JSON.parse(fs.readFileSync(path.join(K0, 'out/final1/replay.json'), 'utf8'));
+const tree = JSON.parse(fs.readFileSync(path.join(K0, 'data/tree.json'), 'utf8'));
+const Q = JSON.parse(fs.readFileSync(path.join(K0, 'data/questions.json'), 'utf8')).questions;
+const commits = fs.readFileSync(path.join(FACTS, 'commits.jsonl'), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const timeOf = new Map(commits.map(c => [c.sha.slice(0, 10), c.time]));
+const POL = R.policies;
+const SHOW = ['file', 'fact', 'cutoff_sem', 'ttl20', 'never'];
+const cases = R.dependency_cases.filter(d => d.kind === 'invariants_on_file').sort((a, b) => (a.qid + a.sha).localeCompare(b.qid + b.sha));
+const pick = cases[Math.floor(rand() * cases.length)];
+const q = Q.find(x => x.qid === pick.qid);
+const mine = rows.filter(r => r.q === pick.qid);
+const at = new Map(mine.map(r => [r.s, r]));
+const nodeOf = s10 => Object.values(tree.nodes).find(n => n.sha.startsWith(s10));
+// path: up to 4 ancestors (where the question was live), the case snapshot, then up to 5 descendants along main where possible
+const back = []; let cur = nodeOf(pick.sha.slice(0, 10));
+for (let p = cur.parent; p && back.length < 4; p = (tree.nodes[p] || {}).parent) { if (at.has(p.slice(0, 10))) back.unshift(p); }
+const fwd = []; let c = cur;
+while (fwd.length < 5 && c && c.children && c.children.length) {
+  const kids = c.children.map(k => tree.nodes[k]).filter(Boolean);
+  const nx = kids.find(k => k.on_main_fp && at.has(k.sha.slice(0, 10))) || kids.find(k => at.has(k.sha.slice(0, 10)));
+  if (!nx) break; fwd.push(nx.sha); c = nx;
+}
+const seq = [...back, cur.sha, ...fwd];
+const word = { C: 'first lookup (cold)', H: 'served, correct', S: 'served, STALE', A: 'recomputed, answer was the same', R: 'recomputed, answer had changed' };
+const steps = seq.map(sha => { const r = at.get(sha.slice(0, 10)); const n = tree.nodes[sha];
+  const o = {}; for (const p of SHOW) o[p] = r ? r.o[POL.indexOf(p)] : null;
+  return { sha: sha.slice(0, 10), date: timeOf.has(sha.slice(0, 10)) ? new Date(timeOf.get(sha.slice(0, 10)) * 1000).toISOString().slice(0, 10) : null, gap: n ? n.gap : null, on_main: n ? !!n.on_main_fp : null, answer_changed: r ? r.ch : null, is_case: sha === pick.sha, outcomes: o }; });
+// whole-history totals for this one question
+const tot = {}; for (const p of SHOW) { tot[p] = { H: 0, S: 0, A: 0, R: 0, C: 0 }; for (const r of mine) tot[p][r.o[POL.indexOf(p)]]++; }
+const out = { seed: SEED, prng: 'mulberry32', rule: 'Candidates: the ' + cases.length + ' recorded dependency cases of the kind "which rules constrain this file" (an answer changed although none of its own files changed), sorted by question and commit; one taken by a seeded draw.',
+  candidates: cases.length, question: { qid: q.qid, kind: q.kind, file: q.target && q.target.path, runtime: q.runtime },
+  case: { sha: pick.sha.slice(0, 10), parent: pick.parent.slice(0, 10), before: pick.before, after: pick.after, cause: pick.fact_check, why: pick.why },
+  policies_shown: SHOW, words: word, steps, totals: tot, lookups_of_question: mine.length, changes_of_question: mine.filter(r => r.ch === 1).length,
+  stale_file_serves_of_question: R.stale_file.filter(s => s.qid === pick.qid).length };
+fs.writeFileSync(path.join(process.cwd(), 'cacheslice.json'), JSON.stringify(out, null, 1));
+console.log(JSON.stringify({ q: out.question, case: out.case, steps: out.steps, totals: out.totals, n: out.lookups_of_question, ch: out.changes_of_question, sf: out.stale_file_serves_of_question }, null, 0));

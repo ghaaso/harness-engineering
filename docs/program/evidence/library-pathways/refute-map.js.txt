@@ -1,0 +1,235 @@
+// Refuter's checks on the library pathway map. Run from this folder:
+//   node - < refute-map.js.txt
+// Uses process.cwd(), never __dirname. Reads the map files only; writes
+// refute-map-console.txt beside itself (and prints the same lines).
+// Part A re-runs the engine and compares with the record. Part B decomposes the
+// best-value result. Part C re-runs the model with questionable pieces changed
+// (tilt tests). Variants change a deep copy of map.json in memory, never the file.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const LP = path.join(HERE, '..', '..', 'library-pathways');
+const E = require(path.join(LP, 'engine.js'));
+const MAP = JSON.parse(fs.readFileSync(path.join(LP, 'map.json'), 'utf8'));
+const TABLE = JSON.parse(fs.readFileSync(path.join(LP, 'params.json'), 'utf8'));
+const BEST = E.paramsFromTable(TABLE, 'best');
+const clone = o => JSON.parse(JSON.stringify(o));
+const f2 = v => (Math.round(v * 100) / 100).toFixed(2);
+const f1 = v => v.toFixed(1);
+const pc = v => (100 * v).toFixed(1) + '%';
+const out = [];
+const say = (...a) => { const s = a.join(' '); out.push(s); console.log(s); };
+
+// ------------------------------------------------------------------ A. reproduce
+say('== A. Reproduce the record at best values');
+const tp = E.timePath(MAP, BEST);
+const first = tp.periods[0], last = tp.periods[tp.periods.length - 1];
+const tier = s => f1(s.costByTier.cheap) + ' / ' + f1(s.costByTier.opus) + ' / ' + f1(s.costByTier.fable);
+say('top_first   cost', f1(tp.top_first.cost), 'wrong', pc(tp.top_first.wrong), 'tiers', tier(tp.top_first));
+say('ladder      cost', f1(tp.cheap_ladder.cost), 'wrong', pc(tp.cheap_ladder.wrong), 'tiers', tier(tp.cheap_ladder));
+say('lib first   cost', f1(first.library.cost), 'wrong', pc(first.library.wrong), 'tiers', tier(first.library));
+say('lib last    cost', f1(last.library.cost), 'wrong', pc(last.library.wrong), 'tiers', tier(last.library));
+say('ratios first', JSON.stringify(Object.fromEntries(Object.entries(first.ratios).map(([k, v]) => [k, f2(v)]))));
+say('ratios last ', JSON.stringify(Object.fromEntries(Object.entries(last.ratios).map(([k, v]) => [k, f2(v)]))));
+say('stocks at start of last period: good', f1(last.stocks.E_good), 'bad', f1(last.stocks.E_bad), 'wrong_share', f2(last.stockValues.wrong_share), 'fill', f2(last.stockValues.fill), 'distract', f2(last.stockValues.distract));
+say('periods', tp.periods.length);
+tp.periods.forEach(r => say('  period', r.period + 1, 'good', f1(r.stocks.E_good), 'bad', f1(r.stocks.E_bad), 'cost_vs_ladder', f2(r.ratios.cost_vs_ladder), 'wrong_vs_ladder', f2(r.ratios.wrong_vs_ladder), 'cost_vs_top', f2(r.ratios.cost_vs_top), 'wrong_vs_top', f2(r.ratios.wrong_vs_top)));
+
+const ens = E.ensemble(MAP, TABLE, { n: 1000, seed: 20261112 });
+const rowTag = id => TABLE.parameters.find(r => r.id === id).tag;
+['cost_vs_ladder', 'wrong_vs_ladder', 'cost_vs_top', 'wrong_vs_top'].forEach(id => {
+  const s = ens.spread.last[id];
+  say('ensemble last', id, 'p5', f2(s.p5), 'p50', f2(s.p50), 'p95', f2(s.p95), '| top5', ens.spearman.last[id].slice(0, 5).map(e => e.id + ' ' + e.rho.toFixed(2) + ' [' + rowTag(e.id) + ']').join(', '));
+});
+say('share better last: vs ladder', pc(ens.shareBetterVs.cheap_ladder.last), 'vs top', pc(ens.shareBetterVs.top_first.last), '| first: vs ladder', pc(ens.shareBetterVs.cheap_ladder.first), 'vs top', pc(ens.shareBetterVs.top_first.first), '| adjusted draws', ens.adjustedDraws);
+['cost_vs_ladder', 'wrong_vs_ladder', 'cost_vs_top', 'wrong_vs_top'].forEach(id => {
+  const s = ens.spread.first[id];
+  say('ensemble first', id, 'p5', f2(s.p5), 'p50', f2(s.p50), 'p95', f2(s.p95));
+});
+// how many draws have the library cheaper than the ladder at all (ignoring the wrong rate)
+const ensK = E.ensemble(MAP, TABLE, { n: 1000, seed: 20261112, keepDraws: true });
+const cheaperL = ensK.draws.filter(d => d.last.cost_vs_ladder < 1).length;
+const lowerWL = ensK.draws.filter(d => d.last.wrong_vs_ladder < 1).length;
+const lowerWT = ensK.draws.filter(d => d.last.wrong_vs_top <= 1).length;
+const cheaperT = ensK.draws.filter(d => d.last.cost_vs_top < 1).length;
+say('draws (of 1000, last period): library cheaper than ladder', cheaperL, '; wrong rate below ladder', lowerWL, '; cheaper than top', cheaperT, '; wrong no higher than top', lowerWT);
+
+// ------------------------------------------------------------------ B. decomposition
+say('');
+say('== B. Where the library\'s extra cost over the ladder comes from (best values, last period)');
+function flowCost(policy, stocks) {
+  const ev = E.evaluatePolicy(MAP, BEST, policy, stocks);
+  const cm = E.compile(MAP);
+  // per-branch expected cost = sum over classes of class chance * branch flow * branch cost
+  const base = {};
+  const pol = cm.policies[cm.policyIndex[policy]];
+  const groups = {};
+  pol.combos.forEach(combo => {
+    const cls = E.evaluateClass(MAP, BEST, policy, combo.values, stocks);
+    if (!cls.chance) return;
+    // recompute branch costs in this class scope
+    const scope = Object.assign({}, E.prepareParams(MAP, BEST).values);
+    cm.stockIds.forEach(id => { scope[id] = stocks[id] || 0; });
+    cm.stockValues.forEach(v => { scope[v.id] = v.fn(scope); });
+    Object.assign(scope, pol.flags, combo.flags);
+    cm.derived.forEach(d => { scope[d.id] = d.fn(scope); });
+    cm.branches.forEach(b => {
+      const fl = cls.branchFlow[b.id];
+      if (!fl || b.tier < 0) return;
+      const k = b.cost.fn(scope);
+      const g = b.id.replace(/^(l\d+)_.*$/, '$1');
+      const key = g === 'l5' ? (b.id.indexOf('none') > 0 || b.id.indexOf('wrong_') > 0 ? 'l5 cheap attempt (no or wrong entry)' : 'l5 cheap attempt (good entry, shortened)') : g;
+      groups[key] = (groups[key] || 0) + cls.chance * fl * k;
+    });
+  });
+  return { total: ev.overall.cost, groups };
+}
+const decL = flowCost('library', last.stocks), decC = flowCost('cheap_ladder', {});
+const keys = Array.from(new Set(Object.keys(decL.groups).concat(Object.keys(decC.groups)))).sort();
+keys.forEach(k => say('  ', k.padEnd(44), 'library', f2(decL.groups[k] || 0), 'ladder', f2(decC.groups[k] || 0), 'difference', f2((decL.groups[k] || 0) - (decC.groups[k] || 0))));
+say('   totals: library', f2(decL.total), 'ladder', f2(decC.total));
+
+// stock inflows over the horizon
+say('');
+say('== B2. What fills the bad stock (best values, sum over the 12 periods)');
+let stale = 0, badRight = 0, badEsc = 0, repair = 0, good = 0;
+tp.periods.forEach(r => {
+  const m = r.library.measures, ep = BEST.episodes_per_period;
+  stale += BEST.delta_stale * r.stocks.E_good; badRight += ep * m.W_bad_right; badEsc += ep * m.W_bad_escape; repair += ep * m.W_repair; good += ep * m.W_good;
+});
+say('  good written', f1(good), '| into bad: staleness', f1(stale), 'bad-on-write', f1(badRight), 'escape written', f1(badEsc), '| repaired out', f1(repair));
+
+// uses per good entry
+say('');
+say('== B3. Uses per good entry implied by the model (best values)');
+tp.periods.forEach(r => {
+  if (r.period !== 5 && r.period !== 11) return;
+  const ep = BEST.episodes_per_period;
+  const ex = r.stateFlow.L5_exact * ep, sim = r.stateFlow.L5_similar * ep, comp = (r.stateFlow.L5_full + r.stateFlow.L5_part) * ep;
+  const g = r.stocks.E_good;
+  say('  period', r.period + 1, 'good entries', f1(g), '| deliveries per period: exact', f1(ex), 'similar', f1(sim), 'composite', f1(comp), '| per good entry per period: all', f2((ex + sim + comp) / g), 'exact only', f2(ex / g));
+});
+say('  measured (R9 s1.1): 0.06 to 0.14 hits per entry over 63.8 days of FixFlow main, i.e. about 0.03 to 0.07 per 30-day period, exact repeats of hard fixes only');
+
+// ------------------------------------------------------------------ C. tilt tests
+say('');
+say('== C. Tilt tests. Each row: best values (last period) and a 1000-run ensemble, seed 20261112.');
+function runVariant(name, map, table) {
+  const best = E.paramsFromTable(table, 'best');
+  const t = E.timePath(map, best);
+  const L = t.periods[t.periods.length - 1];
+  const en = E.ensemble(map, table, { n: 1000, seed: 20261112 });
+  const s = en.spread.last;
+  say(name.padEnd(46),
+    '| best: cL', f2(L.ratios.cost_vs_ladder), 'wL', f2(L.ratios.wrong_vs_ladder), 'cT', f2(L.ratios.cost_vs_top), 'wT', f2(L.ratios.wrong_vs_top),
+    'ws', f2(L.stockValues.wrong_share),
+    '| ens p50: cL', f2(s.cost_vs_ladder.p50), 'wL', f2(s.wrong_vs_ladder.p50), 'cT', f2(s.cost_vs_top.p50), 'wT', f2(s.wrong_vs_top.p50),
+    '| p5 cL', f2(s.cost_vs_ladder.p5), 'wL', f2(s.wrong_vs_ladder.p5),
+    '| better vs ladder', pc(en.shareBetterVs.cheap_ladder.last), 'vs top', pc(en.shareBetterVs.top_first.last));
+  return { t, en };
+}
+const setRow = (table, id, lo, best, hi) => { const r = table.parameters.find(x => x.id === id); r.low = lo; r.best = best; r.high = hi; };
+runVariant('C0 as built', MAP, TABLE);
+
+// C1: per-call price ratio. The record says the measured per-call ratio is near one.
+let T = clone(TABLE); setRow(T, 'm_opus', 1, 1, 1); runVariant('C1a m_opus fixed at 1 (per call, measured sizes)', MAP, T);
+T = clone(TABLE); setRow(T, 'm_opus', 1, 2, 2); runVariant('C1b m_opus drawn 1 to 2', MAP, T);
+
+// C2: no "stealing". Coverage counts every entry; a held problem's entry is bad
+// in proportion to the bad entries that cover problems the good ones do not.
+function noSteal(map) {
+  const m = clone(map);
+  m.stocks.values.find(v => v.id === 'wrong_share').expr = '1 - safediv(1 - exp(-E_good / k_fill), 1 - exp(-(E_good + E_bad) / k_fill))';
+  m.stocks.values.find(v => v.id === 'fill').expr = '1 - exp(-(E_good + E_bad) / k_fill)';
+  return m;
+}
+runVariant('C2 bad entries cover, not steal', noSteal(MAP), TABLE);
+
+// C3: bad entries fade from retrieval at the stale rate (a stale entry about
+// code that is gone stops matching). Tests the absorbing bad stock.
+function retire(map) {
+  const m = clone(map);
+  m.stocks.update.find(u => u.id === 'E_bad').expr = 'E_bad - delta_stale * E_bad + delta_stale * E_good + episodes_per_period * (W_bad_right + W_bad_escape - W_repair)';
+  return m;
+}
+runVariant('C3 bad entries fade at the stale rate', retire(MAP), TABLE);
+
+// C4: a good entry in hand also goes up the ladder with the work.
+function upLadder(map, rightExpr, wrongExpr, costExpr, callsExpr) {
+  const m = clone(map);
+  const outcome = new Set(m.states.filter(s => s.outcome).map(s => s.id));
+  const set = new Set(); const stack = ['L6_wrong'];
+  while (stack.length) { const s = stack.pop(); if (set.has(s) || outcome.has(s)) continue; set.add(s); m.branches.filter(b => b.from === s).forEach(b => stack.push(b.to)); }
+  const newStates = m.states.filter(s => set.has(s.id)).map(s => Object.assign({}, s, { id: s.id + '_E' }));
+  const newBranches = m.branches.filter(b => set.has(b.from)).map(b => Object.assign({}, b, { id: b.id + '_E', from: b.from + '_E', to: set.has(b.to) ? b.to + '_E' : b.to }));
+  newBranches.forEach(b => {
+    if (b.id === 'l8_right_E') { b.chance = rightExpr; b.cost = costExpr; b.calls = callsExpr; }
+    if (b.id === 'l8_wrong_E') { b.chance = wrongExpr; b.cost = costExpr; b.calls = callsExpr; }
+  });
+  m.states = m.states.concat(newStates);
+  m.branches = m.branches.concat(newBranches);
+  ['l5_exact_wrong', 'l5_similar_wrong', 'l5_full_wrong', 'l5_part_wrong'].forEach(id => { m.branches.find(b => b.id === id).to = 'L6_wrong_E'; });
+  m.measures.forEach(me => {
+    if (me.flow_into) me.flow_into = me.flow_into.concat(me.flow_into.filter(s => set.has(s)).map(s => s + '_E'));
+    if (me.flow_on) me.flow_on = me.flow_on.concat(me.flow_on.filter(b => newBranches.some(nb => nb.id === b + '_E')).map(b => b + '_E'));
+  });
+  return m;
+}
+const upMid = upLadder(MAP, 'ok + (1 - ok) * (o_opus + (1 - o_opus) * q_similar)', '(1 - ok) * (1 - o_opus) * (1 - q_similar)', 'n_opus * (1 - s_similar) * m_opus', 'n_opus * (1 - s_similar)');
+const upMax = upLadder(MAP, '1', '0', '0', '0');
+// sanity: conservation on the clones
+[['mid', upMid], ['max', upMax]].forEach(([n, mm]) => { const c = E.conservation(mm, BEST, { stocks: last.stocks }); say('   conservation on C4', n, c.ok ? 'ok' : 'FAILED ' + c.problems[0], 'max error', c.maxError.toExponential(1)); });
+runVariant('C4a good entry helps Opus (similar-entry gains)', upMid, TABLE);
+runVariant('C4b good entry makes Opus right and free (bound)', upMax, TABLE);
+{
+  const tpm = E.timePath(upMax, BEST); const Lm = tpm.periods[tpm.periods.length - 1];
+  say('   C4 flow: share of pieces that reach Opus with a good entry already used, last period, best values:', pc(Lm.stateFlow.L8_opus_E));
+}
+
+// C5: write cost. The source (R9) prices one strict entry at 0.4 to 3.8M tokens; the range's floor is its lean low end.
+T = clone(TABLE); setRow(T, 'c_write', 0.5, 2, 15); runVariant('C5 c_write range 0.5 to 15, best 2', MAP, T);
+
+// C6: combined C2 + C3 + C4a
+runVariant('C6 C2 + C3 + C4a together', upLadder(retire(noSteal(MAP)), 'ok + (1 - ok) * (o_opus + (1 - o_opus) * q_similar)', '(1 - ok) * (1 - o_opus) * (1 - q_similar)', 'n_opus * (1 - s_similar) * m_opus', 'n_opus * (1 - s_similar)'), TABLE);
+T = clone(TABLE); setRow(T, 'm_opus', 1, 1, 1);
+runVariant('C7 C6 with m_opus at 1', upLadder(retire(noSteal(MAP)), 'ok + (1 - ok) * (o_opus + (1 - o_opus) * q_similar)', '(1 - ok) * (1 - o_opus) * (1 - q_similar)', 'n_opus * (1 - s_similar) * m_opus', 'n_opus * (1 - s_similar)'), T);
+
+// C8: horizon. periods is fixed at 12 in every run; the stocks are still moving.
+T = clone(TABLE); setRow(T, 'periods', 6, 36, 36); T.parameters.find(r => r.id === 'periods').run_setting = true;
+runVariant('C8 horizon 36 periods (as built otherwise)', MAP, T);
+runVariant('C8b horizon 36 with C2 + C3', retire(noSteal(MAP)), T);
+
+// ------------------------------------------------------------------ D. corner search
+say('');
+say('== D. Can any setting inside the ranges make the library cheaper than the ladder? (coordinate search)');
+function search(map, table, objective, label) {
+  const rows = table.parameters.filter(r => !r.run_setting && r.low !== r.high);
+  let p = E.paramsFromTable(table, 'best');
+  const score = q => { const t = E.timePath(map, q, { lean: true }); return objective(t); };
+  let cur = score(p);
+  for (let sweep = 0; sweep < 4; sweep++) {
+    rows.forEach(r => {
+      for (let i = 0; i <= 8; i++) {
+        const v = r.low + (r.high - r.low) * i / 8;
+        const q = Object.assign({}, p, { [r.id]: v });
+        let s; try { s = score(q); } catch (e) { continue; }
+        if (s < cur - 1e-12) { cur = s; p = q; }
+      }
+    });
+  }
+  say('  ' + label + ': minimum found', f2(cur));
+  const moved = table.parameters.filter(r => Math.abs(p[r.id] - r.best) > 1e-9).map(r => r.id + '=' + (+p[r.id].toFixed(3)));
+  say('    settings moved from best:', moved.join(', '));
+  return p;
+}
+const objCL = t => t.periods[t.periods.length - 1].ratios.cost_vs_ladder;
+const pMin = search(MAP, TABLE, objCL, 'cost ratio vs ladder, last period, 12 periods');
+{ const t = E.timePath(MAP, pMin); const L = t.periods[t.periods.length - 1]; say('    at that corner: wrong vs ladder', f2(L.ratios.wrong_vs_ladder), 'cost vs top', f2(L.ratios.cost_vs_top), 'wrong vs top', f2(L.ratios.wrong_vs_top)); }
+T = clone(TABLE); setRow(T, 'periods', 36, 36, 36);
+search(MAP, T, objCL, 'same, 36 periods');
+search(retire(noSteal(MAP)), TABLE, objCL, 'same, 12 periods, with C2 + C3');
+const objWL = t => t.periods[t.periods.length - 1].ratios.wrong_vs_ladder;
+search(MAP, TABLE, objWL, 'wrong-rate ratio vs ladder, last period');
+
+fs.writeFileSync(path.join(HERE, 'refute-map-console.txt'), out.join('\n') + '\n');

@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Split rule replay</title>
+<style>
+:root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--rule:#2a78d6;--rule-wash:#cde2fb;--cap:#eb6834;--cap-wash:#fbdccf;--good:#0ca30c;--crit:#d03b3b;--neutral:#898781}
+*{box-sizing:border-box}
+html{background:var(--page)}
+body{margin:0;background:var(--page);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1800px;margin:0 auto;padding:28px 36px 80px}
+h1{font-size:34px;line-height:1.15;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
+h2{font-size:25px;line-height:1.2;margin:0 0 6px;font-weight:650}
+h3{font-size:17px;margin:0 0 6px;font-weight:650}
+p{margin:0 0 10px}
+.sub{color:var(--ink2);font-size:15px}
+.lead{font-size:18px;max-width:1250px}
+section{margin-top:44px}
+.how{color:var(--ink2);font-size:15px;max-width:1300px;margin-bottom:14px}
+.how b{color:var(--ink)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px}
+.tag{display:inline-block;font-size:11px;font-weight:700;line-height:1;padding:3px 5px;border-radius:4px;border:1px solid var(--axis);color:var(--ink2);vertical-align:1px;margin-left:3px}
+.tag.tM{background:#eef3ea}.tag.tE{background:#f4efe2}.tag.tG{background:#f6e9e6}
+.banner{background:#fff7e0;border:1px solid #e9d8a2;border-radius:10px;padding:12px 16px;margin:16px 0 0;font-size:16px;max-width:1250px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:14px;font-size:14px;color:var(--ink2)}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.grid2.wide{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}
+.card{min-width:0}.card table .l{white-space:normal}
+/* the rule strip */
+.rule3{display:grid;grid-template-columns:1fr 1.25fr 1.5fr;gap:18px}
+.win{height:18px;border-radius:5px;background:#eceae4;position:relative;margin:4px 0 2px;overflow:visible}
+.win i{position:absolute;left:0;top:0;bottom:0;border-radius:5px 0 0 5px;background:var(--neutral)}
+.win i.b{background:var(--rule)}
+.win u{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink)}
+.winl{display:flex;justify-content:space-between;font-size:13px;color:var(--ink2);margin-bottom:8px}
+.node{border:1px solid var(--axis);border-radius:8px;padding:8px 10px;background:#fff;font-size:14px}
+.node.closed{opacity:.55;border-style:dashed}
+.node h4{margin:0 0 4px;font-size:14px}
+.keys{font:12.5px/1.45 ui-monospace,Consolas,monospace;color:var(--ink2);white-space:pre}
+.tree{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.arrow{text-align:center;color:var(--muted);font-size:13px;margin:6px 0}
+ul.tight{margin:4px 0 0;padding-left:18px;font-size:14.5px}
+ul.tight li{margin:2px 0}
+.lists{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+/* line cards */
+.lc h3{font-size:30px;margin:0;font-weight:650;letter-spacing:-.01em}
+.lc .lt{color:var(--ink2);font-size:15px;margin-bottom:12px}
+.lc .grp{font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 6px;font-weight:650}
+.row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:baseline;margin:7px 0 0;font-size:15px}
+.row .v{font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+.row .v small{font-weight:400;color:var(--ink2);font-size:13.5px}
+.meter{grid-column:1/-1;height:8px;border-radius:4px;background:var(--rule-wash);position:relative}
+.meter i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--rule)}
+.meter.n{background:#e6e4de}.meter.n i{background:var(--neutral)}
+.meter.c{background:var(--cap-wash)}.meter.c i{background:var(--cap)}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:13.5px;font-weight:600;border-radius:999px;padding:2px 9px 2px 7px;border:1px solid var(--border);background:#fff;white-space:nowrap}
+.chip .d{width:15px;height:15px;border-radius:50%;display:inline-grid;place-items:center;color:#fff;font-size:10.5px;font-weight:800;line-height:1}
+.chip.ok .d{background:var(--good)}.chip.no .d{background:var(--crit)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+/* controls */
+.ctl{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;margin:0 0 12px;font-size:15px}
+.seg{display:inline-flex;border:1px solid var(--axis);border-radius:8px;overflow:hidden;background:#fff}
+.seg button{font:inherit;font-size:14.5px;padding:6px 13px;border:0;background:transparent;cursor:pointer;color:var(--ink2);border-left:1px solid var(--grid)}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"]{background:var(--ink);color:#fff}
+.seg button:focus-visible{outline:2px solid var(--rule);outline-offset:-2px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:14px;color:var(--ink2);margin:0 0 12px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.k{display:inline-block;width:22px;height:0;border-top:2px solid var(--ink2)}
+.k.r{border-color:var(--rule)}.k.c{border-color:var(--cap)}.k.l{border-top:1.5px solid var(--ink)}
+.kb{display:inline-block;width:14px;height:12px;border-radius:2px;background:var(--rule);opacity:.2}
+.kd{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--ink2)}
+.kd.h{background:transparent;border:1.5px solid var(--ink2)}
+.kt{display:inline-block;width:2px;height:10px;background:var(--rule)}.kt.c{background:var(--cap)}
+/* session panels */
+.feat{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.small{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:14px}
+.pn{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 10px 6px;min-width:0}
+.pn .ph{font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pn .ph span{font-weight:400;color:var(--ink2)}
+.pn .ps,.pn .pf{font-size:13px;color:var(--ink2)}
+.pn .pf{color:var(--ink);margin-bottom:2px}
+.pn:not(.big) .pf{min-height:2.75em}
+.pn.big .ph{font-size:16px}.pn.big .ps,.pn.big .pf{font-size:14px}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{font:12px system-ui,-apple-system,"Segoe UI",sans-serif;fill:var(--muted)}
+svg text.i{fill:var(--ink)}svg text.s{fill:var(--ink2)}svg text.b{font-weight:650;fill:var(--ink)}
+/* tables */
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:6px 9px;text-align:right;border-bottom:1px solid var(--grid);font-variant-numeric:tabular-nums;white-space:nowrap}
+#tbl{font-size:13px}#tbl th,#tbl td{padding:5px 6px}#tbl th{white-space:normal;font-size:12px;line-height:1.25}
+th{font-weight:650;color:var(--ink2);font-size:13px;vertical-align:bottom;background:var(--surface);position:sticky;top:0}
+th.l,td.l{text-align:left}td.w{white-space:normal;text-align:left}
+tr.grp th{text-align:center;border-bottom:1px solid var(--axis)}
+td.sep,th.sep{border-left:1px solid var(--axis)}
+.scroll{overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.note{font-size:14px;color:var(--ink2);margin-top:8px;max-width:1300px}
+.tip{position:fixed;pointer-events:none;z-index:9;background:#0b0b0b;color:#fff;font-size:13px;line-height:1.35;padding:6px 9px;border-radius:6px;max-width:320px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+.tip b{font-weight:650}
+.dec{border:2px solid var(--ink);border-radius:12px;padding:18px 22px;background:#fff;max-width:1250px}
+.dec h3{font-size:21px}
+details summary{cursor:pointer;font-weight:650;margin:10px 0}
+code{font:13.5px ui-monospace,Consolas,monospace;background:#efeee9;padding:1px 5px;border-radius:4px}
+@media (max-width:1300px){.grid3,.rule3,.lists,.feat{grid-template-columns:1fr}.small{grid-template-columns:repeat(3,minmax(0,1fr))}.grid2,.grid2.wide{grid-template-columns:minmax(0,1fr)}.wrap{padding:18px 16px 60px}.lists{gap:8px}}
+@media (max-width:700px){.small{grid-template-columns:repeat(2,minmax(0,1fr))}h1{font-size:26px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="sub">WP12, first deliverable · idea PAR-22 · 14 November 2026 · record: <code>docs/program/SPLIT-RULE-2026-11.md</code></div>
+  <h1>Splitting sessions at a line: the rule and its replay</h1>
+  <p class="lead">The proposal: run orchestration as a B+ tree spread over sessions. Inner sessions hold routing keys, leaves hold the work, a session whose window passes a split line hands its work to two fresh sessions, and small siblings merge. This page replays that rule over every Claude Code session recorded on this PC, with no model calls.</p>
+  <div class="banner"><b>Untested proposal.</b> The replay counts exposure: where recorded windows passed a line and what a split could touch. It is not a saving, and it cannot show the effect on quality or hallucinations, which is what the idea is aimed at.</div>
+  <div class="meta" id="meta"></div>
+</header>
+
+<section id="s-rule">
+  <h2>What is being replayed?</h2>
+  <p class="how">Three boxes, left to right: what a session's window does today, what the rule does when a session reaches the line, and what moves across the hand-over. The full rule, with merging, work in flight and where the B+ tree analogy stops, is part 1 of the record.</p>
+  <div class="rule3" id="rule3"></div>
+</section>
+
+<section id="s-lines">
+  <h2>What did the replay find at each line?</h2>
+  <p class="how"><b>How to read it.</b> One card per line. The top half is counted straight from the transcripts. The bottom half replays the rule under stated assumptions; the range in brackets runs from the unfavourable to the favourable assumptions. The chips are the five tests for "not paying", fixed before the replay ran.</p>
+  <div class="grid3" id="cards"></div>
+</section>
+
+<section id="s-win">
+  <h2>Where did each recorded window pass the lines?</h2>
+  <p class="how"><b>How to read it.</b> Each box is one recorded session. Left to right is the session's steps in order; height is how many tokens the window held when that step re-read it, on the same scale in every box (0 to 1,000,000). The three horizontal lines are the split lines. The shaded part is work done above the chosen line. A triangle marks a compaction that was recorded. Ticks along the bottom are where the replay hands over.</p>
+  <div class="ctl">
+    <span>Line: <span class="seg" id="segL"></span></span>
+    <span>Overlay: <span class="seg" id="segO"></span></span>
+  </div>
+  <div class="legend" id="legW"></div>
+  <div class="feat" id="feat"></div>
+  <div class="small" id="small"></div>
+  <p class="note" id="noteW"></p>
+</section>
+
+<section id="s-hist">
+  <h2>How much of the work happened above each line?</h2>
+  <p class="how"><b>How to read it.</b> Every step is placed by the size of the window it re-read, in bands of 25,000 tokens. Left: session windows, the rule's nodes. Right: agent and workflow-agent windows, which the rule does not split. Top row counts steps; bottom row counts the tokens those steps re-read from cache. Bars past the chosen line are blue.</p>
+  <div class="grid2" id="hists"></div>
+</section>
+
+<section id="s-comp">
+  <h2>Where did the recorded compactions fall?</h2>
+  <p class="how"><b>How to read it.</b> One dot per recorded compaction, placed at the size of the window when it compacted; one row per model. A compaction to the right of a line is one a split at that line would have come before. Dots are spread up and down only so they do not hide each other.</p>
+  <div class="card" id="compc"></div>
+</section>
+
+<section id="s-net">
+  <h2>What does the rule remove in tokens, against an earlier compaction window?</h2>
+  <p class="how"><b>How to read it.</b> Three groups, one per line. Each row is a way of acting at that line on the same recorded sessions; the dot is how many fewer context tokens the replay reads than the record. The pale bar is the range across the assumptions. The two hollow marks are measured bounds: everything re-read in steps past the line (no method can remove more), and only the part above the line.</p>
+  <div class="grid2 wide">
+    <div class="card" id="netc"></div>
+    <div class="card" id="netside"></div>
+  </div>
+</section>
+
+<section id="s-sens">
+  <h2>How far does one guessed input move the token result?</h2>
+  <p class="how"><b>How to read it.</b> Three panels, one per line. Each row changes one thing in the middle case; the dot is the rule's net tokens divided by the earlier compaction window's. Left of 1.00 the earlier window removes more. Right of 1.10 the rule passes the test that was fixed beforehand; those figures are in bold at the right of each panel.</p>
+  <div class="card" id="sensc"></div>
+</section>
+
+<section id="s-hand">
+  <h2>How many hand-overs does the rule write, against the summaries it removes?</h2>
+  <p class="how"><b>How to read it.</b> A compaction summary and a split brief are both a point where state is rewritten and can be misstated. Bars count those points on the same sessions: the summaries on record above each line, the summaries an earlier compaction window would write, the hand-overs the rule would make, and the briefs those hand-overs write.</p>
+  <div class="grid2 wide">
+    <div class="card" id="handc"></div>
+    <div class="card" id="handside"></div>
+  </div>
+</section>
+
+<section id="s-checks">
+  <h2>Does it pay, by the tests fixed beforehand?</h2>
+  <p class="how">Judged on session windows in the middle case with an even split. The thresholds were written into the record before the replay stage ran. None of the five can show that the idea works or fails on hallucinations.</p>
+  <div class="scroll"><table id="checks"></table></div>
+</section>
+
+<section id="s-cannot">
+  <h2>What the replay cannot show, and the decision</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>It cannot show</h3>
+      <ul class="tight">
+        <li><b>Whether the work could be divided.</b> The replay sees token counts, not scopes. The roll-over rows are the case where it could not.</li>
+        <li><b>Whether a brief is right.</b> It reads no message text, so it cannot tell a correct brief from a wrong one. An "avoided compaction" is a summary not written, nothing more.</li>
+        <li><b>Quality, hallucinations, throughput, time.</b> None is visible in a transcript's token counts.</li>
+        <li><b>The costs it leaves out:</b> messages between siblings, work that needs both windows, a child that guesses instead of re-reading.</li>
+        <li><b>The parent's own steps, merges and the caps.</b> The replay charges nothing for the inner session above the leaves, makes no merges, and applies neither the fan-out cap nor the depth cap.</li>
+      </ul>
+      <h3 style="margin-top:14px">The trial that would</h3>
+      <ul class="tight">
+        <li>Two comparable lane waves: one under the rule at the chosen line, one with an earlier compaction window at the same token count.</li>
+        <li>Main measure, as first written: a script rechecks each claim that names a path, a commit, a pull request or a test result against the repository. That script was built and run on the record on 14 November. It cannot separate summaries from maintained documents, so the main measure is now a reader's check of the latest state (the box on the right; record, part 6.4).</li>
+        <li>Beside it: review send-backs and rounds, tokens and hours per accepted slice, rule failures, and the fill at every correction.</li>
+        <li>At least ten hand-overs per arm <span class="tag tG">G</span>.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="dec" id="dec"></div>
+      <div class="card" style="margin-top:18px" id="pick"></div>
+    </div>
+  </div>
+</section>
+
+<section id="s-table">
+  <h2>Every session window that passed 300k</h2>
+  <p class="how">The table behind the pictures. Counts are measured; hand-overs and net tokens are the replay's middle case with an even split. Sessions from the owner's other projects appear by id only.</p>
+  <div class="scroll" style="max-height:760px;overflow-y:auto"><table id="tbl"></table></div>
+  <p class="note" id="noteT"></p>
+</section>
+
+<section>
+  <h2>Where this comes from</h2>
+  <div class="card" id="src"></div>
+</section>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const D = /*DATA*/null;
+const LINES = D.lines, NS = 'http://www.w3.org/2000/svg';
+let sel = 0.4, overlay = 'rule';
+const $ = (s, r = document) => r.querySelector(s);
+const nf = new Intl.NumberFormat('en-US');
+const int = n => nf.format(Math.round(n));
+const tok = n => { const a = Math.abs(n); return a >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : a >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : a >= 1e3 ? Math.round(n / 1e3) + 'k' : String(Math.round(n)); };
+const pct = (x, d = 1) => (100 * x).toFixed(d) + ' %';
+const tg = t => `<span class="tag t${t}" title="${{ M: 'measured', E: 'estimated', G: 'guess' }[t]}">${t}</span>`;
+const lk = L => Math.round(L * 1000) + 'k', lp = L => Math.round(L * 100) + ' %';
+const GN = { fixflow: 'FixFlow', clinic: 'Clinic testbed', other: 'other project' };
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const dfmt = (a, b) => { const p = x => [+x.slice(8, 10), MON[+x.slice(5, 7) - 1]], [d1, m1] = p(a), [d2, m2] = p(b); return a === b ? `${d1} ${m1}` : m1 === m2 ? `${d1} to ${d2} ${m1}` : `${d1} ${m1} to ${d2} ${m2}`; };
+const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const tip = $('#tip');
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = 'block'; const w = tip.offsetWidth, h = tip.offsetHeight; let x = e.clientX + 14, y = e.clientY + 14; if (x + w > innerWidth - 8) x = e.clientX - w - 14; if (y + h > innerHeight - 8) y = e.clientY - h - 14; tip.style.left = x + 'px'; tip.style.top = y + 'px'; }
+function hideTip() { tip.style.display = 'none'; }
+function seg(id, opts, get, set) { const el = $(id); el.innerHTML = opts.map(o => `<button type="button" data-v="${o[0]}" aria-pressed="${String(get() === o[0])}">${o[1]}</button>`).join(''); el.onclick = e => { const b = e.target.closest('button'); if (!b) return; let v = b.dataset.v; if (!isNaN(+v)) v = +v; set(v); el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); redraw(); }; }
+
+// ---------- header ----------
+function meta() {
+  const i = D.index, c = D.check;
+  $('#meta').innerHTML = [
+    `<span><b>${int(i.files)}</b> transcript files in <b>${i.stores}</b> project folders, ${(i.bytes / 1e9).toFixed(2)} GB ${tg('M')}</span>`,
+    `<span><b>${int(D.dedupe.calls)}</b> steps (API calls), each message counted once ${tg('M')}</span>`,
+    `<span><b>${D.all.session.n}</b> session windows (${D.dates.from} to ${D.dates.to}) and <b>${int(D.all.agent.n)}</b> agent windows ${tg('M')}</span>`,
+    c ? `<span>the reader agrees with the token report's own parser on <b>${c.identical} of ${c.of}</b> totals ${tg('M')}</span>` : '',
+    `<span>revised after a check on 14 November (<code>evidence/split-replay/review-2026-11-14.md</code>); no measured number moved</span>`,
+    `<span>tags: ${tg('M')} measured · ${tg('E')} estimated from measured numbers · ${tg('G')} guess</span>`].join('');
+}
+
+// ---------- the rule strip ----------
+function ruleStrip() {
+  const st = D.sessionStart.med, m = D.models, f = k => Math.round(k / 1000) + 'k';
+  const defs = Object.values(m).filter(x => x.atDefault > 0), opus = m['claude-opus-5-5'];
+  const hi = Math.max(...defs.map(x => x.compMax)), lo = 967000;
+  const bar = (p, cls = '', mark = null) => `<div class="win"><i class="${cls}" style="width:${Math.min(100, p)}%"></i>${mark != null ? `<u style="left:${mark}%"></u>` : ''}</div>`;
+  $('#rule3').innerHTML = `
+  <div class="card"><h3>Today: one window grows until it compacts</h3>
+    <div class="winl"><span>a new session's first step</span><span><b>${f(st)}</b> ${tg('M')}</span></div>${bar(st / 1e4)}
+    <div class="winl" style="margin-top:10px"><span>Opus windows, when they compact (owner's setting)</span><span><b>near ${f(opus.compMed)}</b> ${tg('M')}</span></div>${bar(opus.compMed / 1e4)}
+    <div class="winl" style="margin-top:10px"><span>Fable and Sonnet sessions, at the default trigger</span><span><b>${f(lo)} to ${f(hi)}</b> ${tg('M')}</span></div>${bar(97)}
+    <p class="note">The bar is the 1,000,000-token window. A summary then replaces the history: ${D.compactions.n} compactions are on record ${tg('M')}, and 2 of 2 summaries checked earlier were behind their kept tail on the latest state (register PR-SUMMARY).</p></div>
+  <div class="card"><h3>The rule: at the line, hand over to two fresh leaves</h3>
+    <div class="node"><h4>Parent (inner session): keys only</h4><div class="keys">scope A  →  leaf 1   open     branch@commit
+scope B  →  leaf 2   open     branch@commit   ← one more row</div></div>
+    <div class="arrow">the parent starts both children, so every leaf stays at the same depth</div>
+    <div class="tree">
+      <div class="node"><h4>Leaf 1: scope A</h4>${bar(st / 1e4, 'b', sel * 100)}<div class="winl"><span>starts at ${f(st)}</span><span>line ${lk(sel)}</span></div></div>
+      <div class="node"><h4>Leaf 2: scope B</h4>${bar(st / 1e4, 'b', sel * 100)}<div class="winl"><span>starts at ${f(st)}</span><span>line ${lk(sel)}</span></div></div>
+    </div>
+    <div class="node closed" style="margin-top:10px"><h4>The old session: closed</h4>${bar(sel * 100 + 3, '', sel * 100)}<div class="winl" style="margin:0"><span>its window cannot give half away, so it is left behind; the transcript stays on disk</span></div></div></div>
+  <div class="card"><h3>What crosses the hand-over</h3>
+    <div class="lists">
+      <div><b>A child starts with</b><ul class="tight"><li>the harness's fixed start</li><li>a one-page brief: its scope, pointers to state, open items, binding decisions by id, what done looks like</li><li>nothing else: it reads the repository fresh</li></ul></div>
+      <div><b>A child does not inherit</b><ul class="tight"><li>the parent's conversation</li><li>files the parent had read</li><li>the parent's own earlier output</li><li>tool results</li><li>finished scopes (this settles TOK-44)</li><li>any summary</li></ul></div>
+      <div><b>The parent keeps: keys</b><ul class="tight"><li>scope and what it covers</li><li>owner session</li><li>state, from a closed set</li><li>pointer to the result</li><li>verdict, once done</li><li>what it is blocked on</li></ul></div>
+    </div>
+    <p class="note" style="margin-top:12px"><b>Point, do not assert:</b> anything the repository can show is passed as a pointer and read fresh, so the latest state is never carried in prose. A scope that cannot be cut rolls over to one fresh session instead. A root has no parent, so the owner opens each new root.</p></div>`;
+}
+
+// ---------- line cards ----------
+function netRange(o) { let lo = Infinity, hi = -Infinity; for (const sk in o.sim.split) for (const dk in o.sim.split[sk]) { const v = o.sim.split[sk][dk].net; lo = Math.min(lo, v); hi = Math.max(hi, v); } return [lo, hi]; }
+const VN = { N1: ['removes tokens', 'removes no tokens'], N2: ['beats the earlier window by 10 %', 'not 10 % ahead of the earlier window, middle case'], N3: ['a leaf lasts one unit of work', 'fails as written, in unlike units'], N4: ['acts on enough of the work', 'would rarely act'], N5: ['comes before most compactions', 'comes after most compactions'] };
+function cards() {
+  $('#cards').innerHTML = LINES.map(L => {
+    const o = D.byLine[L], s = o.session, a = o.agent, mid = o.sim.split.mid.even, c = o.sim.compact, [lo, hi] = netRange(o), rec = D.all.session.ctx;
+    const row = (label, v, p, cls = '') => `<div class="row"><span>${label}</span><span class="v">${v}</span><div class="meter ${cls}"><i style="width:${Math.max(0, Math.min(100, 100 * p))}%"></i></div></div>`;
+    const chips = Object.entries(o.verdict).map(([k, v]) => `<span class="chip ${v.fails ? 'no' : 'ok'}"><span class="d">${v.fails ? '✕' : '✓'}</span>${k}: ${VN[k][v.fails ? 1 : 0]}</span>`).join('');
+    return `<div class="card lc"><h3>${lp(L)} of the window</h3><div class="lt">a line at <b>${int(o.tokens)}</b> tokens</div>
+      <div class="grp">Counted from the transcripts ${tg('M')}</div>
+      ${row('Session windows that passed it', `${s.crossed} <small>of ${s.windows}</small>`, s.crossed / s.windows, 'n')}
+      ${row('Steps taken above it', `${int(s.past)} <small>(${pct(s.past / s.calls)})</small>`, s.past / s.calls, 'n')}
+      ${row('Tokens re-read in those steps', `${tok(s.crPast)} <small>(${pct(s.crPast / s.cr)} of ${tok(s.cr)})</small>`, s.crPast / s.cr, 'n')}
+      ${row('Recorded compactions it would come before', `${o.comp.avoided} <small>of ${o.comp.total}</small>`, o.comp.avoided / o.comp.total, 'n')}
+      ${row('Agent windows that passed it', `${a.crossed} <small>of ${int(a.windows)}</small>`, a.crossed / a.windows, 'n')}
+      <div class="grp">Replayed under assumptions ${tg('E')}</div>
+      ${row('Split rule: fewer context tokens read', `${tok(mid.net)} <small>(${pct(mid.net / rec)}; range ${tok(lo)} to ${tok(hi)})</small>`, mid.net / rec)}
+      ${row('Earlier compaction window, same line', `${tok(c.net)} <small>(${pct(c.net / rec)})</small>`, c.net / rec, 'c')}
+      <div class="row"><span>Rule over earlier window: middle case; across the nine cases</span><span class="v">${o.ratio.mid.toFixed(2)} <small>(${o.ratio.min.toFixed(2)} to ${o.ratio.max.toFixed(2)})</small></span></div>
+      <div class="row"><span>Hand-overs the rule makes</span><span class="v">${int(mid.events)} <small>writing ${int(mid.newSessions)} briefs</small></span></div>
+      <div class="row"><span>Summaries the earlier window writes</span><span class="v">${int(c.events)} <small>(${o.comp.session.avoided} on record above this line)</small></span></div>
+      <div class="row"><span>Steps a leaf serves before its own hand-over</span><span class="v">${o.life.med} <small>median of ${o.life.reached} leaves</small></span></div>
+      <div class="chips">${chips}</div></div>`;
+  }).join('');
+}
+
+// ---------- session panels ----------
+const rowOf = {}; for (const r of D.sessions) rowOf[r.g + r.sid8] = r;
+function panel(s, big) {
+  const W = big ? 560 : 268, H = big ? 236 : 124, m = { l: big ? 40 : 28, r: big ? 40 : 8, t: 8, b: big ? 18 : 12 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, X = i => m.l + (s.n > 1 ? i / (s.n - 1) : 0) * iw, Y = k => m.t + ih - Math.min(k, 1000) / 1000 * ih;
+  const r = s.rec, pts = []; for (let i = 0; i < r.length; i += 2) pts.push(X(r[i]).toFixed(1) + ',' + Y(r[i + 1]).toFixed(1));
+  const lineY = Y(sel * 1000); let area = `M${X(r[0]).toFixed(1)},${lineY.toFixed(1)}`; for (let i = 0; i < r.length; i += 2) area += `L${X(r[i]).toFixed(1)},${Math.min(lineY, Y(r[i + 1])).toFixed(1)}`; area += `L${X(r[r.length - 2]).toFixed(1)},${lineY.toFixed(1)}Z`;
+  let g = '';
+  for (const t of (big ? [0, 250, 500, 750, 1000] : [0, 500, 1000])) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="var(--grid)"/><text x="${m.l - 5}" y="${Y(t) + 4}" text-anchor="end">${t === 1000 ? '1M' : t === 0 ? '0' : t + 'k'}</text>`;
+  g += `<path d="${area}" fill="var(--rule)" opacity=".18"/>`;
+  for (const L of LINES) { const on = L === sel; g += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(L * 1000)}" y2="${Y(L * 1000)}" stroke="${on ? 'var(--ink)' : 'var(--axis)'}" stroke-width="${on ? 1.5 : 1}"/>`; if (big || on) g += `<text x="${W - m.r + 4}" y="${Y(L * 1000) + 4}" class="${on ? 'b' : ''}">${big ? lp(L) : ''}</text>`; }
+  const ov = overlay === 'rule' ? s.rule[sel] : overlay === 'cap' ? s.cap[sel] : null, col = overlay === 'rule' ? 'var(--rule)' : 'var(--cap)';
+  if (ov && ov.band) { const b = ov.band, up = [], dn = []; for (let i = 0; i < b.length; i += 3) { up.push(X(b[i]).toFixed(1) + ',' + Y(b[i + 2]).toFixed(1)); dn.unshift(X(b[i]).toFixed(1) + ',' + Y(b[i + 1]).toFixed(1)); } g += `<polygon points="${up.concat(dn).join(' ')}" fill="${col}" opacity=".28"/><polyline points="${up.join(' ')}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round"/>`; }
+  g += `<polyline points="${pts.join(' ')}" fill="none" stroke="var(--ink2)" stroke-width="${big ? 2 : 1.5}" stroke-linejoin="round" stroke-linecap="round"/>`;
+  for (const c of s.comps) { const x = X(c[0]), y = Y(c[1]) - 3, z = big ? 5 : 3.5; g += `<path d="M${x - z},${y - z * 1.6}L${x + z},${y - z * 1.6}L${x},${y}Z" fill="var(--ink)" stroke="var(--surface)" stroke-width="1"/>`; }
+  if (ov) for (const k of ov.marks) g += `<line x1="${X(k)}" x2="${X(k)}" y1="${H - m.b + 1}" y2="${H - m.b + (big ? 9 : 7)}" stroke="${col}" stroke-width="2"/>`;
+  g += `<line x1="${m.l}" x2="${W - m.r}" y1="${H - m.b}" y2="${H - m.b}" stroke="var(--axis)"/>`;
+  if (big) g += `<text x="${m.l}" y="${H - 3}">step 1</text><text x="${W - m.r}" y="${H - 3}" text-anchor="end">step ${int(s.n)}</text>`;
+  const ro = rowOf[s.g + s.sid8], l = ro.lines[sel], cnt = overlay === 'cap' ? l.compEvents : l.events, what = overlay === 'cap' ? 'summaries' : 'hand-overs';
+  const fact = l.first < 0 ? `never passed ${lk(sel)}` : `passed ${lk(sel)} at step ${int(l.first + 1)}${big ? `, ${pct(l.firstShare, 0)} of the way through` : ''} · ${pct(l.past / s.n, 0)} ${big ? 'of steps above' : 'above'}${overlay === 'none' ? '' : ` · ${cnt} ${what}`}`;
+  return `<div class="pn ${big ? 'big' : ''}" data-k="${s.g + s.sid8}"><div class="ph">${GN[s.g]} <span>· ${s.sid8} · ${s.model}</span></div><div class="ps">${int(s.n)} steps · ${dfmt(s.from, s.to)} · peak ${s.peak}k · ${s.comps.length} compaction${s.comps.length === 1 ? '' : 's'}</div><div class="pf">${fact}</div>
+  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Window size over the steps of session ${s.sid8}: ${fact}" data-w="${W}" data-ml="${m.l}" data-iw="${iw}">${g}<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" class="hit"/></svg></div>`;
+}
+const serOf = {}; for (const s of D.series) serOf[s.g + s.sid8] = s;
+function panels() {
+  $('#feat').innerHTML = D.series.filter(s => s.feat).map(s => panel(s, true)).join('');
+  $('#small').innerHTML = D.series.filter(s => !s.feat).map(s => panel(s, false)).join('');
+  $('#legW').innerHTML = `<span><i class="k"></i>the recorded window</span><span><i class="kb"></i>work done above the chosen line</span><span><i class="k l"></i>the chosen line; the other two are pale</span><span>▼ a recorded compaction</span>` + (overlay === 'none' ? '' : `<span><i class="kt ${overlay === 'cap' ? 'c' : ''}"></i>${overlay === 'cap' ? 'a summary under an earlier compaction window' : 'a hand-over under the rule (middle case, even split)'} ${tg('E')}</span><span><i class="kb" style="background:${overlay === 'cap' ? 'var(--cap)' : 'var(--rule)'};opacity:.45"></i>${overlay === 'cap' ? 'the window under the earlier compaction window' : 'the windows that serve the steps under the rule, from the emptiest to the fullest leaf'}, in the six large boxes ${tg('E')}</span>`);
+  const o = D.byLine[sel]; $('#noteW').innerHTML = `${D.series.length} of ${D.all.session.n} session windows passed 300k and are drawn here, largest first; the other ${D.all.session.n - D.series.length} never did. At ${lk(sel)}, ${o.session.crossed} windows passed the line ${tg('M')}. Opus windows stop near 367k because the owner's settings compact them there, so they do not reach the 40 % and 50 % lines.`;
+}
+document.addEventListener('mousemove', e => {
+  const hit = e.target.closest && e.target.closest('rect.hit'); if (!hit) { if (!e.target.closest || !e.target.closest('[data-tip]')) hideTip(); return; }
+  const svg = hit.ownerSVGElement, pn = svg.closest('.pn'), s = serOf[pn.dataset.k], bb = svg.getBoundingClientRect(), sx = (e.clientX - bb.left) / bb.width * +svg.dataset.w;
+  const f = Math.max(0, Math.min(1, (sx - +svg.dataset.ml) / +svg.dataset.iw)), step = Math.round(f * (s.n - 1));
+  const near = a => { let b = 0, bd = Infinity; for (let i = 0; i < a.length; i += 2) { const d = Math.abs(a[i] - step); if (d < bd) { bd = d; b = i; } } return a[b + 1]; };
+  let h = `<b>step ${int(step + 1)}</b> of ${int(s.n)}<br>recorded window: ${near(s.rec)}k`;
+  const ov = overlay === 'rule' ? s.rule[sel] : overlay === 'cap' ? s.cap[sel] : null; if (ov && ov.band) { const b = ov.band; let j = 0, bd = Infinity; for (let i = 0; i < b.length; i += 3) { const d = Math.abs(b[i] - step); if (d < bd) { bd = d; j = i; } } h += `<br>${overlay === 'cap' ? 'under the earlier compaction window' : 'under the rule, the leaves serving here'}: ${b[j + 1] === b[j + 2] ? b[j + 1] + 'k' : b[j + 1] + 'k to ' + b[j + 2] + 'k'}`; }
+  showTip(e, h);
+});
+document.addEventListener('mouseover', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (t) showTip(e, t.dataset.tip); });
+document.addEventListener('mouseout', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (t) hideTip(); });
+
+// ---------- histograms ----------
+function hist(bins, key, title, unit) {
+  const W = 840, H = 230, m = { l: 46, r: 12, t: 26, b: 30 }, iw = W - m.l - m.r, ih = H - m.t - m.b, tot = bins.reduce((a, b) => a + b[key], 0);
+  const mx = Math.max(...bins.map(b => b[key] / tot)), stp = mx <= 0.05 ? 0.01 : mx <= 0.10 ? 0.02 : mx <= 0.25 ? 0.05 : 0.10, top = Math.ceil(mx / stp - 1e-9) * stp, X = k => m.l + k / 1000 * iw, Y = v => m.t + ih - v / top * ih, bw = Math.min(24, iw / 40 - 2);
+  let g = `<text x="${m.l}" y="14" class="b">${title}</text>`;
+  for (let t = 0; t <= top + 1e-9; t += stp) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="var(--grid)"/><text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${(t * 100).toFixed(0)} %</text>`;
+  let past = 0;
+  for (const b of bins) { const v = b[key] / tot, on = b.lo >= sel * 1000 - 1e-6; if (on) past += b[key]; if (!b[key]) continue; const x = X(b.lo) + (iw / 40 - bw) / 2, y = Y(v), h = Math.max(1, m.t + ih - y);
+    g += `<path d="M${x},${m.t + ih}V${y + Math.min(4, h)}Q${x},${y} ${x + Math.min(4, bw / 2)},${y}H${x + bw - Math.min(4, bw / 2)}Q${x + bw},${y} ${x + bw},${y + Math.min(4, h)}V${m.t + ih}Z" fill="${on ? 'var(--rule)' : 'var(--neutral)'}" data-tip="<b>${b.lo}k to ${b.lo + 25}k</b><br>${unit === 'steps' ? int(b.calls) + ' steps' : tok(b.cr) + ' tokens re-read'} (${pct(v)})"/>`; }
+  for (const L of LINES) { const on = L === sel; g += `<line x1="${X(L * 1000)}" x2="${X(L * 1000)}" y1="${m.t - 6}" y2="${m.t + ih}" stroke="${on ? 'var(--ink)' : 'var(--axis)'}" stroke-width="${on ? 1.5 : 1}"/><text x="${X(L * 1000) + 4}" y="${m.t + 2}" class="${on ? 'b' : ''}">${lp(L)}</text>`; }
+  g += `<line x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}" stroke="var(--axis)"/>`;
+  for (let k = 0; k <= 1000; k += 100) g += `<text x="${X(k)}" y="${H - 10}" text-anchor="middle">${k === 1000 ? '1M' : k === 0 ? '0' : k + 'k'}</text>`;
+  g += `<text x="${W - m.r}" y="${m.t + 22}" text-anchor="end" class="i" style="font-size:14px">past ${lk(sel)}: <tspan style="font-weight:650">${pct(past / tot)}</tspan> of ${unit === 'steps' ? 'steps' : 're-read tokens'}</text>`;
+  return `<div class="card"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title}">${g}</svg></div>`;
+}
+function hists() {
+  $('#hists').innerHTML = hist(D.hist.session, 'calls', 'Session windows: share of steps, by the size of the window the step re-read', 'steps') + hist(D.hist.agent, 'calls', 'Agent windows: share of steps', 'steps') + hist(D.hist.session, 'cr', 'Session windows: share of tokens re-read from cache', 'tokens') + hist(D.hist.agent, 'cr', 'Agent windows: share of tokens re-read from cache', 'tokens');
+}
+
+// ---------- compaction strips ----------
+function compStrips() {
+  const order = ['Opus 5.5', 'Fable 5.1', 'Fable 5.2', 'Sonnet 5.5'], rows = order.filter(n => D.compactions.list.some(c => c[0] === n));
+  const W = 1700, lab = 330, rh = 54, m = { t: 66, b: 30, r: 16 }, H = m.t + rows.length * rh + m.b, iw = W - lab - m.r, X = k => lab + k / 1000 * iw;
+  let g = '';
+  for (let k = 0; k <= 1000; k += 100) g += `<line x1="${X(k)}" x2="${X(k)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${X(k)}" y="${H - 10}" text-anchor="middle">${k === 1000 ? '1M' : k === 0 ? '0' : k + 'k'}</text>`;
+  rows.forEach((name, ri) => { const y0 = m.t + ri * rh, cs = D.compactions.list.filter(c => c[0] === name), mdl = Object.values(D.models).find(x => x.name === name);
+    g += `<text x="0" y="${y0 + 24}" class="b" style="font-size:15px">${name}</text><text x="0" y="${y0 + 42}" class="s" style="font-size:13px">${cs.length} compactions · median ${Math.round(mdl.compMed / 1000)}k · ${Math.round(mdl.compMin / 1000)}k to ${Math.round(mdl.compMax / 1000)}k</text>`;
+    g += `<line x1="${lab}" x2="${W - m.r}" y1="${y0 + rh}" y2="${y0 + rh}" stroke="var(--grid)"/>`;
+    cs.forEach((c, i) => { const j = ((i * 7919) % 97) / 97, y = y0 + 9 + j * (rh - 18); g += c[2] ? `<circle cx="${X(c[1])}" cy="${y}" r="4" fill="var(--ink2)" fill-opacity=".45" stroke="var(--surface)" stroke-width="1" data-tip="${name}: compacted at ${c[1]}k, in a session window"/>` : `<circle cx="${X(c[1])}" cy="${y}" r="3.5" fill="none" stroke="var(--ink2)" stroke-width="1.3" data-tip="${name}: compacted at ${c[1]}k, in an agent window"/>`; }); });
+  LINES.forEach((L, li) => { const o = D.byLine[L], on = L === sel, ty = m.t - 48 + li * 18; g += `<line x1="${X(L * 1000)}" x2="${X(L * 1000)}" y1="${ty - 10}" y2="${H - m.b}" stroke="${on ? 'var(--ink)' : 'var(--axis)'}" stroke-width="${on ? 1.5 : 1}"/><text x="${X(L * 1000) + 6}" y="${ty}" class="${on ? 'b' : 's'}" style="font-size:13.5px">${lp(L)} line: ${o.comp.avoided} of ${o.comp.total} compactions lie to its right</text>`; });
+  $('#compc').innerHTML = `<div class="legend" style="margin-bottom:4px"><span><i class="kd"></i>compacted in a session window (${D.compactions.session})</span><span><i class="kd h"></i>in an agent window (${D.compactions.agent})</span><span>${tg('M')} all ${D.compactions.n} carry the automatic trigger; ${D.compactions.precomputed} were prepared ahead</span></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sizes of recorded compactions by model">${g}</svg>
+  <p class="note">The owner's settings give Opus an automatic-compaction window of 400,000, so it compacts near 367k: ${D.models['claude-opus-5-5'].comps} of the ${D.compactions.n} compactions. ${D.compactions.byModelKind && D.compactions.byModelKind['Opus 5.5'] ? `That is ${D.compactions.byModelKind['Opus 5.5'].session} of the ${D.compactions.session} in session windows and all ${D.compactions.byModelKind['Opus 5.5'].agent} in agent windows. ` : ''}A 40 % or 50 % line sits to the right of that cluster; of the three, only the 30 % line comes before it. Every line needs the setting lifted, because the rule keeps the compaction trigger above its hard ceiling${D.backstop ? `: above about ${D.backstop.map(b => tok(b.setting)).join(', ')}` : ''}.</p>`;
+}
+
+// ---------- net tokens ----------
+function netChart() {
+  const W = 1040, lab = 330, rh = 30, gh = 34, m = { t: 8, b: 34, r: 70 }, rowsPer = 5, H = m.t + LINES.length * (gh + rowsPer * rh) + m.b, iw = W - lab - m.r;
+  const mx = Math.ceil(Math.max(...LINES.map(L => D.byLine[L].session.crPast)) / 5e8) * 5e8, X = v => lab + v / mx * iw;
+  let g = '', y = m.t;
+  for (let v = 0; v <= mx + 1; v += 5e8) g += `<line x1="${X(v)}" x2="${X(v)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${X(v)}" y="${H - 14}" text-anchor="middle">${v === 0 ? '0' : (v / 1e9).toFixed(1) + 'B'}</text>`;
+  g += `<text x="${lab}" y="${H - 1}" class="s">fewer context tokens read than the record (${tok(D.all.session.ctx)} recorded in session windows)</text>`;
+  for (const L of LINES) { const o = D.byLine[L], sp = o.sim.split;
+    g += `<text x="0" y="${y + 22}" class="b" style="font-size:15px">${lp(L)} · line at ${lk(L)}</text>`; y += gh;
+    const rows = [
+      ['Upper bound: all re-reading in steps past the line', 'M', { v: o.session.crPast, hollow: 1 }],
+      ['Split rule, even split', 'E', { v: sp.mid.even.net, lo: sp.high.even.net, hi: sp.low.even.net, col: 'var(--rule)', wash: 'var(--rule-wash)' }],
+      ['Split rule, roll-over (work that cannot be cut)', 'E', { v: sp.mid.rollover.net, lo: sp.high.rollover.net, hi: sp.low.rollover.net, col: 'var(--rule)', wash: 'var(--rule-wash)' }],
+      ['Earlier compaction window at the same line', 'E', { v: o.sim.compact.net, col: 'var(--cap)' }],
+      ['Lower mark: only the tokens above the line', 'M', { v: o.session.above, hollow: 1 }]];
+    for (const [name, t, d] of rows) { const cy = y + rh / 2;
+      g += `<text x="12" y="${cy + 4}" class="i" style="font-size:13.5px">${name}</text><text x="${lab - 10}" y="${cy + 4}" text-anchor="end" style="font-size:11px;font-weight:700">${t}</text>`;
+      if (d.lo != null) g += `<line x1="${X(d.lo)}" x2="${X(d.hi)}" y1="${cy}" y2="${cy}" stroke="${d.wash}" stroke-width="10" stroke-linecap="round"/>`;
+      g += d.hollow ? `<path d="M${X(d.v)},${cy - 6}L${X(d.v) + 6},${cy}L${X(d.v)},${cy + 6}L${X(d.v) - 6},${cy}Z" fill="var(--surface)" stroke="var(--ink2)" stroke-width="1.5"/>` : `<circle cx="${X(d.v)}" cy="${cy}" r="6" fill="${d.col}" stroke="var(--surface)" stroke-width="2"/>`;
+      const lx = d.hi != null ? X(d.hi) + 10 : X(d.v) + 11;
+      g += `<text x="${lx}" y="${cy + 4}" class="i" style="font-size:13.5px;font-weight:${d.hollow ? 400 : 650}">${tok(d.v)}${d.lo != null ? ` <tspan style="font-weight:400;fill:var(--ink2)">(${tok(d.lo)} to ${tok(d.hi)})</tspan>` : ''}</text>`;
+      y += rh; }
+  }
+  $('#netc').innerHTML = `<div class="legend"><span><svg width="16" height="14" style="width:16px"><circle cx="8" cy="7" r="5.5" fill="var(--rule)"/></svg>split rule, middle case</span><span><svg width="30" height="14" style="width:30px"><line x1="5" x2="25" y1="7" y2="7" stroke="var(--rule-wash)" stroke-width="10" stroke-linecap="round"/></svg>unfavourable to favourable assumptions</span><span><svg width="16" height="14" style="width:16px"><circle cx="8" cy="7" r="5.5" fill="var(--cap)"/></svg>earlier compaction window</span><span><svg width="16" height="14" style="width:16px"><path d="M8,1L14,7L8,13L2,7Z" fill="var(--surface)" stroke="var(--ink2)" stroke-width="1.5"/></svg>measured bound</span></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Net tokens under the split rule and under an earlier compaction window, at each line">${g}</svg>`;
+  const r = D.rates || {}, byW = {}; for (const [n, w] of Object.entries(r)) (byW[(w.r * 100).toFixed(1)] ||= []).push(n); const rr = Object.entries(byW).map(([p, ns]) => `${p} % (${ns.join(', ')})`).join(', ');
+  $('#netside').innerHTML = `<h3>What it shows</h3>
+    <p>In the middle case with an even split the rule removes ${LINES.map(L => D.byLine[L].ratio.mid.toFixed(2)).join(', ')} times what an earlier compaction window removes at ${LINES.map(lp).join(', ')} ${tg('E')}. Both restart a window at about the same size (${tok(D.compactions.restart)} after a compaction ${tg('M')}; ${LINES.map(L => tok(D.byLine[L].sim.split.mid.even.startAvg)).join(', ')} for a fresh leaf in the middle case ${tg('E')}) and both then carry the same work.</p>
+    <p>That closeness is built into the replay. A split here is a restart of one window plus a share of later growth, so the result is set by where a child starts against the earlier window's restart. Across the nine stated cases the ratio runs from ${LINES.map(L => D.byLine[L].ratio.min.toFixed(2) + ' to ' + D.byLine[L].ratio.max.toFixed(2)).join(', ')}. Where the work cannot be cut and one session takes it all, the middle case gives ${LINES.map(L => D.byLine[L].ratio.rollover.toFixed(2)).join(', ')}: less than the earlier window.</p>
+    <p><b>The record does not settle which is ahead on tokens.</b> The next picture shows how far one guessed input moves it. What the replay cannot see at all is what a brief loses against what a summary loses.</p>
+    <h3 style="margin-top:14px">The same, weighted for cost ${tg('E')}</h3>
+    <table><tr><th class="l">share of the recorded weighted total removed</th>${LINES.map(L => `<th>${lp(L)}</th>`).join('')}</tr>
+    <tr><td class="l">Split rule, middle case, even split</td>${LINES.map(L => `<td>${pct(D.byLine[L].sim.split.mid.even.wShare)}</td>`).join('')}</tr>
+    <tr><td class="l">Split rule, worst case to best case</td>${LINES.map(L => { const a = Object.values(D.byLine[L].sim.split).flatMap(x => Object.values(x)).map(x => x.wShare); return `<td>${pct(Math.min(...a))} to ${pct(Math.max(...a))}</td>`; }).join('')}</tr>
+    <tr><td class="l">Earlier compaction window</td>${LINES.map(L => `<td>${pct(D.byLine[L].sim.compact.wShare)}</td>`).join('')}</tr></table>
+    <p class="note">Weighted tokens count a cache read as ${rr || 'a fraction'} of an input token and a cache write as 125 to 200 %, from the recorded rate table; no currency. A split trades cheap re-reads for a new session's start, which is written to the cache, so the weighted share is a third or less of the plain one. How cache reads count against the five-hour limit is still unmeasured.</p>`;
+}
+
+// ---------- one input changed at a time ----------
+function sensChart() {
+  const rows = D.sens || []; if (!rows.length) return;
+  const side = { capP25: 'cap', capP75: 'cap', branch: 'check' };
+  const W = 1700, lab = 560, pw = (W - lab) / LINES.length, rh = 30, m = { t: 46, b: 34 }, H = m.t + rows.length * rh + m.b, lo = 0.45, hi = 1.40;
+  let g = '';
+  rows.forEach((r, ri) => { const cy = m.t + ri * rh + rh / 2; g += (ri ? `<line x1="0" x2="${W}" y1="${m.t + ri * rh}" y2="${m.t + ri * rh}" stroke="var(--grid)"/>` : '') + `<text x="0" y="${cy + 4}" class="${r.id === 'base' ? 'b' : 'i'}" style="font-size:13.5px">${esc(r.label)}</text>`; });
+  LINES.forEach((L, li) => {
+    const x0 = lab + li * pw + 30, x1 = lab + (li + 1) * pw - 62, X = v => x0 + (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (x1 - x0);
+    g += `<text x="${x0}" y="16" class="b" style="font-size:15px">${lp(L)} · line at ${lk(L)}</text>`;
+    for (const t of [0.6, 0.8, 1.0, 1.2, 1.4]) g += `<line x1="${X(t)}" x2="${X(t)}" y1="${m.t - 4}" y2="${H - m.b}" stroke="${t === 1.0 ? 'var(--axis)' : 'var(--grid)'}"/><text x="${X(t)}" y="${H - 14}" text-anchor="middle">${t.toFixed(1)}</text>`;
+    g += `<line x1="${X(1.10)}" x2="${X(1.10)}" y1="${m.t - 4}" y2="${H - m.b}" stroke="var(--ink)" stroke-width="1.5"/><text x="${X(1.10) + 5}" y="${m.t - 10}" class="i" style="font-size:12.5px">1.10, the test</text><text x="${X(1.0) - 5}" y="${m.t - 10}" text-anchor="end" style="font-size:12.5px">1.00, equal</text>`;
+    rows.forEach((r, ri) => {
+      const d = r.lines[L], v = d.ratio, cy = m.t + ri * rh + rh / 2, kind = side[r.id] || 'rule', col = kind === 'cap' ? 'var(--cap)' : kind === 'check' ? 'var(--neutral)' : 'var(--rule)';
+      g += `<line x1="${X(1.0)}" x2="${X(v)}" y1="${cy}" y2="${cy}" stroke="${col}" stroke-width="2" opacity=".4"/><circle cx="${X(v)}" cy="${cy}" r="6" fill="${col}" stroke="var(--surface)" stroke-width="2" data-tip="<b>${esc(r.label)}</b><br>${lp(L)}: rule ${tok(d.net)}, earlier window ${tok(d.cap)}, ratio ${v.toFixed(2)}"/><text x="${x1 + 38}" y="${cy + 4}" text-anchor="end" class="i" style="font-size:13.5px;font-weight:${r.id === 'base' || v >= 1.10 ? 650 : 400}">${v.toFixed(2)}${v < 1.10 && v.toFixed(2) === '1.10' ? ', just under' : ''}</text>`;
+    });
+  });
+  const t3 = rows.find(r => r.id === 'three');
+  $('#sensc').innerHTML = `<div class="legend"><span><svg width="16" height="14" style="width:16px"><circle cx="8" cy="7" r="5.5" fill="var(--rule)"/></svg>one of the rule's inputs changed</span><span><svg width="16" height="14" style="width:16px"><circle cx="8" cy="7" r="5.5" fill="var(--cap)"/></svg>the earlier compaction window's restart changed</span><span><svg width="16" height="14" style="width:16px"><circle cx="8" cy="7" r="5.5" fill="var(--neutral)"/></svg>a check of one branch of the script against the other</span><span>${tg('E')} every dot</span></div>
+  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="The rule's net tokens over the earlier compaction window's, with one input changed at a time, at each line">${g}</svg>
+  <p class="note">Each row is the middle case with an even split except for the one thing named; the dot is the rule's net tokens over the earlier compaction window's. One guessed input alone takes the result past the 1.10 that was fixed as the test, or under 1.00. Two costs sit on the rule's side only: it serves the crossing step and its drain steps at full size where the earlier window compacts first, and it pays a guessed re-learning where the earlier window pays only its measured restart.${t3 ? ` Dividing in three or four is not the rule as written; it is shown because a stronger form was asked for. Three-way in the middle case makes ${LINES.map(L => t3.lines[L].events).join(', ')} hand-overs and starts ${LINES.map(L => t3.lines[L].newSessions).join(', ')} sessions, with up to ${LINES.map(L => t3.lines[L].maxLeaves).join(', ')} leaves in one window.` : ''}</p>`;
+}
+
+// ---------- hand-overs against summaries ----------
+function handChart() {
+  const W = 1040, lab = 350, rh = 28, gh = 34, nr = 4, m = { t: 8, b: 30, r: 150 }, H = m.t + LINES.length * (gh + nr * rh) + m.b, iw = W - lab - m.r;
+  const mx = Math.ceil(Math.max(...LINES.map(L => D.byLine[L].sim.split.mid.even.newSessions)) / 100) * 100, X = v => lab + v / mx * iw;
+  let g = '', y = m.t;
+  for (let v = 0; v <= mx; v += 100) g += `<line x1="${X(v)}" x2="${X(v)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${X(v)}" y="${H - 10}" text-anchor="middle">${v}</text>`;
+  const bar = (v, cy, col) => { const x0 = lab, x1 = X(v), h = 14, r = Math.min(4, (x1 - x0) / 2); return `<path d="M${x0},${cy - h / 2}H${x1 - r}Q${x1},${cy - h / 2} ${x1},${cy - h / 2 + r}V${cy + h / 2 - r}Q${x1},${cy + h / 2} ${x1 - r},${cy + h / 2}H${x0}Z" fill="${col}"/>`; };
+  for (const L of LINES) {
+    const o = D.byLine[L], mid = o.sim.split.mid.even;
+    g += `<text x="0" y="${y + 22}" class="b" style="font-size:15px">${lp(L)} · line at ${lk(L)}</text>`; y += gh;
+    const rows = [['Summaries on record above this line', 'M', o.comp.session.avoided, 'var(--neutral)', ''], ['Summaries an earlier compaction window writes', 'E', o.sim.compact.events, 'var(--cap)', ''], ['Hand-overs the split rule makes', 'E', mid.events, 'var(--rule)', ''], ['Briefs the split rule writes, one per new session', 'E', mid.newSessions, 'var(--rule)', '']];
+    for (const [name, t, v, col, extra] of rows) { const cy = y + rh / 2; g += `<text x="12" y="${cy + 4}" class="i" style="font-size:13.5px">${name}</text><text x="${lab - 10}" y="${cy + 4}" text-anchor="end" style="font-size:11px;font-weight:700">${t}</text>${bar(v, cy, col)}<text x="${X(v) + 8}" y="${cy + 4}" class="i" style="font-size:13.5px;font-weight:650">${int(v)}<tspan style="font-weight:400;fill:var(--ink2)">${extra}</tspan></text>`; y += rh; }
+  }
+  $('#handc').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Hand-overs and briefs under the rule against summaries">${g}</svg>`;
+  const a = LINES.map(L => D.byLine[L]), rec = a.map(o => o.life.briefsPerSummaryRemoved), cap = a.map(o => o.like.briefsPerCapSummary), P = D.prompts;
+  $('#handside').innerHTML = `<h3>What it shows</h3>
+    <p>The rule does not remove rewriting points; it trades summaries for briefs. Against today's record it writes <b>${rec.map(v => v.toFixed(1)).join(', ')}</b> briefs for each summary above the line. Against the like-with-like arm, an earlier compaction window at the same line, it writes <b>${cap.map(v => v.toFixed(1)).join(', ')}</b> briefs per summary, in fewer events (${a.map(o => o.like.handovers).join(', ')} hand-overs against ${a.map(o => o.like.capSummaries).join(', ')} summaries) ${tg('E')}.</p>
+    <p>So for the count of wrong hand-overs to fall, a brief has to be wrong ${Math.round(Math.min(...rec))} to ${Math.round(Math.max(...rec))} times less often than today's summary, or ${Math.min(...cap).toFixed(1)} to ${Math.max(...cap).toFixed(1)} times less often than a summary under an earlier compaction window at the same line. Whether it is, the replay cannot say. The rule's case is that a brief is short, written at the line and not from a full window, covers half the work, and points at state the repository already holds.</p>
+    <p>A lower line means more hand-overs under either method: the recorded sessions add about ${(D.growth.perCall / 1000).toFixed(1)}k tokens to a window per step ${tg('M')}. The leaves that reached their own hand-over had served a median ${a.map(o => o.life.med).join(', ')} steps ${tg('E')}${P && P.fixflow && P.clinic ? `; one human prompt drives ${P.fixflow.perPrompt.toFixed(0)} session-window steps in FixFlow and ${P.clinic.perPrompt.toFixed(0)} in the clinic ${tg('M')}` : ''}.</p>
+    <table><tr><th class="l">active work per rewriting point, after a window first passes the line</th>${LINES.map(L => `<th>${lp(L)}</th>`).join('')}</tr>
+    <tr><td class="l">One hand-over under the rule, every</td>${a.map(o => `<td>${Math.round(o.life.minPerHandover)} min</td>`).join('')}</tr>
+    <tr><td class="l">One summary under the earlier window, every</td>${a.map(o => `<td>${Math.round(o.life.minPerSummary)} min</td>`).join('')}</tr>
+    <tr><td class="l">On record, one compaction above the line, every</td>${a.map(o => `<td>${Math.round(o.like.minPerRecordedAbove)} min</td>`).join('')}</tr></table>
+    <p class="note">Active work is the time between steps, each gap counted up to five minutes ${tg('E')}. Over all ${Math.round(D.active.hours)} hours of session-window work, not only the hours after a crossing, the record has one compaction per ${Math.round(D.active.minPerCompaction)} minutes ${tg('M')}.</p>`;
+}
+
+// ---------- checks ----------
+function checks() {
+  const defs = [['N1', 'Net tokens are zero or negative', v => tok(v)], ['N2', "The rule's net tokens are under 1.10 times an earlier compaction window's (middle case, even split)", v => v.toFixed(2) + '×'], ['N3', 'A leaf serves fewer than 162 steps, the recorded work behind one human prompt', v => Math.round(v) + ' steps'], ['N4', 'Under 10 % of re-read tokens sit in steps past the line', v => pct(v)], ['N5', 'Fewer than half the recorded compactions in session windows come after the line', v => pct(v)]];
+  $('#checks').innerHTML = `<tr><th class="l">test</th><th class="l">the line does not pay if</th>${LINES.map(L => `<th>${lp(L)} · ${lk(L)}</th>`).join('')}</tr>` + defs.map(([k, d, f]) => `<tr><td class="l"><b>${k}</b></td><td class="w">${d}</td>${LINES.map(L => { const v = D.byLine[L].verdict[k]; return `<td><span class="chip ${v.fails ? 'no' : 'ok'}"><span class="d">${v.fails ? '✕' : '✓'}</span>${v.fails ? 'does not pay' : 'passes'}</span> &nbsp;${f(v.value)}</td>`; }).join('')}</tr>`).join('');
+  const a = LINES.map(L => D.byLine[L]), P = D.prompts;
+  let h = `<p class="note"><b>These are the outcomes as the tests were fixed.</b> A check of this deliverable found two things that sit beside them.</p>
+  <p class="note"><b>N2 is a middle-case outcome.</b> One guessed input changed alone takes it past 1.10 or under 1.00 (the picture above); across the nine stated cases the ratio runs from ${a.map(o => o.ratio.min.toFixed(2) + ' to ' + o.ratio.max.toFixed(2)).join(', ')}.</p>`;
+  if (P && P.fixflow && P.clinic) h += `<p class="note"><b>N3 compares unlike units.</b> Its 162 counts every step behind a prompt, agent and workflow steps included (on this record ${P.meanFCAll.toFixed(0)}, the mean of FixFlow's ${P.fixflow.allCallsPerPrompt.toFixed(0)} and the clinic's ${P.clinic.allCallsPerPrompt.toFixed(0)}); steps per leaf count session-window steps only. Counted the same way, from ${int(P.all.prompts)} human prompts in ${P.all.prompted} of the ${P.all.windows} session windows ${tg('M')} (a typed slash command counted once), one prompt drives ${P.fixflow.perPrompt.toFixed(0)} session-window steps in FixFlow and ${P.clinic.perPrompt.toFixed(0)} in the clinic, ${P.all.perPrompt.toFixed(0)} over all groups; and ${P.fixflow.perPromptPrompted.toFixed(0)} and ${P.clinic.perPromptPrompted.toFixed(0)} if only the window that received the prompt is counted. Steps per leaf as the test defines them (${a.map(o => Math.round(o.verdict.N3.value)).join(', ')}) are under the two project figures and the all-groups figure at every line, and over the own-window count; leaves that reached their own hand-over (${a.map(o => o.life.med).join(', ')}) are level with the project figures at 30 % and over them at 40 % and 50 %. In like units the leaf test is not clear-cut.</p>`;
+  $('#s-checks').insertAdjacentHTML('beforeend', h);
+}
+
+// ---------- decision ----------
+function decision() {
+  const a = LINES.map(L => D.byLine[L]), bs = D.backstop || [];
+  const t = D.trial;
+  $('#dec').innerHTML = `<h3>Decided on 14 November: yes, one live trial wave at the 300k line</h3>
+    <p>The one decision was yes or no on the split rule (part 1 of the record) before a live trial. The owner's yes lets WP12 size one trial lane wave, with a matched wave under an earlier compaction window; the agents are booked under D07. The replay does not show the rule doing better or worse than that window on tokens.</p>
+    ${t ? `<p><b>Preparing the trial changed how it is scored.</b> The scripted check of hand-overs was built and run on the record before any trial, with no model calls. In the ${t.docs} FixFlow compaction summaries on record it flags ${t.wrong} of ${int(t.checked)} pointers (${pct(t.wrong / t.checked, 1)}): paths, line numbers, commit ids, pull request numbers and states ${tg('M')}. That is the script's own count, not a count of wrong pointers: ${t.cleared} of them, the contradicted pull request states, were read by hand in the summary check and are not wrong, so at most ${t.wrong - t.cleared} are. In two maintained documents it flags ${t.controls[0].wrong} of ${t.controls[0].checked} and ${t.controls[1].wrong} of ${t.controls[1].checked} ${tg('M')}. So a script cannot score hand-over fidelity: the summaries are as right as maintained documents on everything it can recheck, and at this rate a halving would need about ${t.size} documents an arm ${tg('E')}. The main measure becomes a reader's check of the latest state and of dropped open loops (record, part 6.4).</p>
+    ${t.sc ? `<p><b>What the summary check then measured</b> (SUMMARY-CHECK-2026-11.md): ${t.sc.wrong} wrong of ${t.sc.claims} claims a script can recheck in ${t.sc.docs} summaries of FixFlow and the clinic testbed ${tg('M')}, every flag read by hand, and ${t.sc.overtaken} of the ${t.sc.docs} (${t.sc.pct} %) whose last sections, read by one reader, call something pending that the kept tail had already done ${tg('M')}. A compaction hands the next window the summary and that kept tail together, so the reader's check marks such a statement overtaken in the kept tail and reports it beside the wrong count, not in it. <b>Which count scores the trial is the owner's call.</b> On the wrong count alone nothing on record points to many wrong statements; if the rate is near zero, the rule cannot show an improvement at any size. On wrong plus overtaken, a brief has no kept tail and would win by construction; only because of that would ten hand-overs an arm show a difference.</p>` : ''}
+    <p><b>Before a wave starts:</b> D07, the token budget, which is the owner's; the owner's call on which count scores the trial; the rest of the baseline on the record, which is dropped open loops and a second reader of where the work stood across the whole summary, and needs agent runs; which lane wave is each arm; and whether two sessions can hold different compaction windows at once.</p>` : ''}
+    <p style="margin:0">For the trial: of the three lines, only 30 % comes before the Opus compactions (${a[0].comp.avoided} of ${a[0].comp.total}; 40 % and 50 % come before ${a[1].comp.avoided} and ${a[2].comp.avoided}). Every line needs the Opus setting of 400,000 lifted, because the rule keeps the compaction trigger above its hard ceiling${bs.length ? `: above about ${bs.map(b => tok(b.setting)).join(', ')}` : ''}. The trial is scored on hand-over fidelity first, and on tokens too. Each new root is opened by the owner.</p>`;
+  $('#pick').innerHTML = `<h3>What the replay found, in five lines</h3><ul class="tight">
+    <li><b>The exposure is real.</b> ${pct(a[0].session.crPast / a[0].session.cr, 0)}, ${pct(a[1].session.crPast / a[1].session.cr, 0)} and ${pct(a[2].session.crPast / a[2].session.cr, 0)} of the tokens session windows re-read sit in steps past the 30, 40 and 50 % lines ${tg('M')}.</li>
+    <li><b>It is in sessions, not agents.</b> ${a[1].agent.crossed} of ${int(a[1].agent.windows)} agent windows ever passed 400k ${tg('M')}.</li>
+    <li><b>On tokens the record does not settle it.</b> In the middle case the rule removes ${a.map(o => o.ratio.mid.toFixed(2)).join(', ')} times what an earlier compaction window removes; across the stated cases ${a.map(o => o.ratio.min.toFixed(2) + ' to ' + o.ratio.max.toFixed(2)).join(', ')}. One guessed input moves it across the 1.10 test ${tg('E')}.</li>
+    <li><b>It trades summaries for briefs:</b> ${a.map(o => o.life.briefsPerSummaryRemoved.toFixed(1)).join(', ')} for each summary on record above the line, ${a.map(o => o.like.briefsPerCapSummary.toFixed(1)).join(', ')} for each summary an earlier compaction window would write ${tg('E')}.</li>
+    <li><b>By the tests fixed beforehand:</b> N1 and N4 pass at every line; N2 fails at every line in the middle case; N3 fails as written, in unlike units; N5 passes at 30 % only.</li></ul>`;
+}
+
+// ---------- session table ----------
+function table() {
+  const rows = D.sessions.filter(r => r.peak > 300000);
+  let h = `<tr class="grp"><th class="l" colspan="6"></th>${LINES.map(L => `<th colspan="5" class="sep">${lp(L)} · ${lk(L)}</th>`).join('')}</tr><tr><th class="l">group</th><th class="l">session</th><th class="l">model</th><th>steps</th><th>peak</th><th>compactions</th>${LINES.map(() => `<th class="sep">first passed at step</th><th>steps above</th><th>hand-overs</th><th>net tokens, rule</th><th>net tokens, earlier window</th>`).join('')}</tr>`;
+  for (const r of rows) h += `<tr><td class="l">${GN[r.g]}</td><td class="l">${r.sid8}</td><td class="l">${r.model}</td><td>${int(r.calls)}</td><td>${tok(r.peak)}</td><td>${r.comps}</td>${LINES.map(L => { const l = r.lines[L]; return l.first < 0 ? `<td class="sep" colspan="5" style="text-align:center;color:var(--muted)">never</td>` : `<td class="sep">${int(l.first + 1)} <span style="color:var(--ink2)">(${pct(l.firstShare, 0)})</span></td><td>${int(l.past)} <span style="color:var(--ink2)">(${pct(l.past / r.calls, 0)})</span></td><td>${l.events}</td><td>${tok(l.net)}</td><td>${tok(l.compNet)}</td>`; }).join('')}</tr>`;
+  $('#tbl').innerHTML = h;
+  const rest = D.sessions.filter(r => r.peak <= 300000); $('#noteT').innerHTML = `${rest.length} more session windows never passed 300k: ${int(rest.reduce((a, r) => a + r.calls, 0))} steps and ${tok(rest.reduce((a, r) => a + r.ctx, 0))} context tokens ${tg('M')}.`;
+}
+
+function source() {
+  const m = D.models, row = x => `<tr><td class="l">${x.name}</td><td>${int(x.windows)}</td><td>${int(x.calls)}</td><td>${tok(x.max)}</td><td>${x.comps ? `${x.comps}: ${tok(x.compMin)} / ${tok(x.compMed)} / ${tok(x.compMax)}` : 'none'}</td><td>${x.atDefault}</td><td class="l">${x.window ? esc(x.basis) : 'not established'}</td></tr>`;
+  $('#src').innerHTML = `<p>Every number on this page is printed by <code>docs/program/evidence/split-replay/replay.js.txt</code> into <code>replay-table.txt</code> beside it; this page is built from the same run (<code>replay.json</code>, ${D.generated.slice(0, 16).replace('T', ' ')} UTC). Steps made after ${D.index.startedAt.slice(0, 16).replace('T', ' ')} UTC are not counted. The script reads usage counts and compaction markers only, never message text.</p>
+  ${D.methodCheck ? `<p><b>A check on the method.</b> ${D.methodCheck.windows} session windows really ran under an earlier compaction window: Opus's setting compacted them near 367k. Asked to replay exactly that from their first step, the compaction arithmetic gives ${tok(D.methodCheck.replayed)} context tokens against ${tok(D.methodCheck.recorded)} recorded (${pct(Math.abs(D.methodCheck.diff))} apart) and ${D.methodCheck.replayedCompactions} compactions against ${D.methodCheck.recordedCompactions} ${tg('E')}. That checks the earlier-compaction branch only, with a restart fitted partly on the same windows. The split branch has no check against the record; set to the earlier window's own terms it gives the same net tokens at every line.</p>` : ''}
+  <h3>Each model's window, as the record shows it ${tg('M')}</h3>
+  <div class="scroll"><table><tr><th class="l">model</th><th>windows</th><th>steps</th><th>largest window one step re-read</th><th>compactions: smallest / median / largest</th><th>at the default trigger</th><th class="l">window taken ${tg('E')}</th></tr>${Object.values(m).filter(x => MODELS_SHOWN.includes(x.name)).map(row).join('')}</table></div>
+  <p class="note">The transcripts carry no field that states a window, so it is read from where automatic compaction fired: the default trigger is the window minus 33,000, and compactions at 967k to 975k place the window at 1,000,000. A new session's first step read a median ${tok(D.sessionStart.med)} ${tg('M')}; the rule's floor under a line is three times that, ${tok(D.floor.all)} ${tg('E')}.</p>`;
+}
+const MODELS_SHOWN = ['Opus 5.5', 'Sonnet 5.5', 'Fable 5.2', 'Fable 5.1', 'Haiku 5.5'];
+
+function redraw() { ruleStrip(); panels(); hists(); compStrips(); }
+meta(); cards(); netChart(); sensChart(); handChart(); checks(); decision(); table(); source();
+seg('#segL', LINES.map(L => [L, `${lp(L)} · ${lk(L)}`]), () => sel, v => { sel = v; });
+seg('#segO', [['rule', 'split rule'], ['cap', 'earlier compaction window'], ['none', 'none']], () => overlay, v => { overlay = v; });
+redraw();
+</script>
+</body>
+</html>

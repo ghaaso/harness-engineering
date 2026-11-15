@@ -1,0 +1,18 @@
+const fs=require('fs'),path=require('path');
+const B='C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build';
+const G=B+'/sealed/grader/embeddings';
+const RET='C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/grader-returns';
+const jl=f=>fs.readFileSync(f,'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const P=new Set(),ID=new Set();
+for(const r of jl(B+'/sealed/references.jsonl')){if(r.id)ID.add(String(r.id));for(const f of r.files||[]){if(typeof f==='string')P.add(f);else{if(f.path)P.add(f.path);if(f.child_path)P.add(f.child_path);}}for(const d of r.defs||[]){if(d.path)P.add(d.path);}}
+for(const t of jl(G+'/truth/truth.jsonl')){ID.add(String(t.id));(t.truth||[]).forEach(x=>P.add(x));}
+P.delete('');
+const files=[];(function w(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);e.isDirectory()?w(p):files.push(p);}})(RET);
+const out=[];
+for(const f of files){const txt=fs.readFileSync(f,'utf8');const o=JSON.parse(txt);
+ let nums=0,bad=0,strs=[];const keys=new Set();let keyHits=0,valHits=0;
+ (function v(x){if(Array.isArray(x))x.forEach(v);else if(x&&typeof x==='object'){for(const[k,y]of Object.entries(x)){keys.add(k);if(ID.has(k)||P.has(k))keyHits++;v(y);}}else if(typeof x==='number'){nums++;if(!isFinite(x))bad++;}else if(typeof x==='string'){strs.push(x);if(ID.has(x)||P.has(x))valHits++;}})(o);
+ let sub=0;for(const p of P)if(p.includes('/')&&txt.includes(p))sub++;for(const i of ID)if(i.length>=6&&txt.includes('"'+i+'"'))sub++;
+ const pathlike=strs.filter(s=>/\//.test(s)&&!/^[0-9a-f]{64}$/.test(s));
+ out.push({file:path.relative(RET,f),bytes:txt.length,numbers:nums,nonfinite:bad,distinct_keys:keys.size,key_hits:keyHits,value_hits:valHits,substring_hits:sub,pathlike_strings:pathlike.length,strings:strs.length});}
+console.log(JSON.stringify({ref_paths:P.size,task_ids:ID.size,files:out},null,1));

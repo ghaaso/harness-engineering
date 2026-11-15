@@ -1,0 +1,194 @@
+{
+ "overall": "The 24 lanes agree closely, and the agreement holds up. The store would be one embedded transactional engine: SQLite through node:sqlite with FTS5, which needs no install and was verified locally. Entries get an immutable identity plus an append-only stream of outcome events, and the current view is a fold over that stream. Each entry carries a dependency footprint keyed on git blob OIDs and versions. Changes are detected event-driven and only mark an entry \"suspect\". Retrieval is deterministic: an exact-handle prefilter, then multi-field BM25, then score-free abstention. Every entry carries its own discriminating check, and nothing acts until that check passes. Dense vectors, graph engines, OLAP engines, search servers and agent-memory products are rejected for scale, operational burden or egress, and the evidence for those rejections is sound.\n\nThe gaps are operational, not engine choice:\n- **Source of truth across hosts and worktrees.** E-09 makes git-tracked event files the truth. T-06 and E-01 make a single SQLite file outside the worktrees the truth. Neither answers how the Windows dev box and the Linux VPS share one data set.\n- **Safety of running stored checks.** Nobody examined executing stored checks: agent-written data becomes code execution, with production credentials in the environment and native builds that cannot run on the box.\n- **Footprint capture.** Every lane needs a dependency footprint and leaves \"who records it\" open.\n- **Missing prior art.** Nobody looked at the closest operational prior art: OpenStack elastic-recheck, the Jenkins Build Failure Analyzer, and the KCS methodology.\n- **No base rate.** No lane measured whether hard problems recur often enough to pay for the store. The C-01 lane's own record says a month of research found no gain.\n- **Scrubbing and provider egress.** Secret and PII scrubbing is only inferred. Egress to the model provider is an open owner ruling.\n\nSeveral design-steering numbers are inferred or vendor-reported: E-07's embedding triggers, E-05's OLAP thresholds, M-01's junk-memory percentage and M-02's Copilot gains. The design should treat them as placeholders.",
+ "missed_angles": [
+  {
+   "key": "X-01",
+   "title": "One data set across the Windows dev box, the Linux VPS and git worktrees (topology, sync, backup)",
+   "brief": "Research how one knowledge-store data set can serve agents on both the Windows 11 dev box and a self-hosted Linux VPS or home box, including parallel git worktrees, with no third-party egress. Earlier lanes found that SQLite WAL works only on one host, and they split between two designs: (a) a single SQLite file outside the worktrees, and (b) immutable event files in git with a rebuilt index on each host. Evaluate each of the following from primary docs, recording the version or date you read:\n- sqlite_rsync (SQLite 3.47+)\n- Litestream to a self-hosted target\n- libSQL/sqld self-hosted\n- rqlite\n- cr-sqlite (vlcn)\n- Dolt sql-server\n- one store service on the VPS, reached over SSH or WireGuard. Note that Tailscale's coordination server is third-party and Headscale is the self-hosted alternative. The service exposes a CLI over SSH or MCP over HTTP.\n- the git event-log option\n\nFor each, report: behaviour on the dev box when the VPS is unreachable, merge semantics for append-only events, the backup and restore drill, auth, Windows support, maintenance status, and default telemetry. Also answer: what happens to an entry written in a worktree whose branch is abandoned or squash-merged? Recommend at most two topologies, ranked by the owner's ongoing workload.",
+   "why": "Lanes T-06/E-01 and E-09 contradict each other on the source of truth. All lanes flag 'SQLite is same-host only', and no lane answered the workload's explicit two-host, multi-worktree question or gave a tested backup and restore path."
+  },
+  {
+   "key": "X-02",
+   "title": "Running stored discriminating checks safely: sandboxing, credentials, tri-state results, probe poisoning",
+   "brief": "Research how a cheap agent can execute a stored 'discriminating check' (a shell command, a test id or a structural probe) safely and reproducibly. Threats:\n- The check is agent-written data that becomes code execution, which is a poisoning and prompt-injection path.\n- It may read production credentials (Railway, Supabase, R2, FCM) from the environment or .env files.\n- It may mutate a database.\n- It may need Android or EAS builds that cannot run on the box.\n\nPrior art to cover:\n- git bisect run exit codes (0 good, 1-127 bad, 125 skip) as a tri-state precedent\n- Bazel and Nix hermetic sandboxes\n- testcontainers or a throwaway Postgres\n- a fresh 'git worktree add --detach <sha>'\n- environment scrubbing (env -i) and the Windows equivalents: Windows Sandbox, job objects, Docker on WSL2\n- network denial and timeouts\n- allow-listed check templates versus free-form commands\n- reviewer approval of a check before cheap tiers may run it\n- flaky-check rerun policy (Spotify and Google practice)\n\nFor each mechanism, report Windows and Linux support, setup cost for one developer, and which threat it blocks. End with a minimal gate-runner contract: inputs, allowed effects, output schema and tri-state result.",
+   "why": "Every lane makes the gate the false-positive defence, but none researched how the gate runs. C-01 records gate defects that passed without testing anything (RT-01, RT-02, RT-05). M-01 and M-02 warn about memory poisoning without noticing that stored probes are executable."
+  },
+  {
+   "key": "X-03",
+   "title": "Capturing an entry's dependency footprint automatically",
+   "brief": "Earlier lanes agree that each entry needs a dependency footprint: files or blob OIDs, symbols, lockfile entries, and tool and platform versions. None researched how to capture it without the owner listing it by hand. Research these discovery methods:\n- File-access tracing: fsatrace (Windows and Linux), Neil Mitchell's Rattle, tup, the Bazel sandbox, strace and Process Monitor.\n- Claude Code hook payloads (PreToolUse and PostToolUse for Read, Edit and Bash): do they carry file paths and command text, so the files a diagnosing session read can be logged?\n- Coverage-based footprints: run the discriminating check under coverage.py, c8/V8 or jest --coverage to get the exact lines and functions the root cause executes.\n- Environment manifests: node -v, the Expo SDK version, eas --version, lockfile hashes, and the Railway and Gradle versions.\n- Symbol-level hashing with tree-sitter or ast-grep, to avoid whole-file over-invalidation.\n\nFor each, report Windows support, overhead, over- or under-capture, and whether it catches config causes and external-tool causes. Recommend a capture recipe, and list which trap classes it still misses (for example EAS CLI or Railpack behaviour).",
+   "why": "T-01, T-02 and C-01 all leave 'who decides the footprint' open. Invalidation correctness depends on it, and so does the owner's 'less to track' constraint. A hand-maintained manifest is the burden the owner wants to avoid."
+  },
+  {
+   "key": "X-04",
+   "title": "Closest operational prior art: CI failure classifiers and KCS",
+   "brief": "Find and evaluate the closest operational prior art that no lane covered:\n1. OpenStack elastic-recheck: each known gate failure is tracked as a bug with a query file kept in git, matched against CI logs, and reported with an uncategorised-failure rate.\n2. The Jenkins Build Failure Analyzer plugin: 'failure causes' carry regex 'indications' over build logs, with categories and statistics.\n3. Zuul/OpenStack logreduce (log-classify): flags anomalous lines against baseline good runs.\n4. Develocity (Gradle Enterprise) failure grouping and Buildkite Test Engine. Both are hosted, so they are for design only.\n5. Knowledge-Centered Service (KCS v6, Consortium for Service Innovation): article states, 'reuse is review', flag-it-or-fix-it, link rate, the article quality index, and the solve and evolve loops.\n\nFor each, extract: the entry schema, the match mechanism and its documented false-positive handling, lifecycle and retirement, the metrics reported (classification rate, reuse rate), maintenance burden, and licence and maintenance status. State which ideas transfer to a precision-first store of a few hundred entries, and which assume large volumes or a staffed support organisation.",
+   "why": "These systems are a near-exact precedent for a store of known build and deploy failures matched by query against logs, with lifecycle and coverage metrics. The digest covers ITIL templates, crash bucketing and CBR, but not these."
+  },
+  {
+   "key": "X-05",
+   "title": "Recurrence base rate, and a pilot with a stop criterion",
+   "brief": "The track assumes hard problems recur often enough that a store saves top-tier sessions. An owner-side record says a month of research found no measurable gain from added context machinery, and no lane quantified savings. Research three things:\n(a) Empirical recurrence rates: studies of recurring bugs and recurring fixes (for example Nguyen et al. on recurring bug fixes), recurrence of repeated build and CI failures, and KCS reuse statistics.\n(b) How memory or experience reuse in LLM agents is measured for cost avoided: with/without ablations, counterfactual baselines, cost per resolved task.\n(c) A minimal pilot for this program: seed 20-40 entries from the existing traps, replay past defects as queries, log lookup outcomes, and set continue/stop thresholds.\n\nGive sample-size reasoning (rule of three) and what to log: tokens, tier and wall time as raw values, with NULL for unknown. Give a kill criterion. Mark vendor-reported sources.",
+   "why": "No lane established that the store pays for itself. C-01 shows the owner's harness review skipped measurement machinery and found no gain, and M-02 notes that no source quantifies escalation cost avoided. A stop criterion protects an owner with ADHD from building something nobody uses."
+  },
+  {
+   "key": "X-06",
+   "title": "Scrubbing secrets and PII before storing, and whether the model provider counts as egress",
+   "brief": "Entries will hold raw error text, logs and diagnosis paths. Earlier lanes inferred, without evidence, that build and deploy logs carry secrets (DATABASE_URL, tokens, Authorization headers) and that customer data (Pakistani phone numbers, names, addresses) may appear in defect text. They also noted that anything a CLI returns enters model context and reaches the model provider. Research local-only scrubbers:\n- gitleaks\n- trufflehog (its verification mode calls out to live services and must be disabled)\n- detect-secrets\n- Microsoft Presidio\n- regex sets for E.164 and Pakistani mobile numbers and CNIC\n\nFor each, report: licence, usability from Node and on Windows, telemetry or network calls by default, evidence on false-positive rates, and whether it can run as a library inside the canonicaliser before a write.\n\nAlso read Anthropic's primary pages on how Claude Code tool results are handled (retention, training use, zero-data-retention options), so the owner can rule whether the no-egress rule covers the model provider. Recommend a scrub-before-store pipeline and a test fixture set.",
+   "why": "T-04's scrub requirement is marked inferred. E-10 F31 and C-01 leave the scope of the egress rule as an open owner decision. The raw-copy-plus-recipe design (T-04) and backups would otherwise turn the store into a secret and PII archive."
+  }
+ ],
+ "unsupported_claims": [
+  {
+   "lane": "E-07",
+   "claim": "Add the dense channel when about 5% of the last 50 lookups are 'missed, entry existed', or when the corpus passes about 1,000 entries or about 30k tokens of index.",
+   "why": "The numbers are explicitly inferred, with no source. If they are wrong, embeddings come in too early (ops cost, drift) or too late (recall)."
+  },
+  {
+   "lane": "E-07",
+   "claim": "Agent-as-reranker costs about 2-5k tokens per lookup.",
+   "why": "Inferred arithmetic (F29). It drives the claim that lexical search plus LLM rerank is cheap and was never measured."
+  },
+  {
+   "lane": "E-05",
+   "claim": "Practitioner thresholds for adding an OLAP engine are about 50M-100M+ rows, or dashboard queries of 5-10 s.",
+   "why": "Reported from vendor-adjacent blogs via search summaries (F22). The rejection holds anyway, but the 'revisit trigger' numbers in the design would rest on it."
+  },
+  {
+   "lane": "M-01",
+   "claim": "A Mem0 store audit found 97.8% junk entries.",
+   "why": "From a competitor's promotional page via a search snippet. The underlying issue was not opened. It is used to argue against LLM extraction at write time."
+  },
+  {
+   "lane": "M-02",
+   "claim": "Copilot Memory citation re-checking raised merge rates from 83% to 90% and gives robustness to adversarial memories.",
+   "why": "Vendor-reported. It is the main production precedent cited for verify-on-read."
+  },
+  {
+   "lane": "T-05 vs M-02",
+   "claim": "Agents copy retrieved records that resemble the task, including wrong ones (Xiong et al.).",
+   "why": "T-05 marks this reported, from search summaries. M-02 marks it verified. It is the central evidence for precision-first design, so the primary text should be confirmed once."
+  },
+  {
+   "lane": "T-03",
+   "claim": "BM25 is a robust baseline, and dense retrieval does not help, even on 46 documents (BEIR and LIMIT figures).",
+   "why": "Read through a summariser, not the PDFs (F09, F10 reported). It drives the 'no embeddings' decision."
+  },
+  {
+   "lane": "E-01",
+   "claim": "Two worktrees can safely share one SQLite file at a fixed path outside the worktrees (F12).",
+   "why": "Inferred. The multi-process test ran in one directory, not across worktrees. WSL/Windows mixed access and OneDrive syncing of Documents were not checked."
+  },
+  {
+   "lane": "T-06",
+   "claim": "The WAL-reset corruption bug (3.7.0-3.51.2) is avoided because Node 24.22.1 bundles SQLite 3.53.4.",
+   "why": "Verified for the dev-box Node only. A Linux VPS Node, a better-sqlite3 fallback, the Python stdlib sqlite3 used by scripts, or a system sqlite3 CLI may bundle older versions. The guard must cover every runtime that opens the file."
+  },
+  {
+   "lane": "E-09",
+   "claim": "One file per event, written temp-then-rename, is atomic and safe for parallel subagents in one worktree.",
+   "why": "Explicitly untested on NTFS. Windows rename-over-existing and EPERM/EBUSY behaviour is unverified (T-06 open question)."
+  },
+  {
+   "lane": "E-09",
+   "claim": "Dolt's telemetry stance is unknown.",
+   "why": "Unverified. From prior knowledge (not checked this run), Dolt reports usage metrics by default with a metrics.disabled config switch. This must be confirmed before Dolt is kept as the 'credible upgrade path'."
+  },
+  {
+   "lane": "E-10",
+   "claim": "Tool results that agents read reach the model provider, so engine-level egress control does not cover that path (F31).",
+   "why": "Marked inferred. It decides whether the no-egress rule can be met at all, and needs primary Anthropic data-handling documentation plus an owner ruling."
+  },
+  {
+   "lane": "T-01",
+   "claim": "Lease semantics (Gray and Cheriton expiry) for miss-time claims.",
+   "why": "Rests on a secondary summary. The paper was unreadable."
+  },
+  {
+   "lane": "E-02/E-08",
+   "claim": "Kuzu was acquired by Apple.",
+   "why": "Reported from an EU filing and press only. The rejection does not depend on it, since the repository archive is verified."
+  },
+  {
+   "lane": "E-04",
+   "claim": "Typesense has no telemetry.",
+   "why": "Inferred from silent docs (F10)."
+  }
+ ],
+ "contradictions": [
+  {
+   "between": "E-09 vs T-06 / E-01",
+   "what": "E-09 makes immutable event files in git the source of truth, with a disposable SQLite index. T-06 rejects committing the live store and git merges between worktrees. E-01 makes a SQLite file the store and calls a committed JSONL export the 'source of record and rebuild path', while T-06 says JSONL exports are 'review and backup only, never the live store'. The brief also forbids simulating a database with Markdown, and E-09's git-tracked JSON event files sit close to that line.",
+   "resolution_hint": "The owner or main session rules on one source of truth. Pick git events plus a rebuilt index, or SQLite plus an export, after X-01 answers the two-host question. Then state whether event files count as 'simulating a DB'."
+  },
+  {
+   "between": "T-02 vs T-01",
+   "what": "T-02's fold says a refutation is 'permanent until revised'. T-01 (following RFC 2308/8767) says a negative is a lead to retry when dependencies change, never a prohibition, and reopens when the trace changes.",
+   "resolution_hint": "Scope each refute event to the footprint it was observed on. Keep the entry suppressed for that footprint, and mark it 'needs re-verify' rather than 'valid' when the footprint changes."
+  },
+  {
+   "between": "T-01 vs T-03",
+   "what": "T-01 limits reader-side repair to mechanical outcome events, with semantic revision queued for a stronger tier. T-03's Rocchio feedback has a confirmed lookup append the query as a new symptom handle, and a refuted lookup append a 'not when' discriminator, which changes what future lookups match. M-01 and M-02 flag cheap-agent writes as a poisoning path.",
+   "resolution_hint": "Classify handle additions as semantic writes. Store them as proposed-handle events that become active only after higher-tier review or a second confirmation."
+  },
+  {
+   "between": "T-03 / E-07 vs T-05 / M-02",
+   "what": "Shortlist size: T-03 has the cheap agent judge the top 3-5. E-07 proposes an LLM rerank of 10-20. T-05 and M-02 cite ReasoningBank and SWE-Exp evidence that k=1 (at most 2) works best and that more retrieved items confuse agents.",
+   "resolution_hint": "Split internal candidate depth (10-20, for ranking) from what is shown to the acting agent (1, at most 2). Measure both in the evaluation harness."
+  },
+  {
+   "between": "T-06 vs T-01",
+   "what": "T-06 rates the claim lease with fencing token 'strong'. T-01 rates the miss-time claim lease 'weak, only if parallel sessions on the same symptom actually occur'.",
+   "resolution_hint": "Defer the lease. Log concurrent misses on the same symptom handle first, and build the lease only if they occur."
+  },
+  {
+   "between": "E-05 vs E-02",
+   "what": "E-05 recommends DuckDB as a read-only attach over the SQLite primary. E-02 says READ_ONLY attach is confirmed only for Postgres. The SQLite scanner page showed read-write attach, and WAL interaction on Windows is unknown.",
+   "resolution_hint": "Verify the sqlite scanner's READ_ONLY option before citing it. Otherwise the analytics need is plain SQL views, as both lanes agree."
+  },
+  {
+   "between": "T-03 vs E-03 / E-04",
+   "what": "T-03 rates Postgres ts_rank weak because it uses no IDF. E-03 and E-04 rate tsvector plus pg_trgm strong.",
+   "resolution_hint": "Both hold if scores are only used to order results within one query and pg_trgm carries the fuzzy matching. The difference matters only if Postgres replaces SQLite."
+  },
+  {
+   "between": "C-01 (harness-review rulings) vs T-03 / E-07 / M-02 / T-02",
+   "what": "The harness review skipped the measurement pipeline and the evaluation schema, and ruled that FixFlow already has one owner per kind of state. The retrieval lanes require lookup logging, a labelled evaluation set and with/without runs, and the whole track adds a new state owner.",
+   "resolution_hint": "Get an explicit owner ruling that the store is a new state owner. Keep measurement inside the store's own lookup and outcome tables, not as a separate pipeline."
+  },
+  {
+   "between": "T-02 vs E-09 / repo practice",
+   "what": "T-02 makes tamper evidence a non-goal, with any hash chain optional. E-09 proposes reusing the staff_ledger_chain hash chain 'at zero cost'.",
+   "resolution_hint": "Use content-hash event ids now and defer the chain. The two positions agree once that is stated."
+  },
+  {
+   "between": "R-01a seed sources",
+   "what": "The seed corpus is internally contradictory. HANDOFF A2 prescribes letting a correct PIN clear the lock, which CLAUDE.md forbids. Migration 0045 is described both as a free slot and as merged. The C1/C2 'do not ship' note conflicts with their recorded merge.",
+   "resolution_hint": "Seeding must pass each candidate through the gate, and must support 'do-not-apply' entries (R-02 ex6). Never bulk-import prose."
+  }
+ ],
+ "candidates_nobody_evaluated": [
+  "OpenStack elastic-recheck (known CI failures as git-tracked query files matched against logs, with uncategorised-failure rate)",
+  "Jenkins Build Failure Analyzer plugin (failure causes with regex indications over build logs, plus statistics)",
+  "Zuul/OpenStack logreduce (log-classify) for anomalous lines against baseline good runs",
+  "Develocity (Gradle Enterprise) failure analytics and Buildkite Test Engine (hosted; design only)",
+  "Knowledge-Centered Service (KCS v6): article states, 'reuse is review', link rate, AQI",
+  "In-process JS search libraries with edit-distance fuzzy matching (MiniSearch, Orama, FlexSearch, Fuse.js), addressing FTS5's lack of typo tolerance without a server",
+  "SQLite spellfix1/editdist3 or the FTS5 vocab table for query-side term correction",
+  "sqlite_rsync as a two-host sync and backup path (mentioned in passing, not evaluated)",
+  "libSQL/sqld self-hosted, rqlite, cr-sqlite (vlcn CRDT SQLite) for a shared data set across two hosts",
+  "Headscale/WireGuard or SSH as transport for a single remote store service (Tailscale's coordinator is third-party)",
+  "fsatrace, Rattle and tup for automatic dependency footprint capture",
+  "Coverage tools (coverage.py, c8/V8, jest --coverage) as a line-level footprint for the discriminating check",
+  "Semgrep OSS and comby as executable applicability probes (check Semgrep's default metrics setting)",
+  "osv-scanner's matching of advisories against lockfiles, as a precedent for 'does this entry apply to current dependencies'",
+  "Nix content-addressed derivations and closure hashing (design only), addressing untracked dependencies",
+  "The git bisect run exit-code convention (125 = skip) as a tri-state gate precedent",
+  "testcontainers or ephemeral Postgres (pg_tmp, PGlite) for gate runs against production-like state",
+  "Windows Sandbox and job objects for isolating gate execution on the dev box",
+  "gitleaks, trufflehog (verification off), detect-secrets and Microsoft Presidio for scrubbing before storage",
+  "Fedora ABRT/FAF and Ubuntu apport duplicate signatures (crash-dedup design precedent)",
+  "zk / Obsidian-style SQLite-index-over-files tooling (design precedent for index-as-cache)",
+  "Datasette (local read-only SQLite exploration) as a zero-build analytics view for the owner"
+ ]
+}

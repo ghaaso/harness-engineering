@@ -1,0 +1,17 @@
+const fs = require('fs');
+const base = 'C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/';
+const a = JSON.parse(fs.readFileSync(base + 'page/work3/k0-result.before.json', 'utf8'));
+const b = JSON.parse(fs.readFileSync(base + 'widen/k0/result.json', 'utf8'));
+const tb = a.results.token_bound, te = b.results.token_estimate;
+console.log('new results keys', Object.keys(b.results));
+console.log('token_estimate keys', te && Object.keys(te));
+console.log(JSON.stringify(te, null, 1).slice(0, 6000));
+// compare every numeric leaf of tb with some leaf in te with same path tail
+function flat(o, p, out) { if (o && typeof o === 'object') { for (const k of Object.keys(o)) flat(o[k], p ? p + '.' + k : k, out); } else out[p] = o; return out; }
+const fa = flat(tb, '', {}), fb = flat(te, '', {});
+const vals = new Set(Object.values(fb).map(v => JSON.stringify(v)));
+let miss = [];
+for (const [k, v] of Object.entries(fa)) if (typeof v === 'number' && !vals.has(JSON.stringify(v))) miss.push(k + '=' + v);
+console.log('old numeric token_bound values not found anywhere in token_estimate:', miss);
+console.log('corrections_after_audit', JSON.stringify(b.corrections_after_audit, null, 1));
+console.log('status', b.status);

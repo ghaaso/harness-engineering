@@ -1,0 +1,39 @@
+// Writes jobi-<size>.json: screenshots of section M (graphify itself, on our tasks), the scope box and the
+// changed parts of section K, into final4/<size>/. Run from this folder:  node - < make-jobi.js.txt
+// Then run one job at a time:  node - jobi-<size>.json < ../../../library-pathways/shot.js.txt
+'use strict';
+const fs = require('fs');
+const base = JSON.parse(fs.readFileSync('jobh-1870-light.json', 'utf8'));
+const check = base.shots.find(s => s.name === '00-check');
+const nav = base.shots.find(s => s.name === '00-nav');
+// section M, the K graphify block, the K matrix and the scope: body text under 15 px, chart labels under 12 px, anything wider than its card
+const mDump = { dump: { file: 'm-check.txt', expr: "JSON.stringify((()=>{const out={};[['m',document.getElementById('m')],['kgraphify',document.getElementById('k-graphify')],['kwider',document.getElementById('k-wider')],['scope',document.getElementById('scope')]].forEach(([n,root])=>{ if(!root){out[n]='missing';return;} out[n]={smallText:[...root.querySelectorAll('p,li,td,span,b,i,a')].filter(e=>e.offsetParent&&!e.closest('svg')&&!e.classList.contains('tag')&&!e.closest('.tag,.lbadge,.doneb,.lsb,.fstack,.seg,.mstrip')&&e.textContent.trim()&&parseFloat(getComputedStyle(e).fontSize)<15).slice(0,8).map(e=>e.tagName+'.'+e.className+':'+parseFloat(getComputedStyle(e).fontSize)+':'+e.textContent.trim().slice(0,30)), smallSvg:[...root.querySelectorAll('svg text')].filter(e=>parseFloat(getComputedStyle(e).fontSize)<12).slice(0,6).map(e=>parseFloat(getComputedStyle(e).fontSize)+':'+e.textContent.slice(0,24)), overflow:[...root.querySelectorAll('*')].filter(e=>{const c=e.closest('.card,.ftile,.design,.costbox');if(!c||c===e)return false;const r=e.getBoundingClientRect(),cr=c.getBoundingClientRect();return r.width>0&&(r.right>cr.right+1||r.left<cr.left-1);}).slice(0,6).map(e=>e.tagName+'.'+e.className+'#'+e.id)};});return out;})())" } };
+const sizes = [['1870-light', 1870, 1280, 'light'], ['1870-dark', 1870, 1280, 'dark'], ['644-light', 644, 1000, 'light'], ['390-light', 390, 844, 'light']];
+const click = (ctl, v) => ({ eval: "document.querySelector('.seg[data-ctl=" + ctl + "] button[data-v=\"" + v + "\"]').click()" });
+const w = { wait: 300 };
+for (const [name, wd, h, scheme] of sizes) {
+  const job = { page: base.page, out: 'final4/' + name, width: wd, height: h, scheme, shots: [
+    check, nav,
+    { name: '00-m', steps: [mDump], clip: 'none' },
+    { name: 'scope', clip: '#scope' },
+    { name: 'k-graphify', clip: '#k-graphify + p.scope-go', pad: 44 },
+    { name: 'k-row-graphify', clip: '#k .krow:has(a[href="#m"])', pad: 8 },
+    { name: 'k-matrix', clip: wd < 860 ? '#k-wider .mxnarrow' : '#k-wider .mx' },
+    { name: 'm-head', steps: [{ eval: "document.getElementById('m').scrollIntoView()" }, w], clip: '#m .manswer', pad: 120 },
+    { name: 'm-1-T1-8000', steps: [click('mset', 'T1'), click('mbud', '8000'), w], clip: '#m-abs', pad: 8 },
+    { name: 'm-1-card', clip: '#m .card.panel' },
+    { name: 'm-1-T2-2000', steps: [click('mset', 'T2'), click('mbud', '2000'), w], clip: '#m .card.panel' },
+    { name: 'm-2-3', steps: [click('mset', 'T1'), click('mbud', '8000'), w], clip: '#m .grid2:has(#m-sens)' },
+    { name: 'm-4-5', clip: '#m .grid2:has(#m-loc)' },
+    { name: 'm-4-2000', steps: [click('mlbud', '2000'), w], clip: '#m-loc', pad: 8 },
+    { name: 'm-6-7', steps: [click('mlbud', '8000'), w], clip: '#m .grid2:has(#m-q)' },
+    { name: 'm-6-untouched', steps: [click('mq', 'untouched22'), w], clip: '#m .card:has(#m-q)' },
+    { name: 'm-6-kinds', steps: [{ eval: "document.querySelector('#m .mkind').closest('details').open=true" }, w], clip: '#m details:has(.mkind)', pad: 8 },
+    { name: 'm-7-unb', steps: [click('mq', 'all30'), click('mlk', 'unb'), w], clip: '#m .card:has(#m-lk)' },
+    { name: 'm-fair-build', steps: [click('mlk', 'hop3'), w], clip: '#m .grid2:has(#m-tune)' },
+    { name: 'm-lists', clip: '#m .grid2:has(.lshows)' },
+    { name: 'm', steps: [click('mlk', 'hop3'), w], clip: '#m' }
+  ] };
+  fs.writeFileSync('jobi-' + name + '.json', JSON.stringify(job, null, 1));
+}
+console.log('wrote', sizes.length, 'jobs');

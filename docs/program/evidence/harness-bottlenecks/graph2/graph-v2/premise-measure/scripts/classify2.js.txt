@@ -1,0 +1,75 @@
+// Session 2: split premise kind c (file not in version control) by where the file lives now, and record the
+// staleness check of findings whose premises are in this repository. Writes classify2.json. Hand judgements are
+// in the table below; each was made from the finding text and a file search (session 2 notes in PROGRESS.md).
+//   c_repo    = file present in this repository's folder but not tracked by git (docs/program/... evidence, untracked notes)
+//   c_scratch = file in a scratch folder outside the repository, or a session transcript
+//   c_other   = untracked file in the owner's other (clinic) repository
+const fs = require('fs');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const C = JSON.parse(fs.readFileSync(W + '/classify.json', 'utf8'));
+const SPLIT = {
+  C2: { c_scratch: 2, why: 'transcript and scratch lock files' },
+  C4: { c_scratch: 3, why: 'build/tmp/lock/preflight1/tq_parse_check.json and scratch arm code' },
+  C6: { c_scratch: 2, why: 'scratch arm code and question file' },
+  C7: { c_scratch: 2, why: 'scratch arms/ladybug/tq.js and probe output' },
+  C8: { c_scratch: 1, why: 'build/tmp/lock/preflight2/hold_test.json' },
+  D2: { c_repo: 1, why: 'bottleneck card in docs/program/evidence/harness-bottlenecks (untracked)' },
+  D3: { c_repo: 7, why: 'bottleneck cards in the untracked evidence folder' },
+  D4: { c_repo: 1, why: 'sweep card in the untracked evidence folder' },
+  D5: { c_repo: 2, why: 'measurement sections in the untracked evidence folder' },
+  E4: { c_other: 1, why: 'clinic research outcome, no citation' },
+  G1: { c_other: 1, why: 'clinic output not tracked' },
+  G3: { c_other: 7, why: 'clinic output folder not tracked' },
+  G4: { c_other: 3, why: 'clinic verification files not tracked' },
+  G5: { c_other: 5, why: 'clinic RESULTS files not tracked' },
+  H1: { c_repo: 1, why: 'token measurement in the untracked evidence folder' },
+  H2: { c_repo: 1, why: 'TOKEN-BOTTLENECK-2026-11.md (untracked)' },
+  H3: { c_repo: 2, c_scratch: 1, why: 'HARNESS-V2-DESIGN (untracked) x2; graph2/research/result.json exists only in scratch' },
+  H4: { c_repo: 3, why: 'HARNESS-BOTTLENECKS L227, fill/window-fill-output.txt, fill/verify/remeasure/report.md, all untracked in the repo folder' },
+  H5: { c_scratch: 1, why: 'graph2/research/result.json exists only in scratch' },
+  J3: { c_scratch: 2, why: 'scratch extractor and its output' },
+  J4: { c_scratch: 1, why: 'scratch build output' },
+  J5: { c_scratch: 1, why: 'scratch build code' },
+  J9: { c_scratch: 2, why: 'scratch extractor and its output' },
+  K1: { c_scratch: 1, why: 'scratch arm code' },
+  K2: { c_repo: 1, why: 'nul_out.json: a copy is in the untracked evidence folder (research/algorithms)' },
+  K3: { c_repo: 1, why: 'split-run output: a copy is in the untracked evidence folder (research/algorithms)' },
+  K4: { c_scratch: 1, why: 'engines/bench/sqlite_vs_csr.mjs exists only in scratch' },
+  K5: { c_repo: 1, why: 'split-run output: a copy is in the untracked evidence folder (research/algorithms)' },
+  L2: { c_repo: 4, why: 'bottleneck cards and sweep tables in the untracked evidence folder' },
+  L3: { c_repo: 1, why: 'machine-facts.md: a copy is in the untracked evidence folder' },
+  L4: { c_repo: 4, why: 'sweep-tables.txt: cited from a scratch copy, a copy is now in the untracked evidence folder' },
+  L5: { c_repo: 1, why: 'sweep data in the untracked evidence folder' },
+  L6: { c_scratch: 1, why: 'a one-off tally over session transcripts' },
+};
+// Staleness of findings with repository premises: the premise was checked against main's git history after the
+// finding was written (commit, time in UTC). 'stale' = the stated fact no longer holds on main.
+const STALE = {
+  I9: { status: 'stale', since: '2026-11-13T10:03:19Z', commit: '87bbe88', what: 'default of the ping backdate ceiling changed from 48 h to 240 h (config.py)' },
+  B5: { status: 'stale', since: '2026-11-13T10:03:19Z', commit: '87bbe88', what: 'login now refuses a default PIN in production (pin_policy.py, identity/service.py); the seed part still holds' },
+  E5: { status: 'drifted', since: '2026-11-13T10:03:19Z', commit: '87bbe88', what: 'CLAUDE.md grew from 29,605 to 35,853 characters by 90ea88d (about 7.4k to 9.0k tokens at 4 characters per token)' },
+  I3: { status: 'holds', what: 'seed migrations 0004 and 0012 unchanged since 2026-10-30; a fresh DB still has PIN 1234' },
+  I4: { status: 'holds', what: 'technician-app/eas.json unchanged on main since a31924a (2026-08-03)' },
+  I6: { status: 'holds for the deployed build', what: 'P2a (5cd29b1) changed the classifier for new builds; the finding describes the APKs in the field, which did not change' },
+  A8: { status: 'holds', what: 'travelTracker.ts changed in 5cd29b1 but no stop call changed; the library code is pinned' },
+  B6: { status: 'not established', what: 'O01-F17..F19 concern task registration and device_time; not traced' },
+};
+// premise a that is computed from the OTHER (clinic) repository, not this one
+const AX = { H5: "commit count of the clinic repository", L3: "restart key in the clinic compose.yaml", L5: "clinic test-suite facts" };
+for (const f of C.findings) {
+  const s = SPLIT[f.id];
+  const c = f.p.c || 0;
+  if (c) {
+    if (!s) throw new Error('no split for ' + f.id);
+    const sum = (s.c_repo || 0) + (s.c_scratch || 0) + (s.c_other || 0);
+    if (sum !== c) throw new Error('split does not add up for ' + f.id);
+  }
+  const p = { ...f.p }; delete p.c;
+  if (s) { for (const k of ['c_repo', 'c_scratch', 'c_other']) if (s[k]) p[k] = s[k]; f.c_where = s.why; }
+  if (AX[f.id]) { p.ax = p.a; delete p.a; f.ax_why = AX[f.id]; }
+  f.p2 = p;
+  if (STALE[f.id]) f.stale = STALE[f.id];
+}
+C.legend.p2 = 'premise counts as p, with c split into c_repo (in this repository folder, untracked), c_scratch (scratch folder or transcript, outside the repository) and c_other (untracked in the other repository); ax = a computed from the other repository';
+fs.writeFileSync(W + '/classify2.json', JSON.stringify(C, null, 1));
+console.log('ok', C.findings.length);

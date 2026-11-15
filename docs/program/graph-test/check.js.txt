@@ -1,0 +1,304 @@
+// Checks the built page against data/data.json.
+// Run from this folder:  node - < check.js.txt
+// Reads index.html, the record, and (if present) the all-states text dump made by
+// ../evidence/harness-bottlenecks/graph2/page/job-text.json with the screenshot tool.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const d = JSON.parse(fs.readFileSync(path.join(HERE, 'data', 'data.json'), 'utf8'));
+const html = fs.readFileSync(path.join(HERE, 'index.html'), 'utf8');
+const md = fs.readFileSync(path.join(HERE, '..', 'GRAPH-TEST-RESULT-2026-11.md'), 'utf8');
+const dumpPath = path.join(HERE, '..', 'evidence', 'harness-bottlenecks', 'graph2', 'page', 'work', 'text', 'alltext.txt');
+const problems = [], notes = [];
+
+/* 1. size and sections */
+const size = Buffer.byteLength(html);
+if (size >= 500000) problems.push('index.html is ' + size + ' bytes (limit 500,000)');
+notes.push('index.html ' + size + ' bytes; record ' + md.split('\n').length + ' lines');
+if (md.split('\n').length >= 150) problems.push('record has 150 lines or more');
+for (const l of 'abcdefghijklm') { if (!new RegExp('<section class="sec" id="' + l + '"><h2>').test(html)) problems.push('section ' + l.toUpperCase() + ' missing'); }
+/* 1b. scope block first (update 2026-11-13): above the seven cards and section A, linking to K */
+{ const iS = html.indexOf('<section class="scope" id="scope"'), iA = html.indexOf('<section class="sec" id="a"'), iV = html.indexOf('class="verdicts');
+  if (iS < 0) problems.push('scope block missing');
+  else { if (!(iS < iA && (iV < 0 || iS < iV))) problems.push('scope block is not above the seven cards and section A');
+    const scope = html.slice(iS, html.indexOf('</section>', iS));
+    if (!/href="#k/.test(scope)) problems.push('scope block does not link to section K');
+    const nNo = (scope.match(/class="lyr no/g) || []).length, nPart = (scope.match(/class="lyr part/g) || []).length;
+    if (nNo + nPart < 4) problems.push('scope layer picture shows fewer than four untested or partly tested layers');
+    if (nPart < 1) problems.push('scope: the time-validity and cached-conclusions layer is not shown as partly tested');
+    else if (!/partly tested: deterministic answers only, see L/i.test(scope)) problems.push('scope: partly tested layer lacks the wording "partly tested: deterministic answers only, see L"');
+    if (!/href="#l"/.test(scope)) problems.push('scope block does not link to section L');
+    if ((scope.match(/class="lyr yes/g) || []).length < 1) problems.push('scope layer picture shows no tested layer'); } }
+/* 1c. J points to K instead of repeating it; card 7 stays; card 6 reports */
+{ const iJ = html.indexOf('<section class="sec" id="j"'), J = html.slice(iJ, html.indexOf('<section class="sec" id="k"'));
+  if (!/<a class="pointk" href="#k-wider"/.test(J)) problems.push('section J has no pointer to the wider test in K');
+  if (/class="mx"|class="phases"/.test(J)) problems.push('section J repeats the wider-test picture from K');
+  if ((html.match(/<div class="vcard/g) || []).length < 7) problems.push('fewer than seven verdict cards');
+  if (/measuring now/i.test(html)) problems.push('engines still shown as "measuring now"'); }
+/* 1d. section K: every outside source item carries a who tag and a strength tag; the wider test is marked as a design */
+{ const iK = html.indexOf('<section class="sec" id="k"'), K = html.slice(iK, html.indexOf('</main>', iK) > 0 ? html.indexOf('</main>', iK) : undefined);
+  const nWho = (K.match(/class="tag who/g) || []).length, nStr = (K.match(/class="tag str/g) || []).length;
+  if (nWho < 4 || nWho !== nStr) problems.push('section K: who tags (' + nWho + ') and strength tags (' + nStr + ') missing or unpaired');
+  else notes.push('section K: ' + nWho + ' outside items, each with a who tag and a strength tag');
+  if (!/id="k-wider"/.test(K) || !/DESIGN, NOT A RESULT/.test(K)) problems.push('section K: wider test not marked as a design');
+  if ((K.match(/<div class="krow(?! khead)/g) || []).length !== d.k.rows.length) problems.push('section K: owner table rows differ from data (' + d.k.rows.length + ')');
+  // the owner's words in the table are verbatim pieces of his three messages (a "..." marks a cut); the one row the design check added says so
+  const Q = d.k.owner_quotes.join(' | ').toLowerCase(), H = html.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  let nv = 0;
+  d.k.rows.forEach((r, i) => { if (r.words.startsWith('(not in your words')) return;
+    const pieces = r.words.split(/\s*\.\.\.\s*/).filter(Boolean);
+    if (!pieces.every(p => Q.includes(p.toLowerCase()))) problems.push('section K row ' + (i + 1) + ': words are not verbatim from the owner: ' + r.words.slice(0, 80));
+    else if (!pieces.every(p => H.includes(p))) problems.push('section K row ' + (i + 1) + ': owner words not shown on the page');
+    else nv++; });
+  notes.push('section K: ' + nv + ' rows of the owner\'s words checked verbatim against his messages');
+  // update 2026-11-13 (2): feasibility block after the wider-test design; caching rows point to L
+  const iW = K.indexOf('id="k-wider"'), iF = K.indexOf('id="k-feas"');
+  if (iF < 0) problems.push('section K: no "can it run here?" feasibility block');
+  else if (iF < iW) problems.push('section K: feasibility block is not after the wider-test design');
+  if (!/class="tag es/.test(K)) problems.push('section K: wider-test costs not marked as estimates');
+  // rows whose owner words (the text before "Measured here") are about caching
+  const kl = K.split('<div class="krow').slice(1).filter(r => /cach/i.test(r.replace(/<[^>]+>/g, ' ').split('Measured here')[0]));
+  if (kl.length < 2 || !kl.every(r => /href="#l"/.test(r))) problems.push('section K: the caching rows of the owner table do not all point to L');
+  else notes.push('section K: ' + kl.length + ' caching rows of the owner table point to L'); }
+/* 1e. section L (cache replay): after K, tagged, switchable, with both lists */
+{ const iK = html.indexOf('<section class="sec" id="k"'), iL = html.indexOf('<section class="sec" id="l"');
+  if (iL < 0 || iL < iK) problems.push('section L missing or not after K');
+  else { const L = html.slice(iL, html.indexOf('</section>', iL) + 10);
+    if (!/class="tag cr/.test(L)) problems.push('section L: no cache-replay tag');
+    if (!/class="tag es/.test(L)) problems.push('section L: token value not tagged as an estimate');
+    if (!/data-ctl="lset"/.test(L)) problems.push('section L: no switch between all questions and changing questions');
+    ['l-main', 'l-comp', 'l-cause', 'l-gap', 'l-tok'].forEach(id => { if (!new RegExp('id="' + id + '"').test(L)) problems.push('section L: picture ' + id + ' missing'); });
+    const iNot = L.indexOf(' lnot"'); if (iNot < 0 || L.indexOf(' lshows"') < 0) problems.push('section L: the two lists are missing');
+    else { const first = (L.slice(iNot).match(/<li>([\s\S]*?)<\/li>/) || [, ''])[1].replace(/<[^>]+>/g, '');
+      if (!/model-made conclusions were not cached/i.test(first) || !/no agent decided/i.test(first)) problems.push('section L: first "does not show" item is not the model-made conclusions / no agent item'); } }
+  // the counts the page draws come from the replay record (k0/result.json) unchanged
+  const K0 = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'evidence', 'harness-bottlenecks', 'graph2', 'widen', 'k0', 'result.json'), 'utf8'));
+  const sc = K0.results && K0.results.static_and_changing_questions_tree && K0.results.static_and_changing_questions_tree.kinds_1_to_8;
+  if (!sc) problems.push('k0/result.json has no static_and_changing_questions_tree');
+  else { if (d.l.stat.neverChange !== sc.never_change || d.l.stat.lookupsOn !== sc.lookups_on_never_changing || d.l.stat.changingLookups !== sc.lookups_on_changing) problems.push('section L static/changing counts differ from k0/result.json');
+    else notes.push('section L: static/changing counts match k0/result.json (' + sc.never_change + ' of ' + sc.questions + ' questions never change)'); }
+  const RC = K0.results && K0.results.static_and_changing_questions_tree && K0.results.static_and_changing_questions_tree.rates_on_changing_questions;
+  if (RC) { let nm = 0; Object.entries(d.l.sets.changing.rows).forEach(([key, r]) => { const k = RC[key]; if (!k) { problems.push('section L rule ' + key + ' has no changing-question rate in k0/result.json'); return; } nm++; if (Math.abs(k.hit_pct - r.hit) > 1e-9 || Math.abs(k.stale_per_served_pct - r.stalePct) > 1e-9 || k.stale !== r.stale) problems.push('section L changing-question rates differ from k0/result.json for ' + key); }); notes.push('section L: ' + nm + ' changing-question rates compared with k0/result.json'); }
+  if (!(K0.results && K0.results.audit_recomputation)) problems.push('k0/result.json has no audit recomputation');
+  if (!(K0.results && K0.results.token_estimate) || (K0.results && K0.results.token_bound)) problems.push('k0/result.json still calls the token figure a bound'); }
+/* 1f. section M (graphify itself, update 2026-11-13 (3)): after L, tagged, every picture and switch, both lists, K and scope point to it */
+{ const iL = html.indexOf('<section class="sec" id="l"'), iM = html.indexOf('<section class="sec" id="m"');
+  if (iM < 0 || iM < iL) problems.push('section M missing or not after L');
+  else { const M = html.slice(iM, html.indexOf('</main>', iM));
+    if (!/class="tag ho/.test(M)) problems.push('section M: no held-out tag');
+    if (!/class="tag tu/.test(M)) problems.push('section M: no tuning tag');
+    ['m-abs', 'm-diff', 'm-sens', 'm-rank', 'm-loc', 'm-nat', 'm-q', 'm-qd', 'm-lk', 'm-lkbars', 'm-tune'].forEach(id => { if (!new RegExp('id="' + id + '"').test(M)) problems.push('section M: picture ' + id + ' missing'); });
+    ['mset', 'mbud', 'mrk', 'mcmp', 'mlbud', 'mnset', 'mq', 'mlk'].forEach(c => { if (!new RegExp('data-ctl="' + c + '"').test(M)) problems.push('section M: switch ' + c + ' missing'); });
+    const nQual = (M.match(/class="mq"/g) || []).length; if (nQual < 9) problems.push('section M: fewer than nine qualification boxes (' + nQual + ')'); else notes.push('section M: ' + nQual + ' qualification boxes beside their numbers');
+    if (!/class="manswer"/.test(M)) problems.push('section M: no direct answer');
+    const iNot = M.indexOf(' lnot"'); if (iNot < 0 || M.indexOf(' lshows"') < 0) problems.push('section M: the two lists are missing');
+    else { const li = [...M.slice(iNot).matchAll(/<li>([\s\S]*?)<\/li>/g)].map(x => x[1].replace(/<[^>]+>/g, ''));
+      if (!/document layer[^.]*not run/i.test(li[0] || '')) problems.push('section M: first "does not show" item is not "its model-read document layer was not run"');
+      if (!/^no agent used it/i.test(li[1] || '')) problems.push('section M: second "does not show" item is not "no agent used it"'); }
+    if (!/<div class="mkind">/.test(M)) problems.push('section M: the per-kind table is not in its narrow-fit wrapper'); }
+  const iS = html.indexOf('<section class="scope" id="scope"'), scope = html.slice(iS, html.indexOf('</section>', iS));
+  if (!/href="#m"/.test(scope)) problems.push('scope block does not link to section M');
+  const iK = html.indexOf('<section class="sec" id="k"'), K = html.slice(iK, iL);
+  if (!/measured here: its code layer, scripted/i.test(K) || !/href="#m"/.test(K)) problems.push('section K: graphify block does not link to M with "measured here: its code layer, scripted"');
+  if (!K.includes('scripted screen done, see M; with an agent: not run')) problems.push('section K: arm G1 not marked "scripted screen done, see M; with an agent: not run"');
+  // the numbers M draws come from graphify/result.json unchanged, and every verdict follows the declared rule
+  const G = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'evidence', 'harness-bottlenecks', 'graph2', 'graphify', 'result.json'), 'utf8'));
+  let nt = 0, nc = 0;
+  G.table.forEach(r => { const x = d.m.table.find(t => t.arm === r.arm && t.set === r.set); if (!x) { problems.push('section M table lacks ' + r.arm + ' ' + r.set); return; }
+    ['primary:p', 'se:se', 'r2000:r2000', 'r4000:r4000', 'r16000:r16000', 'tasks:n', 'clusters:cl'].forEach(kv => { const [a, b] = kv.split(':'); if (r[a] !== x[b]) problems.push('section M ' + r.arm + ' ' + r.set + ' ' + a + ' differs from graphify/result.json'); else nt++; }); });
+  const KEY = { primary: 'p', r2000: 'r2000', r4000: 'r4000', r16000: 'r16000' };
+  G.comparisons.forEach(c => { const x = d.m.cmp.find(t => t.id === c.id); if (!x) return;
+    Object.entries(c.sets).forEach(([s, o]) => Object.entries(KEY).forEach(([a, b]) => { if (!o[a] || !x.sets[s]) return; const y = x.sets[s][b];
+      if (!y || y[0] !== o[a].diff || y[1] !== o[a].ci95[0] || y[2] !== o[a].ci95[1]) problems.push('section M ' + c.id + ' ' + s + ' ' + a + ' differs from graphify/result.json'); else nc++; }));
+    const rule = k => { const t1 = c.sets.T1[k], t2 = c.sets.T2 && c.sets.T2[k], t3 = c.sets.T3 && c.sets.T3[k];
+      const sg = Math.sign(t1.diff); if ((t1.ci95[0] > 0 || t1.ci95[1] < 0) && [t2, t3].every(t => t && Math.sign(t.diff) === sg)) return 'better';
+      if (t1.ci95[0] >= -0.05 && t1.ci95[1] <= 0.05) return 'equivalent'; return 'inconclusive'; };
+    [['primary', 'verdict'], ['r2000', 'v2000'], ['r4000', 'v4000']].forEach(([k, f]) => { if (x[f] && rule(k) !== x[f]) problems.push('section M ' + c.id + ' ' + k + ': verdict "' + x[f] + '" does not follow the declared rule (' + rule(k) + ')'); }); });
+  notes.push('section M: ' + nt + ' table values and ' + nc + ' paired differences match graphify/result.json; verdicts follow the declared rule'); }
+/* network: the only addresses allowed are outside-source links (<a href>) to the listed hosts; nothing is loaded */
+{ const LINK_HOSTS = ['github.com', 'www.kubeblogs.com', 'rentierdigital.xyz'];
+  const stripped = html.replace(/http:\/\/www\.w3\.org\/2000\/svg/g, '').replace(/<a [^>]*href="https:\/\/([^/"]+)[^"]*"/g, (m, h) => LINK_HOSTS.includes(h) ? '<a' : m);
+  if (/https?:\/\//.test(stripped)) problems.push('page contains a network address outside the allowed source links');
+  const links = (html.match(/<a [^>]*href="https:\/\/[^"]+"/g) || []);
+  notes.push(links.length + ' outside-source links (allowed hosts: ' + LINK_HOSTS.join(', ') + ')'); }
+if (/<script[^>]+src=|<link[^>]+href=|<img[^>]+src="https?:|@import|url\(\s*["']?https?:/.test(html)) problems.push('page loads an external file');
+
+/* 2. every number in the data */
+const vals = [];
+(function walk(o) {
+  if (o == null) return;
+  if (typeof o === 'number') { vals.push(o); return; }
+  if (typeof o === 'string') { (o.replace(/,(?=\d{3})/g, '').match(/\d+(?:\.\d+)?/g) || []).forEach(x => vals.push(+x)); return; }
+  if (Array.isArray(o)) return o.forEach(walk);
+  if (typeof o === 'object') Object.keys(o).forEach(k => { walk(o[k]); (k.match(/\d+(?:\.\d+)?/g) || []).forEach(x => vals.push(+x)); });
+})(d);
+// derived, documented on the page: 1.96 (standard errors for a 95 % interval), 95 (per cent), counts of shown items
+const ALLOW = new Set([1.96, 95]);
+const absVals = vals.map(Math.abs);
+function inData(tok, isPct) {
+  const x = Math.abs(+tok.replace(/,/g, ''));
+  if (ALLOW.has(x)) return true;
+  const dec = (tok.split('.')[1] || '').length;
+  const m = Math.pow(10, dec);
+  const eq = v => Math.abs(Math.round(v * m + 1e-7) / m - x) < 1e-9 || Math.abs(Math.round(v * m - 1e-7) / m - x) < 1e-9;
+  if (absVals.some(eq)) return true;
+  if (isPct && absVals.some(v => Math.abs(Math.round(v * 100) - x) < 1e-9)) return true;
+  if (dec === 0 && absVals.some(v => v === x)) return true;
+  return false;
+}
+function pageText() {
+  let t = html.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, '\n').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  if (fs.existsSync(dumpPath)) { t += '\n' + fs.readFileSync(dumpPath, 'utf8'); notes.push('all-states dump included (' + fs.statSync(dumpPath).size + ' bytes)'); }
+  else problems.push('no all-states dump: run job-text.json first');
+  return t;
+}
+const text = pageText().replace(/−/g, '-');
+const lines = text.split('\n');
+const bad = new Map();
+let checked = 0;
+for (const line of lines) {
+  // skip file paths and configuration ids (shown as code), dates and times
+  const clean = line.replace(/[\w./-]+\.(tsx?|jsx?|py|mjs|json)\b/g, ' ').replace(/\b\d{4}-\d{2}-\d{2}(T[\d:.]+Z)?\b/g, ' ').replace(/\b\d{2}:\d{2}\b/g, ' ').replace(/\b[a-z_]+=[\w.>+-]+/gi, ' ').replace(/\b(T1x?|T[2-5]|H[1-5]b?|S[12]|k[46]|B[12])\b/g, ' ').replace(/#\d+/g, ' ');
+  const re = /(\d[\d,]*(?:\.\d+)?)(\s*%)?/g; let mm;
+  while ((mm = re.exec(clean))) {
+    const tok = mm[1].replace(/,$/, ''); checked++;
+    if (!inData(tok, !!mm[2])) { const k = tok + (mm[2] ? ' %' : ''); if (!bad.has(k)) bad.set(k, line.trim().slice(0, 140)); }
+  }
+}
+notes.push(checked + ' number tokens checked');
+/* 2b. no broken values in any state: NaN, undefined, null, or a missing-value dash where a number belongs */
+['NaN', 'undefined', 'null', '[object Object]'].forEach(w => { if (new RegExp('\\b' + w.replace(/[[\]]/g, '\\$&') + '\\b').test(text.replace(/\b\w+=null\b/g, ' '))) problems.push('page text contains "' + w + '"'); }); // hops=null is a recorded configuration code (unbounded hops), shown in mono beside its plain name
+if (/recall –|F1 –|: –|\(– /.test(text)) problems.push('a missing value (–) is shown where a number belongs');
+/* 2c. counts in prose are read from data: the sources hold no hand-typed sample sizes */
+{ const src = fs.readFileSync(path.join(HERE, 'build.js.txt'), 'utf8') + fs.readFileSync(path.join(HERE, 'src', 'client.js.txt'), 'utf8');
+  const typed = src.match(/\b(75|65|418|770|49|48|31|30|23|22) (commits|tasks|questions|times|untouched)\b/g) || [];
+  if (typed.length) problems.push('hand-typed counts in the sources: ' + [...new Set(typed)].join(', ')); else notes.push('no hand-typed sample sizes in build.js.txt or client.js.txt'); }
+for (const [k, l] of bad) problems.push('number not in data: ' + k + '   in: ' + l);
+
+/* 3. must-not-claim */
+const FORBID = [
+  [/graphs?( models)? add(s)? nothing/i, 'graphs add nothing'], [/graph (engine )?does not help/i, 'graph does not help'],
+  [/equally (fast|cheap|easy)/i, 'engines equally fast/cheap/easy'], [/proven equivalent/i, 'native algorithms proven equivalent'],
+  [/across the (whole )?codebase/i, 'beats search across the codebase'], [/beats? (co-change|changed-together) history/i, 'beats co-change history'],
+  [/how sessions search today/i, 'beats how sessions search today'], [/at least 0\.05 (more|recall more)/i, 'at least 0.05 more recall'],
+  [/answers? (code(-reading)? )?questions better/i, 'answers code questions better'], [/\d+ times fewer/i, 'N times fewer tokens'],
+  [/cost(s)? no more tokens/i, 'no more tokens'], [/helps? most on cross-runtime/i, 'helps most on cross-runtime'],
+  [/agent (finishes|finished) (tasks?|work) faster/i, 'agent finishes faster'], [/fewer mistakes/i, 'fewer mistakes'],
+  [/holds for other repositor/i, 'holds for other repositories'], [/large effect on documented chains/i, 'large T3 effect'],
+  [/amended (selection )?rule picked the better/i, 'amended rule picked better'], [/23 (held-out )?questions (had )?untouched/i, '23 untouched questions'],
+  [/no held-out question answer was known/i, 'no answer known before run'], [/byte-identical/i, 'byte-identical answers'],
+  [/could see no sealed/i, 'no sealed material visible'], [/global order/i, 'global order followed'], [/more token.efficient/i, 'more token efficient'],
+  // engines (build-f/engines_checked.json must_not_claim)
+  [/graph engines? (are|is|was|were) faster than (SQL|SQLite|relational)/i, 'graph engines faster than SQL'],
+  [/SQLite (is|was) (faster|slower) than the graph engines in general/i, 'SQLite faster in general'],
+  [/LadybugDB (computes|computed|runs|ran) PageRank[^.]*(in its graph engine|natively|faster)/i, 'LadybugDB computes PageRank in its engine'],
+  [/graph operators? (is|are|was|were) (faster|slower) than SQL/i, 'graph operator vs SQL'],
+  [/LadybugDB (starts|started)[^.]*faster/i, 'LadybugDB starts faster'], [/149 differences/i, '149 differences hold'],
+  [/quiet machine/i, 'quiet machine'], [/best threads?( setting)? (is|was) faster/i, 'best threads faster'],
+  [/(needs|uses|takes) less query code/i, 'less query code'], [/(should|must) (be )?adopt/i, 'should be adopted'],
+  [/(timed|timings?|times)[^.]*(on|over) held-out/i, 'timed on held-out'], [/timings? hold for (larger|other)/i, 'timings hold for larger graphs'],
+  // wider test (widen/result.json refuter and design-check must_not_claim)
+  [/graphify proves/i, 'graphify proves'], [/stars? (shows?|proves?) (that )?it works/i, 'stars show it works'],
+  [/(typed queries|graph) answer[^.]*20 times fewer/i, '20 times fewer'], [/31 against 695[^.]*session saving/i, '31 vs 695 session saving'],
+  [/(finished test|this test) measured whether a graph cuts/i, 'finished test measured agent tokens'],
+  [/(knowledge graph|temporal knowledge graph) would have won/i, 'KG would have won'], [/graph type does not matter/i, 'graph type does not matter'],
+  [/temporal knowledge graphs? (are|is) proven/i, 'TKG proven'], [/will save tokens/i, 'cached conclusions will save tokens'],
+  [/caching does not help/i, 'caching does not help'], [/model-extracted (document )?layer is proven/i, 'model layer proven'],
+  [/model-extracted graphs are worse[^.]*in general/i, 'model graphs worse in general'],
+  [/cut the bill by/i, 'cut the bill by a share'], [/save at most about a quarter/i, 'at most a quarter'],
+  [/early cutoff makes/i, 'early cutoff makes cheap'], [/stores? connections more compactly/i, 'graph stores more compactly'],
+  [/protocol ignored/i, 'protocol ignored the owner'], [/never scored context a change needed/i, 'never scored needed context'],
+  [/(this|the wider) test answers whether a graph/i, 'test answers which graph'], [/A3 tests a temporal/i, 'A3 tests a TKG'],
+  [/can detect a 12/i, 'can detect 12 %'], [/cannot tell[^.]*means the layer does not help/i, 'cannot tell means no help'],
+  [/A3 needs no install/i, 'A3 needs no installs'], [/at most 2 billion/i, 'at most 2 billion'],
+  [/held-out tasks are fresh commits/i, 'held-out tasks fresh'], [/references are independent of every arm/i, 'references independent'],
+  [/graphify was tested exactly as/i, 'graphify tested as shipped'], [/(graph database )?question is settled/i, 'question settled'],
+  [/traversal caching\)? was tested|caching on top of the graph[^.]*was tested/i, 'traversal caching tested'],
+  [/finished test failed/i, 'the finished test failed'], [/design-document spend is covered/i, 'design-document spend covered'],
+  [/71\.5x is one answer/i, '71.5x is one answer'],
+  // cache replay (k0/AUDIT.md and build-h/result.json cache.audit.must_not_claim)
+  [/caching saves tokens|cach(e|ing)[^.]*(saves?|saving) [\d,]+ tokens/i, 'caching saves tokens'],
+  [/(fact-level )?invalidation[^.]*proven safe|proven safe/i, 'fact-level invalidation proven safe'],
+  [/never serves? a stale/i, 'never serves a stale answer'],
+  [/token (figure|estimate|value)[^.]*\b(is|as) a bound|\bat most (about )?58/i, 'the token figure is a bound'],
+  [/hit rate (an|the) agent would see/i, 'a hit rate an agent would see'],
+  [/(all|every) side-branch snapshots? (were|was) merged/i, 'all side-branch snapshots merged'],
+  [/cached answers are correct about the code/i, 'cached answers correct about the code'],
+  [/(caching|a cache) (would|will) (help|pay)/i, 'caching will help'],
+  // graphify itself, section M (graphify/AUDIT-RUN.md and AUDIT-CLAIMS.md must_not_claim); negated forms reviewed, strict forms below
+  [/agent (using|with) graphify would (do|score|be) worse|an agent[^.]*graphify[^.]*would do worse than/i, 'an agent with graphify would do worse'],
+  [/graphify'?s? (configuration|usage)[^.]*could (not )?do better|with more tuning[^.]*(would|could) win|no graphify configuration/i, 'no configuration could do better / more tuning would win'],
+  [/(precision|F1)[^.]*\b(are|is) (exact|rule-independent)|rule-independent figure/i, 'question precision and F1 exact'],
+  [/robustly exclude/i, 'every T1x interval robustly excludes zero'],
+  [/as good as (the )?typed[^.]*mobile|mobile[^.]*as good as (the )?typed/i, 'as good as typed on mobile'],
+  [/graphify (beats|beat|outperforms?) (scripted search|both floors|the floors|the changed-together|the same-folder)/i, 'beats search or the floors'],
+  [/equivalent to (scripted search|the changed-together floor|the same-folder floor|both floors|the floors|the typed)/i, 'equivalent to search or the floors'],
+  [/graphify (is|was) better than the same-folder/i, 'better than the same-folder floor'],
+  [/lost only because|only because (it|graphify) lacks|only because of (our|the) (adapter|packer)/i, 'lost only because of links / adapter / packer'],
+  [/tuned as hard as/i, 'tuned as hard as the typed arms'],
+  [/graphify builds?[^.]*(faster|smaller)|builds? (its graph )?(faster|smaller) than/i, 'builds faster or smaller'],
+  [/explains? graphify'?s?[^.]*results elsewhere|(confirms?|refutes?) (its|graphify'?s?) published/i, 'explains or confirms/refutes published numbers'],
+  [/agent would use (fewer|more) tokens/i, 'an agent would use fewer or more tokens'],
+  [/scores? (an )?F1 (of )?0\.07\b/i, 'scores F1 0.07 without its qualifiers'],
+  [/graphify (is|was) worse (on|for) other/i, 'worse on other repositories']
+];
+// negative sentences the refuters ruled out in any form: no negation word excuses them
+const STRICT = [
+  [/graphify (does not|doesn't|did not) work/i, 'graphify does not work'], [/worse in general/i, 'worse in general'],
+  [/graphify (is|was) worse/i, 'graphify is worse'], [/worse than (grep|scripted search|search|the changed-together|the same-folder|both floors|the floors)/i, 'worse than grep / search / the floors'],
+  [/no better than (listing|the same-folder|a folder|the folder)/i, 'no better than listing the folder'],
+  [/token savings (are|were) false|wastes? tokens/i, 'token savings false / wastes tokens'],
+  [/cannot answer code(-reading)? questions/i, 'cannot answer code questions'],
+  [/(document|model)(-read)? layer would not help|would not help[^.]*(document|model)(-read)? layer/i, 'document layer would not help'],
+  [/(graphify'?s? )?graph is wrong/i, 'graph is wrong'], [/cannot connect (the )?frontend and backend/i, 'cannot connect frontend and backend']
+];
+const NEG = /\b(whether|not|no|never|until|without|cannot|does not|did not|isn't)\b/i;
+// the generated record (GRAPH-TEST-RESULT-2026-11.md) is held to the same must-not-claim lists as the page
+const sentences = (text + '\n' + md).replace(/\n/g, ' ').split(/(?<=[.?!])\s+/);
+for (const [re, name] of FORBID) {
+  for (const s of sentences) { if (re.test(s)) { if (NEG.test(s) || /\?\s*$/.test(s)) notes.push('negated or a question, reviewed: [' + name + '] ' + s.slice(0, 160)); else problems.push('must-not-claim [' + name + ']: ' + s.slice(0, 200)); } }
+}
+for (const [re, name] of STRICT) { for (const s of sentences) { if (re.test(s)) problems.push('must-not-claim, any form [' + name + ']: ' + s.slice(0, 200)); } }
+notes.push(FORBID.length + ' must-not-claim patterns (negation reviewed) and ' + STRICT.length + ' strict ones checked over the page, every switch state and the record');
+for (const re of [/\bbetter\b/i]) {
+  sentences.filter(s => re.test(s) && /typed/i.test(s) && /question/i.test(s) && !/inconclusive|only when|pre-declared|interval|verdict/i.test(s)).forEach(s => problems.push('questions "better" without its qualification: ' + s.slice(0, 200)));
+}
+/* 4. held-out content: no question text, no held-out task id or commit hash */
+if (/T1-0786/.test(html)) problems.push('held-out task id in page');
+const hashes = [];
+(function walk(o) { if (o && typeof o === 'object') Object.values(o).forEach(walk); else if (typeof o === 'string' && /^[0-9a-f]{40}$/.test(o)) hashes.push(o); })(d);
+hashes.forEach(h => { if (html.includes(h) || html.includes(h.slice(0, 7))) problems.push('commit hash in page: ' + h.slice(0, 7)); });
+if (/"(question|question_text|text)"\s*:/.test(html)) problems.push('a question text field is embedded');
+/* 5. required wording (addendum 6 section C) */
+const need = [
+  ['the three implementations compute the same answers from the same facts with the same method', 'H1/H2 wording'],
+  ['gave no gain of 0.05 recall or more', 'H1b wording'], ['scripted search', 'search called scripted'],
+  ['recall 1', 'question recall convention'], ['sign only', 'T3 sign only'], ['mobile', 'H3 split shown'],
+  ['not counted', 'typed-side costs named as not counted'],
+  // update 2026-11-13: engines reported, scope, section K
+  ['not graph operators', 'engines: PageRank arms compare implementations'], ['facts load', 'engines: LadybugDB facts load named'],
+  ['does not enter the token bill', 'engines: milliseconds against a model step'], ["ranking code in JavaScript is not counted", 'engines: statement length label'],
+  ['spread between passes', 'engines: spread drawn and named'], ['What this page answers, and what it does not', 'scope block'],
+  ['What you asked that this test did not cover', 'section K title'], ['DESIGN, NOT A RESULT', 'wider test marked as a design'],
+  ['self-reported', 'outside source tagged self-reported'], ['independent', 'outside source tagged independent'],
+  ['at most the third lever', 'knowledge layer is at most the third lever'], ['no answer was graded', 'graphify 71.5x: no answer graded'],
+  // update 2026-11-13 (2): section L and the K feasibility block
+  ['Cached answers with invalidation: the replay', 'section L title'], ['expected by construction', 'L: zero wrong is expected by construction'],
+  ['no agent', 'L: no agent decided to look anything up'], ['estimate', 'L: token value named an estimate'],
+  ['a typed query', 'L: a typed query avoids nothing'], ['Can it run here?', 'K: feasibility block'], ['PARTLY TESTED', 'scope: partly tested layer'],
+  ['90 of 91', 'L: one side-branch snapshot was never merged'], ['138 of the 250 questions', 'L: questions that never change'],
+  // update 2026-11-13 (3): section M
+  ['Graphify itself, on our tasks', 'section M title'], ['raw question text', 'M: questions got the raw text'],
+  ['no vocabulary step', 'M: no vocabulary step'], ['by construction', 'M: link-kind files out of reach by construction'],
+  ['neither “better” nor “equivalent”', 'M: inconclusive is neither better nor equivalent'], ['not comparable', 'M: build cost not comparable'],
+  ['recall is the fair reading', 'M: questions read by recall'], ['code layer only', 'M: code layer only'],
+  ['no agent used it', 'M: no agent used it'], ['measured here: its code layer, scripted', 'K: graphify block links to M'],
+  ['scripted screen done, see M; with an agent: not run', 'K: arm G1 marker']
+];
+const low = text.toLowerCase();
+need.forEach(([p, n]) => { if (!low.includes(p.toLowerCase())) problems.push('missing required wording: ' + n); });
+
+console.log(notes.join('\n'));
+console.log(problems.length ? '\nPROBLEMS (' + problems.length + '):\n' + problems.join('\n') : '\nPASSED: no problems');
+fs.writeFileSync(path.join(HERE, '..', 'evidence', 'harness-bottlenecks', 'graph2', 'page', 'check-result.txt'), notes.join('\n') + '\n' + (problems.length ? 'PROBLEMS:\n' + problems.join('\n') : 'PASSED') + '\n');

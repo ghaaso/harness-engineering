@@ -1,0 +1,51 @@
+// Revision 4, R21 (model-brief.md section 14): adds the new promoted-check unknowns to the params of the
+// limitations whose own text is about checks that run in the shared test run or that certify an entry.
+// It edits build-limitations.js.txt, the source of limitations.json. Run from this folder:
+//   node - < patch-limitations-src-rev4.js.txt
+// then rebuild limitations.json with:  node - < build-limitations.js.txt
+// Uses process.cwd(), never __dirname. Safe to run more than once: an unknown already listed is skipped.
+// It changes only the params list of the five items below: no title, text, case, step or status.
+// The source allows at most three params per item, so each item gains one unknown.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const FILE = path.join(process.cwd(), 'build-limitations.js.txt');
+let src = fs.readFileSync(FILE, 'utf8');
+
+// [item key, title (checked), unknown added, reason]
+const ADD = [
+  ['no_machine_check', 'Some entries have no check a machine can run', 'k_promo_exact',
+    "Its text says such entries 'check something else'. A promoted check that checks something else does not catch a wrong output on the same problem."],
+  ['test_certifies', "The entry's own test certifies the defect", 'k_promo_exact',
+    "Its text is about tests stored as the entry's check that pass a faithful copy of the defect. That is the catch chance of a promoted check on the same problem."],
+  ['outside_check', 'The real check happens outside: cloud, deploy or field', 'k_promo_exact',
+    'Its text says every case passed the local checks and failed outside. A promoted check runs in the local shared tests, so it misses what only shows outside.'],
+  ['shared_blind_spot', 'Checks built from the conclusion share its blind spot', 'k_promo_exact',
+    "Its text says reusing the entry passes its own checks, which were written from the same conclusion. That is a promoted check's catch on the same problem."],
+  ['old_fix_check', 'A check built on the old fix misses recurrence', 'k_promo_similar',
+    "Its text says the stored check tests the old defect, and misses the same cause in a new form. That is a promoted check's catch on a similar problem."]
+];
+
+let edits = 0;
+const problems = [];
+ADD.forEach(([key, title, id]) => {
+  const start = src.indexOf("item({ key: '" + key + "'");
+  if (start < 0) { problems.push('item not found: ' + key); return; }
+  const next = src.indexOf('item({', start + 6);
+  const block = src.slice(start, next < 0 ? src.length : next);
+  if (!block.includes(title.replace(/'/g, "\\'")) && !block.includes(title)) { problems.push('title differs for ' + key); return; }
+  const m = /\bp: \[([^\]]*)\]/.exec(block);
+  if (!m) { problems.push('params not found: ' + key); return; }
+  const ids = m[1].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  if (ids.includes(id)) return;
+  ids.push(id);
+  if (ids.length > 3) { problems.push(key + ' would have more than three params'); return; }
+  const now = 'p: [' + ids.map(x => "'" + x + "'").join(', ') + ']';
+  const newBlock = block.slice(0, m.index) + now + block.slice(m.index + m[0].length);
+  src = src.slice(0, start) + newBlock + src.slice(start + block.length);
+  edits++;
+});
+if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
+fs.writeFileSync(FILE, src);
+console.log('build-limitations.js.txt: ' + edits + ' params edits this run, ' + ADD.length + ' in all');
+ADD.forEach(([key, title, id, why]) => console.log('  ' + key + ' (' + title + '): + ' + id + '. ' + why));

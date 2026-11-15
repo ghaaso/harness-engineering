@@ -1,0 +1,109 @@
+export const meta = {
+  name: 'section9-check',
+  description: 'Check the new section of the bottleneck compile against its own evidence, and attack its compaction-line claim',
+  phases: [
+    { title: 'Check', detail: 'one Opus fidelity check of section 9 and the linked edits; one Opus refuter on the compaction claim; one documentation check of the compaction setting' },
+  ],
+}
+
+const DOC = args.doc
+const FIT = args.fit
+const EV = args.ev
+const HORTHY = args.horthy
+
+const ERR = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      where: { type: 'string', description: 'Section and the row or sentence, quoted briefly.' },
+      severity: { type: 'string', enum: ['wrong', 'unsupported', 'misleading', 'minor'] },
+      what_is_wrong: { type: 'string', description: 'At most 50 words.' },
+      correct_value_or_wording: { type: 'string', description: 'At most 50 words, with the file that shows it.' },
+    },
+    required: ['where', 'severity', 'what_is_wrong', 'correct_value_or_wording'],
+  },
+}
+
+const FID_SCHEMA = {
+  type: 'object',
+  properties: {
+    checked: { type: 'string', description: 'At most 120 words: what you compared with what.' },
+    errors: ERR,
+    counts_verified: { type: 'string', description: 'The counts in 9.1 as you recomputed them from the JSON files.' },
+    ids_per_bottleneck_ok: { type: 'boolean' },
+    mechanisms_ok: { type: 'boolean' },
+    verdict: { type: 'string', enum: ['faithful', 'faithful-with-corrections', 'not-faithful'] },
+  },
+  required: ['checked', 'errors', 'counts_verified', 'ids_per_bottleneck_ok', 'mechanisms_ok', 'verdict'],
+}
+
+const REF_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['stands', 'narrowed', 'refuted'] },
+    statement_faithful: { type: 'boolean', description: 'Is the 7 November statement represented as the Horthy document records it?' },
+    numbers_ok: { type: 'boolean' },
+    errors: ERR,
+    strongest_objection: { type: 'string', description: 'At most 100 words.' },
+    what_should_be_said: { type: 'string', description: 'At most 120 words: the claim as it should stand, or empty if it stands as written.' },
+  },
+  required: ['verdict', 'statement_faithful', 'numbers_ok', 'errors', 'strongest_objection', 'what_should_be_said'],
+}
+
+const DOCS_SCHEMA = {
+  type: 'object',
+  properties: {
+    setting_exists: { type: 'string', enum: ['yes', 'no', 'unclear'] },
+    how_it_is_set: { type: 'string', description: 'At most 80 words: the command, settings key or environment variable, its unit, and whether it applies to subagents or agent definitions.' },
+    sources: { type: 'array', items: { type: 'object', properties: { url: { type: 'string' }, fetched: { type: 'boolean' }, says: { type: 'string' } }, required: ['url', 'fetched', 'says'] } },
+    caveats: { type: 'string', description: 'At most 60 words.' },
+  },
+  required: ['setting_exists', 'how_it_is_set', 'sources', 'caveats'],
+}
+
+const fidelity = `You are checking a document section against the data it was written from. Read-only: do not edit anything, do not use the web, do not run git.
+
+The document: ${DOC}
+Read section 9 in full ("## 9. How the Horthy and BAML ideas fit the bottlenecks" to the Appendix heading). Also read these linked edits made at the same time: in section 0 the paragraph beginning "What the Horthy and BAML ideas add"; in section 1 the B17 row; in section 3.3 the sentence beginning "How the Horthy and BAML ideas attach"; in section 3.6 the sentence beginning "Lever (1) now has a number"; in section 7 the last table row.
+
+The data, all in ${FIT}:
+- fit-final.json: the final list of 88 ideas (id, source, disposition_in_pr, fit, bottlenecks, cost, owner, status).
+- review.json: adj (three adjudicator lanes with verdicts on 142 dropped candidates, including clinic_practice), ref (two refuter lanes on 51 mappings), excl (the exclusion check on 36), cons (the consolidation: mechanisms with absorbs_ids, conflicts, per_bottleneck, do_not_take). review.txt is the same, rendered.
+- map.txt: the first mapping pass, rendered. in/horthy-ids.json: every Horthy family id with its disposition in PR #186.
+- tally-buckets-output.txt: the token measurement behind section 9.4.
+The testbed facts cited by card id (A2-11, A5-07, A5-13, A7-05, A7-13, A8-10, A3-14, CR-03) are in ${EV}\\sweep-index.txt and ${EV}\\sweep-cards.txt; Grep by id.
+
+Recompute, do not trust. Use Bash with node or Grep to count from the JSON files where you can. Check every one of these and report each error with its location and the correct value:
+1. Every count in the 9.1 table and its paragraphs (87, 29, 2, 27, 58, 868, 783, 85, 142, 91, 1, 50; "of the 30 that fit, 20 bear on B01, B12 or B17"; "eleven bottlenecks get nothing"; 71, 33 and 38 for testbed practice).
+2. The 9.2 table: for each of the 21 rows, the idea ids against fit-final.json (an id listed under a bottleneck must have that bottleneck in its final list, and no final id may be missing), and Direct, Supporting or Nothing.
+3. The 9.3 table: eleven mechanisms, their absorbed ids against cons.mechanisms, and that every one of the 30 fitting ideas is in a mechanism or in 9.6's "not now".
+4. The 9.4 table and sentences against tally-buckets-output.txt (recompute the "All" row and the subagent row from the four groups).
+5. 9.5 against cons.conflicts. 9.6: the 22 downgraded ids against the refuter verdicts; "seven hold, two do not" for the nine ids G2-F015, G4-F073, G2-F104, G4-F089, G4-F088, G4-F140, G2-F183, T-08, D-13; the three corrections against the cards.
+6. Any sentence in section 9 or the linked edits that says more than the data supports.
+The method paragraph's agent and token totals are provisional and will be corrected; do not report them. Return only the structured result.`
+
+const refute = `You are a refuter. Default verdict: refuted. Read-only: do not edit anything, do not use the web, do not run git.
+
+The claim under attack is section 9.4 of ${DOC} ("The token lever: Horthy's compaction line, measured"), together with the sentence it added to section 3.6 ("Lever (1) now has a number") and the last sentence of the section 0 paragraph "What the Horthy and BAML ideas add". Read section 9.4, section 3.6, section 2.3 and section 2.4 of that file.
+
+Check against these sources:
+- What Dex Horthy actually said on 7 November 2026, as recorded in ${HORTHY}: Grep for "7 November", "400k" and "2026-11-07" and read the surrounding lines (the owner summary near line 120 and the addendum near lines 805 to 830). Is he describing a threshold he sets, a habit, or a recommendation? Does the section represent it no more strongly than the record does?
+- The measurement: ${FIT}\\tally-buckets-output.txt and the script ${FIT}\\tally-buckets.js.txt. Is "context per call" computed sensibly? Do the table's percentages follow from the output? Is "tokens above the line" a fair measure of what a 400k window would remove, or does it mislead (a compacted session falls far below the line; compaction itself costs tokens and breaks the cache; a session may re-read files after compaction)? Is "size of the prize" honest wording?
+- The testbed's own context trials: Grep A5-07, A5-10, A5-11, A5-12, A5-13, A5-14 and CR-05 in ${EV}\\sweep-cards.txt. Does the record support "native compaction kept recall: 15 of 15 in every arm" and "the trials tested restore machinery, not an earlier threshold"? Does anything in the record cut against compacting earlier?
+- The setting: Grep "autocompact" in ${EV}\\research.txt. Is "Claude Code documents an auto-compact window that can be set per session and per subagent definition" supported by what that file records?
+- The proposed trial: is "run the next wave with the window at 400k and compare with November's per-slice figures" a test that could show anything, and is "exploratory" enough of a warning?
+
+Rule: stands, narrowed or refuted. List every error. Say what the claim should be if it must be narrowed. Return only the structured result.`
+
+const docs = `Answer one question about Claude Code from its official documentation, with fetched sources.
+
+Question: can a user set how full the context window gets before Claude Code compacts automatically? Look for a command such as /autocompact, a settings key such as autoCompactWindow, an environment variable such as CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, or anything equivalent. State the exact name, the unit (tokens or percent), where it is set (command, settings.json, environment, an agent or subagent definition), and whether it can differ for subagents. If the documentation does not say, answer "unclear" and say what you did find. Fetch the pages; do not answer from memory. Return only the structured result.`
+
+phase('Check')
+const [fid, ref, doc] = await parallel([
+  () => agent(fidelity, { label: 'check:fidelity', phase: 'Check', schema: FID_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(refute, { label: 'refute:compaction-line', phase: 'Check', schema: REF_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(docs, { label: 'docs:compaction-setting', phase: 'Check', schema: DOCS_SCHEMA, model: 'sonnet', effort: 'medium', agentType: 'claude-code-guide' }),
+])
+return { fidelity: fid, refute: ref, docs: doc }

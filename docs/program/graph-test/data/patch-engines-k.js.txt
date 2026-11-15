@@ -1,0 +1,235 @@
+// Re-appliable patch of data/data.json (owner page update, 2026-11-13).
+// Run from the graph-test folder:  node - < data/patch-engines-k.js.txt
+// It replaces d.engines (was {"status":"measuring"}) with the audited engine timing, and sets d.k
+// (section K: what the owner asked that the test did not cover). Nothing else in data.json is touched.
+// Inputs (read-only):
+//   ../evidence/harness-bottlenecks/graph2/build-f/engines.json          (numbers; every one reproduced by the audit)
+//   ../evidence/harness-bottlenecks/graph2/build-f/engines_checked.json  (audit: labels as corrected, notes, safe sentences, must_not_claim)
+//   section K text below is transcribed from ../evidence/harness-bottlenecks/graph2/widen/ (lane-graphify.md, refuter.md,
+//   critique-assumptions.md, design-draft.md, design-check.md) and ../../TOKEN-BOTTLENECK-2026-11.md; each item names its source.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const DATA = path.join(HERE, 'data', 'data.json');
+const BF = path.join(HERE, '..', 'evidence', 'harness-bottlenecks', 'graph2', 'build-f');
+const d = JSON.parse(fs.readFileSync(DATA, 'utf8'));
+const E = JSON.parse(fs.readFileSync(path.join(BF, 'engines.json'), 'utf8'));
+const C = JSON.parse(fs.readFileSync(path.join(BF, 'engines_checked.json'), 'utf8'));
+
+/* ---------------- engines ---------------- */
+const r3 = x => x == null ? null : Math.round(x * 1000) / 1000;
+const ms = o => o ? { m: r3(o.median_over_passes), sp: r3(o.spread_between_passes), pp: (o.per_pass || []).map(r3) } : null;
+const ENGN = { relational: 'SQLite', ladybug: 'LadybugDB', duckpgq: 'DuckDB+DuckPGQ' };
+const checkedRow = (r) => C.table.find(t => t.row === `${r.graph}/${r.query_class} ${ENGN[r.engine]} ${r.setting} (threads [${r.threads.join(', ')}])`);
+const facts = C.checks['5_labels_and_threads'].cold_with_facts_load;
+const rows = E.table.map(r => {
+  const ck = checkedRow(r);
+  const fl = r.engine === 'ladybug' ? facts.find(x => x.graph === r.graph && x.cls === r.query_class) : null;
+  return {
+    e: r.engine, g: r.graph, c: r.query_class, s: r.setting, th: r.threads[0], same_as_one: r.same_as_one_thread,
+    warm: ms(r.warm_wall_p50_ms), warm_cpu: ms(r.warm_cpu_p50_ms), p95: ms(r.warm_wall_p95_ms), uncached: ms(r.warm_uncached_wall_p50_ms),
+    cold: ms(r.cold_wall_ms), cold_open: r3(r.cold_open_wall_ms && r.cold_open_wall_ms.median_over_passes),
+    cold_with_facts: fl ? { m: r3(fl.ladybug_cold_plus_facts_wall), pp: fl.ladybug_cold_plus_facts_passes.map(r3), facts_load_ms: r3(fl.ladybug_facts_load_ms_median),
+      vs_relational: fl.ladybug_incl_facts_vs_relational || null, vs_duckpgq: fl.ladybug_incl_facts_vs_duckpgq || null } : null,
+    engine_api: r3(r.engine_api_wall_ms && r.engine_api_wall_ms.median_over_passes), app_code: r3(r.app_code_wall_ms && r.app_code_wall_ms.median_over_passes),
+    roundtrip: r3(r.roundtrip_estimate_ms && r.roundtrip_estimate_ms.median_over_passes),
+    statements_per_ranking: r.statements_per_ranking, query_text: r.query_text, rss_mb: r3(r.rss_mb),
+    audit: ck ? { result: ck.result, notes: ck.notes } : null
+  };
+});
+const stores = E.stores.map((s, i) => ({ e: s.engine, g: s.graph, size_mib: s.size_mib, size_bytes: s.size_bytes, builds: s.builds,
+  build: ms(s.build_wall_ms), update: ms(s.update_one_file_wall_ms), audit: C.stores[i] ? { row: C.stores[i].row, result: C.stores[i].result, notes: C.stores[i].notes } : null }));
+const pick = list => list.filter(x => / 1 thread (warm median|cold \(open \+ first call\)):/.test(x.statement)).map(x => {
+  const m = x.statement.match(/^(\w+)\/(\w+) 1 thread (warm median|cold \(open \+ first call\)): (\S+) lower than (\S+) by/);
+  return { g: m[1], c: m[2], kind: m[3].startsWith('warm') ? 'warm' : 'cold', lower: m[4], higher: m[5], listed_as: x.listed_as, result: x.result,
+    statement: x.statement, quote_only_with: x.quote_only_with, wall_diff_ms: x.audit_recomputed && x.audit_recomputed.wall_diff_ms };
+});
+d.engines = {
+  status: 'reported',
+  source: 'build-f/engines.json (timing run of 2026-11-13) with its independent audit build-f/engines_checked.json; every number in the table, every store figure and all 180 engine-to-engine verdicts were reproduced by the audit',
+  settings: { seeds: E.settings.seeds, passes: E.settings.passes, cold_samples_per_pass: E.settings.cold_n, update_samples: E.settings.update_n, max_repeats: E.settings.max_repeats },
+  container: E.container,
+  graphs: {
+    tune: { label: 'tuning graph', nodes: 2450, edges: 7077, seeds: 200, what: 'one June commit graph of the tuning period' },
+    frozen: { label: 'frozen graph', nodes: 5464, edges: 16462, seeds: 200, what: 'the frozen commit graph; 200 file nodes as seeds; questions: the 20 tuning questions' }
+  },
+  summary_rule: E.summary_rule,
+  host_load: { rule: E.host_load.rule, totals: E.host_load.totals },
+  labels_corrected: C.labels.map(l => ({ statement: l.statement, result: l.result, qualification: l.qualification })),
+  other_statements: C.other_statements.map(s => ({ statement: s.statement, result: s.result, qualification: s.qualification, note: s.note })),
+  ladybug_ipc: C.ladybug_harness_ipc,
+  audit_not_done: C.audit.not_done,
+  counts: C.counts,
+  rows, stores,
+  comparisons: pick(C.differences_that_hold).concat(pick(C.differences_within_noise)),
+  where_ranking_runs: {
+    primary: { what: 'the selected method: degree-normalised spreading over an unbounded walk in both directions',
+      relational: 'SQL, one statement per walk level; the level loop runs in application code', ladybug: 'reach in the engine (SHORTEST pattern); the spreading itself in JavaScript',
+      duckpgq: 'reach by the iterativelength() graph function; the spreading in SQL, one statement per level' },
+    S1: { what: 'the 4-hop personalised PageRank variant',
+      relational: 'about 270 SQL statements per ranking', ladybug: 'PageRank in JavaScript over a cached adjacency (40 iterations)', duckpgq: 'recursive SQL, not a graph operator (bounded hops); ranking in SQL' },
+    base: { what: 'the 2-hop personalised PageRank starting point',
+      relational: 'about 270 SQL statements per ranking', ladybug: 'PageRank in JavaScript over a cached adjacency (40 iterations)', duckpgq: 'recursive SQL, not a graph operator (bounded hops); ranking in SQL' },
+    S2: { what: 'LadybugDB only: PageRank plus the stored community prior',
+      ladybug: 'reach in the engine; 40 PageRank iterations in JavaScript; the stored community value read by Cypher' },
+    tq: { what: 'the 20 tuning questions, answered by one query program per kind of question',
+      relational: 'SQL query programs', ladybug: 'Cypher query programs', duckpgq: 'SQL query programs on DuckDB' }
+  },
+  where_short: {
+    primary: { relational: 'SQL per walk level', ladybug: 'spreading in JavaScript', duckpgq: 'graph-function reach, SQL ranking' },
+    S1: { relational: 'about 270 SQL statements', ladybug: 'PageRank in JavaScript', duckpgq: 'recursive SQL' },
+    base: { relational: 'about 270 SQL statements', ladybug: 'PageRank in JavaScript', duckpgq: 'recursive SQL' },
+    S2: { ladybug: 'PageRank in JavaScript + stored prior' },
+    tq: { relational: 'SQL', ladybug: 'Cypher', duckpgq: 'SQL' }
+  },
+  model_step: { seconds: 6.6, source: 'graph2/brief.md: median model step, measured on the second project (a file read took under 1 ms)' },
+  safe_sentences: C.safe_sentences_for_owner,
+  must_not_claim: C.must_not_claim
+};
+
+/* ---------------- section K ---------------- */
+const SRC = {
+  lg: 'graph2/widen/lane-graphify.md', rf: 'graph2/widen/refuter.md', ca: 'graph2/widen/critique-assumptions.md',
+  dd: 'graph2/widen/design-draft.md', dc: 'graph2/widen/design-check.md', tb: 'docs/program/TOKEN-BOTTLENECK-2026-11.md'
+};
+d.k = {
+  sources: SRC,
+  owner_quotes: [
+    'im having difficulty understanding how graph database and spacial and temporal topology used with caching concepts and invalidation ... would not reduce token usage given that we have a lot of files and documents ... its basically ensuring we dont have to search through or fetch unnecessary context into the chat while also fetching it in small small time very fast?? wouldnt cache databases help with this??',
+    'wouldnt graph database to store the semantic relations and actual connections that will or wont break with changes give a lot of info in small size compared to relational and then using caching on top of it so we dont traverse unnecessary nodes?',
+    'if our experiments are all failing then how the hell does graphify show such good results and it has a ton of stars in its repo, are we using strictly graphs or knowledge graphs or TKGs i suspect you are still being narrow minded with the architecture you have flaws in your reasoning and especially your assumptions'
+  ],
+  table_source: 'design-check.md section P12 (its table), corrected for the engine timing that has since run; the assumptions audit critique-assumptions.md (A1 to A12, U1 to U9); refuter.md where it qualifies the audit',
+  rows: [
+    { status: 'partly', words: 'graph database ... give a lot of info in small size compared to relational', measured: 'Partly: the storage engine, on the same parser facts. The same facts in SQLite (relational), LadybugDB (graph) and the DuckDB graph layer gave the same answers. Store size, build, one-file update and query times were measured by the timing run.', not: 'Answers cannot differ in size when they are identical. The store sizes compare three designs that keep different extra tables, not the engines alone.', wider: 'The engine is not re-tested; whether a graph of model-read meaning helps is a separate, untested question (row "store the semantic relations").', go: ['e', 'h'] },
+    { words: 'spacial ... topology', measured: 'Read as graph neighbourhood: how far the walk goes (1 to 6 hops, and unbounded) moved tuning recall more than anything else. Read as place in the code: the same-folder floor.', not: 'Read as closeness in an embedding space: no embedding arm was run, because it needs a model download.', wider: 'The design check asks for each reading to be declared in advance: neighbourhood and impact queries in A1, the same-folder floor, and embedding arm E only if you allow the download.', go: ['f', 'c'] },
+    { words: 'temporal topology ... TKGs', measured: 'Nothing about time. Each commit had its own snapshot of facts (190 snapshots), used only as a build cache.', not: 'Facts with validity periods, "as of commit K" queries, and a temporal knowledge graph as shipped (for example Graphiti).', wider: 'A3t: validity by commit ancestry, split from cached conclusions as the design check asks (P1). Graphiti (arm T) only if you choose it; the draft does not recommend it now.', go: ['k-wider'] },
+    { words: 'caching concepts and invalidation ... wouldnt cache databases help with this??', measured: 'No cache was tested. The facts cost no model tokens and rebuild in about 5.3 s per commit, so there was nothing expensive to cache.', not: 'Conclusions that carry the facts they rest on and are invalidated when one of them changes; stale answers served.', wider: 'K0: replay the 190 snapshots under five cache policies, with no model and no tokens. K1 and A3c with an agent only if K0 passes; A3s is the same store with invalidation switched off. Your prompt cache already serves 94.9 % of FixFlow context tokens as cache reads. Those are still tokens the model processes: the prompt cache lowers price and delay, not the token count (protocol-v2.md). A database cache that keeps unneeded content out of the window would therefore cut cached and uncached tokens alike; how much is untested. The token report also measured that only 0.5 to 1.5 % of a window is content fetched a second time inside the same window, so a cache that only stops repeat reads within one session would save little; stopping a first, unneeded read is the untested part.', go: ['k-wider', 'k-tokens'] },
+    { words: 'using caching on top of it so we dont traverse unnecessary nodes', measured: 'Traversal time in three engines, cold and warm: milliseconds per ranking.', not: 'A cache over traversals. It cannot move the token bill: a traversal costs milliseconds, one model step about 6.6 s, and the bill is counted in tokens.', wider: 'Not a token lever, so not re-tested.', go: ['h'] },
+    { words: 'store the semantic relations', measured: 'Relations a parser reads: files, functions, routes, tables, settings and tests and how they connect, plus which files changed together before.', not: 'Meaning that a model reads from documents: rules, reasons, decisions and document-to-code links. This is the layer graphify adds.', wider: 'A2 (meaning) and G2 (graphify with its document layer).', go: ['b', 'k-graphify'] },
+    { words: 'actual connections that will or wont break with changes', measured: 'Only through proxies: the tests a change updated (tests to update) and "what a function change reaches" questions.', not: 'Breaking something on purpose and watching what fails.', wider: 'B, the break oracle: 80 changes applied at the parent; the repository\'s own tests and type checkers decide what broke.', go: ['c', 'g'] },
+    { words: 'we dont have to search through or fetch unnecessary context into the chat while also fetching it in small small time very fast', measured: 'Recall at answer sizes of 2,000, 4,000, 8,000 and 16,000 tokens. Every answer filled its budget, and answers were lists of paths and signature lines, so the reads that would follow were not counted.', not: 'Tokens until an agent has enough; tokens an agent spends in a session.', wider: 'Total tokens per task over all calls, subagents included, plus the layer\'s build cost; tokens to sufficiency, added by the design check.', go: ['c'] },
+    { words: 'given that we have a lot of files and documents', measured: 'Code only. Documents entered only as 25 documented-chain tasks, read for their sign only.', not: 'Your design and document work, where most of your measured tokens go.', wider: 'A document stratum of about 20 questions, too few for a verdict (design check P13).', go: ['c', 'k-tokens'] },
+    { words: 'are we using strictly graphs or knowledge graphs or TKGs', measured: 'A typed property graph with typed, evidence-carrying edges: a code knowledge graph in the schema sense, with no model-read meaning and no validity periods.', not: 'Graph type varied with everything else held fixed. No source found does that, so "graph type decides" is untested, not refuted.', wider: 'Layers as switches give descriptive step contrasts with intervals. Only A1, A3 and G2 against the agent baseline can carry a verdict, unless the step contrasts are made primary (design check P1).', go: ['k-wider'] },
+    { words: 'if our experiments are all failing', measured: 'The test did not fail. The typed store found more of the change than a scripted search: on changed-together recall, on mobile-app seeds only, at a filled 8,000-token answer.', not: 'Whether that saves an agent any tokens: it did not measure what you asked.', wider: 'The agent arms A0 to G2.', go: ['a', 'd'] },
+    { words: 'how the hell does graphify show such good results and it has a ton of stars', measured: 'Not by this test; the picture below sets its numbers side by side.', not: 'Graphify itself was not run.', wider: 'G1 (graphify\'s code layer as shipped) and G2 (with its document layer).', go: ['k-graphify'] },
+    { words: '(not in your words; added by the design check) orientation, and moving rules from always-loaded to on-demand', measured: 'Nothing: no orientation questions ("what is this slice, where is X handled, which document governs this").', not: 'Summaries or slice maps used as pointers; factor P, pulling CLAUDE.md reasons on demand instead of loading them in every call.', wider: 'Orientation questions in set Q. Factor P is left as your decision; the check says it must not be dropped silently.', go: ['k-wider'] }
+  ],
+  graphify: {
+    what_it_builds: [
+      { layer: 'Code layer', from: 'tree-sitter parsers, about 40 languages', model_tokens: 'none', same_as_tested: true, text: 'Files, classes, functions, methods, imports, calls, inheritance, SQL tables and foreign keys, config keys. The same family as the graph this test used.' },
+      { layer: 'Model-read layer', from: 'a model reads every uncached document, PDF and image', model_tokens: 'yes', same_as_tested: false, text: 'Concept nodes, rationale text, document-to-code links, "semantically similar" edges, each with a confidence label.' },
+      { layer: 'Clusters and report', from: 'Leiden communities named by a model; a report file GRAPH_REPORT.md', model_tokens: 'names only', same_as_tested: false, text: 'Hub nodes, surprising cross-cluster links, knowledge gaps, suggested questions.' },
+      { layer: 'Always-on pointer', from: 'a CLAUDE.md block and hooks before search and read calls', model_tokens: 'none', same_as_tested: false, text: 'Tells the agent to query the graph before searching or reading.' }
+    ],
+    lacks: 'No time validity, no history and no stored summaries; invalidation is per file by content hash. Queries are lexical seed-finding followed by breadth-first expansion, cut at 2,000 tokens by default. The tested graph has changed-together history, route-to-call and table read/write edges that graphify lacks (its changed-together analysis is an open pull request, #4544).',
+    headline: { ratio: 71.5, corpus_tokens: 123488, answer_tokens: 1726, files: 52, questions: 5, code_only_ratio: 8.8, code_corpus_tokens: 16997, code_answer_tokens: 1929,
+      corpus: '29 Python files from three public repositories, 14 documentation files, 5 research-paper PDFs and 4 images',
+      how: 'Corpus tokens estimated as words times 4/3; answer tokens as characters divided by 4; the average over 5 generic questions. No answer was graded. Measured once by the maintainer, on 2026-04-04, and not re-run after the counting change shipped in version 0.9.87 (pull request 4348).',
+      reading: 'It compares reading the whole corpus with one capped graph answer, so any retrieval method would score high. Keeping only the 29 code files (dropping the 5 PDFs, 14 documentation files and 4 images) takes it from 71.5x to 8.8x.',
+      who: 'self-reported', strength: 'weak', links: [['review.md (worked example)', 'https://github.com/Graphify-Labs/graphify/blob/v8/worked/karpathy-repos/review.md'], ['how-it-works.md', 'https://github.com/Graphify-Labs/graphify/blob/v8/docs/how-it-works.md'], ['pull request 4348', 'https://github.com/Graphify-Labs/graphify/pull/4348']] },
+    measurements: [
+      { id: 'erp', title: 'Graphify\'s own code-agent result (ERPNext)', who: 'self-reported', strength: 'weak', n: '6 questions',
+        text: 'Key-fact coverage 82.0 % with the graph tool against 70.8 % for grep and read, with one agent model. No interval; one question flipping moves the score by a similar amount; the harness is not public.',
+        links: [['BENCHMARKS.md', 'https://github.com/Graphify-Labs/graphify/blob/v8/BENCHMARKS.md']] },
+      { id: 'bench', title: 'graphify-bench: the 940-run agent benchmark', who: 'independent', strength: 'medium', n: '940 runs, one repetition per task, one synthetic corpus (477 code files, 139 design documents)',
+        text: 'Real headless coding-agent runs; the graphify arm is exactly what its installer produces. Intervals resample tasks only, so run-to-run noise is unmeasured. The usage counter covers only the main session, so subagent tokens are missed; the graphify arms carry skill text and nudges and never spawn subagents, while the baseline delegated to subagents in about half its runs.',
+        rows: [
+          { label: 'Code tasks, strong model (Sonnet 5)', tasks: 45, tok: 32, lo: -8, hi: 75, acc_g: 78, acc_b: 84 },
+          { label: 'Code tasks, weaker model (Haiku 4.5)', tasks: 45, tok: -119, lo: -245, hi: -12, acc_g: 82, acc_b: 80 },
+          { label: 'Doc-and-code questions, strong model', tasks: 20, tok: -129, lo: -325, hi: 33, acc_g: 80, acc_b: 70, downgraded: true },
+          { label: 'Doc-and-code questions, weaker model', tasks: 20, tok: -161, lo: -317, hi: -25, acc_g: 75, acc_b: 80 }
+        ],
+        extra: 'Against a baseline with subagents disabled, code tasks on the strong model cost +107k tokens [+38k, +180k] with graphify. Contradiction hunt: 4 tasks, graphify found 4 of 4 against 2 of 4 (F1 0.94 against 0.68), on 12 contradictions the benchmark\'s author planted. On doc-and-code questions the strong model\'s cost fell by 0.084 US dollars [-0.180, -0.005].',
+        downgrade: 'The refuter downgrades the doc-and-code positive to weak and directional: 80 % against 70 % on 20 tasks is a difference of 2 tasks with no accuracy interval, the token interval crosses zero, the weaker model reverses the sign (75 % against 80 %), and the arms differ by more than the graph. The page itself states both 65 and 105 for the task count.',
+        links: [['graphify-bench README', 'https://github.com/ohta-rh/graphify-bench']] },
+      { id: 'swe', title: 'File-localisation check on 177 issues', who: 'independent', strength: 'medium', n: '177 SWE-bench Lite issues, nine Python repositories',
+        text: 'The issue title as the question; the files the real fix changed as the answer; graphify at its defaults (breadth-first, depth 3, about 2,000 tokens). It measures finding the file, not agent success.',
+        bars: [ { label: 'right file ranked first', g: 25, b: 32 }, { label: 'right file in the first 5', g: 38, b: 64 } ],
+        extra: 'Anywhere in graphify\'s answer: 62 %. Anywhere in keyword search\'s top 50: 92 %.',
+        links: [['graphify issue 4341', 'https://github.com/Graphify-Labs/graphify/issues/4341']] }
+    ],
+    others: [
+      { title: 'Two fresh agents, 5 cross-file questions on two repositories', who: 'independent', strength: 'weak', text: 'Tokens with graphify against without: 79.6k against 53.1k and 83.5k against 62.1k; the graph answer lacked a citable line, so the agent re-read the files (the lane grades it weak to medium).', links: [['graphify issue 3307', 'https://github.com/Graphify-Labs/graphify/issues/3307']] },
+      { title: 'Production feature work, three rounds, one session per arm per round', who: 'independent', strength: 'weak', text: 'Blind quality 44/50 against 45/50; per-query savings did not show up as a session saving, by the authors\' own words (weak to medium).', links: [['KubeBlogs test', 'https://www.kubeblogs.com/graphify-claims-71-5x-fewer-tokens-we-tested-it-on-real-production-work/']] },
+      { title: 'Hands-on audit, 60 sessions over 14 days', who: 'independent', strength: 'weak', text: 'About 1,500 hook reminders, 0 graph query calls, 1 read of the report: the advisory instruction did not change what the agent did.', links: [['rentierdigital audit', 'https://rentierdigital.xyz/blog/claude-code-knowledge-graph-audit-failed']] },
+      { title: 'A personal question set, 8 questions, two runs per tool', who: 'independent', strength: 'weak', text: 'Items found 67.5 of 69 against 68.5; weighted input tokens 361k against 414k, on questions chosen partly to suit the graph (weak to medium).', links: [['pull request 100', 'https://github.com/quaesitor-scientiam/graphify/pull/100']] }
+    ],
+    stars: { count: 146932, date: '2026-11-13', created: '2026-04-03', text: 'Stars record attention and adoption in about seven months. They are not a measurement of cost or accuracy.', links: [['GitHub repository', 'https://github.com/Graphify-Labs/graphify']] },
+    bottom_line: 'Graphify\'s headline compares one capped answer with reading everything. The controlled independent runs on code with a strong model found no accuracy gain and no clear token saving, which is in line with this test. The one positive sits in the document layer this test left out, and it is weak and directional.'
+  },
+  tokens: {
+    total_context_tokens_billion: 7.35, fixflow_billion: 2.13, clinic_billion: 5.23, calls: 35834, cache_read_share_fixflow: 94.9,
+    segments: [
+      { key: 'prefix', label: 'fixed prefix re-read every call (system prompt, tool schemas, CLAUDE.md, briefs)', both: 27, fixflow: 47, clinic: 19 },
+      { key: 'own', label: 'the model\'s own earlier output carried forward', both: 26, fixflow: 15, clinic: 31 },
+      { key: 'fetched', label: 'content fetched by reads and searches', both: 26, fixflow: 23, clinic: 27, layer: true },
+      { key: 'compaction', label: 'compaction summaries re-read', both: 8, fixflow: 2, clinic: 11 },
+      { key: 'other', label: 'shell output, messages, other', both: 13, fixflow: 13, clinic: 12 }
+    ],
+    levers: [
+      { n: 1, title: 'Cap the long orchestrator window at 150k to 200k tokens', exposure: '39 % (FixFlow) and 74 % (Clinic) of cache-read tokens sit in calls whose context had passed 200k' },
+      { n: 2, title: 'Strip the fixed prefix of subagents', exposure: 'about 60k tokens per agent window: 27 % of all tokens, 47 % of FixFlow\'s' },
+      { n: 3, title: 'Fewer lookup steps and less fetched content: where a knowledge layer acts', exposure: 'fetched content is 26 % of context tokens; calls that only read or search are 64 % of FixFlow\'s calls and re-read 55 % of its tokens' }
+    ],
+    note: 'These are exposures: the share of tokens a lever touches, not what it would save. They overlap, and most are cache reads; whether cache reads count against your limits is unknown.',
+    source: SRC.tb + ' (every API call in this PC\'s transcripts for FixFlow and the Clinic Workshop repo, 35,834 calls)'
+  },
+  wider: {
+    status: 'A design, not a result. Nothing in it has been built, run, installed or frozen; it is a draft for your decisions, with the corrections of the design check applied.',
+    question: 'On this repository, does a knowledge layer let an agent do the same work with fewer total tokens and no loss of correctness, and which layer earns its cost?',
+    outcome: 'Total tokens per task over all model calls, subagents included, plus the layer\'s build and update tokens spread over the tasks it served, plus its tool descriptions in every call; correctness against sealed references as a guard.',
+    layers: [
+      { key: 'agent', label: 'Agent with ordinary search and read (the real baseline)' },
+      { key: 'struct', label: 'Structure: the tested code graph as one command-line tool' },
+      { key: 'meaning', label: 'Meaning: model-read claims from product docs and commit messages' },
+      { key: 'time', label: 'Time: validity by commit ancestry' },
+      { key: 'cache', label: 'Cached conclusions with invalidation' },
+      { key: 'gcode', label: 'Graphify as shipped: code layer' },
+      { key: 'gdoc', label: 'Graphify as shipped: document layer' }
+    ],
+    arms: [
+      { id: 'A0', name: 'baseline', on: ['agent'] },
+      { id: 'A1', name: 'structure', on: ['agent', 'struct'] },
+      { id: 'A2', name: 'meaning', on: ['agent', 'struct', 'meaning'] },
+      { id: 'A3t', name: 'time only', on: ['agent', 'struct', 'meaning', 'time'], corrected: true },
+      { id: 'A3c', name: 'time + cached conclusions', on: ['agent', 'struct', 'meaning', 'time', 'cache'], corrected: true },
+      { id: 'G1', name: 'graphify, code', on: ['agent', 'gcode'] },
+      { id: 'G2', name: 'graphify + docs', on: ['agent', 'gcode', 'gdoc'] }
+    ],
+    controls: 'Controls beside them: A0p, a placebo tool with a description of equal length; A0x, a plain capped keyword index; A3s, the cached-conclusion store with invalidation switched off. Optional, your decision: E, an embedding entry point (a model download); T, Graphiti as shipped on set K only.',
+    phases: [
+      { n: 0, title: 'Feasibility', cost: 'no agent, no model tokens', does: 'Do tests and type checkers run at old parents; how many change commits survive; how much needed-but-not-edited context each commit has; enough fresh commits?', stop: 'STOP if fewer than 25 runnable commits, or the needed-but-not-edited column is near empty.', fix: 'Design check P9: main has 0 product-code commits after the freeze, so the held-out set must be prospective: the first usable commits after the protocol is hashed, plus 14 days.' },
+      { n: 1, title: 'Screens', cost: 'no agent, no model tokens', does: 'Break oracle by script; K0 cache replay over the 190 snapshots under five policies (none, whole repository, file hash, fact level, fact level with early cutoff); replay of the 139 recorded lookups.', stop: 'STOP and fix if a fact-level policy serves any stale answer.', fix: 'Design check P5: the draft stopped on any stale answer, but the file-hash policy is expected to serve some; its stale rate is a finding. The engine timing the check asked for here has now run (section H).' },
+      { n: 2, title: 'Model layers', cost: 'model tokens; your decision 2', does: 'Build the meaning layer (A2) and graphify\'s document layer (G2) twice on 10 parents.', stop: 'STOP if build cost exceeds the agreed budget, or the two builds disagree on more than a quarter of anchored claims.', fix: 'Design check P10: A3 needs the knowledge store built first, and your D1 audit and D1b yes come before any build.' },
+      { n: 3, title: 'Pilot agent runs', cost: 'agent runs', does: '12 change tasks with 4 arms and 3 runs each; 30 questions with 5 arms and 2 runs each. Then freeze sample size, thresholds and arms, and hash the protocol.', stop: 'STOP if adoption is below 20 % in every tool arm without steering, or the leak audit finds leaks.', fix: 'Design check P2 and P3: as drafted, only savings of 20 % or more are detected reliably, and the correctness guard passes a harmless arm only 51 to 64 % of the time; choose the margins before the pilot ends.' },
+      { n: 4, title: 'Held-out main run, once', cost: 'agent runs', does: '40 change tasks with 4 arms and 3 runs; 70 questions with 6 arms and 2 runs; 80 break-oracle changes by script, then 30 with an agent.', stop: 'Verdicts only by the rules fixed in advance.', fix: 'Design check P4: the stale-answer bound needs about 150 cache hits, so it is computed on set K (600 claim-steps), not on change tasks.' },
+      { n: 5, title: 'Score and report', cost: 'scoring, three refuters', does: 'Score by script where the answer is a set or a test result; a judge only for rubric questions; three refuters; the must-not-claim lists bind the report.', stop: '', fix: 'Design check P13: results speak to product-code tasks only; no verdict is possible on design and document work, where most measured spend is.' }
+    ],
+    cost: { draft_pilot: '0.17 to 0.55 billion tokens', draft_main: '0.6 to 2.0 billion tokens', check_pilot: 'about 0.5 to 1.8 billion tokens', check_main: 'about 2 to 6.5 billion tokens', why: 'In this harness an agent call averages 113k to 123k tokens of context, about 60k of it fixed prefix, so the draft\'s per-run figure is likely 2 to 4 times too low. All recorded FixFlow context tokens so far are 2.13 billion.' },
+    verdict_note: 'Graph type (graph, knowledge graph, temporal knowledge graph) gets descriptive step contrasts with intervals; only A1, A3 and G2 against A0 can carry a verdict, unless you make the step contrasts primary (design check P1). A "cannot tell" does not mean a layer does not help.'
+  }
+};
+
+// Status chip per owner-table row (check of 2026-11-13, readability item): what this test measured for that row.
+// partly = some reading of the row was measured, another was not; not = nothing in this test measures it.
+const KSTATUS = ['partly', 'partly', 'not', 'not', 'partly', 'partly', 'partly', 'partly', 'partly', 'partly', 'partly', 'not', 'not'];
+if (KSTATUS.length !== d.k.rows.length) throw new Error('KSTATUS has ' + KSTATUS.length + ' entries for ' + d.k.rows.length + ' rows');
+d.k.rows.forEach((r, i) => { r.status = KSTATUS[i]; });
+d.k.status_labels = { measured: 'Measured', partly: 'Partly measured', not: 'Not measured' };
+
+// Machine and engine versions of the timing run (check of 2026-11-13: the earlier page promised them).
+// Read from the "version" field each timing worker wrote into build/results/bench/interleaved/units/p*-*.json
+// (same strings in every unit file); the DuckPGQ extension build is not in those files, it is taken from
+// arms/duckpgq/NOTES.md, which ran in the same image (graphtest:1, named in bench/run_interleaved.sh).
+d.engines.versions = {
+  os: E.container.platform === 'linux' ? 'Linux container' : 'container platform ' + E.container.platform, node: E.container.node, cpus: E.container.available_parallelism,
+  relational: 'SQLite 3.54.1 through node:sqlite', ladybug: 'LadybugDB 0.22.3 through @ladybugdb/core',
+  duckpgq: 'DuckDB through @duckdb/node-api 2.0.0-r.1, with the DuckPGQ community extension',
+  duckpgq_ext: '9c11bc192a', image: 'graphtest:1',
+  source: 'the version string each timing worker recorded in the unit files of the timing run; the DuckPGQ extension build from the arm notes of the same image'
+};
+
+fs.writeFileSync(DATA, JSON.stringify(d, null, 1));
+console.log('patched data.json: engines rows', rows.length, 'stores', stores.length, 'comparisons', d.engines.comparisons.length, '; k rows', d.k.rows.length, '; bytes', fs.statSync(DATA).size);

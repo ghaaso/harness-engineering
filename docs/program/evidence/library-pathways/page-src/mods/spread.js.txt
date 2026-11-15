@@ -1,0 +1,266 @@
+  // ------------------------------------------------------------ spread module: many runs, and the funnel's reading lines
+  // Replaces renderEnsControls, spreadChart, scatter, rankList, tieTable, renderEnsemble,
+  // renderFunnelLegend and renderFunnel. Every helper here starts with spread_.
+  var spread_TIEW = { '0': 'all separate', '0.5': 'half together', '1': 'all together' };
+  function spread_tieWord(t) { var k = String(t); return spread_TIEW[k] || (t > 0 && t < 1 ? 'part together' : ''); }
+  function spread_tieName(t) { return 'tie ' + t + ': ' + spread_tieWord(t); }
+  function spread_read(how, now) {
+    return '<div class="ux-spread-read"><div class="ux-spread-how"><b>How to read it</b><p>' + how + '</p></div>' +
+      '<div class="ux-spread-now"><b>What it shows now</b><p>' + now + '</p></div></div>';
+  }
+  function spread_group(question, how, now, body) {
+    return '<div class="ux-spread-grp"><h3>' + esc(question) + '</h3>' + spread_read(how, now) + body + '</div>';
+  }
+  // Counts of runs in the four corners, from the raw cost and wrong rate (the same test the engine uses for "better").
+  function spread_quads(w, base, ens) {
+    var q = { bl: 0, tl: 0, br: 0, tr: 0, n: 0 };
+    (ens || ENS).draws.forEach(function (d) {
+      var c = d[w].cost < d[base].cost, g = d[w].wrong <= d[base].wrong;
+      q[c ? (g ? 'bl' : 'tl') : (g ? 'br' : 'tr')]++; q.n++;
+    });
+    return q;
+  }
+  var SPREAD_CMP = [['ladder', 'cheap_ladder', 'Against the cheap model with the ladder'], ['top', 'top_first', 'Against the strong model directly']];
+
+  // ---------------------------------------------------------- controls, with the plain words first
+  function renderEnsControls() {
+    var M = TX.sections.many;
+    $('#ensControls').innerHTML = '<div class="ux-spread-words">' +
+      '<div><b>What one run is</b><p>One run is one pass through the model, every unknown drawn at random from its range.</p></div>' +
+      '<div><b>Why there are many</b><p>One draw says little. Many runs show how far the result spreads when the unknowns move.</p></div>' +
+      '<div><b>What the tie does</b><p>The tie sets how far the library unknowns of one group move together in a run.</p>' +
+      '<ul><li><b>Tie 0:</b> each unknown is drawn on its own.</li><li><b>Tie 0.5:</b> half of each draw is its group’s shared level.</li><li><b>Tie 1:</b> a group’s unknowns all move with one shared level.</li></ul></div></div>' +
+      '<div class="ctl"><span>Runs at each tie</span><select id="ensN" data-label="1"><option>300</option><option selected>1000</option><option>2000</option></select></div>' +
+      '<div class="ctl"><span data-tip="' + esc('A whole number that fixes the random draws. The same seed always gives the same runs.') + '">Seed</span><input type="number" id="ensSeed" value="20261112" style="width:9rem"></div>' +
+      '<button class="btn primary" type="button" id="ensRun">Run at all three ties</button>' +
+      '<div class="ctl"><span>Progress</span><div class="row"><div class="progress"><i id="ensBar"></i></div><span class="small" id="ensTxt" data-label="1">not run yet</span></div></div>' +
+      '<p class="note" style="flex-basis:100%">' + rich('{{c:guess}} of the {{c:drawn}} drawn unknowns are guesses.') + ' ' + esc(M.tie) + ' ' + esc(M.follows) + '</p>';
+  }
+
+  // ---------------------------------------------------------- box plots, one picture per series, one row per tie
+  // S maps a tie to the spread table of one period; ids holds the series to draw (one picture per call).
+  function spreadChart(title, ids, S) {
+    var id = ids[0], isCost = id.indexOf('cost') === 0;
+    var W = 800, L = 200, Rm = 28, T = 58, RH = 68, n = TIES.length, yA = T + n * RH + 16, H = yA + 76;
+    var vals = [1]; TIES.forEach(function (t) { var q = S[t][id]; vals.push(q.p5, q.p95); });
+    vals = vals.filter(isFinite);
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), pad = (hi - lo) * 0.07 || 0.05; lo -= pad; hi += pad;
+    var X = function (v) { return L + (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (W - L - Rm); };
+    var x1 = X(1);
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(title) + '" data-series="' + id + '">' + svgTag(W - 20, 2, 'G');
+    s += '<rect x="' + X(lo) + '" y="' + T + '" width="' + (x1 - X(lo)).toFixed(1) + '" height="' + (yA - T) + '" fill="var(--good-soft)" opacity=".6"/>';
+    s += '<rect x="' + x1.toFixed(1) + '" y="' + T + '" width="' + (X(hi) - x1).toFixed(1) + '" height="' + (yA - T) + '" fill="var(--bad-soft)" opacity=".6"/>';
+    niceTicks(lo, hi, 6).forEach(function (t) {
+      s += '<line x1="' + X(t) + '" x2="' + X(t) + '" y1="' + T + '" y2="' + yA + '" stroke="var(--line-2)" stroke-width="1" opacity=".7"/><text class="ux-spread-s" x="' + X(t) + '" y="' + (yA + 19) + '" text-anchor="middle">' + fmt(t, 'ratio') + '</text>';
+    });
+    s += '<line x1="' + X(lo) + '" x2="' + X(hi) + '" y1="' + yA + '" y2="' + yA + '" stroke="currentColor" stroke-width="1.5"/>';
+    s += '<line x1="' + x1.toFixed(1) + '" x2="' + x1.toFixed(1) + '" y1="' + (T - 8) + '" y2="' + yA + '" stroke="currentColor" stroke-width="2.5"/>';
+    var anc = x1 < L + 110 ? 'start' : x1 > W - Rm - 110 ? 'end' : 'middle';
+    s += '<text class="ux-spread-t" x="' + x1.toFixed(1) + '" y="' + (T - 16) + '" text-anchor="' + anc + '">same as the other way (one)</text>';
+    TIES.forEach(function (t, i) {
+      var q = S[t][id], y = T + i * RH + RH / 2;
+      s += '<g data-tie="' + t + '" data-p50="' + q.p50 + '">';
+      s += '<text class="ux-spread-t" x="' + (L - 14) + '" y="' + (y - 1) + '" text-anchor="end">tie ' + t + '</text><text class="ux-spread-s" x="' + (L - 14) + '" y="' + (y + 16) + '" text-anchor="end">' + esc(spread_tieWord(t)) + '</text>';
+      s += '<line x1="' + X(q.p5) + '" x2="' + X(q.p95) + '" y1="' + y + '" y2="' + y + '" stroke="currentColor" stroke-width="2.5"/>' +
+        '<line x1="' + X(q.p5) + '" x2="' + X(q.p5) + '" y1="' + (y - 9) + '" y2="' + (y + 9) + '" stroke="currentColor" stroke-width="2.5"/><line x1="' + X(q.p95) + '" x2="' + X(q.p95) + '" y1="' + (y - 9) + '" y2="' + (y + 9) + '" stroke="currentColor" stroke-width="2.5"/>';
+      var a = X(q.p25), b = X(q.p75);
+      if (a < x1) s += '<rect x="' + a.toFixed(1) + '" y="' + (y - 15) + '" width="' + (Math.min(b, x1) - a).toFixed(1) + '" height="30" fill="var(--good)"/>';
+      if (b > x1) s += '<rect x="' + Math.max(a, x1).toFixed(1) + '" y="' + (y - 15) + '" width="' + (b - Math.max(a, x1)).toFixed(1) + '" height="30" fill="var(--bad)"/>';
+      s += '<rect x="' + a.toFixed(1) + '" y="' + (y - 15) + '" width="' + Math.max(1.5, b - a).toFixed(1) + '" height="30" fill="none" stroke="currentColor" stroke-width="2"/>';
+      s += '<line x1="' + X(q.p50) + '" x2="' + X(q.p50) + '" y1="' + (y - 15) + '" y2="' + (y + 15) + '" stroke="var(--surface)" stroke-width="7"/><line x1="' + X(q.p50) + '" x2="' + X(q.p50) + '" y1="' + (y - 15) + '" y2="' + (y + 15) + '" stroke="currentColor" stroke-width="3.5"/>';
+      var ma = X(q.p50) < L + 50 ? 'start' : X(q.p50) > W - Rm - 50 ? 'end' : 'middle';
+      s += '<text class="ux-spread-m ux-spread-halo" x="' + X(q.p50) + '" y="' + (y - 21) + '" text-anchor="' + ma + '">middle ' + fmt(q.p50, 'ratio') + '</text>';
+      s += '<text class="ux-spread-s ux-spread-halo" x="' + X(q.p5) + '" y="' + (y + 31) + '" text-anchor="middle">' + fmt(q.p5, 'ratio') + '</text><text class="ux-spread-s ux-spread-halo" x="' + X(q.p95) + '" y="' + (y + 31) + '" text-anchor="middle">' + fmt(q.p95, 'ratio') + '</text>';
+      s += '</g>';
+    });
+    s += '<text class="ux-spread-s" x="' + (x1 - 8).toFixed(1) + '" y="' + (yA + 42) + '" text-anchor="end">◀ ' + (isCost ? 'library costs less' : 'library wrong less often') + '</text>';
+    s += '<text class="ux-spread-s" x="' + (x1 + 8).toFixed(1) + '" y="' + (yA + 42) + '" text-anchor="start">' + (isCost ? 'library costs more' : 'library wrong more often') + ' ▶</text>';
+    s += '<text class="ux-spread-t" x="' + ((L + W - Rm) / 2) + '" y="' + (yA + 68) + '" text-anchor="middle">' + (isCost ? 'cost, in times the cost of the other way' : 'wrong rate, in times the wrong rate of the other way') + '</text>';
+    return '<div class="chartbox ux-spread-chart" data-tagged="G"><h4>' + esc(title) + ' ' + tagEl('G') + '</h4>' + s + '</svg></div>';
+  }
+
+  // ---------------------------------------------------------- the share of runs that are better on both counts
+  function spread_shareChart(title, key, w) {
+    var rows = TIES.map(function (t) {
+      var v = ENSR[t].shareBetterVs[key][w];
+      return '<div class="ux-spread-sr" data-tie="' + t + '" data-share="' + v + '"><span class="ux-spread-srl"><b>tie ' + t + '</b><small>' + esc(spread_tieWord(t)) + '</small></span>' +
+        '<span class="ux-spread-srb"><i style="width:max(' + (100 * v).toFixed(1) + '%,3px)"></i></span><span class="ux-spread-srv">' + num(100 * v, 'G', 'count') + ' <small>of a hundred runs</small></span></div>';
+    }).join('');
+    return '<div class="chartbox ux-spread-chart" data-tagged="G"><h4>' + esc(title) + ' ' + tagEl('G') + '</h4>' + rows +
+      '<div class="ux-spread-sraxis"><span></span><span class="ux-spread-srt"><em>0</em><em>50</em><em>100 of a hundred runs</em></span><span></span></div></div>';
+  }
+
+  // ---------------------------------------------------------- scatter, one dot per run, four corners named in words
+  function scatter(title, kc, kw, w) {
+    var base = kc.indexOf('ladder') >= 0 ? 'ladder' : 'top';
+    var W = 800, H = 680, L = 84, Rm = 20, T = 80, B = 112;
+    var xs = ENS.draws.map(function (d) { return d[w].ratios[kc]; }), ys = ENS.draws.map(function (d) { return d[w].ratios[kw]; });
+    var sx = xs.filter(isFinite).slice().sort(function (a, b) { return a - b; }), sy = ys.filter(isFinite).slice().sort(function (a, b) { return a - b; });
+    var x0 = Math.min(E.percentile(sx, 0.5), 1), x1 = Math.max(E.percentile(sx, 99.5), 1), y0 = Math.min(E.percentile(sy, 0.5), 1), y1 = Math.max(E.percentile(sy, 99.5), 1);
+    var px = (x1 - x0) * 0.08 || 0.02, py = (y1 - y0) * 0.08 || 0.02; x0 -= px; x1 += px; y0 -= py; y1 += py;
+    x0 = Math.max(0, Math.min(x0, 1 - (x1 - 1) / 3)); x1 = Math.max(x1, 1 + (1 - x0) / 3); y0 = Math.max(0, Math.min(y0, 1 - (y1 - 1) / 3)); y1 = Math.max(y1, 1 + (1 - y0) / 3);
+    var clipped = 0;
+    var X = function (v) { return L + (v - x0) / (x1 - x0) * (W - L - Rm); }, Y = function (v) { return T + (y1 - v) / (y1 - y0) * (H - T - B); };
+    var q = spread_quads(w, base);
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(title) + '" data-quads="' + [q.bl, q.tl, q.br, q.tr].join(',') + '">' + svgTag(W - 20, 2, 'G');
+    var xo = X(1), yo = Y(1), xl = L, xr = W - Rm, yt = T, yb = H - B;
+    s += '<rect x="' + xl + '" y="' + yo.toFixed(1) + '" width="' + (xo - xl).toFixed(1) + '" height="' + (yb - yo).toFixed(1) + '" fill="var(--good-soft)" opacity=".6"/>';
+    s += '<rect x="' + xo.toFixed(1) + '" y="' + yt + '" width="' + (xr - xo).toFixed(1) + '" height="' + (yo - yt).toFixed(1) + '" fill="var(--bad-soft)" opacity=".6"/>';
+    niceTicks(x0, x1, 6).forEach(function (t) { s += '<line x1="' + X(t) + '" x2="' + X(t) + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--line-2)" opacity=".6"/><text class="ux-spread-s" x="' + X(t) + '" y="' + (H - B + 19) + '" text-anchor="middle">' + fmt(t, 'ratio') + '</text>'; });
+    niceTicks(y0, y1, 6).forEach(function (t) { s += '<line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + Y(t) + '" y2="' + Y(t) + '" stroke="var(--line-2)" opacity=".6"/><text class="ux-spread-s" x="' + (L - 8) + '" y="' + (Y(t) + 4.5) + '" text-anchor="end">' + fmt(t, 'ratio') + '</text>'; });
+    s += '<rect x="' + L + '" y="' + T + '" width="' + (W - L - Rm) + '" height="' + (H - T - B) + '" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".5"/>';
+    var dots = '';
+    for (var i = 0; i < xs.length; i++) {
+      var a = xs[i], b = ys[i]; if (!isFinite(a) || !isFinite(b)) { clipped++; continue; }
+      if (a < x0 || a > x1 || b < y0 || b > y1) clipped++;
+      var cls = a < 1 ? (b <= 1 ? 'var(--good)' : 'var(--mid)') : (b <= 1 ? 'var(--mid)' : 'var(--bad)');
+      dots += '<circle cx="' + X(Math.max(x0, Math.min(x1, a))).toFixed(1) + '" cy="' + Y(Math.max(y0, Math.min(y1, b))).toFixed(1) + '" r="2.8" fill="' + cls + '"/>';
+    }
+    s += '<g opacity=".5">' + dots + '</g>';
+    s += '<line x1="' + xo.toFixed(1) + '" x2="' + xo.toFixed(1) + '" y1="' + (T - 6) + '" y2="' + yb + '" stroke="currentColor" stroke-width="2.5"/><line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + yo.toFixed(1) + '" y2="' + yo.toFixed(1) + '" stroke="currentColor" stroke-width="2.5"/>';
+    var anc = xo < L + 120 ? 'start' : xo > W - Rm - 120 ? 'end' : 'middle';
+    s += '<text class="ux-spread-t" x="' + xo.toFixed(1) + '" y="' + (T - 12) + '" text-anchor="' + anc + '">same as the other way</text>';
+    s += '<text class="ux-spread-t ux-spread-halo" x="' + (L + 8) + '" y="' + (yo - 8).toFixed(1) + '" text-anchor="start">same as the other way</text>';
+    function qlab(x, y, anchor, txt, n, cls) {
+      return '<text class="ux-spread-ql ' + cls + '" x="' + x + '" y="' + y + '" text-anchor="' + anchor + '">' + txt + ': ' + fmt(n, 'int') + ' runs</text>';
+    }
+    s += qlab(L, T - 44, 'start', 'cheaper, but wrong more often', q.tl, '') + qlab(W - Rm, T - 44, 'end', 'dearer and wrong more often', q.tr, 'b');
+    s += qlab(L, yb + 46, 'start', 'cheaper, wrong rate no higher', q.bl, 'g') + qlab(W - Rm, yb + 46, 'end', 'dearer, wrong rate no higher', q.br, '');
+    s += '<text class="ux-spread-t" x="' + ((L + W - Rm) / 2) + '" y="' + (H - 10) + '" text-anchor="middle">cost, in times the cost of the other way (left of the line: costs less)</text>';
+    s += '<text class="ux-spread-t" transform="translate(18 ' + ((T + H - B) / 2) + ') rotate(-90)" text-anchor="middle">wrong rate, times the other way (below: wrong less often)</text>';
+    return '<div class="chartbox ux-spread-chart" data-tagged="G"><h4>' + esc(title) + ' ' + tagEl('G') + '</h4>' + s + '</svg>' + (clipped ? '<p class="small muted">' + clipped + ' runs lie beyond the edges and sit on the edge.</p>' : '') + '</div>';
+  }
+
+  // ---------------------------------------------------------- ranking, bars either side of zero
+  function spread_rankItems(r, w) {
+    var list = ENS.spearman[w][r];
+    if (ENS.tie === 1) {
+      var seen = {};
+      list = list.filter(function (e) {
+        var row = ROWS[e.id]; if (row.side !== 'library') return true;
+        if (seen[row.lib_group]) return false;
+        seen[row.lib_group] = true; return true;
+      }).map(function (e) { var row = ROWS[e.id]; return row.side === 'library' ? { id: e.id, group: row.lib_group, rho: row.good_end === 'high' ? e.rho : -e.rho } : e; });
+    }
+    return list.slice(0, 8);
+  }
+  function spread_rhoMax(w) {
+    var m = 0.2;
+    E.RATIO_IDS.forEach(function (r) { var l = ENS.spearman[w][r]; if (l && l.length) m = Math.max(m, Math.abs(l[0].rho)); });
+    return Math.ceil(m * 10) / 10;
+  }
+  function spread_rname(e) { return e.group ? 'Group: ' + LIBGI[e.group].short : pname(e.id); }
+  function spread_rdir(rho) { return rho >= 0 ? 'rises with it' : 'falls with it'; }
+  function rankList(title, r, w) {
+    var list = spread_rankItems(r, w), top = spread_rhoMax(w), noise = 2 / Math.sqrt(ENS.n), nz = Math.min(50, 50 * noise / top);
+    var rows = list.map(function (e) {
+      var a = Math.abs(e.rho), len = Math.min(50, 50 * a / top), pos = e.rho >= 0;
+      var tip = e.group ? '<b>' + esc(LIBGI[e.group].label) + '</b><br>' + esc(TX.sections.many.rank_tied) : '<b>' + esc(pname(e.id)) + '</b><br>' + esc(PMETA[e.id].meaning) + '<br><span class="muted">Name in the files: ' + e.id + '</span>';
+      return '<div class="ux-spread-rk" data-tip="' + esc(tip) + '"><span class="ux-spread-rn">' + esc(spread_rname(e)) + (e.group ? '' : tagEl(ROWS[e.id].tag)) + '</span>' +
+        '<span class="ux-spread-rb"><span class="ux-spread-noise" style="left:' + (50 - nz).toFixed(1) + '%;width:' + (2 * nz).toFixed(1) + '%"></span><i class="' + (pos ? 'up' : 'down') + '" style="left:' + (pos ? 50 : 50 - len).toFixed(1) + '%;width:' + len.toFixed(1) + '%"></i></span>' +
+        '<span class="ux-spread-rv"><b>' + esc(fmt(e.rho, 'rho')) + '</b> <small>' + spread_rdir(e.rho) + '</small></span></div>';
+    }).join('');
+    var first = list[0];
+    return '<div class="chartbox ux-spread-chart" data-tagged="G"><h4>' + esc(title) + ' ' + tagEl('G') + '</h4>' +
+      '<p class="ux-spread-top small">Moves it most: <b>' + esc(first ? spread_rname(first) : 'none') + '</b>' + (first ? ' (' + spread_rdir(first.rho) + ', ' + num(first.rho, 'G', 'rho') + ')' : '') + '.</p>' +
+      '<div class="ux-spread-rhead"><span></span><span class="ux-spread-rax"><em>◀ falls with it</em><em>rises with it ▶</em></span><span></span></div>' + rows + '</div>';
+  }
+
+  // ---------------------------------------------------------- the numbers, kept
+  function tieTable(w) {
+    var mid = function (S, k, kind) { var q = S[k]; return '<b>' + esc(fmt(q.p50, kind)) + '</b><br><small class="muted">' + esc(fmt(q.p5, kind)) + ' to ' + esc(fmt(q.p95, kind)) + '</small>'; };
+    var rows = [['cost_vs_ladder', 'Cost against the ladder', 'ratio'], ['wrong_vs_ladder', 'Wrong rate against the ladder', 'ratio'], ['cost_vs_top', 'Cost against the strong model', 'ratio'], ['wrong_vs_top', 'Wrong rate against the strong model', 'ratio']];
+    if (CM.funnelEnd) rows.push(['funnel_end', 'Funnel’s last number, of a hundred', 'funnel']);
+    if (CM.promoMeasure) rows.push(['promo', 'More caught at the first gate by promoted checks, of the same hundred', 'funnel']);
+    var h = '<div class="chart-scroll"><table class="ptable tiet" data-tagged="G"><tr><th>Middle run, and 5 to 95 in 100 ' + tagEl('G') + '</th>' + TIES.map(function (t) { return '<th>tie ' + t + '<br><small class="muted">' + esc(spread_tieWord(t)) + '</small></th>'; }).join('') + '</tr>';
+    rows.forEach(function (r) { h += '<tr><td>' + esc(r[1]) + '</td>' + TIES.map(function (t) { return '<td data-tie="' + t + '">' + mid(ENSR[t].spread[w], r[0], r[2]) + '</td>'; }).join('') + '</tr>'; });
+    h += '<tr><td>Runs cheaper with a wrong rate no higher, against the ladder</td>' + TIES.map(function (t) { return '<td>' + esc(fmt(ENSR[t].shareBetterVs.cheap_ladder[w], 'pct')) + '</td>'; }).join('') + '</tr>';
+    h += '<tr><td>The same, against the strong model</td>' + TIES.map(function (t) { return '<td>' + esc(fmt(ENSR[t].shareBetterVs.top_first[w], 'pct')) + '</td>'; }).join('') + '</tr></table></div>';
+    return h;
+  }
+
+  // ---------------------------------------------------------- the whole section
+  function renderEnsemble() {
+    var out = $('#ensOut');
+    if (!ENSR) { out.innerHTML = '<p class="note">Press the button. The page stays usable while it runs.</p>'; return; }
+    var w = ST.ensWhen;
+    ENS = ENSR[ST.ensTie];
+    var S = {}; TIES.forEach(function (t) { S[t] = ENSR[t].spread[w]; });
+    var noise = 2 / Math.sqrt(ENS.n);
+    var tieNow = function (id) { return TIES.map(function (t) { return 'tie ' + t + ' ' + num(S[t][id].p50, 'G', 'ratio'); }).join(', '); };
+    var h = '<div class="row"><span class="small muted">Show the</span>' + seg('Period', [['first', 'first period'], ['last', 'last period']], w).replace('class="seg"', 'class="seg" id="ensWhen"') + '<span class="small muted" data-label="1">' + ENS.n + ' runs at each tie, seed ' + ENS.seed + '</span></div>';
+
+    // 1. in how many runs is the library better on both counts
+    var shareNow = SPREAD_CMP.map(function (c) { return c[2] + ': ' + TIES.map(function (t) { return 'tie ' + t + ' ' + num(100 * ENSR[t].shareBetterVs[c[1]][w], 'G', 'count'); }).join(', ') + '.'; });
+    h += spread_group('In how many of a hundred runs is the library better on both counts?',
+      'Each bar counts runs where the library costs less with a wrong rate no higher than the other way. A longer bar is more runs.',
+      'Runs out of a hundred that are better on both counts.<br>' + shareNow.join('<br>'),
+      '<div class="ux-spread-grid">' + SPREAD_CMP.map(function (c) { return spread_shareChart(c[2], c[1], w); }).join('') + '</div>');
+
+    // 2 and 3. how far the library is from the other way, on cost and on wrong rate
+    var boxHow = 'Each row is one tie. The box holds the middle half of the runs, and the tick is the middle run. Whiskers reach 5 and 95 in every hundred runs.';
+    h += spread_group('How far is the library’s cost from the other way’s cost?', boxHow,
+      'Middle cost, in times the other way.<br>Against the ladder: ' + tieNow('cost_vs_ladder') + '.<br>Against the strong model: ' + tieNow('cost_vs_top') + '.',
+      '<div class="ux-spread-grid">' + spreadChart(SPREAD_CMP[0][2], ['cost_vs_ladder'], S) + spreadChart(SPREAD_CMP[1][2], ['cost_vs_top'], S) + '</div>');
+    h += spread_group('How far is the library’s wrong rate from the other way’s wrong rate?', boxHow,
+      'Middle wrong rate, in times the other way.<br>Against the ladder: ' + tieNow('wrong_vs_ladder') + '.<br>Against the strong model: ' + tieNow('wrong_vs_top') + '.',
+      '<div class="ux-spread-grid">' + spreadChart(SPREAD_CMP[0][2], ['wrong_vs_ladder'], S) + spreadChart(SPREAD_CMP[1][2], ['wrong_vs_top'], S) + '</div>');
+
+    // 4. the scatter, at the chosen tie
+    var tieSeg = '<div class="row ux-spread-tiesel" data-label="1"><span class="small muted">Look closer at</span>' + seg('Tie', TIES.map(function (t) { return [String(t), 'tie ' + t + ' · ' + spread_tieWord(t)]; }), String(ST.ensTie)).replace('class="seg"', 'class="seg" id="ensTie"') + '</div>';
+    var ql = spread_quads(w, 'ladder'), qt = spread_quads(w, 'top');
+    h += '<div class="ux-spread-grp ux-spread-tiegrp"><h3>Do runs that cost less also go wrong less often?</h3>' + tieSeg + spread_read(
+      'Each dot is one run. Left of the line the library costs less, and below the line its wrong rate is lower.',
+      'At tie ' + ST.ensTie + ', of ' + num(ql.n, 'G', 'int') + ' runs:<br>Against the ladder, ' + num(ql.bl, 'G', 'int') + ' are cheaper with a wrong rate no higher, and ' + num(ql.tr, 'G', 'int') + ' are dearer and wrong more often.<br>Against the strong model, ' + num(qt.bl, 'G', 'int') + ' and ' + num(qt.tr, 'G', 'int') + '.') +
+      '<div class="ux-spread-grid">' + scatter(SPREAD_CMP[0][2], 'cost_vs_ladder', 'wrong_vs_ladder', w) + scatter(SPREAD_CMP[1][2], 'cost_vs_top', 'wrong_vs_top', w) + '</div></div>';
+
+    // 5. the ranking, at the chosen tie
+    var ranksTop = [['cost_vs_ladder', 'cost against the ladder'], ['wrong_vs_ladder', 'wrong rate against the ladder'], ['cost_vs_top', 'cost against the strong model'], ['wrong_vs_top', 'wrong rate against the strong model']].map(function (r) {
+      var f = spread_rankItems(r[0], w)[0]; return f ? r[1].charAt(0).toUpperCase() + r[1].slice(1) + ': ' + esc(spread_rname(f)) + ' (' + spread_rdir(f.rho) + ').' : r[1] + ': none.';
+    });
+    var tieNote = ST.ensTie === 1 ? '<p class="note">' + esc(TX.sections.many.rank_tied) + '</p>' : ST.ensTie > 0 ? '<p class="note">' + esc(TX.sections.many.rank_half) + '</p>' : '';
+    h += spread_group('Which unknowns move the result most when everything varies?',
+      'Each bar is one unknown. A bar to the right means the ratio rises as that unknown rises. A bar to the left means it falls.',
+      'At tie ' + ST.ensTie + ', the one that moves each most:<br>' + ranksTop.join('<br>'),
+      tieNote + '<p class="note">' + esc(TX.sections.many.rank_read) + ' Values closer than about ' + num(noise, 'G', 'ratio') + ' are not well separated. That span is the grey band on each row.</p>' +
+      '<div class="ux-spread-grid">' + rankList('What moves the cost against the ladder most?', 'cost_vs_ladder', w) + rankList('What moves the wrong rate against the ladder most?', 'wrong_vs_ladder', w) +
+      rankList('What moves the cost against the strong model most?', 'cost_vs_top', w) + rankList('What moves the wrong rate against the strong model most?', 'wrong_vs_top', w) + '</div>');
+
+    // the numbers
+    h += '<details class="inline ux-spread-nums"><summary>Show the numbers</summary>' + tieTable(w) + '</details>';
+    out.innerHTML = h;
+  }
+
+  // ---------------------------------------------------------- the funnel: reading lines and a legend beside the bars
+  function spread_funnelKeeps(v) {
+    var bars = v.stages.filter(function (s) { return s.bar; });
+    return bars.map(function (st, i) {
+      var pv = i > 0 ? bars[i - 1].value : 100, pm = i > 0 ? bars[i - 1].mark : 100;
+      return { st: st, keep: pv > 0 ? 100 * st.value / pv : 0, keepM: pm > 0 ? 100 * st.mark / pm : 0 };
+    });
+  }
+  function spread_funnelHead(v) {
+    var ks = spread_funnelKeeps(v), worst = ks[0], gap = ks[0];
+    ks.forEach(function (k) { if (k.keep < worst.keep) worst = k; if (k.keepM - k.keep > gap.keepM - gap.keep) gap = k; });
+    var last = ks[ks.length - 1];
+    var now = 'The biggest loss is at “' + esc(worst.st.label) + '”, which keeps ' + num(worst.keep, 'G', 'count') + ' in a hundred. ' +
+      'After the last bar, ' + num(last.st.value, 'G', 'funnel') + ' of the hundred are left. ' +
+      'The widest gap to the all-good line is at “' + esc(gap.st.label) + '”: it keeps ' + num(gap.keep, 'G', 'count') + ' here and ' + num(gap.keepM, 'G', 'count') + ' at the all-good setting.';
+    var key = '<div class="ux-spread-key"><span><i class="ux-spread-sw"></i>the share a step keeps at these settings (height of the dark bar)</span>' +
+      '<span><i class="ux-spread-dash"></i>the share it keeps at the all-good setting (dashed line)</span></div>';
+    return '<h3 class="ux-spread-q">How many of a hundred pieces of work are left after each step?</h3>' +
+      spread_read('The bold number is how many of the hundred are left after that step. The dark bar is the share the step keeps.', now) + key;
+  }
+  function renderFunnel() {
+    FV = C.funnelView(E, MAP, TABLE, cur, { period: ST.fPeriod, which: ST.fWhich, refs: REFS });
+    var F = TX.sections.funnel;
+    $('#funnelChart').innerHTML = spread_funnelHead(FV) + '<div data-tagged="G">' + funnelSvg(FV) + '</div>' +
+      '<p class="note promoline" data-tagged="G" data-promo="' + FV.promo + '" data-promo-mark="' + FV.mark_promo + '">' + esc(F.promo) + ' ' + esc(F.promo_at) + ' ' + num(FV.promo, 'G', 'funnel') + ' at these settings, ' + num(FV.mark_promo, 'G', 'funnel') + ' at the all-good setting.</p>';
+    var at = $('#funnelAt');
+    if (at) at.innerHTML = 'Period <b data-label="1">' + (FV.period + 1) + '</b> of <b data-label="1">' + NPER + '</b>, at the settings in “Run it”.';
+  }
+  function renderFunnelLegend() {
+    var F = TX.sections.funnel;
+    $('#funnelLegend').innerHTML = '<span class="ux-spread-under">' + esc(F.under) + '</span>' +
+      '<details class="inline"><summary>How bars match the design steps</summary><span data-label="1">' + esc(F.match_note) + '</span></details>';
+  }

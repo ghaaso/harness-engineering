@@ -1,0 +1,76 @@
+// Second-build check (check-second-build.md, 2026-11-12) on map.json. Run from this folder:
+//   node - < patch-map-check2.js.txt
+// Uses process.cwd(), never __dirname. Safe to run more than once. Edits the text in place, so the
+// file keeps its hand layout (patch-map-refute.js.txt reads it line by line).
+// It changes no expression, no branch, no state, no parameter and no stock. It only declares
+// what the page and the record already showed, so that nothing shown is computed outside the map
+// (rule breach "the picture is the model", should-fix 13):
+// 1. Measures for how much the library is used (the usage panel) and for the share of work that
+//    climbs to Opus or Fable (the stock drawing).
+// 2. A declared variant: the current settings with the Opus price ratio at one (the ratio boxes).
+// 3. Plain notes on the unfavourable reference setting (must-fix 1) and on the weight (must-fix 3,
+//    4 and 8).
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const FILE = path.join(process.cwd(), '..', '..', 'library-pathways', 'map.json');
+let raw = fs.readFileSync(FILE, 'utf8');
+const old = JSON.parse(raw);
+const NL = String.fromCharCode(10);
+const J = v => JSON.stringify(v).replace(/},{/g, '}, {').replace(/","/g, '", "').replace(/":"/g, '": "').replace(/":\[/g, '": [').replace(/":\{/g, '": {').replace(/":(\d)/g, '": $1').replace(/,"/g, ', "').replace(/^\{"/, '{ "').replace(/\}$/, ' }').replace(/\{"/g, '{ "').replace(/"\}/g, '" }');
+let edits = 0;
+function swap(a, b) { if (raw.includes(b)) return; if (!raw.includes(a)) throw new Error('Text not found: ' + a.slice(0, 80)); raw = raw.replace(a, b); edits++; }
+
+const ALL = 'of 100 pieces of work of every kind';
+const NEW_MEASURES = [
+  { id: 'use_looked_up', label: 'Work that is looked up', unit: ALL, scale: 100, flow_on: ['l1_lookup'] },
+  { id: 'use_good_in_hand', label: 'Work with a good entry in hand at the cheap attempt', unit: ALL, scale: 100, flow_into: ['L5_exact', 'L5_similar', 'L5_full', 'L5_part'] },
+  { id: 'use_wrong_in_hand', label: 'Work with a wrong entry in hand at the cheap attempt', unit: ALL, scale: 100, flow_into: ['L5_wrong'] },
+  { id: 'use_lookup_cost', label: 'Lookups', unit: 'cheap-call equivalents per piece of work', flow_on: [{ branch: 'l1_lookup', times: 'c_lookup' }] },
+  { id: 'use_write_cost', label: 'Writing entries', unit: 'cheap-call equivalents per piece of work', flow_on: [
+    { branch: 'l10_opus_good', times: 'c_write * m_opus' }, { branch: 'l10_opus_bad', times: 'c_write * m_opus' }, { branch: 'l10_opus_escape_bad', times: 'c_write * m_opus' },
+    { branch: 'l10_fable_good', times: 'c_write * m_fable' }, { branch: 'l10_fable_bad', times: 'c_write * m_fable' }, { branch: 'l10_fable_escape_bad', times: 'c_write * m_fable' }] },
+  { id: 'P_climbs', label: 'Share of work that climbs to Opus or Fable', flow_into: ['L8_handoff'] }
+];
+// the write and lookup costs must equal the branch costs they copy
+const costOf = id => old.branches.find(b => b.id === id).cost;
+NEW_MEASURES.forEach(m => (m.flow_on || []).forEach(t => { if (typeof t === 'object' && costOf(t.branch) !== t.times) throw new Error(m.id + ': ' + t.branch + ' costs ' + costOf(t.branch) + ', not ' + t.times); }));
+
+// 1. measures, after the last one
+const lastClose = '      { "state": "L5_part", "times": "n_cheap * s_part" }' + NL + '    ] }' + NL + '  ],' + NL + NL + '  "funnels": [';
+const measureLines = NEW_MEASURES.map(m => '    ' + J(m)).join(',' + NL);
+const usage = '  "usage_measures": ' + J(['use_looked_up', 'use_good_in_hand', 'use_wrong_in_hand', 'use_lookup_cost', 'use_write_cost']) + ',' + NL +
+  '  "usage_note": "How much the library is used, for the library policy at one period. Each is a flow through this graph. The two costs copy the cost of the lookup branch and of the write branches.",';
+swap(lastClose, '      { "state": "L5_part", "times": "n_cheap * s_part" }' + NL + '    ] },' + NL + measureLines + NL + '  ],' + NL + usage + NL + NL + '  "funnels": [');
+
+// 2. the variant, after the reference settings
+const refEnd = '    { "id": "favourable", "label": "Every library-side unknown at its favourable end; the rest at best" }' + NL + '  ],' + NL + NL + '  "ensemble_ties"';
+swap(refEnd, '    { "id": "favourable", "label": "Every library-side unknown at its favourable end; the rest at best" }' + NL + '  ],' + NL + NL +
+  '  "variants": [' + NL + '    { "id": "opus_one", "label": "The same settings, with the Opus price ratio at one", "set": { "m_opus": 1 } }' + NL + '  ],' + NL +
+  '  "variants_note": "A variant is a parameter set with some values replaced. The page and the record show only the variants declared here. opus_one: the price list gives 2 per token; per call the ratio may be nearer 1 (revision 3, R10).",' + NL + NL + '  "ensemble_ties"');
+
+// 3. notes
+swap('{ "id": "unfavourable", "label": "Every library-side unknown at its unfavourable end; the rest at best" }',
+  '{ "id": "unfavourable", "label": "Every library-side unknown at its unfavourable end; the rest at best", "note": "This is a barely used library: it holds little, is rarely looked up and writes little, so it can do little harm. It is not the worst setting the ranges allow. A setting with heavy use and poor entries lies inside the same ranges and is not declared here (R15)." }');
+const wOld = old.weight.note;
+const wNew = "Brief section 13, R17. A limitation's library-side unknowns move to their favourable end; all else stays at best. Its weight is how far each ratio falls and how far the funnel's last number rises. The score is the mean fall of the four ratios, each as a share of its value before the move. Other-side unknowns stay at best. Steps group limitations by their main step. A limitation or step with no library-side unknown is not measured, because the move changes nothing. Each weight is also split by unknown, each moved alone. A favourable end can raise the ratios at best values, so a weight can be below zero. The favourable reference setting moves every library-side unknown; some are named by no limitation.";
+if (wOld !== wNew) swap('"note": ' + JSON.stringify(wOld), '"note": ' + JSON.stringify(wNew));
+
+// 4. three parameter meanings with a sentence over 20 words (must-fix 11); the words only
+const MEANINGS = [
+  ['Share of pieces of work where a problem shows itself, such as an error, a failing check or a stated bug.',
+    'Share of pieces of work where a problem shows itself. Examples: an error, a failing check or a stated bug.'],
+  ["Multiplier on the three ceilings for latent pieces of work, where the strong model's edge is mostly mistakes it never makes or records.",
+    "Multiplier on the three ceilings for latent pieces of work. There the strong model's edge is mostly mistakes it never makes or records."],
+  ['Multiplier on the three ceilings for pieces of work the cheap model gets right alone, because entries come from problems it failed.',
+    'Multiplier on the three ceilings for pieces of work the cheap model gets right alone. Entries come from problems it failed.']
+];
+MEANINGS.forEach(([a, b]) => swap('"meaning": ' + JSON.stringify(a), '"meaning": ' + JSON.stringify(b)));
+
+const map = JSON.parse(raw);
+const noMeaning = ps => ps.map(p => Object.assign({}, p, { meaning: undefined }));
+const sig = m => JSON.stringify({ s: m.states, b: m.branches, p: noMeaning(m.parameters), st: m.stocks, d: m.derived, a: m.attributes, f: m.funnels, fe: m.funnel_end, c: m.class_chance, pol: m.policies, ms: m.measures.filter(x => !NEW_MEASURES.some(n => n.id === x.id)) });
+if (sig(old) !== sig(map)) throw new Error('The model changed; nothing written');
+NEW_MEASURES.forEach(n => { const m = map.measures.find(x => x.id === n.id); if (!m || JSON.stringify(m) !== JSON.stringify(n)) throw new Error('measure ' + n.id + ' not as declared'); });
+fs.writeFileSync(FILE, raw);
+console.log('map.json: ' + edits + ' edits; measures ' + map.measures.length + ', variants ' + map.variants.length + '; model unchanged');

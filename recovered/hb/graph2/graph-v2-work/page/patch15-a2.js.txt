@@ -1,0 +1,107 @@
+// patch15: A2 rewritten after the second independent check (CHECK-2 D1-D9, D11), card 4 / record power wording (item 12), record A2 part (D10)
+const fs = require('fs');
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing: ' + a.slice(0, 90)); s = s.split(a).join(b); };
+const i = s.indexOf('/* ================= A2: the seven measures');
+const j = s.indexOf('const html = `<!doctype html>');
+if (i < 0 || j < 0 || j < i) throw new Error('A2 block not found');
+
+const code = String.raw`/* ================= A2: the seven measures ================= */
+// Each cell is either a number already in data.json or extras.json, with its own tag and source, or "not measured" naming
+// the test that would measure it (four tests, defined in the legend). No exposure, hit rate or index size is turned into a saving.
+const SEVEN = [['through', 'Throughput'], ['eff', 'Efficiency'], ['tokens', 'Token count'], ['cost', 'Token cost'], ['time', 'Time taken'], ['quality', 'Quality of output'], ['halluc', 'Hallucinations']];
+const TESTS = {
+  agent: ['agent test', 'ruling R-7, step 2: agents do real tasks with and without the part; it records tasks per hour, tokens, billed cost and wall time'],
+  replay: ['lookup replay', 'ruling R-7, step 1: the recorded lookups are answered by each arm and scored on whether the needed span is in the answer and on tokens; timing each step also gives time per lookup'],
+  cite: ['citation audit', 'check the file:line citations and claims in agents\' answers against the code at the session commit'],
+  edge: ['edge precision', 'label a random sample of edges, or of document-to-code links, per type and report precision with a Wilson interval; the design asks for ' + d.link_labels.min + ' to ' + d.link_labels.max + ' labels per type']
+};
+const sM = (parts, more, lead) => ({ m: true, html: (lead ? '<div class="sv-lead">' + lead + '</div>' : '') + parts.map(([txt, k, src]) => '<div class="sv-m">' + txt + '</div><div class="sv-t">' + tag(k, src) + '</div>').join('') + (more ? fold('qualifier', '<p class="small">' + more + '</p>') : '') });
+const sN = (keys, why) => ({ m: false, html: '<div class="sv-n"><span class="sv-nm">○ not measured</span> <span class="sv-by">→ ' + keys.map(k => '<b>' + TESTS[k][0] + '</b>').join(', ') + '</span>' + (why ? '<div class="small">' + why + '</div>' : '') + '</div>' });
+const fPol = pol('fact'), fileP = pol('file'), nevP = pol('never'), VAL = d.cache.validation, VP = d.v1_precision;
+const lpS = LTS ? (LTS.baselines || []).find(b => b.cls === 'product' && b.seeds !== 'all' && b.arm === 'C') : null;
+const lgS = LTS ? (LTS.baselines || []).find(b => b.cls === 'program' && b.seeds !== 'all' && b.arm === 'C') : null;
+const trav = d.notworth.find(x => /^Traversal cache/.test(x.name)), eng = d.notworth.find(x => /^Graph database/.test(x.name));
+const PFR = PMS && PMS.findings_rows ? PMS.findings_rows[0] : null, PST = PMS ? PMS.stale : null;
+const fr = a => a[0] + '/' + a[1];
+const SV = [
+  { row: 'How agents use lookups today', sec: 'b', c: {
+    through: sN(['agent']),
+    eff: sM([[U.waste.empty_product + ' % empty searches; ' + U.waste.reread_product + ' % same-window re-reads', 'meas', 'use-cases.md']]),
+    tokens: sM([['carried: ' + Mt(PR.totals.carried) + ' product, ' + Mt(PG.totals.carried) + ' program; ' + p1(DR.product.carried_of_ctx) + ' of product context', 'meas', 'use-cases.md']]),
+    cost: sN(['agent'], 'no billed cost is recorded'), time: sN(['agent']),
+    quality: sN(['replay']), halluc: sN(['cite']) } },
+  { row: 'Document, item, rule and decision layer, with the session-start brief (not built)', sec: 'c', c: {
+    through: sN(['agent']), eff: sN(['agent']),
+    tokens: sM([['exposure: ' + p0(SS.share_carried) + ' of product lookup tokens come before the first edit; ' + p1(docsLedgerProg) + ' of program lookup tokens are documents and earlier conclusions', 'der', 'from use-cases.md']], 'An exposure is the share a part could reach; it is not a measured effect, and a part can also add tokens.'),
+    cost: sN(['agent']), time: sN(['agent']), quality: sN(['replay']), halluc: sN(['edge', 'cite']) } },
+  { row: 'Conclusion ledger and its invalidation', sec: 'e', c: {
+    through: sN(['agent']),
+    eff: sM([['fact-level rule: ' + rnd(fPol.hit_all, 1) + ' % hit rate (not tokens saved)', 'meas', SRC.k0]]),
+    tokens: sN(['replay'], 'the cache replay counted lookups, not tokens'),
+    cost: sN(['agent']),
+    time: sM([['validation ' + VAL.fact + ' to ' + VAL.fact_sem + ' ms per snapshot; ' + VAL.cutoff + ' ms with early cutoff', 'meas', 'widen/k0 NOTES, ' + VAL.questions + ' questions']]),
+    quality: PFR ? sM([[PFR.k + ' of ' + PFR.n + ' sampled findings rest only on tracked premises', 'meas', 'premise-measure/NOTES.md']], 'Wilson interval ' + PFR.wilson[0] + ' to ' + PFR.wilson[1] + ' %; file-cluster bootstrap ' + PFR.bootstrap[0] + ' to ' + PFR.bootstrap[1] + ' %, the wider and more honest one. The rest rest on scratch files, untracked notes, outside sources or judgement, which a ledger can date but not re-check.', 'Reach of the ledger, not output quality') : sN(['cite']),
+    halluc: sM([['stale cached answers served: ' + f(fPol.stale_all, 0) + ' % fact level, ' + rnd(fileP.stale_all, 1) + ' % file, ' + rnd(nevP.stale_all, 1) + ' % never invalidated', 'meas', SRC.k0]].concat(PST ? [[PST.stale + ' of ' + PST.traced + ' traced findings had gone stale; shown again ' + PST.exposures + ' times after the change; written into a file ' + PST.wrote_after + ' times', 'meas', 'premise-measure/NOTES.md']] : []),
+      'Judged against the extractor\'s own facts on ' + num(d.cache.lookups) + ' replayed lookups of deterministic questions. A stale answer is a cause of wrong agent statements; neither figure is a hallucination rate, which only the citation audit would give.', 'A cause, not a hallucination rate') } },
+  { row: 'Code relations and ranking (v2 not built)', sec: 'd', c: {
+    through: sN(['agent']), eff: sN(['agent']),
+    tokens: sM([[V.median_used + ' of ' + V.budget + ' answer tokens used, median (first test)', 'meas', 'v1-audit.md'], ['ranking question: ' + p1(DR.first_test) + ' of product lookup cost', 'meas', 'use-cases.md']]),
+    cost: sN(['agent']), time: sN(['replay'], 'timed per step'),
+    quality: GF ? sM([[f(GF.primary.typed) + ' of the real change within ' + num(GF.primary.budget_tokens) + ' tokens (scripted search ' + f(GF.primary.search) + ')', 'meas', 'first test, reproduced in graphify/RESULT.md, ' + num(GF.primary.tasks) + ' tasks'],
+      [V.no_node[2] + ' % of changed definitions had no node; ' + V.by_name + ' of ' + num(V.calls_total) + ' calls resolved by name alone', 'meas', 'v1-audit.md']], 'v2\'s code layer and ranker are not built; these are the first test\'s results.', 'First test\'s typed graph (v1), change completion') : sN(['replay']),
+    halluc: sM([['sampled edge precision: calls ' + fr(VP.calls) + ', cites ' + fr(VP.cites) + ', constrains ' + fr(VP.constrains) + ', mentions ' + fr(VP.mentions) + ' strict, reads_setting ' + fr(VP.reads_setting) + ' before the fix', 'meas', 'v1-audit.md, first test\'s typed graph']], 'Precision of the graph\'s own edges, not a rate of wrong agent statements (the citation audit would give that). v2\'s edges are not built; samples this small give wide intervals.') } },
+  { row: 'Test set of real lookups and the index-only arm', sec: 'i', c: {
+    through: sN(['agent']), eff: sN(['agent']),
+    tokens: lpS && lgS ? sM([['keyword search: median ' + num(lpS.tokens_first) + ' (product) / ' + num(lgS.tokens_first) + ' (program) tokens to first hit', 'meas', 'lookup-testset/NOTES.md']], null, 'Sizes of index answers, not tokens saved') : sN(['replay']),
+    cost: sN(['agent']), time: sN(['replay'], 'timed per step'),
+    quality: lpS && lgS ? sM([['keyword search: top-10 hit for ' + lpS.hit10_pct + ' % (product) / ' + lgS.hit10_pct + ' % (program)', 'meas', 'lookup-testset/NOTES.md, search seeds']], 'A hit overlaps the span the agent read, not the whole needed span; ' + LTS.confirmed.all_pct + ' % of lookups have a confirmed used span' + (LTS.replayable ? ', and ' + LTS.replayable.all_pct + ' % of instances replay against a cached snapshot without possible leakage' : '') + '.') : sN(['replay']),
+    halluc: sN(['cite']) } },
+  { row: 'graphify on the same tasks', sec: 'g', c: {
+    through: sN(['agent']), eff: sN(['agent']),
+    tokens: GF ? sM([['own default answer: median ' + num(GF.native.median_tokens) + ' tokens', 'meas', 'graphify/RESULT.md']], 'In the main comparison every arm filled its budget, and no agent session was run, so the tokens an agent would spend with graphify are not measured.') : sN(['agent']),
+    cost: sN(['agent']), time: sN(['replay'], 'timed per step; build times are not comparable'),
+    quality: GF ? sM([[f(GF.primary.graphify) + ' of the real change within ' + num(GF.primary.budget_tokens) + ' tokens (typed graph ' + f(GF.primary.typed) + ')', 'meas', 'graphify/RESULT.md, code layer only']], 'On the code questions (' + esc(GF.questions.qualifier) + ') graphify scored macro F1 ' + GF.questions.graphify_f1 + ' against ' + GF.questions.typed_f1 + ' and ' + GF.questions.search_f1 + '. Its document layer was not run.') : sN(['replay']),
+    halluc: sN(['edge', 'cite']) } },
+  { row: 'Storage engines', sec: 'g', c: {
+    through: sN(['agent']), eff: sN(['agent']), tokens: sN(['agent']), cost: sN(['agent']),
+    time: sM([[esc(eng.reason.split(', ')[1] || eng.reason) + '; ' + esc(trav.reason.split(';')[0]), 'meas', 'storage lane, first test']]),
+    quality: sM([['answers identical across engines', 'meas', 'storage lane, first test']]),
+    halluc: sN(['cite']) } }
+];
+const svCells = SV.flatMap(r => SEVEN.map(([k]) => r.c[k]));
+const svMeas = svCells.filter(c => c.m).length, svNot = svCells.length - svMeas;
+const svLegend = '<dl class="svtests">' + Object.values(TESTS).map(([n, t]) => '<div><dt>' + n + '</dt><dd>' + t + '</dd></div>').join('') + '</dl>';
+const svTable = '<div class="svwrap"><table class="sv"><thead><tr><th class="sv-row">Part of the design</th>' + SEVEN.map(([, l]) => '<th>' + l + '</th>').join('') + '</tr></thead><tbody>' +
+  SV.map(r => '<tr><th class="sv-row" scope="row">' + esc(r.row) + ' <a href="#' + r.sec + '">go to ' + r.sec.toUpperCase() + '</a></th>' + SEVEN.map(([k, l]) => '<td class="' + (r.c[k].m ? 'sv-yes' : 'sv-no') + '" data-col="' + k + '" data-label="' + l + '">' + r.c[k].html + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+const secA2 = sec('a2', 'A2', 'What does each part of the design do to the seven measures you judge by?',
+  'Rows are the parts of the design; columns are your seven measures. A tinted cell holds a measured number with its own tag and source; a plain cell says “○ not measured” and names the test that would measure it (the four tests are defined above the table). Folded qualifiers open under a cell.',
+  '<div class="card"><p class="tokline"><span class="cmp">' + svMeas + '</span> of <span class="cmp">' + svCells.length + '</span> cells hold a measured number; <span class="cmp">' + svNot + '</span> are not measured yet.</p>' + svLegend + svTable + '</div>',
+  'Most of the seven measures have no measurement yet: throughput, token cost and most of efficiency and time wait for the agent test of ruling R-7, and no hallucination rate exists until a citation audit is run. What is measured is where the tokens go (an exposure, not a saving), how often each cache rule serves a stale answer, how much of the real change each arm shows, the first test\'s edge precision, and how long validation and indexing take.');
+`;
+s = s.slice(0, i) + code + '\n' + s.slice(j);
+
+// item 12: card 4 and the record's power wording
+const PWS = 'An agent pilot of about ${d.power.n} tasks would detect a saving only if it were about ${d.power.ruling_band[0]} to ${d.power.ruling_band[1]} % per task or more (80 % power, power script; ruling R-7); an effect the size of these exposures would go unseen, which is why a lookup-level replay comes first.';
+rep('An agent pilot of about ${d.power.n} tasks can see only savings of about ${d.power.ruling_band[0]} to ${d.power.ruling_band[1]} %.', PWS);
+rep('A ${PW.n}-task agent pilot detects only savings of about ${PW.ruling_band[0]} to ${PW.ruling_band[1]} %.', PWS.split('d.power').join('PW'));
+rep('Pilot of ${PW.n} tasks detects savings of ${DR.det_min} to ${DR.det_max} % (below 95 %) across the eight conditions of the power script.', 'A pilot of ${PW.n} tasks would detect a per-task saving only if it were ${DR.det_min} to ${DR.det_max} % or more (80 % power; below 95 %), across the eight conditions of the power script.');
+
+// D10: a short A2 part in the record, generated
+rep("L.push('## B. Lookup cost by question form", "L.push('## A2. The seven measures', '', 'Page view of numbers already in this record and its sources: ' + svMeas + ' of ' + svCells.length + ' cells measured, ' + svNot + ' not measured. Token cost is not measured in any row. Throughput, efficiency and time wait mostly for the agent test (ruling R-7, step 2); hallucination rates for a citation audit of agents\\' file:line claims; edge and link precision for ' + d.link_labels.min + ' to ' + d.link_labels.max + ' labels per type. Measured: exposures (not savings), cache hit and stale-answer rates (not hallucination rates), arm recall, the first test\\'s sampled edge precision, validation and index times.', '');\nL.push('## B. Lookup cost by question form");
+fs.writeFileSync('build.js.txt', s);
+
+let css = fs.readFileSync('src/page.css', 'utf8');
+if (!css.includes('td.sv-yes')) css += `/* A2 round 2: measured cells tinted, not-measured cells plain and muted; test legend */
+table.sv td.sv-yes{background:rgba(59,130,246,.10);box-shadow:inset 3px 0 0 #3b82f6}
+table.sv td.sv-no{color:var(--muted)}
+table.sv td.sv-no .sv-by b{font-weight:600;color:var(--ink2)}
+.sv-lead{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;color:var(--ink2);margin-bottom:2px}
+.svtests{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 16px;margin:6px 0 12px;font-size:13px}
+.svtests dt{font-weight:700}
+.svtests dd{margin:0;color:var(--muted)}
+@media (max-width:1100px){.svtests{grid-template-columns:1fr 1fr}}
+@media (max-width:560px){.svtests{grid-template-columns:1fr}}
+`;
+fs.writeFileSync('src/page.css', css);
+console.log('patched A2 round 2');

@@ -1,0 +1,21 @@
+#!/bin/bash
+# Usage: x-fetch.sh <statusId> <outdir>   -> writes <outdir>/<id>.json and <outdir>/<id>.txt (tweet text + article body if any)
+set -u
+ID="$1"; OUT="$2"; mkdir -p "$OUT"
+curl -sL "https://api.fxtwitter.com/dexhorthy/status/$ID" -o "$OUT/$ID.json"
+node -e '
+const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+if(!j.tweet){console.log("NO TWEET code="+j.code+" "+(j.message||"")); process.exit(1);}
+const t=j.tweet; let out=[];
+out.push("URL: "+t.url); out.push("AUTHOR: @"+t.author.screen_name+" ("+t.author.name+")"); out.push("DATE: "+t.created_at); out.push("STATS: replies="+t.replies+" rts="+t.retweets+" likes="+t.likes+" views="+t.views);
+out.push(""); out.push("TWEET TEXT:"); out.push(t.text||"");
+if(t.quote){out.push(""); out.push("QUOTED @"+t.quote.author.screen_name+": "+t.quote.text);}
+if(t.article){out.push(""); out.push("=== ARTICLE: "+t.article.title+" (created "+t.article.created_at+", modified "+t.article.modified_at+") ===");
+  const blocks=(t.article.content&&t.article.content.blocks)||[];
+  for(const b of blocks){ const ty=b.type||""; let p=""; if(ty.startsWith("header")) p="## "; else if(ty.includes("unordered")) p="- "; else if(ty.includes("ordered")) p="1. "; else if(ty==="blockquote") p="> "; else if(ty==="code-block") p="    "; out.push(p+(b.text||"")); }
+  const urls=[]; for(const b of blocks){ if(b.data&&b.data.urls) for(const u of b.data.urls) urls.push(u.text||u.url||""); }
+  if(urls.length){out.push(""); out.push("ARTICLE LINKS:"); urls.forEach(u=>out.push("- "+u));}
+}
+fs.writeFileSync(process.argv[2], out.join("\n"));
+console.log("OK "+process.argv[2]+" article="+(t.article?"yes("+t.article.title+")":"no")+" words="+out.join(" ").split(/\s+/).length);
+' "$OUT/$ID.json" "$OUT/$ID.txt"

@@ -1,0 +1,13 @@
+// one-off patch: no chip inside a segment narrower than the chip; group values in the A legend. Run from graph-v2.
+const fs = require('fs');
+let c = fs.readFileSync('src/client.js.txt', 'utf8');
+const a = "  if (t.clientWidth && v.offsetLeft + v.offsetWidth > t.clientWidth - 2) { v.style.left = 'auto'; v.style.right = '3px'; } }); }";
+if (!c.includes(a)) throw new Error('fitVals missing');
+c = c.replace(a, a.slice(0, -2) + "\n  $$('.stack .sl').forEach(x => { x.style.display = ''; const seg = x.parentElement; if (!seg.clientWidth || x.offsetWidth > seg.clientWidth - 2) x.style.display = 'none'; }); }");
+fs.writeFileSync('src/client.js.txt', c);
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const b = "const groupLegend = `<div class=\"glegend\">${GROUPS.map(g => `<span><i class=\"sw ${GCLS[g]}\"></i>${esc(GN[g])}</span>`).join('')}</div>`;";
+if (!s.includes(b)) throw new Error('legend missing');
+s = s.replace(b, "const gv = x => x < 0.01 ? p1(x) : p0(x);\nconst groupLegend = `<div class=\"glegend\"><span><b>Share of carried tokens, product / program:</b></span>${GROUPS.map(g => `<span><i class=\"sw ${GCLS[g]}\"></i>${esc(GN[g])}: <b>${gv(DR.product.groups[g].share)}</b> / <b>${gv(DR.program.groups[g].share)}</b></span>`).join('')}</div>`;");
+fs.writeFileSync('build.js.txt', s);
+console.log('patched');

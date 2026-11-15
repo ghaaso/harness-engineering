@@ -1,0 +1,281 @@
+export const meta = {
+  name: 'graph-test-graphify-j',
+  description: 'Install graphify pinned in a test image, fit its code layer to the known-answer tasks on tuning data, run it once on held-out tasks, score it against the stored arms, refute, and add the result to the owner page',
+  phases: [
+    { title: 'Install', detail: 'graphifyy 0.9.108 in a derived image only; everything downloaded listed; builds and queries proven to run with the network off' },
+    { title: 'Fit', detail: 'adapter from task seed to graphify call to ranked files; at most 10 shipped-option configurations on tuning data; no reference answers' },
+    { title: 'Select', detail: 'grader scores tuning runs, selects one configuration by the declared rule, freezes it by hash' },
+    { title: 'Held-out', detail: 'the frozen configuration, once, on the 770 held-out tasks and 30 questions' },
+    { title: 'Score', detail: 'same scorer and bootstrap against the stored answers of the frozen arms' },
+    { title: 'Refute', detail: 'independent re-score with a fair-use and leak audit, and an attack on every claim' },
+    { title: 'Page', detail: 'a section for the result on the owner page, then an independent check' },
+  ],
+}
+
+const SP = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const BUILD = SP + '/build'
+const GF = SP + '/wider/graphify'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const EVID = REPO + '/docs/program/evidence/harness-bottlenecks/graph2'
+const GEV = EVID + '/graphify'
+const PAGE = REPO + '/docs/program/graph-test'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const S = { type: 'string' }
+const N = { type: 'number' }
+const BOOL = { type: 'boolean' }
+const SA = { type: 'array', items: S }
+const DEFECTS = { type: 'array', items: { type: 'object', properties: { severity: S, where: S, what: S, fix: S }, required: ['severity', 'where', 'what', 'fix'] } }
+const BUILD_SCHEMA = {
+  type: 'object',
+  properties: { status: S, ok: BOOL, what_was_done: SA, key_numbers: SA, deviations: SA, problems: SA, how_to_run: SA, files_written: SA },
+  required: ['status', 'ok', 'what_was_done', 'key_numbers', 'problems'],
+}
+const SELECT_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S, ok: BOOL,
+    table: { type: 'array', items: { type: 'object', properties: { config: S, what: S, t1_primary: N, se: N, r2k: N, t2_primary: N, median_tokens: N, complexity: N, note: S }, required: ['config', 't1_primary'] } },
+    chosen: S, chosen_hash: S, frozen_file: S, comparators_on_tuning: SA, observations: SA, problems: SA,
+  },
+  required: ['status', 'ok', 'table', 'chosen', 'chosen_hash', 'frozen_file', 'comparators_on_tuning', 'observations', 'problems'],
+}
+const SCORE_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S,
+    per_arm: { type: 'array', items: { type: 'object', properties: { arm: S, set: S, n_tasks: N, n_clusters: N, primary: N, se: N, r2k: N, r4k: N, r16k: N, median_tokens: N, note: S }, required: ['arm', 'set', 'primary'] } },
+    comparisons: { type: 'array', items: { type: 'object', properties: { id: S, a: S, b: S, set: S, metric: S, diff: N, ci_low: N, ci_high: N, verdict: S, note: S }, required: ['id', 'a', 'b', 'set', 'metric', 'diff', 'ci_low', 'ci_high', 'verdict'] } },
+    native: SA, questions: SA, by_runtime: SA, by_edge_need: SA, build_cost: SA, headline: SA, limits: SA, files_written: SA, problems: SA,
+  },
+  required: ['status', 'per_arm', 'comparisons', 'native', 'questions', 'by_runtime', 'by_edge_need', 'build_cost', 'headline', 'limits', 'files_written', 'problems'],
+}
+const REFUTE_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: S, ok: BOOL,
+    claims: { type: 'array', items: { type: 'object', properties: { claim: S, result: S, detail: S }, required: ['claim', 'result', 'detail'] } },
+    mismatches: SA, must_not_claim: SA, defects: DEFECTS,
+  },
+  required: ['verdict', 'ok', 'claims', 'mismatches', 'must_not_claim', 'defects'],
+}
+
+function common(lane, folders, role) {
+  return [
+    'You are one agent in a controlled experiment on one code repository. A first test compared a scripted search, two floors (same folder, files that changed together) and a typed code graph held in three storage engines, on tasks with known answers. The owner then asked how a popular open-source tool, graphify, can show good results when this test found little. He has approved installing graphify, pinned, in a test container only, and running its code layer on the same known-answer tasks, with no agent and no model call.',
+    '',
+    'YOUR LANE: ' + lane,
+    '',
+    'READ FIRST: ' + SP + '/protocol-addendum-7.md (the rules of this step, written before anything was installed), then ' + SP + '/protocol.md and addenda 2, 4 and 6 for the scoring, the selection rule and the reporting rules, and ' + EVID + '/widen/lane-graphify.md (what graphify is, its commands, read from its source).',
+    '',
+    'LAYOUT. The build tree of the finished test is ' + BUILD + ' (read-only for you): tasks/tasks.jsonl (seeds; split tune or heldout), tasks/tq_questions.jsonl (50 questions), tasks/parents.txt, facts/cache/<parent sha>/ (the typed code graph per parent commit), arms/common (the shared packer, scorer, harness and SPEC.md), results/<arm>/tune/ (stored tuning answers of the frozen arms), results/heldout/<arm>/primary/<set>.jsonl.gz (their stored held-out answers), sealed/ (reference answers; sealed/grader/ holds the grader files). Work for this step lives in ' + GF + ' (code, exports, graphs, answers) and the notes to keep in ' + GEV + ' .',
+    '',
+    'HARD RULES',
+    '1. The repository at ' + REPO + ' is read-only except for folders named in your lane. Never check out, switch branch, stash, commit or push. A past commit is read only with git archive <sha> into a scratch folder under ' + GF + '/exports/ (no .git inside the export).',
+    '2. Nothing is installed on the host. Graphify exists only inside the Docker image built for this step. Never run graphify install, graphify hook install, or anything that writes an instruction block, a hook or a settings file. Never point graphify at the live working tree.',
+    '3. Every graphify build and query runs in a container started with  --network none  and with only what it needs mounted (the export read-only, an output folder). If a step fails without the network, do not turn the network on: stop and report.',
+    '4. ' + role,
+    '5. Never edit anything under ' + BUILD + '. Never stop or change a container or process that is not yours (containers named postiz* and fixflow-* belong to the owner). At most 6 CPUs and 4 GB per container, at most two containers at once.',
+    '6. Never put the project name, file paths, identifiers or code of this repository into a web query or URL.',
+    '7. Host quirks: a Bash command over about 8 KB is cut and doubled backslashes in heredocs collapse, so create files with the Write tool. python is not on PATH on the host; use ' + PY + ' -I . Node 24 is on PATH. Docker on this host needs MSYS_NO_PATHCONV=1 before docker run when paths are mounted. The session may be interrupted: write progress to a file and make long runs restartable.',
+    '8. Stay inside your folders: ' + folders + '.',
+    '9. Write for a reader with no context: plain complete sentences, every number with its unit and what it refers to. Say plainly what failed or was not done. Never word a result as "graphify does not work" or "graphify is worse in general": this is its code layer, on these task kinds, on one repository.',
+    '',
+  ].join('\n')
+}
+const NO_SEALED = 'You never read, list or open ' + BUILD + '/sealed/ or ' + BUILD + '/audit/. A grader scores. Containers you start must not have those folders mounted.'
+const GRADER = 'You are the grader: you may read ' + BUILD + '/sealed/. Never copy reference content or per-task scores into a folder a builder reads (' + GF + '/adapter, ' + GF + '/answers). Your working files go under ' + GF + '/grader/.'
+const AUDITOR = 'You are an independent auditor: you may read everything. You change no file outside your own folder. Do not trust any note or report: recompute and re-read.'
+
+// ---------------------------------------------------------------- Install
+const pInstall = common(
+  'INSTALL. Build one Docker image that contains graphify, pinned, and prove it works with the network off.',
+  GF + '/image (Dockerfile, logs), ' + GEV + ' (INSTALL.md)',
+  NO_SEALED
+) + [
+  'The owner approved: package graphifyy version 0.9.108 from PyPI with its dependencies, in a test image only.',
+  'a. Before building: query the PyPI JSON metadata for graphifyy 0.9.108 and confirm that its project links point at the official repository (github.com/Graphify-Labs/graphify, formerly safishamsi/graphify), note the wheel file name, size and sha256, and the release date. If the metadata does not match, stop and report: do not install a different package.',
+  'b. Build the image graphtest-graphify:1 from the existing local image graphtest:1 (Debian with Python 3.11 and Node 24, no pip). The network is allowed during this build only. Install pip or venv support from the distribution packages, then graphifyy==0.9.108 into a virtual environment, with the tree-sitter grammars it needs for Python, JavaScript, JSX, TypeScript and TSX. Use pip with hashes where you can; record pip freeze, every wheel downloaded with size, and every distribution package added with size. Do not install optional extras that call a model or a server (for example embedding, MCP server or model-provider extras) unless the code layer cannot run without them; say what you left out.',
+  'c. Look before trusting: list the entry points and any install-time or import-time code that touches the network, the home directory or the shell profile (read the package source inside the image). Report anything a user would not expect. Do not run graphify install or any hook installer.',
+  'd. Prove it: in a container with --network none, with a small clean export of one tuning parent commit mounted read-only (make the export with git archive; take the first tuning parent in ' + BUILD + '/tasks/parents.txt), build the code-layer graph (find the command and flags that build from code with no model: the lane notes describe a tree-sitter code layer that needs no model; confirm from the installed source which command and options do that and which steps would call a model), then run one query, one affected call, one path call and one explain call. Record the commands, the time, the output folder contents, node and edge counts, and the relation kinds present. Confirm from the logs that no model call was attempted.',
+  'e. Write ' + GEV + '/INSTALL.md: what was installed (names, versions, sizes, hashes), image size, how to rebuild it, what was left out, what the smoke run showed, the exact build command for a code-only graph, the query commands and their options (depth, budget, direction, traversal order) as found in the installed version, and anything that surprised you. Set ok = true only if the build and the four calls work with the network off.',
+].join('\n')
+
+// ---------------------------------------------------------------- Fit
+const pFit = common(
+  'FIT ON TUNING DATA. Write the adapter that lets graphify answer the known-answer tasks, and run at most 10 configurations of its shipped options on the tuning split.',
+  GF + '/adapter (code), ' + GF + '/exports, ' + GF + '/graphs, ' + GF + '/answers/tune, ' + GEV + ' (ADAPTER.md)',
+  NO_SEALED + ' You may not run anything on a task or question whose split is heldout, and you may not build a graph for a parent that only held-out tasks use.'
+) + [
+  'Read ' + GEV + '/INSTALL.md for the image and commands. Read ' + BUILD + '/arms/common/SPEC.md sections on the answer record, the packer and the token budgets, and arms/common/harness.js, packer.js, facts.js and seed.js as a library: you import them, you do not edit them. Look at one stored tuning answer file of the typed arm (results/relational/tune/) to see the exact record shape the scorer expects.',
+  'WHAT TO BUILD',
+  'a. Graphs. For every parent commit of a tuning task (T1, T1x, T2), export the parent with git archive, build the graphify code-layer graph in a container with the network off, keep the graph output under ' + GF + '/graphs/<sha>/, and delete the export. Record build time, node and edge counts and relation kinds per parent.',
+  'b. The adapter (addendum 7 items 7 and 8). A task gives a seed: a file path and usually a definition (name, kind, lines). Turn it into a graphify call using its own commands only (affected, query, explain, path, with their options), read the ordered result, and map each returned node to a repository file path (and to a definition where graphify gives a name and a line). The ranked list of files, in graphify own order, goes to the SHARED packer with the facts of that parent, at file granularity and signature form, at the 2,000, 4,000, 8,000 and 16,000-token budgets, producing answer records in exactly the stored format (same fields, so the same scorer reads them). The seed file itself is treated as every other arm treats it. If graphify returns fewer files than fill a budget, the answer is shorter: no padding from any other source.',
+  'c. Also keep, for every task, graphify own answer text at its default settings (the native form of addendum 7 item 15), and the token count of that text by the shared tokenizer.',
+  'd. Configurations: at most 10, built only from shipped commands and options: for example affected with default depth; affected deeper; query with the seed path and definition name as the text at default budget and depth; query with larger budget and depth; query depth-first; explain on the seed; a union of affected and query in a stated order. Decide them from the documentation and the installed source, write them down with a short name and what a user would type, and run all of them on all tuning tasks of T1, T1x and T2 (772 tasks each). One answer file per configuration and set under ' + GF + '/answers/tune/.',
+  'e. Questions: for the 20 tuning questions, give the question text as written to graphify query at default settings and keep the raw answer text; also one variant with a larger budget. No per-kind programs: graphify gets the natural-language question, as its users would ask it.',
+  'f. Checks without references: every answer file has every tuning task of its set once; budgets are respected; the record validates against the stored format; how often graphify returned nothing for a seed, and why (seed file not in its graph, definition not found, no edges); how many returned nodes could not be mapped to a file.',
+  'g. Write ' + GEV + '/ADAPTER.md: every choice the adapter makes and why it is how the tool is meant to be used, the 10 configurations, the mapping rule, the empty-answer counts, the build costs, and how to run one configuration on a list of tasks (a command that the held-out runner will use unchanged). Set ok = true only if all configurations ran and the checks pass.',
+  'You compute no score and see no reference answer. Do not tune beyond the 10 configurations.',
+].join('\n')
+
+// ---------------------------------------------------------------- Select
+const pSelect = common(
+  'GRADER, TUNING. Score the graphify tuning runs with the shared scorer, select one configuration by the declared rule, and freeze it.',
+  GF + '/grader, ' + GF + '/FROZEN.json (one file)',
+  GRADER
+) + [
+  'Read ' + GEV + '/ADAPTER.md. Read ' + BUILD + '/sealed/grader/NOTES.md for how the tuning tables of the finished test were made and reuse those scripts (score.js with rule content against the tuning references; the complexity and selection code of sealed/grader/stage2/select.js with the tie order of addendum 4 item 1).',
+  'a. Check the answer files first: complete, in the stored format, budgets respected.',
+  'b. Score every configuration on T1, T1x and T2 tuning tasks: primary (recall of reference files and definitions inside the 8,000-token answer, per commit) with standard error, recall at 2,000, 4,000 and 16,000 tokens, median tokens used. Give graphify a complexity count by the same idea as addendum 3 item 10 (one for the base command; one more each for a non-default depth, a non-default budget, a non-default traversal order, a union of two commands) and state it.',
+  'c. Select: highest T1 tuning primary; among configurations within one standard error of it the lowest complexity; ties by higher primary, then lower median tokens, then name. Write the table, the choice, and the same tuning numbers of the frozen arms beside it for context (typed primary 0.7853, scripted search 0.7593, changed-together floor 0.7521, same-folder floor 0.7191 on T1 tuning; recompute them from the stored answers rather than trusting these figures).',
+  'd. Freeze: write ' + GF + '/FROZEN.json with the chosen configuration, a sha256 over the sorted contents of every file in ' + GF + '/adapter, the image id of graphtest-graphify:1, and the time. From now on the adapter must not change.',
+  'e. Do not give any per-task score or reference content to the builder folders. Report aggregate tuning results only. Set ok = true if a configuration was frozen.',
+].join('\n')
+
+// ---------------------------------------------------------------- Held-out run
+const pRun = common(
+  'HELD-OUT RUNNER. Run the frozen graphify configuration once on the held-out tasks and questions. You have no reference answers and compute no score.',
+  GF + '/exports, ' + GF + '/graphs, ' + GF + '/answers/heldout, ' + GF + '/runner, ' + GEV + ' (RUN.md)',
+  NO_SEALED
+) + [
+  'Read ' + GEV + '/ADAPTER.md and ' + GF + '/FROZEN.json. FIRST recompute the sha256 over ' + GF + '/adapter exactly as FROZEN.json describes and compare: if it differs, stop and report. You change no file under ' + GF + '/adapter. If the frozen command cannot complete without a code change, stop, set ok = false and describe the failure exactly.',
+  'a. Graphs: for every parent of a held-out task of T1, T1x, T2, T3 and T4 (' + BUILD + '/tasks/tasks.jsonl, split heldout; T5 is not run), export the parent with git archive, remove the paths listed in the task remove_paths before building (T3 and T4 tasks: build one graph per distinct parent and removal set), build the code-layer graph with the network off, record build time and counts, delete the export.',
+  'b. Run the frozen configuration on every held-out task: 418, 82, 237, 25 and 8 tasks, into ' + GF + '/answers/heldout/<set>.jsonl.gz in the stored format, plus the native answer text per task at default settings.',
+  'c. Questions: the 30 held-out questions, question text as written, graphify query at default settings and at the larger-budget variant of the adapter notes; keep the raw answer text and its token count. The graph is that of the frozen commit a31924a3818f4ac94b695906d107c72c912792b2.',
+  'd. This step may be a restart after an interruption: keep a progress file, never run a finished set twice, and log any repeat with its reason (mechanical reasons only).',
+  'RESTART NOTE FROM THE ORCHESTRATOR (2026-11-13). A first runner built all 79 held-out graphs and ran graphify own calls on all 770 tasks (raw output under ' + GF + '/answers/heldout/calls/, state in ' + GF + '/runner/progress.json and partial_state.json, notes in ' + GEV + '/RUN.md), then stopped at the frozen pack step: the shared packer needs a cached source-text tree per parent commit, 73 of the 74 held-out parents had none, and the network-off pack container cannot make them. Ruling: no adapter code changes. The orchestrator has filled the input cache on the host (' + BUILD + '/arms/common/srcstore: 73 trees added, the 56 earlier tree files unchanged; record in ' + GF + '/orchestrator/fill_srcstore.result.json). No held-out answer has been packed or scored. Do NOT rebuild graphs or repeat the calls. Verify the adapter hashes against FROZEN.json again, then repeat ONLY the pack step through the frozen command, logged as a repeat with the reason "missing source-text trees in the shared cache (input cache filled, no code change)", and continue with the native answer files, the 30 questions, the checks and the inventory. Add a section to RUN.md that records the stop, the ruling and the repeat. If the frozen pack command still fails, stop again and report exactly why.',
+  'e. Checks without references: every set complete, each task once; budgets respected; no removed path in any T3 or T4 answer (whole-path match); how many seeds returned nothing and why; build time per parent. Write an inventory with sha256 per answer file and ' + GEV + '/RUN.md. Set ok = true only if every set finished and the checks hold.',
+].join('\n')
+
+// ---------------------------------------------------------------- Score
+const pScore = common(
+  'GRADER, HELD-OUT. Score the graphify held-out answers once and state the comparisons declared in addendum 7 section E in the declared wording.',
+  GF + '/grader/heldout, ' + GEV + ' (RESULT.md and result.json: aggregates only)',
+  GRADER
+) + [
+  'FIRST check the inventory against the answer files (sha256) and that the adapter hash still equals FROZEN.json. Then score. Nothing is re-run after you start.',
+  'SCORING: the same scorer, rule and references as the finished test (arms/common/score.js rule content; sealed/references.jsonl; the grader scripts under sealed/grader/heldout/ and v2/ show the exact calls). Comparators are the stored held-out answers: results/heldout/relational/primary (the typed primary; the two graph engines returned the same shown answers), search/primary, floor-co/primary, floor-dir/primary. Paired cluster bootstrap by commit, 10,000 resamples (arms/common/compare.js).',
+  'REPORT',
+  '1. Table per arm and set (graphify and the four comparators): tasks, commits, primary with standard error, recall at 2,000, 4,000 and 16,000 tokens, median tokens used.',
+  '2. G-1 to G-4 on T1 with difference, 95 % interval and verdict word by addendum 7 item 17; the same on T2 and T3 and at 2,000 and 4,000 tokens; the split by where the seed lives (mobile app, backend, web, with and without the root-level task T1-0786).',
+  '3. G-5, the native form: for each held-out T1 task, which reference files are named in graphify own default answer text, and its token count; against each arm file recall inside its 2,000-token answer. Say how the two differ in form.',
+  '4. G-6, questions: for each of the 30 held-out questions, recall, precision and F1 of the reference items found in graphify raw answer (state the matching rule: an item counts when its path, or its path and name, appears in the answer), tokens of the answer, against the stored typed and scripted-search answers; on 30 and on the 22 untouched questions (without 24, 25, 27, 33, 40, 41, 46, 47); per question kind.',
+  '5. The group addendum 7 item 20 declares: split T1 tasks and questions by whether the reference can be reached only through a link kind graphify does not build (route to client call, table read or write, setting read, changed-together history) using the typed facts, and report graphify and the typed arm on each group.',
+  '6. Empty answers: how many seeds graphify returned nothing for, and the primary with those tasks excluded for every arm (descriptive).',
+  '7. Build cost: graph build time, size, nodes and edges per parent for graphify against the typed facts build.',
+  '8. Headline: at most six sentences a reader with no context can follow, each tied to a number. Limits: addendum 7 section F in your own measured terms.',
+  'Write ' + GF + '/grader/heldout/ (scores, comparisons, per-commit paired differences as plain number arrays) and ' + GEV + '/RESULT.md with ' + GEV + '/result.json (aggregates only, no reference content, no per-task score).',
+].join('\n')
+
+// ---------------------------------------------------------------- Refute
+const pV1 = common(
+  'REFUTER 1, RE-SCORE AND RUN AUDIT. Recompute the graphify result independently and establish whether the run was clean and fair to graphify.',
+  GF + '/audit/rescore, ' + GEV + ' (AUDIT-RUN.md)',
+  AUDITOR
+) + [
+  'CHECKS',
+  '1. Re-score with code that is not the grader code (the independent scorer and bootstrap under ' + BUILD + '/audit/heldout/rescore/ may be reused): every primary, the G-1 to G-4 differences and intervals, the native-form numbers, the question numbers. Point estimates to 4 decimals, interval ends within 0.005.',
+  '2. Leak and order: graphs were built from exports of the parent commit with removed documents taken out, with the network off (read the runner logs and scripts); the adapter hash at the held-out run equals FROZEN.json; FROZEN.json was written before any held-out answer; no held-out task was run during fitting (scan ' + GF + '/answers/tune and the fit logs for held-out ids); builders never had sealed mounted.',
+  '3. Fair use of graphify: read the installed source and its documentation inside the image. Is the frozen configuration how its authors intend the tool to be used for this kind of question? Is there a shipped command or option that would plausibly do better and was not among the 10? Try, on TUNING tasks only, any such variant you find (at most 3) and report its tuning score beside the frozen one: if one is clearly better (more than one standard error), say so plainly, because then the held-out result understates graphify.',
+  '4. Adapter loss: how often a node graphify returned could not be mapped to a file; how often the seed was not in graphify graph; whether the shared packer (which renders signature lines from the typed facts) drops files graphify chose because the typed facts lack them. Quantify what each costs graphify.',
+  '5. Hand-check 10 held-out tasks: read graphify raw output, the packed answer and the reference, and confirm the score.',
+  'Set ok = true only if checks 1 and 2 hold. Return each claim with result "survives", "needs qualification" or "refuted".',
+].join('\n')
+
+const pV2 = common(
+  'REFUTER 2, CLAIMS. Attack every headline of the graphify result, in both directions.',
+  GF + '/audit/claims, ' + GEV + ' (AUDIT-CLAIMS.md)',
+  AUDITOR
+) + [
+  'Read ' + GEV + '/RESULT.md and result.json, ' + GF + '/grader/, addendum 7, addendum 6 section C, and ' + EVID + '/widen/lane-graphify.md and refuter.md.',
+  'For each headline and verdict: is the wording rule applied exactly; could the difference come from the adapter and not from graphify (mapping loss, the seed handed over instead of found, the packer); from the tuning effort (10 configurations against 60); from link kinds graphify does not build; from one runtime; from a few commits (drop the five most favourable)? Does the native form tell a different story from the packed form? Is "graphify" being judged on a task its authors did not design it for (it is an orientation and question tool; the task is finding co-changed files)? What does the result say about the owner question (why does graphify show good results while this test found little), and what does it not say: its model-read document layer, an agent using it, tokens in a session, other repositories.',
+  'Return each claim with result "survives", "needs qualification" (give the exact qualification) or "refuted", and the sentences nobody may say to the owner about this result, for graphify or against it. Set ok = true if no headline is refuted outright.',
+].join('\n')
+
+// ---------------------------------------------------------------- Page
+const pPage = (score, v1, v2) => common(
+  'OWNER PAGE. Add the graphify result to the owner page as a new section, with the refuters qualifications applied.',
+  PAGE + ' (sources, data patch scripts, built page), ' + REPO + '/docs/program/GRAPH-TEST-RESULT-2026-11.md (generated record), ' + EVID + '/page (screenshots)',
+  'You may read ' + GEV + '/ and ' + GF + '/grader/ aggregates. The page shows aggregates only: no held-out question text, no reference content, no per-task score.'
+) + [
+  'THE READER: the owner has moderate ADHD, reads on a desktop browser about 1870 px wide in light theme, and understands pictures faster than text. He asked how graphify can show good results when our test found little; this section is the direct answer on our own tasks.',
+  'HOW THE PAGE IS BUILT: ' + PAGE + '/build.js.txt reads data/data.json, src/client.js.txt and src/page.css and writes index.html (one self-contained file, limit 500,000 bytes) and the record; check.js.txt checks it. Run with  cd ' + PAGE + ' && node - < build.js.txt . data.json is patched by scripts in data/ (patch-engines-k.js.txt, then patch-k0-l.js.txt): add a third patch script for this section, never regenerate data.json. Read the sources first.',
+  'THE RESULT (JSON from the grader):', JSON.stringify(score, null, 1), '',
+  'QUALIFICATIONS FROM THE RUN AUDIT (JSON):', JSON.stringify({ verdict: v1 ? v1.verdict : null, claims: v1 ? v1.claims : null, must_not_claim: v1 ? v1.must_not_claim : null }, null, 1), '',
+  'QUALIFICATIONS FROM THE CLAIMS REFUTER (JSON):', JSON.stringify({ verdict: v2 ? v2.verdict : null, claims: v2 ? v2.claims : null, must_not_claim: v2 ? v2.must_not_claim : null }, null, 1), '',
+  'WHAT TO ADD, without removing anything',
+  'A. A new section M, "Graphify itself, on our tasks", after L. One line on what was done in plain words (graphify 0.9.108, its code layer only, installed in a test container, network off, no model, no agent; fitted on the tuning commits, run once on the 75 held-out commits). Then: (1) the main picture: recall inside an 8,000-token answer on the held-out change tasks for graphify, the typed store, scripted search and both floors, with interval whiskers, switchable to 2,000 and 4,000 tokens and to the other task sets; (2) the paired differences graphify minus each comparator with intervals and the verdict word; (3) the split by where the seed lives; (4) the native form: graphify own default answer against each arm at 2,000 tokens; (5) questions: recall, precision and F1 with tokens; (6) the group that needs links graphify does not build, shown apart; (7) build cost. Every qualification the refuters require sits beside the number it qualifies, not in a footnote. End with two short lists: what this shows, what it does not (first items: its model-read document layer was not run; no agent used it).',
+  'B. Update the scope box and section K: the graphify block in K now links to M ("measured here: its code layer, scripted") and the wider-test design marks arm G1 as "scripted screen done, see M; with an agent: not run".',
+  'C. Keep the file under 500,000 bytes: shrink data the page does not show, never content the reader sees; say what you shrank. Extend check.js.txt for section M, including the must-not-claim sentences of both refuters. Update the generated record (under 150 lines).',
+  'D. Page rules: plain words ("typed store (same answers in SQLite, LadybugDB and DuckDB)", "scripted search", "changed-together floor", "same-folder floor", "graphify code layer"); every number tagged (held-out, tuning); an interval is drawn, not only written; colour never the only carrier; light and dark; no horizontal scroll at 1870, 644 and 390 px; body text at least 15 px, chart labels at least 12 px.',
+  'E. LOOK AT IT: take real screenshots with ' + REPO + '/docs/program/evidence/library-pathways/shot.js.txt (read its header; run the sizes one at a time, not in parallel) at 1870 x 1280 light and dark, 644 px and 390 px of section M, the scope box and the changed part of K; read them; fix what does not read at a glance; save the final ones under ' + EVID + '/page/final4/. Run check.js.txt and report.',
+].join('\n')
+
+const pPageCheck = common(
+  'CHECK OF THE NEW PAGE SECTION. Verify section M of the owner page against its sources.',
+  EVID + '/page/check4',
+  AUDITOR
+) + [
+  'The page is ' + PAGE + '/index.html; sources of truth are ' + GEV + '/result.json, RESULT.md, AUDIT-RUN.md and AUDIT-CLAIMS.md; screenshots are in ' + EVID + '/page/final4/.',
+  'CHECKS: (1) every number in section M equals result.json; (2) every qualification the two refuters require is on the page beside the number it qualifies; (3) no sentence on the page or in the generated record states or implies an item of either refuter must-not-claim list, or "graphify does not work", or "graphify is worse in general"; (4) the page says where a reader will see it that the model-read document layer was not run and no agent ran; (5) nothing that was on the page before is gone (compare the section list and the screenshots in ' + EVID + '/page/final3/); (6) the file is under 500,000 bytes and check.js.txt passes when you run it; (7) look at the 1870 px light screenshots of section M: name anything that cannot be read at a glance.',
+  'Set ok = true only if checks 1 to 6 hold; give each defect the exact text or number and the correction.',
+].join('\n')
+
+const pPageFix = (check) => common(
+  'OWNER PAGE, APPLY THE CHECK. Correct what the independent check of section M found, and nothing else.',
+  PAGE + ', ' + REPO + '/docs/program/GRAPH-TEST-RESULT-2026-11.md, ' + EVID + '/page',
+  'You may read ' + GEV + '/ aggregates. The page shows aggregates only.'
+) + [
+  'The check returned (JSON):', check, '',
+  'For each defect and mismatch: verify it against ' + GEV + '/result.json and the audit notes yourself; if the check is right, fix the data patch or the page source and rebuild; if it is wrong, leave it and say why. Run check.js.txt, retake the affected screenshots into ' + EVID + '/page/final4/ (one size at a time) and report.',
+].join('\n')
+
+const OPUS = { model: 'opus', effort: 'high', agentType: 'general-purpose' }
+
+// ================================================================ run
+phase('Install')
+const install = await agent(pInstall, { label: 'install:graphify', phase: 'Install', schema: BUILD_SCHEMA, ...OPUS })
+if (!install || !install.ok) return { stopped: 'install', install }
+
+phase('Fit')
+const fit = await agent(pFit, { label: 'fit:tuning', phase: 'Fit', schema: BUILD_SCHEMA, ...OPUS })
+if (!fit || !fit.ok) return { stopped: 'fit', install, fit }
+
+phase('Select')
+const select = await agent(pSelect, { label: 'grade:select', phase: 'Select', schema: SELECT_SCHEMA, ...OPUS })
+if (!select || !select.ok) return { stopped: 'select', install, fit, select }
+
+phase('Held-out')
+const run = await agent(pRun, { label: 'run:heldout', phase: 'Held-out', schema: BUILD_SCHEMA, ...OPUS })
+if (!run || !run.ok) return { stopped: 'runner', install, fit, select, run }
+
+phase('Score')
+const score = await agent(pScore, { label: 'grade:heldout', phase: 'Score', schema: SCORE_SCHEMA, ...OPUS })
+if (!score) return { failed: 'score', install, fit, select, run }
+
+phase('Refute')
+const ref = await parallel([
+  () => agent(pV1, { label: 'refute:run', phase: 'Refute', schema: REFUTE_SCHEMA, ...OPUS }),
+  () => agent(pV2, { label: 'refute:claims', phase: 'Refute', schema: REFUTE_SCHEMA, ...OPUS }),
+])
+const v1 = ref[0]
+const v2 = ref[1]
+
+phase('Page')
+let page = null
+let pageCheck = null
+let pageFix = null
+if (v1 && v1.ok) {
+  page = await agent(pPage(score, v1, v2), { label: 'page:graphify', phase: 'Page', schema: BUILD_SCHEMA, ...OPUS })
+  if (page) {
+    pageCheck = await agent(pPageCheck, { label: 'page:check4', phase: 'Page', schema: REFUTE_SCHEMA, ...OPUS })
+    if (pageCheck && (!pageCheck.ok || pageCheck.defects.length > 0 || pageCheck.mismatches.length > 0)) {
+      pageFix = await agent(pPageFix(JSON.stringify({ ok: pageCheck.ok, defects: pageCheck.defects, mismatches: pageCheck.mismatches, claims: pageCheck.claims.filter(c => c.result !== 'survives') }, null, 1)), { label: 'page:apply-check4', phase: 'Page', schema: BUILD_SCHEMA, ...OPUS })
+    }
+  }
+} else {
+  log('Page not updated: the run audit did not pass, so the result is not shown until it is judged.')
+}
+
+return { install, fit, select, run, score, refuters: { run: v1, claims: v2 }, page, pageCheck, pageFix }

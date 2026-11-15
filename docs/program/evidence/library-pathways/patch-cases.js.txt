@@ -1,0 +1,22 @@
+const fs=require("fs");const f=process.cwd()+"/../../library-pathways/cases.json";
+const d=JSON.parse(fs.readFileSync(f,"utf8"));
+const P={"f02-C2|5":"The design does not say which window receives the entry.","f02-C3|5":"The design does not say which window receives the entry.","f02-C4|5":"The design does not say which window receives the entry.","f02-C6|5":"The design does not say which window receives the entry.","f08-5|8":"No climb happens.","f10-2|3":"No lookup happens, so no query exists.","f10-2|5":"No lookup happens, so nothing is delivered.","f10-5|9":"Three projects, three writers, three scopes: 'no uv' before uv arrived, 'not on PATH, use node', and 'no Python on the machine', false when written.","f04-C1|1":"Opus 4.8 held the failure and the repo. The decisive fact, that build 14 came from a side branch, was in no window.",
+"f05-6|8":"An Opus review approved 0.05 s per attempt. The Fable root caught it at the gate. The middle rung endorsed a wrong fix.",
+"f08-2|7":"A probe wrote a .txt in bypass mode. The original refusals were analysis-*.md. A check at another scope 'refuted' a right entry.",
+"f09-4|6":"'Not in task.md' became 'in no file', then 'the owner's figure is wrong', then a stop rule.",
+"f10-1a|1":"Opus 4.8 has a task and a generic error code. The cause-specific line is on the EAS web log, so the owner must paste it.",
+"f10-1b|story":"The June note said re-add the plugin once a Sentry project and token exist. A July writer copied it into CLAUDE.md as 'must never be added'. August wired a real DSN without the plugin."};
+for(const c of d.cases)for(const k of Object.keys(P)){const [id,p]=k.split("|");if(c.id!==id)continue;if(p==="story")c.story=P[k];else c.steps[+p-1].note=P[k];}
+fs.writeFileSync(f,JSON.stringify(d,null,1));
+const wc=s=>s.trim().split(/\s+/).filter(Boolean).length;
+const L=require(process.cwd()+"/walkthroughs/walkthroughs.json").result.lanes;
+const tot={};let bad=[];
+d.cases.forEach(c=>{if(c.steps.length!==10)bad.push(c.id+" steps");
+ if(wc(c.title)>9)bad.push(c.id+" title");if(wc(c.story)>35)bad.push(c.id+" story "+wc(c.story));if(wc(c.entry)>60)bad.push(c.id+" entry");if(wc(c.worked)>25)bad.push(c.id+" worked");
+ if(!c.when||!c.source)bad.push(c.id+" when/source");
+ c.steps.forEach((s,i)=>{if(s.step!==i+1)bad.push(c.id+" order");if(wc(s.note)>25||wc(s.note)<3)bad.push(c.id+" s"+s.step+" "+wc(s.note));
+  const t=tot[s.step]=tot[s.step]||{};t[s.status]=(t[s.status]||0)+1;});});
+const exp={1:{works:30,strains:29},2:{works:17,strains:7,breaks:24,not_specified:11},3:{works:28,strains:19,breaks:10,not_reached:2},4:{works:13,strains:19,breaks:26,not_reached:1},5:{works:38,strains:8,breaks:2,not_specified:8,not_reached:3},6:{works:10,strains:13,breaks:31,not_reached:5},7:{works:14,strains:6,breaks:38,not_specified:1},8:{works:3,strains:10,breaks:21,not_specified:2,not_reached:23},9:{works:11,strains:23,breaks:22,not_specified:3},10:{works:8,strains:21,breaks:29,not_reached:1}};
+for(const s in exp){for(const k of new Set([...Object.keys(exp[s]),...Object.keys(tot[s])]))if((exp[s][k]||0)!==(tot[s][k]||0))bad.push("TOTAL step"+s+" "+k+" "+tot[s][k]+" vs "+exp[s][k]);}
+console.log(d.cases.length,d.families.length,new Set(d.cases.map(c=>c.id)).size,"problems:",bad.length,bad.join("; "));
+const fc={};d.cases.forEach(c=>fc[c.family]=(fc[c.family]||0)+1);console.log(JSON.stringify(fc));

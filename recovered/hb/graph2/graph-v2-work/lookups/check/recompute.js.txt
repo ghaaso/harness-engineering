@@ -1,0 +1,53 @@
+// Independent recompute of lookup-testset headline numbers from raw per-instance files.
+const fs=require('fs'),rl=require('readline'),crypto=require('crypto');
+const OUT='../out/';const pct=(a,b)=>b?Math.round(1000*a/b)/10:null;
+const med=a=>{if(!a.length)return null;a=[...a].sort((x,y)=>x-y);const n=a.length;return n%2?a[(n-1)/2]:[a[n/2-1],(a[n/2-1]+a[n/2])/2]};
+async function each(f,fn){const r=rl.createInterface({input:fs.createReadStream(OUT+f)});for await(const l of r){if(l.trim())fn(JSON.parse(l));}}
+(async()=>{
+const res={};
+// transcripts
+const tc={};await each('transcripts.jsonl',o=>{tc[o.cls]=(tc[o.cls]||0)+1});res.transcripts=tc;
+// split
+const tsv=fs.readFileSync(OUT+'split-sessions.tsv');
+res.split_hash=crypto.createHash('sha256').update(tsv).digest('hex');
+const part={};let dupSid=0;for(const line of tsv.toString().split(/\r?\n/)){if(!line.trim())continue;const [sid,p]=line.split('\t');if(sid in part)dupSid++;part[sid]=p;}
+res.split_sessions={n:Object.keys(part).length,dupSid,dev:Object.values(part).filter(p=>p==='dev').length,confirm:Object.values(part).filter(p=>p==='confirm').length};
+const C={};const F={};const sidHome={};const sidParts={};let missingSid=0;
+const g=c=>C[c]=C[c]||{n:0,files:new Set(),sids:new Set(),fetched:0,carried:0,noTruth:0,approx:0,conf:0,confEC:0,confCarried:0,snap:0,snapCarried:0,mySnap:0,rp:{},dev:0,conf_n:0,devCarried:0,confPartCarried:0};
+await each('instances-v.jsonl',o=>{const c=g(o.cls);c.n++;c.files.add(o.file);c.sids.add(o.sid);c.fetched+=o.fetched;c.carried+=o.carried;
+ if(!o.truth.length)c.noTruth++;if(o.ver&&o.ver.approx)c.approx++;
+ const confAny=o.truth.some(t=>t.level==='confirmed');const ec=o.truth.some(t=>t.conf&&((t.conf.edit||0)>0||(t.conf.cite||0)>0));
+ if(confAny){c.conf++;c.confCarried+=o.carried}if(ec)c.confEC++;
+ if(confAny!==o.confirmed)c.confFlagMismatch=(c.confFlagMismatch||0)+1;
+ c.rp[o.replayPrimary]=(c.rp[o.replayPrimary]||0)+1;if(o.replayPrimary==='snapshot-ok'){c.snap++;c.snapCarried+=o.carried}
+ // own primary-truth snapshot test: confirmed files if any else all read files; all must be unchanged-since-frozen
+ const prim=confAny?o.truth.filter(t=>t.level==='confirmed'):o.truth;
+ if(prim.length&&prim.every(t=>t.replay==='unchanged-since-frozen'))c.mySnap++;
+ const p=part[o.sid];if(!p)missingSid++;else{sidParts[o.sid]=sidParts[o.sid]||new Set();sidParts[o.sid].add(p);if(p==='dev'){c.dev++;c.devCarried+=o.carried}else{c.conf_n++;c.confPartCarried+=o.carried}}
+ const k=o.cls+'|'+o.form;F[k]=F[k]||{n:0,carried:0,conf:0};F[k].n++;F[k].carried+=o.carried;if(confAny)F[k].conf++;
+});
+res.sessionsInBothParts=Object.values(sidParts).filter(s=>s.size>1).length;res.instancesWithSidNotInSplit=missingSid;
+res.byClass={};for(const [k,c] of Object.entries(C)){res.byClass[k]={instances:c.n,transcripts:c.files.size,session_ids:c.sids.size,fetched_M:+(c.fetched/1e6).toFixed(2),carried_M:+(c.carried/1e6).toFixed(1),noTruthEmpty:c.noTruth,noTruthReplay:c.rp['no-truth'],approx:c.approx,
+ conf_pct:pct(c.conf,c.n),confEC_pct:pct(c.confEC,c.n),conf:c.conf,confEC:c.confEC,confCarried_pct:pct(c.confCarried,c.carried),confFlagMismatch:c.confFlagMismatch||0,
+ replayPrimary:c.rp,snap:c.snap,snap_pct:pct(c.snap,c.n),snapCarried_pct:pct(c.snapCarried,c.carried),mySnap:c.mySnap,
+ dev:c.dev,confirmPart:c.conf_n,devCarriedShare:pct(c.devCarried,c.devCarried+c.confPartCarried)};}
+const tot=Object.values(C).reduce((a,c)=>({n:a.n+c.n,conf:a.conf+c.conf,ec:a.ec+c.confEC,snap:a.snap+c.snap}),{n:0,conf:0,ec:0,snap:0});
+res.all={instances:tot.n,conf_pct:pct(tot.conf,tot.n),confEC_pct:pct(tot.ec,tot.n),snap:tot.snap,snap_pct:pct(tot.snap,tot.n)};
+res.forms={};for(const cls of ['product','program']){const rows=Object.entries(F).filter(([k])=>k.startsWith(cls+'|')).map(([k,v])=>({form:k.split('|')[1],n:v.n,share:pct(v.carried,C[cls].carried),conf_pct:pct(v.conf,v.n)})).sort((a,b)=>b.share-a.share);res.forms[cls]=rows.slice(0,8).concat(rows.filter(r=>/^CQ(1|2|3|4|10)$/.test(r.form)&&!rows.slice(0,8).includes(r)));}
+// baselines
+const B={};let notDev=0;
+await each('baseline-instances.jsonl',o=>{if(part[o.sid]!=='dev')notDev++;const key=o.cls;B[key]=B[key]||{all:0,sc:{},rows:[]};B[key].all++;B[key].sc[o.scorable]=(B[key].sc[o.scorable]||0)+1;
+ if(o.scorable==='yes')B[key].rows.push({seed:o.seedKind,carried:o.carried,fetched:o.fetched,truthTok:o.truthTok,arms:o.arms});});
+res.baselineInstancesNotInDev=notDev;res.baselines={};
+for(const [cls,b] of Object.entries(B)){const out={devInstances:b.all,scorable:b.sc};
+ for(const seedSel of ['all','pattern']){const rows=b.rows.filter(r=>seedSel==='all'||r.seed===seedSel);const cw=rows.reduce((a,r)=>a+r.carried,0);const o2={n:rows.length,median_fetched:med(rows.map(r=>r.fetched)),median_truth:med(rows.map(r=>r.truthTok))};
+  let any=0;for(const r of rows)if(['A','B','C'].some(a=>r.arms[a].spanRank>=1&&r.arms[a].spanRank<=10))any++;o2.any_hit10_pct=pct(any,rows.length);o2.any_pct_of_all_dev=pct(any,b.all);
+  for(const a of ['A','B','C']){const hits=rows.filter(r=>r.arms[a].spanRank>=1&&r.arms[a].spanRank<=10);
+   o2[a]={hit10_pct:pct(hits.length,rows.length),carried_w:pct(hits.reduce((x,r)=>x+r.carried,0),cw),pct_of_all_dev:pct(hits.length,b.all),
+    med_tok_to_hit:med(hits.map(r=>r.arms[a].listTok+r.arms[a].readTok)),med_cheapest:med(hits.filter(r=>r.arms[a].minReadTok!=null).map(r=>r.arms[a].listTok+r.arms[a].minReadTok)),
+    tie_pct:pct(rows.filter(r=>r.arms[a].tieAtCut).length,rows.length)};}
+  out[seedSel]=o2;}
+ res.baselines[cls]=out;}
+const sk={};for(const [cls,b] of Object.entries(B))for(const r of b.rows)sk[cls+':'+r.seed]=(sk[cls+':'+r.seed]||0)+1;res.scorableSeedKinds=sk;
+fs.writeFileSync('recompute.json',JSON.stringify(res,null,1));console.log(JSON.stringify(res));
+})();

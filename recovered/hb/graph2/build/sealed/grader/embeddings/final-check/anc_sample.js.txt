@@ -1,0 +1,9 @@
+const fs=require('fs');const {execFileSync}=require('child_process');
+const G='C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/grader/embeddings';const R='C:/Users/User/Documents/projects/EMS_workshop1';
+const anc=fs.readFileSync(G+'/truth/ancestry.jsonl','utf8').trim().split('\n').map(JSON.parse);
+const tc=new Set(fs.readFileSync(G+'/truth/commits.jsonl','utf8').trim().split('\n').map(l=>JSON.parse(l).commit));
+let ok=0,bad=0;
+for(const r of anc){const all=new Set(execFileSync('git',['-C',R,'rev-list',r.checkpoint],{encoding:'utf8',maxBuffer:1<<28}).trim().split('\n'));
+ const want=[...tc].filter(c=>all.has(c)).sort();const got=[...r.task_commits].sort();
+ if(JSON.stringify(want)===JSON.stringify(got))ok++;else bad++;}
+console.log(JSON.stringify({checkpoints:anc.length,task_commits:tc.size,equal:ok,differ:bad}));

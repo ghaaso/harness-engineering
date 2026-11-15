@@ -1,0 +1,339 @@
+DuckPGQ: Bringing SQL/PGQ to DuckDB
+
+Daniel ten Wolde    Gábor Szárnyas                                                                                     Peter Boncz
+
+          CWI                CWI                                                                                            CWI
+    dljtw@cwi.nl  gabor.szarnyas@cwi.nl                                                                                boncz@cwi.nl
+
+ABSTRACT                                                                                       SQL/PGQ is the first property graph query (sub-)language sup-
+                                                                                            ported by a standards organization (ISO). The graph database sys-
+We demonstrate the most important new feature of SQL:2023,                                  tems we just mentioned all use a different graph query language [2]:
+namely SQL/PGQ, which eases querying graphs using SQL by in-                                respectively Cypher, GSQL, GraphQL, Gremlin, PGQL and SPARQL
+troducing new syntax for pattern matching and (shortest) path-                               the latter admittedly also a standard (recommendation) from W3C,
+finding. We show how support for SQL/PGQ can be integrated into                             but not for the property graph data model. This fragmentation of
+an RDBMS, specifically in the DuckDB system, using an extension                             query languages is not conducive to growing graph database adop-
+module called DuckPGQ. As such, we also demonstrate the use of                              tion, and therefore it is fortunate that the industry behind these
+the DuckDB extensibility mechanism, which allows us to add new                              systems started to put efforts into standardization. The first result
+functions, data types, operators, optimizer rules, storage systems,                         of this effort and topic of this demo, SQL/PGQ, adopts ideas from
+and even parsers to DuckDB. We also describe the new data struc-                            previous graph query languages: e.g., the pattern matching syntax
+tures and algorithms that the DuckPGQ module is based on, and                               is inspired by Neo4j's Cypher, and the path-finding expressions
+how they are injected into SQL plans.                                                       were influenced by the PGQL language in Oracle PGX. Another
+                                                                                            influence has been the G-CORE language [3] proposed by a con-
+   While the demonstrated DuckPGQ extension module is lean                                  sortium of academia and industry brought together by the Linked
+and efficient, we sketch a roadmap to (i) improve its performance                           Data Benchmark Council (LDBC). LDBC is an organization founded
+through new algorithms (factorized and WCOJ) and better paral-                              in 2013, initially focused on benchmarking but is now also active
+lelism and (ii) extend its functionality to scenarios beyond SQL, e.g.,                     in standardization. It has an ongoing liaison with the ISO work-
+building and analyzing Graph Neural Networks.                                               ing group for SQL, which allows LDBC members access to ISO
+                                                                                            design documents1. ISO has almost finalized GQL [10], a native
+PVLDB Reference Format:                                                                     graph query language that will eventually be able to not only re-
+Daniel ten Wolde, Gábor Szárnyas, and Peter Boncz. DuckPGQ: Bringing                        turn tabular results but also graphs; and with LDBC is designing a
+SQL/PGQ to DuckDB. PVLDB, 16(12): 4034 - 4037, 2023.                                        specification for property graph schemas (early work is in [4]).
+doi:10.14778/3611540.3611614
+                                                                                            CREATE PROPERTY GRAPH pg
+PVLDB Artifact Availability:
+The source code, data, and/or other artifacts have been made available at                   VERTEX TABLES(
+https://github.com/cwida/duckpgq-extension.
+                                                                                            Person        PROPERTIES(id, firstName) LABEL Person ,
+1 SQL/PGQ
+                                                                                            University PROPERTIES(id, name)  LABEL University ,
+SQL/PGQ (Property Graph Queries) is part of the recently released
+standard SQL:2023, and enables SQL users lto see graphs in tablesz.                         Message       PROPERTIES(messageId , content)
+As an intuition, the standard mathematical notation  ( , ) of
+graphs can be used in relational database systems by seeing  and                                          LABEL Message IN MessageType(Post , Comment))
+ as respectively a vertex and edge table.
+                                                                                            EDGE TABLES(
+   A vertex table is a normal SQL table that represents each vertex as
+a tuple and needs to have a unique key  though having an explicit                           Person_knows_Person
+SQL constraint for that is not enforced in SQL/PGQ. Similarly, an
+edge table consists of tuples that represent edges. It must contain                         SOURCE KEY(person1Id) REFERENCES Person(id)
+two referencing columns (or column combinations, in case of multi-
+column keys), i.e., foreign keys (FKs); where these two respectively                        DESTINATION KEY(person2Id) REFERENCES Person(id)
+point to the source and destination vertex of the edge. Finally,
+the notion of properties, well-known from the property graph data                           PROPERTIES(creationDate , interactionCount)
+model (e.g., used in systems [5] such as Neo4j, TigerGraph, Dgraph,
+JanusGraph, Oracle PGX, and AWS Neptune) is represented by the                              LABEL know ,
+non-key columns in the edge and vertex tables.
+                                                                                            Person_likes_Message
+This work is licensed under the Creative Commons BY-NC-ND 4.0 International
+License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of         SOURCE KEY(personId) REFERENCES Person(id)
+this license. For any use beyond those covered by this license, obtain permission by
+emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights        DESTINATION KEY(messageId) REFERENCES Message(id)
+licensed to the VLDB Endowment.
+Proceedings of the VLDB Endowment, Vol. 16, No. 12 ISSN 2150-8097.                          PROPERTIES(creationDate)
+doi:10.14778/3611540.3611614
+                                                                                            LABEL likes ,
+
+                                                                                            Person_studyAt_University
+
+                                                                                            SOURCE KEY(personId) REFERENCES Person(id)
+
+                                                                                            DESTINATION KEY(universityId) REFERENCES University(id)
+
+                                                                                            PROPERTIES(classYear)
+
+                                                                                            LABEL studyAt);
+
+                                                                                                Listing 1: SQL/PGQ query to create a property graph
+
+                                                                                               The above statement defines a property graph storing a social
+                                                                                            graph of persons who know each other, like each other's messages,
+                                                                                            and study at universities.
+
+                                                                                               After creating this property graph (with name pg), it can be used
+                                                                                            in queries. At the heart of SQL/PGQ is the new MATCH clause [7],
+
+                                                                                            1One can become a personal member of LDBC for free at ldbcouncil.org.
+                                                                                            Gábor Szárnyas in the past years helped manage LDBC as a member of its steering
+                                                                                            committee, and Peter Boncz is co-founder and current chair of LDBC.
+
+                                                                                      4034
+which embeds Cypher-like graph pattern queries, where vertex                                     The life of a query in DuckDB passes through the following
+patterns are denoted with round parentheses and edge patterns                                 stages: (i) parsing SQL into a syntax tree, (ii) transforming the
+with square brackets. Restrictions on labels are denoted v:label,                             syntax trees into a parsed statement representation, (iii) binding of
+where v is a (tuple) variable to bind and label is a label restriction. It                    table names (using catalog lookups) and typing of expressions as
+is possible to add additional WHERE filters inside both vertex and edge                       well as performing all semantic checks and any needed error raising
+patterns. The edges use lASCII artz notation to specify conditions                            (iv) generating a logical relational algebra plan and (v) optimizing
+for matching edges, i.e., right- (-[]->), left- (<-[]-), left-right- (<-[]->),                this query plan and generating a physical query operator tree,
+and any-directed (-[]-) edge patterns.                                                        followed finally by (vi) query execution  using push-based morsel-
+                                                                                              driven vectorized execution; where operators in a pipeline push
+   Our first example query doing pattern-matching asks for years                              data in chunks (using a vector size of 2048 tuples) from a source
+and university names where Bob studied:                                                       operator (e.g., a table scan) through streaming operators (such as a
+                                                                                              hash-join probe or filter) upwards to the top of the pipeline where
+SELECT study.classYear , study.name                                                           results are materialized in a sink operator (e.g., a hash-table build).
+FROM GRAPH_TABLE (pg,
+                                                                                                 The original creators of DuckDB, Hannes Mühleisen and Mark
+         MATCH (a:Person WHERE a.firstName = 'Bob')                                           Raasveldt, and CWI have moved the core system code to an open-
+                        -[ s : studyAt ] - >( u : University )                                source foundation (duckdb.org) and also created a spin-off company
+                                                                                              (DuckDB Labs) that aims to grow the adoption of the system under
+         COLUMNS (s.classYear , u.name)) study;                                               its open-source charter. Their efforts have resulted in sharp growth
+                                                                                              in the adoption of DuckDB. It is the first system in its own class
+               Listing 2: Q1: basic pattern matching                                          of embeddable analytics: it is used as a library and runs inside, e.g.,
+                                                                                              the R or Python interpreter, such that data scientists working on
+   The result of matching is an imaginary binding table, where each                           notebooks using popular packages such as dplyr and NumPy/pan-
+column is a variable (a, s, u) and each row a binding that matches all                        das (and PyTorch and TensorFlow) can get zero-copy SQL access
+constraints in the pattern. But these variables are tuple variables,                          to dataframes. While data science is the home turf of DuckDB
+not scalar values. Hence, the role of the COLUMNS clause is to turn tuple                     adoption, its low footprint and embeddable nature make it suit-
+variables into scalar values, by selecting properties, e.g., s.classYear                      able for many (new) use cases, including mobile applications, edge
+selects property classYear of studyAt edges matched on variable s.                            computing, in-browser computing, embedding in storage devices
+The result of this all is a table study(classYear, name), returned by the                     (computational storage); but of course also cloud computing. The
+SQL/PGQ table function GRAPH_TABLE in the FROM clause of SQL; and                             DuckDB founders have also co-founded a startup for cloud-based
+hence it can be further processed with SQL (filtered, joined with                             DuckDB computing (MotherDuck).
+other tables, aggregated, etc.). SQL/PGQ also supports both bounded
+path queries, where a lower and upper amount of hops between                                     DuckDB is purely written in C++ with no software dependencies,
+two nodes is specified (e.g., -[]->{1,4}) as well as unbounded path                           nor explicit usage of platform-specific code such as assembly or
+queries, where no upper limit is defined (-[]->* or -[]->+).                                  intrinsics in order to keep the system portable. These characteristics
+                                                                                              also allow it to be compiled to WebAssembly [14] and therefore run
+SELECT friends.p2_firstName                                                                   inside any modern web browser (demo of that: shell.duckdb.org).
+FROM GRAPH_TABLE (pg,
+                                                                                                 DuckDB provides the possibility to create C++ extension modules
+         MATCH (a:Person WHERE a.firstName = 'Bob')                                           that can add new scalar and aggregation functions, data types,
+                        -[s:know]->* (p2:Person)                                              relational operators, optimizer rules that put these to use, and even
+                                                                                              new transactional storage systems or query parsers to DuckDB.
+         COLUMNS (p2.firstName)) friends;                                                     The parser extension feature of DuckDB registers a separate parser,
+                                                                                              which DuckDB invokes after syntax error in its SQL parser, which
+         Listing 3: Q2: basic path-finding (reachability)                                     is a C++ port of the PostgreSQL parser.
+
+   This second example query is about reachability: we are looking                            DuckPGQ is the result of a research project at CWI into efficient
+for all persons p2 Bob can reach over know edges, but we do not                               graph analytics systems design. The support for SQL/PGQ  the
+return the specific paths. The query could have asked to return                               topic of this demonstration  is on the one hand a central fea-
+a path by adding SHORTEST p = just after MATCH, turning this into a                           ture, but only the stepping stone in this project, which aims be-
+path-finding query that would return one (any) shortest path from                             yond the query language support also for fluent interaction with
+Bob to each reachable person p2.                                                              dataframe libraries (dplyr, NumPy/pandas and Arrow), but also
+                                                                                              tools for machine learning and specifically training, analyzing and
+2 DUCKPGQ: ADDING SQL/PGQ TO DUCKDB                                                           scoring Graph Neural Networks [13] and graph visualization (e.g.,
+                                                                                              NetworkX).
+DuckDB is an extensible state-of-the-art single-node analytical
+database system [23]; featuring columnar storage with MinMax                                     Supporting SQL/PGQ in DuckDB exercises its extensibility API
+predicate pushdown [1], lightweight compression [27] on all data-                             in various ways. The DuckDB parser extension API was originally
+types including strings [6] and doubles [18], morsel-driven paral-                            intended to allow extension modules to introduce new statement
+lel multi-core execution [16], complete query decorrelation [19],                             types, but in the case of DuckPGQ, we register a complete SQL
+full support for window functions [17], dynamic programming-
+optimized join order enumeration [20], cardinality estimates based
+on samples and Hyperloglogs [11], a compressed-vector respre-
+sentation (shared with Velox [22]), out-of-core algorithms for join,
+aggregation and sort [15] as well as adaptive mapping of semi-
+structured data in CSV [8] and JSON2 to DuckDB's non-first-normal-
+form data model that shreds column values that are lists or structs
+or nested combinations thereof into internal columns.
+
+2Shredding deeply nested JSON, one vector at a time: bit.ly/duckdb-json-laurens-kuiper
+
+                                                                                        4035
+                   s.classYear, u.name                       create_csr_vertex(id, count)  create_csr_edge(p1.rowid, p2.rowid)
+
+                   p.id=s.PersonId                                     id, count()                        p2.id=dst
+
+p.firstName="Bob"                       s.UniversityId=u.id              id=src                Person                    p1.id=src
+                                                                                           p2(id, rowid)
+
+Person             Person_studyAt_University University      Person Person_knows_Person                   Person         Person_knows_Person
+
+p (id, firstName) s (PersonId, UniversityId) u(name, id)     p ( id )    k(src, dst)                      p1(id, rowid)             k(src, dst)
+
+(a) Relational algebra tree for Q1 (defined in Listing 2)    (b) create_csr_vertex                        (c) create_csr_edge
+
+Figure 1: Relational algebra trees for expressing Q1 and the user-defined functions create_csr_vertex and create_csr_edge
+
+parser built from a fork of DuckDB; that is, it parses a superset of                in creating a CSR data structure that allows positional lookup is
+SQL with the addition being PGQ.                                                    typically worthwhile, due to the large number of lookups required
+                                                                                    for path-finding. A second reason is that such a data structure
+   The initial version of DuckPGQ that we will demo in fact only                    provides a good basis for Worst-Case Optimal Join (WCOJ) algo-
+affects the first three stages in the life of a query: parsing, trans-              rithms [12] and factorized query execution. A third reason is that
+forming, and binding, as it maps the new SQL/PGQ functionality                      CSR data structures are not only useful for query processing: they
+into a traditional logical SQL query plan that mainline DuckDB can                  also form the backbone of GNN libraries such as DGL and PyTorch-
+handle, with the help of some scalar User Defined Functions (UDFs)                  geometric [21] and when linked into a Python process, DuckPGQ
+implemented in C++ that the module provides. This SQL-rewriting                     eventually aims to provide zero-copy access to ingest graphs into
+approach is sufficient for translating all SQL/PGQ functionality.                   these machine learning tools, as well as the possibility to analyze
+For example, the first example query gets converted to the plan                     the trained graphs using SQL/PGQ.
+depicted in Figure 1a. This plan contains two equi-joins on the
+PK-FK relationships defined during the creation of the edge table                      Most of this is in the future roadmap and has not yet been imple-
+for this property graph (arguably the join order is not optimal here,               mented yet. What has been implemented, and will be demonstrated,
+but this way it is shorter so let us consider that a logical plan).                 are the Multi-Source BFS algorithms (MS-BFS [26], which can be
+                                                                                    used for computing reachability, simple path-finding, and shortest
+   For path-finding and reachability, we decided not to map to WITH                 path-finding (with an additional weight column, adjacent to the
+RECURSIVE SQL query plans, for performance reasons but instead                      CSR edge array). If paths need to be returned we keep yet another
+introduced scalar UDFs that create a Compressed Sparse Row (CSR)                    adjacent array of edge ROWIDs  DuckPGQ returns paths as DuckDB
+data structure on the fly and which is used for path-finding. The                   lists of alternating vertex and edge ROWIDs that point back into the
+CSR data structure consists of a vertex array and an edge array:                    vertex and edge tables. SQL/PGQ introduces the ELEMENT_ID(e) func-
+the latter contains the vertex destination-positions of all edges. It               tion that returns a numeric internal identifier for elements (vertex
+consecutively holds the group of destination vertex-positions of all                or edge variables), and DuckPGQ implements these simply as ROWIDs.
+edges starting at one source vertex and holds these groups consec-
+utively in the storage order of the vertex array. The vertex array                     The MS-BFS algorithm is a good match for DuckPGQ because
+contains the position in the edge array corresponding to its first                  of its vectorized nature: its performance advantage comes from
+outgoing edge. We create the CSR using two scalar UDFs in DuckDB                    the bulk sequential access through a CSR data structure, and the
+that fill either CSR array with the result of a subquery we generate.               fact that MS-BFS executes many path searches simultaneously,
+For create_csr_vertex() the subquery delivers dense vertex IDs and                  exploiting the power of SIMD instructions: for keeping track of
+their edge count (a count aggregate over an outer join between ver-                 which vertexes have been visited a single bit suffices, such that
+tex and edge table) as shown in Figure 1b. For create_csr_edge() the                an AVX512 register can keep track of 512 searches. Note that this
+subquery delivers for all edges, the dense vertex IDs for its source                does not require use of assembly or intrinsics, well-coded MS-BFS
+and destination (a double join between edge and vertex tables, on                   algorithms can be auto-vectorized efficiently by C++ compilers.
+the source and destination keys, respectively), see Figure 1c. Rather               The benefits of MS-BFS stem from the need to execute fewer CPU
+than generating dense vertex IDs using a DENSE_RANK() window func-                  instructions in total, as instructions perform work for multiple
+tion, we exploit the fact that DuckDB tables already have ROWIDs that               active searches, as well as thanks to reduces memory access.
+are semi-dense integers; wasting a bit of space on possible holes left
+by non-checkpointed deletes. The fact that the CSR-constructed                         We implemented path-finding using simple scalar UDFs that as
+subquery, that we generate under the hood, is implemented with                      input get a vector of source vertexes and a vector of destination
+simple scalar UDFs  which a vectorized engine executes just as                      vertexes, such that each call to such a UDF is tasked to handle
+fast as builtin expressions  makes DuckPGQ profit from multi-core                   2048 path-finding searches. This fits MS-BFS, as it needs at least
+parallelism in DuckDB out-of-the-box.                                               hundreds of searches to exploit SIMD. Like with CSR creation, UDFs
+                                                                                    again provide out-of-the-box parallelism for path-finding making
+   Our motivation to create a CSR on the fly for each path-finding                  DuckPGQ outperform all graph database systems we tested [25].
+predicate is that the alternative, mapping into WITH RECURSIVE queries,
+would typically end up using hash-joins and specifically a hash-                       However, this simple way of implementing MS-BFS requires
+table lookup for each traversed edge. We think that the investment                  queries that generate thousands of searches, and not all queries
+                                                                                    do so. Hence we believe we will eventually implement MS-BFS
+
+                                                                         4036
+with a different mechanism (possible useful DuckDB extensibility                 SQL/PGQ is mapped on the underlying primitives, and how the
+mechanisms are: creating an input-output table function, as used in
+LATERAL JOIN queries; or creating a whole new relational operator).              various operations perform.
+However, the horizontal parallelism that would befit MS-BFS, where
+each breadth-first step would horizontally partition the vertexes                   The LDBC Social Network Benchmark dataset at various scale
+in the CSR over multiple threads, would need to be elegantly and
+efficiently integrated with the DuckDB parallelism model; which                  factors will be available to the user during the demonstration with
+provides another research item on our roadmap.
+                                                                                 SQL/PGQ queries from the BI [24] and Interactive [9] workloads.
+Beyond SQL/PGQ. The SQL/PGQ CREATE PROPERTY GRAPH statement
+gives all tuples in a vertex or edge table the same label or set of                 Stretch goals of the demonstration are (i) to have the DuckPGQ
+labels. We found this mechanism alone too rigid and implemented
+an extension that allows for flexible assignment of labels, that is e.g.,        extension module pre-compiled online for various platforms, so
+capable of expressing inheritance, see vertex table Message in List-
+ing 1. The label Message is a global label that applies to all entries           users will also be able to install it on their own devices to con-
+in the Message table. In DuckPGQ, a so-called discriminator column,
+here MessageType, contains integers  interpreted as bitmaps. Bit                 tinue working with their own data (ii) to demonstrate some of
+is then set iff the element is part of the subset listed as the th
+element in the list following the discriminator. So in this example,             our ongoing lzero-copyz graph access between DuckPGQ's CSR
+the value 1 in Message.MessageType means the message has label Post
+and a value 2 label Comment. All vertexes in this table have the global          data structures and machine learning libraries; using SQL/PGQ to
+label Message. A value of 3 would mean a vertex has all three labels.
+                                                                                 prepare and analyze GNN models.
+   Currently, the SQL/PGQ specification only defines how to per-
+form shortest path-finding, while cheapest path-finding is marked                ACKNOWLEDGMENTS
+as a llanguage opportunityz [7]. DuckPGQ supports cheapest path-
+finding using the keyword COST followed by an expression defining                G. Szárnyas and P. Boncz were partially supported by the SQIREL-
+edge weights. DuckDB uses a SIMD-friendly variant of MS-BFS,
+Multi-Source Bellman-Ford [26] to execute such queries. In order                 GRAPHS NWO project.
+to return the actual cost of the shortest path, we allow COST(p) to be
+used in the COLUMNS clause, where p has been bound to a path.                    REFERENCES
+
+SELECT cheapest.path , cheapest.cost               cheapest;                      [1] Daniel Abadi, Peter A. Boncz, Stavros Harizopoulos, Stratos Idreos, and Samuel
+FROM GRAPH_TABLE (pg,                                                                   Madden. 2013. The Design and Implementation of Modern Column-Oriented
+                                                                                        Database Systems. Found. Trends Databases 5, 3 (2013), 197280.
+   MATCH CHEAPEST PATH p =
+       (a:Person WHERE a.firstName = 'Alice')                                     [2] Renzo Angles et al. 2017. Foundations of Modern Query Languages for Graph
+          -[k:know COST 1/k.interactionCount ]->*                                       Databases. ACM Comput. Surv. (2017).
+          (b:Person WHERE b.firstName = 'Bob')
+                                                                                  [3] Renzo Angles et al. 2018. G-CORE: A Core for Future Graph Query Languages.
+   COLUMNS (ELEMENT_ID(p) path , COST(p) cost))                                         In SIGMOD 2018.
+
+Listing 4: Q2: cheapest path SQL/PGQ support in DuckPGQ                           [4] Renzo Angles et al. 2021. PG-Keys: Keys for Property Graphs. In SIGMOD 2021.
+                                                                                  [5] Maciej Besta et al. 2019. Demystifying Graph Databases: Analysis and Taxonomy
+   This third example query looks for the cheapest path between
+Alice and Bob, where the edge cost is proportionally lower between                      of Data Organization, System Designs, and Graph Queries. CoRR (2019).
+people that interact often with each other. Similar to COST(p) we                 [6] Peter A. Boncz et al. 2020. FSST: Fast Random Access String Compression. PVLDB
+use ELEMENT_ID(p) to turn a path into a list of ELEMENT_IDs (which as
+mentioned are DuckDB ROWIDs in DuckPGQ).                                                13, 11 (2020), 26492661.
+                                                                                  [7] Alin Deutsch et al. 2022. Graph Pattern Matching in GQL and SQL/PGQ. In
+3 DEMONSTRATION
+                                                                                        SIGMOD 2022.
+This demonstration will use a laptop showing a python notebook                    [8] Till Döhmen et al. 2017. Multi-Hypothesis CSV Parsing. In SSDBM.
+interface with DuckDB on a large monitor, and a combination of                    [9] Orri Erling et al. 2015. LDBC Social Network Benchmark: Interactive Workload.
+prepared queries to interactively demonstrate the salient features
+of SQL/PGQ in general and DuckPGQ specifically (see also the                            In SIGMOD 2015.
+submitted video). There will also be room for interactive query                  [10] Nadime Francis et al. 2023. A Researcher's Digest of GQL (Invited Talk). In ICDT
+formulation by attendees.
+                                                                                        2023.
+   The goal of the demonstration is to familiarize attendees with the            [11] Michael J. Freitag and Thomas Neumann. 2019. Every Row Counts: Combining
+new SQL/PGQ syntax, allow users to formulate queries with this
+new syntax, and show how these queries are executed in DuckPGQ.                         Sketches and Sampling for Accurate Group-By Result Estimates. In CIDR 2019.
+For the latter purpose, we will use supportive material in our poster,           [12] Per Fuchs et al. 2020. EdgeFrame: Worst-Case Optimal Joins for Graph-Pattern
+but also the output of EXPlAIN PLAN features of DuckDB to show how
+                                                                                        Matching in Spark. In GRADES-NDA at SIGMOD 2020.
+                                                                                 [13] Thomas N. Kipf and Max Welling. 2017. Semi-Supervised Classification with
+
+                                                                                        Graph Convolutional Networks. In ICLR 2017.
+                                                                                 [14] André Kohn et al. 2022. DuckDB-Wasm: Fast Analytical Processing for the Web.
+
+                                                                                        PVLDB 15, 12 (2022).
+                                                                                 [15] Laurens Kuiper and Hannes Mühleisen. 2023. These Rows Are Made for Sorting
+
+                                                                                        and That's Just What We'll Do. In ICDE 2023.
+                                                                                 [16] Viktor Leis et al. 2014. Morsel-driven parallelism: A NUMA-aware query evalua-
+
+                                                                                        tion framework for the many-core age. In SIGMOD 2014.
+                                                                                 [17] Viktor Leis et al. 2015. Efficient Processing of Window Functions in Analytical
+
+                                                                                        SQL Queries. PVLDB 8, 10 (2015), 10581069.
+                                                                                 [18] Panagiotis Liakos et al. 2022. Chimp: Efficient Lossless Floating Point Compres-
+
+                                                                                        sion for Time Series Databases. PVLDB (2022).
+                                                                                 [19] Thomas Neumann and Alfons Kemper. 2015. Unnesting Arbitrary Queries. In
+
+                                                                                        BTW 2015 (LNI), Vol. P-241. GI, 383402.
+                                                                                 [20] Thomas Neumann and Bernhard Radke. 2018. Adaptive Optimization of Very
+
+                                                                                        Large Join Queries. In SIGMOD 2018.
+                                                                                 [21] Adam Paszke et al. 2019. PyTorch: An Imperative Style, High-Performance Deep
+
+                                                                                        Learning Library. CoRR abs/1912.01703 (2019).
+                                                                                 [22] Pedro Pedreira et al. 2022. Velox: Meta's Unified Execution Engine. PVLDB 15,
+
+                                                                                        12 (2022), 33723384.
+                                                                                 [23] Mark Raasveldt and Hannes Mühleisen. 2019. DuckDB: An Embeddable Analyti-
+
+                                                                                        cal Database. In SIGMOD 2019.
+                                                                                 [24] Gábor Szárnyas et al. 2022. The LDBC Social Network Benchmark: Business
+
+                                                                                        Intelligence Workload. PVLDB (2022).
+                                                                                 [25] Daniel ten Wolde et al. 2023. DuckPGQ: Efficient property graph queries in an
+
+                                                                                        analytical RDBMS. In CIDR 2023.
+                                                                                 [26] Manuel Then et al. 2014. The More the Merrier: Efficient Multi-Source Graph
+
+                                                                                        Traversal. PVLDB (2014).
+                                                                                 [27] Marcin Zukowski, Sándor Héman, Niels Nes, and Peter A. Boncz. 2006. Super-
+
+                                                                                        Scalar RAM-CPU Cache Compression. In ICDE 2006.
+
+                                                                           4037
+

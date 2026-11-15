@@ -1,0 +1,229 @@
+/*
+ * Tree prototype: pure helpers. No DOM. In node: require of this file (as text, see build.js.txt).
+ * Inlined in the page: a global named TreeCore.
+ * Every number comes from the engine (PathwayEngine) and core (PathwayCore) on map.json; nothing here sets a value.
+ * What this file adds is arrangement: which state nests under which answer, and which states are shared.
+ */
+/* global module */
+(function (root, factory) {
+  'use strict';
+  var api = factory();
+  if (typeof module === 'object' && module && module.exports) module.exports = api;
+  else if (root) root.TreeCore = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  /**
+   * The arrangement of the tree, read from map.json only.
+   * A state is "shared" (drawn once, pointed to) when branches from more than one state reach it,
+   * when a way of working starts there, or when it is an outcome. Any other state nests under the
+   * first branch (in map order) that reaches it.
+   */
+  function structure(map) {
+    var S = {}, order = {};
+    map.states.forEach(function (s, i) { S[s.id] = s; order[s.id] = i; });
+    var stepIdx = {};
+    map.steps.forEach(function (s, i) { stepIdx[s.id] = i; });
+    var out = {}, inc = {};
+    map.states.forEach(function (s) { out[s.id] = []; inc[s.id] = []; });
+    map.branches.forEach(function (b) { out[b.from].push(b); inc[b.to].push(b); });
+    var starts = {};
+    map.policies.forEach(function (p) { (starts[p.start] = starts[p.start] || []).push(p.id); });
+    var shared = {}, owner = {};
+    map.states.forEach(function (s) {
+      var parents = {};
+      inc[s.id].forEach(function (b) { parents[b.from] = 1; });
+      if (s.outcome || starts[s.id] || Object.keys(parents).length !== 1) shared[s.id] = true;
+      else owner[s.id] = inc[s.id][0].id;
+    });
+    var roots = map.states.filter(function (s) { return shared[s.id] && !s.outcome; }).map(function (s) { return s.id; });
+    roots.sort(function (a, b) { return stepIdx[S[a].step] - stepIdx[S[b].step] || order[a] - order[b]; });
+    var outcomes = map.states.filter(function (s) { return s.outcome; }).map(function (s) { return s.id; });
+    // which root each state is drawn under, and its depth there
+    var home = {}, depth = {};
+    function walk(sid, root, d) {
+      home[sid] = root; depth[sid] = d;
+      out[sid].forEach(function (b) { if (!shared[b.to] && owner[b.to] === b.id) walk(b.to, root, d + 1); });
+    }
+    roots.forEach(function (r) { walk(r, r, 0); });
+    outcomes.forEach(function (o) { home[o] = 'ends'; depth[o] = 0; });
+    // which states a way of working can reach at all, ignoring chances
+    var reach = {};
+    map.policies.forEach(function (p) {
+      var seen = {}, stack = [p.start];
+      while (stack.length) { var x = stack.pop(); if (seen[x]) continue; seen[x] = true; out[x].forEach(function (b) { stack.push(b.to); }); }
+      reach[p.id] = seen;
+    });
+    return { S: S, out: out, inc: inc, starts: starts, shared: shared, owner: owner, roots: roots, outcomes: outcomes, home: home, depth: depth, reach: reach, stepIdx: stepIdx };
+  }
+
+  /** The scope the engine uses for one class (as PathwayCore.branchValues builds it), for explaining a zero. */
+  function scopeFor(E, map, params, policyId, classValues, stocks) {
+    var cm = E.compile(map);
+    var prep = E.prepareParams(cm, params);
+    var pol = cm.policies[cm.policyIndex[policyId]];
+    var combo = pol.combos.filter(function (c) {
+      return Object.keys(classValues).every(function (aid) { return c.values[aid] === classValues[aid]; });
+    })[0];
+    var s = Object.assign({}, prep.values);
+    cm.stockIds.forEach(function (id) { s[id] = stocks && typeof stocks[id] === 'number' ? stocks[id] : 0; });
+    cm.stockValues.forEach(function (v) { s[v.id] = v.fn(s); });
+    Object.assign(s, pol.flags, combo.flags);
+    cm.derived.forEach(function (d) { s[d.id] = d.fn(s); });
+    return s;
+  }
+
+  /** The classes of a way of working, with their values (from the compiled map). */
+  function combos(E, map, policyId) {
+    var cm = E.compile(map);
+    return cm.policies[cm.policyIndex[policyId]].combos.map(function (c) { return c.values; });
+  }
+
+  /**
+   * One picture: of one piece of work (all work, or one kind), the flow through every state and
+   * along every branch, the cost each branch carries, by tier, and how it ends.
+   * kind: null for all work, or { kind, need, held, distractor } (fixed values of the way win).
+   * All work is the engine's evaluatePolicy. The cost a branch carries is summed over the classes
+   * from evaluateClass flows and PathwayCore.branchValues costs; the sum is checked against the engine's total.
+   */
+  function picture(E, C, map, params, policyId, kind, stocks) {
+    var pol = map.policies.filter(function (p) { return p.id === policyId; })[0];
+    var tierOf = {};
+    map.branches.forEach(function (b) { tierOf[b.id] = b.tier || null; });
+    var carried = {}, res;
+    map.branches.forEach(function (b) { carried[b.id] = 0; });
+    function addClass(values, w) {
+      var ev = E.evaluateClass(map, params, policyId, values, stocks);
+      var bv = C.branchValues(E, map, params, policyId, values, stocks);
+      map.branches.forEach(function (b) { if (tierOf[b.id]) carried[b.id] += w * ev.branchFlow[b.id] * bv[b.id].cost; });
+      return { ev: ev, bv: bv };
+    }
+    if (!kind) {
+      var all = E.evaluatePolicy(map, params, policyId, stocks);
+      combos(E, map, policyId).forEach(function (v) {
+        var ch = all.classes.filter(function (c) { return Object.keys(v).every(function (k) { return c.values[k] === v[k]; }); })[0];
+        if (ch && ch.chance > 0) addClass(v, ch.chance);
+      });
+      res = { measures: all.overall.measures, stateFlow: all.stateFlow, branchFlow: all.branchFlow, outcomes: all.overall.outcomes, wrong: all.overall.wrong, cost: all.overall.cost, costByTier: all.overall.costByTier, share: 1, bv: null };
+    } else {
+      var v = Object.assign({}, kind, pol.fixed || {});
+      var one = addClass(v, 1);
+      res = { measures: one.ev.measures, stateFlow: one.ev.stateFlow, branchFlow: one.ev.branchFlow, outcomes: one.ev.outcomes, wrong: one.ev.wrong, cost: one.ev.cost, costByTier: one.ev.costByTier, share: one.ev.chance, bv: one.bv, values: v };
+    }
+    var byTier = {}, sum = 0;
+    map.tiers.forEach(function (t) { byTier[t.id] = 0; });
+    map.branches.forEach(function (b) { if (tierOf[b.id]) { byTier[tierOf[b.id]] += carried[b.id]; sum += carried[b.id]; } });
+    res.carried = carried;
+    res.carriedByTier = byTier;
+    res.parity = Math.abs(sum - res.cost);
+    // chance at the fork: the share of the work arriving at a state that takes the branch
+    res.chanceAt = {};
+    map.branches.forEach(function (b) {
+      var into = res.stateFlow[b.from];
+      res.chanceAt[b.id] = res.bv ? res.bv[b.id].chance : (into > 0 ? res.branchFlow[b.id] / into : null);
+    });
+    return res;
+  }
+
+  /**
+   * Work entering each stage (flow on branches from another stage, plus the start) and the
+   * cost carried by the branches that leave the stage's states, by tier.
+   */
+  function stageTotals(map, st, pic, policyId) {
+    var pol = map.policies.filter(function (p) { return p.id === policyId; })[0];
+    var out = {};
+    map.steps.forEach(function (s) { out[s.id] = { enter: 0, cost: 0, byTier: {}, states: 0, live: 0 }; map.tiers.forEach(function (t) { out[s.id].byTier[t.id] = 0; }); });
+    out[st.S[pol.start].step].enter += 1;
+    map.branches.forEach(function (b) {
+      var fs = st.S[b.from].step, ts = st.S[b.to].step;
+      if (fs !== ts) out[ts].enter += pic.branchFlow[b.id];
+      if (b.tier) { out[fs].cost += pic.carried[b.id]; out[fs].byTier[b.tier] += pic.carried[b.id]; }
+    });
+    map.states.forEach(function (s) { out[s.step].states++; if (pic.stateFlow[s.id] > 1e-12) out[s.step].live++; });
+    return out;
+  }
+
+  /**
+   * Why a state or branch carries no work, as a list of reasons the page turns into words.
+   * Each reason is one of:
+   *   { type: 'start', policy, start }            the way of working starts later and never passes here
+   *   { type: 'upstream', state }                 no work reaches the state the branch leaves from
+   *   { type: 'factor', id, value }               the chance is zero because this name has this value
+   *   { type: 'rule' }                            the chance rule gives zero (no single name explains it)
+   * A factor explains the zero when setting it to its other end (0 to 1, else to 0) makes the chance non-zero.
+   */
+  function zeroWhy(E, map, st, params, policyId, kind, stocks, pic, ref) {
+    var cm = E.compile(map);
+    function stateWhy(sid, seen) {
+      if (!st.reach[policyId][sid]) return [{ type: 'start', policy: policyId, start: map.policies.filter(function (p) { return p.id === policyId; })[0].start }];
+      seen = seen || {};
+      if (seen[sid]) return [{ type: 'rule' }];
+      seen[sid] = true;
+      var ins = st.inc[sid].filter(function (b) { return st.reach[policyId][b.from]; });
+      var live = ins.filter(function (b) { return pic.stateFlow[b.from] > 1e-12; });
+      if (live.length) return branchWhy(live[0].id, seen);
+      if (ins.length) return [{ type: 'upstream', state: ins[0].from }].concat(stateWhy(ins[0].from, seen));
+      return [{ type: 'rule' }];
+    }
+    function branchWhy(bid, seen) {
+      var b = map.branches.filter(function (x) { return x.id === bid; })[0];
+      if (!st.reach[policyId][b.from]) return stateWhy(b.from, seen);
+      if (!(pic.stateFlow[b.from] > 1e-12)) return [{ type: 'upstream', state: b.from }].concat(stateWhy(b.from, seen));
+      var cb = cm.branches[cm.branchIndex[bid]];
+      // the class to explain with: the chosen kind, or the class with the most work reaching the fork
+      var values = kind ? Object.assign({}, kind, (map.policies.filter(function (p) { return p.id === policyId; })[0].fixed || {})) : null;
+      if (!values) {
+        var best = -1;
+        combos(E, map, policyId).forEach(function (v) {
+          var ev = E.evaluateClass(map, params, policyId, v, stocks);
+          var w = ev.chance * ev.stateFlow[b.from];
+          if (w > best) { best = w; values = v; }
+        });
+      }
+      var s = scopeFor(E, map, params, policyId, values, stocks);
+      return explain(cb.chance, s, 0) || [{ type: 'rule' }];
+    }
+    // the derived values and stock values, so a zero can be traced to the name behind it
+    var inner = {};
+    cm.derived.forEach(function (d) { inner[d.id] = d; });
+    cm.stockValues.forEach(function (v) { inner[v.id] = v; });
+    function flip(s, ids) { var t = Object.assign({}, s); ids.forEach(function (id) { t[id] = s[id] === 0 ? 1 : 0; }); return t; }
+    function explain(expr, s, level) {
+      var found = [];
+      expr.ids.forEach(function (id) { if (Math.abs(expr.fn(flip(s, [id]))) > 1e-12) found.push(id); });
+      if (!found.length) {
+        // two names together (for example: nothing held and no bad entry)
+        for (var i = 0; i < expr.ids.length && !found.length; i++) {
+          for (var j = i + 1; j < expr.ids.length; j++) {
+            if (Math.abs(expr.fn(flip(s, [expr.ids[i], expr.ids[j]]))) > 1e-12) { found.push(expr.ids[i], expr.ids[j]); break; }
+          }
+        }
+      }
+      if (!found.length) return null;
+      var out = [];
+      found.forEach(function (id) {
+        var deeper = level < 3 && inner[id] ? explain(inner[id], s, level + 1) : null;
+        if (deeper) deeper.forEach(function (r) { out.push(r); });
+        else out.push({ type: 'factor', id: id, value: s[id], all: !kind });
+      });
+      return out;
+    }
+    return ref.state ? stateWhy(ref.state) : branchWhy(ref.branch);
+  }
+
+  /** Limitations by design step (main step) and the cases that broke at each design step. */
+  function stepEvidence(lims, cases) {
+    var out = {};
+    Object.keys(lims.steps).forEach(function (k) { out[k] = { main: [], also: [], broke: [] }; });
+    lims.items.forEach(function (it) {
+      out[it.main_step].main.push(it.id);
+      it.steps.forEach(function (k) { if (k !== it.main_step && out[k]) out[k].also.push(it.id); });
+    });
+    cases.cases.forEach(function (c) {
+      c.steps.forEach(function (s) { if (s.status === 'breaks') out[s.step].broke.push(c.id); });
+    });
+    return out;
+  }
+
+  return { structure: structure, scopeFor: scopeFor, combos: combos, picture: picture, stageTotals: stageTotals, zeroWhy: zeroWhy, stepEvidence: stepEvidence };
+});

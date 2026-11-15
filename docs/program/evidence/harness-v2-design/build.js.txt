@@ -1,0 +1,196 @@
+// Build script for harness v2. Run it from its own folder (the .txt extension means node needs it on stdin):
+//   cd docs/program/evidence/harness-v2-design && node - < build.js.txt
+// Reads   docs/program/harness-v2/design.json  (the single data source)
+// Reads   docs/program/harness-v2/architecture.json  (the architecture: parts, loops, model, plan check, library, tokens)
+// Writes  docs/program/harness-v2/index.html   (the architecture page; data embedded, no network needed)
+//         docs/program/harness-v2/plan.html    (the 21 problems, the five phases and the owner's decisions)
+//         docs/program/HARNESS-V2-DESIGN-2026-11.md  (the short record, generated from the same data)
+//         docs/program/evidence/harness-v2-design/build-report.txt  (checks and number lint)
+// Neither output is edited by hand: change design.json and rebuild.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = path.resolve(process.cwd());
+if (!fs.existsSync(path.join(HERE, 'src', 'page.js.txt'))) { console.error('Run this from docs/program/evidence/harness-v2-design'); process.exit(2); }
+const PROGRAM = path.resolve(HERE, '..', '..');
+const SRC = path.join(HERE, 'src');
+const dataPath = path.join(PROGRAM, 'harness-v2', 'design.json');
+const raw = fs.readFileSync(dataPath, 'utf8');
+const D = JSON.parse(raw);
+const report = [];
+const fail = [];
+const check = (ok, msg) => { if (!ok) fail.push(msg); };
+
+/* ---------- 1. consistency checks ---------- */
+const B = D.bottlenecks, byId = id => B.find(b => b.id === id);
+check(B.length === 21, 'expected 21 bottlenecks, got ' + B.length);
+const classCount = {}; B.forEach(b => { classCount[b.class] = (classCount[b.class] || 0) + 1; });
+check(classCount.decide === 7 && classCount.build === 7 && classCount.diagnose === 3 && classCount.trial === 4, 'class counts differ from compile section 3: ' + JSON.stringify(classCount));
+const none = B.filter(b => b.ideas.fit === 'none').map(b => b.id).join(',');
+check(none === 'B02,B05,B06,B07,B08,B09,B10,B11,B14,B18,B20', 'the eleven no-idea bottlenecks differ from compile section 9.1: ' + none);
+check(B.filter(b => b.ideas.fit === 'direct').map(b => b.id).join(',') === 'B17', 'only B17 is a direct fit in compile section 9.2');
+check(D.phases.length === 5, 'expected 5 phases');
+B.forEach(b => {
+  const ph = D.phases.find(p => p.n === b.phase);
+  check(!!ph, b.id + ' has no phase');
+  check(ph && ph.builds.some(x => x.answers.includes(b.id)), b.id + ' is answered by no build in its phase');
+});
+D.phases.forEach(p => p.builds.forEach(x => {
+  x.answers.forEach(id => check(byId(id) && byId(id).phase === p.n, 'build "' + x.name + '" answers ' + id + ' outside its home phase'));
+  (x.supports || []).forEach(id => check(!!byId(id), 'unknown id in supports: ' + id));
+}));
+check(D.mechanisms.length === 11, 'expected 11 mechanisms');
+const ideaIds = new Set(); D.mechanisms.forEach(m => m.ideas.forEach(i => ideaIds.add(i)));
+check(ideaIds.size === 29, 'the mechanisms must absorb 29 distinct idea ids (compile section 9.3), got ' + ideaIds.size);
+check(!ideaIds.has('G4-F084'), 'G4-F084 is not taken now and must be in no mechanism');
+D.mechanisms.forEach(m => m.bottlenecks.forEach(id => check(byId(id).mechs.includes(m.n), 'mechanism ' + m.n + ' lists ' + id + ' but ' + id + ' does not list it')));
+B.forEach(b => b.mechs.forEach(n => check(D.mechanisms[n - 1].bottlenecks.includes(b.id), b.id + ' lists mechanism ' + n + ' but it does not list ' + b.id)));
+const decIds = new Set(D.decisions.map(d => d.id));
+D.phases.forEach(p => p.decisions.forEach(id => { check(decIds.has(id), 'phase ' + p.n + ' names unknown decision ' + id); const d = D.decisions.find(x => x.id === id); check(d && d.phase === p.n, id + ' is listed under phase ' + p.n + ' but says phase ' + (d && d.phase)); }));
+D.mechanisms.forEach(m => { if (m.decision) check(decIds.has(m.decision), 'mechanism ' + m.n + ' names unknown decision ' + m.decision); });
+D.decisions.forEach(d => { check(d.options.length >= 2, d.id + ' needs at least two options'); check(d.options.filter(o => o.lean).length <= 1, d.id + ' has more than one lean'); d.bottlenecks.forEach(id => check(!!byId(id), d.id + ' names unknown bottleneck ' + id)); });
+B.filter(b => b.class === 'decide').forEach(b => check(D.decisions.some(d => d.bottlenecks.includes(b.id)), 'decide-class ' + b.id + ' has no decision card'));
+check(D.tensions.length === 8, 'compile section 9.5 has eight conflicts');
+check(D.shutdowns.days.reduce((a, d) => a + d.n, 0) === 24, 'shutdown days must add to 24');
+const T = D.sims.tokens.rows; T.forEach(r => check(Math.abs(r.bands.reduce((a, b) => a + b, 0) - r.share) < 0.051, 'token bands of ' + r.name + ' do not add to its share'));
+check(Math.abs(T.reduce((a, r) => a + r.share, 0) - 100) < 0.051, 'token shares do not add to 100');
+const mw = D.sims.queue.measuredWaits.slice().sort((a, b) => a - b);
+check(mw.length === +D.numbers.wait_count[0], 'wait_count does not match the list of recorded waits');
+check(mw[(mw.length - 1) / 2] + ' s' === D.numbers.wait_median[0], 'wait_median does not match the list of recorded waits');
+
+/* ---------- 2. tokens and tags ---------- */
+const all = JSON.stringify(D);
+const usedN = new Set(); for (const m of all.matchAll(/\{\{n:([a-z0-9_]+)\}\}/g)) usedN.add(m[1]);
+usedN.forEach(k => check(!!D.numbers[k], 'text uses unknown number {{n:' + k + '}}'));
+Object.keys(D.numbers).forEach(k => { const n = D.numbers[k]; check(n.length === 3 && D.tags[n[1]] && n[2].length > 8, 'number ' + k + ' needs [value, tag, source]'); if (!usedN.has(k)) report.push('unused number: ' + k); });
+for (const m of all.matchAll(/\{\{t:([a-z0-9_]+)\|/g)) check(!!D.glossary[m[1]], 'text uses unknown term {{t:' + m[1] + '}}');
+check(!/\{\{(?!n:|t:)/.test(all), 'unknown token type in text');
+
+/* ---------- 3. number lint: digits that are not inside a tagged number ---------- */
+const ALLOW = [/\bB\d\d\b/g, /\bD\d\d\b/g, /\bG\d-F\d+\b/g, /\b[A-Z]{1,2}-\d+\b/g, /PR #\d+/g, /\b(phase|Phase|mechanism|Mechanism|mechanisms|Mechanisms|section|sections|step|Step)s? \d+(, \d+)*( (and|to) \d+)?/g,
+  /\b\d{1,2} (January|February|March|April|May|June|July|August|September|October|November|December|Oct|Nov)\b/g, /\b(October|November) \d{1,2}\b/g, /\b\d\d:\d\d(:\d\d)?\b/g, /\b20\d\d\b/g, /§\d[\d.]*/g,
+  /\bthe 21\b/g, /\b21 (problems|unsolved|problem)\b/g, /\bof the 21\b/g, /\bP[0-3]s?\b/g, /\bP0a\b/g, /\bLever \d\b/g, /the 10 and 11 November/g, /of 10 and 11 November/g, /\bv2\b/g, /\bWSL2\b/g, /\bWindows 11\b/g, /\b24 (event|hours|quiet hours)\b/g, /\b2\d cards\b/g, /\b400k\b/g, /\b15-minute\b/g, /'20 PASS' stood against 19 lines/g, /nine checks while its record said 55/g];
+const lint = [];
+(function walk(v, where) {
+  if (typeof v === 'string') {
+    let s = v.replace(/\{\{[^}]+\}\}/g, ' ');
+    ALLOW.forEach(re => { s = s.replace(re, ' '); });
+    const hits = s.match(/\d[\d,.]*\d|\d/g);
+    if (hits) lint.push(where + ': ' + hits.join(' | ') + '   <<  ' + v.slice(0, 110));
+  } else if (Array.isArray(v)) v.forEach((x, i) => walk(x, where + '[' + i + ']'));
+  else if (v && typeof v === 'object') Object.keys(v).forEach(k => {
+    if (where === '' && (k === 'numbers' || k === 'shutdowns' || k === 'glossary')) return;
+    if (where === '.meta' && (k === 'sources' || k === 'limits' || k === 'date')) return;
+    if (/^(id|key|d|start|end|buildFrom|ideas|mechs|durations|measuredWaits|rows|n|phase|from|to|share|bands|gates|perGate|limit|after|sessionsDefault|sessionsMin|sessionsMax|made|ref)$/.test(k) && typeof v[k] !== 'string') return;
+    if (k === 'ref' || k === 'id' || k === 'key' || k === 'd' || k === 'said' || k === 'round' || k === 'chips') return;
+    walk(v[k], where + '.' + k);
+  });
+})(D, '');
+
+/* ---------- 3b. the architecture: data, checks, page ---------- */
+const A = JSON.parse(fs.readFileSync(path.join(PROGRAM, 'harness-v2', 'architecture.json'), 'utf8'));
+const aAll = JSON.stringify(A);
+for (const m of aAll.matchAll(/\{\{n:([a-z0-9_]+)\}\}/g)) check(!!A.numbers[m[1]], 'architecture: text uses unknown number ' + m[1]);
+for (const m of aAll.matchAll(/\{\{t:([a-z0-9_]+)\|/g)) check(!!A.glossary[m[1]], 'architecture: text uses unknown term ' + m[1]);
+Object.keys(A.numbers).forEach(k => check(A.numbers[k].length === 3 && A.tags[A.numbers[k][1]], 'architecture: number ' + k + ' needs [value, tag, source]'));
+const partKeys = new Set(A.parts.map(p => p.key));
+A.links.forEach(l => check(partKeys.has(l.from) && partKeys.has(l.to), 'architecture: a link names an unknown part'));
+A.loops.forEach(l => check(partKeys.has(l.part), 'architecture: loop ' + l.id + ' names an unknown part'));
+check(A.answers.map(a => a.id).sort().join(',') === B.map(x => x.id).sort().join(','), 'architecture: the answers must cover each of the 21 bottlenecks exactly once');
+A.answers.forEach(a => check(partKeys.has(a.part), 'architecture: answer ' + a.id + ' names an unknown part'));
+Object.keys(A.model.params).forEach(k => { const q = A.model.params[k]; check(A.tags[q.tag] && q.src && typeof q.v === 'number', 'architecture: model parameter ' + k + ' needs a number, a tag and a source'); });
+check(Math.abs(A.tokens.fill.reduce((x, f) => x + f.pct, 0) - 100) < 0.11, 'architecture: the context mix must add to 100');
+A.tokens.methods.forEach(m => check(['start', 'own', 'fetched', 'calls'].includes(m.bucket), 'architecture: method ' + m.name + ' needs a bucket'));
+const archCss = fs.readFileSync(path.join(SRC, 'page.css.txt'), 'utf8') + '\n' + fs.readFileSync(path.join(SRC, 'arch.css.txt'), 'utf8');
+const archJs = fs.readFileSync(path.join(SRC, 'arch.js.txt'), 'utf8');
+const archPage = fs.readFileSync(path.join(SRC, 'arch.html.txt'), 'utf8').replace('/*__CSS__*/', () => archCss).replace('/*__DATA__*/', () => JSON.stringify(A).replace(/</g, '\\u003c')).replace('/*__JS__*/', () => archJs);
+check(!/https?:\/\//.test(archCss + archJs), 'the architecture page must not reference the network');
+
+/* ---------- 4. the page ---------- */
+const css = fs.readFileSync(path.join(SRC, 'page.css.txt'), 'utf8');
+const js = fs.readFileSync(path.join(SRC, 'page.js.txt'), 'utf8');
+const html = fs.readFileSync(path.join(SRC, 'page.html.txt'), 'utf8');
+const dataForPage = JSON.stringify(D).replace(/</g, '\\u003c');
+const page = html.replace('/*__CSS__*/', () => css).replace('/*__DATA__*/', () => dataForPage).replace('/*__JS__*/', () => js);
+check(!/https?:\/\//.test(css + js + html), 'the page must not reference the network');
+
+/* ---------- 5. the markdown record ---------- */
+const TAGL = { m: 'M', s: 'S', t: 'T', e: 'E', i: 'I' };
+const plain = t => String(t).replace(/\{\{n:([a-z0-9_]+)\}\}/g, (_, k) => D.numbers[k][0] + ' [' + TAGL[D.numbers[k][1]] + ']').replace(/\{\{t:[a-z0-9_]+\|([^}]+)\}\}/g, '$1');
+const cell = t => plain(t).replace(/\|/g, '/').replace(/\n/g, ' ');
+const L = [];
+L.push('# Harness v2: design (' + D.meta.date + ')', '');
+L.push('**Status.** ' + D.meta.status, '');
+L.push('**Generated file.** Built from `docs/program/harness-v2/design.json` by `docs/program/evidence/harness-v2-design/build.js.txt`. Do not edit it by hand: change the data and rebuild. The owner reads `docs/program/harness-v2/index.html`, which is built from the same data. This file is the record for agents and for git. It is not committed: it holds details of the clinic build and of the owner\'s PC, and where it goes is the owner\'s call.', '');
+L.push('**Number tags.** ' + Object.keys(D.tags).map(k => '[' + TAGL[k] + '] ' + D.tags[k].word.toLowerCase() + ': ' + D.tags[k].means).join(' '), '');
+const aplain = t => String(t).replace(/\{\{n:([a-z0-9_]+)\}\}/g, (_, k) => A.numbers[k][0] + ' [' + TAGL[A.numbers[k][1]] + ']').replace(/\{\{t:[a-z0-9_]+\|([^}]+)\}\}/g, '$1');
+const acell = t => aplain(t).replace(/\|/g, '/');
+L.push('## 0. The architecture', '', 'Source: `docs/program/harness-v2/architecture.json`. Page: `docs/program/harness-v2/index.html`. Sections 1 to 12 below are the plan behind it (`plan.html`).', '', '**' + aplain(A.meta.law) + '**', '');
+A.meta.thesis.forEach(t => L.push(aplain(t), ''));
+L.push('| Part | Job | Controls |', '| --- | --- | --- |');
+A.parts.forEach(p => L.push('| ' + p.name + ' | ' + acell(p.job) + ' | ' + (A.loops.filter(l => l.part === p.key).map(l => l.id + ' ' + l.name).join('; ') || '–') + ' |'));
+L.push('', '**Loops** (R reinforcing, B balancing).', '', '| Id | Loop | The mechanism | In the testbed | In v2 |', '| --- | --- | --- | --- | --- |');
+A.loops.forEach(l => L.push('| ' + l.id + ' | ' + l.name + ' | ' + acell(l.story) + ' | ' + acell(l.today) + ' | ' + acell(l.v2) + ' |'));
+L.push('', '**The model** (stocks: ' + Object.values(A.sd.stocks).join(', ') + ').', ''); A.sd.equations.forEach(e => L.push('- `' + e + '`'));
+L.push('', 'Controllers that can be switched in the model: ' + A.model.switches.map(s => s.name + ' (' + s.effect + ')').join('; ') + '.', '', 'Model assumptions: ' + A.model.notes.map(aplain).join(' '), '');
+L.push('**Plan check: parallel work is planned, not discovered.** Every slice declares: ' + A.plancheck.declares.map(aplain).join(' ') , '');
+A.plancheck.rules.forEach((r, i) => L.push((i + 1) + '. ' + aplain(r)));
+L.push('', aplain(A.plancheck.capacityText), '');
+L.push('**The library.** Holds: ' + A.library.kinds.map(k => k.name + ' (' + aplain(k.what) + ')').join(' ') , '', 'How it changes by itself: ' + A.library.evolves.map(k => k.name + ': ' + aplain(k.what)).join(' '), '', 'Tables: ' + A.library.tables.map(t => '`' + t.name + '` (' + t.holds + ' Written by ' + t.by + '.)').join(' '), '');
+A.library.honest.forEach(h => L.push('- ' + aplain(h)));
+L.push('', '**Tokens.** ' + A.tokens.intro.map(aplain).join(' '), '', 'What the windows hold: ' + A.tokens.fill.map(f => f.name.toLowerCase() + ' ' + f.label).join('; ') + '. ' + aplain(A.tokens.fillNote), '', aplain(A.tokens.carry.text), '', '| Method | Cuts | How | What the record says | Standing |', '| --- | --- | --- | --- | --- |');
+A.tokens.methods.forEach(m => L.push('| ' + m.name + ' | ' + m.bucket + ' | ' + acell(m.how) + ' | ' + acell(m.basis) + ' | ' + m.status + ' |'));
+L.push('', '**' + A.orchestration.question + '** ' + A.orchestration.answer.map(aplain).join(' '), '', '**Build order.** ' + A.order.map((o, i) => (i + 1) + '. ' + o.name + ': ' + aplain(o.builds)).join(' '), '', '**Limits of the architecture.** ' + A.limits.join(' '), '');
+L.push('## 1. Summary', '');
+D.meta.thesis.forEach(t => L.push(plain(t), ''));
+L.push(D.meta.scope, '', D.meta.classNote, '');
+if (D.meta.progress) { L.push('**' + D.meta.progress.title + '.**', ''); D.meta.progress.items.forEach(x => L.push('- ' + ({ done: 'Done', you: 'Waiting on the owner', next: 'Not started' }[x.state]) + ': ' + plain(x.text))); L.push('', 'Phase 1 measurements and their scripts: `docs/program/harness-v2/phase1/` (start at FINDINGS.md).', ''); }
+L.push('## 2. The five phases', '');
+L.push('| Phase | Built | Answers | Owner decides | Done when |', '| --- | --- | --- | --- | --- |');
+D.phases.forEach(p => L.push('| ' + p.n + '. ' + p.name + ' | ' + p.builds.map(b => b.name).join('; ') + ' | ' + (B.filter(b => b.phase === p.n).map(b => b.id).join(', ') || 'cuts across B03, B04') + ' | ' + p.decisions.join(', ') + ' | ' + cell(p.doneWhen) + ' |'));
+L.push('');
+D.phases.forEach(p => {
+  L.push('### Phase ' + p.n + ': ' + p.name, '', '**Why here.** ' + plain(p.why), '');
+  p.builds.forEach(b => L.push('- **' + b.name + '.** ' + plain(b.what) + (b.answers.length ? ' *Answers ' + b.answers.join(', ') + '.*' : '') + ((b.supports || []).length ? ' *Also helps ' + b.supports.join(', ') + '.*' : '')));
+  L.push('', '**Proof.** ' + p.proofs.map(plain).join(' '), '', '**Cost.** Building: ' + plain(p.cost.build) + ' Agents: ' + plain(p.cost.agents) + ' Owner: ' + plain(p.cost.owner) + ' **Watch.** ' + plain(p.watch), '');
+});
+L.push('**Dependencies.**', ''); D.deps.forEach(d => L.push('- ' + d.from + ' → ' + d.to + ' (' + d.kind + '): ' + d.label));
+L.push('', '**Order.** ' + D.order.kept, ''); D.order.changes.forEach(c => L.push('- ' + plain(c)));
+L.push('', '**Standing rules.**', ''); D.rules.forEach(r => L.push('- **' + r.name + '.** ' + plain(r.text)));
+L.push('', '## 3. The 21 bottlenecks', '', '| Id | Problem | Class | Phase | Idea lists | First step | Proof |', '| --- | --- | --- | --- | --- | --- | --- |');
+B.forEach(b => L.push('| ' + b.id + ' | ' + b.name + ' | ' + b.class + ' | ' + b.phase + ' | ' + b.ideas.fit + ' | ' + cell(b.firstStep) + ' | ' + cell(b.proof) + ' |'));
+L.push('', 'The corrected diagnosis of each is in design.json (`bottlenecks[].diagnosis`) and on the page.');
+L.push('', '## 4. The eleven mechanisms (phase 3, in order)', '', '| # | Mechanism | Cost | Owner decision | Accepted by | Its test | Ideas absorbed |', '| --- | --- | --- | --- | --- | --- | --- |');
+D.mechanisms.forEach(m => L.push('| ' + m.n + ' | ' + m.name + (m.from !== 3 ? ' (in from phase ' + m.from + ')' : '') + ' | ' + cell(m.costText) + ' | ' + (m.decision || 'none') + ' | ' + m.accepted + ' | ' + cell(m.replay) + ' | ' + m.ideas.join(', ') + ' |'));
+L.push('', '## 5. Owner decisions', '', '| Id | Decision | Phase | When | Kind | Options (the design\'s lean in bold) | Bottlenecks | Owner\'s answer |', '| --- | --- | --- | --- | --- | --- | --- | --- |');
+D.decisions.forEach(d => L.push('| ' + d.id + ' | ' + d.title + ' | ' + (d.phase || 'all') + ' | ' + d.when + ' | ' + d.kind + ' | ' + d.options.map(o => (o.lean ? '**' + o.label + '**' : o.label)).join(' / ') + ' | ' + (d.bottlenecks.join(', ') || '–') + ' | ' + (d.answered || '') + ' |'));
+L.push('', D.meta.decisionsNote, '');
+L.push('## 6. One budget', '', plain(D.budget.warning), '', '**Ceiling, as measured.**', ''); D.budget.ceiling.forEach(c => L.push('- ' + plain(c)));
+L.push('', '| What v2 adds | What pays for it | Net |', '| --- | --- | --- |'); D.budget.adds.forEach(a => L.push('| ' + a.what + ' | ' + cell(a.paidBy) + ' | ' + a.net + ' |'));
+L.push('', '**Left out.** ' + D.budget.left.map(plain).join(' '), '', '**Rules.** ' + D.budget.rules.map(plain).join(' '), '', '**Unknown.** ' + plain(D.budget.unknown), '');
+L.push('## 7. Conflicts between ideas and the rule that settles each (compile §9.5)', '', '| Pull | Against | Rule | Where |', '| --- | --- | --- | --- |');
+D.tensions.forEach(t => L.push('| ' + t.pull + ' | ' + cell(t.against) + ' | ' + cell(t.rule) + ' | ' + t.where + ' |'));
+L.push('', '## 8. Not built', '');
+D.notBuilt.forEach(g => { L.push('- **' + g.group + '.** ' + plain(g.why) + ' Not built: ' + g.items.map(i => plain(i).replace(/\.$/, '')).join('; ') + '.' + (g.kept ? ' ' + plain(g.kept) : '')); });
+L.push('');
+L.push('## 9. The six demos on the page', '', 'Each demo explains a mechanism and lists its assumptions on screen. None is a result.', '');
+Object.keys(D.sims).forEach(k => { const s = D.sims[k]; L.push('- **' + s.name + '.** ' + plain(s.shows)); });
+L.push('', '## 10. Limits', ''); D.meta.limits.forEach(x => L.push('- ' + x));
+L.push('', '## 11. Sources', ''); D.meta.sources.forEach(x => L.push('- ' + x));
+L.push('', '## 12. Numbers', '', 'Every number in this file carries a tag. The full list of ' + Object.keys(D.numbers).length + ' numbers with their sources is generated beside the build script: `docs/program/evidence/harness-v2-design/numbers.md`.', '');
+const N = ['# Harness v2: every number used, with its tag and source', '', 'Generated by build.js.txt from design.json.', '', '| Key | Value | Tag | Source |', '| --- | --- | --- | --- |'];
+Object.keys(D.numbers).forEach(k => { const n = D.numbers[k]; N.push('| ' + k + ' | ' + n[0] + ' | ' + D.tags[n[1]].word.toLowerCase() + ' | ' + n[2].replace(/\|/g, '/') + ' |'); });
+N.push('');
+
+/* ---------- 6. write ---------- */
+report.unshift('build of ' + new Date().toISOString(), 'design.json: ' + raw.length + ' bytes; bottlenecks ' + B.length + ' ' + JSON.stringify(classCount) + '; mechanisms ' + D.mechanisms.length + ' absorbing ' + ideaIds.size + ' ideas; decisions ' + D.decisions.length + ' (' + D.decisions.filter(d => d.when === 'now').length + ' to start); numbers ' + Object.keys(D.numbers).length, 'checks failed: ' + fail.length);
+fail.forEach(f => report.push('FAIL: ' + f));
+report.push('', 'number lint (digits in text that are not a tagged number; each one reviewed by hand, ' + lint.length + ' lines):');
+lint.forEach(l => report.push('  ' + l));
+fs.writeFileSync(path.join(HERE, 'build-report.txt'), report.join('\n') + '\n');
+if (fail.length) { console.error(fail.join('\n')); console.error('BUILD FAILED: nothing written except the report.'); process.exit(1); }
+fs.writeFileSync(path.join(PROGRAM, 'harness-v2', 'plan.html'), page);
+fs.writeFileSync(path.join(PROGRAM, 'harness-v2', 'index.html'), archPage);
+fs.writeFileSync(path.join(PROGRAM, 'HARNESS-V2-DESIGN-2026-11.md'), L.join('\n'));
+fs.writeFileSync(path.join(HERE, 'numbers.md'), N.join('\n'));
+console.log('ok: index.html (architecture) ' + archPage.length + ' bytes, plan.html ' + page.length + ' bytes, markdown ' + L.join('\n').length + ' bytes, ' + L.length + ' lines; lint lines ' + lint.length + '; unused numbers ' + report.filter(r => r.startsWith('unused')).length);

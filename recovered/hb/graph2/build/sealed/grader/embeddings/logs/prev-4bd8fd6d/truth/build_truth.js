@@ -1,0 +1,79 @@
+'use strict';
+// Rank truth of every T1 task (tuning and held-out) by addendum 8 item 4: the task commit's other
+// modified (not added) code files (evalcore.CODE) that exist at the parent, seed excluded.
+// Host only (needs git; read-only commands on the repository: diff-tree, log, ls-tree).
+//   node build_truth.js            writes truth.jsonl and commits.jsonl beside this file (sealed)
+// Sources: build/tasks/tasks.jsonl (task id, parent, seed path), sealed/references.jsonl (task id -> task
+// commit; the file statuses of the commit). Truth is taken from the sealed records (status M, old path)
+// and derived a second time from git (diff-tree -r -M against the first parent); the two must agree for
+// every task, every truth file must exist at the parent (ls-tree), and the parent in the records must be
+// the commit's first parent. Any disagreement stops the script (exit 3). Prints counts only.
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+
+const HERE = __dirname;
+const BUILD = path.resolve(HERE, '..', '..', '..', '..');
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const CODE = /^(backend|src|technician-app)\/.*\.(py|ts|tsx|js|jsx|mjs|cjs)$/;
+const git = (...a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', maxBuffer: 1 << 28 });
+const jl = (f) => fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+const tasks = jl(path.join(BUILD, 'tasks', 'tasks.jsonl')).filter((r) => r.set === 'T1');
+const refs = new Map(jl(path.join(BUILD, 'sealed', 'references.jsonl')).filter((r) => r.set === 'T1').map((r) => [r.id, r]));
+const bad = [];
+const commits = new Map();
+for (const t of tasks) {
+  const r = refs.get(t.id);
+  if (!r) { bad.push('no sealed record for a task'); continue; }
+  if (r.parent !== t.parent || r.seed.path !== t.seed.path || r.split !== t.split) bad.push('task row and sealed record disagree');
+  if (!commits.has(r.commit)) commits.set(r.commit, { commit: r.commit, parent: r.parent, split: r.split });
+  else if (commits.get(r.commit).parent !== r.parent || commits.get(r.commit).split !== r.split) bad.push('one commit, two parents or splits');
+}
+// git: first parent, author time, name-status
+const gitMod = new Map();
+for (const c of commits.values()) {
+  const [at, parents] = git('log', '-1', '--format=%at%n%P', c.commit).trim().split('\n');
+  c.author_time = Number(at); c.n_parents = parents.split(' ').length;
+  if (parents.split(' ')[0] !== c.parent) bad.push('recorded parent is not the first parent');
+  const ns = git('diff-tree', '-r', '-M', '--no-commit-id', '--name-status', c.parent, c.commit).split('\n').filter(Boolean);
+  const mod = []; const st = {};
+  for (const l of ns) {
+    const p = l.split('\t'); const s = p[0][0]; st[s] = (st[s] || 0) + 1;
+    if (s === 'M' || s === 'T' || s === 'R') mod.push(p[1]); // R: the old path (exists at the parent)
+  }
+  c.status_counts = st;
+  gitMod.set(c.commit, mod);
+}
+// existence at the parent
+const lsCache = new Map();
+const existsAt = (sha, p) => {
+  if (!lsCache.has(sha)) lsCache.set(sha, new Set(git('ls-tree', '-r', '--name-only', sha).split('\n').filter(Boolean)));
+  return lsCache.get(sha).has(p);
+};
+// date order per split by author time (ties: sha), late 50 = the 50 latest tuning commits
+for (const split of ['tune', 'heldout']) {
+  const cs = [...commits.values()].filter((c) => c.split === split).sort((a, b) => a.author_time - b.author_time || (a.commit < b.commit ? -1 : 1));
+  cs.forEach((c, i) => { c.date_order = i + 1; c.late50 = split === 'tune' ? i >= cs.length - 50 : null; });
+}
+const out = []; let gitEqual = 0; let notExist = 0; let empty = 0;
+for (const t of tasks) {
+  const r = refs.get(t.id); if (!r) continue;
+  const fromRec = [...new Set(r.files.filter((f) => f.status === 'M').map((f) => f.path))].filter((p) => CODE.test(p) && p !== t.seed.path).sort();
+  const fromGit = [...new Set(gitMod.get(r.commit))].filter((p) => CODE.test(p) && p !== t.seed.path).sort();
+  if (JSON.stringify(fromRec) === JSON.stringify(fromGit)) gitEqual++; else bad.push('sealed-record truth differs from git truth');
+  for (const p of fromRec) if (!existsAt(t.parent, p)) notExist++;
+  if (!fromRec.length) empty++;
+  const c = commits.get(r.commit);
+  out.push({ id: t.id, split: t.split, commit: r.commit, parent: t.parent, seed: t.seed.path, date_order: c.date_order, late50: c.late50, truth: fromRec });
+}
+if (notExist) bad.push(notExist + ' truth file(s) do not exist at the parent');
+out.sort((a, b) => (a.id < b.id ? -1 : 1));
+const cs = [...commits.values()].sort((a, b) => (a.split < b.split ? -1 : a.split > b.split ? 1 : a.date_order - b.date_order));
+if (bad.length) { console.log('build_truth: refusing: ' + [...new Set(bad)].join('; ') + ' (' + bad.length + ')'); process.exit(3); }
+fs.writeFileSync(path.join(HERE, 'truth.jsonl'), out.map((x) => JSON.stringify(x)).join('\n') + '\n');
+fs.writeFileSync(path.join(HERE, 'commits.jsonl'), cs.map((x) => JSON.stringify(x)).join('\n') + '\n');
+const cnt = (s) => out.filter((x) => x.split === s).length;
+console.log(JSON.stringify({ tasks: out.length, tune: cnt('tune'), heldout: cnt('heldout'), commits_tune: cs.filter((c) => c.split === 'tune').length,
+  commits_heldout: cs.filter((c) => c.split === 'heldout').length, parents_heldout: new Set(cs.filter((c) => c.split === 'heldout').map((c) => c.parent)).size,
+  late50: cs.filter((c) => c.late50).length, git_equal: gitEqual, empty_truth: empty, merge_commits: cs.filter((c) => c.n_parents > 1).length }));

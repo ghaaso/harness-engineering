@@ -1,0 +1,268 @@
+// Revision 4 (model-brief.md section 14, 2026-11-12) on map.json. Run from this folder:
+//   node - < patch-map-rev4.js.txt
+// Uses process.cwd(), never __dirname. Safe to run more than once: a rerun makes no edit.
+// Edits the text in place, block by block, so the file keeps its hand layout.
+// What it does:
+//   R18   declares the four groups of library-side unknowns (lib_groups) with plain labels.
+//   R18a  replaces the three reference settings with middle, the eight corners, all_good and
+//         worst_corner (plus all_good_costly, which the page brief asks for). "unfavourable" is retired.
+//   R18b  rewrites the tie note: four shared levels per run, one per group.
+//   R18c  declares the square.
+//   R19   rewrites the weight block: two weights, alone and last, as shares of the full fall.
+//   R20   declares the shared groups gate and ladder, with directions, and the shared table.
+//   R21   adds p_promote, k_promo_exact and k_promo_similar (drawn from an added stream, so every
+//         revision-3 draw stays the same), the derived values promo and g_lib, the gate branches on
+//         g_lib, the promoted-check link with the loops it closes, and its measures.
+// It changes no state, no other branch, no stock, no attribute and no policy. It checks that.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const FILE = path.join(process.cwd(), '..', '..', 'library-pathways', 'map.json');
+let raw = fs.readFileSync(FILE, 'utf8');
+const old = JSON.parse(raw);
+const NL = String.fromCharCode(10);
+function J(v) {
+  if (Array.isArray(v)) return '[' + v.map(J).join(', ') + ']';
+  if (v && typeof v === 'object') { const k = Object.keys(v); return k.length ? '{ ' + k.map(x => JSON.stringify(x) + ': ' + J(v[x])).join(', ') + ' }' : '{}'; }
+  return JSON.stringify(v);
+}
+let edits = 0;
+
+// ---------------------------------------------------------------- block helpers
+function lines() { return raw.split(NL); }
+function blockAt(key) {
+  const L = lines();
+  const start = L.findIndex(l => l.startsWith('  "' + key + '":'));
+  if (start < 0) return null;
+  let end = start + 1;
+  while (end < L.length && !L[end].startsWith('  "') && L[end] !== '}') end++;
+  let last = end - 1;
+  while (last > start && L[last].trim() === '') last--;
+  return { start, last };
+}
+function setBlock(key, text) {
+  const b = blockAt(key);
+  if (!b) throw new Error('No block ' + key);
+  const L = lines();
+  const now = L.slice(b.start, b.last + 1).join(NL);
+  const trail = now.endsWith(',') ? ',' : '';
+  const want = text + trail;
+  if (now === want) return;
+  raw = L.slice(0, b.start).concat(want.split(NL), L.slice(b.last + 1)).join(NL);
+  edits++;
+}
+function insertAfter(afterKey, key, text, gap) {
+  if (blockAt(key)) { setBlock(key, text); return; }
+  const b = blockAt(afterKey);
+  if (!b) throw new Error('No block ' + afterKey);
+  const L = lines();
+  const lastLine = L[b.last].endsWith(',') ? L[b.last] : L[b.last] + ',';
+  const add = (gap ? [''] : []).concat((text + ',').split(NL));
+  raw = L.slice(0, b.last).concat([lastLine], add, L.slice(b.last + 1)).join(NL);
+  edits++;
+}
+function swap(a, b) { if (raw.includes(b)) return; if (!raw.includes(a)) throw new Error('Text not found: ' + a.slice(0, 90)); raw = raw.replace(a, b); edits++; }
+function arrayBlock(key, items) { return '  "' + key + '": [' + NL + items.map(x => '    ' + J(x)).join(',' + NL) + NL + '  ]'; }
+function lineKey(key, value) { return '  "' + key + '": ' + J(value); }
+
+// ---------------------------------------------------------------- header
+swap('"version": 3,', '"version": 4,');
+swap('model-brief.md (sections 12 and 13, revisions 2 and 3, override the earlier sections)', 'model-brief.md (sections 12, 13 and 14, revisions 2 to 4, override the earlier sections)');
+insertAfter('revision_3_note', 'revision_4_note', lineKey('revision_4_note',
+  'Revision 4 follows brief section 14. Library-side unknowns fall into four groups: comes back, reach, entry quality and running cost. ' +
+  'The reference settings are the middle values, the eight corners of three groups, the all-good setting and the worst corner. ' +
+  'Tied draws use four shared levels, one per group. Two weights, alone and last, are shares of the full fall. ' +
+  'The gate and the ladder are shared groups, shown in their own table. ' +
+  'Checks promoted into the shared test run are a new pathway: they act at the gate with no lookup.'), false);
+
+// ---------------------------------------------------------------- R21 parameters (after retire_bad, the last unknown of the main stream)
+const ADDED_NOTE = 'Drawn from the added stream, apart from the earlier unknowns. So every revision-3 draw stays the same.';
+const NEW_PARAMS = [
+  { id: 'p_promote', name: 'Promoted checks run in the shared tests', group: 'gate', kind: 'chance',
+    meaning: 'Share of entries with a mechanical check whose check also runs in the shared tests. Only checks that exist because of an entry.',
+    draw_stream: 'added', note: ADDED_NOTE },
+  { id: 'k_promo_exact', name: 'Promoted check catches: same problem', group: 'gate', kind: 'chance',
+    meaning: 'Chance a promoted check catches a wrong output on the same problem it was written for.',
+    draw_stream: 'added', note: ADDED_NOTE },
+  { id: 'k_promo_similar', name: 'Promoted check catches: similar problem', group: 'gate', kind: 'chance',
+    meaning: 'Chance a promoted check catches a wrong output on a similar problem, one an entry fits after adapting.',
+    draw_stream: 'added', note: ADDED_NOTE }
+];
+(function () {
+  const have = JSON.parse(raw).parameters.map(p => p.id);
+  const L = lines();
+  const i = L.findIndex(l => l.startsWith('    { "id": "retire_bad",'));
+  if (i < 0) throw new Error('retire_bad line not found');
+  if (NEW_PARAMS.every(p => have.includes(p.id))) {
+    NEW_PARAMS.forEach((p, k) => { if (L[i + 1 + k].trim().replace(/,$/, '') !== J(p)) throw new Error('parameter line differs: ' + p.id); });
+    return;
+  }
+  if (NEW_PARAMS.some(p => have.includes(p.id))) throw new Error('some R21 parameters exist already');
+  const add = NEW_PARAMS.map((p, k) => '    ' + J(p) + (k < NEW_PARAMS.length - 1 ? ',' : ''));
+  L[i] = L[i] + ',';
+  raw = L.slice(0, i + 1).concat(add, L.slice(i + 1)).join(NL);
+  edits++;
+})();
+
+// ---------------------------------------------------------------- R21 derived values and the gate branches
+const D_G = '    { "id": "g", "label": "Chance the gate catches a wrong output", "expr": "1 - (1 - g_tests) * (1 - s_review * g_review)" },';
+const D_PROMO = { id: 'promo', label: 'Chance a promoted check catches a wrong output here', expr: '(held_exact * k_promo_exact + held_similar * k_promo_similar) * (1 - wrong_share) * c_check_share * p_promote' };
+const D_GLIB = { id: 'g_lib', label: 'Chance the gate catches a wrong output, with promoted checks', expr: 'g + (1 - g) * promo' };
+swap(D_G, D_G + NL + '    ' + J(D_PROMO) + ',' + NL + '    ' + J(D_GLIB) + ',');
+const GATE = ['l6_caught', 'l6_escaped', 'l7_caught', 'l7_escaped', 'l8_caught', 'l8_escaped', 'l9_caught', 'l9_escaped'];
+GATE.forEach(id => {
+  const L = lines();
+  const i = L.findIndex(l => l.startsWith('    { "id": "' + id + '",'));
+  if (i < 0) throw new Error('branch ' + id + ' not found');
+  const caught = /_caught$/.test(id);
+  const from = caught ? '"chance": "g",' : '"chance": "1 - g",';
+  const to = caught ? '"chance": "g_lib",' : '"chance": "1 - g_lib",';
+  if (L[i].includes(to)) return;
+  if (!L[i].includes(from)) throw new Error('branch ' + id + ' chance not as expected');
+  L[i] = L[i].replace(from, to);
+  raw = L.join(NL);
+  edits++;
+});
+
+// ---------------------------------------------------------------- R21 measures (after P_climbs)
+const FW = 'of 100 pieces the cheap model would get wrong alone';
+const ALL = 'of 100 pieces of work of every kind';
+const EXTRA = '(1 - g) * promo';
+const NEW_MEASURES = [
+  { id: 'fw_promo_caught', label: 'More caught at the first gate through promoted checks', unit: FW, scale: 100, per: { need: ['cheap_wrong'] }, where: { need: ['cheap_wrong'] }, flow_into: [{ state: 'L6_wrong', times: EXTRA }] },
+  { id: 'use_promo_caught_first', label: 'Caught at the first gate through promoted checks', unit: ALL, scale: 100, flow_into: [{ state: 'L6_wrong', times: EXTRA }] },
+  { id: 'use_promo_caught_all', label: 'Caught at any gate through promoted checks', unit: ALL, scale: 100, flow_into: [{ state: 'L6_wrong', times: EXTRA }, { state: 'L7_wrong', times: EXTRA }, { state: 'L8_wrong', times: EXTRA }, { state: 'L9_wrong', times: EXTRA }] },
+  { id: 'use_promo_strength', label: 'Catch chance added by promoted checks, averaged over all work', unit: 'percentage points of catch chance, averaged over all pieces of work', scale: 100, flow_into: [{ state: 'L1_trigger', times: 'promo' }] }
+];
+(function () {
+  const have = JSON.parse(raw).measures.map(m => m.id);
+  if (NEW_MEASURES.every(m => have.includes(m.id))) return;
+  if (NEW_MEASURES.some(m => have.includes(m.id))) throw new Error('some R21 measures exist already');
+  const a = '    { "id": "P_climbs", "label": "Share of work that climbs to Opus or Fable", "flow_into": ["L8_handoff"] }';
+  swap(a, a + ',' + NL + NEW_MEASURES.map(m => '    ' + J(m)).join(',' + NL));
+})();
+setBlock('usage_measures', lineKey('usage_measures', ['use_looked_up', 'use_good_in_hand', 'use_wrong_in_hand', 'use_lookup_cost', 'use_write_cost', 'use_promo_caught_first', 'use_promo_caught_all', 'use_promo_strength']));
+setBlock('usage_note', lineKey('usage_note', 'How much the library is used, for the library policy at one period. Each is a flow through this graph. ' +
+  'The two costs copy the cost of the lookup branch and of the write branches. ' +
+  'Three measures count catches through promoted checks and the catch chance they add (revision 4, R21).'));
+setBlock('funnel_note', lineKey('funnel_note', "Brief section 13, R16. Each stage is a flow through states or branches of this graph, for the library policy at one period. " +
+  'Each stage is part of the one before it. A wrong entry that comes back is counted at the third stage and leaves at the fourth. ' +
+  'A look-alike that comes back is not the right entry. ' +
+  'Checks promoted into the shared tests do not pass through this funnel. Their measure is promo_measure (revision 4, R21).'));
+insertAfter('funnel_end', 'promo_measure', lineKey('promo_measure', 'fw_promo_caught'), false);
+insertAfter('promo_measure', 'funnel_mark', lineKey('funnel_mark', 'all_good'), false);
+
+// ---------------------------------------------------------------- R18 groups and R18a reference settings
+const LIB_GROUPS = [
+  { id: 'recurrence', label: 'How much of the work comes back', short: 'comes back', poor: 'little comes back', good: 'much comes back', note: 'What the work holds. It is not a property of the design.' },
+  { id: 'reach', label: 'Whether an entry reaches the cheap model', short: 'reach', poor: 'low reach', good: 'high reach', note: 'Written, looked up, found and in the window, when an entry could exist.' },
+  { id: 'quality', label: 'Whether the entry is right and is used rightly', short: 'entry quality', poor: 'poor entries', good: 'good entries', note: 'Look-alikes, the screen, use, harm, entry quality, repair, staleness, retiring, calls saved and promoted checks.' },
+  { id: 'running_cost', label: 'What the library costs to run', short: 'running cost', poor: 'high running cost', good: 'low running cost', note: 'Lookup, screen, carry and writing.' }
+];
+const LV = ['poor', 'good'];
+const WORD = { recurrence: ['Little comes back', 'Much comes back'], reach: ['low reach', 'high reach'], quality: ['poor entries', 'good entries'] };
+const REFS = [{ id: 'middle', label: 'Every unknown at its middle value', levels: {} }];
+for (const r of [0, 1]) for (const c of [0, 1]) for (const q of [0, 1]) {
+  REFS.push({ id: 'corner_' + r + c + q, label: WORD.recurrence[r] + ', ' + WORD.reach[c] + ', ' + WORD.quality[q], levels: { recurrence: LV[r], reach: LV[c], quality: LV[q] } });
+}
+REFS.push({ id: 'all_good', label: 'All-good setting: every library unknown at its good end', levels: { recurrence: 'good', reach: 'good', quality: 'good', running_cost: 'good' } });
+REFS.push({ id: 'worst_corner', label: 'Much comes back, high reach, poor entries, high running cost', levels: { recurrence: 'good', reach: 'good', quality: 'poor', running_cost: 'poor' } });
+REFS.push({ id: 'all_good_costly', label: 'All-good setting with running cost at its high end', levels: { recurrence: 'good', reach: 'good', quality: 'good', running_cost: 'poor' } });
+insertAfter('funnel_mark', 'lib_groups', arrayBlock('lib_groups', LIB_GROUPS), true);
+insertAfter('lib_groups', 'lib_groups_note', lineKey('lib_groups_note',
+  'Brief section 14, R18. Each library-side unknown belongs to one group. Its lib_group in params.json is generated by build-params.js.txt. ' +
+  "A group's poor end is the end where the mechanism works least as intended. Its good end is where it works as intended. " +
+  'The order here is the order of the four shared levels in the ensemble.'), false);
+setBlock('reference_settings', arrayBlock('reference_settings', REFS));
+insertAfter('reference_settings', 'reference_settings_note', lineKey('reference_settings_note',
+  'Brief section 14, R18a. A group at poor has every unknown at its poor end. A group at good has every unknown at its good end. ' +
+  'A level may also be a number from 0 to 1, a quantile counted from the poor end. ' +
+  'A group not named stays at its middle values. Other-side unknowns always stay at their middle values. ' +
+  'The corners leave running cost at its middle values. ' +
+  'all_good_costly is declared for the page: the all-good setting with running cost at its high end. ' +
+  'The funnel shows one faint mark, at funnel_mark.'), false);
+const SQUARE = { x: 'reach', y: 'quality', steps: 11, period: 'last',
+  sheets: [{ id: 'little', label: 'Little comes back', levels: { recurrence: 'poor' } }, { id: 'middle', label: 'Middle value of how much comes back', levels: { recurrence: 'middle' } }, { id: 'much', label: 'Much comes back', levels: { recurrence: 'good' } }],
+  fixed: { running_cost: 'middle' },
+  ratios: ['cost_vs_ladder', 'wrong_vs_ladder', 'cost_vs_top', 'wrong_vs_top'],
+  note: 'Brief section 14, R18c. Reach runs across and entry quality up, in eleven levels from the poor end (0) to the good end (1). ' +
+    "A level is a quantile of each unknown's range, counted from its poor end, as in the tied draws. " +
+    'Each sheet fixes how much comes back: little, the middle value or much. ' +
+    'Running cost and other-side unknowns stay at their middle values. Each cell gives the four ratios at the last period.' };
+insertAfter('reference_settings_note', 'square', lineKey('square', SQUARE), true);
+
+// ---------------------------------------------------------------- R18b ties
+setBlock('ensemble_ties', lineKey('ensemble_ties', { levels: [0, 0.5, 1], shared_levels: 'lib_groups',
+  note: 'Brief section 14, R18b. Each run draws four shared levels, one per group, in the order of lib_groups. ' +
+    'They come from a stream kept apart from the own draws. ' +
+    "A library-side unknown sits at tie times its group's level plus (1 - tie) times its own draw. Both are counted from its poor end. " +
+    'No group is tied to another. Tie 0 is the untied draw, the same as revision 3, draw for draw. ' +
+    'Other unknowns are always drawn on their own. The three unknowns of R21 come from a third stream.' }));
+
+// ---------------------------------------------------------------- R19 weight
+const WEIGHT_NOTE = 'Brief section 14, R19. The score of a setting is the mean fall in the library\'s cost and wrong rate from the middle values. ' +
+  'The full fall is the score of the all-good setting. ' +
+  'For a set of library-side unknowns, alone is the score with only that set at its good ends. ' +
+  'Last is the full fall less the score of the all-good setting with that set back at its middle values. ' +
+  'Both are shares of the full fall. Alone can be below zero and last above one. ' +
+  'The shares do not add up, because the steps multiply. Other-side unknowns stay at their middle values. ' +
+  'A limitation that acts only through other-side unknowns has no weight on this measure. ' +
+  'If those unknowns belong to the gate or the ladder, the shared table shows them.';
+setBlock('weight', '  "weight": {' + NL +
+  '    "period": "last",' + NL +
+  '    "group_by": "main_step",' + NL +
+  '    "base": "middle",' + NL +
+  '    "full": "all_good",' + NL +
+  '    "score": ["library_cost", "library_wrong"],' + NL +
+  '    "rank_by": "last",' + NL +
+  '    "note": ' + JSON.stringify(WEIGHT_NOTE) + NL +
+  '  }');
+
+// ---------------------------------------------------------------- R20 shared groups and their table
+const SHARED = [
+  { id: 'gate', label: 'The gate: tests and review', moves: { g_tests_visible: 'high', g_tests_latent: 'high', g_review: 'high', s_review: 'high' } },
+  { id: 'ladder', label: 'The ladder: retry, Opus, Fable and the handoff', moves: { rho_retry: 'high', o_opus: 'high', o_fable: 'high', c_handoff: 'low' } }
+];
+insertAfter('weight', 'shared_groups', arrayBlock('shared_groups', SHARED), true);
+insertAfter('shared_groups', 'shared_table', lineKey('shared_table', { bases: ['middle', 'all_good'], moves: [[], ['gate'], ['ladder'], ['gate', 'ladder']], period: 'last',
+  note: 'Brief section 14, R20. These unknowns act in all three ways of working, so the weight gives them none. ' +
+    'Each group moves together to the end shown. The table gives cost and wrong rate of the three ways. ' +
+    'It does so at the middle values and at the all-good setting. ' +
+    'Each is shown as it is, with the gate moved, with the ladder moved, and with both.' }), false);
+
+// ---------------------------------------------------------------- R21 the link drawn in the graph
+const LINKS = [{
+  id: 'promoted_checks', label: 'Checks promoted into the shared tests', policy: 'library',
+  from_stock: 'E_good', via: 'promo', to_step: 'L6', to_branches: GATE,
+  unknowns: ['p_promote', 'k_promo_exact', 'k_promo_similar', 'c_check_share'],
+  measure: 'fw_promo_caught', lookup: false,
+  loops: [
+    { id: 'promo_climb', polarity: 'R', label: 'More caught at the gate, more climbs, more right strong solves written, more good entries',
+      path: ['E_good', 'promoted_checks', 'l6_caught', 'P_climbs', 'W_good', 'E_good'] },
+    { id: 'promo_escape', polarity: 'R', label: 'Fewer strong-tier escapes pass, fewer bad entries written, a smaller bad share',
+      path: ['E_good', 'promoted_checks', 'l8_caught', 'W_bad_escape', 'E_bad', 'wrong_share'] }
+  ]
+}];
+insertAfter('branches', 'links', arrayBlock('links', LINKS), true);
+insertAfter('links', 'links_note', lineKey('links_note',
+  'A link is an influence on branch chances that is not a step of a piece of work. ' +
+  "promoted_checks: in the library way of working, an entry's mechanical check can also run in the shared tests. " +
+  'It needs no lookup, so it does not pass through the funnel. ' +
+  "It can only raise the gate's catch chance, at every gate pass: g_lib = g + (1 - g) * promo. " +
+  'That equals 1 - (1 - g) * (1 - promo). It acts on exact and similar entries, weighed by the share of good entries. ' +
+  "Left out: a bad entry's promoted check can pin a defect in place. Leaving it out leans toward the library."), false);
+
+// ---------------------------------------------------------------- checks
+const map = JSON.parse(raw);
+const txt = JSON.stringify(map);
+if (/unfavourable|favourable/.test(txt)) throw new Error('the retired names are still in the map');
+const noGate = bs => bs.map(b => GATE.includes(b.id) ? Object.assign({}, b, { chance: null }) : b);
+const sig = m => JSON.stringify({ s: m.states, b: noGate(m.branches), st: m.stocks, a: m.attributes, f: m.funnels, fe: m.funnel_end, c: m.class_chance, pol: m.policies,
+  d: m.derived.filter(x => x.id !== 'promo' && x.id !== 'g_lib'), p: m.parameters.filter(x => !NEW_PARAMS.some(n => n.id === x.id)).map(p => p.id),
+  ms: m.measures.filter(x => !NEW_MEASURES.some(n => n.id === x.id)) });
+if (sig(old) !== sig(map)) throw new Error('Something outside revision 4 changed; nothing written');
+GATE.forEach(id => { const b = map.branches.find(x => x.id === id); if (b.chance !== (/_caught$/.test(id) ? 'g_lib' : '1 - g_lib')) throw new Error(id); });
+NEW_MEASURES.forEach(n => { const m = map.measures.find(x => x.id === n.id); if (!m || JSON.stringify(m) !== JSON.stringify(n)) throw new Error('measure ' + n.id + ' not as declared'); });
+if (map.version !== 4) throw new Error('version');
+fs.writeFileSync(FILE, raw);
+console.log('map.json: ' + edits + ' edits; parameters ' + map.parameters.length + ', measures ' + map.measures.length + ', reference settings ' + map.reference_settings.length + '; states and stocks unchanged');

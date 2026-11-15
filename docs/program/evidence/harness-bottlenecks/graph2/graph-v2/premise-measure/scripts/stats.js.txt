@@ -1,0 +1,36 @@
+// Shares with Wilson 95 % intervals and a file-cluster bootstrap interval (the sample is 12 files x about 5 findings).
+const fs = require('fs');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const F = JSON.parse(fs.readFileSync(W + '/classify.json', 'utf8')).findings;
+const N = F.length;
+function wilson(k, n) { const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d; return [Math.max(0, c - h), Math.min(1, c + h)]; }
+let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+const files = [...new Set(F.map((f) => f.id[0]))];
+function boot(pred) { const v = []; for (let b = 0; b < 4000; b++) { let k = 0, n = 0; for (let j = 0; j < files.length; j++) { const fl = files[Math.floor(rnd() * files.length)]; for (const f of F) if (f.id[0] === fl) { n++; if (pred(f)) k++; } } v.push(k / n); } v.sort((x, y) => x - y); return [v[100], v[3899]]; }
+const row = (name, pred) => { const k = F.filter(pred).length; const w = wilson(k, N); const bt = boot(pred); return { name, k, n: N, share: +(k / N).toFixed(3), wilson95: w.map((x) => +x.toFixed(3)), clusterBoot95: bt.map((x) => +x.toFixed(3)) }; };
+const has = (f, c) => (f.p[c] || 0) > 0;
+const only = (f, set) => Object.keys(f.p).every((c) => set.includes(c));
+const out = { n: N, files: files.length, rows: [] };
+for (const t of ['Q', 'M', 'S', 'R', 'I']) out.rows.push(row('type ' + t, (f) => f.type === t));
+for (const t of ['typed', 'new', 'interp']) out.rows.push(row('R9 class ' + t, (f) => f.r9 === t));
+for (const c of ['a', 'b', 'bx', 'c', 'd', 'e', 'epin', 'f']) out.rows.push(row('has premise ' + c, (f) => has(f, c)));
+out.rows.push(row('all premises in this repository (a, b)', (f) => only(f, ['a', 'b'])));
+out.rows.push(row('all premises in some version control or pinned (a, b, bx, epin)', (f) => only(f, ['a', 'b', 'bx', 'epin'])));
+out.rows.push(row('same, if untracked files had been hashed when cited (a, b, bx, epin, c)', (f) => only(f, ['a', 'b', 'bx', 'epin', 'c'])));
+out.rows.push(row('has a premise outside any version control (c, d or e)', (f) => has(f, 'c') || has(f, 'd') || has(f, 'e')));
+out.rows.push(row('has a premise that cannot be re-checked at all (d or f)', (f) => has(f, 'd') || has(f, 'f')));
+out.rows.push(row('deterministic and fully checkable now (type Q and premises only a, b)', (f) => f.type === 'Q' && only(f, ['a', 'b', 'f']) && !has(f, 'f')));
+out.rows.push(row('type Q, any premises', (f) => f.type === 'Q'));
+// premise counts
+const tot = {}; let all = 0; for (const f of F) for (const [c, k] of Object.entries(f.p)) { tot[c] = (tot[c] || 0) + k; all += k; }
+out.premiseShares = Object.fromEntries(Object.entries(tot).sort().map(([c, k]) => [c, { count: k, share: +(k / all).toFixed(3) }]));
+out.premisesTotal = all;
+const per = F.map((f) => Object.values(f.p).reduce((s, k) => s + k, 0)).sort((x, y) => x - y);
+out.premisesPerFinding = { mean: +(all / N).toFixed(2), median: per[Math.floor(N / 2)], min: per[0], max: per[N - 1], p25: per[Math.floor(N / 4)], p75: per[Math.floor(3 * N / 4)] };
+const byType = {}; for (const f of F) { const s = Object.values(f.p).reduce((a, b) => a + b, 0); const b = (byType[f.type] = byType[f.type] || { n: 0, sum: 0, kinds: {} }); b.n++; b.sum += s; for (const [c, k] of Object.entries(f.p)) b.kinds[c] = (b.kinds[c] || 0) + k; }
+out.byType = Object.fromEntries(Object.entries(byType).map(([t, b]) => [t, { n: b.n, meanPremises: +(b.sum / b.n).toFixed(2), kinds: b.kinds }]));
+const byFile = {}; for (const f of F) { const k = f.id[0]; byFile[k] = byFile[k] || {}; byFile[k][f.type] = (byFile[k][f.type] || 0) + 1; }
+out.typeByFile = byFile;
+fs.writeFileSync(W + '/stats.json', JSON.stringify(out, null, 1));
+for (const r of out.rows) console.log(r.name.padEnd(78), String(r.k).padStart(3), (r.share * 100).toFixed(0).padStart(4) + '%', 'W', r.wilson95.map((x) => (x * 100).toFixed(0)).join('-'), 'B', r.clusterBoot95.map((x) => (x * 100).toFixed(0)).join('-'));
+console.log(JSON.stringify({ premiseShares: out.premiseShares, total: all, per: out.premisesPerFinding, byType: out.byType }, null, 0));

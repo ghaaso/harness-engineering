@@ -1,0 +1,168 @@
+// Section D of the graph-v2 owner page: three real lookups stepped through on the frozen commit's facts.
+// Run from this folder:  node - < computeD.js.txt      Writes examples.json here. Reads only.
+// Inputs: the tuning-era facts of the frozen commit (nodes.jsonl, edges.jsonl) and the shared tokenizer
+// (imported, not edited). This is an explanation of the mechanism, not a result: nothing here is scored.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const BUILD = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build';
+const SHA = 'a31924a3818f4ac94b695906d107c72c912792b2';
+const DIR = path.join(BUILD, 'facts', 'cache', SHA);
+const { countTokens } = require(path.join(BUILD, 'arms', 'common', 'tokenizer.js'));
+const rd = f => fs.readFileSync(path.join(DIR, f), 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const N = rd('nodes.jsonl'), Eraw = rd('edges.jsonl');
+const byId = new Map(N.map(n => [n.id, n]));
+const SEED = 20261113;
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rand = mulberry32(SEED);
+// canonical edges: one per (kind, src, dst), self loops dropped, co_changed symmetric (as the shared loader)
+const E = new Map();
+for (const e of Eraw) {
+  if (!byId.has(e.src) || !byId.has(e.dst) || e.src === e.dst) continue;
+  let s = e.src, d = e.dst; if (e.kind === 'co_changed' && d < s) { const t = s; s = d; d = t; }
+  const k = s + '|' + e.kind + '|' + d; const a = e.attrs || {};
+  const prev = E.get(k);
+  if (!prev) E.set(k, { s, d, kind: e.kind, w: e.confidence == null ? 1 : e.confidence, evp: e.evidence_path, evl: e.evidence_line, support: a.support || 0 });
+  else { if ((e.confidence || 0) > prev.w) prev.w = e.confidence; if ((a.support || 0) > prev.support) prev.support = a.support; }
+}
+const edges = [...E.values()];
+const MEMBER_SRC = new Set(['runtime', 'slice', 'invariant_group']);
+const DOCS = new Set(['cites', 'mentions', 'constrains']);
+const fileNode = new Map(); for (const n of N) if ((n.kind === 'file' || n.kind === 'doc') && n.path) fileNode.set(n.path, n.id);
+const KEEP_OWN = new Set(['invariant', 'invariant_group', 'doc_section', 'doc_id', 'missing_ref', 'ambiguous_ref', 'runtime', 'slice']);
+const col = id => { const n = byId.get(id); if (KEEP_OWN.has(n.kind)) return id; if (n.path && fileNode.has(n.path)) return fileNode.get(n.path); return id; };
+const isCodeFile = id => { const n = byId.get(id); return n && n.kind === 'file'; };
+const label = id => { const n = byId.get(id); const h = id.indexOf('#'); if ((id.startsWith('sym:') || id.startsWith('const:')) && h > 0) return id.slice(h + 1); return n.kind + ':' + n.name; };
+const short = p => p; // paths are shown whole; the tokenizer counts them whole
+// typed graph collapsed to files, undirected; withDocs adds the document relations (for the rules example)
+function collapsed(withDocs) {
+  const adj = new Map(); const add = (a, b) => { if (a === b) return; if (!adj.has(a)) adj.set(a, new Set()); if (!adj.has(b)) adj.set(b, new Set()); adj.get(a).add(b); adj.get(b).add(a); };
+  for (const e of edges) {
+    if (e.kind === 'co_changed') continue;
+    if (e.kind === 'contains' && MEMBER_SRC.has(byId.get(e.s).kind)) continue;
+    if (!withDocs && DOCS.has(e.kind)) continue;
+    add(col(e.s), col(e.d));
+  }
+  return adj;
+}
+const coNb = new Map();
+for (const e of edges) if (e.kind === 'co_changed') { for (const [a, b] of [[e.s, e.d], [e.d, e.s]]) { if (!coNb.has(a)) coNb.set(a, new Map()); coNb.get(a).set(b, { conf: e.w, support: e.support }); } }
+function bfs(adj, seed, maxHop) { const hop = new Map([[seed, 0]]); let fr = [seed]; for (let h = 1; h <= maxHop; h++) { const nx = []; for (const u of fr) for (const v of adj.get(u) || []) if (!hop.has(v)) { hop.set(v, h); nx.push(v); } fr = nx; } return hop; }
+function ppr(adj, seed, alpha = 0.15, iters = 25) {
+  let p = new Map([[seed, 1]]);
+  for (let it = 0; it < iters; it++) { const q = new Map([[seed, alpha]]);
+    for (const [u, m] of p) { const nb = adj.get(u); if (!nb || !nb.size) { q.set(seed, (q.get(seed) || 0) + (1 - alpha) * m); continue; } const sh = (1 - alpha) * m / nb.size; for (const v of nb) q.set(v, (q.get(v) || 0) + sh); }
+    p = q; }
+  return p;
+}
+const rankOf = (ids, score) => { const s = ids.slice().sort((a, b) => score(b) - score(a) || (a < b ? -1 : 1)); const r = new Map(); s.forEach((x, i) => r.set(x, i + 1)); return r; };
+// relation lines between the seed side and an item (direct typed edges), for the two answer formats
+function relLines(seedNodes, itemFile, max) {
+  const out = [];
+  for (const e of edges) {
+    if (e.kind === 'co_changed' || e.kind === 'contains' || e.kind === 'defines' || DOCS.has(e.kind)) continue;
+    const sIn = seedNodes.has(e.s), dIn = seedNodes.has(e.d);
+    const sF = col(e.s) === itemFile, dF = col(e.d) === itemFile;
+    if (sIn && dF) out.push({ dir: '->', kind: e.kind, other: e.d, mine: e.s, evp: e.evp, evl: e.evl });
+    else if (dIn && sF) out.push({ dir: '<-', kind: e.kind, other: e.s, mine: e.d, evp: e.evp, evl: e.evl });
+  }
+  out.sort((a, b) => (a.evp || '').localeCompare(b.evp || '') || (a.evl || 0) - (b.evl || 0));
+  return { all: out.length, lines: out.slice(0, max) };
+}
+function renderItem(seedNodes, item, seedLabel, seedFile) {
+  const r = relLines(seedNodes, item.id, 3);
+  const n = byId.get(item.id);
+  let tree = n.path + '\n';
+  for (const l of r.lines) tree += '  ' + (l.dir === '<-' ? '<-' : '') + l.kind + ' ' + label(l.other) + (l.evp ? ' @' + l.evp.split('/').pop() + ':' + l.evl : '') + '\n';
+  if (r.all > r.lines.length) tree += '  +' + (r.all - r.lines.length) + ' more\n';
+  if (item.co) tree += '  changed together in ' + item.co.support + ' commits\n';
+  if (!r.all && !item.co && item.via) tree += '  via ' + byId.get(item.via).path + '\n';
+  let tri = '';
+  for (const l of r.lines) tri += (l.dir === '<-' ? l.other + ' ' + l.kind + ' ' + l.mine : l.mine + ' ' + l.kind + ' ' + l.other) + (l.evp ? ' @' + l.evp + ':' + l.evl : '') + '\n';
+  if (item.co) tri += (seedFile || seedLabel) + ' co_changed ' + item.id + ' support=' + item.co.support + '\n';
+  if (!r.all && !item.co && item.via) tri += seedLabel + ' reaches ' + item.via + '\n' + item.via + ' reaches ' + item.id + '\n';
+  return { tree, tree_tok: countTokens(tree), triples: tri, triples_tok: countTokens(tri), n_rel: r.all };
+}
+function codeExample(kind, seedFile, seedNodes, seedLabel, question, entry) {
+  const adj = collapsed(false);
+  const hop = bfs(adj, seedFile, 2);
+  const co = coNb.get(seedFile) || new Map();
+  const pool = new Set();
+  for (const [v, h] of hop) if (h >= 1 && isCodeFile(v)) pool.add(v);
+  for (const v of co.keys()) if (isCodeFile(v)) pool.add(v);
+  const pr = ppr(adj, seedFile);
+  const ids = [...pool];
+  const pprRank = rankOf(ids, x => pr.get(x) || 0);
+  const coIds = ids.filter(x => co.has(x));
+  const coRank = rankOf(coIds, x => co.get(x).conf + co.get(x).support * 1e-6);
+  const rrf = x => 1 / (60 + pprRank.get(x)) + (coRank.has(x) ? 1 / (60 + coRank.get(x)) : 0);
+  const fused = rankOf(ids, rrf);
+  // the via file for 2-hop items: a 1-hop neighbour that links to it
+  const items = ids.map(id => {
+    let via = null; if (hop.get(id) === 2) for (const u of adj.get(id) || []) if (hop.get(u) === 1 && isCodeFile(u)) { via = u; break; }
+    const it = { id, path: byId.get(id).path, hop: hop.has(id) ? hop.get(id) : null, co: co.has(id) ? co.get(id) : null, via,
+      ppr: +(pr.get(id) || 0).toPrecision(4), ppr_rank: pprRank.get(id), co_rank: coRank.get(id) || null, rrf: +rrf(id).toPrecision(5), rank: fused.get(id),
+      file_tokens: byId.get(id).tokens || 0, is_test: byId.get(id).is_test ? 1 : 0 };
+    return Object.assign(it, renderItem(seedNodes, it, seedLabel, seedFile));
+  }).sort((a, b) => a.rank - b.rank);
+  const whole = items.reduce((a, x) => a + x.tree_tok, 0);
+  return { kind, question, seed: { id: seedFile, path: byId.get(seedFile).path, label: seedLabel, file_tokens: byId.get(seedFile).tokens || 0 }, entry,
+    pool: { n: items.length, hop1: items.filter(x => x.hop === 1).length, hop2: items.filter(x => x.hop === 2).length, co_only: items.filter(x => x.hop == null).length, co_any: coIds.length, tree_tokens_all: whole, file_tokens_all: items.reduce((a, x) => a + x.file_tokens, 0) },
+    graph: { nodes_reachable_2hop: hop.size - 1, collapsed_nodes: adj.size }, items };
+}
+function findEntry(name) {
+  const m = N.filter(n => n.name === name && n.path);
+  const lines = m.slice(0, 8).map(n => n.path + ':' + (n.line_start || 1) + ' ' + n.kind + ' ' + (n.signature ? n.signature.split('\n')[0].slice(0, 100) : n.name)).join('\n') + '\n';
+  return { query: name, matches: m.length, shown: Math.min(8, m.length), text: lines, tokens: countTokens(lines) };
+}
+const pick = arr => arr[Math.floor(rand() * arr.length)];
+const out = { seed: SEED, prng: 'mulberry32', commit: SHA, tokenizer: 'shared regex tokenizer (arms/common/tokenizer.js, regex-bpe-approx v1)', examples: [] };
+// 1. who uses this definition and what could it affect
+{
+  const users = new Map();
+  for (const e of edges) if (['calls', 'renders', 'passes_callable', 'depends_injects', 'uses_constant', 'imports'].includes(e.kind)) { const t = byId.get(e.d); if (!['function', 'method'].includes(t.kind)) continue; const sp = byId.get(e.s).path; if (!sp || sp === t.path) continue; if (!users.has(e.d)) users.set(e.d, new Set()); users.get(e.d).add(sp); }
+  const cand = [...users.keys()].filter(id => { const n = byId.get(id); return !n.is_test && ['backend', 'web', 'mobile'].includes(n.runtime) && users.get(id).size >= 3 && fileNode.has(n.path) && coNb.has(fileNode.get(n.path)); }).sort();
+  const def = pick(cand); const n = byId.get(def);
+  const ex = codeExample('uses', fileNode.get(n.path), new Set([def]), def, 'Who uses ' + n.name + ' and what could a change to it affect?', findEntry(n.name));
+  ex.rule = 'Candidates: production functions and methods (backend, web or mobile) used from 3 or more other files, whose file has changed-together history; ' + cand.length + ' candidates, sorted by id, one taken by a seeded draw (mulberry32, seed ' + SEED + ', first draw).';
+  ex.candidates = cand.length; ex.def = { id: def, name: n.name, signature: n.signature, line: n.line_start, users_files: users.get(def).size };
+  out.examples.push(ex);
+}
+// 2. which rule constrains this file (rules from the invariants document, with their constrains edges)
+{
+  const inFile = new Map();
+  for (const e of edges) if (e.kind === 'constrains' && byId.get(e.s).kind === 'invariant') { const t = byId.get(e.d); if (!t.path || !fileNode.has(t.path)) continue; const f = fileNode.get(t.path); if (!isCodeFile(f) || byId.get(f).is_test) continue; if (!inFile.has(f)) inFile.set(f, []); inFile.get(f).push(e); }
+  const cand = [...inFile.keys()].sort();
+  const f = pick(cand); const fn = byId.get(f);
+  const adj = collapsed(true); const hop = bfs(adj, f, 3); const pr = ppr(adj, f);
+  const rules = new Map();
+  for (const e of edges) if (e.kind === 'constrains' && byId.get(e.s).kind === 'invariant') { const t = byId.get(e.d); const tf = t.path && fileNode.has(t.path) ? fileNode.get(t.path) : e.d; const h = tf === f ? 1 : (hop.has(tf) && hop.get(tf) === 1 ? 2 : null); if (h == null) continue; if (!rules.has(e.s) || rules.get(e.s).hop > h) rules.set(e.s, { hop: h, anchors: [] }); }
+  for (const e of edges) if (e.kind === 'constrains' && rules.has(e.s)) rules.get(e.s).anchors.push(e);
+  const ids = [...rules.keys()];
+  const pprRank = rankOf(ids, x => pr.get(x) || 0); const hopRank = rankOf(ids, x => -rules.get(x).hop + rules.get(x).anchors.filter(a => byId.get(a.d).path === fn.path).length * 1e-3);
+  const rrf = x => 1 / (60 + pprRank.get(x)) + 1 / (60 + hopRank.get(x)); const fused = rankOf(ids, rrf);
+  const items = ids.map(id => { const r = byId.get(id); const R = rules.get(id); const here = R.anchors.filter(a => byId.get(a.d).path === fn.path);
+    let tree = 'CLAUDE.md:' + r.line_start + ' ' + r.name + '\n'; for (const a of (here.length ? here : R.anchors).slice(0, 3)) tree += '  constrains ' + (byId.get(a.d).kind === 'file' ? byId.get(a.d).path : label(a.d)) + ' @' + (byId.get(a.d).path || '').split('/').pop() + ':' + (byId.get(a.d).line_start || '') + '\n';
+    tree += '  role: not recorded in the current graph\n';
+    let tri = ''; for (const a of (here.length ? here : R.anchors).slice(0, 3)) tri += id + ' constrains ' + a.d + ' @CLAUDE.md:' + a.evl + '\n';
+    return { id, path: 'CLAUDE.md', name: r.name, line: r.line_start, rule_tokens: r.tokens || 0, hop: R.hop, anchors_total: R.anchors.length, anchors_here: here.length,
+      ppr: +(pr.get(id) || 0).toPrecision(4), ppr_rank: pprRank.get(id), co_rank: null, hop_rank: hopRank.get(id), rrf: +rrf(id).toPrecision(5), rank: fused.get(id),
+      tree, tree_tok: countTokens(tree), triples: tri, triples_tok: countTokens(tri), file_tokens: r.tokens || 0 }; }).sort((a, b) => a.rank - b.rank);
+  const fe = findEntry(fn.name);
+  out.examples.push({ kind: 'rules', question: 'Which rule constrains ' + fn.path + '?', rule: 'Candidates: production code files that hold a node with a constrains edge from an invariant of the invariants document; ' + cand.length + ' candidates, sorted by id, one taken by the second seeded draw.', candidates: cand.length,
+    seed: { id: f, path: fn.path, label: f, file_tokens: fn.tokens || 0 }, entry: fe,
+    pool: { n: items.length, hop1: items.filter(x => x.hop === 1).length, hop2: items.filter(x => x.hop === 2).length, co_only: 0, co_any: 0, tree_tokens_all: items.reduce((a, x) => a + x.tree_tok, 0), file_tokens_all: items.reduce((a, x) => a + x.file_tokens, 0) },
+    invariants_total: N.filter(n => n.kind === 'invariant').length, invariants_file_tokens: (byId.get(fileNode.get('CLAUDE.md')) || {}).tokens || 0, items });
+}
+// 3. what changes with this file
+{
+  const cand = N.filter(n => n.kind === 'file' && !n.is_test && ['backend', 'web', 'mobile'].includes(n.runtime) && coNb.has(n.id) && [...coNb.get(n.id).keys()].filter(isCodeFile).length >= 3).map(n => n.id).sort();
+  const f = pick(cand); const fn = byId.get(f);
+  const seedNodes = new Set(N.filter(n => n.path === fn.path).map(n => n.id));
+  const ex = codeExample('cochange', f, seedNodes, f, 'What usually changes together with ' + fn.path + '?', findEntry(fn.name));
+  ex.rule = 'Candidates: production code files with 3 or more changed-together code neighbours; ' + cand.length + ' candidates, sorted by id, one taken by the third seeded draw.'; ex.candidates = cand.length;
+  out.examples.push(ex);
+}
+for (const ex of out.examples) ex.items = ex.items.slice(0, 60);
+fs.writeFileSync(path.join(process.cwd(), 'examples.json'), JSON.stringify(out, null, 1));
+for (const ex of out.examples) console.log(ex.kind, '|', ex.question, '| pool', ex.pool.n, '| cand', ex.candidates, '| top', ex.items.slice(0, 5).map(i => (i.path || i.name) + ' ' + i.tree_tok).join(' ; '));

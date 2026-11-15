@@ -1,0 +1,159 @@
+=== schema | schema: a typed property graph built for this repo (measured on HEAD 3415b5e, tracked plus untracked files, 2026-11-12)
+findings 16 favours {"graph":9,"depends":4,"neither":3}
+BUILD RECS:
+  - Use typed edges with a hop budget per edge type (metapaths), not one global hop limit. Example: calls up to 3 within a runtime, then exactly one calls_url hop, one registers_route hop, calls up to 3 on the backend, then one writes_table hop.
+  - Extract in this order of value for effort:
+(1) route table + client URL matching + pytest HTTP calls
+(2) Python calls with the measured type rules (imports/re-exports, self and bases, __init__ attributes, Annotated Depends aliases, pytest fixture return types including tuple unpacking, closure scope, return annotations) + Depends + passes_callable
+(3) tables, columns and FKs; reads and writes including unit-of-work attribute writes; migration chain and touches; settings
+(4) outbox kind and navigation-name edges
+(5) TS/JS calls and JSX renders through the TypeScript compiler API
+(6) test dependency_overrides and fixture scope
+(7) CLAUDE.md invariants and the document graph
+(8) git co-change as a ranking signal
+(9) context and prop callback resolution
+  - Route the outbox through kind nodes (enqueue site -> kind -> jobsApi method) and never through the outboxSync send switch. Measured: the switch adds 6 false routes out of 14.
+  - Compute hub degree per edge type on production edges only. Tag transport and infrastructure providers (core.db get_session, api.ts request, apiGet/apiSend, useApp, makeItem/sendOrQueue) and exclude them from impact paths unless asked.
+  - Attach calls_url edges at the enclosing API function (for example jobsApi.claim), not at the transport function.
+  - Add an overrides edge from test files that set app.dependency_overrides[provider]. Cut test-reach paths through an overridden provider. Label each test as unit, router-with-fakes or integration.
+  - Drop constructor and unit-of-work table edges that come from test files. Handle session.delete(obj). Keep raw-SQL table references with via=sql.
+  - Key document ids as (doc family, id). Add version/supersede links between family members. Give each citation edge a resolved, ambiguous or not-in-repo status. Index untracked docs and code, because 45 of 83 md files under docs/ are untracked.
+  - Make tables, columns, UPPER constants, config keys and import-linter contract edges first-class nodes and edges, so invariants can anchor to them. With those types 18 of 19 anchor; with files and symbols only, 16 of 19.
+  - Rebuild per worktree at query time (about 5 s full). Make the Python stage incremental per file. The TS stage needs the whole program, about 2.6 s, unless an incremental builder is used.
+  - Return answers ranked and grouped by slice, runtime and test/prod within a token budget. A raw transitive list floods on hub targets.
+TEST RECS:
+  - Score answers on correctness and completeness against hand-checked ground truth, not on size. Measured examples of where structure changes the answer: kind-aware vs call-only routes from a screen (8 vs 14 routes); test reach with and without route and override edges (13 integration tests missed by call edges; 3 false via mocked routers).
+  - Use repo-specific question sets with known hop requirements:
+- screen -> tables (7-9 hops)
+- service impact across runtimes (up to 8)
+- tests reaching a function (1-6)
+- invariants on a file (1-2)
+- other half of a rule (2-3)
+- setting readers (1-3)
+- migrations touching a table
+  - Give the relational baseline the same typed edges and the same hop budgets: SQLite recursive CTEs with an edge-type filter per step. The comparison should test the store and the algorithms, not the extraction.
+  - Vary the hop limit per question type and report the answer size in tokens at each hop. Reverse reach p90 grows 3/8/15/22/34 over hops 1/2/3/4/6, and the maximum reaches 320 at hop 6.
+  - Include hub-heavy targets (get_session, api.ts request, sendOrQueue) and ordinary targets. Report damping variants: none, production in-degree, edge-type exclusion, ranking.
+  - Use the co-change pairs at support 3 or more (387) as a weak external check of 'what changes together'. The typed graph joins 30 of 33 cross-runtime pairs within 5 hops.
+OPEN:
+  - Do agent sessions on this repo actually ask cross-runtime or impact questions often enough to matter? The recorded sessions here are mostly document work.
+  - Will the context and prop callback calls (about 70 in production) resolve through checker.getTypeAtLocation on the context value type?
+  - Recall of the Python call graph against an independent tool. None is installed; pyright or jedi would be the candidates.
+  - Precision of writes_column and of the URL method detection, which were not sampled.
+  - Should co-change be an edge or only a ranking feature, given only 129 pairs at support 5 or more?
+  - How to resolve section-sign references (1,752) and ambiguous bare file names (87) in docs without line context.
+  - The CLAUDE.md claim that three clients regex the 409 detail string is not backed by any client file. How should a doc graph flag assertions with no anchor?
+NOT COVERED:
+  - Graph engines and algorithm choice (personalised PageRank, embeddings, stores). These belong to other lanes; this lane used in-memory BFS only.
+  - Real tokenization: all token figures are chars/4.
+  - Independent call-graph tools (pyright, jedi, tsserver call hierarchy). None was run and none is installed.
+  - Context and prop callback resolution, the test overrides edge, and session.delete writes: not built.
+  - Precision of document citations was not re-sampled in this lane (the earlier check found 2 wrong out of 837).
+  - The full LocAgent paper (abstract page only) and the Yamaguchi CPG paper (search snippets only).
+  - report.md was refused by the harness (subagents must return text); this structured output is the report. All scripts and outputs (py_extract.py, ts_extract.js, join.js, join2.js, docs_extract.js, iddup.js, git_extract.js, cochange_vs_imports.js, patch_jsx.js, fix74.js, *_stats.txt, *_out.json, *_graph.json, precision samples) are in the lane folder.
+TABLE Node types (measured counts)
+  | runtime | 3 + ops-server process | name
+  | capability folder | 20 names; 6 in 2 or more runtimes (attendance/jobs/media in all three; auth, dashboard M+W; ops B+W) | runtimes
+  | backend slice | 12 features + core + shared | contract membership
+  | file | 618 tracked + 267 untracked; 477 code; backend .py 218 | path, runtime, slice, tokens, churn, fix-churn, tracked flag
+  | symbol backend | 1,744 = function 1,175, class 241, method 288, nested 40 | path, line range, signature, tokens, test flag
+  | symbol mobile | 514 = function 470 (106 in tests), component 40, class 1, method 3 | same
+  | symbol web | 280 = function 185 (19 in tests), component 95 | same
+  | route | 77 backend (13 routers under /api) + 8 ops-server | method, full path, handler
+  | client URL site | 111 literal sites (75 production) + 4 non-literal wrappers | method, normalised path, enclosing function
+  | pytest HTTP call | 380 | method, path
+  | table / column | 42 / 439 | name, model class
+  | migration | 46 | revision, path, ops
+  | settings key | 47 FIXFLOW_* fields; 7 shop_setting KEY_*; EXPO_PUBLIC 2; VITE 3 | env name, default
+  | outbox kind | 10 (+ clock_out in the attendance queue) | stable-id or unique, droppable
+  | nav screen name | 12 names from 25 navigate() calls; 43 Route/Screen elements | registered component
+  | test | pytest 694 functions, 46 fixtures; mobile 330; web 106 | kind: unit / router-with-fakes / integration
+  | doc / section | 94 md (45 untracked); 1,062 headings | heading path, tokens, family/version
+  | doc id | 199 defined; 85 defined in more than one doc | key = (doc family, id)
+  | invariant | 19 bullets in 8 groups | group, anchors
+  | commit | 323 non-merge (459 with merges), 72 fix | sha, date, subject
+TABLE Edge types (count | method | reliability)
+  | defines | 1,744 py + 794 TS | ast / TS API | exact
+  | imports | 2,033 name-level, 1,119 file pairs | earlier build.js | 100% on a 30-file sample
+  | calls py | 2,377 sites -> 2,085 distinct | ast + type rules | precision 25/25, about 1.5% missed
+  | calls TS/JS | 2,358 sites (1,259 production -> 946 distinct) | checker.getSymbolAtLocation | precision 20/20
+  | renders JSX | mobile 40, web 336 | tag symbol resolution | exact
+  | context/prop callbacks | about 32 + 37 production | needs the type of the context value | NOT built
+  | depends_injects | 208 | Annotated aliases + route dependencies | 1 unresolved
+  | includes_router / registers_route | 13 / 77 | ast | exact
+  | calls_url client->route | 75/75 production + 36 test | template normalisation + method + literal-first | 100% matched
+  | test_calls_route | 380/380 | ast | 100% matched
+  | overrides (test replaces a provider) | 57 sites | ast subscript | NOT built; 3 false test-reach found
+  | reads_table / writes_table | 138 / 398 (292 production writes) | ORM calls, constructors, SQL regex, unit of work | 16/16 sample; misses session.delete
+  | writes_column | 190 sites, 175 distinct | unit-of-work attribute stores | not sampled
+  | foreign_key / has_column / maps_table | 70 / 439 / 42 | ast | exact
+  | migration_follows / migration_touches | 45 / 305 | ast + SQL regex | exact / regex
+  | reads_setting | 97 | settings.X | exact
+  | enqueues_kind / kind_handled_by | 26 / 10 | kind literal + switch case | exact
+  | passes_callable | 51 (6 scheduler jobs) | Name argument -> def | named functions only
+  | co_changed | 387 pairs at support 3+, 129 at 5+ | git log | ranking signal
+  | same_capability | 6 | folder name | exact
+  | contract allow/forbid | 4 contracts, 17 allowed edges + 5 wildcards | toml | exact
+  | cites doc->file | 491 pairs (664 tokens resolved, 517 not in repo, 87 ambiguous) | suffix match | precise, limited recall
+  | mentions doc->symbol | 191 pairs (120 ambiguous) | name lookup | ambiguity-limited
+  | doc->doc | 239 pairs; 1,752 section-sign refs | links + filename mentions | regex
+  | constrains invariant->anchor | 13 files + 21 symbols + 18 table/column/constant/config | backtick resolution | 18 of 19 anchored
+TABLE Traversal patterns (hops | measured)
+  | screen -> tables written | 7-9 typed hops | ArrivalJobBillScreen: 8 routes, 4 tables by metapath; untyped BFS 254 nodes / 10 tables in 10 hops
+  | impact of a service function | up to 8 | submit_completion: 28 production nodes; 15 with a production in-degree stop over 10; a degree stop counting all edges wrongly gives 2
+  | tests reaching a function | 1-6 | submit_completion: 23 direct + 16 via route at hop 3 + 3 deeper; 3 false (mocked service)
+  | invariants constraining a file | 1-2 | 18 of 19 anchored
+  | other half of a rule | 2-3 | route pairing exact; invariant group pairing for bill freeze
+  | reverse reach, 507 production backend functions | hops 1/2/3/4/6 | median 1/2/3/4/6; p90 3/8/15/22/34; max 52/129/200/259/320
+  | cross-runtime co-change distance | - | 2:2, 3:7, 4:13, 5:8, none within 8:3 (of 33)
+TABLE Build cost (full rebuild, 3 runs)
+  | python ast | 1.19-1.35 s
+  | TS compiler API (mobile + web) | 2.63-2.75 s
+  | docs | 0.48-0.50 s
+  | git | 0.40-0.46 s
+  | join | 0.22-0.25 s
+  | total | 5.00 / 5.07 / 5.23 s
+  | output | 2.0 MB + 0.63 MB JSON (174 KB + 45 KB gzipped)
+FINDINGS:
+  * [graph/high] Client-to-route HTTP edges extract exactly. All 75 production URL literal sites (mobile and web) match a backend or ops-server route by method and path. All 380 backend test HTTP calls match too. :: Done with the TypeScript 5.3.3 compiler API from technician-app plus the Python ast module. A ${...} placeholder after a slash becomes {}; other placeholders and ?... are treated as the query and dropped. The HTTP method comes from the options {method} or the apiSend second argument. When two routes match, the one with more literal segments wins. Result: 0 ambiguous matches and 4 non-literal wrapper calls; the wrapper's inner literal is still captured. 53 of 77 backend routes have a client; 24 have none (ledger, advances, shop settings, webhooks, health, ops). 73 routes are exercised over HTTP by pytest. These edges are invisible to an import graph and to plain grep. (measured: ts_extract.js, py_extract.py, join.js in the lane folder)
+  * [graph/high] Python function-level calls resolve at about 98.5% recall for in-repo targets using stdlib ast and lightweight type rules. Precision was 25 of 25 in a sample. :: 8,335 call sites. 2,377 resolve to in-repo definitions (2,085 distinct edges), 3,786 are external, 2,034 name no repo definition. Only 36 sites whose name matches a repo definition stay unresolved: callbacks (dead_letter, handler, on_orphan), module singletons (metrics_registry), chained constructors and local closures. Typing rules that made the difference:
+- imports and re-exports
+- self methods, including base classes
+- __init__ attribute types
+- Annotated[...] dependency aliases followed across modules
+- pytest fixture return types, including tuple[JobService, MagicMock] unpacking: fixed 256 test calls (680 unresolved before)
+- closure scope: fixed build_dispatch_handler.handle -> JobSer (measured: py_extract.py, py_stats.txt, precision_sample.txt)
+  * [graph/high] TypeScript and JavaScript calls resolve through the compiler's type checker with 20 of 20 precision in a sample. The remaining dynamic calls are React context and prop callbacks. :: 2,358 resolved in-repo call sites; 1,259 are production code, giving 946 distinct production pairs (mobile 814 sites, web 445). Unresolved production calls are mostly built-ins on untyped JS values (web 231). Unresolved test calls are jest globals (2,229), because @types/jest is not in the program. Not resolved: about 32 production calls to functions destructured from context (useApp, useAuth) and 37 on* prop callbacks. JSX renders of in-repo components: mobile 40 of 968 elements, web 336 of 1,448. Both programs build in 2.6 to 2.75 s. (measured: ts_extract.js, ts_stats.txt, ts_precision_sample.txt)
+  * [graph/high] Table-level edges need unit-of-work detection. Without it, 8 mutating routes appear to write no table; with it, 1 does. :: Write edges come from four sources. ORM select/update/insert/delete(Model): 125 production. Model(...) constructors: 46 production. Raw SQL inside text(): 23 production. Unit of work, i.e. assigning an attribute on a variable typed from a method's return annotation (tech = await self._load(); tech.pin_hash = ...; flush): 98 production. That last source also yields writes_column (190 sites, 175 distinct). A 16-edge sample of table edges was all correct. The one remaining miss is session.delete(obj) on the DELETE media route. Test-file constructor and unit-of-work edges (161) are not database writes and must be dropped. (measured: py_extract.py, join2.js)
+  * [depends/high] Hop count matters only for hubs and for cross-runtime questions. A single global hop limit is wrong either way; the budget should be set per edge type (a metapath). :: Reverse reach over 507 production backend functions, tests excluded:
+- median 1/2/3/4/6 at hops 1/2/3/4/6
+- p90 3/8/15/22/34
+- max 52/129/200/259/320, all from core.db:get_session
+A change to JobService.submit_completion needs 8 hops to reach the mobile screens: handler, route, client function, outbox kind, enqueue sites. A depth-2 limit stops at the route. Of 33 cross-runtime co-change pairs (support of 3 or more commits), the typed graph joins them at distance 2 (2 pairs), 3 (7), 4 (13) and 5 (8); 3 are not joined within 8 hops. (measured: join.js, join2.js)
+  * [graph/high] Hubs flood answers in three distinct ways here, and each needs its own damping. Plain degree cut-offs fail. :: (1) String-dispatch hub: outboxSync.ts send switches over all 10 outbox kinds. Forward from ArrivalJobBillScreen over call edges reaches 14 routes; over kind edges (enqueue site -> kind -> jobsApi method) it reaches 8. That is 6 false routes, 43%.
+(2) Test-inflated degree: a stop rule of degree over 15 counting all edges cut the impact answer for submit_completion from 28 nodes to 2, because routes carry 380 test edges. Degree must be computed on production edges per edge type. With production in-degree over 10 the answer is 15 nodes.
+(3) Infrastructure providers: get_session has 52 direct dependency-injection dependants and reaches 320 nodes in 6 hops. A degree stop of over 5 still leaves 2 (measured: join.js, join2.js)
+  * [graph/high] Test reach needs route edges plus an overrides edge; call edges alone miss most integration tests and naive route edges add false positives. :: Tests reaching JobService.submit_completion:
+- 23 at hop 1 by direct call
+- 16 at hop 3 via test -> route -> handler -> service, plus 3 more at hops 4 to 6
+- 13 integration tests reach it only over HTTP
+- 3 router tests in test_router.py appear to reach it, but they override get_jobs_service with an AsyncMock, so they are false positives
+JobRepository.try_transition: 39 tests at hop 2, 23 at hop 4. There are 57 dependency_overrides sites in tests, counted by the earlier check. The overrides edge was not built here. (measured: join.js, join2.js)
+  * [depends/medium] Co-change adds information that imports do not have, but history is thin. Most cross-runtime co-change is explained by the URL edges. :: Commits used: 323 non-merge on all refs, 210 of them with 2 to 30 files. Co-change pairs: 1,090 at support 2 or more, 387 at 3 or more, 129 at 5 or more. Of the 387 pairs at support 3 or more, 228 (59%) are not linked by imports: 116 in the same capability folder, 100 involving a test, 33 cross-runtime. 30 of the 33 cross-runtime pairs connect within 2 to 5 hops through URL edges. Without URL edges, none of them connect. One branch commits backend/venv (1,975 files), which must be filtered out. Top churn: jobs/service.py 42 commits (15 fix), JobDetailScreen.tsx 30 (10 fix), config.py 27, main.py 25. (measured: git_extract.js, cochange_vs_imports.js, join2.js)
+  * [depends/medium] The document corpus is about 574k tokens across 94 markdown files, 45 of them untracked. Document ids are scoped to their document and reused, and many path citations point to files that do not exist. :: Markdown in docs/ plus the repo root: 2,294,714 bytes, of which 1,022,871 are untracked. docs/ also holds 273 non-md files (7.4 MB; 266 of the docs/ files are untracked). Sections: 1,062 headings, median 181 tokens, p90 652, max 37,592.
+Identifiers: 199 ids have a defining row or heading, and 85 of them are defined in more than one doc (H1 to H18, M1 to M4 and others). Key ids as (doc family, id), not id alone.
+Citations:
+- 1,268 backticked path tokens: 664 resolve to a unique file (491 doc-file pairs), 87 are ambiguous bare names, 517 name no file in the repo
+- 1,634 symbol-like tokens: 225 resolve to a unique symbol (191 pairs), 120 are ambiguous
+- 239 doc-to-doc pairs, 1,752 section-sign  (measured: docs_extract.js, iddup.js)
+  * [graph/medium] CLAUDE.md invariants can be modelled as nodes with constrains edges. 18 of 19 invariants resolve to concrete anchors once tables, columns, constants and config keys are node types. :: 19 invariant bullets in 8 groups. Anchors: 13 files, 21 symbols, and 18 table, column, constant or config-key anchors. With files and symbols only, 16 of 19 anchor. Two bullets span runtimes by their direct anchors: the job lifecycle and the automated send. The bill-freeze group spans server and client at group level. Money in minor units anchors only to a naming pattern (*_paisa). The 'which invariants constrain this file' query is 1 hop from a file, 2 from a symbol. 'The other half of this rule' is 2 to 3 hops: invariant -> group -> anchors in another runtime, or handler -> route <- client function. (measured: docs_extract.js)
+  * [neither/high] A full rebuild of the typed graph takes about 5 seconds with tools already on the machine. Nothing needs installing. :: Three runs: 5.00, 5.07, 5.23 s. Per stage: Python 1.19 to 1.35 s, TS and JS 2.63 to 2.75 s, docs 0.48 to 0.50 s, git 0.40 to 0.46 s, join 0.22 to 0.25 s. Output: py_graph.json 2.0 MB (174 KB gzipped, including a 4,000-row debug sample) and ts_graph.json 0.63 MB (45 KB gzipped). The Python stage is per-file and can be incremental. The TS stage needs the whole program for the type checker; an incremental builder could cut that time, but this was not tried. (measured: timing loop in the lane folder)
+  * [depends/high] In outside work, 2-hop flattened subgraphs lowered results and cost about 4.5 times the tokens of 1-hop. Graph context raised token cost in every framework tested. :: RepoGraph (ICLR 2025, arXiv 2410.14684 v2, March 2025), Agentless with GPT-4o on SWE-bench Lite:
+- 1-hop flattened: 29.67% resolved, 2,311 tokens
+- 2-hop flattened: 26.00%, 10,505 tokens, below the 27.33% baseline
+- 2-hop summarized: 28.67%, 1,229 tokens
+Nodes are lines (def/ref) with invoke and contain edges. Its own Table 2 shows higher cost and tokens with RepoGraph in every framework, e.g. Agentless 42,376 to 47,323 tokens, although the text says it reduces cost. (https://arxiv.org/html/2410.14684v2)
+  * [graph/medium] LocAgent uses a heterogeneous code graph close to the code half of this schema and reports strong localization. :: Abstract only. Node types: directory, file, class, function. Edge types: contain, import, invoke, inherit. Agents traverse it with multi-hop reasoning. Reports 92.7% file-level localization with a fine-tuned Qwen2.5-Coder-32B, about 86% lower cost than proprietary models, and +12% Pass@10 on issue resolution. It has no cross-runtime, table, settings or document edges. (https://arxiv.org/abs/2503.09089)
+  * [neither/high] GitHub's file-incremental stack-graphs implementation was archived on 2025-09-09. :: The paper (arXiv 2211.01224, 2022; search snippet only) describes file-incremental name resolution built from syntax alone, which is a good model for incremental rebuilds. The repository github/stack-graphs was fetched: archived 2025-09-09 and no longer supported by GitHub. It is a pattern to copy, not a dependency to adopt. (https://github.com/github/stack-graphs)
+  * [graph/medium] Aider ranks a file-level dependency graph within a token budget. This is a known way to damp hubs and size answers. :: The aider repo-map docs describe a graph of files linked by dependencies, ranked by a graph-ranking algorithm, inside a token budget (--map-tokens, default 1k). The page has no date; the linked post is from 2023-10-22. It is a precedent for ranking plus a budget instead of a raw transitive list. (https://aider.chat/docs/repomap.html)
+  * [neither/low/snippet] Code property graphs (Yamaguchi et al. 2014, Joern) merge AST, CFG and PDG into one multigraph. That depth is not needed for this repo's questions. :: Search snippets only. The repo's questions are cross-runtime contract questions and impact questions, not intra-procedural data flow. The one data-flow need found here is narrow: unit-of-work attribute writes and callbacks passed in at the composition root. Light type rules cover it. (https://mlsec.tu-berlin.de/docs/2014-ieeesp.pdf)

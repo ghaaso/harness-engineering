@@ -1,0 +1,37 @@
+// Pages through a user's timeline via the fxtwitter v2 profile endpoint and writes every status since a cutoff date.
+// Usage: node x-timeline.mjs <screen_name> <since YYYY-MM-DD> <out.json> [maxPages=60]
+import fs from 'node:fs';
+const [user, since, out, maxPagesArg] = process.argv.slice(2);
+const maxPages = Number(maxPagesArg || 60);
+const cutoff = new Date(since + 'T00:00:00Z').getTime();
+const base = 'https://api.fxtwitter.com/2/profile/' + user + '/statuses';
+const all = []; const seen = new Set();
+let cursor = null, pages = 0, oldest = Infinity, stop = false, firstKeys = null, cursorShape = null;
+while (!stop && pages < maxPages) {
+  const url = cursor ? base + '?cursor=' + encodeURIComponent(cursor) : base;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) { console.error('HTTP', res.status, 'at page', pages); break; }
+  const j = await res.json();
+  if (!firstKeys) { firstKeys = Object.keys(j); cursorShape = JSON.stringify(j.cursor || j.next_cursor || null).slice(0, 200); }
+  const results = j.results || [];
+  if (!results.length) break;
+  let pageOld = Infinity;
+  for (const r of results) {
+    const t = r.status || r; // some shapes wrap the status
+    const id = t.id; if (!id || seen.has(id)) continue; seen.add(id);
+    const ts = t.created_timestamp ? t.created_timestamp * 1000 : new Date(t.created_at).getTime();
+    pageOld = Math.min(pageOld, ts);
+    all.push(t);
+  }
+  oldest = Math.min(oldest, pageOld);
+  pages++;
+  const next = (j.cursor && (j.cursor.bottom || j.cursor.next)) || j.next_cursor || null;
+  if (!next || next === cursor) break;
+  cursor = next;
+  if (pageOld < cutoff) stop = true;
+  await new Promise(r => setTimeout(r, 900));
+}
+const kept = all.filter(t => (t.created_timestamp ? t.created_timestamp * 1000 : new Date(t.created_at).getTime()) >= cutoff);
+fs.writeFileSync(out, JSON.stringify(kept, null, 1));
+console.log('top-level keys', firstKeys, 'cursor', cursorShape);
+console.log('pages', pages, 'fetched', all.length, 'kept since ' + since + ':', kept.length, 'oldest fetched', new Date(oldest).toISOString());

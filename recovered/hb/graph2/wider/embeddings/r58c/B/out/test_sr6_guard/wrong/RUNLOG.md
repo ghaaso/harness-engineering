@@ -1,0 +1,13 @@
+sha256 0000000000000000000000000000000000000000000000000000000000000000 item27 train/item27.py
+sha256 2eb00659b6f6cfb66fd34369e19ca6f601945a2132ea7efb1b7192b083293b49 heldout-driver train/heldout.py
+sha256 13c1859f571faf9f588b6c818e8672b5bc762eb7696941c8195e0822277dfcc1 item24-adapter train/answer_level.py
+sha256 c0b3bb8ba4fb3ad9b7761a23ca93b2d1be979d1c5679ca3094bf2c011742dcee leak-audit train/leak_audit.py
+sha256 9c4b51ee5a98b3e331af69b325760855cec75a7fe287b0edd5ada428d31805d3 selectB train/selectB.py
+sha256 b99389f5300fce6b1815e53792554e422ed1705c7a5514f7b41614eb790313a2 report train/report.py
+PASS item27 logs/item27.log
+PASS heldout-driver logs/heldout-driver.log
+PASS item24-adapter logs/item24-adapter.log
+PASS leak-audit logs/leak-audit.log
+PASS selectB logs/selectB.log
+PASS report logs/report.log
+PASS assemble-checks logs/ac.log tables_digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

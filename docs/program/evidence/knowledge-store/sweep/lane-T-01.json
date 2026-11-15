@@ -1,0 +1,848 @@
+{
+ "lane": "T-01",
+ "tool_status": "ok",
+ "summary": "Caching/memoization prior art says four things for this store. (1) Treat each entry as a memoised task with a recorded dependency trace: a set of (dependency, content-hash) pairs captured at the moment the discriminating check last passed (Shake verifying traces, Bazel/CloudBuild constructive traces, rustc red-green). Dependencies must include environment (Node, Expo SDK, Gradle, OS), because untracked dependencies are the documented way such caches go wrong (a la carte 6.3; Bazel remote-caching docs). (2) Invalidate by event, lazily, with early cutoff: a changed dependency only marks the entry 'needs re-verify'; the reader re-runs the check; if it still reproduces the root cause the entry is re-stamped (Salsa backdating) rather than discarded. TTL is at most a backstop; the web-cache evidence (Gwertzman/Seltzer) accepts a few percent stale, which this store cannot. (3) Negative entries follow RFC 2308: scoped to the narrowest key, carrying their authority and the world-state they were asserted against, bounded in life, and stored as tombstones so a stale writer cannot resurrect a refuted entry (Cassandra tombstones). A cached 'no' is a lead to retry when dependencies change, never a prohibition (RFC 8767 warns stale negatives delay newly valid answers). (4) Write-through at fix time with a provisional status and a compare-and-set against the code version the check actually ran on (Facebook 'stale sets' and leases); the cheap reader performs read repair by appending mechanical confirmed/refuted events, never rewriting the diagnosis (Dynamo, Cassandra). Serve-stale (RFC 5861/8767) inverts here: a stale entry may be shown only as a flagged hypothesis. Most infrastructure cited (Dynamo, Skyframe, Facebook memcache) is orders of magnitude too large; borrow the ideas only.",
+ "facts": [
+  {
+   "id": "F01",
+   "statement": "Build Systems a la Carte (Mokhov, Mitchell, Peyton Jones, ICFP 2018) splits a build system into a scheduler and a rebuilder. Rebuilder strategies: dirty bit (Excel; Make's mtimes act as one), verifying traces (record hashes of the values of dependencies used last time; if any differ the key is dirty; Shake, Ninja), constructive traces (additionally store the resulting value, many traces per key, shareable; Bazel, CloudBuild, Cloud Shake), deep constructive traces (record only terminal input hashes; Buck, Nix). The paper says the trace store 'constitutes the build system's memory'.",
+   "source": "https://www.microsoft.com/en-us/research/wp-content/uploads/2018/03/build-systems.pdf (ICFP 2018 version, read via pdftotext; section 4.2.1-4.2.4, Table 2, 5.3, 5.4)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F02",
+   "statement": "Early cutoff: when a task is re-executed and its result is unchanged from the previous build, dependent tasks need not run. Shake and Bazel support it; Make and Excel do not (a dirty bit cannot be un-set without also leaving dependents dirty). All trace types except deep constructive traces support it; deep traces can cut off only at n levels. Minimality (Definition 2.1): a task executes at most once per build and only if it transitively depends on inputs that changed.",
+   "source": "ICFP 2018 build-systems.pdf, section 2.3, Definition 2.1, 4.2.1, 4.2.2, 4.2.4",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "canonicalisation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F03",
+   "statement": "The paper's section 6.3 'Impure Computations' names three ways memoisation breaks: untracked dependencies (e.g. a C compile lists source.c but not the gcc version), non-determinism, and volatility (volatile tasks cannot be cached; they are modelled as depending on a RealWorld key changed every build). It notes sandboxing is used to guard against missing dependencies but none is perfect.",
+   "source": "ICFP 2018 build-systems.pdf, section 6.3",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F04",
+   "statement": "'Frankenbuild' (section 6.4, Fig. 11): with deep constructive traces plus a non-deterministic task, a cached downstream artifact can be inconsistent with its immediate dependency, because the cache key looked only at terminal inputs. The paper says the resulting store is incorrect under all its correctness definitions.",
+   "source": "ICFP 2018 build-systems.pdf, section 6.4 and Fig. 11",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "data_model",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F05",
+   "statement": "Self-tracking (section 6.5): some build systems (Excel, Ninja) recompute a task when the task itself changes, not only when its dependencies change. Shake by default assumes rules do not change and offers shakeVersion ('Change the version number to force a complete rebuild') as the manual override.",
+   "source": "ICFP 2018 build-systems.pdf section 6.5; https://hackage-content.haskell.org/package/shake-0.19.9/docs/Development-Shake.html; https://github.com/ndmitchell/shake/blob/master/docs/Manual.md",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F06",
+   "statement": "Shake's change detection is configurable: ChangeModtime (default), ChangeDigest (touch does not force rebuild), ChangeModtimeAndDigest (rebuilt only if both changed; mtime checked first), ChangeModtimeAndDigestInput, ChangeModtimeOrDigest. shakeFiles (default .shake) stores metadata; shakeShare / shakeCloud give a shared cache. Shake avoids rebuilding dependents when a rebuilt output is unchanged (early cutoff) and tracks non-file dependencies (file existence, environment variables, directory contents, tool versions).",
+   "source": "https://hackage-content.haskell.org/package/shake-0.19.9/docs/Development-Shake.html (Change type, shakeChange, shakeFiles, shakeShare); https://raw.githubusercontent.com/ndmitchell/shake/master/docs/Why.md",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F07",
+   "statement": "Bazel's action cache key is derived from an action's declared inputs, output names, command line and explicitly passed environment variables. The action cache (AC) maps action hash to result metadata; a content-addressable store (CAS) holds output files keyed by content hash. Tools outside the workspace and undeclared inputs are not tracked, so two users with different compilers can share a wrong hit. Anyone with write access can poison the cache and the cache does not record which build produced an output; the docs advise clearing it entirely when poisoned.",
+   "source": "https://bazel.build/remote/caching (read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F08",
+   "statement": "Bazel Skyframe: a graph of SkyKey/SkyValue/SkyFunction nodes. Invalidation is bottom-up from changed inputs. Change pruning: if a re-evaluated node yields the same value as before, nodes invalidated because of it are restored (editing a C++ comment yields an identical .o, so the linker does not rerun). Reads that bypass registered dependencies create hidden dependencies and incorrect incremental builds.",
+   "source": "https://bazel.build/reference/skyframe",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F09",
+   "statement": "rustc red-green incremental compilation: queries are fingerprinted by arguments; results compared by hash. try-mark-green: if all recorded reads of a query are green, mark it green without re-executing; if any read is red, re-execute and compare the result hash with the saved one, and if equal mark it green. So an upstream change whose result is unchanged does not re-run dependents. Reads are replayed in recorded order because a later read may only be valid if earlier ones are unchanged.",
+   "source": "https://rustc-dev-guide.rust-lang.org/queries/incremental-compilation.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F10",
+   "statement": "Salsa (Rust incremental framework) adds two refinements to red-green: backdating (if a re-executed function returns the same value, keep the old result's changed_at so dependents are not re-run) and durability (inputs tagged by how rarely they change, e.g. dependencies high, workspace low; a function depending only on high-durability inputs is confirmed valid after a low-durability change without walking its dependency edges).",
+   "source": "https://salsa-rs.github.io/salsa/reference/algorithm.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F11",
+   "statement": "RFC 2308 (Mark Andrews, March 1998): negative caching is mandatory for caching resolvers (section 8). NXDOMAIN is cached against <QNAME,QCLASS>; NODATA against <QNAME,QTYPE,QCLASS> (section 5). Authoritative negative answers MUST carry the zone SOA (section 3); the cached SOA MUST be kept with the negative entry (section 5) and negative responses without an SOA SHOULD NOT be cached. Negative TTL = min(SOA MINIMUM, SOA TTL).",
+   "source": "https://www.rfc-editor.org/rfc/rfc2308.txt sections 3, 5, 8",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance",
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F12",
+   "statement": "RFC 2308 section 5 on how long to remember 'nothing here': the protocol allows up to 68 years, so resolvers should impose their own cap, which SHOULD NOT exceed the cap for positive answers and should be tunable; 'values of one to three hours have been found to work well'; 'values exceeding one day have been found to be problematic'. Server-failure and dead-server negatives may be cached at most 5 minutes (section 7). Security section: a very high negative TTL enables denial-of-service.",
+   "source": "https://www.rfc-editor.org/rfc/rfc2308.txt sections 5, 7, 11",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F13",
+   "statement": "RFC 5861 (Mark Nottingham, May 2010, Informational): stale-while-revalidate=N lets a cache serve a stale response for N seconds while revalidating in the background; stale-if-error=N lets a stale response be used when the origin returns 500/502/503/504, regardless of other freshness info, up to N seconds of staleness. Stale responses carry non-zero Age and a Warning header. Defined only as HTTP Cache-Control extensions.",
+   "source": "https://www.rfc-editor.org/rfc/rfc5861.txt sections 3, 4",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "retrieval"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F14",
+   "statement": "RFC 8767 (Standards Track, March 2020): an expired record may be used 'as though it is unexpired' only when it cannot be refreshed authoritatively (section 4); stale answers carry TTL 30 seconds (recommended); a stale-timer cap of 1-3 days and a TTL cap of 7 days are suggested (sections 4-5); the failure-recheck timer is no more than 5 minutes per RFC 2308. Section 7/10 note stale negative records can delay use of newly published TLSA/DS records and stale mappings can be abused; serve-stale never turns a successful lookup into a failure because it is used only after refresh fails.",
+   "source": "https://www.rfc-editor.org/rfc/rfc8767.txt sections 4, 5, 6, 7, 10",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F15",
+   "statement": "RFC 9111 HTTP Caching (June 2022, obsoletes RFC 7234): freshness lifetime from max-age/Expires, else a heuristic lifetime typically about 10% of time since Last-Modified (4.2.2); stale responses may be served only if disconnected or explicitly permitted (4.2.4); revalidation uses conditional requests with validators ETag/Last-Modified and a 304 refreshes the stored response (4.3); a cache MUST invalidate the target URI after a successful unsafe method (PUT/POST/DELETE) and invalidation covers only the caches the request passes through, so it gives no global consistency (4.4).",
+   "source": "https://www.rfc-editor.org/rfc/rfc9111.txt sections 4.2, 4.2.2, 4.2.4, 4.3, 4.4",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F16",
+   "statement": "Gwertzman and Seltzer, 'World Wide Web Cache Consistency' (USENIX 1996): the Alex weak-consistency protocol (an object is revalidated when time since last validation exceeds a threshold times the object's age) can be tuned to return stale data less than 5% of the time and beat TTL and invalidation on bandwidth/server load; pure invalidation gives 0% stale but needs server changes and per-copy bookkeeping; weak protocols are simpler and more fault-tolerant because stale entries expire without special recovery logic. TTL suits content with known lifetimes. Results depend on workload (synthetic workload gave far higher stale rates).",
+   "source": "https://www.usenix.org/legacy/publications/library/proceedings/sd96/full_papers/seltzer.txt",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F17",
+   "statement": "Facebook 'Scaling Memcache at Facebook' (NSDI 2013) section 3.2.1: a 'stale set' happens when a client sets a value that does not reflect the latest value because concurrent updates were reordered. A lease is a 64-bit token bound to the key, handed to a client on a miss; the client presents it on set, and memcached rejects the set if a delete invalidated the token ('similar to load-link/store-conditional'). The same lease throttles thundering herds (one client per key repopulates). Invalidations are derived from the database commit log by a daemon (mcsqueal) and stored in reliable logs so lost or misrouted invalidations can be replayed (section 4); deletes can carry a hold-off that rejects adds for a few seconds.",
+   "source": "https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf (read via pdftotext; sections 3.2.1, 4.1, 4.2)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "invalidation",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F18",
+   "statement": "Dynamo (DeCandia et al., SOSP 2007): on a read the coordinator waits for outstanding responses; 'If stale versions were returned in any of the responses, the coordinator updates those nodes with the latest version. This process is called read repair because it repairs replicas that have missed a recent update at an opportunistic time and relieves the anti-entropy protocol from having to do it.' Anti-entropy uses per-key-range Merkle trees (leaf = hash of key, branch checkable independently) to find out-of-sync keys. Conflict resolution is either by the store (simple policies such as 'last write wins' by physical timestamp) or by the application (semantic merge, e.g. shopping cart). Sloppy quorum plus hinted handoff keep writes available.",
+   "source": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf (read via pdftotext; read-repair text in the experiences section, anti-entropy in 4.7, reconciliation in 4.4-4.5; exact section numbers not captured by the extraction)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "invalidation",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F19",
+   "statement": "Cassandra 5.0 docs on read repair: default BLOCKING mode repairs out-of-date replicas before responding, giving monotonic quorum reads but not partition-level write atomicity; background (probabilistic) read repair (read_repair_chance) was removed in 4.0 (CASSANDRA-13910); only replicas involved in the read are repaired; read repair 'does not replace full repairs'; it is skipped at consistency ONE/LOCAL_ONE; mismatches are detected by digest (hash-only) reads then merged by timestamp.",
+   "source": "https://cassandra.apache.org/doc/latest/cassandra/managing/operating/read_repair.html (5.0 docs, read 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "invalidation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F20",
+   "statement": "Cassandra treats a delete as an insertion of a time-stamped tombstone; default gc_grace_seconds is 864000 (10 days), after which the tombstone can be compacted away; a replica that returns after the grace period 'may' reintroduce the deleted data because the deletion was missed.",
+   "source": "https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/tombstones.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F21",
+   "statement": "Write policies (Wikipedia 'Cache (computing)'): write-through writes synchronously to cache and backing store (simple, no dirty tracking, common when multiple writers would otherwise need coherency protocols); write-back writes only to the cache and updates the backing store later on eviction, requiring dirty-bit tracking and risking loss of unflushed data; write-around/no-write-allocate writes straight to the backing store and populates the cache only on read misses, usually paired with write-through.",
+   "source": "https://en.wikipedia.org/wiki/Cache_(computing) (writing policies section)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "workflow",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F22",
+   "statement": "Vogels, 'Eventually Consistent - Revisited' (23 Dec 2008): client-side consistency models are strong, weak, eventual, causal, read-your-writes (special case of causal), session, monotonic read, monotonic write. N/W/R quorum: if W+R > N reads and writes overlap and strong consistency can be guaranteed; if W+R <= N reads may miss recent writes; if W < (N+1)/2 conflicting writes become possible.",
+   "source": "https://www.allthingsdistributed.com/2008/12/eventually_consistent.html",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F23",
+   "statement": "SQLite WAL mode: readers do not block the writer and the writer does not block readers, but 'there can only be one writer at a time'; each read transaction sees a single point-in-time snapshot; all processes must be on the same host and WAL does not work over a network filesystem; checkpoint starvation can grow the WAL without bound if there is always an active reader; applications must handle SQLITE_BUSY (busy timeout).",
+   "source": "https://www.sqlite.org/wal.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F24",
+   "statement": "PostgreSQL 18 docs section 13.2: Read Committed (default) takes a snapshot per statement; Repeatable Read and Serializable snapshot at first statement; applications at those levels must be prepared to retry on serialization failure (SQLSTATE 40001); read-only transactions never have serialization conflicts; writers wait on writers for the same row.",
+   "source": "https://www.postgresql.org/docs/18/transaction-iso.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F25",
+   "statement": "Gray and Cheriton, 'Leases' (SOSP 1989): a lease is a contract giving its holder rights over property for a limited time; a cache needs a valid lease, not just the data, to serve reads; if a leaseholder is unreachable the writer waits for expiry, so consistency survives message loss, partitions and crashes; short terms cut failure delay and false sharing, with extension overhead as the cost; the paper gives formulas for the optimal term. (Read via a secondary summary; the PDF copy fetched was a scanned image.)",
+   "source": "https://blog.acolyer.org/2014/10/31/leases-an-efficient-fault-tolerant-mechanism-for-distributed-file-cache-consistency/ (secondary); paper at https://courses.cs.duke.edu/spring15/cps210/readings/leases-sosp89.pdf (scanned, unreadable)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "concurrency",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F26",
+   "statement": "The 'two hard things' saying (cache invalidation and naming things) is attributed to Phil Karlton; Martin Fowler's bliki entry is dated 14 July 2009 and records Tim Bray's blog post of 23 December 2005 as the earliest internet appearance, Bray having first heard it around 1996-97. It is folklore, not a result; the serious literature is the dependency-tracking and consistency work above.",
+   "source": "https://martinfowler.com/bliki/TwoHardThings.html",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F27",
+   "statement": "Local sibling-track context: the knowledge-store design skeleton has sections for data model, retrieval, invalidation and provenance, workflow and seed corpus, but no content yet; CLAUDE.md already lists dependency-sensitive traps (Expo SDK 52, RN 0.76.9, eas.json empty-env rejection, Sentry Expo plugin gradle break, deploy from backend/ not repo root, Alembic head 0046) whose validity depends on concrete files, versions and platform, i.e. exactly the dependency dimensions a trace would record.",
+   "source": "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:1-35; CLAUDE.md (in-context, 'Build & deploy traps' section)",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "seed_corpus",
+    "invalidation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F28",
+   "statement": "Inference: build-system memoisation is exact-key lookup (hash of inputs), whereas this store's retrieval key is a fuzzy symptom. The two compose as a pipeline: fuzzy retrieval proposes candidates (other lanes), then a trace comparison (cheap, exact, deterministic) classifies each candidate as trace-unchanged or trace-drifted, then the discriminating check decides. A trace match is necessary evidence, not sufficient, because of untracked dependencies (F03); a trace mismatch is not refutation, because of early cutoff (F02).",
+   "source": "inferred from F01-F04, F09",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "retrieval",
+    "invalidation",
+    "canonicalisation"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "Per-entry dependency trace (verifying-trace pattern): (dependency, content-hash) pairs captured when the check last passed",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Direct repurposing of Shake/Bazel/rustc traces. Record, per entry facet, the files (git blob hashes, ideally the specific hunks or symbols the root cause reads), lockfile entries, tool and platform versions (Node, Expo SDK, Gradle/NDK, OS, Postgres), and the checking command itself. At hundreds of entries the whole index is a trivial join against `git diff` plus a lockfile diff. Environment dimensions are mandatory because untracked dependencies (compiler version, PATH) are the documented failure of such caches.",
+   "egress_posture": "No egress; all data local hashes and text.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F01",
+    "F03",
+    "F07",
+    "F27"
+   ],
+   "linux_prod_fit": "Identical on Linux; git and file hashing only.",
+   "windows_dev_fit": "Fine; beware CRLF/autocrlf: hash normalised content or git blob ids so Windows and Linux agree.",
+   "maturity": "Decades of use (Make 1979, Shake 2012, Bazel); here a small reimplementation.",
+   "footprint": "A table of (entry_id, facet, dep_kind, dep_ref, dep_hash).",
+   "agent_access": "CLI subcommand `verify-trace <entry>` returning drifted dependencies."
+  },
+  {
+   "name": "Early cutoff / backdating via re-running the entry's discriminating check",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "When a dependency changes, do not invalidate: re-run the check. If the root cause still reproduces, re-stamp the trace to current hashes and record a 'confirmed (backdated)' event; only a failing check yields refuted/invalidated. This is rustc try-mark-green and Salsa backdating, and it avoids mass false invalidation when unrelated lines of a touched file change. Also keeps the human's tracking burden near zero.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F02",
+    "F09",
+    "F10",
+    "F08"
+   ],
+   "linux_prod_fit": "Independent of platform.",
+   "windows_dev_fit": "Checks must run on Windows dev box or be marked platform-bound (e.g. Android Gradle compile cannot be checked on this box).",
+   "maturity": "Proven in compilers and build systems.",
+   "footprint": "Check command, expected-signal, and a last_green_trace per entry."
+  },
+  {
+   "name": "Event-driven, lazy dependency-tracked invalidation driven by git history, not TTL",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Event source is the commit/lockfile diff (Facebook derives invalidations from the MySQL commit log and keeps the log replayable). Mark affected entries 'needs re-verify' at a phase boundary or lazily at read time (Salsa/rustc style, no daemon). TTL alone is unsuitable because Gwertzman/Seltzer-style weak consistency accepts several percent stale, which is the false-positive failure this store must avoid; TTL survives only as a backstop that triggers re-verification (never as a validity grant) for entries with weakly tracked dependencies.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F16",
+    "F17",
+    "F09",
+    "F15",
+    "F26"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine; Git Bash available.",
+   "maturity": "Standard practice.",
+   "footprint": "Last-verified commit per entry; a reverse index dependency -> entries."
+  },
+  {
+   "name": "Salsa-style durability classes for dependencies",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Tag dependencies as high durability (Expo SDK, RN, Node major, Gradle plugin, Alembic head policy, Dockerfile base images) versus low (feature source files). A bump in a high-durability dependency re-verifies all build-trap entries at once; a change in a low-durability file cannot touch entries that depend only on high-durability inputs, so no edge walk is needed. Cheap to add as one column; value is modest at a few hundred entries, so make it optional.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F10",
+    "F27"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "Salsa production use in rust-analyzer.",
+   "footprint": "One enum column on dependency rows."
+  },
+  {
+   "name": "RFC 2308 negative entries: scoped key, authority and world-state attached, bounded life",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Two negative kinds. (a) Negative result inside an entry ('approach X failed because Y'): scope it to the narrowest key (RFC 2308 distinguishes NXDOMAIN on name from NODATA on name+type), attach the evidence and the dependency trace under which it was observed (the 'SOA': no authority, no caching), and re-open it when those dependencies change, because a refuted approach may become viable after an SDK bump. (b) Negative lookup ('no entry for this symptom'): never stored as authority; record only the miss event and link it to the entry later created. Cap negative lifetime well below positive (RFC: 1-3 hours good, over a day problematic); here that translates to 'valid only while its trace is unchanged, and surfaced as an ordering hint (try later), never a prohibition', since stale negatives delay newly valid answers (RFC 8767 s7).",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F11",
+    "F12",
+    "F14"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "RFC 2308 is a 1998 standard in daily use.",
+   "footprint": "A `polarity` and `scope` field on claim rows; negative claims share the same trace table."
+  },
+  {
+   "name": "Tombstones (soft-delete with grace) for refuted and invalidated entries",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Never hard-delete a refuted entry: Cassandra treats delete as a timestamped insert and warns that a replica missing the deletion resurrects data. With git worktrees and parallel sessions holding older copies or stale drafts, a deleted entry could be re-added by a stale writer. Keep a refuted/invalidated status with the refuting evidence and commit, which is also the provenance record the owner wants for analytics (hit/refute rates).",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F20",
+    "F18"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "Standard.",
+   "footprint": "Status field plus append-only event rows."
+  },
+  {
+   "name": "Write-through provisional entry at fix time with compare-and-set base version (lease-token analogue)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "The solving agent is the only party that holds the diagnosis path, and a write-back policy (write at session end) risks loss on compaction or crash. So write through: draft entry in the same step as the fix, status 'provisional', trace recorded against the commit the discriminating check actually ran on (not the commit at write time). Facebook's stale-set problem is the same race: an agent that diagnosed on old code and writes after the code moved would store a trace that lies. Use optimistic concurrency (expected base commit / row version) so a reordered write is rejected. Promotion to 'confirmed' requires a reproduction by a different agent or session. Write-around is rejected: it would leave the expensive diagnosis unrecorded until some later read miss.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F17",
+    "F21",
+    "F18"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "LL/SC and optimistic locking are standard.",
+   "footprint": "Version column; a single conditional INSERT/UPDATE."
+  },
+  {
+   "name": "Reader-driven read repair restricted to append-only mechanical outcome events",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Dynamo/Cassandra repair stale replicas opportunistically on read, relieving the background process. Here the cheap agent that runs the gate appends confirmed/refuted/invalidated events (with commit, check output hash, time, agent tier) and re-stamps the trace on a backdated confirm. It must not rewrite the diagnosis or the failed-approaches list: semantic revision goes to a 'needs revision' queue for a stronger tier. Cassandra's lesson: read repair only repairs what is read, so unread entries need a periodic sweep.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F18",
+    "F19",
+    "F02"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "Dynamo 2007; Cassandra blocking read repair is the default since 4.0.",
+   "footprint": "Event table; derived status view."
+  },
+  {
+   "name": "Periodic anti-entropy sweep as a dependency-hash scan (no Merkle tree)",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Dynamo uses Merkle trees so replicas can find differing key ranges without shipping all data; at a few hundred entries a full scan of (entry, dependency hash) against HEAD costs milliseconds, so the sweep is just a query run at phase boundaries to surface drifted entries and rot in never-read entries. The Merkle tree itself is designed for far larger replicated data sets and is cite-only.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F18",
+    "F19"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "Trivial.",
+   "footprint": "One SQL/CLI query."
+  },
+  {
+   "name": "Serve-stale inverted: stale entries shown only as flagged hypotheses (RFC 5861/8767 analogue)",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "The RFCs allow a stale answer when refresh is impossible, flagged with Age/Warning and a bounded stale lifetime. For this store a stale entry is a lead: the diagnosis path and the failed approaches stay useful for ordering a search even when the fix is no longer valid. Return it with a 'STALE: dependencies changed: ...' marker and no actionable fix; if the check cannot run in the current environment (stale-if-error analogue, e.g. Android native build cannot run on the Windows box) show it with an explicit 'unverified' warning and require human or higher-tier confirmation before acting. Never stale-while-revalidate in the web sense, because acting on the stale answer is the dangerous false positive.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F13",
+    "F14",
+    "F15"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "Concept only; borrowed semantics.",
+   "footprint": "A computed `validity` label returned by the lookup."
+  },
+  {
+   "name": "Miss-time claim lease to prevent duplicated expensive re-derivation",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "Facebook leases double as thundering-herd control (one client repopulates). With parallel sessions or worktrees, two top-tier agents could escalate and solve the same symptom. A short-lived claim row (symptom handle, agent, expiry) lets the second agent wait or work on something else; expiry (Gray and Cheriton) means a crashed session does not block others. Value is real only if parallelism is common; skip if the owner rarely runs parallel sessions.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F17",
+    "F25"
+   ],
+   "linux_prod_fit": "Fine.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "Standard.",
+   "footprint": "One small table with expiry timestamp."
+  },
+  {
+   "name": "Append-only outcome event log with derived entry status; ordering by code version, not wall-clock",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Concurrent writers (subagents, worktrees) commute if each only appends events and status is a fold over them; this is the application-assisted-reconciliation approach Dynamo advocates over blind last-write-wins. Order events by the commit/lineage they were evaluated against, not by timestamp: a late-arriving 'confirmed' from an old commit must not override a 'refuted' from the newer code. Needs read-your-writes for the writing agent and monotonic reads across agents, not strong consistency.",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F18",
+    "F22",
+    "F23",
+    "F24"
+   ],
+   "linux_prod_fit": "Fine on SQLite or Postgres.",
+   "windows_dev_fit": "Fine.",
+   "maturity": "Event sourcing is mainstream.",
+   "footprint": "Event table; status view."
+  },
+  {
+   "name": "Single canonical store location with one writer at a time (SQLite WAL or Postgres) for the consistency requirement",
+   "kind": "engine",
+   "verdict": "viable",
+   "why": "For single-writer / many-reader at this scale, SQLite WAL gives snapshot readers and one serialised writer, but requires all processes on the same host and a single database path (multiple worktrees must point at one file outside the worktree directories, otherwise each worktree gets an unreconciled replica). Postgres (Docker locally, VPS in prod) gives MVCC with server-mediated truth and no filesystem caveat, at higher ops cost. Final engine choice belongs to the engine lanes; from the caching/consistency angle either satisfies read-your-writes plus monotonic reads.",
+   "egress_posture": "No egress for either.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F23",
+    "F24",
+    "F22"
+   ],
+   "linux_prod_fit": "Both fine.",
+   "windows_dev_fit": "SQLite trivial; Postgres needs Docker Desktop.",
+   "maturity": "Both mature.",
+   "footprint": "SQLite: one file plus -wal and -shm; Postgres: one container.",
+   "agent_access": "CLI or MCP wrapper over either."
+  },
+  {
+   "name": "Adaptive TTL / heuristic freshness (Alex protocol, RFC 9111 10% rule)",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Clever (young objects change more often than old ones) but accepts a few percent stale by design, which is the opposite of this store's precision requirement. Possible narrow use: prioritising which entries a sweep re-verifies first (recently changed areas of the code first).",
+   "egress_posture": "No egress.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F16",
+    "F15"
+   ]
+  },
+  {
+   "name": "Bazel / Shake / Skyframe / Salsa as actual engines",
+   "kind": "system",
+   "verdict": "rejected",
+   "why": "They memoise deterministic computations keyed by exact inputs, at repository-scale graph size, and assume a build graph to execute. This store needs fuzzy symptom retrieval and human-readable diagnosis records; adopting a build system as the store adds a heavy toolchain (Haskell, JVM) for no benefit. Cite design only. Skyframe notes invalidation is all-or-nothing per node and Bazel's cache cannot say which build produced an output, which are provenance gaps this store must fill itself.",
+   "egress_posture": "No egress, but heavy local footprint.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F07",
+    "F08",
+    "F06",
+    "F10"
+   ]
+  },
+  {
+   "name": "Dynamo-style vector clocks, sloppy quorum, Merkle-tree replication",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Designed for a multi-datacentre key-value store with node failures; at one box or one VPS and a few hundred rows there are no replicas to reconcile. Borrow only read repair, tombstone discipline and application-level merge.",
+   "egress_posture": "No egress if self-hosted, but irrelevant.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F18",
+    "F19"
+   ]
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Key the validity of an entry on a recorded dependency trace, not on age: for each entry facet (diagnosis, fix, each failed approach) store the (dependency, content-hash) pairs it relied on when its discriminating check last passed. Dependencies must include the check command itself and environment dimensions (Node, Expo SDK, RN, Gradle/NDK, OS, Postgres version, which service is deployed from which directory), because untracked dependencies are how memoisation silently goes wrong.",
+   "fact_ids": [
+    "F01",
+    "F03",
+    "F05",
+    "F07",
+    "F27"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "A trace match is necessary but not sufficient; a trace mismatch is not refutation. Order the lookup pipeline: fuzzy symptom match proposes candidates, trace comparison classifies each as unchanged or drifted, and the discriminating check on current code decides. Never act on a hit without running the check, regardless of trace state; use the trace only to label, rank and decide how loudly to warn.",
+   "fact_ids": [
+    "F02",
+    "F03",
+    "F09",
+    "F28"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Invalidate by event and lazily with early cutoff: a changed dependency only marks the entry 'needs re-verify' (computed from git diff and lockfile diff at phase boundaries or at read time, no daemon). If the check still reproduces the root cause, re-stamp the trace to current hashes (backdating) and record a confirmed event instead of dropping the entry. This keeps false invalidation and owner workload low.",
+   "fact_ids": [
+    "F02",
+    "F08",
+    "F09",
+    "F10",
+    "F17"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "TTL is not a validity mechanism for this store. Web-cache literature accepts several percent stale for bandwidth savings; this store's dangerous failure is a false positive. If used at all, age only schedules re-verification of entries whose dependencies are weakly tracked, and never extends validity.",
+   "fact_ids": [
+    "F16",
+    "F15",
+    "F26"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Do not combine facets from different verification states into one answer (Frankenbuild). An entry's diagnosis, fix and failed-approach facets each carry their own trace and status; a consumer should take a facet only if that facet verifies, and must not splice a still-valid diagnosis from entry A with a fix from entry B verified in a different environment.",
+   "fact_ids": [
+    "F04",
+    "F03"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Negative entries follow RFC 2308: (a) a 'failed approach' claim is scoped to the narrowest key, carries its evidence and the trace under which it was observed (the SOA analogue: no authority, no caching), has bounded life tied to its trace, and is presented as an ordering hint rather than a prohibition because a refuted approach may become viable after dependency changes and stale negatives delay newly valid answers; (b) a plain miss is never stored as a claim that 'nothing exists', only logged as a miss event for the hit/refute/miss analytics and later linked to the entry created.",
+   "fact_ids": [
+    "F11",
+    "F12",
+    "F14"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Refuted and invalidated entries become tombstoned status rows (never hard-deleted, with evidence and commit), so a stale draft or a worktree holding an older copy cannot resurrect them, and so refute rates can be computed later. Apply a grace policy: a tombstone may be compacted only after no worktree or session older than it can still write.",
+   "fact_ids": [
+    "F20",
+    "F18"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Write-through at fix time: the solver writes a provisional entry when the fix lands, with the trace captured against the commit the check actually ran on, using a conditional write on expected base version to reject stale sets. Promote provisional to confirmed only after reproduction by a different agent or session. Write-back (deferred write) loses the diagnosis on session death or context compaction; write-around leaves the expensive derivation unrecorded.",
+   "fact_ids": [
+    "F17",
+    "F21",
+    "F18"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Repair on read, by the reader, but only mechanically: the cheap agent that runs the gate appends confirmed/refuted/invalidated events and re-stamps traces; semantic revision of the diagnosis or failed-approach list is queued for a stronger tier. Because read repair only touches entries that get read, run a cheap periodic dependency-hash scan at phase boundaries to surface drift in never-read entries.",
+   "fact_ids": [
+    "F18",
+    "F19"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Consistency target is read-your-writes for the writing agent plus monotonic reads across agents (a refutation once seen is never un-seen), not strong consistency. Achieve it with an append-only event log and a derived status ordered by code lineage (commit ancestry the event was evaluated on) rather than wall-clock timestamps, so concurrent writers commute and a late 'confirmed' from old code cannot overwrite a newer 'refuted'. All agents and worktrees must reach one canonical store (single file path or server), since SQLite WAL is same-host only and per-worktree copies would be unreconciled replicas.",
+   "fact_ids": [
+    "F18",
+    "F22",
+    "F23",
+    "F24"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Serve-stale semantics are inverted for this store: a drifted entry is returned only as a clearly labelled lead (diagnosis path, failed approaches, and 'STALE: dependencies changed: ...' with no actionable fix), and when the check cannot run in the current environment (for example an Android native build on the Windows box) the entry is shown 'unverified' and needs higher-tier or human confirmation before acting.",
+   "fact_ids": [
+    "F13",
+    "F14"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Optional: a short-expiry claim row at miss time stops two top-tier sessions from re-deriving the same defect in parallel (Facebook lease against thundering herd; Gray and Cheriton expiry so a crashed session does not block). Only worth building if parallel sessions on the same symptom actually occur.",
+   "fact_ids": [
+    "F17",
+    "F25"
+   ],
+   "strength": "weak"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Time-based expiry (TTL) as the primary invalidation mechanism",
+   "why": "Web-cache evidence (Gwertzman and Seltzer) shows TTL and adaptive TTL accept several percent stale responses, tolerable for pages but not for a store where one false positive reuse is the dangerous failure. A TTL also expires still-valid entries and keeps invalid ones alive until the clock runs out. Event-driven, dependency-tracked invalidation is available because the dependency set (files, versions, platform) is knowable from git.",
+   "fact_ids": [
+    "F16",
+    "F15",
+    "F26"
+   ]
+  },
+  {
+   "what": "Invalidate immediately when any dependency file changes (Make-style dirty bit)",
+   "why": "A dirty bit cannot support early cutoff (a la carte 4.2.1): touching a large shared file would invalidate every entry that mentions it, producing mass invalidation and eventually owner distrust. Re-running the check and backdating is cheaper and more precise.",
+   "fact_ids": [
+    "F01",
+    "F02"
+   ]
+  },
+  {
+   "what": "Deep (terminal-input-only) traces as the entry key",
+   "why": "Recording only coarse terminal inputs such as the repo commit or the package.json hash gives fast keys but cannot early-cut-off and risks Frankenbuild inconsistency; the dependency set should be the narrow set the root cause actually reads plus the environment.",
+   "fact_ids": [
+    "F01",
+    "F04"
+   ]
+  },
+  {
+   "what": "Stale-while-revalidate: serve the stale entry as the answer and revalidate in the background",
+   "why": "The web rationale is latency; here acting on a stale answer is the false positive. Only 'stale as a labelled lead' survives (RFC 8767 allows stale only after refresh fails and flags it).",
+   "fact_ids": [
+    "F13",
+    "F14"
+   ]
+  },
+  {
+   "what": "Write-around or write-back for entry creation",
+   "why": "Write-around leaves the expensive diagnosis unrecorded until some later miss; write-back risks losing it when the session ends or compacts. Write-through with a provisional status is the safe policy.",
+   "fact_ids": [
+    "F21",
+    "F17"
+   ]
+  },
+  {
+   "what": "Caching 'no entry exists' as an authoritative negative",
+   "why": "RFC 2308 caches a negative only with its authority record and a short bounded lifetime; a miss in a store with a few hundred entries just means the symptom handles did not match, and caching that would suppress escalation exactly when a new entry should be created. Log misses as analytics events only.",
+   "fact_ids": [
+    "F11",
+    "F12",
+    "F14"
+   ]
+  },
+  {
+   "what": "Last-write-wins by wall-clock timestamp for conflicting status updates",
+   "why": "Dynamo's LWW picks the largest physical timestamp, which would let a confirmation from an older commit overwrite a newer refutation. Order by code lineage and fold append-only events.",
+   "fact_ids": [
+    "F18"
+   ]
+  },
+  {
+   "what": "Adopting Dynamo-style quorum, vector clocks or Merkle trees",
+   "why": "Built for replicated multi-node stores orders of magnitude larger; this store has one canonical copy and a few hundred rows, so only read repair, tombstones and application-level merge transfer.",
+   "fact_ids": [
+    "F18",
+    "F19",
+    "F23"
+   ]
+  }
+ ],
+ "open_questions": [
+  "What exactly is a 'dependency' of a defect entry at sufficient granularity: whole files, git blob hashes, hunks/line ranges, or symbols? Coarser is cheaper but causes more re-verification; a design decision for the data-model lane, to be settled with real seed entries from CLAUDE.md traps (for example the eas.json empty-env trap depends on one file plus the EAS CLI behaviour, which is not in the repo and so is untracked).",
+  "How should entries whose cause is external behaviour (EAS CLI, Railpack detection, Supabase pooler, Sentry plugin) be traced? The external tool version is the only trackable handle and is often not recorded; these may need a small manually maintained 'environment manifest' key, which adds tracking burden the owner wants to avoid.",
+  "Can every discriminating check be automated and cheap? Native Android compile is not gated in CI and not runnable on the Windows box; such entries can only be 'unverified' unless a check surrogate (grep for a config pattern) is accepted as a valid gate.",
+  "Non-deterministic or flaky root causes (race conditions such as the documented outbox race): per a la carte 6.3 volatile or non-deterministic tasks cannot be cached the same way. Does the store record them with a 'probabilistic reproduction' check and a lower promotion bar?",
+  "Which negative-result lifetime policy is acceptable: pure event-driven (reopen when trace changes) or event-driven plus a cap measured in phases? No empirical data exists; RFC 2308's 1-3 hour guidance is for DNS and does not translate to a time unit here.",
+  "Is a second-agent reproduction required for 'confirmed', and who pays for it when only the top-tier model can reproduce? Policy for the workflow lane.",
+  "Does the owner run parallel sessions on the same symptom often enough to justify the claim-lease mechanism?",
+  "Could not read the Gray and Cheriton Leases paper directly (scanned PDF); lease claims rest on a secondary summary."
+ ],
+ "urls_attempted": [
+  "https://www.rfc-editor.org/rfc/rfc2308.txt",
+  "https://www.rfc-editor.org/rfc/rfc5861.txt",
+  "https://www.rfc-editor.org/rfc/rfc8767.txt",
+  "https://www.rfc-editor.org/rfc/rfc9111.txt",
+  "https://www.microsoft.com/en-us/research/wp-content/uploads/2018/03/build-systems.pdf",
+  "https://ndmitchell.com/downloads/paper-build_systems_a_la_carte-30_sep_2018.pdf (404)",
+  "https://www.microsoft.com/en-us/research/publication/build-systems-a-la-carte/",
+  "https://www.cambridge.org/core/journals/journal-of-functional-programming/article/build-systems-a-la-carte-theory-and-practice/097CE52C750E69BD16B78C318754C7A4 (abstract only)",
+  "https://neverworkintheory.org/2021/09/21/build-systems-a-la-carte.html",
+  "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf",
+  "https://cassandra.apache.org/doc/latest/cassandra/operating/read_repair.html (404)",
+  "https://cassandra.apache.org/doc/latest/cassandra/managing/operating/read_repair.html",
+  "https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/index.html",
+  "https://cassandra.apache.org/doc/latest/cassandra/managing/operating/compaction/tombstones.html",
+  "https://bazel.build/remote/caching",
+  "https://bazel.build/reference/skyframe",
+  "https://hackage.haskell.org/package/shake/docs/Development-Shake.html (redirected)",
+  "https://hackage-content.haskell.org/package/shake-0.19.9/docs/Development-Shake.html",
+  "https://github.com/ndmitchell/shake/blob/master/docs/Manual.md",
+  "https://raw.githubusercontent.com/ndmitchell/shake/master/docs/Why.md",
+  "https://en.wikipedia.org/wiki/Shake_(software) (wrong Shake)",
+  "https://en.wikipedia.org/wiki/Cache_(computing)",
+  "https://rustc-dev-guide.rust-lang.org/queries/incremental-compilation.html",
+  "https://salsa-rs.github.io/salsa/reference/algorithm.html",
+  "https://git.joshthomas.dev/mirrors/salsa/raw/branch/gh-pages/reference/algorithm.html (connection refused)",
+  "https://martinfowler.com/bliki/TwoHardThings.html",
+  "https://www.allthingsdistributed.com/2008/12/eventually_consistent.html",
+  "https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf",
+  "https://web.stanford.edu/class/cs240/readings/89-leases.pdf (404)",
+  "https://courses.cs.duke.edu/spring15/cps210/readings/leases-sosp89.pdf (scanned image)",
+  "https://blog.acolyer.org/2014/10/31/leases-an-efficient-fault-tolerant-mechanism-for-distributed-file-cache-consistency/",
+  "https://www.usenix.org/legacy/publications/library/proceedings/sd96/full_papers/seltzer.txt",
+  "https://www.sqlite.org/wal.html",
+  "https://www.postgresql.org/docs/current/transaction-iso.html",
+  "WebSearch (generic queries on the a la carte paper, Dynamo, Leases, Salsa, Gwertzman/Seltzer; no repository content in any query)"
+ ],
+ "anomalies": [
+  "WebFetch returns answers produced by a small summariser model, not raw page text. Facts from HTML pages and RFCs were checked against section numbers and quotes the summariser gave, and rated verified where those were explicit; treat exact quotes in F11-F15, F19-F20 and F22-F24 as summariser-reported to that degree. Facts from F01-F05, F17 and F18 were read directly from PDF text extracted with the local pdftotext binary (read-only use of an existing tool, no installs).",
+  "WebFetch could not decode PDFs; the three PDFs it saved under the session tool-results folder were converted with pdftotext to the session scratchpad. No repository files were modified and nothing was installed.",
+  "The ICFP 2018 version of the a la carte paper was the one read; the JFP 2020 'Theory and Practice' version renumbers sections and adds material, so section numbers cited (4.2.x, 6.3-6.5) apply to the ICFP version. In the ICFP text the in-paper cross-reference numbers for rebuilders appear shifted by one in Table 2 (4.2.1 is the dirty bit in the body text); the body text was used, not the table labels.",
+  "Dynamo read-repair section number could not be recovered from the extraction; it is located in the paper's experiences discussion of the read path, with get()/put() reconciliation described near 4.5.",
+  "Search results for the a la carte paper and Dynamo returned only secondary summaries, so primary text came from direct PDF fetches.",
+  "The Cassandra tombstone page's statement on resurrection was given by the fetch summariser as a conditional ('may miss the deletion'); the stronger 'zombie data' wording from Cassandra operational lore was not found on the pages read and is not asserted.",
+  "Wikipedia is used only for the write-policy definitions (reported confidence); no primary textbook source (Hennessy and Patterson) was reachable."
+ ]
+}

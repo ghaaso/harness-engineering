@@ -1,0 +1,44 @@
+// check4: every number token in section M (all switch states from the all-states dump) against the sources.
+// Run: node - < numcheck.js.txt  (from this folder)
+'use strict';
+const fs = require('fs'), path = require('path');
+const HERE = process.cwd();
+const P = path.join(HERE, '..', '..', '..', '..', '..'); // docs/program
+const GF = path.join(P, 'evidence', 'harness-bottlenecks', 'graph2', 'graphify');
+const CL = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/graphify/audit/claims';
+const RS = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/graphify/audit/rescore/out';
+const dump = fs.readFileSync(path.join(HERE, '..', 'work', 'text', 'alltext.txt'), 'utf8').split('\n');
+// collect section M blocks
+const mLines = new Set(); let inM = false;
+for (const l of dump) {
+  if (l === 'Graphify itself, on our tasks') inM = true;
+  if (inM) mLines.add(l);
+  if (inM && /^Sources: graph2\/graphify\/RESULT\.md/.test(l)) inM = false;
+}
+// static html of section M too
+const html = fs.readFileSync(path.join(P, 'graph-test', 'index.html'), 'utf8');
+const iM = html.indexOf('<section class="sec" id="m"');
+const mHtml = html.slice(iM, html.indexOf('</section>', iM));
+mHtml.replace(/<[^>]+>/g, '\n').split('\n').forEach(l => { if (l.trim()) mLines.add(l.trim()); });
+// aria-labels and data-tips inside M
+(mHtml.match(/(aria-label|data-tip)="[^"]*"/g) || []).forEach(a => mLines.add(a));
+fs.writeFileSync(path.join(HERE, 'm-lines.txt'), [...mLines].join('\n'));
+// sources: strict (result.json) and wider (audits)
+function nums(o, out) { if (o == null) return; if (typeof o === 'number') out.push(o); else if (typeof o === 'string') (o.replace(/,(?=\d{3})/g, '').match(/-?\d+(?:\.\d+)?/g) || []).forEach(x => out.push(+x)); else if (Array.isArray(o)) o.forEach(x => nums(x, out)); else if (typeof o === 'object') Object.keys(o).forEach(k => { nums(o[k], out); }); }
+const strict = []; nums(JSON.parse(fs.readFileSync(path.join(GF, 'result.json'), 'utf8')), strict);
+const wide = [];
+for (const f of ['RESULT.md', 'AUDIT-CLAIMS.md', 'AUDIT-RUN.md']) nums(fs.readFileSync(path.join(GF, f), 'utf8').replace(/−/g, '-'), wide);
+for (const f of [CL + '/recheck.json', CL + '/recheck2.json', CL + '/native_check.json']) { try { nums(JSON.parse(fs.readFileSync(f, 'utf8')), wide); } catch (e) { console.log('cannot read', f); } }
+try { for (const f of fs.readdirSync(RS)) if (f.endsWith('.json')) { try { nums(JSON.parse(fs.readFileSync(path.join(RS, f), 'utf8')), wide); } catch (e) {} } } catch (e) { console.log('no rescore out'); }
+const has = (pool, tok) => { const x = Math.abs(+tok.replace(/,/g, '')); const dec = (tok.split('.')[1] || '').length; const m = Math.pow(10, dec);
+  return pool.some(v => { const a = Math.abs(v); return Math.abs(Math.round(a * m + 1e-7) / m - x) < 1e-9 || Math.abs(Math.round(a * m - 1e-7) / m - x) < 1e-9; }); };
+const report = { strictOnly: 0, wideOnly: [], none: [] };
+for (const line of mLines) {
+  const clean = line.replace(/−/g, '-').replace(/\b(T1x?|T[2-5]|G-[1-6])\b/g, ' ').replace(/nDCG@10/g, ' ').replace(/0\.9\.108/g, ' ').replace(/\d{2}:\d{2}:\d{2}/g, ' ').replace(/top-10/g, ' ').replace(/[a-z]+-d\d/g, ' ');
+  const re = /(\d[\d,]*(?:\.\d+)?)/g; let mm;
+  while ((mm = re.exec(clean))) { const tok = mm[1].replace(/,$/, '');
+    if (has(strict, tok)) report.strictOnly++; else if (has(wide, tok)) report.wideOnly.push(tok + '  ::  ' + line.slice(0, 150)); else report.none.push(tok + '  ::  ' + line.slice(0, 150)); }
+}
+console.log('lines', mLines.size, 'numbers in result.json', report.strictOnly);
+console.log('--- only in the audits or RESULT.md (not result.json):', report.wideOnly.length); [...new Set(report.wideOnly)].forEach(x => console.log('  ' + x));
+console.log('--- in no source:', report.none.length); [...new Set(report.none)].forEach(x => console.log('  ' + x));

@@ -1,0 +1,11 @@
+// Writer classes with "created during the reading agent's run" (birth between transcript start and read) counted as same agent.
+const fs=require('fs'),rl=require('readline');
+(async()=>{const rows=[];const per={};const r=rl.createInterface({input:fs.createReadStream('../rows.jsonl')});
+for await(const l of r){const o=JSON.parse(l);const key=o.f+'|'+o.cid+'|'+o.i;per[key]=(per[key]||0)+1;rows.push([key,o.lvl,o.ageLastWriteH,o.birth,o.trStart,o.ts,o.tok,o.car]);}
+const n=Object.keys(per).length;let T=0,C=0;const W={};
+for(const [key,lvl,age,birth,trS,ts,tok,car] of rows){T+=tok;C+=car;const w=1/per[key];let c;
+ const born=birth!=null&&birth>=trS&&birth<=ts;
+ if(lvl.startsWith('transcript'))c='a';else if(lvl.startsWith('session')&&age!=null&&age<24)c='b';else if(born)c='a';else if(lvl.startsWith('session'))c='c';else if(lvl==='otherSession')c='d';else c='e';
+ W[c]=W[c]||[0,0,0];W[c][0]+=w;W[c][1]+=tok;W[c][2]+=car;}
+const f=ks=>ks.reduce((a,k)=>[a[0]+(W[k]||[0,0,0])[0],a[1]+(W[k]||[0,0,0])[1],a[2]+(W[k]||[0,0,0])[2]],[0,0,0]).map((v,i)=>+(100*v/[n,T,C][i]).toFixed(1));
+console.log(JSON.stringify({a:f(['a']),b:f(['b']),c:f(['c']),d:f(['d']),e:f(['e']),task24:f(['a','b']),loose:f(['a','b','c'])}));})();

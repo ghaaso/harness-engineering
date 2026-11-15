@@ -1,0 +1,306 @@
+{
+  "summary": "Build the pathway map engine from the model brief (one agent at a time): declarative graph and engine with tests, then the parameter table from the evidence, then an independent check",
+  "agentCount": 3,
+  "logs": [
+    "engine: 37 states, 75 branches, tests 19/19",
+    "parameters: 52 filled; measured 6, studies 9, guesses 37"
+  ],
+  "result": {
+    "engine": {
+      "files": [
+        "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/map.json",
+        "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/engine.js",
+        "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/package.json",
+        "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/library-pathways/params-placeholder.json",
+        "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/library-pathways/engine-test.js.txt"
+      ],
+      "api": "engine.js exports the PathwayEngine object. It loads with require in node, and in a page it sets a global with that name. Every function takes the map (the raw JSON, compiled once and cached) and plain parameter sets of the form {id: number}. Expressions go through a small parser that knows only + - * / ( ), exp/min/max/safediv and the names the map declares. Nothing is evaluated with eval.\n- evaluatePolicy(map, params, policyId, stocks) returns {overall, classes[], shares, classTotal, stateFlow, branchFlow, adjusted}. Each summary holds outcomes{EQUAL, ESCAPED_FOUND, ESCAPED_SILENT, UNRESOLVED}, wrong, cost, costByTier{cheap, opus, fable}, calls, callsByTier and measures{P_strong_right, P_escaped}.\n- evaluateClass(map, params, policyId, {kind, need, held, distractor}, stocks) returns one class's summary plus its chance and flows.\n- timePath(map, params) returns periods[] (stocks at the start of the period, stock values, attribute shares, the library summary, ratios, the next stocks, flows), plus top_first, cheap_ladder, first, last.\n- headline(lib, top, ladder) returns cost_vs_top, wrong_vs_top, cost_vs_ladder and wrong_vs_ladder.\n- routes(map, params, policyId, {stocks, classValues, maxVisits, minChance, sortBy}) returns routes[]. Each route has branches, states, outcome, chance, cost, costByTier and carried. Also returned: totalChance and truncatedChance. sortRoutes(list, 'chance' | 'cost' | 'carried') sorts them.\n- ensemble(map, table, {n, seed, percentiles, keepDraws}) returns the spread (first and last period: the four ratios plus each policy's cost and wrong rate), shareBetter, the Spearman ranking per ratio, and adjustedDraws.\n- swings(map, table) returns base, rows (low and high for each parameter) and a ranking per ratio.\n- conservation(map, params, {stocks, tol}) returns {ok, maxError, checks, problems}. checkMap(map) returns the structural checks.\n- Helpers: compileExpr, prepareParams, paramsFromTable, drawParams, rng (mulberry32), spearman, percentile.",
+      "states": 37,
+      "branches": 75,
+      "tests_run": 19,
+      "tests_passed": 19,
+      "hand_checks": [
+        "Case 1, top_first, a visible episode the cheap model alone gets wrong (Opus right 0.7, Fable right 0.6, gate catch chance g 0.6, review cost 1, Opus and Fable attempts 10 each, rework 10). Worked by hand: EQUAL 0.808, UNRESOLVED 0.0432, each of the two escape outcomes 0.0744. Cost 13.724, split as cheap 0, Opus 11.924, Fable 1.8. Calls 2.5648, of which Opus 2.3848 and Fable 0.18. The engine matched to six decimal places.",
+        "Case 2, cheap_ladder, the same class (retry right 0.25, handoff 0.5, one cheap call per attempt). Worked by hand: EQUAL 0.5136, UNRESOLVED 0.01944, each of the two escape outcomes 0.23348. Cost 11.6008, split as cheap 1.825, Opus 8.9658, Fable 0.81. The engine matched to six decimal places.",
+        "Case 3, library: a latent episode the cheap model alone gets wrong, with the exact problem held, a look-alike retrievable, and stocks of 4 good and 1 bad entry, so the bad share is 0.2. Worked by hand: a good exact entry is in hand at the cheap attempt with chance 0.20736, and a wrong entry is accepted and in hand with chance 0.0369. EQUAL 0.5741159424, UNRESOLVED 0.01702135296, each of the two escape outcomes 0.20443135232. Cost 10.932500592, including lookup, screen, carry and write costs. Right strong-tier solves 0.3183623424. The engine matched to six decimal places."
+      ],
+      "deviations_from_brief": [
+        "Opus attempt (L8). The chance of a right answer is ok + (1 - ok) * o_opus under every policy. This uses the top_first note (right with chance 1 for cheap_ok episodes) as the general rule for L8, where L8's own text gives o_opus flatly. The two readings differ in one place only: a cheap_ok episode in the library policy that a wrong accepted entry spoiled, that the gate caught and that the retry failed to fix.",
+        "The cheap retry passes through the gate, so it pays one review cost (s_review * c_review * m_opus) whether right or wrong. A wrong retry is caught with chance 1, as the brief says. Every gate pass pays the review cost, including the gate after Fable.",
+        "Tiers. The handoff (c_handoff), lookup, mechanical screen and carry costs are booked to the cheap tier, because none of them is multiplied by a price ratio. Review and rework are booked to Opus. Writing an entry is booked to the tier that solved the problem.",
+        "Call counts. A cheap attempt or retry counts n_cheap calls, an Opus attempt n_opus and a Fable attempt n_fable. A gate pass counts s_review * c_review calls, a write c_write calls at the solving tier, and a rework R_rework Opus calls. Lookup, screen, carry and handoff count no calls. The brief does not define calls.",
+        "When the cheap model judges an entry at the screen with no mechanical check, that judgement costs nothing. Section 6 lists no cost for it.",
+        "Stock update. Both stocks are updated together from their values at the start of each period. Staleness applies to E_good at the start of the period. The section 8 formulas are used as written. z_wrongstore applies to every escape at every tier, whether or not the escape is found later. It appears only in the stock equation, not as a drawn branch.",
+        "Capture (L10) is drawn as three branches: a good entry is written, a bad entry is written, or nothing is written. They are gated by a policy flag called capture, which is 0 for top_first and cheap_ladder. One graph therefore serves all three policies, and the policies differ only in their start state, the capture flag and the class attributes they fix.",
+        "Constraints. If a draw puts r_comp_full + r_comp_part above 1, both are scaled down in proportion; the brief states this limit. The same rule is applied to u_exact + u_similar + u_composite so that the chance of holding nothing can never go negative; the brief does not state that one. Scaled draws are counted in adjustedDraws, and the placeholder ranges never trigger either rule. latent_coverage_factor is treated as a chance, between 0 and 1.",
+        "A wrong entry before the screen has its own kind, 'wrong', separate from 'wrong_accepted'. The brief lists six kinds of entry and this makes seven.",
+        "Ratios. When the denominator is zero, the ratio is 1 if the numerator is also 0, and Infinity otherwise. The 'first period' is period 0, which starts with an empty library. The Spearman ranking leaves out any parameter held fixed in the table (periods).",
+        "The graph as specified has no cycle, because there is only one retry. The loop bound on routes (default: at most 2 visits per state) therefore never binds; the tests confirm the cut-off chance is 0. The engine does handle cycles in general.",
+        "A new file was needed: library-pathways/package.json, which says {\"type\": \"commonjs\"}. The repository root is \"type\": \"module\", so without it node loads engine.js as an ES module with no module.exports. engine.js also carries a /* global module */ comment because the root ESLint config lints every .js file, docs included. engine.js passes ESLint."
+      ],
+      "notes": "All 19 tests pass. Run them with: cd docs/program/evidence/library-pathways && node - < engine-test.js.txt. They take about 5 seconds.\n\nThe conservation test checked 2.2 million sums over 500 draws: 250 from the placeholder ranges and 250 with every chance drawn across the whole range 0 to 1, each with random stocks. The largest error was 4.4e-16.\n\nThe tests also check:\n- the map's own rules: label lengths, plain meanings under 25 words, every parameter used, the 12 pure cost parameters never reaching a chance, every state reachable;\n- the expression whitelist;\n- that the tree routes add up to the graph (chances sum to 1, and route costs weighted by chance equal the graph cost);\n- the stock balance;\n- that the ensemble is deterministic for a given seed;\n- Spearman and percentiles;\n- swings;\n- constraints.\n\nThe map has 52 parameters, 37 states (4 of them outcomes) and 75 branches, each branch with an empty limitations list. The top level holds a limitations index that is empty for now.\n\nRoutes at the placeholder best values: 7 for top_first, 11 for cheap_ladder and 630 for library.\n\nSpeed in node: 1000 ensemble draws over 12 periods take about 6.8 s, and swings take about 0.8 s. A page may want to run the ensemble in chunks.\n\nThe engine also runs inside a vm context with no module object, where it exposes the global PathwayEngine with 19 functions.\n\nPlaceholder numbers are not findings. As a smoke run only: 1000 draws gave a median cost_vs_top of 0.51 and a median wrong_vs_top of 2.5, and shareBetter was 0 in the 150-draw test."
+    },
+    "params": {
+      "file": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/params.json",
+      "count": 52,
+      "measured": [
+        "u_exact",
+        "c_check_share",
+        "c_carry",
+        "rho_retry",
+        "w_write",
+        "e_right"
+      ],
+      "from_studies": [
+        "u_similar",
+        "k_fill",
+        "r_exact",
+        "a_wrong",
+        "q_exact",
+        "q_similar",
+        "h_harm",
+        "m_opus",
+        "m_fable"
+      ],
+      "guesses": [
+        "p_visible",
+        "need_visible",
+        "need_latent",
+        "u_composite",
+        "latent_coverage_factor",
+        "v_max",
+        "k_distract",
+        "t_visible",
+        "t_latent",
+        "c_lookup",
+        "r_similar",
+        "r_comp_full",
+        "r_comp_part",
+        "f_false",
+        "c_screen",
+        "a_right",
+        "d_deliver",
+        "q_comp",
+        "q_part",
+        "n_cheap",
+        "g_tests_visible",
+        "g_tests_latent",
+        "s_review",
+        "g_review",
+        "c_review",
+        "c_handoff",
+        "n_opus",
+        "n_fable",
+        "o_opus",
+        "o_fable",
+        "c_write",
+        "z_wrongstore",
+        "l_found",
+        "R_rework",
+        "delta_stale",
+        "episodes_per_period",
+        "periods"
+      ],
+      "doubts": [
+        "Episode size is not fixed by the map. n_cheap, n_opus, n_fable, c_review, s_review, c_lookup, c_carry, c_write and R_rework only make sense relative to one episode. I assumed a fix-sized unit of about 10 calls. The record's nearest numbers are whole agent windows (median 7 calls) and whole slices (519 calls per session), which differ by 70 times.",
+        "Period length is not fixed by the map. delta_stale and episodes_per_period depend on it. I assumed 30 days and said so in the file.",
+        "periods is marked run_setting in map.json. I gave it a range (6 to 36) and best 12, but the note says it is a horizon, not an unknown. The engine should skip it in the ensemble.",
+        "Model structure: Opus is wrong only on cheap_wrong episodes, with chance 1 - o_opus. In the Clinic record, Opus-built slices had a serious defect at round-one review in 9 of 14. The map cannot show that as Opus error on cheap_ok work.",
+        "h_harm applies only to cheap_ok episodes. The harm studies measure net score drops, which are a lower bound on how many right answers were spoiled.",
+        "rho_retry uses 36 % (1 in 2.8 review rounds). That is a pass rate per review round across first and later rounds, mostly for Opus-led fixes, not a measured cheap-retry rate.",
+        "u_exact is tagged M because 3 to 5 of 48 to 50 fix commits repeated a cause. That covers hard fixes only, not all episodes, and includes same cause in a different file.",
+        "m_opus is fixed at 2 to 2. This assumes equal call size per tier. In November slice sessions Sonnet calls read about twice the context of Opus calls (R5 says this is a window-size artefact).",
+        "R4 reports Sonnet 2 of 6 slices with a serious round-one defect. The Clinic table read again here has counts for only 4 Sonnet slices (2 of 4). I used 2 of 4 and noted it in need_latent.",
+        "Outside-study figures (APC, AgentBrew, ClashEval, MemCollab, Dynamic Cheatsheet, vCache and others) were taken from the fact sheets, where the fact gatherers opened the source. I had no web access and did not re-open them. The MeanCache and 17 to 45 % pattern figures are search summaries or second-hand reads."
+      ],
+      "notes": "Also written: C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/library-pathways/params-notes.md (one line per parameter) and the generator build-params.js.txt in the same folder. Run it from that folder with: node - < build-params.js.txt. It checks every id against map.json, low <= best <= high, chances inside 0 to 1, the two sum constraints at low, best and high, and that each note is under 35 words. params.json has a parameters array with id, group, low, high, best, tag, source, note, plus a source_key legend and an assumptions list. Source codes (F1 to F6, R1 to R10, D1, D7, V2, HB) are decoded in source_key."
+    },
+    "verify": {
+      "verdict": "sound_after_fixes",
+      "defects": [
+        {
+          "where": "engine.js paramsFromTable / drawParams / swings / ensemble",
+          "what": "The engine could not read the real table. params.json holds its rows as a list with ids, but the engine expected an object keyed by id. paramsFromTable returned keys '0','1',...; drawParams, swings and ensemble stopped with an error. Added tableRows(), which accepts both shapes, used it in all four places and exported it.",
+          "fixed": true
+        },
+        {
+          "where": "engine.js drawParams and swings",
+          "what": "The run setting 'periods' was drawn uniformly from 6 to 36 and was swung. Both map.json and params.json mark it run_setting, and the table says it is 'not drawn in the ensemble'. It is now held at its best value in every draw (a random number is still taken, so the stream does not shift) and is left out of the swings. The brief itself does not settle this (brief item 1).",
+          "fixed": true
+        },
+        {
+          "where": "engine.js rng",
+          "what": "Seeds 0 and 1 gave the same stream because seed 0 was replaced by 1. Removed that; mulberry32 works with 0. Minor.",
+          "fixed": true
+        },
+        {
+          "where": "engine-test.js.txt",
+          "what": "Added 3 regression tests: the real list-shaped table is read by all four table functions; a run setting with a range is never drawn or swung; seeds 0 and 1 differ. 22 of 22 pass.",
+          "fixed": true
+        }
+      ],
+      "hand_checks": [
+        {
+          "case": "A library: visible, cheap_wrong, exact held, no look-alike (best values, stocks 50 good / 20 bad)",
+          "by_hand": "EQUAL 0.765155, FOUND 0.093391, SILENT 0.062260, UNRESOLVED 0.079194, cost 51.020384 (cheap 19.592250, Opus 25.316912, Fable 6.111221), class chance 0.003722",
+          "engine": "identical to 6 dp; largest gap 1.4e-14",
+          "agree": true
+        },
+        {
+          "case": "B library: latent, cheap_ok, nothing held, look-alike retrievable",
+          "by_hand": "EQUAL 0.993539, FOUND 0.003877, SILENT 0.002584, UNRESOLVED 0, cost 15.529838 (cheap 10.263055, Opus 5.266783), class chance 0.093640",
+          "engine": "identical to 6 dp; largest gap 8.9e-16",
+          "agree": true
+        },
+        {
+          "case": "C library: visible, cheap_wrong, composite held, look-alike retrievable",
+          "by_hand": "EQUAL 0.725688, FOUND 0.109085, SILENT 0.072724, UNRESOLVED 0.092503, cost 56.858800 (cheap 20.989303, Opus 28.731259, Fable 7.138239), class chance 0.001179",
+          "engine": "identical to 6 dp; largest gap 1.4e-14",
+          "agree": true
+        },
+        {
+          "case": "D top_first: latent, cheap_wrong (also worked with pencil: g = 0.49375, review 5 per pass)",
+          "by_hand": "EQUAL 0.661094, FOUND 0.170432, SILENT 0.113621, UNRESOLVED 0.054853, cost 37.889529 (Opus 31.223904, Fable 6.665625)",
+          "engine": "identical to 6 dp; largest gap 3.6e-15",
+          "agree": true
+        },
+        {
+          "case": "E cheap_ladder: visible, cheap_ok (extra)",
+          "by_hand": "EQUAL 1, cost 15.000000 (cheap 10, Opus review 5)",
+          "engine": "identical",
+          "agree": true
+        },
+        {
+          "case": "Every class of every policy (40 classes), 300 random draws with random stocks",
+          "by_hand": "brief model written from sections 4 to 8 without reading map.json or engine code",
+          "engine": "120,000 numbers, largest relative gap 1.3e-15",
+          "agree": true
+        }
+      ],
+      "conservation": "Passed. 1,000 draws uniform inside params.json's ranges (my own generator), full 12-period path each, checked at every period's stocks: every branch chance out of every state lies in 0..1 and sums to 1 for every class of every policy; every class's outcome chances sum to 1 (engine and, separately, my model); class chances sum to 1 (my formula and the engine's attribute shares). 52.8 million sums over 12,000 draw-periods, largest error 6.7e-16. No draw needed the constraint scaling (highs give r_comp_full + r_comp_part = 1.0 and the three ceilings 0.92).",
+      "picture_is_model": "Passed. All 75 branches carry flow and all 37 states are reached under some policy and period. engine.js names no parameter, state or branch of the model, only the three policy ids and the horizon 'periods'. Every parameter except the horizon moves some output; pure cost parameters never move a chance. Costs are counted once: graph flow times cost, the route view's carried cost over all routes (630 for the library) and my independent model agree for each policy (library 27.900009 three ways). Stock equations and the time path match my own section-8 recursion at every period, at best values and over 100 random draws (gap 7e-15). map.json fields the engine does not compute from (steps, entry_kinds, groups, labels, tiers[].price) are wording for the page; the price strings agree with each tier's branch-cost multipliers.",
+      "brief_problems": [
+        "Is the horizon drawn? Section 9.5 says draw all parameters and section 7 lists periods as one, but the map and table call it a run setting. The engine now follows the map and table.",
+        "L8 after a handoff on a cheap_ok episode: the brief says right with o_opus, and the right-with-1 rule is stated only for top_first. The map uses 1. Using o_opus instead moves the last-period ratios at best values from cost 0.9326 / wrong 1.6276 to 0.9349 / 1.6390.",
+        "Stored escapes (L11 z_wrongstore): (a) it is unclear whether cheap-tier escapes are stored, since L10 writes only after strong solves. The map stores them all, and this is the largest stock effect: 150 of 180 stored escapes per year come from the cheap tier, and the bad stock is 228 against 89 if only Opus and Fable escapes are stored. (b) whether that write costs c_write: the map charges nothing, and charging it gives cost 0.9426; (c) whether it is gated by w_write.",
+        "Staleness order inside a period (start-of-period stock vs after new entries) is not stated. Its effect is small: cost 0.93266 against 0.93260.",
+        "Which stocks 'the last period' uses is not stated. The engine uses each period's starting stocks, so the stocks after the final update are never evaluated.",
+        "What counts as a call is not stated. Lookup, screen, carry and handoff have costs but count 0 calls in the map, while the table says a lookup is one model call. Only the calls figure is affected.",
+        "No tier is named for the lookup, screen, carry and handoff costs. The map puts all four on the cheap tier, which affects only the split by tier.",
+        "Inconsistent: a wrong first output is caught with g (0.49 on latent work at best values), but a wrong retry is 'assumed caught again' with chance 1, so the retry route can never escape.",
+        "Constraints: the brief gives r_comp_full + r_comp_part <= 1 with no rule for a draw that breaks it. It never says the three ceilings must sum to 1 or less, which P(held=nothing) needs. The map adds proportional scaling for both; neither binds with the current table.",
+        "Period length is never fixed, although delta_stale and episodes_per_period are per period. The table assumes 30 days.",
+        "m_opus and m_fable are called 'price ratios' while the cost unit is a call. Vendor ratios are per token, so the per-call ratio equals them only if calls are the same size in every tier.",
+        "Silent on whether a wrong accepted entry still acts at the retry or the Opus attempt. The map lets it act only at L5.",
+        "Silent on whether the cheap model's own judgment at the screen costs anything. The map charges nothing."
+      ],
+      "param_table_problems": [
+        "c_carry is tagged M but is derived (D1 marks it [D]) from an assumed input (260 remaining calls, 'half the session'). Too generous.",
+        "rho_retry is tagged M, but 64 % is the share of whole Clinic slice reviews sent back, mixing rounds, with mostly Opus-led fixes. The parameter is one cheap retry on one episode, so by the table's own rule this is a hint (G).",
+        "w_write is tagged M, but R9's crude keyword classifier counted whether the strict write rule would fire on 22 of 50 fix commits (eligibility). No entry was ever written. The top of the range, 1.0, is the owner's description. Too generous.",
+        "r_exact is tagged S, but KS-O19 gives the share of duplicate bug reports that share no words, a stand-in for lookup recall. The note admits 'bug reports, not stored fixes', so by the table's rule this is a hint (G).",
+        "Borderline: u_exact (M) counts hard fix commits over 64 days with same-cause-different-file repeats, not per-episode exact repeats. c_check_share (M) counts the design's planned seed, not entries written in use. For q_exact (S) the study gives 0.99, while best 0.75 and low 0.35 are judgments.",
+        "h_harm and a_wrong both cite the same ClashEval figure (wrong content adopted over a correct prior more than 60 % of the time), but in the map they act one after the other. At best values their product is 0.36, so one figure supports two steps and the chain does not reproduce it.",
+        "k_fill's source line misreads F4. '14.29 % hit rate at the 20th percentile of queries' is cited as '14 % at 20' entries. The cache-size points alone give 27 to 55 entries, which is still inside 10 to 300.",
+        "m_opus is fixed at 2 (low = high), so the ensemble never varies it, although its own note says Sonnet calls were twice as large. F3 gives about 222k tokens per Opus call against 440k per Sonnet call, which puts the per-call ratio near 1.",
+        "Mechanical checks passed on all 52 rows: every best lies inside its range, every chance lies inside 0..1, and every row has a tag and a source."
+      ],
+      "first_ensemble": "2,000 draws, seed 20261112, uniform inside params.json's ranges, horizon held at 12 periods, no draw needed scaling. These numbers follow from the assumed ranges and are not findings: 37 of 52 parameters are guesses. Ratios are library over top_first. Cost ratio p10/p50/p90 is 0.581 / 0.905 / 1.526 at the first period and 0.594 / 0.925 / 1.551 at the last. Wrong-rate ratio p10/p50/p90 is 1.000 / 1.536 / 3.437 at the first period and 1.018 / 1.579 / 3.559 at the last. The library is cheaper than top_first with a wrong rate no higher in 6.5 % of draws at the first period and 5.7 % at the last. At the first period the library is empty, so its wrong rate equals cheap_ladder's exactly; the spread against top_first comes from the cheap-first ladder. Against cheap_ladder at the last period, the cost ratio is 1.023 / 1.050 / 1.101 and the wrong-rate ratio 1.003 / 1.015 / 1.056. With 2,000 draws, Spearman noise is about +/-0.044, so ranks below the top 2 or 3 are not well separated.",
+      "top_drivers": [
+        "Cost ratio vs top_first (last period, |Spearman|): n_opus -0.73, n_cheap +0.48, o_opus +0.16, need_latent +0.14, rho_retry -0.13, s_review +0.12, c_review +0.11, need_visible +0.11 (first period: same names, nearly the same order)",
+        "Wrong-rate ratio vs top_first (last period): o_opus +0.85, o_fable +0.31, s_review -0.16, g_review -0.14, g_tests_visible -0.12, rho_retry -0.11, g_tests_latent -0.11, p_visible -0.10",
+        "None of these sixteen is a library parameter. The library's own parameters show only against cheap_ladder. Last-period cost vs ladder: c_write +0.42, w_write +0.35, n_cheap -0.31, p_visible +0.24, t_visible +0.22, c_lookup +0.20, f_false +0.19, t_latent +0.19. Last-period wrong rate vs ladder: h_harm +0.38, v_max +0.33, need_latent -0.32, t_latent +0.31, f_false +0.31, a_wrong +0.28, need_visible -0.19, d_deliver +0.17",
+        "The one-at-a-time swings rank the same parameters first: n_opus, n_cheap and R_rework for cost; o_opus, o_fable and s_review for the wrong rate"
+      ],
+      "notes": "At best values the bad stock outgrows the good one: 228 against 90 after a year. This comes mostly from stored cheap-tier escapes and rests on brief item 3(a). Nothing in map.json or params.json proposes a fix. Files: C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/engine.js (changed), C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/library-pathways/verify-engine.md (working), verify-engine.js.txt (independent brief model and all 31 checks, run with node - < verify-engine.js.txt from that folder), verify-engine-out.json (results, including the full ensemble and swings), verify-engine-console.txt, and engine-test.js.txt (3 tests added, 22 of 22 pass). map.json is unchanged. Nothing was committed."
+    }
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Engine"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Parameters"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "engine",
+      "phaseIndex": 1,
+      "phaseTitle": "Engine",
+      "agentId": "a646fd193b7fd7969",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794491875789,
+      "queuedAt": 1794491875337,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "engine.js exports the PathwayEngine object. It loads with r…",
+      "promptPreview": "CONTEXT. The owner of this repository designed a \"library\": a separate memory of model reasoning conclusions that a cheaper model fetches from, with an escalation ladder to stronger models whose solutions are stored. He proposed mapping and measuring the pathways through this design with trees, ensemble models and graphs. The orchestrating session wrote the model for that map as a brief: C:/Users/…",
+      "promptFramed": true,
+      "lastProgressAt": 1794492732741,
+      "tokens": 176266,
+      "toolCalls": 21,
+      "durationMs": 856952,
+      "resultPreview": "{\"files\":[\"C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/map.json\",\"C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/engine.js\",\"C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/package.json\",\"C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/library-pathways/params-placeholder.json\",\"C:/Users…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "parameters",
+      "phaseIndex": 2,
+      "phaseTitle": "Parameters",
+      "agentId": "adb632b40ce207c60",
+      "agentType": "general-purpose",
+      "model": "claude-sonnet-5-5",
+      "state": "done",
+      "startedAt": 1794492732758,
+      "queuedAt": 1794492732743,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program…",
+      "promptPreview": "CONTEXT. The owner of this repository designed a \"library\": a separate memory of model reasoning conclusions that a cheaper model fetches from, with an escalation ladder to stronger models whose solutions are stored. He proposed mapping and measuring the pathways through this design with trees, ensemble models and graphs. The orchestrating session wrote the model for that map as a brief: C:/Users/…",
+      "promptFramed": true,
+      "lastProgressAt": 1794493260230,
+      "tokens": 314299,
+      "toolCalls": 32,
+      "durationMs": 527471,
+      "resultPreview": "{\"file\":\"C:/Users/User/Documents/projects/EMS_workshop1/docs/program/library-pathways/params.json\",\"count\":52,\"measured\":[\"u_exact\",\"c_check_share\",\"c_carry\",\"rho_retry\",\"w_write\",\"e_right\"],\"from_studies\":[\"u_similar\",\"k_fill\",\"r_exact\",\"a_wrong\",\"q_exact\",\"q_similar\",\"h_harm\",\"m_opus\",\"m_fable\"],\"guesses\":[\"p_visible\",\"need_visible\",\"need_latent\",\"u_composite\",\"latent_coverage_factor\",\"v_max\",\"k…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "verify",
+      "phaseIndex": 3,
+      "phaseTitle": "Verify",
+      "agentId": "aa08a1f4ebd50a2b2",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794493260248,
+      "queuedAt": 1794493260232,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "sound_after_fixes",
+      "promptPreview": "CONTEXT. The owner of this repository designed a \"library\": a separate memory of model reasoning conclusions that a cheaper model fetches from, with an escalation ladder to stronger models whose solutions are stored. He proposed mapping and measuring the pathways through this design with trees, ensemble models and graphs. The orchestrating session wrote the model for that map as a brief: C:/Users/…",
+      "promptFramed": true,
+      "lastProgressAt": 1794494240817,
+      "tokens": 260397,
+      "toolCalls": 47,
+      "durationMs": 980569,
+      "resultPreview": "{\"verdict\":\"sound_after_fixes\",\"defects\":[{\"where\":\"engine.js paramsFromTable / drawParams / swings / ensemble\",\"what\":\"The engine could not read the real table. params.json holds its rows as a list with ids, but the engine expected an object keyed by id. paramsFromTable returned keys '0','1',...; drawParams, swings and ensemble stopped with an error. Added tableRows(), which accepts both shapes, …"
+    }
+  ],
+  "totalTokens": 750962,
+  "totalToolCalls": 100
+}

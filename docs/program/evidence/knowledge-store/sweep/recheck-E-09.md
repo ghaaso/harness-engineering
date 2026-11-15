@@ -1,0 +1,37 @@
+# recheck:E-09
+
+lane=E-09 tool_status=ok checks=11
+
+- F01 ON_PAGE — https://github.com/steveyegge/beads ; https://github.com/steveyegge/beads/releases
+    quote: `.beads/issues.jsonl` is an export for viewers and interchange, not the source of truth or a backup. / the embedded Dolt engine is unchanged (Dolt 2.2.0)
+    note: README confirmed embedded/server modes, paths, Dolt tagline. Releases: v1.3.2 Latest, October 24, 2026, Dolt 2.2.0.
+- F02 ON_PAGE — https://pkg.go.dev/github.com/steveyegge/beads@v0.30.0
+    quote: Source of truth is JSONL (`.beads/issues.jsonl`, committed to git).
+    note: All sub-claims supported (5 s debounce, auto-import, hooks optional, merge driver, hash IDs 0.20.1, lock/socket files). Page also says 'no daemon required' in one place.
+- F03 PARTIAL — https://www.dolthub.com/blog/2026-04-15-common-beads-workflows/
+    quote: all Beads issues exist on Dolt's `main` branch, regardless of your Git repo's branch, the two are completely decoupled.
+    note: Supported: Dolt storage, JSONL off by default, branch decoupling, origin/bd dolt push/pull, non-fast-forward and merge conflicts, no worktrees mention. The fetch summary did not verify the 'v1.0.1' version number specifically.
+- F05 PARTIAL — https://fossil-scm.org/home/doc/trunk/www/tickets.wiki
+    quote: The content of the two ticket tables can always be reconstructed from the ticket change artifacts.
+    note: Supported: artifact fields, timestamp-order application, reconstruction, only artifacts synced and tables rebuilt on receipt. The page does not use the term 'append-only'; '~15+ years in production' is not on the page.
+- F07 PARTIAL — https://git-scm.com/docs/gitattributes
+    quote: take lines from both versions, instead of leaving conflict markers. This tends to leave the added lines in the resulting file in random order and the user should verify the result.
+    note: Union, driver %O %A %B, exit 0/non-zero, and binary leaving path conflicted are all on page. The page example places driver config in 'Git config' generally, not specifically .git/config.
+- F08 PARTIAL — https://git-scm.com/docs/git-worktree
+    quote: refs inside `refs/bisect`, `refs/worktree` and `refs/rewritten` are not shared.
+    note: Sharing, refs exceptions, config sharing and worktreeConfig, and the same-branch refusal are on page (the latter is for `add`, overridable with --force). The 'Consequence' sentence about custom ref vs branch files is inference, not on the page.
+- F10 ON_PAGE — https://dolthub.com/docs/sql-reference/version-control/merges ; https://github.com/steveyegge/beads
+    quote: Version-controlled SQL database with cell-level merge, native branching, and built-in sync via Dolt remotes.
+    note: Dolt merges page supports DOLT_MERGE, dolt_conflicts and dolt_conflicts_$table with base/our/their, dolt_schema_conflicts, dolt_constraint_violations, rollback unless dolt_allow_commit_conflicts=1. Beads README has cell-level merge.
+- F11 ON_PAGE — https://www.dolthub.com/docs/sql-reference/version-control/remotes ; https://dolthub.com/blog/2026-02-13-announcing-git-remote-support-in-dolt
+    quote: Bitbucket is not supported as a Git remote.
+    note: Docs page supports refs/dolt/data and --ref, git on PATH, at least one branch, Bitbucket unsupported, max-history-commits 64 with parentless commit, reset-history-on-prune true, no locking mention, SSH vs sql-server lock. Blog (after 301 to the trailing-slash URL) dated Feb 13, 2026 and confirms refs/dolt/data, git on PATH, one branch, but does not say Bitbucket is unsupported; the docs page does.
+- F13 PARTIAL — https://github.com/git-bug/git-bug ; https://github.com/git-bug/git-bug/blob/master/doc/design/data-model.md
+    quote: This chain of `Commit`s is made available as a git `Reference` under `refs/<namespace>/<id>`.
+    note: Data-model doc supports operations, OperationPacks as blobs, commit chain, merge-commit DAG, Lamport order with pack-id tiebreak, op-based CRDTs. Author is stored per pack, not per operation. README: GPLv3 or later, no files added to project; Go inferred from file listing. Windows and cache not stated, as the fact itself says.
+- F17 ON_PAGE — https://www.sqlite.org/howtocorrupt.html
+    quote: The backup copy then might contain some old and some new content, and thus be corrupt.
+    note: Journal/wal kept together, backup API, VACUUM INTO, sqlite3_rsync 3.47.0 all on page; network filesystem corruption is in the locking context. Version control (git) not discussed; Fossil appears only as a bug example.
+- F19 ON_PAGE — https://nodejs.org/docs/latest-v24.x/api/sqlite.html
+    quote: Stability: 1.2 - Release candidate. / v24.15.0: SQLite is now a release candidate.
+    note: No flag needed, exec/prepare, serialize/deserialize (v24.16.0), backup, createSession/applyChangeset confirmed. FTS5 not mentioned in the whole page text read (all 102k chars), consistent with the fact's claim.

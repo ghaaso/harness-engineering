@@ -1,0 +1,90 @@
+// Revision 2 run: counts, tags, the three policies at best values, a 2,000-draw ensemble.
+// Run from this folder:  node - < run-v2.js.txt
+// Writes run-v2-out.json here. The numbers follow from assumed ranges; they are not findings.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const table = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const SEED = 20261112, N = 2000;
+
+const out = {};
+out.counts = { states: map.states.length, branches: map.branches.length, parameters: map.parameters.length,
+  outcomes: map.outcomes.length, measures: map.measures.length, stock_equations: map.stocks.update.length };
+const tags = { M: [], S: [], G: [] };
+table.parameters.forEach(r => tags[r.tag].push(r.id));
+out.tags = { M: tags.M.length, S: tags.S.length, G: tags.G.length, ids: tags };
+
+const best = E.paramsFromTable(table, 'best');
+const tp = E.timePath(map, best);
+const pick = s => ({ cost: s.cost, wrong: s.wrong, costByTier: s.costByTier, outcomes: s.outcomes });
+const first = tp.periods[0], last = tp.periods[tp.periods.length - 1];
+out.best = {
+  periods: best.periods,
+  top_first: pick(tp.top_first),
+  cheap_ladder: pick(tp.cheap_ladder),
+  library_first: pick(first.library),
+  library_last: pick(last.library),
+  ratios_first: first.ratios,
+  ratios_last: last.ratios,
+  stocks_last_period_start: last.stocks,
+  stocks_after_last: tp.finalStocks,
+  stock_values_last: last.stockValues,
+  measures_last: last.library.measures
+};
+
+const en = E.ensemble(map, table, { n: N, seed: SEED, percentiles: [10, 50, 90], keepDraws: true });
+out.ensemble = { n: N, seed: SEED, adjustedDraws: en.adjustedDraws, spread: {}, shareBetterVs: en.shareBetterVs, drivers: {} };
+['first', 'last'].forEach(w => {
+  out.ensemble.spread[w] = {};
+  E.RATIO_IDS.forEach(r => { out.ensemble.spread[w][r] = en.spread[w][r]; });
+  out.ensemble.drivers[w] = {};
+  E.RATIO_IDS.forEach(r => { out.ensemble.drivers[w][r] = en.spearman[w][r].slice(0, 8).map(e => ({ id: e.id, rho: +e.rho.toFixed(3) })); });
+});
+// Where the library's cost against cheap_ladder comes from, at best values, last period (per episode).
+const bf = last.branchFlow, sf = last.stateFlow;
+out.best.breakdown_last = {
+  good_entry_delivered: sf.L5_exact + sf.L5_similar + sf.L5_full + sf.L5_part,
+  wrong_entry_delivered: sf.L5_wrong,
+  held_shares: last.shares.held,
+  calls_saved_by_entries: (bf.l5_exact_right + bf.l5_exact_wrong) * best.n_cheap * best.s_exact +
+    (bf.l5_similar_right + bf.l5_similar_wrong) * best.n_cheap * best.s_similar +
+    (bf.l5_full_right + bf.l5_full_wrong) * best.n_cheap * best.s_comp +
+    (bf.l5_part_right + bf.l5_part_wrong) * best.n_cheap * best.s_part,
+  lookup_cost: bf.l1_lookup * best.c_lookup,
+  write_cost: (bf.l10_opus_good + bf.l10_opus_bad + bf.l10_opus_escape_bad) * best.c_write * best.m_opus +
+    (bf.l10_fable_good + bf.l10_fable_bad + bf.l10_fable_escape_bad) * best.c_write * best.m_fable,
+  library_minus_ladder_cost: last.library.cost - tp.cheap_ladder.cost
+};
+// The first-period wrong-rate ratio against cheap_ladder: the library is empty, so the two policies have the same outcomes.
+const wf = en.draws.map(d => d.first.wrong_vs_ladder);
+out.ensemble.first_wrong_vs_ladder_range = [Math.min.apply(null, wf), Math.max.apply(null, wf)];
+out.ensemble.min_cost_vs_ladder = {
+  first: Math.min.apply(null, en.draws.map(d => d.first.cost_vs_ladder)),
+  last: Math.min.apply(null, en.draws.map(d => d.last.cost_vs_ladder))
+};
+fs.writeFileSync(path.join(here, 'run-v2-out.json'), JSON.stringify(out, null, 2) + '\n');
+console.log('breakdown at best, last period (per episode): ' + JSON.stringify(out.best.breakdown_last));
+console.log('first-period wrong_vs_ladder in every draw lies in ' + JSON.stringify(out.ensemble.first_wrong_vs_ladder_range) + '; lowest cost_vs_ladder ' + JSON.stringify(out.ensemble.min_cost_vs_ladder));
+
+const f = x => (Math.round(x * 1000) / 1000).toFixed(3);
+console.log('counts', JSON.stringify(out.counts));
+console.log('tags M', tags.M.length, 'S', tags.S.length, 'G', tags.G.length);
+console.log('best values, period 1 and period ' + best.periods);
+console.log('  top_first     cost ' + f(tp.top_first.cost) + ' wrong ' + f(tp.top_first.wrong));
+console.log('  cheap_ladder  cost ' + f(tp.cheap_ladder.cost) + ' wrong ' + f(tp.cheap_ladder.wrong));
+console.log('  library first cost ' + f(first.library.cost) + ' wrong ' + f(first.library.wrong));
+console.log('  library last  cost ' + f(last.library.cost) + ' wrong ' + f(last.library.wrong));
+console.log('  stocks at the start of the last period', f(last.stocks.E_good), f(last.stocks.E_bad), 'after it', f(tp.finalStocks.E_good), f(tp.finalStocks.E_bad));
+console.log('ensemble n ' + N + ' seed ' + SEED + ' (adjusted draws ' + en.adjustedDraws + ')');
+['first', 'last'].forEach(w => {
+  E.RATIO_IDS.forEach(r => {
+    const s = en.spread[w][r];
+    console.log('  ' + w + ' ' + r + ': p10 ' + f(s.p10) + ' p50 ' + f(s.p50) + ' p90 ' + f(s.p90));
+  });
+  console.log('  ' + w + ' share cheaper with wrong rate no higher: vs top_first ' + f(en.shareBetterVs.top_first[w]) + ', vs cheap_ladder ' + f(en.shareBetterVs.cheap_ladder[w]));
+  E.RATIO_IDS.forEach(r => console.log('  ' + w + ' drivers ' + r + ': ' + out.ensemble.drivers[w][r].map(e => e.id + ' ' + (e.rho > 0 ? '+' : '') + e.rho.toFixed(2)).join(', ')));
+});

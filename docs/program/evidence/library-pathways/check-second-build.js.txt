@@ -1,0 +1,241 @@
+// Independent check of the second build (2026-11-12). Run from this folder: node - < check-second-build.js.txt
+// Reads the data files and engine.js; changes nothing on disk except check-second-build-console.txt.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const lib = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(lib, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(lib, 'map.json'), 'utf8'));
+const table = JSON.parse(fs.readFileSync(path.join(lib, 'params.json'), 'utf8'));
+const lims = JSON.parse(fs.readFileSync(path.join(lib, 'limitations.json'), 'utf8'));
+const cases = JSON.parse(fs.readFileSync(path.join(lib, 'cases.json'), 'utf8'));
+const out = [];
+const log = (...a) => { const s = a.join(' '); out.push(s); console.log(s); };
+const r = (v, d = 4) => (typeof v === 'number' ? Number(v.toFixed(d)) : v);
+const rows = E.tableRows(table);
+const best = E.paramsFromTable(table, 'best');
+const ids = map.parameters.map(p => p.id);
+const libIds = ids.filter(id => rows[id].side === 'library');
+
+// A. best values, time path
+log('== A. Best values, 12 periods');
+const tp = E.timePath(map, best);
+log('top_first cost', r(tp.top_first.cost), 'wrong', r(tp.top_first.wrong));
+log('cheap_ladder cost', r(tp.cheap_ladder.cost), 'wrong', r(tp.cheap_ladder.wrong));
+tp.periods.forEach(p => log('period', p.period, 'Egood', r(p.stocks.E_good, 2), 'Ebad', r(p.stocks.E_bad, 2), 'lib cost', r(p.library.cost), 'wrong', r(p.library.wrong),
+  'ratios ct', r(p.ratios.cost_vs_top), 'wt', r(p.ratios.wrong_vs_top), 'cl', r(p.ratios.cost_vs_ladder), 'wl', r(p.ratios.wrong_vs_ladder),
+  'fw_right', r(p.library.measures.fw_right), 'wrong_share', r(p.stockValues.wrong_share), 'fill', r(p.stockValues.fill)));
+log('final stocks', JSON.stringify(tp.finalStocks));
+const one = Object.assign({}, best, { m_opus: 1 });
+const tp1 = E.timePath(map, one);
+log('m_opus=1 last ct', r(tp1.last.cost_vs_top), 'cl', r(tp1.last.cost_vs_ladder));
+
+// B. reference settings
+log('\n== B. Reference settings');
+const refs = E.references(map, table);
+['unfavourable', 'best', 'favourable'].forEach(w => {
+  const x = refs[w];
+  log(w, 'last ratios', JSON.stringify(Object.fromEntries(Object.entries(x.last.ratios).map(([k, v]) => [k, r(v)]))), 'funnel_end', r(x.last.funnel_end, 6),
+    'final stocks', r(x.finalStocks.E_good, 2), r(x.finalStocks.E_bad, 2), 'adjusted', JSON.stringify(x.adjusted),
+    'first ratios', JSON.stringify(Object.fromEntries(Object.entries(x.first.ratios).map(([k, v]) => [k, r(v)]))));
+  log('  lib cost', r(x.last.library.cost), 'wrong', r(x.last.library.wrong), 'top', r(x.top_first.cost), 'ladder', r(x.cheap_ladder.cost));
+  Object.keys(x.last.funnels).forEach(f => log('  funnel', f, x.last.funnels[f].map(s => s.id + '=' + r(s.value, 5)).join(' ')));
+});
+
+// C. funnel at best, last period, and a hand derivation for one class
+log('\n== C. Funnel at best, last period');
+const fb = E.funnel(map, best, { period: 'last' });
+Object.keys(fb.funnels).forEach(f => log(f, fb.funnels[f].map(s => s.id + '=' + r(s.value, 5)).join(' ')));
+const st = fb.stocks; const P = best;
+const Eg = st.E_good, Eb = st.E_bad;
+const ws = Eb / (Eg + Eb);
+const fill = 1 - Math.exp(-(Eg + Eb) / P.k_fill);
+const distract = P.v_max * (1 - Math.exp(-(Eg + Eb) / P.k_distract));
+log('by hand: stocks', r(Eg, 3), r(Eb, 3), 'wrong_share', r(ws), 'fill', r(fill), 'distract', r(distract));
+// one class: visible / cheap_wrong / exact / distractor no
+{
+  const cov = 1; // visible and cheap_wrong
+  const held = 1;
+  const t = P.t_visible;
+  const back = t * (1 - 0) * P.r_exact; // distractor no
+  const good = back * (1 - ws);
+  const screened = good * (P.c_check_share + (1 - P.c_check_share) * P.a_right);
+  const inwin = screened * P.d_deliver;
+  const right = inwin * P.q_exact;
+  log('hand, class visible/cheap_wrong/exact/no (per 100 of this class):', [held, t, back, good, screened, inwin, right].map(v => r(100 * v, 4)).join(' '));
+  const ec = E.evaluateClass(map, best, 'library', { kind: 'visible', need: 'cheap_wrong', held: 'exact', distractor: 'no' }, st);
+  log('engine, same class:', ['fw_held', 'fw_looked_up', 'fw_right_back', 'fw_good', 'fw_screened', 'fw_in_window', 'fw_right'].map(k => r(ec.measures[k], 4)).join(' '), 'class chance', r(ec.chance, 6));
+  log('hand class chance: p_visible*need_visible*u_exact*fill*cov*(1-distract) =', r(P.p_visible * P.need_visible * P.u_exact * fill * cov * (1 - distract), 6));
+}
+// aggregate first two stages by hand
+{
+  const pv = P.p_visible * P.need_visible, pl = (1 - P.p_visible) * P.need_latent;
+  const U = P.u_exact + P.u_similar + P.u_composite;
+  const heldV = U * fill * 1, heldL = U * fill * P.latent_coverage_factor;
+  const fwHeld = (pv * heldV + pl * heldL) / (pv + pl);
+  const fwLook = (pv * heldV * P.t_visible + pl * heldL * P.t_latent) / (pv + pl);
+  // right back: held composite gives r_comp_full + r_comp_part
+  const rb = k => (P.u_exact * P.r_exact + P.u_similar * P.r_similar + P.u_composite * (P.r_comp_full + P.r_comp_part)) * fill * k;
+  const fwBack = (pv * P.t_visible * rb(1) + pl * P.t_latent * rb(P.latent_coverage_factor)) / (pv + pl) * (1 - distract * P.f_false);
+  const fwGood = fwBack * (1 - ws);
+  const scr = P.c_check_share + (1 - P.c_check_share) * P.a_right;
+  const fwScr = fwGood * scr;
+  const fwWin = fwScr * P.d_deliver;
+  const qavg = k => (P.u_exact * P.r_exact * P.q_exact + P.u_similar * P.r_similar * P.q_similar + P.u_composite * (P.r_comp_full * P.q_comp + P.r_comp_part * P.q_part)) * fill * k;
+  const fwRight = (pv * P.t_visible * qavg(1) + pl * P.t_latent * qavg(P.latent_coverage_factor)) / (pv + pl) * (1 - distract * P.f_false) * (1 - ws) * scr * P.d_deliver;
+  log('hand aggregate cheap_wrong funnel:', [fwHeld, fwLook, fwBack, fwGood, fwScr, fwWin, fwRight].map(v => r(100 * v, 4)).join(' '));
+}
+
+// D. weights
+log('\n== D. Weights');
+const W = E.weights(map, table, lims, {});
+log('base', JSON.stringify(W.base.ratios), 'funnel_end', r(W.base.funnel_end, 5));
+log('top 10 single:', W.ranking.slice(0, 10).map(x => x.id + ' ' + r(100 * x.score, 3) + '%').join('; '));
+log('bottom 12 single:', W.ranking.slice(-12).map(x => x.id + ' ' + r(100 * x.score, 3) + '%').join('; '));
+log('negative count', W.ranking.filter(x => x.score < -1e-12).length, 'zero count', W.ranking.filter(x => Math.abs(x.score) <= 1e-12).length);
+log('steps:', W.stepRanking.map(x => x.step + ' ' + r(100 * x.score, 3) + '%').join('; '));
+log('sequence:', W.sequence.map(x => x.step + ' ' + r(100 * x.cumulative.score, 3) + '% fe=' + r(x.values.funnel_end, 3)).join('; '));
+const lastSeq = W.sequence[W.sequence.length - 1];
+const covered = new Set(lastSeq.moved_so_far);
+const notCovered = libIds.filter(id => !covered.has(id));
+log('library unknowns moved by no limitation:', notCovered.join(', '), '(' + notCovered.length + ' of ' + libIds.length + ')');
+const favRatios = refs.favourable.last.ratios, bestR = refs.best.last.ratios;
+const favScore = ['cost_vs_top', 'wrong_vs_top', 'cost_vs_ladder', 'wrong_vs_ladder'].reduce((a, k) => a + (bestR[k] - favRatios[k]) / bestR[k], 0) / 4;
+log('favourable reference score', r(100 * favScore, 3) + '%', 'vs sequence end', r(100 * lastSeq.cumulative.score, 3) + '%');
+// the uncovered unknowns alone at their good end
+{
+  const p = Object.assign({}, best);
+  notCovered.forEach(id => { p[id] = rows[id].good_end === 'high' ? rows[id].high : rows[id].low; });
+  const x = E.timePath(map, p);
+  log('uncovered unknowns alone at good end, last ratios', JSON.stringify(Object.fromEntries(Object.entries(x.last).map(([k, v]) => [k, r(v)]))), 'fw_right', r(x.periods[x.periods.length - 1].library.measures.fw_right, 4));
+}
+// per-limitation detail for a few
+['LIM-03', 'LIM-07', 'LIM-46', 'LIM-57', 'LIM-65', 'LIM-31', 'LIM-11'].forEach(id => {
+  const l = W.limitations.find(x => x.id === id);
+  log(id, 'moved', l.moved.join(','), 'left at best', l.left_at_best.join(','), 'holds', JSON.stringify(Object.fromEntries(Object.entries(l.holds).map(([k, v]) => [k, r(v, 5)]))));
+});
+
+// E. direction of each library unknown's good end, one at a time from best
+log('\n== E. Good end direction, one at a time from best (last period)');
+const RAT = ['cost_vs_top', 'wrong_vs_top', 'cost_vs_ladder', 'wrong_vs_ladder'];
+const lastR = p => { const x = E.timePath(map, p); const l = x.periods[x.periods.length - 1]; return Object.assign({}, x.last, { fe: l.library.measures.fw_right }); };
+const baseR = lastR(best);
+const against = [];
+libIds.forEach(id => {
+  const row = rows[id];
+  const p = Object.assign({}, best); p[id] = row.good_end === 'high' ? row.high : row.low;
+  const x = lastR(p);
+  const d = RAT.map(k => x[k] - baseR[k]);
+  const up = d.filter(v => v > 1e-9).length;
+  if (up > 0) against.push(id);
+  log(id.padEnd(22), row.good_end, 'd_ct', r(d[0], 4), 'd_wt', r(d[1], 4), 'd_cl', r(d[2], 4), 'd_wl', r(d[3], 4), 'd_fe', r(x.fe - baseR.fe, 4), up ? '<< good end raises ' + up + ' ratio(s)' : '');
+});
+log('good end raises a ratio at best for:', against.join(', '));
+
+// F. corner search: coordinate descent over library unknowns, others at best, on cost_vs_ladder and on the mean score
+log('\n== F. Corner search over library unknowns (others at best), last period');
+function search(objective, sign, start) {
+  let p = Object.assign({}, start);
+  let cur = objective(p);
+  for (let pass = 0; pass < 6; pass++) {
+    let moved = false;
+    libIds.forEach(id => {
+      const row = rows[id];
+      if (row.low === row.high) return;
+      [0, 0.25, 0.5, 0.75, 1].forEach(q => {
+        const v = row.low + q * (row.high - row.low);
+        const t = Object.assign({}, p); t[id] = v;
+        const o = objective(t);
+        if (sign * o < sign * cur - 1e-12) { cur = o; p = t; moved = true; }
+      });
+    });
+    if (!moved) break;
+  }
+  return { p, cur };
+}
+const objCL = p => lastR(p).cost_vs_ladder;
+const objScore = p => { const x = lastR(p); return RAT.reduce((a, k) => a + x[k] / baseR[k], 0) / 4; };
+const fav = E.referenceParams(map, table, 'favourable');
+const unf = E.referenceParams(map, table, 'unfavourable');
+const minCL = search(objCL, 1, fav); const maxCL = search(objCL, -1, unf);
+const minCLb = search(objCL, 1, best); const maxCLb = search(objCL, -1, best);
+log('cost vs ladder: favourable ref', r(lastR(fav).cost_vs_ladder), 'search min from fav', r(minCL.cur), 'from best', r(minCLb.cur));
+log('cost vs ladder: unfavourable ref', r(lastR(unf).cost_vs_ladder), 'search max from unf', r(maxCL.cur), 'from best', r(maxCLb.cur));
+const diffFrom = (p, ref) => libIds.filter(id => Math.abs(p[id] - ref[id]) > 1e-12).map(id => id + '=' + r(p[id], 3)).join(', ');
+log('  min corner differs from favourable at:', diffFrom(minCL.p, fav));
+log('  max corner differs from unfavourable at:', diffFrom(maxCL.p, unf));
+const mx = lastR(maxCL.p); log('  at max corner: ratios', JSON.stringify(Object.fromEntries(RAT.map(k => [k, r(mx[k])]))));
+const mn = lastR(minCL.p); log('  at min corner: ratios', JSON.stringify(Object.fromEntries(RAT.map(k => [k, r(mn[k])]))), 'fe', r(mn.fe, 3));
+const minS = search(objScore, 1, fav), maxS = search(objScore, -1, unf);
+log('mean ratio / best (score as 1 - fall): fav ref', r(objScore(fav)), 'search min', r(minS.cur), '| unf ref', r(objScore(unf)), 'search max', r(maxS.cur));
+log('  max-score corner differs from unfavourable at:', diffFrom(maxS.p, unf));
+log('  max-score corner ratios', JSON.stringify(Object.fromEntries(RAT.map(k => [k, r(lastR(maxS.p)[k])]))));
+
+// G. tie checks
+log('\n== G. Tie checks');
+{
+  const rnd = () => 0.37;
+  const a = E.drawParams(map, table, rnd, { tie: 1, level: 1 });
+  const b = E.drawParams(map, table, rnd, { tie: 1, level: 0 });
+  const badA = libIds.filter(id => Math.abs(a[id] - fav[id]) > 1e-12);
+  const badB = libIds.filter(id => Math.abs(b[id] - unf[id]) > 1e-12);
+  log('tie 1, U=1 equals favourable on library side:', badA.length === 0, badA.join(','));
+  log('tie 1, U=0 equals unfavourable on library side:', badB.length === 0, badB.join(','));
+  const otherSame = ids.filter(id => rows[id].side === 'other' && !rows[id].run_setting).every(id => Math.abs(a[id] - b[id]) < 1e-12);
+  log('other side independent of U:', otherSame);
+  const c = E.drawParams(map, table, E.rng(5), { tie: 0, level: 0.9 });
+  const d0 = E.drawParams(map, table, E.rng(5));
+  log('tie 0 equals untied draw:', ids.every(id => c[id] === d0[id]));
+  // spread of one library unknown's position at tie 0.5
+  const g = E.rng(11), s = E.rng(12); const pos = [];
+  for (let i = 0; i < 20000; i++) { const lv = s(); const x = E.drawParams(map, table, g, { tie: 0.5, level: lv }); pos.push((x.t_visible - rows.t_visible.low) / (rows.t_visible.high - rows.t_visible.low)); }
+  pos.sort((x, y) => x - y);
+  log('tie 0.5: position of t_visible in its range, 5th/50th/95th percentile', r(E.percentile(pos, 5), 3), r(E.percentile(pos, 50), 3), r(E.percentile(pos, 95), 3), '(uniform would be 0.05/0.5/0.95)');
+}
+
+// H. ensembles at three ties
+log('\n== H. Ensembles, n 1000, seed 20261112');
+[0, 0.5, 1].forEach(tie => {
+  const en = E.ensemble(map, table, { n: 1000, seed: 20261112, tie });
+  const L = en.spread.last;
+  const f = k => r(L[k].p50, 3) + ' (' + r(L[k].p5, 4) + ' to ' + r(L[k].p95, 4) + ')';
+  log('tie', tie, 'cl', f('cost_vs_ladder'), '| wl', f('wrong_vs_ladder'), '| ct', f('cost_vs_top'), '| wt', f('wrong_vs_top'), '| fe', f('funnel_end'));
+  log('  share better vs ladder last', r(100 * en.shareBetterVs.cheap_ladder.last, 2) + '%', 'first', r(100 * en.shareBetterVs.cheap_ladder.first, 2) + '%', '| vs top last', r(100 * en.shareBetterVs.top_first.last, 2) + '%', 'adjusted draws', en.adjustedDraws);
+  log('  top 4 rank cl last', en.spearman.last.cost_vs_ladder.slice(0, 6).map(x => x.id + ' ' + r(x.rho, 3)).join(', '));
+  log('  top 4 rank ct last', en.spearman.last.cost_vs_top.slice(0, 4).map(x => x.id + ' ' + r(x.rho, 3)).join(', '));
+});
+
+// I. conservation over 500 draws, at each draw's last-period stocks and at empty stocks
+log('\n== I. Conservation, 500 draws (tie 0 and tie 1)');
+let worst = 0, fails = 0, nonMono = 0, checks = 0;
+[0, 1].forEach(tie => {
+  const g = E.rng(777 + tie), s = E.rng(999 + tie);
+  for (let i = 0; i < 250; i++) {
+    const raw = E.drawParams(map, table, g, { tie, level: s() });
+    const x = E.timePath(map, raw, { lean: true });
+    [x.periods[0].stocks, x.periods[x.periods.length - 1].stocks].forEach(stk => {
+      const c = E.conservation(map, raw, { stocks: stk });
+      checks += c.checks; worst = Math.max(worst, c.maxError); if (!c.ok) fails++;
+    });
+    const fu = E.funnel(map, raw, { period: 'last' });
+    Object.keys(fu.funnels).forEach(fid => {
+      const mono = map.funnels.find(f => f.id === fid).monotone || map.funnels.find(f => f.id === fid).stages;
+      const vals = fu.funnels[fid].filter(s => mono.indexOf(s.id) >= 0).map(s => s.value);
+      for (let k = 1; k < vals.length; k++) if (vals[k] > vals[k - 1] + 1e-9) nonMono++;
+      if (fu.funnels[fid][0].value > 100 + 1e-9 || vals.some(v => v < -1e-12)) nonMono++;
+    });
+  }
+});
+log('conservation: checks', checks, 'failed parameter sets', fails, 'largest error', worst.toExponential(2), 'non-monotone funnels', nonMono);
+
+// J. counts under the funnel bars and the grid
+log('\n== J. Counts under the funnel');
+const match = JSON.parse(fs.readFileSync(path.join(here, 'page-src', 'text.json'), 'utf8')).funnel_steps;
+const grp = steps => ({ lims: lims.items.filter(i => steps.indexOf(i.main_step) >= 0).length, cases: cases.cases.filter(c => c.steps.some(s => s.status === 'breaks' && steps.indexOf(s.step) >= 0)).length });
+match.stages.forEach((s, i) => log('stage', i, JSON.stringify(s), JSON.stringify(grp(s))));
+log('after', JSON.stringify(match.after), JSON.stringify(grp(match.after)));
+// cases that broke at step 6 broke at the screen or at the attempt? Count lims with steps incl. 6
+log('lims with step 6 in their steps:', lims.items.filter(i => (i.steps || []).indexOf(6) >= 0).map(i => i.id).join(','));
+
+fs.writeFileSync(path.join(here, 'check-second-build-console.txt'), out.join('\n') + '\n');

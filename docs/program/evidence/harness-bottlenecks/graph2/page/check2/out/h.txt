@@ -1,0 +1,386 @@
+HWhich engine is faster, smaller and easier to work with?
+
+How to read it. timing run, tuning inputs only, 5 passes A separate timing run, after the held-out run was scored, and independently audited. A dot is the median over 5 passes, the bar the spread from the fastest to the slowest pass, and the small ticks each pass. The time axis is logarithmic: each grid line is ten times the one before. The grey label beside each dot says where that ranking runs: in the engine, in SQL statements, or in application code. Switch the graph to see the larger frozen graph.
+
+The plain reading
+On the selected method, SQLite was fastest: 14.5 ms per ranking on the tuning graph and 32.7 ms on the frozen graph, against 41.5 and 71.2 ms for LadybugDB (graph) and 70.3 and 98.7 ms for the DuckDB graph layer (one thread, warm). These differences hold in wall and CPU time in all 5 passes.
+On the PageRank variants, the arm that runs PageRank in application code was fastest: frozen graph, 4-hop variant, 17.1 ms for LadybugDB (PageRank in JavaScript over a cached adjacency), 58.4 ms for the DuckDB graph layer and 256 ms for SQLite (about 270 SQL statements per ranking). This compares PageRank implementations, not graph operators.
+Every time here is milliseconds; one model step takes seconds. A model step takes about 6.6 s at the median, so engine speed does not enter the token bill. Answers were the same in every engine (section E).
+Graph
+tuning graph (2,450 nodes, 7,077 edges)
+frozen graph (5,464 nodes, 16,462 edges)
+Warm time per ranking timing run, ms, median and spread
+
+The store is already open and warm. One row per engine, grouped by method; the line under each group says which differences hold under the declared rule (same direction in wall and CPU time, larger than both engines' spreads).
+
+0.1 ms
+1 ms
+10 ms
+100 ms
+1,000 ms
+warm time per ranking or question, milliseconds, logarithmic scale
+Selected method
+degree-normalised spreading over an unbounded walk in both directions
+SQLite (relational)
+32.7 ms
+SQL per walk level
+LadybugDB (graph)
+71.2 ms
+spreading in JavaScript
+DuckDB graph layer
+98.7 ms
+graph-function reach, SQL ranking
+SQLite faster than LadybugDB: the difference holds
+SQLite faster than DuckDB: the difference holds
+LadybugDB faster than DuckDB: inside the noise, not stated
+4-hop PageRank variant
+4-hop personalised PageRank variant
+SQLite (relational)
+256 ms
+about 270 SQL statements
+LadybugDB (graph)
+17.1 ms
+PageRank in JavaScript
+DuckDB graph layer
+58.4 ms
+recursive SQL
+LadybugDB faster than SQLite: the difference holds
+DuckDB faster than SQLite: the difference holds
+LadybugDB faster than DuckDB: the difference holds
+2-hop PageRank start
+2-hop personalised PageRank starting point
+SQLite (relational)
+265 ms
+about 270 SQL statements
+LadybugDB (graph)
+6.76 ms
+PageRank in JavaScript
+DuckDB graph layer
+58.7 ms
+recursive SQL
+LadybugDB faster than SQLite: the difference holds
+DuckDB faster than SQLite: the difference holds
+LadybugDB faster than DuckDB: the difference holds
+LadybugDB + community prior
+LadybugDB only: PageRank plus the stored community prior
+LadybugDB (graph)
+87.3 ms
+PageRank in JavaScript + stored prior
+Code-reading questions (time per question)
+20 tuning questions, answered by one query program per kind of question
+SQLite (relational)
+0.30 ms
+SQL
+LadybugDB (graph)
+1.93 ms
+Cypher
+DuckDB graph layer
+9.16 ms
+SQL
+SQLite faster than LadybugDB: the difference holds
+SQLite faster than DuckDB: the difference holds
+LadybugDB faster than DuckDB: the difference holds
+Cold start: open the store and answer once timing run, ms
+
+LadybugDB has two marks: hollow without, and filled with, the facts load that only LadybugDB needs before it can answer (the other engines load nothing). Client-library load, about 70 to 100 ms per engine, is left out for all three.
+
+1 ms
+10 ms
+100 ms
+1,000 ms
+cold time per ranking or question, milliseconds, logarithmic scale
+Selected method
+degree-normalised spreading over an unbounded walk in both directions
+SQLite (relational)
+47.2 ms
+SQL per walk level
+LadybugDB (graph)
+154 ms → 333
+without → with facts load
+DuckDB graph layer
+243 ms
+graph-function reach, SQL ranking
+SQLite faster than LadybugDB: the difference holds
+SQLite faster than DuckDB: the difference holds
+LadybugDB faster than DuckDB: the difference holds (only without the facts load)
+Counting the facts load, against SQLite: LadybugDB slower in every pass; against
+DuckDB: LadybugDB slower in every pass
+4-hop PageRank variant
+4-hop personalised PageRank variant
+SQLite (relational)
+271 ms
+about 270 SQL statements
+LadybugDB (graph)
+126 ms → 300
+without → with facts load
+DuckDB graph layer
+192 ms
+recursive SQL
+LadybugDB faster than SQLite: the difference holds (only without the facts load)
+DuckDB faster than SQLite: inside the noise, not stated
+LadybugDB faster than DuckDB: inside the noise, not stated
+Counting the facts load, against SQLite: cannot be told apart (pass ranges
+overlap); against DuckDB: LadybugDB slower in every pass
+2-hop PageRank start
+2-hop personalised PageRank starting point
+SQLite (relational)
+262 ms
+about 270 SQL statements
+LadybugDB (graph)
+109 ms → 266
+without → with facts load
+DuckDB graph layer
+178 ms
+recursive SQL
+LadybugDB faster than SQLite: the difference holds (only without the facts load)
+DuckDB faster than SQLite: inside the noise, not stated
+LadybugDB faster than DuckDB: inside the noise, not stated
+Counting the facts load, against SQLite: cannot be told apart (pass ranges
+overlap); against DuckDB: LadybugDB slower in every pass
+LadybugDB + community prior
+LadybugDB only: PageRank plus the stored community prior
+LadybugDB (graph)
+226 ms → 400
+without → with facts load
+Code-reading questions (time per question)
+20 tuning questions, answered by one query program per kind of question
+SQLite (relational)
+5.90 ms
+SQL
+LadybugDB (graph)
+71.9 ms → 252
+without → with facts load
+DuckDB graph layer
+148 ms
+SQL
+SQLite faster than LadybugDB: the difference holds
+SQLite faster than DuckDB: the difference holds
+LadybugDB faster than DuckDB: the difference holds (only without the facts load)
+Counting the facts load, against SQLite: LadybugDB slower in every pass; against
+DuckDB: LadybugDB slower in every pass
+Store size, build time and one-file update timing run, median of 5 builds
+
+The stores hold different extra tables, so these compare the three designs, not the engines alone. Bars: median; whiskers: fastest to slowest pass.
+
+Size on disk (MiB)
+SQLite (relational)
+10.72 MiB
+LadybugDB (graph)
+18.26 MiB
+DuckDB graph layer
+16.26 MiB
+Build from scratch (ms)
+SQLite (relational)
+869 ms
+LadybugDB (graph)
+3710 ms
+DuckDB graph layer
+692 ms
+One-file update (ms)
+SQLite (relational)
+269 ms
+LadybugDB (graph)
+633 ms
+DuckDB graph layer
+179 ms
+Length of the statements sent to the engine timing run, characters
+
+Characters of distinct statement text per method. LadybugDB's ranking code in JavaScript is not counted, only its Cypher text, so this is not the length of the code each method needs.
+
+Selected method
+SQLite (relational)
+2,475 characters, 19 statements
+LadybugDB (graph)
+471 characters, 2 statements; JavaScript not counted
+DuckDB graph layer
+3,207 characters, 15 statements
+4-hop PageRank variant
+SQLite (relational)
+2,952 characters, 21 statements
+LadybugDB (graph)
+471 characters, 2 statements; JavaScript not counted
+DuckDB graph layer
+8,806 characters, 21 statements
+2-hop PageRank start
+SQLite (relational)
+2,952 characters, 21 statements
+LadybugDB (graph)
+471 characters, 2 statements; JavaScript not counted
+DuckDB graph layer
+8,814 characters, 21 statements
+LadybugDB + community prior
+LadybugDB (graph)
+576 characters, 4 statements; JavaScript not counted
+Code-reading questions (time per question)
+SQLite (relational)
+5,512 characters, 13 statements
+LadybugDB (graph)
+4,658 characters, 21 statements
+DuckDB graph layer
+13,935 characters, 29 statements
+How it was run, in the audit's words
+The engine timing ran after the held-out run was scored, on tuning inputs only: 200 tuning seeds on one June commit graph (2,450 nodes, 7,077 edges), 200 file nodes of the frozen commit graph (5,464 nodes, 16,462 edges) and the 20 tuning questions. No held-out task or question was timed.
+The three engines took turns in short blocks inside one container on six pinned CPUs, one engine at a time (no two blocks overlapped in time), over five passes from 08:05 to 11:21 UTC on 2026-11-13; every engine was first in about a third of the rounds.
+The PC was busy throughout: other work used a median of about 6 of its 24 logical CPUs during the blocks. 148 of the 2,148 block attempts in the passes were repeated because other work exceeded 12 CPUs, and 6 blocks were kept and flagged after three repeats; dropping them changes nothing.
+All three engines returned the same ranked answer for every seed, in every pass, at every thread setting, warm and cold, and the same answers to the 20 questions.
+An independent recomputation from the raw block files reproduced every number in the engine table and all 180 engine-to-engine verdicts.
+For the selected configuration (the frozen primary), SQLite answered fastest: median 14.5 ms per ranking on the tuning graph and 32.7 ms on the frozen graph, against 41.5 and 71.2 ms for LadybugDB and 70.3 and 98.7 ms for DuckDB with the DuckDB graph layer (one thread, warm). These differences hold in wall and CPU time in all five passes.
+Between LadybugDB and DuckDB-with-the DuckDB graph layer no difference is stated for the frozen primary warm median (71.2 against 98.7 ms): LadybugDB was lower in all five passes, but the 27.5 ms gap is smaller than the 36 ms spread between DuckDB's passes, so under the declared rule it stays inside the noise.
+For the PageRank configurations (the 4-hop choice and the 2-hop base), the arm that runs PageRank in JavaScript over a cached adjacency (LadybugDB) was fastest, and the arm that runs it as about 270 SQL statements per ranking (SQLite) was slowest: frozen graph the 4-hop choice 17 ms, 58 ms and 256 ms (LadybugDB, DuckDB, SQLite). With the application caches dropped, LadybugDB is 51 ms and still lowest. This compares PageRank implementations, not graph operators.
+For the 20 question lookups SQLite took about 0.3 ms per question, LadybugDB about 1.9 ms and DuckDB about 9 ms (warm median, frozen graph).
+Building a store took about 0.35 to 0.9 s for SQLite, 0.6 to 0.7 s for DuckDB and 3.1 to 3.7 s for LadybugDB (median over five builds), and a one-file update 0.18 to 0.27 s for SQLite and DuckDB (no difference between them beyond the noise) against 0.52 to 0.63 s for LadybugDB; the stores hold different extra tables, so this compares the three designs, not the engines alone.
+Every per-query time is a few milliseconds to a few hundred milliseconds on graphs of a few thousand nodes; the test does not show whether these differences matter for an agent working in a session.
+
+What these timings do not show: that a graph engine is faster or slower than SQL in general (the order depends on the method and on where its ranking runs); that LadybugDB's engine computes PageRank (it runs in JavaScript); that one engine should be adopted on this evidence; anything about held-out tasks, larger graphs, other repositories or other machines; or whether an agent finishes work faster.
+
+Every timing row, both thread settings (table)
+Engine	Graph	Method	Threads	Warm median (ms)	Spread (ms)	Warm p95 (ms)	Warm, caches dropped (ms)	Cold (ms)	Cold with facts load (ms)	Cold open (ms)	Statements per ranking	Statement characters	Distinct statements	Memory (MB)	Audit
+SQLite (relational)	tuning graph	Selected method	1 thread	14.5	2.35	18.6	14.4	21.9	–	2.60	50	2475	19	295	survives
+SQLite (relational)	tuning graph	Selected method	calibration pick, 1 thread	14.5	2.35	18.6	14.4	21.9	–	2.60	50	2475	19	295	survives
+LadybugDB (graph)	tuning graph	Selected method	1 thread	41.5	8.85	53.3	41.2	105	198	27.2	2	471	2	456	needs qualification
+LadybugDB (graph)	tuning graph	Selected method	calibration pick, 2 threads	40.5	10.8	55.0	41.7	107	198	27.9	2	471	2	456	needs qualification
+DuckDB graph layer	tuning graph	Selected method	1 thread	70.3	27.4	94.5	71.7	192	–	93.0	22	3657	23	414	survives
+DuckDB graph layer	tuning graph	Selected method	calibration pick, 1 thread	70.3	27.4	94.5	71.7	192	–	93.0	22	3657	23	414	survives
+SQLite (relational)	tuning graph	4-hop PageRank variant	1 thread	116	8.92	140	127	127	–	2.63	272	2952	21	297	survives
+SQLite (relational)	tuning graph	4-hop PageRank variant	calibration pick, 1 thread	116	8.92	140	127	127	–	2.63	272	2952	21	297	survives
+LadybugDB (graph)	tuning graph	4-hop PageRank variant	1 thread	17.4	1.32	27.7	32.9	109	200	26.8	2	471	2	461	needs qualification
+LadybugDB (graph)	tuning graph	4-hop PageRank variant	calibration pick, 2 threads	18.7	0.74	28.2	33.9	112	200	27.6	2	471	2	461	needs qualification
+DuckDB graph layer	tuning graph	4-hop PageRank variant	1 thread	48.7	7.48	58.9	53.9	173	–	92.5	12	9256	29	414	survives
+DuckDB graph layer	tuning graph	4-hop PageRank variant	calibration pick, 1 thread	48.7	7.48	58.9	53.9	173	–	92.5	12	9256	29	414	survives
+SQLite (relational)	tuning graph	2-hop PageRank start	1 thread	111	12.0	131	122	116	–	2.55	272	2952	21	301	survives
+SQLite (relational)	tuning graph	2-hop PageRank start	calibration pick, 1 thread	111	12.0	131	122	116	–	2.55	272	2952	21	301	survives
+LadybugDB (graph)	tuning graph	2-hop PageRank start	1 thread	4.60	0.51	6.45	20.6	87.6	181	26.2	2	471	2	463	needs qualification
+LadybugDB (graph)	tuning graph	2-hop PageRank start	calibration pick, 1 thread	4.60	0.51	6.45	20.6	87.6	181	26.2	2	471	2	463	needs qualification
+DuckDB graph layer	tuning graph	2-hop PageRank start	1 thread	44.0	7.64	54.4	48.0	166	–	91.2	12	9264	29	340	survives
+DuckDB graph layer	tuning graph	2-hop PageRank start	calibration pick, 1 thread	44.0	7.64	54.4	48.0	166	–	91.2	12	9264	29	340	survives
+LadybugDB (graph)	tuning graph	LadybugDB + community prior	1 thread	51.3	5.52	67.4	66.9	142	231	26.1	4	576	4	437	needs qualification
+LadybugDB (graph)	tuning graph	LadybugDB + community prior	calibration pick, 1 thread	51.3	5.52	67.4	66.9	142	231	26.1	4	576	4	437	needs qualification
+SQLite (relational)	frozen graph	Selected method	1 thread	32.7	7.69	38.1	32.4	47.2	–	4.23	53	2475	19	385	survives
+SQLite (relational)	frozen graph	Selected method	calibration pick, 1 thread	32.7	7.69	38.1	32.4	47.2	–	4.23	53	2475	19	385	survives
+LadybugDB (graph)	frozen graph	Selected method	1 thread	71.2	15.1	94.9	72.5	154	333	26.6	2	471	2	620	needs qualification
+LadybugDB (graph)	frozen graph	Selected method	calibration pick, 4 threads	67.4	13.9	91.8	65.6	150	333	27.2	2	471	2	616	needs qualification
+DuckDB graph layer	frozen graph	Selected method	1 thread	98.7	36.0	121	94.5	243	–	96.5	24	3207	15	464	survives
+DuckDB graph layer	frozen graph	Selected method	calibration pick, 1 thread	98.7	36.0	121	94.5	243	–	96.5	24	3207	15	464	survives
+SQLite (relational)	frozen graph	4-hop PageRank variant	1 thread	256	35.7	310	286	271	–	4.26	271	2952	21	383	survives
+SQLite (relational)	frozen graph	4-hop PageRank variant	calibration pick, 1 thread	256	35.7	310	286	271	–	4.26	271	2952	21	383	survives
+LadybugDB (graph)	frozen graph	4-hop PageRank variant	1 thread	17.1	2.91	39.2	51.1	126	300	25.5	2	471	2	610	needs qualification
+LadybugDB (graph)	frozen graph	4-hop PageRank variant	calibration pick, 1 thread	17.1	2.91	39.2	51.1	126	300	25.5	2	471	2	610	needs qualification
+DuckDB graph layer	frozen graph	4-hop PageRank variant	1 thread	58.4	8.48	76.4	67.3	192	–	94.8	12	8806	21	467	survives
+DuckDB graph layer	frozen graph	4-hop PageRank variant	calibration pick, 1 thread	58.4	8.48	76.4	67.3	192	–	94.8	12	8806	21	467	survives
+SQLite (relational)	frozen graph	2-hop PageRank start	1 thread	265	61.7	323	294	262	–	4.35	271	2952	21	384	survives
+SQLite (relational)	frozen graph	2-hop PageRank start	calibration pick, 1 thread	265	61.7	323	294	262	–	4.35	271	2952	21	384	survives
+LadybugDB (graph)	frozen graph	2-hop PageRank start	1 thread	6.76	2.11	9.56	41.9	109	266	24.7	2	471	2	587	needs qualification
+LadybugDB (graph)	frozen graph	2-hop PageRank start	calibration pick, 1 thread	6.76	2.11	9.56	41.9	109	266	24.7	2	471	2	587	needs qualification
+DuckDB graph layer	frozen graph	2-hop PageRank start	1 thread	58.7	22.5	72.6	65.2	178	–	95.0	12	8814	21	441	survives
+DuckDB graph layer	frozen graph	2-hop PageRank start	calibration pick, 1 thread	58.7	22.5	72.6	65.2	178	–	95.0	12	8814	21	441	survives
+LadybugDB (graph)	frozen graph	LadybugDB + community prior	1 thread	87.3	20.3	109	120	226	400	25.5	4	576	4	639	needs qualification
+LadybugDB (graph)	frozen graph	LadybugDB + community prior	calibration pick, 2 threads	80.7	13.1	99.1	111	216	400	26.8	4	576	4	633	needs qualification
+SQLite (relational)	frozen graph	Code-reading questions	1 thread	0.30	0.15	0.59	0.26	5.90	–	4.36	3	5512	13	135	survives
+SQLite (relational)	frozen graph	Code-reading questions	calibration pick, 4 threads	0.25	0.07	0.50	0.27	5.94	–	4.41	3	5512	13	138	needs qualification
+LadybugDB (graph)	frozen graph	Code-reading questions	1 thread	1.93	0.38	5.31	2.09	71.9	252	27.1	3	4658	21	582	needs qualification
+LadybugDB (graph)	frozen graph	Code-reading questions	calibration pick, 1 thread	1.93	0.38	5.31	2.09	71.9	252	27.1	3	4658	21	582	needs qualification
+DuckDB graph layer	frozen graph	Code-reading questions	1 thread	9.16	4.34	39.2	8.38	148	–	102	1	13935	29	421	survives
+DuckDB graph layer	frozen graph	Code-reading questions	calibration pick, 1 thread	9.16	4.34	39.2	8.38	148	–	102	1	13935	29	421	survives
+
+"Calibration pick" is the fewest threads within 3 % of the lowest median on 20 calibration seeds, picked once under load; it is not a setting shown to be faster in the passes. "Best" is the calibration pick (fewest threads within 3 % of the lowest median on 20 calibration seeds x 3, once, under load), not a setting shown to be faster in the passes. LadybugDB frozen primary "best 4" was 26 % faster in calibration, but in the passes it is 67.4 ms against 71.2 ms at 1 thread (spreads about 14 to 15 ms) and uses about 108 ms of CPU against 72 ms. SQLite's question "best 4" is PRAGMA threads = 3, sorter helpers only, picked on 0.261 against 0.234 ms.
+
+Engine	Graph	Size (MiB)	Build (ms)	Spread (ms)	One-file update (ms)	Spread (ms)	Audit note
+SQLite (relational)	tuning graph	4.30	350	73.2	224	36.1	Per-pass build and update values and the store size reproduced. Store contents and build/update thread counts differ per arm, so these compare designs, not engines alone.
+LadybugDB (graph)	tuning graph	14.73	3145	2217	518	125	Per-pass build and update values and the store size reproduced. Store contents and build/update thread counts differ per arm, so these compare designs, not engines alone. LadybugDB build spread is large (one pass about 5.1 to 5.3 s against about 3.0 to 3.7 s in the others).
+DuckDB graph layer	tuning graph	15.26	621	148	237	68.1	Per-pass build and update values and the store size reproduced. Store contents and build/update thread counts differ per arm, so these compare designs, not engines alone.
+SQLite (relational)	frozen graph	10.72	869	205	269	97.8	Per-pass build and update values and the store size reproduced. Store contents and build/update thread counts differ per arm, so these compare designs, not engines alone.
+LadybugDB (graph)	frozen graph	18.26	3710	2143	633	240	Per-pass build and update values and the store size reproduced. Store contents and build/update thread counts differ per arm, so these compare designs, not engines alone. LadybugDB build spread is large (one pass about 5.1 to 5.3 s against about 3.0 to 3.7 s in the others).
+DuckDB graph layer	frozen graph	16.26	692	506	179	73.5	Per-pass build and update values and the store size reproduced. Store contents and build/update thread counts differ per arm, so these compare designs, not engines alone.
+Labels on where each method runs, as corrected by the audit
+
+needs qualification: the DuckDB graph layer's k-hop is recursive SQL, not a graph operator (bounded hops: a recursive SQL statement; unbounded: iterativelength() over a CSR built in the statement). Qualification: The first clause ("recursive SQL, not a graph operator") is true for the bounded classes the 4-hop choice and base only. For the frozen primary (unbounded) the DuckDB graph layer reaches nodes with iterativelength(), a graph function of the extension over a CSR, and fetches the reach DAG with a GRAPH_TABLE MATCH one-edge pattern (arms/duckpgq/pgq.js khop). The parenthesis says so; the headline clause should not be quoted alone.
+
+survives: LadybugDB's personalised PageRank runs in application code over a cached adjacency (40 iterations in JavaScript over a transition CSR fetched by one Cypher query and cached per configuration).
+
+survives: SQLite's walk is a recursive common table expression (bounded hops; unbounded hops use a level-wise loop of SQL statements driven by application code).
+
+survives: Where the frozen primary's ranking (degree-normalised spreading, addendum 2 item 20) runs: LadybugDB fetches arcs and out-degrees by Cypher and spreads the activation in application code (JavaScript), so for LadybugDB this ranking is not in the engine; SQLite and the DuckDB graph layer spread it in SQL, one statement per BFS level, the level loop driven by application code; SQLite's unbounded walk is likewise a level loop in application code.
+
+What the audit could not do: The reference-arm comparison of bench/icheck.js was not re-run (no arm or bench was executed by this audit); cross-engine identity was recomputed instead. The VM side of the per-block load (sampled inside the container, not saved to a file) could not be re-derived. The CPU time of LadybugDB's facts load is not recorded per cold row, so the facts-load variant was judged on wall time only.
+
+What it shows. With the same answers in every engine, the choice between them is about cost, and every cost here is small: milliseconds per ranking on graphs of a few thousand nodes, and well under a second to update one file. On the selected method SQLite (relational) was fastest; on the PageRank variants the arm that runs PageRank in application code was fastest, which compares implementations, not graph operators. Store sizes and build times compare three designs that keep different extra tables. A model step takes about 6.6 s, so none of this moves the token bill.
+TIP: SQLite (relational), Selected method, warm median 32.7 ms; spread between passes 7.69 ms; passes 30.0, 37.7, 31.6, 32.7, 34.5 ms. Where it runs: SQL, one statement per walk level; the level loop runs in application code. Statements per ranking: 53.
+TIP: LadybugDB (graph), Selected method, warm median 71.2 ms; spread between passes 15.1 ms; passes 67.9, 83.1, 71.2, 71.2, 78.2 ms. Where it runs: reach in the engine (SHORTEST pattern); the spreading itself in JavaScript. Statements per ranking: 2.
+TIP: DuckDB graph layer, Selected method, warm median 98.7 ms; spread between passes 36.0 ms; passes 84.3, 120, 93.1, 98.7, 117 ms. Where it runs: reach by the iterativelength() graph function; the spreading in SQL, one statement per level. Statements per ranking: 24.
+TIP: Difference that holds, 38.6 ms wall. LadybugDB's degree-normalised spreading for the primary runs in JavaScript; only the reach (native SHORTEST pattern) and the arc fetch run in the engine.
+TIP: Difference that holds, 66.0 ms wall. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 10.3 ms of its 98.7 ms warm median here). DuckPGQ reaches nodes for the primary with its iterativelength() graph function over a CSR built in the statement; the ranking is SQL.
+TIP: Inside the noise, 27.5 ms wall. LadybugDB's degree-normalised spreading for the primary runs in JavaScript; only the reach (native SHORTEST pattern) and the arc fetch run in the engine. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 10.3 ms of its 98.7 ms warm median here). DuckPGQ reaches nodes for the primary with its iterativelength() graph function over a CSR built in the statement; the ranking is SQL.
+TIP: SQLite (relational), 4-hop PageRank variant, warm median 256 ms; spread between passes 35.7 ms; passes 252, 288, 256, 255, 266 ms. Where it runs: about 270 SQL statements per ranking. Statements per ranking: 271.
+TIP: LadybugDB (graph), 4-hop PageRank variant, warm median 17.1 ms; spread between passes 2.91 ms; passes 17.3, 19.5, 16.7, 16.6, 17.1 ms. Where it runs: PageRank in JavaScript over a cached adjacency (40 iterations). Statements per ranking: 2.
+TIP: DuckDB graph layer, 4-hop PageRank variant, warm median 58.4 ms; spread between passes 8.48 ms; passes 57.9, 66.4, 58.4, 58.4, 63.4 ms. Where it runs: recursive SQL, not a graph operator (bounded hops); ranking in SQL. Statements per ranking: 12.
+TIP: Difference that holds, 239 ms wall. LadybugDB's PageRank here is 40 iterations in JavaScript over a transition CSR cached in application code; the "application caches dropped" statement is the like-for-like one. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite.
+TIP: Difference that holds, 197 ms wall. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 6.0 ms of its 58.4 ms warm median here). DuckPGQ's bounded reach for this class is a recursive SQL statement, not a graph operator; PageRank is one recursive SQL statement.
+TIP: Difference that holds, 41.3 ms wall. LadybugDB's PageRank here is 40 iterations in JavaScript over a transition CSR cached in application code; the "application caches dropped" statement is the like-for-like one. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 6.0 ms of its 58.4 ms warm median here). DuckPGQ's bounded reach for this class is a recursive SQL statement, not a graph operator; PageRank is one recursive SQL statement.
+TIP: SQLite (relational), 2-hop PageRank start, warm median 265 ms; spread between passes 61.7 ms; passes 224, 269, 285, 241, 265 ms. Where it runs: about 270 SQL statements per ranking. Statements per ranking: 271.
+TIP: LadybugDB (graph), 2-hop PageRank start, warm median 6.76 ms; spread between passes 2.11 ms; passes 5.38, 6.78, 7.49, 6.38, 6.76 ms. Where it runs: PageRank in JavaScript over a cached adjacency (40 iterations). Statements per ranking: 2.
+TIP: DuckDB graph layer, 2-hop PageRank start, warm median 58.7 ms; spread between passes 22.5 ms; passes 43.2, 62.7, 65.7, 50.6, 58.7 ms. Where it runs: recursive SQL, not a graph operator (bounded hops); ranking in SQL. Statements per ranking: 12.
+TIP: Difference that holds, 259 ms wall. LadybugDB's PageRank here is 40 iterations in JavaScript over a transition CSR cached in application code; the "application caches dropped" statement is the like-for-like one. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite.
+TIP: Difference that holds, 207 ms wall. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 6.2 ms of its 58.7 ms warm median here). DuckPGQ's bounded reach for this class is a recursive SQL statement, not a graph operator; PageRank is one recursive SQL statement.
+TIP: Difference that holds, 52.0 ms wall. LadybugDB's PageRank here is 40 iterations in JavaScript over a transition CSR cached in application code; the "application caches dropped" statement is the like-for-like one. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 6.2 ms of its 58.7 ms warm median here). DuckPGQ's bounded reach for this class is a recursive SQL statement, not a graph operator; PageRank is one recursive SQL statement.
+TIP: LadybugDB (graph), LadybugDB + community prior, warm median 87.3 ms; spread between passes 20.3 ms; passes 82.0, 102, 87.3, 85.1, 94.0 ms. Where it runs: reach in the engine; 40 PageRank iterations in JavaScript; the stored community value read by Cypher. Statements per ranking: 4.
+TIP: SQLite (relational), Code-reading questions (time per question), warm median 0.30 ms; spread between passes 0.15 ms; passes 0.24, 0.38, 0.27, 0.30, 0.31 ms. Where it runs: SQL query programs. Statements per ranking: 3.
+TIP: LadybugDB (graph), Code-reading questions (time per question), warm median 1.93 ms; spread between passes 0.38 ms; passes 1.84, 1.93, 2.22, 1.84, 2.04 ms. Where it runs: Cypher query programs. Statements per ranking: 3.
+TIP: DuckDB graph layer, Code-reading questions (time per question), warm median 9.16 ms; spread between passes 4.34 ms; passes 7.35, 11.7, 9.82, 8.53, 9.16 ms. Where it runs: SQL query programs on DuckDB. Statements per ranking: 1.
+TIP: Difference that holds, 1.64 ms wall. The question code differs per arm (SQLite re-prepares its statements each call, LadybugDB keeps prepared statements, DuckDB inlines literals); 20 TUNE questions.
+TIP: Difference that holds, 8.86 ms wall. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 0.4 ms of its 9.2 ms warm median here). The question code differs per arm (SQLite re-prepares its statements each call, LadybugDB keeps prepared statements, DuckDB inlines literals); 20 TUNE questions.
+TIP: Difference that holds, 7.23 ms wall. DuckDB's times include the asynchronous Node client's per-statement round trips (estimated 0.4 ms of its 9.2 ms warm median here). The question code differs per arm (SQLite re-prepares its statements each call, LadybugDB keeps prepared statements, DuckDB inlines literals); 20 TUNE questions.
+TIP: SQLite (relational), Selected method, cold median 47.2 ms; spread between passes 10.0 ms; passes 44.0, 53.9, 47.2, 43.9, 50.8 ms. Where it runs: SQL, one statement per walk level; the level loop runs in application code. Statements per ranking: 53.
+TIP: LadybugDB (graph), Selected method, cold median 154 ms; spread between passes 26.1 ms; passes 134, 158, 154, 134, 160 ms. With the facts load (179 ms median), 333 ms. Where it runs: reach in the engine (SHORTEST pattern); the spreading itself in JavaScript. Statements per ranking: 2.
+TIP: DuckDB graph layer, Selected method, cold median 243 ms; spread between passes 62.8 ms; passes 204, 249, 243, 215, 267 ms. Where it runs: reach by the iterativelength() graph function; the spreading in SQL, one statement per level. Statements per ranking: 24.
+TIP: Difference that holds, 107 ms wall. Counting LadybugDB's facts load would make this difference larger: LadybugDB's cold time leaves out loading the canonical facts graph into memory (median 179 ms on this graph), which only the LadybugDB arm needs to answer (its LbGraph reads node kinds, files and count from it); SQLite and DuckDB load nothing. Counted in, LadybugDB's cold wall time is about 333 ms against 47 ms for SQLite: SQLite is then lower in every pass. Client-library load (about 70 to 100 ms per engine) is left out for all three.
+TIP: Difference that holds, 196 ms wall
+TIP: Difference that holds, 89.4 ms wall
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: SQLite (relational), 4-hop PageRank variant, cold median 271 ms; spread between passes 52.4 ms; passes 255, 302, 271, 257, 308 ms. Where it runs: about 270 SQL statements per ranking. Statements per ranking: 271.
+TIP: LadybugDB (graph), 4-hop PageRank variant, cold median 126 ms; spread between passes 25.9 ms; passes 114, 139, 126, 116, 136 ms. With the facts load (170 ms median), 300 ms. Where it runs: PageRank in JavaScript over a cached adjacency (40 iterations). Statements per ranking: 2.
+TIP: DuckDB graph layer, 4-hop PageRank variant, cold median 192 ms; spread between passes 46.2 ms; passes 162, 201, 192, 164, 209 ms. Where it runs: recursive SQL, not a graph operator (bounded hops); ranking in SQL. Statements per ranking: 12.
+TIP: Difference that holds, 145 ms wall. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite.
+TIP: Inside the noise, 78.7 ms wall. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite.
+TIP: Inside the noise, 66.2 ms wall. If LadybugDB's facts load is counted, this cold comparison changes: LadybugDB's cold time leaves out loading the canonical facts graph into memory (median 170 ms on this graph), which only the LadybugDB arm needs to answer (its LbGraph reads node kinds, files and count from it); SQLite and DuckDB load nothing. Counted in, LadybugDB's cold wall time is about 300 ms against 192 ms for DuckDB+DuckPGQ: DuckDB+DuckPGQ is then lower in every pass. Client-library load (about 70 to 100 ms per engine) is left out for all three.
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: SQLite (relational), 2-hop PageRank start, cold median 262 ms; spread between passes 52.9 ms; passes 247, 300, 262, 250, 279 ms. Where it runs: about 270 SQL statements per ranking. Statements per ranking: 271.
+TIP: LadybugDB (graph), 2-hop PageRank start, cold median 109 ms; spread between passes 22.0 ms; passes 103, 125, 109, 103, 118 ms. With the facts load (163 ms median), 266 ms. Where it runs: PageRank in JavaScript over a cached adjacency (40 iterations). Statements per ranking: 2.
+TIP: DuckDB graph layer, 2-hop PageRank start, cold median 178 ms; spread between passes 63.9 ms; passes 151, 215, 178, 161, 195 ms. Where it runs: recursive SQL, not a graph operator (bounded hops); ranking in SQL. Statements per ranking: 12.
+TIP: Difference that holds, 153 ms wall. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite.
+TIP: Inside the noise, 83.7 ms wall. SQLite's PageRank is about 270 SQL statements per ranking driven by a loop in application code: an implementation choice of the relational arm, not a property of SQLite.
+TIP: Inside the noise, 68.9 ms wall. If LadybugDB's facts load is counted, this cold comparison changes: LadybugDB's cold time leaves out loading the canonical facts graph into memory (median 163 ms on this graph), which only the LadybugDB arm needs to answer (its LbGraph reads node kinds, files and count from it); SQLite and DuckDB load nothing. Counted in, LadybugDB's cold wall time is about 266 ms against 178 ms for DuckDB+DuckPGQ: DuckDB+DuckPGQ is then lower in every pass. Client-library load (about 70 to 100 ms per engine) is left out for all three.
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: LadybugDB (graph), LadybugDB + community prior, cold median 226 ms; spread between passes 40.5 ms; passes 200, 240, 226, 203, 226 ms. With the facts load (175 ms median), 400 ms. Where it runs: reach in the engine; 40 PageRank iterations in JavaScript; the stored community value read by Cypher. Statements per ranking: 4.
+TIP: SQLite (relational), Code-reading questions (time per question), cold median 5.90 ms; spread between passes 2.54 ms; passes 5.12, 7.66, 5.90, 5.82, 7.37 ms. Where it runs: SQL query programs. Statements per ranking: 3.
+TIP: LadybugDB (graph), Code-reading questions (time per question), cold median 71.9 ms; spread between passes 29.4 ms; passes 47.2, 71.9, 72.2, 48.6, 76.5 ms. With the facts load (178 ms median), 252 ms. Where it runs: Cypher query programs. Statements per ranking: 3.
+TIP: DuckDB graph layer, Code-reading questions (time per question), cold median 148 ms; spread between passes 37.9 ms; passes 112, 148, 149, 120, 150 ms. Where it runs: SQL query programs on DuckDB. Statements per ranking: 1.
+TIP: Difference that holds, 66.0 ms wall. Counting LadybugDB's facts load would make this difference larger: LadybugDB's cold time leaves out loading the canonical facts graph into memory (median 178 ms on this graph), which only the LadybugDB arm needs to answer (its LbGraph reads node kinds, files and count from it); SQLite and DuckDB load nothing. Counted in, LadybugDB's cold wall time is about 252 ms against 6 ms for SQLite: SQLite is then lower in every pass. Client-library load (about 70 to 100 ms per engine) is left out for all three. The question code differs per arm (SQLite re-prepares its statements each call, LadybugDB keeps prepared statements, DuckDB inlines literals); 20 TUNE questions.
+TIP: Difference that holds, 142 ms wall. The question code differs per arm (SQLite re-prepares its statements each call, LadybugDB keeps prepared statements, DuckDB inlines literals); 20 TUNE questions.
+TIP: Difference that holds, 76.5 ms wall. The question code differs per arm (SQLite re-prepares its statements each call, LadybugDB keeps prepared statements, DuckDB inlines literals); 20 TUNE questions.
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: Counted with its facts load, compared pass by pass (wall time only).
+TIP: SQLite (relational), Size on disk: 10.72 MiB
+TIP: LadybugDB (graph), Size on disk: 18.26 MiB
+TIP: DuckDB graph layer, Size on disk: 16.26 MiB
+TIP: SQLite (relational), Build from scratch: 869 ms median; passes 869, 964, 800, 759, 908 ms
+TIP: LadybugDB (graph), Build from scratch: 3710 ms median; passes 3710, 5141, 2998, 3014, 4229 ms
+TIP: DuckDB graph layer, Build from scratch: 692 ms median; passes 769, 1185, 688, 692, 679 ms
+TIP: SQLite (relational), One-file update: 269 ms median; passes 241, 339, 269, 262, 308 ms
+TIP: LadybugDB (graph), One-file update: 633 ms median; passes 549, 789, 633, 607, 716 ms
+TIP: DuckDB graph layer, One-file update: 179 ms median; passes 152, 225, 179, 161, 223 ms
+TIP: SQLite (relational), Selected method: 2,475 characters in 19 distinct statements (43 lines); 53 statements run per ranking.
+TIP: LadybugDB (graph), Selected method: 471 characters in 2 distinct statements (2 lines); 2 statements run per ranking. The ranking code in JavaScript is not counted.
+TIP: DuckDB graph layer, Selected method: 3,207 characters in 15 distinct statements (32 lines); 24 statements run per ranking.
+TIP: SQLite (relational), 4-hop PageRank variant: 2,952 characters in 21 distinct statements (53 lines); 271 statements run per ranking.
+TIP: LadybugDB (graph), 4-hop PageRank variant: 471 characters in 2 distinct statements (2 lines); 2 statements run per ranking. The ranking code in JavaScript is not counted.
+TIP: DuckDB graph layer, 4-hop PageRank variant: 8,806 characters in 21 distinct statements (146 lines); 12 statements run per ranking.
+TIP: SQLite (relational), 2-hop PageRank start: 2,952 characters in 21 distinct statements (53 lines); 271 statements run per ranking.
+TIP: LadybugDB (graph), 2-hop PageRank start: 471 characters in 2 distinct statements (2 lines); 2 statements run per ranking. The ranking code in JavaScript is not counted.
+TIP: DuckDB graph layer, 2-hop PageRank start: 8,814 characters in 21 distinct statements (146 lines); 12 statements run per ranking.
+TIP: LadybugDB (graph), LadybugDB + community prior: 576 characters in 4 distinct statements (4 lines); 4 statements run per ranking. The ranking code in JavaScript is not counted.
+TIP: SQLite (relational), Code-reading questions (time per question): 5,512 characters in 13 distinct statements (117 lines); 3 statements run per ranking.
+TIP: LadybugDB (graph), Code-reading questions (time per question): 4,658 characters in 21 distinct statements (32 lines); 3 statements run per ranking.
+TIP: DuckDB graph layer, Code-reading questions (time per question): 13,935 characters in 29 distinct statements (136 lines); 1 statements run per ranking.

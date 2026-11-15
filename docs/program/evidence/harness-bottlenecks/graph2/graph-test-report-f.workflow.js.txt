@@ -1,0 +1,220 @@
+export const meta = {
+  name: 'graph-test-report-f',
+  description: 'Post-run corrections with an independent check, the resumed engine timing with its audit, and the owner page built from the checked data',
+  phases: [
+    { title: 'Corrections', detail: 'recompute the sensitivity rows the refuters asked for and write the page data; independent check' },
+    { title: 'Timing', detail: 'resume the load-tolerant engine timing run, then audit its claims' },
+    { title: 'Page', detail: 'the owner page, built from the checked data and looked at as real screenshots' },
+  ],
+}
+
+const SP = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const BUILD = SP + '/build'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const EVID = REPO + '/docs/program/evidence/harness-bottlenecks/graph2'
+const PAGE = REPO + '/docs/program/graph-test'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const S = { type: 'string' }
+const N = { type: 'number' }
+const SA = { type: 'array', items: S }
+const DEFECTS = { type: 'array', items: { type: 'object', properties: { severity: S, where: S, what: S, fix: S }, required: ['severity', 'where', 'what', 'fix'] } }
+const BUILD_SCHEMA = {
+  type: 'object',
+  properties: { status: S, what_was_done: SA, key_numbers: SA, deviations_from_protocol: SA, problems: SA, files_written: SA },
+  required: ['status', 'what_was_done', 'key_numbers', 'deviations_from_protocol', 'problems'],
+}
+const REFUTE_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: S,
+    claims: { type: 'array', items: { type: 'object', properties: { claim: S, result: S, detail: S }, required: ['claim', 'result', 'detail'] } },
+    mismatches: SA, must_not_claim: SA, defects: DEFECTS,
+  },
+  required: ['verdict', 'claims', 'mismatches', 'must_not_claim', 'defects'],
+}
+const BENCH_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S, host_load: S,
+    table: { type: 'array', items: { type: 'object', properties: { engine: S, graph: S, query_class: S, threads: S, cold_wall_ms: N, warm_wall_p50_ms: N, warm_wall_p95_ms: N, warm_cpu_p50_ms: N, app_ms: N, pass_spread_ms: N, flagged_blocks: N, note: S }, required: ['engine', 'query_class', 'warm_wall_p50_ms'] } },
+    stores: { type: 'array', items: { type: 'object', properties: { engine: S, graph: S, size_mb: N, build_wall_s: N, build_cpu_s: N, update_one_file_ms: N, note: S }, required: ['engine', 'size_mb'] } },
+    query_text: { type: 'array', items: { type: 'object', properties: { engine: S, query_class: S, chars: N, lines: N, statements: N, note: S }, required: ['engine', 'query_class', 'chars'] } },
+    differences_that_hold: SA, differences_within_noise: SA, labels: SA, problems: SA,
+  },
+  required: ['status', 'host_load', 'table', 'stores', 'query_text', 'differences_that_hold', 'differences_within_noise', 'labels', 'problems'],
+}
+
+function common(lane, folders, role) {
+  return [
+    'You are one agent finishing a controlled experiment on one code repository. It compared ways of answering "what is connected to this code?": a scripted text search with two floors (same directory, co-change), a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The single held-out run is finished, scored, independently re-scored and audited. Nothing may be re-run on held-out tasks or questions, and no arm, configuration or answer file may change.',
+    '',
+    'YOUR LANE: ' + lane,
+    '',
+    'READ FIRST: ' + SP + '/protocol.md and ' + SP + '/protocol-addendum-1.md to -6.md. Addendum 6 is the post-run record and binds how the result is reported. The result of the run, the grader output and all three refuter reports are in ' + EVID + '/build-e/result.json (keys: run:heldout, grade:heldout, bench:rewrite, refute:rescore, refute:discipline, refute:claims).',
+    '',
+    'LAYOUT (under ' + BUILD + '): results/heldout/ (the held-out answers), sealed/ (reference answers), sealed/grader/ (tuning tables in selection_v2.json and stage1/, stage2/; held-out scoring in sealed/grader/heldout/ with scores.json, comparisons.json, tq.json, report_data.json, NOTES.md), audit/heldout/{rescore,discipline,claims}/ (the refuters, with their scripts and outputs), results/<arm>/ (tuning answers), bench/ and results/bench/ (engine timing), arms/, tasks/, facts/.',
+    '',
+    'HARD RULES',
+    '1. The repository at ' + REPO + ' is read-only except for the folders named in your lane. Never check out, switch branch, stash, commit or push.',
+    '2. Never start an arm on a held-out task or question. Never edit a file under arms/, tasks/, facts/, results/frozen/ or results/heldout/.',
+    '3. ' + role,
+    '4. Three containers named postiz, postiz-postgres and postiz-redis, and any container whose name starts with fixflow-, belong to the owner: never stop, restart or change them. Never stop or change any process that is not yours.',
+    '5. Install nothing and download nothing. Never put the project name, file paths, identifiers or code from this repository into a web query or URL.',
+    '6. Host tool quirks: a Bash command over about 8 KB is cut and doubled backslashes in heredocs collapse, so create files with the Write tool. python is not on PATH on the host; use ' + PY + ' -I . Node 24 is on PATH. node rejects a file ending .js.txt: run such a script with  cd <its folder> && node - < name.js.txt . The session may be interrupted: write progress to files.',
+    '7. Stay inside your folders: ' + folders + '.',
+    '8. Write for a reader with no context: plain complete sentences, every number with its unit and what it refers to. If something is not done or failed, say so plainly.',
+    '',
+  ].join('\n')
+}
+const GRADER = 'You are the grader: you may read ' + BUILD + '/sealed/ and ' + BUILD + '/audit/. Your working files go under ' + BUILD + '/sealed/grader/heldout/v2/.'
+const AUDITOR = 'You are an independent auditor: you may read everything. You change no file outside your own audit folder. Do not trust any note or report: recompute what you can.'
+const BENCHER = 'You are a bench agent: never read ' + BUILD + '/sealed/ or ' + BUILD + '/audit/. Benches use tuning inputs and the frozen-commit graph only.'
+
+// ---------------------------------------------------------------- Corrections
+const pC1 = common(
+  'GRADER, POST-RUN CORRECTIONS AND PAGE DATA. Recompute, from the stored answers and scores only, the rows the refuters asked for, fix the record, and write one checked data file for the owner page.',
+  BUILD + '/sealed/grader/heldout/v2 (new), and ' + PAGE + '/data (new: the page data file only)',
+  GRADER
+) + [
+  'Keep every existing file under sealed/grader/heldout/ unchanged; write new files under v2/. Reuse the grader scripts (score_heldout.js, compare_heldout.js, finalize_h4.js) and the refuter scripts under audit/heldout/ where they already compute a row, and reconcile any difference between the two.',
+  'WHAT TO COMPUTE (addendum 6 sections B and C)',
+  'a. H4 on 30, on 23 and on 22 questions (22 = without 24, 25, 27, 33, 40, 41, 46, 47), each with and without the judgement items: macro F1 per arm, difference with the paired bootstrap over questions, wins, losses and ties, and the per-kind means. Correct the sentence in the notes: on the 7 first-listed touched questions the typed arms win 1, lose 2 and tie 4.',
+  'b. Question tokens two ways: the size of the final answer per arm, and what the scripted search read to reach it.',
+  'c. The split of every H3 comparison (typed against search, search s2, co-change floor, same-directory floor) by where the seed file lives: mobile app, backend, web; the web row with and without the root-level task T1-0786; commits and tasks per group; and the mix of the three groups on the tuning split and on the held-out split.',
+  'd. Sensitivity of the co-change floor and search comparisons: the five most favourable commits dropped; the three largest commits dropped; seeds matched by id only.',
+  'e. T3 comparisons clustered by task (as scored) and by parent commit.',
+  'f. H1b: all five community draws on T1 with intervals, and the T2 and T3 rows.',
+  'g. The 8 tasks where the full ranked-list hash differs from the reference arm: say why (ties or float differences beyond the shown part) from tmp/runner/diff_detail.json and the stored answers, and confirm that no reported measure reads beyond the shown items.',
+  'h. The share of each arm credited recall that comes from its padding tail, and for the typed primary the share reached through a path that includes a co-change edge (the claims refuter computed both; reproduce or cite its file).',
+  'PAGE DATA. Write ' + PAGE + '/data/data.json (and a copy in sealed/grader/heldout/v2/). Aggregates only, every number with source ("held-out" or "tuning"), n, and interval where one exists. It must hold:',
+  '- arms: the seven arms in plain words (what each one is, what it reads, how it answers), the frozen configuration of each in plain words, and the role rows (primary, S1 = choice of the tie rule as first written, S2 = best form).',
+  '- sets: T1, T1x, T2, T3, T4 and the questions, each in one plain sentence with task and commit counts for tuning and held-out.',
+  '- heldout: the per-arm table (every arm, role and set: primary with standard error, recall at 2,000, 4,000, 8,000 and 16,000 tokens, area under the curve, lookups, the tuning primary beside it), and the recall-by-token-budget curve points per arm for T1, T2 and T3.',
+  '- comparisons: every pre-declared comparison (H1, H2, H1b, H3, H4) with difference, interval, verdict word, the condition that decided it, and the qualification the claims refuter requires, in plain words; the descriptive rows (S1, floors against search).',
+  '- splits: item c; sensitivity: item d; t3: item e; draws: item f.',
+  '- questions: per-arm F1, precision, recall on 30, 23 and 22; per-kind table; per-question typed and search F1 with the kind and a touched flag (no question text, no reference content); tokens both ways.',
+  '- tuning: the sweep that shows what mattered. From the stage-1 and stage-2 tuning tables (sealed/grader/selection_v2.json, stage1/, stage2/): T1 tuning primary by hop depth (1, 2, 3, 4, 6, unbounded) for the typed arms; by ranking mode at the base depth and at unbounded depth; by direction; by hub cut; by output form and granularity; by padding; by edge-class set; the search arm by rounds, BM25, import following and padding; the best engine-native rows of each graph arm against the base. Say for each factor how much it moved the primary.',
+  '- identity: the counts that show the three typed implementations return the same answers (tuning and held-out, tasks and questions).',
+  '- examples: three worked examples from the TUNING split only (never held-out): one where the typed store clearly beats search, one tie, one where search or a floor beats the typed store. For each: the seed (path and symbol), the files the commit changed (the reference), and for the typed primary, search primary and the co-change floor the files shown inside 8,000 tokens with a hit or miss mark and the recall. Choose them by a stated rule (for example the median task of each group), not by hand.',
+  '- trust: the timeline of the test in order (protocol frozen, facts built, phase A audit, phase B audit, tuning, selection audit, three pre-flight audits, held-out run, scoring, three refuters) with what each audit caught and what was changed, taken from the addenda; the declared changes made after tuning data existed (tie rule; question code); tuning-to-held-out drop per arm.',
+  '- limits: addendum 6 section D, and the must_not_claim lists of the claims and discipline refuters verbatim.',
+  '- engines: a placeholder object {status: "measuring"}; another lane fills it later.',
+  'Also write sealed/grader/heldout/v2/NOTES.md (what was recomputed, how, and every difference from the first report).',
+].join('\n')
+
+const pC2 = common(
+  'CHECK OF THE CORRECTIONS AND THE PAGE DATA. Recompute the new rows independently and check the page data file line by line against the scores.',
+  BUILD + '/audit/heldout/v2',
+  AUDITOR
+) + [
+  'The grader lane has written sealed/grader/heldout/v2/ and ' + PAGE + '/data/data.json.',
+  'CHECKS',
+  '1. Recompute with your own code (the scorer and bootstrap in audit/heldout/rescore/ are independent of the grader and may be reused): H4 on 30, 23 and 22 questions; the runtime split of every H3 comparison with and without task T1-0786; the sensitivity rows; T3 clustered by parent commit; the five H1b draws. Point estimates must agree to 4 decimals, interval ends within 0.005.',
+  '2. Every number in data.json: trace it to scores.json, comparisons.json, tq.json, the tuning tables or a v2 file. List each number you could not trace or that differs.',
+  '3. The tuning sweep rows equal the tuning tables (sample at least 30 cells).',
+  '4. The three worked examples come from the tuning split, are chosen by the stated rule, and their hit and miss marks and recalls equal a re-score of the stored tuning answers.',
+  '5. No sentence in data.json states or implies anything on the must_not_claim lists (build-e/result.json, refute:claims and refute:discipline) or against addendum 6 section C. Quote each offending string.',
+  '6. data.json holds no held-out question text, no held-out reference content and no per-task held-out score.',
+  'Return each check as a claim with result "survives", "needs qualification" or "refuted", the mismatches, and defects with the exact field and the corrected value.',
+].join('\n')
+
+const pC3 = (check) => common(
+  'GRADER, APPLY THE CHECK. Correct the page data file where the independent check found a mismatch.',
+  BUILD + '/sealed/grader/heldout/v2, and ' + PAGE + '/data',
+  GRADER
+) + [
+  'The independent check returned (JSON):',
+  check,
+  '',
+  'For every mismatch and defect: recompute the value yourself; if the check is right, correct data.json (and the copy under v2/) and note it in v2/NOTES.md; if the check is wrong, leave the value and say why in your report. Remove or reword every quoted string that states or implies a must-not-claim sentence. Do not add content.',
+].join('\n')
+
+// ---------------------------------------------------------------- Timing
+const pB4 = common(
+  'ENGINE TIMING, RESUME. A load-tolerant timing run named "interleaved" was interrupted when the session ended: pass 1 is complete and pass 2 was in progress. Resume it and bring it to the end.',
+  BUILD + '/results/bench, tmp/bench',
+  BENCHER
+) + [
+  'Read bench/NOTES.md (the section on run_interleaved.sh and on restarting), results/bench/interleaved/run_config.json, progress.json and run.log.',
+  'a. Docker Desktop was restarted. Check that no container named gt-ibench-interleaved is running, then start the host load sampler as the notes say and run exactly the same command with the same settings:  bash ' + BUILD + '/bench/run_interleaved.sh interleaved  in the background, output to tmp/bench/interleaved.resume.out. Finished units are kept; the unfinished unit is redone.',
+  'b. It can take several hours when the machine is busy. Wait on it with long background waits and write a line to tmp/bench/resume_progress.txt each time you look. If it stops, restart it the same way and say so. Never stop or slow another program to get a quieter machine.',
+  'c. When all five passes are done, run the check and the summary. Do not change bench code except to fix a crash; say so if you do.',
+  'd. Return the table (engine, graph, query class, threads, cold wall, warm wall median and 95th percentile, warm CPU median, application time, spread between passes, flagged blocks), the stores (size, build wall and CPU time, one-file update), query text length and statements per class, the labels, and the two lists: differences that hold in wall and CPU time beyond the spread between passes, and differences inside the noise. Say how loaded the host was (share of blocks repeated or flagged).',
+  'e. Write the same content as plain aggregates to ' + BUILD + '/results/bench/interleaved/engines.json for the page.',
+].join('\n')
+
+const pB5 = common(
+  'TIMING AUDIT. Check the engine measures independently before anyone quotes them.',
+  BUILD + '/audit/bench',
+  AUDITOR
+) + [
+  'Read addendum 4 section E and addendum 5 section C, bench/ and results/bench/interleaved/ (summary.md, summary.json, check.json, blocks.jsonl, units/, engines.json).',
+  'CHECKS: (1) recompute the summary table from the raw unit files with your own code; (2) the engines really alternated (block timestamps and order), on the same seeds and configurations, and each engine returned the same ranked answers (the equivalence check); (3) host load per block is recorded and repeated or flagged blocks were treated by the rule; (4) every "difference that holds" does hold in wall and CPU time and exceeds the spread between passes, and nothing inside the noise is stated as a difference; (5) the labels are honest: which numbers time a graph operator, which time recursive SQL, which time application code or a cache; thread settings stated; (6) what a reader could wrongly conclude from the table.',
+  'Then write ' + BUILD + '/audit/bench/engines_checked.json: engines.json with every statement marked "survives", "needs qualification" (with the qualification) or "refuted", and a short list of plain sentences that are safe to show the owner.',
+  'Return each quoted statement with its result, and the list must_not_claim.',
+].join('\n')
+
+// ---------------------------------------------------------------- Page
+const pP1 = common(
+  'OWNER PAGE. Build the page the owner will read to understand the result of this test. He decides from it whether a graph database belongs in his agent harness.',
+  PAGE + ' (page sources, build script, built page), ' + REPO + '/docs/program/GRAPH-TEST-RESULT-2026-11.md (the short record, generated from the same data), and ' + EVID + '/page (your screenshots and build notes)',
+  'You may read ' + BUILD + '/sealed/grader/heldout/v2/ and the audits, but the page shows aggregates only: no held-out question text, no held-out reference content.'
+) + [
+  'THE READER. The owner has moderate ADHD and understands best from pictures, step-through demos and small simulations, not long text. He reads on a desktop browser about 1870 px wide, light theme. He asked, in his words: does the way a graph stores things make a difference to the answer; are the answers scored for the value they carry; do the type of graph, the algorithms and the number of hops matter; was the graph given a fair, optimised form against an established relational engine; and would it be more token efficient. The page answers those questions in that order of importance, leading with the answer.',
+  'THE DATA. Everything on the page comes from ' + PAGE + '/data/data.json, which has been checked independently. Do not compute new results and do not copy numbers by hand: the build script reads data.json and writes the page and the record, so they cannot drift. The "engines" part is a placeholder until the timing run reports; build that section so it shows "measuring now" from the placeholder and fills itself when data.json later carries the numbers.',
+  'WHAT THE RESULT IS (my reading as the judge of the test; the wording rules of addendum 6 section C bind every sentence on the page):',
+  '1. Same facts and same method give the same answers in SQLite, LadybugDB and DuckDB. The engine did not change the answer.',
+  '2. The one graph-only algorithm that reached the final (a community prior added to personalised PageRank) gave +0.015 recall with an interval that includes zero; five draws range from +0.009 to +0.032; it was lower on the code-to-tests set. No gain of 0.05 or more.',
+  '3. A typed store of connections, in either kind of engine, beat scripted search by 0.076 recall at the same answer size, and beat both floors. The whole gain is in changes that start in the mobile app. Elsewhere it ties the cheapest floor (files that changed together before).',
+  '4. What moved the score during tuning was how far the walk goes (hops) and which facts are in the store. The ranking algorithm barely mattered.',
+  '5. Code-reading questions: typed queries scored higher than scripted search, but not provably on all 30 questions; clearly on the untouched 22. A typed query returns the answer directly; the scripted search read about 695 tokens to produce an answer of the same size.',
+  '6. Engine speed, size and effort: measuring now.',
+  '7. Not tested: whether an agent finishes work faster with any of this.',
+  'SECTIONS (each one: a question as its heading, one line on how to read the picture, the picture, one line on what it shows; quantities by length or position on a common scale; labels on the marks, not in a legend far away; nothing dropped: detail may be quiet or folded, never missing):',
+  'A. The answer on one screen: the seven statements above as a row of verdict cards, each with its one number, its interval drawn as a bar, and a tag "held-out" or "tuning".',
+  'B. What was compared: a picture of the seven arms (what each reads and how it answers) and of one task (seed file, what the tool returns inside the token budget, what the commit really changed). Then the three worked examples as a step-through the reader can click: seed, each tool answer with hits and misses marked, the score.',
+  'C. The main result: recall for every arm on held-out with interval whiskers, switchable between the task sets (T1, T2, T3, with T1x and T4 marked descriptive) and between token budgets; and the recall-by-budget curves, which is the token-efficiency view.',
+  'D. Where the gain comes from: the split by mobile app, backend and web for typed against search and against the co-change floor, with the mix change between tuning and held-out, and the sensitivity rows.',
+  'E. Does the engine matter: the identity counts as a picture; the five community draws against the relational store with intervals, and the T2 and T3 rows.',
+  'F. What did matter: an interactive sweep from the tuning data. A hop control (1, 2, 3, 4, 6, unbounded) that moves the recall bar; the ranking modes side by side; direction, hub cut, edge classes, output form, padding; the search arm own factors. Tagged "tuning set: optimistic".',
+  'G. Questions: F1 with intervals on 30, 23 and 22 questions; per-question dots (win, tie, loss, touched flagged); per-kind bars; tokens shown two ways.',
+  'H. Engines: the placeholder section described above, with the labels that must accompany any timing number.',
+  'I. How far to trust it: the timeline of audits with what each caught; the changes made after tuning data existed; the drop from tuning to held-out for every arm; the first-written tie rule row.',
+  'J. What this does not show, and what could be tested next (an agent pilot; an embedding search arm; another repository): each as a decision the owner may take, not as a plan.',
+  'RULES FOR THE PAGE',
+  '- One self-contained file ' + PAGE + '/index.html under 500,000 bytes (inline script and style, no network, no external library), built by ' + PAGE + '/build.js.txt from data/data.json. The record ' + REPO + '/docs/program/GRAPH-TEST-RESULT-2026-11.md is generated by the same script and stays under 150 lines.',
+  '- Light and dark themes, readable at 1870 px, at 644 px and at phone width. No horizontal page scroll. Body text at least 15 px; labels on charts at least 12 px.',
+  '- Plain words on the page: say "SQLite (relational)", "LadybugDB (graph)", "DuckDB graph layer", "scripted search", "same-folder floor", "changed-together floor". Explain "recall" once in plain words (the share of the files and definitions the real change touched that the tool put in front of the reader). No internal ids (H1, S2, T1x) without the plain name beside them.',
+  '- Every number carries its tag: held-out or tuning, and n. An interval is always drawn, never only written. Colour is never the only carrier of meaning.',
+  '- If the dataviz skill is available to you, load it before writing chart code.',
+  '- LOOK AT IT. Use the screenshot tool ' + REPO + '/docs/program/evidence/library-pathways/shot.js.txt (read its header for usage; it drives the installed Edge headless) to take real screenshots at 1870 x 1280 light, 1870 x 1280 dark, 644 px wide and 390 px wide, of every section. Read your own screenshots and fix what cannot be read at a glance: clipped labels, overlapping marks, tiny text, a picture that needs its caption to be decoded. Repeat until each section reads by looking. Save the final screenshots under ' + EVID + '/page/.',
+  '- Check the built page against data.json with a script: every number on the page is in the data; every section A to J is present; nothing in the page states or implies a must-not-claim sentence.',
+  'Report what each section shows, the file sizes, the screenshot files, and anything you could not make readable.',
+].join('\n')
+
+const OPUS = { model: 'opus', effort: 'high', agentType: 'general-purpose' }
+
+// ================================================================ run
+const branches = await parallel([
+  async () => {
+    phase('Corrections')
+    const c1 = await agent(pC1, { label: 'grade:corrections', phase: 'Corrections', schema: BUILD_SCHEMA, ...OPUS })
+    if (!c1) return { failed: 'corrections' }
+    const c2 = await agent(pC2, { label: 'verify:corrections', phase: 'Corrections', schema: REFUTE_SCHEMA, ...OPUS })
+    let c3 = null
+    if (c2 && (c2.mismatches.length > 0 || c2.defects.length > 0)) {
+      c3 = await agent(pC3(JSON.stringify({ mismatches: c2.mismatches, defects: c2.defects, claims: c2.claims.filter(c => c.result !== 'survives') }, null, 1)), { label: 'grade:apply-check', phase: 'Corrections', schema: BUILD_SCHEMA, ...OPUS })
+    }
+    const page = await agent(pP1, { label: 'page:build', phase: 'Page', schema: BUILD_SCHEMA, ...OPUS })
+    return { corrections: c1, check: c2, applied: c3, page }
+  },
+  async () => {
+    const bench = await agent(pB4, { label: 'bench:run', phase: 'Timing', schema: BENCH_SCHEMA, ...OPUS })
+    let benchAudit = null
+    if (bench) benchAudit = await agent(pB5, { label: 'bench:audit', phase: 'Timing', schema: REFUTE_SCHEMA, ...OPUS })
+    return { bench, benchAudit }
+  },
+])
+
+return { report: branches[0], timing: branches[1] }

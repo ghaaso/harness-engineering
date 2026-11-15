@@ -1,0 +1,46 @@
+// Step 3: where did each sampled finding's text appear in the transcripts, when, in which session, and how
+// (written by a tool call, shown in a tool result, or quoted in the model's own text). Local only.
+const fs = require('fs'), path = require('path'), readline = require('readline');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const P = 'C:/Users/User/.claude/projects';
+const sel = fs.readFileSync(W + '/sample-selected.jsonl', 'utf8').split('\n').map(JSON.parse).filter((o) => o.selected);
+// needle: the longest run of plain characters, cut to at most 48 chars from its middle
+function needle(t) {
+  const runs = t.replace(/\\/g, ' ').match(/[A-Za-z0-9 ,.;()%=+-]{24,}/g) || [];
+  runs.sort((a, b) => b.length - a.length);
+  let r = (runs[0] || '').trim().replace(/\s+/g, ' ');
+  if (r.length > 48) { const s = Math.floor((r.length - 48) / 2); r = r.slice(s, s + 48).trim(); }
+  return r;
+}
+const N = sel.map((o) => ({ id: o.id, path: o.path, needle: needle(o.text) }));
+fs.writeFileSync(W + '/needles.json', JSON.stringify(N, null, 1));
+const dirs = fs.readdirSync(P).filter((d) => d.includes('EMS-workshop1'));
+function walk(d, a) { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p, a); else if (e.name.endsWith('.jsonl')) a.push(p); } return a; }
+const sessOf = (f) => { const m = f.replace(/\\/g, '/').match(/\/projects\/[^/]+\/([0-9a-f-]{36})/i); return m ? m[1] : null; };
+const hits = [];
+(async () => {
+  const files = []; for (const d of dirs) walk(path.join(P, d), files);
+  let nf = 0;
+  for (const f of files) {
+    nf++;
+    const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+    const toolIn = {};
+    for await (const line of rl) {
+      let any = false; for (const n of N) if (n.needle && line.indexOf(n.needle) >= 0) { any = true; break; }
+      if (!any) { if (line.indexOf('"tool_use"') >= 0) { try { const o = JSON.parse(line); for (const b of (o.message && Array.isArray(o.message.content) ? o.message.content : [])) if (b.type === 'tool_use') toolIn[b.id] = JSON.stringify(b.input).slice(0, 400); } catch {} } continue; }
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      const blocks = o.message && Array.isArray(o.message.content) ? o.message.content : (o.message && typeof o.message.content === 'string' ? [{ type: 'text', text: o.message.content }] : []);
+      for (const b of blocks) {
+        let kind, txt, via = '';
+        if (b.type === 'tool_use') { toolIn[b.id] = JSON.stringify(b.input).slice(0, 400); kind = /^(Write|Edit|MultiEdit)$/.test(b.name) ? 'written' : 'tool-input'; txt = JSON.stringify(b.input); }
+        else if (b.type === 'tool_result') { kind = 'shown'; txt = typeof b.content === 'string' ? b.content : JSON.stringify(b.content); via = toolIn[b.tool_use_id] || ''; }
+        else if (b.type === 'text') { kind = o.type === 'user' ? 'prompt' : 'model-text'; txt = b.text; }
+        else continue;
+        if (!txt) continue;
+        for (const n of N) if (n.needle && txt.indexOf(n.needle) >= 0) hits.push({ id: n.id, f, sess: sessOf(f), sub: /subagents/.test(f), ts: o.timestamp, kind, via: via.slice(0, 300) });
+      }
+    }
+  }
+  fs.writeFileSync(W + '/reuse-hits.jsonl', hits.map((h) => JSON.stringify(h)).join('\n'));
+  console.log('files', nf, 'hits', hits.length);
+})();

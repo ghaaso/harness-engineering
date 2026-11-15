@@ -1,0 +1,189 @@
+export const meta = {
+  name: 'library-pathway-walkthroughs',
+  description: 'Ten pathway families: Sonnet finds real cases in the repos and session records, Opus walks each case through the ten steps of the library design and reports where it works and where it breaks. Limitations only, no fixes.',
+  phases: [
+    { title: 'Find cases', detail: 'one Sonnet reader per pathway family collects three or four real cases with exact evidence', model: 'sonnet' },
+    { title: 'Walk cases', detail: 'one Opus agent per family replays each case through the ten steps of the design', model: 'opus' },
+  ],
+}
+
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const CLINIC = 'C:/Bilal_Migration/User/Downloads/20_PROJECTS/24_Clinic_Workshop'
+const TX = 'C:/Users/User/.claude/projects'
+const MEM = TX + '/C--Users-User-Documents-projects-EMS-workshop1/memory'
+const KS = REPO + '/.claude/worktrees/knowledge-store-research-9c609c/docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md'
+const F1 = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/0bf1c4f3-76dc-4144-995c-2af5a213db41/scratchpad/lib/facts/F1-ks-mechanics.md'
+const OUT = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/c43afbf6-198f-44b7-9c89-fb1b583ea234/scratchpad/sim'
+
+const SYSTEM = `THE SYSTEM BEING STUDIED (the owner's design; quoted words are his). Nothing is built yet.
+A "library": a separate memory of model reasoning conclusions "so we can fetch what we want".
+- When a strong model solves a problem, the solution and its reasoning are stored.
+- Later a cheaper model facing a similar problem fetches it through "accurate semantic and technical matching", adapts it and uses it.
+- Retrieval can merge: "graphs where branches can be merged", for a problem partly covered by one stored solution and partly by another.
+- A hard new problem is the point: if the cheap model fails, the problem goes up a ladder (Sonnet, then Opus, then Fable), is solved once, and is stored.
+- It works across sessions (a new session does not remember what earlier sessions learned) and across projects.
+- Goal: "equal outputs with a cheaper smaller model in the long run cutting costs A TON".
+Setting: coding agents (Claude Code sessions and their subagents) on one developer's PC, two main repositories, a test suite and a review gate.
+
+THE TEN STEPS OF THE DESIGN.
+1. A task arrives for the cheap model. What is in its window?
+2. Trigger: does anything cause a lookup, and when?
+3. Query: what is asked, in what words or signals?
+4. Match: what comes back: the same problem, a similar one, several partial ones to merge, a wrong one, nothing?
+5. Delivery: which window receives it (main session or subagent), and does it stay there?
+6. Use: the cheap model adapts it and applies it.
+7. Check: what decides that the result equals what the strong model would have produced?
+8. Failure and the ladder: how is failure noticed, and what is handed up to Opus, then to Fable?
+9. Capture: what is written to the library, by whom, when, and from what material?
+10. Afterlife: what happens to that entry later: other sessions, parallel branches, refactors, upgrades, other projects, new models, changes of direction.
+
+WHERE THE REAL RECORDS ARE (all read-only).
+- FixFlow repository: ${REPO} (git history on all refs; CLAUDE.md; docs/, especially docs/HANDOFF-2026-07-28-open-work.md, docs/lifecycle-audit-followups-2026-07.md, docs/program/ and docs/program/evidence/).
+- Clinic build repository: ${CLINIC} (git history; its board and review findings; docs/). The compile of its problems is in ${REPO}/docs/program/HARNESS-BOTTLENECKS-2026-11.md with evidence under ${REPO}/docs/program/evidence/harness-bottlenecks/ (sweep-cards.txt, map-full.txt).
+- Session transcripts: ${TX}/<project folder>/*.jsonl, with subagent transcripts in subfolders. They are large: scan them with a node script (python is not on PATH), never read one whole.
+- The owner's memory notes: ${MEM}/ (MEMORY.md is the index).
+
+RULES. Read-only everywhere except your output folder ${OUT}/. node and git are available. No web is needed. Plain English, short sentences. Quote evidence exactly and say where it is (file and line, commit hash, or transcript file).`
+
+const KNOWN = `KNOWN LIST (limitations already found by thought experiment; titles only).
+1 the cheap model gets tasks, not problems, and does not know when it needs help; 2 it asks the wrong question; 3 similar is not the same; 4 the judge of "equal output" is the expensive model; 5 what to store: too specific or too general; 6 the parts of a new problem are not known before diagnosis; 7 adapting the fetched solution; 8 wrong or half-right entries spread; 9 empty at the start, and the first weeks cost more; 10 lookup overhead in the window; 11 the first time is full price; 12 too much applies at task start; 13 "either/or" looks like "both" when two entries partly match; 14 two checked answers do not make a checked merge; 15 reasoning steps have no identity, so branches cannot be joined; 16 many short subagent windows start empty; 17 compaction drops a fetched entry; 18 the entry froze the goal of its day; 19 a stored "no" is read as "never"; 20 a stored conclusion cannot answer new questions; 21 a wrong entry anchors the cheap model; 22 passing tests becomes the reward; 23 failure is not visible from inside; 24 hard problems pay every rung of the ladder; 25 the handoff is a polluted window or a brief by the model that failed; 26 when is it "solved"; 27 raw reasoning is not available, only a write-up after the fact; 28 the strong model records what was hard for it, not the mistakes it never makes; 29 the writer cannot know which details mattered; 30 writing happens at the largest window and the session may die first; 31 parallel sessions copy unreviewed answers or solve the same thing twice; 32 blame when a reused entry fails; 33 upkeep grows with size; 34 a rule in one project is a bug in another; 35 merged answers depend on their parents.`
+
+const CASES_SCHEMA = {
+  type: 'object',
+  properties: {
+    cases: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          what_happened: { type: 'string' },
+          when: { type: 'string' },
+          who: { type: 'string' },
+          evidence: { type: 'array', items: { type: 'string' } },
+          sources: { type: 'array', items: { type: 'string' } },
+          later_moment: { type: 'string' },
+        },
+        required: ['id', 'title', 'what_happened', 'evidence', 'sources', 'later_moment'],
+      },
+    },
+    searched: { type: 'array', items: { type: 'string' } },
+    notes: { type: 'string' },
+    written: { type: 'boolean' },
+  },
+  required: ['cases', 'searched', 'written'],
+}
+
+const WALK_SCHEMA = {
+  type: 'object',
+  properties: {
+    walks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          case_id: { type: 'string' },
+          entry_as_written: { type: 'string' },
+          steps: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                step: { type: 'number' },
+                status: { type: 'string', enum: ['works', 'strains', 'breaks', 'not_specified', 'not_reached'] },
+                note: { type: 'string' },
+              },
+              required: ['step', 'status', 'note'],
+            },
+          },
+        },
+        required: ['case_id', 'entry_as_written', 'steps'],
+      },
+    },
+    breaks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          step: { type: 'string' },
+          description: { type: 'string' },
+          evidence: { type: 'string' },
+          seen_before: { type: 'boolean' },
+          cases_hit: { type: 'number' },
+        },
+        required: ['title', 'step', 'description', 'evidence', 'seen_before', 'cases_hit'],
+      },
+    },
+    did_not_break: { type: 'array', items: { type: 'object', properties: { listed_item: { type: 'string' }, why: { type: 'string' } }, required: ['listed_item', 'why'] } },
+    works_well: { type: 'array', items: { type: 'string' } },
+    summary: { type: 'string' },
+    written: { type: 'boolean' },
+  },
+  required: ['walks', 'breaks', 'did_not_break', 'works_well', 'summary', 'written'],
+}
+
+const LANES = [
+  { id: 'L01-same-mistake-new-session', family: `SAME MISTAKE, NEW SESSION. A fresh session runs into something an earlier session had already worked out: a missing tool, a path or shell quirk, a limit of the harness, a fact about this PC, a project convention.`, look: `Scan the session transcripts for tool results that are errors and group them by error text across different sessions and different project folders (write a node script). Read the owner's memory notes, which list facts that were written down after being hit more than once. Prefer cases with several recurrences and say how many calls each recurrence cost.` },
+  { id: 'L02-silent-defect-found-later', family: `SILENT DEFECT, FOUND LATER. Work that passed its checks when it was built and was found wrong afterwards by an audit, a review or production.`, look: `FixFlow: docs/lifecycle-audit-followups-2026-07.md, docs/HANDOFF-2026-07-28-open-work.md sections 4 and 6, and the invariants in CLAUDE.md (each says it was paid for: find the commits and pull requests behind them, for example the bill freeze, the job lifecycle state machine, the outbox dispatcher). Clinic: review findings and fix chains (the harness compile and sweep-cards.txt point to them). For each case give the date the faulty work landed and the date it was found.` },
+  { id: 'L03-build-new-from-old', family: `BUILDING SOMETHING NEW WHERE SIMILAR THINGS EXIST. A new feature slice written when earlier slices of the same shape were already in the repository.`, look: `FixFlow: feature commits under backend/app/features/ and their migrations (attendance, staff ledger, advance requests, customer messaging, tenancy settings), and the matching web and mobile slices. Clinic: its slices and merges. Pick cases where a later slice could have borrowed from an earlier one, and at least one where the project's conventions changed between the two (naming, migration rules, test style).` },
+  { id: 'L04-vendor-build-deploy', family: `FAILURES WHOSE CAUSE IS OUTSIDE THE REPOSITORY. Cloud builds, hosting, the database host, phone behaviour, a vendor's silent change.`, look: `FixFlow: "Build & deploy traps" in CLAUDE.md and the commits behind each (the cloud build failures, the outage from deploying from the repository root, the empty value in eas.json), docs/HANDOFF-2026-07-28-open-work.md section 2, docs/RUNBOOK-BACKUPS.md. Clinic: its deploy folder and the first-deploy gaps in the harness compile. For each case say how the evidence reached the session (pasted log, command output) and how long one attempt took to verify, if the record shows it.` },
+  { id: 'L05-race-flaky-data', family: `FAILURES THAT DO NOT REPRODUCE ON DEMAND. Races, flaky or order-dependent tests, causes that sit in production data or in timing.`, look: `FixFlow: the outbox mutual-exclusion defect, the arrival-wizard state, the dispatcher cursor and replay, production-data audits around migrations (CLAUDE.md invariants and the commits behind them). Clinic: the hung check, tests that depend on run order, long waits (harness compile). Transcripts: a failing check that was simply run again and then passed.` },
+  { id: 'L06-composite-merge', family: `A PROBLEM THAT NEEDED TWO OR MORE EARLIER LESSONS TOGETHER. This is the owner's merge case.`, look: `Find real ones: fixes whose commit bodies cite several earlier fixes or invariants (the carry-in loop pull requests 162, 163 and 170, the dispatcher hardening, the login lock), and clinic fix chains where a later defect sat where two earlier changes met. For each, name the earlier lessons, what each one covered, what neither covered, and whether the lessons were alternatives or parts of one answer.` },
+  { id: 'L07-research-design', family: `RESEARCH AND DESIGN WORK, where the "solution" is a conclusion and no test can check it.`, look: `docs/program/ in FixFlow: the ship plan versions and their five critiques, the harness review, the harness bottlenecks compile including its withdrawn graph verdict, the token bottleneck report; the knowledge-store design's adjudication record (${KS} section 12); and the memory notes, which record conclusions later corrected or rejected by the owner. Pick cases where an earlier conclusion was reused by a later session, and cases where a conclusion that had passed checks by other models was overturned.` },
+  { id: 'L08-cross-project', family: `KNOWLEDGE MOVING BETWEEN PROJECTS. FixFlow (FastAPI, React, Expo), the clinic build (Django), and the other project folders on this PC.`, look: `Find real lessons learned in one project that were needed in another: machine and harness facts, review patterns, test and deploy lessons, stack traps. Show how each actually travelled (memory notes, copied documents, re-learning from scratch) and what happened to it on arrival. The project folders under the transcripts directory show which projects exist.` },
+  { id: 'L09-ladder-in-real-life', family: `A CHEAPER AGENT WAS WRONG AND A STRONGER ONE CAUGHT IT, OR NOBODY DID. This is the escalation ladder as it already happens.`, look: `Subagent transcripts compared with what the main session then did; the clinic's recorded overstated session reports and review rounds (harness compile, map-full.txt, problems B12 and B17); refuter corrections under docs/program/evidence/. For each case: which model did the work, how the failure was noticed (or that it was not), what exactly was handed to the stronger model, and what the detour cost.` },
+  { id: 'L10-existing-libraries-over-time', family: `THE SMALL LIBRARIES THE OWNER ALREADY RUNS. CLAUDE.md, the memory notes folder with its index, the HANDOFF documents.`, look: `Replay their history with git log on CLAUDE.md and the docs, and by reading the memory notes with their dates. For several entries: when it was written and from what, how it was found and used later, whether it went stale, was contradicted, lost a condition on the way in, or was overruled, and how anyone noticed. Include at least one case where the entry was present in the session's context and the mistake it warns about was made anyway.` },
+]
+
+const findPrompt = (l) => `${SYSTEM}
+
+YOUR JOB: FIND REAL CASES. FACTS ONLY. A later agent will walk each case through the ten steps. You do not judge the design.
+
+PATHWAY FAMILY: ${l.family}
+WHERE TO LOOK: ${l.look}
+
+Return three or four real cases, the more different from each other the better. For each: what happened (under 150 words), when, which model or session did it if the record shows it, the exact evidence (error text, commit subject and hash, finding text, transcript file), the sources, and the "later moment": the later situation in which knowledge from this case was needed again, or would have been, with its own source. If the record holds no later moment, say so. Do not invent cases; if you find fewer than three, return what you found and say what you searched.
+
+OUTPUT. Write the case file as markdown to ${OUT}/${l.id}-cases.md (Write tool), then return the structured result.`
+
+const walkPrompt = (l, found) => `${SYSTEM}
+
+YOUR JOB: WALK REAL CASES THROUGH THE DESIGN AND REPORT WHERE IT WORKS AND WHERE IT BREAKS.
+
+PATHWAY FAMILY: ${l.family}
+
+THE CASES (collected by a reader; open the sources and check them before relying on a detail; add a case of your own if these are thin):
+${found && found.cases && found.cases.length ? JSON.stringify(found.cases, null, 1) : 'The reader returned no cases. Find three real ones yourself. Where to look: ' + l.look}
+
+HOW TO WALK A CASE. Replay it as if the library had existed from the start of the project. Be concrete. Write the entry as the solver could have written it at the time, in under 120 words, using only what was known then. State exactly what the later moment looked like to the model in that session: what was in its window, what it was doing. Say what a lookup keyed on which signal would have returned. Then give every one of the ten steps a status: works, strains, breaks, not_specified (the design does not say what happens here), or not_reached. A step breaks when it cannot produce what the next step needs, produces something wrong, costs more than it saves, or would do damage. Keep each note under 60 words.
+
+NO FIXES. The owner wants the limitations found and discussed before any solution is attempted. Do not propose solutions, mitigations or redesigns, not even in passing. If the existing design documents already contain a mechanism that handles a step, say so and count the step as working: ${KS} (972 lines, many several KB long: Grep a heading and read around it) and its summary ${F1}.
+
+NOT ALLOWED. Arguments that the work may not repeat often enough, or any base rate from a short history. The question is how the mechanism behaves on a case, not how often such cases come.
+
+ALSO REPORT WHAT WORKS. Where the design would have helped in a real case, say so plainly and say what it would have saved (calls, a session, a failed build, an outage).
+
+${KNOWN}
+For every break you find, set seen_before to true if it is on the known list and false if it is new. Report only what your cases show: do not list an item because it is on the list. If your cases show a listed item did NOT happen, or matters less than the list implies, put it under did_not_break with the reason.
+
+OUTPUT. At most twelve breaks, the ones your cases show most clearly first; "description" under 70 words, "evidence" under 50, "cases_hit" is how many of your cases showed it. Write your full walk as markdown to ${OUT}/${l.id}-walk.md (Write tool), then return the structured result. "summary" under 150 words.`
+
+const stage1 = (l) =>
+  agent(findPrompt(l), { label: 'find:' + l.id, phase: 'Find cases', schema: CASES_SCHEMA, model: 'sonnet', effort: 'medium', agentType: 'general-purpose' })
+
+const stage2 = (found, l) =>
+  agent(walkPrompt(l, found), { label: 'walk:' + l.id, phase: 'Walk cases', schema: WALK_SCHEMA, model: 'opus', effort: 'xhigh', agentType: 'general-purpose' })
+    .then(r => r ? ({ id: l.id, cases_found: found && found.cases ? found.cases.length : 0, ...r }) : null)
+
+const out = []
+for (const group of [LANES.slice(0, 5), LANES.slice(5)]) {
+  const res = await pipeline(group, stage1, stage2)
+  out.push(...res)
+  log(`group done: ${res.filter(Boolean).length}/${group.length} walks returned`)
+}
+const ok = out.filter(Boolean)
+const missing = LANES.map(l => l.id).filter(id => !ok.some(r => r.id === id))
+if (missing.length) log(`missing: ${missing.join(', ')}`)
+return { dir: OUT, lanes: ok, missing }

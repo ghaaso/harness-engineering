@@ -1,0 +1,72 @@
+// Q2: product-code commits after the frozen commit, on main and on all refs. Read-only git.
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const FROZEN = 'a31924a3818f4ac94b695906d107c72c912792b2';
+const git = (args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+
+function runtimeOf(p) {
+  if (/\.md$/i.test(p)) return null; // documents are not product code
+  if (p.startsWith('docs/') || p.startsWith('.claude/') || p.startsWith('.github/')) return null;
+  if (p.startsWith('backend/')) return 'backend';
+  if (p.startsWith('technician-app/')) return 'mobile';
+  if (p.startsWith('src/') || /^(ops-server\.mjs|vite(\.ops)?\.config\.js|index\.html|ops\.html|eslint\.config\.js|package\.json|package-lock\.json|Dockerfile(\.ops)?)$/.test(p)) return 'web';
+  return null;
+}
+const isTest = (p) => /(^|\/)(tests?|__tests__)\//.test(p) || /\.(test|spec)\.[jt]sx?$/.test(p) || /(^|\/)test_[^/]*\.py$/.test(p);
+const CODE = /\.(py|ts|tsx|js|jsx|mjs|cjs)$/;
+
+function collect(revArgs) {
+  const shas = git(['rev-list', '--no-merges', ...revArgs]).split('\n').filter(Boolean);
+  const merges = git(['rev-list', '--merges', ...revArgs]).split('\n').filter(Boolean).length;
+  const out = [];
+  for (const sha of shas) {
+    const raw = git(['show', '--no-renames', '--name-status', '--format=%H%x09%cs%x09%as%x09%s', sha]).split('\n').filter(Boolean);
+    const [h, cdate, adate, ...subj] = raw[0].split('\t');
+    const files = raw.slice(1).map((l) => { const [st, ...p] = l.split('\t'); return { st, p: p.join('\t') }; });
+    const rts = {};
+    let codeFiles = 0, existingCode = 0, testOnly = true;
+    for (const f of files) {
+      const r = runtimeOf(f.p);
+      if (!r) continue;
+      rts[r] = (rts[r] || 0) + 1;
+      if (CODE.test(f.p)) { codeFiles++; if (f.st !== 'A') existingCode++; if (!isTest(f.p)) testOnly = false; }
+    }
+    if (!Object.keys(rts).length) continue;
+    out.push({ sha: h, cdate, adate, subject: subj.join(' '), runtimes: Object.keys(rts).sort(), product_files: files.filter((f) => runtimeOf(f.p)).length, code_files: codeFiles, existing_code_files: existingCode, test_only: codeFiles > 0 && testOnly, usable_2_30: existingCode >= 2 && existingCode <= 30 });
+  }
+  return { nonmerge: shas.length, merges, product: out };
+}
+
+function summarise(list) {
+  const byDate = {}, byRt = { backend: 0, web: 0, mobile: 0 }, byRtUsable = { backend: 0, web: 0, mobile: 0 };
+  let usable = 0, testOnly = 0, cross = 0;
+  for (const c of list) {
+    byDate[c.cdate] = (byDate[c.cdate] || 0) + 1;
+    for (const r of c.runtimes) { byRt[r]++; if (c.usable_2_30) byRtUsable[r]++; }
+    if (c.usable_2_30) usable++;
+    if (c.test_only) testOnly++;
+    if (c.runtimes.length > 1) cross++;
+  }
+  return { product_commits: list.length, usable_2_to_30_existing_code_files: usable, test_only: testOnly, cross_runtime: cross, by_committer_date: byDate, by_runtime_any_touch: byRt, by_runtime_usable: byRtUsable };
+}
+
+const onMain = collect(['main', '--not', FROZEN]);
+const allRefs = collect(['--all', '--not', FROZEN]);
+// unique to non-main refs
+const mainSet = new Set(onMain.product.map((c) => c.sha));
+const offMain = allRefs.product.filter((c) => !mainSet.has(c.sha));
+// patch-id dedupe: commits off main whose patch also landed on main (squash/rebase copies) are not new work
+const res = {
+  frozen: FROZEN,
+  main_head: git(['rev-parse', 'main']).trim(),
+  measured_at: new Date().toISOString(),
+  rule: 'product code = a non-.md file under backend/, technician-app/, src/, or web root build files; usable = 2 to 30 code files (.py/.ts/.tsx/.js/.jsx/.mjs/.cjs) that already existed at the parent (status not A), the finished test T1 rule',
+  main: { nonmerge_commits_after_frozen: onMain.nonmerge, merge_commits_after_frozen: onMain.merges, ...summarise(onMain.product) },
+  all_refs: { nonmerge_commits_after_frozen: allRefs.nonmerge, merge_commits_after_frozen: allRefs.merges, ...summarise(allRefs.product) },
+  off_main_only: summarise(offMain),
+  main_list: onMain.product,
+  off_main_list: offMain,
+};
+fs.writeFileSync('q2_fresh.json', JSON.stringify(res, null, 1));
+console.log(JSON.stringify({ main: res.main, all_refs: res.all_refs, off_main_only: res.off_main_only, head: res.main_head }, null, 1));

@@ -1,0 +1,822 @@
+
+######## M1-top-four (B01, B02, B03, B04)
+
+== B01 | class=TRIAL | research=light | priority=P0
+CAUSE: The data do not show fix rounds converging. They show rounds ending when the reviewer changed. In round 1, two Opus refuters found 19 P1s across 12 branches (sweep-tables gate_rounds_per_branch). Round 2 was a targeted re-review of the fixes. In 9 of the 11 slice gates, round 3 was the root reading the diff alone, 'instead of buying a third agent review' (A2-01; clinic-build task.md:102,174). Wherever a later round was reviewed independently, it found new P1s made by the fixes: S07 W1 'broke the per-close rule again'; cutoff guards GD-01 'the RR-2 hold never ends' (task.md:631, confirmed) and RS-1; S11 GV-01 and GV-02 after the merge (A2-02, A2-03, A2-04). By my count over the board's own words, that is at least 5 fix-induced P1s against 19 round-1 P1s, plus at least 10 fix-induced P2s (S01 V1/V2, S02 V1, S06 inert price check, RR-1..3, PQ-01/02, S11 P2-1). This is a lower bound, because the board does not separate 'fix incomplete' from 'fix made a new defect' (A2-04). The fix-induced P1s cluster in fixes that ADD state: a hold, a lock, a marker or a cutoff date. The new state had no tested way to end (A2-02 'what releases it'; A2-03 'record state x marker x serving'). Gate tooling also passed things it should have failed: CRLF needle files, piped-subshell PASS lines and lock-removal experiments that proved less than claimed (A4-07, A2-06). The faster check repeated the pattern in miniature: FC-01 to FC-19 and FS-01 to FS-09 over six review records, and an author commit that never ran mypy (A3-13, A3-12). There was no stop rule beyond 'no unresolved critical finding' (task.md:56). The build stopped on USER-24 (task.md:786, confirmed), and five branches merged with unreviewed tails (A2-08).
+EVIDENCE:
+- sweep-tables.txt gate_rounds_per_branch: S01, S02, S03, S04, S05, S06, S07, S09, S10 took 3 rounds; S00 and S08 took 2; round 3 was 'root read' in all nine
+- sweep-tables.txt findings_by_severity_round1: 19 round-1 P1 across 12 branches; fix_induced_new_defect_cases_with_board_lines lists the chains
+- Testbed docs/tasks/clinic-build/task.md:631 (read today): 'GD-01 | The RR-2 hold never ends ... leaves every medicine in it refused for all stock postings for good' | P1
+- Testbed docs/tasks/opening-cutoff-guards/task.md:63 (read today): the Opus re-review 'found three new P2s caused by the end-of-day rule'
+- Testbed task.md:793 (read today): the S11 closing-round GV fix was 're-reviewed by the session's own Opus reviewer ... not re-reviewed by the roo[t]'
+- A2-10: no convergence claim and no stopping rule on the board; A2-11: the owner stopped the build (USER-24, task.md:786)
+- A2-08: of the five 10-Nov merges, People was 'not separately reviewed' and the S11 closing, query and faster-check fixes were 'not re-reviewed by the root's reviewer'
+- research B1 C9 (fetched abstracts, function-level benchmarks): multi-turn edits lose earlier behaviour in 40-73% of tasks; a verification gate with rollback was the only strategy that helped every model
+- research B3 C4 (abstract only): the LLM repair rate is below the damage rate, with pseudo-cycles; B3 C3 TDAD: a dependency-map test selection cut regressions 6.08% to 1.82% (small open models)
+- research B1 C10: no study measures N candidate fixes per review finding with test-based selection; plausible, not demonstrated
+ALREADY TRIED:
+- A2-01 / A1-06 two-level gate with Opus refute-reviewers: Caught 19 round-1 P1s, but 9 of 11 slices needed 3 rounds and round 3 was root-only. Independent later rounds kept finding fix-induced P1s.
+- A2-06 lock-removal experiments: Exposed race tests that pass without their lock. At least four experiments were later found to prove less than claimed (G06-08, G08-05, G10-23, G05-21).
+- A3-12 exactly-once id partition and failure demos: The gate stayed no weaker than before. Each review round still found new P2s in the previous round's fixes (A3-13).
+- A4-07 positive controls after drill-harness false passes: The rule is sound. The faults were found by Opus review, not by the tooling, and some limits stayed 'not done'.
+- A2-11 owner stop (USER-24): Ended the rounds, not the defects. Findings went to a pilot backlog, and the final tails were unreviewed.
+- A5-08 A/B evaluation harness: Built and dry-run only. It never measured review quality live.
+EXISTING ANSWERS:
+- [partly] ship-plan-section0.md section 0 Routing: The Opus refute reviewer names the PR head SHA. A push after review needs a re-read of the diff since that SHA. Per register id, it names the test that fails on base and passes on head, and lists changed expected values, removed assertions and new skips.
+- [partly] horthy-ideas.md G2-F015 (adopt): Each fail-before line cites the command run on the base SHA and its output, or says 'read, not run'.
+- [partly] horthy-ideas.md G4-F089 / G4-F088 (trial): Recurring defect shapes go into the reviewer brief, plus 'which copy of new stored state is authoritative'. This aims at state-adding fixes.
+- [partly] horthy-ideas.md G4-F140 (trial), G4-F156 (unrefuted): The owner reads the invariant-touching hunks on Opus-owned PRs. Verification is tiered by risk, with the full suite before close.
+- [partly] knowledge-store-design.md section 0 rules 1 and 4; ks lookup --diff: 'Do not apply this prescribed fix' entries warn when a diff reintroduces a known-bad fix. This works across time, not inside one round, and is unbuilt.
+- [partly] research.txt B1 C9, B3 C3/C7/C11: A regression gate with rollback (measured, function-level), impact-selected tests (TDAD) and fail-before reproduction tests (a sound oracle; its effect on convergence is unmeasured). Round caps are not measured anywhere.
+GAP: What is missing: a stop rule; revert-on-regression in place of patch-on-patch; a per-round record that splits each finding into old-and-open, fix-induced or independent; a blast-radius list for each fix; a rule that a fix which adds state must test every way that state ends; and an independent read of the final fix diff (the root alone is not independent). FixFlow's section 0 already has the reproduction test per register id and the head-SHA binding. It lacks the other five. Nobody has measured whether any of them lowers the fix-induced rate on a real multi-module app.
+RESEARCH Q: Under the fix-round contract below, does the rate of fix-induced P1/P2 per fixed P1/P2 fall below the clinic baseline over the next five gated branches? The baseline is at least 15 fix-induced P1/P2 against about 110 fixed, and at least 5 of 19 for P1 alone (my arithmetic on the board's words). First pin the baseline exactly: one Sonnet pass classifies every round-2+ finding in clinic-build task.md as old, fix-induced or independent. Reading cannot settle this, because the only measured evidence comes from function-level benchmarks.
+MECHANISMS:
+- Fix-round contract (bounded, with rollback): 1. Each finding gets a reproduction test that fails on the pre-fix commit and passes after; the existing section 0 rule, applied to every P1/P2. 2. The full gate runs before the fix commit (all steps, mypy included; A3-13). If any previously passing test fails, revert the fix commit and retry once; never patch on patch. 3. The re-review is a FRESH refute reviewer, not the root. It is briefed with the fix diff since the verdict SHA, the prior findings list and the blast radius, and labels each finding old, fix-induced or independent. 4. At most two fix rounds. A third, or any fix that touches lines an earlier fix round changed (the pseudo-cycle sign), escalates: revert that fix family and redesign it with an Opus design note, or the owner carries it as a named risk. 5. Stop rule: an independent re-review of the whole fix diff finds no P1/P2 that was not already on the list, and every reproduction test is green. Each merge records 'final head reviewed by: X' (A2-08).
+  COST: Brief and template text, about an hour. One full check per round (274-840 s on this PC, plus queue waits) and one fresh Opus reviewer per round, much as today. Rounds should fall.
+  PROOF: Over the next five gated branches: fix-induced P1/P2 divided by P1/P2 fixed, against the baseline of at least 15/110 (at least 5/19 for P1). Also rounds per branch, and how many branches end root-only. Adopt if the fix-induced P1 count is zero and the overall rate falls below half the baseline.
+- State-exit table for fixes that add a hold, lock, marker or status: Before re-review, any fix that adds state lists every way the state can end: post, abandon, reverse, owner or preparer absent, crash mid-write, rollback. Each exit gets one test. Recovery scripts get the full table of record state x marker x serving, with a drill per cell (A2-02, A2-03 transfer).
+  COST: 30-60 minutes per such fix. Applies only to a minority of fixes.
+  PROOF: Retrospective: apply the table to the cutoff-guards and S11 histories and check whether it demands the tests GD-01, RS-1, GV-01 and GV-02 needed (target 4 of 4). Forward: zero 'state never ends or is lost' findings in later rounds.
+- Blast-radius report attached to every fix diff: A deterministic list made by script: functions and classes changed, their callers and importers (AST or grep), files co-changed with them in git log, and the test ids that touch them. The reviewer must clear each line. Run those tests first, then the full suite.
+  COST: A script of about 100-200 lines, no install. It runs in seconds.
+  PROOF: For each fix-induced finding in the trial: was its file in the report? Target at least 80% coverage. Compare the regression rate against the trial branches without the report.
+THOUGHT STRUCTURES (narrow): Only best-of-N with an executable selector has coding evidence (Agentless, CodeMonkeys; B1 C6/C8). Its use on review-fix rounds is unmeasured (B1 C10), and it multiplies checks on a PC that already queues (B07) and tokens toward limits. At most, trial 2-3 candidate fixes chosen by the reproduction test plus the full suite, only for P1 fixes in stateful code. ToT, FoT and LLM-judge trees: no. Repeated LLM review invents defects (B3 C4).
+GRAPH RECALL (narrow): Code-structure neighbourhood (callers, importers, co-change) is the blast-radius report. TDAD measured a 70% cut in regressions from it, on small models (B3 C3; B2 C6/C10). A plain script gives it; no graph store is needed. Temporal facts matter only through the knowledge store's 'do not apply' entries.
+GAIN: Fewer P1s found late, and an honest stop. Baseline: at least 5 fix-induced P1s and at least 10 fix-induced P2s, 9 of 11 gates closing on a root-only read, and a build stopped by fiat. Expect most branches to pass in two rounds with an independent final read, and stateful fixes to stop producing 'never ends' or 'lost after rollback' P1s. The trial count decides it.
+
+== B02 | class=BUILD | research=none | priority=P0
+CAUSE: Every check fed the app synthetic data, including the one drill that looked like a clean install. Drill (a), 'first deploy, clean machine', built a fresh VM and then ran the seeder: 'bash $RIG seed identity,catalogue,...' (testbed deploy/drills/a_first_deploy.sh:37-38, read today; staging-rig task.md:23 'seed 7 s'). So it proved deploy, not first use. The synthetic-only guard was a deliberate invariant: real labels were refused by design (D10-05, D08-02). Creating tills, bank accounts, ledger accounts and expense categories existed only in the seeder (A1-13; A2-13; task.md:23). No gate step created the first real records through production paths. The gap was found only while S12 documents were being written on the last day (A1-13). It is now half answered: the real-data switch and money_setup merged as fb55599 on 11 Nov 05:47 (git log, read today; CR-10 says 'unmerged', which is now stale). But commit 7cf8014 says 'the two console commands were run only in tests and on a local database, not on the rig'. A clean install has still never been walked end to end.
+EVIDENCE:
+- Testbed deploy/drills/a_first_deploy.sh:37-38 (read today): the clean-machine drill seeds a synthetic world before its checks
+- Testbed docs/tasks/clinic-build/task.md:23 (read today): S12 row: the two things that stopped real data were 'built and merged on 11 November 2026 (fb55599)'; 'no pilot has started'
+- git log main (read today): fb55599 merged 2026-11-11 05:47 +0500; 7cf8014: console commands 'run only in tests and on a local database, not on the rig'
+- A2-13: G07-22, G07-23 and G10-02 were carried 'blocking real data' while gates passed; 'no person has used the screens' (G10-23, G08-25)
+- A1-13: the importer and pay records refuse every label without the SYN token; nothing outside the seeder can create tills or accounts
+- docs/tasks/s12-pilot/task.md:11-17 (read today): first deploy on a real host 'never run ... nine gaps listed'
+- research B3 C10: FeatureBench measured Claude 4.5 Opus at 11.0% on feature-level tasks against 74.4% on SWE-bench. No study measures clean-install walks; that is practitioner advice
+ALREADY TRIED:
+- A4-06 staging rig drill (a) first deploy on a clean VM: 19 PASS, serving in 109 s. It seeded synthetic data, so it could not see the missing creation paths.
+- A2-13 invariant gates on synthetic data: Passed every slice, while the remainders 'blocking real data' piled up unrouted.
+- CR-10 real-data switch and money_setup: Built after the last-day finding. Two refute reviews, check 2570 passed, merged fb55599 on 11 Nov. Not yet run on the rig or a real host.
+- A1-13 wrap-up plus S12 checklist: Documents the gap (nine first-deploy gaps) but does not close it.
+EXISTING ANSWERS:
+- [no] ship-plan-section0.md section 0: Nothing requires a zero-seed walk. Gates are unit, integration and CI.
+- [partly] harness-review.md section 4 lessons (RT-05): A fail-closed boot test runs in a cleaned environment. This is the same 'clean environment' idea, applied to one test.
+- [partly] horthy-ideas.md G4-F154 (unrefuted trial): Each phase gets a cheap proof a human can check (a curl, a black-box integration test).
+- [partly] research.txt B3 C10 and implication B02: A golden-path journey test on a clean install with an empty database, run from slice 1. Justified by the unit-versus-feature gap; walking skeletons themselves are unmeasured.
+- [partly] testbed CR-10 / fb55599: The production paths now exist (console money_setup, per-scope real_data authorization).
+GAP: There is no standing zero-seed journey: install, then first user, then tills and accounts, then a real-shaped (non-SYN) import, then one transaction, then close day. No check finds a model that only the seeder can create. And the new console paths have not run on the rig. Lanes B1 and B2 agree that neither reasoning methods nor recall bear on this. It is an acceptance-test omission.
+RESEARCH Q: None. The remedy is known, and the rig and drill harness already exist.
+MECHANISMS:
+- Zero-seed journey drill ('drill p'), standing in the gate: Drill (a) without lines 37-38. Fresh rig VM, or a fresh container database. Then the first-deploy checklist steps 15-16 (money_setup; real_data on for each scope), first user and roles, the S12 opening templates with real-shaped non-SYN labels, one receipt, issue and sale, close day. Fail on any step that needs the seeder or direct SQL. The results header records commit and dirty count, with a positive control (A4-07).
+  COST: Half a day to a day. It reuses rig.sh, the drill harness and the S12 templates, and runs about 2-3 minutes per run.
+  PROOF: Fail-before/pass-after: on main before fb55599 it must fail at 'create till / account'; at 7cf8014 it must pass. After that, count gaps found at wrap-up in the next build (baseline: two, found on the last day).
+- Seeder-only path check: A test that lists every model the seeder writes and asserts each has a production creation path (a URL or view, a management command, or the importer). Seed-only reference data goes on an explicit allow-list with a reason.
+  COST: 2-4 hours, plain Python, no install.
+  PROOF: On the tree before fb55599 it names tills, bank accounts, ledger accounts and expense categories. On head it names none. Afterwards it fails the first time a slice adds a seeder-only model.
+- Real-shaped acceptance sample in every slice gate: A fixed, anonymised, non-SYN fixture set imported under the production configuration (the switch on in the test). A slice may not pass if its screens or importer refuse it. The sample grows with each slice (walking skeleton).
+  COST: Minutes per slice once the sample exists. Building the sample takes a few hours.
+  PROOF: Zero 'refuses real data' findings at pilot setup. Count the slices whose gate caught a refusal early.
+THOUGHT STRUCTURES (none): Search over candidate answers cannot find a path nobody tested (lane B1 implication B02). This is an acceptance test.
+GRAPH RECALL (none): Lane B2 says do not spend research on graphs here. The seeder-only check is a plain static test, not recall.
+GAIN: The pilot-blocking class (an app that cannot start from empty with real data) fails a gate on the first slice that creates it, not on the last day. It is cheap because the rig, drills and templates exist. It also gives B19 a first real-host rehearsal script.
+
+== B03 | class=DECIDE | research=light | priority=P0
+CAUSE: The list misdescribes the 6-9 Nov halt. The evidence points to an unclean PC shutdown, not a usage limit. (1) The Windows System log (read today) has Event 6008: 'The previous system shutdown at 2:58:23 PM on 11/6/2026 was unexpected', with Event 41 at the 15:13 reboot. The last slice commit was at 14:57 (A8-04), and one slice transcript ends on an unanswered API request at 09:59:05Z, which is 14:59 local. (2) No clinic transcript holds a rate-limit record on 6 Nov. The only 'You've hit your session limit' records are on 1 Nov and 3 Nov (grep of every clinic transcript today). The 'usage limit' story first appears in the root's own message on 9 Nov. (3) After the reboot, nothing restarted. The log shows repeated 'System Idle' sleeps on 6, 7 and 8 Nov and three more unclean shutdowns (6 Nov 18:11, 7 Nov 16:40, 8 Nov 11:47). Docker autostart is off, 31 of 34 containers have restart policy 'no', and background sessions do not survive a restart (machine-facts.md; B5 C4). The root itself had ended its turn normally at 14:21 local after merging S11, and woke only on 9 Nov from a child's note. So the three days were B05 (crash) plus B10 (no restart), not a limit. Limits are real but shorter: 14 five-hour episodes in October (CR-03), a 3h06m stall on 1 Oct (A7-07), and 1 and 3 Nov in this build. Separately, the desktop app accepts a session start only on a turn the owner's message began. The board records it (task.md:834, confirmed), though lane B5 could not find it documented; treat it as real.
+EVIDENCE:
+- Windows System log, read today: 6008 'previous system shutdown at 2:58:23 PM on 11/6/2026 was unexpected'; 41 at 2026-11-06 15:13:10; idle sleeps from 16:07 on 6 Nov; 6008 at 18:11 on 6 Nov, 16:40 on 7 Nov, 11:47 on 8 Nov
+- Root transcript 7f348b2c: last 6 Nov record at 09:21:52Z (an end of turn after the S11 merge); next record 2026-11-09T12:03Z, started by a child session's turn note
+- Clinic transcripts (all folders): 'error':'rate_limit' records only at 2026-11-01T15:44Z and 2026-11-03T04:52Z; none on 6 Nov
+- Slice transcript nervous-newton-322a49: last record an api-request at 2026-11-06T09:59:05Z with no response
+- Testbed task.md:763 (read today): 'A usage limit stopped every session on 6 November at about 14:57'; task.md:834: 'the app accepts a start only on a turn the owner's own message began'
+- machine-facts.md: Docker AutoStart false; 31 containers with restart policy 'no'; keep_awake_while_working On
+- CR-03: 14 limit episodes in 6-20 Oct; subagents made 91 of 104 limit records; limits hit about 75 minutes into the window. CR-04: 10 parallel lanes died in 15 minutes; 2 at a time completed
+- research B5 C1/C2: auto-continue resumes an open interactive session (at most 3 times; needs Enter after more than 30 minutes asleep). Workflows pause and resume at a limit in a Desktop Code-tab session; agent-level resume needs v2.1.318+, and the clinic root ran 2.1.317 (transcript 'version')
+- research B5 C3/C4: desktop scheduled tasks need the machine on but no open session; cloud tasks need a fresh clone (impossible without a remote, B11); background sessions stop at a restart
+ALREADY TRIED:
+- A8-06 manual resume on 9 Nov: No work was lost, because state was in git and task.md. It took three days and the owner's return.
+- CR-02 parked-start technique: Three sessions were parked on 6 Nov and released by SendMessage. It only stretches the owner's last turn and did nothing against the crash.
+- A1-09 standing authority USER-21: The root may start next slices, but the platform start rule still needs an owner turn.
+- CR-04 lane sizing (2 lanes, state on disk, lean mode): Measured on the Pro plan in October: 30 of 31 agents finished on 3.28M tokens. It needs a human relaunch after a limit.
+- A5-18 SetThreadExecutionState plus --continue in the eval drivers: Worked in the Codex harness. It was never wired to clinic sessions.
+- A7-07 the 1 Oct limit stall: About 3h06m. Resumed only when the owner typed 'continue'.
+EXISTING ANSWERS:
+- [partly] research.txt B5 C1 autoContinueAtUsageLimit: An open interactive session continues after the reset.
+- [partly] research.txt B5 C2 workflows pause and resume at limits: Agents wait for the reset in a Desktop Code-tab session. Needs v2.1.318+ for failed-agent resume; at most two waits per run.
+- [partly] research.txt B5 C3, B5 C6: Desktop scheduled tasks (machine on, no open session), SendMessage with notify_when_idle, claude --bg, cloud API triggers (need a remote). The only documented starters without the owner. Not tested here.
+- [partly] research.txt B4 C11: Docker Desktop 'start when you sign in', plus restart policy unless-stopped or always. Needs a signed-in Windows user after a reboot.
+- [partly] ship-plan-section0.md Resume rule (draft PR checklist, Plan @ sha, one phase per session): Makes a cold resume cheap and exact. Starts nothing by itself.
+- [partly] horthy-ideas.md G2-F056, G2-F054, G2-F051: Resume hygiene and a cold-resume trial. Resume correctness, not resume triggering.
+- [partly] testbed CR-02 parked start: Works around the owner-turn rule for work planned on the owner's last turn.
+GAP: Nothing brings the PC back to work after an unexpected reboot. The steps that need a human are: sign-in, Docker Desktop, the in-use database containers, and the sessions. Nothing starts or releases sessions while the owner is away beyond what was parked. Slice work does not run as workflows, which would pause and resume at a limit. And the crash itself is undiagnosed (B05). A fix aimed at usage limits would not have saved 6-9 Nov.
+RESEARCH Q: One probe on this PC (an afternoon): can a Desktop scheduled task, firing while no session is open and the owner is away, open a session in the repository that (a) reads the board's Next action, (b) releases parked sessions by SendMessage, and (c) starts a new session or workflow despite the owner-turn rule? And does it fire after a reboot once Windows has signed in? Pass: all three, timed, with the owner absent for 4 hours and one forced reboot.
+MECHANISMS:
+- Restart-recovery chain (owner settings plus one logon script): Owner decisions: UPS, or BIOS 'restore on AC power loss' (if power loss is the cause); auto sign-in for this PC (a security trade-off), or the owner accepts that nothing runs until sign-in; Docker Desktop 'start when you sign in' on. Engineering: restart policy unless-stopped only on the database containers of in-flight worktrees, or a logon Task Scheduler entry running docker compose -p clinic-<slice> up -d for the rows the board lists as active. Turn off idle sleep while builds run, since keep_awake covers only a working session.
+  COST: An hour of settings, a 30-line script, and a UPS if chosen.
+  PROOF: A deliberate reboot test: minutes from power-on to all in-use databases healthy, untouched, against the 6-9 Nov baseline of about 3 days. At the next real unexpected reboot, read Event 6005 time against container StartedAt.
+- Unattended resume trigger: Run the root as an interactive session with autoContinueAtUsageLimit on, on v2.1.318+. Run slice gates and fan-out as workflows, which pause at limits. Add a Desktop scheduled task (every 2-3 hours) whose fixed prompt reads Next action, releases parked sessions and reports. Keep CR-02 parked starts for new sessions until the probe shows a scheduled task may start them.
+  COST: An afternoon probe, then about an hour of setup.
+  PROOF: Over the next two weeks: idle hours between the first moment work could resume (limit reset or reboot finished) and the next commit. Target under 3 hours, against a baseline of about 3 days.
+- Limit pacing from measured data: Rerun the existing PR-LOCAL transcript_forensics.py (CR-03), read-only, over the November transcripts: limit episodes per day, subagent share, tokens per slice. Cap concurrent lanes to what one five-hour window carries (CR-04). Push the status line's rate_limits fields to the owner's phone (B5 C14).
+  COST: About an hour; the script exists.
+  PROOF: The November baseline exists at all. Limit episodes per day, and fan-out bursts that cause them (the October burst was 40 limit records in 78 s), fall under the cap.
+THOUGHT STRUCTURES (none): Trees, forests and best-of-N multiply calls and make limits worse (lane B1 implication B03). They do nothing for reboots.
+GRAPH RECALL (none): Resuming needs durable state (git, task.md, PR body), which already worked: nothing was lost. Graph or temporal recall does not trigger a restart (lane B2 implication B03, low).
+GAIN: The largest single loss in the build: 2.5 days of zero commits (A8-04) become hours. Credit goes mainly to restart recovery and the B05 diagnosis, not to limit handling. Correcting the misdiagnosis also stops effort going to the wrong fix.
+
+== B04 | class=BUILD | research=light | priority=P1
+CAUSE: One Fable session (claude-fable-5-1, desktop 2.1.317) did three jobs. (1) REVIEW: it ran every root check, briefed the refuters, and read the round-3 diffs itself in 9 of 11 slice gates (A2-01). (2) MERGE: git merge-tree, the check on merged main, then a gate commit. Its own merge edits broke the first merged-main check at S01 and S02 (A2-07). (3) SHARED-DOCUMENT EDITS: as sole writer (A1-04) it applied every slice's proposals to a board that is now 838 lines and 221,112 bytes (wc today). The board's header and the context map are stale (A1-12). Measured today over the root transcript 7f348b2c (deduplicated by message id): 1,107 API calls, 592.7M cache-read tokens, 14.6M cache-creation tokens and 1.8M output tokens. That is about 535k tokens of context per call on average. There were FOUR automatic compactions, at 573,774, 974,246, 967,210 and 969,988 tokens; the fourth at 2026-11-11T00:49Z came after CR-05 counted three. The context system's autoCompactWindow lever was never installed (A5-07, CR-05), and about 70k tokens of fixed overhead load per agent (CR-11). This is a design choice (A1-02, A8-05), not a defect of the model. Lane B6 notes that history loss is a minor failure mode (MAST 2.8%); the measured costs are tokens and serial waiting.
+EVIDENCE:
+- Root transcript 7f348b2c, measured today (node, deduplicated by message.id): 1,107 calls; 592,699,138 cache-read tokens; 14,629,757 cache-creation tokens; 1,802,215 output tokens
+- Same transcript: preTokens 573774, 974246, 967210, 969988; the 4th compaction at 2026-11-11T00:49:46Z
+- CR-05: compactions at the default threshold of about 967k; A5-07: autoCompactWindow 400000 was researched but not applied
+- A2-01: round 3 was a root diff read in 9 of 11 slice gates; A2-07: root merge edits broke the merged-main check at S01 ('two consequences') and S02 ('three')
+- Testbed docs/tasks/clinic-build/task.md: 838 lines, 221,112 bytes (wc today); A1-12: header line stale; A1-04: context map still names old ranges
+- A1-13 / task.md:788: the 10-Nov batch merged 5 branches with one check (2520 tests, 726 s). Batching works
+- research B5 C10: workflows keep intermediate results in script variables, so only the final answer reaches the orchestrator. B5 C13: no built-in merge lock or queue
+- research B6 C1/C2: merge queues gate on the tested merged result (forge-based; a local version is inference). B6 C13: towncrier-style fragments for shared logs
+- research B2 implication B04: retrieval beats full context (Zep 115k to 1.6k tokens; conversational memory). A flat bi-temporal fact table is untested against a graph
+ALREADY TRIED:
+- A1-02 / A8-05 bounded session tree (depth 3, fan-out 3): Limits fan-out and the shared session limit, not the root's load. The root stays the serial gate by design.
+- A1-04 single-writer rule: No merge conflicts on shared documents. Root becomes a bottleneck, and the context map and parts of AGENTS.md went stale.
+- A1-12 one wave board as the single state owner: Grew to 221 KB with a stale header. The root rereads it.
+- A5-01 / A8-12 / A5-07 context system (compaction steering, autoCompactWindow 400k): 85 offline tests. Never installed. The root compacted at the default threshold four times.
+- A7-03 / A6-06 compact context packet, cmap query: Byte-level pilot 10,010 to 7,947 bytes. Never used by the root.
+- 10-Nov batch merge: Five branches, one check, conflict-free. It worked, but the root still did it by hand.
+EXISTING ANSWERS:
+- [partly] ship-plan-section0.md Sessions / Resume (HR-C1, HR-C2): One phase per new session. State lives in the draft PR body and journal. The main session briefs, gates and judges, and never implements. This bounds context by construction, but FixFlow runs phases mostly in sequence, so it never met the clinic's parallel load.
+- [partly] harness-review.md section 6 HR-C4, HR-C5: A Fable-keyed autoCompactWindow of 500k when a session passes 500k (not set). A SessionStart(compact) hook in reserve.
+- [partly] orchestration-design.md sections 4-5, 7: Fable gates read results by id. Workflows hold intermediate results. Section 5.2 schema verdicts.
+- [partly] knowledge-store-design.md section 3.1 journal plus index: One file per event, with a rebuildable SQLite index: the pattern for slice-written fragments and a generated board. Unbuilt; designed for a different purpose.
+- [partly] horthy-ideas.md G4-F157 (g() one-line gate output, adopted for backend); section 0 note (auto-compact at 400k): Keeps gate output and context growth small.
+- [partly] baml-ideas.md S-1 tagged run() results, S-3 stub harness: Structural borrows for a gate workflow script's bookkeeping.
+- [partly] research.txt B5 C10/C11/C13, B6 C1/C2/C13: Workflows for fan-out; /autocompact; no merge lock built in; the merge-queue pattern; fragments.
+GAP: Two of the three jobs can leave the root, and the third mostly can. REVIEW can leave whole: a gate workflow per slice runs the check, refuters and fix rounds (B01 contract) and returns a schema verdict naming the head SHA, so the root reads about 2k characters, not diffs. MERGE can leave as a mechanical step: a local merge-queue script under a lock builds main plus the ready branches on a temp branch, runs one check, fast-forwards on green and drops the failing branch. Eligibility is rule-based (verdict clean, check green; USER-21 already delegates). Only migration-slot conflicts (CR-07) need the root. SHARED DOCUMENTS mostly can leave: slices write fragments (a state row, proposed edits as exact old/new tables) and a generator applies them. Doc-drift tests (CR-06) fail on half-applied edits. The root keeps the decision log and the rule files. Separately, the root needs one wave per session and an autoCompactWindow keyed to its model. None of this is built. The local merge queue is inference, not documented practice.
+RESEARCH Q: One probe: inside a workflow on this PC, can an agent run the Docker-backed full check and return a schema verdict, with the run surviving a usage-limit pause (v2.1.318+)? And does a modelSettings autoCompactWindow keyed to claude-fable-5-1 take effect in a desktop session? Check this with one session pushed past the window and a grep for compact_boundary.
+MECHANISMS:
+- Gate as a workflow with a schema verdict: One workflow per slice gate: check agent, then two refute reviewers, then fix rounds under the B01 contract, then a fresh final reviewer. It returns {head_sha, findings[id, severity, class old/fix-induced/independent], tests_run, check_result, final_head_reviewed_by}. Aggregation is deterministic code (dedupe ids, take the highest severity), not a model. The root reads only the verdict.
+  COST: About 200-300 lines of script, adapting the orchestration design's section 4.3 contract and BAML S-1/S-3. Agent tokens move from the root to workers.
+  PROOF: Root tokens per gate, from a transcript tally: cache-read per gate against the baseline of about 593M over about 30 gates (about 20M per gate). Target: no auto-compaction across a wave of at least 5 gates, and root mean context per call below 300k.
+- Local merge queue under a lock: A script holding a lock file or git ref: temp branch = main plus every ready branch in dependency order; one full check (batching, as on 10 Nov); fast-forward main on green; on red, bisect out the failing branch and requeue the rest. The migration-graph test runs first. The root is called only on a migration-slot clash.
+  COST: About a day. Plain git and the existing check script.
+  PROOF: Merges per day without a root turn. Root-caused merge fix-ups (A2-07 baseline: S01, S02, at least 5 failures) drop to zero. Minutes from a clean verdict to merge on main.
+- Shared documents as generated views: Each slice owns a fragment file (a current-state row, plus proposed edits to AGENTS.md, glossary and contracts as exact old/new tables, the pattern the prototype retirement used: 27 edits applied verbatim). A generator builds the board's current-state table (target under 20 KB, read every turn) and applies the tables. Gate sections move to per-slice archives. Drift tests fail on half-applied edits. Add later, only if a query needs it: a flat bi-temporal fact table (decision, valid_from, superseded_at) in SQLite, which the root queries instead of rereading.
+  COST: About a day for fragments plus generator. The fact table is optional, about a day.
+  PROOF: Board current-state file size (221 KB to under 20 KB). Manual root edits at merge: zero. Stale-line count from the drift tests. Run lane B2's 30-task replay (arms A, B, C) before adding any graph edges.
+THOUGHT STRUCTURES (narrow): The only transferable idea is distilling parallel outputs into a small workspace, which here means merging N reviewer verdicts into one schema verdict. Lane B1 finds no evidence that GoT-style model aggregation merges parallel agents' work (C11). Do the aggregation in code. Nothing shows a tree or graph over reviews reduces the serial gate (B1 implication B04).
+GRAPH RECALL (strong): This is where recall plausibly cuts tokens. The root rereads a 221 KB board at about 535k tokens of context per call. Facts with validity over time (slice status, decisions, superseded rulings, gate verdicts), queried instead of reread, fit the one strong measured pattern: retrieval at about 2k tokens instead of full context (B2 C1, conversational). The evidence supports a flat bi-temporal table first; graph edges and code neighbourhoods are unproven for this job.
+GAIN: The root stops being the place where every diff, merge and document edit passes. Its context per call and compactions fall, and parallel slices merge when green, not when the root is free. Baseline: 1,107 root calls, about 593M cache-read tokens and 4 compactions in 11 days. The gain is in tokens and wait time; MAST and lane B6 do not suggest a quality gain from more orchestrators, so keep one root and shrink its job.
+
+CROSS-CUTTING:
+- B03 is misdescribed. The 6-9 Nov halt matches an unclean PC shutdown, not a usage limit. Event 6008 records 'previous system shutdown at 2:58:23 PM on 11/6/2026 was unexpected', one minute after the last commit (14:57). No clinic transcript holds a rate-limit record on 6 Nov; the only ones are 1 Nov and 3 Nov. The PC then idle-slept and crashed again on 6 Nov 18:11, 7 Nov 16:40 and 8 Nov 11:47, and nothing restarted. So B03's three days belong mostly to B05 (crash) and B10 (no restart). The 'usage limit' wording comes from the root's own 9-Nov message.
+- B04 understates. The root has compacted FOUR times (573,774; 974,246; 967,210; 969,988), not three. Deduplicated over 7f348b2c, it made 1,107 calls with 592.7M cache-read tokens, about 535k tokens of context per call.
+- B02 is half closed since the list was written. The real-data switch and money_setup merged as fb55599 on 11 Nov (CR-10 says unmerged; stale). Commit 7cf8014 states the console commands ran only in tests and a local database. The clean-install walk is still unrun, and the existing 'clean machine' drill (a) seeds synthetic data (a_first_deploy.sh:37-38).
+- B01's convergence did not fail at random. Rounds 'passed' when the reviewer changed to the root (9 of 11 gates). Fix-induced P1s cluster in fixes that add state (holds, markers, cutoffs). The list's 'two to four rounds' hides that round 3 was mostly unreviewed.
+- Mechanism answering B01, B04, B12, B16 and B17: the gate as a workflow with a schema verdict (head SHA, findings classified old/fix-induced/independent, tests run, 'final head reviewed by'). It moves review out of the root, makes reports checkable, keeps long reports out of the root's context, and records who read the last fix.
+- Mechanism answering B03, B05, B10 and B15: a restart-recovery chain (owner settings for power and sign-in, Docker autostart, a logon script that brings up only in-flight database containers, a scheduled resume task). Diagnosing B05 decides whether a UPS or a BIOS power-restore setting is part of it.
+- Mechanism answering B04, B13 and B14: per-slice fragments plus a generated board (an optional flat bi-temporal fact table later). One writer becomes one generator. The owner gets a short current-state view. The knowledge-store journal (one file per event) is the same pattern.
+- Mechanism answering B03, B04 and B08: rerun the existing read-only PR-LOCAL forensics script (CR-03) over the November transcripts. It gives the missing per-slice token, limit and subagent-share baseline that every trial above needs. Horthy G2-F183 (transcript tally) is the same idea.
+- Mechanism answering B02, B18 and B19: a zero-seed journey drill on the Linux rig, with a fail-before run on the commit before fb55599. It is also the first rehearsal of the real-host checklist.
+- On thought structures across the four: only best-of-N with an executed-test selector has coding evidence, and it fits narrowly in B01 (P1 fixes in stateful code, 2-3 candidates). ToT, FoT and GoT have no measured gain on these problems and would deepen B03 and B07. On graph recall: code neighbourhood bears narrowly on B01 (blast radius); facts with validity over time bear strongly on B04 and B13. Lane B2's evidence says start with a flat table, and add edges only if its 30-task replay shows a gain.
+
+######## M2-machine (B05, B06, B07, B08, B09, B10, B11)
+
+== B05 | class=DIAGNOSE | research=light | priority=P0
+CAUSE: Unknown, and the record does not support 'memory pressure'. The Windows System log shows 24 Kernel-Power 41 events since 2026-10-07, not two. 23 have BugcheckCode 0 (no stop code, no dump). Microsoft maps that to power loss, a hard hang or a hard reset. 4 have the power button held, which means the machine was frozen and someone forced it off. 5 happened around a sleep or resume. One real bugcheck: 0xA0 INTERNAL_POWER_ERROR during sleep on Oct 7. There are no WHEA hardware errors. Commit exhaustion (Event 2004) was logged only on Nov 1, naming Topaz Photo AI and Lightroom, and it sits next to no shutdown. The build was not the only trigger: 8 shutdowns came in October, before the build (6 commits in October), and Nov 7, Nov 8 and Nov 10 15:08/15:25 have no commits in those hours. Some do line up with heavy work. Nov 4 14:21 fell in a 13-commit hour. Nov 6 14:58 came one minute after the commit at 14:57:52 that recorded a full check. That is also the last commit before the three-day halt that B03 blames on the usage limit. The testbed also recorded 0.0 GiB available memory during check pairs (faster-check FS pairs) with no shutdown noted. Open causes, consistent with the log: mains power loss, a thermal or PSU trip under sustained all-core load, a hard hang, and a separate sleep/resume power fault.
+EVIDENCE:
+- machine-facts.md B05: 24 Event 41 + 6008 since 2026-10-07; 23 with BugcheckCode 0; 4 PowerButtonTimestamp; 5 SleepInProgress=4; 0xA0 minidump C:\Windows\Minidump\100726-15281-01.dmp; no WHEA; 2004 only 2026-11-01 01:14 (Topaz, Lightroom)
+- A8-07: the testbed's own record names two shutdowns (5 and 6 Nov). 'The cause was not diagnosed; no crash dump, event log or memory trace is cited' (clinic-build/task.md:823; use-the-machine-parallelism.md:22 'cause ... still unknown' per sweep-critic)
+- git log (read-only) in the testbed: last commit before the halt is 2026-11-06 14:57:52 +0500 'Record the round's full check on 622db16'. Event 6008 gives a previous-shutdown time of 14:58 that day (PC timezone is Pakistan Standard Time, the same as the commit offset). No commits on Nov 7 or 8, and none in 14-16h on Nov 10, yet shutdowns were logged then
+- A3-07 / faster-check/task.md:362-367 and :406: available memory fell to 0.0-0.8 GiB with two checks beside six sessions. This is available memory (free plus standby, via GlobalMemoryStatusEx: A3-08). Nothing records a power-off at those samples
+- research B4 C1-C3: Microsoft's Event 41 page lists code 0 as power loss or hard hang ('usually' hardware/driver). Memory exhaustion is reported as Event 2004, not as a power-off (partly supported, snippets)
+- A5-18: in October the eval drivers confirmed a 14,227 s sleep gap against Windows sleep/wake records. That method was never applied to B05
+ALREADY TRIED:
+- A8-07 / A3-06: A temp-folder lock directory, then a git-common-dir file lock: one heavy check at a time and 3-4 children. This is mitigation by lower concurrency. It was retired on 6 Nov for slots (USER-23). Shutdowns continued after it (Nov 7, 8, 10).
+- A3-07 / A3-08 / A8-02: Two slots, the second offered only with 8 GiB available. In about 980 samples 8 GiB was never available, so in practice this is one slot. It reduces load. It diagnoses nothing.
+- A1-11: Incident rules (concurrency cap, root-measured idle CPU 0.4 of 24). No memory figure and no cause.
+EXISTING ANSWERS:
+- [partly] machine-facts.md B05 inference paragraph: A diagnosis plan: log temperature and power during a full parallel check, ask whether the house lost power at the logged times, decode the Oct 7 minidump, stop the PC sleeping while sessions hold work
+- [partly] research lane B4 C1, C2, C3 and implication B05: Staged reading of Events 41/6008/1001/2004/WHEA, plus the hardware checks (overclock/XMP, RAM test, PSU wattage, temperatures)
+- [partly] desktop app setting keep_awake_while_working = On (machine-facts.md): Stops idle sleep while a session works. It does not stop a closed lid or a scheduled sleep. 5 events still fell at sleep transitions
+- [partly] ship-plan section 0 Sessions: at most one backend Docker-gate phase in flight: Caps load on FixFlow by policy. Like the testbed's lock, it is mitigation, not diagnosis
+- [no] Horthy / BAML / knowledge-store none: Nothing in them bears on a hardware or power fault
+GAP: Nobody has measured temperature, power draw or mains state at the moment of a shutdown. The minidump is not decoded. The 24 timestamps have not been joined to activity (commits, check logs, sampler CSVs). The owner has not said whether the house lost power at those times. Until that is done, every harness rule that limits concurrency 'for memory' is built on a guess, and it costs throughput (B07).
+RESEARCH Q: Do the logged shutdown times coincide with (a) mains outages, (b) high CPU/GPU package power or temperature, (c) a frozen machine ended by the power button, or (d) sleep/resume transitions, and which share of the 24 falls in each? This is a measurement on this PC, not reading. An afternoon of setup, then waiting for the next event.
+MECHANISMS:
+- Activity-correlation table (read-only): Join the 24 Event 41/6008 times to testbed commit hours, check-log start and end times, and the existing sampler CSVs (faster-check/evidence/*/run-N-system.csv; note the free_mb thousands comma, A8-07). Classify each shutdown as during a check, active but no check, idle, or at sleep.
+  COST: About one hour, read-only, no installs
+  PROOF: A table with a class for each of the 24 events. If at least a third fall in idle or no-check hours, load is ruled out as a necessary condition (already true for Nov 7, Nov 8 and Nov 10 15:08/15:25)
+- Always-on sensor and memory logger: The owner installs a sensor logger that writes CPU Tctl, package power, GPU power, available memory and the top process groups every 2 s to a CSV outside any checkout, flushed per line. Then reproduce: two container checks at 12 workers plus normal sessions. The owner notes mains outages and UPS state.
+  COST: An afternoon of setup by the owner. The logger is a download the owner must approve
+  PROOF: The next Event 41 has a trace that ends at it. Rising temperature or power at the end points to thermal or PSU. A flat, normal trace with a mains outage noted points to power. A flat trace with the power button set points to a hang. Decided by one event
+- Sleep-path fix and minidump decode: Decode 100726-15281-01.dmp (WinDbg !analyze -v; 0xA0, parameter 0xF0). Check the chipset and BIOS power drivers. Use powercfg to disable hybrid sleep and hibernate while sessions hold work. Then decide on a UPS (owner, money) once the diagnosis points to power.
+  COST: 1-2 hours, plus a UPS if justified
+  PROOF: Zero events with SleepInProgress != 0 over the next 14 days (5 in the last 35)
+THOUGHT STRUCTURES (none): This is a hardware and power diagnosis. Candidate-solution search adds nothing that a timestamp join and a sensor log do not settle.
+GRAPH RECALL (narrow): Only the temporal half applies: the diagnosis is a join of event timestamps against activity over time. That is a plain time-series join, not graph retrieval. Once diagnosed, one knowledge-store entry (cause, check, validity) would stop later sessions re-suspecting memory.
+GAIN: Stops unplanned power-offs that kill every session, leave Docker down (B10), risk the only copy of the repository (B11), and may have started the three-day halt (B03). It also lets the harness drop concurrency limits that were set for an unproven memory cause, which bears on B07 throughput.
+
+== B06 | class=DECIDE | research=none | priority=P1
+CAUSE: Measured: during a native check the machine sat at 42% of 24 processors. The six workers used 2.45 cores in total (each busy about 40% of the time). The Docker VM used 2.7 cores, Postgres about 1.0, and the published-port forwarder com.docker.backend 0.7. A trivial query took 0.63 ms through the published port against 0.13 ms inside the container. So the workers wait on the network hop from Windows into the Docker VM, not on CPU and not on files. The attribution is inferred; the closest A/B is container mode, whose parallel pass was 1.9x faster. Container mode copies the tree by tar over stdin (no bind mount), and native Python reads its own Windows files. So the 'put the checkout in the WSL2 filesystem' lever targets a file boundary that neither mode crosses at test time. What keeps native as the gate is a decision, not a speed fact. A4-04 says native is the only run that exercises the Windows branches of the devtools themselves (job object, msvcrt lock, socket retry). After the parallel pass, the fixed cost is the serial race pass (92-126 s), about 40% of a container check.
+EVIDENCE:
+- A3-10 / faster-check/task.md:322 (opened and confirmed): 42% of 24 processors; workers 2.45 cores; forwarder 0.7 cores; 0.63 ms vs 0.13 ms per trivial query; 8 workers gained 3% over 6
+- A3-11 / A4-01 / linux-test-runner/task.md:9-19 (opened and confirmed): df66fc8, 2,246 tests. Container 12 workers 247.0/215.6/227.7 s (mean 230.1; parallel 117.9, serial 94.0). Native 6 workers 367.2 s (236.1/126.5); earlier native 346.8, 336.8. 'About 1.5 times faster as a whole'
+- linux-test-runner/task.md:216-219: a loaded day (bc572f6) gave container 318.8-360.1 s against native 475.5 s
+- A4-01: the tree goes in as a tar over stdin with a SHA-256 manifest. 1,889 files / 64 MB take 2.1 s and the main checkout 4.0 s, so the file path costs seconds, not minutes
+- A4-04: native stays the gate to exercise the Windows host code. Nothing is measured; it is a design decision left to the root
+- A3-03: non-durable test DB settings gave 316 to 297 s, 'inside the noise'
+- A4-05 / linux-test-runner/task.md:92: the serial pass (about 92 s, 134 tests, mostly fixed race-harness waits) is 40% of the container check and was 'not proposed and not evaluated' for splitting
+ALREADY TRIED:
+- A3-01 / A8-01: xdist 6 workers plus a serial pass: 855 to about 284 s whole (3.0x), measured over 12 runs. Kept.
+- A3-02 / A4-05: Worker sweeps. Native 8 gave 3% over 6. Container knee between 6 and 12; 12 is 'defensible but not established'. More workers cannot fix a latency-bound path.
+- A3-04: The --basetemp fix removed a 32 s tmp_path symlink cost (43 to 11.5 s on 16 tests). Kept.
+- A3-03: Non-durable Postgres settings: gain inside the noise.
+- A3-10 (FC-20): A fix of the database path itself was dropped in favour of the container (USER-23).
+- A3-11 / A4-01: Linux container beside the database: built, verified, 1.5x faster. Optional only (built_not_used as the gate).
+EXISTING ANSWERS:
+- [fully] ship-plan section 0 Gates: backend gates run in Docker (Appendix A, postgres:17-alpine), ruff/mypy/pytest in the same container: FixFlow already makes the Linux container the backend gate. That is the testbed's measured remedy
+- [no] research lane B4 C7, C8: Keep sources in the Linux filesystem and avoid /mnt/c bind mounts. True, but it targets a file path the testbed's measured cost did not run through. The ratios found are npm blogs, not a Python suite
+- [no] research lane B4 C9: Non-durable Postgres for throwaway DBs. Already tried (A3-03), no measurable gain
+- [partly] A4-04 (testbed's own recommendation) linux-test-runner/task.md:125-138: Run native only when devtools or the host side of check.py change, before a tooling release, and as a canary
+GAP: In the testbed only a choice remains. Making the container the default gate and native a devtools-only canary is a one-line default plus a rule. For the new harness: confirm that FixFlow's Appendix A pytest reaches Postgres by container network name, not a published port. Then decide whether to cut the serial race pass, which is now the largest fixed cost.
+RESEARCH Q: 
+MECHANISMS:
+- Container mode is the gate; native is a path-triggered canary: Flip the default CLINIC_CHECK_MODE to container. Run native only when src/clinic/devtools/** or the host side of check.py changes (A4-04's own list). In FixFlow, keep ship-plan Appendix A and assert in its preflight that the DB host is the compose service name.
+  COST: About an hour, plus the owner's decision
+  PROOF: Median gate wall time over the next 20 gate runs near 230 s on a quiet machine (native 346-367 s measured), zero fallbacks, and the native canary green on every devtools change. MEASURED basis: A3-11
+- Serial race pass in its own lane (TRIAL): Since FS-01/KG-02 the race harness decides 'blocked' from pg_blocking_pids, not elapsed time (A3-15). Run the serial tests against their own database alongside the parallel pass, instead of after it.
+  COST: Half a day
+  PROOF: Whole container check close to max(parallel, serial), about 120-130 s instead of 230, with all 159 race tests green in 10 consecutive runs. INFERRED. Partial support: ten checks beside another check passed all race tests (A8-02, faster-check/task.md:315)
+THOUGHT STRUCTURES (none): A latency-bound test path is fixed by moving the tests next to the database, not by generating candidate solutions.
+GRAPH RECALL (none): No recall question here. The facts are already measured and recorded in the testbed's task files.
+GAIN: About 1.5x on every gate run, measured: 230 s against 350-367 s, and 319-360 s against 476 s on a loaded day. Up to roughly 2x more if the serial pass runs alongside (inferred). It also brings Linux parity, closing B18 in the same move.
+
+== B07 | class=TRIAL | research=none | priority=P1
+CAUSE: Every slice session runs the full gate, at least once per review round (2-4 rounds), with up to about six sessions working. Only two slots exist, and the second opens only with 8 GiB available. In about 980 one-second samples on build days, 8 GiB was never available (2.1-6.2 GiB). Today, with no build running, the PC had 7.3 GB available (Chrome 6.1 GB, vmmemWSL 5.2 GB, Claude 3.2 GB). So the 8 GiB constant sits above this machine's normal baseline, and the gate is in practice one slot. The 8 GiB figure was 'a safety margin, not a measured requirement'; a check's own memory was never measured. Waiting is also unfair (FS-06: a newcomer can take the slot). The list's figure is wrong: recorded waits run 3-742 s (at most 12.4 min). Whole checks including the wait reach 1,116 s. '34 minutes' appears in no file (the wait cap is 2,700 s).
+EVIDENCE:
+- A3-17 + sweep-critic: waits 385; 409/364/469/337; 338/551/726/221; 647/3/256/614; 443/169 s. The largest is 742 s at linux-test-runner/task.md:88 (opened and confirmed: c9 'wait 742, busy', c12 'wait 700'). '34 min' was not found
+- A3-08 / faster-check/task.md:405-408 (opened and confirmed): '8 GiB was never available'; 'I did not measure a check's own footprint ... 8 GiB is a safety margin, not a measured requirement'
+- A4-05 / linux-test-runner/task.md:98: two container checks at once, 12 workers each: 266.4 and 267.0 s against about 220 s alone (about 20% slower each, about 1.65x throughput), least free memory 5.3 GB. At 6 workers each: 285.9/283.0 s, 7.3 GB. MEASURED: two container checks fit, yet the 8 GiB guard would refuse them
+- A3-07: native pair 1 was 435 s each against 389-418 s loaded single, a throughput of 1.8-1.9x. Free memory min 8.5 GB in that pair, falling to 0.0-0.8 GB in the FS pairs with six sessions
+- machine-facts.md: 7.3 GB available at a no-build reading
+- A3-06: the lock is not fair (FS-06, faster-check/task.md:351)
+ALREADY TRIED:
+- A3-06: One machine-wide slot: serialised all checks (385 s wait).
+- A3-07: Two slots: throughput 1.8-1.9x vs loaded single, but free memory hit 0.0 GiB with six sessions.
+- A3-08 / A8-02: An 8 GiB gate on the second slot. It never opened, so waits of 256-647 s returned.
+- A3-11 / A4-01: A faster check shortens each hold (about 230 s), but container mode 'would wait the same way' (A4-12).
+EXISTING ANSWERS:
+- [partly] ship-plan section 0 At most one backend Docker-gate phase in flight (fixed container names): FixFlow avoids the queue by running fewer backend phases at once. This is a policy trade of parallelism for no contention
+- [partly] research lane B4 C10 and implication B07: Database per worker (already done in the testbed), and replacing the 8 GiB guess with a measured per-check peak
+- [no] Horthy G4-F156 (tier verification, run a subset per phase): refuted, skip; G4-F005 already-done: Running less of the gate per session was considered and rejected for FixFlow
+- [no] research lane B6 C1 GitHub merge queue: Speculative merge testing needs a GitHub remote, which the testbed lacks (B11)
+- [no] research lane B1 implication B07: Warning: candidate-fix search multiplies checks and lands on this bottleneck
+GAP: A check's own peak memory, as container plus DB plus host processes, is unmeasured, so the slot count is a guess. There is no fair queue. No rule says how many full gate runs a slice may spend per review round.
+RESEARCH Q: 
+MECHANISMS:
+- Size slots from a measured per-check peak: Run one container check with a 1 s sampler: docker stats or the cgroup memory.peak of the test container and its Postgres, plus the host process tree. Then set slots = floor((baseline available - 2 GiB reserve) / peak) and replace SECOND_SLOT_FREE_GB = 8.0 with peak + reserve.
+  COST: One afternoon of measurement, then a constant change
+  PROOF: Decides with one number: the per-check peak. If it is 2.5 GiB or less, the measured two-at-once runs (5.3-7.3 GB least free) justify two slots. Success = second slot open on at least half the polls on a build day, median wait under 60 s, and no available-memory sample under 1 GiB
+- Fair FIFO ticket queue: Replace 'first to grab a free slot' with ordered tickets in the git common dir, printing queue position (fixes FS-06).
+  COST: A few hours, stdlib
+  PROOF: No check waits longer than (its queue position x one check duration). Today a waiter can lose to a newcomer indefinitely up to the 2,700 s cap
+- One full gate per review round: A slice runs the container gate once at hand-off and once after its last fix of a round, not after every edit. The root runs it once on the merge candidate. This counts gate runs; it does not shrink them (the G4-F156 refutation stands).
+  COST: A routine rule, no code
+  PROOF: Gate runs per merged slice and total queue seconds per day, from the check logs, fall against the testbed baseline (A2-12 table)
+THOUGHT STRUCTURES (narrow): Negative bearing only. Tree or forest searches over candidate fixes that each run the gate would multiply queued checks (research B1 implication B07). If used, candidates must run in a narrow test scope, never the full gate.
+GRAPH RECALL (none): Queueing is capacity and scheduling. Recall does not change how many checks run or how long each holds a slot.
+GAIN: Measured basis: two container checks together give about 1.65x throughput (266 s each vs 220 s alone), and queue waits of 221-742 s per check mostly vanish when two slots really open. With container mode (B06), a slice's gate cost falls from about 10-18 min with waits to about 4-5 min.
+
+== B08 | class=DIAGNOSE | research=light | priority=P1
+CAUSE: Partly known, partly unmeasured. Known: each worktree got its own compose project and Postgres container (A8-08), and nothing ever tears them down. There are 26 postgres:17.11 containers for clinic-s01..s11, ui, fastcheck, linuxtests and more; 25 are stopped now. 19 worktrees. There is no .wslconfig, so the WSL2 VM may grow to 15.18 GiB, and vmmemWSL held 5.2 GB with only 4 containers running. Not shown in the record: how much memory each idle Claude session costs. At the no-build reading, Claude was 3.2 GB for 14-15 processes. The largest group was Chrome at 6.1 GB, and other apps exhausted commit on Nov 1 (Topaz Photo AI, about 97 GB virtual). During the build, with six working sessions, available memory was 2-6 GiB with one check and 0.0-0.8 GiB at the lows with two. Nobody split that by process group.
+EVIDENCE:
+- machine-facts.md B08/B10: 34 containers, 4 running; 26 on postgres:17.11-bookworm, one per clinic-<slice> project; clinic-dev-db-1 241 MiB, the postiz Postgres 47 MiB; no .wslconfig; WSL limit 15.18 GiB; vmmemWSL 5.2 GB; Chrome 6.1 GB, Claude 3.2 GB, ChatGPT/Codex 1.4 GB, python 1.1 GB; 7.3 GB available
+- A8-08: a per-checkout compose project, port and DB container. 'No mechanism removes finished worktrees, containers or volumes' (clinic-build/task.md:821)
+- A8-02 / faster-check/task.md:406 and clinic-build/task.md:778: 'idle sessions and containers left 2 to 6 GiB free'
+- A8-07 LIMITS: 'Idle sessions and database containers ... are not addressed by any mechanism in the repository'
+- research B4 C6: each Postgres container carries its own shared_buffers (128 MB default). No measured idle footprint was found. 'A few GB for 26' is an estimate
+- research B5 C4: background sessions left unattached for about an hour have their process stopped (agent view). Desktop app auto_archive is Off and inactive-days is 0 (machine-facts.md)
+ALREADY TRIED:
+- A1-02: A bounded session tree (depth 3, fan-out 3). It is a review-bandwidth rule; B08 happened anyway.
+- A3-08 / A8-02: A memory guard. It reacts to low memory by refusing a second check. It frees nothing.
+- A8-08: Per-checkout isolation. It works, and it is the source of the container pile-up (DB names hashed per checkout and per gw<N>).
+EXISTING ANSWERS:
+- [partly] research lane B4 C4, C5 (.wslconfig memory/swap, autoMemoryReclaim, Docker Resource Saver): Documented levers to cap and reclaim the WSL2 VM. Resource Saver does nothing while containers run
+- [partly] research lane B6 implication B08 (Compose project name per worktree): Makes containers attributable to a worktree. Teardown on merge is still unverified
+- [partly] desktop app settings auto_archive_on_pr_close, auto_archive_inactive_days (machine-facts.md): Owner settings that stop sessions piling up without an agent deciding
+- [partly] ship-plan section 0 Gates on fixed container names (Appendix A): FixFlow reuses one fixed set of gate containers rather than one per worktree, so there is no pile-up. The price is serial backend gates
+- [no] research lane B2 implication B08: Any recall index should be one SQLite file, not a graph server, so it adds no resident memory (knowledge-store design E-01 already chose node:sqlite)
+GAP: No per-group memory attribution exists for a build day (sessions vs containers vs vmmem cache vs browser). There is no teardown on merge and no shared test database server. Claude Code archiving is off. Without the attribution, cutting sessions may buy less than closing a browser or capping WSL.
+RESEARCH Q: On a build day, when available memory falls under 2 GiB, which process group holds it: Claude sessions (per-session MB, idle vs working), Postgres containers (MB per idle container), the vmmem page cache, or Chrome and other desktop apps? One day with a 5 s per-group sampler answers it.
+MECHANISMS:
+- One shared test Postgres for every checkout: One long-lived test DB container (named volume, non-durable settings allowed) hosts every checkout's databases. The names already carry the checkout hash and gw<N> (FC-04). A per-worktree DB container only when a slice runs the app itself.
+  COST: About a day: compose plus the check preflight
+  PROOF: Running Postgres containers stay at 2 or fewer during a build day (one test, one dev), against up to 9 in use at restart. Per-check time is unchanged within the ±15 s noise. vmmem working set during the build compared with the same sampler before. INFERRED saving, not measured (research B4 C6/C10)
+- Teardown on merge and auto-archive: A merge step runs 'docker compose -p <slug> down -v' and 'git worktree remove' for the merged slice. The owner turns on auto_archive_on_pr_close or a small inactive-days value.
+  COST: An hour of script, plus two owner settings
+  PROOF: The count of stopped clinic-* containers and of worktrees equals the count of live slices after each merge; zero leftovers after a week
+- Bounded WSL2 VM with reclaim (TRIAL): .wslconfig [wsl2] memory = 12-14 GB with autoMemoryReclaim, so the VM hands cache back after checks.
+  COST: Minutes plus a 'wsl --shutdown'. Risk: too low a cap starves two container checks, which need the per-check peak from B07 first
+  PROOF: vmmemWSL falls under 3 GB within 10 min after the last check ends (5.2 GB today with 4 small containers), and two container checks still pass
+THOUGHT STRUCTURES (none): Memory accounting and teardown are operations. Candidate search has no role.
+GRAPH RECALL (narrow): Only as a cost rule: research B2 warns that graph servers and LLM-built graph indexes add memory load. A single SQLite file index (knowledge-store E-01) avoids that. It does not free RAM by itself.
+GAIN: This frees the memory the second check slot needs (B07) and removes the 26-container pile-up (with B15). The size of the gain is unknown until the attribution run. Today's reading suggests the browser and the WSL cache matter as much as idle sessions.
+
+== B09 | class=DIAGNOSE | research=none | priority=P2
+CAUSE: Unknown, and the instrument cannot say. The stall came once: native mode, 6 workers, run m1 on bc572f6. The parallel pass stopped at about 96%, 'no test made progress for 600s', and the watchdog killed it after 961 s (whole check 1,116 s). The heartbeat records no test id, so the hung test is not identified. The rerun m2 passed in 475.5 s. Context recorded: a heavily loaded day (processor 60-72% mean, peak 90-100%), host free memory under 1 GB, native Windows-to-Docker path. A related native-only symptom exists with no recorded link: psycopg 'No buffer space available (10055)' on loopback connects (A3-16), now retried. No hang has been recorded in container mode, but a real hang there was never tested (only a planted sleep).
+EVIDENCE:
+- A3-09 / linux-test-runner/task.md:218-221 (opened and confirmed): m1 'CHECK FAILED: 6/7 ... stalled at about 96 percent ... watchdog killed it after 961 s'; 'its cause is not known ... the hung test is not identified: the heartbeat watchdog reports no test id'; 'machine with under 1 GB of free memory'
+- A3-09 LIMITS: a hung pass costs the full 600 s; the longest healthy test is about 16 s
+- A3-16: two of the first 22 runs failed with 10055 on loopback; TIME_WAIT peaked at 352, so ephemeral-port exhaustion was ruled out; cause unidentified; no recurrence in 17 runs after the retry
+- A4-02: in the container, a planted hung test was killed after 24 s with stall limit 20 s; a real container hang was never observed
+- research B4 C12: pytest-timeout thread method dumps all thread stacks then exits. A per-test timeout does not cover a hang outside a test (startup, docker exec), so an outer timeout is also needed
+ALREADY TRIED:
+- A3-09: Heartbeat + 600 s stall deadline + Windows job object kill-on-close: turns a silent hang into a failed check with a message, and kills the tree. It does not name the test, and each hang costs 10-16 min.
+- A3-16: A narrow bounded retry for 10055: no recurrence in 17 runs. Cause not found.
+- A5-18: In October, correlating a long gap with Windows sleep/wake records explained an 'unexplained' stall. Not applied to m1.
+EXISTING ANSWERS:
+- [partly] research lane B4 C12 (pytest-timeout thread method, PYTEST_TIMEOUT, per-test marker): A documented way to get stacks of a hung test
+- [partly] A3-09 TRANSFER (testbed's own improvement list) record the last started test id; lower the stall limit well under 600 s: Makes the next hang attributable and cheaper
+- [no] knowledge-store-design.md lookup / verify / record with footprints: Once a hang is diagnosed, the entry lets a recurrence be matched instead of re-diagnosed. Unbuilt
+GAP: The next hang will again be anonymous: no test id, no stacks, and no memory or socket snapshot at the moment of the stall. One event in a few dozen runs cannot be reproduced on demand, so the only path is to be instrumented when it recurs.
+RESEARCH Q: 
+MECHANISMS:
+- Attributable heartbeat with stacks: Each worker writes its current nodeid (pytest_runtest_logstart) into the heartbeat. On a stall the check dumps every worker's Python stacks (faulthandler.dump_traceback_later or pytest-timeout timeout_method=thread at 120 s) and snapshots available memory, TIME_WAIT count, docker ps and the DB's pg_stat_activity.
+  COST: Half a day
+  PROOF: The next stall report names the test, its stack, and whether it waited on a socket, a DB lock or a CPU loop. Success = cause class known after one recurrence
+- Stall limit from the longest test: Lower CLINIC_CHECK_STALL_SECONDS from 600 to about 120 s (longest healthy test about 16 s), plus an outer whole-check deadline for hangs outside tests.
+  COST: Minutes
+  PROOF: A hang costs 2 min or less instead of 10-16 (961 s measured), and no false kills over the next 20 gate runs
+- Leave the native socket path out of the gate: Follows from B06: with the container as the gate, the Windows loopback path (10055 class) runs only in the devtools canary.
+  COST: None beyond B06
+  PROOF: Stall and retry counts per 100 gate runs, container vs native. The link to the hang is INFERRED, not measured
+THOUGHT STRUCTURES (none): This is a missing-observation problem. Generating hypotheses is cheap; what is missing is a stack trace at the moment of the stall.
+GRAPH RECALL (narrow): After diagnosis, a recall entry keyed by symptom with a validity condition (native mode, low memory, which test) would let a later session match a recurrence. Temporal validity matters because the cause may be specific to a state of the machine.
+GAIN: Each hang costs about 10-16 min plus a rerun (1,116 s + 475 s measured). The gain is attributable stalls and a 5x cheaper failure. Rare today (one in roughly 40 native runs recorded), so it is lower priority than B05-B08.
+
+== B10 | class=DECIDE | research=light | priority=P1
+CAUSE: Known and simple: two settings are off. Docker Desktop AutoStart is false, and 31 of 34 containers have restart policy 'no'. The compose db service has no restart: key (compose.yaml, confirmed by grep). Claude Code sessions do not restart after a reboot either (research B5 C4). The Hyper-V rig VM is off after every reboot and moves subnet. With 24 unexpected shutdowns in 35 days (B05), this manual restart is frequent, not occasional.
+EVIDENCE:
+- machine-facts.md: Docker Desktop AutoStart false; restart policy 'no' on 31 containers, 'always' on 3 (postiz)
+- compose.yaml in the testbed: no 'restart' key (grep, read-only)
+- A4-11: the development guide says 'start Docker Desktop and wait until docker ps works'. The rig VM needs UAC, which an agent cannot answer. A DB container created before the tests-internal network is refused by the preflight until recreated
+- research B4 C11: unless-stopped/always restart containers when the daemon starts. 'Start Docker Desktop when you sign in' is off by default. Auto-login and Task Scheduler routes were not verified
+- research B5 C4: a shutdown or restart stops running background sessions; nothing restarts them by itself
+- CR-09: Hyper-V traps cost 10-40 min of blind retries each; every reboot powers the VM off and moves the Default Switch subnet
+ALREADY TRIED:
+- A4-11: Only documented as a manual sequence. No startup script, scheduled task or restart policy was found.
+- A4-02: Fail-closed checks when the daemon is unreachable. The gate refuses correctly, but nothing brings Docker back.
+EXISTING ANSWERS:
+- [partly] research lane B4 C11: Docker's sign-in autostart setting and container restart policies together cover the manual start, if someone signs in after the reboot
+- [no] ship-plan section 0 Gates: 'the owner starts Docker Desktop and confirms with docker info': FixFlow keeps the start manual and owner-confirmed by design
+- [no] research lane B5 C4 (background sessions survive sleep, not restart): States the session half of the problem; offers no auto-resume
+GAP: These are owner choices: whether Docker starts at sign-in, which containers should come back (only a shared test DB and the dev DB, not 26), and whether to accept auto-login (a security trade). The check could also start its own database when it is missing, instead of refusing. Session resume after a reboot is still manual.
+RESEARCH Q: With 'Start Docker Desktop when you sign in' on, does the engine come up to a working 'docker info' with no UI interaction after an unclean shutdown, and how long does it take? One reboot answers it.
+MECHANISMS:
+- Two settings, scoped: Turn on Docker's sign-in autostart. Set restart: unless-stopped only on the shared test DB and the dev DB (B08 mechanism 1), not on per-slice containers.
+  COST: Minutes; owner decision
+  PROOF: After the next reboot and sign-in, 'docker ps' shows both DBs healthy within 3 minutes with no human command
+- Self-starting check preflight: When its database is missing or stopped, the check runs 'docker compose up -d --wait db' instead of refusing. It still refuses if the daemon is down, printing one line that says what to do.
+  COST: An hour
+  PROOF: A check started right after a reboot passes without a manual container start. Demonstrated once by stopping the DB and running the check
+- Resume list at logon: A logon task writes the worktrees with uncommitted changes and sessions marked failed or stopped to one file the owner reads (with B03/B14).
+  COST: A few hours
+  PROOF: Time from sign-in to all interrupted slices resumed, measured on the next reboot. Today it is unbounded (Nov 6 to Nov 9)
+THOUGHT STRUCTURES (none): Settings and start-up scripts; no search problem.
+GRAPH RECALL (none): Nothing to recall; the facts are two settings.
+GAIN: Removes a manual step after each of the frequent unexpected shutdowns (24 in 35 days). That shortens dead time after a power-off from 'until the owner notices' to minutes, which bears on B03.
+
+== B11 | class=DECIDE | research=none | priority=P0
+CAUSE: Exactly as stated, and worse than stated. 'git remote -v' prints nothing. 432 commits on main and 19 worktrees exist only on this disk. The index holds staged, uncommitted work (the real-data switch), and the context-system line exists only as untracked files (A5-16 card). The disk sits on a PC that powered off uncleanly 24 times in 35 days (B05). An unclean power-off can also damage the repository itself, not only lose the machine. Nobody chose this; it was simply never set up. FixFlow, by contrast, already works through a GitHub remote with draft PRs.
+EVIDENCE:
+- machine-facts.md B11: no remote; 432 commits on main; 19 worktrees; staged, uncommitted work in the index
+- A1-13 LIMITS: 'Nothing in this lane mentions B11 (no remote) or an off-machine copy of the repo'
+- sweep-cards A5-16 area: the context-system work 'exists only as untracked files in a repository with no remote (B11), so a loss of this checkout loses the whole line'
+- A7-04: the verify command, pre-commit hook and Git foundations: 'Same machine only. No remote was created or contacted'
+- research B4 C13: 'git bundle create --all' packs all refs; 'git bundle verify' checks it; 'git clone' restores. Bundles exclude the index, working tree, stash, config and hooks
+- machine-facts.md B05: 24 unexpected shutdowns since 2026-10-07
+ALREADY TRIED:
+- A7-04: Local Git foundations and hooks only. No remote.
+- A5-16: The owner decided (1 Nov) to move the context-system line to its own repository, low priority. Not done.
+EXISTING ANSWERS:
+- [fully] research lane B4 C13 (git bundle), C14 (private GitHub, restic/rclone to B2/R2, bare repo on a VPS): Known, documented ways to get an off-machine copy. Pricing came from secondary sources
+- [partly] ship-plan section 0 Resume: draft PR per phase, 'gh pr view': FixFlow's practice assumes a GitHub remote; the new harness inherits it
+- [partly] harness-review.md HR-A3 (VPS from P3b; R2 off-box for DB dumps): A VPS the owner will control comes only later, in the other project. A bare repo there is a later second copy, not today's first
+GAP: Only a choice of custody remains: a third-party remote (private GitHub) or an encrypted bundle to storage the owner controls. Credentials stay with the owner, never with agents. Also, staged and untracked work is invisible to any bundle or push until it is committed, so a WIP-capture rule is needed. No restore has ever been tried.
+RESEARCH Q: 
+MECHANISMS:
+- First off-machine copy today: The owner runs 'git fsck', then 'git bundle create clinic-<date>.bundle --all' and 'git bundle verify', and copies it off the PC: an encrypted cloud folder, a bucket separate from FixFlow's production R2 bucket, or a private GitHub repo with 'git push --all'.
+  COST: 15-30 minutes of the owner's time
+  PROOF: A clone made from the off-machine copy into a fresh folder shows the same main SHA and every branch head as the source ('git for-each-ref' diff empty)
+- Nightly incremental copy with WIP capture: A scheduled task (1) commits each worktree's staged and untracked-not-ignored state to refs/wip/<worktree> without touching the branch (git stash create / commit-tree), then (2) makes an incremental bundle or pushes, and (3) logs the size and verify result.
+  COST: A few hours; Task Scheduler route unverified (research B4)
+  PROOF: A monthly restore drill reproduces every worktree's latest WIP. Copy age is never more than 24 h, checked by the logon resume list (B10)
+- Second remote on the VPS later: When HR-A3's VPS exists, add a bare repo over SSH as a second remote.
+  COST: An hour once the VPS exists
+  PROOF: Two independent restores succeed
+THOUGHT STRUCTURES (none): This is custody and a backup routine.
+GRAPH RECALL (none): Not a recall problem. One note: the knowledge-store design keeps its truth in an append-only git journal, so it is exactly as safe as the repository's off-machine copy.
+GAIN: Removes total loss of eight days of work (432 commits, 19 worktrees) on a machine with frequent unclean power-offs. The cost is minutes today and a few hours for the nightly routine.
+
+CROSS-CUTTING:
+- Container gate plus one shared test Postgres plus slots sized from a measured per-check peak: one change answers B06 (1.5x measured: 230 s vs 367 s, A3-11/A4-01), B07 (two container checks measured together at 266/267 s with 5.3-7.3 GB least free, A4-05, so the 8 GiB guard is the wrong number), B08 (one DB container instead of up to 26), and B18 (Linux parity). It also partly answers B09 (the native socket path, 10055 class, leaves the gate). For FixFlow the first half already exists: ship-plan section 0 runs backend gates in Docker (Appendix A).
+- One always-on machine sampler (1-2 s CPU temperature and package power, available memory, memory by process group, written outside checkouts and flushed per line) serves four diagnoses: B05 (what the PC was doing when it died), B08 (who holds memory), B07 (per-check peak for slot sizing) and B09 (state at a stall). The testbed already built the method (A3-07 pairs harness, A4-05 measure.py). Reuse it and fix the thousands-comma CSV trap (A8-07).
+- Power-loss resilience is one chain, not four items: diagnose the shutdowns (B05), bring Docker and the shared DB back at sign-in (B10), keep a verified off-machine copy plus WIP refs (B11), and write a resume list at logon (B03, B14). The 24 shutdowns make every link urgent.
+- Teardown on merge ('compose down -v' for the slice project, 'git worktree remove', app auto-archive on PR close) answers B08 and B15 together, without the orchestrator having to decide to archive.
+- MISDESCRIBED B05: not 'two shutdowns under load'. The log shows 24 since 2026-10-07: 8 before the build, several in hours with no commits (Nov 7, Nov 8, Nov 10 15:08/15:25), 4 power-button forced, 5 at sleep transitions, one 0xA0 power bugcheck in sleep. No Event 2004 sits near any of them. Memory pressure is not supported.
+- MISDESCRIBED B03 (outside this group, found here): the last commit before the three-day halt is 2026-11-06 14:57:52 +0500. The event log records an unexpected shutdown with previous-shutdown time 14:58 the same day. The halt began with a power-off, whatever the usage limit did. Nothing restarts Docker or sessions after a reboot (B10, research B5 C4), which explains why nothing resumed by itself.
+- MISDESCRIBED B06: the slow 'Windows-to-Docker path' is the network hop through Docker Desktop's published-port forwarder (0.63 vs 0.13 ms per query; forwarder 0.7 cores, A3-10), not files. Container mode copies the tree by tar over stdin in 2-4 s. So 'put the checkout in the WSL2 filesystem' targets a boundary neither mode crosses; it is inferred from vendor guidance (research B4 C7) and unmeasured here.
+- MISDESCRIBED B07: recorded waits are 3-742 s (max 12.4 min, linux-test-runner/task.md:88). Whole checks including the wait reach 1,116 s. '34 minutes' is in no file. And the second slot does not 'open with 8 GB free': 8 GiB was never available in about 980 samples, and only 7.3 GB was available on a no-build day, so it is in practice always closed.
+- MISDESCRIBED B08: idle sessions and containers are not shown to be the main consumers. At the no-build reading Chrome (6.1 GB) led, then vmmemWSL (5.2 GB with only 4 containers running), then Claude (3.2 GB for 14-15 processes). Per-session memory was never measured.
+- Measured versus inferred for the B06/B07 next steps. MEASURED: container gate speed (A3-11), two container checks at once (A4-05), the forwarder latency (A3-10). NOT MEASURED: a check's own peak memory (faster-check/task.md:407), the memory saved by one shared Postgres (research B4 C6/C10, estimate only), any speedup from a WSL2-filesystem checkout, and the serial pass running beside the parallel pass.
+- Thought structures (ToT, FoT, GoT) bear on none of B05-B11 positively. Their one bearing is a cost warning: candidate-fix forests that each run the gate multiply load on B07 (research B1). Graph recall bears only narrowly, on B09 (and B05 once diagnosed) as a temporal-validity record of a diagnosed machine fault. Any index must be a single SQLite file (knowledge-store E-01), not a graph server, so it adds nothing to B08's memory load.
+
+######## M3-process
+
+== B12 | class=TRIAL | research=none | priority=P0
+CAUSE: The overstatement sits in prose claims, not in the check result. The check itself cannot be fooled: it fails on any skip, xfail or unrun test, ignores injected environment, and was shown failing on planted faults (A8-10, A3-12). The root also re-ran it independently (clinic-build/task.md:701). What breaks is the link between a sentence and the thing it names. Records cited test names that no longer existed (GE-01, confirmed at opening-cutoff-guards/task.md:97: 'GD-03 row named missing tests'). Race tests passed with their lock removed (G02-02, G03-02, G04-02, G08-05). Assertions were always true (G05-09, G09-14). Evidence came from an earlier code variant (G08-05 E6). Reviewers 'ran no tests, scripts or database commands' (A2-05 LIMITS), so claims about execution were checked by reading only. The workflow's own verify tool passed vacuously (RT-01: 29 skipped tests, exit 0) and was never repaired (A7-13). There is no denominator: at least 20 instances are recorded, but the rate is unknown.
+EVIDENCE:
+- A2-05: at least 20 overstatement records, no denominator; reviewers ran nothing (opening-cutoff-guards/evidence/review-opus-round2.md:3)
+- A2-06: lock-removal experiments were model-run; at least four proved less than claimed (G06-08, G08-05 E6, G10-23, G05-21)
+- A3-12 and A8-10: the check runner is unforgeable and tested by planted faults (planted six-fault file gave CHECK FAILED 5/7, clinic-build/task.md:796)
+- A7-04 and A7-13: verify hook treats 'Ran N tests' as success (tools/coding_workflow.py:354); RT-01..RT-09 found, 8 left open
+- Confirmed in repo: opening-cutoff-guards/task.md:97 'GE-01 (P2) GD-03 row named missing tests'
+- research B6 C10: LLM judges at or below AUROC 0.65 on false success (Advani 2026, fetched); TF-IDF detectors 0.83-0.95
+- research B6 C11: CLAUDE.md-style instructions did not stop overselling (Transluce write-up, LLM-labelled)
+- research B5 C16: Stop, SubagentStop and TaskCompleted hooks block with exit 2; a missing script fails open
+ALREADY TRIED:
+- A2-06 lock-removal experiments: Each guard was named and shown load-bearing, but the experiments were run by the model. At least four were later found misleading. One lock at a time, one machine's interleavings.
+- A1-06 / A2-01 / A8-09 two Opus refute-reviewers, up to three rounds: They caught the 20+ overstatements, at the cost of extra rounds (B01). The root's own premise was wrong once (G04-02 / Y2, task.md:303).
+- A3-12 / A8-10 gate integrity proofs and planted faults: Worked for the suite: the id-partition proof and the failure demos were measured. These prove the check, not the prose claims.
+- A7-04 verify command and pre-commit hook: Vacuous success (RT-01), python -O strips asserts (RT-02), the hook checks the working tree and not the commit (RT-04). Abandoned with eight defects open.
+- A7-21 / A8-18 evidence-status vocabulary ('automated is not human', VERIFIED/INFERRED): Asserted only. Nothing measured.
+- A7-22 before/after file manifests: These catch unintended change. They do not catch a wrong claim.
+EXISTING ANSWERS:
+- [partly] Horthy G2-F015: Each fail-before line cites the command run on the base SHA and its observed output, or says 'read, not run'.
+- [partly] Horthy G4-F073, G2-F104: The verdict lists every added inline suppression and gate-config edit with its reason, backed by a diff grep.
+- [partly] Horthy G2-F183 (trial): A read-only transcript tally of tool_use records at phase close. It can show whether a claimed command actually ran and how it exited.
+- [partly] BAML T-08 (trial): Deterministic, record-only checks over returned objects instead of a judge. Warning: a naive regex flagged 174 of 707 legitimate strings, so the allow-list is the real work.
+- [partly] ship plan section 0 Routing: The reviewer names the head SHA, names a test per register id that fails on base and passes on head, and lists changed expectations, removed assertions and new skips. This output is still model-produced.
+- [partly] harness review adopted: skip-aware gates: pytest -rs --junitxml, and fail when integration tests were skipped. This covers the RT-01 class.
+- [partly] knowledge-store design section 3.4 check specs, inject-control, present_when: A test-id check must fail with a matching message, and the fail-side mutant is re-applied at each reaffirm. This is A2-06 made mechanical. Designed, not built.
+- [partly] Claude Code docs (lane B5) C16 Stop/SubagentStop/TaskCompleted exit 2: A hook can refuse 'done' and feed stderr back to the session.
+GAP: Claims are prose, so no script can resolve them. Four pieces are missing: a typed claims file per slice; a resolver that checks names, paths, hashes and commits; a mutation runner for 'fails without guard' claims; and a place to run all of it that a slice cannot skip. There is also no claims-checked denominator, so nobody knows the real overstatement rate.
+RESEARCH Q: No reading is needed. Smallest experiment: in a disposable clone of the clinic repo, replay a resolver over the committed task and review records at each gate's head SHA. It checks that every cited test id is in the collect-only list, every cited path and evidence file exists, and each evidence file's commit matches. The deciding number: does it flag at least half of the recorded overstatements whose class a script can check (name, path or mutation), with under 10 percent false flags on claims the gates accepted?
+MECHANISMS:
+- Claims file plus resolver (claimcheck): Each slice commits evidence/claims.json. Each entry has: id, finding id, kind (test_exists, fails_without, passes_on_head, file_has, ran_command), test node id, mutant patch path, evidence path with sha256, and the commit it ran on. A zero-dep Node script checks five things: (1) node ids are in `pytest --collect-only -q` on head; (2) evidence paths exist and hashes match; (3) the evidence commit equals head, or the cited files are unchanged since (git diff --quiet sha..head -- paths); (4) every backticked test_* name in task.md or review prose is in the collected set (this would have caught GE-01 mechanically); (5) ran_command claims match a transcript tool_use with its exit code (G2-F183). Where it runs: first step of the root's gate, before any model reviewer reads (zero tokens). Also as the slice's Stop hook with exit 2, behind a wrapper that fails closed if the script is missing.
+  COST: About a day to build. Seconds to a few minutes per gate (collect-only runs in the slice's container). Zero model tokens.
+  PROOF: Retro replay: share of the 20+ recorded instances flagged, and the false-flag rate. Live, over the next five gates: overstatements that model reviewers find but the resolver missed in a checkable class (target 0), plus review rounds per branch against the gate_rounds table.
+- Mechanical mutation runner for 'fails without guard' claims: This is A2-06 run by a script, the same discipline as the knowledge-store design's inject-control. Apply the committed mutant patch in a temporary worktree and run only the named tests. Require the named test to fail with an assertion failure (not an error) and to pass on head. Record 'another guard still catches it' as a redundant-guard finding, not a pass.
+  COST: Hours to build. One targeted test run per claim, seconds to a minute with the database container.
+  PROOF: In replay, the four experiments later found misleading (G06-08, G08-05, G10-23, G05-21) are flagged. Live: zero later findings of the form 'the experiment proves less than claimed'.
+- A denominator in the ledger: Count claims checked, failed and unverifiable per gate, per tier and model. That gives a measured overstatement rate where A2-05 had none. It also tells model review where to look, and feeds Horthy trial G4-F034 on reviewer effort.
+  COST: Free once the resolver exists.
+  PROOF: A rate per tier exists after three gates, and it shifts reviewer effort toward the claims a script cannot check.
+THOUGHT STRUCTURES (narrow): More model reviewers, debate or judges do not fix this. Judges reach at most AUROC 0.65 (B6 C10), and debate does no better than self-consistency at matched compute (B1). The only thought-structure family with coding evidence is best-of-n selected by executed tests (Agentless, CodeMonkeys). That is the same principle as the resolver, not ToT or GoT.
+GRAPH RECALL (narrow): Lane B2: graphs do not fix overstated reports, and facts a model extracts from prose add errors. What helps is a table of facts recorded from deterministic tool output (test id existed at sha X, exit code), each with a footprint so evidence goes stale when its cited files change (knowledge-store design section 3.5). That is a join on changed paths, not a graph topology.
+GAIN: For the classes a script can check, the root stops verifying by reading. By my reading of A2-05, about half the recorded instances are name, path or mutation checkable: GE-01, G02-02, G03-02, G04-02, G05-09, G08-05, GC-06, GC-09 and G09-14. G09-02/03 page claims and S11's restore-volume claim are not. That count is inferred, not measured. Expect fewer gate rounds and less root context (B04), and B17's model-only review gets a mechanical floor.
+
+== B13 | class=BUILD | research=none | priority=P1
+CAUSE: The single writer is a rule, not an accident. Only the root edits nine shared documents, and slices propose changes in their own records (A1-04; confirmed at docs/agentic-coding/orchestration.md:26). The board is one hand-edited file: 829 lines and 219,111 bytes at sweep time, 838 lines on 11 Nov by wc -l. Current-state rows run to thousands of characters, gate sections are append-only, and the header line is stale and contradicts itself (A1-12). Staleness lands only where no drift test exists. Registry-like documents asserted by tests (CR-06: test_capability_doc, test_forest, test_errors) stayed true. The context map's id ranges, AGENTS.md routing and the board header went stale. Root edits at merge also created defects (A2-07) and broke the drift tests ('expect one fix-up round', CR-06). The root's context compacted three times at 574k to 974k tokens (CR-05), so reading the board competes with judging.
+EVIDENCE:
+- A1-04: single-writer rule; context map and AGENTS.md stale at wrap-up (task.md:37)
+- A1-12: board 829 lines / 219,111 bytes; header stale; closed rows not re-verified row by row
+- CR-06: doc-versus-code drift tests exist for registry tables only; root edits broke them at gates
+- A2-07: the first check on merged main failed on consequences of the merge itself
+- CR-05: three automatic compactions of the root (3, 4 and 5 Nov)
+- Confirmed: orchestration.md:26 single-writer text; wc -l docs/tasks/clinic-build/task.md = 838
+- research B6 C13: towncrier compiles one fragment file per change into a generated file (fetched)
+- research B2 B13 implication: board as a generated view over an append-only fact table with validity times; unmeasured for documents
+ALREADY TRIED:
+- A1-04 single-writer rule: No conflicts and no divergent truth, but the root became serial and documents went stale when it had no time.
+- A1-04 registry-append pattern (slices append to SCREENS; at most one line in urls.py): Merges of those files became mechanical. This is the one fragment-like pattern that worked.
+- CR-06 doc-versus-code drift tests: Kept registry documents true. Each root edit became a two-sided change that cost a fix-up round.
+- A1-12 'Next action' with the current paragraph first, gate sections frozen: A reader must know that the wrap-up supersedes earlier sections. Older statements stay in place, stale.
+- A8-14 doc-context small language model, A6-03..A6-07 corpus map: Proposed only (A8-14), or built and never used (corpus map).
+EXISTING ANSWERS:
+- [partly] research lane B6 C13 towncrier: One fragment per change, compiled by a single generator step.
+- [partly] research lane B2 B13 implication, Zep bi-temporal model: Close an old fact's validity when a new one supersedes it, and generate the views.
+- [partly] ship plan section 0 Resume: draft PR body checklist and decisions journal; OWNER-VIEW refreshed at close: Per-phase state is written by the phase in its own PR body and moved to its owner at close.
+- [partly] harness review adopted: CI check of the CLAUDE.md Alembic head and named paths: A drift test on the root instruction file, the CR-06 pattern.
+- [partly] knowledge-store design section 3.1 journal and index: One immutable file per event, named by hash, with a rebuildable projection. The same fragment-plus-generated-view pattern. Unbuilt.
+- [no] research lane B1 C11: GoT aggregation is not evidenced for merging documents.
+GAP: No generator exists: the board is prose the root edits. No drift test covers routing documents (context map id ranges, AGENTS.md). Current state is not split from the archive. A hybrid where a slice edits its own section (A1-04 TRANSFER) was never tried.
+RESEARCH Q: none
+MECHANISMS:
+- Per-slice fragments, generated board: Each slice writes docs/board/<slice>.json on its own branch. It holds: status, branch, worktree, port, tier, gate round, findings (id, severity, state, closing sha), and proposed shared-document edits as patch files. A zero-dep generator renders a short current-state board plus an archive. CI fails if the generated file differs from the committed one. At merge the root fast-forwards and does not hand-edit. Proposed edits to AGENTS.md or contracts are applied by git apply in the slice branch and checked by the drift tests.
+  COST: About a day.
+  PROOF: Root-authored commits to shared documents per merge fall to about 0. Merge-caused fix-up rounds (A2-07, CR-06) fall to 0. The current-state view is 150 lines or fewer, against 838. Root tokens spent reading state drop (count compactions per build day against CR-05).
+- Validity columns on findings: Each finding row carries opened_at sha, closed_at sha and superseded_by. Touching the cited code reopens the finding. This fixes 'closed rows not re-verified' (A1-12) and B21's P3 carry, with plain columns, not a graph.
+  COST: Part of the fragment schema.
+  PROOF: A script finds 0 closed rows without a closing sha and evidence.
+- Drift tests for routing documents: Extend the CR-06 pattern, and the harness review's adopted CLAUDE.md check: assert that every id range or id named in AGENTS.md and the context map exists in the plan's id set, and that named paths resolve.
+  COST: About an hour each.
+  PROOF: A planted stale id fails CI. Stale-document findings at the next wrap-up: 0.
+THOUGHT STRUCTURES (none): GoT aggregation was measured only on toy tasks such as sorting. No source shows it merging parallel agents' documents (B1 C11). Per-slice ownership plus a mechanical merge is the ordinary answer.
+GRAPH RECALL (narrow): A fact with valid-from and superseded-at fits stale board text well (B2, Zep). But nothing measured it for engineering documents, and plain status columns with a closing sha do the same job here.
+GAIN: Shared-document edits leave the root's merge path, the state the root rereads shrinks from 838 lines to a short view, and stale routing documents are caught by CI instead of at wrap-up. Directly relieves B04.
+
+== B14 | class=DIAGNOSE | research=light | priority=P2
+CAUSE: No repository file describes this (A8-21). I ran a read-only probe over the 19 clinic transcript folders (Node scripts in scratchpad\m3). It found 3 single tool calls longer than 20 minutes. One was a 49-minute foreground polling loop, `until grep -q "^CHECK" ...`, on 5 Nov 18:31 in the kind-grothendieck worktree. Two were Bash calls started on 6 Nov at 09:50 and 09:57 whose results arrived about 74 hours later, which is the usage-limit halt (B03). The probe also found 53 silent gaps of 30 to 180 minutes. Most follow a turn's wrap_up (idle, waiting for input); several had a Bash wait in flight. The check lets one invocation wait up to 2,700 s for a slot: DEFAULT_LOCK_WAIT_SECONDS at src/clinic/devtools/check.py:72 (confirmed). On top of that comes a 5 to 18 minute run; recorded waits reach 742 s. The step list advances only between tool calls, and no hook fires during a call. So 'an hour with no step change while working' fits one long foreground wait. Which hour the owner saw is not identified. There is also no owner-level view: progress lives in the 219 KB board (A1-12).
+EVIDENCE:
+- A8-21: no live status mechanism in any repository file; B14 not described anywhere
+- A1-12: progress visible only through the 219,111-byte board
+- Confirmed: src/clinic/devtools/check.py:72 DEFAULT_LOCK_WAIT_SECONDS = 2700.0; :88 DEFAULT_STALL_SECONDS = 600.0
+- sweep-tables: slot waits 385 to 742 s; full runs 274 to 1,110 s
+- My transcript probe (read-only): one 49.3-min foreground polling call; two calls spanning about 74 h from 6 Nov 09:50; 53 gaps of 30 to 180 min, mostly idle after wrap_up
+- research B5 C14: status line JSON (context %, cost, rate_limits.five_hour and seven_day with resets_at, worktree, pr), agent view states, claude agents --json --all, Notification hook (agent_needs_input, agent_completed); a frozen step display is not addressed
+- machine-facts: Desktop notification banners on (default)
+ALREADY TRIED:
+- A1-03 / A7-01 task.md per session plus board rows: State is recorded, but the owner must read one large file, and nothing shows liveness.
+- A7-09 / A7-10 / A7-12 measurement system (ledger, collector): Designed only. No collector exists.
+EXISTING ANSWERS:
+- [partly] Claude Code docs (lane B5) C14 status line: A per-session script that shows context, cost, usage-limit percentages with reset times, and the worktree. Whether it refreshes during a long tool call is unverified.
+- [partly] Claude Code docs (lane B5) C14 agent view and claude agents --json --all: Row states for background sessions: working, needs input, idle, failed, stopped.
+- [partly] Claude Code docs (lane B5) C14 Notification hook, Desktop notifications: Pushes needs-input and completed events. It does not show liveness.
+- [partly] ship plan section 0 Resume and close: draft PR checklist ticked as items land, six-question close, OWNER-VIEW.md: Progress per item and per phase. No liveness.
+- [no] research lane B6 C14 OpenTelemetry agent conventions: Could not be confirmed (the docs had moved, stability unknown).
+GAP: No liveness signal during long calls, no single cross-session view, and no way for the owner to tell waiting from hung from halted by the limit.
+RESEARCH Q: In the November transcripts, which tool call or idle state spans the hour the owner saw? Was the session waiting on the check slot (up to 2,700 s), polling in the foreground, halted by the usage limit, or idle waiting for input? The gap scripts already written (scratchpad\m3\gaps.js and longcalls.js) answer it once the owner names the session and the day.
+MECHANISMS:
+- Heartbeat from the check runner: check.py writes a small per-checkout JSON every 15 to 30 s: waiting_for_slot since T with queue position, running pass k with tests done of total, or stalled. Sessions run full checks in the background and wait with Monitor, never with a foreground until or sleep loop. The step text names the wait and its cap.
+  COST: A few hours, plus one brief rule.
+  PROOF: On a full parallel build day, the longest interval between heartbeat updates is 60 s or less, and the transcript tally finds 0 foreground calls over 10 minutes (against 1 at 49 minutes today).
+- Owner board from hooks and heartbeats: PostToolUse, SubagentStop and Notification hooks append one line per event to a per-session log. A generator or the status line shows, per session: age of last activity, state (working, needs input, limit until resets_at, idle) and current step. A phone push fires on needs-input and on 'no heartbeat for 15 minutes'.
+  COST: About a day. Reopens the harness review's 'skip hooks' ruling.
+  PROOF: Over a week, owner 'cannot tell' incidents fall to 0, and the median time from a stall (limit or needs-input) to the owner noticing is measured, in minutes rather than hours.
+THOUGHT STRUCTURES (none): This is observability, not search over candidate solutions.
+GRAPH RECALL (none): A flat event log per session is enough. There is nothing to traverse.
+GAIN: Small engineering cost. The owner sees liveness and limit resets at a glance, and needs-input stalls are noticed in minutes, which also shortens B03 outages.
+
+== B15 | class=DECIDE | research=light | priority=P1
+CAUSE: Things accumulate by design, and nothing reaps them. Each checkout gets its own worktree, compose project, port and database container (A8-08). The PC now has 19 worktrees and 26 postgres:17.11 containers, one per clinic-<slice>, 25 of them stopped (machine-facts), plus about 20 idle sessions. The root archives nothing without the owner's yes (A1-09, A8-21; root memory clinic-build-standing-start-authorization.md:17 'Archiving stays the owner's yes'), a rule adopted after one wrongful archive. The app's own triggers are off: auto_archive_on_pr_close Off, auto_archive_inactive_days 0 (machine-facts). The PR trigger could never fire for the clinic anyway, because the repository has no remote (git remote -v prints nothing). The Claude Code docs say the archive approval card is skipped in Auto and Bypass modes (B5 C15), the likely route of the wrongful archive (inference). The A4-02 leftover sweep removes only dead-host check containers, not compose databases.
+EVIDENCE:
+- A8-08: per-checkout worktree, compose project, port and database; 19 worktrees; no removal mechanism
+- A1-09 / A8-21: no-archive rule (clinic-build/task.md, Next action, 6 and 10 Nov)
+- A4-02: leftover sweep for check containers only (0.6 to 2.4 s cleanup measured)
+- machine-facts: auto_archive_on_pr_close Off, auto_archive_inactive_days 0; 34 containers, 26 postgres, 4 running; git remote empty
+- Confirmed: root memory clinic-build-standing-start-authorization.md:17
+- research B5 C15: cleanupPeriodDays sweeps clean subagent and background worktrees; claude rm refuses unpushed work; archive approval card skipped in Auto and Bypass
+- research B6 C15: git worktree remove refuses dirty or locked trees; a lock carries a reason, not an expiry; compose down flags unverified
+ALREADY TRIED:
+- A1-09 owner-only archiving: No further wrongful archives, but sessions, worktrees and containers pile up.
+- A4-02 leftover container sweep: Works for check containers of a dead host (measured). It does not touch compose database containers or worktrees.
+- A8-08 path-hash database names, per-checkout lock: No cross-checkout collisions (one recorded 115-error clash inside a single checkout), but one container per checkout.
+- A7-22 file manifests: Show what a session touched. They are not used for cleanup.
+EXISTING ANSWERS:
+- [partly] desktop app settings (machine-facts, lane B5 C15) auto_archive_on_pr_close, auto_archive_inactive_days: The app archives on its own. The PR trigger needs a remote (FixFlow has GitHub; the clinic has none). The inactivity trigger could archive a session the owner still uses.
+- [partly] Claude Code docs (lane B5) C15 cleanupPeriodDays, claude rm, git worktree remove: Safe deletion primitives that refuse dirty or unpushed work.
+- [partly] ship plan section 0 Sessions: at most one Docker-gated backend phase at a time, fixed container names (Appendix A): No per-slice database containers to pile up in FixFlow, at the price of parallel backend gates.
+- [partly] research lane B6 C15 compose project name per worktree: Makes each container attributable to a worktree. Teardown flags unverified.
+GAP: Two things are missing. First, a written policy for what may be removed without the owner, for example: branch merged, tree clean, no owner message for N hours. Second, a reaper that applies it to sessions, worktrees and compose projects with their volumes, with a trigger that works without a remote.
+RESEARCH Q: Three single probes. Does `docker compose -p <project> down -v` remove only that project's containers and named volumes? Does archiving a Desktop local session remove its .claude/worktrees directory, and when? Does the archive approval card appear in default permission mode?
+MECHANISMS:
+- Owner archive policy (decision): A session or worktree may be archived without asking only when four things hold: its branch is an ancestor of main (git merge-base --is-ancestor), its tree is clean, nothing is unpushed or unmerged, and the owner has written nothing in it for 24 hours. The root runs in a mode that keeps the archive approval card, or archives only through the script below. The owner may also turn on auto_archive_inactive_days with a long window.
+  COST: Owner minutes.
+  PROOF: Over a month: 0 sessions archived with owner activity under 24 hours or a dirty tree.
+- Reaper script, dry-run by default: Runs at each merge and nightly. It lists merged, clean worktrees and removes them with git worktree remove (never --force). It finds compose projects whose worktree is gone and runs compose down, with -v for test databases. It lists sessions eligible to archive, for one owner click or automatic archive under the policy.
+  COST: Half a day, zero-dep Node or PowerShell.
+  PROOF: After each merge, worktree and container counts return to the number of active slices plus one (against 19 and 26 today). docker stats before and after shows the memory freed (feeds B08).
+- One shared database container, one database per checkout: A8-08's own TRANSFER: keep the path-hash database names but run one Postgres container for all checkouts.
+  COST: About a day. Risk: one container fault stops every slice's tests.
+  PROOF: Container count goes from N to 1, idle memory is measured against 26 containers, and there are no cross-checkout collisions over a build week.
+THOUGHT STRUCTURES (none): This is lifecycle policy plus a script. Nothing here needs a search over candidate solutions.
+GRAPH RECALL (none): Tying a worktree to its branch and compose project is a lookup by name, not recall.
+GAIN: Fewer containers and idle sessions, which feeds the memory problem (B08), less owner attention, and no repeat of the wrongful archive.
+
+== B16 | class=DIAGNOSE | research=light | priority=P1
+CAUSE: The bottleneck is misdescribed. The Claude Code docs say general-purpose agents and custom agents that have Write can write files. Explore and Plan are read-only. A background subagent's permission prompt goes to the parent, and if nobody answers it, the write fails. A worktree session cannot write into the main checkout (B5 C7-C9). Today's probe confirms it: a subagent wrote a file and read it back with no prompt, in bypass mode (machine-facts; scratchpad\hb\subagent-write-probe.txt). The rule came from root memory subagents-return-text-not-files.md (2026-11-01, read). Two Opus analysts reported that 'the harness blocks subagents from writing report files'. The same memory notes that Sonnet extractors wrote files earlier in that session, and Workflow lanes wrote files too (critic overturn of A8-16). The Desktop default permission mode is 'default' (machine-facts), so an unanswered background prompt is a likely cause. That is unverified. The rule became orchestration.md:14 (confirmed): 'file writes from subagents are refused here'. In other words, an agent's self-report became policy without a check, which is itself a B12 instance. The cost is real: subagents made 82.4 percent of API calls and 78.7 percent of output tokens in October (CR-03), and their long reports flow into the root, which compacted three times (CR-05).
+EVIDENCE:
+- A8-16: rule asserted, nothing measured; orchestration.md:14 and :18 (confirmed)
+- Critic overturn: root memory subagents-return-text-not-files.md:15 says Sonnet extractors wrote files; Workflow lanes (PR-LOCAL, corpus-map incoming/<chunk>.jsonl) wrote files
+- Confirmed: root memory names two Opus analysts' reports as the only source of the refusal
+- machine-facts: subagent write probe succeeded today; default permission mode is 'default'
+- CR-03: subagents and workflow agents made 82.4% of 4,155 calls and 78.7% of output tokens (6 to 20 Oct)
+- CR-05: three root compactions at 573,774 / 974,246 / 967,210 pre-tokens
+- research B5 C7-C9: tools by agent type; parent mode overrides; background prompts surface in parent; worktree blocks writes to main checkout
+- research B5 C10: workflow results stay in script variables; agent() takes a JSON schema
+ALREADY TRIED:
+- A8-16 return full text, batch claims, Haiku extraction, compact schemas: Asserted only. Long reports still land in the root's context.
+- A1-08 discovery returns facts, not verdicts: Asserted only. Shrinks the text but keeps the route through the root.
+- A6-05 corpus-map chunk readers via Workflow: They wrote per-chunk JSONL files: the write route worked in this repository's own history.
+- A7-23 parallel research agents writing owned files: Worked (lean workflow, another environment).
+EXISTING ANSWERS:
+- [fully] Claude Code docs (lane B5) C7-C9: Which agents can write, how the parent's mode overrides the subagent's, and that a subagent can write a report and return its path. The write-and-return-path recipe is inferred, not a documented recipe.
+- [fully] Claude Code docs (lane B5) C10 workflows: Intermediate results stay in script variables, returns can be schema-typed, and only the final answer reaches the root.
+- [partly] research lane B6 C6 Anthropic multi-agent research system: Subagents write to external storage and return references.
+- [partly] BAML T-08, S-1: Deterministic checks and tagged results on returned objects.
+- [partly] orchestration-design.md output contracts: Typed returns per tier.
+GAP: It is not known which documented cause bit the clinic sessions. There is no standing recipe either: no pre-allowed report directory, no return contract of path, hash and short summary.
+RESEARCH Q: In the clinic's actual setup (Desktop app, default permission mode, a worktree session), does a Write by a general-purpose subagent succeed, prompt or fail when it targets (a) the session scratchpad, (b) its own worktree, (c) the main checkout? Repeat for an Explore agent and a custom agent with Write. One probe matrix, about 15 minutes, on a throwaway repository rather than the testbed.
+MECHANISMS:
+- Write-and-return-path contract: Pre-allow Write for <scratchpad>/reports/** in settings. Use general-purpose agents or custom agents with Write. The brief says: write the full report there, then return {path, sha256, a summary of 400 characters or fewer, counts}. The root opens only what it needs.
+  COST: About an hour.
+  PROOF: Measured from transcripts: tool-result tokens per long subagent return drop by 80 percent or more, and refused writes stay at 0 over 20 runs.
+- Fan-out through workflows with typed returns: Reviewers and extractors run inside a workflow script. The script merges the typed results, and the root receives one summary (B5 C10).
+  COST: Script authoring per workflow kind.
+  PROOF: Root compactions per build day and peak context, against the CR-05 baseline of three compactions in three days.
+- Reports on disk become checkable: A report written to a file can go through the B12 resolver and T-08-style checks before anyone reads it.
+  COST: Shared with B12.
+  PROOF: Resolver flags on subagent reports are counted per run.
+THOUGHT STRUCTURES (narrow): 'Graph aggregation of parallel outputs' amounts to a workflow script merging typed results. No evidence shows GoT-style aggregation beating a plain merge for agent artifacts (B1 C11).
+GRAPH RECALL (narrow): Lane B2 suggests a store where subagents file findings by id and the root reads only ids and summaries. That is unmeasured for reports, and a folder of files with a manifest does the job.
+GAIN: Cheap. The root stops ingesting long reports, which relieves context overflow (B04) and the usage-limit pressure that subagent fan-out drives (CR-03, B03).
+
+CROSS-CUTTING:
+- One slice-written, script-checked record answers B12, B13, B14, B16 and B21. Each slice writes three things itself: a claims file, a board fragment and a heartbeat. Scripts check them and compile the views. The root then reads a generated summary instead of prose, which also relieves B04.
+- Make the root's gate script-first: at each merge, run the claim resolver, the mutation runner, the board generator, the drift tests and the reaper before any model reads anything (B12, B13, B15, B17, B04). Model reviewers then spend their effort on what a script cannot check.
+- Two hooks would reopen the harness review's 'skip hooks' ruling: a Stop or SubagentStop hook with exit 2 for the claim check (B12), and PostToolUse/Notification hooks for heartbeat and needs-input push (B14, and shorter B03 stalls). Each must fail closed, because the docs say a missing hook script fails open (B5 C16).
+- Extend Horthy G2-F183's transcript tally to four measures: the overstatement denominator (B12), foreground waits over 10 minutes (B14), tool-result size per subagent return (B16), and compactions per day (B04). The read-only probes in scratchpad\m3 (gaps.js, longcalls.js) already do part of this on the clinic transcripts.
+- B16 is misdescribed. Subagents can write; the rule came from two Opus analysts' unchecked self-report (root memory subagents-return-text-not-files.md), which makes it itself an instance of B12.
+- B14 is likely misdescribed as a frozen display. The evidence fits one long foreground call instead: check.py allows a 2,700 s slot wait (check.py:72), the transcripts show a 49-minute foreground polling loop on 5 Nov, and two calls spanned the 6 Nov limit halt for about 74 hours.
+- B15's obvious fix cannot fire for the clinic: auto-archive on PR close needs a remote, and the clinic repository has none. The wrongful archive most likely came from the approval card being skipped in Auto or Bypass mode (B5 C15; inference).
+- B13: the board is 838 lines today (829 at sweep time). The documents that went stale are exactly the ones without drift tests; the registry documents with drift tests (CR-06) stayed true.
+- B12: the overstatement is in the prose claims, not in the check result. The check itself was proven unforgeable (A8-10, A3-12), so re-running it was never the expensive part; reading the claims was.
+
+######## M4-verification (B17, B18, B19, B20, B21)
+
+== B17 | class=TRIAL | research=light | priority=P1
+CAUSE: The list's wording is partly wrong. Review is not only model reading. The gate already ran executed checks with failure demonstrations (A3-12, A8-10), lock-removal experiments (A2-06) and rig drills (A4-06). The real gaps are two. First, no human reads anything, and the parked production-readiness review is itself a proposed model session ("reads the plan and writes one review file", clinic-build/task.md:36), so unparking it would add no human. Second, there is an unreviewed tail. In the 10 November batch, 4 of 5 merges had no independent read of the final head (task.md:792-796; A2-08). The real-data switch merged on 11 November (fb55599) with only its own two reviews: "did not run a further review (USER-24)" (task.md:821). That merge's first root check then failed 2 of 2570 tests on an order-dependent migration bug the session's own run had missed. The late P1s that only a final independent re-read found (GD-01, RS-1, GV-01/02) show the tail carries real risk. Model rubric scores also prove no usability (CR-08: 59 findings, 16 fixed, 22 not fixed, 1 regressed; G-UI-10). Model review did catch drill harness false passes, such as the CRLF needle file and a subshell PASS (A4-07). So reading and executing each catch what the other misses.
+EVIDENCE:
+- A2-08: reviewer per round; round 3 read by the root alone for 9 of 11 slice gates; the 10 Nov batch merged 'not separately reviewed' / 'not re-reviewed by the root' (clinic-build/task.md:788-796, confirmed by reading)
+- clinic-build/task.md:821 (read): real-data switch merged fb55599, 'did not run a further review (USER-24)'; root check found 2 of 2570 failing (order-dependent), fixed in 6a2fd45
+- task.md:36 (read): production-readiness review is a parked model session, not a human review
+- A4-07: the verification tooling itself reported PASS wrongly several times; each was found by an Opus refute-review
+- CR-08: UI rubric 64/160 -> 110/160 is one model's reading; board says it proves no usability
+- A7-18: Codex cross-model review designed, never trialled; its 91.4 vs 82.8 percent figure is external, not local
+- research B3 C2: METR, 296 grader-passing patches, maintainers merge about 24 points below the grader after normalising (fetched); C9: cross-model evidence mixed (Stone: +23.5 pts coverage with a second vendor; Song: no significant F1 difference vs a fresh same-model session, p=.006 only against two same-model reviews)
+- research B1 C6/C8 and implication B17: executed tests are the stronger selector (Agentless: each test filter raised the resolve rate, 25.67% -> 32.00%); LLM-judge value functions are self-reported
+ALREADY TRIED:
+- A2-01 / A8-09: Root check plus two Opus refute-reviewers plus up to three rounds. It found 19 round-1 P1s across 12 branches. It did not converge without the owner's stop (A2-10).
+- A3-12 / A8-10: Executed proofs that every test runs exactly once and nothing is weaker, shown to fail on planted faults. This works. It catches mechanical cheating, not wrong logic.
+- A2-06: Removing the lock made the race tests fail, which proved them. Used ad hoc on some slices, not as a rule.
+- CR-08: Screenshot capture plus model rubric. The captures are useful. The scores were judged triage only.
+- A5-08 / A5-13 / A5-14: An A/B evaluation harness for review quality. The Codex line was abandoned with context_gain_proven false. The Claude harness never ran live.
+- A7-18: A cross-model (Codex) review bridge. Designed only, never trialled.
+EXISTING ANSWERS:
+- [partly] ship plan section 0 Routing ship-plan-section0.md 'Routing': Every PR gets an Opus refute-by-default reviewer bound to the head SHA. A push after review needs a re-read of the diff since that SHA. For each fixed register id the reviewer names a test that fails on base and passes on head. Changed expectations and new skips are listed.
+- [partly] Horthy G4-F140 (trial): The owner reads only the hunks the reviewer marks as touching invariants, only on Opus-owned PRs (money, auth, migrations, lifecycle). Trialled on 3 PRs.
+- [partly] Horthy G2-F015 / G4-F073 / G2-F104 (adopt): Each fail-before line cites the command run on the base SHA and its output, or says 'read, not run'. Every added suppression and gate-config edit is listed.
+- [partly] Horthy G4-F154 (unrefuted trial): Each phase gets a cheap human-checkable proof, such as a curl or a black-box test.
+- [partly] BAML T-08, P-10: Deterministic record-only checks over returned verdicts, and a stub harness for gate scripts. These replace a model judge with code where code can decide.
+- [partly] harness review harness-review.md section 4 table: Adopted reviewer bound to the head SHA, fail-before/pass-after, and skip-aware gates. Skipped hooks and the measurement pipeline.
+- [partly] research lane B3 B3 implication B17: Model reviewers for breadth. Human attention sampled on money, stock, restore, auth, migrations and import. One different-family reviewer only on high-risk slices, as a hedge.
+GAP: Nothing forces an independent read of the FINAL head before merge once the owner says 'wrap up'. Nothing requires every P1/P2 closure to carry an executed fail-before test with a positive control. No human reads money, stock or restore code. Whether a second model family catches what Opus missed is unmeasured on this codebase, and the literature is split. Share to move: all acceptance of P1/P2 closures should move to executed checks (100 percent, with a harness-run fail-before id and a positive control). Model reading stays for discovery only. Human time is worth its cost only on invariant hunks of the high-risk surfaces (G4-F140), plus the pilot users for usability. A second family is worth its cost only if the replay below shows it catches known misses.
+RESEARCH Q: On this repository, does a reviewer from a second model family (for example Codex/GPT, already on this PC) or a fresh same-model Opus session catch the known late P1s that the earlier Opus round missed? Replay at the frozen pre-catch SHAs: GD-01, RS-1, GV-01, GV-02, W1, the G05-01 incomplete fix, and the G10-05 incomplete fix. Count catches and false alarms per arm. Reading alone cannot settle this, because the two published studies disagree (Stone vs Song) and neither reviewed fixes inside a loop.
+MECHANISMS:
+- Executed acceptance for every P1/P2 closure: A finding counts as closed only when the harness itself runs a test id that fails on the base SHA and passes on head. 'Nothing found' checks need a positive control that must be found (A4-07 rule). Lock-removal or fault-injection is required for race and money tests (A2-06). Model reading finds; execution accepts.
+  COST: Rules already adopted in ship plan section 0 and G2-F015. About a 40-line T-08-style script that re-runs the cited ids and greps the verdicts. Minutes per PR.
+  PROOF: Over the next 10 merges: 100 percent of closed P1/P2 carry a harness-executed fail-before id (scripted count). Zero late P1s found after merge on a path whose finding closed without one.
+- Final-head review label and merge block: Each merge records 'final head reviewed by: independent / own / root / none' (A2-08 transfer). Merge is refused when it is 'none' or 'own' for a high-risk surface, including under a wrap-up instruction. The owner can override only in writing, per branch.
+  COST: One column in the merge record plus one check line. Near zero.
+  PROOF: Count of high-risk merges with an unreviewed final head: from 5 of 6 (10-11 Nov) to 0. Late P1s found on unreviewed tails tracked over the pilot.
+- Retrospective second-reviewer replay, then G4-F140 human sampling: Run the replay in research_question: about 7 frozen SHAs x 2 arms (second family vs fresh Opus), both arms on the same brief and inputs (G4-F023 clause). Separately, the owner reads only reviewer-marked invariant hunks on 3 high-risk PRs and logs minutes and catches.
+  COST: About 14 reviewer runs plus about 3 owner hours.
+  PROOF: Adopt the second family on high-risk slices only if it catches at least 2 of the 7 known misses and beats the fresh-Opus arm at a similar false-alarm count. Keep human sampling if it yields at least one real catch in 3 PRs, or costs under 30 minutes a PR.
+THOUGHT STRUCTURES (narrow): Aggregating parallel independent reviewers and deduplicating their findings is a small graph-aggregation step, and two reviews beat one (B3 C9). Executed tests as the selector is the only 'best-of-n' form with coding evidence (B1 C6/C8). Tree or forest search, and debate, add no review quality: matched-compute work finds debate no better, and LLM judges invent defects (B3 C4).
+GRAPH RECALL (narrow): A code-to-test dependency neighbourhood can point the reviewer and the test selection at a fix's blast radius. TDAD measured a 70 percent regression cut, but with small open-weight models. Validity-over-time facts help record who reviewed which SHA, but a flat table does that.
+GAIN: Late P1s caught before merge instead of after. Five unreviewed high-risk tail merges a batch drop to zero. Human minutes are spent only on invariant hunks. The cross-model question gets a local answer for about 14 agent runs instead of a standing extra reviewer on every slice.
+
+== B18 | class=DECIDE | research=none | priority=P1
+CAUSE: Windows-native stays the gate because the gate's own tooling has Windows-only code: the job object, the msvcrt lock, socket retry, the scratch_dir workaround and os.name=='nt' branches. A container-only gate would stop covering that tooling (linux-test-runner/task.md:125-138, read; A4-04). The product code runs on Linux, and the Windows gate never runs it there. A second cause sits in B11: the repository has no remote, so there is no hosted Linux CI to fall back on. The container mode merged on 10 Nov as optional (6dc311a) and was demonstrated in the main checkout, but no one chose it as the gate. The development guide left the choice to the root.
+EVIDENCE:
+- A4-04 and linux-test-runner/task.md section 8 table (read): native 'exercises code that production runs: no'; container 'yes'; native recommended only when devtools, the host side of check.py, or Windows-specific code changes
+- A4-03: first Linux run found P-1 (9 mypy attr-defined errors from unguarded Windows ctypes), P-3, P-4 (7 platform-dependent parametrize ids); later 2 of 2,472 tests failed only on Linux, in POSIX code its own record called 'not exercised on this PC'
+- A4-01: container whole check mean 230.1 s vs native 367.2 s on 2,246 tests (about 1.5x); no --cpus or memory limit set, so a check can take the whole Docker VM
+- clinic-build/task.md:34 (read): merged 'as an optional mode... the native mode stays the gate'
+- machine-facts B11: git remote -v prints nothing, so there is no CI runner
+ALREADY TRIED:
+- A4-01 / A8-03 / A3-11: Built and measured. A Linux container check beside the database, with hash-verified tree copy, image tagged by lockfile hash, and no fallback. Faster and finds Linux defects. Left optional.
+- A4-03: Linux-only defects found and fixed in tests. A convention was proposed for platform-specific type: ignore and for path-free parametrize ids.
+EXISTING ANSWERS:
+- [fully] ship plan section 0 Gates ship-plan-section0.md 'Gates': FixFlow's backend gates already run in Docker on postgres:17-alpine, and CI runs on Linux. A phase is done only when local gates and CI are both green.
+- [partly] research lane B3 B3 implication B18: Make the Linux container run, which matches production, the gate, with the Windows run advisory. Engineering inference, not measured.
+- [partly] research lane B4 B4 C5/C7: Keep sources on the Linux side, and set WSL2/Docker memory and CPU limits via .wslconfig. This matters once the container becomes the gate.
+GAP: A one-line policy choice: the gate runs on the production OS, and the native run triggers only when a path filter matches host tooling (devtools/, check.py host side, os.name branches). The path filter, a cross-platform collected-id comparison, and container resource caps are not built.
+RESEARCH Q: 
+MECHANISMS:
+- Production-OS gate with a path-triggered native run: The container check becomes the merge gate. The native check runs only when the diff touches the host-tooling path set, and as a weekly canary. This is the section 8 recommendation applied as a rule.
+  COST: An owner decision plus about 1 hour to add the path filter.
+  PROOF: Over the next 10 merges: gate wall time near 230 s instead of about 350 s; zero Linux-only failures reaching main; native runs triggered only on host-tooling diffs.
+- Collected-id parity check: Compare normalised collected test ids between native and container runs (A4-03 transfer). Ban paths and random values in parametrize ids.
+  COST: About 30 lines; seconds per run.
+  PROOF: Id sets equal after normalising, and a planted path-bearing id fails the check.
+- Resource caps on the gate container: Set --cpus and --memory on the test container, and add a .wslconfig ceiling, so a gate cannot starve the PC (A4-01 limit; B05/B08 link).
+  COST: Minutes.
+  PROOF: Least free host memory during two parallel gates stays above an agreed floor (for example 5 GB; A4 table measured 5.3-7.3 GB).
+THOUGHT STRUCTURES (none): This is a platform-coverage choice. There is nothing to search over or aggregate.
+GRAPH RECALL (none): A fixed path filter decides when to run the native check. A code graph adds nothing at this size.
+GAIN: Every merge exercises the code production runs. About 120 s saved per gate (34 percent). The defect class 'never ran on its target OS' (A4-03) leaves the merge path.
+
+== B19 | class=DECIDE | research=none | priority=P0
+CAUSE: The list understates this. Several items are not just untested; they are unbuilt. The S12 first-deploy checklist (read) lists nine gaps. There is no certificate script (gap 1). Nothing pushes backups off the host; the only pull script is for the rig (gap 4). There is no alert channel; the watcher only returns an exit code (gap 6). Provisioning does no ssh hardening, updates or time sync (gap 3). Owner decisions are open: Q-12 alert destination and key custodians, the off-site store, DNS and host. The rig sits on the same PC, so it cannot prove PC-off, independence, hosted-vCPU speed or the clinic network (A4-08). The fresh-VM restore never ran because the Hyper-V administrator prompt went unanswered three times (s11 task.md, section 6, read). The newest pilot path, the real-data switch and money_setup console commands, ran 'only in tests and on a local database, not on the rig' (commit 7cf8014 on main). A7-19 F05 had proposed a disposable synthetic deployment after S03; it was not done early.
+EVIDENCE:
+- A4-08: list of what the rig cannot prove; runbook 'not a runbook for a real host'
+- s12-pilot/first-deploy-checklist.md:3 and lines 86-96 (read): 'Nothing on this page has been run on a real host'; nine gaps incl. no cert script, nothing pushes off-site, watcher sends nothing, no hardening
+- s11-operations/task.md section 6 (read): fresh-host restore wiped variant only; second VM blocked by unanswered admin prompts; desk-only cost estimate
+- git log main (read): 7cf8014 'the two console commands were run only in tests and on a local database, not on the rig'
+- A4-06: rig and drills a-o measured (fresh VM serving in 109 s; restore of 781,505 rows in 14 s with 105 tables md5-identical); limits: one PC, fast desktop CPU
+- A7-19 F05 and A7-20 ER-07: proposals to prove deployment and recovery early; asserted only
+ALREADY TRIED:
+- A4-06: Hyper-V staging VM plus 15 numbered drills with committed results. Proved deploy, upgrade, chained releases, restore by row md5, security probe and fail-closed reboot on the rig. Drills also found real defects such as F-S11-2 and N9.
+- A4-08: The real-host gap is kept as an explicit list. Nothing on it was closed.
+- CR-10: Real-data switch and money setup built. The card says unmerged, but it is now merged (fb55599, f6b5c6c). It was not run on the rig.
+EXISTING ANSWERS:
+- [partly] harness review HR-A3: A VPS is primary first (2 vCPU / 4 GB, USD 5-15 a month). Region is measured before committing (P3c). The home box becomes primary only after a box gate: a 14-day heartbeat at 99.5 percent or above, or a second uplink. Hourly dump off-box through the app's own backup. This is FixFlow-specific, but the order transfers: prove on a cheap rented host, then gate the home box.
+- [partly] ship plan section 0 'Merge is not deploy', P3b/P3c/P13e: Deploys are recorded per phase with a post-deploy check: /api/ops/health shows the head SHA, and the image digest is recorded. The move to the home box has its own phase: final dump, restore, equal counts, old host read-only for 14 days.
+- [partly] clinic itself A7-19 F05: A disposable synthetic deployment after the third slice, with backup, clean restore and a migration, restored from material independent of the app disk.
+GAP: These can be proved before any money is spent, on this PC. (1) The fresh-VM restore: the owner answers one UAC prompt and drill c runs with C_TARGET=fresh. (2) The S12 checklist walked end to end on a clean rig VM, including the real-data switch and money_setup. (3) A push-to-store backup script and an alert sender, built and tested on the rig with a planted failure. (4) An ssh-hardening step in provisioning, and the age key made on a non-host machine. These need money or an owner choice: a domain and DNS, so a real certificate and renewal; an independent store with a write-only token and retention lock; hosted-vCPU performance; PC-off; the clinic's network. A one-day hourly-billed VPS covers most of them for a small sum, but the owner must choose the provider and the domain.
+RESEARCH Q: 
+MECHANISMS:
+- Free rig closures first: Owner answers the Hyper-V prompt. Run drill c against a fresh VM. Walk the S12 first-deploy checklist step by step on a clean VM, including real_data on and money_setup. Build and test the off-site push and alert scripts against the rig, each with a planted failure as a positive control.
+  COST: About 1 owner minute (UAC) and 1-2 sessions of build.
+  PROOF: Drill c fresh: all tables row-md5 identical. Checklist steps 1-13: each ticked with a results file naming commit and dirty count. Planted backup failure produces a received alert. Off-site push verified by hash on arrival.
+- One-day rented-host rehearsal: After the owner picks a provider, a domain and Q-12 answers: rent the target-size VM by the hour, run drills a, c (restore from the off-site copy onto a second fresh host), e, g, i and o plus a real ACME certificate with a renewal dry-run. Then destroy it, or keep it as the pilot host.
+  COST: The owner's decision, a domain fee, a few hours of host rental; about one session.
+  PROOF: Each of checklist gaps 1, 2, 4, 6 and 8 has a PASS results file from the real host. Measured RTO from the off-site copy with named key custodians. Hosted p95 numbers recorded beside the rig's.
+- Box gate before any home-hosted primary: Borrow HR-A3: the clinic's own machine becomes primary only after a heartbeat record (for example 14 days at 99.5 percent or above) watched from a second machine.
+  COST: Watcher already exists; needs an alert channel from mechanism 1.
+  PROOF: The heartbeat log meets the threshold before the switch.
+THOUGHT STRUCTURES (none): These are physical facts about a host, a store and a network. Only running the drills there proves them.
+GRAPH RECALL (none): The gaps are already listed by hand in one checklist. No recall problem.
+GAIN: The pilot starts with a recovery point that has left the host, an alert that someone receives, and a measured restore time. Without these, real clinic data put in on the first day has no tested way back.
+
+== B20 | class=BUILD | research=none | priority=P1
+CAUSE: Scope and the wrap-up, not inability. The drill exists (deploy/drills/e_load.sh with loadtest/locustfile.py, listed). The query follow-up merged in the 10 Nov batch. Drill j was rerun with one client, and the record says drill e and a stock-movement volume run 'were not asked for here' (s11 task.md, T17 paragraph, read). The list also understates the gap. Two claims are open, not one: concurrency under 12 clerks with backups, and the plan's 250,000 stock movements (the ledger held 11 in the rerun and about 2,500 earlier, because service-created movements are slow to make one at a time). The N1-era concurrency failure was 'plausibly' caused by the slow pages hogging the two workers, which was not separated by a measurement. So the fix may well have cured it, but nobody knows. Rig figures come from a fast desktop CPU and a 2 GB VM, while the plan's envelope is 4 GB on a hosted vCPU (operations-and-costs.md:43).
+EVIDENCE:
+- A4-09 / A8-11: page p50 9-13 s -> 0.1-0.5 s at 75,016 docs, one client; drill e not rerun; N1-era 12 clerks: posting p50 3.4-7.5 s, p95 up to 16 s, CPU 96-99 percent
+- s11-operations/task.md:40 (read): concurrency cause 'not separated by a measurement'; 24 clerks / 8 workers gave 24 HTTP 500, 7 HTTP 502
+- s11-operations/task.md T17 paragraph (read): 'not closed for the concurrent-load and ledger-size parts... which were not asked for here'
+- technical-plan/operations-and-costs.md:43 (read): gates are p95 posting < 1 s, list/report < 2 s, zero invariant failures, peak memory < 3.2 GB in a 4 GB envelope
+- A4-10: 2-second memory sampler exists on the rig
+- deploy/drills listing (read): e_load.sh, loadtest/locustfile.py present
+ALREADY TRIED:
+- A4-09: Query count fixed by set-based reads (29,346 -> 28 on /money/), with a query-count test at two sizes and per-persona body hashes. Page latency met on the rig.
+- A8-11: Drill j rerun after the fix, with before and after recorded for page time. Drill e not rerun.
+EXISTING ANSWERS:
+- [partly] research lane B3 B3 C14 and implication B20: No study of load tests as a gate. Rerunning the load after any query or schema change is cheap practitioner advice; add concurrency tests on the stock and cutoff paths.
+- [partly] clinic itself A7-20 ER-07: Bring a small performance proof into early slices: measure p95 under the documented workload.
+- [partly] Horthy G4-F156 (unrefuted trial): Tier verification by cost and risk, cheap proxies first, full suite before close.
+GAP: Run drill e on current main at about 75k documents with backups every 45 s, and compare against the plan's gates. Build a bulk generator so the stock ledger reaches 250,000 movements. Make the load drill a triggered gate for query or schema changes on money and stock. Rerun on the hosted vCPU once B19's host exists.
+RESEARCH Q: 
+MECHANISMS:
+- Rerun drill e now on the rig: Run e_load.sh at 12 clerks, 2 workers and a backup every 45 s on main, with the 2-second sampler. Run it when no gate is running on the PC (B07).
+  COST: About 1-2 hours including warm-up; no new code.
+  PROOF: Posting p95 < 1 s, list/report p95 < 2 s, zero 5xx and zero invariant failures, peak memory recorded, against the N1-era figures.
+- Stock-ledger volume generator: Add a bulk path for synthetic movements (outside the per-call service path, then verified by invariant checks). Rerun drill j for the stock reports at 250,000 movements.
+  COST: About one session.
+  PROOF: Ledger row count reaches 250,000 or more. Stock reports p95 < 2 s. A query-count test stays equal at two ledger sizes.
+- Path-triggered performance gate: Any diff touching ORM queries or schema in money or stock runs the query-count tests in CI-equivalent (cheap, executed). Drill j plus e run before merge or release. Repeat on the hosted vCPU when B19's host exists.
+  COST: A path list plus a merge-record field; drills cost about 1 hour each time they trigger.
+  PROOF: Over the pilot, zero merges to those paths without a recorded drill result whose header names the merge SHA.
+THOUGHT STRUCTURES (none): Load behaviour is measured, not reasoned out. Candidate search adds nothing.
+GRAPH RECALL (none): A path filter decides the trigger. Recall structure does not bear on load.
+GAIN: The '12 concurrent users' claim becomes a measured yes or no before real users arrive. An unknown ledger-size cliff is found on the rig rather than at the clinic.
+
+== B21 | class=BUILD | research=none | priority=P2
+CAUSE: Four causes, from the evidence. First, model reading produces many low-severity findings per round: 111 P3s in round 1 across ten slices (A2-09). LLM reviewers also report bugs in correct code (B3 C4), so some P3s are likely noise. Second, the stop rule only defines pass as 'no unresolved critical correctness or security finding' (task.md:56). So P3s never block, and nothing makes them expire or get promoted. Third, P3s live as prose rows in an 800-plus-line board with no status column. My grep finds 183 distinct ids with a P3 severity cell in clinic-build/task.md. Seven lines say 'not verified by anyone', and S11's 'closed by evidence' rows were not re-verified by the root (task.md:802, read). So no open count exists. The list's 'dozens' understates it, and no one can tell which P3s still apply. Fourth, the owner's USER-24 stop turned everything left into a 'pilot backlog (not gates)', with 'none blocks a pilot' asserted but not tested (A2-11).
+EVIDENCE:
+- A2-09: P3 per round-1 table S01 13, S02 7, S03 8, S04 11, S05 12, S06 13, S07 11, S08 17, S09 11, S10 8 = 111; carried rows with owners; 'Not verified by anyone' rows
+- grep of clinic-build/task.md (read-only): 183 distinct ids on '| P3 |' rows; 7 lines 'not verified by anyone'; no status column
+- clinic-build/task.md:802 (read): pilot backlog list; 'the root has not re-verified them row by row'
+- A2-10: no stopping rule other than no unresolved P1/P2; A2-11: stop by owner instruction
+- research B3 C4 (abstract only): LLMs claim bugs in bug-free programs, damage rate above repair rate; C12: no study of carry-over policies, OSS-Fuzz low-impact bugs stay open (snippet only)
+- BAML D-13: in FixFlow's design P-levels are defined nowhere, and 8 of 12 skeptic verdicts lowered a severity
+ALREADY TRIED:
+- A2-09: Remainder tables with severity and an owner, plus closing-touch branches with one commit per item. Some were closed (PE-01..04, PX-01/02), but most stayed as prose with no queryable count.
+- A2-11 / A1-13: Everything left became a 'pilot backlog' with a short most-likely-first list. That is an assertion, not a triage measured against code.
+EXISTING ANSWERS:
+- [partly] knowledge-store design knowledge-store-design.md section 0 rule 1, sections 3.5, 3.7, 5.1: Open-defect entries carry footprints. `ks lookup --diff` warns when a PR touches a guarded identifier. Entries go suspect when their footprint changes, by event and never by age. The design is unbuilt and says it is 'not the defect register'.
+- [partly] harness review / ship plan harness-review.md section 3 register addendum: FixFlow's register gives each finding a severity, a status code and an owning phase, e.g. O10-F17 P3 -> P2b-1. Fixes are bound to fail-before/pass-after.
+- [partly] BAML D-13, T-08: Define each P-level once in the schema, and check returned findings deterministically for form.
+- [partly] research lane B2 B2 implication B21: A status column plus an auto-close-on-touch rule (a flat temporal fact table). No measured benefit.
+- [partly] research lane B3 B3 implication B21: Owner policy: tag each P3 with path and slice; re-triage any P3 touching money, stock, auth or import before the pilot; re-triage at each release.
+- [partly] clinic itself A7-18 finding shape: A finding needs a trigger, the violated requirement, the affected path, the consequence and a reproduction.
+GAP: There is no machine-readable list with id, severity, status, file footprint and area, so there is no open count and no staleness signal. There is no owner policy for expiry, promotion or a per-round cap. There is no rule that a P3 without a concrete consequence is recorded as a note rather than a finding.
+RESEARCH Q: 
+MECHANISMS:
+- Extract the carried findings into structured records: A cheap extractor pass (Haiku plus a script) turns every finding and remainder row into a record: id, severity, status, owner, closing commit, cited file paths. Check it against the grep count (183 P3 ids) and a 20-row hand sample.
+  COST: One session; zero risk to code.
+  PROOF: An open-P3 count exists and matches a hand recount on the sample. Each record has at least one file footprint or is flagged 'no footprint'.
+- Footprint staleness and a pilot triage rule: Join each open record's files to `git diff <raised-sha>..main` (knowledge-store lineage join, flat form). Owner policy: any open P3 on money, stock, auth, import or restore gets re-triaged before the pilot. Others expire at the next release unless a diff touches their footprint, which revives them.
+  COST: About 100 lines of script plus one owner decision.
+  PROOF: Reports the share of open P3s whose footprint has already changed since they were raised. The pilot-critical subset is re-triaged with a verdict per row before the first real-data day.
+- Severity definitions and a 'consequence or note' rule in the reviewer brief: Define P1-P3 once (D-13). A P3 must name a consequence and a path, or it is filed as a note. Trial on the next 3 gates.
+  COST: A brief edit.
+  PROOF: Round-1 P3 count per gate against the 111 / 10-slice baseline (about 11 a slice), with no rise in late P1s.
+THOUGHT STRUCTURES (narrow): Deduplicating overlapping findings from parallel reviewers is a small graph-aggregation step. Tree or forest search does not bear on triage.
+GRAPH RECALL (narrow): Whether a finding is still true is a validity-over-time fact, closed when its footprint changes or a superseding commit lands. A flat table with a status column and a file join does it. A graph is needed only if multi-hop questions appear, and lane B2 found no measured benefit for this use.
+GAIN: The 'pilot backlog' becomes a number with ages. The few P3s on money, stock or restore paths are re-judged before real data. Stale ones close by evidence, not by reading the board again. Fewer noise findings come in each round. The pilot-critical re-triage is P1 work inside this P2 item.
+
+CROSS-CUTTING:
+- Executed acceptance, model discovery (B17, B21, B01, B12): a finding closes only on a harness-run test that fails on base and passes on head, with a positive control (A4-07 rule, ship plan section 0 Routing, G2-F015). Model reading only finds. This is the one rule with measured support (B1 C6/C8, B3 C1/C2) and it costs minutes.
+- Structured finding records with file footprints (B21, B13, B04, B17): one flat table (id, severity, status, owner, closing SHA, footprint, 'final head reviewed by') replaces prose remainder tables. It gives an open count, auto-suspect on footprint change, and a visible unreviewed tail. It is a flat subset of the unbuilt knowledge-store design (sections 3.5, 3.7, 5.1); no graph needed first.
+- A documented good-enough stop rule (B21, B01, B17): set it before the build, not at wrap-up. Which P1 classes can never be deferred, that the final head of a high-risk branch is always independently read, and how P3s expire or get promoted (A2-10, A2-11 transfer).
+- Rehearse deployment early, then rent before buying (B19, B20, B02): run the clean-install first-deploy walk and drills c (fresh), e and j as standing gates from slice 3 (A7-19 F05). Then a one-day rented host for what the rig cannot prove; the home box only after a heartbeat gate (HR-A3 pattern).
+- Production-OS gate (B18, B06, B07, B05): one owner decision makes the container check the gate (1.5x faster, runs the code production runs), with native runs only on host-tooling diffs and resource caps on the container.
+- Misdescribed: B17 says 'all review is model reading', but executed proofs and drills ran at every gate. The real gaps are no human and an unreviewed final-head tail: 4 of the 5 10-Nov merges, plus the 11-Nov real-data switch, which the root did not re-review (task.md:821). The parked production-readiness review is itself a model session, so unparking it adds no human.
+- Misdescribed: B18's root cause includes B11. With no remote there is no hosted Linux CI. Windows stays the gate because of the gate tooling's own Windows code, not the product's.
+- Misdescribed: B19 understates. Certificate script, off-site push, alert sender and ssh hardening are unbuilt, not merely untested (s12-pilot/first-deploy-checklist.md gaps 1, 3, 4, 6). The newest pilot console commands never ran even on the rig (commit 7cf8014).
+- Misdescribed: B20 has two open claims, concurrency under 12 clerks and the 250,000-movement stock ledger. Rig numbers come from a fast desktop CPU in a 2 GB VM, not a hosted 4 GB envelope.
+- Misdescribed: B21's 'dozens' understates. 111 P3s came in round 1 alone (A2-09), and the board holds 183 distinct P3 ids with no status column, so no open count exists.
+- Stale card: CR-10 says the real-data switch is unmerged. It is merged on main (fb55599, gate f6b5c6c, 7cf8014).

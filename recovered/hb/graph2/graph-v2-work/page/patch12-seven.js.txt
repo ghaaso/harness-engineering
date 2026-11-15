@@ -1,0 +1,101 @@
+// one-off patch: section A2, the owner's seven measures, as a table of the design's layers. Run from graph-v2:  node - < <this file>
+const fs = require('fs');
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing: ' + a.slice(0, 80)); s = s.split(a).join(b); };
+
+const code = String.raw`/* ================= A2: the seven measures ================= */
+// Each cell is either a number already on the page (from data.json or extras.json) with its tag and source, or
+// "not measured" with what would measure it. No exposure is turned into a saving.
+const SEVEN = [['through', 'Throughput'], ['eff', 'Efficiency'], ['tokens', 'Token count'], ['cost', 'Token cost'], ['time', 'Time taken'], ['quality', 'Quality of output'], ['halluc', 'Hallucinations']];
+const AGT = 'the agent test of ruling R-7 (step 2)', RPL = 'the lookup-level replay of ruling R-7 (step 1)';
+const sM = (txt, k, src, more) => ({ m: true, html: '<div class="sv-m">' + txt + '</div><div class="sv-t">' + tag(k, src) + '</div>' + (more ? fold('qualifier', '<p class="small">' + more + '</p>') : '') });
+const sN = why => ({ m: false, html: '<div class="sv-n"><span class="sv-nm" aria-label="not measured">○ not measured</span> <span class="small">' + why + '</span></div>' });
+const NOCOST = sN('no billed cost is recorded; ' + AGT + ' would record it');
+const fPol = pol('fact'), fileP = pol('file'), nevP = pol('never'), VAL = d.cache.validation;
+const lpS = LTS ? (LTS.baselines || []).find(b => b.cls === 'product' && b.seeds !== 'all' && b.arm === 'C') : null;
+const lgS = LTS ? (LTS.baselines || []).find(b => b.cls === 'program' && b.seeds !== 'all' && b.arm === 'C') : null;
+const trav = d.notworth.find(x => /^Traversal cache/.test(x.name)), eng = d.notworth.find(x => /^Graph database/.test(x.name));
+const PFR = PMS && PMS.findings_rows ? PMS.findings_rows[0] : null, PST = PMS ? PMS.stale : null;
+const SV = [
+  { row: 'How agents use lookups today', sec: 'b', c: {
+    through: sN(AGT + ': tasks finished per hour'),
+    eff: sM(U.waste.empty_product + ' % empty searches, ' + U.waste.reread_product + ' % same-window re-reads', 'meas', 'use-cases.md, product lookups'),
+    tokens: sM('carried ' + Mt(PR.totals.carried) + ' product, ' + Mt(PG.totals.carried) + ' program; ' + p1(DR.product.carried_of_ctx) + ' of product context', 'meas', 'use-cases.md'),
+    cost: NOCOST, time: sN(AGT),
+    quality: sN('lookups are not scored for correctness here; ' + RPL),
+    halluc: sN('not scored; ' + RPL + ' on confirmed spans') } },
+  { row: 'Document, item, rule and decision layer, with the session-start brief (not built yet)', sec: 'c', c: {
+    through: sN(AGT + ', focused on the session start'), eff: sN(AGT),
+    tokens: sM('exposure: ' + p0(SS.share_carried) + ' of product lookup tokens are spent before the first edit; ' + p1(docsLedgerProg) + ' of program lookup tokens are documents and earlier conclusions', 'der', 'from use-cases.md', 'An exposure is the share a tool could reach, not what it would save; a tool can also add tokens.'),
+    cost: NOCOST, time: sN(AGT), quality: sN(RPL), halluc: sN(RPL + '; the layer is not built yet') } },
+  { row: 'Conclusion ledger and its invalidation (section E)', sec: 'e', c: {
+    through: sN(AGT),
+    eff: sM('fact-level rule served ' + rnd(fPol.hit_all, 1) + ' % of lookups from the cache', 'meas', SRC.k0),
+    tokens: sN('the replay counted lookups, not tokens; ' + RPL),
+    cost: NOCOST,
+    time: sM('validation ' + VAL.fact + ' to ' + VAL.fact_sem + ' ms per snapshot (median, ' + VAL.questions + ' questions); ' + VAL.cutoff + ' ms with early cutoff', 'meas', 'widen/k0 NOTES'),
+    quality: PFR ? sM(PFR.k + ' of ' + PFR.n + ' sampled earlier findings rest only on tracked, re-checkable premises', 'meas', 'premise-measure/NOTES.md', 'Wilson 95 % interval ' + PFR.wilson[0] + ' to ' + PFR.wilson[1] + ' %. The rest rest on scratch files, untracked notes, outside sources or judgement, which a ledger can date but not re-check.') : sN('the premise measure'),
+    halluc: sM('wrong answers served: ' + f(fPol.stale_all, 0) + ' % fact level, ' + rnd(fileP.stale_all, 1) + ' % file level, ' + rnd(nevP.stale_all, 1) + ' % never invalidated', 'meas', SRC.k0, 'Judged against the extractor\'s own facts, on ' + num(d.cache.lookups) + ' replayed lookups of deterministic questions.' + (PST ? ' For earlier conclusions written by agents: ' + PST.stale + ' of ' + PST.traced + ' traced findings had gone stale and ' + PST.drifted + ' drifted (premise measure); whether a decision rested on them was not established.' : '')) } },
+  { row: 'Code relations and ranking (section D)', sec: 'd', c: {
+    through: sN(AGT), eff: sN(AGT),
+    tokens: sM(V.median_used + ' of ' + V.budget + ' answer tokens used (median, first graph); the ranking question is ' + p1(DR.first_test) + ' of product lookup cost', 'meas', 'v1-audit.md'),
+    cost: NOCOST, time: sN('ranking time was not measured; engine times are in the storage row'),
+    quality: GF ? sM('typed graph showed ' + f(GF.primary.typed) + ' of the real change within ' + num(GF.primary.budget_tokens) + ' tokens (scripted search ' + f(GF.primary.search) + ')', 'meas', 'graphify/RESULT.md, ' + num(GF.primary.tasks) + ' held-out tasks') : sN(RPL),
+    halluc: sN('edges were not checked for correctness; only rankings were scored') } },
+  { row: 'Test set of real lookups and the index-only arm (sections B and I)', sec: 'i', c: {
+    through: sN(AGT), eff: sN(AGT),
+    tokens: lpS && lgS ? sM('keyword search: median ' + num(lpS.tokens_first) + ' tokens to first hit (product), ' + num(lgS.tokens_first) + ' (program)', 'meas', 'lookup-testset/NOTES.md, search seeds') : sN(RPL),
+    cost: NOCOST, time: sN(RPL),
+    quality: lpS && lgS ? sM('keyword search hit in its top 10 for ' + lpS.hit10_pct + ' % of product and ' + lgS.hit10_pct + ' % of program lookups', 'meas', 'lookup-testset/NOTES.md, search seeds', 'A hit is an overlap with the span the agent read, not the whole needed span; ' + LTS.confirmed.all_pct + ' % of lookups have a confirmed used span.') : sN(RPL),
+    halluc: sN('not scored; ' + RPL) } },
+  { row: 'graphify on the same tasks (section G)', sec: 'g', c: {
+    through: sN(AGT), eff: sN(AGT),
+    tokens: GF ? sM('its own default answer: median ' + num(GF.native.median_tokens) + ' tokens', 'meas', 'graphify/RESULT.md', 'In the main comparison every arm filled its budget, and no agent session was run, so the tokens an agent would spend with graphify are not measured.') : sN(AGT),
+    cost: NOCOST, time: sN('build times are not comparable between the tools'),
+    quality: GF ? sM(f(GF.primary.graphify) + ' of the real change within ' + num(GF.primary.budget_tokens) + ' tokens (typed graph ' + f(GF.primary.typed) + ')', 'meas', 'graphify/RESULT.md, code layer only', 'On the code questions (' + esc(GF.questions.qualifier) + ') graphify scored macro F1 ' + GF.questions.graphify_f1 + ' against ' + GF.questions.typed_f1 + ' and ' + GF.questions.search_f1 + '. Its document layer was not run.') : sN(RPL),
+    halluc: sN('no edge was checked for correctness') } },
+  { row: 'Storage engines (section G)', sec: 'g', c: {
+    through: sN(AGT), eff: sN(AGT), tokens: sN('not measured separately; the engines returned identical answers'), cost: NOCOST,
+    time: sM(esc(eng.reason.split(', ')[1] || eng.reason) + '; ' + esc(trav.reason.split(';')[0]), 'meas', 'storage lane, first test'),
+    quality: sM('answers identical across engines', 'meas', 'storage lane, first test'),
+    halluc: sN('not measured separately; the engines returned identical answers') } }
+];
+const svCells = SV.flatMap(r => SEVEN.map(([k]) => r.c[k]));
+const svMeas = svCells.filter(c => c.m).length, svNot = svCells.length - svMeas;
+const svTable = '<div class="svwrap"><table class="sv"><thead><tr><th class="sv-row">Part of the design</th>' + SEVEN.map(([, l]) => '<th>' + l + '</th>').join('') + '</tr></thead><tbody>' +
+  SV.map(r => '<tr><th class="sv-row" scope="row">' + esc(r.row) + ' <a href="#' + r.sec + '">' + r.sec.toUpperCase() + '</a></th>' + SEVEN.map(([k, l]) => '<td data-col="' + k + '" data-label="' + l + '">' + r.c[k].html + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+const secA2 = sec('a2', 'A2', 'What does each part of the design do to the seven measures you judge by?',
+  'Rows are the parts of the design and the results measured so far; columns are your seven measures. A cell holds a measured number with its tag and where it was measured, or “○ not measured” and what would measure it. Folded qualifiers open under a cell.',
+  '<div class="card"><p class="tokline">' + svMeas + ' of ' + svCells.length + ' cells hold a measured number; ' + svNot + ' are not measured yet.</p>' + svTable + '</div>',
+  'Most of the seven measures have no measurement yet: throughput, token cost and most of efficiency and time taken wait for the agent test of ruling R-7. What is measured is where the tokens go (an exposure, not a saving), how often each cache rule serves a wrong answer, how much of the real change each arm shows, and how long validation and indexing take.');
+`;
+rep("const html = `<!doctype html>", code + "\nconst html = `<!doctype html>");
+rep("${header}${toc}<main class=\"wrap\">${secA}${secB}", "${header}${toc}<main class=\"wrap\">${secA}${secA2}${secB}");
+rep("const TOC = [['a', 'A · The answer'], ['b',", "const TOC = [['a', 'A · The answer'], ['a2', 'A2 · The seven measures'], ['b',");
+fs.writeFileSync('build.js.txt', s);
+
+let css = fs.readFileSync('src/page.css', 'utf8');
+css += `/* A2: the seven measures */
+.svwrap{overflow-x:auto}
+table.sv{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed}
+table.sv th,table.sv td{border:1px solid var(--grid);padding:6px 7px;vertical-align:top;text-align:left;overflow-wrap:anywhere}
+table.sv thead th{background:var(--surface);font-size:14px}
+table.sv th.sv-row{width:17%;font-size:14px}
+table.sv th.sv-row a{font-weight:400;font-size:13px}
+.sv-m{font-weight:600}
+.sv-t{margin-top:3px}
+.sv-n{color:var(--ink2)}
+.sv-nm{display:inline-block;border:1.5px dashed var(--axis);border-radius:4px;padding:0 5px;font-size:12px;font-weight:700;color:var(--ink2);white-space:nowrap}
+table.sv .fold summary{font-size:12px}
+@media (max-width:1100px){
+  .svwrap{overflow:visible}
+  table.sv,table.sv tbody,table.sv tr,table.sv td,table.sv th{display:block;width:auto}
+  table.sv thead{display:none}
+  table.sv tr{border:1px solid var(--line);border-radius:8px;margin:0 0 12px;padding:4px 0}
+  table.sv th.sv-row{width:auto;border:0;font-size:16px}
+  table.sv td{border:0;border-top:1px solid var(--grid)}
+  table.sv td::before{content:attr(data-label);display:block;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+}
+`;
+fs.writeFileSync('src/page.css', css);
+console.log('patched A2');

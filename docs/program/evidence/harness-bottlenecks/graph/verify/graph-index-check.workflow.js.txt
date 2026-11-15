@@ -1,0 +1,147 @@
+export const meta = {
+  name: 'graph-index-check',
+  description: 'Check a scripted connection graph of the repo: edge accuracy, the claims drawn from it, and whether real session searches are questions it answers',
+  phases: [
+    { title: 'Check', detail: 'edge accuracy, claims refuter, two independent search classifiers' },
+  ],
+}
+
+const G = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+
+const COMMON = `
+Working rules for this task:
+- Inputs are in ${G} (build.js, query.js, extract.js, graph.json, graph.db, answer.txt, build-output.txt, query-output.txt, extract-output.txt, claims.md, sample.json, searches.jsonl). Read claims.md first for context.
+- The FixFlow repo is at ${REPO}. Treat it as READ-ONLY: do not edit, create, stage or commit anything in it. Do not run git commands that change state.
+- Write only inside your own lane folder (given below). Put any script you write there, and a report.md with your method, your numbers and the commands that produced them.
+- Tools on this PC: node v24 is on PATH (node:sqlite is built in); there is NO python on PATH. Bash commands longer than about 8 KB are cut silently, so write long scripts to a file in pieces. In a heredoc, a doubled backslash collapses to one; use regex literals with single backslashes inside a quoted heredoc, or String.fromCharCode(92).
+- Never put the owner's name, the project name, file paths or any project detail into a web search or a request to an outside service.
+- Report what you measured, not what you expect. If you could not check something, say so. Your final structured output is data for an orchestrator, not a message to a person.
+`
+
+const EDGES_SCHEMA = {
+  type: 'object',
+  properties: {
+    files_sampled: { type: 'number' },
+    sampling_rule: { type: 'string' },
+    true_importer_links_found_independently: { type: 'number' },
+    links_in_graph_and_true: { type: 'number' },
+    links_missed_by_graph: { type: 'number' },
+    false_links_in_graph: { type: 'number' },
+    recall_pct: { type: 'number' },
+    precision_pct: { type: 'number' },
+    miss_causes: { type: 'array', items: { type: 'string' } },
+    unresolved_47_explained: { type: 'string' },
+    doc_citations_checked: { type: 'number' },
+    doc_citations_wrong: { type: 'number' },
+    doc_unresolved_explained: { type: 'string' },
+    symbol_edges_checked: { type: 'number' },
+    symbol_edges_wrong: { type: 'number' },
+    target_file_check: { type: 'string' },
+    connection_kinds_the_graph_cannot_see: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string' }, example: { type: 'string' }, rough_count: { type: 'string' }, scriptable: { type: 'string' } }, required: ['kind', 'example', 'scriptable'] } },
+    numbers_in_claims_that_change: { type: 'array', items: { type: 'string' } },
+    verdict: { type: 'string' },
+  },
+  required: ['files_sampled', 'sampling_rule', 'recall_pct', 'precision_pct', 'miss_causes', 'unresolved_47_explained', 'connection_kinds_the_graph_cannot_see', 'numbers_in_claims_that_change', 'verdict'],
+}
+
+const CLAIMS_SCHEMA = {
+  type: 'object',
+  properties: {
+    claims: { type: 'array', items: { type: 'object', properties: {
+      id: { type: 'string' },
+      verdict: { type: 'string', enum: ['holds', 'holds with a correction', 'overstated', 'wrong', 'cannot be checked'] },
+      what_you_did: { type: 'string' },
+      correction: { type: 'string' },
+    }, required: ['id', 'verdict', 'what_you_did'] } },
+    strongest_case_for_the_owners_idea: { type: 'string' },
+    strongest_case_against: { type: 'string' },
+    missing_from_the_claims: { type: 'array', items: { type: 'string' } },
+    one_line_answer_you_would_give: { type: 'string' },
+  },
+  required: ['claims', 'strongest_case_for_the_owners_idea', 'strongest_case_against', 'missing_from_the_claims', 'one_line_answer_you_would_give'],
+}
+
+const CLS_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: { type: 'array', items: { type: 'object', properties: {
+      id: { type: 'number' },
+      cls: { type: 'string', enum: ['NOT_A_SEARCH', 'CONNECTION', 'DEFINITION', 'CONTENT', 'STATE_OR_LISTING', 'UNCLEAR'] },
+      graph_answer: { type: 'string', enum: ['full', 'partial', 'none'] },
+      step_saved: { type: 'string', enum: ['likely', 'unlikely', 'cannot tell'] },
+      note: { type: 'string' },
+    }, required: ['id', 'cls', 'graph_answer', 'step_saved'] } },
+    observations: { type: 'array', items: { type: 'string' } },
+    how_sessions_already_search: { type: 'string' },
+    what_an_index_would_change: { type: 'string' },
+  },
+  required: ['items', 'observations', 'how_sessions_already_search', 'what_an_index_would_change'],
+}
+
+const CLS_PROMPT = (lane) => `You are classifying real searches that coding-agent sessions ran, to learn whether a scripted index of code connections would have answered them.
+${COMMON}
+Your lane folder: ${G}/verify/${lane}
+
+Read ${G}/sample.json. It holds 200 items drawn at a fixed interval from all 8,303 search-bearing tool calls in one project's November sessions (a Django-style Python project, not the FixFlow repo). Each item has: id, kind (the tool), sub (true if a subagent), search (the command or tool input, cut at 420 characters), said_before (what the model wrote just before, if anything), next_calls (the next two tool calls).
+
+The index being judged is deterministic and built by script, with no model: for every file, which files import it and which named symbols they import; who calls a function; which test files reach a file; which docs cite a file by path; where a symbol is defined, with its line range. It holds connections and locations. It does not hold file contents, log output, test results, git state or prose meaning.
+
+For EACH of the 200 items give:
+- cls, the main intent of the call:
+  NOT_A_SEARCH: grep, ls or find used only to filter or check the output of something being run (a test run, a script, a git command, a build), or appearing inside a script being written. Not a lookup in the code.
+  CONNECTION: asks who imports, calls, uses or references a thing, which tests cover it, which files mention a file or symbol. The answer is a list of places.
+  DEFINITION: asks where a named thing is defined, usually reading its body in the same command (grep -n "def x" -A30, sed -n a,b p).
+  CONTENT: wants specific content or values: strings, settings, numbers, wording in docs or code, the lines of a known file.
+  STATE_OR_LISTING: logs, run output files, directory listings, git state, checking that a file exists.
+  UNCLEAR: cannot tell from what is shown.
+  If a command mixes several, choose the one that carries most of what it returns.
+- graph_answer: "full" if the index alone would have returned what the call was after, in one lookup and in no more tokens; "partial" if it would give the place but the call also needed the lines themselves, or it answers only some of the sub-commands; "none" otherwise.
+- step_saved: would having the index plausibly have saved a model step here or just after (for example next_calls shows a follow-up search or read hunting for the same thing)? "likely", "unlikely" or "cannot tell". Be strict: a single command that already finds and reads the thing in one step saves nothing.
+- note: at most 12 words, only where the call is a borderline case.
+
+Judge each item on its own evidence. Do not aim for any particular share. Do not skip items: the output must hold exactly 200 entries with ids 1 to 200.
+Then give: observations (patterns you saw, with counts where you can), how_sessions_already_search (do they batch several lookups into one command, read ranges or whole files, repeat themselves), and what_an_index_would_change (be concrete and conservative).
+Also write your full table to ${G}/verify/${lane}/classification.json and a short report.md.`
+
+phase('Check')
+const results = await parallel([
+  () => agent(`You are testing the accuracy of a scripted connection graph of a code repository. Your job is to find where it is wrong or incomplete. Assume it has errors until you have checked.
+${COMMON}
+Your lane folder: ${G}/verify/edges
+
+The graph is ${G}/graph.json: {files: [...], edges: [[fromIndex, toIndex, kind, detail]], sym: {...}}. kind is "import" (detail = the imported name, or empty for a whole-module import), "mock" (a test mocking a module) or "cites" (a markdown doc naming a file; detail = "line|heading"). It was built by ${G}/build.js from the FixFlow repo at ${REPO} (FastAPI backend in backend/, React web app in src/ with aliases @app @ops @shared @features, Expo mobile app in technician-app/ with alias @/ meaning technician-app/src/).
+
+Do all of these and report numbers:
+1. Importer recall and precision. Choose 30 code files by a rule you state before looking at results (10 Python under backend/, 10 web under src/, 10 mobile under technician-app/; include both heavily imported files and ordinary ones; for example every Nth file of each group sorted by path, plus the three most-imported per group). For each, find every in-repo file that imports it by your OWN independent method (search and read the import lines; consider relative imports, aliases, index barrels, re-exports, __init__ re-exports, dynamic imports, jest.mock or vi.mock; do not reuse build.js). Compare with the graph's incoming import and mock edges. Count true links, links the graph missed, and false links, and give the cause of each miss or false link.
+2. The build reported 47 in-repo imports it could not resolve. Find them (copy build.js into your lane and add a print) and say what they are and whether real links are lost.
+3. Doc citations: check 30 "cites" edges chosen at a fixed interval. Does the doc line really refer to that file? The resolver tries a list of path prefixes in order, so a short name can resolve to the wrong file. The build resolved 979 of 1,606 path mentions; say what the unresolved ones mostly are.
+4. Named-symbol edges: check 20 at a fixed interval. Is the named symbol really defined in or re-exported by the target file?
+5. Re-run the target query (node query.js ${REPO} backend/app/features/jobs/service.py, from a copy in your lane if you need to change anything) and check its 18 direct dependants and 30 total by your own search. Check the "plain text search returns 49 lines" figure: the pattern in query.js lost a backslash, so say what a correct search returns.
+6. What real connections can this graph not see at all? Consider at least: function calls without a matching import edge at function level, FastAPI dependency injection and router registration, client code calling backend URLs, ORM table and column names, the Alembic migration chain, settings keys and environment variables, the mobile outbox kinds and their server handlers, tests that reach code only through fixtures. For each give a real example from this repo, a rough count where cheap, and whether a script could extract it reliably.
+7. List every number in claims.md (C1, C2, C5) that your checks change, with the corrected value.`,
+    { label: 'edges: graph accuracy', phase: 'Check', model: 'opus', effort: 'high', agentType: 'general-purpose', schema: EDGES_SCHEMA }),
+
+  () => agent(`You are a refuter. An orchestrator drafted ten claims (C1 to C10 in ${G}/claims.md) to answer an owner who asked whether a graph database of the repo's semantic relations and real connections, with a cache on top, would carry a lot of information in a small size and so reduce token use by coding agents. The orchestrator has overclaimed on this topic before. Try to break each claim. Where a claim is fair, say so plainly; do not invent objections.
+${COMMON}
+Your lane folder: ${G}/verify/claims
+
+Do at least this:
+- Re-run the scripts (copies in your lane if you change them) and check every number in C1 to C5 against the outputs.
+- C2: is "555 tokens against 70,500" a fair comparison? What would a session really read to learn the same thing? Is the text-search figure right (the pattern in query.js lost a backslash)? Measure the fair alternatives and give the honest ratio.
+- C3: test it harder. Build a larger synthetic graph at the size a function-level call graph of this repo would have (estimate that size from the 2,332 functions and classes counted, and say how you estimated), and at 10 and 100 times that, and time the same reverse-reach query in memory and in SQLite. At what size, if any, does the store start to matter? Is anything in C3 about graph databases wrong or too strong? You may check facts about graph databases on the web with generic queries only. Consider embedded graph stores that need no server: would one change the conclusion?
+- C4: is there any cache that would matter that the claim ignores? Think about what is expensive in this system (a model step takes seconds and re-reads its whole window; a lookup takes microseconds) and about the provider's prompt cache. Is "rebuild on every commit" enough when agents work in several worktrees with uncommitted changes?
+- C5: check the reach figures, and say whether the hub problem undermines the usefulness claim.
+- C6: read section 6 of ${REPO}/docs/program/HARNESS-BOTTLENECKS-2026-11.md (lines 212 to 243) and its evidence under ${REPO}/docs/program/evidence/harness-bottlenecks/ where you need it. Is the outside evidence quoted fairly in C6? Are there other semantic relations in this repo that a script could extract without a model (look at CLAUDE.md in the repo root: it names invariants and the files that hold them)?
+- C7 and C8: is the limit stated honestly? Does anything in the demo quietly imply a token saving that was not measured?
+- C10: read ${REPO}/docs/program/harness-v2/design.json and architecture.json (search them for "index", "replay", "D23") and say whether "already in phase 3 of the plan" is accurate, and whether the owner's idea contains anything the plan does not.
+- Finally: the strongest honest case FOR the owner's idea, the strongest case AGAINST, what the claims leave out, and the one-line answer you would give the owner.`,
+    { label: 'claims: refuter', phase: 'Check', model: 'opus', effort: 'high', agentType: 'general-purpose', schema: CLAIMS_SCHEMA }),
+
+  () => agent(CLS_PROMPT('searches-a'), { label: 'searches: classifier A', phase: 'Check', model: 'sonnet', effort: 'medium', agentType: 'general-purpose', schema: CLS_SCHEMA }),
+  () => agent(CLS_PROMPT('searches-b'), { label: 'searches: classifier B', phase: 'Check', model: 'opus', effort: 'high', agentType: 'general-purpose', schema: CLS_SCHEMA }),
+])
+
+const [edges, claims, clsA, clsB] = results
+log(`edges ${edges ? 'ok' : 'FAILED'} | claims ${claims ? 'ok' : 'FAILED'} | classifier A ${clsA ? clsA.items.length : 'FAILED'} | classifier B ${clsB ? clsB.items.length : 'FAILED'}`)
+return { edges, claims, clsA, clsB }

@@ -1,0 +1,149 @@
+'use strict';
+// DuckDB + DuckPGQ store for one (parent commit, removed document): built once from the canonical graph
+// (common/facts.js exportCanon CSV files, bulk loaded with read_csv), then opened read-only by every run.
+//
+// Layout of the store file (<store>/<sha>-<tag>.duckdb):
+//   ekind(kid, name), eclass(cid, name, structural)          kind ids = canonical kind order (SPEC 2)
+//   node(id PK, sid, kind, path, name, ls, le, runtime, slice, is_test, file, tokens, text, transport, dl)
+//        rows inserted in id order, so DuckPGQ vertex rowid = id - 1 (checked at open)
+//   edge(src, dst, kid, cid, w, n_ev, sym)                     every canonical edge, once (co_changed: src < dst)
+//   one label table per (edge kind, class): "l_<kind>" (contains splits into l_contains_structure and
+//        l_contains_membership): (src, dst, w, n_ev). These are the typed edge labels of the property graph.
+//   deg(node, cid, prod_in)       production in-degree per class (SPEC 5 indeg)
+//   term(node, term, tf), df(term, n)   BM25 postings over the shared node text (SPEC 8.4)
+//   cochange(a, b, w)             co_changed in both orientations (SPEC 8.3)
+//   edge_ev(src, dst, kid, path, line, op)   evidence rows (for the TQ queries only)
+//   meta(k, v)                    canon hash, counts, build times, versions
+// A property graph cannot be stored with the file opened read-only, so the graphs are declared per
+// connection (pgq.js), over these tables.
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { DuckDBInstance } = require('@duckdb/node-api');
+const { exportCanon } = require('../common/facts');
+const { CLASSES, STRUCTURAL } = require('../common/edgeclasses');
+
+const STORE_VERSION = 'D1';
+const EXT_DIR = process.env.GT_DUCKDB_EXT || '/opt/eng/ext-duckdb';
+const now = () => Number(process.hrtime.bigint()) / 1e6;
+
+function storeTag(G) {
+  return crypto.createHash('sha1').update([STORE_VERSION, G.loader_version, G.meta.extractor_version, G.removed.join(',')].join('|')).digest('hex').slice(0, 8);
+}
+function storeFile(G, dir) { return path.join(dir, G.sha + '-' + storeTag(G) + '.duckdb'); }
+// label name of an edge kind (and class, for contains)
+function labelOf(kind, cls) { return kind === 'contains' ? 'l_contains_' + cls : 'l_' + kind; }
+
+// value conversion: BIGINT -> number, lists recursively
+function js(v) {
+  if (typeof v === 'bigint') return Number(v);
+  if (Array.isArray(v)) return v.map(js);
+  if (v && typeof v === 'object' && !(v instanceof Date)) { const o = {}; for (const k of Object.keys(v)) o[k] = js(v[k]); return o; }
+  return v;
+}
+async function connect(file, opts = {}) {
+  const inst = await DuckDBInstance.create(file, opts.config || {});
+  const conn = await inst.connect();
+  const db = {
+    inst, conn,
+    async all(sql) { const r = await conn.runAndReadAll(sql); return r.getRowObjectsJS().map(js); },
+    async run(sql) { await conn.run(sql); },
+    async one(sql) { const r = await db.all(sql); return r[0]; },
+    close() { try { conn.closeSync(); } catch (e) { /* closed */ } try { inst.closeSync(); } catch (e) { /* closed */ } },
+  };
+  return db;
+}
+async function loadPgq(db) {
+  await db.run(`SET extension_directory='${EXT_DIR}'`);
+  await db.run('LOAD duckpgq');
+  await db.run("SET active_grammar_extensions=['duckpgq']");
+}
+const lit = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+const csvField = (v) => { if (v === null || v === undefined) return ''; const s = String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+
+async function buildStore(G, file) {
+  const T = {}; let t = now();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + '.csv';
+  fs.rmSync(tmp, { recursive: true, force: true });
+  const manifest = exportCanon(G, tmp);
+  // evidence rows are not part of the canonical CSV export; they come from the same loaded graph
+  const kid = new Map(G.kinds.map((k, i) => [k, i + 1]));
+  let ev = 'src,dst,kid,path,line,op\n';
+  for (const e of G.edges) for (const [p, l, op] of e.evs) ev += [e.s, e.d, kid.get(e.kind), p, l, op].map(csvField).join(',') + '\n';
+  fs.writeFileSync(path.join(tmp, 'edge_ev.csv'), ev);
+  T.export_ms = now() - t; t = now();
+  const part = file + '.part';
+  fs.rmSync(part, { force: true }); fs.rmSync(part + '.wal', { force: true });
+  const db = await connect(part);
+  const P = (f) => lit(path.join(tmp, f).replace(/\\/g, '/'));
+  const csv = (f, cols) => `read_csv(${P(f)}, header = true, delim = ',', quote = '"', escape = '"', columns = {${cols}})`;
+  const stmts = [
+    'CREATE TABLE ekind(kid INTEGER PRIMARY KEY, name VARCHAR)',
+    'INSERT INTO ekind VALUES ' + G.kinds.map((k, i) => `(${i + 1}, ${lit(k)})`).join(', '),
+    'CREATE TABLE eclass(cid INTEGER PRIMARY KEY, name VARCHAR, structural INTEGER)',
+    'INSERT INTO eclass VALUES ' + CLASSES.map((c, i) => `(${i}, ${lit(c)}, ${STRUCTURAL.has(c) ? 1 : 0})`).join(', '),
+    `CREATE TABLE node(id BIGINT PRIMARY KEY, sid VARCHAR, kind VARCHAR, path VARCHAR, name VARCHAR, ls INTEGER, le INTEGER,
+      runtime VARCHAR, slice VARCHAR, is_test INTEGER, file BIGINT, tokens INTEGER, text VARCHAR, transport INTEGER, dl INTEGER)`,
+    `INSERT INTO node SELECT id, sid, kind, path, name, ls, le, runtime, slice, is_test, file, tokens, text, 0,
+      CASE WHEN text IS NULL OR text = '' THEN 0 ELSE len(string_split(text, ' ')) END
+      FROM ${csv('nodes.csv', "'id': 'BIGINT', 'sid': 'VARCHAR', 'kind': 'VARCHAR', 'path': 'VARCHAR', 'name': 'VARCHAR', 'ls': 'INTEGER', 'le': 'INTEGER', 'runtime': 'VARCHAR', 'slice': 'VARCHAR', 'is_test': 'INTEGER', 'file': 'BIGINT', 'tokens': 'INTEGER', 'text': 'VARCHAR'")} ORDER BY id`,
+    'CREATE TABLE edge(src BIGINT, dst BIGINT, kid INTEGER, cid INTEGER, w DOUBLE, n_ev INTEGER, sym INTEGER)',
+    `INSERT INTO edge SELECT e.src, e.dst, k.kid, c.cid, e.weight, e.n_ev, CASE WHEN e.kind = 'co_changed' THEN 1 ELSE 0 END
+      FROM ${csv('edges.csv', "'kind': 'VARCHAR', 'class': 'VARCHAR', 'src': 'BIGINT', 'dst': 'BIGINT', 'weight': 'DOUBLE', 'n_ev': 'INTEGER'")} e
+      JOIN ekind k ON k.name = e.kind JOIN eclass c ON c.name = e.class ORDER BY e.src, k.kid, e.dst`,
+    `CREATE TABLE edge_ev AS SELECT * FROM ${csv('edge_ev.csv', "'src': 'BIGINT', 'dst': 'BIGINT', 'kid': 'INTEGER', 'path': 'VARCHAR', 'line': 'INTEGER', 'op': 'VARCHAR'")}`,
+    // transport hubs (SPEC 5), independent of the configuration
+    `UPDATE node SET transport = 1 WHERE kind IN ('runtime', 'slice', 'invariant_group', 'ambiguous_ref', 'missing_ref')
+      OR (kind IN ('function', 'method', 'class') AND is_test = 0 AND id IN (
+        SELECT e.dst FROM edge e JOIN node x ON x.id = e.src JOIN ekind k ON k.kid = e.kid
+        WHERE k.name IN ('calls', 'depends_injects', 'passes_callable') AND e.sym = 0 AND x.is_test = 0 AND x.slice IS NOT NULL
+        GROUP BY e.dst HAVING count(DISTINCT coalesce(x.runtime, 'null') || '/' || x.slice) >= 3))`,
+    // production in-degree per class: target of an edge whose source is not a test; a symmetric edge
+    // counts for both ends
+    `CREATE TABLE deg AS SELECT node, cid, count(*)::INTEGER AS prod_in FROM (
+        SELECT e.dst AS node, e.cid FROM edge e JOIN node s ON s.id = e.src WHERE s.is_test = 0
+        UNION ALL SELECT e.src, e.cid FROM edge e JOIN node d ON d.id = e.dst WHERE e.sym = 1 AND d.is_test = 0)
+      GROUP BY node, cid ORDER BY node, cid`,
+    `CREATE TABLE term AS SELECT id AS node, t AS term, count(*)::INTEGER AS tf FROM (
+        SELECT id, unnest(string_split(text, ' ')) AS t FROM node WHERE text IS NOT NULL AND text <> '') GROUP BY id, t ORDER BY term, node`,
+    'CREATE TABLE df AS SELECT term, count(*)::INTEGER AS n FROM term GROUP BY term ORDER BY term',
+    `CREATE TABLE cochange AS SELECT a, b, w FROM (SELECT src AS a, dst AS b, w FROM edge WHERE kid = ${kid.get('co_changed') || -1}
+      UNION ALL SELECT dst, src, w FROM edge WHERE kid = ${kid.get('co_changed') || -1}) ORDER BY a, b`,
+  ];
+  for (const s of stmts) await db.run(s);
+  T.load_ms = now() - t; t = now();
+  // one typed label table per (kind, class)
+  const kc = await db.all('SELECT DISTINCT k.name AS kind, c.name AS cls, e.kid, e.cid FROM edge e JOIN ekind k ON k.kid = e.kid JOIN eclass c ON c.cid = e.cid ORDER BY 1, 2');
+  for (const r of kc) await db.run(`CREATE TABLE ${labelOf(r.kind, r.cls)} AS SELECT src, dst, w, n_ev FROM edge WHERE kid = ${r.kid} AND cid = ${r.cid} ORDER BY src, dst`);
+  T.labels_ms = now() - t; t = now();
+  // load check against the canonical graph (counts and sums per kind, node text bytes)
+  const chk = await db.all('SELECT k.name AS kind, count(*) AS n, sum(src) AS s, sum(dst) AS d, sum(w) AS w, sum(n_ev) AS ne FROM edge e JOIN ekind k USING (kid) GROUP BY 1 ORDER BY 1');
+  const exp = new Map();
+  for (const e of G.edges) { const x = exp.get(e.kind) || { n: 0, s: 0, d: 0, w: 0, ne: 0 }; x.n++; x.s += e.s; x.d += e.d; x.w += e.w; x.ne += e.n; exp.set(e.kind, x); }
+  const bad = [];
+  for (const r of chk) { const x = exp.get(r.kind); if (!x || x.n !== r.n || x.s !== r.s || x.d !== r.d || x.ne !== r.ne || Math.abs(x.w - r.w) > 1e-6) bad.push(r.kind); exp.delete(r.kind); }
+  if (exp.size) bad.push(...exp.keys());
+  const nchk = await db.one('SELECT count(*) AS n, sum(id) AS s, sum(strlen(coalesce(text, ""))) AS tb, sum(strlen(sid)) AS sb, sum(is_test) AS nt FROM node'.replace(/""/g, "''"));
+  const enc = (s) => Buffer.byteLength(s || '', 'utf8');
+  const ne = { n: G.nodes.length, s: G.nodes.reduce((a, n) => a + n.i, 0), tb: G.nodes.reduce((a, n) => a + enc(n.text), 0), sb: G.nodes.reduce((a, n) => a + enc(n.sid), 0), nt: G.nodes.reduce((a, n) => a + n.is_test, 0) };
+  for (const k of Object.keys(ne)) if (ne[k] !== nchk[k]) bad.push('node.' + k + ' ' + ne[k] + ' vs ' + nchk[k]);
+  const rid = await db.one('SELECT count(*) AS n FROM (SELECT rowid AS r, id FROM node) WHERE r <> id - 1');
+  if (rid.n) bad.push('node rowid order');
+  if (bad.length) { db.close(); throw new Error('duckpgq store load check failed: ' + bad.join(', ')); }
+  T.check_ms = now() - t;
+  const nt = await db.one('SELECT count(*) AS n, sum(dl) AS total FROM node');
+  const meta = { store_version: STORE_VERSION, canon_hash: manifest.hash, sha: G.sha, removed: G.removed.join(','), loader_version: G.loader_version,
+    extractor_version: G.meta.extractor_version, nodes: G.nodes.length, edges: G.edges.length, n_docs: nt.n, total_tokens: nt.total,
+    labels: kc.length, ...Object.fromEntries(Object.entries(T).map(([k, v]) => [k, +v.toFixed(1)])) };
+  await db.run('CREATE TABLE meta(k VARCHAR PRIMARY KEY, v VARCHAR)');
+  await db.run('INSERT INTO meta VALUES ' + Object.entries(meta).map(([k, v]) => `(${lit(k)}, ${lit(v)})`).join(', '));
+  await db.run('CHECKPOINT');
+  db.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.renameSync(part, file);
+  meta.bytes = fs.statSync(file).size;
+  return meta;
+}
+
+module.exports = { STORE_VERSION, storeTag, storeFile, labelOf, connect, loadPgq, buildStore, lit, js, EXT_DIR };

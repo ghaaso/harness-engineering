@@ -1,0 +1,68 @@
+// Build the river prototype of the map section: one self-contained page, index.html, in this folder.
+// Run from this folder:   node - < build.js.txt
+// Reads (never writes): ../../../../library-pathways/{map.json,params.json,limitations.json,cases.json,engine.js}
+// and ../../page-src/{core.js.txt,text.json}. Writes only ./index.html.
+// Every number on the page is computed in the browser by the engine from these files at middle values.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const DATA = path.resolve(here, '../../../../library-pathways');
+const SRC = path.resolve(here, '../../page-src');
+const read = (p) => fs.readFileSync(p, 'utf8');
+const json = (p) => JSON.parse(read(p));
+
+const C = require(path.join(SRC, 'core.js.txt'));
+const E = require(path.join(DATA, 'engine.js'));
+const map = json(path.join(DATA, 'map.json'));
+const params = json(path.join(DATA, 'params.json'));
+const lims = json(path.join(DATA, 'limitations.json'));
+const cases = json(path.join(DATA, 'cases.json'));
+const text = json(path.join(SRC, 'text.json'));
+
+// Words the map section needs from text.json (hand-set match of design steps to stages, way names, tags).
+const tx = {
+  policy_names: text.policy_names, policy_short: text.policy_short, policy_says: text.policy_says,
+  tags: text.tags, computed_tag: text.computed_tag, todays_notes: text.todays_notes,
+  design_steps: text.design_steps, design_steps_note: text.design_steps_note
+};
+
+// Parity checks before inlining: conservation and cost by branch adds up to the engine's cost.
+const best = E.paramsFromTable(params, 'best');
+const tp = E.timePath(map, best);
+const last = tp.periods[tp.periods.length - 1];
+let worst = 0;
+['library', 'cheap_ladder', 'top_first'].forEach((pol) => {
+  const st = pol === 'library' ? last.stocks : {};
+  const ev = E.evaluatePolicy(map, best, pol, st);
+  const cm = E.compile(map);
+  let carried = 0;
+  cm.policies[cm.policyIndex[pol]].combos.forEach((combo) => {
+    const ec = E.evaluateClass(map, best, pol, combo.values, st);
+    if (!ec.chance) return;
+    const bv = C.branchValues(E, map, best, pol, combo.values, st);
+    map.branches.forEach((b) => { carried += ec.chance * ec.branchFlow[b.id] * bv[b.id].cost; });
+  });
+  worst = Math.max(worst, Math.abs(carried - ev.overall.cost));
+  const outs = Object.values(ev.overall.outcomes).reduce((a, b) => a + b, 0);
+  if (Math.abs(outs - 1) > 1e-9) throw new Error('Outcomes do not sum to 1 under ' + pol);
+});
+if (worst > 1e-9) throw new Error('Cost carried by branches does not add up to the engine cost: ' + worst);
+
+const data = { map, params, lims, cases: C.packCases(cases), text: tx };
+const dataJson = JSON.stringify(data).replace(/</g, '\\u003c');
+const engine = C.strip(read(path.join(DATA, 'engine.js')));
+const core = C.strip(read(path.join(SRC, 'core.js.txt')));
+const css = C.strip(read(path.join(here, 'river.css.txt')));
+const js = C.strip(read(path.join(here, 'river.js.txt')));
+let html = read(path.join(here, 'river.html.txt'));
+html = html.replace('/*__CSS__*/', () => css)
+  .replace('/*__DATA__*/', () => dataJson)
+  .replace('/*__ENGINE__*/', () => engine)
+  .replace('/*__CORE__*/', () => core)
+  .replace('/*__JS__*/', () => js);
+fs.writeFileSync(path.join(here, 'index.html'), html);
+const size = Buffer.byteLength(html);
+console.log('index.html ' + size + ' bytes' + (size > 500000 ? '  OVER 500,000' : ''));
+console.log('cost by branch matches the engine to ' + worst.toExponential(1));
+console.log('states ' + map.states.length + ', branches ' + map.branches.length + ', limitations ' + lims.items.length + ', cases ' + cases.cases.length);

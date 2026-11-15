@@ -1,0 +1,616 @@
+// Build script for the library pathways page (third build, page-brief.md). Run it from its own folder
+// (node needs the .txt file on stdin):
+//   cd docs/program/evidence/library-pathways && node - < build-page.js.txt
+// Reads   docs/program/library-pathways/{map.json, params.json, engine.js, limitations.json, cases.json}
+//         docs/program/evidence/library-pathways/page-src/{page.html.txt, page.css.txt, page.js.txt, core.js.txt, text.json}
+// Writes  docs/program/library-pathways/index.html        (one self-contained page: data, engine, styles and script inlined)
+//         docs/program/LIBRARY-PATHWAYS-2026-11.md         (the short record, generated from the same data)
+//         docs/program/evidence/library-pathways/build-page-report.txt  (checks)
+// Neither output is edited by hand: change the data or page-src and rebuild.
+// The inlined scripts and style sheet are stripped (comment lines, block comments, indentation, blank
+// lines) and the inlined data leaves out fields the page never reads. Every parity check runs on exactly
+// what is inlined. The page is also rendered here without a browser (a small stand-in for the document),
+// so the funnel, the corners, the square, the weights and the word counts are checked on the markup the
+// page itself produces.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const HERE = path.resolve(process.cwd());
+if (!fs.existsSync(path.join(HERE, 'page-src', 'page.js.txt'))) { console.error('Run this from docs/program/evidence/library-pathways'); process.exit(2); }
+const PROGRAM = path.resolve(HERE, '..', '..');
+const LP = path.join(PROGRAM, 'library-pathways');
+const SRC = path.join(HERE, 'page-src');
+const read = p => fs.readFileSync(p, 'utf8');
+const MAP = JSON.parse(read(path.join(LP, 'map.json')));
+const TABLE = JSON.parse(read(path.join(LP, 'params.json')));
+const LIMS = JSON.parse(read(path.join(LP, 'limitations.json')));
+const CASES = JSON.parse(read(path.join(LP, 'cases.json')));
+const TX = JSON.parse(read(path.join(SRC, 'text.json')));
+const engineSrc = read(path.join(LP, 'engine.js'));
+const coreSrc = read(path.join(SRC, 'core.js.txt'));
+const MODS_DIR = path.join(SRC, 'mods');
+const MOD_IDS = process.env.LP_MODS !== undefined ? process.env.LP_MODS.split(',').filter(Boolean) : (fs.existsSync(MODS_DIR) ? fs.readdirSync(MODS_DIR).filter(f => /\.js\.txt$/.test(f)).map(f => f.replace(/\.js\.txt$/, '')).sort() : []);
+const modPart = (id, ext) => { const p = path.join(MODS_DIR, id + ext); return fs.existsSync(p) ? read(p) : ''; };
+const pageJs = read(path.join(SRC, 'page.js.txt')).replace('/*__MODS__*/', () => MOD_IDS.map(id => '\n' + modPart(id, '.js.txt')).join('\n'));
+const cssSrc = read(path.join(SRC, 'page.css.txt')) + MOD_IDS.map(id => '\n' + modPart(id, '.css.txt')).join('');
+const E = require(path.join(LP, 'engine.js'));
+const C = require(path.join(SRC, 'core.js.txt'));
+const fail = [], report = [], notes = [];
+const check = (ok, msg) => { if (!ok) fail.push(msg); };
+const WORD_LIMIT = 6000;
+const SENTENCE_LIMIT = 20;
+const SIZE_LIMIT = 760000;
+const T0 = Date.now();
+
+/* ---------- 1. data consistency ---------- */
+const stateIds = MAP.states.map(s => s.id), branchIds = new Set(MAP.branches.map(b => b.id)), stepIds = MAP.steps.map(s => s.id);
+const paramIds = new Set(MAP.parameters.map(p => p.id));
+stateIds.forEach(id => check(Array.isArray(TX.layout.states[id]), 'layout has no position for state ' + id));
+Object.keys(TX.layout.states).forEach(id => check(stateIds.includes(id), 'layout names unknown state ' + id));
+Object.keys(TX.layout.lanes).forEach(id => check(branchIds.has(id), 'layout lane names unknown branch ' + id));
+MAP.states.forEach(s => { const st = MAP.steps.findIndex(x => x.id === s.step); check(st >= 0, 'state ' + s.id + ' has unknown step'); });
+const colRange = {};
+MAP.states.forEach(s => { const c = TX.layout.states[s.id][0]; const r = colRange[s.step] = colRange[s.step] || [99, -1]; r[0] = Math.min(r[0], c); r[1] = Math.max(r[1], c); });
+for (let i = 1; i < stepIds.length; i++) check(colRange[stepIds[i]][0] > colRange[stepIds[i - 1]][1], 'stage ' + stepIds[i] + ' is not to the right of ' + stepIds[i - 1]);
+MAP.branches.forEach(b => check(TX.layout.states[b.to][0] > TX.layout.states[b.from][0], 'branch ' + b.id + ' does not run left to right'));
+check(JSON.stringify(Object.keys(TX.design_steps)) === JSON.stringify(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']), 'design_steps must cover steps 1 to 10');
+Object.keys(TX.design_steps).forEach(k => TX.design_steps[k].forEach(st => check(stepIds.includes(st), 'design step ' + k + ' names unknown stage ' + st)));
+check(JSON.stringify(Object.keys(LIMS.steps)) === JSON.stringify(Object.keys(TX.design_steps)), 'limitations.json steps differ from the design step table');
+MAP.policies.forEach(p => check(TX.policy_names[p.id] && TX.policy_short[p.id] && TX.policy_says[p.id], 'no display name for policy ' + p.id));
+TABLE.parameters.forEach(r => check(paramIds.has(r.id), 'params.json row for unknown parameter ' + r.id));
+MAP.parameters.forEach(p => { const r = TABLE.parameters.find(x => x.id === p.id); check(!!r, 'no params.json row for ' + p.id); if (r) check(['M', 'S', 'G'].includes(r.tag) && r.source && r.low <= r.best && r.best <= r.high, 'params.json row ' + p.id + ' needs a tag, a source and low <= best <= high'); });
+TABLE.parameters.forEach(r => { try { E.sideOf(r, r.id); E.groupOf(MAP, r, r.id); } catch (e) { fail.push('side or group: ' + e.message); } });
+LIMS.items.forEach(it => {
+  (it.params || []).forEach(p => check(paramIds.has(p), it.id + ' names unknown parameter ' + p));
+  check(LIMS.steps[it.main_step] !== undefined, it.id + ' has an unknown main step');
+  it.steps.forEach(s => check(LIMS.steps[s] !== undefined, it.id + ' names unknown step ' + s));
+  it.real.case_ids.forEach(cid => check(CASES.cases.some(c => c.id === C.caseId(cid)), it.id + ' names a case not in cases.json: ' + cid));
+  it.contradicted.forEach(cn => cn.cases.forEach(cid => check(CASES.cases.some(c => c.id === C.caseId(cid)), it.id + ' contradiction names a case not in cases.json: ' + cid)));
+  (it.real.examples || []).forEach(x => check(CASES.cases.some(c => c.id === C.caseId(x.case)), it.id + ' example names a case not in cases.json: ' + x.case));
+});
+LIMS.works.forEach(w => check(CASES.cases.some(c => c.id === C.caseId(w.case)), 'works names a case not in cases.json: ' + w.case));
+check(LIMS.summary.items === LIMS.items.length, 'limitations summary count differs from its items');
+check(Object.keys(LIMS.families).length === CASES.families.length, 'limitations and cases list different numbers of families');
+const famIds = CASES.families.map(f => f.id);
+CASES.cases.forEach(c => {
+  check(famIds.includes(c.family), c.id + ' has unknown family ' + c.family);
+  check(c.steps.map(s => s.step).join(',') === '1,2,3,4,5,6,7,8,9,10', c.id + ' does not have steps 1 to 10 in order');
+  c.steps.forEach(s => check(C.STATUSES.includes(s.status), c.id + ' step ' + s.step + ' has unknown status ' + s.status));
+});
+const famOrder = CASES.cases.map(c => famIds.indexOf(c.family));
+check(famOrder.every((v, i) => i === 0 || v >= famOrder[i - 1]), 'cases are not grouped by family in order');
+Object.keys(LIMS.families).forEach((k, i) => check(k === 'L' + String(i + 1).padStart(2, '0') && CASES.cases.some(c => c.family === famIds[i] && c.id.startsWith('f' + String(i + 1).padStart(2, '0'))), 'family order differs at ' + k));
+MAP.parameters.forEach(p => check(typeof p.name === 'string' && p.name.trim().length > 0, 'parameter has no plain name: ' + p.id));
+LIMS.items.forEach(it => check(['yes', 'partly', 'no'].includes(it.shown) && (it.shown === 'yes' || !!it.not_shown) && (it.shown !== 'no' || it.params.length === 0), it.id + ' needs shown yes, partly or no, a reason when not yes, and no settings when no'));
+LIMS.works.forEach(w => check(['seen', 'estimate'].includes(w.basis) && w.tag === (w.basis === 'seen' ? 'M' : 'G'), 'works item ' + w.case + ' needs a basis that matches its tag'));
+const mapCheck = E.checkMap(MAP);
+check(mapCheck.ok, 'engine checkMap: ' + mapCheck.problems.join('; '));
+const best = E.paramsFromTable(TABLE, 'best');
+const cons = E.conservation(MAP, best, { stocks: { E_good: 50, E_bad: 20 } });
+check(cons.ok, 'conservation fails at middle values');
+const CMP = E.compile(MAP);
+check(CMP.funnels.length >= 1 && !!CMP.funnelEnd, 'map.json declares no funnel or no funnel_end');
+CMP.funnels.forEach(f => check(f.stages.length === TX.funnel_steps.stages.length, 'funnel_steps has ' + TX.funnel_steps.stages.length + ' stages; funnel ' + f.id + ' has ' + f.stages.length));
+check(MAP.reference_settings.some(r => r.id === MAP.funnel_mark), 'funnel_mark names no declared reference setting');
+check(!!MAP.square && !!MAP.shared_table && !!MAP.weight && Array.isArray(MAP.links) && MAP.links.length > 0, 'map.json lacks the square, the shared table, the weight block or the promoted-check link');
+check(typeof TX.sections.conditions.near_band === 'number' && TX.sections.conditions.near_note.includes('{{n:' + TX.sections.conditions.near_band + '|G}}'), 'the near band in text.json and its printed value differ');
+let FC = null;
+try { FC = C.funnelCounts(LIMS, CASES, TX.funnel_steps); } catch (e) { fail.push('funnel_steps: ' + e.message); }
+
+/* ---------- 2. counts and totals ---------- */
+const CNT = C.counts(MAP, TABLE, LIMS, CASES);
+const TOT = C.statusTotals(CASES.cases);
+C.STATUSES.forEach(s => check(TOT[s].length === 10, 'totals row ' + s));
+let cellSum = 0; C.STATUSES.forEach(s => TOT[s].forEach(v => { cellSum += v; }));
+check(cellSum === CASES.cases.length * 10, 'grid totals do not add to 10 cells per case');
+const indep = steps => ({
+  lims: LIMS.items.filter(it => steps.includes(it.main_step)).length,
+  cases: CASES.cases.filter(c => c.steps.some(s => s.status === 'breaks' && steps.includes(s.step))).length
+});
+const FUN_EXPECT = TX.funnel_steps.stages.map(indep), AFTER_EXPECT = indep(TX.funnel_steps.after);
+check(FUN_EXPECT.reduce((a, x) => a + x.lims, 0) + AFTER_EXPECT.lims === LIMS.items.length, 'limitations under the funnel bars do not add up to ' + LIMS.items.length);
+TX.funnel_steps.stages.forEach(st => { if (st.length === 1) { const k = st[0] - 1; check(indep(st).cases === TOT.breaks[k], 'cases broke at step ' + st[0] + ' differ from the grid total'); } });
+
+/* ---------- 3. no fixes, no verdicts, plain words, retired words, tags, sentence length ---------- */
+const BANNED = [/\bshould\b/i, /\brecommend/i, /\bmitigat/i, /\bwe propose\b/i, /\bpropose[sd]? (a|the|to)\b/i, /\bthe fix (is|would|will)\b/i, /\bto fix (it|this|the)\b/i, /\bsolution (is|would)\b/i, /\bwill (not )?work\b/i, /\bwon'?t work\b/i, /\b(does|do) not work\b/i, /\bviable\b/i, /\bworth (it|building|doing)\b/i, /\bsuggest/i, /\bit is better to\b/i, /\bredesign/i, /\bthe answer is\b/i, /\blibrary (works|fails|will|would succeed|would fail)\b/i, /\b(succeeds|fails) at its goal\b/i, /\bmust be (fixed|changed|added)\b/i, /\bneeds to (be )?(fixed|changed|added)\b/i, /\bto (improve|reduce|raise|lower) the weight\b/i, /\byou should\b/i, /\bfocus on\b/i, /\bprioriti[sz]e\b/i];
+const PLAIN = [/\bepisodes?\b/i, /keeps no notes/i, /no notes (of any kind|at all)/i];
+const RETIRED = [/unfavourable/i, /favourable setting/i, /best value/i, /best guess/i];
+function strings(v, where, out) {
+  if (typeof v === 'string') out.push([where, v]);
+  else if (Array.isArray(v)) v.forEach((x, i) => strings(x, where + '[' + i + ']', out));
+  else if (v && typeof v === 'object') Object.keys(v).forEach(k => strings(v[k], where + '.' + k, out));
+  return out;
+}
+const jsLiterals = (pageJs.match(/'(?:[^'\\\n]|\\.)*'/g) || []).map(s => s.slice(1, -1));
+const SKIP_KEYS = /\.layout\.|\.design_steps\.|\.funnel_steps\.|^text\.note$|^text\.date$/;
+const txCopy = strings(TX, 'text', []).filter(([w]) => !SKIP_KEYS.test(w));
+const copy = txCopy.concat(jsLiterals.map(s => ['page.js', s]));
+const lintHits = [];
+copy.forEach(([w, s]) => BANNED.concat(PLAIN).forEach(re => { if (re.test(s)) lintHits.push(w + ': ' + s.slice(0, 120)); }));
+lintHits.forEach(h => fail.push('fix, verdict or retired wording in the page copy: ' + h));
+const retiredHits = [];
+copy.forEach(([w, s]) => RETIRED.forEach(re => { if (re.test(s)) retiredHits.push(w + ': ' + s.slice(0, 120)); }));
+retiredHits.forEach(h => fail.push('retired word in the page copy: ' + h));
+const dataHits = [];
+strings({ lims: LIMS, cases: CASES, map: MAP }, 'data', []).forEach(([w, s]) => BANNED.forEach(re => { if (re.test(s)) dataHits.push(w + ': ' + s.slice(0, 140)); }));
+const digitLint = [];
+txCopy.filter(([w]) => !/\.note$/.test(w)).forEach(([w, s]) => {
+  const t = s.replace(/\{\{[^}]+\}\}/g, ' ').replace(/\bsteps? \d+(, \d+)*\b/gi, ' ').replace(/\b[RB]\d\b/g, ' ');
+  if (/\d/.test(t)) digitLint.push(w + ': ' + s.slice(0, 120));
+});
+digitLint.forEach(h => fail.push('untagged digit in the page copy: ' + h));
+const sentenceOf = s => s.replace(/<[^>]*>/g, ' ').replace(/\{\{[^}]+\}\}/g, 'X').replace(/&[a-z]+;/g, ' ');
+function sentences(s) { return sentenceOf(s).split(/(?<=[.!?])\s+(?=[A-Z'‘“(0-9X])/).map(x => x.trim()).filter(Boolean); }
+const wc = s => s.split(/\s+/).filter(t => /[A-Za-z0-9]/.test(t)).length;
+const longS = [];
+let sentCount = 0, sentMax = 0;
+txCopy.filter(([w]) => !/\.(note|t|id|kind)$|\.tags\.|policy_short|policy_names|\.title$/.test(w)).forEach(([w, s]) => sentences(s).forEach(x => { sentCount++; const n = wc(x); sentMax = Math.max(sentMax, n); if (n > SENTENCE_LIMIT) longS.push(w + ' (' + n + '): ' + x.slice(0, 110)); }));
+jsLiterals.filter(s => /[a-z]{3,} [a-z]{3,} [a-z]{2,}/i.test(sentenceOf(s)) && /[.!?]\s*$/.test(sentenceOf(s).trim())).forEach(s => sentences(s).forEach(x => { if (wc(x) < 4) return; sentCount++; const n = wc(x); sentMax = Math.max(sentMax, n); if (n > SENTENCE_LIMIT) longS.push('page.js (' + n + '): ' + x.slice(0, 110)); }));
+longS.forEach(h => fail.push('sentence over ' + SENTENCE_LIMIT + ' words in the page copy: ' + h));
+const dataProse = [];
+LIMS.items.forEach(it => {
+  [['title', it.title], ['what', it.what], ['not_shown', it.not_shown || '']].forEach(([k, v]) => dataProse.push([it.id + '.' + k, v]));
+  it.contradicted.forEach((c, i) => dataProse.push([it.id + '.contradicted[' + i + ']', c.reason]));
+  (it.real.examples || []).forEach((x, i) => dataProse.push([it.id + '.example[' + i + ']', x.evidence]));
+});
+LIMS.works.forEach(w => [['text', w.text], ['caveat', w.caveat || ''], ['channel', w.channel || '']].forEach(([k, v]) => dataProse.push(['works ' + w.case + '.' + k, v])));
+CASES.cases.forEach(c => {
+  ['title', 'story', 'entry', 'worked'].forEach(k => dataProse.push([c.id + '.' + k, c[k] || '']));
+  c.steps.forEach(s => dataProse.push([c.id + '.step ' + s.step, s.note]));
+});
+MAP.parameters.forEach(p => dataProse.push(['map ' + p.id + '.meaning', p.meaning]));
+TABLE.parameters.forEach(r => dataProse.push(['params ' + r.id + '.note', r.note || '']));
+MAP.lib_groups.forEach(g => ['label', 'poor', 'good', 'short'].forEach(k => dataProse.push(['map lib_group ' + g.id + '.' + k, g[k]])));
+MAP.reference_settings.forEach(r => dataProse.push(['map reference ' + r.id + '.label', r.label]));
+MAP.links.forEach(l => { dataProse.push(['map link ' + l.id + '.label', l.label]); (l.loops || []).forEach(lp => dataProse.push(['map loop ' + lp.id + '.label', lp.label])); });
+let dataSent = 0, dataMax = 0;
+const longData = [];
+dataProse.forEach(([w, s]) => sentences(s).forEach(x => { dataSent++; const n = wc(x); dataMax = Math.max(dataMax, n); if (n > SENTENCE_LIMIT) longData.push(w + ' (' + n + '): ' + x.slice(0, 110)); }));
+longData.forEach(h => fail.push('sentence over ' + SENTENCE_LIMIT + ' words in the data text: ' + h));
+const dataRetired = [];
+dataProse.forEach(([w, s]) => RETIRED.forEach(re => { if (re.test(s)) dataRetired.push(w + ': ' + s.match(re)[0]); }));
+check(TX.hero.length === 2 && TX.hero.every(h => sentences(h).length === 1), 'above the map: the hero must be two sentences');
+
+/* ---------- 4. assemble the page: strip, prune, inline ---------- */
+// Fields of the data files the page never reads. The build reads them from the files on disk.
+function pruned() {
+  const map = JSON.parse(JSON.stringify(MAP));
+  ['source', 'note', 'revision_note', 'revision_3_note', 'revision_4_note', 'todays_notes', 'usage_note', 'funnel_note', 'lib_groups_note', 'reference_settings_note', 'variants_note', 'links_note', 'limitations_note'].forEach(k => { delete map[k]; });
+  ['square', 'weight', 'shared_table', 'ensemble_ties'].forEach(k => { if (map[k]) delete map[k].note; });
+  delete map.stocks.note; delete map.stocks.update_note; map.stocks.update.forEach(u => { delete u.same_as; });
+  map.lib_groups.forEach(g => { delete g.note; });
+  map.parameters.forEach(p => { delete p.note; });
+  const params = JSON.parse(JSON.stringify(TABLE));
+  ['note', 'assumptions', 'source_key', 'map', 'title'].forEach(k => { delete params[k]; });
+  const lims = JSON.parse(JSON.stringify(LIMS));
+  ['title', 'date', 'status', 'how_to_read', 'words', 'summary'].forEach(k => { delete lims[k]; });
+  lims.counting = { breaks_read: LIMS.counting.breaks_read };
+  lims.items.forEach(it => { delete it.absorbed; delete it.origin; delete it.merged_from; delete it.real.tag; delete it.real.family_ids; it.contradicted.forEach(c => { delete c.cases; }); });
+  const text = JSON.parse(JSON.stringify(TX));
+  delete text.note; delete text.layout.note; delete text.funnel_steps.note;
+  return { map: map, params: params, lims: lims, cases: C.packCases(CASES), text: text, build: { date: TX.date } };
+}
+const DATA = pruned();
+const dataText = JSON.stringify(DATA).replace(/</g, '\\u003c');
+const engineIn = C.strip(engineSrc), coreIn = C.strip(coreSrc), pageIn = C.strip(pageJs), cssIn = C.strip(cssSrc);
+const template = read(path.join(SRC, 'page.html.txt'));
+const html = template
+  .replace('/*__CSS__*/', () => cssIn)
+  .replace('/*__DATA__*/', () => dataText)
+  .replace('/*__ENGINE__*/', () => engineIn)
+  .replace('/*__CORE__*/', () => coreIn)
+  .replace('/*__JS__*/', () => pageIn);
+const SIZE = Buffer.byteLength(html);
+check(SIZE < SIZE_LIMIT, 'index.html is ' + SIZE + ' bytes; the limit is ' + SIZE_LIMIT);
+const sizeParts = { data: Buffer.byteLength(dataText), engine: Buffer.byteLength(engineIn), core: Buffer.byteLength(coreIn), page: Buffer.byteLength(pageIn), css: Buffer.byteLength(cssIn) };
+const sizeSaved = { engine: Buffer.byteLength(engineSrc) - sizeParts.engine, core: Buffer.byteLength(coreSrc) - sizeParts.core, page: Buffer.byteLength(pageJs) - sizeParts.page, css: Buffer.byteLength(cssSrc) - sizeParts.css,
+  data: Buffer.byteLength(JSON.stringify({ map: MAP, params: TABLE, lims: LIMS, cases: CASES, text: TX, build: { date: TX.date } })) - sizeParts.data };
+check(!/https?:\/\//i.test(html), 'the page names a web address');
+const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '<script></script>');
+check(!/<link\b|@import|<iframe|<img\b|<embed|<object/i.test(html), 'the page loads an outside file');
+check(!/\s(src|href|action)\s*=\s*(?!["']?#)/i.test(markup), 'the page markup points at an outside file');
+check(!/(\.src\s*=|setAttribute\(\s*['"](src|href)|\bfetch\(|XMLHttpRequest|import\()/.test(pageJs + coreSrc), 'the page script loads an outside file');
+check(!/url\((?!#)/i.test(html), 'the page uses url() for something other than an in-page id');
+check(!/localStorage|sessionStorage|indexedDB/.test(html), 'the page uses browser storage');
+check((html.match(/<script/g) || []).length === 4, 'expected four inline scripts');
+
+/* ---------- 5. the inlined engine gives the same numbers as engine.js ---------- */
+const scripts = [...html.matchAll(/<script>\n([\s\S]*?)\n<\/script>/g)].map(m => m[1]);
+check(scripts[0] === engineIn && scripts[1] === coreIn && scripts[2] === pageIn, 'the inlined scripts are not the stripped sources');
+const box = vm.createContext({});
+vm.runInContext(scripts[0], box); vm.runInContext(scripts[1], box);
+const PE = box.PathwayEngine, PC = box.PathwayCore;
+const dataBack = JSON.parse(html.match(/<script type="application\/json" id="lp-data">([\s\S]*?)<\/script>/)[1]);
+const bestPage = PE.paramsFromTable(dataBack.params, 'best');
+check(JSON.stringify(PC.unpackCases(JSON.parse(JSON.stringify(dataBack.cases)))) === JSON.stringify(CASES), 'the packed cases do not unpack to cases.json');
+let maxGap = 0, compared = 0;
+const gap = (a, b) => { compared++; if (a === b) return; const g = (a === null || b === null) ? Infinity : Math.abs(a - b) / Math.max(1, Math.abs(a)); maxGap = Math.max(maxGap, isNaN(g) ? Infinity : g); };
+const tpN = E.timePath(MAP, best), tpP = PE.timePath(dataBack.map, bestPage);
+['top_first', 'cheap_ladder'].forEach(k => { gap(tpN[k].cost, tpP[k].cost); gap(tpN[k].wrong, tpP[k].wrong); });
+tpN.periods.forEach((r, i) => { gap(r.library.cost, tpP.periods[i].library.cost); gap(r.library.wrong, tpP.periods[i].library.wrong); E.RATIO_IDS.forEach(id => gap(r.ratios[id], tpP.periods[i].ratios[id])); gap(r.stocks.E_good, tpP.periods[i].stocks.E_good); gap(r.stocks.E_bad, tpP.periods[i].stocks.E_bad); Object.keys(r.library.measures).forEach(k => gap(r.library.measures[k], tpP.periods[i].library.measures[k])); });
+const cls = { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'yes' };
+const rN = E.routes(MAP, best, 'library', { classValues: cls, stocks: tpN.periods[11].stocks }), rP = PE.routes(dataBack.map, bestPage, 'library', { classValues: cls, stocks: tpP.periods[11].stocks });
+check(rN.count === rP.count, 'route counts differ between node and the page engine');
+rN.routes.forEach((r, i) => { gap(r.chance, rP.routes[i].chance); gap(r.cost, rP.routes[i].cost); });
+// the page's stepwise ensemble (core) against the engine's ensemble, at the three ties
+[0, 0.5, 1].forEach(tie => {
+  const enN = E.ensemble(MAP, TABLE, { n: 120, seed: 5, tie: tie });
+  const run = PC.ensembleRunner(PE, dataBack.map, dataBack.params, { n: 120, seed: 5, tie: tie }); while (!run.done()) run.step(17);
+  const enP = run.result();
+  ['first', 'last'].forEach(w => {
+    Object.keys(enN.spread[w]).forEach(k => { check(!!enP.spread[w][k], 'page ensemble lacks series ' + k); if (enP.spread[w][k]) ['p5', 'p25', 'p50', 'p75', 'p95'].forEach(p => gap(enN.spread[w][k][p], enP.spread[w][k][p])); });
+    E.RATIO_IDS.forEach(id => enN.spearman[w][id].forEach((e, i) => { check(e.id === enP.spearman[w][id][i].id, 'ensemble ranking order differs at tie ' + tie); gap(e.rho, enP.spearman[w][id][i].rho); }));
+    gap(enN.shareBetterVs.cheap_ladder[w], enP.shareBetterVs.cheap_ladder[w]); gap(enN.shareBetterVs.top_first[w], enP.shareBetterVs.top_first[w]);
+  });
+});
+// every declared reference setting, the funnel with its one mark, the shared table
+const REFS = E.references(MAP, TABLE), refsP = PE.references(dataBack.map, dataBack.params);
+check(JSON.stringify(Object.keys(REFS)) === JSON.stringify(MAP.reference_settings.map(r => r.id)), 'references() does not return every declared setting in order');
+Object.keys(REFS).forEach(id => ['first', 'last'].forEach(p => {
+  E.RATIO_IDS.forEach(r => gap(REFS[id][p].ratios[r], refsP[id][p].ratios[r]));
+  gap(REFS[id][p].funnel_end, refsP[id][p].funnel_end); gap(REFS[id][p].promo, refsP[id][p].promo);
+  gap(REFS[id][p].library.cost, refsP[id][p].library.cost); gap(REFS[id][p].library.wrong, refsP[id][p].library.wrong);
+}));
+const MARK = MAP.funnel_mark;
+CMP.funnels.forEach(f => ['first', 'last'].forEach(p => {
+  const fN = E.funnel(MAP, best, { period: p }), vP = PC.funnelView(PE, dataBack.map, dataBack.params, bestPage, { period: p, which: f.id, refs: refsP });
+  fN.funnels[f.id].forEach((s, i) => { gap(s.value, vP.stages[i].value); gap(REFS[MARK][p].funnels[f.id][i].value, vP.stages[i].mark); });
+  gap(fN.promo, vP.promo); gap(REFS[MARK][p].promo, vP.mark_promo);
+}));
+const SHT = E.sharedTable(MAP, TABLE), shtP = PE.sharedTable(dataBack.map, dataBack.params);
+SHT.rows.forEach((r, i) => ['library', 'cheap_ladder', 'top_first'].forEach(p => { gap(r[p].cost, shtP.rows[i][p].cost); gap(r[p].wrong, shtP.rows[i][p].wrong); }));
+const W8 = E.weights(MAP, TABLE, LIMS.items, { stepLabels: LIMS.steps });
+const engineChecked = compared;
+report.push('engine check: ' + compared + ' numbers compared between engine.js in node and the stripped, inlined engine and core run on the inlined data (time path with every measure, routes, ensembles at ties 0, 0.5 and 1 with the promoted-check series, all ' + Object.keys(REFS).length + ' reference settings, both funnels with the all-good mark and the promoted-check value, the gate and ladder table); the weights and the square are compared through the page itself below');
+
+/* ---------- 6. render the page without a browser and check what it draws ---------- */
+function renderPage() {
+  const ids = new Set([...template.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]));
+  const store = {};
+  const escT = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  function mk(id) {
+    const el = {
+      id: id, _html: null, style: {}, dataset: {}, disabled: false, hidden: false, value: '',
+      classList: { toggle() {}, add() {}, remove() {}, contains() { return false; } },
+      addEventListener() {}, removeEventListener() {}, setAttribute() {}, removeAttribute() {}, getAttribute() { return null; },
+      querySelector() { return null; }, querySelectorAll() { return []; }, closest() { return null; }, scrollIntoView() {}, appendChild() {}
+    };
+    Object.defineProperty(el, 'innerHTML', { get() { return this._html || ''; }, set(v) { this._html = String(v); } });
+    Object.defineProperty(el, 'textContent', { get() { return id === 'lp-data' ? dataText : (this._html || ''); }, set(v) { this._html = escT(v); } });
+    return el;
+  }
+  const byId = id => (ids.has(id) ? (store[id] || (store[id] = mk(id))) : null);
+  const doc = {
+    getElementById: byId,
+    querySelector(sel) { const m = /^#([\w-]+)$/.exec(sel); return m ? byId(m[1]) : null; },
+    querySelectorAll() { return []; },
+    createElement() { return mk('_tmp'); },
+    addEventListener() {}, body: mk('_body'), documentElement: mk('_root')
+  };
+  const queue = [];
+  const ctx = vm.createContext({ document: doc, console: console, performance: { now: () => 0 }, requestAnimationFrame: f => { queue.push(f); return 0; }, setTimeout: f => { queue.push(f); return 0; }, innerWidth: 1200 });
+  ctx.window = ctx;
+  const t0 = Date.now();
+  scripts.forEach(s => vm.runInContext(s, ctx));
+  const msFirst = Date.now() - t0;
+  let guard = 0;
+  while (queue.length && guard++ < 100) queue.shift()();
+  const ms = Date.now() - t0;
+  let out = html;
+  Object.keys(store).forEach(id => {
+    if (store[id]._html === null || id === 'lp-data') return;
+    const re = new RegExp('(<([a-z0-9]+)\\b[^>]*\\sid="' + id + '"[^>]*>)(</\\2>)');
+    check(re.test(out), 'render: no empty element for #' + id);
+    out = out.replace(re, (m, open, tag, close) => open + store[id]._html + close);
+  });
+  return { html: out, ms: ms, msFirst: msFirst, lp: ctx.__lp, store: store };
+}
+let R = null;
+try { R = renderPage(); } catch (e) { fail.push('the page script fails without a browser: ' + (e.stack || e.message).split('\n').slice(0, 3).join(' | ')); }
+const attr = (s, name) => { const m = new RegExp('\\s' + name + '="([^"]*)"').exec(s); return m ? m[1] : null; };
+const attrNum = (s, name) => { const v = attr(s, name); return v === null ? NaN : Number(v); };
+function visibleWords(h) {
+  h = h.replace(/<!--[\s\S]*?-->/g, '').replace(/<script\b[\s\S]*?<\/script>/g, '').replace(/<style\b[\s\S]*?<\/style>/g, '');
+  const VOID = new Set(['br', 'input', 'img', 'meta', 'link', 'hr', 'wbr', 'source', 'col', 'area', 'base']);
+  const re = /<(\/?)([a-zA-Z][\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>|([^<]+)/g;
+  const stack = [], text = [];
+  let m;
+  while ((m = re.exec(h))) {
+    if (m[4] !== undefined) { const top = stack[stack.length - 1]; if (!top || !top.hidden) text.push(m[4]); continue; }
+    const close = m[1] === '/', tag = m[2].toLowerCase(), attrs = m[3] || '';
+    if (close) { for (let i = stack.length - 1; i >= 0; i--) if (stack[i].tag === tag) { stack.length = i; break; } continue; }
+    const parent = stack[stack.length - 1];
+    let hidden = parent ? parent.hidden : false;
+    if (parent && parent.closed) hidden = tag === 'summary' ? parent.outer : true;
+    if (/\shidden(\s|=|\/|$)/.test(attrs)) hidden = true;
+    const frame = { tag: tag, hidden: hidden };
+    if (tag === 'details' && !/\sopen(\s|=|\/|$)/.test(attrs)) { frame.closed = true; frame.outer = hidden; }
+    if (VOID.has(tag) || /\/\s*$/.test(attrs)) continue;
+    stack.push(frame);
+  }
+  return text.join(' ').replace(/&nbsp;/g, ' ').replace(/&[a-z]+;|&#\d+;/g, ' ').split(/\s+/).filter(t => /[A-Za-z]/.test(t));
+}
+const SECTION_ORDER = ['map', 'funnel', 'conditions', 'cases', 'lims', 'run', 'many', 'leaves', 'words'];
+const FOUND_ORDER = [...template.matchAll(/<section class="band" id="([a-z]+)"/g)].map(m => m[1]);
+check(JSON.stringify(FOUND_ORDER) === JSON.stringify(SECTION_ORDER), 'section order is ' + FOUND_ORDER.join(', '));
+const NAV_ORDER = [...template.matchAll(/<a href="#([a-z]+)">/g)].map(m => m[1]);
+check(JSON.stringify(NAV_ORDER) === JSON.stringify(SECTION_ORDER), 'the top bar links differ from the section order: ' + NAV_ORDER.join(', '));
+let WORDS = null, GRAPH = null;
+const CHK = {};
+if (R) {
+  const body = R.html.slice(R.html.indexOf('<body>'));
+  const mapAt = body.indexOf('<section class="band" id="map"');
+  const all = visibleWords(body), above = visibleWords(body.slice(0, mapAt));
+  const heroOnly = visibleWords(body.slice(body.indexOf('<section class="hero"'), mapAt));
+  const per = {};
+  FOUND_ORDER.forEach((id, i) => {
+    const a = body.indexOf('<section class="band" id="' + id + '"'), b = i + 1 < FOUND_ORDER.length ? body.indexOf('<section class="band" id="' + FOUND_ORDER[i + 1] + '"') : body.indexOf('</main>');
+    per[id] = visibleWords(body.slice(a, b)).length;
+  });
+  per.footer = visibleWords(body.slice(body.indexOf('<footer'))).length;
+  const byBox = Object.keys(R.store).filter(id => R.store[id]._html && id !== 'lp-data').map(id => [id, visibleWords('<div>' + R.store[id]._html + '</div>').length]).sort((a, b) => b[1] - a[1]);
+  WORDS = { all: all.length, above: above.length, hero: heroOnly.length, per: per, ms: R.ms, msFirst: R.msFirst, byBox: byBox.slice(0, 16) };
+  if (process.env.LP_DUMP) fs.writeFileSync(process.env.LP_DUMP, FOUND_ORDER.map((id, i) => '## section ' + id + '\n' + visibleWords(body.slice(body.indexOf('<section class="band" id="' + id + '"'), i + 1 < FOUND_ORDER.length ? body.indexOf('<section class="band" id="' + FOUND_ORDER[i + 1] + '"') : body.indexOf('</main>'))).join(' ')).join('\n\n') + '\n\n' + byBox.map(([id]) => '## ' + id + '\n' + visibleWords('<div>' + R.store[id]._html + '</div>').join(' ')).join('\n\n') + '\n');
+  check(all.length < WORD_LIMIT, 'visible words with everything collapsed: ' + all.length + ' (limit ' + WORD_LIMIT + ')');
+  check(!/class="(caveats|callout)[^"]*"[\s\S]*<section class="band" id="map"/.test(body.slice(0, mapAt + 40)), 'a caveat box sits above the map');
+  const visible = visibleWords(body.replace(/<code\b[\s\S]*?<\/code>/g, ' ').replace(/<span class="mono">[\s\S]*?<\/span>/g, ' ')).join(' ');
+  PLAIN.concat(RETIRED).forEach(re => check(!re.test(visible), 'visible text uses retired wording: ' + re));
+  const RB = R.html.replace(/<script\b[\s\S]*?<\/script>/g, '');
+
+  // the funnel drawn equals the engine's funnel at middle values, last period, with its one mark (map.funnel_mark)
+  const fN = E.funnel(MAP, best, { period: 'last' });
+  const fid = CMP.funnels[0].id;
+  const drawn = [...RB.matchAll(/<g class="fbar"[^>]*>/g)].map(m => m[0]).filter(s => /data-stage=/.test(s));
+  check(drawn.length === fN.funnels[fid].filter(s => CMP.funnels[0].monotone.includes(s.id)).length, 'the page draws ' + drawn.length + ' funnel bars');
+  check(!/data-u=|data-f=/.test(RB.slice(RB.indexOf('id="funnelChart"'), RB.indexOf('id="funnelLegend"'))), 'the funnel still carries a second mark');
+  fN.funnels[fid].forEach((s, i) => {
+    const g = drawn.find(x => x.includes('data-stage="' + s.id + '"'));
+    if (!g) { if (CMP.funnels[0].monotone.includes(s.id)) fail.push('funnel bar missing on the page: ' + s.id); return; }
+    check(attrNum(g, 'data-v') === s.value, 'funnel bar ' + s.id + ' on the page is ' + attrNum(g, 'data-v') + ', the engine gives ' + s.value);
+    check(attrNum(g, 'data-m') === REFS[MARK].last.funnels[fid][i].value, 'funnel mark (' + MARK + ') differs at ' + s.id);
+    check(attrNum(g, 'data-nlims') === FUN_EXPECT[i].lims && attrNum(g, 'data-ncases') === FUN_EXPECT[i].cases, 'funnel counts under ' + s.id + ' differ from the data files');
+  });
+  const aft = (RB.match(/<g class="fbar after"[^>]*>/) || [''])[0];
+  check(attrNum(aft, 'data-nlims') === AFTER_EXPECT.lims && attrNum(aft, 'data-ncases') === AFTER_EXPECT.cases, 'counts after the funnel differ from the data files');
+  // the promoted-check figures: the funnel line, the usage panel, the stock drawing, the map's link
+  const pline = (RB.match(/<p class="note promoline"[^>]*>/) || [''])[0];
+  CHK.promo = { funnel: attrNum(pline, 'data-promo'), mark: attrNum(pline, 'data-promo-mark') };
+  check(CHK.promo.funnel === fN.promo, 'promoted checks under the funnel: page ' + CHK.promo.funnel + ', engine ' + fN.promo);
+  check(CHK.promo.mark === REFS[MARK].last.promo, 'promoted checks at the all-good setting: page ' + CHK.promo.mark + ', engine ' + REFS[MARK].last.promo);
+  const lastRow = tpN.periods[tpN.periods.length - 1];
+  const usageN = C.usage(MAP, lastRow);
+  const usageP = {}; for (const m of RB.matchAll(/data-u="([a-z_]+)" data-v="([^"]+)"/g)) usageP[m[1]] = Number(m[2]);
+  usageN.forEach(u => check(usageP[u.id] === u.value, 'usage panel ' + u.id + ': page ' + usageP[u.id] + ', engine ' + u.value));
+  check(usageN.filter(u => /promo/.test(u.id)).length >= 1 && usageN.filter(u => /promo/.test(u.id)).every(u => u.id in usageP), 'the usage panel lacks the promoted-check figures');
+  const sfdP = attrNum((RB.match(/\sdata-promo-all="[^"]+"/) || [''])[0], 'data-promo-all');
+  check(sfdP === lastRow.library.measures.use_promo_caught_all, 'stock drawing, promoted checks: page ' + sfdP + ', engine ' + lastRow.library.measures.use_promo_caught_all);
+  const loopsN = MAP.links.reduce((a, l) => a + (l.loops || []).length, 0);
+  check(/data-link="promoted_checks"/.test(RB), 'the map graph does not draw the promoted-check link');
+  CHK.promo.loops = loopsN;
+
+  // the map graph's text at a 644 px pane: the graph is drawn at a fixed pixel scale, so the pane width does
+  // not shrink it. Smallest text = smallest font size (page.css.txt, by class) times pixels per unit.
+  const FONT = {}; for (const m of cssIn.matchAll(/\.(g-[a-z]+)\{font:\d+ ([\d.]+)px/g)) FONT[m[1]] = Number(m[2]);
+  const gsvg = (R.store.graph && R.store.graph._html) || '';
+  const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(gsvg), widthAttr = attrNum(gsvg.slice(0, 300), 'width');
+  const scale = vb ? widthAttr / Number(vb[1]) : NaN;
+  let minFont = Infinity, unsized = 0, ntext = 0;
+  for (const m of gsvg.matchAll(/<text\b([^>]*)>/g)) {
+    ntext++;
+    const cl = (attr(m[1], 'class') || '').split(/\s+/)[0], st = /font-size:([\d.]+)px/.exec(m[1]);
+    const sz = st ? Number(st[1]) : FONT[cl];
+    if (!sz) { unsized++; continue; }
+    minFont = Math.min(minFont, sz);
+  }
+  GRAPH = { scale: scale, minFont: minFont, minPx: minFont * scale, texts: ntext, unsized: unsized, width: widthAttr, height: attrNum(gsvg.slice(0, 300), 'height') };
+  check(unsized === 0, unsized + ' text elements in the map graph have no known font size');
+  check(GRAPH.minPx >= TX.layout.min_text_px, 'smallest text in the map graph is ' + GRAPH.minPx + ' px (limit ' + TX.layout.min_text_px + ')');
+
+  // the corner table equals the engine's reference settings
+  let cornerCells = 0; const seenRefs = new Set();
+  for (const m of RB.matchAll(/data-ref="(\w+)" data-r="(\w+)" data-v="([^"]+)"/g)) { cornerCells++; seenRefs.add(m[1]); check(Number(m[3]) === REFS[m[1]].last.ratios[m[2]], 'corner cell ' + m[1] + ' ' + m[2] + ' differs on the page'); }
+  check(cornerCells === 4 * MAP.reference_settings.length && seenRefs.size === MAP.reference_settings.length, 'the corner table shows ' + cornerCells + ' cells for ' + seenRefs.size + ' settings');
+  CHK.corners = cornerCells;
+
+  // the square: every sheet and both ladder ratios, drawn by the page's own code, equal the engine's square
+  const SQN = E.square(MAP, TABLE);
+  let sqCells = 0;
+  SQN.sheets.forEach(sh => ['cost_vs_ladder', 'wrong_vs_ladder'].forEach(rid => {
+    const svg = R.lp.squareSvg(sh.id, rid);
+    check(attr(svg, 'data-sheet') === sh.id && attr(svg, 'data-ratio') === rid, 'square svg for ' + sh.id + ' ' + rid + ' is labelled wrongly');
+    let n = 0;
+    for (const m of svg.matchAll(/data-i="(\d+)" data-j="(\d+)" data-v="([^"]+)"/g)) { n++; check(Number(m[3]) === sh.cells[+m[1]][+m[2]].ratios[rid], 'square ' + sh.id + ' ' + rid + ' cell ' + m[1] + ',' + m[2] + ' differs'); }
+    check(n === SQN.steps * SQN.steps, 'square ' + sh.id + ' ' + rid + ' has ' + n + ' cells'); sqCells += n;
+    const P = R.lp.square(sh.id); P.sheet.cells.forEach((row, i) => row.forEach((c, j) => E.RATIO_IDS.forEach(r => gap(sh.cells[i][j].ratios[r], c.ratios[r]))));
+  }));
+  const sqDom = RB.slice(RB.indexOf('id="sqChart"'), RB.indexOf('id="sqCell"'));
+  check((sqDom.match(/class="sqc"/g) || []).length === SQN.steps * SQN.steps, 'the square drawn at load does not show every cell');
+  check(/class="sqone"/.test(sqDom) || SQN.sheets.find(s => s.id === 'middle').cells.every(r => r.every(c => c.ratios.cost_vs_ladder < 1) || r.every(c => c.ratios.cost_vs_ladder >= 1)), 'the square drawn at load has no line where the ratio is one');
+  CHK.square = sqCells;
+  CHK.squareSummary = SQN.sheets.map(sh => { const cs = [].concat(...sh.cells); return { id: sh.id, cost: cs.filter(c => c.ratios.cost_vs_ladder < 1).length, wrong: cs.filter(c => c.ratios.wrong_vs_ladder < 1).length, both: cs.filter(c => c.ratios.cost_vs_ladder < 1 && c.ratios.wrong_vs_ladder < 1).length, min: Math.min(...cs.map(c => c.ratios.cost_vs_ladder)), max: Math.max(...cs.map(c => c.ratios.cost_vs_ladder)), n: cs.length }; });
+
+  // the weights: every alone and last on the page equals the engine's (limitations, steps, groups, sequence)
+  const WP = R.lp.weights();
+  check(!!WP, 'the page did not compute the weights');
+  if (WP) {
+    WP.limitations.forEach((r, i) => { const q = W8.limitations[i]; check(r.id === q.id, 'weights order differs'); if (q.measured) { gap(q.alone, r.alone); gap(q.last, r.last); } });
+    W8.steps.forEach((q, i) => { if (q.measured) { gap(q.alone, WP.steps[i].alone); gap(q.last, WP.steps[i].last); } });
+    W8.groups.forEach((q, i) => { gap(q.alone, WP.groups[i].alone); gap(q.last, WP.groups[i].last); });
+    gap(W8.full.score, WP.full.score);
+  }
+  const limW = {};
+  for (const m of RB.matchAll(/data-lim="(LIM-\d+)"><button[^>]*>[\s\S]*?(data-nm="([a-z_]+)"|data-alone="([^"]+)" data-last="([^"]+)")/g)) limW[m[1]] = m[3] ? { nm: m[3] } : { alone: Number(m[4]), last: Number(m[5]) };
+  check(Object.keys(limW).length === LIMS.items.length, 'the page shows ' + Object.keys(limW).length + ' limitation weights');
+  let wCells = 0;
+  W8.limitations.forEach(r => {
+    const p = limW[r.id] || {};
+    if (r.measured) { wCells += 2; check(p.alone === r.alone && p.last === r.last, 'weights of ' + r.id + ' on the page are ' + p.alone + ' and ' + p.last + ', the engine gives ' + r.alone + ' and ' + r.last); }
+    else check(p.nm === r.not_measured, r.id + ' on the page reads ' + JSON.stringify(p) + ', the engine says not measured: ' + r.not_measured);
+  });
+  check(W8.limitations.filter(r => !r.measured).every(r => r.moved.length === 0) && W8.limitations.filter(r => r.measured).every(r => r.moved.length > 0), 'measured flags disagree with the unknowns moved');
+  const shareRows = W8.limitations.filter(r => r.same_set && r.same_set.count);
+  shareRows.forEach(r => { const row = (RB.match(new RegExp('data-lim="' + r.id + '"><button[\\s\\S]*?</button>')) || [''])[0]; check(row.includes('↔' + r.same_set.count), r.id + ' does not say it shares its unknowns with ' + r.same_set.count + ' others'); });
+  let stepCells = 0;
+  for (const m of RB.matchAll(/data-wstep="(\d+)" data-tagged="G" data-alone="([^"]+)" data-last="([^"]+)"/g)) { stepCells++; const s = W8.steps.find(x => String(x.step) === m[1]); check(s && Number(m[2]) === s.alone && Number(m[3]) === s.last, 'step weights ' + m[1] + ' differ on the page'); }
+  check(stepCells === 2 * W8.steps.filter(s => s.measured).length, 'the page shows ' + stepCells + ' step weight cells');
+  let groupCells = 0;
+  for (const m of RB.matchAll(/data-wgroup="(\w+)" data-tagged="G" data-alone="([^"]+)" data-last="([^"]+)"/g)) { groupCells++; const g = W8.groups.find(x => x.id === m[1]); check(g && Number(m[2]) === g.alone && Number(m[3]) === g.last, 'group weights ' + m[1] + ' differ on the page'); }
+  check(groupCells === W8.groups.length, 'the page shows ' + groupCells + ' group weight rows');
+  const seqP = [...RB.matchAll(/data-seq="(\w+)" data-cum="([^"]+)"/g)].map(m => [m[1], Number(m[2])]);
+  check(JSON.stringify(seqP) === JSON.stringify(W8.sequence.map(q => [String(q.step), q.cumulative]).concat([['unnamed', W8.sequence_end.cumulative]])), 'the steps moved one after another differ on the page');
+  const fullP = (RB.match(/\sdata-full="[^"]+" data-cost-fall="[^"]+" data-wrong-fall="[^"]+"/) || [''])[0];
+  check(attrNum(fullP, 'data-full') === W8.full.score && attrNum(fullP, 'data-cost-fall') === W8.full.cost_fall && attrNum(fullP, 'data-wrong-fall') === W8.full.wrong_fall, 'the full fall differs on the page');
+  CHK.weights = { lims: wCells, steps: stepCells, groups: groupCells, seq: seqP.length };
+
+  // the gate and ladder table equals the engine's shared table
+  let gateCells = 0;
+  for (const m of RB.matchAll(/data-st="(\d+)" data-p="(\w+)" data-k="(\w+)" data-v="([^"]+)"/g)) { gateCells++; check(Number(m[4]) === SHT.rows[+m[1]][m[2]][m[3]], 'gate and ladder cell ' + m[1] + ' ' + m[2] + ' ' + m[3] + ' differs'); }
+  check(gateCells === SHT.rows.length * 6, 'the gate and ladder table shows ' + gateCells + ' cells');
+  CHK.gate = gateCells;
+
+  // the grid totals on the page equal cases.json
+  const gtAt = RB.indexOf('<div class="cg-tot"'), gt = gtAt < 0 ? '' : RB.slice(gtAt, gtAt + 8000);
+  C.STATUSES.forEach(s => { const row = (gt.match(new RegExp('data-status="' + s + '"[\\s\\S]*?</div>')) || [''])[0]; const nums = [...row.matchAll(/<span class="num">(\d+)<\/span>/g)].map(x => +x[1]); check(nums.join(',') === TOT[s].join(','), 'grid totals on the page differ for ' + s); });
+}
+check(maxGap === 0, 'the page engine differs from engine.js by ' + maxGap);
+
+/* ---------- 7. the short record ---------- */
+const PN = TX.policy_names;
+const f2 = v => v.toFixed(2), f1 = v => v.toFixed(1), pc = v => (100 * v).toFixed(1) + '%';
+const fun = v => v === 0 ? '0' : Math.abs(v) >= 1 ? v.toFixed(1) : Math.abs(v) >= 0.01 ? v.toFixed(2) : v.toPrecision(1);
+const wpc = v => { const y = 100 * v; return (y < 0 ? '−' : '') + (y === 0 ? '0' : Math.abs(y) >= 0.1 ? Math.abs(y).toFixed(1) : Math.abs(y) >= 0.01 ? Math.abs(y).toFixed(2) : Math.abs(y).toPrecision(1)) + '%'; };
+const FACTS = C.bestFacts(E, MAP, TABLE);
+const plain = t => C.fillTokens(t, CNT, (v, tg) => v + ' [' + tg + ']', s => s, FACTS);
+const PNM = id => MAP.parameters.find(p => p.id === id).name;
+const FAMN = code => CASES.families[Object.keys(LIMS.families).indexOf(code)].name;
+const GL = {}; MAP.lib_groups.forEach(g => { GL[g.id] = g; });
+const REFL = {}; MAP.reference_settings.forEach(r => { REFL[r.id] = r; });
+const CT = TX.sections.conditions, LX = TX.sections.lims;
+const last = tpN.periods[tpN.periods.length - 1], first = tpN.periods[0];
+const ENS_N = +process.env.LP_ENS_N || 1000, ENS_SEED = 20261112, TIES = (MAP.ensemble_ties && MAP.ensemble_ties.levels) || [0, 0.5, 1];
+const ensT = {}; TIES.forEach(t => { ensT[t] = E.ensemble(MAP, TABLE, { n: ENS_N, seed: ENS_SEED, tie: t }); });
+const WL = {}; W8.limitations.forEach(r => { WL[r.id] = r; });
+const L = [];
+L.push('# Library pathways: the map, three conditions and the limitations (' + TX.date + ')', '');
+L.push('**Generated file.** Built by `docs/program/evidence/library-pathways/build-page.js.txt` from `docs/program/library-pathways/` (map.json, params.json, engine.js, limitations.json, cases.json) and `page-src/text.json`. The owner reads `docs/program/library-pathways/index.html`, built in the same run. Do not edit by hand.', '');
+L.push('**Rules.** This record maps and measures. It holds no fixes and no judgment on whether the library reaches its goal. Tags: [M] ' + TX.tags.M + '; [S] ' + TX.tags.S + '; [G] ' + TX.tags.G + '. ' + TX.computed_tag + ' The ' + CNT.cases + ' [M] real cases are chosen problem cases: they show where steps break, never how often.', '');
+L.push('## 1. The map', '');
+L.push(MAP.unit + ' ' + MAP.cost_unit + ' ' + MAP.period, '');
+L.push('The graph has ' + CNT.states + ' [M] states and ' + CNT.branches + ' [M] branches over eleven stages and an outcome, plus one link with no lookup: ' + MAP.links.map(l => l.label.toLowerCase() + ', from the stock of ' + MAP.stocks.labels[l.from_stock].toLowerCase() + ' to every gate').join('; ') + '. It has ' + CNT.params + ' [M] settings: ' + CNT.drawn + ' [M] unknowns drawn in the runs (' + CNT.guess + ' [M] guesses, ' + CNT.study + ' [M] from outside studies, ' + CNT.measured + ' [M] measured), plus the horizon, which is chosen. ' + TABLE.parameters.filter(r => r.side === 'library').length + ' [M] unknowns are library unknowns, in four groups: ' + W8.groups.map(g => GL[g.id].short + ' ' + TABLE.parameters.filter(r => r.lib_group === g.id).length).join(', ') + ' [M].', '');
+MAP.policies.forEach(p => L.push('- **' + PN[p.id] + '.** ' + TX.policy_says[p.id]));
+L.push('', 'Design steps to model stages (set by hand): ' + Object.keys(TX.design_steps).map(k => k + ' ' + TX.design_steps[k].join('+')).join('; ') + '. ' + TX.design_steps_note, '');
+const FD = CMP.funnels[0];
+const SN = TX.sections.funnel.stage_notes || {};
+const fNlast = E.funnel(MAP, best, { period: 'last' });
+L.push('## 2. The funnel, last period [G]', '', plain(TX.sections.funnel.lede) + ' Counts under each bar are from the data files [M]; the match of bars to design steps is set by hand.', '');
+L.push('| Stage | Middle values | All-good setting | Design steps | Limitations [M] | Cases broke [M] |', '| --- | ---: | ---: | --- | ---: | ---: |');
+fNlast.funnels[FD.id].forEach((s, i) => L.push('| ' + s.label + ' | ' + fun(s.value) + ' | ' + fun(REFS[MARK].last.funnels[FD.id][i].value) + ' | ' + (FC.stages[i].steps.join(', ') || (SN[i] ? SN[i].under : 'none')) + ' | ' + (FC.stages[i].steps.length ? FC.stages[i].lims.length : '') + ' | ' + (FC.stages[i].steps.length ? FC.stages[i].cases.length : '') + ' |'));
+L.push('| ' + TX.sections.funnel.after_label + ' | | | ' + FC.after.steps.join(', ') + ' | ' + FC.after.lims.length + ' | ' + FC.after.cases.length + ' |', '');
+L.push(TX.sections.funnel.match_note + ' ' + TX.sections.funnel.promo + ' Of the same hundred, they catch ' + fun(fNlast.promo) + ' [G] more at the first gate at middle values, ' + fun(REFS[MARK].last.promo) + ' [G] at the all-good setting.', '');
+L.push('## 3. Three conditions, last period [G]', '', CT.lede + ' ' + CT.items.map(it => GL[it[0]].short.replace(/^./, c => c.toUpperCase()) + ': ' + it[1]).join(' ') + ' ' + CT.running_cost + ' ' + CT.table_note + ' ' + TX.todays_notes, '');
+L.push('| Setting | Cost / ladder | Wrong / ladder | Cost / strong | Wrong / strong |', '| --- | ---: | ---: | ---: | ---: |');
+const sideWord = v => { const k = C.sideOfOne(v, CT.near_band); return k === 'near' ? ' (near)' : ''; };
+const refRow = id => '| ' + REFL[id].label + ' | ' + ['cost_vs_ladder', 'wrong_vs_ladder', 'cost_vs_top', 'wrong_vs_top'].map((r, k) => f2(REFS[id].last.ratios[r]) + (k < 2 ? sideWord(REFS[id].last.ratios[r]) : '')).join(' | ') + ' |';
+MAP.reference_settings.forEach(r => L.push(refRow(r.id)));
+L.push('', 'Near: within ' + CT.near_band + ' [G] of one, a band chosen for reading. ' + (CMP.promoMeasure ? CT.promo_note + ' ' : '') + plain(TX.opus_line) + ' At one, the middle-value cost ratio against the strong model is ' + FACTS.ct_last_m1 + ' [G].', '');
+const SHEETL = {}; MAP.square.sheets.forEach(s => { SHEETL[s.id] = s.label; });
+L.push(CT.square_title + ' (' + MAP.square.steps + ' by ' + MAP.square.steps + ' levels [M]). ' + CHK.squareSummary.map(q => (SHEETL[q.id] || q.id).replace(/^./, c => c.toUpperCase()) + ': cost below the ladder in ' + q.cost + ' [G], wrong rate below in ' + q.wrong + ' [G], both in ' + q.both + ' [G] of ' + q.n + ' cells; cost ratio ' + f2(q.min) + ' to ' + f2(q.max) + ' [G].').join(' ') + ' ' + CT.square_level, '');
+L.push('At middle values: ' + PN.top_first.toLowerCase() + ' costs ' + f1(tpN.top_first.cost) + ' [G] per piece with ' + pc(tpN.top_first.wrong) + ' [G] wrong; ' + PN.cheap_ladder.toLowerCase() + ' ' + f1(tpN.cheap_ladder.cost) + ' [G] and ' + pc(tpN.cheap_ladder.wrong) + ' [G]; the library ' + f1(first.library.cost) + ' then ' + f1(last.library.cost) + ' [G] and ' + pc(first.library.wrong) + ' then ' + pc(last.library.wrong) + ' [G] (first, last period).', '');
+L.push('## 4. Where real cases broke', '', plain(TX.sections.cases.lede) + ' **' + TX.sections.cases.warning + '** ' + plain(TX.sections.cases.ks_note) + ' In cases.json those steps carry `ks: true`.', '');
+L.push('| Status [M] | ' + Object.keys(LIMS.steps).join(' | ') + ' |', '| --- |' + ' ---: |'.repeat(10));
+C.STATUSES.forEach(s => L.push('| ' + s.replace('_', ' ') + ' | ' + TOT[s].join(' | ') + ' |'));
+L.push('', 'Steps: ' + Object.keys(LIMS.steps).map(k => k + ' ' + LIMS.steps[k].split(':')[0].toLowerCase()).join('; ') + '. Families: ' + CASES.families.map(f => f.name + ' (' + CASES.cases.filter(c => c.family === f.id).length + ')').join('; ') + ' [M].', '');
+L.push('## 5. The limitations, by step, with two weights [G]', '', plain('{{c:lims}} limitations: {{c:lims_real}} seen in real cases, {{c:lims_thought}} from thought experiments only; real cases went the other way for {{c:contradicted}}.') + ' ' + LX.alone_def + ' ' + LX.last_def + ' ' + LX.add_def + ' ' + LX.sign_def + ' ' + LX.full_def + ' There the library\'s cost falls ' + wpc(W8.full.cost_fall) + ' [G] and its wrong rate ' + wpc(W8.full.wrong_fall) + ' [G]; the full fall is their mean, ' + wpc(W8.full.score) + ' [G].', '');
+const ZERO = W8.sequence.filter(q => q.added === 0).map(q => q.step);
+const andList = a => a.length === 1 ? String(a[0]) : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+L.push('Groups, alone and last [G]: ' + W8.ranking.groups.map(g => GL[g.id].short + ' ' + wpc(g.alone) + ' and ' + wpc(g.last)).join('; ') + '. Steps by last, alone and last [G]: ' + W8.ranking.steps.map(s => s.step + ' ' + wpc(s.alone) + ' and ' + wpc(s.last)).join('; ') + '. Steps moved one after another, share of the full fall so far [G]: ' + W8.sequence.map(q => q.step + ' ' + wpc(q.cumulative)).join(', ') + '; the unknowns no limitation names (' + W8.sequence_end.ids.map(PNM).join('; ') + ') carry the last ' + wpc(W8.sequence_end.added) + ' [G].' + (ZERO.length ? ' ' + (ZERO.length === 1 ? 'Step ' : 'Steps ') + andList(ZERO) + ' ' + LX.seq_zero : ''), '');
+const nmRows = W8.limitations.filter(r => !r.measured);
+L.push('Not weighed: ' + ['no_setting', 'gate_or_ladder', 'other_side_only'].map(k => { const ids = nmRows.filter(r => r.not_measured === k).map(r => r.id); return ids.length ? LX['nm_' + k] + ' (' + ids.join(', ') + ')' : ''; }).filter(Boolean).join('; ') + ' [M]. ' + LX.shares, '');
+const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+const wtext = w => w.measured ? 'alone ' + wpc(w.alone) + ', last ' + wpc(w.last) + ' [G]' : LX['nm_' + w.not_measured];
+Object.keys(LIMS.steps).forEach(k => {
+  const items = LIMS.items.filter(i => String(i.main_step) === k);
+  if (!items.length) return;
+  const ws = W8.steps.find(s => String(s.step) === k);
+  L.push('**Step ' + k + ': ' + LIMS.steps[k] + '** (' + wtext(ws) + ')');
+  items.forEach(it => {
+    const w = WL[it.id];
+    const real = it.real.cases ? plural(it.real.cases, 'case', 'cases') + ', ' + plural(it.real.families, 'family', 'families') + ' [M]' : 'Thought experiment only';
+    const con = it.contradicted.length ? '; other way in ' + it.contradicted.length + ' [M] (' + it.contradicted.map(c => FAMN(c.family)).join('; ') + ')' : '';
+    const shown = it.shown && it.shown !== 'yes' ? ' *' + (it.shown === 'no' ? LX.shown_no : LX.shown_partly) + '*' : '';
+    const ss = w.same_set && w.same_set.count ? ' ↔' + w.same_set.count : '';
+    L.push('- ' + it.id + ' ' + it.title + '. ' + real + con + '. ' + wtext(w) + ss + '.' + shown);
+  });
+});
+L.push('', '**' + LX.gate_title + '** (last period, cost and wrong rate [G]). ' + LX.gate_lede + ' ' + LX.gate_moved + ': ' + MAP.shared_groups.map(g => g.label + ': ' + Object.keys(g.moves).map(id => PNM(id) + ' to its ' + g.moves[id] + ' end').join(', ')).join('. ') + '.', '');
+L.push('| Base, moved | ' + ['library', 'cheap_ladder', 'top_first'].map(p => TX.policy_short[p]).join(' | ') + ' |', '| --- | ---: | ---: | ---: |');
+SHT.rows.forEach(r => L.push('| ' + REFL[r.base].label.split(':')[0] + ', ' + (r.moved.length ? r.moved.join(' and ') + ' moved' : 'as it is') + ' | ' + ['library', 'cheap_ladder', 'top_first'].map(p => f1(r[p].cost) + ', ' + pc(r[p].wrong)).join(' | ') + ' |'));
+L.push('', '## 6. ' + LX.works_title, '', plain(LX.works_lede).replace(/\(M\)/g, '[M]').replace(/\(G\)/g, '[G]'), '');
+LIMS.works.forEach(w => L.push('- ' + C.caseId(w.case) + ': ' + w.text + ' [' + w.tag + ']' + (w.channel ? ' Carried by ' + w.channel + ', a channel that exists today.' : '')));
+L.push('', '## 7. Many runs at three ties', '', plain(TX.sections.many.lede) + ' ' + TX.sections.many.tie + ' ' + plain('{{c:guess}} of the {{c:drawn}} drawn unknowns are guesses.') + ' ' + ENS_N + ' runs at each tie, seed ' + ENS_SEED + ', last period; the page gives the same numbers for the same seed. **' + TX.sections.many.follows + '**', '');
+L.push('| Middle (5 to 95 in 100) [G] | ' + TIES.map(t => 'tie ' + t).join(' | ') + ' |', '| --- |' + ' ---: |'.repeat(TIES.length));
+[['cost_vs_ladder', 'Cost, against the ladder', f2], ['wrong_vs_ladder', 'Wrong rate, against the ladder', f2], ['cost_vs_top', 'Cost, against the strong model', f2], ['wrong_vs_top', 'Wrong rate, against the strong model', f2], ['funnel_end', 'Funnel\'s last number', fun], ['promo', 'More caught by promoted checks', fun]].forEach(([id, name, f]) => { if (ensT[TIES[0]].spread.last[id]) L.push('| ' + name + ' | ' + TIES.map(t => { const s = ensT[t].spread.last[id]; return f(s.p50) + ' (' + f(s.p5) + ' to ' + f(s.p95) + ')'; }).join(' | ') + ' |'); });
+L.push('| Runs cheaper with a wrong rate no higher, against the ladder | ' + TIES.map(t => pc(ensT[t].shareBetterVs.cheap_ladder.last)).join(' | ') + ' |');
+L.push('| The same, against the strong model | ' + TIES.map(t => pc(ensT[t].shareBetterVs.top_first.last)).join(' | ') + ' |', '');
+const TROW = {}; TABLE.parameters.forEach(r => { TROW[r.id] = r; });
+const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+const groupRho = (t, r) => { const seen = {}; return ensT[t].spearman.last[r].filter(e => { const row = TROW[e.id]; if (row.side !== 'library') return true; if (seen[row.lib_group]) return false; seen[row.lib_group] = true; return true; }).slice(0, 4).map(e => { const row = TROW[e.id]; return row.side === 'library' ? 'group ' + GL[row.lib_group].short + ' ' + sgn(row.good_end === 'high' ? e.rho : -e.rho) : PNM(e.id) + ' ' + sgn(e.rho); }).join(', '); };
+L.push(TX.sections.many.rank_read + ' Moves the cost against the ladder most, last period: ' + TIES.filter(t => t !== 1).map(t => 'tie ' + t + (t > 0 ? ' (' + TX.sections.many.rank_half + ')' : '') + ': ' + ensT[t].spearman.last.cost_vs_ladder.slice(0, 4).map(e => PNM(e.id) + ' ' + sgn(e.rho)).join(', ')).join('; ') + (TIES.includes(1) ? '; tie 1 (' + TX.sections.many.rank_tied + '): ' + groupRho(1, 'cost_vs_ladder') : '') + ' [G]. With ' + ENS_N + ' runs, correlations closer than about ' + (2 / Math.sqrt(ENS_N)).toFixed(2) + ' [G] are not well separated.', '');
+L.push('## 8. What the map leaves out', '');
+TX.leaves_out.forEach(l => L.push('- **' + l.t + '.** ' + plain(l.x)));
+L.push('', '## 9. Files', '');
+L.push('- Page: `docs/program/library-pathways/index.html` (self-contained; opens from disk). Data: map.json, params.json, engine.js, limitations.json, cases.json beside it.');
+L.push('- Page sources and this build: `docs/program/evidence/library-pathways/page-src/`, `build-page.js.txt`; checks in `build-page-report.txt`. Briefs: `model-brief.md` (sections 12, 13 and 14 override), `page-brief.md`.');
+const md = L.join('\n');
+check(L.length < 250, 'the record has ' + L.length + ' lines; it must stay under 250');
+BANNED.concat(PLAIN).forEach(re => { const m = md.replace(/^- (LIM|f\d).*$/gm, '').match(re); if (m) notes.push('record wording to review: ' + m[0]); });
+RETIRED.forEach(re => { const m = md.replace(/^- (LIM|f\d).*$/gm, '').match(re); if (m) fail.push('retired word in the record: ' + m[0]); });
+
+/* ---------- 8. write ---------- */
+report.unshift('build of ' + new Date().toISOString() + ' (' + ((Date.now() - T0) / 1000).toFixed(1) + ' s)', 'checks failed: ' + fail.length);
+fail.forEach(f => report.push('FAIL: ' + f));
+report.push('engine numbers compared in all: ' + compared + ' (' + engineChecked + ' before the page render); largest relative gap ' + maxGap);
+report.push('section order: hero, ' + FOUND_ORDER.join(', ') + '; top bar links in the same order');
+report.push('page size: ' + SIZE + ' bytes (limit ' + SIZE_LIMIT + '); parts: ' + Object.keys(sizeParts).map(k => k + ' ' + sizeParts[k]).join(', ') + '; saved by stripping and pruning: ' + Object.keys(sizeSaved).map(k => k + ' ' + sizeSaved[k]).join(', '));
+if (WORDS) {
+  report.push('visible words with everything collapsed (rendered without a browser, after the deferred work, many runs not run): ' + WORDS.all + ' (limit ' + WORD_LIMIT + ')');
+  report.push('words above the map: ' + WORDS.above + ' (top bar and hero); the hero alone: ' + WORDS.hero);
+  report.push('words per section: ' + Object.keys(WORDS.per).map(k => k + ' ' + WORDS.per[k]).join(', '));
+  report.push('largest filled boxes by visible words: ' + WORDS.byBox.map(x => x[0] + ' ' + x[1]).join(', '));
+  report.push('page script run time without a browser: first paint ' + WORDS.msFirst + ' ms, with the deferred work ' + WORDS.ms + ' ms');
+}
+if (GRAPH) report.push('map graph: drawn at ' + GRAPH.width + ' by ' + GRAPH.height + ' px, ' + GRAPH.scale + ' px per unit at any pane width (it scrolls sideways); ' + GRAPH.texts + ' text elements; smallest font ' + GRAPH.minFont + ' units, so ' + GRAPH.minPx + ' px on screen at a 644 px pane (limit ' + TX.layout.min_text_px + ')');
+report.push('sentences checked in the page copy: ' + sentCount + '; longest ' + sentMax + ' words (limit ' + SENTENCE_LIMIT + ')');
+report.push('sentences checked in the data files: ' + dataSent + '; longest ' + dataMax + ' words (limit ' + SENTENCE_LIMIT + ')');
+report.push('retired words ("unfavourable", "favourable setting", "best value", "best guess") in the page copy: ' + retiredHits.length + '; in visible data text: ' + dataRetired.length + (dataRetired.length ? ' (' + dataRetired.join('; ') + ')' : ''));
+report.push('funnel on the page: ' + fNlast.funnels[FD.id].map(s => s.id + ' ' + fun(s.value)).join(', ') + ' (equal to engine funnel(), with the one mark at ' + MARK + ')');
+report.push('promoted checks: under the funnel ' + fun(fNlast.promo) + ', at ' + MARK + ' ' + fun(REFS[MARK].last.promo) + '; usage panel ' + usageNText() + '; loops the link closes: ' + (CHK.promo ? CHK.promo.loops : '?') + ' (all equal to the engine)');
+function usageNText() { return C.usage(MAP, last).map(u => u.id + ' ' + (+u.value.toPrecision(3))).join(', '); }
+report.push('corner table: ' + CHK.corners + ' cells equal to engine references(); square: ' + CHK.square + ' cells (3 sheets, 2 ratios) equal to engine square(); gate and ladder table: ' + CHK.gate + ' cells equal to engine sharedTable()');
+if (CHK.weights) report.push('weights on the page equal to engine weights(): ' + CHK.weights.lims + ' limitation cells, ' + CHK.weights.steps + ' step cells, ' + CHK.weights.groups + ' group rows, ' + CHK.weights.seq + ' sequence rows, and the full fall');
+report.push('corners, last period: ' + MAP.reference_settings.map(r => r.id + ' ' + E.RATIO_IDS.map(id => f2(REFS[r.id].last.ratios[id])).join('/')).join('; ') + ' (cost/wrong vs strong, cost/wrong vs ladder)');
+report.push('full fall ' + wpc(W8.full.score) + ' (cost ' + wpc(W8.full.cost_fall) + ', wrong ' + wpc(W8.full.wrong_fall) + '); groups ' + W8.groups.map(g => g.id + ' ' + wpc(g.alone) + '/' + wpc(g.last)).join(', ') + '; steps ' + W8.steps.map(s => s.step + ' ' + (s.measured ? wpc(s.alone) + '/' + wpc(s.last) : s.not_measured)).join(', ') + '; sequence ' + W8.sequence.map(q => q.step + ' ' + wpc(q.cumulative)).join(', ') + '; unnamed ' + W8.sequence_end.ids.join('+') + ' +' + wpc(W8.sequence_end.added));
+report.push('not weighed: ' + nmRows.map(r => r.id + ' ' + r.not_measured).join(', ') + '; sharing their unknowns: ' + W8.limitations.filter(r => r.same_set && r.same_set.count).length);
+report.push('square, cells below the ladder: ' + (CHK.squareSummary || []).map(q => q.id + ' cost ' + q.cost + ', wrong ' + q.wrong + ', both ' + q.both + ' of ' + q.n).join('; '));
+report.push('counts: ' + JSON.stringify(CNT));
+report.push('grid totals (status: steps 1..10): ' + C.STATUSES.map(s => s + ' ' + TOT[s].join(',')).join(' | '));
+report.push('middle values: top_first cost ' + tpN.top_first.cost + ' wrong ' + tpN.top_first.wrong + '; cheap_ladder cost ' + tpN.cheap_ladder.cost + ' wrong ' + tpN.cheap_ladder.wrong + '; library last cost ' + last.library.cost + ' wrong ' + last.library.wrong);
+report.push('record: ' + L.length + ' lines');
+report.push('fix, verdict or retired wording in the page copy: ' + lintHits.length + ' hits; untagged digits in the page copy: ' + digitLint.length);
+report.push('wording in the data files to review by hand (' + dataHits.length + '):');
+dataHits.forEach(h => report.push('  ' + h));
+notes.forEach(n => report.push('note: ' + n));
+if (process.env.LP_OUT) {
+  const outP = path.resolve(HERE, process.env.LP_OUT);
+  fs.mkdirSync(path.dirname(outP), { recursive: true });
+  fs.writeFileSync(outP, html);
+  console.log('private build: ' + outP + ' (' + SIZE + ' bytes; modules: ' + (MOD_IDS.join(', ') || 'none') + '); checks failed: ' + fail.length);
+  fail.slice(0, 60).forEach(f => console.log('  FAILED: ' + f));
+  process.exit(0);
+}
+fs.writeFileSync(path.join(HERE, 'build-page-report.txt'), report.join('\n') + '\n');
+if (fail.length) { console.error(fail.slice(0, 40).join('\n')); console.error('BUILD FAILED (' + fail.length + '): nothing written except the report.'); process.exit(1); }
+fs.writeFileSync(path.join(LP, 'index.html'), html);
+fs.writeFileSync(path.join(PROGRAM, 'LIBRARY-PATHWAYS-2026-11.md'), md + '\n');
+console.log('ok: index.html ' + SIZE + ' bytes; record ' + L.length + ' lines; engine numbers compared ' + compared + ', largest gap ' + maxGap + (WORDS ? '; visible words ' + WORDS.all + ', above the map ' + WORDS.above : '') + (GRAPH ? '; smallest graph text ' + GRAPH.minPx + ' px' : ''));

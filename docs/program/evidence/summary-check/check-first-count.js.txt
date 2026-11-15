@@ -1,0 +1,464 @@
+// check.js.txt — hand-over fidelity of the compaction summaries on record (FixFlow and the clinic testbed).
+// Record: docs/program/SUMMARY-CHECK-2026-11.md (part 1 is the scoring this script implements).
+// Makes no model calls. Reads main-session transcripts of the two project groups only.
+//
+//   node - index <cacheDir>            < check.js.txt   find summaries, pull out claims, scan what each session saw -> <cacheDir>/index.json
+//   node - check <cacheDir>            < check.js.txt   git + gh lookups, verdicts -> <cacheDir>/checked.json and the hand-read work files
+//   node - table <cacheDir> [outDir]   < check.js.txt   counts, rates, ranges -> check-table.txt, check.json (reads <outDir>/audit.json if present)
+//
+// <cacheDir> holds summary sentences (the context of each claim, for the hand read). Keep it OUTSIDE the repository
+// and delete it when done. Nothing written to [outDir] holds a sentence from a summary or a message.
+//
+// The reader reuses the split replay's index rules (docs/program/evidence/split-replay/replay.js.txt): a compact
+// boundary marker with its size, then the user line flagged as a compaction summary; request blobs and file-history
+// lines skipped; sidechain lines left out; a copied line (its sessionId is not the file's) loses to the original.
+'use strict';
+const fs = require('fs'), path = require('path'), os = require('os'), readline = require('readline'), crypto = require('crypto');
+const { spawnSync } = require('child_process');
+const [stage, a1, a2] = process.argv.slice(2);
+const ROOT = process.env.CLAUDE_PROJECTS || path.join(os.homedir(), '.claude', 'projects');
+const REPOS = { fixflow: process.env.FIXFLOW_REPO || 'C:/Users/User/Documents/projects/EMS_workshop1', clinic: process.env.CLINIC_REPO || 'C:/Bilal_Migration/User/Downloads/20_PROJECTS/24_Clinic_Workshop' };
+const REPLAY_CUT = '2026-11-14T05:12';      // the split replay's cut (calls made up to 05:12 UTC on 14 November)
+
+// ---------- shared ----------
+const groupOf = (store) => /EMS-workshop1|23-FixFlow/.test(store) ? 'fixflow' : /24-Clinic-Workshop/.test(store) ? 'clinic' : 'other';
+const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
+const EXT = 'py|pyi|ts|tsx|js|jsx|mjs|cjs|json|jsonl|md|mdx|yml|yaml|toml|sh|ps1|bat|cmd|txt|html|htm|css|scss|sql|ini|cfg|conf|lock|gradle|kts|kt|java|xml|png|jpg|jpeg|svg|pdf|csv|tsv|env|example|log|apk|aab|zip|gz|tgz|db|sqlite|sqlite3|properties|ipynb|docx|xlsx|pptx|mp4|webp|gif|ico|wav|mp3|m4a|patch|diff|rs|go|rb|php|mako|j2|snap|map|plist|pem|dump|bak|tmp|out|err';
+const EXT_RE = new RegExp('\\.(?:' + EXT + ')$', 'i');
+const normPath = (s) => s.replace(/[\\/]+/g, '/').replace(/^\.\//, '').toLowerCase();
+const baseKey = (p) => p.slice(p.lastIndexOf('/') + 1).replace(/^\.+/, '');
+const numNorm = (s) => s.replace(/,/g, '');
+const collectStrings = (v, acc) => { if (typeof v === 'string') acc.push(v); else if (Array.isArray(v)) for (const x of v) collectStrings(x, acc); else if (v && typeof v === 'object') for (const k in v) collectStrings(v[k], acc); return acc; };
+
+// ---------- claim patterns (scoring 1.4) ----------
+const SHA = '([0-9a-f]{7,40})';
+const REF = '((?:origin\\/)?[A-Za-z0-9._\\-]+(?:\\/[A-Za-z0-9._\\-]+)+|main|master)';
+const RX = {
+  hex: /(?<![0-9A-Za-z_\-\/\\.#:=])([0-9a-f]{7,40})(?![0-9A-Za-z_\-\/\\]|\.[A-Za-z0-9])/g,
+  headA: new RegExp('(?<![\\w\\/.\\-])' + REF + '\\s*[,(]?\\s*(?:(?:is|now|is now|sits|stands)\\s+)?(?:at|@)\\s+' + SHA + '(?![0-9A-Za-z])', 'g'),
+  headB: new RegExp('(?<![\\w\\/.\\-])' + REF + '\\s*\\(\\s*' + SHA + '\\s*[),]', 'g'),
+  headC: new RegExp('#(\\d{1,4})\\b[^.;\\n#]{0,24}?\\b(?:head|HEAD|tip|at|@)\\s*(?:is|=|:|now)?\\s*' + SHA + '(?![0-9A-Za-z])', 'g'),
+  headD: new RegExp('\\b(?:head|HEAD|tip)\\s*(?:SHA\\s*|sha\\s*)?(?:is|=|:|at|now at|now)?\\s*' + SHA + '(?![0-9A-Za-z])', 'g'),
+  prNum: /(?<![\w&\/])#(\d{1,4})\b/g,
+  prState: /\b(merged|open|closed|draft)\b/gi,
+  prGuard: /\b(not|never|no longer|isn't|wasn't|aren't|unmerged|until|once|after|when|whenever|if|unless|will|would|should|must|may|might|can|could|to be|before|awaits?|awaiting|pending|waits?|waiting|needs?|needed|ready to|then|or|whether|either|cannot|can't)\b/i,
+  narr: /\b(reviews?|reviewed|verdict|PASS|FAIL|pass|second-pass|first-pass|round|earlier|originally|previously|formerly|old|initial|initially|was|were|had been|then|before|from|base|based|cut|branched|off|rebased|onto|merge-base|parent|forked|since|after|when)\b/,
+  t1: /(?<![\w.,\/])(\d{1,3}(?:,\d{3})+|\d+)\s+(passed|failed|skipped|passing|failing)\b/gi,
+  t2: /(?<![\w.,\/])(\d+)\s*\/\s*(\d+)\s+(?:tests?\s+)?(passing|passed|pass|green)\b/gi,
+  t3: /(?<![\w.,\/])(\d{1,3}(?:,\d{3})+|\d+)\s+(?:[A-Za-z\-]+\s+)?tests?\s+(pass|passed|passing|green)\b/gi,
+  tObsA: /(?:^|[\s#])(pass|fail|skipped)(?:ed)?\s+(\d+)\b/gim,
+  tObsB: /\b(passed|failed|skipped)\s*[:=]\s*(\d+)\b/gi,
+  cnt: /(?<![\w.,\/])(\d{1,3}(?:,\d{3})+|\d+)\s+(files?|rows?)\b/gi,
+  barePath: new RegExp('(?<![\\w`\\\\/.\\-@~])((?:[A-Za-z]:[\\\\/])?(?:[\\w.@~+\\-]+[\\\\/])+[\\w.@+\\-]+\\.(?:' + EXT + '))(?::\\d+(?:-\\d+)?)?(?![\\w\\\\/\\-]|\\.[A-Za-z0-9])', 'gi'),
+};
+const UNIT = { passed: 'passed', passing: 'passed', pass: 'passed', green: 'passed', failed: 'failed', failing: 'failed', fail: 'failed', skipped: 'skipped' };
+const SECTION_RE = /^\s*(?:#{1,4}\s*)?(?:\*\*)?(\d)\.\s+(?:Primary Request|Key Technical|Files and Code|Errors and [Ff]ixes|Problem Solving|All [Uu]ser [Mm]essages|Pending Tasks|Current Work|Optional Next Step)/;
+const isRefNotPath = (r) => !EXT_RE.test(r) && !/^\d+(\.\d+)*$/.test(r);
+function pathFromTick(c) {
+  let s = c.trim().replace(/(?::\d+(?:-\d+)?|#L\d+(?:-L?\d+)?)$/, '');
+  if (!/[\\/]/.test(s) || /[<>*?{}|$"'`…,;=]|\.\.\.|^https?:|^\w+:\/\/|^-/.test(s) || !EXT_RE.test(s)) return null;
+  const abs = /^[A-Za-z]:[\\/]/.test(s);
+  if (/\s/.test(s) && !abs) return null;
+  const segs = s.split(/[\\/]+/).filter((x, i) => x !== '' || i > 0);
+  for (const g of segs) if (g !== '' && !/^[\w.@~+\- ()\[\]:]+$/.test(g)) return null;
+  if (!/^[\w.@+\-]+\.[A-Za-z0-9]+$/.test(segs[segs.length - 1])) return null;
+  return s;
+}
+// One claim = kind + subject + value, once per summary.
+function extractClaims(text, sid8s) {
+  const out = new Map(), lines = text.split('\n'); let sec = 0;
+  const add = (kind, subj, val, li, col, len, extra) => {
+    const key = kind + '|' + subj + '|' + val; if (out.has(key)) return;
+    const L = lines[li], a = Math.max(0, col - 230), b = Math.min(L.length, col + len + 230);
+    out.set(key, Object.assign({ kind, subj, val, sec, li, ctx: (a > 0 ? '…' : '') + L.slice(a, b) + (b < L.length ? '…' : '') }, extra || {}));
+  };
+  for (let li = 0; li < lines.length; li++) {
+    const raw = lines[li]; const hm = SECTION_RE.exec(raw); if (hm) sec = +hm[1];
+    if (/read the full transcript at:|\.claude[\\/]projects[\\/]/.test(raw)) continue;          // the harness's own footer
+    // ---- file paths: backticked tokens first, then bare tokens outside backticks
+    let bare = raw.replace(/`([^`\n]+)`/g, (m, c, off) => { const p = pathFromTick(c); if (p) add('path', normPath(p), '', li, off, m.length, { shown: p }); return ' '.repeat(m.length); });
+    for (const m of bare.matchAll(RX.barePath)) { const p = pathFromTick(m[1]); if (p && !/\s/.test(p)) add('path', normPath(p), '', li, m.index, m[0].length, { shown: p }); }
+    // ---- everything else works on the line without backticks and bold marks
+    const pl = raw.replace(/[`*]/g, '');
+    for (const m of pl.matchAll(RX.hex)) {
+      const h = m[1]; if (!/\d/.test(h) || !/[a-f]/.test(h)) continue;
+      if (!(h.length <= 12 || h.length === 40)) continue;
+      if (sid8s.has(h.slice(0, 8)) && h.length <= 8) continue;                                     // a session id's first group
+      const before = pl.slice(Math.max(0, m.index - 16), m.index);
+      if (/(sha-?256|sha-?1|md5|digest|checksum)\W{0,4}$/i.test(before) || /(session|sessions|agent|task|local_)\W{0,2}$/i.test(before)) continue;
+      add('commit', h, '', li, m.index, h.length);
+    }
+    const narr = (idx) => RX.narr.test(pl.slice(Math.max(0, idx - 50), idx));
+    for (const m of pl.matchAll(RX.headA)) if (isRefNotPath(m[1]) && !narr(m.index)) add('head', m[1], m[2], li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.headB)) if (isRefNotPath(m[1]) && !narr(m.index)) add('head', m[1], m[2], li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.headC)) if (!narr(m.index)) add('head', '#' + m[1], m[2], li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.headD)) {
+      if (narr(m.index)) continue;
+      const pre = pl.slice(Math.max(0, m.index - 120), m.index); let subj = null, at = -1;
+      for (const r of pre.matchAll(/#(\d{1,4})\b/g)) if (r.index > at) { at = r.index; subj = '#' + r[1]; }
+      for (const r of pre.matchAll(new RegExp('(?<![\\w\\/.\\-])' + REF + '(?![\\w\\/])', 'g'))) if (r.index > at && isRefNotPath(r[1])) { at = r.index; subj = r[1]; }
+      if (!subj || /[0-9a-f]{7,40}/.test(pre.slice(at + subj.length))) continue;                      // another id sits between the ref and this one
+      add('head', subj, m[1], li, m.index, m[0].length);
+    }
+    const prs = [...pl.matchAll(RX.prNum)];
+    for (let k = 0; k < prs.length; k++) {
+      const m = prs[k], end = m.index + m[0].length;
+      let after = pl.slice(end, Math.min(pl.length, end + 45)); const ca = after.search(/[.;]|#\d/); if (ca >= 0) after = after.slice(0, ca);
+      let before = pl.slice(Math.max(0, m.index - 35), m.index); const cb = Math.max(before.lastIndexOf('.'), before.lastIndexOf(';'), before.search(/#\d[^#]*$/) >= 0 ? before.search(/#\d[^#]*$/) + 2 : -1); if (cb >= 0) before = before.slice(cb + 1);
+      const aw = [...after.matchAll(RX.prState)], bw = [...before.matchAll(RX.prState)];
+      const a = aw.length ? aw[0][1].toLowerCase() : null, b = bw.length ? bw[bw.length - 1][1].toLowerCase() : null;
+      let st = null, scope = '';
+      if (a && b && a !== b) continue;
+      if (a) { st = a; scope = before + ' ' + after.slice(0, aw[0].index); } else if (b) { st = b; scope = before.slice(Math.max(0, bw[bw.length - 1].index - 25)) + ' ' + after.slice(0, 12); }
+      if (!st || RX.prGuard.test(scope)) continue;
+      add('pr', '#' + m[1], st === 'draft' ? 'open' : st, li, m.index, m[0].length, st === 'draft' ? { draft: 1 } : null);
+    }
+    for (const m of pl.matchAll(RX.t1)) add('test', UNIT[m[2].toLowerCase()], numNorm(m[1]), li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.t2)) add('test', 'passed', numNorm(m[1]), li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.t3)) add('test', 'passed', numNorm(m[1]), li, m.index, m[0].length);
+    for (const m of pl.matchAll(RX.cnt)) add('count', m[2].toLowerCase().replace(/s$/, '') + 's', numNorm(m[1]), li, m.index, m[0].length);
+  }
+  return [...out.values()];
+}
+
+// ---------- what a tool result or message shows about heads, pull requests and test runs ----------
+function headObsFromOutput(cmd, text, push) {
+  const c = cmd || '';
+  for (const m of text.matchAll(/^\[([^\s\]]+)(?: \(root-commit\))? ([0-9a-f]{7,40})\]/gm)) if (m[1] !== 'detached') push(m[1], m[2], 'commit');
+  for (const m of text.matchAll(/^\s*[ +*!=\-]?\s*([0-9a-f]{7,40})\.\.\.?([0-9a-f]{7,40})\s+(\S+)\s+->\s+(\S+)/gm)) {
+    if (/^origin\//.test(m[4])) push(m[4], m[2], 'fetch'); else { push('origin/' + m[4], m[2], 'push'); if (m[3] !== 'HEAD') push(m[3], m[2], 'push'); }
+  }
+  if (/\bgit\b[^|;&]*\bbranch\b/.test(c)) for (const m of text.matchAll(/^[*+ ]\s+(\S+)\s+([0-9a-f]{7,40})\s/gm)) if (!/^\(/.test(m[1])) push(m[1].replace(/^remotes\//, ''), m[2], 'branch');
+  if (/worktree\s+list/.test(c)) for (const m of text.matchAll(/^\S.*?\s+([0-9a-f]{7,40})\s+\[([^\]]+)\]/gm)) push(m[2], m[1], 'worktree');
+  for (const m of text.matchAll(/^\*?\s*(?:commit\s+)?([0-9a-f]{7,40})\s+\(([^)\n]+)\)/gm)) for (let r of m[2].split(',')) { r = r.trim().replace(/^HEAD -> /, ''); if (!r || r === 'HEAD' || /^tag:/.test(r)) continue; push(r, m[1], 'log'); }
+  for (const m of text.matchAll(/^([0-9a-f]{40})\s+refs\/(heads|remotes)\/(\S+)/gm)) push(m[2] === 'remotes' ? m[3] : (/ls-remote/.test(c) ? 'origin/' + m[3] : m[3]), m[1], 'refs');
+  const rp = /\bgit\b(?:\s+-C\s+\S+)?\s+rev-parse\s+(?:--short(?:=\d+)?\s+|--verify\s+)*([A-Za-z0-9._\/\-]+)\s*$/.exec(c.trim());
+  if (rp && rp[1] !== 'HEAD' && !/^-/.test(rp[1])) { const t = text.trim(); if (/^[0-9a-f]{7,40}$/.test(t)) push(rp[1], t, 'rev-parse'); }
+}
+function ghObs(text, pushHead, pushPr) {
+  if (!/"(?:headRefOid|state|number)"/.test(text)) return;
+  // walk JSON-ish objects loosely: split on object boundaries and read the fields that sit together
+  for (const chunk of text.split(/\}\s*,\s*\{|\n\s*\n/)) {
+    const num = /"number"\s*:\s*(\d+)/.exec(chunk), st = /"state"\s*:\s*"(OPEN|MERGED|CLOSED)"/.exec(chunk), oid = /"headRefOid"\s*:\s*"([0-9a-f]{40})"/.exec(chunk), ref = /"headRefName"\s*:\s*"([^"]+)"/.exec(chunk), mg = /"merged(?:At)?"\s*:\s*(true|"[0-9T:\-Z.]+")/.exec(chunk);
+    if (num && (st || mg)) pushPr(+num[1], st ? st[1].toLowerCase() : 'merged', 'gh-json');
+    if (oid && num) pushHead('#' + num[1], oid[1], 'gh-json');
+    if (oid && ref) pushHead('origin/' + ref[1], oid[1], 'gh-json');
+  }
+}
+function prObsFromOutput(cmd, text, pushPr) {
+  for (const m of text.matchAll(/(?:Merged|Squashed and merged|Rebased and merged) pull request [^\n#]*#(\d+)/g)) pushPr(+m[1], 'merged', 'gh-merge');
+  for (const m of text.matchAll(/Pull request [^\n#]*#(\d+)[^\n]*was already merged/g)) pushPr(+m[1], 'merged', 'gh-merge');
+  for (const m of text.matchAll(/Closed pull request [^\n#]*#(\d+)/g)) pushPr(+m[1], 'closed', 'gh-close');
+  if (/\bgh\b[^|;&]*\bpr\s+create\b/.test(cmd || '')) for (const m of text.matchAll(/github\.com\/[^\s\/]+\/[^\s\/]+\/pull\/(\d+)/g)) pushPr(+m[1], 'open', 'gh-create');
+  if (/\bgh\b[^|;&]*\bpr\s+list\b/.test(cmd || '')) for (const m of text.matchAll(/^(\d+)\t[^\n]*\t(OPEN|MERGED|CLOSED|DRAFT)\b/gm)) pushPr(+m[1], m[2] === 'DRAFT' ? 'open' : m[2].toLowerCase(), 'gh-list');
+  if (/\bgh\b[^|;&]*\bpr\s+view\b/.test(cmd || '')) { const n = /^number:\t(\d+)/m.exec(text), s = /^state:\t(OPEN|MERGED|CLOSED|DRAFT)/m.exec(text); if (n && s) pushPr(+n[1], s[1] === 'DRAFT' ? 'open' : s[1].toLowerCase(), 'gh-view'); }
+}
+function testCounts(text) {
+  const out = [];
+  for (const m of text.matchAll(RX.t1)) out.push(UNIT[m[2].toLowerCase()] + '|' + numNorm(m[1]));
+  for (const m of text.matchAll(RX.t2)) out.push('passed|' + numNorm(m[1]));
+  for (const m of text.matchAll(RX.t3)) out.push('passed|' + numNorm(m[1]));
+  for (const m of text.matchAll(RX.tObsA)) out.push(UNIT[m[1].toLowerCase()] + '|' + m[2]);
+  for (const m of text.matchAll(RX.tObsB)) out.push(UNIT[m[1].toLowerCase()] + '|' + m[2]);
+  return out;
+}
+
+// ---------- stage: index ----------
+async function findSummaries(f, sid, cutoff) {
+  const comps = []; let ln = 0;
+  const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+  for await (const line of rl) {
+    ln++;
+    if (line.startsWith('{"type":"api-request-blob"') || line.startsWith('{"type":"file-history')) continue;
+    const isC = line.includes('"compact_boundary"'), isS = line.includes('"isCompactSummary":true');
+    if (!isC && !isS) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (o.isSidechain) continue;
+    if (cutoff && o.timestamp && o.timestamp > cutoff) continue;
+    if (o.type === 'system' && o.subtype === 'compact_boundary') {
+      const m = o.compactMetadata || {}, ps = m.preservedSegment || {};
+      comps.push({ line: ln, ts: o.timestamp, pre: m.preTokens || 0, post: m.postTokens || 0, ms: m.durationMs || 0, trigger: m.trigger || '?', precomputed: !!m.precomputed, headUuid: ps.headUuid || null, tailUuid: ps.tailUuid || null, copied: !!(o.sessionId && o.sessionId !== sid), sumLine: 0, sumTs: null, text: null });
+      continue;
+    }
+    if (o.type === 'user' && o.isCompactSummary && o.message && comps.length && !comps[comps.length - 1].sumLine) {
+      const c = comps[comps.length - 1], ct = o.message.content;
+      c.sumLine = ln; c.sumTs = o.timestamp; c.text = typeof ct === 'string' ? ct : Array.isArray(ct) ? ct.filter(b => b && b.type === 'text').map(b => b.text || '').join('\n') : '';
+    }
+  }
+  return comps;
+}
+async function scanTranscript(f, comps, wanted) {
+  // one pass over the whole file: what the session saw (tool results, user-role messages, attachments) and what it said
+  const occ = new Map();                                             // token key -> { seen: [lines], said: [lines] }
+  const hit = (key, cls, ln) => { let o = occ.get(key); if (!o) { o = { seen: [], said: [] }; occ.set(key, o); } const a = o[cls]; if (a[a.length - 1] !== ln) a.push(ln); };
+  const headObs = [], prObs = [], runs = [], opened = new Map(), uuidLine = new Map(), tsLines = [], models = [];
+  const tools = new Map();                                           // tool_use id -> { name, cmd, fp }
+  const hex7 = new Map(); for (const h of wanted.hex) { const k = h.slice(0, 7); (hex7.get(k) || hex7.set(k, []).get(k)).push(h); }
+  const scan = (text, cls, ln, opt) => {
+    if (!text) return;
+    if (hex7.size) for (const m of text.matchAll(/(?<![0-9a-zA-Z])[0-9a-f]{7,40}(?![0-9a-zA-Z])/g)) { const c = hex7.get(m[0].slice(0, 7)); if (c) for (const w of c) if (m[0] === w || m[0].startsWith(w) || w.startsWith(m[0])) hit('h|' + w, cls, ln); }
+    if (wanted.base.size) {
+      const t2 = text.replace(/\\+/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
+      for (const m of t2.matchAll(/[a-z0-9_@+\-][a-z0-9_.@+\-]*\.[a-z0-9]{1,8}(?![a-z0-9_])/g)) {
+        const ps = wanted.base.get(m[0]); if (!ps) continue; const end = m.index + m[0].length;
+        for (const p of ps) { const st = end - p.length; if (st < 0 || !t2.startsWith(p, st)) continue; const pc = st > 0 ? t2[st - 1] : ''; if (pc && /[a-z0-9_.@+\-]/.test(pc)) continue; hit('p|' + p, cls, ln); }
+      }
+    }
+    const t3 = opt && opt.stripLineNumbers ? text.replace(/^\s*\d+[\t→]/gm, '') : text;
+    for (const k of testCounts(t3)) hit('t|' + k, cls, ln);
+    for (const m of t3.matchAll(RX.cnt)) hit('c|' + m[2].toLowerCase().replace(/s$/, '') + 's|' + numNorm(m[1]), cls, ln);
+    if (wanted.nums.size) for (const m of t3.matchAll(/(?<![\d.,])\d[\d,]*(?![\d]|[.,]\d)/g)) { const n = numNorm(m[0]); if (wanted.nums.has(n)) hit('n|' + n, cls, ln); }
+  };
+  const proseObs = (text, ln) => {                                   // a message that states a head or a pull request state in the summary's own forms
+    for (const c of extractClaims(text, new Set())) { if (c.kind === 'head') headObs.push({ ref: c.subj, sha: c.val, line: ln, form: 'prose' }); else if (c.kind === 'pr') prObs.push({ n: +c.subj.slice(1), state: c.val, line: ln, form: 'prose' }); }
+  };
+  let ln = 0, lastModel = '', ci = 0;
+  const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+  for await (const line of rl) {
+    ln++;
+    while (ci < comps.length && ln >= comps[ci].line) { comps[ci].model = lastModel; ci++; }
+    if (ci >= comps.length && ln > comps[comps.length - 1].line) break;   // nothing after the last boundary is needed
+    if (line.startsWith('{"type":"api-request') || line.startsWith('{"type":"file-history')) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (o.isSidechain) continue;
+    if (o.uuid) uuidLine.set(o.uuid, ln);
+    if (o.timestamp) tsLines.push([ln, o.timestamp]);
+    if (o.type === 'assistant' && o.message) {
+      const m = o.message; if (m.model && m.model !== '<synthetic>' && m.usage) lastModel = m.model;
+      if (Array.isArray(m.content)) for (const b of m.content) {
+        if (b.type === 'text') scan(b.text, 'said', ln); else if (b.type === 'thinking') scan(b.thinking, 'said', ln);
+        else if (b.type === 'tool_use') { const inp = b.input || {}; tools.set(b.id, { name: b.name, cmd: typeof inp.command === 'string' ? inp.command : '', fp: inp.file_path || inp.notebook_path || (b.name === 'Read' || b.name === 'Glob' || b.name === 'Grep' ? inp.path : '') || '' }); scan(collectStrings(inp, []).join('\n'), 'said', ln); }
+      }
+      continue;
+    }
+    if (o.type === 'user' && o.message) {
+      const ct = o.message.content;
+      if (o.isCompactSummary) { scan(typeof ct === 'string' ? ct : collectStrings(ct, []).join('\n'), 'said', ln); continue; }   // an earlier summary is the model's own words
+      if (typeof ct === 'string') { scan(ct, 'seen', ln); proseObs(ct, ln); continue; }
+      if (Array.isArray(ct)) for (const b of ct) {
+        if (!b) continue;
+        if (b.type === 'text') { scan(b.text, 'seen', ln); proseObs(b.text || '', ln); }
+        else if (b.type === 'tool_result') {
+          const t = tools.get(b.tool_use_id) || { name: '?', cmd: '', fp: '' }, text = typeof b.content === 'string' ? b.content : collectStrings(b.content, []).join('\n');
+          const echo = t.name === 'Write' || t.name === 'Edit' || t.name === 'NotebookEdit' || t.name === 'MultiEdit';   // the result repeats what the model wrote
+          if (t.fp && !b.is_error) { const p = normPath(String(t.fp)); if (!opened.has(p)) opened.set(p, ln); }
+          scan(text, echo ? 'said' : 'seen', ln, { stripLineNumbers: t.name === 'Read' });
+          if (echo) continue;
+          if (t.name === 'Bash' || t.name === 'PowerShell') {
+            headObsFromOutput(t.cmd, text, (ref, sha, form) => headObs.push({ ref, sha, line: ln, form }));
+            prObsFromOutput(t.cmd, text, (n, state, form) => prObs.push({ n, state, line: ln, form }));
+            const tc = testCounts(text); if (tc.length) runs.push({ line: ln, cmd: sha1(t.cmd.replace(/\s+/g, ' ').replace(/\s*\|\s*(tail|head)\b.*$/, '').trim().toLowerCase()).slice(0, 12), counts: [...new Set(tc)] });
+          } else if (t.name === 'Agent' || t.name === 'Task' || /SendMessage|get_status|list_sessions/.test(t.name)) proseObs(text, ln);
+          ghObs(text, (ref, sha, form) => headObs.push({ ref, sha, line: ln, form }), (n, state, form) => prObs.push({ n, state, line: ln, form }));
+        }
+      }
+      continue;
+    }
+    if (o.type === 'attachment' && o.attachment) { const t = collectStrings(o.attachment, []).join('\n'); scan(t, 'seen', ln); if (o.attachment.type === 'queued_command' || o.attachment.type === 'task_status' || o.attachment.type === 'hook_additional_context') proseObs(t, ln); continue; }
+    if (o.type === 'queue-operation' && typeof o.content === 'string') { scan(o.content, 'seen', ln); proseObs(o.content, ln); continue; }
+    if (o.type === 'system' && typeof o.content === 'string') { scan(o.content, 'seen', ln); continue; }
+  }
+  while (ci < comps.length) { comps[ci].model = lastModel; ci++; }
+  return { occ, headObs, prObs, runs, opened, uuidLine, tsLines };
+}
+async function stageIndex(cacheDir) {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const startedAt = new Date().toISOString(), t0 = Date.now();
+  const stores = fs.readdirSync(ROOT, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name).sort();
+  const scope = stores.filter(s => groupOf(s) !== 'other');
+  const files = []; for (const s of scope) for (const mf of fs.readdirSync(path.join(ROOT, s)).filter(n => n.endsWith('.jsonl'))) files.push({ g: groupOf(s), sid: mf.replace(/\.jsonl$/, ''), f: path.join(ROOT, s, mf) });
+  const sid8s = new Set(files.map(x => x.sid.slice(0, 8)));
+  const out = { startedAt, replayCut: REPLAY_CUT, foldersInScope: scope.length, foldersLeftOut: stores.length - scope.length, mainTranscripts: files.length, copiedMarkers: 0, markersWithoutSummary: 0, sessions: [] };
+  for (const it of files) {
+    const all = await findSummaries(it.f, it.sid, startedAt);
+    out.copiedMarkers += all.filter(c => c.copied).length; out.markersWithoutSummary += all.filter(c => !c.copied && !c.sumLine).length;
+    const comps = all.filter(c => !c.copied && c.sumLine); if (!comps.length) continue;
+    const wanted = { hex: new Set(), base: new Map(), nums: new Set() };
+    for (const c of comps) {
+      c.claims = extractClaims(c.text, sid8s); c.chars = c.text.length;
+      for (const cl of c.claims) {
+        if (cl.kind === 'commit') wanted.hex.add(cl.subj); else if (cl.kind === 'head') wanted.hex.add(cl.val);
+        else if (cl.kind === 'path') { const b = baseKey(cl.subj); (wanted.base.get(b) || wanted.base.set(b, []).get(b)).push(cl.subj); }
+        else if (cl.kind === 'test' || cl.kind === 'count') wanted.nums.add(cl.val);
+      }
+    }
+    for (const [b, ps] of wanted.base) wanted.base.set(b, [...new Set(ps)]);
+    const ev = await scanTranscript(it.f, comps, wanted);
+    const sess = { g: it.g, sid: it.sid, sid8: it.sid.slice(0, 8), headObs: ev.headObs, prObs: ev.prObs, runs: ev.runs, comps: [] };
+    comps.forEach((c, i) => {
+      const headLine = c.headUuid && ev.uuidLine.has(c.headUuid) ? ev.uuidLine.get(c.headUuid) : c.line;
+      let tsLine = c.line; if (c.precomputed && c.sumTs) { for (const [l, ts] of ev.tsLines) { if (l >= c.line) break; if (ts > c.sumTs) { tsLine = l; break; } } }
+      const inputEnd = Math.min(headLine, tsLine);
+      const before = (arr, lim) => { let n = 0, first = 0, last = 0; for (const l of arr) { if (l >= lim) break; n++; if (!first) first = l; last = l; } return [n, first, last]; };
+      const stat = (key) => { const o = ev.occ.get(key); if (!o) return { seen: 0, said: 0 }; const [ns, fs1, ls] = before(o.seen, c.line), [nd, fd] = before(o.said, c.line); return { seen: ns, firstSeen: fs1, lastSeen: ls, said: nd, firstSaid: fd }; };
+      for (const cl of c.claims) {
+        if (cl.kind === 'commit') cl.ev = stat('h|' + cl.subj); else if (cl.kind === 'head') cl.ev = stat('h|' + cl.val);
+        else if (cl.kind === 'path') { cl.ev = stat('p|' + cl.subj); let op = 0; for (const [p, l] of ev.opened) { if (l >= c.line) continue; if (p === cl.subj || p.endsWith('/' + cl.subj) || cl.subj.endsWith('/' + p)) { op = op ? Math.min(op, l) : l; } } cl.ev.opened = op; }
+        else if (cl.kind === 'test') { cl.ev = stat('t|' + cl.subj + '|' + cl.val); cl.ev.num = stat('n|' + cl.val); }
+        else if (cl.kind === 'count') { cl.ev = stat('c|' + cl.subj + '|' + cl.val); cl.ev.num = stat('n|' + cl.val); }
+      }
+      sess.comps.push({ n: i + 1, line: c.line, sumLine: c.sumLine, ts: c.ts, sumTs: c.sumTs, pre: c.pre, post: c.post, ms: c.ms, precomputed: c.precomputed, model: c.model, chars: c.chars, headLine, inputEnd, afterReplayCut: c.ts > REPLAY_CUT, claims: c.claims });
+    });
+    out.sessions.push(sess);
+    process.stderr.write(`index ${it.g} ${sess.sid8} summaries=${comps.length} claims=${comps.reduce((a, c) => a + c.claims.length, 0)} (${((Date.now() - t0) / 1000).toFixed(0)}s)\n`);
+  }
+  fs.writeFileSync(path.join(cacheDir, 'index.json'), JSON.stringify(out));
+  const ns = out.sessions.reduce((a, s) => a + s.comps.length, 0), nc = out.sessions.reduce((a, s) => a + s.comps.reduce((x, c) => x + c.claims.length, 0), 0);
+  console.log(`INDEX_DONE transcripts=${files.length} sessions-with-summaries=${out.sessions.length} summaries=${ns} claims=${nc} copied-markers=${out.copiedMarkers} seconds=${((Date.now() - t0) / 1000).toFixed(0)} cut=${startedAt}`);
+}
+
+// ---------- stage: check (repository and GitHub lookups, verdicts) ----------
+function git(repo, args, input) { const r = spawnSync('git', ['-C', repo, ...args], { input, encoding: 'utf8', maxBuffer: 1 << 29 }); return { status: r.status, out: r.stdout || '' }; }
+const sameSha = (a, b) => !!a && !!b && (a.startsWith(b) || b.startsWith(a));
+function loadRepo(g, tokens) {
+  const repo = REPOS[g]; const R = { g, repo, ok: fs.existsSync(repo), full: new Map(), ct: new Map(), pathCt: new Map(), baseIdx: new Map(), refLog: new Map(), anc: new Map(), worktrees: [] };
+  if (!R.ok) return R;
+  const list = [...tokens];
+  const bc = git(repo, ['cat-file', '--batch-check'], list.join('\n') + '\n').out.split('\n');
+  list.forEach((t, i) => { const m = /^([0-9a-f]{40}) (\w+) /.exec(bc[i] || ''); if (m) R.full.set(t, { sha: m[1], type: m[2] }); });
+  for (const l of git(repo, ['log', '--all', '--format=%H %ct']).out.split('\n')) { const [h, c] = l.split(' '); if (h) R.ct.set(h, +c); }
+  let ct = 0;
+  for (const l of git(repo, ['log', '--all', '--name-only', '--format=@%ct']).out.split('\n')) {
+    if (!l) continue; if (l[0] === '@') { ct = +l.slice(1); continue; }
+    const p = normPath(l), prev = R.pathCt.get(p); if (prev === undefined || ct < prev) R.pathCt.set(p, ct);
+  }
+  for (const p of R.pathCt.keys()) { const b = baseKey(p); (R.baseIdx.get(b) || R.baseIdx.set(b, []).get(b)).push(p); }
+  R.worktrees = git(repo, ['worktree', 'list', '--porcelain']).out.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9));
+  R.refs = new Set(git(repo, ['for-each-ref', '--format=%(refname:short)']).out.split('\n').filter(Boolean));
+  R.isAnc = (x, y) => { const k = x + ' ' + y; if (!R.anc.has(k)) R.anc.set(k, git(repo, ['merge-base', '--is-ancestor', x, y]).status === 0); return R.anc.get(k); };
+  R.headAt = (ref, T) => { if (!R.refs.has(ref)) return null; if (!R.refLog.has(ref)) R.refLog.set(ref, git(repo, ['log', '--first-parent', '--format=%H %ct', ref]).out.split('\n').filter(Boolean).map(l => { const [h, c] = l.split(' '); return [h, +c]; })); for (const [h, c] of R.refLog.get(ref)) if (c <= T) return h; return null; };
+  R.pathTime = (p) => { const c = R.baseIdx.get(baseKey(p)); if (!c) return undefined; let best; for (const r of c) if (r === p || r.endsWith('/' + p) || p.endsWith('/' + r)) { const t = R.pathCt.get(r); if (best === undefined || t < best) best = t; } return best; };
+  R.onDisk = (p) => { try { if (/^[a-z]:\//.test(p)) return fs.existsSync(p); for (const root of [repo, ...R.worktrees]) if (fs.existsSync(path.join(root, p))) return true; } catch {} return false; };
+  return R;
+}
+function loadGitHub(cacheDir) {
+  const f = path.join(cacheDir, 'github.json');
+  if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf8'));
+  const r = spawnSync('gh', ['pr', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,state,createdAt,mergedAt,closedAt,isDraft,headRefName,headRefOid'], { cwd: REPOS.fixflow, encoding: 'utf8', maxBuffer: 1 << 27 });
+  const G = { ok: r.status === 0, at: new Date().toISOString(), prs: {}, commits: {} };
+  if (G.ok) for (const p of JSON.parse(r.stdout)) G.prs[p.number] = p;
+  fs.writeFileSync(f, JSON.stringify(G)); return G;
+}
+function prCommits(G, cacheDir, n) {
+  if (G.commits[n]) return G.commits[n];
+  const r = spawnSync('gh', ['pr', 'view', String(n), '--json', 'commits'], { cwd: REPOS.fixflow, encoding: 'utf8', maxBuffer: 1 << 26 });
+  let c = []; try { c = JSON.parse(r.stdout).commits.map(x => ({ oid: x.oid, t: Math.round(Date.parse(x.committedDate) / 1000) })); } catch {}
+  G.commits[n] = c; fs.writeFileSync(path.join(cacheDir, 'github.json'), JSON.stringify(G)); return c;
+}
+const claimId = (s, c, cl) => `${s.g}-${s.sid8}-${String(c.n).padStart(2, '0')}|${cl.kind}|${cl.subj}|${cl.val}`;
+const KINDS = ['commit', 'head', 'pr', 'test', 'path', 'count'];
+function stageCheck(cacheDir) {
+  const idx = JSON.parse(fs.readFileSync(path.join(cacheDir, 'index.json'), 'utf8'));
+  const tokens = new Set(); for (const s of idx.sessions) { for (const o of s.headObs) tokens.add(o.sha); for (const c of s.comps) for (const cl of c.claims) { if (cl.kind === 'commit') tokens.add(cl.subj); if (cl.kind === 'head') tokens.add(cl.val); } }
+  const RP = { fixflow: loadRepo('fixflow', tokens), clinic: loadRepo('clinic', tokens) };
+  const G = loadGitHub(cacheDir);
+  const resolve = (g, t) => { const a = RP[g].ok && RP[g].full.get(t); if (a) return { g, sha: a.sha, type: a.type }; const og = g === 'fixflow' ? 'clinic' : 'fixflow', b = RP[og].ok && RP[og].full.get(t); return b ? { g: og, sha: b.sha, type: b.type } : null; };
+  const byReason = {};
+  for (const s of idx.sessions) {
+    const g = s.g, prBranch = new Map(); if (g === 'fixflow') for (const p of Object.values(G.prs)) prBranch.set(p.headRefName, p.number);
+    for (const c of s.comps) {
+      const T = Math.round(Date.parse(c.ts) / 1000), has = new Set(c.claims.map(cl => cl.kind + '|' + cl.subj + '|' + cl.val));
+      for (const cl of c.claims) {
+        const ev = cl.ev || {}, set = (verdict, reason, extra) => Object.assign(cl, { verdict, reason, basis: '', cls: '', latest: false, tail: false }, extra || {});
+        if (cl.kind === 'commit') {
+          const r = resolve(g, cl.subj); cl.inRepo = r ? r.type : '';
+          if (ev.seen) set('held', r ? 'seen, and in the repository' : 'seen', { basis: 'transcript', evLine: ev.lastSeen });
+          else if (r) set('held', 'in the repository', { basis: 'repository' });
+          else if (ev.said) set('nc', 'said only', { evLine: ev.firstSaid });
+          else set('wrong', 'named nothing on record', { cls: 'nowhere' });
+        } else if (cl.kind === 'path') {
+          const R = RP[g], pt = R.ok ? R.pathTime(cl.subj) : undefined;
+          if (ev.seen) set('held', 'seen', { basis: 'transcript', evLine: ev.lastSeen });
+          else if (ev.opened) set('held', 'opened by a file tool', { basis: 'transcript', evLine: ev.opened });
+          else if (pt !== undefined && pt <= T) set('held', 'in the repository history', { basis: 'repository' });
+          else if (R.ok && R.onDisk(cl.subj)) set('held', 'on disk', { basis: 'repository' });
+          else if (pt !== undefined) set('nc', 'in the repository only later');
+          else if (ev.said) set('nc', 'said only', { evLine: ev.firstSaid });
+          else set('wrong', 'named nothing on record', { cls: 'nowhere' });
+        } else if (cl.kind === 'test' || cl.kind === 'count') {
+          const num = ev.num || {};
+          if (ev.seen) {
+            let sup = null;
+            if (cl.kind === 'test') {
+              const key = cl.subj + '|' + cl.val, runs = s.runs.filter(r => r.line < c.line); let star = null;
+              for (const r of runs) if (r.counts.includes(key)) star = r;
+              if (star) for (const r of runs) { if (r.line <= star.line || r.cmd !== star.cmd) continue; const same = r.counts.filter(k => k.startsWith(cl.subj + '|')); if (same.length && !same.includes(key)) sup = { line: r.line, vals: same.map(k => k.split('|')[1]), starLine: star.line }; }
+              if (sup && sup.vals.some(v => has.has('test|' + cl.subj + '|' + v))) sup = null;       // the summary gives the newer number too: a before-and-after, not a stale value
+            }
+            if (sup) set('wrong', 'a later run of the same command gave ' + sup.vals.join(' and '), { cls: 'latest', latest: true, tail: sup.line >= c.inputEnd, basis: 'transcript', rec: sup.vals.join(','), evLine: sup.starLine, evLine2: sup.line });
+            else set('held', 'seen with its word', { basis: 'transcript', evLine: ev.lastSeen });
+          } else if (num.seen) set('nc', 'the number is seen, not as a result', { evLine: num.lastSeen });
+          else if (ev.said || num.said) set('nc', 'said only', { evLine: ev.firstSaid || num.firstSaid });
+          else set('wrong', 'named nothing on record', { cls: 'nowhere' });
+        } else if (cl.kind === 'pr') {
+          const n = +cl.subj.slice(1), p = g === 'fixflow' ? G.prs[n] : null, obs = s.prObs.filter(o => o.n === n && o.line < c.line), last = obs[obs.length - 1];
+          const iso = (x) => x ? Math.round(Date.parse(x) / 1000) : null;
+          let gh = null; if (p) { const cr = iso(p.createdAt), mg = iso(p.mergedAt), cz = iso(p.closedAt); gh = cr > T ? 'not yet created' : (mg && mg <= T) ? 'merged' : (cz && cz <= T) ? 'closed' : 'open'; }
+          if (last && last.state === cl.val) set('held', 'the last state seen', { basis: 'transcript', evLine: last.line });
+          else if (last) {
+            if (gh === cl.val) set('held', 'GitHub at that time', { basis: 'github', evLine: last.line });
+            else if (!p) set('nc', 'no such pull request on GitHub');
+            else {
+              const wasSeen = obs.some(o => o.state === cl.val), lastSame = obs.filter(x => x.state === cl.val).pop(), first = obs.find(o => o.line > (lastSame ? lastSame.line : 0) && o.state !== cl.val) || last;
+              set('wrong', 'the last state seen was ' + last.state + (gh ? '; GitHub at that time: ' + gh : ''), { cls: wasSeen || cl.val === 'open' ? 'latest' : 'mismatch', latest: wasSeen || cl.val === 'open', tail: first.line >= c.inputEnd, basis: 'transcript', rec: last.state, evLine: last.line });
+            }
+          } else if (!p) set('nc', g === 'fixflow' ? 'no such pull request on GitHub' : 'no remote');
+          else if (gh === cl.val) set('held', 'GitHub at that time', { basis: 'github' });
+          else if (gh === 'not yet created') set('nc', 'created after the hand-over');
+          else set('wrong', 'GitHub at that time: ' + gh, { cls: 'mismatch', basis: 'github', rec: gh });
+        } else if (cl.kind === 'head') {
+          const r = resolve(g, cl.val), X = r ? r.sha : cl.val, R = r ? RP[r.g] : RP[g];
+          const refs = new Set([cl.subj]); let prN = null;
+          if (cl.subj[0] === '#') { prN = +cl.subj.slice(1); const p = g === 'fixflow' ? G.prs[prN] : null; if (p) { refs.add('origin/' + p.headRefName); refs.add(p.headRefName); } }
+          else { const b = cl.subj.replace(/^origin\//, ''); refs.add(b); refs.add('origin/' + b); const n = prBranch.get(b); if (n) { refs.add('#' + n); prN = n; } }
+          const full = (o) => { const q = resolve(g, o.sha); return q ? q.sha : o.sha; };
+          const obs = s.headObs.filter(o => refs.has(o.ref) && o.line < c.line).map(o => ({ ref: o.ref, sha: full(o), line: o.line, form: o.form }));
+          let done = false;
+          if (obs.length) {
+            const byRef = new Map(); for (const o of obs) (byRef.get(o.ref) || byRef.set(o.ref, []).get(o.ref)).push(o);
+            const lasts = [...byRef.values()].map(a => a[a.length - 1]), same = lasts.find(o => sameSha(o.sha, X));
+            if (same) { set('held', 'the last head seen', { basis: 'transcript', evLine: same.line }); done = true; }
+            else {
+              let allStale = true, firstRep = Infinity;
+              for (const a of byRef.values()) {
+                const lastY = a[a.length - 1]; let li = -1; a.forEach((o, i) => { if (sameSha(o.sha, X)) li = i; });
+                const stale = li >= 0 || (!!r && R.ok && /^[0-9a-f]{40}$/.test(lastY.sha) && R.isAnc(X, lastY.sha));
+                if (!stale) { allStale = false; break; }
+                const rep = li >= 0 ? a[li + 1] : a.find(o => !sameSha(o.sha, X)); if (rep) firstRep = Math.min(firstRep, rep.line);
+              }
+              if (allStale) { set('wrong', 'the session later saw it at ' + lasts.map(o => o.sha.slice(0, 7)).join(' / '), { cls: 'latest', latest: true, tail: firstRep >= c.inputEnd, basis: 'transcript', rec: lasts.map(o => o.sha.slice(0, 7)).join(','), evLine: lasts[0].line }); done = true; }
+            }
+          }
+          if (!done) {
+            let HT = null, basis = 'repository';
+            if (r && R.ok) for (const ref of [...refs].filter(x => x[0] !== '#').sort((a, b) => (b.startsWith('origin/') ? 1 : 0) - (a.startsWith('origin/') ? 1 : 0))) { HT = R.headAt(ref, T); if (HT) break; }
+            if (!HT && prN && g === 'fixflow' && G.ok) { const cs = prCommits(G, cacheDir, prN).filter(x => x.t <= T); if (cs.length && cs.some(x => sameSha(x.oid, X))) { HT = cs[cs.length - 1].oid; basis = 'github'; } }
+            if (!HT) set('nc', obs.length ? 'the heads seen do not settle it' : 'no record of that head');
+            else if (sameSha(HT, X)) set('held', 'the head by commit dates at that time', { basis });
+            else if (r && R.ok && R.isAnc(X, HT)) set('wrong', 'older than the head by commit dates, ' + HT.slice(0, 7), { cls: 'mismatch', basis, rec: HT.slice(0, 7) });
+            else set('nc', 'the record does not settle it');
+          }
+        }
+        const k = cl.kind + ' / ' + cl.verdict + ' / ' + (cl.verdict === 'wrong' ? cl.cls + (cl.tail ? ' (kept tail)' : '') : cl.reason); byReason[k] = (byReason[k] || 0) + 1;
+      }
+    }
+  }
+  fs.writeFileSync(path.join(cacheDir, 'checked.json'), JSON.stringify(idx));
+  // ---- work files for the hand reads. Scratch only: they hold sentences from summaries.
+  const W = [];
+  for (const s of idx.sessions) for (const c of s.comps) for (const cl of c.claims) if (cl.verdict === 'wrong') W.push(`ID ${claimId(s, c, cl)}\n   ${cl.cls}${cl.tail ? ' (kept tail)' : ''} | sec ${cl.sec} | ${cl.reason} | boundary L${c.line} inputEnd L${c.inputEnd}${cl.evLine ? ' | evidence L' + cl.evLine + (cl.evLine2 ? ' then L' + cl.evLine2 : '') : ''}\n   CTX: ${cl.ctx}\n`);
+  fs.writeFileSync(path.join(cacheDir, 'wrong-candidates.txt'), W.join('\n'));
+  const H = [];
+  for (const k of KINDS) { const pool = []; for (const s of idx.sessions) for (const c of s.comps) for (const cl of c.claims) if (cl.kind === k && cl.verdict === 'held') pool.push({ id: claimId(s, c, cl), cl, c }); pool.sort((a, b) => sha1(a.id) < sha1(b.id) ? -1 : 1); for (const x of pool.slice(0, 10)) H.push(`ID ${x.id}\n   held: ${x.cl.reason} | sec ${x.cl.sec} | boundary L${x.c.line}${x.cl.evLine ? ' | evidence L' + x.cl.evLine : ''}\n   CTX: ${x.cl.ctx}\n`); }
+  fs.writeFileSync(path.join(cacheDir, 'held-sample.txt'), H.join('\n'));
+  const tot = {}; for (const s of idx.sessions) for (const c of s.comps) for (const cl of c.claims) { const a = tot[cl.kind] || (tot[cl.kind] = { found: 0, held: 0, wrong: 0, nc: 0 }); a.found++; a[cl.verdict]++; }
+  console.log('CHECK_DONE github=' + G.ok + ' prs=' + Object.keys(G.prs).length + ' repos=' + RP.fixflow.ok + '/' + RP.clinic.ok);
+  for (const k of KINDS) console.log('  ', k.padEnd(7), JSON.stringify(tot[k] || {}));
+  for (const [k, v] of Object.entries(byReason).sort()) console.log('     ', String(v).padStart(5), k);
+}
+
+(async () => {
+  if (stage === 'index') return stageIndex(a1);
+  if (stage === 'check') return stageCheck(a1);
+  console.log('stages: index <cacheDir> | check <cacheDir> | table <cacheDir> [outDir]');
+})();

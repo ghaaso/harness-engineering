@@ -1,0 +1,662 @@
+// after.js.txt — do sessions make more mistakes after a compaction than before one (FixFlow and the clinic testbed).
+// Record: docs/program/AFTER-COMPACTION-2026-11.md (part 1 is the scoring this script implements).
+// Makes no model calls. Reads main-session transcripts of the two project groups only.
+//
+// Run from this folder (scripts are saved as .js.txt, so they run on stdin):
+//   node - survey                      < after.js.txt   what ran before the scoring was fixed: nothing by position except calls between boundaries
+//   node - index  <cacheDir>           < after.js.txt   needs <cacheDir>/index.json from the summary check's reader (see README); writes <cacheDir>/calls.json
+//   node - sample <cacheDir>           < after.js.txt   picks the hand-read sample by hash; writes <cacheDir>/hand-read.txt (blind) and audit-skeleton.json
+//   node - count  <cacheDir> [outDir]  < after.js.txt   windows, signals, placebo, resampling -> after-table.txt, after.json (reads <outDir>/audit.json)
+//
+// <cacheDir> holds commands and tool results (calls.json, hand-read.txt). Keep it OUTSIDE the repository and delete it
+// when done. Nothing written to [outDir] holds a sentence from a message, a summary or a tool result, or a command.
+//
+// The reader is the summary check's (docs/program/evidence/summary-check/check.js.txt): its boundaries, input ends,
+// call classes and fingerprints are used as they are; this script adds the call stream, the windows and the signals.
+'use strict';
+const fs = require('fs'), path = require('path'), readline = require('readline'), crypto = require('crypto');
+const [stage, a1, a2] = process.argv.slice(2);
+const READER = process.env.SUMMARY_CHECK_READER || path.resolve('..', 'summary-check', 'check.js.txt');
+const SC_DIR = path.dirname(READER);
+const BOUNDARY_CUT = '2026-11-14T08:49:53.273Z';                                  // the summary check's cut: its 117 boundaries
+const CALL_CUT = process.env.AFTER_COMPACTION_CUT || '2026-11-14T10:30:00.000Z';   // calls are read up to here (scoring 1.1)
+const N = 30, LOOKBACK = 200, MIN_WINDOW = 10, SAMPLE = 15, SEED = 20261114, RESAMPLES = 4000;
+function loadReader() {
+  let src = fs.readFileSync(READER, 'utf8'); const at = src.lastIndexOf('\n(async () => {'); if (at < 0) throw new Error('reader: dispatcher not found');
+  return new Function('require', 'process', src.slice(0, at) + '\nreturn { groupOf, findSummaries, classifyCall, fingerprint, describeCall, normPath, collectStrings, sha1, wilson, rng32, perArm, MODEL_NAME, ROOT, testCounts, EXT_RE };')(require, { argv: ['node', '-', 'none'], env: process.env, stderr: process.stderr });
+}
+const R = loadReader();
+const sha1 = R.sha1;
+const scopeFiles = () => { const stores = fs.readdirSync(R.ROOT, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name).sort(); const scope = stores.filter(s => R.groupOf(s) !== 'other'); const files = []; for (const s of scope) for (const mf of fs.readdirSync(path.join(R.ROOT, s)).filter(n => n.endsWith('.jsonl'))) files.push({ g: R.groupOf(s), sid: mf.replace(/\.jsonl$/, ''), f: path.join(R.ROOT, s, mf) }); return { files, inScope: scope.length, leftOut: stores.length - scope.length }; };
+
+// ---------- the kinds of error result (scoring 1.3): the first that fits, in this order ----------
+const P = {
+  ended: /^\s*\[Tool call interrupted: the session ended/,
+  ownerRefused: /The user doesn't want to (?:proceed|take this action)|\[Request interrupted by user/,
+  harnessRefused: /^(?:<tool_use_error>)?Blocked: |is blocked\. This path is protected|denied by a built-in|Permission to use .{1,80} has been denied|Start sessions only on|needs the user's own menu|hook error|outside the directories this session has acce|requires approval|was blocked by/m,
+  environment: /Command timed out|timed out after|Connection timed out|ETIMEDOUT|EAI_AGAIN|ECONNREFUSED|ECONNRESET|Could not resolve host|is not installed\b|ENAMETOOLONG|did not finish rendering/,
+  missingPath: /No such file or directory|cannot access '|Cannot find path|cannot find the (?:file|path) specified|Could not find a part of the path|Could not find file|ENOENT|File does not exist|Directory does not exist|Path does not exist/,
+  missingCommand: /command not found|is not recognized as (?:an internal|the name of a cmdlet|a name of a cmdlet)|: not found\s*$|Python was not found|No such tool available/m,
+  missingRef: /unknown revision or path not in the working tree|bad revision|[Nn]ot a valid object name|pathspec '.*' did not match|did not match any file|couldn't find remote ref|not a git repository|Could not resolve to a (?:PullRequest|Repository|node)|no pull requests found|invalid reference|bad object|does not point to a valid object|exists on disk, but not in|is not a commit|no such ref|not something we can merge|no such remote|unknown ref|Needed a single revision|Could not bind/,
+  shellSyntax: /syntax error near unexpected token|syntax error: unexpected|unexpected EOF while looking for matching|unterminated quoted string|ParserError|ParseException|The string is missing the terminator|Missing closing '[)}]'|Unexpected token '.{1,40}' in expression or statement|Missing expression after/,
+  badArgs: /unknown option|invalid option|unrecognized (?:option|argument)|unrecognized arguments|unknown (?:flag|switch|command|subcommand)|illegal option|is not a git command|unknown shorthand flag|A parameter cannot be found that matches parameter name|no such option|InputValidationError|^Pass \{|items also needs|Invalid workflow script|^usage: /im,
+  scriptCrash: /Traceback \(most recent call last\)|^Node\.js v\d+|^\s*(?:Syntax|Reference|Type|Range)Error\b|^\w*Error: |Uncaught|Unhandled(?:PromiseRejection| exception)|^\s+at .+\(node:|KeyError|AssertionError|Exception in thread|panicked at/m,
+};
+const EK = ['owner refused', 'harness refused', 'environment', 'missing path', 'missing command', 'missing reference', 'shell syntax', 'bad arguments', 'file tool refused', 'script crashed', 'check failed', 'other'];
+function errorKind(c, t) {
+  if (P.ownerRefused.test(t)) return 'owner refused';
+  if (P.harnessRefused.test(t)) return 'harness refused';
+  if (P.environment.test(t)) return 'environment';
+  if (P.missingPath.test(t)) return 'missing path';
+  if (P.missingCommand.test(t)) return 'missing command';
+  if (P.missingRef.test(t)) return 'missing reference';
+  if (c.shell && P.shellSyntax.test(t)) return 'shell syntax';
+  if (P.badArgs.test(t)) return 'bad arguments';
+  if (/^(Read|Edit|Write|NotebookEdit|MultiEdit)$/.test(c.name)) return 'file tool refused';
+  if (c.k !== 'test or check run' && P.scriptCrash.test(t)) return 'script crashed';
+  if (c.k === 'test or check run') return 'check failed';
+  return 'other';
+}
+// the same diagnostics on a line of a result that is not flagged as an error (scoring 1.3)
+const NF = {
+  'missing path': /^\S+: .*(?:No such file or directory|cannot access)|^[\w\-]+ : Cannot find path/m,
+  'missing command': /^\S+: .*command not found|^[\w\-]+ : The term '|^Python was not found/m,
+  'missing reference': /^fatal: .*(?:unknown revision|[Nn]ot a valid object name|bad revision|not a git repository|Needed a single revision)|^error: pathspec '/m,
+};
+const notFlagged = (t) => { for (const k of Object.keys(NF)) if (NF[k].test(t)) return k; return null; };
+// the subject of an error, for "the same error met again" (A1)
+function subjectOf(kind, c, t) {
+  const first = (...res) => { for (const re of res) { const m = re.exec(t); if (m) return m[1]; } return null; };
+  if (kind === 'missing path') {
+    if (!c.shell && c.fpath) return R.normPath(c.fpath);
+    const s = first(/cannot access '([^'\n]+)'/, /can't read ([^:\n]+): No such file/, /cannot open '([^'\n]+)'/, /cannot change to '([^'\n]+)'/, /Cannot find path '([^'\n]+)'/, /\[Errno 2\] No such file or directory: '([^'\n]+)'/, /no such file or directory,? (?:open|stat|scandir|lstat|access|unlink|rmdir|mkdir)? ?'([^'\n]+)'/i, /^\S+: (?:line \d+: )?(?:cd: )?([^:\n]+): No such file or directory/m);
+    return s ? R.normPath(s.trim()) : '?';
+  }
+  if (kind === 'missing command') { if (/Python was not found/.test(t)) return 'python'; const s = first(/^(?:\S+: )?(?:line \d+: )?([\w.\-]+): command not found/m, /'([^'\n]+)' is not recognized/, /The term '([^'\n]+)'/, /No such tool available: (\S+)/); return s ? s.toLowerCase() : '?'; }
+  if (kind === 'missing reference') { if (/not a git repository/.test(t)) return 'not a repository'; const s = first(/ambiguous argument '([^'\n]+)'/, /pathspec '([^'\n]+)'/, /bad revision '([^'\n]+)'/, /[Nn]ot a valid object name:? '?([^\s'\n]+)/, /couldn't find remote ref (\S+)/, /PullRequest with the number of (\d+)/); return s || '?'; }
+  if (kind === 'harness refused') return /Blocked: (?:sleep|Start-Sleep)/.test(t) ? 'wait guard' : /path is protected/.test(t) ? 'protected path' : /built-in/.test(t) ? 'safety check' : /Start sessions only on/.test(t) ? 'session rule' : /hook error|outside the directories/.test(t) ? 'hook' : /own menu/.test(t) ? 'owner menu' : 'other guard';
+  if (kind === 'file tool refused') return (/String to replace not found/.test(t) ? 'text not found' : /Found \d+ matches/.test(t) ? 'not unique' : /modified since read/.test(t) ? 'changed since read' : /has not been read yet/.test(t) ? 'not read yet' : /exceeds maximum allowed/.test(t) ? 'too large' : /EISDIR|is a directory/i.test(t) ? 'is a directory' : 'other') + '|' + R.normPath(c.fpath || '');
+  return null;
+}
+// a finer label for the kinds that count in M, for the breakdown added after the first count (table section J)
+function subKind(c, t) {
+  const k = c.ekind;
+  if (k === 'missing command') return /Python was not found/.test(t) || /^(python3?|py)$/.test(c.subj || '') ? 'python, which is not on this PC\'s PATH' : 'another program or tool';
+  if (k === 'shell syntax') return /unexpected EOF while looking for matching/.test(t) ? 'a command cut short or a quote left open' : 'another parse error';
+  if (k === 'script crashed') return /AssertionError|assert [^\n]{0,80}count\(|JS anchor|anchor: |Error\(["'`]missing|expected \d+ of/.test(t) ? 'the text it was to replace was not in the file' : /SyntaxError|Invalid regular expression|bad escape|Unterminated|Unexpected token/.test(t) ? 'the script itself did not parse' : /ModuleNotFoundError|MODULE_NOT_FOUND|Cannot find module/.test(t) ? 'a module it could not load' : 'another crash';
+  if (k === 'file tool refused') return String(c.subj || '').split('|')[0] || 'other';
+  if (k === 'harness refused') return c.subj || 'other guard';
+  if (k === 'bad arguments') return c.shell ? 'a program\'s options' : /update_plan/.test(c.name) ? 'the plan tool' : c.name === 'Monitor' ? 'the Monitor tool' : 'another tool';
+  return '';
+}
+const A1_FAMILY = new Set(['missing path', 'missing command', 'missing reference', 'file tool refused', 'harness refused']);
+function isNoop(k, t) {
+  return (/git commit/.test(k) && /nothing to commit|nothing added to commit|no changes added to commit/.test(t)) || (/git push/.test(k) && /Everything up-to-date/.test(t)) || (/git merge/.test(k) && /Already up to date/.test(t))
+    || (/gh pr create/.test(k) && /already exists/.test(t)) || (/gh pr merge/.test(k) && /already merged/.test(t)) || (/git cherry-pick/.test(k) && /previous cherry-pick is now empty|nothing to commit/.test(t));
+}
+// options before the verb are dropped first, as the reader does in classifyCall
+const flatCmd = (c) => (c.length > 20000 ? c.slice(0, 20000) : c).replace(/\s-[cC]\s+(?:"[^"\n]{0,300}"|'[^'\n]{0,300}'|[^\s"'=]{1,200}(?:=(?:"[^"\n]{0,300}"|'[^'\n]{0,300}'|[^\s"']{0,300}))?)/g, ' ');
+const DISCARD = /\bgit\s+(?:checkout|restore)\b[^;&|\n]*\s--\s+\S|\bgit\s+restore\s+(?!--staged\b)[^;&|\n-]*\S|\bgit\s+reset\s+--hard\b|\bgit\s+revert\b|\bgit\s+stash\b(?!\s+(?:list|show|pop|apply|drop|branch))|\bgit\s+clean\s+-[a-zA-Z]*f/;
+const checkKey = (cmd) => sha1(cmd.replace(/\s+/g, ' ').replace(/\s*\|\s*(tail|head)\b.*$/, '').trim().toLowerCase()).slice(0, 12);   // the reader's normalisation of a check command
+// the files a call reads, each with the lines it reads (scoring 1.3 A3 and addendum 1.11 A3s):
+// 'whole', 'tail', 'unknown', or a list of [first line, last line]
+function readItems(name, inp, cmd) {
+  if (name === 'Read') { if (!inp.file_path) return []; const off = +inp.offset || 0, lim = +inp.limit || 0; return [{ p: R.normPath(String(inp.file_path)), r: (off || lim) ? [[off || 1, lim ? (off || 1) + lim - 1 : 1e9]] : 'whole' }]; }
+  if (name !== 'Bash' && name !== 'PowerShell') return [];
+  const out = [], head = cmd.split('<<')[0];                           // nothing after a here-document marker is a command
+  for (const seg of head.split(/&&|\|\||[;|\n]/)) {
+    const s = seg.trim(), m = /^(cat|head|tail|nl|less|more|bat|type|Get-Content|gc)\b([\s\S]*)$/.exec(s), ms = m ? null : /^sed\s+(?:-[A-Za-z]*n[A-Za-z]*|--quiet|--silent)\b([\s\S]*)$/.exec(s);
+    if (!m && !ms) continue;
+    const args = m ? m[2] : ms[1], verb = m ? m[1] : 'sed', paths = []; let skip = false, r = verb === 'sed' ? 'unknown' : verb === 'tail' ? 'tail' : verb === 'head' ? [[1, 10]] : 'whole';
+    if (verb === 'head') { const n = /(?:^|\s)-n\s*(\d+)|(?:^|\s)-(\d+)(?=\s|$)/.exec(args); if (n) r = [[1, +(n[1] || n[2])]]; }
+    if (verb !== 'sed' && verb !== 'head' && verb !== 'tail') { const n = /-(?:TotalCount|First|Head)\s+(\d+)/i.exec(args); if (n) r = [[1, +n[1]]]; else if (/-(?:Tail|Last)\s+\d+/i.test(args)) r = 'tail'; }
+    for (let tok of args.split(/\s+/)) {
+      if (skip) { skip = false; continue; }
+      if (/^\d?>>?$/.test(tok)) { skip = true; continue; }             // the word after a redirect is written, not read
+      if (/^\d?>/.test(tok)) continue;
+      tok = tok.replace(/^["']|["']$/g, '');
+      if (verb === 'sed' && /^\d+(?:,\d+)?p(?:;\d+(?:,\d+)?p)*$/.test(tok)) { r = tok.split(';').map(x => { const q = /^(\d+)(?:,(\d+))?p$/.exec(x); return [+q[1], +(q[2] || q[1])]; }); continue; }
+      if (!tok || tok.startsWith('-') || /[<>*?$`{}]/.test(tok)) continue;
+      if (R.EXT_RE.test(tok)) paths.push(R.normPath(tok));
+    }
+    for (const p of paths) out.push({ p, r });
+  }
+  return out;
+}
+
+// ---------- stage: index (the call stream of every main transcript in scope) ----------
+async function readCalls(f, sid) {
+  const calls = [], byId = new Map(); let ln = 0, lastOwn = null, lastModel = '';
+  const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+  for await (const line of rl) {
+    ln++;
+    if (line.startsWith('{"type":"api-request') || line.startsWith('{"type":"file-history')) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    if (o.isSidechain) continue;
+    if (o.timestamp && o.timestamp > CALL_CUT) continue;
+    const own = !(o.sessionId && o.sessionId !== sid);
+    if (o.type === 'assistant' && o.message) {
+      const m = o.message; if (m.model && m.model !== '<synthetic>' && m.usage) lastModel = m.model;
+      if (Array.isArray(m.content)) for (const b of m.content) if (b.type === 'tool_use') {
+        const inp = b.input || {}, cl = R.classifyCall(b.name, inp), shell = b.name === 'Bash' || b.name === 'PowerShell', cmd = shell ? String(inp.command || '') : '';
+        const c = { ln, own, name: b.name, k: cl.k, state: cl.state, shell, model: lastModel, fp: R.fingerprint(b.name, inp), d: R.describeCall(b.name, inp), cmd: cmd.slice(0, 900) };
+        const fpath = inp.file_path || inp.notebook_path || ''; if (fpath) c.fpath = String(fpath);
+        c.rr = readItems(b.name, inp, cmd); c.rp = [...new Set(c.rr.map(x => x.p))];
+        if (b.name === 'Edit') c.ed = { p: R.normPath(String(inp.file_path || '')), oh: sha1(String(inp.old_string || '')), nh: sha1(String(inp.new_string || '')) };
+        if (b.name === 'Write') c.wr = { p: R.normPath(String(inp.file_path || '')), ch: sha1(String(inp.content || '')) };
+        if (shell && DISCARD.test(flatCmd(cmd))) c.r2 = true;
+        if (cl.k === 'test or check run') c.ck = checkKey(cmd);
+        calls.push(c); byId.set(b.id, c); if (own) lastOwn = c;
+      }
+      continue;
+    }
+    if (o.type === 'user' && o.message) {
+      const ct = o.message.content, intr = (t) => { if (own && lastOwn && /^\s*\[Request interrupted/.test(t || '')) lastOwn.interrupt = true; };
+      if (typeof ct === 'string') { if (!o.isCompactSummary) intr(ct); continue; }
+      if (Array.isArray(ct)) for (const b of ct) {
+        if (!b) continue;
+        if (b.type === 'text') intr(b.text);
+        else if (b.type === 'tool_result') {
+          const c = byId.get(b.tool_use_id); if (!c || c.res) continue; c.res = true;
+          const t = typeof b.content === 'string' ? b.content : R.collectStrings(b.content, []).join('\n');
+          c.rs = t.trim().slice(-200);
+          if (P.ended.test(t)) { c.ended = true; continue; }
+          c.err = !!b.is_error;
+          const note = /\[This command modified \d+ files? you've previously read: ([^\]]+?)\. Call Read before editing\.\]/.exec(t);   // the harness's own note of a file the command changed
+          if (note) c.mod = note[1].split(/,\s*/).map(x => x.trim().replace(/\\/g, '/').toLowerCase()).map(x => x.slice(x.lastIndexOf('/') + 1));
+          if (c.err) { c.ekind = errorKind(c, t); const s = subjectOf(c.ekind, c, t); if (s) c.subj = s; const sk = subKind(c, t); if (sk) c.sub = sk; c.rh = t.slice(0, 400); c.rt = t.slice(-700); if (c.name === 'Read') { c.rp = []; c.rr = []; } }
+          else if (c.shell) { const nf = notFlagged(t); if (nf) { c.nf = nf; c.subj = subjectOf(nf, c, t); const m = NF[nf].exec(t); c.rh = t.slice(Math.max(0, m.index - 200), m.index + 400); c.rt = t.slice(-300); } }
+          if (c.shell && c.state && isNoop(c.k, t)) { c.noop = true; if (!c.rt) c.rt = t.slice(-500); }
+          if (c.ck) c.chk = (c.err || R.testCounts(t).some(x => /^failed\|(?!0+$)/.test(x))) ? 'fail' : 'pass';
+        }
+      }
+    }
+  }
+  // signals that look back over the session (scoring 1.3): A1, A2, R1, R3
+  const seenErr = new Map(), lastOk = new Map(), edits = new Map(), lastRun = new Map();
+  calls.forEach((c, i) => {
+    const fam = c.ekind && A1_FAMILY.has(c.ekind) ? c.ekind : c.nf || null;
+    if (fam && c.subj && c.subj !== '?') { const key = fam + '|' + c.subj; if (seenErr.has(key)) c.a1 = seenErr.get(key); else seenErr.set(key, c.ln); }
+    const ok = c.res && !c.err && !c.ended;
+    if (c.state) { const j = lastOk.get(c.fp); if (j !== undefined && i - j <= LOOKBACK) c.a2 = calls[j].ln; if (ok) lastOk.set(c.fp, i); }
+    if (ok && (c.ed || c.wr)) {
+      const p = (c.ed || c.wr).p, list = edits.get(p) || edits.set(p, []).get(p);
+      if (c.ed) { for (let x = list.length - 1; x >= 0; x--) { const e = list[x]; if (i - e.i > LOOKBACK) break; if (e.ed && e.ed.oh === c.ed.nh && e.ed.nh === c.ed.oh && c.ed.oh !== c.ed.nh) { c.r1 = calls[e.i].ln; break; } } }
+      else { let between = false; for (let x = list.length - 1; x >= 0; x--) { const e = list[x]; if (i - e.i > LOOKBACK) break; if (e.wr && e.wr.ch === c.wr.ch) { if (between) c.r1 = calls[e.i].ln; break; } between = true; } }
+      list.push({ i, ed: c.ed, wr: c.wr });
+    }
+    if (c.ck && c.chk) { const prev = lastRun.get(c.ck); if (c.chk === 'fail' && prev && prev.chk === 'pass' && i - prev.i <= LOOKBACK) c.r3 = calls[prev.i].ln; lastRun.set(c.ck, { i, chk: c.chk }); }
+    delete c.ed; delete c.wr; delete c.fp;
+  });
+  return calls;
+}
+async function stageIndex(cacheDir) {
+  const { files, inScope, leftOut } = scopeFiles(), out = { callCut: CALL_CUT, inScope, leftOut, files: [] }, t0 = Date.now();
+  for (const it of files) { const calls = await readCalls(it.f, it.sid); out.files.push({ g: it.g, sid: it.sid, calls }); }
+  fs.writeFileSync(path.join(cacheDir, 'calls.json'), JSON.stringify(out));
+  const n = out.files.reduce((a, f) => a + f.calls.filter(c => c.own).length, 0);
+  console.log(`INDEX_DONE transcripts=${files.length} own-calls=${n} copied-calls=${out.files.reduce((a, f) => a + f.calls.filter(c => !c.own).length, 0)} seconds=${((Date.now() - t0) / 1000).toFixed(0)} cut=${CALL_CUT}`);
+}
+
+// ---------- windows (scoring 1.2) and placebo points (1.4) ----------
+function load(cacheDir) {
+  const idx = JSON.parse(fs.readFileSync(path.join(cacheDir, 'index.json'), 'utf8')), cj = JSON.parse(fs.readFileSync(path.join(cacheDir, 'calls.json'), 'utf8'));
+  if (idx.startedAt !== CALL_CUT) throw new Error(`the reader's index.json was made with cut ${idx.startedAt}; run it with SUMMARY_CHECK_CUT=${CALL_CUT}`);
+  const byId = new Map(cj.files.map(f => [f.sid, f])), scTail = JSON.parse(fs.readFileSync(path.join(SC_DIR, 'audit.json'), 'utf8')).tail, scRows = new Map(JSON.parse(fs.readFileSync(path.join(SC_DIR, 'check.json'), 'utf8')).rows.map(r => [r.id, r]));
+  const sessions = []; let laterAll = 0;
+  for (const f of cj.files) { f.calls.forEach((c, i) => { c.pos = i; }); f.own = f.calls.filter(c => c.own); f.own.forEach((c, i) => { c.oi = i; }); f.sid8 = f.sid.slice(0, 8); }
+  for (const s of idx.sessions) {
+    const f = byId.get(s.sid); if (!f) throw new Error('no call stream for ' + s.sid);
+    f.comps = s.comps.map(c => { const id = `${s.g}-${s.sid8}-${String(c.n).padStart(2, '0')}`, sc = scRows.get(id), counted = c.ts <= BOUNDARY_CUT; if (!counted) laterAll++;
+      if (counted && (!sc || sc.pre !== c.pre || sc.prepared !== !!c.precomputed)) throw new Error('boundary ' + id + ' does not match the summary check');
+      return { id, n: c.n, line: c.line, inputEnd: c.inputEnd, ts: c.ts, pre: c.pre, prepared: !!c.precomputed, model: R.MODEL_NAME[c.model] || c.model || '?', counted, band: c.pre < 300000 ? 0 : c.pre < 400000 ? 1 : c.pre < 900000 ? 2 : 3, overtaken: counted ? (scTail[id] || ['?'])[0] === 'overtaken' : null }; }).sort((x, y) => x.line - y.line);
+    if (f.comps.some(c => c.counted)) sessions.push(f);
+  }
+  return { sessions, files: cj.files, inScope: cj.inScope, leftOut: cj.leftOut, laterAll };
+}
+const rankBefore = (own, line) => { let lo = 0, hi = own.length; while (lo < hi) { const m = (lo + hi) >> 1; if (own[m].ln < line) lo = m + 1; else hi = m; } return lo; };
+// windows of W calls a side around every boundary on record; a stretch under 2W is cut in the middle; no call in two windows
+function boundaryWindows(f, W) {
+  const own = f.own, cs = f.comps, eb = cs.map(c => rankBefore(own, c.inputEnd)), sa = cs.map(c => rankBefore(own, c.line)), w = cs.map(() => ({}));
+  cs.forEach((c, k) => {
+    if (k === 0) w[k].before = [Math.max(0, eb[0] - W), eb[0]];
+    const end = k + 1 < cs.length ? eb[k + 1] : own.length, G = Math.max(0, end - sa[k]);
+    if (k + 1 < cs.length) { if (G >= 2 * W) { w[k].after = [sa[k], sa[k] + W]; w[k + 1].before = [end - W, end]; } else { const h = Math.floor(G / 2); w[k].after = [sa[k], sa[k] + h]; w[k + 1].before = [sa[k] + h, end]; } }
+    else w[k].after = [sa[k], Math.min(sa[k] + W, own.length)];
+    w[k].tail = [eb[k], sa[k]]; w[k].stretchAfter = G;
+  });
+  return { eb, sa, w };
+}
+function placeboPoints(f, bw) {
+  const own = f.own, cs = f.comps, pts = [], add = (p, where, from) => pts.push({ p, where, dist: p - (from || 0), before: [p - N, p], after: [p, p + N] });
+  if (bw.eb[0] >= 4 * N) add(Math.floor(bw.eb[0] / 2), 'before the first boundary');
+  for (let k = 0; k + 1 < cs.length; k++) { const G = bw.eb[k + 1] - bw.sa[k]; if (G >= 4 * N) add(bw.sa[k] + Math.floor(G / 2), 'between two boundaries', bw.sa[k]); }
+  const last = cs.length - 1, Gl = own.length - bw.sa[last]; if (Gl >= 3 * N) add(bw.sa[last] + Math.floor((Gl + N) / 2), 'after the last boundary', bw.sa[last]);
+  return pts;
+}
+const slice = (f, r) => f.own.slice(r[0], r[1]);
+const noMaps = () => ({ before: new Map(), after: new Map() });
+// A3: a read in the window that names a path a read in the reference calls also named
+const samePath = (p, q) => p === q || p.endsWith('/' + q) || q.endsWith('/' + p);
+function reReads(win, ref) {
+  const refs = []; for (const c of ref) if (c.rp && c.rp.length) for (const p of c.rp) refs.push([p, c.ln]);
+  const out = new Map(); if (!refs.length) return out;
+  for (const c of win) if (c.rp && c.rp.length) { const hit = refs.find(([q]) => c.rp.some(p => samePath(p, q))); if (hit) out.set(c, hit[1]); }
+  return out;
+}
+const refBefore = (f, r) => { const first = f.own[r[0]]; return first ? f.calls.slice(Math.max(0, first.pos - N), first.pos) : []; };
+// A3s (addendum 1.11): the same lines of the same file, with no write to it between the two reads that the calls show
+const overlap = (a, b) => { if (a === 'unknown' || b === 'unknown') return false; if (a === 'whole' || b === 'whole') return true; if (a === 'tail' || b === 'tail') return a === b; return a.some(([s1, e1]) => b.some(([s2, e2]) => s1 <= e2 && s2 <= e1)); };
+const WRITE_RE = /\bsed\s+(?:-[A-Za-z]*i|--in-place)|\bperl\s+-[A-Za-z0-9]*i|\bgit\s+(?:checkout|restore|apply|stash|reset|revert|merge|rebase|cherry-pick|pull)\b|\b(?:mv|cp|patch|tee)\b|write_text|write_bytes|writeFileSync|\.write\(|--write\b|ruff\s+format|--fix\b/;
+function wroteTo(c, p) {
+  const base = p.slice(p.lastIndexOf('/') + 1);
+  if ((c.name === 'Edit' || c.name === 'Write' || c.name === 'NotebookEdit') && c.fpath) return samePath(R.normPath(c.fpath), p);
+  if (!c.shell) return false;
+  if (c.mod && c.mod.includes(base)) return true;
+  if (!c.cmd.toLowerCase().includes(base)) return false;
+  return WRITE_RE.test(c.cmd) || new RegExp('>>?\\s*["\']?[^\\s"\'|;&]*' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(c.cmd);
+}
+function reReadsStrict(f, win, ref) {
+  const refs = []; for (const c of ref) for (const x of c.rr || []) refs.push([x, c]);
+  const out = new Map(); if (!refs.length) return out;
+  for (const c of win) for (const x of c.rr || []) {
+    if (out.has(c)) break;
+    for (const [y, rc] of refs) {
+      if (!samePath(x.p, y.p) || !overlap(x.r, y.r)) continue;
+      if (wroteTo(c, x.p) || f.calls.slice(rc.pos + 1, c.pos).some(k => wroteTo(k, x.p))) continue;
+      out.set(c, rc.ln); break;
+    }
+  }
+  return out;
+}
+// every window of the count: the pairs at boundaries, the pairs at placebo points, the fresh starts
+function buildAll(D) {
+  const pairs = [], plc = [], leftOut = [], laterBoundaries = [];
+  for (const f of D.sessions) {
+    const bw = boundaryWindows(f, N); f.bw = bw;
+    f.comps.forEach((c, k) => {
+      if (!c.counted) { laterBoundaries.push(c.id); return; }
+      const B = slice(f, bw.w[k].before), A = slice(f, bw.w[k].after), T = slice(f, bw.w[k].tail);
+      const rb = refBefore(f, bw.w[k].before), ra = B.concat(T);
+      const pr = { kind: 'boundary', f, c, before: B, after: A, tail: T, a3: { before: reReads(B, rb), after: reReads(A, ra) }, a3s: { before: reReadsStrict(f, B, rb), after: reReadsStrict(f, A, ra) } };
+      if (B.length >= MIN_WINDOW && A.length >= MIN_WINDOW) pairs.push(pr); else leftOut.push({ id: c.id, before: B.length, after: A.length });
+    });
+    for (const pt of placeboPoints(f, bw)) { const B = slice(f, pt.before), A = slice(f, pt.after); const rb = refBefore(f, pt.before); plc.push({ kind: 'placebo', f, where: pt.where, dist: pt.dist, before: B, after: A, a3: { before: reReads(B, rb), after: reReads(A, B) }, a3s: { before: reReadsStrict(f, B, rb), after: reReadsStrict(f, A, B) } }); }
+  }
+  // no call in two windows
+  const seen = new Set(); for (const x of pairs.concat(plc)) for (const c of x.before.concat(x.after)) { const key = x.f.sid + ':' + c.pos; if (seen.has(key)) throw new Error('a call sits in two windows: ' + key); seen.add(key); }
+  const fresh = []; for (const f of D.files) { if (!f.calls.length || !f.calls[0].own || f.own.length < N) continue; fresh.push({ kind: 'fresh', f, before: [], after: f.own.slice(0, N), a3: noMaps(), a3s: noMaps() }); }
+  return { pairs, plc, leftOut, laterBoundaries, fresh };
+}
+
+// ---------- the signals ----------
+const HAND_KINDS = EK.map(k => 'E:' + k).concat(['NF:missing path', 'NF:missing command', 'NF:missing reference', 'N', 'A1', 'A2', 'A3', 'A3s', 'R1', 'R2', 'R3']);
+const M_CANDIDATES = ['E:harness refused', 'E:missing path', 'E:missing command', 'E:missing reference', 'E:shell syntax', 'E:bad arguments', 'E:file tool refused', 'E:script crashed', 'NF:missing path', 'NF:missing command', 'NF:missing reference', 'N', 'A1', 'A2', 'R1', 'R2', 'R3'];
+const kindTest = {};
+for (const k of EK) kindTest['E:' + k] = (c) => c.ekind === k;
+for (const k of Object.keys(NF)) kindTest['NF:' + k] = (c) => c.nf === k;
+Object.assign(kindTest, { N: c => !!c.noop, A1: c => !!c.a1, A2: c => !!c.a2, R1: c => !!c.r1, R2: c => !!c.r2, R3: c => !!c.r3 });
+const KIND_NAME = { N: 'a state-changing command with nothing to do', A1: 'the same error met again', A2: 'a state-changing call run twice', A3: 'a file read again', A3s: 'the same lines read again', R1: 'an edit that undoes an earlier one', R2: 'work thrown away by git', R3: 'a check that fails after it last passed' };
+const kindName = (k) => KIND_NAME[k] || (k.startsWith('E:') ? 'error result: ' + k.slice(2) : k.startsWith('NF:') ? k.slice(3) + ', in a result not flagged' : k);
+function signalList(mKinds) {
+  const inM = (c) => mKinds.some(k => kindTest[k](c));
+  const S = [
+    { id: 'M', name: 'mistakes (the lead measure)', fam: 'lead', f: inM },
+    { id: 'E', name: 'an error result', fam: 'lead', f: c => !!c.ekind },
+    { id: 'B', name: 'aimed at something that is not there', fam: 'signal', f: c => c.ekind === 'missing path' || c.ekind === 'missing command' || c.ekind === 'missing reference' || !!c.nf },
+    { id: 'N', name: KIND_NAME.N, fam: 'signal', f: kindTest.N }, { id: 'A1', name: KIND_NAME.A1, fam: 'signal', f: kindTest.A1 }, { id: 'A2', name: KIND_NAME.A2, fam: 'signal', f: kindTest.A2 },
+    { id: 'A3', name: KIND_NAME.A3 + ' (a cost, not a mistake)', fam: 'cost', map: 'a3' }, { id: 'A3s', name: KIND_NAME.A3s + ' (a cost, not a mistake)', fam: 'cost', map: 'a3s' },
+    { id: 'R1', name: KIND_NAME.R1, fam: 'signal', f: kindTest.R1 }, { id: 'R2', name: KIND_NAME.R2, fam: 'signal', f: kindTest.R2 }, { id: 'R3', name: KIND_NAME.R3, fam: 'signal', f: kindTest.R3 },
+    { id: 'O', name: 'the owner stopped or refused a step', fam: 'signal', f: c => !!c.interrupt || c.ekind === 'owner refused' },
+  ];
+  for (const k of EK) S.push({ id: 'E:' + k, name: 'error result: ' + k, fam: 'kind', f: kindTest['E:' + k] });
+  for (const k of Object.keys(NF)) S.push({ id: 'NF:' + k, name: k + ', in a result not flagged', fam: 'kind', f: kindTest['NF:' + k] });
+  S.push({ id: 'Esh', name: 'an error result of a shell call, for each 100 shell calls', fam: 'mix', f: c => !!c.ekind && c.shell, den: c => c.shell });
+  S.push({ id: 'CKF', name: 'a failing check or test run, for each 100 check or test runs', fam: 'mix', f: c => c.chk === 'fail', den: c => !!c.chk });
+  S.push({ id: 'NR', name: 'calls with no result because the session ended', fam: 'mix', f: c => !!c.ended });
+  S.push({ id: 'EnM', name: 'an error result that is not one of the mistake kinds', fam: 'mix', f: c => !!c.ekind && !inM(c) });
+  S.push({ id: 'EinM', name: 'an error result that is one of the mistake kinds', fam: 'mix', f: c => !!c.ekind && inM(c) });
+  S.push({ id: 'MP', name: 'a missing path, flagged or not', fam: 'mix', f: c => c.ekind === 'missing path' || c.nf === 'missing path' });
+  S.push({ id: 'Msh', name: 'M among shell calls, for each 100 shell calls', fam: 'mix', f: c => c.shell && inM(c), den: c => c.shell });
+  S.push({ id: 'ST', name: 'a call that changes state (a write, a commit, a message, an agent)', fam: 'mix', f: c => !!c.state });
+  S.push({ id: 'RD', name: 'a call of the read class (Read, Grep, Glob, ToolSearch)', fam: 'mix', f: c => c.k === 'read' });
+  return S;
+}
+const cnt = (sig, x, side) => sig.map ? x[sig.map][side].size : x[side].filter(sig.f).length;
+const den = (sig, x, side) => sig.den ? x[side].filter(sig.den).length : x[side].length;
+
+// ---------- stage: sample (the hand read of scoring 1.7; blind to the side) ----------
+function eventsByKind(W) {
+  const ev = new Map(HAND_KINDS.map(k => [k, new Map()]));
+  const put = (k, x, side, c, extra) => { const id = x.f.sid8 + ':' + c.ln; if (!ev.get(k).has(id)) ev.get(k).set(id, Object.assign({ kind: k, id, f: x.f, c, side: x.kind + ' ' + side, h: sha1(k + '|' + x.f.sid + '|' + c.ln) }, extra || {})); };
+  for (const x of W.pairs.concat(W.plc)) for (const side of ['before', 'after']) {
+    for (const c of x[side]) for (const k of HAND_KINDS) if (kindTest[k] && kindTest[k](c)) put(k, x, side, c);
+    for (const k of ['A3', 'A3s']) for (const [c, refLn] of x[k === 'A3' ? 'a3' : 'a3s'][side]) put(k, x, side, c, { refLn });
+  }
+  return ev;
+}
+function stageSample(cacheDir) {
+  const D = load(cacheDir), W = buildAll(D), ev = eventsByKind(W), L = [], key = {}, skel = {};
+  const show = (c, n) => `[${c.k}${c.err ? ', ERROR' : ''}${c.ended ? ', no result' : ''}] ${String(c.d || '').replace(/\s+/g, ' ').slice(0, n)}`;
+  const byLn = (f, ln) => f.calls.find(c => c.ln === ln);
+  console.log('events inside the windows, all sides together, and how many are read:');
+  for (const k of HAND_KINDS) {
+    const all = [...ev.get(k).values()].sort((a, b) => a.h < b.h ? -1 : 1), pick = all.slice(0, SAMPLE); skel[k] = {};
+    console.log('  ' + kindName(k).padEnd(52) + String(all.length).padStart(5) + String(pick.length).padStart(5));
+    L.push('', '='.repeat(110), `KIND ${k}  (${kindName(k)})   in windows ${all.length}, read ${pick.length}`, '='.repeat(110));
+    for (const e of pick) {
+      const c = e.c, f = e.f; key[k + '|' + e.id] = e.side; skel[k][e.id] = '';
+      L.push('', `--- ${k} | ${e.id} | ${f.g} | ${c.name}`);
+      for (let i = Math.max(0, c.pos - 3); i < c.pos; i++) L.push('   before: ' + show(f.calls[i], 130) + '   => ' + String(f.calls[i].rs || '').replace(/\s+/g, ' ').slice(-80));
+      { const cm = c.shell ? c.cmd : String(c.d || ''); L.push('   CALL:   ' + (cm.length > 620 ? cm.slice(0, 460) + ' [...] ' + cm.slice(-140) : cm).replace(/\n/g, '\n           ')); }
+      if (c.subj) L.push('   subject: ' + c.subj);
+      if (c.rh || c.rt) { const rh = (c.rh || '').slice(0, 260), rt = (c.rt || '').slice(-420); L.push('   RESULT: ' + (rt.length && rh.length && !rh.endsWith(rt.slice(-60)) ? rh + '\n   [...]\n' + rt : rh || rt).replace(/\n/g, '\n           ')); } else L.push('   result end: ' + String(c.rs || ''));
+      const ptr = k === 'A1' ? c.a1 : k === 'A2' ? c.a2 : (k === 'A3' || k === 'A3s') ? e.refLn : k === 'R1' ? c.r1 : k === 'R3' ? c.r3 : 0;
+      if (ptr) { const p = byLn(f, ptr); if (p) L.push(`   EARLIER (${c.pos - p.pos} calls back): ` + show(p, 260) + '   => ' + String(p.rs || '').replace(/\s+/g, ' ').slice(-120)); }
+      if (f.calls[c.pos + 1]) L.push('   after:  ' + show(f.calls[c.pos + 1], 130));
+    }
+  }
+  fs.writeFileSync(path.join(cacheDir, 'hand-read.txt'), L.join('\n') + '\n');
+  fs.writeFileSync(path.join(cacheDir, 'hand-key.json'), JSON.stringify(key));
+  fs.writeFileSync(path.join(cacheDir, 'audit-skeleton.json'), JSON.stringify({ verdicts: skel }, null, 1));
+  console.log(`SAMPLE_DONE pairs=${W.pairs.length} placebo-points=${W.plc.length} left-out=${W.leftOut.length} read=${Object.values(skel).reduce((a, o) => a + Object.keys(o).length, 0)}`);
+}
+
+// ---------- stage: count ----------
+const pctl = (a, p) => a[Math.min(a.length - 1, Math.floor(p * a.length))];
+const f2 = (v) => (v === null || v === undefined || Number.isNaN(v)) ? 'n/a' : v.toFixed(2);
+const sgn = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+function stageCount(cacheDir, outDir) {
+  outDir = outDir || '.';
+  const D = load(cacheDir), W = buildAll(D), ev = eventsByKind(W);
+  const auditPath = path.join(outDir, 'audit.json'), audit = fs.existsSync(auditPath) ? JSON.parse(fs.readFileSync(auditPath, 'utf8')) : { verdicts: {} };
+  // ---- the hand read: which kinds stand (scoring 1.7)
+  const hand = [], missing = [];
+  for (const k of HAND_KINDS) {
+    const all = [...ev.get(k).values()].sort((a, b) => a.h < b.h ? -1 : 1), pick = all.slice(0, SAMPLE), v = (audit.verdicts || {})[k] || {}, codes = {}, bySide = { before: { n: 0, m: 0 }, after: { n: 0, m: 0 } };
+    const good = (code) => k === 'A3' ? /^[YSW]$/.test(code) : k === 'A3s' ? code === 'Y' : k === 'R3' ? (code === 'M' || code === 'D') : code === 'M';
+    let n = 0, m = 0;
+    for (const e of pick) { const code = v[e.id]; if (!code) { missing.push(k + '|' + e.id); continue; } n++; codes[code] = (codes[code] || 0) + 1; if (good(code)) m++; const sd = e.side.endsWith('before') ? 'before' : 'after'; bySide[sd].n++; if (good(code)) bySide[sd].m++; }
+    const share = n ? m / n : null, cand = M_CANDIDATES.includes(k);
+    const decision = n < 5 ? 'counts only' : share >= 0.8 ? ((k === 'A3' || k === 'A3s') ? 'stands' : cand ? 'a mistake kind, in M' : 'stands, never in M') : share >= 0.5 ? 'events only, outside M' : 'dropped as a signal';
+    const unlike = bySide.before.n >= 8 && bySide.after.n >= 8 && Math.abs(bySide.before.m / bySide.before.n - bySide.after.m / bySide.after.n) > 0.25;
+    hand.push({ kind: k, name: kindName(k), inWindows: all.length, read: n, codes, share, decision, inM: cand && n >= 5 && share >= 0.8, bySide, unlike });
+  }
+  const DRY = missing.length > 0;
+  if (DRY) { console.log(`DRY RUN: ${missing.length} sampled events have no verdict in audit.json. The sides of every pair are scrambled at random and the numbers mean nothing.`); for (const x of W.pairs.concat(W.plc)) if (Math.random() < 0.5) { [x.before, x.after] = [x.after, x.before]; for (const m of [x.a3, x.a3s]) [m.before, m.after] = [m.after, m.before]; } }
+  const mKinds = DRY ? M_CANDIDATES : hand.filter(h => h.inM).map(h => h.kind), SIG = signalList(mKinds), sigById = new Map(SIG.map(s => [s.id, s]));
+  // ---- resampling whole sessions
+  const sessIdx = new Map(D.sessions.map((f, i) => [f.sid, i])), nS = D.sessions.length, rnd = R.rng32(SEED), picks = [];
+  for (let b = 0; b < RESAMPLES; b++) { const p = new Int32Array(nS); for (let i = 0; i < nS; i++) p[i] = Math.floor(rnd() * nS); picks.push(p); }
+  const sums = (sig, list) => { const s = { xb: new Float64Array(nS), nb: new Float64Array(nS), xa: new Float64Array(nS), na: new Float64Array(nS) }; for (const x of list) { const i = sessIdx.get(x.f.sid); s.xb[i] += cnt(sig, x, 'before'); s.nb[i] += den(sig, x, 'before'); s.xa[i] += cnt(sig, x, 'after'); s.na[i] += den(sig, x, 'after'); } return s; };
+  const boot = (s) => picks.map(p => { let xb = 0, nb = 0, xa = 0, na = 0; for (let i = 0; i < nS; i++) { const j = p[i]; xb += s.xb[j]; nb += s.nb[j]; xa += s.xa[j]; na += s.na[j]; } return (nb && na) ? [100 * xb / nb, 100 * xa / na] : null; });
+  const range = (vals) => { const a = vals.filter(v => v !== null && !Number.isNaN(v)).sort((x, y) => x - y); return a.length ? [pctl(a, 0.025), pctl(a, 0.975)] : [null, null]; };
+  const tot = (a) => a.reduce((x, y) => x + y, 0);
+  function compare(sig, list) {
+    const s = sums(sig, list), xb = tot(s.xb), nb = tot(s.nb), xa = tot(s.xa), na = tot(s.na), bs = boot(s);
+    const rb = nb ? 100 * xb / nb : null, ra = na ? 100 * xa / na : null, d = (rb === null || ra === null) ? null : ra - rb;
+    let more = 0, same = 0, fewer = 0; for (const x of list) { const b = den(sig, x, 'before'), a = den(sig, x, 'after'); if (!a || !b) continue; const vb = cnt(sig, x, 'before') / b, va = cnt(sig, x, 'after') / a; if (va > vb) more++; else if (va < vb) fewer++; else same++; }
+    const rB = range(bs.map(v => v && v[0])), rA = range(bs.map(v => v && v[1])), dv = bs.map(v => v ? v[1] - v[0] : null), rD = range(dv);
+    return { xb, nb, rb, rbLo: rB[0], rbHi: rB[1], xa, na, ra, raLo: rA[0], raHi: rA[1], d, dLo: rD[0], dHi: rD[1], shown: rD[0] !== null && (rD[0] > 0 || rD[1] < 0), more, same, fewer, n: list.length, sessions: new Set(list.map(x => x.f.sid)).size, few: xb + xa < 20, dv };
+  }
+  const diffOf = (c1, c2) => { const dv = c1.dv.map((v, i) => (v === null || c2.dv[i] === null) ? null : v - c2.dv[i]), r = range(dv); return { d: (c1.d === null || c2.d === null) ? null : c1.d - c2.d, lo: r[0], hi: r[1], shown: r[0] !== null && (r[0] > 0 || r[1] < 0) }; };
+  const strip = (c) => { const o = Object.assign({}, c); delete o.dv; return o; };
+
+  const L = [], out = (s) => L.push(s === undefined ? '' : s), J = { generated: new Date().toISOString(), dry: DRY, N, lookback: LOOKBACK, boundaryCut: BOUNDARY_CUT, callCut: CALL_CUT };
+  if (DRY) out('*** DRY RUN: sides scrambled at random; no number below means anything ***');
+  out('AFTER-COMPACTION COUNT   ' + J.generated + '   record: docs/program/AFTER-COMPACTION-2026-11.md');
+  out('Tags: [M] measured from the transcripts. [M, hand] measured by this session\'s own read. [E] estimated. [G] guess.');
+  out('Rates are events for each 100 calls. Ranges are the 2.5th and 97.5th percentiles over ' + RESAMPLES + ' resamples of whole sessions (seed ' + SEED + ').');
+  out();
+  // ---- A
+  const allOwn = D.files.reduce((a, f) => a + f.own.length, 0), copied = D.files.reduce((a, f) => a + f.calls.length - f.own.length, 0), counted = D.sessions.reduce((a, f) => a + f.comps.filter(c => c.counted).length, 0);
+  out('A. WHAT WAS READ  [M]');
+  out(`A1  folders in scope ${D.inScope}, left out and not opened ${D.leftOut}; main transcripts ${D.files.length}; tool calls by the main sessions ${allOwn}; copied calls left out of every window ${copied}`);
+  out(`    boundaries: the summary check's cut ${BOUNDARY_CUT}; calls read up to ${CALL_CUT}`);
+  out(`A2  boundaries counted ${counted} in ${D.sessions.length} sessions; boundaries written between the two cuts and not counted: ${D.laterAll} (${W.laterBoundaries.length} in those sessions, where no window crosses one; ${D.laterAll - W.laterBoundaries.length} in sessions that hold no counted boundary)`);
+  const wl = (list, side) => list.map(x => x[side].length), full = W.pairs.filter(x => x.before.length === N && x.after.length === N);
+  out(`A3  pairs counted (each window at least ${MIN_WINDOW} calls): ${W.pairs.length}; left out: ${W.leftOut.length}${W.leftOut.length ? ' (' + W.leftOut.map(x => `${x.id} ${x.before}/${x.after}`).join(', ') + ')' : ''}`);
+  out(`    pairs with both windows full (${N} and ${N}): ${full.length}; before windows under ${N}: ${wl(W.pairs, 'before').filter(v => v < N).length}; after windows under ${N}: ${wl(W.pairs, 'after').filter(v => v < N).length}`);
+  out(`    calls in before windows ${tot(wl(W.pairs, 'before'))}, in after windows ${tot(wl(W.pairs, 'after'))}; in the kept tails (in neither) ${tot(W.pairs.map(x => x.tail.length))}, of them error results ${tot(W.pairs.map(x => x.tail.filter(c => c.ekind).length))}`);
+  const pw = {}; for (const x of W.plc) pw[x.where] = (pw[x.where] || 0) + 1;
+  out(`A4  placebo points ${W.plc.length} in ${new Set(W.plc.map(x => x.f.sid)).size} sessions: ${Object.entries(pw).map(([k, v]) => v + ' ' + k).join(', ')}; calls before ${tot(wl(W.plc, 'before'))}, after ${tot(wl(W.plc, 'after'))}`);
+  { const ds = W.plc.map(x => x.dist).sort((a, b) => a - b), q = (p) => ds[Math.min(ds.length - 1, Math.floor(p * ds.length))];
+    out(`    a placebo point sits a median of ${q(0.5)} calls after the last compaction or the session's start (a tenth at ${q(0.1)} or fewer, a tenth at ${q(0.9)} or more); its two windows reach 30 calls to either side`); J.placeboDist = { median: q(0.5), p10: q(0.1), p90: q(0.9) }; }
+  out(`A5  fresh starts (first ${N} calls of a main transcript that holds at least ${N} and does not begin with copied lines): ${W.fresh.length} of ${D.files.length} transcripts`);
+  const byKind = (list) => { const o = {}; for (const x of list) { const k = x.c.prepared ? 'prepared ahead' : 'written when the boundary fell'; o[k] = (o[k] || 0) + 1; } return o; };
+  out(`A6  pairs by how the summary was written: ${JSON.stringify(byKind(W.pairs))}`);
+  J.A = { inScope: D.inScope, leftOut: D.leftOut, transcripts: D.files.length, calls: allOwn, copied, counted, sessions: D.sessions.length, later: D.laterAll, laterInSessions: W.laterBoundaries.length, pairs: W.pairs.length, pairsLeftOut: W.leftOut, full: full.length, callsBefore: tot(wl(W.pairs, 'before')), callsAfter: tot(wl(W.pairs, 'after')), tailCalls: tot(W.pairs.map(x => x.tail.length)), placebo: W.plc.length, placeboSessions: new Set(W.plc.map(x => x.f.sid)).size, placeboWhere: pw, fresh: W.fresh.length };
+  out();
+  // ---- B
+  out('B. THE HAND READ: WHAT EACH KIND OF FLAGGED EVENT IS  [M, hand]   (scoring 1.7)');
+  out('    codes: M a mistake of the session; D a defect a check caught; P a probe or expected failure; V the environment; O the owner; X not what the kind says; for the two read-again kinds: Y the same content again, S another part of the same file, W the file was changed between');
+  out('    kind                                                 in windows  read   M   D   P   V   O   X   Y   S   W   share   what it is used for');
+  for (const h of hand) out('    ' + h.name.padEnd(52) + String(h.inWindows).padStart(8) + String(h.read).padStart(7) + ['M', 'D', 'P', 'V', 'O', 'X', 'Y', 'S', 'W'].map(c => String(h.codes[c] || 0).padStart(4)).join('') + (h.share === null ? '    n/a' : (100 * h.share).toFixed(0).padStart(6) + ' %') + '   ' + h.decision + (h.unlike ? '   NOT LIKE WITH LIKE: before ' + h.bySide.before.m + '/' + h.bySide.before.n + ', after ' + h.bySide.after.m + '/' + h.bySide.after.n : ''));
+  out(`    read in all: ${tot(hand.map(h => h.read))} events (${tot(hand.filter(h => h.kind !== 'A3s').map(h => h.read))} before the addendum of 1.11, ${tot(hand.filter(h => h.kind === 'A3s').map(h => h.read))} for the same lines read again). The share is of M (for the check that fails after it last passed: M or D; for a file read again: Y, S or W, each a second read of the same file; for the same lines read again: Y).`);
+  out('    the same shares by side, for the kinds with at least 4 read on each side (before windows | after windows, boundary and placebo together):');
+  for (const h of hand) if (h.bySide.before.n >= 4 && h.bySide.after.n >= 4) out('      ' + h.name.padEnd(52) + `${h.bySide.before.m} of ${h.bySide.before.n} | ${h.bySide.after.m} of ${h.bySide.after.n}`);
+  out(`    kinds that count in M: ${mKinds.map(kindName).join('; ') || 'none'}`);
+  J.B = hand; J.mKinds = mKinds;
+  out();
+  // ---- C and D
+  const row = (name, c) => '    ' + name.padEnd(58) + `${String(c.xb).padStart(4)}/${String(c.nb).padEnd(5)} ${f2(c.rb).padStart(6)} (${f2(c.rbLo)} to ${f2(c.rbHi)})`.padEnd(38) + `${String(c.xa).padStart(4)}/${String(c.na).padEnd(5)} ${f2(c.ra).padStart(6)} (${f2(c.raLo)} to ${f2(c.raHi)})`.padEnd(38) + `${c.d === null ? 'n/a' : sgn(c.d)} (${c.dLo === null ? 'n/a' : sgn(c.dLo)} to ${c.dHi === null ? 'n/a' : sgn(c.dHi)})`.padEnd(28) + (c.few ? 'too few to say' : c.shown ? 'SHOWN' : 'not shown').padEnd(16) + `${c.more}/${c.same}/${c.fewer}`;
+  const head = '    signal                                                     before: events/calls, rate (range)    after: events/calls, rate (range)     after less before (range)   reading         pairs more/same/fewer';
+  out('C. BEFORE AGAINST AFTER AT THE BOUNDARIES  [M; ranges E]   (' + W.pairs.length + ' pairs; ' + N + ' calls a side)'); out(head);
+  J.signals = [];
+  const cmpB = new Map(), cmpP = new Map();
+  for (const s of SIG) { const c = compare(s, W.pairs); cmpB.set(s.id, c); out(row(`${s.id}  ${s.name}`.slice(0, 57), c)); }
+  { const c = cmpB.get('M'); out(`    M: of the ${c.n} pairs, ${c.more} (${(100 * c.more / c.n).toFixed(1)} %) had more after than before, ${c.fewer} (${(100 * c.fewer / c.n).toFixed(1)} %) fewer, ${c.same} the same`); }
+  out();
+  out('D. THE PLACEBO: THE SAME COUNT AROUND POINTS THAT ARE NOT BOUNDARIES  [M; ranges E]   (' + W.plc.length + ' points)'); out(head);
+  for (const s of SIG) { const c = compare(s, W.plc); cmpP.set(s.id, c); out(row(`${s.id}  ${s.name}`.slice(0, 57), c)); }
+  out('    the difference in differences: after less before at the boundaries, less the same at the placebo points');
+  for (const s of SIG) { const dd = diffOf(cmpB.get(s.id), cmpP.get(s.id)); out('    ' + `${s.id}  ${s.name}`.slice(0, 57).padEnd(58) + `${dd.d === null ? 'n/a' : sgn(dd.d)} (${dd.lo === null ? 'n/a' : sgn(dd.lo)} to ${dd.hi === null ? 'n/a' : sgn(dd.hi)})`.padEnd(30) + (cmpB.get(s.id).few ? 'too few to say' : dd.shown ? 'SHOWN' : 'not shown'));
+    J.signals.push({ id: s.id, name: s.name, fam: s.fam, boundary: strip(cmpB.get(s.id)), placebo: strip(cmpP.get(s.id)), did: dd }); }
+  out();
+  // ---- E: full pairs, other window sizes, the profile
+  out('E. CHECKS ON THE WINDOW  [M; ranges E]');
+  out(`E1  only the pairs whose windows are both full (${full.length} pairs)`); out(head);
+  J.full = []; for (const id of ['M', 'E', 'B', 'A3', 'A3s']) { const c = compare(sigById.get(id), full); out(row(`${id}  ${sigById.get(id).name}`.slice(0, 57), c)); J.full.push({ id, c: strip(c) }); }
+  out('E2  other window sizes (a stretch under twice the size is cut in the middle; pairs with at least ' + MIN_WINDOW + ' calls a side, or the full size if smaller)'); out(head);
+  J.sizes = [];
+  for (const Wn of [15, 60]) {
+    const list = []; for (const f of D.sessions) { const bw = boundaryWindows(f, Wn); f.comps.forEach((c, k) => { if (!c.counted) return; const B = slice(f, bw.w[k].before), A = slice(f, bw.w[k].after); if (B.length >= Math.min(MIN_WINDOW, Wn) && A.length >= Math.min(MIN_WINDOW, Wn)) list.push({ f, c, before: B, after: A, a3: noMaps(), a3s: noMaps() }); }); }
+    if (DRY) for (const x of list) if (Math.random() < 0.5) [x.before, x.after] = [x.after, x.before];
+    for (const id of ['M', 'E', 'B']) { const c = compare(sigById.get(id), list); out(row(`${Wn} a side: ${id}  ${sigById.get(id).name}`.slice(0, 57), c)); J.sizes.push({ size: Wn, id, pairs: list.length, c: strip(c) }); }
+    if (Wn === 60) {
+      // the profile: bins of 10 calls from 60 before to 60 after
+      const bins = []; for (let b = -6; b <= 5; b++) bins.push({ from: b < 0 ? b * 10 : b * 10 + 1, to: b < 0 ? b * 10 + 9 : b * 10 + 10, n: 0, M: 0, E: 0, B: 0, reads: 0, plan: 0 });
+      for (const x of list) { const tally = (c, off) => { const bi = off < 0 ? 6 + Math.ceil(off / 10) - 1 : 6 + Math.ceil(off / 10) - 1; const b = bins[off < 0 ? 6 - Math.ceil(-off / 10) : 5 + Math.ceil(off / 10)]; if (!b) return; b.n++; if (sigById.get('M').f(c)) b.M++; if (c.ekind) b.E++; if (sigById.get('B').f(c)) b.B++; if (c.rp && c.rp.length) b.reads++; if (c.k === 'plan update') b.plan++; };
+        x.before.forEach((c, i) => tally(c, -(x.before.length - i))); x.after.forEach((c, i) => tally(c, i + 1)); }
+      out('E3  the profile: calls by their distance from the boundary, in bins of 10 (before windows count back from the input end, after windows forward from the boundary)');
+      out('      calls from..to     calls   M: events  rate    E: events  rate    B: events  rate    reads  rate    plan updates  rate');
+      for (const b of bins) out('      ' + `${b.from} to ${b.to}`.padEnd(16) + String(b.n).padStart(7) + String(b.M).padStart(12) + f2(b.n ? 100 * b.M / b.n : null).padStart(7) + String(b.E).padStart(12) + f2(b.n ? 100 * b.E / b.n : null).padStart(7) + String(b.B).padStart(12) + f2(b.n ? 100 * b.B / b.n : null).padStart(7) + String(b.reads).padStart(9) + f2(b.n ? 100 * b.reads / b.n : null).padStart(7) + String(b.plan).padStart(12) + f2(b.n ? 100 * b.plan / b.n : null).padStart(7));
+      J.profile = bins;
+    }
+  }
+  // the same profile around the placebo points, 30 a side
+  { const bins = []; for (let b = -3; b <= 2; b++) bins.push({ from: b < 0 ? b * 10 : b * 10 + 1, to: b < 0 ? b * 10 + 9 : b * 10 + 10, n: 0, M: 0, E: 0, B: 0, reads: 0, plan: 0 });
+    for (const x of W.plc) { const tally = (c, off) => { const b = bins[off < 0 ? 3 - Math.ceil(-off / 10) : 2 + Math.ceil(off / 10)]; if (!b) return; b.n++; if (sigById.get('M').f(c)) b.M++; if (c.ekind) b.E++; if (sigById.get('B').f(c)) b.B++; if (c.rp && c.rp.length) b.reads++; if (c.k === 'plan update') b.plan++; }; x.before.forEach((c, i) => tally(c, -(x.before.length - i))); x.after.forEach((c, i) => tally(c, i + 1)); }
+    out('E4  the same profile around the placebo points');
+    for (const b of bins) out('      ' + `${b.from} to ${b.to}`.padEnd(16) + String(b.n).padStart(7) + String(b.M).padStart(12) + f2(b.n ? 100 * b.M / b.n : null).padStart(7) + String(b.E).padStart(12) + f2(b.n ? 100 * b.E / b.n : null).padStart(7) + String(b.B).padStart(12) + f2(b.n ? 100 * b.B / b.n : null).padStart(7) + String(b.reads).padStart(9) + f2(b.n ? 100 * b.reads / b.n : null).padStart(7) + String(b.plan).padStart(12) + f2(b.n ? 100 * b.plan / b.n : null).padStart(7));
+    J.profilePlacebo = bins; }
+  out();
+  // ---- F: splits
+  out('F. THE SPLITS  [M; ranges E]   (scoring 1.6 and 1.11; for M, E, A3 and A3s)');
+  const G = [
+    ['how the summary was written', 'written when the boundary fell', x => !x.c.prepared], ['how the summary was written', 'prepared ahead of the boundary', x => x.c.prepared],
+    ['size and model, one contrast (only summaries written when the boundary fell)', 'Opus at the owner\'s setting', x => !x.c.prepared && x.c.model === 'Opus 5.5'], ['size and model, one contrast (only summaries written when the boundary fell)', 'other models at the default trigger', x => !x.c.prepared && x.c.model !== 'Opus 5.5'],
+    ['the summary check\'s verdict', 'summary behind its kept tail', x => x.c.overtaken], ['the summary check\'s verdict', 'summary not behind', x => !x.c.overtaken],
+    ['project', 'FixFlow', x => x.f.g === 'fixflow'], ['project', 'clinic testbed', x => x.f.g === 'clinic'],
+  ];
+  for (const m of [...new Set(W.pairs.map(x => x.c.model))].sort()) G.push(['model', m, x => x.c.model === m]);
+  ['under 300k', '300k to 400k', '400k to 900k', '900k and over'].forEach((b, i) => G.push(['window size at compaction', b, x => x.c.band === i]));
+  J.splits = []; let lastHead = '';
+  const groupCmp = new Map();
+  for (const [hd, name, fn] of G) {
+    const list = W.pairs.filter(fn); if (hd !== lastHead) { out('  ' + hd); out(head); lastHead = hd; }
+    const sizes = list.map(x => x.c.pre), o = { group: hd, name, pairs: list.length, sessions: new Set(list.map(x => x.f.sid)).size, sizeMin: sizes.length ? Math.min(...sizes) : 0, sizeMax: sizes.length ? Math.max(...sizes) : 0, sig: {} };
+    out(`    ${name}: ${list.length} pairs in ${o.sessions} sessions${o.sessions < 5 ? ' (fewer than five: the range means little)' : ''}${sizes.length ? `, ${Math.round(o.sizeMin / 1000)}k to ${Math.round(o.sizeMax / 1000)}k` : ''}`);
+    for (const id of ['M', 'E', 'A3', 'A3s']) { const c = compare(sigById.get(id), list); groupCmp.set(hd + '|' + name + '|' + id, c); o.sig[id] = strip(c); out(row(`    ${id}  ${sigById.get(id).name}`.slice(0, 57), c)); }
+    J.splits.push(o);
+  }
+  out('  differences between two groups: the difference of their after-less-before differences');
+  J.contrasts = [];
+  const contrast = (hd, a, b) => { for (const id of ['M', 'E', 'A3', 'A3s']) { const c1 = groupCmp.get(hd + '|' + a + '|' + id), c2 = groupCmp.get(hd + '|' + b + '|' + id), dd = diffOf(c1, c2); out('    ' + `${id}: ${a} less ${b}`.padEnd(92) + `${dd.d === null ? 'n/a' : sgn(dd.d)} (${dd.lo === null ? 'n/a' : sgn(dd.lo)} to ${dd.hi === null ? 'n/a' : sgn(dd.hi)})`.padEnd(30) + ((c1.few || c2.few) ? 'too few to say' : dd.shown ? 'SHOWN' : 'not shown')); J.contrasts.push({ group: hd, a, b, id, d: dd.d, lo: dd.lo, hi: dd.hi, shown: dd.shown, few: c1.few || c2.few }); } };
+  contrast(G[0][0], 'prepared ahead of the boundary', 'written when the boundary fell'); contrast(G[2][0], 'other models at the default trigger', 'Opus at the owner\'s setting'); contrast(G[4][0], 'summary behind its kept tail', 'summary not behind'); contrast('project', 'clinic testbed', 'FixFlow');
+  out();
+  // ---- G: fresh starts
+  out('G. A SECOND REFERENCE: THE FIRST ' + N + ' CALLS OF A SESSION  [M; ranges E]   (scoring 1.5; between sessions, not paired)');
+  J.fresh = [];
+  { const fS = W.fresh.map(x => x.f.sid), fi = new Map(fS.map((s, i) => [s, i])), nF = fS.length, r2 = R.rng32(SEED + 1), fp = []; for (let b = 0; b < RESAMPLES; b++) { const p = new Int32Array(nF); for (let i = 0; i < nF; i++) p[i] = Math.floor(r2() * nF); fp.push(p); }
+    for (const id of ['M', 'E', 'B', 'N', 'A1', 'A2', 'R1', 'R2', 'R3', 'O']) { const s = sigById.get(id), x = new Float64Array(nF), n = new Float64Array(nF); for (const w of W.fresh) { const i = fi.get(w.f.sid); x[i] += cnt(s, w, 'after'); n[i] += den(s, w, 'after'); }
+      const bs = fp.map(p => { let a = 0, b = 0; for (let i = 0; i < nF; i++) { a += x[p[i]]; b += n[p[i]]; } return b ? 100 * a / b : null; }), r = range(bs), X = tot(x), Nn = tot(n);
+      out('    ' + `${id}  ${s.name}`.slice(0, 57).padEnd(58) + `${String(X).padStart(4)}/${String(Nn).padEnd(5)} ${f2(Nn ? 100 * X / Nn : null).padStart(6)} (${f2(r[0])} to ${f2(r[1])})`); J.fresh.push({ id, x: X, n: Nn, rate: Nn ? 100 * X / Nn : null, lo: r[0], hi: r[1] }); } }
+  out();
+  // ---- H: the mix of calls
+  out('H. THE MIX OF CALLS  [M]');
+  const classes = ['shell', 'test or check run', 'git or gh status', 'changes state', 'read', 'plan update', 'other tool'], cls = (c) => c.state ? 'changes state' : c.k;
+  const mix = (list, side) => { const o = {}; for (const x of list) for (const c of x[side]) o[cls(c)] = (o[cls(c)] || 0) + 1; return o; };
+  const mb = mix(W.pairs, 'before'), ma = mix(W.pairs, 'after'), pb = mix(W.plc, 'before'), pa = mix(W.plc, 'after'), share = (o, k) => { const t = tot(Object.values(o)); return t ? (100 * (o[k] || 0) / t).toFixed(1) + ' %' : 'n/a'; };
+  out('    class of call          boundaries: before   after        placebo: before   after');
+  for (const k of classes) out('    ' + k.padEnd(22) + `${String(mb[k] || 0).padStart(6)} ${share(mb, k).padStart(7)} ${String(ma[k] || 0).padStart(7)} ${share(ma, k).padStart(7)}     ${String(pb[k] || 0).padStart(6)} ${share(pb, k).padStart(7)} ${String(pa[k] || 0).padStart(7)} ${share(pa, k).padStart(7)}`);
+  { const st = cmpB.get('ST'), rd = cmpB.get('RD'), w = (v) => f2(v * N / 100);
+    out(`    in one window of ${N} calls: ${w(st.rb)} change state before a compaction and ${w(st.ra)} after; ${w(rd.rb)} are of the read class before and ${w(rd.ra)} after; that is ${f2((st.rb - st.ra) * N / 100)} fewer that change state and ${f2((rd.ra - rd.rb) * N / 100)} more reads  [M]`);
+    J.mixPerWindow = { stateBefore: st.rb * N / 100, stateAfter: st.ra * N / 100, readBefore: rd.rb * N / 100, readAfter: rd.ra * N / 100 }; }
+  J.mix = { classes, boundaryBefore: mb, boundaryAfter: ma, placeboBefore: pb, placeboAfter: pa };
+  out();
+  // ---- I: the trial size
+  out('I. THE TRIAL SIZE  [E]   (scoring 1.9; one hand-over is one unit; its score is the measure in the ' + N + ' calls after it; 5 % two-sided, 80 % power)');
+  J.trial = [];
+  const atB = W.pairs.filter(x => !x.c.prepared);
+  for (const id of ['M', 'E']) {
+    const s = sigById.get(id), ys = atB.map(x => 100 * cnt(s, x, 'after') / den(s, x, 'after')), n = ys.length, mean = tot(ys) / n, v = ys.reduce((a, y) => a + (y - mean) ** 2, 0) / (n - 1);
+    const perS = new Map(); atB.forEach((x, i) => { const k = sessIdx.get(x.f.sid); (perS.get(k) || perS.set(k, []).get(k)).push(ys[i]); });
+    const bm = picks.map(p => { let a = 0, m = 0; for (let i = 0; i < nS; i++) { const l = perS.get(p[i]); if (l) for (const y of l) { a += y; m++; } } return m ? a / m : null; }).filter(x => x !== null), bmean = tot(bm) / bm.length, vb = bm.reduce((a, y) => a + (y - bmean) ** 2, 0) / (bm.length - 1), deff = Math.max(1, vb / (v / n));
+    const before = cmpB.get(id), fr = J.fresh.find(x => x.id === id), need = (m2) => (m2 === null || Math.abs(mean - m2) < 1e-9) ? null : Math.ceil(7.85 * 2 * v / (mean - m2) ** 2);
+    const o = { id, handovers: n, mean, variance: v, sd: Math.sqrt(v), deff, zeroShare: ys.filter(y => y === 0).length / n, rows: [], detect: [] };
+    out(`  ${id}  ${s.name}: over the ${n} hand-overs written when the boundary fell, mean ${f2(mean)} events for each 100 calls, standard deviation ${f2(Math.sqrt(v))}, ${(100 * o.zeroShare).toFixed(0)} % of hand-overs with none; design effect ${deff.toFixed(2)}`);
+    const rowT = (name, m2, tag) => { const n1 = need(m2), usable = n1 !== null && m2 < mean; const r = { name, rate: m2, tag, perArm: usable ? n1 : null, perArmDeff: usable ? Math.ceil(n1 * deff) : null, note: usable ? '' : 'the rate is not below the rate after a compaction: nothing for a brief to remove' };
+      out('      ' + `${name}`.padEnd(64) + `${f2(m2).padStart(6)} [${tag}]   ` + (usable ? `${String(r.perArm).padStart(6)} for each arm, ${String(r.perArmDeff).padStart(6)} with the design effect` : r.note)); o.rows.push(r); };
+    rowT('the rate before a compaction, so that the hand-over costs nothing', compare(s, atB).rb, 'E'); rowT('half the rate after a compaction', mean / 2, 'G'); rowT('the rate of a fresh start', fr ? fr.rate : null, 'E');
+    for (const k of [10, 20, 38]) { const dmin = Math.sqrt(7.85 * 2 * v / k), dminD = Math.sqrt(7.85 * 2 * v * deff / k); out(`      with ${k} hand-overs for each arm the smallest difference that would show is ${f2(dmin)} events for each 100 calls (${f2(dminD)} with the design effect); the rate after a compaction is ${f2(mean)}`); o.detect.push({ perArm: k, diff: dmin, diffDeff: dminD }); }
+    J.trial.push(o);
+  }
+  out();
+  // ---- J: what the mistakes are (added after the first count; changes no number above)
+  out('J. WHAT THE MISTAKES ARE  [M]   (added after the first count; it changes no number above; the grouping into three is this session\'s own)');
+  { const inM = sigById.get('M').f, ORDER = ['harness refused', 'missing command', 'shell syntax', 'bad arguments', 'file tool refused', 'script crashed'];
+    const labelOf = (c) => { const k = ORDER.find(k => c.ekind === k && mKinds.includes('E:' + k)); if (k) return k + ': ' + (c.sub || 'other'); const fam = c.ekind || c.nf, where = c.ekind ? '' : ', in a result not flagged';
+      return 'the same error met again: ' + (fam === 'missing command' ? (/^(python3?|py)$/.test(c.subj || '') ? 'python, not on this PC\'s PATH' : 'another program not on this PC') : fam) + where; };
+    const famOf = (l) => /^(missing command|harness refused|bad arguments)|a command cut short|not on this PC/.test(l) ? 'a fact about this PC or the harness' : /text it was to replace|file tool refused|met again: missing (path|reference)/.test(l) ? 'what is in the project: a file, its content, a reference' : 'a command or a script written wrong';
+    const T = new Map(), add = (l, col) => { const o = T.get(l) || T.set(l, { label: l, family: famOf(l), bb: 0, ba: 0, pb: 0, pa: 0 }).get(l); o[col]++; };
+    for (const x of W.pairs) { for (const c of x.before) if (inM(c)) add(labelOf(c), 'bb'); for (const c of x.after) if (inM(c)) add(labelOf(c), 'ba'); }
+    for (const x of W.plc) { for (const c of x.before) if (inM(c)) add(labelOf(c), 'pb'); for (const c of x.after) if (inM(c)) add(labelOf(c), 'pa'); }
+    const rowsT = [...T.values()].sort((a, b) => a.family < b.family ? -1 : a.family > b.family ? 1 : (b.ba + b.bb) - (a.ba + a.bb)), fams = [...new Set(rowsT.map(r => r.family))];
+    out('    what the call got wrong                                                          boundaries: before  after      placebo: before  after');
+    J.what = { rows: rowsT, families: [] };
+    for (const fm of fams) { const rs = rowsT.filter(r => r.family === fm), t = (k) => rs.reduce((a, r) => a + r[k], 0); out('  ' + fm.padEnd(82) + String(t('bb')).padStart(18) + String(t('ba')).padStart(7) + String(t('pb')).padStart(21) + String(t('pa')).padStart(7)); J.what.families.push({ family: fm, bb: t('bb'), ba: t('ba'), pb: t('pb'), pa: t('pa') });
+      J.what.families[J.what.families.length - 1].more = t('ba') - t('bb');
+      for (const r of rs) out('      ' + r.label.padEnd(78) + String(r.bb).padStart(18) + String(r.ba).padStart(7) + String(r.pb).padStart(21) + String(r.pa).padStart(7)); }
+  }
+  out('    more after a compaction than before, by group: ' + J.what.families.map(x => x.family + ' ' + (x.more >= 0 ? '+' : '') + x.more).join('; ') + `; in all ${cmpB.get('M').xa - cmpB.get('M').xb >= 0 ? '+' : ''}${cmpB.get('M').xa - cmpB.get('M').xb}`);
+  out();
+  // ---- K: where in a stretch the mistakes fall (added after the first count, to read the placebo)
+  out('K. WHERE IN A STRETCH THE MISTAKES FALL  [M; ranges E]   (added after the first count, to read the placebo; every call of the ' + D.sessions.length + ' sessions, by how many calls it comes after the last compaction, or after the session\'s start when none came before)');
+  { const BIN = [[1, 30], [31, 60], [61, 90], [91, 120], [121, 150], [151, 210], [211, 1e9]], inM = sigById.get('M').f, mk = () => BIN.map(() => ({ n: new Float64Array(nS), m: new Float64Array(nS), e: new Float64Array(nS) })), G = { comp: mk(), start: mk() };
+    for (const f of D.sessions) { const si = sessIdx.get(f.sid), bw = f.bw, fresh = f.calls.length && f.calls[0].own; let k = -1;
+      f.own.forEach((c, oi) => { while (k + 1 < f.comps.length && bw.sa[k + 1] <= oi) k++; if (k + 1 < f.comps.length && oi >= bw.eb[k + 1] && oi < bw.sa[k + 1]) return;   // a call of a kept tail
+        const g = k < 0 ? 'start' : 'comp'; if (g === 'start' && !fresh) return; const d = k < 0 ? oi + 1 : oi - bw.sa[k] + 1, bi = BIN.findIndex(b => d >= b[0] && d <= b[1]); if (bi < 0) return;
+        const o = G[g][bi]; o.n[si]++; if (inM(c)) o.m[si]++; if (c.ekind) o.e[si]++; }); }
+    J.where = {};
+    for (const [g, name] of [['comp', 'calls after the last compaction'], ['start', 'calls after the session\'s start, before its first compaction']]) {
+      out('  ' + name); out('      calls           calls counted   M: events  rate (range)              E: events  rate (range)'); J.where[g] = [];
+      BIN.forEach((b, bi) => { const o = G[g][bi], N0 = tot(o.n), M0 = tot(o.m), E0 = tot(o.e), bs = (arr) => range(picks.map(p => { let a = 0, d = 0; for (let i = 0; i < nS; i++) { a += arr[p[i]]; d += o.n[p[i]]; } return d ? 100 * a / d : null; })), rm = bs(o.m), re = bs(o.e);
+        out('      ' + (b[1] > 1e8 ? b[0] + ' and on' : b[0] + ' to ' + b[1]).padEnd(16) + String(N0).padStart(13) + String(M0).padStart(12) + '  ' + (f2(N0 ? 100 * M0 / N0 : null) + ' (' + f2(rm[0]) + ' to ' + f2(rm[1]) + ')').padEnd(26) + String(E0).padStart(9) + '  ' + f2(N0 ? 100 * E0 / N0 : null) + ' (' + f2(re[0]) + ' to ' + f2(re[1]) + ')');
+        J.where[g].push({ from: b[0], to: b[1] > 1e8 ? null : b[1], n: N0, M: M0, mRate: N0 ? 100 * M0 / N0 : null, mLo: rm[0], mHi: rm[1], E: E0, eRate: N0 ? 100 * E0 / N0 : null, eLo: re[0], eHi: re[1] }); });
+      // the first 60 calls against everything after them, inside the same resamples
+      const early = (arr) => picks.map(p => { let a = 0, d = 0, a2 = 0, d2 = 0; for (let i = 0; i < nS; i++) { const j = p[i]; for (let bi = 0; bi < BIN.length; bi++) { if (bi < 2) { a += arr(G[g][bi])[j]; d += G[g][bi].n[j]; } else { a2 += arr(G[g][bi])[j]; d2 += G[g][bi].n[j]; } } } return (d && d2) ? 100 * a / d - 100 * a2 / d2 : null; });
+      const obs = (arr) => { let a = 0, d = 0, a2 = 0, d2 = 0; BIN.forEach((b, bi) => { if (bi < 2) { a += tot(arr(G[g][bi])); d += tot(G[g][bi].n); } else { a2 += tot(arr(G[g][bi])); d2 += tot(G[g][bi].n); } }); return { early: 100 * a / d, late: 100 * a2 / d2, x1: a, n1: d, x2: a2, n2: d2 }; };
+      const om = obs(o => o.m), rmd = range(early(o => o.m)), oe = obs(o => o.e), red = range(early(o => o.e));
+      out(`      M: calls 1 to 60, ${om.x1}/${om.n1} = ${f2(om.early)}; calls 61 and on, ${om.x2}/${om.n2} = ${f2(om.late)}; the first less the rest ${sgn(om.early - om.late)} (${sgn(rmd[0])} to ${sgn(rmd[1])})`);
+      out(`      E: calls 1 to 60, ${oe.x1}/${oe.n1} = ${f2(oe.early)}; calls 61 and on, ${oe.x2}/${oe.n2} = ${f2(oe.late)}; the first less the rest ${sgn(oe.early - oe.late)} (${sgn(red[0])} to ${sgn(red[1])})`);
+      if (g === 'comp') { const base = cmpB.get('M').rb; let ex = 0; J.where.comp.slice(0, 5).forEach(b => { ex += (b.mRate - base) * 30 / 100; }); out(`      [E] M above the rate of the 30 calls before a compaction (${f2(base)}), summed over calls 1 to 150 as if every stretch ran that long: ${f2(ex)} mistakes for each compaction`); const first = (J.where.comp[0].mRate - base) * 30 / 100; out(`      [E] of it in calls 1 to 30: ${f2(first)}; at the boundaries' own figures (${f2(cmpB.get('M').ra)} after, ${f2(base)} before): ${f2(cmpB.get('M').d * N / 100)} in the ${N} calls after a compaction`); J.where.excess = { base, perCompaction: ex, first30: first, pairFirst30: cmpB.get('M').d * N / 100 }; }
+      J.where[g + 'Split'] = { M: Object.assign(om, { d: om.early - om.late, lo: rmd[0], hi: rmd[1] }), E: Object.assign(oe, { d: oe.early - oe.late, lo: red[0], hi: red[1] }) };
+    }
+  }
+  out();
+  // ---- L: one session left out (added after the first count)
+  out('L. ONE SESSION LEFT OUT  [M]   (added after the first count; the after-less-before difference at the boundaries when any one session is dropped)');
+  J.leaveOne = [];
+  for (const id of ['M', 'E', 'B']) { const sg = sigById.get(id), S0 = sums(sg, W.pairs), T0 = { xb: tot(S0.xb), nb: tot(S0.nb), xa: tot(S0.xa), na: tot(S0.na) };
+    const ds = D.sessions.map((f, i) => ({ sid8: f.sid8, pairs: W.pairs.filter(x => x.f === f).length, d: 100 * (T0.xa - S0.xa[i]) / (T0.na - S0.na[i]) - 100 * (T0.xb - S0.xb[i]) / (T0.nb - S0.nb[i]), xa: S0.xa[i], xb: S0.xb[i] })).sort((a, b) => a.d - b.d);
+    const lo = ds[0], hi = ds[ds.length - 1];
+    out(`    ${id}: with every session ${sgn(cmpB.get(id).d)}; lowest ${sgn(lo.d)}, without session ${lo.sid8} (${lo.pairs} pairs, ${lo.xb} events before and ${lo.xa} after); highest ${sgn(hi.d)}, without session ${hi.sid8} (${hi.pairs} pairs, ${hi.xb} before and ${hi.xa} after)`);
+    const keep = D.sessions.map((f, i) => i).filter(i => D.sessions[i].sid8 !== lo.sid8), r3 = R.rng32(SEED + 2), dv = [];
+    for (let b = 0; b < RESAMPLES; b++) { let xb = 0, nb = 0, xa = 0, na = 0; for (let i = 0; i < keep.length; i++) { const j = keep[Math.floor(r3() * keep.length)]; xb += S0.xb[j]; nb += S0.nb[j]; xa += S0.xa[j]; na += S0.na[j]; } if (nb && na) dv.push(100 * xa / na - 100 * xb / nb); }
+    dv.sort((a, b) => a - b); const rl = [pctl(dv, 0.025), pctl(dv, 0.975)];
+    out(`       without session ${lo.sid8}, resampling the other ${keep.length} sessions: ${sgn(lo.d)} (${sgn(rl[0])} to ${sgn(rl[1])})  [E]`);
+    J.leaveOne.push({ id, all: cmpB.get(id).d, lowest: lo, highest: hi, withoutLo: rl[0], withoutHi: rl[1] }); }
+  out();
+  // ---- M: every boundary
+  out('M. EVERY BOUNDARY  [M]');
+  out('    boundary                 model        size   prepared   calls before/after   M before/after   E before/after   same lines read again before/after');
+  J.rows = [];
+  const allRows = W.pairs.map(x => ({ x, ok: true })).concat([]);
+  for (const { x } of allRows.sort((a, b) => a.x.c.id < b.x.c.id ? -1 : 1)) { const m = sigById.get('M'), e = sigById.get('E'), r = { id: x.c.id, g: x.f.g, model: x.c.model, pre: x.c.pre, prepared: x.c.prepared, overtaken: x.c.overtaken, nb: x.before.length, na: x.after.length, mb: cnt(m, x, 'before'), ma: cnt(m, x, 'after'), eb: cnt(e, x, 'before'), ea: cnt(e, x, 'after'), rb: x.a3s.before.size, ra: x.a3s.after.size };
+    out('    ' + r.id.padEnd(25) + r.model.padEnd(12) + (Math.round(r.pre / 1000) + 'k').padStart(6) + (r.prepared ? 'yes' : '-').padStart(9) + `${r.nb}/${r.na}`.padStart(16) + `${r.mb}/${r.ma}`.padStart(17) + `${r.eb}/${r.ea}`.padStart(17) + `${r.rb}/${r.ra}`.padStart(17)); J.rows.push(r); }
+  out();
+  out('N. WHAT THIS DOES NOT SEE');
+  out('    Mistakes that raise no error and trip no check: a wrong statement, a wrong decision, work on the wrong thing, something left out. What the owner typed. Review send-backs. Calls made by sub-agents.');
+  out('    Whether a full window by itself raises mistakes: the before window is the fullest point of a window and the after window the emptiest, and the placebo sits in mid-fill.');
+  out('    One reader made every hand verdict, with no second reader.');
+  if (!DRY) { fs.writeFileSync(path.join(outDir, 'after-table.txt'), L.join('\n') + '\n'); fs.writeFileSync(path.join(outDir, 'after.json'), JSON.stringify(J)); }
+  else fs.writeFileSync(path.join(cacheDir, 'dry-table.txt'), L.join('\n') + '\n');
+  console.log(`COUNT_DONE dry=${DRY} pairs=${W.pairs.length} placebo=${W.plc.length} fresh=${W.fresh.length} lines=${L.length} mKinds=${mKinds.length}`);
+}
+
+// ---------- stage: survey (as run before the scoring was fixed; no signal by position) ----------
+async function stageSurvey() {
+  const { files, inScope, leftOut } = scopeFiles(), q = (a, p) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+  const toolN = {}, errTool = {}, combo = {}; let calls = 0, errs = 0, copied = 0, nb = 0, nbOld = 0, t2 = 0, checks = 0, checkFail = 0, stateCalls = 0, interrupts = 0;
+  const gFirst = [], gMid = [], gLast = []; let sessWith = 0;
+  for (const it of files) {
+    const comps = (await R.findSummaries(it.f, it.sid, CALL_CUT)).filter(c => !c.copied && c.sumLine), lines = [], tools = new Map(); let ln = 0;
+    const rl = readline.createInterface({ input: fs.createReadStream(it.f), crlfDelay: Infinity });
+    for await (const line of rl) {
+      ln++; if (line.startsWith('{"type":"api-request') || line.startsWith('{"type":"file-history')) continue;
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      if (o.isSidechain || (o.timestamp && o.timestamp > CALL_CUT)) continue;
+      const own = !(o.sessionId && o.sessionId !== it.sid);
+      if (o.type === 'assistant' && o.message && Array.isArray(o.message.content)) { for (const b of o.message.content) if (b.type === 'tool_use') { if (!own) { copied++; continue; } calls++; lines.push(ln); toolN[b.name] = (toolN[b.name] || 0) + 1; const cl = R.classifyCall(b.name, b.input || {}); tools.set(b.id, { name: b.name, k: cl.k, state: cl.state }); if (cl.state) stateCalls++; } continue; }
+      if (o.type !== 'user' || !o.message || !own) continue;
+      const ct = o.message.content; if (typeof ct === 'string') { if (/^\[Request interrupted/.test(ct)) interrupts++; continue; }
+      if (Array.isArray(ct)) for (const b of ct) { if (!b) continue; if (b.type === 'text' && /^\[Request interrupted/.test(b.text || '')) interrupts++; if (b.type !== 'tool_result') continue; const t = tools.get(b.tool_use_id); if (!t) continue;
+        const text = typeof b.content === 'string' ? b.content : R.collectStrings(b.content, []).join('\n'), shell = t.name === 'Bash' || t.name === 'PowerShell';
+        if (t.k === 'test or check run') { checks++; if (b.is_error || R.testCounts(text).some(x => /^failed\|(?!0$)/.test(x))) checkFail++; }
+        if (!b.is_error) { if (shell && notFlagged(text)) t2++; continue; }
+        errs++; errTool[shell ? t.name : /^mcp__/.test(t.name) ? 'mcp__*' : t.name] = (errTool[shell ? t.name : /^mcp__/.test(t.name) ? 'mcp__*' : t.name] || 0) + 1;
+        const k = P.ended.test(text) ? 'no result: the session ended' : errorKind({ shell, name: t.name, k: t.k }, text); combo[k] = (combo[k] || 0) + 1; }
+    }
+    if (!comps.length) continue; sessWith++; nb += comps.length; nbOld += comps.filter(c => c.ts <= BOUNDARY_CUT).length;
+    const between = (a, b) => lines.filter(l => l > a && l < b).length;
+    comps.forEach((c, i) => (i ? gMid : gFirst).push(between(i ? comps[i - 1].line : 0, c.line))); gLast.push(between(comps[comps.length - 1].line, Infinity));
+  }
+  const desc = (name, a) => console.log(`${name}: n=${a.length} min=${Math.min(...a)} p10=${q(a, .1)} median=${q(a, .5)} p90=${q(a, .9)} max=${Math.max(...a)}`);
+  console.log(`folders in scope ${inScope}, left out ${leftOut}; main transcripts ${files.length}; calls read up to ${CALL_CUT}`);
+  console.log(`tool calls by the main sessions ${calls}; copied calls ${copied}; boundaries ${nb} in ${sessWith} sessions, of them at the summary check's cut ${nbOld}`);
+  desc('calls from a session\'s start to its first boundary', gFirst); desc('calls between two boundaries', gMid); desc('calls after the last boundary', gLast);
+  for (const n of [30, 50]) console.log(`  ${n} a side: stretches between boundaries with a middle of ${2 * n} or more calls: ${gMid.filter(g => g >= 4 * n).length} of ${gMid.length}`);
+  console.log(`error results ${errs} (${(100 * errs / calls).toFixed(1)} for each 100 calls); by tool ${JSON.stringify(errTool)}`);
+  console.log('error results by kind, whole record:'); for (const [k, v] of Object.entries(combo).sort((a, b) => b[1] - a[1])) console.log('  ' + String(v).padStart(5) + '  ' + k);
+  console.log(`shell results not flagged that hold a diagnostic line ${t2}; check or test runs ${checks}, failing ${checkFail}; state-changing calls ${stateCalls}; interrupts ${interrupts}`);
+  console.log('tool names: ' + Object.entries(toolN).filter(([k]) => !/^mcp__/.test(k)).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + v).join(', ') + ', mcp tools ' + Object.entries(toolN).filter(([k]) => /^mcp__/.test(k)).reduce((a, [, v]) => a + v, 0));
+}
+
+(async () => {
+  if (stage === 'survey') return stageSurvey();
+  if (stage === 'index') return stageIndex(a1);
+  if (stage === 'sample') return stageSample(a1);
+  if (stage === 'count') return stageCount(a1, a2);
+  console.log('stages: survey | index <cacheDir> | sample <cacheDir> | count <cacheDir> [outDir]');
+})();

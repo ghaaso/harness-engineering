@@ -1,0 +1,122 @@
+// Refuter's second set of checks on the library pathway map. Run from this folder:
+//   node - < refute-map-2.js.txt
+// Writes refute-map-2-console.txt beside itself. Reads only the map files.
+// E1: how the 0.0 % "library cheaper than the ladder" share depends on drawing
+//     the unknowns independently (a Gaussian copula ties the library-side unknowns).
+// E2: the chain from "piece arrives" to "good entry in hand", at best values.
+// E3: repeat occurrences per good entry before the lookup chain, to set beside R9.
+// E4: two simplifications that favour the library: the perfect mechanical check
+//     and the free repair of a bad entry.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const LP = path.join(HERE, '..', '..', 'library-pathways');
+const E = require(path.join(LP, 'engine.js'));
+const MAP = JSON.parse(fs.readFileSync(path.join(LP, 'map.json'), 'utf8'));
+const TABLE = JSON.parse(fs.readFileSync(path.join(LP, 'params.json'), 'utf8'));
+const BEST = E.paramsFromTable(TABLE, 'best');
+const clone = o => JSON.parse(JSON.stringify(o));
+const f2 = v => v.toFixed(2), f3 = v => v.toFixed(3), pc = v => (100 * v).toFixed(1) + '%';
+const out = [];
+const say = (...a) => { const s = a.join(' '); out.push(s); console.log(s); };
+
+// ---------------------------------------------------------------- E1 copula
+// +1: a higher value helps the library; -1: a lower value helps it.
+const SIDE = {
+  t_visible: 1, t_latent: 1, u_exact: 1, u_similar: 1, u_composite: 1, latent_coverage_factor: 1, ok_coverage_factor: 1,
+  k_fill: -1, v_max: -1, k_distract: 1, c_lookup: -1, r_exact: 1, r_similar: 1, r_comp_full: 1, r_comp_part: 1, f_false: -1,
+  c_check_share: 1, c_screen: -1, a_right: 1, a_wrong: -1, d_deliver: 1, c_carry: -1, q_exact: 1, q_similar: 1, q_comp: 1, q_part: 1,
+  h_harm: -1, s_exact: 1, s_similar: 1, s_comp: 1, s_part: 1, c_write: -1, e_right: 1, fix_on_found: 1, delta_stale: -1
+};
+function erf(x) { // Abramowitz-Stegun 7.1.26
+  const s = x < 0 ? -1 : 1; x = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return s * y;
+}
+const Phi = z => 0.5 * (1 + erf(z / Math.SQRT2));
+function gauss(rand) { let u = 0; while (u === 0) u = rand(); const v = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+function copulaRun(r, n, seed) {
+  const rand = E.rng(seed);
+  const rows = TABLE.parameters;
+  let cheaperL = 0, betterL = 0, betterT = 0; const cl = [], wl = [];
+  for (let d = 0; d < n; d++) {
+    const z0 = gauss(rand);
+    const p = {};
+    rows.forEach(row => {
+      const zi = gauss(rand);
+      let u;
+      if (SIDE[row.id]) { const z = Math.sqrt(r) * z0 + Math.sqrt(1 - r) * zi; u = Phi(z); if (SIDE[row.id] < 0) u = 1 - u; }
+      else u = Phi(zi);
+      if (row.run_setting) p[row.id] = row.best;
+      else if (row.low === row.high) p[row.id] = row.low;
+      else p[row.id] = row.low + u * (row.high - row.low);
+    });
+    const t = E.timePath(MAP, p, { lean: true });
+    const L = t.periods[t.periods.length - 1];
+    cl.push(L.ratios.cost_vs_ladder); wl.push(L.ratios.wrong_vs_ladder);
+    if (L.ratios.cost_vs_ladder < 1) cheaperL++;
+    if (L.library.cost < t.cheap_ladder.cost && L.library.wrong <= t.cheap_ladder.wrong) betterL++;
+    if (L.library.cost < t.top_first.cost && L.library.wrong <= t.top_first.wrong) betterT++;
+  }
+  cl.sort((a, b) => a - b); wl.sort((a, b) => a - b);
+  say('  tie strength', r, '| cost vs ladder p5/p50/p95', f2(E.percentile(cl, 5)), f2(E.percentile(cl, 50)), f2(E.percentile(cl, 95)),
+    '| wrong vs ladder p5/p50', f2(E.percentile(wl, 5)), f2(E.percentile(wl, 50)),
+    '| library cheaper than ladder', pc(cheaperL / n), '| cheaper and wrong no higher: vs ladder', pc(betterL / n), 'vs top', pc(betterT / n));
+}
+say('== E1. Library-side unknowns tied together (Gaussian copula), 1000 runs each, seed 7');
+say('  (tie strength 0 = independent draws, as the map does; 1 = all library-side unknowns move together)');
+[0, 0.5, 1].forEach(r => copulaRun(r, 1000, 7));
+
+// ---------------------------------------------------------------- E2 chain
+say('');
+say('== E2. The chain at best values, last-period stocks: share of each class that ends with a good entry in hand');
+const tp = E.timePath(MAP, BEST);
+const last = tp.periods[tp.periods.length - 1];
+[['visible', 'cheap_wrong'], ['visible', 'cheap_ok'], ['latent', 'cheap_wrong'], ['latent', 'cheap_ok']].forEach(([k, nd]) => {
+  let arrive = 0, lookup = 0, good = 0;
+  ['exact', 'similar', 'composite', 'nothing'].forEach(h => ['yes', 'no'].forEach(dx => {
+    const c = E.evaluateClass(MAP, BEST, 'library', { kind: k, need: nd, held: h, distractor: dx }, last.stocks);
+    arrive += c.chance;
+    lookup += c.chance * c.stateFlow.L2_lookup;
+    good += c.chance * (c.stateFlow.L5_exact + c.stateFlow.L5_similar + c.stateFlow.L5_full + c.stateFlow.L5_part);
+  }));
+  const held = E.evaluatePolicy(MAP, BEST, 'library', last.stocks).shares;
+  say('  ', (k + '/' + nd).padEnd(20), 'share of all work', pc(arrive), '| looked up', pc(lookup / arrive), '| good entry in hand', pc(good / arrive));
+});
+{
+  const ev = E.evaluatePolicy(MAP, BEST, 'library', last.stocks);
+  const s = ev.stateFlow;
+  say('   all work: lookups', pc(s.L2_lookup), '| look-alike or bad entry screened', pc(s.L3_wrong), '| good entry in hand', pc(s.L5_exact + s.L5_similar + s.L5_full + s.L5_part), '| wrong entry in hand', pc(s.L5_wrong));
+  say('   held shares (before the lookup):', JSON.stringify(Object.fromEntries(Object.entries(ev.shares.held).map(([a, b]) => [a, +b.toFixed(4)]))));
+  // E3
+  const heldAny = 1 - ev.shares.held.nothing;
+  const ep = BEST.episodes_per_period;
+  say('');
+  say('== E3. Repeat occurrences per good entry, best values, last period');
+  say('   pieces with a held entry per period', (heldAny * ep).toFixed(1), 'over', last.stocks.E_good.toFixed(1), 'good entries =', f2(heldAny * ep / last.stocks.E_good), 'per entry per period (exact only', f2(ev.shares.held.exact * ep / last.stocks.E_good) + ')');
+  say('   good entry in hand per period', ((s.L5_exact + s.L5_similar + s.L5_full + s.L5_part) * ep).toFixed(1), '=', f3((s.L5_exact + s.L5_similar + s.L5_full + s.L5_part) * ep / last.stocks.E_good), 'per entry per period');
+  say('   R9 s1.1 measured hits per entry: 0.06 to 0.14 over 63.8 days (about 0.03 to 0.07 per 30 days), exact repeats of hard fixes');
+}
+
+// ---------------------------------------------------------------- E4 favourable simplifications
+say('');
+say('== E4. Simplifications that favour the library, at best values and over 1000 runs (seed 20261112)');
+function report(name, map) {
+  const t = E.timePath(map, BEST); const L = t.periods[t.periods.length - 1];
+  const en = E.ensemble(map, TABLE, { n: 1000, seed: 20261112 });
+  say('  ', name.padEnd(52), 'best cL', f3(L.ratios.cost_vs_ladder), 'wL', f3(L.ratios.wrong_vs_ladder), '| p50 cL', f3(en.spread.last.cost_vs_ladder.p50), 'wL', f3(en.spread.last.wrong_vs_ladder.p50), '| p5 wL', f3(en.spread.last.wrong_vs_ladder.p5), '| better vs ladder', pc(en.shareBetterVs.cheap_ladder.last));
+}
+report('as built', MAP);
+// the mechanical check is fooled by a wrong entry with chance 0.3 (LIM-35, LIM-40)
+const fooled = clone(MAP);
+fooled.branches.find(b => b.id === 'l3_wrong_check').chance = 'c_check_share * 0.7';
+fooled.branches.push({ id: 'l3_wrong_check_fooled', from: 'L3_wrong', to: 'L4_wrong', chance: 'c_check_share * 0.3', cost: 'c_screen', calls: '0', tier: 'cheap', label: 'A mechanical check passes the wrong entry', limitations: [] });
+report('mechanical check passes a wrong entry 30 % of the time', fooled);
+// repairing a bad entry costs one write at Opus price
+const paid = clone(MAP);
+paid.branches.find(b => b.id === 'l11_stored_fixed').cost = 'R_rework * m_opus + c_write * m_opus';
+report('repair costs one Opus write', paid);
+
+fs.writeFileSync(path.join(HERE, 'refute-map-2-console.txt'), out.join('\n') + '\n');

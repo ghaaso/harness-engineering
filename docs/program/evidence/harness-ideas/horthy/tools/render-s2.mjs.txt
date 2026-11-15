@@ -1,0 +1,50 @@
+// Renders §2 (post-review list) of the document from the review families.
+// Usage: node render-s2.mjs <families.json> <cards-merged.json> <out.md>
+import fs from 'node:fs';
+const [famPath, mergedPath, out] = process.argv.slice(2);
+const fams = JSON.parse(fs.readFileSync(famPath, 'utf8'));
+const merged = JSON.parse(fs.readFileSync(mergedPath, 'utf8'));
+const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n+/g, ' ').trim();
+const cut = (s, n) => { s = esc(s); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; };
+const sc = r => r ? `${r.evidence}/${r.transferability}/${r.novelty}/${r.benefit}/${r.cost_risk} ${r.disposition}` : '—';
+const W = { W1: 'W1 CLAUDE.md length', W2: 'W2 self-reported compliance', W3: 'W3 routine never run, cold resume', W4: 'W4 agents and skills', W5: 'W5 workflow library', L1: 'L1 effort routing', L2: 'L2 context budget', L3: 'L3 backpressure and verifiers', none: 'cross-cutting' };
+const primary = f => (f.bears_on || []).filter(x => x !== 'none')[0] || 'none';
+const lines = [];
+function table(title, list, withMeasure) {
+  lines.push(`### ${title} (${list.length} families, ${list.reduce((n, f) => n + f.members.length, 0)} cards)`, '');
+  lines.push(withMeasure ? '| Family | Bears on | What survives (the refuter\'s narrowed form) | The measurement that decides it | A · B scores (e/t/n/b/c) | Cards |' : '| Family | Bears on | Claim | A · B | Cards |');
+  lines.push(withMeasure ? '| --- | --- | --- | --- | --- | --- |' : '| --- | --- | --- | --- | --- |');
+  for (const f of list) {
+    const A = f.reviews.find(r => /-A$/.test(r.reviewer)), B = f.reviews.find(r => /-B$/.test(r.reviewer));
+    const R = f.refutation || {};
+    const cards = f.members.slice(0, 4).join(', ') + (f.members.length > 4 ? ` +${f.members.length - 4}` : '');
+    if (withMeasure) lines.push(`| **${f.id}** | ${(f.bears_on || []).join(', ') || 'none'} | ${cut(R.reason || f.label, 420)} | ${cut(R.what_would_settle_it || (B && B.measurement) || (A && A.measurement) || '', 360)} | ${sc(A)} · ${sc(B)} | ${cards} |`);
+    else lines.push(`| **${f.id}** | ${(f.bears_on || []).join(', ') || 'none'} | ${cut(f.label, 260)} | ${sc(A)} · ${sc(B)} | ${cards} |`);
+  }
+  lines.push('');
+}
+const order = ['W1', 'L2', 'W2', 'W3', 'W4', 'W5', 'L1', 'L3', 'none'];
+const byW = k => fams.filter(f => primary(f) === k);
+lines.push('## 2. Post-review list', '');
+lines.push(`Every one of the ${merged.length} cards sits in one of ${fams.length} families (the clusterers covered all cards; code validated membership after the run: 0 invented ids, 0 unassigned cards, 0 cards placed outside their weakness group). Each family carries two Opus reviews (A = benefit-seeker, B = cost-and-novelty skeptic; five scores 0–3 in the order evidence / transferability / novelty / benefit / cost-risk, higher is better on every dimension, then the disposition) and, where at least one reviewer said adopt or trial, a fresh-context Opus refuter's verdict. The complete per-family list with every reviewer's one-line reason is \`evidence/harness-ideas/horthy/review/POST-REVIEW-LIST.md\` (838 rows); the per-card mapping is \`review/card-dispositions.tsv\`; the raw reviews, refutations and critic output sit beside them. This section prints in full the families that survived the refuters, the families the cap left unrefuted, and a count of the rest per weakness.`, '');
+const tot = { adopt: 0, trial: 0, 'already-done': 0, skip: 0, 'unrefuted (over cap)': 0 };
+lines.push('| Weakness or lever | Families | Cards | adopt | trial | already-done | skip | unrefuted (over cap) |', '| --- | --- | --- | --- | --- | --- | --- | --- |');
+for (const k of order) { const l = byW(k); const c = d => l.filter(f => f.final_disposition === d).length; for (const d in tot) tot[d] += c(d); lines.push(`| ${W[k]} | ${l.length} | ${l.reduce((n, f) => n + f.members.length, 0)} | ${c('adopt')} | ${c('trial')} | ${c('already-done')} | ${c('skip')} | ${c('unrefuted (over cap)')} |`); }
+lines.push(`| **All** | **${fams.length}** | **${merged.length}** | **${tot.adopt}** | **${tot.trial}** | **${tot['already-done']}** | **${tot.skip}** | **${tot['unrefuted (over cap)']}** |`, '');
+const rv = fams.flatMap(f => f.reviews.map(r => r.disposition)); const cnt = a => a.reduce((m, x) => (m[x] = (m[x] || 0) + 1, m), {});
+const two = fams.filter(f => f.reviews.length === 2); const agree = two.filter(f => f.reviews[0].disposition === f.reviews[1].disposition).length;
+const refd = fams.filter(f => f.refutation); const verdicts = cnt(refd.map(f => f.refutation.verdict));
+lines.push(`Reviewer dispositions before refutation (two per family): ${Object.entries(cnt(rv)).map(([k, v]) => `${k} ${v}`).join(', ')}. The two lenses agreed on the disposition for ${agree} of ${two.length} families. Refuters ran on ${refd.length} families: verdicts ${Object.entries(verdicts).map(([k, v]) => `${k} ${v}`).join(', ')}. No family survived in the form the reviewers passed it: every surviving adopt and trial is the refuter's narrowed version, and ${refd.filter(f => f.refutation.verdict === 'refuted').length} fell outright (${refd.filter(f => f.refutation.verdict === 'refuted' && f.refutation.final_disposition === 'already-done').length} of them because the harness already has the mechanism).`, '');
+for (const k of order) {
+  const l = byW(k); if (!l.length) continue;
+  lines.push(`### 2.${order.indexOf(k) + 1} ${W[k]} — ${l.length} families, ${l.reduce((n, f) => n + f.members.length, 0)} cards`, '');
+  const ad = l.filter(f => f.final_disposition === 'adopt'), tr = l.filter(f => f.final_disposition === 'trial'), oc = l.filter(f => f.final_disposition === 'unrefuted (over cap)');
+  if (ad.length) table('Adopt, narrowed by the refuter', ad, true);
+  if (tr.length) table('Trial, narrowed by the refuter', tr, true);
+  if (oc.length) table('Unrefuted (over the per-group cap): both reviewers\' dispositions stand, no verdict', oc, false);
+  const rest = l.filter(f => !['adopt', 'trial', 'unrefuted (over cap)'].includes(f.final_disposition));
+  const rf = rest.filter(f => f.refutation);
+  lines.push(`**Skip and already-done (${rest.length} families, ${rest.reduce((n, f) => n + f.members.length, 0)} cards):** ${rest.filter(f => f.final_disposition === 'already-done').length} already done here, ${rest.filter(f => f.final_disposition === 'skip').length} skipped; ${rf.length} of these reached a refuter and fell. Each is listed with its scores and one-line reason in \`review/POST-REVIEW-LIST.md\` under ${[...new Set(l.map(f => f.group))].join(' and ')}.`, '');
+}
+fs.writeFileSync(out, lines.join('\n'));
+console.error('s2 lines', lines.length);

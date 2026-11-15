@@ -1,0 +1,122 @@
+// Session 2: headline numbers from the kept step outputs. Inputs (all in this folder): loc.json, rows.jsonl,
+// perfile.json, classify2.json, reuse.json, reuse-hits.jsonl. Output: measure.json. Local only, no transcript text.
+const fs = require('fs');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const J = (f) => JSON.parse(fs.readFileSync(W + '/' + f, 'utf8'));
+const r4 = (x) => +x.toFixed(4);
+function wilson(k, n) { const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d; return [r4(Math.max(0, c - h)), r4(Math.min(1, c + h))]; }
+const out = {};
+
+// ---- 1. reads by location (loc.json), grouped into the six classes of the brief plus two residues
+const loc = J('loc.json');
+const GROUP = (k) => k.startsWith('1 ') ? 'product code or tracked product document' : k.startsWith('2 ') ? 'tracked program document' : k.startsWith('3') ? 'program or evidence file in the repository folder, not in version control when read' : k.startsWith('4 ') ? 'scratch folder outside the repository' : k.startsWith('5 ') ? 'session transcript' : k.startsWith('6 ') ? 'web' : k.startsWith('7 ') ? 'other outside the repository (other codebase, skills, memory, elsewhere)' : 'no path resolved';
+const g = {}; for (const [k, a] of Object.entries(loc.byClass)) { const G = GROUP(k); const x = (g[G] = g[G] || { calls: 0, fetched: 0, carried: 0 }); x.calls += a.calls; x.fetched += a.fetchedTok; x.carried += a.carriedTok; }
+g.web = g.web || { calls: 0, fetched: 0, carried: 0 };
+const T = loc.totals;
+out.reads_by_location = { source: 'loc.js.txt -> loc.json (byClass), grouped here', total_calls: Math.round(T.calls), total_fetched_tokens: Math.round(T.fetched), total_carried_tokens: Math.round(T.carried), classes: Object.fromEntries(Object.entries(g).map(([k, x]) => [k, { calls: +x.calls.toFixed(1), calls_share: r4(x.calls / T.calls), fetched_share: r4(x.fetched / T.fetched), carried_share: r4(x.carried / T.carried) }])) };
+out.reads_by_location.inside_repository = { tracked_calls_share: r4((g['product code or tracked product document'].calls + g['tracked program document'].calls) / T.calls), tracked_carried_share: r4((g['product code or tracked product document'].carried + g['tracked program document'].carried) / T.carried), folder_untracked_calls_share: r4(g['program or evidence file in the repository folder, not in version control when read'].calls / T.calls), folder_untracked_carried_share: r4(g['program or evidence file in the repository folder, not in version control when read'].carried / T.carried) };
+
+// ---- 2. same-task re-reads (rows.jsonl; the writer logic of own.js.txt, plus a 24-hour bound)
+const rows = fs.readFileSync(W + '/rows.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const per = new Map(); for (const r of rows) per.set(r.cid, (per.get(r.cid) || 0) + 1);
+const acc = {}; const add = (k, r) => { const a = (acc[k] = acc[k] || { calls: 0, tok: 0, car: 0 }); a.calls += 1 / per.get(r.cid); a.tok += r.tok; a.car += r.car; };
+for (const r of rows) {
+  const ownRun = r.birth && r.birth >= r.trStart - 60e3 && r.birth <= r.ts;
+  const sameTr = r.lvl === 'transcriptFile' || r.lvl === 'transcriptDir' || (r.lvl === 'none' && ownRun) || (r.lvl === 'sessionScratch' && ownRun && !!r.sub);
+  const sameSess = r.lvl === 'sessionFile' || r.lvl === 'sessionDir' || r.lvl === 'sessionScratch';
+  const ageH = r.ageFirstWriteH != null ? r.ageFirstWriteH : (r.birth && r.birth <= r.ts ? (r.ts - r.birth) / 3.6e6 : null);
+  let k;
+  if (sameTr) k = 'a same agent transcript wrote it (or created it during its run)';
+  else if (sameSess && ageH != null && ageH < 24) k = 'b same session, written under 24 h before the read';
+  else if (sameSess) k = 'c same session, written 24 h or more before the read, or age unknown';
+  else if (r.lvl === 'otherSession') k = 'd another session wrote it';
+  else k = 'e no recorded writer (file existed before, or is gone)';
+  add(k, r);
+}
+const RT = Object.values(acc).reduce((s, a) => ({ calls: s.calls + a.calls, tok: s.tok + a.tok, car: s.car + a.car }), { calls: 0, tok: 0, car: 0 });
+const fmt = (a) => ({ calls: +a.calls.toFixed(1), calls_share: r4(a.calls / RT.calls), fetched_share: r4(a.tok / RT.tok), carried_share: r4(a.car / RT.car) });
+const byW = Object.fromEntries(Object.entries(acc).sort().map(([k, a]) => [k, fmt(a)]));
+const sum = (keys, f) => r4(keys.reduce((s, k) => s + (acc[k] ? acc[k][f] : 0), 0) / RT[f]);
+const A = Object.keys(acc).filter((k) => k.startsWith('a ')), B = Object.keys(acc).filter((k) => k.startsWith('b ')), Cc = Object.keys(acc).filter((k) => k.startsWith('c '));
+out.same_task_reread_share = {
+  source: 'measure.js.txt over rows.jsonl (rows written by loc.js.txt; writer levels as in own.js.txt)',
+  definition: 'a call re-reads its own task working file when the same agent transcript wrote it (strict), or the same session (orchestrator plus its subagents) wrote it under 24 hours before (task). "Same session any age" is the loose upper bound; one session ran 310 hours.',
+  rows_calls: Math.round(RT.calls),
+  strict_same_transcript: { calls_share: sum(A, 'calls'), fetched_share: sum(A, 'tok'), carried_share: sum(A, 'car') },
+  task_same_transcript_or_session_under_24h: { calls_share: sum([...A, ...B], 'calls'), fetched_share: sum([...A, ...B], 'tok'), carried_share: sum([...A, ...B], 'car') },
+  loose_same_session_any_age: { calls_share: sum([...A, ...B, ...Cc], 'calls'), fetched_share: sum([...A, ...B, ...Cc], 'tok'), carried_share: sum([...A, ...B, ...Cc], 'car') },
+  by_writer: byW,
+};
+
+// ---- 3. premises (classify2.json)
+const F = J('classify2.json').findings; const N = F.length;
+let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+const files = [...new Set(F.map((f) => f.id[0]))];
+function boot(pred) { const v = []; for (let b = 0; b < 4000; b++) { let k = 0, n = 0; for (let j = 0; j < files.length; j++) { const fl = files[Math.floor(rnd() * files.length)]; for (const f of F) if (f.id[0] === fl) { n++; if (pred(f)) k++; } } v.push(k / n); } v.sort((x, y) => x - y); return [r4(v[100]), r4(v[3899])]; }
+const row = (pred, def) => { const k = F.filter(pred).length; return { definition: def, k, n: N, share: r4(k / N), wilson95: wilson(k, N), file_cluster_bootstrap95: boot(pred) }; };
+const has = (f, c) => (f.p2[c] || 0) > 0;
+const keysNoF = (f) => Object.keys(f.p2).filter((c) => c !== 'f');
+const onlyIn = (f, set, allowF) => { const ks = allowF ? keysNoF(f) : Object.keys(f.p2); return ks.length > 0 && ks.every((c) => set.includes(c)); };
+const KINDS = { a: 'fact computable from this repository at a commit by a fixed query', ax: 'fact computable from the other (clinic) repository at a commit', b: 'span of a file tracked in this repository', bx: 'span of a file tracked in the other repository', c_repo: 'span of a file in this repository folder, not tracked', c_scratch: 'span of a scratch file or transcript outside the repository', c_other: 'span of an untracked file in the other repository', d: 'measurement run once, inputs not kept', e: 'outside source (paper, web page, video, tool docs)', epin: 'third-party library source at a version pinned by a tracked lockfile', f: 'agent judgement with no checkable premise' };
+out.premise_kind_shares = { source: 'measure.js.txt over classify2.json (hand classification; classify2.js.txt splits kind c)', unit: 'share of the 60 sampled findings that have at least one premise of the kind', kinds: Object.fromEntries(Object.entries(KINDS).map(([c, d]) => [c, row((f) => has(f, c), d)])) };
+const tot = {}; let all = 0; for (const f of F) for (const [c, k] of Object.entries(f.p2)) { tot[c] = (tot[c] || 0) + k; all += k; }
+out.premise_kind_shares.premise_counts = { total: all, per_finding_mean: +(all / N).toFixed(2), by_kind: Object.fromEntries(Object.entries(tot).sort().map(([c, k]) => [c, { count: k, share_of_premises: r4(k / all) }])), note: 'premise-level shares are clustered within findings; use the finding-level shares for inference' };
+const per2 = F.map((f) => Object.values(f.p2).reduce((s, k) => s + k, 0)).sort((x, y) => x - y);
+out.premise_kind_shares.premise_counts.per_finding = { median: per2[Math.floor(N / 2)], p25: per2[Math.floor(N / 4)], p75: per2[Math.floor(3 * N / 4)], min: per2[0], max: per2[N - 1] };
+const TRK = ['a', 'b'], FOLDER = ['a', 'b', 'c_repo'], VC = ['a', 'b', 'ax', 'bx', 'epin'];
+out.in_repo_premise_share = {
+  source: 'measure.js.txt over classify2.json',
+  definitions: { tracked: 'premise kinds a or b: recoverable from git at a commit of this repository', folder: 'tracked, or c_repo: a file that sits in the repository folder but is not committed (can change or vanish with no record)' },
+  headline_tracked_checkable: row((f) => onlyIn(f, TRK, true), 'every checkable premise is tracked in this repository (a, b); agent judgement (f) may sit on top'),
+  tracked_strict: row((f) => onlyIn(f, TRK, false), 'every premise is a or b, and no premise is bare agent judgement'),
+  folder_checkable: row((f) => onlyIn(f, FOLDER, true), 'every checkable premise is in the repository folder, tracked or not (a, b, c_repo); f may sit on top'),
+  any_version_control_or_pinned_checkable: row((f) => onlyIn(f, VC, true), 'every checkable premise is in some version control or pinned (a, b, ax, bx, epin); f may sit on top'),
+  counterfactual_every_cited_file_content_hashed: row((f) => keysNoF(f).length > 0 && keysNoF(f).every((c) => !['d', 'e'].includes(c)), 'if every cited file (any place) had been content-hashed when cited: every checkable premise is a file span or a repository query, none a one-off measurement or outside source; f may sit on top'),
+  has_any_tracked_premise: row((f) => has(f, 'a') || has(f, 'b'), 'at least one premise a or b'),
+  has_premise_outside_repository_folder: row((f) => ['ax', 'bx', 'c_scratch', 'c_other', 'd', 'e', 'epin'].some((c) => has(f, c)), 'at least one premise outside this repository folder (other repo, scratch, one-off measurement, outside source)'),
+  has_unrecheckable_premise: row((f) => has(f, 'd') || has(f, 'f'), 'at least one premise that cannot be re-checked at all (d or f)'),
+  only_judgement_or_none: row((f) => keysNoF(f).length === 0, 'no checkable premise at all (judgement only)'),
+};
+out.deterministic_finding_share = {
+  source: 'measure.js.txt over classify2.json (finding type and r9 fields)',
+  type_Q_query_and_answer: row((f) => f.type === 'Q', 'finding is a deterministic query plus its answer (type Q)'),
+  type_Q_recheckable_now_in_repo: row((f) => f.type === 'Q' && onlyIn(f, TRK, true), 'type Q and every checkable premise tracked in this repository'),
+  type_M_one_off_script_result: row((f) => f.type === 'M', 'finding is the result of a script run (deterministic in form, but inputs mostly unkept)'),
+  expressible_as_query: row((f) => f.r9 === 'new' || f.r9 === 'typed', 'could be stored as a deterministic query plus answer (r9 new or typed), whatever its premises'),
+  interpretation: row((f) => f.r9 === 'interp', 'interpretation that only a model or a person can re-check'),
+  by_type: Object.fromEntries(['Q', 'M', 'S', 'R', 'I'].map((t) => [t, F.filter((f) => f.type === t).length])),
+};
+
+// ---- 4. reuse (reuse.json for the sample; perfile.json for the broader file view)
+const ru = J('reuse.json');
+const pf = J('perfile.json').filter((f) => !f.isDir);
+const pfT = pf.reduce((s, f) => s + f.carried, 0);
+const multi = pf.filter((f) => f.sessions >= 2), notW = pf.filter((f) => f.sessionsNotWriter >= 1);
+out.reuse = {
+  source_sample: 'reuse.js.txt -> needles.json, reuse-hits.jsonl; reuse2.js.txt -> reuse.json (summary)',
+  sample: ru.summary,
+  sample_note: 'an exposure is a tool result that contains the finding\'s needle (a 24-48 character run of its text): a read or search output that showed it; it is not proof that the agent used it. The writing session is excluded from "other session" counts.',
+  source_files: 'perfile.json (written by loc.js.txt): files read under CQ1, directories excluded',
+  files: { n: pf.length, read_in_2plus_sessions: multi.length, share_of_carried_on_files_read_in_2plus_sessions: r4(multi.reduce((s, f) => s + f.carried, 0) / pfT), read_by_a_session_that_never_wrote_it: notW.length, share_of_carried_on_those: r4(notW.reduce((s, f) => s + f.carried, 0) / pfT), max_sessions: Math.max(...pf.map((f) => f.sessions)), sessions_histogram: (() => { const h = {}; for (const f of pf) { const b = f.sessions >= 5 ? '5+' : String(f.sessions); h[b] = (h[b] || 0) + 1; } return h; })(), first_to_last_read_days_files_2plus_sessions: (() => { const v = multi.map((f) => (Date.parse(f.last) - Date.parse(f.first)) / 864e5).sort((a, b) => a - b); return { median: +v[Math.floor(v.length / 2)].toFixed(1), p75: +v[Math.floor(v.length * 0.75)].toFixed(1), max: +v[v.length - 1].toFixed(1) }; })() },
+};
+
+// ---- 5. stale use: exposures of a stale or drifted sampled finding after the change reached main
+const H = fs.readFileSync(W + '/reuse-hits.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((x) => !/agent-a2b9edd46ed6e48db/.test(x.f));
+const lastTs = H.reduce((m, x) => (x.ts && x.ts > m ? x.ts : m), '');
+const st = [];
+for (const f of F) {
+  if (!f.stale) continue;
+  const s = { id: f.id, type: f.type, status: f.stale.status, since: f.stale.since || null, commit: f.stale.commit || null, what: f.stale.what };
+  if (f.stale.since) {
+    const t = Date.parse(f.stale.since);
+    const after = H.filter((x) => x.id === f.id && x.ts && Date.parse(x.ts) >= t);
+    const shown = after.filter((x) => x.kind === 'shown');
+    s.after_change = { shown_calls: shown.length, transcripts: new Set(shown.map((x) => x.f)).size, sessions: new Set(shown.map((x) => x.sess)).size, copied_or_quoted_after_change: after.filter((x) => x.kind !== 'shown').length, kinds: after.reduce((o, x) => ((o[x.kind] = (o[x.kind] || 0) + 1), o), {}) };
+    const before = H.filter((x) => x.id === f.id && x.kind === 'shown' && x.ts && Date.parse(x.ts) < t);
+    s.before_change = { shown_calls: before.length, sessions: new Set(before.map((x) => x.sess)).size };
+  }
+  st.push(s);
+}
+out.stale_use = { source: 'classify2.js.txt (STALE table, from git history of main) and measure.js.txt over reuse-hits.jsonl', last_exposure_in_scan: lastTs, findings_checked: st.length, findings: st };
+fs.writeFileSync(W + '/measure.json', JSON.stringify(out, null, 1));
+console.log(JSON.stringify({ loc: out.reads_by_location.classes, same: [out.same_task_reread_share.strict_same_transcript, out.same_task_reread_share.task_same_transcript_or_session_under_24h, out.same_task_reread_share.loose_same_session_any_age], inrepo: Object.fromEntries(Object.entries(out.in_repo_premise_share).filter(([k]) => k !== 'source' && k !== 'definitions').map(([k, v]) => [k, [v.k, v.share, v.wilson95, v.file_cluster_bootstrap95]])), det: Object.fromEntries(Object.entries(out.deterministic_finding_share).filter(([k]) => !/source|by_type/.test(k)).map(([k, v]) => [k, [v.k, v.share, v.wilson95]])), files: out.reuse.files, stale: st.map((s) => [s.id, s.status, s.after_change, s.before_change]), lastTs }, null, 0));

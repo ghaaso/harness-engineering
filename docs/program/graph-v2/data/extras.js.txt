@@ -1,0 +1,325 @@
+// Assembles data/extras.json from the graphify result files. Run:
+//   cd docs/program/graph-v2 && node - < data/extras.js.txt
+// Every number is read from a source at run time; a missing match throws.
+const fs = require("fs");
+const path = require("path");
+const REPO = path.resolve(process.cwd(), "../../..");
+const G2E_REL = "docs/program/evidence/harness-bottlenecks/graph2";
+const GF = G2E_REL + "/graphify/";
+const SRC = {
+  result: GF + "RESULT.md",
+  run: GF + "AUDIT-RUN.md",
+  claims: GF + "AUDIT-CLAIMS.md",
+  json: GF + "result.json",
+};
+const rd = (rel) => fs.readFileSync(path.join(REPO, rel), "utf8").replace(/\r/g, "");
+const need = (v, what) => { if (v === null || v === undefined || (Array.isArray(v) && !v.length) || (typeof v === "number" && !isFinite(v))) throw new Error("not found: " + what); return v; };
+const num = (s) => parseFloat(String(s).replace(/,/g, ""));
+const L = {};
+for (const k of ["result", "run", "claims"]) L[k] = rd(SRC[k]).split("\n");
+const J = JSON.parse(rd(SRC.json));
+
+const idx = (lines, re, from = 0) => { for (let i = from; i < lines.length; i++) if (re.test(lines[i])) return i; throw new Error("no line matches " + re); };
+const cells = (line) => line.split("|").slice(1, -1).map((c) => c.trim());
+const section = (lines, re) => { // from heading matching re up to the next "## " heading
+  const s = idx(lines, re); let e = lines.length;
+  for (let i = s + 1; i < lines.length; i++) if (/^## /.test(lines[i])) { e = i; break; }
+  return lines.slice(s + 1, e);
+};
+// bullets: lines starting with "- " (or "N. " when numbered) with indented continuation lines, until a blank line
+function bulletsAfter(lines, start, numbered) {
+  const out = []; let cur = null;
+  const startRe = numbered ? /^\d+\.\s+/ : /^- /;
+  for (let i = start; i < lines.length; i++) {
+    const l = lines[i];
+    if (startRe.test(l)) { if (cur !== null) out.push(cur); cur = l.replace(startRe, "").trim(); }
+    else if (cur !== null && /^\s+\S/.test(l)) cur += " " + l.trim();
+    else if (cur !== null && l.trim() === "" ) { if (numbered) continue; break; }
+    else if (cur !== null) break;
+  }
+  if (cur !== null) out.push(cur);
+  return need(out, "bullets after line " + start);
+}
+const triple = (cell) => { // "-0.019 [-0.092, +0.038]"
+  const m = /([+-]?\d+\.\d+) \[([+-]?\d+\.\d+), ([+-]?\d+\.\d+)\]/.exec(cell);
+  need(m, "interval in '" + cell + "'");
+  return [num(m[1]), num(m[2]), num(m[3])];
+};
+
+// ---- what
+const R = L.result;
+const wi = idx(R, /^What was tested:/);
+let what = R[wi].trim();
+for (let i = wi + 1; i < R.length && R[i].trim() !== ""; i++) what += " " + R[i].trim();
+need(what, "what");
+
+// ---- headline items
+const hs = section(R, /^## Headline/);
+const headline_text = bulletsAfter(hs, hs.findIndex((l) => /^1\.\s/.test(l)), true);
+if (headline_text.length !== 6) throw new Error("headline items: " + headline_text.length);
+
+// ---- primary (section 2 table, T1 rows)
+const t1 = idx(R, /^\| T1 \(418 \/ 75\) \|/);
+const armRow = (name) => { for (let i = t1; i < t1 + 5; i++) { const c = cells(R[i]); if (c[1] === name || c[0].includes("T1") && c[1] === name) return c; } throw new Error("arm row " + name); };
+const prim = (name) => num(/^([\d.]+)/.exec(armRow(name)[2])[1]);
+const tasksCommits = /T1 \((\d+) \/ (\d+)\)/.exec(R[t1]);
+const primary = {
+  graphify: prim("graphify code layer"), typed: prim("typed primary"), search: prim("scripted search"),
+  cochange_floor: prim("changed-together floor"), folder_floor: prim("same-folder floor"),
+  budget_tokens: num(need(/inside an 8,000-token answer/.exec(R.join("\n")), "budget") && "8000"),
+  tasks: num(tasksCommits[1]), commits: num(tasksCommits[2]),
+};
+// cross-check with result.json
+const jt1 = need(J.table.find((r) => r.arm === "graphify" && r.set === "T1"), "json T1 graphify");
+if (Math.abs(jt1.primary - primary.graphify) > 0.0006 || jt1.tasks !== primary.tasks || jt1.clusters !== primary.commits) throw new Error("result.json disagrees with RESULT.md on T1 graphify");
+
+// ---- diffs (G-1..G-4, T1 primary column)
+const gRow = (g) => cells(R[idx(R, new RegExp("^\\| " + g + " "))]);
+const verdictOf = (c) => /better: the typed primary/.test(c[6]) ? "better (typed)" : /inconclusive/.test(c[6]) ? "inconclusive" : (() => { throw new Error("verdict " + c[6]); })();
+const mk = (g, vs, note) => { const c = gRow(g); const [d, lo, hi] = triple(c[1]); const o = { vs, diff: d, lo, hi, verdict: verdictOf(c) }; if (note) o.note = note; return o; };
+const g3t3 = triple(gRow("G-3")[3])[0];
+const diffs = [
+  mk("G-1", "typed graph"),
+  mk("G-2", "scripted search"),
+  mk("G-3", "changed-together floor", g3t3 > 0 ? "opposite sign on T3" : null),
+  mk("G-4", "same-folder floor"),
+];
+if (!diffs[2].note) throw new Error("G-3 T3 sign no longer opposite");
+
+// ---- by seed
+const seedRow = (re, label, name) => { const c = cells(R[idx(R, re)]); const m = /\((\d+) \/ (\d+)\)/.exec(c[0]); need(m, "seed counts " + name);
+  return { where: label, commits: num(m[1]), tasks: num(m[2]), score: num(c[1]), vs_typed: triple(c[6]), vs_search: triple(c[7]) }; };
+const by_seed = [
+  seedRow(/^\| mobile app \(/, "mobile-app seeds"),
+  seedRow(/^\| backend \(/, "backend seeds"),
+];
+
+// ---- links (section 6)
+const linkRowA = cells(R[idx(R, /^\| reachable only through a missing kind \|/)]);
+const linkRowB = cells(R[idx(R, /^\| reachable without the missing kinds \|/)]);
+const cnt = (c) => num(/^([\d,]+)/.exec(c)[1]);
+const links = {
+  ref_files_link_only: cnt(linkRowA[1]), graphify: cnt(linkRowA[2]), typed: cnt(linkRowA[3]), search: cnt(linkRowA[4]),
+  rest_files: cnt(linkRowB[1]), rest_graphify: cnt(linkRowB[2]), rest_typed: cnt(linkRowB[3]), rest_search: cnt(linkRowB[4]),
+};
+// tie to headline 4 text
+const h4 = headline_text[3];
+if (!h4.includes(String(links.ref_files_link_only)) || !h4.includes(links.rest_files.toLocaleString("en-US"))) throw new Error("links disagree with headline 4");
+
+// ---- native (section 4)
+const natStart = idx(R, /^\| graphify native text \|/);
+const nc = (i) => cells(R[i]);
+const nat = nc(natStart);
+const native = {
+  median_tokens: cnt(nat[2]),
+  graphify: num(/^([\d.]+)/.exec(nat[1])[1]),
+  typed_2000: num(nc(idx(R, /^\| typed primary, 2,000 tokens \|/))[1]),
+  search_2000: num(nc(idx(R, /^\| scripted search, 2,000 tokens \|/))[1]),
+};
+
+// ---- questions (section 5)
+const q0 = idx(R, /^\| all 30 \| graphify, defaults \|/);
+const qg = cells(R[q0]), qt = cells(R[idx(R, /^\| \| typed store \|/, q0)]), qs = cells(R[idx(R, /^\| \| scripted search \|/, q0)]);
+const tokOf = (c) => num(/^([\d,.]+)/.exec(c)[1]);
+const questions = {
+  n: num(/^\| all (\d+) /.exec(R[q0])[1]),
+  graphify_f1: num(qg[4]), typed_f1: num(qt[4]), search_f1: num(qs[4]),
+  graphify_median_tokens: tokOf(qg[5]),
+  others_median_tokens: [tokOf(qt[5]), tokOf(qs[5])],
+  qualifier: need(/raw question text, no agent, no vocabulary step, printout scored as an item list/.exec(L.claims.join(" ").replace(/\s+/g, " ")), "qualifier")[0],
+};
+
+// ---- audit run verdict
+const AR = L.run;
+const vi = idx(AR, /\*\*Verdict in one line\.\*\*/);
+let verdict = AR[vi].replace(/^.*?\*\*Verdict in one line\.\*\*\s*/, "").trim();
+for (let i = vi + 1; i < AR.length && AR[i].trim() !== ""; i++) verdict += " " + AR[i].trim();
+
+// ---- audit claims
+const C = L.claims;
+const s4 = section(C, /^## 4\. /);
+const what_it_says = bulletsAfter(s4, idx(s4, /^What this result says:/) + 1, false);
+const does_not_say = bulletsAfter(s4, idx(s4, /^What it does not say:/) + 1, false);
+const s5 = section(C, /^## 5\. /);
+const against = bulletsAfter(s5, idx(s5, /^Against graphify:/) + 1, false);
+const forg = bulletsAfter(s5, idx(s5, /^For graphify:/) + 1, false);
+const quoted = (b) => {
+  const body = b.replace(/\s*\([^()]*(\([^()]*\)[^()]*)*\)\.?\s*$/, "");
+  const out = []; const re = /(^|[^\w])"([^"]+)"/g; let m;
+  while ((m = re.exec(body))) { if (/without\s*$/.test(body.slice(0, m.index + m[1].length))) continue; out.push(m[2]); }
+  return out;
+};
+const mustnot_against = against.flatMap(quoted), mustnot_for = forg.flatMap(quoted);
+need(mustnot_against, "mustnot_against"); need(mustnot_for, "mustnot_for");
+
+// ---- pending slots
+function baseSlot(p) {
+  const abs = path.join(REPO, p);
+  if (!fs.existsSync(abs)) return { path: p, exists: false, label: "being measured in another session" };
+  const lines = fs.readFileSync(abs, "utf8").replace(/\r/g, "").split("\n");
+  const out = { path: p, exists: true };
+  const dl = lines.find((l) => /\b20\d\d-\d\d-\d\d\b/.test(l));
+  out.written = dl ? dl.trim() : null;
+  let h = -1, lvl = 0;
+  for (let i = 0; i < lines.length; i++) { const m = /^(#{1,6})\s+(.*)$/.exec(lines[i]); if (m && /headline|verdict|short answer|result/i.test(m[2])) { h = i; lvl = m[1].length; break; } }
+  if (h < 0) { out.headline = null; out.numbers = []; return out; }
+  const body = [];
+  for (let i = h + 1; i < lines.length && body.length < 25; i++) { const m = /^(#{1,6})\s/.exec(lines[i]); if (m && m[1].length <= lvl) break; body.push(lines[i]); }
+  out.headline = body.join("\n").trim();
+  out.numbers = out.headline.match(/[+-]?\d[\d,]*(?:\.\d+)?%?/g) || [];
+  return out;
+}
+// ---- structured builders (run only when the measurement's files exist)
+const G_REL = G2E_REL + "/graph-v2";
+const readJson = (rel) => JSON.parse(rd(rel));
+const pct1 = (x) => { if (typeof x !== "number" || !isFinite(x)) throw new Error("not a number: " + x); return Math.round(x * 1000) / 10; };
+const get = (o, p) => { let c = o; for (const k of p.split(".")) { if (c === null || typeof c !== "object" || !(k in c)) throw new Error("missing key " + p + " (at " + k + ")"); c = c[k]; } return c; };
+const paragraphFrom = (lines, re) => { const i = idx(lines, re); let t = lines[i].trim(); for (let k = i + 1; k < lines.length && lines[k].trim() !== "" && !/^#/.test(lines[k]); k++) t += " " + lines[k].trim(); return t; };
+const must = (text, needle, what) => { if (!text.includes(needle)) throw new Error("NOTES no longer says " + what + ": " + needle); };
+
+function buildLookup() {
+  const dir = G_REL + "/lookup-testset/";
+  const J2 = readJson(dir + "result.json");
+  const NT = rd(dir + "NOTES.md"); const N = NT.split("\n");
+  const flat = NT.replace(/\s+/g, " ");
+  const ibc = get(J2, "instances_by_class");
+  const date = need(/\((20\d\d-\d\d-\d\d)\)/.exec(N[0]), "lookup date")[1];
+  const instances = {
+    all: ibc.product.instances + ibc.program.instances,
+    transcripts: get(J2, "transcripts.program") + get(J2, "transcripts.product") + get(J2, "transcripts.empty"),
+    product: ibc.product.instances, program: ibc.program.instances,
+    product_carried_M: ibc.product.carried_tokens_M, program_carried_M: ibc.program.carried_tokens_M,
+  };
+  const cts = get(J2, "confirmed_truth_share");
+  const confirmed = {
+    all_pct: cts.all.any_pct, edit_or_cite_pct: cts.all.edit_or_cite_pct,
+    product_pct: cts.product.any_pct, program_pct: cts.program.any_pct,
+    product_carried_weighted_pct: cts.product.carried_weighted_any_pct, program_carried_weighted_pct: cts.program.carried_weighted_any_pct,
+  };
+  const plain = (cls, form) => { const f = get(J2, "instances_by_form." + cls).find((x) => x.form === form); return need(f && f.plain, "plain name " + cls + " " + form); };
+  const r1 = get(J2, "r1_falsifier");
+  const r1_falsifier = { rule: r1.rule, rows: r1.by.map((r) => ({ cls: r.cls, form: r.form, form_name: plain(r.cls, r.form), instances: r.instances, confirmed_any_pct: r.confirmed_any_pct, at_least_half: r.at_least_half })) };
+  const rp = get(J2, "replay"), rn = get(J2, "replayable_no_leak_share");
+  const replayable = { all_n: rn.all_instances, all_pct: rn.all_pct, product_pct: rn.product_pct, program_pct: rn.program_pct, product_carried_pct: rp.product.snapshot_ok_carried_pct, program_carried_pct: rp.program.snapshot_ok_carried_pct };
+  // arms: names stated by the coordinator, each checked against NOTES section 4
+  must(NT, "**A, path and symbol index**", "arm A"); must(NT, "**B, outline and item-ID index**", "arm B"); must(NT, "**C, keyword search**", "arm C");
+  must(NT, "BM25 over names, paths, headings and ID definitions (no body text)", "arm C description");
+  const arms = [{ key: "A", name: "path and symbol index" }, { key: "B", name: "outline and item-ID index" }, { key: "C", name: "keyword search over names, paths and headings (BM25, no body text)" }];
+  const seedKey = { all: "all", search: "search-seed" };
+  const baselines = []; const share_of_all_dev = {};
+  const byAll = get(J2, "baselines.by").filter((b) => b.form === "ALL");
+  for (const cls of ["product", "program"]) {
+    for (const seeds of ["all", "search"]) {
+      const b = need(byAll.find((x) => x.cls === cls && x.seeds === seedKey[seeds]), "baseline " + cls + " " + seeds);
+      for (const a of arms) {
+        const r = get(b, "arms." + a.key);
+        baselines.push({ cls, seeds, n_scorable: b.scorable, n_dev: ibc[cls].dev_instances, arm: a.key, hit10_pct: r.span_hit10_pct, carried_weighted_pct: r.carried_weighted_hit10_pct, tokens_first: r.median_tok_to_hit, tokens_cheapest: r.median_tok_to_cheapest_hit, any_arm_pct: b.any_arm_span_hit10_pct, share_of_all_dev: seeds === "all" ? r.span_hit10_pct_of_all_dev : null });
+      }
+      if (seeds === "all") share_of_all_dev[cls] = { A: b.arms.A.span_hit10_pct_of_all_dev, B: b.arms.B.span_hit10_pct_of_all_dev, C: b.arms.C.span_hit10_pct_of_all_dev, any: get(b, "any_arm_span_hit10_pct_of_all_dev") };
+    }
+  }
+  const to_beat = get(J2, "to_beat").map((t) => { if (!("best_arm_median_tok_to_cheapest_hit" in t)) throw new Error("to_beat row lacks cheapest key"); return { cls: t.cls, form: t.form, form_name: t.plain, share_pct: t.carried_share_pct, best_arm: t.best_arm, hit_pct: t.best_arm_span_hit10_pct, n: t.scorable, tokens_first: t.best_arm_median_tok_to_hit, tokens_cheapest: t.best_arm_median_tok_to_cheapest_hit ?? null, truth_tokens: t.median_truth_span_tok, agent_fetched: t.median_agent_fetched_tok }; });
+  const to_beat_caveat = (() => { const i = idx(N, /^These are sizes of index answers/); let t = N[i].trim(); for (let k = i + 1; k < N.length && N[k].trim() !== ""; k++) t += " " + N[k].trim(); if (!/needs an agent run\.$/.test(t)) throw new Error("caveat end changed"); return t; })();
+  const s7 = section(N, /^## 7\. /);
+  const design_change = (() => { const i = s7.findIndex((l) => l.trim() !== ""); let t = ""; for (let k = i; k < s7.length && s7[k].trim() !== ""; k++) t += (t ? " " : "") + s7[k].trim(); return need(t, "design_change"); })();
+  const could_not_measure = get(J2, "could_not_measure");
+  // cross-check against NOTES headline numbers
+  must(flat, "4,829 instances from 1,481 transcripts", "instance count"); must(flat, "27.1 % of all instances", "confirmed share"); must(flat, "512 of 4,829 instances (10.6 %)", "replayable");
+  if (instances.all !== 4829 || instances.transcripts !== 1481 || confirmed.all_pct !== 27.1 || replayable.all_pct !== 10.6) throw new Error("lookup json disagrees with NOTES");
+  const cAll = baselines.filter((r) => r.arm === "C" && r.seeds === "all").map((r) => r.hit10_pct);
+  if (cAll.length !== 2 || cAll.some((v) => v !== 55.3)) throw new Error("keyword arm all-seeds no longer 55.3 in both classes");
+  must(flat, "C 55.3 %", "keyword arm 55.3");
+  return { result_path: dir + "result.json", notes_path: dir + "NOTES.md", date, instances, confirmed, r1_falsifier, replayable, arms, baselines, share_of_all_dev, to_beat, to_beat_caveat, design_change, could_not_measure };
+}
+
+function buildPremise() {
+  const dir = G_REL + "/premise-measure/";
+  const J3 = readJson(dir + "result.json");
+  const NT = rd(dir + "NOTES.md"); const N = NT.split("\n");
+  const flat = NT.replace(/\s+/g, " ");
+  const date = need(/(20\d\d-\d\d-\d\d)\s*$/.exec(N[0]), "premise date")[1];
+  const what_it_measures = paragraphFrom(N, /^\*\*What this measures\.\*\*/).replace(/^\*\*What this measures\.\*\*\s*/, "");
+  const cls = get(J3, "reads_by_location.classes");
+  const find = (re) => { const k = Object.keys(cls).find((x) => re.test(x)); return need(k && cls[k], "class " + re); };
+  const sum = (arr, f) => arr.reduce((s, c) => s + c[f], 0);
+  const mkLoc = (where, arr) => ({ where, calls_pct: pct1(sum(arr, "calls_share")), fetched_pct: pct1(sum(arr, "fetched_share")), carried_pct: pct1(sum(arr, "carried_share")) });
+  const reads_by_location = [
+    mkLoc("tracked files in this repository", [find(/^product code or tracked/), find(/^tracked program document/)]),
+    mkLoc("untracked files in the repository folder", [find(/^program or evidence file in the repository folder/)]),
+    mkLoc("scratch folders outside the repository", [find(/^scratch folder/)]),
+    mkLoc("transcripts", [find(/^session transcript/)]),
+    mkLoc("other outside", [find(/^other outside the repository/)]),
+    mkLoc("unresolved", [find(/^no path resolved/)]),
+    mkLoc("web", [find(/^web$/)]),
+  ];
+  const ins = get(J3, "reads_by_location.inside_repository");
+  if (Math.abs(reads_by_location[0].carried_pct - pct1(ins.tracked_carried_share)) > 0.11 || Math.abs(reads_by_location[1].carried_pct - pct1(ins.folder_untracked_carried_share)) > 0.11) throw new Error("reads_by_location inconsistent with inside_repository");
+  const total = { calls: get(J3, "reads_by_location.total_calls"), fetched_M: Math.round(get(J3, "reads_by_location.total_fetched_tokens") / 1e5) / 10, carried_M: Math.round(get(J3, "reads_by_location.total_carried_tokens") / 1e5) / 10 };
+  const st = get(J3, "same_task_reread_share");
+  const same_task = {
+    strict_same_transcript: { calls_pct: pct1(st.strict_same_transcript.calls_share), carried_pct: pct1(st.strict_same_transcript.carried_share) },
+    same_session_24h: { calls_pct: pct1(st.task_same_transcript_or_session_under_24h.calls_share), fetched_pct: pct1(st.task_same_transcript_or_session_under_24h.fetched_share), carried_pct: pct1(st.task_same_transcript_or_session_under_24h.carried_share) },
+    loose_any_age: { calls_pct: pct1(st.loose_same_session_any_age.calls_share), carried_pct: pct1(st.loose_same_session_any_age.carried_share) },
+  };
+  // findings rows: label from the NOTES table row whose last cell names the key
+  const tableRows = N.filter((l) => /^\|/.test(l)).map(cells);
+  const labelFor = (needle) => { const r = tableRows.find((c) => c.length >= 3 && c[c.length - 1].includes(needle)); return need(r && r[0], "table row for " + needle); };
+  const specs = [
+    ["in_repo_premise_share.headline_tracked_checkable", "headline_tracked_checkable"],
+    ["in_repo_premise_share.tracked_strict", "...tracked_strict"],
+    ["in_repo_premise_share.folder_checkable", "folder_checkable"],
+    ["in_repo_premise_share.any_version_control_or_pinned_checkable", "any_version_control_or_pinned_checkable"],
+    ["in_repo_premise_share.counterfactual_every_cited_file_content_hashed", "counterfactual_every_cited_file_content_hashed"],
+    ["in_repo_premise_share.has_unrecheckable_premise", "...has_unrecheckable_premise"],
+    ["deterministic_finding_share.type_Q_query_and_answer", "type_Q_*"],
+    ["deterministic_finding_share.interpretation", "...interpretation"],
+  ];
+  const findings_rows = specs.map(([path_, needle]) => {
+    const o = get(J3, path_);
+    const bs = o.file_cluster_bootstrap95;
+    const row = { label: labelFor(needle), k: o.k, n: o.n, pct: pct1(o.share), wilson: o.wilson95.map(pct1), bootstrap: Array.isArray(bs) ? bs.map(pct1) : null };
+    must(flat, row.k + " of " + row.n, "finding count " + row.k + " of " + row.n);
+    return row;
+  });
+  const pc = get(J3, "premise_kind_shares.premise_counts");
+  const premises_per_finding = { mean: pc.per_finding_mean, median: pc.per_finding.median, q1: pc.per_finding.p25, q3: pc.per_finding.p75, max: pc.per_finding.max };
+  const rs = get(J3, "reuse.sample"), rf = get(J3, "reuse.files");
+  const reuse = { found: rs.shownInAnotherSession, sampled: rs.foundInTranscripts, two_or_more: rs.shownInTwoOrMoreOtherSessions, median_gap_h: rs.gapToEachOtherSessionHours.median, files_two_plus: rf.read_in_2plus_sessions, files_total: rf.n, files_carried_pct: pct1(rf.share_of_all_CQ1_carried_on_files_read_in_2plus_sessions) };
+  const sh = get(J3, "stale_use.headline");
+  const stale = { stale: sh.stale_findings_in_sample, drifted: sh.drifted, traced: sh.checked, exposures: sh.exposures_after_change, pairs: sh.sessions_after_change_summed_per_finding, wrote_after: sh.stale_statement_written_into_a_file_afterwards };
+  const step4 = bulletsAfter(section(N, /^## Step 4/), 0, false);
+  if (step4.length !== 5) throw new Error("step4 bullets: " + step4.length);
+  const cmI = idx(N, /^## Could not measure/);
+  const could_not_measure = bulletsAfter(N, cmI + 1, true);
+  if (could_not_measure.length !== 9) throw new Error("could-not-measure items: " + could_not_measure.length);
+  const not_claimed = need(N.find((l) => /^Not claimed here:/.test(l)), "not claimed").trim();
+  // cross-check against NOTES headline numbers
+  const chk = (c, what) => { if (!c) throw new Error("premise json disagrees with NOTES: " + what); };
+  chk(reads_by_location[2].carried_pct === 67.8 && reads_by_location[1].carried_pct === 25.1 && reads_by_location[0].carried_pct === 4.1 && same_task.same_session_24h.carried_pct === 83.9, "location/same-session shares");
+  chk(findings_rows[0].k === 12 && findings_rows[4].k === 32 && reuse.found === 43 && reuse.sampled === 56 && stale.stale === 2 && stale.drifted === 1 && stale.traced === 8, "finding counts");
+  must(flat, "67.8 % carried", "67.8"); must(flat, "83.9 % carried", "83.9"); must(flat, "43 of 56 found", "reuse");
+  return { result_path: dir + "result.json", notes_path: dir + "NOTES.md", date, what_it_measures, reads_by_location, total, same_task, findings_rows, premises_per_finding, reuse, stale, step4, could_not_measure, not_claimed };
+}
+
+function slot(p, builder) {
+  const o = baseSlot(p);
+  if (o.exists && builder) o.structured = builder();
+  return o;
+}
+const pending = {
+  embeddings: slot(G2E_REL + "/embeddings/RESULT.md"),
+  lookup_testset: slot(G2E_REL + "/graph-v2/lookup-testset/NOTES.md", buildLookup),
+  premise_measure: slot(G2E_REL + "/graph-v2/premise-measure/NOTES.md", buildPremise),
+};
+const extras = {
+  graphify: {
+    sources: [SRC.result, SRC.run, SRC.claims, SRC.json],
+    what, primary, diffs, by_seed, links, native, questions,
+    headline_text, audit_run_verdict: verdict, does_not_say, what_it_says,
+    mustnot_against, mustnot_for, mustnot_reasons: [...against, ...forg],
+  },
+  pending,
+};
+const outFile = path.join(REPO, "docs/program/graph-v2/data/extras.json");
+fs.writeFileSync(outFile, JSON.stringify(extras, null, 1));
+console.log("wrote", outFile, fs.statSync(outFile).size, "bytes");

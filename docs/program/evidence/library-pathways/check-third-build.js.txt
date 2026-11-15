@@ -1,0 +1,198 @@
+// Check of the third build (revision 4), part 1: the numbers. Run from this folder:
+//   node - < check-third-build.js.txt
+// Reads the data files and engine.js; changes nothing on disk except check-third-build-console.txt.
+// Every model number here follows from assumed values (mostly guesses, tag G). None is a finding
+// about the library.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const table = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const lims = JSON.parse(fs.readFileSync(path.join(dir, 'limitations.json'), 'utf8'));
+const out = [];
+const say = s => { out.push(s); console.log(s); };
+const f = (x, d = 3) => x === null || x === undefined ? 'n/a' : Number(x).toFixed(d);
+const pc = (x, d = 1) => (100 * x).toFixed(d);
+const rows = E.tableRows(table);
+const best = E.paramsFromTable(table, 'best');
+const R4 = ['cost_vs_ladder', 'wrong_vs_ladder', 'cost_vs_top', 'wrong_vs_top'];
+let misses = 0;
+const expect = (label, got, want, tol) => { const ok = Math.abs(got - want) <= tol; if (!ok) misses++; return label + ' ' + f(got, 4) + (ok ? ' = ' : ' DIFFERS FROM ') + want; };
+
+// ---------- A. middle values, time path ----------
+say('A. MIDDLE VALUES, TIME PATH');
+const tp = E.timePath(map, best);
+const L = tp.periods[tp.periods.length - 1], F0 = tp.periods[0];
+say('strong ' + f(tp.top_first.cost, 2) + ' / ' + pc(tp.top_first.wrong, 2) + '%; ladder ' + f(tp.cheap_ladder.cost, 2) + ' / ' + pc(tp.cheap_ladder.wrong, 2) + '%');
+say('library first ' + f(F0.library.cost, 2) + ' / ' + pc(F0.library.wrong, 2) + '%; last ' + f(L.library.cost, 3) + ' / ' + pc(L.library.wrong, 3) + '%');
+say('ratios first ' + R4.map(r => f(F0.ratios[r])).join(' ') + '; last ' + R4.map(r => f(L.ratios[r])).join(' '));
+tp.periods.forEach(p => say('  period ' + p.period + ': ' + R4.map(r => f(p.ratios[r])).join(' ') + '  stocks ' + f(p.stocks.E_good, 2) + ' good, ' + f(p.stocks.E_bad, 2) + ' bad'));
+say('final stocks ' + f(tp.finalStocks.E_good, 2) + ' good, ' + f(tp.finalStocks.E_bad, 2) + ' bad; bad share at start of last period ' + f(L.stockValues.wrong_share));
+const v1 = E.variant(map, best, 'opus_one');
+say('Opus price ratio one: cost vs strong last ' + f(v1.last.ratios.cost_vs_top));
+
+// ---------- B. reference settings ----------
+say('\nB. REFERENCE SETTINGS, LAST PERIOD (cost/l wrong/l cost/s wrong/s | funnel end | promo | lib cost, wrong)');
+const REFS = E.references(map, table);
+Object.keys(REFS).forEach(id => { const r = REFS[id].last; say(id.padEnd(16) + R4.map(k => f(r.ratios[k])).join(' ') + ' | ' + f(r.funnel_end, 2) + ' | ' + f(r.promo, 3) + ' | ' + f(r.library.cost, 2) + ', ' + pc(r.library.wrong) + '%'); });
+
+// ---------- C. funnels and usage ----------
+say('\nC. FUNNELS, MIDDLE VALUES, LAST PERIOD (mark: all_good)');
+const fn = E.funnel(map, best, { period: 'last' });
+Object.keys(fn.funnels).forEach(fid => say(fid + ': ' + fn.funnels[fid].map((s, i) => s.id + ' ' + f(s.value, 3) + ' [' + f(REFS.all_good.last.funnels[fid][i].value, 2) + ']').join(', ')));
+say('promoted checks per 100 cheap-wrong at the first gate: ' + f(fn.promo, 4) + '; at all_good ' + f(REFS.all_good.last.promo, 3));
+const usage = (map.usage_measures || []).map(id => id + ' ' + f(L.library.measures[id], 4)).join(', ');
+say('usage panel: ' + usage + '; P_climbs ' + f(L.library.measures.P_climbs, 4));
+
+// ---------- D. square ----------
+say('\nD. SQUARE');
+const SQ = E.square(map, table);
+SQ.sheets.forEach(sh => { const cs = [].concat(...sh.cells); say(sh.id + ': cost below ladder ' + cs.filter(c => c.ratios.cost_vs_ladder < 1).length + ', wrong below ' + cs.filter(c => c.ratios.wrong_vs_ladder < 1).length + ', both ' + cs.filter(c => c.ratios.cost_vs_ladder < 1 && c.ratios.wrong_vs_ladder < 1).length + ' of ' + cs.length + '; cost ' + f(Math.min(...cs.map(c => c.ratios.cost_vs_ladder)), 2) + ' to ' + f(Math.max(...cs.map(c => c.ratios.cost_vs_ladder)), 2) + '; wrong ' + f(Math.min(...cs.map(c => c.ratios.wrong_vs_ladder)), 2) + ' to ' + f(Math.max(...cs.map(c => c.ratios.wrong_vs_ladder)), 2) + '; corner cells (0,0) ' + f(sh.cells[0][0].ratios.cost_vs_ladder) + ' (10,10) ' + f(sh.cells[10][10].ratios.cost_vs_ladder)); });
+
+// ---------- E. weights ----------
+say('\nE. WEIGHTS (shares of the full fall, %)');
+const W = E.weights(map, table, lims.items, { stepLabels: lims.steps });
+say('full fall ' + pc(W.full.score, 2) + ' (cost ' + pc(W.full.cost_fall, 2) + ', wrong ' + pc(W.full.wrong_fall, 2) + ')');
+W.groups.forEach(g => say('group ' + g.id.padEnd(13) + ' alone ' + pc(g.alone) + ' last ' + pc(g.last)));
+W.steps.forEach(s => say('step ' + String(s.step).padEnd(3) + ' alone ' + pc(s.alone) + ' last ' + pc(s.last)));
+say('sequence: ' + W.sequence.map(q => q.step + ' ' + pc(q.cumulative)).join(', ') + '; unnamed ' + W.sequence_end.ids.join('+') + ' adds ' + pc(W.sequence_end.added) + ' to ' + pc(W.sequence_end.cumulative));
+say('top limitations by last: ' + W.ranking.limitations.filter(r => r.measured).slice(0, 8).map(r => r.id + ' ' + pc(r.alone) + '/' + pc(r.last)).join(', '));
+say('not measured: ' + W.limitations.filter(r => !r.measured).map(r => r.id + ' ' + r.not_measured).join(', '));
+say('unknowns alone/last: ' + W.unknowns.slice().sort((a, b) => b.last - a.last).map(u => u.id + ' ' + pc(u.alone) + '/' + pc(u.last)).join(', '));
+
+// ---------- F. gate and ladder ----------
+say('\nF. GATE AND LADDER (cost, wrong%: library | ladder | strong)');
+const SH = E.sharedTable(map, table);
+SH.rows.forEach(r => say(r.base.padEnd(9) + (r.moved.join('+') || 'as is').padEnd(12) + ['library', 'cheap_ladder', 'top_first'].map(p => f(r[p].cost, 1) + ', ' + pc(r[p].wrong) + '%').join(' | ')));
+
+// ---------- G. ensembles ----------
+say('\nG. ENSEMBLES, 1000 RUNS, SEED 20261112, LAST PERIOD: p50 (p5 to p95)');
+const ENS = {};
+[0, 0.5, 1].forEach(tie => {
+  const en = E.ensemble(map, table, { n: 1000, seed: 20261112, tie: tie });
+  ENS[tie] = en;
+  const s = en.spread.last;
+  say('tie ' + tie + ': ' + R4.concat(['funnel_end', 'promo']).map(k => k + ' ' + f(s[k].p50, 3) + ' (' + f(s[k].p5, 3) + ' to ' + f(s[k].p95, 3) + ')').join('; '));
+  say('   better than ladder ' + pc(en.shareBetterVs.cheap_ladder.last) + '%, than strong ' + pc(en.shareBetterVs.top_first.last) + '%; cost_vs_ladder top: ' + en.spearman.last.cost_vs_ladder.slice(0, 8).map(e => e.id + ' ' + f(e.rho, 3)).join(', '));
+});
+
+// ---------- H. p_promote at 0: the section 14 targets ----------
+say('\nH. P_PROMOTE AT 0 (row 0/0/0): SECTION 14 TARGETS');
+const pinned = JSON.parse(JSON.stringify(table));
+pinned.parameters.forEach(r => { if (r.id === 'p_promote') { r.low = 0; r.best = 0; r.high = 0; } });
+const RP = E.references(map, pinned);
+const T = {
+  middle: [1.034, 1.008, 0.887, 1.911], corner_000: [1.034, 1.023, 0.887, 1.940], corner_001: [1.011, 1.000, 0.868, 1.897],
+  corner_010: [1.429, 1.558, 1.226, 2.956], corner_011: [1.062, 0.997, 0.912, 1.891], corner_100: [1.035, 1.025, 0.889, 1.944],
+  corner_101: [1.007, 0.997, 0.864, 1.890], corner_110: [1.530, 1.713, 1.313, 3.250], corner_111: [0.803, 0.710, 0.689, 1.348],
+  all_good: [0.739, 0.710, 0.634, 1.348], worst_corner: [1.750, 1.713, 1.502, 3.250]
+};
+Object.keys(T).forEach(id => say(id.padEnd(13) + R4.map((r, i) => expect('', RP[id].last.ratios[r], T[id][i], 0.0005)).join(';')));
+say(expect('middle funnel end', RP.middle.last.funnel_end, 0.35, 0.005) + '; ' + expect('all_good funnel end', RP.all_good.last.funnel_end, 31.71, 0.005));
+const WP = E.weights(map, pinned, lims.items, { stepLabels: lims.steps });
+say(expect('S(all_good)', WP.full.score, 0.290, 0.0005));
+const TG = { recurrence: [-0.4, 82.0], reach: [-13.0, 75.5], quality: [5.4, 105.1], running_cost: [3.5, 10.7] };
+WP.groups.forEach(g => say('group ' + g.id + ' ' + expect('alone', 100 * g.alone, TG[g.id][0], 0.05) + '; ' + expect('last', 100 * g.last, TG[g.id][1], 0.05)));
+const TS = { 1: [1.5, 19.4], 2: [-5.6, 74.9], 3: [2.0, 26.5], 4: [11.3, 95.7], 5: [-0.3, 13.0], 6: [0.5, 33.3], 7: [2.1, 12.6], 8: [-3.8, 10.0], 9: [8.9, 78.3], 10: [3.9, 31.2] };
+WP.steps.forEach(s => say('step ' + s.step + ' ' + expect('alone', 100 * s.alone, TS[s.step][0], 0.05) + '; ' + expect('last', 100 * s.last, TS[s.step][1], 0.05)));
+const TQ = [[4, 11.3], [2, 24.7], [9, 52.4], [6, 59.6], [7, 61.9], [1, 63.3]];
+TQ.forEach(([st, v], i) => say('sequence ' + (i + 1) + ' step ' + WP.sequence[i].step + (WP.sequence[i].step === st ? '' : ' (TARGET ' + st + ')') + ' ' + expect('', 100 * WP.sequence[i].cumulative, v, 0.05)));
+if (WP.sequence.slice(0, 6).some((q, i) => q.step !== TQ[i][0])) misses++;
+const SHP = E.sharedTable(map, pinned);
+const TT = [[26.6, 21.4, 25.7, 21.2, 29.9, 11.2], [39.2, 7.9, 37.9, 7.9, 36.4, 8.5], [23.7, 17.1, 23.1, 16.9, 26.0, 1.6], [32.9, 2.8, 31.8, 2.8, 31.4, 0.5], [19.0, 15.1], [29.0, 5.5], [17.0, 12.0], [24.8, 2.0]];
+SHP.rows.forEach((r, i) => { const t = TT[i]; const got = [r.library.cost, 100 * r.library.wrong, r.cheap_ladder.cost, 100 * r.cheap_ladder.wrong, r.top_first.cost, 100 * r.top_first.wrong]; say('gate/ladder row ' + i + ' (' + r.base + ' ' + (r.moved.join('+') || 'as is') + '): ' + t.map((v, k) => expect('', got[k], v, 0.05)).join(';')); });
+
+// ---------- I. hand derivations ----------
+say('\nI. HAND DERIVATIONS (middle values, last period starting stocks)');
+const st = L.stocks, P = best;
+const ws = st.E_bad / (st.E_good + st.E_bad), fill = 1 - Math.exp(-(st.E_good + st.E_bad) / P.k_fill), distract = P.v_max * (1 - Math.exp(-(st.E_good + st.E_bad) / P.k_distract));
+say('stocks ' + f(st.E_good, 4) + ' good, ' + f(st.E_bad, 4) + ' bad; bad share ' + f(ws, 4) + '; fill ' + f(fill, 4) + '; look-alike chance ' + f(distract, 4));
+// 1. promoted-check catch chance, class visible / cheap_wrong / exact / no look-alike
+const g = 1 - (1 - P.g_tests_visible) * (1 - P.s_review * P.g_review);
+const promo = 1 * P.k_promo_exact * (1 - ws) * P.c_check_share * P.p_promote;
+const glib = g + (1 - g) * promo;
+const pRightCheap = P.t_visible * P.r_exact * (1 - ws) * (P.c_check_share + (1 - P.c_check_share) * P.a_right) * P.d_deliver * P.q_exact;
+const handExtra = 100 * (1 - pRightCheap) * (1 - g) * promo;
+const cls = E.evaluateClass(map, best, 'library', { kind: 'visible', need: 'cheap_wrong', held: 'exact', distractor: 'no' }, st);
+say('class visible/cheap_wrong/exact/no: g ' + f(g, 6) + ', promo ' + f(promo, 6) + ', g_lib ' + f(glib, 6));
+say('  ' + expect('extra caught at first gate per 100 (hand vs engine)', handExtra, cls.measures.fw_promo_caught, 1e-9));
+say('  ' + expect('engine l6_caught chance from flows', cls.branchFlow.l6_caught / cls.stateFlow.L6_wrong, glib, 1e-12));
+// 2. the whole cheap-wrong funnel by hand
+const kinds = [['visible', P.p_visible, P.need_visible, 1, P.t_visible], ['latent', 1 - P.p_visible, P.need_latent, P.latent_coverage_factor, P.t_latent]];
+const held = [['exact', P.u_exact], ['similar', P.u_similar], ['composite', P.u_composite]];
+let pcw = 0; const fw = [0, 0, 0, 0, 0, 0, 0]; let promoHand = 0;
+kinds.forEach(([kid, pk, need, covk, t]) => {
+  const pc_ = pk * need; pcw += pc_;
+  const gk = 1 - (1 - (kid === 'visible' ? P.g_tests_visible : P.g_tests_latent)) * (1 - P.s_review * P.g_review);
+  const hs = held.map(([hid, u]) => [hid, u * fill * covk]);
+  const pNothing = 1 - hs.reduce((a, h) => a + h[1], 0);
+  [['yes', distract], ['no', 1 - distract]].forEach(([did, pd]) => {
+    const ff = did === 'yes' ? P.f_false : 0;
+    hs.concat([['nothing', pNothing]]).forEach(([hid, ph]) => {
+      const w = pc_ * ph * pd;
+      const rHit = hid === 'exact' ? P.r_exact : hid === 'similar' ? P.r_similar : hid === 'composite' ? P.r_comp_full + P.r_comp_part : 0;
+      if (hid !== 'nothing') { fw[0] += w; fw[1] += w * t; }
+      const back = w * t * (1 - ff) * rHit;
+      fw[2] += back; fw[3] += back * (1 - ws);
+      const scr = back * (1 - ws) * (P.c_check_share + (1 - P.c_check_share) * P.a_right);
+      fw[4] += scr; fw[5] += scr * P.d_deliver;
+      let qRight = 0;
+      if (hid === 'exact') qRight = P.q_exact; else if (hid === 'similar') qRight = P.q_similar;
+      else if (hid === 'composite') qRight = (P.r_comp_full * P.q_comp + P.r_comp_part * P.q_part) / (P.r_comp_full + P.r_comp_part);
+      fw[6] += scr * P.d_deliver * qRight;
+      // promoted checks at the first gate: flow into L6_wrong times (1 - g) * promo
+      const pr = (hid === 'exact' ? P.k_promo_exact : hid === 'similar' ? P.k_promo_similar : 0) * (1 - ws) * P.c_check_share * P.p_promote;
+      // chance the cheap attempt is wrong in this class: 1 - right with a good entry (a wrong entry gives wrong for cheap_wrong)
+      const right = hid === 'nothing' ? 0 : t * (1 - ff) * rHit * (1 - ws) * (P.c_check_share + (1 - P.c_check_share) * P.a_right) * P.d_deliver * qRight;
+      promoHand += w * (1 - right) * (1 - gk) * pr;
+    });
+  });
+});
+const fwHand = fw.map(v => 100 * v / pcw);
+const fwEng = fn.funnels.cheap_wrong.map(s => s.value);
+say('funnel by hand:   ' + fwHand.map(v => f(v, 4)).join(', '));
+say('funnel by engine: ' + fwEng.map(v => f(v, 4)).join(', ') + (fwHand.every((v, i) => Math.abs(v - fwEng[i]) < 1e-9) ? '  (equal)' : '  DIFFER'));
+if (!fwHand.every((v, i) => Math.abs(v - fwEng[i]) < 1e-9)) misses++;
+say(expect('promoted checks per 100 cheap-wrong, hand vs engine', 100 * promoHand / pcw, fn.promo, 1e-9));
+// 3. alone and last for step 4 from the definitions, with my own settings
+const good = id => rows[id].good_end === 'high' ? rows[id].high : rows[id].low;
+const libIds = Object.keys(rows).filter(id => rows[id].side === 'library');
+const fav = Object.assign({}, best); libIds.forEach(id => { fav[id] = good(id); });
+const lastOf = p => { const t2 = E.timePath(map, p, { lean: true }); return t2.periods[t2.periods.length - 1].library; };
+const b0 = lastOf(best), bF = lastOf(fav);
+const Sx = x => ((b0.cost - x.cost) / b0.cost + (b0.wrong - x.wrong) / b0.wrong) / 2;
+const SF = Sx(bF);
+const step4 = [...new Set([].concat(...lims.items.filter(l => l.main_step === 4).map(l => l.params || [])))].filter(id => rows[id] && rows[id].side === 'library');
+const pa = Object.assign({}, best); step4.forEach(id => { pa[id] = good(id); });
+const pl = Object.assign({}, fav); step4.forEach(id => { pl[id] = best[id]; });
+const aloneH = Sx(lastOf(pa)) / SF, lastH = (SF - Sx(lastOf(pl))) / SF;
+const w4 = W.steps.find(s => s.step === 4);
+say('step 4 unknowns: ' + step4.join(', '));
+say(expect('full fall by hand', SF, W.full.score, 1e-12) + '; ' + expect('step 4 alone by hand', aloneH, w4.alone, 1e-12) + '; ' + expect('step 4 last by hand', lastH, w4.last, 1e-12));
+
+// ---------- J. conservation over 500 draws ----------
+say('\nJ. CONSERVATION, 500 DRAWS (250 at tie 0, 250 at tie 1), empty stocks and last-period stocks');
+let checks = 0, failed = 0, maxErr = 0, funnelBad = 0;
+[0, 1].forEach(tie => {
+  const streams = E.ensembleStreams(777 + tie);
+  for (let d = 0; d < 250; d++) {
+    const run = E.drawRun(map, table, streams, tie);
+    const pr = E.prepareParams(map, run.raw).values;
+    const t3 = E.timePath(map, pr, { lean: true });
+    [{ E_good: 0, E_bad: 0 }, t3.periods[t3.periods.length - 1].stocks].forEach(stk => {
+      const c = E.conservation(map, pr, { stocks: stk });
+      checks += c.checks; if (!c.ok) failed++; maxErr = Math.max(maxErr, c.maxError);
+    });
+    const fnd = E.funnel(map, pr, { period: 'last' });
+    Object.keys(fnd.funnels).forEach(fid => { const mono = map.funnels.find(x => x.id === fid).monotone || map.funnels.find(x => x.id === fid).stages; const vals = fnd.funnels[fid].filter(s => mono.includes(s.id)).map(s => s.value); for (let i = 1; i < vals.length; i++) if (vals[i] > vals[i - 1] + 1e-12) funnelBad++; });
+  }
+});
+say('checks ' + checks + ', draws failing ' + failed + ', largest error ' + maxErr.toExponential(2) + ', funnel stages that rose ' + funnelBad);
+if (failed || funnelBad) misses++;
+
+say('\nMISSES: ' + misses);
+fs.writeFileSync(path.join(here, 'check-third-build-console.txt'), out.join('\n') + '\n');
+process.exitCode = misses ? 1 : 0;

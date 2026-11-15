@@ -1,0 +1,29 @@
+// Q1: how far the existing node_modules (copied from the live tree) are from each parent's lockfile.
+// Compares "packages" entries (path -> version) of the parent's package-lock.json with node_modules/.package-lock.json.
+const fs = require('fs');
+const S = JSON.parse(fs.readFileSync('sample12.json', 'utf8')).sample;
+const load = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
+const inst = { web: load('env/web/node_modules/.package-lock.json'), mobile: load('env/mobile/node_modules/.package-lock.json') };
+const out = [];
+for (const c of S) {
+  const d = 'exp/' + c.parent.slice(0, 10) + '/';
+  const row = { parent: c.parent.slice(0, 10), date: c.cdate };
+  for (const [rt, lockPath] of [['web', d + 'package-lock.json'], ['mobile', d + 'technician-app/package-lock.json']]) {
+    const lock = load(lockPath);
+    if (!lock) { row[rt] = 'no lockfile at parent'; continue; }
+    const want = lock.packages || {}; const have = inst[rt].packages || {};
+    let same = 0, diff = 0, missing = 0; const top = [];
+    for (const [k, v] of Object.entries(want)) {
+      if (!k.startsWith('node_modules/')) continue;
+      const h = have[k];
+      if (!h) { missing++; continue; }
+      if (h.version === v.version) same++; else { diff++; if (k.split('node_modules/').length === 2 && top.length < 8) top.push(`${k.slice(13)} ${v.version}->${h.version}`); }
+    }
+    const extra = Object.keys(have).filter((k) => k.startsWith('node_modules/') && !want[k]).length;
+    row[rt] = { lock_packages: Object.keys(want).length - 1, same_version: same, different_version: diff, missing_in_installed: missing, installed_not_in_lock: extra, top_level_examples: top };
+  }
+  out.push(row);
+}
+fs.writeFileSync('q1_drift.json', JSON.stringify(out, null, 1));
+for (const r of out) console.log(r.parent, r.date, 'web', typeof r.web === 'string' ? r.web : `${r.web.same_version}/${r.web.different_version}/${r.web.missing_in_installed}`, 'mobile', typeof r.mobile === 'string' ? r.mobile : `${r.mobile.same_version}/${r.mobile.different_version}/${r.mobile.missing_in_installed}`);
+console.log(JSON.stringify(out[0], null, 1));

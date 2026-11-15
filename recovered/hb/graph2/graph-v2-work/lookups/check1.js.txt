@@ -1,0 +1,21 @@
+const fs = require('fs');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+const I = fs.readFileSync(W + '/out/instances.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const T = fs.readFileSync(W + '/out/transcripts.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const tc = {}; for (const t of T) tc[t.cls] = (tc[t.cls] || 0) + 1; console.log('transcripts', tc);
+const agg = {};
+for (const x of I) {
+  const a = (agg[x.cls] = agg[x.cls] || { n: 0, carried: 0, fetched: 0, calls: 0, withTruth: 0, withSpan: 0, conf: 0, fileEd: 0, seed: {}, byForm: {} });
+  a.n++; a.carried += x.carried; a.fetched += x.fetched; a.calls += x.nCalls; if (x.truth.length) a.withTruth++; if (x.truth.some((t) => t.spans.length || t.whole)) a.withSpan++; if (x.confirmed) a.conf++; if (x.anyFileEdited) a.fileEd++;
+  a.seed[x.seed.kind] = (a.seed[x.seed.kind] || 0) + 1;
+  const f = (a.byForm[x.form] = a.byForm[x.form] || { n: 0, carried: 0, conf: 0, span: 0 }); f.n++; f.carried += x.carried; if (x.confirmed) f.conf++; if (x.truth.some((t) => t.spans.length || t.whole)) f.span++;
+}
+for (const [k, a] of Object.entries(agg)) {
+  console.log('\n==', k, 'instances', a.n, 'calls', a.calls, 'fetched M', (a.fetched / 1e6).toFixed(2), 'carried M', (a.carried / 1e6).toFixed(1), 'withTruth', a.withTruth, 'withSpan', a.withSpan, 'confirmed', a.conf, 'fileEditedLater', a.fileEd);
+  console.log('seed kinds', a.seed);
+  for (const [f, v] of Object.entries(a.byForm).sort((p, q) => q[1].carried - p[1].carried)) console.log(f.padEnd(12), String(v.n).padStart(5), (v.carried / 1e6).toFixed(1).padStart(8), 'span', String(v.span).padStart(5), 'conf', String(v.conf).padStart(5));
+}
+// samples for manual check
+const prod = I.filter((x) => x.cls === 'product');
+for (const x of prod.filter((x) => x.confirmed).slice(0, 4)) console.log(JSON.stringify({ form: x.form, seed: x.seed, fc: x.firstCall.q.slice(0, 150), truth: x.truth.map((t) => ({ f: t.f, sp: t.spans.slice(0, 4), lvl: t.level, conf: t.conf.edit + '/' + t.conf.cite + '/' + t.conf.quote, cs: t.conf.spans })) }));
+for (const x of prod.filter((x) => !x.truth.length).slice(0, 6)) console.log('NOTRUTH', x.form, x.firstCall.tool, x.firstCall.q.slice(0, 160));

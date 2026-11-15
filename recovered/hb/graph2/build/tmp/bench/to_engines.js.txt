@@ -1,0 +1,77 @@
+// Writes results/bench/<RUN>/engines.json (plain aggregates for the page) from summary.json, check.json,
+// run_config.json, calibration.json and blocks.jsonl of one interleaved run. Reads nothing else.
+// Run:  cd <build>/tmp/bench && RUN=interleaved node - < to_engines.js.txt
+const fs = require('fs'), path = require('path');
+const RUN = process.env.RUN || 'interleaved';
+const DIR = path.resolve(process.cwd(), '..', '..', 'results', 'bench', RUN);
+const rd = (f) => JSON.parse(fs.readFileSync(path.join(DIR, f), 'utf8'));
+const S = rd('summary.json'), CFG = rd('run_config.json');
+let CHECK = null; try { CHECK = rd('check.json'); } catch (e) { CHECK = null; }
+const NAME = { relational: 'SQLite (relational arm)', ladybug: 'LadybugDB', duckpgq: 'DuckDB + DuckPGQ' };
+const r3 = (x) => (x == null || !isFinite(x) ? null : Math.round(x * 1000) / 1000);
+const m = (o) => (o ? { median_over_passes: r3(o.wall), spread_between_passes: r3(o.wall_spread), per_pass: (o.wall_passes || []).map(r3) } : null);
+const mc = (o) => (o ? { median_over_passes: r3(o.cpu), spread_between_passes: r3(o.cpu_spread), per_pass: (o.cpu_passes || []).map(r3) } : null);
+
+const table = [];
+for (const [gc, rows] of Object.entries(S.rows)) {
+  const [graph, cls] = gc.split('/');
+  for (const r of rows) {
+    table.push({
+      engine: r.engine, engine_name: NAME[r.engine] || r.engine, graph, query_class: cls,
+      setting: r.setting, threads: r.T, passes: r.passes, seeds: r.seeds, cold_samples_per_pass: r.cold_n,
+      unit: 'milliseconds per ranking (TQ: per question)',
+      cold_wall_ms: m(r.cold), cold_cpu_ms: mc(r.cold), cold_p95_wall_ms: m(r.cold_p95), cold_open_wall_ms: m(r.cold_open),
+      warm_wall_p50_ms: m(r.warm), warm_cpu_p50_ms: mc(r.warm), warm_wall_p95_ms: m(r.warm_p95), warm_cpu_p95_ms: mc(r.warm_p95),
+      warm_uncached_wall_p50_ms: m(r.uncached), warm_uncached_cpu_p50_ms: mc(r.uncached),
+      engine_api_wall_ms: m(r.api), app_code_wall_ms: m(r.app), app_code_cpu_ms: mc(r.app),
+      roundtrip_estimate_ms: m(r.rtt), statements_per_ranking: r.stmts ? r3(r.stmts.wall) : null,
+      result_size: r.size ? r3(r.size.wall) : null,
+      query_text: Array.isArray(r.text) ? { distinct_statements: r.text[0], chars: r.text[1], lines: r.text[2] } : null,
+      rss_mb: r3(r.rss_mb), thread_readback: r.readback, blocks: r.blocks, blocks_kept_flagged: r.flagged, repeats: r.repeats,
+      same_as_one_thread: r.same_as_one,
+    });
+  }
+}
+const stores = [];
+for (const [k, b] of Object.entries(S.builds || {})) {
+  const [graph, engine] = k.split('/'); const u = (S.updates || {})[k];
+  stores.push({
+    engine, engine_name: NAME[engine] || engine, graph, size_bytes: b.bytes, size_mib: r3(b.bytes / 1048576), builds: b.builds,
+    build_wall_ms: m(b), build_cpu_ms: mc(b),
+    update_one_file_wall_ms: u ? m(u) : null, update_one_file_cpu_ms: u ? mc(u) : null,
+    update_one_file_p95_wall_ms: u && u.p95 ? m(u.p95) : null, update_one_file_p95_cpu_ms: u && u.p95 ? mc(u.p95) : null,
+  });
+}
+const comps = (S.comparisons || []).map((c) => ({ what: c.what, a: c.a, b: c.b, wall_diff_ms: r3(c.wall_diff), cpu_diff_ms: r3(c.cpu_diff), holds: c.holds, same_direction: c.same_direction, larger_than_spread: c.larger_than_spread, passes_agreeing: c.passes_agreeing, passes: c.passes, text: c.text }));
+
+// host load: per unit, the attempts of the session that completed it (an interrupted session's lines for a redone unit are left out)
+const blocks = fs.readFileSync(path.join(DIR, 'blocks.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+const lastSess = {}; for (const b of blocks) if (!lastSess[b.unit] || b.session > lastSess[b.unit]) lastSess[b.unit] = b.session;
+const per = {}; let tot = { attempts: 0, kept: 0, repeat: 0, kept_flagged: 0 };
+const discarded = { attempts: 0 };
+for (const b of blocks) {
+  if (b.session !== lastSess[b.unit]) { discarded.attempts++; continue; }
+  const u = (per[b.unit] = per[b.unit] || { attempts: 0, kept: 0, repeat: 0, kept_flagged: 0 });
+  u.attempts++; u[b.action]++; tot.attempts++; tot[b.action]++;
+}
+const finalBlocks = tot.kept + tot.kept_flagged;
+const host_load = {
+  rule: 'a block is repeated (up to 3 times, then kept and flagged) when other work used more than ' + CFG.config.load_frac + ' of the host\'s 24 logical CPUs (12 CPUs) during it',
+  per_unit: per, totals: tot, final_blocks: finalBlocks,
+  share_of_final_blocks_kept_flagged: r3(tot.kept_flagged / finalBlocks),
+  share_of_attempts_that_were_repeats: r3(tot.repeat / tot.attempts),
+  attempts_of_interrupted_session_discarded: discarded.attempts,
+};
+let check = null;
+if (CHECK) check = { problems: Array.isArray(CHECK.problems) ? CHECK.problems.length : CHECK.problems, detail: Array.isArray(CHECK.problems) ? CHECK.problems.slice(0, 50) : undefined };
+const out = {
+  generated_at: new Date().toISOString(), run: RUN, source: 'results/bench/' + RUN + '/summary.json (bench/isummary.js) and blocks.jsonl',
+  settings: CFG.config, container: CFG.container, units: S.units,
+  summary_rule: 'Per engine, graph, class and thread setting each pass gives one value per measure; shown is the median over passes and the spread between passes (largest minus smallest). A difference between two engines holds only if it has the same direction in wall and CPU time and is larger than both engines\' spreads in both, with at least 2 passes.',
+  labels: CFG.labels, calibration_best_threads: (() => { try { return rd('calibration.json').best; } catch (e) { return null; } })(),
+  check, host_load, table, stores,
+  ladybug_harness_ipc_per_pass: { note: 'LadybugDB as the harness runs it (store in a child process, 1 thread), per graph/class, one entry per pass, milliseconds per ranking, as isummary.js stores them: w = parent wall median, c = child own time median, i = difference (the IPC round trip) median, cc = child CPU, pc = parent CPU', data: S.ipc || null },
+  differences_that_hold: comps.filter((c) => c.holds), differences_within_noise: comps.filter((c) => !c.holds),
+};
+fs.writeFileSync(path.join(DIR, 'engines.json'), JSON.stringify(out, null, 1));
+console.log('wrote', path.join(DIR, 'engines.json'), 'rows', table.length, 'stores', stores.length, 'holds', out.differences_that_hold.length, 'noise', out.differences_within_noise.length, 'host', JSON.stringify(host_load.totals));

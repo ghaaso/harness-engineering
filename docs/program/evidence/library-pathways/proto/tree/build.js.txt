@@ -1,0 +1,37 @@
+// Builds the tree prototype page from the real data. Run from this folder: node - < build.js.txt
+// Inlines map.json, params.json, limitations.json, cases.json and engine.js (from docs/program/library-pathways),
+// core.js.txt and the design-step match from page-src, and this folder's src files. Writes index.html here.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const lib = path.resolve(here, '../../../../library-pathways');
+const psrc = path.resolve(here, '../../page-src');
+const rd = p => fs.readFileSync(p, 'utf8');
+const C = require(path.join(psrc, 'core.js.txt'));
+const json = p => JSON.parse(rd(p));
+
+const map = json(path.join(lib, 'map.json'));
+const params = json(path.join(lib, 'params.json'));
+const lims = json(path.join(lib, 'limitations.json'));
+const cases = json(path.join(lib, 'cases.json'));
+const ptx = json(path.join(psrc, 'text.json'));
+const tx = json(path.join(here, 'src/text.json'));
+
+const data = {
+  map, params, lims, cases: C.packCases(cases), tx,
+  ptx: { design_steps: ptx.design_steps, tags: ptx.tags, computed_tag: ptx.computed_tag, policy_names: ptx.policy_names, policy_short: ptx.policy_short, policy_says: ptx.policy_says, todays_notes: ptx.todays_notes }
+};
+const safe = s => s.replace(/<\//g, '<\\/');
+const engine = C.strip(rd(path.join(lib, 'engine.js')));
+const core = C.strip(rd(path.join(psrc, 'core.js.txt')));
+const tcore = C.strip(rd(path.join(here, 'src/tree-core.js.txt')));
+const js = C.strip(rd(path.join(here, 'src/page.js.txt')));
+const css = rd(path.join(here, 'src/page.css.txt'));
+let html = rd(path.join(here, 'src/page.html.txt'));
+const parts = { CSS: css, DATA: safe(JSON.stringify(data)), ENGINE: safe(engine), CORE: safe(core), TREECORE: safe(tcore), JS: safe(js) };
+Object.keys(parts).forEach(k => { html = html.split('{{' + k + '}}').join(parts[k]); });
+fs.writeFileSync(path.join(here, 'index.html'), html);
+const size = Buffer.byteLength(html);
+console.log('index.html ' + size + ' bytes' + (size > 500000 ? '  OVER 500,000' : ''));
+Object.keys(parts).forEach(k => console.log('  ' + k + ' ' + Buffer.byteLength(parts[k])));

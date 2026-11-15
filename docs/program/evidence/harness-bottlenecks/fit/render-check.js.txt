@@ -1,0 +1,17 @@
+const fs = require('fs');
+const [outFile, dest] = process.argv.slice(2);
+const NL = String.fromCharCode(10);
+const top = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+const r = top.result && top.result.fidelity ? top.result : top;
+fs.writeFileSync(dest + '/check.json', JSON.stringify(r, null, 1));
+const L = [];
+const errs = (list) => { for (const e of list) L.push('- [' + e.severity + '] ' + e.where, '    wrong: ' + e.what_is_wrong, '    correct: ' + e.correct_value_or_wording); };
+L.push('=== FIDELITY CHECK: ' + r.fidelity.verdict + ' (ids per bottleneck ok: ' + r.fidelity.ids_per_bottleneck_ok + '; mechanisms ok: ' + r.fidelity.mechanisms_ok + ') ===', r.fidelity.checked, '', 'COUNTS: ' + r.fidelity.counts_verified, '');
+errs(r.fidelity.errors);
+L.push('', '=== REFUTER ON THE COMPACTION LINE: ' + r.refute.verdict + ' (statement faithful: ' + r.refute.statement_faithful + '; numbers ok: ' + r.refute.numbers_ok + ') ===');
+errs(r.refute.errors);
+L.push('', 'STRONGEST OBJECTION: ' + r.refute.strongest_objection, '', 'SHOULD SAY: ' + r.refute.what_should_be_said);
+L.push('', '=== DOCUMENTATION CHECK: setting exists: ' + r.docs.setting_exists + ' ===', r.docs.how_it_is_set, 'caveats: ' + r.docs.caveats);
+for (const s of r.docs.sources) L.push('- ' + s.url + (s.fetched ? ' (fetched)' : ' (not fetched)') + ': ' + s.says);
+fs.writeFileSync(dest + '/check.txt', L.join(NL) + NL);
+console.log(L.slice(L.findIndex((x) => x.startsWith('=== REFUTER'))).join(NL));

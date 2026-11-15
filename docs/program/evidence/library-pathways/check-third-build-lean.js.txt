@@ -1,0 +1,205 @@
+// Check of the third build (revision 4), part 2: does any device of revision 4 lean one way?
+// Run from this folder:  node - < check-third-build-lean.js.txt
+// Writes check-third-build-lean-console.txt. Changes no data file. Every number follows from assumed values
+// (mostly guesses, tag G); none is a finding about the library. Settings not declared in map.json are
+// built here only to test the declared devices; nothing here is drawn on the page.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const table = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const lims = JSON.parse(fs.readFileSync(path.join(dir, 'limitations.json'), 'utf8'));
+const out = [];
+const say = s => { out.push(s); console.log(s); };
+const f = (x, d = 3) => x === null || x === undefined ? 'n/a' : Number(x).toFixed(d);
+const pc = (x, d = 1) => (100 * x).toFixed(d);
+const rows = E.tableRows(table);
+const best = E.paramsFromTable(table, 'best');
+const libIds = Object.keys(rows).filter(id => rows[id].side === 'library');
+const GROUPS = ['recurrence', 'reach', 'quality', 'running_cost'];
+const goodV = id => rows[id].good_end === 'high' ? rows[id].high : rows[id].low;
+const poorV = id => rows[id].good_end === 'high' ? rows[id].low : rows[id].high;
+const posOf = (id, v) => rows[id].high === rows[id].low ? 0 : (v - rows[id].low) / (rows[id].high - rows[id].low);
+const atPos = (id, p) => rows[id].low + p * (rows[id].high - rows[id].low);
+function at(p) {
+  const tp = E.timePath(map, p, { lean: true });
+  const L = tp.periods[tp.periods.length - 1];
+  return { cl: L.ratios.cost_vs_ladder, wl: L.ratios.wrong_vs_ladder, ct: L.ratios.cost_vs_top, wt: L.ratios.wrong_vs_top, lc: L.library.cost, lw: L.library.wrong, dc: tp.cheap_ladder.cost, dw: tp.cheap_ladder.wrong, tc: tp.top_first.cost, tw: tp.top_first.wrong, fe: L.library.measures.fw_right, promo: L.library.measures.fw_promo_caught, stocks: L.stocks };
+}
+const r4 = x => [x.cl, x.wl, x.ct, x.wt].map(v => f(v)).join(' ');
+// a setting from a group membership and levels: { group: 'poor' | 'good' | 'middle' }
+function setting(member, levels) {
+  const p = Object.assign({}, best);
+  libIds.forEach(id => { const lv = levels[member[id]]; if (lv === 'good') p[id] = goodV(id); else if (lv === 'poor') p[id] = poorV(id); });
+  return p;
+}
+const built = {}; libIds.forEach(id => { built[id] = rows[id].lib_group; });
+const corners = [];
+for (const a of ['poor', 'good']) for (const b of ['poor', 'good']) for (const c of ['poor', 'good']) corners.push({ id: '' + (a === 'good' ? 1 : 0) + (b === 'good' ? 1 : 0) + (c === 'good' ? 1 : 0), lv: { recurrence: a, reach: b, quality: c } });
+function cornerTable(member, label) {
+  say(label);
+  const res = {};
+  corners.forEach(k => { const x = at(setting(member, k.lv)); res[k.id] = x; say('  ' + k.id + ' ' + r4(x)); });
+  const wc = at(setting(member, { recurrence: 'good', reach: 'good', quality: 'poor', running_cost: 'poor' }));
+  say('  worst_corner ' + r4(wc));
+  res.wc = wc;
+  return res;
+}
+
+// ---------- (a) groups ----------
+say('(a) GROUP MEMBERSHIP');
+say('as built: ' + GROUPS.map(g => g + ' ' + libIds.filter(id => built[id] === g).join(',')).join(' | '));
+const ALTS = [
+  ['A1 a_right and p_promote to reach (whether a good entry, or its check, gets through)', { a_right: 'reach', p_promote: 'reach' }],
+  ['A2 calls saved (s_exact, s_similar, s_comp, s_part) to their own group, held at middle in the corners', { s_exact: 'saved', s_similar: 'saved', s_comp: 'saved', s_part: 'saved' }],
+  ['A3 look-alike ceiling and scale, and staleness, to comes back (what the work holds)', { v_max: 'recurrence', k_distract: 'recurrence', delta_stale: 'recurrence' }],
+  ['A4 all of A1, A2 and A3', { a_right: 'reach', p_promote: 'reach', s_exact: 'saved', s_similar: 'saved', s_comp: 'saved', s_part: 'saved', v_max: 'recurrence', k_distract: 'recurrence', delta_stale: 'recurrence' }]
+];
+const baseTab = cornerTable(built, 'corners as built (recurrence, reach, quality; 0 poor end, 1 good end): c/l w/l c/s w/s');
+const allGood = at(setting(built, { recurrence: 'good', reach: 'good', quality: 'good', running_cost: 'good' }));
+say('  all_good ' + r4(allGood) + ' (the same under every grouping)');
+ALTS.forEach(([label, moves]) => {
+  const m = Object.assign({}, built, moves);
+  const t = cornerTable(m, label);
+  say('  change in cost vs ladder from as built: ' + corners.map(k => k.id + ' ' + (t[k.id].cl - baseTab[k.id].cl >= 0 ? '+' : '') + f(t[k.id].cl - baseTab[k.id].cl)).join(', ') + ', worst ' + (t.wc.cl - baseTab.wc.cl >= 0 ? '+' : '') + f(t.wc.cl - baseTab.wc.cl));
+});
+
+// ---------- (b) the anchor of "last" ----------
+say('\n(b) ANCHOR OF THE WEIGHTS: all_good (1) against three quarters (0.75) and half (0.5) of the way from middle to the good ends');
+const lastOf = p => { const tp = E.timePath(map, p, { lean: true }); return tp.periods[tp.periods.length - 1].library; };
+const mid = lastOf(best);
+const S = x => ((mid.cost - x.cost) / mid.cost + (mid.wrong - x.wrong) / mid.wrong) / 2;
+const stepIds = {};
+lims.items.forEach(l => { (stepIds[l.main_step] = stepIds[l.main_step] || new Set()); (l.params || []).forEach(id => { if (rows[id] && rows[id].side === 'library') stepIds[l.main_step].add(id); }); });
+const sets = {};
+GROUPS.forEach(g => { sets['group ' + g] = libIds.filter(id => built[id] === g); });
+Object.keys(stepIds).forEach(s => { sets['step ' + s] = [...stepIds[s]]; });
+const anchored = {};
+[1, 0.75, 0.5].forEach(k => {
+  const anc = Object.assign({}, best);
+  libIds.forEach(id => { anc[id] = atPos(id, posOf(id, best[id]) + k * (posOf(id, goodV(id)) - posOf(id, best[id]))); });
+  const SF = S(lastOf(anc));
+  const res = {};
+  Object.keys(sets).forEach(name => {
+    const ids = sets[name];
+    if (!ids.length) { res[name] = { alone: null, last: null }; return; }
+    const pa = Object.assign({}, best); ids.forEach(id => { pa[id] = anc[id]; });
+    const pl = Object.assign({}, anc); ids.forEach(id => { pl[id] = best[id]; });
+    res[name] = { alone: S(lastOf(pa)) / SF, last: (SF - S(lastOf(pl))) / SF };
+  });
+  anchored[k] = { SF: SF, res: res };
+  say('anchor ' + k + ': full fall ' + pc(SF, 2) + '%');
+  const rank = kind => names => names.slice().sort((a, b) => res[b][kind] - res[a][kind]);
+  const gN = Object.keys(sets).filter(n => n.startsWith('group')), sN = Object.keys(sets).filter(n => n.startsWith('step'));
+  say('  groups by last: ' + rank('last')(gN).map(n => n.slice(6) + ' ' + pc(res[n].alone) + '/' + pc(res[n].last)).join(', '));
+  say('  steps by last:  ' + rank('last')(sN).map(n => n.slice(5) + ' ' + pc(res[n].alone) + '/' + pc(res[n].last)).join(', '));
+  say('  steps by alone: ' + rank('alone')(sN).map(n => n.slice(5)).join(', '));
+});
+
+// ---------- (c) search beyond the declared corners ----------
+say('\n(c) SEARCH OF THE RANGES (library unknowns only, every other unknown at middle), cost vs ladder, last period');
+const POS = [0, 0.25, 0.5, 0.75, 1];
+function search(start, sign, label) {
+  let p = Object.assign({}, start), cur = sign * at(p).cl, sweeps = 0, improved = true;
+  while (improved && sweeps < 8) {
+    improved = false; sweeps++;
+    for (const id of libIds) {
+      const cand = POS.map(q => atPos(id, q)).concat([best[id]]);
+      for (const v of cand) {
+        if (v === p[id]) continue;
+        const q = Object.assign({}, p); q[id] = v;
+        const val = sign * at(q).cl;
+        if (val < cur - 1e-9) { cur = val; p = q; improved = true; }
+      }
+    }
+  }
+  const x = at(p);
+  const notAtEnd = libIds.filter(id => p[id] !== goodV(id) && p[id] !== poorV(id)).map(id => id + '=' + f(p[id], 3));
+  const flipped = libIds.filter(id => p[id] === (sign < 0 ? poorV(id) : goodV(id))).map(id => id);
+  say(label + ': ' + r4(x) + ' after ' + sweeps + ' sweeps');
+  say('   ' + (sign < 0 ? 'at the poor end' : 'at the good end') + ': ' + (flipped.join(', ') || 'none') + '; inside the range: ' + (notAtEnd.join(', ') || 'none'));
+  return { x: x, p: p };
+}
+const pAllGood = setting(built, { recurrence: 'good', reach: 'good', quality: 'good', running_cost: 'good' });
+const pWorst = setting(built, { recurrence: 'good', reach: 'good', quality: 'poor', running_cost: 'poor' });
+const lo = search(pAllGood, 1, 'lowest cost vs ladder, from all_good (' + f(at(pAllGood).cl) + ')');
+const lo2 = search(best, 1, 'lowest cost vs ladder, from middle');
+const hi = search(pWorst, -1, 'highest cost vs ladder, from worst_corner (' + f(at(pWorst).cl) + ')');
+const hi2 = search(best, -1, 'highest cost vs ladder, from middle');
+const loV = Math.min(lo.x.cl, lo2.x.cl), hiV = Math.max(hi.x.cl, hi2.x.cl);
+const midV = at(best).cl;
+say('declared: all_good ' + f(at(pAllGood).cl) + ', worst_corner ' + f(at(pWorst).cl) + '; found: lowest ' + f(loV) + ', highest ' + f(hiV) + '; middle ' + f(midV));
+say('share of the available fall from middle shown by all_good: ' + pc((midV - at(pAllGood).cl) / (midV - loV)) + '%; share of the available rise shown by worst_corner: ' + pc((at(pWorst).cl - midV) / (hiV - midV)) + '%');
+
+// ---------- (d) R21, promoted checks ----------
+say('\n(d) R21: PROMOTED CHECKS');
+const withP = (p, v) => Object.assign({}, p, { p_promote: v });
+[['middle', best], ['all_good', pAllGood], ['corner_101', setting(built, { recurrence: 'good', reach: 'poor', quality: 'good' })]].forEach(([name, p]) => {
+  [0, 0.5, 1].forEach(v => { const x = at(withP(p, v)); say(name.padEnd(11) + ' p_promote ' + v + ': ' + r4(x) + ' | lib ' + f(x.lc, 2) + ', ' + pc(x.lw, 2) + '% | promo ' + f(x.promo, 3)); });
+});
+// the same benefit given to the ladder and the strong model: a check left by an earlier strong solve of the same or a
+// similar problem. Approximated with the library's own last-period stocks and holding chances, so the ladder gets
+// no more stock than the library has (the ladder climbs more often, so this understates its own stock).
+function counterpart(name, p) {
+  const tp = E.timePath(map, p, { lean: true });
+  const L = tp.periods[tp.periods.length - 1];
+  const st = L.stocks, tot = st.E_good + st.E_bad, ws = tot ? st.E_bad / tot : 0, fill = 1 - Math.exp(-tot / p.k_fill);
+  const pr = covk => (p.u_exact * fill * covk * p.k_promo_exact + p.u_similar * fill * covk * p.k_promo_similar) * (1 - ws) * p.c_check_share * p.p_promote;
+  const prV = pr(1), prL = pr(p.latent_coverage_factor);
+  const q = Object.assign({}, p, { g_tests_visible: 1 - (1 - p.g_tests_visible) * (1 - prV), g_tests_latent: 1 - (1 - p.g_tests_latent) * (1 - prL) });
+  const lad = E.evaluatePolicy(map, q, 'cheap_ladder', {}, { classes: false }).overall;
+  const top = E.evaluatePolicy(map, q, 'top_first', {}, { classes: false }).overall;
+  say(name + ': promo for cheap-wrong work, visible ' + f(prV, 4) + ', latent ' + f(prL, 4));
+  say('   ladder as built ' + f(tp.cheap_ladder.cost, 2) + ', ' + pc(tp.cheap_ladder.wrong, 2) + '%; with the same checks ' + f(lad.cost, 2) + ', ' + pc(lad.wrong, 2) + '%');
+  say('   library ' + f(L.library.cost, 2) + ', ' + pc(L.library.wrong, 2) + '%: vs ladder as built ' + f(L.ratios.cost_vs_ladder) + ' / ' + f(L.ratios.wrong_vs_ladder) + '; vs ladder with the same checks ' + f(L.library.cost / lad.cost) + ' / ' + f(L.library.wrong / lad.wrong) + '; vs strong with the same checks ' + f(L.library.cost / top.cost) + ' / ' + f(L.library.wrong / top.wrong));
+}
+counterpart('middle', best);
+counterpart('all_good', pAllGood);
+counterpart('corner_101', setting(built, { recurrence: 'good', reach: 'poor', quality: 'good' }));
+// the ensembles with p_promote pinned at 0
+const pinned = JSON.parse(JSON.stringify(table));
+pinned.parameters.forEach(r => { if (r.id === 'p_promote') { r.low = 0; r.best = 0; r.high = 0; } });
+[0, 0.5, 1].forEach(tie => {
+  const a = E.ensemble(map, table, { n: 1000, seed: 20261112, tie: tie }), b = E.ensemble(map, pinned, { n: 1000, seed: 20261112, tie: tie });
+  say('tie ' + tie + ': runs better than the ladder ' + pc(a.shareBetterVs.cheap_ladder.last) + '% as built, ' + pc(b.shareBetterVs.cheap_ladder.last) + '% with p_promote at 0; than the strong model ' + pc(a.shareBetterVs.top_first.last) + '% and ' + pc(b.shareBetterVs.top_first.last) + '%; wrong vs ladder p5 ' + f(a.spread.last.wrong_vs_ladder.p5) + ' and ' + f(b.spread.last.wrong_vs_ladder.p5) + '; cost vs ladder p50 ' + f(a.spread.last.cost_vs_ladder.p50) + ' and ' + f(b.spread.last.cost_vs_ladder.p50));
+});
+
+// ---------- (e) the four shared levels ----------
+say('\n(e) SHARED LEVELS AT TIE 1 (and 0.5), 1000 runs, seed 20261112');
+function tiedRuns(tie, shape) {
+  const streams = E.ensembleStreams(20261112);
+  let betterL = 0, betterT = 0; const cl = [], wl = [];
+  for (let d = 0; d < 1000; d++) {
+    const lv = {}; GROUPS.forEach(g => { lv[g] = streams.shared(); });
+    if (shape === 'one') GROUPS.forEach(g => { lv[g] = lv.recurrence; });
+    if (shape === 'against') lv.quality = 1 - lv.reach;
+    const raw = E.drawParams(map, table, streams.random, { tie: tie, levels: lv, added: streams.added });
+    const tp = E.timePath(map, E.prepareParams(map, raw).values, { lean: true });
+    const L = tp.periods[tp.periods.length - 1];
+    if (L.library.cost < tp.cheap_ladder.cost && L.library.wrong <= tp.cheap_ladder.wrong) betterL++;
+    if (L.library.cost < tp.top_first.cost && L.library.wrong <= tp.top_first.wrong) betterT++;
+    cl.push(L.ratios.cost_vs_ladder); wl.push(L.ratios.wrong_vs_ladder);
+  }
+  cl.sort((a, b) => a - b); wl.sort((a, b) => a - b);
+  return { betterL: betterL / 1000, betterT: betterT / 1000, cl: [5, 50, 95].map(q => E.percentile(cl, q)), wl: [5, 50, 95].map(q => E.percentile(wl, q)) };
+}
+[1, 0.5].forEach(tie => [['independent (as built)', 'indep'], ['all four tied together', 'one'], ['quality tied against reach', 'against']].forEach(([label, shape]) => {
+  const r = tiedRuns(tie, shape);
+  say('tie ' + tie + ', ' + label.padEnd(26) + ': better than ladder ' + pc(r.betterL) + '%, than strong ' + pc(r.betterT) + '%; cost vs ladder ' + r.cl.map(v => f(v)).join(' / ') + '; wrong vs ladder ' + r.wl.map(v => f(v)).join(' / '));
+}));
+
+// ---------- R20: the shared table moved the other way ----------
+say('\nR20: THE GATE AND THE LADDER MOVED TO THEIR LOW ENDS (the table moves them only to the high ends)');
+const GATE = { g_tests_visible: 'low', g_tests_latent: 'low', g_review: 'low', s_review: 'low' };
+const LAD = { rho_retry: 'low', o_opus: 'low', o_fable: 'low', c_handoff: 'high' };
+const GATEH = { g_tests_visible: 'high', g_tests_latent: 'high', g_review: 'high', s_review: 'high' };
+const LADH = { rho_retry: 'high', o_opus: 'high', o_fable: 'high', c_handoff: 'low' };
+const mv = (p, set) => { const q = Object.assign({}, p); Object.keys(set).forEach(id => { q[id] = rows[id][set[id]]; }); return q; };
+[['middle', best], ['all_good', pAllGood]].forEach(([name, p]) => {
+  [['as is', {}], ['gate high', GATEH], ['gate low', GATE], ['ladder high', LADH], ['ladder low', LAD], ['both high', Object.assign({}, GATEH, LADH)], ['both low', Object.assign({}, GATE, LAD)]].forEach(([lab, set]) => { const x = at(mv(p, set)); say(name.padEnd(9) + lab.padEnd(12) + r4(x) + ' | lib ' + f(x.lc, 1) + ', ' + pc(x.lw) + '% | ladder ' + f(x.dc, 1) + ', ' + pc(x.dw) + '% | strong ' + f(x.tc, 1) + ', ' + pc(x.tw) + '%'); });
+});
+
+fs.writeFileSync(path.join(here, 'check-third-build-lean-console.txt'), out.join('\n') + '\n');

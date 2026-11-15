@@ -1,0 +1,115 @@
+// Readability pass 1 on the page sources (2026-11-13), after the owner's "not up to par" note.
+// Nothing is removed. Adds: an all-work view of the map (the engine already computes it), a count in every box,
+// faded boxes and lines that carry no work, a map that fills a wide screen, larger map text, and funnel bars
+// drawn as the share each step keeps. Run from this folder: node - < patch-page-ux1.js.txt   (a rerun makes 0 edits)
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const SRC = path.join(process.cwd(), 'page-src');
+let edits = 0;
+function patch(file, pairs) {
+  const p = path.join(SRC, file);
+  let s = fs.readFileSync(p, 'utf8');
+  pairs.forEach(([from, to, name]) => {
+    if (s.includes(to)) return;                      // already applied
+    if (!s.includes(from)) throw new Error(file + ': anchor not found for "' + name + '"');
+    s = s.replace(from, () => to); edits++;
+  });
+  fs.writeFileSync(p, s);
+}
+
+patch('page.js.txt', [
+  ["    if (kind === 'funnel') return v === 0 ? '0' : a >= 1 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(1);",
+   "    if (kind === 'funnel') return v === 0 ? '0' : a >= 1 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(1);\n    if (kind === 'count') return v === 0 ? '0' : a >= 99.95 ? '100' : a >= 10 ? v.toFixed(0) : a >= 1 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : '<0.01';",
+   'count format'],
+  ["    sel: null, stepIdx: null, selAuto: true,", "    scope: 'all',\n    sel: null, stepIdx: null, selAuto: true,", 'state: scope'],
+
+  // the svg fills a wide container and never shrinks below its drawn size
+  ["width=\"' + (W * k) + '\" height=\"' + (H * k) + '\" data-scale=\"' + k + '\" role=\"img\" aria-label=\"The map: states and branches of the library design\">';",
+   "width=\"' + (W * k) + '\" height=\"' + (H * k) + '\" data-scale=\"' + k + '\"' + (mini ? '' : ' style=\"width:100%;min-width:' + (W * k) + 'px;height:auto\"') + ' role=\"img\" aria-label=\"The map: states and branches of the library design\">';",
+   'svg width'],
+
+  // branch tooltip for all work
+  ["        if (b.tier) tip += '<br>Cost when taken: ' + num(v.cost, 'G', 'cost') + ' cheap-call equivalents, paid at ' + esc(TIER[b.tier].label);\n      }",
+   "        if (b.tier) tip += '<br>Cost when taken: ' + num(v.cost, 'G', 'cost') + ' cheap-call equivalents, paid at ' + esc(TIER[b.tier].label);\n      } else if (f !== null) tip += '<br>Share of all work taking it: ' + num(f, 'G', 'pct');",
+   'branch tip'],
+
+  // nodes: idle class, tooltip wording, the count
+  ["      var cls = 'g-node' + (st.outcome ? ' outcome' : '') + (st.outcome && !OUT[st.id].right ? ' wrongout' : '') + (opts.start === st.id ? ' start' : '') + (opts.onStates && opts.onStates.has(st.id) ? ' on' : '');",
+   "      var sf = opts.stateFlow ? (opts.stateFlow[st.id] || 0) : null;\n      var cls = 'g-node' + (st.outcome ? ' outcome' : '') + (st.outcome && !OUT[st.id].right ? ' wrongout' : '') + (opts.start === st.id ? ' start' : '') + (opts.onStates && opts.onStates.has(st.id) ? ' on' : '') + (sf !== null && sf < 1e-12 && !mini ? ' idle' : '');",
+   'node idle'],
+  ["      if (opts.stateFlow) tip += '<br>Share of this piece passing here: ' + num(opts.stateFlow[st.id] || 0, 'G', 'pct');",
+   "      if (opts.stateFlow) tip += '<br>Share of ' + (opts.all ? 'all work' : 'this piece') + ' passing here: ' + num(sf, 'G', 'pct') + (sf < 1e-12 ? '<br>No work reaches this box under this choice.' : '');",
+   'node tip'],
+  ["        var y0 = p.y - (lines.length - 1) * 6.5 + 4;\n        lines.forEach(function (ln, j) { s += '<text class=\"' + (st.outcome ? 'g-out' : 'g-lab') + '\" text-anchor=\"middle\" x=\"' + p.x + '\" y=\"' + (y0 + j * 13).toFixed(1) + '\">' + esc(ln) + '</text>'; });",
+   "        var y0 = p.y - (lines.length - 1) * 6.5 + 4 - (sf !== null ? 7 : 0);\n        lines.forEach(function (ln, j) { s += '<text class=\"' + (st.outcome ? 'g-out' : 'g-lab') + '\" text-anchor=\"middle\" x=\"' + p.x + '\" y=\"' + (y0 + j * 13).toFixed(1) + '\">' + esc(ln) + '</text>'; });\n        if (sf !== null) s += '<text class=\"g-cnt\" data-tagged=\"G\" text-anchor=\"middle\" x=\"' + p.x + '\" y=\"' + (p.y + g.nh / 2 - 6).toFixed(1) + '\">' + esc(fmt(100 * sf, 'count')) + '</text>';",
+   'node count'],
+
+  // pickers: which work
+  ["    var h = '<div class=\"ctl\"><span>Way of working</span>' + seg('Way of working', MAP.policies.map(function (p) { return [p.id, PNAME[p.id], TX.policy_says[p.id]]; }), ST.policy) + '</div>';\n    ['kind', 'need', 'held', 'distractor'].forEach(function (aid) {",
+   "    var all = ST.scope === 'all';\n    var h = '<div class=\"ctl\"><span>Way of working</span>' + seg('Way of working', MAP.policies.map(function (p) { return [p.id, PNAME[p.id], TX.policy_says[p.id]]; }), ST.policy) + '</div>';\n    h += '<div class=\"ctl\" data-scope=\"1\"><span>Which work</span>' + seg('Which work', [['all', 'All work', 'Every kind of work together, each by its share.'], ['kind', 'One kind of work', 'Pick the kind with the four choices beside this.']], ST.scope) + '</div>';\n    h += '<div class=\"kindset' + (all ? ' quiet' : '') + '\">';\n    ['kind', 'need', 'held', 'distractor'].forEach(function (aid) {",
+   'pickers head'],
+  ["seg(label, a.values.map(function (v) { return [v.id, SHORT_VAL[v.id] || v.label, v.label]; }), cls[aid], !lib && (aid === 'held' || aid === 'distractor')) + '</div>';\n    });",
+   "seg(label, a.values.map(function (v) { return [v.id, SHORT_VAL[v.id] || v.label, v.label]; }), all ? null : cls[aid], !lib && (aid === 'held' || aid === 'distractor')) + '</div>';\n    });\n    h += '</div>';\n    if (all) h += '<p class=\"note\" style=\"flex-basis:100%\">The map shows all work, each kind by its share. Pick any choice in the faded group to see one kind.</p>';",
+   'pickers kinds'],
+  ["    if (ctl && ctl.dataset.attr) ST.cls[ctl.dataset.attr] = b.dataset.v; else ST.policy = b.dataset.v;",
+   "    if (ctl && ctl.dataset.scope) ST.scope = b.dataset.v;\n    else if (ctl && ctl.dataset.attr) { ST.cls[ctl.dataset.attr] = b.dataset.v; ST.scope = 'kind'; }\n    else ST.policy = b.dataset.v;",
+   'picker click'],
+
+  // the map's numbers
+  ["  var ROUTES = null, BV = null, EVC = null;", "  var ROUTES = null, BV = null, EVC = null, EVP = null;", 'EVP var'],
+  ["    EVC = E.evaluateClass(MAP, cur, ST.policy, cls, stocks);\n    BV = ", "    EVC = E.evaluateClass(MAP, cur, ST.policy, cls, stocks);\n    EVP = E.evaluatePolicy(MAP, cur, ST.policy, stocks);\n    BV = ", 'EVP compute'],
+  ["    drawGraph($('#graph'), { flow: EVC.branchFlow, stateFlow: EVC.stateFlow, bv: BV, on: on,",
+   "    var all = ST.scope === 'all';\n    drawGraph($('#graph'), { all: all, flow: all ? EVP.branchFlow : EVC.branchFlow, stateFlow: all ? EVP.stateFlow : EVC.stateFlow, bv: all ? null : BV, on: on,",
+   'paintGraph'],
+
+  // a lit route belongs to one kind of work
+  ["    ST.sel = key; ST.stepIdx = null; ST.userSel = true;\n    paintGraph(); renderTree(); renderStepper();",
+   "    ST.sel = key; ST.stepIdx = null; ST.userSel = true;\n    if (ST.scope === 'all') { ST.scope = 'kind'; renderMap(); return; }\n    paintGraph(); renderTree(); renderStepper();",
+   'tree click'],
+  ["    else ST.stepIdx = null;\n    paintGraph(); renderStepper();",
+   "    else ST.stepIdx = null;\n    if (ST.scope === 'all') { ST.scope = 'kind'; renderMap(); return; }\n    paintGraph(); renderStepper();",
+   'stepper click'],
+
+  // the summary beside the map
+  ["    var o = EVC.outcomes;\n    var h = '<div class=\"panel stack\"><h3>This piece of work</h3>';\n    h += '<p class=\"small\">Share of all work like this'",
+   "    var all = ST.scope === 'all', R = all ? EVP.overall : EVC;\n    var o = R.outcomes;\n    var h = '<div class=\"panel stack\"><h3>' + (all ? 'All work' : 'This piece of work') + '</h3>';\n    if (all) h += '<p class=\"small\">Every kind of work together, each by its share' + (ST.policy === 'library' ? ', at period <b data-label=\"1\">' + ST.period + '</b>' : '') + '.</p>';\n    else h += '<p class=\"small\">Share of all work like this'",
+   'piece head'],
+  ["outcomeBar(o) + '<span class=\"val\">' + num(EVC.wrong, 'G', 'pct')", "outcomeBar(o) + '<span class=\"val\">' + num(R.wrong, 'G', 'pct')", 'piece wrong'],
+  ["tierBar(EVC.costByTier, Math.max(EVC.cost, 1e-9)) + '<span class=\"val\">' + num(EVC.cost, 'G', 'cost')", "tierBar(R.costByTier, Math.max(R.cost, 1e-9)) + '<span class=\"val\">' + num(R.cost, 'G', 'cost')", 'piece cost'],
+  ["<h4>The same piece, three ways</h4>", "<h4>' + (all ? 'All work, three ways' : 'The same piece, three ways') + '</h4>", 'three ways title'],
+  ["      var ev = E.evaluateClass(MAP, cur, p.id, c2, p.id === 'library' ? stocks : {});",
+   "      var ev = all ? E.evaluatePolicy(MAP, cur, p.id, p.id === 'library' ? stocks : {}).overall : E.evaluateClass(MAP, cur, p.id, c2, p.id === 'library' ? stocks : {});",
+   'three ways rows'],
+
+  // the funnel: a bar's height is the share that step keeps; the bold number is still how many are left
+  ["      var hv = base - Y(st.value);\n      s += '<rect x=\"' + bx + '\" y=\"' + (base - Math.max(hv, 1)).toFixed(1) + '\" width=\"' + bw + '\" height=\"' + Math.max(hv, 1).toFixed(1) + '\" fill=\"currentColor\"/>';\n      if (i > 0) { var pv = bars[i - 1].value; s += '<path d=\"M' + (bx - 18) + ' ' + Y(pv).toFixed(1) + 'L' + bx + ' ' + Y(st.value).toFixed(1) + '\" stroke=\"currentColor\" stroke-width=\"1\" opacity=\".35\" fill=\"none\"/>'; }\n      s += '<line class=\"fref\" x1=\"' + (bx - 3) + '\" x2=\"' + (bx + bw + 3) + '\" y1=\"' + Y(st.mark).toFixed(1) + '\" y2=\"' + Y(st.mark).toFixed(1) + '\" stroke-dasharray=\"7 3\"/>';\n      s += '<text class=\"fval\" x=\"' + cx + '\" y=\"' + (Math.min(Y(st.value), base - 1) - 5).toFixed(1) + '\" text-anchor=\"middle\">' + esc(fmt(st.value, 'funnel')) + '</text>';",
+   "      var pv = i > 0 ? bars[i - 1].value : 100, pm = i > 0 ? bars[i - 1].mark : 100;\n      var keep = pv > 0 ? 100 * st.value / pv : 0, keepM = pm > 0 ? 100 * st.mark / pm : 0;\n      var hv = base - Y(keep);\n      s += '<rect x=\"' + bx + '\" y=\"' + (base - Math.max(hv, 1)).toFixed(1) + '\" width=\"' + bw + '\" height=\"' + Math.max(hv, 1).toFixed(1) + '\" fill=\"currentColor\" opacity=\".82\"/>';\n      s += '<line class=\"fref\" x1=\"' + (bx - 3) + '\" x2=\"' + (bx + bw + 3) + '\" y1=\"' + Y(keepM).toFixed(1) + '\" y2=\"' + Y(keepM).toFixed(1) + '\" stroke-dasharray=\"7 3\"/>';\n      var ty = Math.min(Y(keep), base - 1);\n      s += '<text class=\"fval\" x=\"' + cx + '\" y=\"' + (ty - 17).toFixed(1) + '\" text-anchor=\"middle\">' + esc(fmt(st.value, 'funnel')) + ' left</text>';\n      s += '<text class=\"fkeep\" data-keep=\"' + keep + '\" x=\"' + cx + '\" y=\"' + (ty - 5).toFixed(1) + '\" text-anchor=\"middle\">keeps ' + esc(fmt(keep / 100, 'pct')) + '</text>';",
+   'funnel bars'],
+]);
+
+patch('page.css.txt', [
+  [".wrap.wide{max-width:1480px}", ".wrap.wide{max-width:1800px}", 'wide wrap'],
+  [".g-lab{font:500 11px var(--font-body); fill:var(--ink-2)}", ".g-lab{font:500 11.5px var(--font-body); fill:var(--ink-2)}\n.g-cnt{font:800 12.5px var(--font-body); fill:var(--ink)}\n.g-node.idle{opacity:.42}\n.g-node.idle rect{stroke-dasharray:3 3; stroke-width:1}\n.kindset{display:contents}\n.kindset.quiet .ctl{opacity:.55}\n.fkeep{font:500 11px var(--font-body); fill:var(--ink-2)}", 'graph text'],
+  [".g-out{font:700 11px var(--font-body); fill:var(--ink)}", ".g-out{font:700 11.5px var(--font-body); fill:var(--ink)}", 'outcome text'],
+  [".g-edge.zero{stroke-dasharray:2 4; stroke-width:1; opacity:.45}", ".g-edge.zero{stroke-dasharray:2 4; stroke-width:1; opacity:.2}", 'zero edges'],
+  [".g-step{font:650 11.5px var(--font-body); fill:var(--ink)}", ".g-step{font:650 12.5px var(--font-body); fill:var(--ink)}", 'stage text'],
+]);
+
+// text.json: wording and the map's row height (room for the count in each box)
+(function () {
+  const p = path.join(SRC, 'text.json');
+  const raw = fs.readFileSync(p, 'utf8');
+  const j = JSON.parse(raw);
+  const set = (o, k, v) => { if (o[k] !== v) { o[k] = v; edits++; } };
+  set(j.sections.map, 'lede', 'The map starts with all work. Pick a way of working, or one kind of work. Tap a route in the tree to light it up, then step through it.');
+  set(j.sections.map, 'graph_note', 'Boxes are states and lines are branches. The bold number in a box counts the pieces of work, of a hundred, that pass through it. A thicker line carries more work. Faded boxes and dotted lines carry none under this choice.');
+  set(j.sections.map, 'scroll_note', 'On a narrow screen the map scrolls sideways.');
+  set(j.sections.funnel, 'lede', 'Start with a hundred pieces of work the cheap model would get wrong alone. The bold number is how many are left after each step. The height of a bar is the share that step keeps.');
+  set(j.sections.funnel, 'marks', 'Faint mark: the share the step keeps at the all-good setting.');
+  set(j.layout, 'row_h', 66);
+  set(j.layout, 'node_h', 56);
+  const out = JSON.stringify(j, null, raw.includes('\n  "') ? 2 : 1) + (raw.endsWith('\n') ? '\n' : '');
+  if (out !== raw) fs.writeFileSync(p, out);
+})();
+console.log('edits made: ' + edits);

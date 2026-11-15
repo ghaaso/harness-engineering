@@ -1,0 +1,662 @@
+{
+ "lane": "X-05",
+ "tool_status": "web_degraded",
+ "summary": "No source measures how often hard defects recur for one developer in a young repo, and no source measures escalation cost avoided. Population studies show fix-pattern repetition (reported 17-45% of fixes recurring; 75% of flaky tests in co-failure clusters), but those are many-contributor corpora and pattern-level, not \"this exact hard problem again\". The closest agent-memory evidence is modest: ReasoningBank (Google-affiliated, inferred) cut SWE-bench steps about 4-9% against a no-memory baseline and measured steps, not dollars. The most relevant counter-evidence is the AGENTS.md study: injected context did not generally raise success and raised cost over 20%, which matches the owner's \"no measurable gain\" record. Locally the repo has 369 commits and about 48 fix-prefixed ones, with almost no explicit repeats, and the likely seed traps already sit in always-loaded CLAUDE.md. So the store must beat plain grep over existing prose, pull-only, to justify itself. Recommended pilot has three steps. Step 0 is a free git-history recurrence audit, one Sonnet session. Step 1 is a blind-query replay with negative and stale probes, a grep arm and a rule-of-three false-positive bound. Step 2 is a prospective lookup log with raw tokens, tier and wall time (NULL if unknown) and a hard checkpoint at 20 encounters or 8 weeks. Proposed continue/kill thresholds are inferred and are owner decisions. Hand-computed binomial error rates are given so the owner can see how weak 20 observations are. Two reads failed: the Yue (ICSME 2017) PDF and the Nguyen 2010 original, so those figures are secondary.",
+ "facts": [
+  {
+   "id": "F01",
+   "statement": "Reported: Nguyen et al. (ICSE 2010, 'Recurring bug fixes in object-oriented programs', pp.315-324) found 17-45% of bug fixes were recurring, where the recurrence came from fixes modifying API usage. I could not read the original; the figure comes via a 2017 paper's citation of it. It measures repeated fix patterns across many Java projects, not repeated hard defects.",
+   "source": "Secondary summary via search of https://people.cs.vt.edu/nm8247/publications/ruru-icsme-2017-camera-ready.pdf (PDF undecodable); original not read",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F02",
+   "statement": "Reported: Yue, Meng and Wang (ICSME 2017, 'A Characterization Study of Repeated Bug Fixes') examined 341,856 bug fixes from 3 open source projects for frequency, edit locations and semantic meaning of repeated fixes. Headline percentages not read.",
+   "source": "https://people.cs.vt.edu/nm8247/publications/ruru-icsme-2017-camera-ready.pdf (via search summary)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F03",
+   "statement": "Reported by a review page: Pan et al. 2008 found 27 fix patterns cover 45.7%-63.3% of bug-fix hunk pairs across 7 Java projects; Campos et al. 2017 analysed over 4 million bug-fix commits from 101,471 Java GitHub projects, with the null-check fix the most common pattern at 29%. Fixes are repetitive at the pattern level in large corpora, which says little about recurrence of one specific hard defect in one repo.",
+   "source": "https://neverworkintheory.org/2021/09/11/common-bug-fix-patterns.html",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F04",
+   "statement": "Parry, Kapfhammer, Hilton, McMinn (arXiv 2504.16777, 23 Apr 2025): across 10,000 suite runs of 24 Java projects with 810 flaky tests, 75% of flaky tests belong to a cluster of co-occurring failures (mean cluster size 13.5); predominant causes were intermittent networking and unstable external dependencies. One root cause producing many symptoms supports multi-handle entries.",
+   "source": "https://arxiv.org/abs/2504.16777",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F05",
+   "statement": "GitHub Actions study (arXiv 2602.02307): 1,960 Java projects, about 4.86M builds; 3.2% of builds rerun; of 52,610 rerun builds (approval reruns excluded) 67.73% were flaky; 15 failure categories (flaky tests 64.99%, network issue 15.8% of the remainder, dependency resolution 6.32%). The paper does NOT quantify how often the same failure recurs, and notes 'the same root cause can manifest as different failure symptoms'. It has internal count inconsistencies. No published number for repeat-CI-failure rate was found.",
+   "source": "https://arxiv.org/html/2602.02307v1",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "retrieval"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F06",
+   "statement": "KCS v6 Adoption Guide (Consortium for Service Innovation): the proficiency indicator is that internal article reuse rate is equal to or greater than the create rate; self-service viable at better than 50% probability of finding something helpful. The page sets NO numeric reuse-rate target and does not mention link rate. Reuse/create ratio is a usable continue signal for the pilot, but KCS is a human-support practice with thousands of cases.",
+   "source": "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Adoption_Guide/030_Build_Proficiency/010_Activities_for_Leveraging_the_KB/010_Self-Service_Success",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F07",
+   "statement": "VENDOR/ADVOCACY: Consortium for Service Innovation page (dated Sept 2012, updated Apr 2022, promotes KCS certification) says Consortium-member data show 3-5 issues cause 30-60% of incident volume in most product areas, and that self-service costs 1-2% of an assisted call (no source). Sample size and method undisclosed. Supports a Pareto bet (few recurring causes dominate) but is unauditable.",
+   "source": "https://www.serviceinnovation.org/maximize-the-benefits-of-kcs/",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F08",
+   "statement": "VENDOR-REPORTED (SearchUnify blog, secondary): attributes to the Consortium link rate above 60% and link accuracy above 90%. I could not find it on the Consortium KCS v6 page I read. Do not cite as a benchmark.",
+   "source": "https://www.searchunify.com/resource-center/blog/5-razor-sharp-kcs-metrics-to-streamline-agent-workflows-prevent-burnout/ (via search summary)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F09",
+   "statement": "ReasoningBank (Ouyang et al., arXiv 2509.25140, v1 29 Sep 2025, v2 16 Mar 2026, ICLR 2026; code under google-research, so likely Google-affiliated, inferred): SWE-Bench-Verified, Gemini-2.5-flash resolve 34.2% to 38.8% and average steps 30.3 to 27.5; Gemini-2.5-pro 54.0% to 57.4% and 21.1 to 19.8 (No Memory baseline). WebArena step reductions 9.7 to 8.3 (flash), 8.0 to 7.3 (Claude-3.7-sonnet). Abstract headline: up to 16% fewer steps. The efficiency metric is interaction steps, not tokens or dollars, and memory is built online from the same benchmark stream.",
+   "source": "https://arxiv.org/html/2509.25140 (Tables 1, 2, read characters 0-100000)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F10",
+   "statement": "Same paper, failure-trajectory ablation (WebArena Shopping, Gemini-2.5-flash): ReasoningBank 46.5 with success-only traces vs 49.7 with successes plus failures; AWM went 44.4 to 42.2 and Synapse 40.6 to 41.7 when failures were added. So storing failed attempts helped only when distilled into strategy-level memory; raw failure traces did not reliably help. Relevant to 'save the negative results'.",
+   "source": "https://arxiv.org/html/2509.25140",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F11",
+   "statement": "Agent Workflow Memory (Wang, Mao, Fried, Neubig, arXiv 2409.07429, 11 Sep 2024): reported 24.6% relative success-rate gain on Mind2Web and 51.1% on WebArena, plus fewer steps on successful WebArena tasks (no percentage in abstract). Benchmark web tasks, success metric.",
+   "source": "https://arxiv.org/abs/2409.07429",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F12",
+   "statement": "Gloaguen et al., 'Evaluating AGENTS.md: Are Repository-Level Context Files Helpful for Coding Agents?' (arXiv 2602.11988, v1 12 Feb 2026, latest v3 29 Sep 2026): context files do not generally improve task success rates and increase inference cost by over 20% on average, across LLMs and agents and for both LLM-generated and developer-written files. Counter-evidence to injected context and consistent with the owner's no-gain record; implies lookups must be pull-based, not injected.",
+   "source": "https://arxiv.org/abs/2602.11988",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "ops_cost",
+    "access"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F13",
+   "statement": "Kapoor et al., 'AI Agents That Matter' (arXiv 2407.01502, 1 Jul 2024): accuracy-only benchmarking leads to needlessly costly agents and wrong conclusions; cost should be reported alongside accuracy and optimised jointly. Methodological support for logging cost next to outcome and comparing against cheap baselines.",
+   "source": "https://arxiv.org/abs/2407.01502",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F14",
+   "statement": "VENDOR-REPORTED (Mem0 paper, arXiv 2504.19413, 28 Apr 2025; authors appear to be the Mem0 team, affiliation not shown on the page read): claims 91% lower p95 latency and over 90% token-cost saving vs a full-context baseline on LOCOMO conversational memory. The baseline is stuffing the whole history, not no memory, so the saving is not comparable to a store consulted on demand. Cite only for how not to define the counterfactual.",
+   "source": "https://arxiv.org/abs/2504.19413",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F15",
+   "statement": "Agentless (Xia et al., arXiv 2407.01489, v2 29 Oct 2024): reports 32.00% (96 fixes) on SWE-bench Lite at $0.70 cost (abstract does not say per issue). Gives an order-of-magnitude reference that a bounded pipeline resolves a task for well under a few dollars, so a store has to beat a cheap fresh attempt, not only a top-tier one.",
+   "source": "https://arxiv.org/abs/2407.01489",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F16",
+   "statement": "SWE-Exp (arXiv 2507.23361, v2 2 Feb 2026) distils reusable experience (successful and failed attempts) from past trajectories and reports 73.0% Pass@1 on SWE-Bench Verified with Claude 4 Sonnet. I did not read ablation numbers, so no with/without effect size is established from it.",
+   "source": "https://arxiv.org/abs/2507.23361",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F17",
+   "statement": "Rule of three: if an event is seen 0 times in n independent trials, 3/n is the approximate 95% upper bound on its rate (general form -ln(alpha)/n; numerators 3.51 at 97%, 4.61 at 99%). Assumes independent trials and small p. Original reference listed on the page: Hanley and Lippman-Hand, JAMA 249(13):1743-5, 1983 (attribution not confirmed from the page).",
+   "source": "https://en.wikipedia.org/wiki/Rule_of_three_(statistics)",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F18",
+   "statement": "Sequential probability ratio test (Wald, Annals of Mathematical Statistics 16(2):117-186, 1945): accumulate log-likelihood ratio, stop at upper bound b = log((1-beta)/alpha) or lower bound a = log(beta/(1-alpha)). Prior art for a stop-early rule; for a handful of binary outcomes a fixed checkpoint is simpler and enough.",
+   "source": "https://en.wikipedia.org/wiki/Sequential_probability_ratio_test",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F19",
+   "statement": "VENDOR-REPORTED price table fetched 2026-11-02 (per MTok input/output): Fable 5.1 $10/$50; Opus 5.5 $4/$20; Sonnet 5.5 $2/$10; Haiku 5.5 $0.10/$0.50 up to 100k-token prompts and $0.50/$2.50 above. Cache hits are priced separately (for example Sonnet 5.5 $0.10, Opus 5.5 $0.20). Output price ratio Fable:Sonnet:Haiku is about 100:20:1. Prices and model line-up change, so the pilot must store raw tokens and model id and apply a dated price table only at analysis time.",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F20",
+   "statement": "Local: this repo has 369 commits between 2026-05-31 and 2026-11-02, of which 48 have a subject starting with fix or hotfix; only three subjects match recurrence keywords (a revert of migration 0045, a mobile voice-note race fix, and 'travel works again after the first arrival'). The repo is about 5 months old, so the pool of repeat defects is small and the base rate may be low. Keyword counts understate repeats; a labelled audit is the real measurement.",
+   "source": "git log --oneline in the worktree, run 2026-11-02 (local command output)",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "seed_corpus"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F21",
+   "statement": "Local: HANDOFF section 2 holds about 10 operational traps (deploy from backend/ not root, railway up --ci timeout is not a failure, never alembic downgrade, rollback-button divergence, reverted-migration duplicate revision ids, alembic check blind to CHECK constraints, two pytest processes deadlock on the test DB, worktrees for parallel agents), section 6 lists 7 recurring defect shapes, and CLAUDE.md lists 4 build traps plus roughly a dozen invariants. A 20-40 entry seed is available. Most of these already sit in CLAUDE.md, which every agent reads, so their lookup value is already served by always-loaded prose. The pilot must test marginal value over that.",
+   "source": "docs/HANDOFF-2026-07-28-open-work.md:52-148 and :558-580; CLAUDE.md (Build and deploy traps, Invariants sections)",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "seed_corpus",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F22",
+   "statement": "Local: completed subagent results survive in .claude/projects/<proj>/<session>/subagents/workflows/<runId>/journal.jsonl, one result line per agent. A raw per-agent record exists to mine token and tier data for past runs. Whether those lines carry token usage was not checked, and Claude Code session transcripts carry per-message usage (inferred from general knowledge, not verified here).",
+   "source": "docs/HANDOFF-2026-07-28-open-work.md:138-148",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "access"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F23",
+   "statement": "Local: the design doc KNOWLEDGE-STORE-DESIGN-2026-11.md is a skeleton (status: draft, sections 0-12 empty) with no section on measuring value, a pilot or a kill criterion. The owner-side record of 'a month of research found no measurable gain' is not in the repo (grep for no measurable, measurable gain, harness review, context machinery found nothing in docs/ or CLAUDE.md).",
+   "source": "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:1-35; grep over docs/ and CLAUDE.md",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F24",
+   "statement": "Inferred, hand-computed binomial figures for checkpoint design. With 0 false positives in n probes the 95% upper bound is 3/n: 7.5% at n=40, 5% at n=60. For 20 prospective hard-problem lookups: if the true verified-hit rate is 25%, P(at most 1 hit) is 2.4%; if 15%, 17.6%; if 5%, P(at least 3 hits) is 7.5%. So 20 observations can reject a 25% store with confidence, but cannot separate 15% from 5%, and the checkpoint is a coarse go/no-go.",
+   "source": "Own calculation from the binomial distribution (see F17)",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F25",
+   "statement": "Inferred break-even model. Per hard-problem encounter, net saving = h*(S - Lhit) - (1-h)*Lmiss - W/E, where h is the verified-hit rate, S the cost of the top-tier solve avoided, Lhit and Lmiss the cheap-tier lookup+verify(+apply) cost on a hit and a miss, W the total cost of writing and maintaining entries, E the number of encounters. Break-even h* = (Lmiss + W/E) / (S - Lhit + Lmiss). Illustration only: with Lhit = Lmiss = 0.05S and W/E = 0.1S (one entry written per encounter at a tenth of a top-tier solve), h* is about 0.15. That is why 15% is proposed as the continue line, but the inputs are guesses until the log gives S, L and W.",
+   "source": "Own derivation; price ratios from F19",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "ops_cost",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F26",
+   "statement": "Inferred design flaws a pilot must avoid. (1) Entries seeded from past defects and queried with the entry's own wording measure retrieval of text you just wrote, not recurrence, so queries must be the original raw symptom, written or captured before seeing entries. (2) Without negative probes (problems with no entry) and stale probes (entry whose dependency has changed) a false-positive rate cannot be estimated. (3) A grep-over-existing-prose arm is needed or the store's marginal value is unmeasured (F21). (4) Many seed traps (Railway deploy, EAS) cannot be replayed on a code checkout, so replay applies to code-level defects and gate-only checks to the rest. (5) Replaying with a cheap tier on a checkout of the parent commit of a fix gives a paired with/without comparison; with 5 or more discordant pairs all favouring the entry, a one-sided sign test gives p=0.031.",
+   "source": "Own reasoning; sign-test arithmetic 0.5^5",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "limits",
+    "retrieval",
+    "workflow",
+    "seed_corpus"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "Step 0: git-history recurrence audit (free baseline)",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Before building anything, have one Sonnet session label the 48 fix-prefixed commits (and any revert/follow-up) for 'same root cause as an earlier fix: yes/no/unclear', citing both commit shas. Cost is about one cheap session, touches nothing, and gives the only real recurrence base rate for this repo. Proposed (inferred) rule: 0 repeats of 48 gives an upper bound of 6.25% (F17), so 2 or fewer confirmed repeats means STOP and keep the prose docs; 3 or more means proceed to Step 1.",
+   "egress_posture": "none: local git read only",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F17",
+    "F20",
+    "F26"
+   ],
+   "maturity": "standard practice; no specific citation",
+   "footprint": "one script-free session, one table of 48 rows",
+   "agent_access": "git log read",
+   "windows_dev_fit": "fits (git on PATH, Git Bash)",
+   "linux_prod_fit": "n/a (dev-time only)"
+  },
+  {
+   "name": "Step 1: blind replay with negative and stale probes and a grep arm",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Seed 20-40 entries from F21. Build 30-40 queries from RAW original symptoms (error text, first report), 20 or more of them positive, plus at least 40 negative or stale probes (no matching entry, or an entry whose dependency was changed). Arms: store lookup, grep over CLAUDE.md/HANDOFF/docs, none. Record recall at k=3, gate verdict, acted/not. Proposed pass line (inferred): recall at 3 of at least 60% on positives AND 0 acted false positives on at least 40 probes (bound 7.5%) AND store beats the grep arm on recall at equal precision, otherwise the answer is 'use grep and keep the prose'. Optionally 10-15 code-level paired replays (cheap tier on parent-commit checkout, with vs without entry, 3 runs each).",
+   "egress_posture": "none if run on local models or the owner's existing Claude Code subscription; no defect text to third-party search",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F09",
+    "F12",
+    "F13",
+    "F21",
+    "F24",
+    "F26"
+   ],
+   "maturity": "design here; follows ReasoningBank-style no-memory baseline (F09) and cost-with-accuracy reporting (F13)",
+   "footprint": "1-2 sessions to author queries and run arms",
+   "agent_access": "CLI or MCP lookup",
+   "windows_dev_fit": "fits",
+   "linux_prod_fit": "fits"
+  },
+  {
+   "name": "Step 2: prospective lookup log with raw values",
+   "kind": "system",
+   "verdict": "strong",
+   "why": "Log one row per hard-problem encounter, including misses (otherwise the hit rate is undefined). Define an encounter as: an agent escalated tier, or spent more than a stated token budget on one defect, or the main session flagged it hard. Fields, with NULL for unknown and no derived values: encounter_id, ts_start, ts_end, wall_ms, query_text_hash, handle_types_matched, candidate_ids, top_k, gate_result (reproduced / refuted / could_not_run / not_run), acted (bool), outcome (confirmed / refuted / invalidated / revised / miss / false_positive_acted), agent_model_id string, tier label, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, tool_calls, escalated_after_lookup (bool), solving_tier, solve_tokens_if_escalated, injected_tokens (must be 0), owner_minutes. No dollars stored; a dated price table (F19) is applied at analysis. Keep it as an append-only table or file in the same store, so there is nothing extra to track.",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F12",
+    "F13",
+    "F19",
+    "F22",
+    "F25"
+   ],
+   "maturity": "design here",
+   "footprint": "one table, a few writes per phase",
+   "agent_access": "CLI or MCP append",
+   "windows_dev_fit": "fits",
+   "linux_prod_fit": "fits"
+  },
+  {
+   "name": "Fixed checkpoint plus kill criterion",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "For an owner who wants less to track: one decision date, not a dashboard. Checkpoint at 20 prospective encounters or 8 weeks, whichever comes first (proposed, inferred). CONTINUE if verified hits are 3 or more of 20 (15%) AND acted false positives are 0 AND median lookup+verify tokens on hits are no more than a quarter of the original solve tokens AND owner time on the store stays low. KILL if 1 or fewer verified hits in 20 (false-kill chance 2.4% if the real rate is 25%, 17.6% if 15%, F24) OR any acted false positive that reached a merged change OR the grep arm matched the store in Step 1. KILL means delete the store directory and keep the prose docs; nothing else depends on it. A middle result (2 of 20) extends once by 10 encounters, then decides.",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F17",
+    "F24",
+    "F25"
+   ],
+   "maturity": "design here; thresholds are proposals",
+   "footprint": "one calendar entry",
+   "agent_access": "n/a",
+   "windows_dev_fit": "fits",
+   "linux_prod_fit": "fits"
+  },
+  {
+   "name": "KCS reuse-rate and create-rate as the steady-state health metric",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "The KCS v6 indicator that reuse is at least the create rate (F06) is a cheap, familiar ratio: once the pilot passes, track entries reused (verified hit) versus entries created per phase. It has no numeric benchmark in the page I read, so use it as a trend, not a target. Link rate figures seen in a vendor blog are not usable (F08).",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "F06",
+    "F07",
+    "F08"
+   ],
+   "maturity": "documented practice (KCS v6) in human support",
+   "footprint": "two counters derived from the log",
+   "agent_access": "derived",
+   "windows_dev_fit": "fits",
+   "linux_prod_fit": "fits"
+  },
+  {
+   "name": "Paired with/without ablation on a no-memory baseline (ReasoningBank style)",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "The only defensible counterfactual for cost avoided is the same defect run by the same cheap tier with and without the entry, repeated 3 times because of LLM variance. Evidence base: ReasoningBank reports a 4-9% step reduction against No Memory on SWE-bench (F09), which is the size of effect a one-developer store should not expect to beat by much. Feasible only for code-level defects that reproduce on a checkout (F26).",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F09",
+    "F13",
+    "F26"
+   ],
+   "maturity": "standard in agent-memory papers",
+   "footprint": "10-15 replays",
+   "agent_access": "worktree plus lookup CLI",
+   "windows_dev_fit": "fits (git worktrees already used)",
+   "linux_prod_fit": "fits"
+  },
+  {
+   "name": "Cost-avoided estimate from recorded original solve cost",
+   "kind": "technique",
+   "verdict": "weak",
+   "why": "Estimate avoided = original top-tier solve tokens minus (lookup + verify + apply tokens). It is cheap, but the counterfactual (would the agent have re-derived it, and at what cost) is not observed, and Agentless-style cheap pipelines show a fresh cheap attempt may already be inexpensive (F15). Use only as a labelled estimate beside paired replays, never as the kill input alone.",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F15",
+    "F25"
+   ],
+   "maturity": "inferred",
+   "footprint": "derived column",
+   "agent_access": "derived",
+   "windows_dev_fit": "fits",
+   "linux_prod_fit": "fits"
+  },
+  {
+   "name": "SPRT-style continuous stop rule",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Wald's sequential test (F18) is the right prior art for stopping early, but with a handful of binary outcomes and an owner who wants fewer moving parts, a fixed checkpoint (above) is simpler and gives the same decision at this sample size.",
+   "egress_posture": "none",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F18",
+    "F24"
+   ],
+   "maturity": "1945, textbook",
+   "footprint": "none"
+  },
+  {
+   "name": "Published vendor memory savings as a prior (Mem0 and similar)",
+   "kind": "tool",
+   "verdict": "rejected",
+   "why": "The vendor-reported >90% token saving is measured against full-context stuffing on conversation QA (F14), not against an on-demand lookup on coding defects, and no vendor figure for escalation cost avoided was found. Not usable as a prior for this program.",
+   "egress_posture": "cloud-hosted product by default; not assessed for local use",
+   "one_dev_ops_cost": "unknown",
+   "fact_ids": [
+    "F14"
+   ],
+   "maturity": "vendor-reported"
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Treat 'hard problems recur often enough' as unproven for this repo. Run Step 0 (git-history recurrence audit) before any engine work; the track's cost is justified only if repeats are not rare. Literature base rates (17-45% recurring fix patterns, F01; 75% of flaky tests in clusters, F04) are pattern-level, multi-project figures and should not be read as this program's hit rate.",
+   "fact_ids": [
+    "F01",
+    "F03",
+    "F04",
+    "F20"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "The store must be pull-only. The best direct evidence on repository context for coding agents found no general success gain and over 20% added cost (F12), matching the owner's no-gain record. Record injected_tokens and keep it at 0; the cost of a miss must be one cheap lookup.",
+   "fact_ids": [
+    "F12",
+    "F23"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "The pilot must include a grep-over-existing-prose arm, because most seed traps are already in always-loaded CLAUDE.md and HANDOFF (F21). If the store does not beat grep at equal precision, the right outcome is 'keep prose', and the kill criterion should say so.",
+   "fact_ids": [
+    "F21",
+    "F26"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Log raw tokens (input, output, cache read, cache write), model id, tier label and wall time per encounter, with NULL for unknown, and apply a dated price table only at analysis; tier price ratios are large (output $50 vs $10 vs $0.50 per MTok at the top, middle and bottom tiers) and change with model line-ups (F19). Report cost beside outcome, as 'AI Agents That Matter' recommends (F13). Log misses too, or the hit rate cannot be computed.",
+   "fact_ids": [
+    "F13",
+    "F19",
+    "F22"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Sample sizes are small, so state what they can show. 0 false positives in 40 probes only bounds the rate at 7.5%; 60 probes give 5% (F17). 20 prospective encounters can reject a 25% hit-rate store but not separate 15% from 5% (F24). Hence a coarse go/no-go checkpoint with one extension, not a statistical dashboard.",
+   "fact_ids": [
+    "F17",
+    "F24"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Proposed thresholds (inferred, owner decisions): Step 0 stop at 2 or fewer repeats in 48 fix commits. Step 1 pass requires recall at 3 of at least 60% on blind positive queries, 0 acted false positives on at least 40 negative or stale probes, and beating grep. Step 2 checkpoint at 20 encounters or 8 weeks: continue at 3 or more verified hits in 20 with 0 acted false positives and lookup+verify cost on hits at most a quarter of the original solve cost; kill at 1 or fewer, at any acted false positive that reached a merged change, or if grep matched the store. Break-even hit rate is about 15% under the illustrative cost ratios in F25.",
+   "fact_ids": [
+    "F17",
+    "F24",
+    "F25"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Measured effects of agent memory in the literature are modest and proxy-measured: 4-9% fewer steps with a no-memory baseline (F09), relative success gains on web benchmarks (F11), and vendor token savings against a full-context strawman (F14). No source quantifies escalation cost avoided. Expect a small effect and design the metric around paired replays plus the prospective log, not a published prior.",
+   "fact_ids": [
+    "F09",
+    "F11",
+    "F14",
+    "F16"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Distilled strategy-level entries beat raw failure traces: adding failures helped ReasoningBank (46.5 to 49.7) but hurt AWM (44.4 to 42.2) in one ablation (F10). Supports recording negative results as short 'tried, failed because' lines inside an entry, and tracking whether that field changes outcomes in the log, rather than storing transcripts.",
+   "fact_ids": [
+    "F10"
+   ],
+   "strength": "weak"
+  },
+  {
+   "claim": "KCS reuse-rate at least create-rate (F06) is a usable steady-state metric after the pilot passes. Treat the unsourced KCS cost figures (F07, F08) as advocacy, not evidence of savings.",
+   "fact_ids": [
+    "F06",
+    "F07",
+    "F08"
+   ],
+   "strength": "weak"
+  },
+  {
+   "claim": "A false positive that is acted upon is the one result that overrides everything else. Count 'gate passed but entry wrong' separately from 'gate refuted', since the first measures gate quality and the second measures retrieval precision, and let any merged false positive trigger the kill rule.",
+   "fact_ids": [
+    "F24",
+    "F26"
+   ],
+   "strength": "moderate"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Use literature recurrence percentages (17-45%, 75%) as the expected hit rate",
+   "why": "They measure fix-pattern repetition across thousands of projects or flaky tests in many suites, not recurrence of one hard defect in a 5-month-old single-developer repo. The original Nguyen paper and the Yue PDF were not read.",
+   "fact_ids": [
+    "F01",
+    "F03",
+    "F04",
+    "F20"
+   ]
+  },
+  {
+   "what": "Estimate savings from vendor token-saving claims (Mem0, KCS cost-per-resolution)",
+   "why": "Baselines are full-context stuffing or unsourced human-support cost; no coding-agent escalation figure exists.",
+   "fact_ids": [
+    "F07",
+    "F14"
+   ]
+  },
+  {
+   "what": "Judge the pilot by replaying seeded defects with the entry's own wording",
+   "why": "Measures retrieval of text you wrote, not recurrence; inflates recall and cannot estimate false positives without negative and stale probes.",
+   "fact_ids": [
+    "F26"
+   ]
+  },
+  {
+   "what": "Always-on injection of store contents into agent context to 'make sure it is used'",
+   "why": "AGENTS.md study shows over 20% added cost with no general success gain.",
+   "fact_ids": [
+    "F12"
+   ]
+  },
+  {
+   "what": "Time-based review or sunset instead of a fixed checkpoint tied to encounter count",
+   "why": "Encounters are what produce evidence; the program's pace varies by phase, and a calendar-only date could fall before any hard problem occurs. Use encounters OR 8 weeks, whichever first.",
+   "fact_ids": [
+    "F24"
+   ]
+  },
+  {
+   "what": "Store dollar cost per lookup in the log",
+   "why": "Prices and models change (F19); store raw tokens, model id, tier, and apply a dated price table at analysis.",
+   "fact_ids": [
+    "F19"
+   ]
+  }
+ ],
+ "open_questions": [
+  "What is the actual recurrence rate in this repo? Step 0 (labelled audit of the 48 fix-prefixed commits plus reverts) answers it; nothing here did.",
+  "Where is the owner-side 'no measurable gain' record, and what exactly was measured (success, tokens, wall time)? It is not in the repo, so the kill criterion cannot be reconciled with its method.",
+  "How many hard-problem encounters per phase are there? If it is about 1-3 per phase, reaching 20 encounters could take 7-20 phases, so the 8-week fallback may bind first; the log's own count will tell.",
+  "Do harness transcripts and workflow journal.jsonl lines carry per-agent input, output and cache token counts and the model id? Not verified; if not, tokens will be NULL and only tier and wall time can be logged.",
+  "What objective rule defines 'hard' (tier escalation, token budget, or human flag)? The encounter definition drives the denominator of the hit rate.",
+  "Original Nguyen et al. ICSE 2010 abstract and the Yue et al. ICSME 2017 headline percentages were not read; confirm before quoting either in the design doc.",
+  "Which seed traps are replayable on a code checkout? Deploy and Railway/EAS traps likely are not; only a gate-run check is possible for them.",
+  "No published number for repeated CI/build failure with the same root cause was found, only symptom-vs-root-cause notes (F05); this may be a genuine gap."
+ ],
+ "urls_attempted": [
+  "WebSearch: Nguyen recurring bug fixes empirical study (ok, secondary only)",
+  "WebSearch: KCS reuse rate link rate statistics (ok)",
+  "WebSearch: Nguyen 'Recurring bug fixes in object-oriented programs' ICSE 2010 (ok, no abstract)",
+  "WebSearch: flaky tests recurring CI build failures empirical study (ok)",
+  "WebSearch: ReasoningBank (refused: web search budget used up for the turn)",
+  "https://people.cs.vt.edu/nm8247/publications/ruru-icsme-2017-camera-ready.pdf (undecodable PDF)",
+  "https://library.serviceinnovation.org/KCS/KCS_v6/KCS_v6_Adoption_Guide/030_Build_Proficiency/010_Activities_for_Leveraging_the_KB/010_Self-Service_Success",
+  "https://arxiv.org/abs/2504.16777",
+  "https://dl.acm.org/doi/10.1145/1806799.1806845 (403)",
+  "https://arxiv.org/abs/2509.25140",
+  "https://arxiv.org/html/2509.25140",
+  "https://arxiv.org/abs/2308.10144",
+  "https://arxiv.org/abs/2407.01502",
+  "https://arxiv.org/abs/2409.07429",
+  "https://www.semanticscholar.org/search?q=Recurring bug fixes in object-oriented programs (403)",
+  "https://api.semanticscholar.org/graph/v1/paper/search (429, two attempts)",
+  "https://arxiv.org/pdf/2001.09630 (undecodable PDF)",
+  "https://arxiv.org/abs/2001.09630",
+  "https://people.cs.vt.edu/nm8247/",
+  "https://neverworkintheory.org/2021/09/11/common-bug-fix-patterns.html",
+  "https://arxiv.org/html/2602.02307v1",
+  "https://www.serviceinnovation.org/maximize-the-benefits-of-kcs/",
+  "https://en.wikipedia.org/wiki/Rule_of_three_(statistics)",
+  "https://arxiv.org/abs/2507.23361",
+  "https://arxiv.org/abs/2305.14301 (irrelevant paper, guessed ID, discarded)",
+  "https://docs.anthropic.com/en/docs/about-claude/pricing (301)",
+  "https://platform.claude.com/docs/en/docs/about-claude/pricing",
+  "https://arxiv.org/abs/2407.01489",
+  "https://arxiv.org/abs/2504.19413",
+  "https://en.wikipedia.org/wiki/Sequential_probability_ratio_test",
+  "https://arxiv.org/abs/2602.11988",
+  "https://arxiv.org/abs/2303.11366"
+ ],
+ "anomalies": [
+  "WebSearch stopped after four queries with a message that the per-turn search budget (shared by all agents) was used up; no further searches were run and no workaround was attempted. Remaining evidence came from direct WebFetch of known URLs.",
+  "Two PDFs (Yue ICSME 2017, Ammonia) could not be decoded by WebFetch (FlateDecode); the Read tool lacked pdftoppm. A local Python stream-extraction attempt failed on a regex error and was abandoned. Figures from those PDFs are secondary.",
+  "ACM and Semantic Scholar blocked or rate-limited fetches, so the Nguyen ICSE 2010 abstract was not read.",
+  "An arXiv ID (2305.14301) I guessed for a Microsoft incident study turned out to be an unrelated paper; nothing from it was used.",
+  "Some fetch results are summaries by a small model, not verbatim page text; the ReasoningBank tables were read from such a summary and not spot-checked against the PDF.",
+  "The 2602.02307 paper has internal inconsistencies in its own counts (builds, project numbers), as noted by the fetch summary; used only for approximate figures.",
+  "The pricing page lists model names (Fable, Mythos, Opus 5.5, Sonnet 5.5, Haiku 5.5) as of 2026-11-02; tier labels in the pilot should use free text model ids because this line-up changes.",
+  "Wikipedia was used for the rule of three and SPRT statements; these are standard results, but the pages themselves carry citation-needed flags on extensions, which I did not use."
+ ]
+}

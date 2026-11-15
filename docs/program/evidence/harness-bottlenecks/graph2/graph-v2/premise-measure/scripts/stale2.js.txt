@@ -1,0 +1,44 @@
+// Session 2: what happened around each exposure of a stale sampled finding after its change reached main.
+// Mechanical only (no reading by a person or model): for each exposing transcript, after the exposure,
+//  - did a later tool result in the same transcript carry the corrected fact (awareness marker)?
+//  - did the transcript later write or edit files, and where (repository tracked area / repository docs/program / scratch)?
+//  - did any later write in that transcript contain the stale statement's marker (propagation)?
+// Output: stale2.json (counts and file classes only, no transcript text). Streams each transcript.
+const fs = require('fs'), readline = require('readline');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const H = fs.readFileSync(W + '/reuse-hits.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((x) => !/agent-a2b9edd46ed6e48db/.test(x.f)); // the earlier lane's own scan agent is excluded
+const CASES = [
+  { id: 'I9', since: '2026-11-13T10:03:19Z', fixed: /BACKDATE_CEILING_HOURS[^\n]{0,120}240|ping_backdate_ceiling_hours[^\n]{0,40}240|240[^\n]{0,40}h?[^\n]{0,40}ceiling/i, stale: /stays 48|48 h guard|48 by default/i },
+  { id: 'B5', since: '2026-11-13T10:03:19Z', fixed: /default PIN|PIN must be changed|pin_policy/i, stale: /login never checks for a default/i },
+];
+const viaClass = (v) => /O-10-design/i.test(v) ? 'read of O-10-design.md (tracked on the plan branch, still says it)' : /G2-deep-dive-gate/i.test(v) ? 'read of the G2 gate document (tracked, still says it)' : /grep|rg |pattern|Select-String/.test(v) ? 'search output' : 'other read';
+const where = (p) => { const s = String(p || '').replace(/\\/g, '/'); if (/EMS_workshop1(\/\.claude\/worktrees\/[^/]+)?\/docs\/program\//i.test(s)) return 'repository docs/program'; if (/EMS_workshop1/i.test(s)) return 'repository product or other tracked area'; if (/Temp\/claude|scratchpad/i.test(s)) return 'scratch'; return 'elsewhere'; };
+(async () => {
+  const res = [];
+  for (const c of CASES) {
+    const t0 = Date.parse(c.since);
+    const ex = H.filter((x) => x.id === c.id && x.kind === 'shown' && x.ts && Date.parse(x.ts) >= t0);
+    for (const x of ex) {
+      const tx = Date.parse(x.ts);
+      const r = { id: c.id, sub: x.sub, exposure: viaClass(x.via), awareAfter: 0, awareBefore: 0, writesAfter: {}, staleCopiesWritten: 0, editsAfter: 0 };
+      const rl = readline.createInterface({ input: fs.createReadStream(x.f), crlfDelay: Infinity });
+      for await (const line of rl) {
+        if (!line.includes('"timestamp"')) continue;
+        let o; try { o = JSON.parse(line); } catch { continue; }
+        const ts = Date.parse(o.timestamp); if (!ts) continue;
+        const blocks = o.message && Array.isArray(o.message.content) ? o.message.content : [];
+        for (const b of blocks) {
+          if (b.type === 'tool_result') { const txt = typeof b.content === 'string' ? b.content : JSON.stringify(b.content || ''); if (c.fixed.test(txt)) { if (ts > tx) r.awareAfter++; else r.awareBefore++; } }
+          if (b.type === 'tool_use' && ts > tx) {
+            const inp = b.input || {};
+            if (/^(Write|Edit|MultiEdit)$/.test(b.name)) { r.editsAfter++; const w = where(inp.file_path); r.writesAfter[w] = (r.writesAfter[w] || 0) + 1; if (c.stale.test(JSON.stringify(inp))) r.staleCopiesWritten++; }
+            else if ((b.name === 'Bash' || b.name === 'PowerShell') && /(>|tee |Out-File|Set-Content|git commit)/.test(String(inp.command || ''))) { r.writesAfter['shell write or commit'] = (r.writesAfter['shell write or commit'] || 0) + 1; if (c.stale.test(String(inp.command))) r.staleCopiesWritten++; }
+          }
+        }
+      }
+      res.push(r);
+    }
+  }
+  fs.writeFileSync(W + '/stale2.json', JSON.stringify(res, null, 1));
+  console.log(JSON.stringify(res));
+})();

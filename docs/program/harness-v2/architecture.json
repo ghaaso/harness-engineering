@@ -1,0 +1,1711 @@
+{
+ "meta": {
+  "title": "Harness v2: the architecture",
+  "date": "2026-11-11",
+  "status": "A design. Nothing is built.",
+  "planLink": "plan.html",
+  "law": "Speed = lanes × what one lane delivers, until the lowest limit is reached. There are four: the check, the review, the merge, the token window.",
+  "thesis": [
+   "The harness is one machine with four scarce things: time on the check, review, the one-at-a-time merge, and tokens per five-hour window. Each gets a controller. A planner sets how many sessions run at once, a little below the point where one more adds nothing. A library that updates itself feeds the planner its numbers and feeds sessions answers, so they read less.",
+   "Which limit comes first depends on rates that are only partly measured today. That is the point of the design: the harness measures them, and the planner works the answer out again for every plan.",
+   "Below: the parts, how the machine behaves over time as stocks and flows, the plan check that lays out parallel work before it starts, the library, and the token methods."
+  ]
+ },
+ "tags": {
+  "m": {
+   "word": "Measured",
+   "means": "Observed in the record."
+  },
+  "s": {
+   "word": "Setting",
+   "means": "A value someone chose. Read, not observed."
+  },
+  "t": {
+   "word": "Target",
+   "means": "A pass mark. Not true yet."
+  },
+  "e": {
+   "word": "Estimate",
+   "means": "Worked out or guessed. Not observed directly."
+  },
+  "i": {
+   "word": "Illustrative",
+   "means": "Made up to show how the mechanism behaves."
+  }
+ },
+ "numbers": {
+  "total_tokens": [
+   "4.25 billion",
+   "m",
+   "cache-read tokens in 184 November transcripts. evidence/harness-bottlenecks/tally-output.txt"
+  ],
+  "over400": [
+   "39.8 %",
+   "m",
+   "tokens in calls whose context had passed 400k. fit/tally-buckets-output.txt"
+  ],
+  "opus_max": [
+   "367k",
+   "m",
+   "largest context of any slice call on Opus 5.5, over 5,879 calls. harness-v2/phase1/compaction-by-model-2026-11.txt"
+  ],
+  "sonnet_max": [
+   "963k",
+   "m",
+   "largest context of any slice call on Sonnet 5.5. harness-v2/phase1/compaction-by-model-2026-11.txt"
+  ],
+  "sonnet_read": [
+   "1,452 million",
+   "m",
+   "cache-read tokens of slice calls on Sonnet 5.5, in 3,297 calls. harness-v2/phase1/compaction-by-model-2026-11.txt"
+  ],
+  "opus_read": [
+   "1,306 million",
+   "m",
+   "cache-read tokens of slice calls on Opus 5.5, in 5,879 calls. harness-v2/phase1/compaction-by-model-2026-11.txt"
+  ],
+  "comp_367": [
+   "38 of 48",
+   "m",
+   "automatic compactions that came near 367k, every one on Opus. harness-v2/phase1/compaction-by-model-2026-11.txt"
+  ],
+  "calls_per": [
+   "about 519",
+   "m",
+   "calls per slice session: 9,342 calls over 18 slice sessions. harness-v2/phase1/token-baseline-2026-11.txt"
+  ],
+  "board_kb": [
+   "221 KB",
+   "m",
+   "the shared board on 11 November. map-full.txt:128"
+  ],
+  "fixed_cost": [
+   "about 70,000 tokens",
+   "m",
+   "what every agent in the testbed paid before any work. compile §2.3 (CR-11)"
+  ],
+  "fixed_cost_n": [
+   "70000",
+   "m",
+   "the same figure as a plain number, for the calculator"
+  ],
+  "tools_cost": [
+   "34k",
+   "m",
+   "tool definitions inside the 70k. compile §2.3 (CR-11)"
+  ],
+  "answer_cap": [
+   "about 860 tokens",
+   "s",
+   "the knowledge-store design caps a lookup's whole output at 2,000 characters. KNOWLEDGE-STORE-DESIGN-2026-11.md §4"
+  ],
+  "ctx_plus": [
+   "6 to 17 % more",
+   "m",
+   "tokens used for the same recall by a Codex adapter that snapshots before compaction and restores after, tried on another project. It tested no index and no graph. compile §0, §2.4"
+  ],
+  "rounds": [
+   "2.8",
+   "m",
+   "review rounds per slice gate: nine gates took three and two took two. sweep-cards.txt:132"
+  ],
+  "container": [
+   "230 s",
+   "m",
+   "the check in the Linux container. compile §2.1"
+  ],
+  "native": [
+   "367 s",
+   "m",
+   "the check on Windows, on the same code. compile §2.1"
+  ],
+  "wait_max": [
+   "2,030 s",
+   "m",
+   "the longest recorded wait for the check, after every session was released at once. refute.txt:34"
+  ],
+  "wait_median": [
+   "409 s",
+   "m",
+   "median of the 19 recorded waits. computed in harness-v2/design.json"
+  ],
+  "ten_lanes": [
+   "about 15 minutes",
+   "m",
+   "how long a run of ten parallel lanes lasted before the limit stopped it. sweep-cards.txt:1229"
+  ],
+  "oct_limits": [
+   "14",
+   "m",
+   "usage-limit episodes, 6 to 20 October. compile §2.3"
+  ],
+  "merge_breaks": [
+   "the first two",
+   "m",
+   "slices whose first check on merged main failed, on the root's own hand edits to shared documents; fixed before the gate commit. sweep-cards.txt:178-181"
+  ],
+  "peak_sessions": [
+   "nine",
+   "m",
+   "sessions with a call in the same ten minutes, 4 November. harness-v2/phase1/shutdown-join-2026-11.txt"
+  ],
+  "root_ctx": [
+   "about 499k",
+   "m",
+   "mean context per root call. tally-output.txt"
+  ],
+  "failed38": [
+   "38 of 71",
+   "m",
+   "ideas the testbed had already practised that failed anyway, mostly as lines in a brief. compile §9.1"
+  ],
+  "fill_fetched": [
+   "about 27 to 28.5 %",
+   "e",
+   "content the sessions fetched by reading and searching, as a share of context tokens: 26.9 % as first run, 28.5 % with a stricter classifier; an independent method gave 22.3 % (range 20.6 to 32.2). compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "fill_own": [
+   "about 32 %",
+   "e",
+   "the model's own earlier output carried forward: thinking, commands, the code it wrote. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "fill_start": [
+   "about 29 %",
+   "e",
+   "the start of each window, re-read on every call: system prompt, tool definitions, instructions, and after a compaction the summary. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "ks_prior": [
+   "3 to 5",
+   "e",
+   "same-cause repeats the knowledge-store design expects among 48 fix commits, before its audit. KNOWLEDGE-STORE-DESIGN-2026-11.md §11"
+  ],
+  "oct_window": [
+   "about 2.5 lane-hours",
+   "e",
+   "October, Pro plan, workflow subagents: ten lanes lasted about 15 minutes and two lanes about 75. Worked out here from sweep-cards.txt:1229 and compile §2.3"
+  ],
+  "gain": [
+   "64 %",
+   "m",
+   "share of reviews that sent a slice back for another round: 1 − 1 ÷ 2.8. From sweep-cards.txt:132"
+  ],
+  "ks_kill": [
+   "fewer than 3 verified hits in 20 encounters or 8 weeks",
+   "s",
+   "the knowledge-store design's own stop rule at its checkpoint KS-9"
+  ],
+  "merges65": [
+   "65",
+   "m",
+   "merge commits in November. sweep-cards.txt:1062"
+  ],
+  "step_calls": [
+   "54.7 %",
+   "m",
+   "8,701 of 15,921 calls issued nothing but read or search tools. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "step_tokens": [
+   "43.6 %",
+   "e",
+   "share of all context tokens re-read by calls that only read or search: slice main sessions 42.4 %, subagents 70.9 %. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "ctx_total": [
+   "4.33 billion",
+   "m",
+   "context tokens in November's 184 transcripts. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "fill_repeat": [
+   "0.5 to 1.5 %",
+   "e",
+   "content genuinely seen earlier in the same window. Identical repeat commands: zero. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "carry_in": [
+   "about 19 million",
+   "e",
+   "tokens of fetched content as they entered the windows, once. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "carry_proc": [
+   "about 950 million",
+   "e",
+   "times those tokens were then processed. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "passes": [
+   "some 50",
+   "e",
+   "passes per fetched token: 950 million over 19 million. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "hot_half": [
+   "72 paths",
+   "e",
+   "3.3 % of the paths read hold half the fetched tokens. The path key is the last two path segments. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "hot_73": [
+   "73 %",
+   "e",
+   "share of the fetched tokens held by the 294 paths that were read in five or more windows. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "fill_indep": [
+   "22.3 %",
+   "e",
+   "fetched content by an independent method, range 20.6 to 32.2. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "unedited": [
+   "74 %",
+   "e",
+   "share of fetched tokens that went to files the window did not edit. Not proof of waste: reading a file to change another is normal. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"
+  ],
+  "replay_bars": [
+   "3 % of tokens and a recall of 0.8",
+   "t",
+   "pass marks suggested by a refuter of the window-fill measurement. Not settled: yours to set, decision D23 on the plan page"
+  ],
+  "commits": [
+   "432 commits",
+   "m",
+   "commits in the clinic repository. Outside studies found that history helps large repositories and hurt those under 10,000 commits. compile §6"
+  ]
+ },
+ "glossary": {
+  "lane": [
+   "lane",
+   "One session working on one slice. Lanes run side by side."
+  ],
+  "slice": [
+   "slice",
+   "One piece of the product, built by its own session on its own branch."
+  ],
+  "check": [
+   "the check",
+   "The full test run. Every review round needs one."
+  ],
+  "gate": [
+   "gate",
+   "What a branch must pass before it merges: the check plus review."
+  ],
+  "slot": [
+   "slot",
+   "How many checks may run at once on this PC."
+  ],
+  "wave": [
+   "wave",
+   "Slices that can run at the same time: everything they need is merged, and none writes a file another one writes."
+  ],
+  "footprint": [
+   "footprint",
+   "The files a slice will write."
+  ],
+  "knee": [
+   "knee",
+   "The number of lanes past which one more adds nothing, because a limit has been reached."
+  ],
+  "window": [
+   "token window",
+   "The plan's usage limit. It resets every five hours."
+  ],
+  "context": [
+   "context",
+   "Everything the model re-reads on every call."
+  ],
+  "compaction": [
+   "compaction",
+   "The tool swaps a full context for a summary and carries on."
+  ],
+  "stock": [
+   "stock",
+   "Something that accumulates: slices waiting, tokens used, entries in the library."
+  ],
+  "loop": [
+   "loop",
+   "A chain of cause and effect that comes back to where it started. Reinforcing loops feed themselves. Balancing loops hold a limit."
+  ],
+  "root": [
+   "the root",
+   "The one orchestrator session of the testbed."
+  ]
+ },
+ "parts": [
+  {
+   "key": "planner",
+   "name": "Planner",
+   "x": 20,
+   "y": 20,
+   "w": 210,
+   "h": 100,
+   "lines": [
+    "checks the plan for parallel",
+    "work; sets waves and lanes"
+   ],
+   "job": "Works out, before any work starts, which slices can run side by side and how many lanes are worth running.",
+   "does": [
+    "Reads each slice's declared {{t:footprint|footprint}}, what it reads, and what it needs first.",
+    "Lays the slices out in {{t:wave|waves}} so that nothing in a wave collides, aiming at the shortest finish, not the widest wave.",
+    "Works out the {{t:knee|knee}} from the four limits and memory, and runs a little below it, because a queue forms before a limit is fully used.",
+    "Names what limits the plan and the one change that would lift it.",
+    "Refuses a plan with a missing footprint, two writers of one file, or more lanes than it worked out."
+   ],
+   "reads": [
+    "The plan: slices, footprints, needs, shared things.",
+    "From the library: files that changed together before, and the measured rates."
+   ],
+   "writes": [
+    "Waves and a lane count, to the scheduler.",
+    "The predicted speed-up and the binding limit, to you."
+   ],
+   "proof": "No collision is first found at a merge. After every plan, its predicted finish is set against the real one, and the difference corrects the rates."
+  },
+  {
+   "key": "scheduler",
+   "name": "Scheduler",
+   "x": 300,
+   "y": 20,
+   "w": 180,
+   "h": 100,
+   "lines": [
+    "starts, parks and",
+    "releases sessions"
+   ],
+   "job": "Turns the wave plan into running sessions, and brings them back after a stop.",
+   "does": [
+    "Starts a session per slice in its own worktree, with its own branch, port and database.",
+    "Releases a slice as soon as what it needs is merged and nothing running collides with it. It does not wait for a whole wave.",
+    "Releases two at a time, never all at once, and keeps waiting outside the session: a slice that waits is parked.",
+    "If a lane fails, its slice goes back to the backlog and the plan is laid out again.",
+    "After a restart, shows the resume list and checks each session's record against its branch."
+   ],
+   "reads": [
+    "Waves and lanes, from the planner.",
+    "The lanes allowed right now, from the governor."
+   ],
+   "writes": [
+    "Sessions, to the lanes.",
+    "The resume list, to you."
+   ],
+   "proof": "After a restart, the next commit comes within three hours of the PC being up. The median wait for the check is under a minute."
+  },
+  {
+   "key": "governor",
+   "name": "Governor",
+   "x": 760,
+   "y": 20,
+   "w": 200,
+   "h": 100,
+   "lines": [
+    "token window, lanes,",
+    "context ceiling"
+   ],
+   "job": "Keeps the token window from stopping everything.",
+   "does": [
+    "Holds one token budget per window, for lanes, reviewers and replays together.",
+    "Slows the lanes when the burn rate would use up the window, instead of letting the limit stop them all.",
+    "Learns the window's size from every limit message: what had been used, by kind of token, when it came. Nobody knows that size today.",
+    "Sets a context ceiling per model, so no call re-reads more than about 367k.",
+    "The lanes actually running are the lower of the planner's count and the governor's."
+   ],
+   "reads": [
+    "Burn per lane, by model, from the library.",
+    "Free memory and the check's peak, from the logger."
+   ],
+   "writes": [
+    "Lanes allowed now, to the scheduler.",
+    "Ceilings and tool lists, to sessions."
+   ],
+   "proof": "No limit stop inside a wave. It falls back to a fixed two lanes if its estimate of the window is wrong twice."
+  },
+  {
+   "key": "lanes",
+   "name": "Lanes",
+   "x": 300,
+   "y": 180,
+   "w": 180,
+   "h": 96,
+   "lines": [
+    "one slice, one session,",
+    "one worktree each"
+   ],
+   "job": "Where the work is written. Each lane is a session that asks before it explores and leaves its results on disk.",
+   "does": [
+    "One phase per session, so a new phase starts with a small context.",
+    "Asks the library by one command before reading its way through the code.",
+    "Writes reports and a small state file to disk and hands back a path and a summary.",
+    "Commits a claims file: what it claims, and the test that proves each claim.",
+    "Works only in its own worktree and may write reports only to one allowed folder."
+   ],
+   "reads": [
+    "A brief, a branch, and answers from the library."
+   ],
+   "writes": [
+    "A branch and its claims, to the gate.",
+    "A solved problem, to the library, when it had to work one out."
+   ],
+   "proof": "Refused writes: zero over 20 runs. Hand edits to shared documents at merge: zero."
+  },
+  {
+   "key": "gate",
+   "name": "Gate",
+   "x": 530,
+   "y": 180,
+   "w": 180,
+   "h": 96,
+   "lines": [
+    "check, review,",
+    "fix rounds"
+   ],
+   "job": "Decides whether a slice is good, by tests it runs itself.",
+   "does": [
+    "Runs the check in the Linux container, in a fair queue with a printed place.",
+    "A script reads the claims and writes a small fixed-format verdict that names the commit.",
+    "A finding closes only on a test that fails before the fix and passes after.",
+    "Two rounds at most; a red gate means revert, not a patch on a patch.",
+    "Refuses a branch whose changes leave its declared footprint, until the plan is amended.",
+    "Walks a clean install inside every gate."
+   ],
+   "reads": [
+    "A branch and its claims.",
+    "From the library: what the fix touches, and the open findings."
+   ],
+   "writes": [
+    "A verdict, to the merge queue.",
+    "Findings, to the lane and to the library."
+   ],
+   "proof": "On the record: the verdict script flags the recorded overstatements with under one false flag in ten. Live: defects made by fixes, against the testbed’s rate."
+  },
+  {
+   "key": "merge",
+   "name": "Merge queue",
+   "x": 760,
+   "y": 180,
+   "w": 160,
+   "h": 96,
+   "lines": [
+    "one script, one lock,",
+    "checks the commit"
+   ],
+   "job": "The one place where work is serial. It is a script, so the serial part is short.",
+   "does": [
+    "Merges under a lock, only when the verdict names the exact commit.",
+    "Runs one check on the merged result.",
+    "Applies the generated board; nobody edits it by hand.",
+    "Records what the slice really touched and how long everything took."
+   ],
+   "reads": [
+    "A verdict that names a commit."
+   ],
+   "writes": [
+    "Merged work.",
+    "Actual footprints and timings, to the library."
+   ],
+   "proof": "Run record-only over the {{n:merges65}} recorded merges, it flags the unread final commits of 10 and 11 November."
+  },
+  {
+   "key": "library",
+   "name": "The library",
+   "x": 130,
+   "y": 336,
+   "w": 740,
+   "h": 62,
+   "hub": true,
+   "lines": [
+    "what is true now   ·   what a change touches   ·   solved problems   ·   measured rates"
+   ],
+   "job": "The harness's memory. It is written by the tools at the moment something becomes true, and it is asked, never pushed.",
+   "does": [
+    "Holds four things: what is true now, what a change touches, solved problems, measured rates.",
+    "Answers a lookup in at most {{n:answer_cap}}, with a check that proves the answer applies.",
+    "Marks an entry stale when its files change, and never by age.",
+    "Proposes a lesson seen three times as a lint, a test or a gate clause.",
+    "Counts every lookup, hit and miss, so it can be judged on its own numbers."
+   ],
+   "reads": [
+    "From the gate and the merge queue: verdicts, findings, footprints, timings.",
+    "From a lane: a problem it had to solve."
+   ],
+   "writes": [
+    "To the planner: footprints and rates.",
+    "To the governor: burn by model.",
+    "To a lane: a short, proved answer."
+   ],
+   "proof": "First the index replay on the recorded windows, at zero tokens. Then the knowledge store's own audit and pilot. Stopped on {{n:ks_kill}}, or as soon as lookups cost more tokens than they save."
+  },
+  {
+   "key": "substrate",
+   "name": "The machine",
+   "x": 20,
+   "y": 420,
+   "w": 940,
+   "h": 40,
+   "lines": [],
+   "job": "Power, restart, the off-machine copy and one always-on logger. Everything above stands on it.",
+   "does": [
+    "A copy off the PC every night.",
+    "A restart that needs no commands.",
+    "One logger of temperature, power and memory, so a power-off leaves a trace.",
+    "A rehearsal on a real host."
+   ],
+   "reads": [
+    "The Windows log, the sensors."
+   ],
+   "writes": [
+    "The check's peak memory and free memory, to the governor."
+   ],
+   "proof": "A clone from the copy shows the same heads. After a reboot the databases are healthy within three minutes. The next power-off leaves a trace."
+  }
+ ],
+ "links": [
+  {
+   "from": "planner",
+   "to": "scheduler",
+   "side": "h",
+   "kind": "control",
+   "label": "waves, lanes",
+   "ly": -8
+  },
+  {
+   "from": "governor",
+   "to": "scheduler",
+   "side": "h",
+   "kind": "control",
+   "label": "lanes allowed now",
+   "ly": -8
+  },
+  {
+   "from": "scheduler",
+   "to": "lanes",
+   "kind": "control",
+   "label": "two at a time",
+   "lx": 44,
+   "ly": 4,
+   "anchor": "start"
+  },
+  {
+   "from": "lanes",
+   "to": "gate",
+   "side": "h",
+   "kind": "data",
+   "label": "branch",
+   "off": -18,
+   "ly": -6
+  },
+  {
+   "from": "gate",
+   "to": "lanes",
+   "side": "h",
+   "kind": "data",
+   "label": "findings",
+   "off": 20,
+   "ly": 14
+  },
+  {
+   "from": "gate",
+   "to": "merge",
+   "side": "h",
+   "kind": "data",
+   "label": "verdict",
+   "ly": -6
+  },
+  {
+   "from": "lanes",
+   "to": "library",
+   "kind": "learn",
+   "off2": -110,
+   "label": "asks first; writes what it solved",
+   "lx": 6,
+   "ly": 4,
+   "anchor": "start"
+  },
+  {
+   "from": "gate",
+   "to": "library",
+   "kind": "learn",
+   "off2": 120,
+   "label": "findings",
+   "lx": 6,
+   "ly": 4,
+   "anchor": "start"
+  },
+  {
+   "from": "merge",
+   "to": "library",
+   "kind": "learn",
+   "off2": 340,
+   "label": "what it touched, timings",
+   "lx": -6,
+   "ly": 4,
+   "anchor": "end"
+  },
+  {
+   "from": "library",
+   "to": "planner",
+   "kind": "learn",
+   "label": "footprints, rates",
+   "off": -345,
+   "off2": 30,
+   "lx": 6,
+   "ly": 0,
+   "anchor": "start"
+  },
+  {
+   "from": "library",
+   "to": "governor",
+   "kind": "learn",
+   "label": "burn by model",
+   "off": 440,
+   "off2": 80,
+   "lx": -6,
+   "ly": -76,
+   "anchor": "end"
+  }
+ ],
+ "loops": [
+  {
+   "id": "R1",
+   "kind": "R",
+   "part": "gate",
+   "name": "The fix spiral",
+   "story": "A fix adds stored state. The state has an ending nobody tested. That is a new defect, which needs another fix, and another check. In the model this is the share of reviews that send a slice back: {{n:gain}} in the testbed.",
+   "today": "{{n:rounds}} rounds per slice, and the last diff read by the root alone.",
+   "v2": "Two rounds at most, revert instead of patching, and a test for every way new state ends."
+  },
+  {
+   "id": "B1",
+   "kind": "B",
+   "part": "gate",
+   "name": "Check capacity",
+   "story": "Every round needs the check. The check serves its slots divided by its run time and no more. Past that, lanes queue.",
+   "today": "One slot and {{n:native}} on Windows. The longest wait on record is {{n:wait_max}}.",
+   "v2": "The container run takes {{n:container}}. A second slot opens once the check's peak memory is measured."
+  },
+  {
+   "id": "B2",
+   "kind": "B",
+   "part": "merge",
+   "name": "The serial gate",
+   "story": "Review and merging pass through something that takes one at a time. However many lanes run, nothing leaves faster than that.",
+   "today": "The root did both. It briefed the reviewers, read the last diff itself, ran the check on the branch and again on merged main, and edited the board by hand.",
+   "v2": "Reviews run in a gate workflow, one gate at a time, outside the root. Merging is a script under a lock with one check. Raising the review limit takes a shorter review, or a second gate workflow when the token window allows."
+  },
+  {
+   "id": "B3",
+   "kind": "B",
+   "part": "governor",
+   "name": "The limit stop",
+   "story": "Tokens used rise with the lanes working and the context each one carries. At the window's limit every lane stops at once.",
+   "today": "Unmanaged. {{n:oct_limits}} limit episodes in October; a run of ten lanes lasted {{n:ten_lanes}}.",
+   "v2": "The governor slows the lanes so the window lasts, instead of the limit stopping all of them."
+  },
+  {
+   "id": "R2",
+   "kind": "R",
+   "part": "governor",
+   "name": "Context growth",
+   "story": "Every call re-reads the whole context and adds to it. So each call costs more than the one before. In the model it appears as its average: about 306k per call without a ceiling, about 220k with one. That gap is a comparison across models, not a trial.",
+   "today": "Sessions on Sonnet ran to {{n:sonnet_max}}. Sessions on Opus stopped at {{n:opus_max}}, because of that model's own window.",
+   "v2": "A ceiling near 367k on every model, and one phase per session."
+  },
+  {
+   "id": "R4",
+   "kind": "R",
+   "part": "scheduler",
+   "name": "The pile-up",
+   "story": "A lane that waits still holds its context. Waiting costs tokens, tokens bring the stop sooner, and after a stop everything is released at once and waits again.",
+   "today": "Every session was released together on 9 November. One check then waited {{n:wait_max}}.",
+   "v2": "Two at a time, and waiting happens parked, outside any session."
+  },
+  {
+   "id": "R3",
+   "kind": "R",
+   "part": "library",
+   "name": "The library compounds",
+   "story": "Each merged slice writes what it learned. The next session asks before it explores, so it reads less. Less reading means more slices per window, which write more.",
+   "today": "No library, and no index or graph was ever tried. The one context trial on record, a compaction adapter on another project, used {{n:ctx_plus}} tokens for the same recall.",
+   "v2": "Pull-only lookups, counted one by one. Unproven until measured."
+  },
+  {
+   "id": "B4",
+   "kind": "B",
+   "part": "library",
+   "name": "Staleness",
+   "story": "Code changes. An entry whose files changed is not trusted until its check runs again. This is what stops the library filling with things that are no longer true.",
+   "today": "The board carried 183 minor findings with no status at all.",
+   "v2": "Entries are tied to the files they depend on. Stale by code change, never by age."
+  },
+  {
+   "id": "B5",
+   "kind": "B",
+   "part": "planner",
+   "name": "Lanes at the knee",
+   "story": "More lanes help only until the lowest limit. Past it they add queues, tokens and collisions, and no speed.",
+   "today": "Lanes were chosen by feel and nothing checked for collisions. For {{n:merge_breaks}} slices the first check on merged main failed, on hand edits to shared documents.",
+   "v2": "The plan check runs a little below the knee and keeps colliding slices apart."
+  }
+ ],
+ "sd": {
+  "stocks": {
+   "B": "Backlog",
+   "W": "In work",
+   "Q": "Waiting for check",
+   "C": "In check",
+   "V": "In review",
+   "G": "Waiting to merge",
+   "M": "Merged",
+   "T": "Tokens used, this window",
+   "X": "Context per call",
+   "K": "Valid library entries"
+  },
+  "flowNames": [
+   "start",
+   "work done",
+   "check starts",
+   "check done",
+   "passes",
+   "merge"
+  ],
+  "again": "another round",
+  "more": "more work, another check",
+  "burn": "burn",
+  "reset": "window resets",
+  "write": "written at merge",
+  "stale": "entries leave as their files change",
+  "limit": "at the limit: all stop",
+  "hits": "hits: less reading",
+  "ctxCapped": "ceiling 367k",
+  "ctxOpen": "up to 963k",
+  "equations": [
+   "lanes = your setting; with the planner, the lower of that and about 0.8 × the knee. When tokens are the first limit it takes the knee itself, and the governor trims the rest",
+   "start = min(backlog, lanes − slices in flight); with the scheduler, at most one new slice every five minutes",
+   "work done = in work ÷ work time × governor share",
+   "check starts = min(waiting, slots − in check);  check done = in check ÷ check time",
+   "after a check: back to work, except one time in every (checks per round), which goes to review",
+   "review done = min(in review, one gate at a time) ÷ review time;  another round = review done × (1 − 1 ÷ rounds)",
+   "merge = one at a time; each takes merge time + merge checks × check time and holds a check slot. In the testbed the root does both, so it reviews only when it is not merging",
+   "burn = (working × governor share + waiting × waiting share) × context factor × library factor",
+   "library factor = 1 − lookup-step share × hit rate + cost of looking up;  hit rate = top hit rate × entries ÷ (entries + half point)",
+   "entries: + per merged slice, − a share of them with every merge, as their files change",
+   "without the governor: every flow stops while tokens used ≥ window. With it: governor share = what the window can still carry ÷ what the lanes would burn",
+   "tokens used returns to zero every 300 minutes",
+   "one lane delivers 1 ÷ (rounds × (checks per round × (work + check) + review) + merge);  knee = lowest limit ÷ that"
+  ]
+ },
+ "model": {
+  "hours": 40,
+  "intro": [
+   "The same machine as stocks and flows. Boxes hold things that pile up. Thick arrows are flows, each with a valve. Thin arrows say what speeds a flow up (+) or slows it down (−). The circled marks are the loops listed underneath.",
+   "Switch the controllers on and off and move the lanes. The boxes show the stocks at the chosen hour; the three charts show the whole run."
+  ],
+  "params": {
+   "lanes": {
+    "name": "Lanes",
+    "v": 6,
+    "unit": "",
+    "tag": "m",
+    "src": "'up to about six sessions working' (map-full.txt:255); nine at the peak"
+   },
+   "slices": {
+    "name": "Slices to merge",
+    "v": 11,
+    "unit": "",
+    "tag": "m",
+    "src": "the testbed's eleven slice gates"
+   },
+   "width": {
+    "name": "Widest wave the plan allows",
+    "v": 12,
+    "unit": "",
+    "tag": "i",
+    "src": "set high so the plan is not the limit in this run"
+   },
+   "tcWin": {
+    "name": "Check time, Windows",
+    "v": 6.1,
+    "unit": "min",
+    "tag": "m",
+    "src": "367 s. compile §2.1"
+   },
+   "tcCon": {
+    "name": "Check time, container",
+    "v": 3.8,
+    "unit": "min",
+    "tag": "m",
+    "src": "230 s. compile §2.1"
+   },
+   "tw": {
+    "name": "Work between two checks",
+    "v": 20,
+    "unit": "min",
+    "tag": "i",
+    "src": "a guess; with it the testbed's one check slot is fully used at about five lanes"
+   },
+   "checksPerRound": {
+    "name": "Checks in one round of work",
+    "v": 3,
+    "unit": "",
+    "tag": "i",
+    "src": "a guess; sessions ran the check several times per round"
+   },
+   "tv": {
+    "name": "Review time per round",
+    "v": 20,
+    "unit": "min",
+    "tag": "i",
+    "src": "a guess"
+   },
+   "r0": {
+    "name": "Rounds per slice, testbed",
+    "v": 2.8,
+    "unit": "",
+    "tag": "m",
+    "src": "nine gates took three rounds, two took two. sweep-cards.txt:132"
+   },
+   "rCap": {
+    "name": "Rounds per slice, with the contract",
+    "v": 2,
+    "unit": "",
+    "tag": "t",
+    "src": "the contract's cap. compile §3.3"
+   },
+   "mergeChecks0": {
+    "name": "Checks at a merge, testbed",
+    "v": 2,
+    "unit": "",
+    "tag": "m",
+    "src": "on the branch and again on merged main. sweep-cards.txt:130"
+   },
+   "tmRoot": {
+    "name": "Serial merge work, by the root",
+    "v": 30,
+    "unit": "min",
+    "tag": "i",
+    "src": "a guess: reading the diff and editing the board"
+   },
+   "tmQueue": {
+    "name": "Serial merge work, by the script",
+    "v": 3,
+    "unit": "min",
+    "tag": "i",
+    "src": "a guess"
+   },
+   "wq0": {
+    "name": "Token burn of a waiting lane, as a share of a working one",
+    "v": 0.3,
+    "unit": "",
+    "tag": "i",
+    "src": "a guess; waiting sessions 'sit idle holding context' (sweep-cards.txt:368)"
+   },
+   "ctxCap": {
+    "name": "Context factor under a ceiling",
+    "v": 0.72,
+    "unit": "",
+    "tag": "e",
+    "src": "sessions that never passed 367k averaged about 220k per call, against 306k over all slice sessions. A comparison across models, not a trial. phase1/token-baseline-2026-11.txt"
+   },
+   "budget": {
+    "name": "Token window, start value of the slider",
+    "v": 30,
+    "unit": "lane-hours",
+    "tag": "i",
+    "src": "a guess; how re-read tokens count against the limit is unknown"
+   },
+   "explore": {
+    "name": "Share of tokens re-read by calls that only read or search: what a library is exposed to",
+    "v": 0.436,
+    "unit": "",
+    "tag": "e",
+    "src": "8,701 of 15,921 calls only read or searched, and re-read 43.6 % of context tokens. An exposure, not a saving. compile §6"
+   },
+   "hitMax": {
+    "name": "Share of those lookup steps a full library spares",
+    "v": 0.25,
+    "unit": "",
+    "tag": "i",
+    "src": "a guess; nobody has measured it"
+   },
+   "khalf": {
+    "name": "Entries at which the hit rate is half its top",
+    "v": 20,
+    "unit": "",
+    "tag": "i",
+    "src": "a guess"
+   },
+   "entriesPerSlice": {
+    "name": "Entries written per merged slice",
+    "v": 4,
+    "unit": "",
+    "tag": "i",
+    "src": "a guess"
+   },
+   "callsPerSession": {
+    "name": "Calls per slice session",
+    "v": 519,
+    "unit": "",
+    "tag": "m",
+    "src": "9,342 calls over 18 slice sessions. phase1/token-baseline-2026-11.txt"
+   },
+   "answerTokens": {
+    "name": "Size of a library answer",
+    "v": 860,
+    "unit": "tokens",
+    "tag": "s",
+    "src": "the knowledge-store design's 2,000-character cap"
+   },
+   "tcCon2": {
+    "name": "Check time, container, two at once",
+    "v": 4.4,
+    "unit": "min",
+    "tag": "m",
+    "src": "266 to 267 s each. sweep-cards.txt:418"
+   },
+   "tcWin2": {
+    "name": "Check time, Windows, two at once",
+    "v": 7.3,
+    "unit": "min",
+    "tag": "m",
+    "src": "435 s each. sweep-cards.txt:287"
+   },
+   "lookupCost": {
+    "name": "Cost of looking things up, as a share of burn",
+    "v": 0.02,
+    "unit": "",
+    "tag": "i",
+    "src": "a guess: every lookup is a turn, and its answer stays in the context"
+   },
+   "staleShare": {
+    "name": "Share of entries that go stale with each merged slice",
+    "v": 0.03,
+    "unit": "",
+    "tag": "i",
+    "src": "a guess"
+   },
+   "margin": {
+    "name": "How far below the knee the planner runs",
+    "v": 0.8,
+    "unit": "",
+    "tag": "s",
+    "src": "a design choice: a real queue forms before a limit is fully used"
+   }
+  },
+  "switches": [
+   {
+    "key": "container",
+    "name": "Container run as the gate",
+    "effect": "the check takes 3.8 minutes, not 6.1",
+    "onByDefault": true
+   },
+   {
+    "key": "slot2",
+    "name": "A second check slot",
+    "effect": "two checks at once, each a little slower; waits on the memory measurement",
+    "onByDefault": false
+   },
+   {
+    "key": "contract",
+    "name": "Fix-round contract",
+    "effect": "two rounds at most, not 2.8",
+    "onByDefault": true
+   },
+   {
+    "key": "queue",
+    "name": "Gate workflow and merge queue",
+    "effect": "review leaves the root; a script merges with one check",
+    "onByDefault": true
+   },
+   {
+    "key": "ceiling",
+    "name": "Context ceiling",
+    "effect": "every session compacts near 367k",
+    "onByDefault": true
+   },
+   {
+    "key": "nowait",
+    "name": "Scheduler: two at a time, waits parked",
+    "effect": "no mass release; a waiting lane burns nothing",
+    "onByDefault": true
+   },
+   {
+    "key": "planner",
+    "name": "Planner sets the lanes",
+    "effect": "runs a little below the knee, whatever the slider says: nearly the same finish on fewer lane-hours",
+    "onByDefault": true
+   },
+   {
+    "key": "governor",
+    "name": "Governor",
+    "effect": "slows the lanes so the token window lasts",
+    "onByDefault": true
+   },
+   {
+    "key": "library",
+    "name": "The library (unproven)",
+    "effect": "sessions ask before they explore; each lookup costs a little. Watch the tokens figure",
+    "onByDefault": false
+   }
+  ],
+  "notes": [
+   "This is a model of how the machine behaves, not a forecast. Its output is illustrative.",
+   "Measured inputs: check times, rounds per slice, checks per merge, the slice count. Estimated from the record: the context factor and the fetched share. Guessed: work, review and merge minutes, checks per round, the size of the token window, the library's costs. The full list is under 'The equations'.",
+   "Which limit comes first depends on those guesses. Move the token window to see it change: at the size October's runs fitted ({{n:oct_window}}), tokens are the first limit at any lane count.",
+   "Stocks are continuous: 2.4 slices in review is an average, not a count. A smooth model shows no queue until a limit is fully used. A real queue forms earlier, which is why the planner runs below the knee. A plan counts as merged when less than half a slice is left.",
+   "In this model a lane past the knee only waits; it does not slow the others. So the planner does not make a run faster. It gets nearly the same finish with fewer sessions open, which is fewer tokens and less memory. A lane-hour of tokens is what one working testbed session burns in an hour.",
+   "In the model a stop and a slow-down cost the same time. In the record a stop cost more: a restart by hand, and every session released at once.",
+   "Review is one gate at a time in both runs. In the testbed the root also merges, so it cannot review while it merges.",
+   "Not in the model: the PC powering off, you being away, memory, the cost of a revert, a lane that fails. Those stop or slow every flow at once. The machine part and the scheduler are their answer.",
+   "The library lowers token burn only: the share of tokens that lookup-only calls re-read, times a guessed share of those steps it spares, less a small cost on every lookup. With few entries it costs more than it saves. Fewer lookup steps would also save time; that is not modelled."
+  ]
+ },
+ "plancheck": {
+  "declares": [
+   "The files it will write: its {{t:footprint|footprint}}.",
+   "What it reads from other slices: the interfaces it depends on.",
+   "The slices it needs merged first.",
+   "Any shared thing it takes: a migration number, a shared document, a port, a database.",
+   "Its risk (money, stock, access, import, restore) and its model.",
+   "Its size, in work rounds."
+  ],
+  "rules": [
+   "Refuse a slice that declares no footprint.",
+   "Build two graphs: who needs whom, and who collides with whom. Two slices collide if they write the same file, take the same shared thing, or one writes what the other reads without saying it needs it. The library adds files that have changed together before.",
+   "Lay the slices out for the shortest finish. The longest chain of needs, weighted by size, is the floor. A re-split is worth it only if it shortens that chain or fills an idle lane.",
+   "Work out the lanes worth running from the four limits and memory, and run a little below the knee.",
+   "Name what limits the plan, and the one change that would lift it.",
+   "Refuse a plan with two writers of one file, or more lanes than that.",
+   "While it runs: a slice starts as soon as what it needs is merged and nothing running collides with it. The lanes running are the lower of the planner's count and the governor's.",
+   "At the gate: a branch that changed files outside its footprint is refused until the plan is amended. After the merge, what it really touched goes to the library, so the next plan starts from better footprints."
+  ],
+  "plans": {
+   "base": [
+    {
+     "id": "cat",
+     "name": "Catalogue",
+     "writes": [
+      "catalogue/",
+      "migration 0010"
+     ],
+     "needs": []
+    },
+    {
+     "id": "acc",
+     "name": "Access",
+     "writes": [
+      "access/",
+      "settings.py"
+     ],
+     "needs": []
+    },
+    {
+     "id": "rst",
+     "name": "Restore",
+     "writes": [
+      "ops/restore/",
+      "settings.py"
+     ],
+     "needs": []
+    },
+    {
+     "id": "stk",
+     "name": "Stock",
+     "writes": [
+      "stock/",
+      "migration 0011"
+     ],
+     "needs": [
+      "cat"
+     ]
+    },
+    {
+     "id": "bil",
+     "name": "Billing",
+     "writes": [
+      "billing/",
+      "money.py"
+     ],
+     "needs": [
+      "cat"
+     ]
+    },
+    {
+     "id": "til",
+     "name": "Tills",
+     "writes": [
+      "tills/",
+      "money.py"
+     ],
+     "needs": [
+      "cat"
+     ]
+    },
+    {
+     "id": "imp",
+     "name": "Import",
+     "writes": [
+      "import/",
+      "migration 0012"
+     ],
+     "needs": [
+      "stk"
+     ]
+    },
+    {
+     "id": "rep",
+     "name": "Reports",
+     "writes": [
+      "reports/"
+     ],
+     "needs": [
+      "stk",
+      "bil",
+      "til"
+     ]
+    }
+   ],
+   "split": [
+    {
+     "id": "base",
+     "name": "Shared base",
+     "writes": [
+      "settings.py",
+      "money.py"
+     ],
+     "needs": []
+    },
+    {
+     "id": "cat",
+     "name": "Catalogue",
+     "writes": [
+      "catalogue/",
+      "migration 0010"
+     ],
+     "needs": []
+    },
+    {
+     "id": "acc",
+     "name": "Access",
+     "writes": [
+      "access/"
+     ],
+     "needs": [
+      "base"
+     ]
+    },
+    {
+     "id": "rst",
+     "name": "Restore",
+     "writes": [
+      "ops/restore/"
+     ],
+     "needs": [
+      "base"
+     ]
+    },
+    {
+     "id": "stk",
+     "name": "Stock",
+     "writes": [
+      "stock/",
+      "migration 0011"
+     ],
+     "needs": [
+      "cat"
+     ]
+    },
+    {
+     "id": "bil",
+     "name": "Billing",
+     "writes": [
+      "billing/"
+     ],
+     "needs": [
+      "cat",
+      "base"
+     ]
+    },
+    {
+     "id": "til",
+     "name": "Tills",
+     "writes": [
+      "tills/"
+     ],
+     "needs": [
+      "cat",
+      "base"
+     ]
+    },
+    {
+     "id": "imp",
+     "name": "Import",
+     "writes": [
+      "import/",
+      "migration 0012"
+     ],
+     "needs": [
+      "stk"
+     ]
+    },
+    {
+     "id": "rep",
+     "name": "Reports",
+     "writes": [
+      "reports/"
+     ],
+     "needs": [
+      "stk",
+      "bil",
+      "til"
+     ]
+    }
+   ]
+  },
+  "variants": [
+   {
+    "key": "naive",
+    "label": "As first written",
+    "plan": "base",
+    "check": false,
+    "text": "Slices are grouped only by what they need. Two pairs write the same file, shown in red. Nobody sees it until the merge. The testbed had no such check: for {{n:merge_breaks}} slices the first check on merged main failed, on hand edits to shared documents."
+   },
+   {
+    "key": "checked",
+    "label": "After the plan check",
+    "plan": "base",
+    "check": true,
+    "text": "The check reads the declared files. Slices that write the same file never run together. Nothing is left to collide, but the plan is now one wave longer."
+   },
+   {
+    "key": "split",
+    "label": "Re-split to widen it",
+    "plan": "split",
+    "check": true,
+    "text": "The check names why: two shared files. Pulling them into one small slice first removes the collisions and the extra wave. The re-split is worth it because it shortens the plan, not because a wave is wider."
+   }
+  ],
+  "sampleNote": "A made-up plan in the shape of the clinic app, to show what the check does. The check is a script over the plan file and spends no tokens.",
+  "capacityText": "One lane delivers a slice every cycle. More lanes multiply that until the lowest limit. With these numbers the testbed's first limit is the root, which reviewed and merged everything one at a time: about three lanes were worth running, and the build ran six to {{n:peak_sessions}}. In v2 the first limit is the review, then the check. A small token window puts tokens first at any lane count. Several of the times behind this chart are guesses, so read which limits exist and how the controllers move them, not the figures. The harness measures these rates, and the planner works this chart out again for every plan."
+ },
+ "library": {
+  "flow": {
+   "inflow": "written by the agent that solved it, when it solved it",
+   "s1": "Candidate",
+   "s1b": "waits for the reviewer",
+   "verify": "reviewer proves it",
+   "s2": "Valid",
+   "s2b": "answers lookups",
+   "drift": "its files change",
+   "s3": "Stale",
+   "s3b": "not trusted",
+   "reverify": "its check passes again",
+   "retire": "never passes again",
+   "s4": "A check",
+   "s4b": "lint, test or gate clause",
+   "promote": "seen three times: proposed as a check",
+   "lookup": "A lookup reads Valid entries only. A hit is used once its check says it applies. A miss is written down."
+  },
+  "kinds": [
+   {
+    "name": "What is true now",
+    "what": "Slices, verdicts, findings and decisions, each with the commit it became true at and the commit that replaced it. The board is a view of this."
+   },
+   {
+    "name": "What a change touches",
+    "what": "Files that import each other, tests that cover them, files that changed together, and what each slice declared against what it really touched."
+   },
+   {
+    "name": "Solved problems",
+    "what": "The knowledge-store design as it stands: symptom, cause, what failed, the fix, and a check with a control pair that proves the entry applies."
+   },
+   {
+    "name": "Measured rates",
+    "what": "Check time, waits, tokens per lane-hour by model, rounds per slice. The planner and the governor run on these."
+   }
+  ],
+  "evolves": [
+   {
+    "name": "Written at the moment of truth",
+    "what": "By the gate, the merge queue and the agent that solved the problem. Never by a model reading old text afterwards.",
+    "who": "The gate and merge scripts; the agent that solved a problem.",
+    "when": "At a verdict, at a merge, and at a solve that took an escalation or two failed tries."
+   },
+   {
+    "name": "Stale by code change",
+    "what": "An entry is tied to the files it depends on. When they change, it is not trusted until its check runs again. Never by age.",
+    "who": "The lookup command and the merge script.",
+    "when": "When a file an entry depends on no longer has the content it was proved against."
+   },
+   {
+    "name": "Lessons become checks",
+    "what": "An entry seen three times is proposed as a lint, a test or a gate clause. Once that lands, the entry retires and the defect stops arriving.",
+    "who": "The store's rule-of-three view proposes; you decide; a script lands the check.",
+    "when": "Three sightings of the same cause."
+   },
+   {
+    "name": "Misses are written down",
+    "what": "When a session solves what the library already held, the miss and its cause are recorded and the lookup keys are fixed.",
+    "who": "The solving agent's record step; the reviewer rules on it without seeing the first ruling.",
+    "when": "When a solve matches an entry that an earlier lookup did not return."
+   },
+   {
+    "name": "Rates replace guesses",
+    "what": "Every wave updates the measured rates and footprints, so each plan is laid out on better numbers than the last.",
+    "who": "The check, the merge queue and the transcript tally.",
+    "when": "After every check, every merge and every wave."
+   }
+  ],
+  "readers": [
+   {
+    "name": "The planner",
+    "what": "Footprints and rates, for waves and lanes."
+   },
+   {
+    "name": "A session, before it explores",
+    "what": "One command; an answer of at most {{n:answer_cap}}; a check that the entry applies."
+   },
+   {
+    "name": "The gate",
+    "what": "What a fix touches; the open findings."
+   },
+   {
+    "name": "The governor",
+    "what": "Token burn per lane, by model."
+   },
+   {
+    "name": "You",
+    "what": "The board, generated."
+   }
+  ],
+  "tables": [
+   {
+    "name": "journal",
+    "holds": "The truth: one unchangeable file per event, in git. The SQLite file is rebuilt from it at any time.",
+    "by": "every writer"
+   },
+   {
+    "name": "entry, handle, footprint_item",
+    "holds": "Solved problems, the keys that find them, and the files each one depends on.",
+    "by": "the solving agent; approved by the reviewer (knowledge-store design)"
+   },
+   {
+    "name": "state",
+    "holds": "Slice, verdict, finding, decision; valid from one commit until another.",
+    "by": "the gate and merge scripts"
+   },
+   {
+    "name": "edge",
+    "holds": "imports, covers, changed-together, declared, touched. One recursive query gives what a change touches.",
+    "by": "scripts over git and the check"
+   },
+   {
+    "name": "rate",
+    "holds": "A measured number, its scope and how many samples it rests on.",
+    "by": "the check, the merge queue, the transcript tally"
+   },
+   {
+    "name": "lookup",
+    "holds": "Who asked what, what came back, tokens returned, hit or miss.",
+    "by": "the lookup command"
+   }
+  ],
+  "honest": [
+   "Standing: unproven. Nothing like it has been tried: the testbed never tested an index or a graph. Its one context trial, a compaction adapter on another project, used {{n:ctx_plus}} tokens for the same recall. This library is asked, never pushed, and every lookup is counted.",
+   "What it could touch is estimated as two exposures, which overlap. {{n:fill_fetched}} of context is content fetched by reading. And {{n:step_calls}} of calls did nothing but read or search, re-reading {{n:step_tokens}} of all tokens. Neither is a saving and neither is a ceiling.",
+   "Where it could pay is across sessions, not inside one. Re-reading inside a window is only {{n:fill_repeat}}, so a cache of files already read saves almost nothing. Across windows the reading is concentrated: {{n:hot_half}} hold half the fetched tokens, and the paths read in five or more windows hold {{n:hot_73}}. So the form that could pay lasts across sessions and returns something shorter than the lines. Nothing has shown that a shorter digest can stand in for the lines. Whether the reading was needed at all is unmeasured: {{n:unedited}} went to files the window did not edit, which is not proof of waste.",
+   "Its first test spends no tokens: replay the recorded windows. Build an import-and-caller index at each window's start commit, count the lookup-only calls it would have answered, and check whether its list holds the files the window went on to edit. An index earns a live trial only if that replay says so. A refuter suggested pass marks of {{n:replay_bars}}; setting them is your decision. Files that changed together are the weak half, with only {{n:commits}} to learn from. The replay reads the clinic repository and the transcripts and writes nothing there.",
+   "Its larger worth may be elsewhere. The generated board replaces a {{n:board_kb}} document that sessions carry. And the measured rates are what let the planner and the governor work at all.",
+   "It builds on the knowledge-store design (PR #183), which already has the journal, the SQLite index, the lookup command and the proof step, and which stops for your yes after a free audit and again after a pilot. That design expects only {{n:ks_prior}} repeats in the record it would audit.",
+   "v2 departs from that design in three ways. Work state sits in sibling tables, not in the store, which that design says is not a defect register. Code edges are added, which it chose to skip; they stay only if the index replay passes. And a lookup before exploring is a new trigger; that design looks up on an error, an escalation or a diff.",
+   "That design's stop rule is carried over: {{n:ks_kill}}. Lookups stay on this PC, as in that design; only their totals go to the journal.",
+   "Its worth, in that design’s own terms: hit rate × (cost of solving again − cost of a hit) − miss rate × cost of a miss − cost of writing. None of those is measured yet."
+  ]
+ },
+ "tokens": {
+  "intro": [
+   "Nearly every token the build used was a re-read: {{n:total_tokens}} cache-read tokens in November. Whatever enters a session’s {{t:context|context}} is read again on every later call. So a piece of context costs its size times the calls still to come.",
+   "What fills that context is estimated from the transcripts. The start of every window is {{n:fill_start}}. The model's own earlier output, carried forward, is {{n:fill_own}}. What the session fetched by reading and searching is {{n:fill_fetched}}. Each method below attacks one of those three, or cuts the number of calls: {{n:step_calls}} of calls only read or searched."
+  ],
+  "fill": [
+   {
+    "key": "start",
+    "name": "The start of every window",
+    "pct": 29,
+    "label": "about 29 %",
+    "what": "System prompt, tool definitions, instructions; after a compaction, the summary."
+   },
+   {
+    "key": "own",
+    "name": "The model's own earlier output",
+    "pct": 32,
+    "label": "about 32 %",
+    "what": "Thinking, commands and code it wrote, carried forward."
+   },
+   {
+    "key": "fetched",
+    "name": "What the session fetched",
+    "pct": 27.5,
+    "label": "27 to 28.5 %",
+    "what": "Files read and search hits. The share an index or a library is exposed to."
+   },
+   {
+    "key": "other",
+    "name": "Everything else",
+    "pct": 11.5,
+    "label": "the rest",
+    "what": "Messages, test output and small items."
+   }
+  ],
+  "fillNote": "Shares of November's {{n:ctx_total}} context tokens, not of a bill: output tokens are left out. Estimates from the transcripts, checked by two refuters and an independent re-measurement, which put fetched content at {{n:fill_indep}}.",
+  "residencyNote": "A slice session made {{n:calls_per}} calls on record. Each route also costs one call, the same for all three, so that is left out. A compaction ends the re-reading early. A subagent in the testbed paid {{n:fixed_cost}} before any work.",
+  "methods": [
+   {
+    "name": "A context ceiling on every model",
+    "bucket": "own",
+    "how": "No call re-reads more than about 367k.",
+    "basis": "{{n:over400}} of tokens were in calls past 400k, all on Sonnet and Fable. Opus never passed {{n:opus_max}}: {{n:comp_367}} compactions came there.",
+    "status": "Trial. What a compaction loses is unmeasured."
+   },
+   {
+    "name": "Route by window as well as price",
+    "bucket": "own",
+    "how": "A cheaper model with a bigger window can cost more.",
+    "basis": "Slice calls on Sonnet read {{n:sonnet_read}} tokens; on Opus, {{n:opus_read}} in nearly twice the calls.",
+    "status": "A comparison across models, not a trial."
+   },
+   {
+    "name": "One phase per session",
+    "bucket": "own",
+    "how": "Each phase starts with a small context.",
+    "basis": "Late calls in a long session carry everything before them: {{n:calls_per}} calls per session.",
+    "status": "Design."
+   },
+   {
+    "name": "A small standing context",
+    "bucket": "start",
+    "how": "A generated board, a short brief, a short tool list.",
+    "basis": "The board is {{n:board_kb}}. Tool definitions are {{n:tools_cost}} of the {{n:fixed_cost}} each agent pays.",
+    "status": "Build, with a with-and-without test."
+   },
+   {
+    "name": "Ask, do not read",
+    "bucket": "fetched",
+    "how": "A library answer of at most {{n:answer_cap}} instead of files read into the session.",
+    "basis": "Two exposures, which overlap: {{n:fill_fetched}} of context is fetched content, and calls that only read or search re-read {{n:step_tokens}}. Inside one window re-reading is only {{n:fill_repeat}}, so the gain, if any, is across sessions.",
+    "status": "Unproven. A zero-token index replay first."
+   },
+   {
+    "name": "Results on disk",
+    "bucket": "own",
+    "how": "A report is a path and a summary; a verdict is a few fixed fields.",
+    "basis": "The root averaged {{n:root_ctx}} of context per call.",
+    "status": "Build."
+   },
+   {
+    "name": "No waiting inside a session",
+    "bucket": "calls",
+    "how": "A waiting slice is parked; the check runs in the background.",
+    "basis": "Median recorded wait {{n:wait_median}}; the longest {{n:wait_max}}.",
+    "status": "Build."
+   },
+   {
+    "name": "Fewer rounds",
+    "bucket": "calls",
+    "how": "Each round re-reads the session's context again.",
+    "basis": "{{n:rounds}} rounds per slice.",
+    "status": "Trial: the fix-round contract."
+   },
+   {
+    "name": "Scripts before agents",
+    "bucket": "calls",
+    "how": "The gate, the audit, the planner and the parser spend no tokens.",
+    "basis": "{{n:failed38}} practised ideas failed as prose.",
+    "status": "Build."
+   },
+   {
+    "name": "Lanes at the knee",
+    "bucket": "calls",
+    "how": "No lane runs that only waits.",
+    "basis": "Ten lanes at once lasted {{n:ten_lanes}}.",
+    "status": "Design: the plan check."
+   }
+  ],
+  "carry": {
+   "title": "A read costs by staying",
+   "inLabel": "Entered the windows, once",
+   "inText": "19M",
+   "in": 19,
+   "procLabel": "Processed, call after call",
+   "procText": "950M",
+   "proc": 950,
+   "text": "Fetched content entered the windows once as {{n:carry_in}} tokens. It was then processed {{n:carry_proc}} times, {{n:passes}} passes per token, because every later call reads it again. That is why keeping something out of a long session matters more than how big it is."
+  }
+ },
+ "answers": [
+  {
+   "id": "B05",
+   "name": "The PC powers off",
+   "part": "substrate",
+   "how": "The join of power-offs to activity, a logger, and no sleep on mains."
+  },
+  {
+   "id": "B10",
+   "name": "Nothing restarts after a reboot",
+   "part": "substrate",
+   "how": "A restart that needs no commands."
+  },
+  {
+   "id": "B11",
+   "name": "The work exists only on this PC",
+   "part": "substrate",
+   "how": "A nightly copy off the machine."
+  },
+  {
+   "id": "B19",
+   "name": "Nothing has run on a real host",
+   "part": "substrate",
+   "how": "A rehearsal on a rented host."
+  },
+  {
+   "id": "B03",
+   "name": "Everything stops when you are away",
+   "part": "scheduler",
+   "how": "A resume list; sessions released two at a time."
+  },
+  {
+   "id": "B15",
+   "name": "Worktrees and containers pile up",
+   "part": "scheduler",
+   "how": "A reaper that lists what is merged and clean."
+  },
+  {
+   "id": "B08",
+   "name": "Memory is short",
+   "part": "governor",
+   "how": "Lanes and slots set from measured memory."
+  },
+  {
+   "id": "B16",
+   "name": "Reports flow through the orchestrator",
+   "part": "governor",
+   "how": "Results on disk; a path and a summary come back."
+  },
+  {
+   "id": "B01",
+   "name": "Fixes that create new defects",
+   "part": "gate",
+   "how": "The fix-round contract breaks the fix spiral."
+  },
+  {
+   "id": "B02",
+   "name": "Gaps found only on the last day",
+   "part": "gate",
+   "how": "A clean-install walk inside every gate."
+  },
+  {
+   "id": "B06",
+   "name": "The check is slow on Windows",
+   "part": "gate",
+   "how": "The container run is the gate."
+  },
+  {
+   "id": "B07",
+   "name": "Checks queue behind each other",
+   "part": "gate",
+   "how": "Slots from one measured number; a fair queue; lanes at the knee."
+  },
+  {
+   "id": "B09",
+   "name": "One check hung",
+   "part": "gate",
+   "how": "A heartbeat that names the running test."
+  },
+  {
+   "id": "B12",
+   "name": "Session reports overstate",
+   "part": "gate",
+   "how": "A claims file, checked by a script."
+  },
+  {
+   "id": "B14",
+   "name": "You cannot see progress",
+   "part": "gate",
+   "how": "The check's heartbeat: waiting, running or stalled."
+  },
+  {
+   "id": "B18",
+   "name": "Tests ran only on Windows",
+   "part": "gate",
+   "how": "The container run is the gate."
+  },
+  {
+   "id": "B20",
+   "name": "The load test was not rerun",
+   "part": "gate",
+   "how": "A rerun on current main, then on the host."
+  },
+  {
+   "id": "B04",
+   "name": "One orchestrator is the only gate",
+   "part": "merge",
+   "how": "A gate workflow and a merge queue take the serial work from the root."
+  },
+  {
+   "id": "B13",
+   "name": "Shared documents have one writer",
+   "part": "merge",
+   "how": "A generated board, applied by the merge script."
+  },
+  {
+   "id": "B17",
+   "name": "Nobody reads the final commit",
+   "part": "merge",
+   "how": "No merge unless the verdict names the exact commit."
+  },
+  {
+   "id": "B21",
+   "name": "Minor findings pile up uncounted",
+   "part": "library",
+   "how": "Findings are records with a status, in 'what is true now'."
+  }
+ ],
+ "orchestration": {
+  "question": "Would the orchestration document then carry the parallel planning too?",
+  "answer": [
+   "Yes. The orchestration document is where the method lives, and today it has none of this. Its only parallel work is read-only discovery, five readers at a time. It puts off phase design, and it has no dependency graph, no footprint check, no lane arithmetic and no predicted speed-up.",
+   "The plan check belongs there as a new section after its second gate, with the lane arithmetic in its cost section and the machine's limits in its constraints section. Its read-only discovery fan-out stays as it is. The mechanism is defined once, here. The orchestration document carries the rule: no plan runs before it passes the check.",
+   "Three of its rules are really capacity facts that the planner should compute instead of state: fixed container names with one test database (that is one check slot), no two installs at once, and the top model alone on the risky areas. Migration numbers are a collision point it never names.",
+   "Nothing in that document was changed. It belongs to the ship plan's pull request, which this track does not edit. The section can be written when you say so."
+  ]
+ },
+ "order": [
+  {
+   "name": "The machine",
+   "builds": "The copy, the restart, the logger, the resume list. Phase 1, under way."
+  },
+  {
+   "name": "The check",
+   "builds": "The container run as the gate, slots from one measured number, the heartbeat. Its timings are the first measured rates."
+  },
+  {
+   "name": "The gate, the merge queue and the plan check",
+   "builds": "All scripts, no tokens. The same scripts write 'what is true now' and the rates, which is the first half of the library. The index replay runs here too, on the record."
+  },
+  {
+   "name": "First use and a real host",
+   "builds": "The clean-install walk and the rehearsal."
+  },
+  {
+   "name": "The governor and the rest of the library",
+   "builds": "The budget from measured rates and the context ceiling. Solved problems come last, through the knowledge store's own audit and pilot."
+  }
+ ],
+ "limits": [
+  "Which limit comes first depends on guessed times and on the size of the token window, which nobody knows. The charts show how the machine behaves, not how fast it will be.",
+  "The model leaves out the PC powering off, the owner being away, memory, the cost of a revert and a failing lane.",
+  "The library is unproven. The figures for what it could touch are exposures, not savings and not ceilings. No index or graph has been tried in the testbed.",
+  "The window-fill shares are estimates. They rest on context growth between calls; the path key is the last two path segments; the first run counted some heredoc writes as reads; output tokens are left out. How cache reads count against the plan’s limits is unknown.",
+  "The sample plan is made up. The testbed’s slices were never laid out with footprints, so there is no real plan to replay yet.",
+  "The library departs from the knowledge-store design in three places, listed in its section.",
+  "The orchestration document was read, not edited.",
+  "A refuter ran the model and checked the claims; what it found and what changed is in evidence/harness-v2-design/refute-architecture.md."
+ ],
+ "sources": [
+  "docs/program/HARNESS-BOTTLENECKS-2026-11.md and its evidence folder",
+  "docs/program/harness-v2/phase1/ (token baseline, compactions by model, power-off join)",
+  "docs/ORCHESTRATION-DESIGN-2026-10.md (read; summary in evidence/harness-v2-design/read/orchestration-doc.md)",
+  "KNOWLEDGE-STORE-DESIGN-2026-11.md on pull request #183 (read; summary in evidence/harness-v2-design/read/knowledge-store-design.md)",
+  "docs/program/harness-v2/plan.html: the 21 problems, the five phases and your decisions"
+ ]
+}

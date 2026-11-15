@@ -1,0 +1,24 @@
+// Lists RSS items matching a keyword, with enclosure and podcast:transcript tags.
+// Usage: node rss-items.mjs <feed.xml> [keyword-regex]
+import fs from 'node:fs';
+const [feedPath, kw] = process.argv.slice(2);
+const xml = fs.readFileSync(feedPath, 'utf8');
+const re = kw ? new RegExp(kw, 'i') : null;
+const items = xml.split(/<item[\s>]/).slice(1);
+const pick = (s, tag) => { const m = s.match(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>')); return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : ''; };
+let n = 0;
+for (const it of items) {
+  const title = pick(it, 'title');
+  const desc = pick(it, 'description') + ' ' + pick(it, 'itunes:summary') + ' ' + pick(it, 'content:encoded');
+  if (re && !re.test(title) && !re.test(desc)) continue;
+  n++;
+  const enc = it.match(/<enclosure[^>]*url="([^"]+)"[^>]*>/);
+  const len = it.match(/<enclosure[^>]*length="(\d+)"/);
+  const trs = [...it.matchAll(/<podcast:transcript[^>]*url="([^"]+)"[^>]*type="([^"]+)"[^>]*>/g)].map(m => m[2] + ' ' + m[1]);
+  const trs2 = [...it.matchAll(/<podcast:transcript[^>]*type="([^"]+)"[^>]*url="([^"]+)"[^>]*>/g)].map(m => m[1] + ' ' + m[2]);
+  console.log('TITLE: ' + title);
+  console.log('  date: ' + pick(it, 'pubDate') + ' | episode: ' + pick(it, 'itunes:episode') + ' | duration: ' + pick(it, 'itunes:duration'));
+  console.log('  enclosure: ' + (enc ? enc[1] : '-') + ' (' + (len ? Math.round(len[1] / 1048576) + ' MB' : '?') + ')');
+  console.log('  transcripts: ' + ([...trs, ...trs2].join(' ; ') || 'none'));
+}
+console.error('items total ' + items.length + ', matched ' + n + ', feed has podcast:transcript tags: ' + (xml.match(/<podcast:transcript/g) || []).length);

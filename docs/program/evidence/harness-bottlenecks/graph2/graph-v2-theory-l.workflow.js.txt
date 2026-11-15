@@ -1,0 +1,275 @@
+export const meta = {
+  name: 'graph-v2-theory-l',
+  description: 'Derive the graph for this use case from the documented theory: mine the real use cases, audit the current graph, research six bodies of graph theory, verify, design graph v2 with every choice traced to its source, then refute the design',
+  phases: [
+    { title: 'Ground', detail: 'what agents actually look up in this repository, and an honest inventory of the current graph: what comes from the literature and what was improvised' },
+    { title: 'Theory', detail: 'six research lanes: building code graphs, knowledge-graph modelling, ranking as link prediction, token-budgeted selection and agent interfaces, time and incremental maintenance, storage and indexing', model: 'sonnet' },
+    { title: 'Verify', detail: 'the decision-relevant claims of each lane re-read at the source' },
+    { title: 'Design', detail: 'graph v2: each component traced to its theory, with rejected alternatives, expected effect, the tuning-data test that decides it, and what must be installed' },
+    { title: 'Refute', detail: 'attack on the design: over-engineering, scale mismatch, weak evidence, overfitting, anything that would flatter it' },
+  ],
+}
+
+const SP = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const BUILD = SP + '/build'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const EVID = REPO + '/docs/program/evidence/harness-bottlenecks/graph2'
+const OUT = EVID + '/graph-v2'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const S = { type: 'string' }
+const SA = { type: 'array', items: S }
+const LANE_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: S,
+    findings: { type: 'array', items: { type: 'object', properties: { claim: S, evidence: S, source: S, strength: S, applies_at_this_size: S }, required: ['claim', 'evidence', 'source', 'strength'] } },
+    recommendations: { type: 'array', items: { type: 'object', properties: { what: S, from_theory: S, replaces_in_current_graph: S, expected_effect: S, how_to_test_on_tuning_data: S, needs_install: S, verdict: S }, required: ['what', 'from_theory', 'expected_effect', 'how_to_test_on_tuning_data', 'needs_install', 'verdict'] } },
+    earlier_research_missed: SA, could_not_verify: SA, notes_file: S,
+  },
+  required: ['summary', 'findings', 'recommendations', 'earlier_research_missed', 'could_not_verify', 'notes_file'],
+}
+const USE_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: S,
+    competency_questions: { type: 'array', items: { type: 'object', properties: { question_form: S, example: S, how_often: S, what_the_agent_did: S, tokens_it_cost: S, what_a_graph_would_need: S }, required: ['question_form', 'example', 'how_often', 'what_the_agent_did', 'what_a_graph_would_need'] } },
+    what_is_not_a_graph_question: SA, counts: SA, could_not_measure: SA, notes_file: S,
+  },
+  required: ['summary', 'competency_questions', 'what_is_not_a_graph_question', 'counts', 'could_not_measure', 'notes_file'],
+}
+const AUDIT_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: S,
+    parts: { type: 'array', items: { type: 'object', properties: { part: S, how_it_works_now: S, origin: S, measured_quality: S, known_gap: S }, required: ['part', 'how_it_works_now', 'origin', 'measured_quality', 'known_gap'] } },
+    from_literature: SA, improvised: SA, measured_gaps: SA, notes_file: S,
+  },
+  required: ['summary', 'parts', 'from_literature', 'improvised', 'measured_gaps', 'notes_file'],
+}
+const VERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: S,
+    checks: { type: 'array', items: { type: 'object', properties: { lane: S, claim: S, result: S, corrected: S, source: S }, required: ['lane', 'claim', 'result', 'corrected', 'source'] } },
+    recommendations_to_drop_or_weaken: SA, feasibility_problems: SA, notes_file: S,
+  },
+  required: ['summary', 'checks', 'recommendations_to_drop_or_weaken', 'feasibility_problems', 'notes_file'],
+}
+const DESIGN_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: S,
+    competency_questions_served: SA,
+    components: { type: 'array', items: { type: 'object', properties: { component: S, layer: S, what_it_is: S, from_theory: S, replaces_in_v1: S, rejected_alternatives: S, expected_effect: S, tuning_test_that_decides_it: S, build_cost: S, installs: S, tier: S }, required: ['component', 'layer', 'what_it_is', 'from_theory', 'replaces_in_v1', 'rejected_alternatives', 'expected_effect', 'tuning_test_that_decides_it', 'installs', 'tier'] } },
+    not_worth_it_at_this_size: SA,
+    agent_tool: S, validation_plan: SA, build_order: SA,
+    owner_decisions: { type: 'array', items: { type: 'object', properties: { decision: S, options: S, recommendation: S, cost: S }, required: ['decision', 'options', 'recommendation'] } },
+    owner_words_covered: SA, design_file: S,
+  },
+  required: ['summary', 'competency_questions_served', 'components', 'not_worth_it_at_this_size', 'agent_tool', 'validation_plan', 'build_order', 'owner_decisions', 'owner_words_covered', 'design_file'],
+}
+const REFUTE_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: S,
+    claims: { type: 'array', items: { type: 'object', properties: { claim: S, result: S, detail: S }, required: ['claim', 'result', 'detail'] } },
+    components_to_cut: SA, components_missing: SA, must_not_claim: SA, notes_file: S,
+  },
+  required: ['verdict', 'claims', 'components_to_cut', 'components_missing', 'must_not_claim', 'notes_file'],
+}
+
+const OWNER = [
+  'THE OWNER, IN HIS WORDS (he has built a knowledge-graph project of his own with graph embeddings and a graph database, so he knows this field):',
+  '- "im having difficulty understanding how graph database and spacial and temporal topology used with caching concepts and invalidation all that is intensely documented in cs literature would not reduce token usage given that we have a lot of files and documents ... its basically ensuring we dont have to search through or fetch unnecessary context into the chat while also fetching it in small small time very fast?? wouldnt cache databases help with this??"',
+  '- "wouldnt graph database to store the semantic relations and actual connections that will or wont break with changes give a lot of info in small size compared to relational and then using caching on top of it so we dont traverse unnecessary nodes?"',
+  '- "the type of graph we make makes a huge difference including the algorithms we use on it we dont get anything for free, have you added optimizations so its catered to this repo enough ... I think you did not work on the graph properly for it to even be used, First research on the best advanced optimized way of making it and then start testing it"',
+  '- "are we using strictly graphs or knowledge graphs or TKGs i suspect you are still being narrow minded with the architecture you have flaws in your reasoning and especially your assumptions"',
+  '- Now: "we previously discussed, if you are simply [making] a graph on your own and not from the extensive documented theory on graph theory and working and building graphs to build an optimal for our usecase setup, we are significantly handicapping ourselves so that disappoints me from your side".',
+].join('\n')
+
+const STATE = [
+  'WHERE THINGS STAND. A code graph for one repository was built and tested (call it v1). The repository is a workshop management system: a FastAPI backend (Python 3.12, SQLAlchemy, Alembic), a React web app and a React Native mobile app (TypeScript, TSX, JavaScript), about 480 code files, about 230 commits of history, organised as vertical slices, with an invariants document and handoff documents that agents re-read. v1 is a property graph extracted by parsers (Python ast, the TypeScript compiler API) and from git history: about 5,400 nodes and 16,500 typed edges at the frozen commit, 37 edge kinds including cross-runtime URL-to-route links, table reads and writes, settings, document citations and changed-together history. Its retrieval was k-hop reach, ordered metapaths, personalised PageRank, degree-normalised spreading, a few fused variants and a Louvain prior, tuned by a sweep of 60 hand-chosen configurations. Result on held-out commits: it beat a scripted search by 0.076 recall at equal answer size, only for changes starting in the mobile app, and tied a plain changed-together list elsewhere; three storage engines gave the same answers. A replay showed that tracking the facts an answer rests on lets a cache serve repeat lookups without stale answers. No agent has used the graph yet: an agent test is planned and is waiting for a graph worth testing.',
+  'The first research round (in ' + EVID + '/research/: lane-*.txt, verify.txt, critic.txt) read the literature on code graphs for coding agents and on engines. It did NOT treat: ranking as link prediction or learning to rank, similarity measures on heterogeneous graphs, knowledge-graph embeddings or graph neural models, temporal graph models, token-budgeted subgraph selection, schema design from competency questions, hypergraph or n-ary modelling, or the literature on how a language model should traverse a graph. It ruled out trained graph models in one line. The second round (' + EVID + '/widen/) covered graphify, temporal knowledge graphs for memory, summary-based graph retrieval, agents with graph tools, and evaluation design. Read both before your own lane and build on them: say what they got wrong or skipped in your area.',
+].join('\n')
+
+function common(lane, notes) {
+  return [
+    'You are one agent in a research and design pass whose purpose is to stop improvising. The owner of a software project is right that a graph built by intuition handicaps the idea it is meant to test. The goal: a graph for THIS use case whose every design choice comes from the documented theory, with the alternatives named and the reason for each choice written down, and with a test on tuning data that can show the choice was wrong.',
+    '',
+    'YOUR LANE: ' + lane,
+    'YOUR NOTES FILE: ' + notes,
+    '',
+    OWNER,
+    '',
+    STATE,
+    '',
+    'THE USE CASE. Coding agents (language models with search and read tools) work on this repository. They spend most of their tokens re-reading context. The graph should let an agent fetch a small, exact piece of context instead of searching and reading files: what is connected to this code, what breaks if it changes, which rule constrains it and why, where the other half of a contract lives, what was already concluded about it and whether that still holds. Success is measured in an agent total tokens for the same correct work, never in graph elegance.',
+    '',
+    'RULES',
+    '1. Read-only on the repository at ' + REPO + ' and on ' + BUILD + ' ; you write only your notes file under ' + OUT + '/ . Never commit, push, check out or switch branch. Install nothing and download no package, model or dataset; reading papers, documentation and source code on the web is what this lane is for.',
+    '2. PRIVACY: never put the project name, its file paths, identifiers, code or any detail of it into a web search, URL or request to an outside service. Search for the public theory, papers and tools by their own names only.',
+    '3. Read the primary source (the paper, the official documentation, the source code), not a blog summary of it. Every claim carries its source and how the effect was measured: on what data, against what baseline, at what scale. Mark each strong (independent, controlled, replicated), medium, or weak (single study, self-reported, toy scale). Say plainly what you could not open or verify. Do not fill gaps from memory.',
+    '4. Be exact about scale. This graph has thousands of nodes, not billions; the history has hundreds of commits, not millions. For every technique say whether its benefit exists at this size, and what would change at 10 or 100 times the size. A technique that only pays off at web scale is reported as such, not recommended.',
+    '5. Every recommendation is concrete: what to build, which theory it comes from, what it replaces in v1, what effect to expect and why, the test on tuning data that would show it does not help, and what would have to be installed (name, source, approximate size, whether it runs offline on Linux in a container). The owner decides on installs: list them, do not assume them.',
+    '6. Report against your own enthusiasm: where the literature shows a technique failing, being matched by a simple baseline, or helping only weak models, say so with the numbers.',
+    '7. Host quirks: create files with the Write tool; python is not on PATH (use ' + PY + ' -I); Node 24 is on PATH.',
+    '8. Write for a reader with no context: plain complete sentences; define a term the first time you use it; every number with its unit, baseline and source.',
+    '',
+  ].join('\n')
+}
+
+// ---------------------------------------------------------------- Ground
+const pUse = common(
+  'THE REAL USE CASES. Find out, from recorded sessions, what agents working on this repository actually look up, so the graph is designed for the questions that are asked and not for the questions a graph happens to answer.',
+  OUT + '/use-cases.md'
+) + [
+  'Session transcripts are JSON-lines files under C:/Users/User/.claude/projects/ in every folder whose name contains EMS-workshop1 (a main checkout and worktrees), with subagent transcripts in subfolders. About 1,400 transcripts. Most are document and research work; the product-code work is recent (the ship-plan sessions of 2026-11-13 and their agents). Everything stays on this machine: write scripts, do not paste transcript content anywhere outside.',
+  'DO: (1) Separate product-code work from program and document work. (2) For product-code work, reconstruct lookup episodes: a run of search and read calls that ends in an edit, an answer or a decision. For each episode record what the agent was trying to find out, the calls it made, the tokens of tool output it pulled into its window (and how many later calls carried them), and whether it found it. (3) Group the episodes into question forms in plain words (for example: where is X defined; who calls X; what does this endpoint return and who reads it; which tests cover X; which rule in the invariants document applies here; what changed here recently and why; is this document still true). Count each form, its cost in tokens, and how often the agent went wrong or read far more than it used. (4) Do the same for program and document work, kept apart: what do agents look up in the design and planning documents. (5) Say which question forms a graph of relations could answer, what nodes, relations and properties each needs, and which are not graph questions at all (reading prose for understanding, checking a number, following an instruction).',
+  'Return the competency questions (the term from ontology engineering: the questions a knowledge model must be able to answer) ranked by how many tokens they cost today, with counts and real examples reduced to their form (no secrets, no long excerpts).',
+].join('\n')
+
+const pAudit = common(
+  'AUDIT OF THE CURRENT GRAPH (v1). Produce the honest inventory: for every part of v1, how it works, where the idea came from (a named technique from the literature, or improvised), how good it measurably is, and the known gap.',
+  OUT + '/v1-audit.md'
+) + [
+  'Read the extractor code (' + BUILD + '/facts/: py_extract.py, ts_extract.js, docs_extract.js, git_extract.js, build_facts.js and facts/NOTES.md), the shared specification of traversal, ranking, packing and questions (' + BUILD + '/arms/common/SPEC.md, and the reference implementation in arms/reference/), the facts of the frozen commit (' + BUILD + '/facts/cache/a31924a3818f4ac94b695906d107c72c912792b2/), the tuning tables as summarised in ' + EVID + '/build-c/ and build-f/result.json, and the audits in ' + EVID + '/build-a/ and build-b/.',
+  'COVER, part by part: node kinds and what has no node (the held-out scoring found 11.2 % of reference definitions had no node: variables, object members, schema fields); how each edge kind is found and how names are resolved to definitions (by type information or by name matching; what is guessed), with the measured precision and recall where a measurement exists and "not measured" where it does not; identity of a thing across renames and across commits; how history edges are built (support, confidence, recency) and against which published method; the traversal modes, the hub cuts, each ranking and how its parameters were chosen; how the 60 configurations were picked and what was never tried; the packer (how items are chosen for a token budget); the per-kind question programs; the cache replay dependency recording. For each: origin = a named published technique with its source, or improvised, or a simplified form of a published technique (say what was simplified).',
+  'Then measure three things directly on the frozen-commit facts and the tuning tasks (no reference answers needed for the first two): how many call edges point to a definition chosen by name alone where two or more candidates exist; what share of files, definitions and edges are in the largest connected component and how skewed the degree distribution is (which nodes are hubs); and, from the tuning tables only, how much each ranking mode differed from plain breadth-first order.',
+  'Return the two lists the owner asked for in effect: what in v1 rests on the literature, and what was improvised.',
+].join('\n')
+
+// ---------------------------------------------------------------- Theory lanes
+const pR1 = common(
+  'BUILDING THE GRAPH FROM CODE. The theory and tools for extracting an accurate graph from source code, for Python and TypeScript/JavaScript.',
+  OUT + '/lane-construction.md'
+) + [
+  'COVER: compiler-accurate symbol indexing and its schemas (SCIP and LSIF, Kythe, Glean; language servers such as Pyright and the TypeScript server as a source of resolved references); call-graph construction theory and what precision and recall each method reaches on real code (class hierarchy analysis, rapid type analysis, points-to based; PyCG and its successors for Python; approximate call graphs and Jelly for JavaScript and TypeScript; what dynamic dispatch, decorators, dependency injection, higher-order functions and framework magic do to recall); code property graphs (abstract syntax tree, control flow and program dependence in one graph; Joern) and program slicing; change impact analysis and regression test selection as the theory of "what breaks if this changes" (static file and class level selection such as Ekstazi-style, call-graph based, hybrid), with their measured safety and precision; framework-aware extraction (web routes, object-relational mapping tables and columns, dependency injection, React component and navigation trees); cross-language links through an interface description (an OpenAPI schema generated by the backend, typed clients) so that a response field is linked to the client code that reads it; data-flow and field-level edges; what granularity (file, definition, statement, field) pays off for an agent.',
+  'ANSWER: which extraction method gives the most accurate "who uses this" and "what does this reach" for this stack; what v1 (a syntactic parser pass with name matching for Python and the compiler API for TypeScript) loses against it, in measured terms where the literature gives them; what a field-level contract edge across the runtimes would take; which tools run offline in a Linux container and their size and licence.',
+].join('\n')
+
+const pR2 = common(
+  'MODELLING THE KNOWLEDGE. The theory of designing a knowledge graph: what the nodes, relations and properties should be, and how identity and quality are handled.',
+  OUT + '/lane-modelling.md'
+) + [
+  'COVER: ontology engineering from competency questions (Gruninger and Fox; NeOn; "Ontology Development 101"), and how a schema is validated against them; property graphs against RDF and RDF-star, and when n-ary relations, reification or hypergraphs are the right model (a commit that touches several files; a route with its method, path, handler and callers; a rule that constrains several places); heterogeneous information networks and the theory of metapaths; existing schemas for software knowledge (Kythe graph schema, the SCIP symbol grammar, software-engineering ontologies such as SEON and CodeOntology, the schemas of published code knowledge graphs for agents) and what can be reused; entity resolution and stable identity over time (renames, moves, splits) and how version-control research tracks the origin of code; knowledge-graph quality (accuracy, completeness, consistency, timeliness) and how each is measured; how documents and their claims are modelled against code (a rule and the code that implements it; a decision and its reason; provenance of every statement); confidence and evidence on edges.',
+  'ANSWER: a method for deriving the schema of graph v2 from a list of competency questions and validating it; where a hyperedge or an n-ary node is the right model in this repository and what a pairwise edge loses; how identity over time should be handled; what the meaning layer (rules, decisions, reasons, linked to code) should look like as a model, independent of how it is extracted.',
+].join('\n')
+
+const pR3 = common(
+  'RANKING AS LINK PREDICTION. v1 ranked candidates with hand-chosen traversals and a sweep of 60 configurations. The theory says that "which other nodes belong with this one" is link prediction and recommendation on a heterogeneous, time-stamped graph. Survey it and say what the principled ranker for this graph is.',
+  OUT + '/lane-ranking.md'
+) + [
+  'COVER: neighbourhood and path heuristics (common neighbours, Adamic-Adar, resource allocation, Katz, rooted PageRank, SimRank) and their heterogeneous forms (PathSim, HeteSim, metapath counts); the path ranking algorithm and learning to rank over path features; rule mining on knowledge graphs (AMIE, AnyBURL) and temporal rules (TLogic); knowledge-graph embeddings (TransE, RotatE, ComplEx and successors) and graph neural models for heterogeneous graphs; temporal link prediction and temporal knowledge-graph forecasting (models that predict the next interaction from an event history); and the software-engineering literature that predicts which files change together (association rules as in ROSE, targeted association rule mining, evolutionary coupling, and recent learned predictors), with their reported precision and recall and the size of history they needed. For each family: the evidence on SMALL graphs and SHORT histories, where simple heuristics are known to match or beat learned models, and the published comparisons that show it.',
+  'ANSWER: (1) Given about 5,000 nodes, 16,000 typed edges and about 140 usable commits (65 for tuning), which ranker is principled and feasible: say exactly which features, which model, how it is trained and validated without leaking the future (rolling-origin evaluation), and how overfitting is detected. (2) Which heuristics should be features. (3) Whether embeddings or neural models can be justified at this size, with the evidence either way; the owner has trained rotation-based knowledge-graph embeddings himself, so explain precisely when they help and when a path-feature model beats them. (4) How "what will break" differs from "what changes together" and which ground truth each needs. (5) What can be built with no install (plain code) and what needs a library.',
+].join('\n')
+
+const pR4 = common(
+  'SMALL ANSWERS, AND HOW A MODEL SHOULD USE A GRAPH. Two bodies of work: choosing a subgraph that fits a token budget, and the interface through which a language model queries a graph.',
+  OUT + '/lane-selection-interface.md'
+) + [
+  'COVER, selection: subgraph retrieval under a size budget for language models (prize-collecting Steiner tree as in G-Retriever; other budgeted subgraph methods); budgeted maximum coverage, submodular selection and knapsack formulations with their guarantees; diversity and redundancy control (maximal marginal relevance); graph summarisation and hierarchy (supernodes and quotient graphs, k-core and k-truss decompositions, hierarchical community detection such as Leiden and nested block models) as a way to answer at the right level of detail; what order and format of graph facts a model reads best (triples, adjacency lists, trees, natural-language sentences) with measured effects on accuracy and tokens.',
+  'COVER, interface: how a model traverses a graph step by step (Think-on-Graph, Reasoning on Graphs, StructGPT, Graph Chain-of-Thought, knowledge-graph agents) and what their ablations say about the set of operations, pruning and beam width; the tool designs of code-graph agents (LocAgent search, traverse and retrieve tools with their output format; RepoGraph ego-graphs; CodexGraph; Aider repository map; later systems) with their measured effect on tokens, calls and success; whether a model should write a query language, call a few fixed tools, or be handed a prepared subgraph; how tool descriptions and output caps should be designed given that every tool definition is re-read on every call; what makes a model actually call the tool.',
+  'ANSWER: the principled way to turn a ranked candidate set into the smallest sufficient answer for a token budget (v1 simply took items in rank order until the budget was full, and every answer filled its budget); and the tool interface an agent should get for this graph: the operations, their arguments, their output format and caps, each tied to the published design and evidence it comes from.',
+].join('\n')
+
+const pR5 = common(
+  'TIME, CACHED CONCLUSIONS AND INVALIDATION. The owner asked from the first day about temporal structure, caching and invalidation. Find the documented theory that covers it and say what the principled design is.',
+  OUT + '/lane-time-incremental.md'
+) + [
+  'COVER: temporal graph models (interval-stamped edges, time-respecting paths, snapshots against deltas, bitemporal modelling with valid time and transaction time) and versioned graph storage; temporal knowledge graphs as used for memory (the widen lane ' + EVID + '/widen/lane-temporal.md already covers the products: go to the theory under them); incremental view maintenance for recursive queries (the counting and delete-and-rederive algorithms, differential dataflow, DBSP) and incremental Datalog engines; Datalog as the query language of code analysis (CodeQL, Souffle, Glean with its query language) and why code-analysis systems chose it; provenance of query answers (why-provenance, provenance semirings) as the formal version of "the facts this answer rests on"; negation and non-monotonic queries (an answer that says "nothing else matches") and how incremental maintenance handles them; truth maintenance systems (justification-based and assumption-based) as the theory of beliefs that are retracted when their premises change; incremental computation and build systems (self-adjusting computation, Adapton, Salsa, Skyframe: dependency recording, early cutoff, verifying traces). The cache replay already done here (' + EVID + '/widen/k0/NOTES.md and AUDIT.md) hand-built dependency sets with "nothing else matches" patterns: say exactly which published algorithm each part corresponds to, what the published version does that the hand-built one does not, and what guarantees it gives.',
+  'ANSWER: (1) the principled architecture for "derived answers kept correct as the code changes": base facts, rules, materialised answers, provenance, incremental maintenance; whether a Datalog engine is the right implementation at this size or whether recorded dependencies with early cutoff are equivalent here; (2) how a conclusion made by a language model (which read some facts and some text and reasoned) fits that architecture: what its premises are, how they are recorded, when it becomes suspect, and what the literature says about re-checking it; (3) what a temporal model adds for an agent that resumes work ("what changed near this since I last looked") and the cheapest sound way to provide it; (4) what must be installed for each option and what can be built in plain code.',
+].join('\n')
+
+const pR6 = common(
+  'STORAGE, INDEXING AND LOCALITY. The owner asked about a graph database, spatial topology, small size and very fast fetches. Find what the theory of graph storage and indexing says, and be exact about the scale at which each idea matters.',
+  OUT + '/lane-storage.md'
+) + [
+  'COVER: physical designs for adjacency (index-free adjacency, compressed sparse rows, adjacency lists in a relational table with indexes) and what the measured differences are by graph size; reachability and distance indexes (transitive closure, two-hop labels and pruned landmark labelling, GRAIL and related interval labels) and when they beat a plain traversal; labelling schemes for hierarchies (interval or prefix labels so that "is inside" and "is an ancestor of" are constant-time) as the concrete form of spatial or containment topology; graph reordering and compression for locality; materialised views and caching of traversals; the published benchmarks comparing graph databases and relational engines on traversal workloads and what they show at small scale. The timing already measured here (' + EVID + '/build-f/engines_checked.json: three engines on graphs of 2,450 and 5,464 nodes, every query between 0.3 ms and 270 ms, one model step about 6.6 s) is your baseline: do not re-argue it, explain it with the theory.',
+  'ANSWER: (1) at this size, which of these ideas changes anything an agent would notice, in tokens or in seconds, and which do not: say it plainly, including if the answer is "none of the speed ideas"; (2) at what graph size each begins to matter (give the crossover the literature supports), since the owner intends more repositories later; (3) what "spatial topology" can mean concretely for code (containment hierarchy, slices and runtimes, cross-runtime links, closeness in the call or import structure) and which representation serves each; (4) whether the storage choice affects the SIZE OF AN ANSWER in tokens at all, or only the size on disk; (5) the one or two storage decisions that are worth making deliberately now.',
+].join('\n')
+
+// ---------------------------------------------------------------- Verify
+function withLanes(obj) { return ['THE LANES (structured summaries; the full notes are in ' + OUT + '/, read them):', JSON.stringify(obj, null, 1), ''].join('\n') }
+
+const pVerify = (which, lanes) => common(
+  'VERIFIER (' + which + '). Re-read at the source the claims that will decide the design, and correct them.',
+  OUT + '/verify-' + which + '.md'
+) + withLanes(lanes) + [
+  'For each lane given to you, take the ten claims that matter most to a design decision (the ones behind a recommendation with verdict "adopt" or "test", and any surprising number). Open the primary source for each and check: does the source say this; on what data, against what baseline, at what scale; is the effect size quoted correctly; does it carry over to a graph of a few thousand nodes and a history of a few hundred commits; is the tool or library real, maintained, and able to run offline in a Linux container for Python 3.12 and current TypeScript. Mark each "confirmed", "partly" (give the corrected statement) or "not supported".',
+  'Then list the recommendations that should be dropped or weakened because their evidence is weak, their scale is wrong or a simple baseline is known to match them, and every feasibility problem you found. Default to "partly" when you cannot open the source.',
+].join('\n')
+
+// ---------------------------------------------------------------- Design
+const pDesign = (ground, lanes, verifs) => common(
+  'GRAPH V2 DESIGN. Write the design of the graph for this use case, derived from the theory, so that nothing in it is improvised.',
+  OUT + '/DESIGN.md'
+) + [
+  'THE GROUND (what agents really ask, and what v1 is):', JSON.stringify(ground, null, 1), '',
+  withLanes(lanes),
+  'THE VERIFIERS (corrections; they override the lanes):', JSON.stringify(verifs, null, 1), '',
+  'WRITE the design in this order, each part short and exact:',
+  '1. THE COMPETENCY QUESTIONS the graph must answer, taken from the recorded use (ranked by what they cost today), not from what a graph can do. Mark the ones that are not graph questions and are left to reading.',
+  '2. THE MODEL: node kinds, relation kinds, properties, where an n-ary or hyper relation is used, identity over time, confidence and evidence; each derived from a competency question, with the modelling theory it follows.',
+  '3. CONSTRUCTION: how each relation is extracted, with which method and tool, and the accuracy to expect; what replaces name matching.',
+  '4. DERIVED FACTS, TIME AND INVALIDATION: base facts, rules, materialised answers, provenance, incremental maintenance; where a conclusion made by a model sits and how it is kept honest.',
+  '5. RANKING: the principled ranker, its features, its training and validation without leaking the future, and how it is compared with v1 and with the plain changed-together list.',
+  '6. SELECTION: how the smallest sufficient answer for a token budget is chosen.',
+  '7. THE AGENT TOOL: operations, arguments, output format and caps, the description text budget; each tied to its published source.',
+  '8. STORAGE: the deliberate choices, and what is not worth doing at this size.',
+  'For EVERY component give: the theory and source it comes from; what it replaces in v1; the alternatives rejected and why; the expected effect and why; the test on TUNING data that decides whether it stays (an ablation with a stated threshold: a component that does not beat the simpler form on tuning data is cut); the build cost; what must be installed (name, source, size, offline or not); and a tier: tier 0 = plain code, no install, can start now; tier 1 = needs an install the owner must approve; tier 2 = only pays off at a larger scale, not built now.',
+  'ALSO WRITE: the list "not worth it at this size" with the reason and the scale at which it would be; the validation plan (only tuning data and rolling-origin splits: the 75 held-out commits of the finished test are spent and may be used only as a final descriptive check, declared as such; fresh commits after the frozen commit are few); the build order; the decisions that are the owner (installs, each with size and source; any step that sends content to a model; the order against other work); and a table of the owner own words against the component that answers each, with no gap left unnamed.',
+  'Be honest about the ceiling: by the owner own records a knowledge layer acts on about a quarter of the tokens (fetched content) and on the number of lookup steps; say what share of that the design could plausibly move and that only an agent test can show it.',
+  'Keep DESIGN.md under 350 lines, plain language, every term defined once. No component without a source; no source without a link or a full citation.',
+].join('\n')
+
+// ---------------------------------------------------------------- Refute
+const pRefute = (design, ground) => common(
+  'REFUTER. Attack the graph v2 design before anything is built.',
+  OUT + '/REFUTE.md'
+) + [
+  'THE DESIGN (JSON; the full text is ' + OUT + '/DESIGN.md, read it, and the lane and verifier notes in the same folder):', JSON.stringify(design, null, 1), '',
+  'THE GROUND:', JSON.stringify(ground, null, 1), '',
+  'ATTACK: (1) Is any component still improvised: a choice with no source, or a source that does not say what the design claims? (2) Over-engineering: which components answer a question agents rarely ask (check against the recorded use), or give a benefit that a cheaper thing already gives (the changed-together list, a grep, a file the agent already has in its prefix)? (3) Scale: which components import a technique whose published benefit exists only at a scale far above this graph? (4) Learning on little data: about 65 tuning commits and 140 in all: can the ranker be trained and validated honestly, or will it fit noise; is the rolling-origin plan sound; is there any path by which the spent held-out commits or the future leak in (history edges, embeddings, document text written after the fact)? (5) Is each tuning test able to fail: is the threshold stated, is the simpler form really the strongest simple form? (6) Does the design serve the measured use, or the questions a graph is good at? (7) What is missing that the theory clearly calls for? (8) Are the owner words covered honestly: graph theory, knowledge graph, temporal knowledge graph, spatial and temporal topology, caching, invalidation, semantic relations, small and fast? (9) Does anything in it promise a token saving that only an agent test can show?',
+  'Return each claim of the design with result "survives", "needs qualification" (give it) or "refuted"; the components to cut; the components missing; and the sentences nobody may say to the owner about this design.',
+].join('\n')
+
+const SONNET = { model: 'sonnet', effort: 'high', agentType: 'general-purpose' }
+const OPUS = { model: 'opus', effort: 'high', agentType: 'general-purpose' }
+
+// ================================================================ run
+const first = await parallel([
+  () => agent(pUse, { label: 'ground:use-cases', phase: 'Ground', schema: USE_SCHEMA, ...OPUS }),
+  () => agent(pAudit, { label: 'ground:v1-audit', phase: 'Ground', schema: AUDIT_SCHEMA, ...OPUS }),
+  () => agent(pR1, { label: 'theory:construction', phase: 'Theory', schema: LANE_SCHEMA, ...SONNET }),
+  () => agent(pR2, { label: 'theory:modelling', phase: 'Theory', schema: LANE_SCHEMA, ...SONNET }),
+  () => agent(pR3, { label: 'theory:ranking', phase: 'Theory', schema: LANE_SCHEMA, ...SONNET }),
+  () => agent(pR4, { label: 'theory:selection-interface', phase: 'Theory', schema: LANE_SCHEMA, ...SONNET }),
+  () => agent(pR5, { label: 'theory:time-incremental', phase: 'Theory', schema: LANE_SCHEMA, ...SONNET }),
+  () => agent(pR6, { label: 'theory:storage', phase: 'Theory', schema: LANE_SCHEMA, ...SONNET }),
+])
+const ground = { use_cases: first[0], v1_audit: first[1] }
+const names = ['construction', 'modelling', 'ranking', 'selection_interface', 'time_incremental', 'storage']
+const lanes = {}
+names.forEach((n, i) => { const r = first[i + 2]; if (r) lanes[n] = { summary: r.summary, findings: r.findings, recommendations: r.recommendations, earlier_research_missed: r.earlier_research_missed, could_not_verify: r.could_not_verify } })
+const missing = names.filter(n => !lanes[n])
+if (missing.length) log('Theory lanes with no result: ' + missing.join(', '))
+if (!ground.use_cases) log('The use-case lane returned nothing: the design will say so.')
+if (Object.keys(lanes).length < 4) return { failed: 'theory', ground, lanes }
+
+phase('Verify')
+const pick = (keys) => { const o = {}; keys.forEach(k => { if (lanes[k]) o[k] = lanes[k] }); return o }
+const ver = await parallel([
+  () => agent(pVerify('a', pick(['construction', 'modelling', 'storage'])), { label: 'verify:construction-modelling-storage', phase: 'Verify', schema: VERIFY_SCHEMA, ...OPUS }),
+  () => agent(pVerify('b', pick(['ranking', 'selection_interface', 'time_incremental'])), { label: 'verify:ranking-selection-time', phase: 'Verify', schema: VERIFY_SCHEMA, ...OPUS }),
+])
+const verifs = { a: ver[0], b: ver[1] }
+
+phase('Design')
+const design = await agent(pDesign(ground, lanes, verifs), { label: 'design:graph-v2', phase: 'Design', schema: DESIGN_SCHEMA, ...OPUS })
+if (!design) return { failed: 'design', ground, lanes, verifs }
+
+phase('Refute')
+const refute = await agent(pRefute(design, ground), { label: 'refute:graph-v2', phase: 'Refute', schema: REFUTE_SCHEMA, ...OPUS })
+
+return { ground, lanes, verifs, design, refute }

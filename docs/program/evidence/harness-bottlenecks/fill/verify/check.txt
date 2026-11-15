@@ -1,0 +1,194 @@
+
+===== method :: holds-with-corrections
+SUMMARY: The measurement holds. I reproduced it exactly (26.9 / 32.5 / 28.6 / 18.7 / 7.0; 4331M; 233 windows; 2.21) and then tested each part against the transcripts.
+
+- **Identity:** holds. Thinking stays in the window: incoming chars/token is 2.37-2.51 after thinking calls against 2.50-2.58 after non-thinking calls. Only 0.6% of gap-weighted tokens sit in pairs where it fails badly. Thinking drops that are not compactions overstate own output by at most 0.7 pts.
+- **Windows:** robust. All 50 breaks are real compactions, and any threshold from 0.2 to 0.6 gives the same result.
+- **Character split and cpt:** neutral (fitted rates 2.47-2.60; fetched moves +0.1). The cpt only moves the thinking sub-share.
+- **Shell classification:** puts reads in shell-other when a command starts with a variable assignment or a for loop. It also counts heredoc writes and sed -i as reads. Net, fetched rises 26.9 to 28.5, or is 26.8 if log reads are excluded.
+- **Opened again (7.0):** almost entirely a different range of the same file. Exact repeats are 0.00 pts; content truly seen before in the window is about 0.6-1.5 pts.
+- **Bill framing:** context shares hold under input-price weighting. With output at 5x, generation is 16% of the bill, so 'share of the bill' would read about a sixth lower.
+- **Slice share:** slice work including its subagents is 75.3% of tokens, not 66%.
+
+Report: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/fill/verify/method/report.md
+NUMBERS: Reproduced: fetched 26.9, own 32.5, start 28.6, first 18.7, again 7.0. Corrected: fetched 28.5 with a consistent shell classifier (26.8 with log/temp reads excluded); own 31.8-32.5 (at most -0.7 from thinking drops); start 28.6 (holds); first open 19.5 (18.5 with logs excluded); opened again 7.5, of which only about 0.6-1.5 is content already seen in the window (exact repeats 0.00; after an edit at least 0.47). Price-weighted with output at 5x: fetched 23.0, own (re-read) 27.1, start 23.7, output generation 16.3. Slice main + slice subagents = 75.3% of tokens (66.0 + 9.3).
+
+[M1] major | fetched 26.9 (shell classification)
+  FINDING: The shell classifier stops at the first segment. A leading variable assignment (S="..."; grep ...) or a for loop therefore sends real reads to shell-other, and heredoc writes (cat >, cat >>) and sed -i are counted as shell-read. The two errors pull in opposite directions, but they do not cancel.
+  EVIDENCE: Hand samples from slice sessions. 60 shell-read: 8 are writes or scripts (13% by count, 1.5% by tokens). 60 shell-other, by tokens: 35% code/doc reads, 27% log reads or waits, 22% runs, 5% edits, 2% git writes, 8% file moves. 30 shell-run: 22% of tokens are read-dominated, 14% heredoc edits. Population under a stricter classifier that agrees with the hand labels: 0.77 pts of writes/runs in shell-read; 2.43 pts of reads in shell-other (1.54 repo files + 0.89 logs). Fetched becomes 28.5 and unclassified falls from 4.3 to 0.5. With all log/temp reads excluded, fetched is 26.8.
+  FIX: Skip assignment-only segments, loop keywords and sleep. Class cat>/cat>> heredocs, sed -i and perl -pi as writes. Report fetched as 28.5 (logs counted, which matches how the original already counts cat on a log), or as about 26.8 for repo reads only, and say which one.
+
+[M2] major | opened again 7.0
+  FINDING: 'Opened again' is not a measure of redundant reading. Almost all of it is a different range of the same file, or a different command on it. An identical command or Read range is 0.00 pts.
+  EVIDENCE: Automated over 6.97 pts: exact repeat with no edit between = 0.00; re-read after an edit at least 0.47; the rest is a different command. Hand sample of 40 (lower token share includes the two largest cases, upper excludes them): 22 different part or content (68-87% of tokens), 3 strict subsets (3-8%), 4 partial overlaps (5-13%), 1 after an edit, 8 writes (cat >> / sed -i) counted as reads (3-7%), 2 log polls or runs. Path-key collisions are at most 0.11 pts.
+  FIX: State that content genuinely seen earlier in the window is about 0.6-1.5 pts, and that the rest of the 7.0 is navigation to other parts of a file already opened. Do not present 7.0 as the saving a cache could make.
+
+[M3] minor | own output 32.5 / accounting identity
+  FINDING: The identity holds and thinking stays in the window. The exception is 3 within-window drops at thinking_drop events that are not compactions; the method keeps counting what was dropped.
+  EVIDENCE: Incoming chars/token is 2.37-2.51 after thinking calls and 2.50-2.58 after non-thinking calls; it would be 1.37-1.77 if thinking were dropped. d<out in 3 of 15,688 pairs. 37 pairs fail badly, holding 0.6% of gap-weighted tokens. There are 38 thinking_drop attachments, 36 of them at compactions. Attributed 4361M vs actual 4331M = 0.7% over.
+  FIX: Note that own output is overstated by at most 0.7 pts. Optionally subtract the drop from out-thinking.
+
+[M4] minor | framing: context sum as the bill
+  FINDING: The context sum is 98.2% cache reads and leaves out output generation. On a price-weighted bill, every share shrinks by about a sixth.
+  EVIDENCE: Cache read 4253M, cache write 78.4M, output 19.7M. Weighted by input price only (read 0.1, write 1.25): fetched 27.5, own 32.4, start 28.4, so the shares hold. With output at 5x, generation is 16.3% of the bill, and fetched 23.0, own (re-read) 27.1, start 23.7.
+  FIX: Call the shares 'share of context tokens', not 'share of the bill', or add the price-weighted row.
+
+[M5] minor | grouping (slice share)
+  FINDING: The subagents of slice sessions are counted under 'subagents', not under slice work.
+  EVIDENCE: slice-main is 66.0% of tokens. Subagents in worktree folders (75 files) add 9.3%, so slice work is 75.3%.
+  FIX: Say that 66% covers slice main sessions only.
+
+[M6] note | window detection, character split, cpt 2.21, filters
+  FINDING: All of these hold.
+  EVIDENCE: All 50 drops over 20% carry a compaction summary, and no summary arrives without one; the smallest compaction drop is 63%. Thresholds 0.2-0.6 and a break-on-summary rule give identical results; a threshold of 0.1 or lower invents 3 windows (start +2.6, own -1.6). Fitted chars/token by category is 2.47-2.60, and re-splitting moves fetched +0.1; only 7.9% of fetched sits in mixed gaps. cpt changes only the split inside own output: thinking 12.3 (12.7 with per-kind rates; 9.5-15.2 for rates 1.6-2.8). All 15,921 calls are in November; no duplicate ids across 184 files; no sidechain lines; no resumed sessions. The first user message is about 0.9 pts of window start, and content carried through compactions is 2.1 pts.
+  FIX: None needed.
+
+===== remeasure :: holds-with-corrections
+SUMMARY: I re-measured the context fill from the raw transcripts with my own method. I did not look at the compile's figures, so this sets out my own numbers and does not check theirs. There are 15,921 November calls, all real, across 184 files (4 root main, 26 slice main, 154 subagent), and they sum to 4,331.3M tokens of context. Window boundaries come from the requestRef → api-request base/keep chain plus the compaction-summary lines, giving 305 windows. The context at a window's first call is (c). Each later call's growth (A_k − A_(k−1)) is split over the blocks that entered in that gap, weighted by a fitted estimate; the fit over 15,616 per-call deltas has R² 0.991 and shows thinking stays in context at full size. Each block is then counted at every later call in its window. Overall: (a) reads and searches 22.3%, (b) model's own output 22.8% (8.8 points of it thinking), (c) window start 47.8%, (d) other 7.2%. Sticking to the task's definition, (a) ranges from 20.6% to 32.2%. Two assumptions move it most. One is which shell commands count as reads: counting only Read/Grep/Glob gives 5.4%. The other is restarts: they resume with almost the full prior context (ratio median 1.02, n=70) but count wholly as (c) by definition. Re-reading a file again costs 2.2% of all tokens, and exact duplicates 0.1%. The cost of (a) is that read content stays in the window: about 50 later passes per token. Report: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/fill/verify/remeasure/report.md (scripts lib.js, pass1.js, pass2a.js, fit.js, agg.js, run.js and sens.txt are in the same folder).
+NUMBERS: Scope: 184 files (4 root main, 26 slice main, 154 subagent), 15,921 calls (all 2026-11), sum of context 4,331.3M tokens
+Windows: 305 (183 session starts, 70 restarts with no base, 50 compactions, 2 keep-drops)
+ALL: a 22.3% | b 22.8% (thinking 8.8) | c 47.8% | d 7.2%
+SLICE MAIN (9,327 calls, 2,858.4M): a 21.4 | b 26.8 | c 44.1 | d 7.7
+ROOT MAIN (1,331 calls, 666.1M): a 4.1 | b 15.4 | c 72.1 | d 8.5
+SUBAGENTS (5,263 calls, 806.8M): a 40.1 | b 15.0 | c 40.6 | d 4.3
+(a) split, all: first open of a file in the window 13.4 | same file opened again 2.2 (of which exact same range 0.1) | rest (search, listings) 6.7
+(a) split, slice 13.0/2.0/6.4; root 1.6/0.1/2.4; sub 24.4/4.5(0.6)/11.2
+Reconciliation, estimates only (no scaling): 4,312.7M of 4,331.3M = 99.6% (slice 99.5, root 99.9, sub 99.7); the delta-scaled main result reconciles at 100% by construction
+Fit over 15,616 deltas (R^2 0.991): output coefficient 0.99, thinking 1.00, read results 2.59 chars/token, other tool results 2.39, text 2.48, 22.5 tokens per block, 1,060 per image
+Distinct files read: 1,450 repo-relative (2,542 counting each worktree copy separately)
+Top 30 files: 5.0% of all tokens (22.4% of (a)); largest single file 0.3%; all keyed file reads 15.5%
+Sensitivity of (a): flat 4 chars/token scaled 20.6; flat 4 unscaled 16.0 (88.7% of context accounted for); flat 3 unscaled 19.9 (94.6%)
+Sensitivity of (a): Read/Grep/Glob only 5.4; listed shell rule 22.3; every Bash/PowerShell result 26.3
+Sensitivity of (a): restart start split by the previous window's mix 26.2 (c falls to 31.0; root c 72.1 -> 19.3); with the broad shell rule as well 32.2
+Range for (a): 20.6-32.2% (reconciled methods); 16.0% with an unreconciled flat 4 chars/token; 5.4% if only the dedicated tools count
+(c) breakdown: static session-start prefix 26.9 of the 47.8 points; slice restarts 12.1, root restarts 10.1, slice compactions 9.4, subagent starts 6.4, slice starts 6.1
+Persistence: (a) entered once as 18.9M tokens, processed 953.5M times (x50); (b) x54; (d) x57
+Restart start / previous last call: median 1.02, min 0.84, max 1.13 (n=70)
+Calls over 200k context: 8,635 of 15,921
+
+[R1] major | share (c) window start
+  FINDING: Almost half of the window-start share is earlier conversation that came back after a restart, not a fixed overhead. Restarts resume with essentially the whole prior context, but the definition counts all of it as (c), which makes (c) look large and (a)/(b)/(d) look small.
+  EVIDENCE: Restart windows have A0 / previous last call = median 1.02 (range 0.84-1.13, n=70). Slice and root restarts alone are 22.2 of the 47.8 points. Splitting the carried start by the previous window's mix moves overall c from 47.8% to 31.0% and root c from 72.1% to 19.3%.
+  FIX: Report (c) in two parts: the static start prefix (26.9 points) and history carried over at a restart (about 21 points). Or attribute the carried history to its origin category.
+
+[R2] major | definition of (a)
+  FINDING: Shell commands carry most of the read traffic. A count of only the dedicated tools understates (a) about fourfold.
+  EVIDENCE: Shares of all tokens (unscaled estimate): sed -n 6.2, Read 5.2, cat 4.0, grep 3.8, git diff/show/log 1.3, Grep+Glob tool 0.2 points. Strict Read/Grep/Glob-only rule gives (a) = 5.4% against 22.3%.
+  FIX: Any figure for (a) must state its shell-classification rule. Commands the rule leaves out (uv 0.8, for-loops 0.5, sed without -n 0.35) give an upper bound of 26.3%.
+
+[R3] major | cache or index savings
+  FINDING: Re-reading the same file is a small cost. A cache of already-read files can only remove the 'same file again' slice, and identical re-reads are almost nothing. The cost of (a) comes from read content staying in the window and being re-processed at every later call.
+  EVIDENCE: Same file opened again = 2.2% of all tokens; same file and same range = 0.1%. Read content entered windows once as 18.9M tokens and was processed 953.5M times (about 50x).
+  FIX: Size any graph or index proposal on the 13.4% first-open share, and on reads leaving the window sooner, not on deduplicating re-reads.
+
+[R4] minor | token estimation
+  FINDING: These transcripts run at about 2.4-2.6 characters per token, not 4. A flat 4 chars/token underestimates tool results by about a third and leaves 11% of context unaccounted for.
+  EVIDENCE: Regression over 15,616 per-call deltas, R^2 0.991: 2.59 chars/token for read results, 2.39 for other tool results, 2.48 for text. With a flat 4 chars/token and no scaling, only 88.7% of the summed context is accounted for (subagents 84.0%).
+  FIX: Calibrate chars per token against the usage deltas before attributing tokens.
+
+[R5] minor | thinking in context
+  FINDING: Thinking stays in the context at full size on later calls, so it is a real part of (b).
+  EVIDENCE: The regression coefficient on thinking_tokens is 1.00 (on other output 0.99). Every request carries clear_thinking keep:all. Thinking = 8.8 of the 22.8 points of (b).
+  FIX: None needed. A method that drops thinking from (b) would be wrong.
+
+[R6] note | exact request reconstruction
+  FINDING: The transcripts contain api-request and api-request-blob records, but they cannot rebuild every request exactly. I used them only to find window boundaries.
+  EVIDENCE: 38,542 of 57,424 tail hashes (67%) have no stored blob, and the blob hash is not a plain sha256 of the message JSON (tested).
+  FIX: Treat all composition shares as estimates (reconciled to 99.6% unscaled), not exact token counts.
+
+[R7] note | top files
+  FINDING: Reads are spread thinly across many files. No small set of files dominates.
+  EVIDENCE: 1,450 distinct repo-relative files. The top 30 files are 5.0% of all tokens; the largest is 0.3% (docs/technical-plan/contracts-and-permissions.md). One agent scratchpad dump file is in the top 30.
+  FIX: None. This argues against a cache of hot files as the main lever.
+
+===== fidelity :: holds-with-corrections
+SUMMARY: Every number in the checked texts matches window-fill-output.txt. The manifest verifies, with 73 lines and no non-OK line. Nothing presents 26.9 % as a saving. Two small corrections: the 66.4 % vs 66.0 % and 9,342 vs 9,327 differences are not explained in the compile, and C5's inference is too strong.
+NUMBERS: Shares: 26.9 / 32.5 / 28.6 / 4.3 / 3.1 / 4.6 = 100.0 (all-group SUMMARY line). Groups: 26.0 / 14.8 / 40.1 fetched. First open 18.7, again 7.0, no path 0.9, search 0.3. sed 8.0, grep 5.0, cat 4.9, Read tool 5.4. 2,179 files, top 30 = 7.7 %, ten documents = 3.0 % (my sum 132.4M / 4331M = 3.06 %). Slice: 2858M of 4331M = 66.0 %; cache-read 2825M of 4253M = 66.4 %; 2858M / 9327 calls = 306k.
+
+[F1] minor | HARNESS-BOTTLENECKS-2026-11.md line 87 vs section 6 and fill output
+  FINDING: Older figures (66.4 %, 9,342 calls, 4.25 billion) and new ones (66.0 %, 9,327 calls, 4,331M) differ in denominator and call count, and the compile does not say so.
+  EVIDENCE: fill output: slice cache-read 2825M, root 650M, subagents 778M, sum 4253M, and 2825/4253 = 66.4 %. Context tokens 2858M of 4331M = 66.0 %. Nov calls 9327 vs 9342 in the older line.
+  FIX: Add a half-sentence in section 6 or the appendix row: the 66.4 % is of cache-read tokens, the 66.0 % is of all context tokens; call counts differ by 15 (explain or note as a counting difference).
+
+[F2] minor | claims.md C5
+  FINDING: C5 says most fetched content was needed because 18.7 of 26.9 points are first opens. A first open can still be a wrong turn, and the compile itself says the unnecessary share is not measured.
+  EVIDENCE: Section 6 text: 'How much of the fetched share was unnecessary is not measured'.
+  FIX: Reword C5 to: most fetched content is first opens, which cannot be removed by avoiding repeats; whether they were needed is unmeasured.
+
+[F3] note | claims.md C2 / section 6
+  FINDING: The 12.0 in C2 is the sum 4.3 + 3.1 + 4.6, correct. The section 6 paragraph lists the three parts separately, which is fine.
+  EVIDENCE: all-group line
+  FIX: None.
+
+===== claims :: holds-with-corrections
+SUMMARY: The measurement holds; several claims drawn from it do not. Shares, groups and repeat buckets reproduce exactly, and thinking is carried in context, so the split is sound. Seven claims overstate or mis-cite.
+
+- **C1:** the "at most 27 %" ceiling ignores that every lookup step re-reads the whole window. 54.6 % of calls were read/search-only, and they re-read 43.6 % of context tokens.
+- **C5:** "needed" is unsupported. 74 % of fetched tokens went to files the window never edited.
+- **C8:** "no small hot set" is false. 3.3 % of paths hold half the fetched tokens, and 294 paths read in 5 or more windows hold 73 %.
+- **C12:** the 6-17 % comes from a Codex compaction snapshot-and-restore layer, not from any index or graph. The "no" stands on external evidence instead.
+- **C11:** PR #183 is unbuilt, covers diagnosis entries only, and excludes work state, so it is not "already designed".
+- **C7:** the 400k compaction figure is an exposure, not a saving.
+- **C13:** the evidence supports a defect trial, not a token trial, and the co-change half is contra-indicated at 432 commits.
+- **C6:** holds for slices only. Subagents read whole files more.
+- **C10:** holds in part, but a lookup returned as a tool result does not break the cache.
+
+Strongest case for the owner's idea:
+- **Lookup calls re-read the window:** read/search-only calls re-read 43.6 % of context tokens, so cutting lookup steps saves whole windows, not just result bytes.
+- **Subagents:** 40 % of their tokens are fetched, and 76.5 % of their calls are read/search-only.
+- **A cross-window hot set:** the same files are fetched in many windows, which is what a hash-invalidated digest cache would target.
+
+What cuts against it: repeat reads inside one window are only 0.5 % of tokens, and nothing has shown that a digest can stand in for the lines.
+
+Report: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/fill/verify/claims/report.md
+NUMBERS: Reproduced: fetched 26.9 % (slices 26.0, root 14.8, subagents 40.1); first open 18.7, repeat 7.0. Calls: 15,921 November calls; read/search-only 8,701 (54.6 %), re-reading 1,889M tokens (43.6 %); locate-only 1,246 calls, 225M (5.2 %). Repeats: lines re-read with no edit between 23M (0.5 % of all tokens); identical commands 0. Fetched tokens on paths not edited in the window: 74.2 % (slices 68.7 %). Concentration: top 30 paths = 28.6 % of fetched; 72 paths (3.3 %) = half; top 100 = 56 %; paths read in 5 or more windows = 73.0 %. Read kinds, slices: ranges 8.8 + grep 4.9 vs whole 7.4; subagents: whole 16.8 vs ranges 10.4 + grep 4.1; all groups: ranges 8.0 + grep 4.5 vs whole 8.4. Usage: cache-read 4,253M, cache-write 78M (1h 49M), output 20M, uncached input about 0. Fetched share of fresh arriving content: 31.6 %. Official doc: cache reads 0.05x (Opus/Sonnet 5.5) and 0.025x (Fable 5.1/5.2); writes 1.25x (5 min) and 2x (1 h).
+
+[CL-1] major | C1
+  FINDING: The 27 % 'at most' ceiling is not a ceiling. It counts only fetched content in the window and ignores the call channel: tokens = calls x window, and every lookup step re-reads the whole window.
+  EVIDENCE: run2.js/sum2-output.txt: 8,701 of 15,921 November calls (54.6 %) emitted only read/search tools. The context they re-read is 1,889M, 43.6 % of the 4,332M context tokens (subagents 76.5 % of calls and 70.9 % of tokens; slices 47.5 % and 42.5 %). Locate-only calls: 1,246 calls, 225M, 5.2 %. Under the official cache multipliers the fetched share of context-side spend is about 29 %, so 27 % holds as a content share but not as an upper bound.
+  FIX: Reword: 'Fetched content is 26.9 % of context tokens and read/search-only calls re-read 43.6 %. Both are exposures, not savings.' Drop 'at most'.
+
+[CL-2] major | C5
+  FINDING: 'Most fetched content was needed' does not follow from 'first open', and it contradicts the compile's own statement that the unnecessary share is unmeasured.
+  EVIDENCE: edited-output.txt: 74.2 % of fetched tokens (slices 68.7 %, subagents 85.2 %) went to paths never edited in that window. HARNESS-BOTTLENECKS §6: 'How much of the fetched share was unnecessary is not measured'.
+  FIX: Reword: '18.7 points are first opens. Whether they were needed is unmeasured. 74 % went to files the window did not edit.'
+
+[CL-3] major | C8
+  FINDING: 'No small hot set' is false. A small set of paths holds a large share of fetched tokens. The repetition happens across windows, not within one.
+  EVIDENCE: run2-result.json: the top 30 paths (1.4 %) hold 28.6 % of fetched tokens; 72 paths (3.3 %) hold half of the fetched tokens that have a path; the top 100 hold 56 %; 294 paths read in 5 or more windows hold 73.0 % of fetched. Examples: implementation-plan.md read in 39 windows, operations/kernel.py in 63. Within a window, lines re-read with no edit between are only 0.5 % of tokens (rep3-output.txt).
+  FIX: Reword: 'A cross-window hot set exists (3.3 % of paths hold half of fetched tokens). Repeat reads inside one window are 0.5 %, so only a cache that lasts across sessions and returns something shorter than the lines could pay.'
+
+[CL-4] major | C12
+  FINDING: The 6-17 % figure is mis-cited. It comes from the Codex adapter, a compaction snapshot-and-restore layer, not from the testbed's Claude context system and not from any code index, graph or embedding.
+  EVIDENCE: sweep-cards A5-10, A5-13 and A5-14: Codex (gpt-6-astra) in a different project (the cinema pilot), an interrupted exploratory cohort, 15 planted facts recalled. A5-01: the Claude context system was 'not installed ... not yet run in a live session'. The corpus map's validation contract was never run (A6-10).
+  FIX: Drop the 6-17 % as the reason. Rest the 'no' on the external evidence: extraction costs about 1000x, Kuzu is archived, sqlite-vec is pre-v1, the PC is short of memory, and code-graph token claims were contradicted (verdicts 190-192, research C9).
+
+[CL-5] major | C11
+  FINDING: 'Already designed' overstates the case. PR #183 designs code-change invalidation for diagnosis entries, not a cache of read or lookup results. It explicitly excludes work state, so the 'what is true now' view is only a §6 proposal. Neither has a token measure.
+  EVIDENCE: evidence/harness-v2-design/read/knowledge-store-design.md:1-47 (v1.3.1 on branch claude/knowledge-store-research-9c609c, unbuilt, only KS-0 asked; line 47: 'no slice status, gate verdicts, open findings'). §6: the store 'lacks only these work-state tables'. KS-5 gates measure recall and false positives, not tokens.
+  FIX: Reword: 'Partly designed: PR #183 (unbuilt) has hash-based invalidation for diagnosis entries. The now-view is a one-paragraph proposal in §6. Neither is measured for tokens.'
+
+[CL-6] major | C7
+  FINDING: 'First lever' and 'a shorter window cuts all of it' are not supported. §9.4 calls the figure an exposure, compaction already re-adds carried content, and by the same exposure logic lookup calls are a lever of comparable size. In price terms fetching is not free.
+  EVIDENCE: §9.4: 39.8 % (14.3 % above 400k) is 'an exposure figure, not a saving'; extra compactions cost a summary call, a cache rewrite and re-reads. window-fill-output: post-compaction window starts are already 16.3 % of slice tokens. Official doc: a 1h cache write costs 2x and an Opus/Sonnet 5.5 cache read 0.05x, so one write equals 40 carries. Subagent windows average 34 calls.
+  FIX: Reword: 'The largest measured exposure, next to lookup calls (43.6 %). The saving is unmeasured.'
+
+[CL-7] minor | C6
+  FINDING: Holds for slice sessions, but the labels are loose. It reverses in subagents, and across all groups ranges and whole-file reads are roughly even. sed here really is a range read.
+  EVIDENCE: sum2-output.txt, slices: sed ranges 7.4 (ranges over 300 lines only 0.2) plus ranged Read 1.4 = 8.8, grep 4.9, whole files (Read 4.0 + cat 3.4) = 7.4; the claim's 'Read tool 5.4' includes 1.4 ranged. Subagents: whole 16.8 vs ranges 10.4 plus grep 4.1. All groups: ranges 8.0 plus grep 4.5 vs whole 8.4. 'cat' includes 0.6 % heredoc writes, and sed -i (0.3 %) is counted as a read.
+  FIX: Keep it scoped to slices and add the subagent reversal. Move heredoc writes and sed -i out of reads.
+
+[CL-8] minor | C13
+  FINDING: The cited evidence supports a trial for reviewer blast radius (defects), not for token saving. The co-change half is the part the evidence argues against at this repository size.
+  EVIDENCE: research C6 and C10: LocAgent +4 Acc@5; RepoMem +4.9 overall but -13.1 on repositories under 10k commits, and the testbed has 432. The verdicts say: 'There is no basis to expect token savings here' for code exploration. §6's zero-token test is about defect files.
+  FIX: Keep it as a defect trial. For tokens, first replay the recorded windows: build the import/caller index at each window's start commit, then count the locate-only calls it would answer (now 1,246 calls, 225M tokens, 5.2 %) and the recall of the edited files (list of 15 files or fewer). Pre-register 3 % or more of tokens and a recall of 0.8 or more.
+
+[CL-9] minor | C10
+  FINDING: True in part. The cache is on, and a change invalidates its own level and everything after it. Appended content does not invalidate the prefix, so an index answered as a tool result does not break the cache. The claim undersells this.
+  EVIDENCE: platform.claude.com prompt-caching doc: 'Changes at each level invalidate that level and all subsequent levels'; appending blocks reads the earlier entry. Also: 'cache hits are not deducted against your rate limit' (API; plan limits unknown). Transcripts: 4,253M cache-read tokens, about 0 uncached input.
+  FIX: Reword: 'Injecting at the top of the window breaks the cache. A lookup returned as a tool result does not.'
+
+[CL-10] note | C14, C2-C4, C9
+  FINDING: C2, C3, C4 and C9 hold and reproduce exactly. C14 holds, but its 'upper bound' is very loose, and it omits three limits.
+  EVIDENCE: Reproduced 26.9/32.5/28.6, 18.7/7.0/1.2 and 26.0/14.8/40.1, with 233 windows and 2,179 paths. Thinking is carried in context: growth minus output per incoming character is 0.402 with thinking and 0.388 without (think-output.txt). Lines re-read with no edit between are 0.5 %; identical repeat commands are 0. Unstated: the path key is the last two segments ('main...head' counted as a file); writes are counted as reads; and a content attribution cannot show savings from fewer calls.
+  FIX: Add those three limits to C14.

@@ -1,0 +1,712 @@
+// Builds index.html and ../GRAPH-TEST-RESULT-2026-11.md from data/data.json.
+// Run from this folder:  node - < build.js.txt
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const d = JSON.parse(fs.readFileSync(path.join(HERE, 'data', 'data.json'), 'utf8'));
+// Size (section M, 2026-11-13): source comments, whole-line // comments and leading indentation are left out of the
+// page copy of the stylesheet and the page script (the sources keep them). Nothing that runs or shows changes.
+const css = fs.readFileSync(path.join(HERE, 'src', 'page.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]+/gm, '').replace(/\n+/g, '\n');
+const client = fs.readFileSync(path.join(HERE, 'src', 'client.js.txt'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '').replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n');
+
+/* ---------- format helpers (same rules as the page script) ---------- */
+const MINUS = '−';
+const rnd = (a, n) => { const m = Math.pow(10, n); return (Math.round(a * m + 1e-7) / m).toFixed(n); };
+const f = (x, n = 3) => { if (x == null) return '–'; const s = rnd(Math.abs(x), n); return (x < 0 && +s !== 0 ? MINUS : '') + s; };
+const sg = (x, n = 3) => { if (x == null) return '–'; const s = rnd(Math.abs(x), n); if (+s === 0) return s; return (x > 0 ? '+' : MINUS) + s; };
+// plain names for internal ids inside data sentences
+const pl = s => String(s == null ? '' : s).replace(/T3 carries/g, 'Documented chains carry').replace(/s2 \(best form\)/gi, 'best form')
+  .replace(/held-out comparisons H1 to H5/g, 'held-out comparisons').replace(/\bH1 to H5\b/g, 'the comparisons')
+  .replace(/\bH1b\b/g, 'the community-prior result').replace(/\bH5\b/g, 'the timing run').replace(/\bH4\b/g, 'the questions verdict').replace(/\bthe H3\b/g, 'the typed-store verdict\'s').replace(/\bH3\b/g, 'the typed-store verdict').replace(/\bH1 and H2\b/g, 'the engine comparisons')
+  .replace(/LadybugDB S2/g, 'LadybugDB best form').replace(/\(S2\)/g, '(its best form)').replace(/\bs2\b|\bS2\b/g, 'best form').replace(/\bas row S1\b/g, 'as a shown extra row').replace(/\bS1\b|\bs1\b/g, 'the 4-hop choice')
+  .replace(/(?<!the )\bDuckPGQ\b(?! extension)/g, 'the DuckDB graph layer').replace(/\bRelational against\b/g, 'SQLite (relational) against').replace(/\bLouvain community/g, 'Louvain community (a standard clustering)')
+  .replace(/\bTUNE T1\b/g, 'tuning change-completion').replace(/\bTUNE\b/g, 'tuning').replace(/\bHELD-OUT\b/g, 'held-out')
+  .replace(/\bT1x\b/g, 'the cross-runtime subset').replace(/\bT1\b/g, 'change completion').replace(/\bT2\b/g, 'tests to update').replace(/\bT3\b/g, 'documented chains').replace(/\bT4\b/g, 'the defect register')
+  .replace(/co_changed/g, 'changed-together').replace(/\(arms\/common\/tq_score\.js\)/g, '').replace(/\s+\.(?![A-Za-z])/g, '.');
+const ci = (c, n = 3) => '[' + sg(c[0], n) + ', ' + sg(c[1], n) + ']';
+const pct = x => Math.round(x * 100) + ' %';
+const num = n => Number(n).toLocaleString('en-US');
+const escRaw = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const esc = s => escRaw(pl(s));
+// The audit's engine sentences use internal names (S1, base, DuckPGQ). Give them the page's names before pl(),
+// whose generic S1 and DuckPGQ replacements garble these sentences (check of 2026-11-13).
+const engW = s => String(s == null ? '' : s).replace(/DuckDB[- ]with[- ]DuckPGQ/g, 'the DuckDB graph layer')
+  .replace(/\(S1 and the 2-hop base\)/g, '(the 4-hop and the 2-hop variants)').replace(/frozen graph S1 (\d)/g, 'frozen graph, 4-hop variant: $1')
+  .replace(/the bounded classes S1 and base only/g, 'the bounded 4-hop and 2-hop methods only').replace(/^DuckPGQ's /, 'The DuckDB graph layer\'s ')
+  .replace(/\(primary, S1, base on both graphs; S2 across/g, '(the selected method and the 4-hop and 2-hop variants on both graphs; the community-prior variant across');
+const escE = s => esc(engW(s));
+/* ---------- lookups ---------- */
+const T = (arm, role, set) => d.heldout.table.find(r => r.arm === arm && r.role === role && r.set === set);
+const ALLC = [...d.comparisons.rows, ...d.comparisons.descriptive];
+const C = id => ALLC.find(r => r.id === id);
+const set = id => d.sets.find(s => s.id === id);
+// Counts shown in prose and tags, read from the data (never typed by hand).
+const QB = k => { const b = d.questions.blocks; const key = Object.keys(b).find(x => x.startsWith(k)); return key ? b[key].n_questions : null; };
+const N = { ho: set('T1').heldout.commits, tu: set('T1').tuning.commits, tasks: set('T1').heldout.tasks, t2: set('T2').heldout.commits,
+  t3: d.t3.tasks, t3p: d.t3.parents, t3d: d.t3.documents, q: set('TQ').heldout.questions, q23: QB('addendum5_list23'), q22: QB('untouched22'),
+  q8: d.questions.touched_questions.length, qtu: d.questions.tuning.questions };
+{ const m = d.trust.timeline.map(t => t.what).join(' ').match(/(\d+) of (\d+) declared invocations/); N.inv = m && +m[1]; N.invT = m && +m[2];
+  const j = d.questions.judgement_items_note.match(/the (\d+) answer items/); N.jud = j && +j[1]; N.t3g = d.t3.parent_document_groups; }
+for (const [k, v] of Object.entries(N)) if (v == null) throw new Error('count missing from data: ' + k);
+// Section H, card 6 and section K read d.engines and d.k, which data/patch-engines-k.js.txt writes (re-appliable; run it before this build).
+if (!d.engines || d.engines.status !== 'reported' || !d.k) throw new Error('data.json lacks the engine timing or section K: run  node - < data/patch-engines-k.js.txt  first');
+// Section L and the K additions (feasibility counts, protocol-v2 costs) read d.l, d.k.feas and d.k.wider.cost_v2, which
+// data/patch-k0-l.js.txt writes; run it after patch-engines-k.js.txt, which rewrites d.k from scratch.
+if (!d.l || !d.k.feas || !d.k.wider.cost_v2) throw new Error('data.json lacks section L or the K additions: run  node - < data/patch-k0-l.js.txt  after patch-engines-k.js.txt');
+const T1 = set('T1'), T2 = set('T2'), T3s = set('T3'), TQ = set('TQ');
+const H1 = C('H1').sets.T1, H1b = C('H1b'), H3s = C('H3-search'), H3co = C('H3-floor-co'), H3dir = C('H3-floor-dir'), H3s2 = C('H3-search-s2');
+const SP = d.splits.comparisons, HC = d.splits.heldout_counts;
+const draws = d.draws.rows.map(r => r.T1.diff);
+const dmin = Math.min(...draws), dmax = Math.max(...draws);
+const h4 = d.questions.h4, tok = d.questions.tokens_two_ways;
+const hopF = d.tuning.factors.find(x => x.factor.startsWith('hop depth'));
+const rank2 = d.tuning.factors.find(x => x.factor.startsWith('ranking mode at the base'));
+const rankU = d.tuning.factors.find(x => x.factor.startsWith('ranking mode at unbounded'));
+const dirF = d.tuning.factors.find(x => x.factor === 'direction');
+const edgeF = d.tuning.factors.find(x => x.factor.startsWith('edge classes'));
+const histStep = edgeF.levels.find(l => l.level.startsWith('+ data + config'));
+const hop1 = hopF.levels[0], hopU = hopF.levels[hopF.levels.length - 1];
+const pad = d.padding.arms;
+const mix = d.splits.mix;
+const I = d.identity.heldout;
+const relT1 = T('relational', 'primary', 'T1'), seaT1 = T('search', 'primary', 'T1'), coT1 = T('floor-co', 'primary', 'T1'), dirT1 = T('floor-dir', 'primary', 'T1');
+const sensTS = d.sensitivity.comparisons.typed_vs_search;
+const sensCO = d.sensitivity.comparisons.typed_vs_cochange_floor;
+const tieEff = d.trust.declared_changes_after_tuning_data[0].effect_on_heldout.s1_minus_primary_T1;
+const counts = d.tuning.counts;
+const engMeasuring = false;
+/* ---------- engine timing lookups (audited, tuning inputs only) ---------- */
+const EG = d.engines, KD = d.k;
+const WQ = [...new Set(EG.comparisons.flatMap(x => x.quote_only_with))]; // tooltip qualifiers, stored once
+const ER = (g, c, e, s = 'one') => EG.rows.find(r => r.g === g && r.c === c && r.e === e && r.s === s);
+const fms = v => v == null ? '–' : v >= 100 ? String(Math.round(v)) : v >= 10 ? rnd(v, 1) : rnd(v, 2);
+const ENGP = { relational: 'SQLite (relational)', ladybug: 'LadybugDB (graph)', duckpgq: 'DuckDB graph layer' };
+const wFz = e => ER('frozen', 'primary', e).warm.m, wTu = e => ER('tune', 'primary', e).warm.m;
+const s1Fz = e => ER('frozen', 'S1', e).warm.m;
+const tqFz = e => ER('frozen', 'tq', e).warm.m;
+const stepS = EG.model_step.seconds;
+const tagTM = n => `<span class="tag tm">timing run${n ? ', ' + n : ''}</span>`;
+const tagOS = n => `<span class="tag os">outside source${n ? ', ' + n : ''}</span>`;
+const tagCR = n => `<span class="tag cr">cache replay${n ? ', ' + n : ''}</span>`;
+const tagES = n => `<span class="tag es">estimate${n ? ', ' + n : ''}</span>`;
+const GR = EG.graphs;
+const gName = g => `${GR[g].label} (${num(GR[g].nodes)} nodes, ${num(GR[g].edges)} edges)`;
+
+/* ---------- client data (pruned: no held-out task ids, no commit hashes) ---------- */
+const lvl = (factor, conf) => { const F = d.tuning.factors.concat(d.tuning.search_factors).find(x => x.factor === factor); return F && F.levels.find(l => l.configuration === conf); };
+const tuneSE = {
+  'relational|primary': d.tuning.typed_frozen.se,
+  'relational|s1': lvl('hop depth (personalised PageRank ranking)', 'hops=4').se,
+  'ladybug|s2': d.tuning.native.ladybug[0].se,
+  'search|primary': lvl('with the CO tail (stage 2)', 'pad=CO rounds=1 routes=off').se,
+  'search|s2': lvl('with the CO tail (stage 2)', 'pad=CO co rrf rounds=1').se,
+  'floor-dir|primary': d.tuning.floors.find(x => x.arm === 'floor-dir').rows[0].se,
+  'floor-co|primary': d.tuning.floors.find(x => x.arm === 'floor-co').rows[0].se
+};
+['s2-draw1', 's2-draw2', 's2-draw3', 's2-draw4'].forEach(r => { tuneSE['ladybug|' + r] = d.tuning.native.ladybug[0].se; });
+const P = {
+  table: d.heldout.table.map(r => ({ arm: r.arm, role: r.role, set: r.set, n_tasks: r.n_tasks, n_clusters: r.n_clusters, cluster_unit: r.cluster_unit, p: r.primary_recall_at_8000_tokens, se: r.standard_error })),
+  curves: d.heldout.curves.map(c => ({ arm: c.arm, role: c.role, set: c.set, budget_points: c.budget_points, whole_item_grid: c.whole_item_grid })),
+  cmp: ALLC.map(c => ({ id: c.id, verdict: c.verdict, sets: c.sets })),
+  splits: { comparisons: d.splits.comparisons, tuning_comparisons: d.splits.tuning_comparisons, heldout_counts: d.splits.heldout_counts, tuning_counts: d.splits.tuning_counts, heldout_reweighted_to_tuning_mix: d.splits.heldout_reweighted_to_tuning_mix },
+  sens: { comparisons: d.sensitivity.comparisons },
+  t3: { comparisons: d.t3.comparisons },
+  draws: d.draws,
+  questions: { per_question: d.questions.per_question.map(q => { const { id, ...rest } = q; return rest; }), blocks: d.questions.blocks, h4: d.questions.h4, tokens_two_ways: d.questions.tokens_two_ways },
+  tuning: { factors: d.tuning.factors, search_factors: d.tuning.search_factors, native: d.tuning.native },
+  identity: { heldout: { shown_answers_identical_to_reference_arm: I.shown_answers_identical_to_reference_arm, full_record_identical_to_reference_arm: I.full_record_identical_to_reference_arm } },
+  trust: { tuning_to_heldout_drop: d.trust.tuning_to_heldout_drop, declared_changes_after_tuning_data: d.trust.declared_changes_after_tuning_data },
+  // size: example items keep only the fields the page reads, and false or empty flags are left out (the client treats a missing flag as false)
+  examples: { items: d.examples.items.map(e => ({ title: e.title, group_size: e.group_size, seed: e.seed, commit_changed_files_total: e.commit_changed_files_total, reference: e.reference,
+    arms: Object.fromEntries(Object.entries(e.arms).map(([k, a]) => [k, { recall_at_8000: a.recall_at_8000, reference_files_found: a.reference_files_found, reference_definitions_found: a.reference_definitions_found, tokens_used: a.tokens_used, files_shown: a.files_shown,
+      items: a.items.map(it => { const o = { path: it.path }; if (it.hit) o.hit = 1; if (it.file_hit) o.file_hit = 1; if (it.padding) o.padding = 1; if (it.definitions_credited && it.definitions_credited.length) o.definitions_credited = it.definitions_credited; return o; }) }])) })) },
+  engines: {
+    rows: EG.rows.filter(r => r.s === 'one').map(r => ({ e: r.e, g: r.g, c: r.c, warm: { m: r.warm.m, sp: r.warm.sp, pp: r.warm.pp }, cold: { m: r.cold.m, sp: r.cold.sp, pp: r.cold.pp },
+      cwf: r.cold_with_facts ? { m: r.cold_with_facts.m, pp: r.cold_with_facts.pp, fl: r.cold_with_facts.facts_load_ms, vr: r.cold_with_facts.vs_relational, vd: r.cold_with_facts.vs_duckpgq } : null,
+      qt: r.query_text, spr: r.statements_per_ranking })),
+    cmp: EG.comparisons.map(x => ({ g: x.g, c: x.c, k: x.kind, lo: x.lower, hi: x.higher, holds: x.listed_as === 'difference that holds', q: x.result === 'needs qualification', d: x.wall_diff_ms, w: x.quote_only_with.map(t => WQ.indexOf(t)) })),
+    wq: WQ,
+    stores: EG.stores.map(s => ({ e: s.e, g: s.g, mib: s.size_mib, build: s.build, update: s.update })),
+    where: EG.where_ranking_runs, short: EG.where_short, graphs: EG.graphs, step: stepS, passes: EG.settings.passes
+  },
+  kbench: KD.graphify.measurements.find(m => m.id === 'bench').rows,
+  // section L: only what its charts draw (rates, counts, labels)
+  l: { rules: d.l.rules.map(r => ({ key: r.key, name: r.name, what: r.what, group: r.group })), sets: d.l.sets, stat: d.l.stat, hub: d.l.hub,
+    causes: { total: d.l.causes.total, pattern: d.l.causes.pattern, fact: d.l.causes.fact, kinds: d.l.causes.kinds },
+    gap: { lanes: d.l.gap.lanes, series: d.l.gap.series }, tokens: d.l.tokens },
+  N,
+  tuneSE,
+  // section M: only what its charts and tooltips read (aggregates only; no question text, no per-task score)
+  m: (() => { const M = d.m, pick = (o, ks) => Object.fromEntries(ks.map(k => [k, o[k]]));
+    return {
+      t: M.table.map(r => ({ a: r.arm, s: r.set, n: r.n, cl: r.cl, p: r.p, se: r.se, r2000: r.r2000, r4000: r.r4000, r16000: r.r16000, e: r.empty || undefined })),
+      c: M.cmp.map(c => ({ id: c.id, v: c.verdict, v2: c.v2000, v4: c.v4000, sets: c.sets })),
+      sens: Object.assign({ left: M.sens.commitsLeft }, ...['G-1', 'G-2', 'G-3', 'G-4'].map(id => ({ [id]: pick(M.sens[id], ['asScored', 'dropGraphify', 'dropOther', 'idOnly', 'grader']) }))),
+      rank: M.rank, mob: M.mobile.dropGraphify, mobLeft: M.mobile.dropCommitsLeft,
+      loc: M.loc.map(g => pick(g, ['key', 'label', 'tasks', 'commits', 'means', 'd'])),
+      nat: Object.fromEntries(['T1', 'T2', 'T3'].map(s => [s, pick(M.native[s], ['tasks', 'commits', 'recall', 'tok', 'arms'])])),
+      q: Object.fromEntries(['all30', 'untouched22'].map(k => [k, M.q[k]])),
+      lk: Object.fromEntries(['hop3', 'unb'].map(k => [k, { NEEDS: M.links[k].NEEDS, WITHOUT: M.links[k].WITHOUT, files: Object.assign({ only: M.links[k].files.only, without: M.links[k].files.without }, M.links[k].files.far ? { far: M.links[k].files.far } : {}), total: M.links.totalFiles }])),
+      tune: M.tune.drops };
+  })()
+};
+// Size (section M added 2026-11-13; page limit 500,000 bytes): the page copy leaves out data no chart, label or tooltip
+// reads (data.json keeps all of it): six comparisons no chart draws (H2-ladybug, H4, H5 and the three H3-s1 rows), the
+// area-under-curve entry inside every comparison (section C draws the 2,000, 4,000, 8,000 and 16,000 points only) and
+// the two question blocks for the superseded list of 7 touched questions (section G uses the list of 8).
+{ const UNUSED = new Set(['H2-ladybug', 'H4', 'H5', 'H3-s1-search', 'H3-s1-floor-dir', 'H3-s1-floor-co']);
+  P.cmp = P.cmp.filter(c => !UNUSED.has(c.id)).map(c => ({ ...c, sets: Object.fromEntries(Object.entries(c.sets).map(([k, s]) => { const { area_under_curve, ...rest } = s || {}; return [k, s ? rest : s]; })) }));
+  P.questions = { ...P.questions, blocks: Object.fromEntries(Object.entries(P.questions.blocks).filter(([k]) => !/^touched7_/.test(k))) }; }
+// Size (page limit 500,000 bytes, section L added 2026-11-13): fields of the embedded comparison data that no chart,
+// label or tooltip reads are left out of the page copy (data.json keeps them): the two arms' means behind each
+// difference (mean_a, mean_b), the excludes-zero flags, the per-row source labels, the mean difference beside the
+// bootstrap difference, and the stand-alone verdict word. Nothing the reader sees changes.
+// Two lossless packings follow, unpacked by the page script on load: every example file path is stored once in a
+// path table (items carry its index), and each curve point {tokens, recall} is stored as a [tokens, recall] pair.
+const DROP = new Set(['mean_a', 'mean_b', 'excludes_zero', 'source', 'mean_difference', 'verdict_word_on_its_own']);
+{
+  const T = [], ix = new Map();
+  const id = p => { if (!ix.has(p)) { ix.set(p, T.length); T.push(p); } return ix.get(p); };
+  P.examples.items.forEach(e => Object.values(e.arms).forEach(a => { a.items = a.items.map(it => ({ ...it, path: id(it.path) })); }));
+  P.pathTable = T;
+  const pk = arr => (arr || []).map(q => (q && typeof q === 'object' && Object.keys(q).length === 2 && 'tokens' in q && 'recall' in q) ? [q.tokens, q.recall] : q);
+  P.curves = P.curves.map(c => ({ ...c, budget_points: pk(c.budget_points), whole_item_grid: pk(c.whole_item_grid) }));
+}
+// A third lossless packing (section M, 2026-11-13): every array of two or more objects that share exactly the same keys
+// is stored as {__k: [keys], __r: [[values], ...]}, so each key name is written once per array, not once per row. The
+// page script rebuilds the objects on load, before anything reads them. No value is changed or left out.
+const packRows = o => {
+  if (Array.isArray(o)) {
+    const objs = o.length >= 2 && o.every(x => x && typeof x === 'object' && !Array.isArray(x));
+    if (objs) { const k0 = Object.keys(o[0]), sig = k0.slice().sort().join('\u0001');
+      if (k0.length >= 2 && o.every(x => Object.keys(x).sort().join('\u0001') === sig)) return { __k: k0, __r: o.map(x => k0.map(k => packRows(x[k]))) }; }
+    return o.map(packRows);
+  }
+  if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, packRows(v)]));
+  return o;
+};
+const dataJson = JSON.stringify(packRows(JSON.parse(JSON.stringify(P, (k, v) => DROP.has(k) ? undefined : v)))).replace(/</g, '\\u003c');
+
+/* ---------- small html helpers ---------- */
+const tagHO = n => `<span class="tag ho">held-out${n ? ', ' + n : ''}</span>`;
+const tagTU = n => `<span class="tag tu">tuning${n ? ', ' + n : ''}</span>`;
+const seg = (ctl, label, opts) => `<div class="ctlrow"><span class="lab">${label}</span><div class="seg" role="group" aria-label="${esc(label)}" data-ctl="${ctl}">${opts.map(o => `<button type="button" data-v="${o[0]}">${o[1]}</button>`).join('')}</div></div>`;
+const sec = (id, letter, q, how, body, shows) => `<section class="sec" id="${id}"><h2><span class="letter">${letter}</span>${q}</h2><p class="how"><b>How to read it.</b> ${how}</p>${body}<p class="shows"><b>What it shows.</b> ${shows}</p></section>`;
+const fold = (title, inner) => `<details class="fold"><summary>${title}</summary><div class="in">${inner}</div></details>`;
+const table = (head, rows) => `<table class="t"><thead><tr>${head.map((h, i) => `<th${i === 0 ? '' : ''}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((c, i) => `<td${typeof c === 'string' && i > 0 && !/^[−+\-\d\[.]/.test(c) ? ' class="l"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+
+const ARMN = { 'relational|primary': 'SQLite (relational)', 'ladybug|primary': 'LadybugDB (graph)', 'duckpgq|primary': 'DuckDB graph layer', 'ladybug|s2': 'LadybugDB + community prior (stored grouping)', 'relational|s1': '4-hop variant, SQLite', 'ladybug|s1': '4-hop variant, LadybugDB', 'duckpgq|s1': '4-hop variant, DuckDB graph layer', 'search|primary': 'scripted search', 'search|s2': 'scripted search, best form', 'floor-co|primary': 'changed-together floor', 'floor-dir|primary': 'same-folder floor', 'ladybug|s2-draw1': 'LadybugDB + community, draw 1', 'ladybug|s2-draw2': 'LadybugDB + community, draw 2', 'ladybug|s2-draw3': 'LadybugDB + community, draw 3', 'ladybug|s2-draw4': 'LadybugDB + community, draw 4' };
+const SETN = { T1: 'change completion (T1)', T1x: 'cross-runtime subset (T1x), descriptive', T2: 'tests to update (T2)', T3: 'documented chains (T3), sign only', T4: 'defect register (T4), descriptive' };
+
+/* ================= A ================= */
+const coNM = SP.typed_vs_cochange_floor.groups.not_mobile;
+const vcard = (n, head, big, small, word, tags, chartId, text, go) => `<div class="vcard"><div class="vn">${n}</div><div class="vh">${head}</div><div class="vnum tnum">${big}${small ? ' <small>' + small + '</small>' : ''}</div><div>${tags}</div>${word ? `<span class="word">${word}</span>` : ''}${chartId ? `<div class="chart vchart" id="${chartId}"></div>` : ''}<div class="vt">${text}</div><div class="vgo"><a href="#${go[0]}">${go[1]}</a></div></div>`;
+const secA = sec('a', 'A', 'What did the test find?',
+  `Seven cards, one finding each, most important first. The big number is a difference between two tools. The line under it is its 95 % interval (the range the true difference probably lies in); the grey band is ±0.05, the smallest difference in recall the test treated as worth acting on; the dark vertical line is zero. A line that crosses zero means the test cannot tell the two apart. Hover any mark for its exact value.`,
+  `<div class="verdicts">
+${vcard('1 · the engine', 'Same facts, same method: the same answers in all three engines', sg(H1.difference), 'recall difference ' + ci(H1.ci95), 'same within ±0.05', tagHO(N.ho + ' commits'), 'v1',
+    `The three implementations compute the same answers from the same facts with the same method: the answer shown to the reader was identical in SQLite (relational), LadybugDB (graph) and the DuckDB graph layer on ${esc(I.shown_answers_identical_to_reference_arm.relational)}. The engine did not change the answer.`, ['e', 'See E: does the engine matter'])}
+${vcard('2 · a graph-only ranking', 'Adding a community prior gave no gain of 0.05 or more', sg(H1b.sets.T1.difference), 'recall ' + ci(H1b.sets.T1.ci95), 'no gain of 0.05 or more', tagHO(N.ho + ' commits'), 'v2',
+    `Adding a stored community prior to personalised PageRank (LadybugDB) gave no gain of 0.05 recall or more. The five community draws (diamonds) range from ${sg(dmin)} to ${sg(dmax)}. On tests to update it was lower: ${sg(H1b.sets.T2.difference)} ${ci(H1b.sets.T2.ci95)}. The PageRank iterations ran in application code; only the grouping came from the engine.`, ['e', 'See E: the five draws'])}
+${vcard('3 · typed store against scripted search', 'A typed store found more of the change, but only for changes that start in the mobile app', sg(H3s.sets.T1.difference), 'recall ' + ci(H3s.sets.T1.ci95), 'better by the pre-declared rule', tagHO(N.ho + ' commits'), 'v3',
+    `Same answer size (8,000 tokens) for every tool, in either kind of engine. Top line: all changes. Hollow blue: seeds in the mobile app, ${sg(SP.typed_vs_search.groups.mobile.diff)} ${ci(SP.typed_vs_search.groups.mobile.ci95)} over ${HC.mobile.commits} commits. Grey: seeds elsewhere, ${sg(SP.typed_vs_search.groups.not_mobile.diff)} ${ci(SP.typed_vs_search.groups.not_mobile.ci95)} over ${HC.not_mobile.commits} commits, which cannot be told apart from zero. It also beat both floors; against the changed-together floor (${sg(H3co.sets.T1.difference)} ${ci(H3co.sets.T1.ci95)}) the gain again sits in mobile seeds and elsewhere it ties (${sg(coNM.diff)} ${ci(coNM.ci95)}). Both lower ends are under 0.05. The search arm is a fixed script, not an agent searching.`, ['d', 'See D: where the gain comes from'])}
+${vcard('4 · what moved the score', 'How far the walk goes and which facts are stored mattered; the ranking algorithm barely did', f(hopF.range), 'tuning recall moved by hop depth', '', tagTU(N.tu + ' commits, optimistic'), 'v4',
+    `Upper bar (blue dots): hop depth, from ${f(hop1.primary)} at 1 hop to ${f(hopU.primary)} unbounded. Lower bar (violet): every ranking mode at unbounded depth, all within ${f(rankU.range)}. Following edges one way only cost up to ${f(dirF.range)}; adding the history of files that changed together added ${f(-histStep.change_from_base)}.`, ['f', 'See F: try the hop control'])}
+${vcard('5 · code-reading questions', `Typed queries scored higher, but not provably on all ${N.q} questions`, sg(h4.all30.diff), 'F1 ' + ci(h4.all30.ci95), 'inconclusive', tagHO(N.q + ' questions'), 'v5',
+    `Lines from top: all ${N.q} questions; the ${N.q23} first listed as untouched; the ${N.q22} whose handling never changed, where the interval is ${ci(h4.untouched22.ci95)} and excludes zero. Final answers were about the same size (median ${tok.all30.typed_final_answer_tokens_median} against ${tok.all30.search_final_answer_tokens_median} tokens); to produce its answer the scripted search read a median of ${tok.all30.search_tokens_read_median} tokens. The typed side's own costs (knowing the schema, writing a query program per kind of question) were not counted.`, ['g', 'See G: every question'])}
+${vcard('6 · engine speed', 'Every engine answers in milliseconds; one model step takes seconds', fms(wFz('relational')) + ' ms', 'SQLite (relational), selected method, warm median per ranking', 'milliseconds, not tokens', tagTM(EG.settings.passes + ' passes, tuning inputs only'), 'v6',
+    `On the selected method SQLite was fastest: ${fms(wFz('relational'))} ms against ${fms(wFz('ladybug'))} ms for LadybugDB (graph) and ${fms(wFz('duckpgq'))} ms for the DuckDB graph layer on the frozen graph (bars: spread between passes). On the PageRank variants the arm that runs PageRank in application code (LadybugDB) was fastest, which compares implementations, not graph operators. One model step takes about ${stepS} s, so engine speed does not enter the token bill.`, ['h', 'See H: engines'])}
+${vcard('7 · not tested', 'Whether an agent finishes work faster with any of this', 'not tested', '', '', '<span class="tag ds">no agent was run</span>', '',
+    `Every result here is about what a tool puts in front of the reader within a fixed answer size. Whether an agent then finishes a task faster, or with fewer mistakes, was not measured.`, ['j', 'See J: what could be tested next'])}
+</div>
+<h3 style="margin:26px 0 4px;font-size:21px">Your five questions, answered in one line each</h3>
+<div class="qa">
+<div class="q"><div class="qq">Does the way a graph stores things change the answer?</div><div class="qa1">No. Given the same facts and the same method, SQLite, LadybugDB and DuckDB returned the same answers (${esc(I.shown_answers_identical_to_reference_arm.ladybug)}). The facts in the store and the method decide the answer. <a href="#e">E</a></div></div>
+<div class="q"><div class="qq">Are the answers scored for the value they carry?</div><div class="qa1">Partly. A changed file or definition counts only when the tool actually showed it inside the 8,000-token answer, and a definition only when its own lines were shown. Every item counts the same; how much an agent gains from it was not measured. <a href="#b">B</a></div></div>
+<div class="q"><div class="qq">Do the type of graph, the algorithms and the number of hops matter?</div><div class="qa1">Hops and which facts are stored moved tuning recall by up to ${f(hopF.range)}; ranking algorithms by at most ${f(rankU.range)}; the one graph-only algorithm that reached the final gave no gain of 0.05 or more. <a href="#f">F</a></div></div>
+<div class="q"><div class="qq">Was the graph given a fair, optimised form against an established relational engine?</div><div class="qa1">Each engine had ${counts.relational} tuned configurations on the same ${d.tuning.n_commits} tuning commits, its own native algorithms were tried, and audits fixed graph-side defects before scoring. <a href="#e-fair">E</a></div></div>
+<div class="q"><div class="qq">Would it be more token efficient?</div><div class="qa1">Every tool filled the same 8,000-token answer, so the test compares how much each found per token, not tokens saved: the typed store found more, on mobile-app changes. Engine times are milliseconds and do not enter the token bill; an agent's tokens were not measured. <a href="#c">C</a> <a href="#g">G</a> <a href="#h">H</a> <a href="#k">K</a></div></div>
+</div>`,
+  `The engine did not change the answer, and on the selected method SQLite (relational) answered fastest, in milliseconds that do not enter the token bill. A typed store of connections found more of a change than a scripted search at the same answer size, and the whole gain sits in mobile-app changes. No agent was run; what you asked that this did not cover is in K.`);
+
+/* ================= scope (first screen) ================= */
+// state: true = tested, false = not tested, 'part' = partly tested (section L, 2026-11-13)
+const layer = (tested, title, sub) => { const st = tested === 'part' ? 'part' : tested ? 'yes' : 'no';
+  return `<div class="lyr ${st}"><span class="lmark" aria-hidden="true">${st === 'part' ? '◐' : tested ? '✓' : '✕'}</span><div class="ltx"><b>${title}</b>${sub ? `<span>${sub}</span>` : ''}</div><span class="lbadge">${st === 'part' ? 'PARTLY TESTED' : tested ? 'TESTED' : 'NOT TESTED'}</span></div>`; };
+const scopeBlock = `<section class="scope" id="scope" aria-labelledby="scope-h"><div class="scope-grid"><div>
+<h2 id="scope-h">What this page answers, and what it does not</h2>
+<p class="scope-p">It answers two questions. <b>Do three storage engines differ</b>: SQLite (relational), LadybugDB (graph) and the DuckDB graph layer, holding the same facts? <b>Does a parser-built code graph beat a scripted search</b> at finding the other code that a real change touched? It does <b>not</b> test a layer of meaning that a model reads from documents (what graphify adds), facts with time validity, orientation (summaries and maps), an agent actually using any of these tools, or the tokens a working session spends.</p>
+<p class="scope-p"><b>Added since:</b> a replay of <b>cached answers with invalidation</b> (section L), for answers a program computes from the graph only. No model was called and no agent ran, so conclusions a model makes were not cached. And <b>graphify itself</b>, its code layer only, run scripted on the same tasks (section M), with no model and no agent.</p>
+<p class="scope-go"><a href="#k">K: what you asked that this test did not cover →</a><br><a href="#l">L: cached answers with invalidation, the replay →</a><br><a href="#m">M: graphify itself, on our tasks →</a></p></div>
+<div class="layers" role="list" aria-label="Layers of a knowledge layer, tested, partly tested and not tested">
+${layer(false, 'An agent using the tool; tokens in a session', 'no agent was run')}
+${layer(false, 'Orientation', 'summaries, reports, slice maps')}
+${layer('part', 'Time validity and cached conclusions', 'partly tested: deterministic answers only, see L. Not tested: facts valid from and to a commit, and conclusions made by a model')}
+${layer(false, 'Meaning read from documents by a model', 'rules, reasons, document-to-code links: what graphify adds; its document layer was not run (M)')}
+${layer(true, 'Structure: a parser-built code graph', 'files, functions, routes, tables, settings, tests, changed-together history; held in three engines. Graphify’s code layer too, scripted, see M')}
+</div></div></section>`;
+
+/* ================= B ================= */
+const armCard = (a, color) => `<div class="arm" style="--ac:${color}"><h4>${esc(a.label)}</h4><div class="kind">${esc(a.kind)}${a.scored ? '' : ' · not scored'}</div><div class="flow"><span class="k">Reads</span><span>${esc(a.reads)}</span><span class="k">Answers</span><span>${esc(a.answers)}</span></div>${fold('What it is', `<p class="note" style="margin:0">${esc(a.what)}</p>`)}</div>`;
+const AR = id => d.arms.find(a => a.id === id);
+const plain = { relational: 'SQLite (relational)', ladybug: 'LadybugDB (graph)', duckpgq: 'DuckDB graph layer', reference: 'Reference implementation (check only)', search: 'Scripted search', 'floor-dir': 'Same-folder floor', 'floor-co': 'Changed-together floor' };
+const armObj = id => Object.assign({}, AR(id), { label: plain[id] });
+const setRows = d.sets.map(s => [`<b>${esc(s.name)}</b> <span class="note">(${s.id})</span><br><span class="note">${esc(s.sentence)}</span>`, s.tuning.tasks != null ? (s.tuning.tasks ? num(s.tuning.tasks) + ' tasks, ' + s.tuning.commits + ' commits' : 'none') : s.tuning.questions + ' questions', s.heldout.questions ? s.heldout.questions + ' questions' : s.heldout.run === false ? s.heldout.tasks_listed + ' listed, not run' : num(s.heldout.tasks) + ' tasks' + (s.heldout.commits ? ', ' + s.heldout.commits + ' commits' : s.heldout.parent_commits ? ', ' + s.heldout.parent_commits + ' parent commits, ' + s.heldout.documents + ' documents' : s.heldout.fix_commits ? ', ' + s.heldout.fix_commits + ' fix commits' : '')]);
+const frozenRows = d.frozen_configurations.map(c => [esc(c.arm), esc(c.role), esc(c.plain), f(c.tune_primary)]);
+const secB = sec('b', 'B', 'What was compared, and how was each answer scored?',
+  `The cards are the seven tools: what each reads and how it answers. The three typed stores in the dashed box hold the same facts and run the same method. Below them, one task as a picture. At the bottom, step through three real tasks with Back and Next.`,
+  `<div class="bracket"><p class="bl">Typed stores: the same facts (files, functions, routes, tables, settings, tests and how they connect, including which files changed together before) in three engines</p><div class="arms">${armCard(armObj('relational'), 'var(--c-typed)')}${armCard(armObj('ladybug'), 'var(--c-typed)')}${armCard(armObj('duckpgq'), 'var(--c-typed)')}${armCard(armObj('reference'), 'var(--axis)')}</div></div>
+<div class="arms">${armCard(armObj('search'), 'var(--c-search)')}${armCard(armObj('floor-co'), 'var(--c-co)')}${armCard(armObj('floor-dir'), 'var(--c-dir)')}</div>
+<h3 style="margin:24px 0 8px;font-size:20px">One task, as a picture</h3>
+<div class="taskpic">
+<div class="box"><h4>1. Seed</h4>One file and one symbol that a real commit changed. The tool sees the code as it was just before that commit.</div><div class="arrow" aria-hidden="true">→</div>
+<div class="box"><h4>2. The tool's answer</h4>A ranked list of files, each printed as its path and the signature lines of its definitions, packed until <b>8,000 tokens</b> are used. Every tool gets the same packer and the same budget.</div><div class="arrow" aria-hidden="true">→</div>
+<div class="box"><h4>3. Compared with the commit</h4>The other files and definitions the same commit changed (the reference) are counted: <b>recall</b> = found ÷ all of them.</div>
+</div>
+<p style="font-size:17px;max-width:1150px"><b>Recall</b> is the share of the files and definitions the real change touched that the tool put in front of the reader. ${esc(d.meta.primary_metric.replace(/^Recall: the share/, 'As scored, it is the share'))} Every item counts the same: recall does not weigh how important an item was, and it does not count context a change needed but did not edit.</p>
+<h3 style="margin:24px 0 8px;font-size:20px">Three worked examples (tuning tasks, never held-out)</h3>
+${seg('ex', 'Example', d.examples.items.map((e, i) => [i, esc(e.title)]))}
+<div class="ex-steps" id="b-steps"></div>
+<div class="ex-stage" id="b-ex"></div>
+<div class="ex-nav"><button class="btn" id="b-prev" type="button">← Back</button><button class="btn" id="b-next" type="button">Next →</button></div>
+<p class="note">${esc(d.examples.rule)}</p>
+${fold('The task sets and their sizes', table(['Task set', 'Tuning', 'Held-out'], setRows))}
+${fold('The frozen configuration of each tool (chosen on tuning, then fixed)', table(['Tool', 'Role', 'What it does', 'Tuning recall'], frozenRows) + d.roles.map(r => `<p class="note"><b>${esc(r.role)}</b>: ${esc(r.meaning)}</p>`).join(''))}`,
+  `Every tool answered the same tasks under the same rules: one seed, one shared packer, an 8,000-token answer, and a score that counts what the real commit changed. In the three examples: ${d.examples.items.map(e => `${esc(e.title)} — typed store ${fnd(e, 'typed')}, scripted search ${fnd(e, 'search')}, changed-together floor ${fnd(e, 'fco')}`).join('; ')}.`);
+function fnd(e, k) { const a = e.arms[k]; return (a.reference_files_found.length + a.reference_definitions_found.length) + ' of ' + e.reference.units; }
+
+/* ================= C ================= */
+const fullRows = d.heldout.table.map(r => [ARMN[r.arm + '|' + r.role] || r.arm + ' ' + r.role, r.set, r.n_tasks, r.n_clusters + ' ' + r.cluster_unit + (r.n_clusters === 1 ? '' : 's'), f(r.recall_at_2000), f(r.recall_at_4000), f(r.recall_at_8000), f(r.recall_at_16000), f(r.standard_error), f(r.definition_recall_at_8000), f(r.file_recall_at_8000), f(r.recall_without_padding_tail_at_8000), f(r.precision_at_8000), r.median_answer_tokens_at_8000_budget, r.median_lookups, r.median_tokens_read_by_search == null ? '–' : r.median_tokens_read_by_search, pct(r.share_of_tasks_reaching_80_percent_recall_within_16000), r.median_tokens_to_80_percent_where_reached == null ? 'none reached' : r.median_tokens_to_80_percent_where_reached]);
+const secC = sec('c', 'C', 'Which tool put more of the real change in front of the reader?',
+  `First chart: each tool's recall at 8,000 tokens with its interval; the three engines' rows are the same frozen configuration. Second chart: each difference with its 95 % interval, paired commit by commit; a bar clear of zero and of the grey band is a difference worth acting on. The task-set switch changes both charts; the answer-size switch changes the second one. Third: recall at every answer size, the token-efficiency view. Rows are faded where the set is too small for an effect size.`,
+  `${seg('cset', 'Task set', [['T1', 'Change completion'], ['T2', 'Tests to update'], ['T3', 'Documented chains (sign only)'], ['T1x', 'Cross-runtime (descriptive)'], ['T4', 'Defect register (descriptive)']])}
+${seg('cbud', 'Answer size (second chart)', [['2000', '2,000 tokens'], ['4000', '4,000 tokens'], ['8000', '8,000 tokens'], ['16000', '16,000 tokens']])}
+<div class="stack"><div class="card panel"><h3>Recall of each tool ${tagHO('n per row in the hover')}</h3><p class="sub">Answer size fixed at 8,000 tokens; the frozen configurations.</p><div class="chart" id="c-abs"></div></div>
+<div class="card panel"><h3>Differences, with 95 % intervals ${tagHO('paired over commits')}</h3><p class="sub">Positive: the first tool found more. Verdict words appear only where the pre-declared rule applies (change completion at 8,000 tokens).</p><div class="chart" id="c-diff"></div></div></div>
+<div class="card panel" style="margin-top:18px"><h3>Recall by answer size: the token-efficiency view ${tagHO(N.ho + ' commits for change completion')}</h3><p class="sub">Read across: how much of the change each tool has shown after that many tokens. Read up at 8,000: the scored point. Hover for every tool's value at one size.</p>${seg('curve', 'Task set', [['T1', 'Change completion'], ['T2', 'Tests to update'], ['T3', 'Documented chains']])}<div class="chart" id="c-curves"></div><p class="note">Line: recall of the whole items of the 16,000-token answer that fit within each token count, in steps of 500 tokens. Dots: recall when the answer is packed to exactly that budget, as scored (the last item may be cut).</p></div>
+${fold('Every held-out number for every tool and task set (table)', table(['Tool', 'Set', 'Tasks', 'Clusters', 'Recall 2,000', '4,000', '8,000', '16,000', 'Std. error (8,000)', 'Definitions', 'Files', 'Without padding tail', 'Precision', 'Median answer tokens', 'Median lookups', 'Median tokens read (search)', 'Tasks reaching 80 % within 16,000', 'Median tokens to 80 %'], fullRows))}`,
+  `On change completion the typed store's answer held ${f(relT1.primary_recall_at_8000_tokens)} of the change, the changed-together floor ${f(coT1.primary_recall_at_8000_tokens)}, scripted search ${f(seaT1.primary_recall_at_8000_tokens)} and the same-folder floor ${f(dirT1.primary_recall_at_8000_tokens)}. Against scripted search the typed store is ahead at every answer size scored: ${sg(sensTS.at_2000_tokens.diff)} ${ci(sensTS.at_2000_tokens.ci95)} at 2,000 tokens, ${sg(sensTS.at_4000_tokens.diff)} ${ci(sensTS.at_4000_tokens.ci95)} at 4,000 and ${sg(sensTS.at_16000_tokens.diff)} ${ci(sensTS.at_16000_tokens.ci95)} at 16,000. Every answer fills its budget (median ${relT1.median_answer_tokens_at_8000_budget} tokens), so this is "more found per token", not "fewer tokens spent".`);
+
+/* ================= D ================= */
+const mixBar = (label, parts) => `<div class="mixrow"><span>${label}</span><div class="mix">${parts.map(p => `<div style="flex:${p[1]};background:${p[2]}" data-tip="${esc(p[0] + ': ' + pct(p[1]))}">${p[1] >= 0.3 ? esc(p[0] + ' ' + pct(p[1])) : p[1] >= 0.05 ? esc(pct(p[1])) : ''}</div>`).join('')}</div></div>`;
+const padRow = (k, color) => { const a = pad[k]; const pt = a.per_task; const head = pt.from_own_head, tail = pt.from_padding_tail_only, via = pt.via_path_with_cochange_edge; return `<div class="scorebar"><span>${esc(a.label.replace('LadybugDB S2, stored community draw', 'LadybugDB + community').replace('co-change floor', 'changed-together floor').replace('typed primary', 'typed store').replace('scripted search primary', 'scripted search').replace('scripted search s2 (best form)', 'scripted search, best form').replace('same-directory floor', 'same-folder floor'))}</span><span class="track" data-tip="${esc('per task: recall ' + f(pt.recall) + '; from its own ranked list ' + f(head) + (via ? ' (of which through a stored path with a co-change edge ' + f(via) + ')' : '') + '; from the padding tail only ' + f(tail))}"><span class="fill" style="width:${head * 100}%;background:${color}"></span>${via ? `<span class="fill" style="width:${via * 100}%;background:repeating-linear-gradient(45deg,rgba(255,255,255,.55) 0 3px,transparent 3px 7px)"></span>` : ''}<span class="fill" style="left:${head * 100}%;width:${tail * 100}%;background:repeating-linear-gradient(45deg,${color} 0 3px,var(--chip) 3px 7px);border-radius:0"></span></span><b class="tnum">${f(pt.recall)}${tail ? ' · ' + pct(a.share_from_padding_tail_per_task) + ' from the tail' : ''}${via ? ' · ' + pct(a.share_via_cochange_per_task) + ' via a co-change edge' : ''}</b></div>`; };
+const cmpSeg = ctl => seg(ctl, 'Comparison', [['typed_vs_search', 'typed vs scripted search'], ['typed_vs_cochange_floor', 'typed vs changed-together floor'], ['typed_vs_samedir_floor', 'typed vs same-folder floor'], ['typed_vs_search_s2', 'typed vs search, best form'], ['cochange_floor_vs_search', 'changed-together floor vs search']]);
+const secD = sec('d', 'D', "Where does the typed store's gain come from?",
+  `Each row is one part of the codebase, chosen by where the seed file lives. The filled dot and its bar are held-out (95 % interval); the faded hollow row under it is the same comparison on the tuning commits. Switch the comparison to see the same split for the floors.`,
+  `${cmpSeg('dcmp')}
+<div class="stack"><div class="card panel"><h3>The split by runtime ${tagHO('commits per row')}</h3><p class="sub">Grouped by the top folder of the seed file: technician-app/ is the mobile app, backend/ the backend, src/ the web app. One held-out task is seeded at the repository root (the ops console server); it is shown outside and inside the web group. A commit with seeds in two groups counts in both.</p><div class="chart" id="d-split"></div><p class="note" id="d-rew"></p></div>
+<div class="grid2"><div class="card panel"><h3>The mix of changes moved between tuning and held-out</h3><p class="sub">Share of change-completion tasks by where the seed lives.</p>
+${mixBar('tuning, ' + d.splits.tuning_counts.all.tasks + ' tasks', [['mobile', mix.mobile.tuning_share_of_tasks, 'var(--c-typed)'], ['backend', mix.backend.tuning_share_of_tasks, 'var(--c-dir)'], ['web', mix.web_without_root_task.tuning_share_of_tasks, 'var(--c-co)']])}
+${mixBar('held-out, ' + HC.all.tasks + ' tasks', [['mobile', mix.mobile.heldout_share_of_tasks, 'var(--c-typed)'], ['backend', mix.backend.heldout_share_of_tasks, 'var(--c-dir)'], ['web', mix.web_without_root_task.heldout_share_of_tasks, 'var(--c-co)'], ['root level', mix.root.heldout_tasks / HC.all.tasks, 'var(--c-search)']])}
+<div class="legendrow"><span><span class="tile" style="background:var(--c-typed);border-color:var(--c-typed)"></span>mobile app</span><span><span class="tile" style="background:var(--c-dir);border-color:var(--c-dir)"></span>backend</span><span><span class="tile" style="background:var(--c-co);border-color:var(--c-co)"></span>web</span><span><span class="tile" style="background:var(--c-search);border-color:var(--c-search)"></span>root level (1 task)</span></div><p class="note">Mobile-app seeds: ${pct(mix.mobile.tuning_share_of_tasks)} of tuning tasks, ${pct(mix.mobile.heldout_share_of_tasks)} of held-out tasks. Share of commits (a commit with seeds in two parts counts in both): mobile ${pct(mix.mobile.tuning_share_of_commits)} to ${pct(mix.mobile.heldout_share_of_commits)}, backend ${pct(mix.backend.tuning_share_of_commits)} to ${pct(mix.backend.heldout_share_of_commits)}, web ${pct(mix.web_without_root_task.tuning_share_of_commits)} to ${pct(mix.web_without_root_task.heldout_share_of_commits)}. One held-out task is seeded at the repository root (the ops console server); the web row is shown with and without it.</p></div>
+<div class="card panel"><h3>Half of the scripted search's recall comes from its padding tail ${tagHO(N.tasks + ' tasks')}</h3><p class="sub">Solid: found by the tool's own ranked list. Striped on the right: found only by the padding tail (files that changed together with the seed before). Light stripes inside the typed bars: found through a stored path that contains a changed-together edge.</p>
+${padRow('typed', 'var(--c-typed)')}${padRow('lbs2', 'var(--c-comm)')}${padRow('search', 'var(--c-search)')}${padRow('search2', 'var(--c-search)')}${padRow('fco', 'var(--c-co)')}${padRow('fdir', 'var(--c-dir)')}
+<p class="note">${esc(d.padding.rule)}. Per-task means (tasks weighted equally), so they differ slightly from the per-commit recall used everywhere else.</p></div></div></div>
+<div class="stack" style="margin-top:18px"><div class="card panel"><h3>Does the result survive dropping commits? ${tagHO('change completion')}</h3><p class="sub">The same difference recomputed after removing the commits that help one side most, the largest commits, or seeds that the arms matched differently.</p>${cmpSeg('scmp')}<div class="chart" id="d-sens"></div></div>
+<div class="card panel"><h3>Documented chains: read the sign only ${tagHO(N.t3 + ' tasks from ' + N.t3p + ' parent commits, ' + N.t3d + ' documents')}</h3><p class="sub">${esc(d.t3.note)}</p>${seg('t3cmp', 'Comparison', [['typed_vs_search', 'typed vs search'], ['typed_vs_cochange_floor', 'typed vs changed-together'], ['typed_vs_samedir_floor', 'typed vs same-folder'], ['lbs2_vs_typed', 'community vs typed']])}<div class="chart" id="d-t3"></div><p class="note">Sign in each of the 5 groups of tasks (parent commit and document):</p><div id="d-t3sign" style="display:flex;flex-wrap:wrap;gap:6px"></div></div></div>`,
+  `The typed store's lead over scripted search is ${sg(SP.typed_vs_search.groups.mobile.diff)} ${ci(SP.typed_vs_search.groups.mobile.ci95)} on mobile-app seeds and ${sg(SP.typed_vs_search.groups.backend.diff)} ${ci(SP.typed_vs_search.groups.backend.ci95)} on backend seeds. Mobile seeds rose from ${pct(mix.mobile.tuning_share_of_tasks)} to ${pct(mix.mobile.heldout_share_of_tasks)} of tasks, so part of the overall gap comes from the mix. Against the changed-together floor the lead is the most fragile: dropping the five commits most favourable to the typed store leaves ${sg(sensCO.drop_5_most_favourable_to_a.diff)} ${ci(sensCO.drop_5_most_favourable_to_a.ci95)}, and seeds matched by id only give ${sg(sensCO.seeds_matched_by_id_only.diff)} ${ci(sensCO.seeds_matched_by_id_only.ci95)}. About half of the typed store's own recall travelled over a changed-together edge.`);
+
+/* ================= E ================= */
+const nativeBest = d.tuning.native.note;
+const secE = sec('e', 'E', 'Does the kind of database change the answer?',
+  `Top: one square per held-out task, for each engine; filled means the answer shown to the reader was identical to a plain in-memory reference implementation. Middle: the graph-only ranking (a stored community grouping added to personalised PageRank) against SQLite, for the stored grouping and four further draws, on five views. Bottom: every engine-native mode tried during tuning, as a change from the same walk written once for all engines.`,
+  `<div class="waffles" id="e-waffles"></div>
+<ul class="note" style="margin:10px 0;padding-left:20px"><li>Code-reading questions: LadybugDB ${esc(I.questions_identical_to_relational.ladybug)} and DuckDB ${esc(I.questions_identical_to_relational.duckpgq)} identical to SQLite.</li><li>The first-written 4-hop configuration: ${esc(I.s1_identical)}.</li>${d.identity.tuning.recorded_in_stage_notes.map(x => `<li>Tuning: ${esc(x)}</li>`).join("")}</ul>
+${fold('Why 5 SQLite and 3 DuckDB ranked lists differ beyond what is shown', `<p class="note" style="margin:0">${esc(d.identity.heldout.ranked_hash_differences ? '' : '')}${esc(dIdentityExplain())}</p>`)}
+<h3 style="margin:24px 0 6px;font-size:20px">The one graph-only ranking that reached the final ${tagHO('LadybugDB + community prior minus SQLite')}</h3>
+<p class="note">${esc(H1b.qualification)}</p>
+<div class="grid2 draws" id="e-draws"></div>
+<div class="card panel" id="e-fair" style="margin-top:18px"><h3>Was each engine given its best form? ${tagTU(N.tu + ' commits')}</h3>
+<ul style="margin:6px 0 10px;padding-left:20px;font-size:16px">
+<li>Each of SQLite, LadybugDB, DuckDB and the scripted search had ${counts.relational} configurations on the same ${d.tuning.n_commits} tuning commits (${d.tuning.n_tasks_T1} tasks); each floor had ${counts['floor-co']}.</li>
+<li>All arms ran in one Linux image, because LadybugDB's algorithm extension would not load on Windows and running without it would have handicapped the graph side.</li>
+<li>The relational store had a strong design: integer ids, typed node and edge tables, indexes in both directions, depth-capped recursive queries and stored rank columns.</li>
+<li>Audits before scoring fixed defects on both sides: a division by zero in a ranking, two engines defining weighted shortest path differently, communities that changed with each build, and DuckDB counting paths beyond the hop limit.</li>
+<li>${esc(nativeBest)}</li>
+<li>The DuckDB k-hop walk is recursive SQL, not a graph operator.</li></ul>
+<div class="chart" id="e-native"></div></div>`,
+  `No. The three implementations compute the same answers from the same facts with the same method. The only graph-only ranking that reached the final changed answers, and gave no gain of 0.05 recall or more: ${sg(H1b.sets.T1.difference)} ${ci(H1b.sets.T1.ci95)} on change completion, draws from ${sg(dmin)} to ${sg(dmax)}, and ${sg(H1b.sets.T2.difference)} on tests to update. This is one configuration on one repository, so it does not rule out a gain from other graph algorithms.`);
+function dIdentityExplain() { return d.identity.heldout.ranked_hash_differences.explanation; }
+
+/* ================= F ================= */
+const factorTable = list => list.map(F => `<p style="margin:12px 0 4px"><b>${esc(F.factor)}</b> (${esc(F.arm === 'search' ? 'scripted search' : 'typed store')}): moved recall by ${f(F.range)}${F.note && typeof F.note === 'string' ? ' — ' + esc(F.note) : ''}</p>` + table(['Setting', 'Configuration', 'Tuning recall', 'Std. error', 'Change from start'], F.levels.map(l => [esc(l.level), `<span class="mono">${esc(l.configuration)}</span>`, l.primary == null ? 'no primary' + (l.file_recall_at_10 != null ? ' (file recall at 10: ' + f(l.file_recall_at_10) + ')' : '') : f(l.primary), l.se == null ? '–' : f(l.se), l.change_from_base == null ? '–' : sg(l.change_from_base)]))).join('');
+const secF = sec('f', 'F', 'What changed the score: hops, facts or the ranking algorithm?',
+  `<span class="tag tu big">tuning set: optimistic</span> These numbers come from the ${d.tuning.n_commits} tuning commits the settings were chosen on, so they are higher than held-out. Press a hop setting: the long bar shows the tuning recall at that depth. The ranking chart uses the same scale, so the size of the two effects can be compared by eye. The last chart shows every setting that was swept.`,
+  `${seg('hop', 'How far the walk goes', [['1', '1 hop'], ['2', '2 hops'], ['3', '3 hops'], ['4', '4 hops'], ['6', '6 hops'], ['unbounded', 'unbounded']])}
+<div class="card panel"><div class="chart" id="f-hopbig"></div><div class="chart" id="f-hop" style="margin-top:8px"></div></div>
+<div class="card panel" style="margin-top:16px"><h3>Ranking modes side by side ${tagTU(N.tu + ' commits')}</h3><p class="sub">Swept at 2 hops and at unbounded depth; the hop control above switches this too.</p>${seg('rank', 'Depth', [['2', 'at 2 hops'], ['unbounded', 'at unbounded depth']])}<div class="chart" id="f-rank"></div></div>
+<div class="card panel" style="margin-top:16px"><h3>Every factor that was swept ${tagTU(N.tu + ' commits')}</h3><p class="sub">One row per factor: hollow dots are its settings, the filled dot is where it started, the bar is the spread. Sorted by how far each factor moved recall. Hover a row for every setting.</p><div class="chart" id="f-factors"></div>
+${fold('Every setting of every factor (table)', factorTable(d.tuning.factors) + factorTable(d.tuning.search_factors) + `<p class="note">${esc(d.tuning.note)}</p><p class="note">Starting point, typed store: ${esc(d.tuning.typed_base.description)} (${f(d.tuning.typed_base.primary)}). Frozen: ${esc(d.tuning.typed_frozen.description)} (${f(d.tuning.typed_frozen.primary)}). Starting point, scripted search: ${esc(d.tuning.search_base.description)} (${f(d.tuning.search_base.primary)}). Best scripted search without a padding tail: <span class="mono">${esc(d.tuning.search_best_without_padding.configuration)}</span> (${f(d.tuning.search_best_without_padding.primary)}).</p>`)}</div>`,
+  `How far the walk goes moved tuning recall by ${f(hopF.range)} (${f(hop1.primary)} at 1 hop, ${f(hopU.primary)} unbounded) and following edges in one direction only cost ${f(-dirF.levels[1].change_from_base)}; which facts are stored mattered next (the history of files that changed together added ${f(-histStep.change_from_base)}). Every ranking mode, including PageRank, landed within ${f(rank2.range)} of each other at 2 hops and ${f(rankU.range)} at unbounded depth. For the scripted search, its padding tail moved recall most (${f(d.tuning.search_factors.find(x => x.factor === 'padding tail').range)}).`);
+
+/* ================= G ================= */
+const bl = d.questions.blocks.all30_with_judgement;
+const secG = sec('g', 'G', 'How did typed queries do on code-reading questions?',
+  `${TQ.heldout.questions} held-out questions whose answers are fixed by reading the code (${esc(TQ.sentence.split('(')[1] ? 'for example ' + TQ.sentence.split('(for example ')[1].split(')')[0] : '')}). <b>F1</b> scores one answer from 0 to 1: it is high only when most of the right items were given and most of the given items were right. Top: the difference in F1 with its 95 % interval. Middle: one row per question, the circle is the typed query and the square the scripted search. Bottom: tokens counted two ways.`,
+  `${seg('qjud', 'Judgement items', [['with', 'with the ' + N.jud + ' judgement items'], ['without', 'without them']])}
+<div class="grid2"><div class="card panel"><h3>F1 difference, typed queries minus scripted search ${tagHO(N.q + ', ' + N.q23 + ', ' + N.q22 + ' and ' + N.q8 + ' questions')}</h3><p class="sub">${esc(d.questions.judgement_items_note)}</p><div class="chart" id="g-ci"></div>
+<p class="note">Verdict by the pre-declared rule: <b>${esc(h4.verdict)}</b>. The rule decides on all ${N.q} questions and turns inconclusive when the ${N.q23} or the ${N.q22} questions give a different verdict. On ${N.q23} and on ${N.q22} questions the interval excludes zero, but the rule's token condition holds only when the typed final answer is compared with what the scripted search read; on final answers alone it fails.</p>${fold("The rule and the verdict words, exactly as recorded", `<p class="note">${esc(h4.rule)}.</p><p class="note">On ${N.q23} questions: ${esc(h4.words.addendum5_list23)}.</p><p class="note">On ${N.q22} questions:${esc(h4.words.untouched22)}.</p>`)}</div>
+<div class="card panel"><h3>Tokens, counted two ways ${tagHO('median per question')}</h3><p class="sub">The size of the final answer, and what the scripted search read to reach it. The typed side's own costs are not counted: knowing the schema, and the query programs written once per kind of question on the ${N.qtu} tuning questions.</p><div class="chart" id="g-tok"></div></div></div>
+<div class="grid2" style="margin-top:18px"><div class="card panel"><h3>Every question ${tagHO(N.q + ' questions')}</h3><p class="sub">Grouped by kind. ▲ typed higher, ▼ search higher, = tie. ◇ touched marks the ${N.q8} questions whose handling changed after their text was read. Hover for the scores and tokens.</p><div class="chart" id="g-dots"></div></div>
+<div class="card panel"><h3>By kind of question ${tagHO('1 to 4 questions per kind')}</h3>${seg('qkind', 'Questions', [['all30', 'all ' + N.q], ['addendum5_list23', String(N.q23)], ['untouched22', N.q22 + ' untouched'], ['touched8', N.q8 + ' touched']])}<div class="chart" id="g-kind"></div>
+<p class="note">Scoring convention: ${esc(d.questions.recall_convention)}.</p><p class="note">${N.q8} questions had their handling changed after their text was read (in the typed arms' or the search's parser, a cut-back rule, or the LadybugDB setting fix). No reference answer was used for those changes.</p>${fold("Which questions changed, and how they scored", `<p class="note">${esc(d.questions.touched_note)}</p><p class="note">${esc(d.questions.corrected_sentence)}</p>`)}
+<p class="note">All 30, with judgement items: typed macro F1 ${f(bl.arms.typed.macro_f1)}, scripted search ${f(bl.arms.search.macro_f1)}; median lookups ${bl.arms.typed.median_lookups} against ${bl.arms.search.median_lookups}. Tuning (${d.questions.tuning.questions} questions): typed ${f(d.questions.tuning.typed_macro_f1)}, search ${f(d.questions.tuning.search_macro_f1)}.</p></div></div>`,
+  `Typed queries scored ${sg(h4.all30.diff)} F1 higher on all ${N.q} questions, with an interval ${ci(h4.all30.ci95)} that includes zero, so the pre-declared verdict is inconclusive; on the ${N.q22} untouched questions the interval ${ci(h4.untouched22.ci95)} excludes zero. They were weakest on "the other half of a rule" (typed ${f(bl.per_kind.other_half.typed_mean_f1)} against ${f(bl.per_kind.other_half.search_mean_f1)}). A typed query returns the answer directly; the scripted search read a median ${tok.all30.search_tokens_read_median} tokens of search and file output to produce an answer of about the same size. Only the 8 known kinds of question were tested.`);
+
+/* ================= H ================= */
+const CLSN = { primary: 'Selected method', S1: '4-hop PageRank variant', base: '2-hop PageRank start', S2: 'LadybugDB + community prior', tq: 'Code-reading questions' };
+const engTableRows = EG.rows.map(r => [`${ENGP[r.e]}`, esc(GR[r.g].label), esc(CLSN[r.c]), r.s === 'one' ? '1 thread' : 'calibration pick, ' + r.th + (r.th === 1 ? ' thread' : ' threads'), fms(r.warm.m), fms(r.warm.sp), fms(r.p95.m), fms(r.uncached.m), fms(r.cold.m), r.cold_with_facts ? fms(r.cold_with_facts.m) : '–', fms(r.cold_open), r.statements_per_ranking, r.query_text.chars, r.query_text.distinct_statements, fms(r.rss_mb), r.audit ? esc(r.audit.result) : '']);
+const storeRows = EG.stores.map(s => [ENGP[s.e], esc(GR[s.g].label), rnd(s.size_mib, 2), fms(s.build.m), fms(s.build.sp), fms(s.update.m), fms(s.update.sp), esc(s.audit.notes.join(' '))]);
+const plainBullet = (big, rest) => `<li><b>${big}</b> ${rest}</li>`;
+const secH = sec('h', 'H', 'Which engine is faster, smaller and easier to work with?',
+  `${tagTM('tuning inputs only, ' + EG.settings.passes + ' passes')} A separate timing run, after the held-out run was scored, and independently audited. A dot is the median over ${EG.settings.passes} passes, the bar the spread from the fastest to the slowest pass, and the small ticks each pass. The time axis is logarithmic: each grid line is ten times the one before. The grey label beside each dot says where that ranking runs: in the engine, in SQL statements, or in application code. Switch the graph to see the larger frozen graph.`,
+  `<div class="plainread"><h3>The plain reading</h3><ul>
+${plainBullet(`On the selected method, SQLite was fastest:`, `${fms(wTu('relational'))} ms per ranking on the tuning graph and ${fms(wFz('relational'))} ms on the frozen graph, against ${fms(wTu('ladybug'))} and ${fms(wFz('ladybug'))} ms for LadybugDB (graph) and ${fms(wTu('duckpgq'))} and ${fms(wFz('duckpgq'))} ms for the DuckDB graph layer (one thread, warm). These differences hold in wall and CPU time in all ${EG.settings.passes} passes.`)}
+${plainBullet(`On the PageRank variants, the arm that runs PageRank in application code was fastest:`, `frozen graph, 4-hop variant, ${fms(s1Fz('ladybug'))} ms for LadybugDB (PageRank in JavaScript over a cached adjacency), ${fms(s1Fz('duckpgq'))} ms for the DuckDB graph layer and ${fms(s1Fz('relational'))} ms for SQLite (about 270 SQL statements per ranking). This compares PageRank implementations, not graph operators.`)}
+${plainBullet(`Every time here is milliseconds; one model step takes seconds.`, `A model step takes about ${stepS} s at the median, so engine speed does not enter the token bill. Answers were the same in every engine (section E).`)}
+</ul></div>
+${seg('hg', 'Graph', [['tune', esc(gName('tune'))], ['frozen', esc(gName('frozen'))]])}
+<div class="grid2"><div class="card panel"><h3>Warm time per ranking ${tagTM('ms, median and spread')}</h3><p class="sub">The store is already open and warm. One row per engine, grouped by method; the line under each group says which differences hold under the declared rule (same direction in wall and CPU time, larger than both engines' spreads). <b>Bold, after a filled square: the difference holds.</b> Grey, after a hollow square: inside the noise, not stated.</p><div class="chart" id="h-warm"></div></div>
+<div class="card panel"><h3>Cold start: open the store and answer once ${tagTM('ms')}</h3><p class="sub">LadybugDB has two marks: hollow without, and filled with, the facts load that only LadybugDB needs before it can answer (the other engines load nothing). Client-library load, about 70 to 100 ms per engine, is left out for all three.</p><div class="chart" id="h-cold"></div></div></div>
+<div class="grid2" style="margin-top:18px"><div class="card panel"><h3>Store size, build time and one-file update ${tagTM('median of ' + EG.stores[0].builds + ' builds')}</h3><p class="sub">The stores hold different extra tables, so these compare the three designs, not the engines alone. Bars: median; whiskers: fastest to slowest pass.</p><div class="chart" id="h-store"></div></div>
+<div class="card panel"><h3>Length of the statements sent to the engine ${tagTM('characters')}</h3><p class="sub">Characters of distinct statement text per method. <b>LadybugDB's ranking code in JavaScript is not counted</b>, only its Cypher text, so this is not the length of the code each method needs.</p><div class="chart" id="h-text"></div></div></div>
+<div class="card panel" style="margin-top:18px"><h3>How it was run, in the audit's words, with this page's names for the methods and engines</h3><ul class="note" style="margin:6px 0;padding-left:20px">${EG.safe_sentences.map(s => `<li>${escE(s)}</li>`).join('')}</ul>
+<p class="note"><b>Machine and versions:</b> ${esc(EG.versions.os)}, Node ${esc(EG.versions.node)}, ${EG.versions.cpus} CPUs; ${esc(EG.versions.relational)}; ${esc(EG.versions.ladybug)}; ${esc(EG.versions.duckpgq)} (extension build ${esc(EG.versions.duckpgq_ext)}), all in the image ${esc(EG.versions.image)}. Source: ${esc(EG.versions.source)}.</p>
+<p class="note">What these timings do not show: that a graph engine is faster or slower than SQL in general (the order depends on the method and on where its ranking runs); that LadybugDB's engine computes PageRank (it runs in JavaScript); that one engine should be adopted on this evidence; anything about held-out tasks, larger graphs, other repositories or other machines; or whether an agent finishes work faster.</p></div>
+${fold('Every timing row, both thread settings (table)', table(['Engine', 'Graph', 'Method', 'Threads', 'Warm median (ms)', 'Spread (ms)', 'Warm p95 (ms)', 'Warm, caches dropped (ms)', 'Cold (ms)', 'Cold with facts load (ms)', 'Cold open (ms)', 'Statements per ranking', 'Statement characters', 'Distinct statements', 'Memory (MB)', 'Audit'], engTableRows) + `<p class="note">"Calibration pick" is the fewest threads within 3 % of the lowest median on 20 calibration seeds, picked once under load; it is not a setting shown to be faster in the passes. ${escE(EG.other_statements.find(s => /calibration_best_threads/.test(s.statement)).qualification[0])}</p>` + table(['Engine', 'Graph', 'Size (MiB)', 'Build (ms)', 'Spread (ms)', 'One-file update (ms)', 'Spread (ms)', 'Audit note'], storeRows))}
+${fold('Labels on where each method runs, as corrected by the audit (with this page\'s names)', EG.labels_corrected.map(l => `<p class="note"><b>${esc(l.result)}:</b> ${escE(l.statement)}${l.qualification.length ? ' <i>Qualification:</i> ' + l.qualification.map(escE).join(' ') : ''}</p>`).join('') + `<p class="note"><b>What the audit could not do:</b> ${EG.audit_not_done.map(esc).join(' ')}</p>`)}`,
+  `With the same answers in every engine, the choice between them is about cost, and every cost here is small: milliseconds per ranking on graphs of a few thousand nodes, and well under a second to update one file. On the selected method SQLite (relational) was fastest; on the PageRank variants the arm that runs PageRank in application code was fastest, which compares implementations, not graph operators. Store sizes and build times compare three designs that keep different extra tables. A model step takes about ${stepS} s, so none of this moves the token bill.`);
+
+/* ================= I ================= */
+const dch = d.trust.declared_changes_after_tuning_data;
+const secI = sec('i', 'I', 'How far can this result be trusted?',
+  `The timeline runs top to bottom; an orange dot marks a step where an audit caught something, with what it caught and what changed. Then the two changes made after tuning data existed, the fall from tuning to held-out for every tool, and the first-written tie rule.`,
+  `<div class="grid2"><div class="card panel"><h3>Every audit, in order</h3><ol class="tl">${d.trust.timeline.map(t => `<li class="${t.caught ? 'caught' : ''}"><span class="dot"></span><div class="st">${esc(t.step)}</div><div class="wh">${esc(t.when)}</div><div>${esc(t.what)}</div>${t.caught ? `<div class="cg"><b>Caught:</b> ${esc(t.caught)}</div>` : ''}${t.changed ? `<div class="cg"><b>Changed:</b> ${esc(t.changed)}</div>` : ''}</li>`).join('')}</ol></div>
+<div><div class="card panel"><h3>Every tool scored lower on held-out than on tuning ${tagHO(N.ho + ' commits')} ${tagTU(N.tu + ' commits')}</h3><p class="sub">Hollow: the tuning score each configuration was chosen on. Filled: held-out, with its interval.</p><div class="chart" id="i-drop"></div><p class="note">${esc(d.trust.drop_note)}</p></div>
+<div class="card panel" style="margin-top:16px"><h3>Changes made after tuning data existed</h3>${dch.map(c => `<p style="margin:8px 0 2px"><b>${esc(c.change)}</b> — ${esc(c.when)}. ${esc(c.why)}</p><p class="note" style="margin:0 0 8px">${esc(c.effect_on_heldout.note)}</p>`).join('')}
+<p style="margin:12px 0 2px"><b>The first-written tie rule's choice (4 hops) against the amended choice</b> ${tagHO(N.ho + ' commits')}</p><p class="note">${esc(C('X-s1-primary').qualification)}</p><div class="chart" id="i-tie"></div></div>
+<div class="card panel" style="margin-top:16px"><h3>Reproduced</h3><p class="note" style="margin:4px 0">${esc(d.trust.reproduction.rescore)}</p><p class="note" style="margin:4px 0">${esc(d.trust.reproduction.this_file)}</p><p class="note" style="margin:4px 0">An independent check of this data file by the grader corrected its wording; no answer, score or verdict changed.</p></div></div></div>
+${fold('Further limits the grader recorded', `<ul>${d.limits.further.map(x => `<li class="note">${esc(x)}</li>`).join('')}</ul>`)}`,
+  `The run was declared in advance, ran once (${N.inv} of ${N.invT} invocations, no repeat), and was re-scored independently with no verdict changing. Every tool lost ${f(Math.min(...d.trust.tuning_to_heldout_drop.map(r => r.drop)))} to ${f(Math.max(...d.trust.tuning_to_heldout_drop.map(r => r.drop)))} recall from tuning to held-out, the typed-store rows less than scripted search and the floors. The weak points are named: ${N.q8} questions changed after their text was read, the change of tie rule (its first choice scored ${sg(tieEff.difference)} ${ci(tieEff.ci95)} higher, which supports no claim about either rule), and the different mix of held-out changes.`);
+
+/* ================= J ================= */
+const NS_TIMING = 'Engine speed, size and effort: now measured on tuning inputs only (see H); not on held-out tasks, larger graphs or other machines.';
+const ns = d.limits.not_shown_by_this_test_addendum6_section_D.map(x => x.replace(/^\d+\.\s*/, '')).map(x => /timing run \(H5\) reports/.test(x) ? NS_TIMING : x);
+const decision = (title, tells, needs, why) => `<div class="decision"><h3>${title}</h3><dl><dt>Would tell you</dt><dd>${tells}</dd><dt>Needs</dt><dd>${needs}</dd><dt>Why it matters</dt><dd>${why}</dd></dl></div>`;
+const secJ = sec('j', 'J', 'What does this not show, and what could be tested next?',
+  `First the four things this test does not show, as the reporting rules list them. Then each possible next test as a decision you may take. None of them is planned. The wider test that would measure most of what you asked is drawn once, in K, and not repeated here.`,
+  `<a class="pointk" href="#k-wider"><b>The wider test, drawn as a design in K →</b><span>An agent baseline with structure, meaning, time and cached conclusions, and graphify as shipped, each as a switch; phases with a stop after each. It includes the agent pilot and the embedding arm below.</span></a>
+<div class="card panel" style="margin-top:14px"><h3>Not shown by this test</h3><ul style="margin:6px 0;padding-left:20px;font-size:16px">${ns.map(x => `<li>${x === NS_TIMING ? esc(x).replace('(see H)', '(see <a href="#h">H</a>)') : esc(x)}</li>`).join('')}</ul></div>
+<div class="decisions" style="margin-top:16px">
+${decision('Run an agent pilot?', 'Whether an agent replaying real fix commits finishes faster, or with fewer mistakes, with the typed store than with scripted search. This is the question the harness decision rests on.', 'Model tokens and many agent runs; the owner decides the budget.', 'This test measured what a tool shows within a fixed answer size, not what an agent does with it.')}
+${decision('Add an embedding-search arm?', 'Whether a vector search over the code, the strongest non-graph baseline in the literature, matches the typed store without a hand-built fact extractor.', 'A model download, which is the owner’s decision; nothing was installed for this test.', 'The typed store’s lead was over a fixed script and the changed-together floor, not over the strongest baseline.')}
+${decision('Repeat on another repository?', 'Whether the lead that sits in mobile-app changes here is about this codebase or about typed stores in general.', 'Another repository with enough history and languages the extractor reads.', 'One repository; the whole gain sat in one part of it.')}
+${decision('Re-run over several split dates?', 'A firmer estimate from the same repository, by scoring several tuning and held-out splits in turn (a secondary analysis the protocol allows).', 'Compute only; no new held-out tasks exist in this repository.', 'With 75 held-out commits the smallest detectable difference is about 0.09, so several comparisons stayed inconclusive.')}
+</div>`,
+  `Because the three engines gave identical answers, choosing between them is a question of cost, and the timing run (H) found every cost in milliseconds. Whether a typed store of connections helps an agent at all is a different question; only agent runs can answer it, and K draws the test that would.`);
+
+/* ================= K ================= */
+const KG = KD.graphify, KT = KD.tokens, KW = KD.wider;
+const goLinks = g => g.map(x => `<a href="#${x}">${{ a: 'A', b: 'B', c: 'C', d: 'D', e: 'E', f: 'F', g: 'G', h: 'H', 'k-wider': 'the wider test', 'k-graphify': 'graphify', 'k-tokens': 'your tokens', l: 'L: the cache replay', m: 'M: graphify on our tasks', 'k-feas': 'can it run here' }[x] || x}</a>`).join(' · ');
+const whoTag = (who, str) => `<span class="tag who">${esc(who)}</span><span class="tag str s-${esc(str)}">${esc(str)}</span>`;
+const srcLinks = L => L.map(l => `<a href="${escRaw(l[1])}" rel="noopener noreferrer">${escRaw(l[0])}</a>`).join(' · ');
+const ownerTable = `<div class="ktab" role="table" aria-label="Your words against what was measured"><div class="krow khead" role="row"><div role="columnheader">Your words</div><div role="columnheader">Measured here</div><div role="columnheader">Not measured</div><div role="columnheader">Where the wider test measures it</div></div>
+${KD.rows.map(r => `<div class="krow" role="row"><div class="kw" role="cell">${r.words.startsWith("(not in your words") ? `<span class="knot">${escRaw(r.words)}</span>` : `<q>${escRaw(r.words)}</q>`}</div><div role="cell"><span class="kl">Measured here</span><span class="kst k-${escRaw(r.status)}">${escRaw(KD.status_labels[r.status])}</span> ${escRaw(r.measured)} <span class="kgo">${goLinks(r.go)}</span></div><div role="cell"><span class="kl">Not measured</span>${escRaw(r.not)}</div><div role="cell"><span class="kl">Wider test</span>${escRaw(r.wider)}</div></div>`).join('')}</div>`;
+const H71 = KG.headline;
+const sc = (label, val, max, cls, note) => `<div class="scl"><span class="sl">${label}</span><span class="st"><span class="sf ${cls}" style="width:${Math.max(0.25, val / max * 100).toFixed(2)}%"></span></span><b class="tnum">about ${num(val)} tokens</b>${note ? `<span class="sn">${note}</span>` : ''}</div>`;
+const builds = KG.what_it_builds.map(b => `<div class="lyr ${b.same_as_tested ? 'yes' : 'no'}"><span class="lmark" aria-hidden="true">${b.same_as_tested ? '=' : '+'}</span><div class="ltx"><b>${esc(b.layer)}</b><span>${esc(b.text)} From: ${esc(b.from)}. Model tokens to build: ${esc(b.model_tokens)}.</span></div><span class="lbadge">${b.same_as_tested ? 'SAME FAMILY AS TESTED' : 'NOT IN THIS TEST'}</span></div>`).join('');
+const meas = KG.measurements;
+const mErp = meas.find(m => m.id === 'erp'), mBench = meas.find(m => m.id === 'bench'), mSwe = meas.find(m => m.id === 'swe');
+const mHead = m => `<h4>${esc(m.title)}</h4><div class="mtags">${tagOS()}${whoTag(m.who, m.strength)}<span class="tag ds">${esc(m.n)}</span></div>`;
+const sweBars = mSwe.bars.map(b => `<div class="pair"><div class="pl">${esc(b.label)}</div><div class="scorebar"><span>graphify</span><span class="track"><span class="fill" style="width:${b.g}%;background:var(--c-comm)"></span></span><b class="tnum">${b.g} %</b></div><div class="scorebar"><span>keyword search (BM25)</span><span class="track"><span class="fill" style="width:${b.b}%;background:repeating-linear-gradient(45deg,var(--c-dir) 0 4px,var(--chip) 4px 7px)"></span></span><b class="tnum">${b.b} %</b></div></div>`).join('');
+const tokSeg = KT.segments.map(s => `<div class="tseg t-${s.key}${s.layer ? ' layer' : ''}" style="flex:${s.both}" data-tip="${esc(s.label + ': ' + s.both + ' % of all context tokens (FixFlow ' + s.fixflow + ' %, Clinic ' + s.clinic + ' %)')}">${s.both >= 20 ? '<span class="tlong">' + esc((s.key === 'fetched' ? 'fetched content ' : s.key === 'prefix' ? 'fixed prefix ' : s.key === 'own' ? 'own earlier output ' : '') + s.both + ' %') + '</span><span class="tshort">' + s.both + ' %</span>' : '<span>' + (s.both >= 8 ? s.both + ' %' : '') + '</span>'}</div>`).join('');
+const tokLegend = KT.segments.map(s => `<li class="${s.layer ? 'hl' : ''}"><span class="sw t-${s.key}"></span><b class="tnum">${s.both} %</b> ${esc(s.label)} <span class="note">(FixFlow ${s.fixflow} %, Clinic ${s.clinic} %)</span>${s.layer ? ' <b>← a knowledge layer acts here</b>' : ''}</li>`).join('');
+const sw = on => on ? '<span class="swon" title="on">on</span>' : '<span class="swoff" title="off">·</span>';
+const matrix = `<div class="mx" role="table" aria-label="Which layers each arm switches on"><div class="mxr mxh" role="row"><div role="columnheader">Layer</div>${KW.arms.map(a => `<div role="columnheader"><b>${a.id}</b><span>${esc(a.name)}</span>${a.corrected ? '<i>split by the check</i>' : ''}${a.done ? `<i class="adone"><a href="#m">${esc(a.done)}</a></i>` : ''}</div>`).join('')}</div>
+${KW.layers.map(l => `<div class="mxr" role="row"><div role="rowheader">${esc(l.label)}</div>${KW.arms.map(a => `<div role="cell">${sw(a.on.includes(l.key))}</div>`).join('')}</div>`).join('')}</div>
+<div class="mxnarrow">${KW.arms.map(a => `<div class="armc"><b>${a.id} · ${esc(a.name)}</b>${a.corrected ? ' <i>(split by the check)</i>' : ''}${a.done ? `<i class="adone"><a href="#m">${esc(a.done)}</a></i>` : ''}<div>${a.on.map(k => `<span class="chip">${esc((lb => /^Graphify/.test(lb) ? 'Graphify ' + lb.split(':')[1].trim() : lb.split(':')[0])(KW.layers.find(l => l.key === k).label))}</span>`).join('')}</div></div>`).join('')}</div>`;
+const phases = `<ol class="phases">${KW.phases.map(p => `<li><div class="ph"><span class="pn">Phase ${p.n}</span><b>${esc(p.title)}</b><span class="pc">${esc(p.cost)}</span></div><p>${esc(p.does)}</p>${/^STOP /.test(p.stop) ? `<p class="stop"><span class="stopb">STOP</span> ${esc(p.stop.replace(/^STOP /, ''))}</p>` : p.stop ? `<p class="stop"><span class="stopb rule">RULE</span> ${esc(p.stop)}</p>` : ''}<p class="fix"><b>Correction:</b> ${esc(p.fix)}</p>${p.done ? `<p class="pdone"><span class="doneb">${/^Partly/.test(p.done) ? 'PARTLY DONE' : 'DONE'}</span> ${esc(p.done)}</p>` : ''}</li>`).join('')}</ol>`;
+/* K additions (2026-11-13): protocol-v2 costs drawn as ranges, and the feasibility counts ("can it run here?") */
+const CV = KW.cost_v2, cMax = 10.5, cPct = v => (v / cMax * 100).toFixed(2) + '%';
+const bil = v => (v < 0.5 ? rnd(v, 2) : rnd(v, 1));
+const costRows = CV.stages.map(s => `<div class="crow${s.optional ? ' opt' : ''}"><div class="cn"><b>${esc(s.name)}</b><span>${esc(s.what)}</span></div><div class="ctrack" role="img" aria-label="${esc(s.name + ': ' + bil(s.lo) + ' to ' + bil(s.hi) + ' billion tokens, estimate')}"><span class="cref" style="left:${cPct(CV.recorded)}"></span><span class="crange" style="left:${cPct(s.lo)};width:${cPct(Math.max(0.06, s.hi - s.lo))}" data-tip="${esc(s.name + ': about ' + bil(s.lo) + ' to ' + bil(s.hi) + ' billion tokens (estimate, protocol v2)')}"></span></div><div class="cv tnum">${bil(s.lo)} to ${bil(s.hi)} billion</div></div>`).join('');
+const costBlock = `<div class="costbox"><b>Cost, if it ran</b> ${tagES('protocol v2')}<p class="note" style="margin:4px 0 8px">Each bar is the estimated range of tokens for one stage. The dashed line is ${CV.recorded} billion: all context tokens recorded for FixFlow so far. ${esc(CV.per_run)}</p>
+<div class="crow cscale-row" aria-hidden="true"><div></div><div class="cscale">${[0, 2, 4, 6, 8, 10].map(v => `<span style="left:${cPct(v)}">${v === 10 ? '10 billion' : v}</span>`).join('')}</div><div></div></div>${costRows}
+<p class="plainline" style="margin-top:10px">Probe, pilot and both main stages: about ${rnd(CV.total.lo, 1)} to ${rnd(CV.total.hi, 1)} billion tokens (estimate), two to five times everything recorded for FixFlow so far. Plus ${esc(CV.reserve)}. Phases 0 and 1 cost no model tokens.</p>
+<p class="note">${esc(CV.arms_note)}</p><p class="note">${esc(CV.not_in_tokens)} Earlier estimates, now replaced: the draft put the pilot at ${esc(KW.cost.draft_pilot)} and the main run at ${esc(KW.cost.draft_main)}; the design check at ${esc(KW.cost.check_pilot)} and ${esc(KW.cost.check_main)}. Source: ${esc(CV.source)}.</p></div>`;
+const FE = KD.feas, tagFC = n => `<span class="tag fc">feasibility count${n ? ', ' + n : ''}</span>`;
+const meter = (label, a, b, note, cls) => `<div class="fm${cls ? ' ' + cls : ''}"><div class="fml"><b>${esc(label)}</b>${note ? `<span>${esc(note)}</span>` : ''}</div><div class="fmt" role="img" aria-label="${esc(label + ': ' + a + ' of ' + b)}" data-tip="${esc(label + ': ' + a + ' of ' + b)}"><span class="fmf" style="width:${(a / b * 100).toFixed(2)}%"></span></div><div class="fmv tnum">${num(a)} of ${num(b)}</div></div>`;
+const stack = (parts, total, aria) => `<div class="fstack" role="img" aria-label="${esc(aria)}">${parts.map((p, i) => `<span class="fs fs${i}" style="flex:${p[1]}" data-tip="${esc(p[0] + ': ' + num(p[1]))}">${p[1] / total >= 0.12 ? num(p[1]) : ''}</span>`).join('')}</div><ul class="fsleg">${parts.map((p, i) => `<li><span class="sw fs${i}"></span><b class="tnum">${num(p[1])}</b> ${esc(p[0])}</li>`).join('')}</ul>`;
+const FH = FE.history, FF = FE.fresh, FN = FE.needed, FL = FE.lookups, FG = FE.graphify;
+const strictSq = Array.from({ length: FN.commits }, (_, i) => `<span class="sq${i < FN.commits - FN.strictEmpty ? ' on' : ''}"></span>`).join('');
+const feasBlock = `<div class="card panel feas" id="k-feas"><h3>Can it run here? ${tagFC('no model, no agent, nothing installed')}</h3><p class="sub">Phase 0 of the design above, counted on ${esc(FF.day)}. Source: ${esc(FE.source)}.</p>
+<div class="fgrid">
+<div class="ftile"><h4>Old commits run their own checks with nothing installed</h4><p class="note">${FH.sample} seeded commits of ${FH.population} (${FH.june} June, ${FH.july} July, ${FH.august} August), checked at their parent commits:</p>
+${FH.checks.map(c => meter(c.name, c.passed, c.ran, c.note, c.passed < c.ran ? 'part' : '')).join('')}${meter('Commits whose JavaScript packages are all already present', FH.packagesOk, FH.population, '', 'part')}<p class="note">${esc(FH.note)}</p></div>
+<div class="ftile"><h4>Fresh commits: not enough yet for a held-out run</h4>${meter('Fresh usable change tasks, against the ' + FF.needed + ' a held-out main run needs', FF.usable, FF.needed, 'about ' + FF.usable + ' at most: ' + FF.mainUsable + ' on main and ' + FF.unmergedUsable + ' not yet merged', 'part')}<p class="note">${esc(FF.note)}</p>
+<h4 style="margin-top:14px">Context a change needs but does not edit is thin</h4><div class="sqrow" role="img" aria-label="${FN.commits - FN.strictEmpty} of ${FN.commits} commits have at least one strict item">${strictSq}</div><p class="note"><b>${FN.commits - FN.strictEmpty} of ${FN.commits}</b> commits have at least one strict item (filled squares); ${FN.strictEmpty} have none. Counting every unedited caller, test and route client: ${FN.unionNonzero} of ${FN.commits} have at least one, a median of ${FN.unionMedian} files per commit, at most ${FN.unionMax}, ${FN.unionSum} in all. ${esc(FN.note)}</p></div>
+<div class="ftile"><h4>Your recorded lookups open mostly program documents</h4><p class="note">${FL.distinct} distinct search-then-read pairs in ${num(FL.transcripts)} session transcripts (${FL.earlier} at the earlier count), by the kind of file opened:</p>${stack(FL.kinds, FL.kinds.reduce((a, k) => a + k[1], 0), 'Recorded lookups by kind of file opened')}<p class="note">${esc(FL.note)}</p></div>
+<div class="ftile"><h4>What graphify would see on this stack</h4><p class="note">The ${num(FG.edges)} edges of the frozen commit's graph, by whether graphify builds that kind of edge:</p>${stack([['kinds graphify also builds (not checked to be the same edges)', FG.analogue], ['kinds unclear without running it', FG.unclear], ['kinds it has no analogue for', FG.none]], FG.edges, 'Edges by graphify coverage')}
+<p class="note"><b>No analogue:</b> routes and URLs ${num(FG.route)} (route registrations ${FG.routes.registers_route}, client calls to a URL ${FG.routes.calls_url}, tests calling a route ${FG.routes.test_calls_route}); tables, columns and migrations about ${num(FG.data)}; settings ${FG.settings}; mocks ${FG.mocks}; import contracts ${FG.contracts}; changed-together history ${num(FG.cochange)}; CLAUDE.md invariants ${FG.invariants}. ${esc(FG.note)}</p></div>
+</div></div>`;
+const secK = sec('k', 'K', 'What you asked that this test did not cover',
+  `Four parts. First, your own words beside what this test measured, what it did not, and where a wider test would measure it; the rows on caching and invalidation point to the replay in L. Second, graphify as a picture: what it builds, what its 71.5x measures, and what independent people measured, each with its source and a tag for who measured it and how strong it is. Third, where the tokens of your own sessions go, and the wider test drawn as a design with its estimated cost. Fourth, whether that test can run here today.`,
+  `<h3 class="kh">1 · Your words, against what was measured</h3>
+<p class="note">Your words are quoted as you wrote them. Built from the design check's table (its section P12) and the assumptions audit, with the engine timing that has since run.</p>
+${ownerTable}
+<h3 class="kh" id="k-graphify">2 · Graphify, as a picture</h3>
+<p class="scope-go" style="margin:0 0 10px"><a href="#m">${esc(KG.measured_here.replace(/\.$/, ''))} →</a></p>
+<div class="grid2"><div class="card panel"><h3>What it builds</h3><p class="sub">Read from its source code (version 0.9.108). "Same family" means a parser-built code graph like the one tested here.</p><div class="layers">${builds}</div><p class="note">${esc(KG.lacks)}</p></div>
+<div class="card panel"><h3>What its 71.5x measures, drawn to scale ${tagOS()}${whoTag(H71.who, H71.strength)}</h3><p class="sub">Two token counts, on one scale. ${esc(H71.files + ' files: ' + H71.corpus + '.')}</p>
+${sc('Whole corpus put in the context', H71.corpus_tokens, H71.corpus_tokens, 'big', '')}
+${sc('One graph answer, average of ' + H71.questions + ' questions', H71.answer_tokens, H71.corpus_tokens, 'small', 'ratio ' + H71.ratio + 'x')}
+${sc('Code files only', H71.code_corpus_tokens, H71.corpus_tokens, 'big', '')}
+${sc('One graph answer, code only', H71.code_answer_tokens, H71.corpus_tokens, 'small', 'ratio ' + H71.code_only_ratio + 'x')}
+<p class="note">${esc(H71.how)} ${esc(H71.reading)}</p><p class="note">Sources: ${srcLinks(H71.links)}</p></div></div>
+<h3 style="margin:22px 0 6px;font-size:20px">What others measured</h3>
+<div class="card panel">${mHead(mBench)}<p class="sub">${esc(mBench.text)}</p><div class="chart" id="k-bench"></div><p class="note">${esc(mBench.extra)}</p><p class="note warnline"><b>Refuter downgrade:</b> ${esc(mBench.downgrade)}</p><p class="note">Source: ${srcLinks(mBench.links)}</p></div>
+<div class="grid2" style="margin-top:18px"><div class="card panel">${mHead(mSwe)}<p class="sub">${esc(mSwe.text)}</p>${sweBars}<p class="note">${esc(mSwe.extra)}</p><p class="note">Source: ${srcLinks(mSwe.links)}</p></div>
+<div class="card panel">${mHead(mErp)}<p class="sub">${esc(mErp.text)}</p><div class="scorebar"><span>with the graph tool</span><span class="track"><span class="fill" style="width:82%;background:var(--c-comm)"></span></span><b class="tnum">82.0 %</b></div><div class="scorebar"><span>grep and read</span><span class="track"><span class="fill" style="width:70.8%;background:repeating-linear-gradient(45deg,var(--c-dir) 0 4px,var(--chip) 4px 7px)"></span></span><b class="tnum">70.8 %</b></div><p class="note">Source: ${srcLinks(mErp.links)}</p>
+<div class="stars"><b class="tnum">${num(KG.stars.count)} stars</b> ${tagOS(KG.stars.date)} <span>${esc(KG.stars.text)} Created ${esc(KG.stars.created)}.</span> <span class="note">${srcLinks(KG.stars.links)}</span></div></div></div>
+${fold('Four smaller independent write-ups', KG.others.map(o => `<p style="margin:10px 0 2px"><b>${esc(o.title)}</b> ${tagOS()}${whoTag(o.who, o.strength)}</p><p class="note" style="margin:0">${esc(o.text)} ${srcLinks(o.links)}</p>`).join(''))}
+<p class="kbottom">${esc(KG.bottom_line)} Graphify’s own code layer has since been run on this test’s tasks: see <a href="#m">M</a>.</p>
+<h3 class="kh" id="k-tokens">3 · Where the tokens of your own sessions go</h3>
+<div class="card panel"><h3>All context tokens of your recorded sessions, by what the window holds ${tagOS('your session records')}</h3><p class="sub">${num(KT.total_context_tokens_billion)} billion context tokens over ${num(KT.calls)} API calls (FixFlow ${KT.fixflow_billion} billion, Clinic ${KT.clinic_billion} billion). The outlined part is the one a knowledge layer acts on.</p>
+<div class="tbar" role="img" aria-label="Shares of context tokens">${tokSeg}</div><ul class="tleg">${tokLegend}</ul>
+<p class="plainline">A knowledge layer acts on the fetched-content part and on repeated lookups. It is at most the third lever, after capping the long orchestrator window and stripping the fixed prefix.</p>
+<ol class="levers">${KT.levers.map(l => `<li><b>${esc(l.title)}</b><span>${esc(l.exposure)}</span></li>`).join('')}</ol><p class="note">${esc(KT.note)} Source: ${esc(KT.source)}.</p></div>
+<div class="design" id="k-wider"><div class="dbanner">DESIGN, NOT A RESULT · no agent phase has been run</div>
+<h3 style="margin:6px 0 4px;font-size:21px">The wider test, in one picture</h3><p class="note">${esc(KW.status)}</p>
+<p style="font-size:16px;margin:6px 0"><b>Question:</b> ${esc(KW.question)}</p><p class="note"><b>Primary outcome:</b> ${esc(KW.outcome)}</p>
+<h4 class="dh">The layers as switches, on top of a real agent baseline</h4>${matrix}<p class="note">${esc(KW.controls)}</p><p class="note"><b>What it can conclude:</b> ${esc(KW.verdict_note)}</p>
+<h4 class="dh">Phases, with a stop after each</h4>${phases}
+${costBlock}
+<p class="note">Sources: ${esc(KD.sources.dd)} (the draft), ${esc(KD.sources.dc)} (the check, whose corrections are applied above) and graph2/widen/protocol-v2.md (the costs). ${esc(KW.cost.why)}</p></div>
+<h3 class="kh">4 · Can it run here?</h3>
+${feasBlock}`,
+  `This test answered the storage-engine question and the structure question. Your other questions (meaning read from documents, time with cached conclusions, an agent's tokens) were not measured here. Graphify's headline compares one capped answer with reading everything; independent controlled runs on code with a strong model found no clear gain, and its one positive sits in the document layer this test left out. In your sessions fetched content is about a quarter of context tokens; a knowledge layer acts there and on repeated lookups, behind two larger levers. The wider test is a design for your decision, not a result: its checks run on old commits here with nothing installed, but there are not yet enough fresh commits for its held-out change tasks. Cached answers with invalidation have since been replayed for deterministic answers only (L).`);
+
+/* ================= L ================= */
+const LD = d.l, LS = LD.setup, LT = LD.tokens, LST = LD.stat, LC = LD.causes;
+const p1 = v => v == null ? '–' : rnd(v, 1);
+const LR = (set, key) => LD.sets[set].rows[key];
+const lrules = LD.rules;
+const lTable = table(['Rule', 'All 250 questions: served', 'wrong among served', 'The ' + LD.sets.changing.questions + ' that change: served', 'wrong among served', 'Wide ranking question: served', 'wrong among served'],
+  lrules.map(r => { const a = LR('all', r.key), c = LR('changing', r.key), w = LR('completion', r.key);
+    return [`<b>${esc(r.name)}</b><br><span class="note">${esc(r.what)}</span>`, p1(a.hit) + ' %', p1(a.stalePct) + ' % (' + num(a.stale) + ' of ' + num(a.served) + ')', p1(c.hit) + ' %', p1(c.stalePct) + ' % (' + num(c.stale) + ')', p1(w.hit) + ' %', p1(w.stalePct) + ' % (' + num(w.stale) + ' of ' + num(w.served) + ')']; }));
+const flow = `<ol class="lflow" aria-label="How one lookup was judged"><li><b>1 · Save</b><span>A program answers a question from the code graph; the answer is saved with everything it read.</span></li><li><b>2 · Next commit</b><span>The code changes; a new saved version of the graph exists.</span></li><li><b>3 · Rule</b><span>The rule decides: does the saved answer still hold? If yes it is served, if no it is recomputed.</span></li><li><b>4 · Check</b><span>The true answer is recomputed anyway. A served answer that differs is counted as wrong (stale).</span></li></ol>`;
+const secL = sec('l', 'L', 'Cached answers with invalidation: the replay',
+  `${tagCR(num(LS.lookupsAll) + ' lookups')} One picture carries the result. For each rule, the solid bar is the share of lookups answered from the cache; the hatched bar under it is the share of those served answers that were wrong (stale). Both use the same 0 to 100 % scale. The switch shows all questions or only those whose answer changes at least once. Then three small pictures and two lists. Hover a bar for its counts.`,
+  `<p class="lwhat"><b>What was done, in plain words:</b> ${num(LS.questions)} questions about the code were looked up again at each later saved version of the code graph where the code they ask about existed (${num(LS.lookupsAll)} lookups at the ${LS.steps} versions after the first). There are ${LS.snapshots} saved versions in all, one per commit, in commit order: ${LS.onMain} on the main line and ${LS.offChain} from side branches, of which ${LS.merged} of ${LS.offChain} were later merged into main and one never was. A saved answer was reused only if the rule said it still held. No model and no agent: every answer is computed by a program from the graph, and the true answer was recomputed every time to check what the rule served.</p>
+${flow}
+<div class="grid2"><div class="card panel"><h3>Served from the cache, and how much of it was wrong ${tagCR()}</h3><p class="sub">Eight kinds of question (who calls a route, which tests reach a function, which rules apply to a file, and five more). "Wrong" means different from the answer recomputed from the same extractor's facts at that commit, not checked against the code itself.</p>
+${seg('lset', 'Questions', [['all', 'All ' + LS.kinds18 + ' questions (' + num(LS.lookups18) + ' lookups)'], ['changing', 'The ' + LST.changingQ + ' whose answer changes (' + num(LST.changingLookups) + ' lookups)']])}
+<div class="lstat"><div class="lsb" role="img" aria-label="${LST.neverChange} of ${LST.of} questions never change"><span class="lsn" style="flex:${LST.neverChange}">${LST.neverChange} never change</span><span class="lsc" style="flex:${LST.changingQ}">${LST.changingQ} change</span></div><p class="note"><b>${LST.neverChange} of the ${LST.of} questions (${p1(LST.pct)} %) never changed their answer</b> over this history, and ${num(LST.lookupsOn)} of the ${num(LS.lookups18)} lookups (${p1(LST.lookupsPct)} %) are of them. Every rule, even "no invalidation", is right on those, so the switch shows the rates on the questions that test invalidation.</p></div>
+<div class="llegend"><span><i class="lsw serve"></i>served from the cache (share of lookups)</span><span><i class="lsw wrong"></i>wrong among the served answers (stale)</span></div>
+<div class="chart" id="l-main"></div></div>
+<div class="card panel"><h3>The wide ranking question: change completion ${tagCR(num(LS.lookupsC) + ' lookups')}</h3><p class="sub">The ranking of other files a change will need, for ${LD.sets.completion.questions} files. Its answer rests on a median of <b>${num(LD.hub.files)} files</b> (${num(LD.hub.nodes)} nodes, ${num(LD.hub.edges)} edges) and changed at ${p1(LD.hub.changedPct)} % of steps. No rule that checks what the answer rests on served more than <b>${p1(LR('completion', 'cutoff_sem').hit)} %</b> of lookups, about a quarter; the age-based rules served most lookups, and most of what they served was wrong.</p>
+<div class="llegend"><span><i class="lsw serve"></i>served from the cache</span><span><i class="lsw wrong"></i>wrong among the served answers</span></div>
+<div class="chart" id="l-comp"></div></div></div>
+<div class="grid3" style="margin-top:18px">
+<div class="card panel"><h3>Where wrong answers come from ${tagCR()}</h3><p class="sub">${LC.total} times an answer changed although none of the files it had read changed. Each square is one such case. <b>${LC.pattern} of ${LC.total}</b> were a new relation appearing in another file: a new caller, test, reader, rule or route. ${LC.fact} was a route renamed by a prefix set in another file.</p>
+<div class="llegend"><span><i class="lsw newrel"></i>new relation in another file</span><span><i class="lsw renamed"></i>renamed from another file</span></div><div class="chart" id="l-cause"></div><p class="note">File level kept serving the old answer until one of the answer's own files changed: ${num(LC.kinds.reduce((a, k) => a + k.fileStale, 0))} wrong answers in all. Fact level with the "nothing else" patterns caught every case. ${esc(LC.note)}</p></div>
+<div class="card panel"><h3>The share served falls as lookups get further apart ${tagCR('main chain')}</h3><p class="sub">Replays of main's history alone, looking up at every saved version, every 2nd, 4th or 8th. Across: the average gap between two lookups, in commits. Up: share of lookups served from the cache.</p><div class="chart" id="l-gap"></div>
+<p class="note" style="margin:8px 0 2px">The same values: share of lookups served, in per cent; columns are the average gap between two lookups, in commits.</p>
+<div class="lgaptab">${table(['Rule', ...LD.gap.lanes.map(l => rnd(l.meanGap, 2))], LD.gap.series.map(s => [`<b>${esc({ cutoff_sem: 'Fact level, fields read, early cutoff', fact: 'Fact level, with the patterns', file: 'File level', ttl20: 'Time-to-live, 20 commits' }[s.key])}</b>`, ...s.hit.map(v => p1(v))]))}</div>
+<p class="note">Fact level with the patterns and file level lie almost on top of each other: ${p1(LD.gap.series.find(s => s.key === 'fact').hit[3])} % and ${p1(LD.gap.series.find(s => s.key === 'file').hit[3])} % at the widest gap; only file level served wrong answers. The two fact-level rules served no wrong answer at any gap. File level's wrong share rose from ${p1(LD.gap.series.find(s => s.key === 'file').stale[0])} % to ${p1(LD.gap.series.find(s => s.key === 'file').stale[3])} % of what it served. ${esc(LD.gap.note)}</p></div>
+<div class="card panel"><h3>What a hit would be worth ${tagES('not measured')}</h3><p class="sub">Every figure in this picture is an estimate; only the prices behind it were measured, on ${LT.prices.n} held-out questions. <b>Assumption:</b> ${esc(LT.assumption)} Fact-level rule with the patterns, ${num(LT.served)} hits in ${num(LT.lookups)} lookups. Tokens avoided per 100 lookups, priced three ways:</p><div class="chart" id="l-tok"></div>
+<p class="plainline">Against a typed query a hit avoids nothing: the typed query already returns the small answer (a median of ${LT.prices.medianTyped} tokens).</p><p class="note">Prices were measured once, on ${LT.prices.n} held-out questions answered by a scripted search (not an agent), at one commit; per kind they rest on ${LT.prices.perKindN} questions each. The search read a median of ${LT.prices.medianSearch} tokens per answer, a mean of ${num(LT.prices.meanSearch)} and at most ${num(LT.prices.largest)}, so the price chosen moves the figure about threefold. These answers take about ${rnd(LT.computeMs, 1)} ms of computer time for ${LT.benchQuestions} questions; the costly case, conclusions a model spends many tokens deriving, was not tested.</p></div>
+</div>
+<div class="grid2" style="margin-top:18px"><div class="card panel lshows"><h3>What it shows</h3><ul>${LD.shows.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>
+<div class="card panel lnot"><h3>What it does not show</h3><ul>${LD.notShows.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div></div>
+${fold('Exact numbers for every rule (table)', lTable + `<p class="note">Rates in per cent; counts in brackets are wrong answers and, where known, served answers. The rates on the changing questions come from the audit's recomputation, which gives no served counts. Sources: ${esc(LD.sources.notes)}, ${esc(LD.sources.result)} and ${esc(LD.sources.audit)}.</p>`)}`,
+  `On this history, a rule that records what an answer read, including the "nothing else matches" queries, reused most deterministic answers and served none that differed from the recomputed answer; rules based on files or on age served wrong answers, mostly because a new relation appeared in another file. Zero wrong answers is expected by construction for programs whose every read is recorded, so this does not carry over to conclusions a model makes. No tokens were measured: what a hit would be worth is an estimate, and against a typed query it is zero.`);
+
+/* ================= M: graphify itself, on our tasks (2026-11-13) ================= */
+const MM = d.m, MS = MM.setup, MW = MM.words, MTU = MM.tune, MLK = MM.links, MQ = MM.q, MB = MM.build, MNF = MM.nativeForm;
+const mT = (a, s) => MM.table.find(r => r.arm === a && r.set === s);
+const mC = id => MM.cmp.find(c => c.id === id).sets.T1;
+const t3 = v => sg(v[0]) + ' ' + ci([v[1], v[2]]);
+const mqual = t => `<p class="mq"><b>Qualification from the refuters:</b> ${t}</p>`;
+const MNAME = { graphify: 'graphify code layer', relational: 'typed store (same answers in SQLite, LadybugDB and DuckDB)', search: 'scripted search', 'floor-co': 'changed-together floor', 'floor-dir': 'same-folder floor' };
+const gT1 = mT('graphify', 'T1'), tT1m = mT('relational', 'T1'), mobMix = mix.mobile;
+const strip = (a, color) => { const x = MM.packer[a], tot = x.files * x.perFile / 8000 * 100, per = (100 / x.files).toFixed(4);
+  return `<div class="mstrip"><div class="ml"><b>${esc(a === 'relational' ? 'typed store' : MNAME[a])}</b>: a median ${x.files} whole files, a median ${x.perFile} tokens each</div><div class="mt" role="img" aria-label="${esc(MNAME[a] + ': ' + x.files + ' files of a median ' + x.perFile + ' tokens')}"><span style="width:${tot.toFixed(2)}%;background:repeating-linear-gradient(90deg,${color} 0 calc(${per}% - 2px),transparent calc(${per}% - 2px) ${per}%)"></span></div></div>`; };
+const mrng = (label, o, max, unit, color) => `<div class="mrng"><span class="mk">${label}</span><span class="mtr" role="img" aria-label="${esc(label + ': median ' + o.median + ' ' + unit + ', ' + o.min + ' to ' + o.max)}" data-tip="${esc(label + ': median ' + o.median + ' ' + unit + ', range ' + o.min + ' to ' + o.max)}"><span class="mra" style="left:${(o.min / max * 100).toFixed(2)}%;width:${((o.max - o.min) / max * 100).toFixed(2)}%;background:${color}"></span><span class="mmd" style="left:${(o.median / max * 100).toFixed(2)}%;background:${color}"></span></span><span class="mv tnum">${o.median} ${unit} <span class="note">(${o.min} to ${o.max})</span></span></div>`;
+const kindRows = MQ.kinds.map(k => [esc(k.label), String(k.n), f(k.gd), f(k.typed), f(k.search)]);
+const t3p = MS.t3byParent['G-1'];
+const pctn = x => pct(x).replace(' %', '\u00a0%');
+const secM = sec('m', 'M', 'Graphify itself, on our tasks',
+  `${tagHO(N.ho + ' commits')} First what was done, then the direct answer to your question. Then seven numbered pictures and two cards, on fair use and on build cost. Each has its qualification from the two refuters right under it, in a box with a pink edge. Switches change the task set, the answer size or the comparison. Hover any mark for its exact value.`,
+  `<p class="lwhat"><b>What was done, in plain words:</b> graphify ${esc(MS.version)}, its <b>code layer only</b>, was installed in a test container with the network switched off; no model was called and no agent ran. For each task an adapter of ours called graphify’s own query command on the seed (its seeded query, depth 3) and read graphify’s ordered files; the shared packer then showed them exactly like every other tool’s answer. ${MTU.configs} shipped configurations were fitted on the ${N.tu} tuning commits; the chosen one was frozen and run once on the ${N.ho} held-out commits (${num(MS.tasks)} tasks) and the ${MS.questions} held-out questions. It was scored once; an independent re-scorer matched all ${num(MS.values)} graphify values, and a run audit and a claims refuter checked the result.</p>
+<div class="manswer"><b>Your question, answered on our tasks.</b> ${esc(MW.answer)}</div>
+<div class="card panel"><h3>1 · How much of the real change each tool put in front of the reader ${tagHO()}</h3><p class="sub">Each dot is one tool’s recall: the share of the files and definitions the real commit changed that its answer showed. The graphify row is shaded. Below it, graphify minus each other tool, paired by commit, with the verdict by the rule declared before the run.</p>
+${seg('mset', 'Task set', [['T1', 'change completion'], ['T2', 'tests to update'], ['T3', 'documented chains'], ['T1x', 'cross-runtime subset'], ['T4', 'defect register']])}
+${seg('mbud', 'Answer size', [['2000', '2,000 tokens'], ['4000', '4,000 tokens'], ['8000', '8,000 tokens (the primary)'], ['16000', '16,000 tokens']])}
+<div class="chart" id="m-abs"></div>
+<h4 style="margin:14px 0 2px;font-size:17px">Graphify minus each tool</h4><div class="chart" id="m-diff"></div>
+<p class="plainline">The primary result (change completion, 8,000 tokens; the switches do not change this line): graphify ${f(gT1.p)}, typed store ${f(tT1m.p)}; the difference ${t3(mC('G-1').p)} reads “better” for the typed store by the declared rule, and the same at 2,000 and 4,000 tokens. Against scripted search, the changed-together floor and the same-folder floor it reads “inconclusive”.</p>
+${mqual(esc(MW.g1) + ` See picture 3: the rank of the first right file differs by ${t3(MM.rank['G-1'].mrr)}.`)}
+${mqual(esc(MW.inconclusive) + ' ' + esc(MW.t3sign) + ` By parent commit, against the typed store, graphify was higher on ${t3p[0]}, lower on ${t3p[1]} and tied on ${t3p[2]} of the ${MS.t3parents}.`)}
+<p class="note">Graphify returned an empty answer on ${MS.empty} of ${num(MS.tasks)} held-out tasks (${MS.emptyT1} in change completion): only nodes of the seed file came back. The cross-runtime subset and the defect register are descriptive only, and the documented chains carry a sign only. On the cross-runtime subset the same-folder floor interval’s upper end moves between ${sg(MM.mc.t1xG4Hi.min)} and ${sg(MM.mc.t1xG4Hi.max)} across bootstrap seeds (run audit; ${sg(MM.mc.t1xG4Hi.at, 4)} with ${num(MM.mc.t1xG4Hi.resamples)} resamples), so it excludes zero only narrowly.</p></div>
+<div class="grid2 mrow"><div class="card panel"><h3>2 · Each verdict moves with five commits ${tagHO('change completion, 8,000 tokens')}</h3><p class="sub">For each comparison: the difference as scored, then without the five commits most favourable to graphify, then without the five most favourable to the other tool, then with only the seeds both tools matched by id. The scored report dropped one direction only, the five commits most favourable to the leader: those values are the grader’s; the other direction and the match by id were recomputed by the claims refuter.</p><div class="chart" id="m-sens"></div>
+${mqual(`Against the same-folder floor, dropping that floor’s five best commits gives ${t3(MM.sens['G-4'].dropOther)}, which would read “better” for graphify; dropping graphify’s five best gives ${t3(MM.sens['G-2'].dropGraphify)} against scripted search and ${t3(MM.sens['G-3'].dropGraphify)} against the changed-together floor, both below zero. Inconclusive is neither better nor equivalent.`)}</div>
+<div class="card panel"><h3>3 · Large files first ${tagHO('change completion')}</h3><p class="sub">The 8,000-token budget charges each file by its size. Graphify’s order puts large, highly connected files first, so fewer files fit. Each block is one whole file (medians, drawn as equal blocks).</p>
+${strip('graphify', 'var(--c-gfy)')}${strip('relational', 'var(--c-typed)')}${strip('search', 'var(--c-search)')}
+<p class="sub" style="margin-top:12px">On ranking measures that do not charge for size, the gap is smaller. Pick a comparison:</p>
+${seg('mrk', 'Graphify minus', [['G-1', 'typed store'], ['G-2', 'scripted search'], ['G-3', 'changed-together floor'], ['G-4', 'same-folder floor']])}
+<div class="chart" id="m-rank"></div>
+${mqual(`The first right file comes equally early for graphify and the typed store (${t3(MM.rank['G-1'].mrr)}); graphify falls behind on the files after it. ${esc(MW.rankFloor)}`)}</div></div>
+<div class="grid2 mrow"><div class="card panel"><h3>4 · Where the seed lives ${tagHO('change completion')}</h3><p class="sub">The same difference, split by the part of the app the seed file is in. Mobile-app seeds were ${pctn(mobMix.heldout_share_of_tasks)} of held-out tasks against ${pctn(mobMix.tuning_share_of_tasks)} on tuning, a mix that favours graphify here.</p>
+${seg('mcmp', 'Graphify minus', [['G-1', 'typed store'], ['G-2', 'scripted search'], ['G-3', 'changed-together floor'], ['G-4', 'same-folder floor']])}
+${seg('mlbud', 'Answer size', [['8000', '8,000 tokens'], ['4000', '4,000 tokens'], ['2000', '2,000 tokens']])}
+<div class="chart" id="m-loc"></div>
+${mqual(esc(MW.location) + ` Against scripted search on mobile seeds: top-10 file recall ${t3(MM.mobile.rankVsSearch.r10)}, nDCG@10 ${t3(MM.mobile.rankVsSearch.nd)}, first right file ${t3(MM.mobile.rankVsSearch.mrr)}. On backend seeds graphify’s top files are level with scripted search (top-10 file recall ${t3(MM.backend.rankVsSearch.r10)}); the gap opens further down the list.`)}
+<p class="note">The web row with the root-level task holds one of graphify’s two empty change-completion answers. ${MM.mc.n} interval ends on small groups (${MM.mc.clMin} to ${MM.mc.clMax} clusters) differ by ${MM.mc.lo} to ${MM.mc.hi} from the run audit’s own bootstrap; all lie inside its ${MM.mc.seeds}-seed range, so this is resampling noise and no conclusion changes.</p></div>
+<div class="card panel"><h3>5 · Graphify’s own answer, unpacked ${tagHO()}</h3><p class="sub">Graphify’s own default answer text, scored on which reference files it names as whole paths, against each tool’s file recall inside a 2,000-token answer.</p>
+${seg('mnset', 'Task set', [['T1', 'change completion'], ['T2', 'tests to update'], ['T3', 'documented chains']])}
+<div class="chart" id="m-nat"></div>
+<p class="note">What the text is: a header of start nodes, a truncation notice (graphify’s own budget cut ${MNF.truncated} of the ${gT1.n} change-completion answers), then a median ${MNF.nodeLines} lines, each a node’s label, file, line and community, with no code; they name a median ${MM.native.T1.files} files. The packed form shows each file once with its path and signature lines: a median ${MNF.wholeFiles2000.graphify} whole files at 2,000 tokens for graphify, ${MNF.wholeFiles2000.relational} for the typed store, ${MNF.wholeFiles2000.search} for scripted search. The text is about ${MNF.longerPct}\u00a0% longer by the shared tokenizer, because graphify counts about ${MNF.charsPerToken} characters per token and prints its notice outside its budget.</p>
+${mqual(esc(MW.nativeLimits) + ` The query text names the seed and its path, so path words can start the walk elsewhere (a median ${MNF.driftMedianPct}\u00a0% of printed nodes in another part of the app); without the ${MNF.driftAnswers} answers that mostly start elsewhere the recall is ${MNF.recallWithoutDrift}, so the effect is negligible.`)}</div></div>
+<div class="grid2 mrow"><div class="card panel"><h3>6 · Code-reading questions ${tagHO()}</h3><p class="sub">The same held-out questions as section G. Graphify got each question’s text, once at its default budget and once at 8,000 tokens; its answer is a printout of graph nodes, scored as a list of items.</p>
+${seg('mq', 'Questions', [['all30', 'all ' + MQ.all30.n], ['untouched22', MQ.untouched22.n + ' untouched']])}
+<div class="chart" id="m-q"></div><div class="chart" id="m-qd" style="margin-top:8px"></div>
+${mqual(esc(MW.questions) + ' ' + esc(MW.questionsWhy) + ` Graphify’s answer named a median ${MQ.items.default} candidate items. ${MQ.needs} of the ${MQ.all30.n} questions need links graphify does not build. The run audit’s own read-out gives graphify F1 ${f(MQ.auditF1.gd)} and ${f(MQ.auditF1.g8)}, not an exact reproduction; counting a definition on its path alone gives recall ${f(MQ.lenient.default_lenient.macro_recall)} and ${f(MQ.lenient.b8000_lenient.macro_recall)}.`)}
+${fold('F1 by kind of question (held-out, 1 to 4 questions per kind)', '<div class="mkind">' + table(['Kind of question', 'Questions', 'graphify, default budget', 'typed store', 'scripted search'], kindRows) + '</div>' + `<p class="note">Graphify’s F1 on rules for a file comes entirely from the convention that a non-empty answer to an empty reference counts as recall 1: a code-only graph has no document node to name.</p>`)}</div>
+<div class="card panel"><h3>7 · Files only a route, table, setting or history link connects ${tagHO('change completion')}</h3><p class="sub">Some reference files are linked to the seed in the typed facts only through a kind of link graphify’s code layer does not build. Shown here apart, counted inside 8,000 tokens. The 3-hop walk leads, as the refuter asked; with any number of hops the group of tasks equals the cross-runtime subset.</p>
+${seg('mlk', 'Walk from the seed', [['hop3', 'within 3 hops'], ['unb', 'any number of hops']])}
+<div id="m-lkbars"></div><div class="chart" id="m-lk" style="margin-top:8px"></div>
+${mqual(esc(MW.links) + ` With any number of hops these are ${pctn(MLK.onlyShare)} of the reference files (${num(MLK.unb.files.only.n)} of ${num(MLK.totalFiles)}, on ${MLK.unb.NEEDS.tasks} of ${MLK.tasks} tasks); tasks without them still show ${t3(MLK.unb.WITHOUT.d)}.`)}
+<p class="note">${tagTU()} An indication from tuning only: the typed store held to parser-type links (2 hops) scored ${MLK.tuneIndication.parserOnly2hop}, its all-link 2-hop start ${MLK.tuneIndication.allClass2hop}, its frozen choice ${MLK.tuneIndication.typedFrozen}, and graphify’s chosen configuration ${MLK.tuneIndication.graphify}. More link kinds and a tuned walk together carry the typed lead.</p></div></div>
+<div class="grid2 mrow"><div class="card panel"><h3>Was graphify used fairly? <span class="tag tu">tuning and held-out</span></h3><p class="sub">Tuning recall (hollow) and held-out recall (filled) on change completion at 8,000 tokens, for every tool.</p><p class="sub mkey"><span class="mkm" aria-hidden="true">○</span> hollow: tuning &nbsp; <span class="mkm" aria-hidden="true">●</span> filled: held-out</p><div class="chart" id="m-tune"></div>
+<p class="note">Graphify got ${MTU.configs} configurations, the typed arms ${MTU.typedConfigs} each. Its chosen configuration scored ${f(MTU.chosen)} on tuning against ${f(MTU.best)} for its best (standard error ${MTU.bestSe}; the chosen one’s is ${MTU.se}); its default single call scored ${f(MTU.defaultSingle)}. Three more shipped options tried on tuning by the run audit: ${MTU.variants.map(v => esc(v[0]) + ' ' + sg(v[1], Math.abs(v[1]) < 0.01 ? 4 : 3)).join('; ')}. None beats the frozen choice by more than one standard error. On tuning graphify was below every other tool, the same-folder floor included.</p>
+${mqual(esc(MW.design) + ' ' + esc(MW.fair) + ` The change command scored ${f(MTU.affected, 2)} on tuning.`)}</div>
+<div class="card panel"><h3>Build cost ${tagHO(MB.graphs + ' graphify graphs')}</h3><p class="sub">Bar: range over parent commits; tick: median. Graphify’s code layer (extract inside a container with 6 CPUs, 4 GB and the network off) against the typed facts’ recorded build.</p>
+<p class="mlkh"><b>Seconds to build one commit’s graph</b></p>
+${mrng('graphify extract', MB.g.ext, 12, 's', 'var(--c-gfy)')}${mrng('graphify, whole container', MB.g.cont, 12, 's', 'var(--c-gfy)')}${mrng('typed facts, all stages', MB.t.sec, 12, 's', 'var(--c-typed)')}
+<p class="mlkh"><b>Size of the stored graph</b></p>
+${mrng('graphify graph.json', MB.g.mb, 8, 'MB', 'var(--c-gfy)')}${mrng('typed facts files', MB.t.mb, 8, 'MB', 'var(--c-typed)')}
+<p class="note">Graphify: a median ${num(MB.g.nodes.median)} nodes and ${num(MB.g.edges.median)} edges, all from the parser, with no route, URL, table, setting or changed-together relation. Typed facts (${MB.typedParents} parent commits): a median ${num(MB.t.nodes.median)} nodes and ${num(MB.t.edges.median)} edge evidence rows.</p>
+${mqual(esc(MW.build))}</div></div>
+<div class="grid2 mrow"><div class="card panel lshows"><h3>What this shows</h3><ul>${MM.shows.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>
+<div class="card panel lnot"><h3>What this does not show</h3><ul>${MM.notShows.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div></div>
+<p class="note">Sources: ${esc(MM.sources.result)}, ${esc(MM.sources.claims)}, ${esc(MM.sources.run)}; rules: ${esc(MM.sources.protocol)}. Graphify’s code layer only, on these task kinds, on one repository.</p>`,
+  `On this repository’s own change tasks, graphify’s code layer, queried through our adapter, put less of the real change in front of the reader than the typed store, and was inconclusive against scripted search and both floors; part of the gap is that it shows large files first. It builds no route, table, setting or history link. Its model-read document layer was not run and no agent used it, so nothing here speaks to tokens in a session or to graphify’s published numbers.`);
+
+/* ---------- page ---------- */
+const nav = [['scope', 'Scope'], ['a', 'Answer'], ['b', 'What was compared'], ['c', 'Main result'], ['d', 'Where the gain is'], ['e', 'Engine'], ['f', 'What mattered'], ['g', 'Questions'], ['h', 'Engine speed'], ['i', 'Trust'], ['j', 'Not shown, next'], ['k', 'Not covered'], ['l', 'Cache replay'], ['m', 'Graphify on our tasks']];
+const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graph Test Result</title>
+<meta name="description" content="Held-out result of the test of a typed code store in a relational engine and two graph engines against scripted search.">
+<style>${css}</style></head>
+<body>
+<header class="top wrap"><h1>Does a graph database belong in the agent harness? What the held-out test found</h1>
+<p class="lede">When an agent changes one file, can a tool put the other files and definitions it will need in front of it? Seven tools answered the same ${num(T1.heldout.tasks)} change-completion tasks from ${T1.heldout.commits} real commits of July and August 2026 that no setting was tuned on, each with an 8,000-token answer. Tags on every number say whether it is <span class="tag ho">held-out</span> (the one fair run) or <span class="tag tu">tuning</span> (where settings were chosen, so optimistic); engine times carry <span class="tag tm">timing run</span> (tuning inputs only), other people's figures or your session records <span class="tag os">outside source</span>, the replay of cached answers <span class="tag cr">cache replay</span> (no model, no agent), counts of what can run here <span class="tag fc">feasibility count</span>, and figures that rest on an assumption <span class="tag es">estimate</span>.</p>
+<div class="themebar"><span>Theme</span><div class="seg" id="theme-seg" role="group" aria-label="Theme"><button type="button" data-t="auto">auto</button><button type="button" data-t="light">light</button><button type="button" data-t="dark">dark</button></div><span>Data written ${esc(d.meta.written_at.slice(0, 10))}; every number on this page is read from one checked data file.</span></div></header>
+<nav class="toc" aria-label="Sections"><div class="wrap">${nav.map(n => `<a href="#${n[0]}">${n[0].length === 1 ? n[0].toUpperCase() + ' · ' : ''}${n[1]}</a>`).join('')}</div></nav>
+<main class="wrap">
+${scopeBlock}
+${secA}
+${secB}
+${secC}
+${secD}
+${secE}
+${secF}
+${secG}
+${secH}
+${secI}
+${secJ}
+${secK}
+${secL}
+${secM}
+</main>
+<footer class="wrap"><p>Sources: ${esc(d.meta.sources['held-out'])}; ${esc(d.meta.sources.tuning)}. Data file generated by ${esc(d.meta.generator)}; independent checks passed: ${d.meta.checks.list.map(esc).join('; ')}.</p><p>Wording rule used for every verdict: ${esc(d.meta.wording_rule)}</p><p>Reporting rules: ${esc(d.meta.reporting_rules)}</p></footer>
+<div id="tip" role="tooltip"></div>
+<script type="application/json" id="gt-data">${dataJson}</script>
+<script>${client}</script>
+</body></html>`;
+// Size only, nothing the reader sees: the HTML standard lets a </td> or </th> be left out
+// when the next thing is another cell or the row's end, and the browser builds the same table.
+const cut = html.indexOf('<script type="application/json"');
+const htmlOut = html.slice(0, cut).replace(/<\/t[dh]>(?=<t[dh][\s>]|<\/tr>)/g, '') + html.slice(cut);
+fs.writeFileSync(path.join(HERE, 'index.html'), htmlOut);
+
+/* ================= the short record ================= */
+const L = [];
+L.push('# Graph test result (2026-11)', '');
+L.push(`Generated from \`docs/program/graph-test/data/data.json\` by \`docs/program/graph-test/build.js.txt\`, the same script that builds the owner page \`docs/program/graph-test/index.html\`. Data written ${d.meta.written_at}. Do not edit by hand.`, '');
+L.push('## What was tested', '');
+L.push(`Given one changed file of a real commit, which tool puts the other changed files and definitions in front of the reader within an 8,000-token answer? Tools: a typed store of code facts in SQLite (relational), LadybugDB (graph) and the DuckDB graph layer; a scripted text search; a same-folder floor; a changed-together floor. Settings were chosen on ${d.tuning.n_commits} tuning commits (June 2026) and frozen; the held-out run used ${T1.heldout.commits} commits (${num(T1.heldout.tasks)} tasks, July and August 2026) once.`, '');
+L.push('Recall = the share of the files and definitions the real change touched that the tool put in front of the reader (a definition counts only when its own lines are shown). Intervals are 95 %, paired cluster bootstrap over commits.', '');
+L.push('## The answer', '');
+L.push(`1. **Engine (held-out, ${N.ho} commits).** The three implementations compute the same answers from the same facts with the same method: difference ${sg(H1.difference)} ${ci(H1.ci95)}; shown answers identical on ${I.shown_answers_identical_to_reference_arm.relational}.`);
+L.push(`2. **Community prior (held-out, ${N.ho} commits).** Adding a stored community prior to personalised PageRank gave no gain of 0.05 recall or more: ${sg(H1b.sets.T1.difference)} ${ci(H1b.sets.T1.ci95)}; five draws ${sg(dmin)} to ${sg(dmax)}; tests to update ${sg(H1b.sets.T2.difference)} ${ci(H1b.sets.T2.ci95)}. PageRank iterations run in application code; only the grouping comes from the engine.`);
+L.push(`3. **Typed store against scripted search (held-out, ${N.ho} commits).** ${sg(H3s.sets.T1.difference)} ${ci(H3s.sets.T1.ci95)} at the same 8,000-token answer size, verdict "better". Mobile-app seeds ${sg(SP.typed_vs_search.groups.mobile.diff)} ${ci(SP.typed_vs_search.groups.mobile.ci95)} (${HC.mobile.commits} commits); outside the mobile app ${sg(SP.typed_vs_search.groups.not_mobile.diff)} ${ci(SP.typed_vs_search.groups.not_mobile.ci95)} (${HC.not_mobile.commits} commits). Mobile seeds were ${pct(mix.mobile.tuning_share_of_tasks)} of tuning tasks and ${pct(mix.mobile.heldout_share_of_tasks)} of held-out tasks. Against the floors: changed-together ${sg(H3co.sets.T1.difference)} ${ci(H3co.sets.T1.ci95)} (outside mobile ${sg(coNM.diff)} ${ci(coNM.ci95)}; five most favourable commits dropped ${sg(sensCO.drop_5_most_favourable_to_a.diff)} ${ci(sensCO.drop_5_most_favourable_to_a.ci95)}; seeds matched by id only ${sg(sensCO.seeds_matched_by_id_only.diff)} ${ci(sensCO.seeds_matched_by_id_only.ci95)}); same-folder ${sg(H3dir.sets.T1.difference)} ${ci(H3dir.sets.T1.ci95)}. The search arm is a scripted search, not an agent; ${pct(pad.search.share_from_padding_tail_per_task)} of its credited recall per task comes from its changed-together padding tail.`);
+L.push(`4. **What moved the score (tuning, ${N.tu} commits, optimistic).** Hop depth moved recall by ${f(hopF.range)} (${f(hop1.primary)} at 1 hop to ${f(hopU.primary)} unbounded); direction by ${f(dirF.range)}; ranking modes by at most ${f(rankU.range)}.`);
+L.push(`5. **Code-reading questions (held-out, ${N.q} questions).** F1 typed minus scripted search ${sg(h4.all30.diff)} ${ci(h4.all30.ci95)}: inconclusive. On ${N.q22} untouched questions ${sg(h4.untouched22.diff)} ${ci(h4.untouched22.ci95)}; on 23 ${sg(h4.addendum5_list23.diff)} ${ci(h4.addendum5_list23.ci95)}. Tokens two ways: final answers median ${tok.all30.typed_final_answer_tokens_median} (typed) and ${tok.all30.search_final_answer_tokens_median} (search); the scripted search read a median ${tok.all30.search_tokens_read_median} tokens. The typed side's own costs (knowing the schema, query programs per kind) are not counted. Recall convention: ${d.questions.recall_convention}.`);
+L.push(`6. **Engine speed, size and effort (timing run, tuning inputs only, ${EG.settings.passes} passes, audited).** Selected method, warm median per ranking: SQLite ${fms(wTu('relational'))} ms (tuning graph) and ${fms(wFz('relational'))} ms (frozen graph); LadybugDB ${fms(wTu('ladybug'))} and ${fms(wFz('ladybug'))} ms; DuckDB graph layer ${fms(wTu('duckpgq'))} and ${fms(wFz('duckpgq'))} ms. 4-hop PageRank variant, frozen graph: LadybugDB ${fms(s1Fz('ladybug'))} ms (PageRank in JavaScript), DuckDB ${fms(s1Fz('duckpgq'))} ms, SQLite ${fms(s1Fz('relational'))} ms (about 270 SQL statements per ranking): this compares PageRank implementations, not graph operators. Questions: ${fms(tqFz('relational'))}, ${fms(tqFz('ladybug'))} and ${fms(tqFz('duckpgq'))} ms. LadybugDB cold times leave out a facts load only it needs. Store sizes and build times compare designs with different extra tables, not engines alone. A model step takes about ${stepS} s, so engine speed does not enter the token bill.`);
+L.push('7. **Not tested.** Whether an agent finishes work faster or with fewer mistakes with any of these tools. No agent was run.', '');
+L.push(`## Held-out recall at 8,000 tokens (change completion, ${N.ho} commits)`, '');
+L.push('| Tool | Recall | Std. error | 2,000 | 4,000 | 16,000 | Tuning |', '|---|---|---|---|---|---|---|');
+[['relational', 'primary'], ['ladybug', 'primary'], ['duckpgq', 'primary'], ['ladybug', 's2'], ['relational', 's1'], ['search', 'primary'], ['search', 's2'], ['floor-co', 'primary'], ['floor-dir', 'primary']].forEach(([a, r]) => { const x = T(a, r, 'T1'); L.push(`| ${ARMN[a + '|' + r]} | ${f(x.primary_recall_at_8000_tokens)} | ${f(x.standard_error)} | ${f(x.recall_at_2000)} | ${f(x.recall_at_4000)} | ${f(x.recall_at_16000)} | ${f(x.tuning_primary_same_configuration)} |`); });
+L.push('');
+L.push('## Pre-declared comparisons (held-out)', '');
+L.push('| Comparison | Change completion | Tests to update | Verdict |', '|---|---|---|---|');
+[['H1', 'LadybugDB minus SQLite'], ['H2-duckpgq', 'DuckDB graph layer minus SQLite'], ['H1b', 'LadybugDB + community minus SQLite'], ['H3-search', 'typed minus scripted search'], ['H3-search-s2', 'typed minus search, best form'], ['H3-floor-co', 'typed minus changed-together floor'], ['H3-floor-dir', 'typed minus same-folder floor']].forEach(([id, n]) => { const c = C(id); L.push(`| ${n} | ${sg(c.sets.T1.difference)} ${ci(c.sets.T1.ci95)} | ${sg(c.sets.T2.difference)} ${ci(c.sets.T2.ci95)} | ${c.verdict} |`); });
+L.push(`| questions, typed minus search (F1) | ${sg(h4.all30.diff)} ${ci(h4.all30.ci95)} (30) | – | ${h4.verdict} |`);
+L.push('');
+L.push(`Documented chains (${N.t3} tasks, ${N.t3p} parent commits) carry a sign only: typed minus search is positive in all ${N.t3g} parent-and-document groups. The first-written tie rule's choice scored ${sg(tieEff.difference)} ${ci(tieEff.ci95)} higher than the amended choice; that supports no claim about either rule.`, '');
+L.push('## Trust', '');
+L.push(`- ${d.trust.reproduction.rescore}`);
+L.push(`- ${d.trust.reproduction.this_file}`);
+L.push(`- ${d.trust.drop_note}`);
+L.push(`- ${N.q8} held-out questions had their handling changed after their text was read; the question comparison (H4) is shown on ${N.q}, ${N.q23} and ${N.q22} questions.`, '');
+L.push('## Not shown by this test', '');
+ns.forEach(x => L.push('- ' + x));
+L.push('');
+L.push('## What the owner asked that this test did not cover (section K)', '');
+L.push('- Not tested: meaning read from documents by a model (graphify\x27s extra layer); time validity of facts; cached conclusions made by a model (cached deterministic answers were replayed since, section L below); orientation; an agent using any tool; tokens in a session.');
+L.push(`- Graphify's ${KD.graphify.headline.ratio}x is about ${num(KD.graphify.headline.corpus_tokens)} corpus tokens against about ${num(KD.graphify.headline.answer_tokens)} tokens per ungraded answer (${KD.graphify.headline.code_only_ratio}x on code alone), self-reported, weak. Independent: graphify-bench (940 runs, medium; its doc-and-code positive downgraded to weak and directional) and a file-localisation check on 177 issues (25 % against 32 % for keyword search, medium).`);
+L.push(`- In the owner's sessions fetched content is ${KD.tokens.segments.find(x => x.key === 'fetched').both} % of context tokens; a knowledge layer acts there and on repeated lookups, at most the third lever after capping the orchestrator window and stripping the fixed prefix.`);
+L.push('- The wider test (agent baseline; structure, meaning, time, cached conclusions and graphify as switches; phases with stops) is a design with the design check\x27s corrections, not a result.');
+{ const CV2 = KD.wider.cost_v2, FE2 = KD.feas;
+  L.push(`- Its cost, estimated in protocol v2, in billion tokens: ${CV2.stages.map(s => s.name + ' ' + s.lo + ' to ' + s.hi).join('; ')}; probe, pilot and both main stages about ${rnd(CV2.total.lo, 1)} to ${rnd(CV2.total.hi, 1)} billion, against ${CV2.recorded} billion context tokens recorded for all of FixFlow.`);
+  L.push(`- Can it run here (feasibility counts, no model, no agent, nothing installed): at ${FE2.history.sample} seeded old commits of ${FE2.history.population}, backend checks and web and mobile tests passed with nothing installed (mobile type-check ${FE2.history.checks[5].passed} of ${FE2.history.checks[5].ran}; alembic check 1 of 2, run at 2 parents only, the June parent having a model-migration drift in its own code); about ${FE2.fresh.usable} fresh usable change tasks exist against the ${FE2.fresh.needed} a held-out run needs; the strict needed-but-not-edited set is empty in ${FE2.needed.strictEmpty} of ${FE2.needed.commits} commits; ${FE2.lookups.kinds[0][1]} of ${FE2.lookups.distinct} recorded lookups open program documents; ${num(FE2.graphify.none)} of ${num(FE2.graphify.edges)} graph edges (routes, URLs, tables, settings, mocks) are of kinds graphify does not build.`);
+  L.push('- Removed on purpose from the caching row (2026-11-13): a sentence on what a database cache that keeps unneeded content out of the window would do to cached and uncached tokens. It leaned toward a token saving nobody measured; whether stopping a first, unneeded read changes tokens is untested.', ''); }
+{ const A = k => LD.sets.all.rows[k], Cg = k => LD.sets.changing.rows[k], W = k => LD.sets.completion.rows[k];
+  L.push('## Cached answers with invalidation: the replay (section L)', '');
+  L.push(`Deterministic answers only: ${LS.questions} questions looked up again at each later saved code-graph version where what they ask about existed (${num(LS.lookupsAll)} lookups at the ${LS.steps} versions after the first of ${LS.snapshots}, in commit order), under ${LS.rules} rules; an answer was reused only if the rule said it still held, and the true answer was recomputed every time. No model was called and no agent ran. Audited: a recomputation of the true answer at all ${num(LD.audit.recomputed)} lookups, with the audit's own loader and reconstruction of what each rule served but the finished test's original SQL programs and reference code, found ${LD.audit.disagreements} disagreements; a mistake shared with those programs, about what a question means, would not show.`, '');
+  L.push('| Rule | All 250 questions: served, wrong among served | The ' + LST.changingQ + ' that change | Wide ranking question |', '|---|---|---|---|');
+  lrules.forEach(r => L.push(`| ${r.name} | ${p1(A(r.key).hit)} %, ${p1(A(r.key).stalePct)} % | ${p1(Cg(r.key).hit)} %, ${p1(Cg(r.key).stalePct)} % | ${p1(W(r.key).hit)} %, ${p1(W(r.key).stalePct)} % |`));
+  L.push('');
+  L.push(`- ${LST.neverChange} of ${LST.of} questions (${p1(LST.pct)} %) never change their answer and ${p1(LST.lookupsPct)} % of lookups are of them; every rule is right on them.`);
+  L.push(`- ${LC.pattern} of ${LC.total} cases behind the wrong answers were a new relation in another file (new caller, test, reader, rule or route); ${LC.fact} was a route renamed from another file.`);
+  L.push(`- The wide ranking question rests on a median of ${LD.hub.files} files; no rule that checks what it rests on served more than ${p1(W('cutoff_sem').hit)} % of its lookups.`);
+  L.push(`- Tokens were not measured. Estimate, assuming each hit replaces one scripted search: ${num(LT.fact.median)} tokens per 100 lookups at the median price, ${num(LT.fact.mean)} at the mean, ${num(LT.fact.perKind)} at per-kind prices; against a typed query 0.`);
+  L.push('- Not shown: conclusions made by a model (the costly ones) were not cached and no agent chose what to look up; zero wrong answers is expected by construction for programs whose every read is recorded; "wrong" is judged against the same extractor\x27s facts, not the code.', ''); }
+{ const c = id => MM.cmp.find(x => x.id === id).sets.T1;
+  L.push('## Graphify itself, on our tasks (section M)', '');
+  L.push(`Graphify ${MS.version}, code layer only, in a test container with the network off; no model, no agent. ${MTU.configs} shipped configurations fitted on tuning (typed arms ${MTU.typedConfigs} each); the frozen one ran once on the ${N.ho} held-out commits (${num(MS.tasks)} tasks) and ${MS.questions} questions, through our adapter and the shared packer. An independent re-scorer matched all ${num(MS.values)} graphify values; a run audit and a claims refuter checked the result.`, '');
+  L.push(`- **Change completion, 8,000 tokens (held-out).** graphify ${f(gT1.p)}, typed store ${f(tT1m.p)}, scripted search ${f(mT('search', 'T1').p)}, changed-together floor ${f(mT('floor-co', 'T1').p)}, same-folder floor ${f(mT('floor-dir', 'T1').p)}. Graphify minus typed ${t3(c('G-1').p)}: "better" for the typed store by the declared rule (also at 2,000 and 4,000 tokens). Minus scripted search ${t3(c('G-2').p)}, minus changed-together floor ${t3(c('G-3').p)}, minus same-folder floor ${t3(c('G-4').p)}: inconclusive, which is neither better nor equivalent.`);
+  L.push(`- **Qualifications.** Part of the typed lead is file size: graphify shows a median ${MM.packer.graphify.files} files of ${MM.packer.graphify.perFile} tokens against ${MM.packer.relational.files} of ${MM.packer.relational.perFile}; the first right file comes equally early (MRR ${t3(MM.rank['G-1'].mrr)}). Each inconclusive verdict moves with five commits (same-folder floor without its five best commits ${t3(MM.sens['G-4'].dropOther)}; search and changed-together floor without graphify's five best ${t3(MM.sens['G-2'].dropGraphify)} and ${t3(MM.sens['G-3'].dropGraphify)}).`);
+  L.push(`- **Task fit.** ${MW.design}`);
+  L.push(`- **Where the seed lives.** Mobile app (${MM.loc[0].commits} commits): minus typed ${t3(MM.loc[0].d['G-1'].p)}, minus scripted search ${t3(MM.loc[0].d['G-2'].p)}, but not at 2,000 or 4,000 tokens, not on top-10 ranking and not after dropping five commits (${t3(MM.mobile.dropGraphify['G-2'])}). Backend (${MM.loc[1].commits} commits): minus typed ${t3(MM.loc[1].d['G-1'].p)}. Mobile seeds were ${pct(mix.mobile.heldout_share_of_tasks)} of held-out tasks against ${pct(mix.mobile.tuning_share_of_tasks)} on tuning.`);
+  L.push(`- **Links graphify does not build** (route, table, setting, changed-together): ${num(MLK.unb.files.only.n)} of ${num(MLK.totalFiles)} reference files; graphify showed ${MLK.unb.files.only.shown.graphify}, the typed store ${MLK.unb.files.only.shown.relational}, scripted search ${MLK.unb.files.only.shown.search} inside 8,000 tokens. Tasks without such files still show ${t3(MLK.unb.WITHOUT.d)}; this run does not split that between link kinds, ranking and tuning.`);
+  L.push(`- **Own answer text** (median ${num(MM.native.T1.tok)} tokens) named ${f(MM.native.T1.recall)} of the reference files; minus the typed store's 2,000-token answer ${t3(MM.native.T1.arms.relational.d)}, minus scripted search ${t3(MM.native.T1.arms.search.d)}. Keyword mode at depth 2; file paths only.`);
+  L.push(`- **Questions** (raw question text, no agent, no vocabulary step): recall ${f(MQ.all30.arms.gd.r)} at its default budget and ${f(MQ.all30.arms.g8.r)} at 8,000 tokens, against ${f(MQ.all30.arms.typed.r)} typed and ${f(MQ.all30.arms.search.r)} scripted search; F1 ${f(MQ.all30.arms.gd.f1)} depends on our read-out of candidates. Typed-side costs not counted; scripted search read a median ${MQ.all30.arms.search.read} tokens.`);
+  L.push(`- **Not shown:** its model-read document layer was not run; no agent used it; nothing about tokens in a session, other repositories, or why graphify's published numbers look good elsewhere. Build times are not comparable (typed facts built earlier under unrecorded conditions).`, ''); }
+L.push('## Possible next tests (owner decisions, not plans)', '');
+L.push('- An agent pilot replaying fix commits with each tool set (model tokens and many agents).');
+L.push('- An embedding-search arm (needs a model download).');
+L.push('- Another repository.');
+L.push('- A rolling-origin re-run over several split dates for more power.', '');
+L.push('Sources: ' + d.meta.sources['held-out'] + '; ' + d.meta.sources.tuning + '. Reporting rules: protocol addendum 6, section C.');
+const md = L.join('\n') + '\n';
+fs.writeFileSync(path.join(HERE, '..', 'GRAPH-TEST-RESULT-2026-11.md'), md);
+
+const sz = fs.statSync(path.join(HERE, 'index.html')).size;
+console.log('index.html bytes', sz, sz < 500000 ? 'OK' : 'TOO BIG');
+console.log('record lines', md.split('\n').length, 'bytes', Buffer.byteLength(md));

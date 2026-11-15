@@ -1,0 +1,44 @@
+// Step 2: seeded sample of finding candidates from the most re-read finding-bearing files under CQ1.
+// A candidate is a bullet item, a numbered item, a table row (not header or separator) or a prose paragraph of 80+ chars.
+const fs = require('fs');
+const T = 'C:/Users/User/AppData/Local/Temp/claude';
+const R = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const FILES = [
+  ['A', 'review report', T + '/C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-harness-ideas-horthy-2371b9/9c3f9742-d1e5-4e7b-ad89-bb5bcaada06a/scratchpad/pr182/docs/program/HARNESS-REVIEW-2026-11-01.md'],
+  ['B', 'gate verdicts', R + '/docs/program/G2-deep-dive-gate-2026-11-01.md'],
+  ['C', 'lane notes', T + '/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/common/NOTES.md'],
+  ['D', 'audit compile', R + '/docs/program/HARNESS-BOTTLENECKS-2026-11.md'],
+  ['E', 'facts list', T + '/192654871f6b1294/0bf1c4f3-76dc-4144-995c-2af5a213db41/scratchpad/lib/facts/F1-ks-mechanics.md'],
+  ['F', 'review cards', T + '/C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-harness-ideas-horthy-2371b9/9c3f9742-d1e5-4e7b-ad89-bb5bcaada06a/scratchpad/review-input/G1-cards.md'],
+  ['G', 'sweep cards', R + '/docs/program/evidence/harness-bottlenecks/sweep-cards.txt'],
+  ['H', 'facts list', T + '/192654871f6b1294/0bf1c4f3-76dc-4144-995c-2af5a213db41/scratchpad/lib/facts/F3-v2-numbers.md'],
+  ['I', 'design with findings', R + '/docs/program/w2/O-10-design.md'],
+  ['J', 'lane notes', T + '/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/facts/NOTES.md'],
+  ['K', 'critic report', R + '/docs/program/evidence/harness-bottlenecks/graph2/research/critic.txt'],
+  ['L', 'refuter report', R + '/docs/program/evidence/harness-bottlenecks/refute.txt'],
+];
+function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const r = rng(20261113);
+const out = [];
+for (const [id, kind, f] of FILES) {
+  const L = fs.readFileSync(f, 'utf8').split(/\r?\n/);
+  const units = []; let cur = null;
+  const flush = () => { if (cur && cur.text.length >= 80) units.push(cur); cur = null; };
+  L.forEach((line, i) => {
+    const s = line.trim();
+    if (!s) { flush(); return; }
+    if (/^#/.test(s) || /^\|?\s*:?-{3,}/.test(s) || /^```/.test(s)) { flush(); return; }
+    if (/^([-*]|\d+[.)])\s+/.test(s) || /^\|/.test(s)) { flush(); cur = { line: i + 1, text: s }; if (/^\|/.test(s)) flush(); return; }
+    if (cur && /^\s+/.test(line)) { cur.text += ' ' + s; return; }
+    if (cur && !/^\s/.test(line) && !/^([-*]|\d+[.)])/.test(s)) { cur.text += ' ' + s; return; }
+    flush(); cur = { line: i + 1, text: s };
+  });
+  flush();
+  // drop table header rows (the row right before a separator) by checking the next line
+  const keep = units.filter((u) => !(/^\|/.test(u.text) && /^\|?\s*:?-{3,}/.test((L[u.line] || '').trim())));
+  // seeded shuffle
+  const idx = keep.map((_, k) => k); for (let k = idx.length - 1; k > 0; k--) { const j = Math.floor(r() * (k + 1)); [idx[k], idx[j]] = [idx[j], idx[k]]; }
+  idx.slice(0, 9).forEach((k, n) => out.push({ file: id, kind, path: f, order: n + 1, line: keep[k].line, units: keep.length, text: keep[k].text.slice(0, 1100) }));
+}
+fs.writeFileSync('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises/sample-candidates.jsonl', out.map((o) => JSON.stringify(o)).join('\n'));
+const byF = {}; for (const o of out) byF[o.file] = o.units; console.log(byF, out.length);

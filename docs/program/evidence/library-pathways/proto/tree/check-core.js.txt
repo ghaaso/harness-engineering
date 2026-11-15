@@ -1,0 +1,48 @@
+// Checks the tree helpers against the engine. Run from this folder: node - < check-core.js.txt
+'use strict';
+const path = require('path');
+const here = process.cwd();
+const lib = path.resolve(here, '../../../../library-pathways');
+const E = require(path.join(lib, 'engine.js'));
+const C = require(path.resolve(here, '../../page-src/core.js.txt'));
+const T = require(path.resolve(here, 'src/tree-core.js.txt'));
+const map = require(path.join(lib, 'map.json'));
+const table = require(path.join(lib, 'params.json'));
+const lims = require(path.join(lib, 'limitations.json'));
+const cases = require(path.join(lib, 'cases.json'));
+const best = E.paramsFromTable(table, 'best');
+const st = T.structure(map);
+console.log('roots', st.roots.join(' '));
+console.log('nested', Object.keys(st.owner).length, 'shared', Object.keys(st.shared).length);
+const depthMax = Math.max.apply(null, Object.values(st.depth));
+console.log('max depth', depthMax);
+const tp = E.timePath(map, best);
+let worst = 0;
+['top_first', 'cheap_ladder', 'library'].forEach(p => {
+  for (let per = 1; per <= tp.periods.length; per++) {
+    const stocks = p === 'library' ? tp.periods[per - 1].stocks : {};
+    const pic = T.picture(E, C, map, best, p, null, stocks);
+    worst = Math.max(worst, pic.parity);
+    if (p !== 'library') break;
+  }
+});
+const kind = { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'no' };
+const pk = T.picture(E, C, map, best, 'library', kind, tp.periods[11].stocks);
+worst = Math.max(worst, pk.parity);
+console.log('worst cost parity', worst.toExponential(2), 'kind share', pk.share);
+const pt = T.picture(E, C, map, best, 'top_first', null, {});
+['l1_lookup', 'l10_opus_bad', 'l5_none_wrong'].forEach(b => console.log(b, JSON.stringify(T.zeroWhy(E, map, st, best, 'top_first', null, {}, pt, { branch: b }))));
+const pl = T.picture(E, C, map, best, 'cheap_ladder', null, {});
+['l10_opus_bad', 'L11_stored', 'L3_exact'].forEach(b => console.log(b, JSON.stringify(T.zeroWhy(E, map, st, best, 'cheap_ladder', null, {}, pl, b[0] === 'L' ? { state: b } : { branch: b }))));
+const p1 = T.picture(E, C, map, best, 'library', null, tp.periods[0].stocks);
+const z1 = Object.keys(p1.branchFlow).filter(k => p1.branchFlow[k] < 1e-12);
+console.log('period 1 zero branches', z1.length, z1.slice(0, 6).join(' '));
+z1.slice(0, 4).forEach(b => console.log(b, JSON.stringify(T.zeroWhy(E, map, st, best, 'library', null, tp.periods[0].stocks, p1, { branch: b }))));
+const pz = T.picture(E, C, map, best, 'library', { kind: 'visible', need: 'cheap_ok', held: 'nothing', distractor: 'no' }, tp.periods[11].stocks);
+const zz = Object.keys(pz.branchFlow).filter(k => pz.branchFlow[k] < 1e-12);
+console.log('ok/nothing zero branches', zz.length);
+zz.slice(0, 5).forEach(b => console.log(b, JSON.stringify(T.zeroWhy(E, map, st, best, 'library', { kind: 'visible', need: 'cheap_ok', held: 'nothing', distractor: 'no' }, tp.periods[11].stocks, pz, { branch: b }))));
+const ev = T.stepEvidence(lims, cases);
+console.log(Object.keys(ev).map(k => k + ':' + ev[k].main.length + '/' + ev[k].also.length + '/' + ev[k].broke.length).join(' '));
+const stt = T.stageTotals(map, st, T.picture(E, C, map, best, 'library', null, tp.periods[11].stocks), 'library');
+console.log(Object.keys(stt).map(k => k + ' in ' + (100 * stt[k].enter).toFixed(1) + ' cost ' + (100 * stt[k].cost).toFixed(0)).join(' | '));

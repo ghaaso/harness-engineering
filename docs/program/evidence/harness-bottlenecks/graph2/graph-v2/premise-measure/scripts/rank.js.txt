@@ -1,0 +1,11 @@
+// Session 2: rank of the 12 sampled files among files read under CQ1 (perfile.json), by carried tokens and by sessions.
+const fs = require('fs');
+const pf = JSON.parse(fs.readFileSync('perfile.json', 'utf8')).filter((f) => !f.isDir);
+const byCar = [...pf].sort((a, b) => b.carried - a.carried); const byS = [...pf].sort((a, b) => b.sessions - a.sessions || b.carried - a.carried);
+const L = fs.readFileSync('sample-selected.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const files = [...new Map(L.map((x) => [x.file, x.path])).entries()];
+const tail = (p) => p.toLowerCase().split(String.fromCharCode(92)).join('/').split('/').slice(-3).join('/');
+const out = [];
+for (const [id, p] of files) { const t = tail(p); const i = byCar.findIndex((f) => tail(f.path) === t); const j = byS.findIndex((f) => tail(f.path) === t); const f = byCar[i]; out.push({ id, carriedRank: i + 1, sessionsRank: j + 1, sessions: f ? f.sessions : null, reads: f ? f.reads : null, cls: f ? f.cls : null }); }
+fs.writeFileSync('rank.json', JSON.stringify({ nFiles: pf.length, files: out }, null, 1));
+console.log(pf.length, out.map((o) => [o.id, o.carriedRank, o.sessionsRank, o.sessions, o.reads, (o.cls || '').slice(0, 2)].join(':')).join(' '));

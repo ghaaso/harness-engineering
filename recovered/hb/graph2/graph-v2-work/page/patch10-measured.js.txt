@@ -1,0 +1,74 @@
+// one-off patch of src/measured.js.txt and build.js.txt for the independent check's defects 4, 6, 10, 11, 13, 20.
+// Run from graph-v2:  node - < <this file>
+const fs = require('fs');
+let m = fs.readFileSync('src/measured.js.txt', 'utf8');
+const rep = (a, b) => { if (!m.includes(a)) throw new Error('missing: ' + a.slice(0, 90)); m = m.split(a).join(b); };
+
+// helpers: the measurement's own NOTES text, whitespace flattened, for its caveats and corrections
+rep("  const seeOf = p => `${tag('meas', esc(p.path))}`;", "  const seeOf = p => `${tag('meas', esc(p.path))}`;\n  const flat = p => String(p.text || '').replace(/\\s+/g, ' ');\n  const grab = (p, re) => { const x = flat(p).match(re); return x || null; };");
+
+// defect 6: transcripts, not sessions
+rep("transcripts: 'recorded sessions they come from'", "transcripts: 'transcripts they come from (session logs, subagents included)'");
+
+// defect 4: the truth span is the read span
+rep("['truth_tokens', 'tk-truth', 'the span the agent went on to use']", "['truth_tokens', 'tk-truth', 'the span the agent read (the used span where confirmed)']");
+
+// defects 11 and 20: the per-form chart split by class, larger, with its own axis and legend; NOTES section 4 reading notes
+{ const a = m.indexOf('      const rows = TB.map((r, i) =>'); const b = m.indexOf("<div class=\"tklegend\">${MK.map(([, c, l]) => `<span><i class=\"tk ${c}\"></i>${l}</span>`).join('')}</div></div>`;", a);
+  if (a < 0 || b < 0) throw new Error('tb rows block missing');
+  const end = b + "<div class=\"tklegend\">${MK.map(([, c, l]) => `<span><i class=\"tk ${c}\"></i>${l}</span>`).join('')}</div></div>`;".length;
+  m = m.slice(0, a) + `      const row = r => \`<div class="tbrow"><div class="lab"><b>\${formName(r)}</b><small>\${pc(r.share_pct)} of \${clsName(r.cls)} carried tokens · \${fmt(r.n)} scorable · best arm \${armS(r.best_arm)}</small></div>
+<div class="track"><div class="fill \${r.best_arm === 'C' ? 'hl' : 'g-index'}" style="width:\${Math.max(0.3, +r.hit_pct || 0).toFixed(2)}%"></div><div class="val" style="left:\${Math.min(+r.hit_pct || 0, 66).toFixed(2)}%">\${pc(r.hit_pct)}</div></div>
+<div class="tktrack">\${MK.map(mm => mark(r, mm)).join('')}</div>
+<div class="tkv">\${MK.map(([k, c]) => has(r[k]) ? \`<span><i class="tk \${c}"></i>\${fmt(r[k])}</span>\` : '').join('')}</div></div>\`;
+      const legend = \`<div class="tklegend">\${MK.map(([, c, l]) => \`<span><i class="tk \${c}"></i>\${l}</span>\`).join('')} <span class="small">(token axis logarithmic; medians)</span></div>\`;
+      const classes = [...new Set(TB.map(r => r.cls))];
+      tbChart = classes.map(cl => \`<div class="tb tbcls"><h5 class="tbsub">\${clsName(cl)} lookups (\${TB.filter(r => r.cls === cl).length} question forms)</h5>\${legend}<div class="tbrow head"><div class="lab">Question form</div><div>Hit rate of the best index-only arm (0 to 100 %)</div><div class="tkaxis">\${ax}</div><div>median tokens, as marked</div></div>\${TB.filter(r => r.cls === cl).map(row).join('')}</div>\`).join('');` + m.slice(end);
+}
+rep("${blRows ? `<h4>Index-only arms, top-10 hit rate on scorable lookups</h4>${armLegend}${blRows}` : ''}",
+  "${blRows ? `<h4>Index-only arms, top-10 hit rate on scorable lookups</h4>${armLegend}${blRows}` : ''}${readNotes}");
+rep("    const TB = arr(S.to_beat);", `    const rn = grab(p, /Reading notes: (.*?\\(\`tie_at_cut_pct\`\\)\\.)/), ep = grab(p, /(These shares differ from use-cases\\.md table 3\\.1 .*?"what a test instance asks"\\.)/);
+    const readNotes = (rn || ep) ? \`<p class="note"><b>Reading notes (from the NOTES file).</b> \${rn ? e(rn[1].replace(/\\s*\\(tie_at_cut_pct\\)/, '')) : ''} A hit is an overlap with the span the agent read, not the whole needed span.\${ep ? ' <b>Why the shares per form differ from section B:</b> ' + e(ep[1]) : ''}</p>\` : '';
+    const TB = arr(S.to_beat);`);
+
+// defect 13: two location rows corrected by the NOTES recomputation (rounding)
+rep("    const RL = arr(S.reads_by_location);", `    const fx = grab(p, /Rounding only: transcripts ([\\d.]+) % \\(not ([\\d.]+) %\\), other outside sources ([\\d.]+) % \\(not ([\\d.]+) %\\)/);
+    const RL = arr(S.reads_by_location).map(r => { const o = Object.assign({}, r);
+      if (fx && /^transcripts/.test(r.where) && String(r.calls_pct) === fx[2]) { o.calls_pct = fx[1]; o.fixed = fx[2]; }
+      if (fx && /^other outside/.test(r.where) && String(r.calls_pct) === fx[4]) { o.calls_pct = fx[3]; o.fixed = fx[4]; }
+      return o; });`);
+rep("· ${pc(r.calls_pct)} of calls</span>`).join('')}</div>` : '';",
+  "· ${pc(r.calls_pct)} of calls${r.fixed ? ` (corrected in the NOTES recomputation, not ${r.fixed} %)` : ''}</span>`).join('')}</div>` : '';");
+// defect 20: solid colours for the location bar, no pattern that means "index question" elsewhere; every segment listed
+rep("const LC = ['g-ledger', 'g-docs', 'g-index', 'g-codemap', 'g-coderel', 'g-reading', 'g-bad'];", "const LC = ['pm0', 'pm1', 'pm2', 'pm3', 'pm4', 'pm5', 'pm6'];");
+rep("<div class=\"glegend\">${RL.map((r, i) =>", "<div class=\"glegend pmlist\">${RL.map((r, i) =>");
+
+// defect 10: the same-task shares are upper figures
+rep("${stRows ? `<h4>How much of that is the same task re-reading its own notes (by carried tokens, 0 to 100 %)</h4>${stRows}` : ''}",
+  "${stRows ? `<h4>How much of that is the same task re-reading its own notes (by carried tokens, 0 to 100 %)</h4>${stRows}${upNote}` : ''}");
+rep("    const FR = arr(S.findings_rows);", `    const u1 = grab(p, /counting recorded writes alone, the share is (\\d+) % of calls and (\\d+) % of carried tokens/), u2 = grab(p, /One session that ran (\\d+) hours holds (\\d+) % of the calls/);
+    const upNote = (u1 || u2) ? \`<p class="note"><b>Read the middle bar as an upper figure.</b>\${u1 ? \` Counting recorded writes alone, it is \${u1[1]} % of calls and \${u1[2]} % of carried tokens.\` : ''}\${u2 ? \` One session that ran \${u2[1]} hours holds \${u2[2]} % of the calls, so the session-level figures lean on it.\` : ''}</p>\` : '';
+    const FR = arr(S.findings_rows);`);
+fs.writeFileSync('src/measured.js.txt', m);
+
+// the NOTES text travels with each pending entry
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const a2 = "  p.head = p.exists ? plH(headlineOf(fs.readFileSync(abs, 'utf8'))) : null;";
+if (!s.includes(a2)) throw new Error('PEND head line missing');
+s = s.replace(a2, a2 + "\n  p.text = p.exists ? fs.readFileSync(abs, 'utf8') : null;");
+fs.writeFileSync('build.js.txt', s);
+
+let css = fs.readFileSync('src/page.css', 'utf8');
+css += `.pm0{background:#123f7a}.pm1{background:#2a78d6}.pm2{background:#c46a1a}.pm3{background:#6250d6}.pm4{background:#8d8b83}.pm5{background:#c9c8bf}.pm6{background:#e6e5df}
+.stack > div.pm5,.stack > div.pm6{color:var(--ink)}
+.glegend.pmlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:4px 18px}
+.tbcls{margin:10px 0 18px;padding:8px 12px;border:1px solid var(--grid);border-radius:8px}
+.tbcls .tbrow{font-size:16px;padding:8px 0}
+.tbcls .tktrack{height:34px}
+.tbcls .tktrack .tk{top:9px;width:16px;height:16px;margin-left:-8px}
+.tbcls .tkv{font-size:15px}
+.tbcls .track{height:26px}
+@media (max-width:520px){.glegend.pmlist{grid-template-columns:1fr}}
+`;
+fs.writeFileSync('src/page.css', css);
+console.log('patched measured, build, css');

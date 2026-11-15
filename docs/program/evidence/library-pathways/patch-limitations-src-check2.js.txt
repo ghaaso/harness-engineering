@@ -1,0 +1,138 @@
+// Second-build check (check-second-build.md, 2026-11-12): rewords text inside build-limitations.js.txt,
+// the source of limitations.json. Run from this folder:  node - < patch-limitations-src-check2.js.txt
+// then rebuild limitations.json with:                    node - < build-limitations.js.txt
+// Uses process.cwd(), never __dirname. Safe to run more than once: an edit whose new text is already
+// in place is skipped. It edits only the values of string literals, never code.
+// 1. Every sentence over 20 words in a description, a "went the other way" reason, a "cannot show"
+//    reason or a works item is split (must-fix 11).
+// 2. LIM-03 no longer reads the chosen cases as a rate (must-fix 10).
+// 3. The works item f07-4 keeps only what the walk saw; the inferred saving moves to its caveat, as the
+//    walker's inference (rule breach, should-fix 12). f06-C4 says "already warns" once (should-fix 10).
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const FILE = path.join(process.cwd(), 'build-limitations.js.txt');
+let src = fs.readFileSync(FILE, 'utf8');
+
+const EDITS = [
+  // descriptions
+  ['Most defects were written while building, with checks green. No error, no failed check, no call for help.',
+    'A defect can be written while building, with every check green. No error, no failed check, no call for help.'],
+  ['When recovery takes one call, the error names its fix, or a pushed note already worked, the lookup adds cost and saves little.',
+    'Sometimes recovery takes one call, the error names its fix, or a pushed note already worked. Then the lookup adds cost and saves little.'],
+  ['The failed call, which can be a long command, is already spent, and each new session or project pays its own first failure.',
+    'The failed call, which can be a long command, is already spent. Each new session or project pays its own first failure.'],
+  ["The error shows up in one window, but its cause is somewhere else: a parent session's brief, or other sessions running at the same moment.",
+    "The error shows up in one window, but its cause is elsewhere. It may be a parent session's brief, or other sessions running at once."],
+  ['Some causes enter, and some failures happen, outside any session: a dependency bump merged on the website, a vendor log, phones in the field. A lookup waits until a later, unrelated session trips over it.',
+    'Some causes arise outside any session: a dependency bump merged on the website, a vendor log, phones in the field. A lookup waits until a later, unrelated session trips over it.'],
+  ['The lookup returns the answer to that worry, or confirms the wrong guess, while the real hazard shares few words with it.',
+    'The lookup returns the answer to that worry, or confirms the wrong guess. The real hazard shares few words with it.'],
+  ['An exact or near-exact symptom match returns an entry whose cause is different: a command-length fault matching a path-length fix, a new stall matching an old, already-fixed one.',
+    'An exact or near-exact symptom match returns an entry with a different cause. A command-length fault matches a path-length fix. A new stall matches an old, fixed one.'],
+  ['An entry for one cause checks out as applying and gets fixed; the other cause has no entry, and the next build fails again.',
+    'An entry for one cause checks out as applying and gets fixed. The other cause has no entry, and the next build fails again.'],
+  ['When a long window is compacted, its summary can leave out a fact fetched or learned earlier, and the mistake comes back.',
+    'A long window gets compacted into a summary. The summary can leave out a fact fetched or learned earlier, and the mistake comes back.'],
+  ['A race, a hang, production data, a machine or tool fact, or a research conclusion gives no check that reads present before the fix and absent after. Such entries stay unconfirmed or check something else.',
+    'A race, a hang, production data, a machine fact or a research finding gives no clean check. No check reads present before the fix and absent after. Such entries stay unconfirmed or check something else.'],
+  ['The true check is a cloud build, a deploy, a machine rebuild or field data, each a slow outside round trip.',
+    'The true check is a cloud build, a deploy, a machine rebuild or field data. Each is a slow outside round trip.'],
+  ["A later check that looked stronger 'refuted' a right claim by testing something else: a text file instead of a report file, one folder instead of all files. The wrong correction then spread.",
+    "A later check that looked stronger 'refuted' a right claim by testing something else. It tested a text file, not a report file, or one folder, not all. The wrong correction then spread."],
+  ["When the same cause returns in a new form, the old fix is present, so the check says 'does not apply'.",
+    "The same cause can return in a new form while the old fix is present. Then the check says 'does not apply'."],
+  ['A problem that beats the cheap model and then Opus pays for each attempt on the way up before Fable solves it.',
+    'Some problems beat the cheap model and then Opus. Each attempt on the way up is paid for before Fable solves it.'],
+  ['Passing work up the ladder means sharing a window full of the failed attempt, or a brief written by the model that failed.',
+    'Passing work up the ladder means sharing a window full of the failed attempt. Or it means a brief written by the model that failed.'],
+  ["Later work obeys the unconditional form after the condition is met, or treats a scoped 'not found' as 'does not exist'.",
+    "Later work obeys the unconditional form after the condition is met. Or it treats a scoped 'not found' as 'does not exist'."],
+  ["An entry claims more than was seen: a shallow probe becomes 'no Python', two observed subnets become 'every boot', an unchecked guess is written in the voice of a finding.",
+    "An entry claims more than was seen. A shallow probe becomes 'no Python'. Two observed subnets become 'every boot'. An unchecked guess reads as a finding."],
+  ["The words that made a claim true are lost: 'report files' becomes 'file writes'; one note mixes rules of different scope.",
+    "The words that made a claim true are lost. 'Report files' becomes 'file writes', and one note mixes rules of different scope."],
+  ['Write-ups said a fix reached the main branch when it had not, or stored a guess about the cause; the errors travelled.',
+    'Write-ups said a fix reached the main branch when it had not. Others stored a guess about the cause, and the errors travelled.'],
+  ["A mistake the cheap model makes but the strong model fixes in a minute counts as 'routine' and is never stored.",
+    "The cheap model may make a mistake the strong model fixes in a minute. That counts as 'routine' and is never stored."],
+  ['When a source is corrected, copies in other files and in code keep the old text, and new sessions read the copy.',
+    'When a source is corrected, copies in other files and in code keep the old text. New sessions read the copy.'],
+  ['When work built on a fetched entry fails, the fault may lie in the entry, the match, the adaptation or the new case.',
+    'Work built on a fetched entry can fail. The fault may lie in the entry, the match, the adaptation or the new case.'],
+  // "cannot show" reasons
+  ['It cannot show the stored check passing the wrong entry later: its mechanical check accepts every good entry and rejects every wrong one.',
+    'It cannot show the stored check passing the wrong entry later. Its mechanical check accepts every good entry and rejects every wrong one.'],
+  ["The model's mechanical check never does that, so raising the share of entries with a check can only help the library.",
+    "The model's mechanical check never does that. So raising the share of entries with a check can only help the library."],
+  // went the other way
+  ['Lookups came in the middle of the task at a failed check (L05-3 at transcript line 1152 of 1892; L05-4 from line 1369 of 4070), not at task start.',
+    'Lookups came at a failed check in the middle of the task, not at its start. L05-3 looked up at transcript line 1152 of 1892, and L05-4 from line 1369 of 4070.'],
+  ["The trigger 'before retrying a failed build or deploy' fires at the right moment in every case where a session saw the failure.",
+    "The trigger 'before retrying a failed build or deploy' fires at the right moment. It did so in each of these cases where a session saw the failure."],
+  ["The fact held in both projects: the same refusal text in the clinic session on 1 Nov and in this repository's helper windows on 12 Nov.",
+    "The fact held in both projects. The same refusal text appeared in the clinic on 1 Nov and in this repository's helper windows on 12 Nov."],
+  ["The earlier knowledge-store design's flag for a symptom with several known causes kept the generic build error from returning a confident wrong lead.",
+    'The earlier knowledge-store design flags a symptom with several known causes. That flag kept the generic build error from returning a confident wrong lead.'],
+  ['An empty library would have done less harm than a full one: the entries that would have existed were the defects themselves.',
+    'An empty library would have done less harm than a full one. The entries that would have existed were the defects themselves.'],
+  ['It happened in the prose notes, not a store, and did no harm yet: the precondition (an auth token) still did not exist.',
+    'It happened in the prose notes, not a store, and did no harm yet. The precondition, an auth token, still did not exist.'],
+  // works items
+  ['A stored pdftoppm route served to the second wave would have saved 2 to 8 calls per agent across four Opus agents.',
+    'A stored pdftoppm route, served to the second wave, would have saved 2 to 8 calls per agent. Four Opus agents were in that wave.'],
+  ['The same walk rates the trigger as not specified and the afterlife as broken: the cause went away about three hours after the note.',
+    'The same walk rates the trigger as not specified and the afterlife as broken. The cause went away about three hours after the note.'],
+  ['The pushed Python note worked at no extra cost: three agents carried its remedy in the same command as the probe, on 11-09 and 11-12.',
+    'The pushed Python note worked at no extra cost. Three agents carried its remedy in the same command as the probe, on 11-09 and 11-12.'],
+  ["A lookup by the failing test's name would have hit the root's entry, saving a wrong fixture commit, its revert, stopped runs and one Opus review.",
+    "A lookup by the failing test's name would have hit the root's entry. It would have saved a wrong fixture commit, its revert, stopped runs and one Opus review."],
+  ["The check held: an exact match to an old, fixed cause was tested, came back 'does not apply', and no wrong fix was applied.",
+    "The check held. An exact match to an old, fixed cause was tested and came back 'does not apply'. No wrong fix was applied."],
+  ["After the first solve, a do-not-apply entry on the handoff's wrong advice stops a change that would let a 4-digit PIN be guessed without limit. CLAUDE.md already warns.",
+    "After the first solve, a do-not-apply entry would block the handoff's wrong advice. That advice would let a 4-digit PIN be guessed without limit. CLAUDE.md already warns of it."],
+  ['CLAUDE.md, which already warns', 'CLAUDE.md'],
+  ["The action words 'enable dispatcher' reach the stored hazard, preventing the replay measured at 36 messages about months-old jobs, plus permanent suppressed rows.",
+    "The action words 'enable dispatcher' reach the stored hazard. That prevents the measured replay: 36 messages about months-old jobs, plus permanent suppressed rows."],
+  ["The builder's own words 'offline presence outbox' reach the right entry; had a lookup fired, it saves three days of stuck badges and a rework commit.",
+    "The builder's own words 'offline presence outbox' reach the right entry. Had a lookup fired, it would have saved three days of stuck badges and a rework commit."],
+  ['A red check handed raw output to Fable, which fixed the defect in about a minute and wrote the rule, with its reason, within two minutes.',
+    'A red check handed raw output to Fable. Fable fixed the defect in about a minute and wrote the rule, with its reason, within two minutes.'],
+  ['The same walk says a lookup would have saved nothing at the time: no entry could exist before the first failure, and the fix took about a minute.',
+    'The same walk says a lookup would have saved nothing at the time. No entry could exist before the first failure, and the fix took about a minute.'],
+  ["The S02 entry, fetched at the S04 check, would have stopped the top tier's wrong premise: one finding's round trip saved.",
+    "The entry from slice two, fetched at slice four's check, would have stopped the top tier's wrong premise. That saves one finding's round trip."],
+  ['A later change reused two stored traps and avoided at least two failed cloud builds; a later design reused one that cost about 15M helper tokens.',
+    'A later change reused two stored traps that earlier failed cloud builds had paid for. A later design reused a stored design that had cost about 15M helper tokens.'],
+  ['The same walk rates use, capture and afterlife as broken, and notes that an older playbook still names the sign-in system the team turned down.',
+    'The same walk rates use, capture and afterlife as broken. It notes that an older playbook still names the sign-in system the team turned down.'],
+  ["The earlier knowledge-store design's scan for fixes not on the main branch fits June exactly: it removes one of build 15's two causes and 16 days of broken main.",
+    "The earlier knowledge-store design scans for fixes not on the main branch. That scan fits June exactly. It removes one of build 15's two causes and 16 days of broken main."]
+];
+
+// f07-4: the inferred saving becomes the caveat (the slot after the channel is null today)
+const F074_OLD = "'M', 'seen', 'CLAUDE.md and the stored design documents', null],";
+const F074_NEW = "'M', 'seen', 'CLAUDE.md and the stored design documents',\n    'The walk also says the reuse avoided at least two failed cloud builds. That is the walker\\'s inference, not something seen.'],";
+
+const LIT = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g;
+const unq = lit => (lit[0] === "'" ? lit.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, '\\') : JSON.parse(lit));
+const req = (val, q) => q + (q === "'" ? val.replace(/\\/g, '\\\\').replace(/'/g, "\\'") : JSON.stringify(val).slice(1, -1)) + q;
+let applied = 0;
+const problems = [];
+EDITS.forEach(([oldT, newT]) => {
+  let hit = 0, done = 0;
+  src = src.replace(LIT, lit => {
+    const v = unq(lit);
+    if (!v.includes(oldT)) { if (v.includes(newT)) done++; return lit; }
+    hit++;
+    return req(v.split(oldT).join(newT), lit[0]);
+  });
+  if (hit) applied++;
+  if (!hit && !done) problems.push('not found: ' + oldT.slice(0, 70));
+  if (hit > 1) problems.push('found ' + hit + ' times: ' + oldT.slice(0, 70));
+});
+if (src.includes(F074_OLD)) { src = src.replace(F074_OLD, F074_NEW); applied++; }
+else if (!src.includes("That is the walker\\'s inference, not something seen.")) problems.push('f07-4 slot not found');
+if (problems.length) { console.error(problems.join('\n')); process.exit(1); }
+fs.writeFileSync(FILE, src);
+console.log('build-limitations.js.txt: ' + applied + ' edits this run, ' + (EDITS.length + 1) + ' in all');

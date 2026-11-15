@@ -1,0 +1,144 @@
+// Screenshot harness for the pathway page: full-resolution pictures of any section in any state.
+// No dependencies. Drives a headless Edge (or Chrome) over the DevTools protocol with node's built-in WebSocket.
+//
+// Run from this folder:   node - job.json < shot.js.txt
+// (several jobs can run at once: each starts its own browser on its own port with its own temporary profile)
+//
+// job.json:
+// {
+//   "page": "../../library-pathways/index.html",   // file path relative to this folder, or an absolute path, or a file:/// or http:// address
+//   "out": "shots/second-look",                     // folder for the PNG files, relative to this folder
+//   "width": 1870, "height": 1280,                  // viewport in CSS px (default 1870 x 1280)
+//   "scheme": "light",                              // "light" or "dark" (prefers-color-scheme)
+//   "shots": [
+//     { "name": "map-library",                      // file name without .png
+//       "steps": [                                  // optional, run in order before the picture
+//         { "click": "Cheap model with the library" },   // click the first button, summary or [role=button] whose text is exactly this
+//         { "clickSel": "#run details > summary" },      // or click by CSS selector (first match)
+//         { "eval": "document.querySelector('#x').value = 3" },   // or run any script in the page
+//         { "wait": 300 },                                // or wait, in ms
+//         { "dump": { "expr": "document.body.innerText", "file": "text.txt" } }   // or write what a script returns to a file in the out folder
+//       ],
+//       "clip": "#map"                              // CSS selector of the element to capture; or "viewport"; or "full" (whole page);
+//                                                   // or {"x":0,"y":0,"width":800,"height":600} in page coordinates; or "none" for steps only
+//       , "pad": 8                                  // optional padding around an element clip, in px
+//       , "reload": true                            // optional: reload the page before this shot's steps (fresh state)
+//     }
+//   ]
+// }
+// Each shot also prints the element's size, so a reader can tell how big it is on the page.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+
+const jobPath = process.argv[2];
+if (!jobPath) { console.error('usage: node - job.json < shot.js.txt'); process.exit(2); }
+const here = process.cwd();
+const job = JSON.parse(fs.readFileSync(path.resolve(here, jobPath), 'utf8'));
+const W = job.width || 1870, H = job.height || 1280;
+const outDir = path.resolve(here, job.out || 'shots');
+fs.mkdirSync(outDir, { recursive: true });
+
+function pageUrl(p) {
+  if (/^(file|https?):/i.test(p)) return p;
+  const abs = path.resolve(here, p);
+  return 'file:///' + abs.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+const BROWSERS = [
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+];
+const exe = BROWSERS.find(b => fs.existsSync(b));
+if (!exe) { console.error('no Edge or Chrome found'); process.exit(2); }
+const port = 9300 + Math.floor((process.pid * 7 + Number(process.hrtime.bigint() % 500n)) % 600);
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-shot-'));
+const child = spawn(exe, ['--headless=new', '--remote-debugging-port=' + port, '--user-data-dir=' + profile, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--hide-scrollbars', '--force-device-scale-factor=1', '--window-size=' + W + ',' + H, 'about:blank'], { stdio: 'ignore' });
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function getJson(u) { const r = await fetch(u); return r.json(); }
+
+function connect(wsUrl) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    let id = 0; const waiting = new Map(); const listeners = [];
+    ws.onopen = () => resolve({
+      send(method, params) { return new Promise((res, rej) => { const i = ++id; waiting.set(i, { res, rej, method }); ws.send(JSON.stringify({ id: i, method, params: params || {} })); }); },
+      once(event) { return new Promise(res => listeners.push({ event, res })); },
+      close() { try { ws.close(); } catch (e) {} }
+    });
+    ws.onerror = e => reject(new Error('websocket error'));
+    ws.onmessage = m => {
+      const msg = JSON.parse(typeof m.data === 'string' ? m.data : Buffer.from(m.data).toString('utf8'));
+      if (msg.id && waiting.has(msg.id)) { const w = waiting.get(msg.id); waiting.delete(msg.id); if (msg.error) w.rej(new Error(w.method + ': ' + msg.error.message)); else w.res(msg.result); }
+      else if (msg.method) { for (let i = listeners.length - 1; i >= 0; i--) if (listeners[i].event === msg.method) { listeners[i].res(msg.params); listeners.splice(i, 1); } }
+    };
+  });
+}
+
+async function main() {
+  let version = null;
+  for (let i = 0; i < 80 && !version; i++) { try { version = await getJson('http://127.0.0.1:' + port + '/json/version'); } catch (e) { await sleep(150); } }
+  if (!version) throw new Error('the browser did not start');
+  const targets = await getJson('http://127.0.0.1:' + port + '/json/list');
+  const target = targets.find(t => t.type === 'page');
+  const page = await connect(target.webSocketDebuggerUrl);
+  await page.send('Page.enable'); await page.send('Runtime.enable');
+  await page.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
+  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: job.scheme === 'dark' ? 'dark' : 'light' }] });
+  const errors = [];
+  const url = pageUrl(job.page);
+  async function load() {
+    const loaded = page.once('Page.loadEventFired');
+    await page.send('Page.navigate', { url });
+    await loaded; await sleep(400);
+    await ev("document.documentElement.style.scrollBehavior='auto'; 0");
+  }
+  async function ev(expression) {
+    const r = await page.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) { const t = (r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text; throw new Error('page script failed: ' + String(t).slice(0, 300)); }
+    return r.result.value;
+  }
+  await load();
+  for (const shot of job.shots) {
+    try {
+      if (shot.reload) await load();
+      for (const st of shot.steps || []) {
+        if (st.wait != null) await sleep(st.wait);
+        else if (st.eval != null) await ev(st.eval);
+        else if (st.dump != null) { const v = await ev(st.dump.expr); fs.writeFileSync(path.resolve(outDir, st.dump.file), typeof v === 'string' ? v : JSON.stringify(v, null, 1)); console.log('dump ' + st.dump.file); }
+        else if (st.clickSel != null) { const ok = await ev('(()=>{const e=document.querySelector(' + JSON.stringify(st.clickSel) + ');if(!e)return false;e.scrollIntoView({block:"center"});e.click();return true})()'); if (!ok) throw new Error('nothing matches ' + st.clickSel); await sleep(250); }
+        else if (st.click != null) { const ok = await ev('(()=>{const t=' + JSON.stringify(st.click) + ';const all=[...document.querySelectorAll("button,summary,[role=button],[role=tab],label,a")];const e=all.find(x=>x.textContent.trim()===t)||all.find(x=>x.textContent.trim().startsWith(t));if(!e)return false;e.scrollIntoView({block:"center"});e.click();return true})()'); if (!ok) throw new Error('no control with the text "' + st.click + '"'); await sleep(250); }
+      }
+      if (shot.clip === 'none') { console.log('ok   ' + shot.name + ' (no picture)'); continue; }
+      let clip, note = '';
+      const c = shot.clip == null ? 'viewport' : shot.clip;
+      if (c === 'viewport') { const s = await ev('JSON.stringify({x:scrollX,y:scrollY})'); const o = JSON.parse(s); clip = { x: o.x, y: o.y, width: W, height: H }; }
+      else if (c === 'full') { const s = JSON.parse(await ev('JSON.stringify({w:Math.max(document.documentElement.scrollWidth,innerWidth),h:document.documentElement.scrollHeight})')); clip = { x: 0, y: 0, width: s.w, height: s.h }; }
+      else if (typeof c === 'object') clip = c;
+      else {
+        const s = await ev('(()=>{const e=document.querySelector(' + JSON.stringify(c) + ');if(!e)return null;const r=e.getBoundingClientRect();return JSON.stringify({x:r.left+scrollX,y:r.top+scrollY,w:r.width,h:r.height})})()');
+        if (!s) throw new Error('nothing matches ' + c);
+        const o = JSON.parse(s), pad = shot.pad == null ? 8 : shot.pad;
+        clip = { x: Math.max(0, o.x - pad), y: Math.max(0, o.y - pad), width: o.w + 2 * pad, height: o.h + 2 * pad };
+        note = ' element ' + Math.round(o.w) + ' x ' + Math.round(o.h) + ' px';
+      }
+      clip.scale = 1;
+      const png = await page.send('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: true });
+      const file = path.join(outDir, shot.name + '.png');
+      fs.writeFileSync(file, Buffer.from(png.data, 'base64'));
+      console.log('ok   ' + shot.name + '.png  ' + Math.round(clip.width) + ' x ' + Math.round(clip.height) + note);
+    } catch (e) { errors.push(shot.name + ': ' + e.message); console.log('FAIL ' + shot.name + ': ' + e.message); }
+  }
+  const logs = await ev('JSON.stringify({w:innerWidth,h:document.documentElement.scrollHeight,sw:document.documentElement.scrollWidth})');
+  console.log('page ' + logs + (errors.length ? '  failures: ' + errors.length : ''));
+  page.close();
+  try { const b = await connect(version.webSocketDebuggerUrl); await b.send('Browser.close'); b.close(); } catch (e) {}
+}
+main().catch(e => { console.error('error: ' + e.message); process.exitCode = 1; }).finally(async () => {
+  await sleep(300); try { child.kill(); } catch (e) {}
+  await sleep(300); try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) {}
+});

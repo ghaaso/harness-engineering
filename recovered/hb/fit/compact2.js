@@ -1,0 +1,13 @@
+const fs = require('fs');
+const base = process.argv[2];
+const r = JSON.parse(fs.readFileSync(base + '/out/review.json', 'utf8'));
+const cut = (s, n) => (s && s.length > n ? s.slice(0, n) + '…' : s || '');
+const refV = r.ref.filter(Boolean).flatMap((x) => x.verdicts);
+console.log('--- ref lane notes ---');
+for (const x of r.ref) console.log(cut(x.notes, 1200));
+console.log('--- kept (stands or narrowed) ---');
+for (const v of refV.filter((v) => v.verdict !== 'downgraded-to-fixflow-only')) console.log(v.id + ' ' + v.verdict + ' ' + v.corrected_fit + ' ' + v.corrected_bottlenecks.join(',') + ' | ' + v.corrected_cost + (v.needs_owner_decision ? ' | OWNER' : '') + (v.reopened_part !== 'none' ? ' | reopened ' + v.reopened_part : '') + ' :: ' + cut(v.what_survives, 250));
+console.log('--- downgraded ---');
+for (const v of refV.filter((v) => v.verdict === 'downgraded-to-fixflow-only')) console.log(v.id + ' :: ' + cut(v.reason, 210));
+console.log('--- exclusion ---', r.excl.notes);
+for (const v of r.excl.verdicts.filter((v) => v.verdict === 'should-map')) console.log(v.id + ' ' + v.fit + ' ' + v.bottlenecks.join(',') + ' :: ' + v.how);

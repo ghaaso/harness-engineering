@@ -1,0 +1,23 @@
+// one-off patch (what-it-shows sentences and record lines from the measured fields): run from graph-v2:  node - < <this file>
+const fs = require('fs');
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing: ' + a.slice(0, 70)); s = s.split(a).join(b); };
+// short sentences built from extras.json, empty when the structured fields are absent
+rep("const headOnly = p => Object.assign({}, p, { head: null });",
+`const headOnly = p => Object.assign({}, p, { head: null });
+const LTS = (PEND.lookup_testset.structured || null), PMS = (PEND.premise_measure.structured || null);
+const ltC = LTS ? (LTS.baselines || []).find(b => b.cls === 'product' && b.seeds === 'all' && b.arm === 'C') : null;
+const ltCp = LTS ? (LTS.baselines || []).find(b => b.cls === 'program' && b.seeds === 'all' && b.arm === 'C') : null;
+const sayLT = LTS ? \` Measured since: the test set holds \${num(LTS.instances.all)} recorded lookups; \${LTS.confirmed.all_pct} % have a span a later edit, citation or quote used, and \${LTS.replayable.all_pct} % replay against the frozen commit with no leak.\` : '';
+const sayLTI = LTS && ltC && ltCp ? \` The arm a graph must beat is already measured: keyword search over names, paths and headings found the needed span in its top 10 for \${ltC.hit10_pct} % of scorable product lookups and \${ltCp.hit10_pct} % of program ones.\` : '';
+const pmLoc = w => PMS ? (PMS.reads_by_location || []).find(r => r.where.startsWith(w)) : null;
+const sayPM = PMS && pmLoc('scratch') && pmLoc('tracked') && (PMS.findings_rows || [])[0] ? \` Measured for earlier conclusions: \${pmLoc('scratch').carried_pct} % of their carried read tokens come from scratch folders outside the repository and \${pmLoc('tracked').carried_pct} % from tracked files; \${PMS.findings_rows[0].k} of \${PMS.findings_rows[0].n} sampled findings have all their checkable premises tracked.\` : '';`);
+rep("The form the first test scored is ${p1(DR.first_test)} of product cost.`);", "The form the first test scored is ${p1(DR.first_test)} of product cost.${sayLT}`);");
+rep("for model-made conclusions it holds only as far as their premises were recorded.`);", "for model-made conclusions it holds only as far as their premises were recorded.${sayPM}`);");
+rep("A lookup-level replay is the test that can see effects of this size.`);", "A lookup-level replay is the test that can see effects of this size.${sayLTI}`);");
+rep("L.push(`Test set of real lookups: ${PEND.lookup_testset.exists ? PEND.lookup_testset.head : 'being measured (' + PEND.lookup_testset.path + ').'}`, '');",
+  "L.push(`Test set of real lookups: ${PEND.lookup_testset.exists ? PEND.lookup_testset.head : 'being measured (' + PEND.lookup_testset.path + ').'}`, '');\nif (LTS) L.push(`Measured (extras.json):${sayLT}${sayLTI}`, '');");
+rep("Premise share: ${PEND.premise_measure.exists ? PEND.premise_measure.head : 'being measured (' + PEND.premise_measure.path + ').'}`, '');",
+  "Premise share: ${PEND.premise_measure.exists ? PEND.premise_measure.head : 'being measured (' + PEND.premise_measure.path + ').'}`, '');\nif (PMS) L.push(`Measured (extras.json):${sayPM}`, '');");
+fs.writeFileSync('build.js.txt', s);
+console.log('patched');

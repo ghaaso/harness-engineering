@@ -1,0 +1,32 @@
+// Writes jobh-<size>.json: screenshots of the scope banner, the changed parts of section K and the new section L
+// (cache replay), into final3/<size>/. Run from this folder:  node - < make-jobh.js.txt
+'use strict';
+const fs = require('fs');
+const base = JSON.parse(fs.readFileSync('jobf-1870-light.json', 'utf8'));
+const check = base.shots.find(s => s.name === '00-check');
+const navDump = { dump: { expr: "JSON.stringify((()=>{const w=document.querySelector('nav.toc .wrap');const a=[...w.querySelectorAll('a')].pop();const wr=w.getBoundingClientRect(), ar=a.getBoundingClientRect();return {scrollWidth:w.scrollWidth, clientWidth:w.clientWidth, lastLabel:a.textContent, lastRight:Math.round(ar.right), wrapRight:Math.round(wr.right), lastFullyVisible: ar.right<=wr.right+0.5};})())", file: 'nav-check.txt' } };
+// section L only: chart labels under 12 px, body text under 15 px, anything wider than its card
+const lDump = { dump: { file: 'l-check.txt', expr: "JSON.stringify((()=>{const L=document.getElementById('l');const F=document.getElementById('k-feas');const out={};[['l',L],['kfeas',F],['scope',document.getElementById('scope')]].forEach(([n,root])=>{ if(!root){out[n]='missing';return;} out[n]={smallText:[...root.querySelectorAll('p,li,td,span,b')].filter(e=>e.offsetParent&&!e.closest('svg')&&!e.classList.contains('tag')&&!e.closest('.tag,.lbadge,.doneb,.lsb,.fstack')&&e.textContent.trim()&&parseFloat(getComputedStyle(e).fontSize)<15).slice(0,8).map(e=>e.tagName+'.'+e.className+':'+parseFloat(getComputedStyle(e).fontSize)+':'+e.textContent.trim().slice(0,30)), smallSvg:[...root.querySelectorAll('svg text')].filter(e=>parseFloat(getComputedStyle(e).fontSize)<12).length, overflow:[...root.querySelectorAll('*')].filter(e=>{const c=e.closest('.card,.ftile,.design,.costbox');if(!c||c===e)return false;const r=e.getBoundingClientRect(),cr=c.getBoundingClientRect();return r.width>0&&(r.right>cr.right+1||r.left<cr.left-1);}).slice(0,6).map(e=>e.tagName+'.'+e.className)};});return out;})())" } };
+const sizes = [['1870-light', 1870, 1280, 'light'], ['1870-dark', 1870, 1280, 'dark'], ['644-light', 644, 1000, 'light'], ['390-light', 390, 844, 'light']];
+const changing = { eval: "document.querySelector('.seg[data-ctl=lset] button[data-v=changing]').click()" };
+const all = { eval: "document.querySelector('.seg[data-ctl=lset] button[data-v=all]').click()" };
+for (const [name, w, h, scheme] of sizes) {
+  const job = { page: base.page, out: 'final3/' + name, width: w, height: h, scheme, shots: [
+    check,
+    { name: '00-nav', steps: [navDump], clip: 'none' },
+    { name: '00-l', steps: [lDump], clip: 'none' },
+    { name: 'nav', clip: 'nav.toc' },
+    { name: 'scope', clip: '#scope' },
+    { name: 'k-table', clip: '#k .ktab' },
+    { name: 'k-cost', clip: '#k-wider .costbox' },
+    { name: 'k-feas', clip: '#k-feas' },
+    { name: 'l-head', steps: [{ eval: "document.getElementById('l').scrollIntoView()" }, { wait: 200 }], clip: '#l .lflow' },
+    { name: 'l-main-all', steps: [all, { wait: 300 }], clip: '#l .grid2' },
+    { name: 'l-main-changing', steps: [changing, { wait: 300 }], clip: '#l .grid2' },
+    { name: 'l-small', steps: [all, { wait: 300 }], clip: '#l .grid3' },
+    { name: 'l-lists', clip: '#l .grid2:has(.lshows)' },
+    { name: 'l', clip: '#l' }
+  ] };
+  fs.writeFileSync('jobh-' + name + '.json', JSON.stringify(job, null, 1));
+}
+console.log('wrote', sizes.length, 'jobs');

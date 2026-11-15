@@ -1,0 +1,8 @@
+const fs=require('fs'); const f='C:/Users/User/Documents/projects/EMS_workshop1/docs/program/HARNESS-BOTTLENECKS-2026-11.md';
+let s=fs.readFileSync(f,'utf8'); const add=fs.readFileSync('sec6-graph.md','utf8'); let n=0;
+const rep=(a,b)=>{ if(!s.includes(a)){console.log('MISSING: '+a.slice(0,70));return;} s=s.replace(a,b); n++; };
+rep('**What "self-evolving" can honestly mean:**', add+'**What "self-evolving" can honestly mean:**');
+rep('two exposures for an index, neither of them a saving.', 'two exposures for an index, neither of them a saving. A connection graph of the FixFlow repo was then built by script and tested (12 November): it is small and cheap, but of 200 real searches from the testbed sessions it would have fully answered one and saved no step. So no graph database and no traversal cache; the part worth testing is a scripted map of cross-runtime contracts as an input to review.');
+rep('a graph database server on a memory-short PC;', 'a graph database, server or embedded (nothing to gain at this size; a server adds 1 to 2 GB); a cache over graph traversal;');
+rep('| `manifest.sha256` | Digests of every file above |', '| `graph/build.js.txt`, `graph/query.js.txt`, `graph/graph.json`, `graph/answer.txt`, `graph/*-output.txt` | §6: the connection graph of the FixFlow repo, one answer, and the size and timing figures |\n| `graph/extract.js.txt`, `graph/sample.json` | §6: the searches the November testbed sessions ran, and the fixed sample of 200 |\n| `graph/verify/` | §6: the four checks (edge accuracy, claims refuter, two search classifiers), rendered in `check.txt`, with their reports and scripts |\n| `manifest.sha256` | Digests of every file above |');
+fs.writeFileSync(f,s); console.log('replacements',n,'| lines',s.split('\n').length);

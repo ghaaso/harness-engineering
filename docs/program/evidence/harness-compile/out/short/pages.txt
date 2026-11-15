@@ -1,0 +1,1837 @@
+=== Page 1 ===
+HARNESS PROGRAMME � SHORT EDITION
+
+Our AI build harness: the ideas,
+the bottlenecks and the work
+
+What we are building, what limits the seven things I judge it by, the ideas we
+have against each limit, and the work we can now split across the team.
+
+7                         130                         484                      16
+
+metrics every bottleneck  bottlenecks, sorted by the  ideas, whatever their    work packages, each with
+and idea is judged by     metric each limits          results, chats included  an owner slot
+
+This edition is organised by the seven metrics I judge the harness by: throughput, efficiency, token
+count, token cost, time taken, quality of output and hallucinations. Start with "The short version", then
+Part 2 for the bottlenecks and Part 4 for the work. The reference edition, HARNESS-IDEAS-AND-
+BOTTLENECKS-2026-11-14-REFERENCE.pdf beside this file, holds every idea, bottleneck and package
+card in full. Every number carries a tag that says how sure we are of it.
+
+Muhammad Bilal
+14 November 2026
+Compiled from the documents and chats of 6 October to 14 November 2026
+
+=== Page 2 ===
+Our AI build harness � Short edition                                                                           How to read this
+
+BEFORE YOU START
+
+How to read this
+
+This is the short edition of the one place where everything we have learned about our build harness sits
+together. It is organised by the seven metrics I judge the harness by, keeps every diagram, and gives what a
+teammate needs to pick a piece of work and see why it matters. The reference edition, HARNESS-IDEAS-AND-
+BOTTLENECKS-2026-11-14-REFERENCE.pdf beside this file, holds every idea, every bottleneck and every
+package card in full. Throughout, "I" is me and "we" is the team.
+
+The short version                      3                       Part 3 � The ideas                                                14
+
+                                                               All ideas at a glance                                             14
+
+Part 1 � What we are building 4 The twelve themes 15
+
+What the harness is made of            4                       Part 4 � Dividing the work                                        16
+Where the ideas came from
+                                       4                       How the packages fit together                                     16
+
+How it fits together: harness v2       4                       The work packages                                                 17
+
+                                                               Decisions waiting on me                                           19
+
+Part 2 � The bottlenecks               5 How we work 19
+
+The seven metrics, and where we stand  5                       Glossary                                                          20
+
+Which bottleneck limits which metric   6                       Sources                                                           23
+
+The bottlenecks, one by one            7                       How this compile was made                                         24
+
+Every number says how sure we are of it                        Every idea shows how far it has got
+
+ M Measured. Counted or timed on our own machine or in our              Idea       Proposed, or picked from an outside source
+       own records.
+                                                                                   to try.
+ E Estimated. Worked out from measured data with a stated
+       assumption.                                                      Designed Written into a design or plan with its test.
+
+ G Guess. A judgement, written down so a measurement can                Built      It exists, but is not measured or switched on
+       replace it.
+                                                                                   yet.
+ S Setting or outside figure. A configured value, or a number
+       from an outside study or vendor.                                 Tested     Measured, trialled or replayed, with results
+                                                                                   in.
+ T Target. A bar we set for ourselves to clear.
+                                                                        In use     Part of how we work today.
+ I Illustrative. An example that shows the arithmetic, not a
+       result.                                                          Parked     Not pursued for now, or replaced; the
+                                                                                   reason stays.
+
+Ids and terms
+
+    The seven metrics are throughput, efficiency, token count, token cost, time taken, quality of output and
+    hallucinations. Part 2 defines each and sorts every bottleneck under them.
+
+    Bottlenecks in Part 2 are numbered 1 to 11. Each groups the register's rows that share one cause. A register row
+    keeps the id its first session gave it: B01 to B21 come from the bottleneck compile of 11 November; R2, R4 and
+    B3-LOOP are loops of harness v2, shown on page 5 as R2, R4 and B3 among loops R1 to R4 and B1 to B5; ids that
+    start with TK (tokens), LIB (memory), MC (the machine and the check) or PR (process; not a pull request) were added
+    in this compile.
+    Ideas are numbered by theme: MAC-03 is the third idea in the machine theme. Six came only from my chats and
+    were added on 14 November: PAR-22, TOK-44, MTH-66, MTH-67, MSR-49 and MSR-50.
+
+    Work packages are WP1 to WP12; WP2, WP6 and WP10 are split into lettered parts (WP2a, WP2b, WP6a to WP6c,
+    WP10a, WP10b), sixteen in all. Decisions waiting on me are harness v2's D05 and D07 to D23, the knowledge store's
+    KS-D1 and KS-D1b, and named ones such as GT-1; Part 4 lists them all.
+
+    Terms are explained in the text, or in the glossary with where each comes from.
+
+14 November 2026                                                                                               Page 2 of 24
+
+=== Page 3 ===
+Our AI build harness � Short edition                                                   The short version
+
+ONE PAGE
+
+The short version
+
+I build software with AI agents. The harness is everything around them: how I split work into sessions, the
+checks that decide whether work is right, and the memory that carries what we learn. I judge it by seven
+metrics: throughput, efficiency, token count, token cost, time taken, quality of output and hallucinations.
+This edition says what limits each one, what we have measured, and every idea we have against it, including
+the ones we only talked about.
+
+97 % M                         574k-974k M                   2 of 2 M                  6,600 ms M
+
+of our context tokens are the  tokens in the orchestrator's  compaction summaries we   for one model step, against
+model re-reading a window      window each time it had to    checked were wrong about  0.5 ms M to read a file:
+it has already seen            compact                       the latest state          time goes on steps, not on
+                                                                                       disk
+
+1 The window keeps growing, and that is the first bottleneck. Every call re-reads the whole window, so each
+      step costs more than the last, and the orchestrator's window reached 574k to 974k tokens M before it
+      compacted. Both summaries we checked were then wrong about the latest state M . My proposal is to run
+      orchestration as a B+ tree spread over sessions, as in a distributed system: a session past about 40 % S of its
+      window (set per model) splits, small ones merge, and we may never have to compact. WP12 wrote the rule and
+      replayed it on our record: tokens are not settled against compacting earlier, and its first aim, fewer
+      hallucinations, needs a live trial. I said yes to one trial wave at 300k, ahead of most of our compactions.
+
+2 Hallucinations and quality have catches, not yet a rate. We recorded 20-plus overstated reports, with no
+      denominator M , and those two wrong summaries M . 64 % M of reviews sent a slice back, and an Opus
+      reviewer found a serious defect in 9 of 14 M Opus-built slices. Two things should bring the numbers down:
+      claims that a script rechecks instead of a model, and windows that stay small (not yet measured). A script
+      rechecked 1,265 M paths, commits and pull requests in FixFlow's summaries: 16 M were not borne out, no
+      more than in maintained documents; the latest state needs a reader. WP8 counts reports next.
+
+3 One orchestrator and one usage limit cap throughput. Review, merging and checks all pass through one
+      session, and when the five-hour limit hits, every lane stops: ten were stopped within about 15 minutes M . The
+      testbed had about three lanes worth running M but ran six to nine M . The planner, the merge queue and the
+      governor are designed to answer this.
+
+4 Every agent pays a fixed start, often on the most expensive model. About 70k tokens M per clinic agent
+      before any work, 27 % E of all our tokens. A short tool list should shrink it; model tiers by role are in use, and
+      raising only the stuck problem to the top model is designed but not yet measured.
+
+5 Most steps only find and re-read. 64 % M of FixFlow's calls and 52 % M of the clinic's only read or searched,
+      each one a full re-read. A typed code store found more of what a change touched than a scripted search did
+      (+0.076 overall M , the gain in the mobile app). The test with an agent in the loop is next.
+
+6 What one session learns, the next does not have. The library and the knowledge store are designed, not built.
+      The ensemble of simulated runs I suggested on 12 November helped: it showed which unknowns matter most.
+      The same model's corner settings (MEM-15) show the library pays only when work comes back, reaches the
+      cheap model and is right, all together. Neither can pick a path, because the inputs are still guesses G .
+
+7 A lot already works, and the work splits cleanly. The clinic's full check is 3.0� faster in parallel M and 1.6�
+      faster in a Linux container M . Sixteen packages each have a goal, a first deliverable and a "done when": one
+      has begun, six can start today, six start on my word and three follow another package.
+
+What I need from you. Read this page and Part 4, take a package (two people can share one) and write your
+name in its row. Parts 2 and 3 give the background for your package, and the reference edition holds every
+bottleneck and idea behind it.
+
+14 November 2026                                                                       Page 3 of 24
+
+=== Page 4 ===
+Our AI build harness � Short edition                                                                                        Part 1 � What we are building
+
+PART 1
+
+What we are building
+
+FixFlow is the product. The harness is how we build it: everything we wrap around the AI models to build
+software with them. The word comes from software testing, where a test harness is the code that runs the
+tests; teams that build with AI agents now use it for the whole system around a model.
+
+What the harness is made of
+
+    Sessions and agents. A session is one conversation with Claude Code, Anthropic's coding tool, which reads and
+    edits code and runs commands on our PC. A session can start subagents (helpers that each begin with a fresh
+    context) and workflows (scripts that run many subagents to a fixed plan).
+
+    Checks and gates. The test runs and reviews that decide whether a piece of work is good enough to merge into the
+    main line of code.
+
+    Memory. Whatever carries what we learned from one session to the next: notes, the library we have designed, the
+    knowledge store.
+
+    The token budget. A token is the unit a model reads and writes in, a short piece of text. The context window is
+    everything the model holds in mind for one call, and it re-reads the whole window on every call. Our Claude plan
+    allows a limited amount of use in each five-hour window, so tokens are the resource every part of the harness
+    shares.
+    The machine. The one PC everything runs on: its power, memory, disk and Docker (the tool that runs our databases
+    and Linux test runs in containers).
+
+    How results reach me. Reports, visual pages and decision forms.
+
+Where the ideas came from
+
+Two of our own projects feed this record. FixFlow is the workshop management system we are building for a home-
+appliance repair shop in Karachi: a web app for the manager, an Android app for technicians and a backend in FastAPI
+(a Python web framework). Its build is laid out in the ship plan, the document that orders FixFlow's work into phases
+(P0a, P0b and on). The clinic testbed is an earlier large build on this same PC that we used to push the harness hard:
+432 commits and 65 merges in eight working days M . Most of our measured bottlenecks come from its record. Two
+outside sources were studied card by card: talks and writing by Dex Horthy of HumanLayer, and BAML, BoundaryML's
+language for typed model calls. This edition also draws on what I typed in 59 M saved sessions since 6 October,
+because some ideas were only ever said in chat.
+
+Each dot is a session or document that produced ideas or measurements. Read left to right.
+
+30 Oct 31         1 Nov  2            3              4  5  6  7                      8  9  10  11                           12  13  14
+
+Orchestration design                                 BAML and Horthy sweeps; skills        Token measurement
+roles, model tiers, gates                            PR #184, #186, #185                         every call counted
+
+                  Harness review; gates G1, G2                   Horthy addendum               Library map; graph test
+                  what carries over from the clinic                 PR #186, section 4                   and FixFlow's lanes
+
+                         Knowledge-store design                                      Bottleneck compile; harness v2            Seven-metric lens
+                         PR #183, opened 2 Nov                                                      B01-B21 and the design  chats read; B+ tree idea
+
+Most of the record was written between 9 and 13 November, once the clinic testbed's record was large enough to study as a
+whole.
+
+Dates are when each document or result was written. Sources are listed at the back.
+
+How it fits together: harness v2
+
+On 11 November we put what we had learned into one design, harness v2. It treats the harness as one system with
+four scarce things: time on the check, review, the one-at-a-time merge, and tokens per five-hour window. Each scarce
+thing gets a part that controls it.
+
+14 November 2026                                                                                                                Page 4 of 24
+
+=== Page 5 ===
+Our AI build harness � Short edition                                                                                                               Part 1 � What we are building
+
+Speed = lanes � what one lane delivers, until the lowest limit. A lane is one session building one slice of work.
+More lanes help only until the first of the four limits is reached. Past that point, the knee, they add queues, tokens
+and collisions, and no speed.
+
+Boxes are the parts of the harness; arrows show what flows between them. The blue labels name the loops each part controls.
+
+                                      Governor                                                B3 limit stop � R2 context growth
+                                                                                                       B1 check capacity � R1 fix spiral
+                                      Keeps the five-hour usage limit from stopping
+                                      everything: it slows lanes before the limit does
+
+B5 lanes at the knee         R4 pile-up pace                                            pace
+
+Planner                               Scheduler                 Lanes                         Gate                                                 Merge queue
+
+Before work starts:                   Turns the plan into       One session per slice;        Decides whether a                                    The one serial step,
+which slices can run                  running sessions; brings  asks the library first;       slice is good, by tests                              kept short because
+together; how many lanes              them back after a stop    leaves results on disk        it runs itself                                       it is a script
+
+                                                                                                                                                   B2 the serial gate
+
+rates, footprints                             answers when asked                              sent back for fixes  verdicts, rates
+
+  Library (the harness's memory)
+
+  What is true now � what a change touches � solved problems � measured rates. Written by the tools at the moment
+  something becomes true; sessions look things up, it never pushes; an entry goes stale when its files change
+
+                                                                                                                      R3 compounds � B4 staleness
+
+  The machine
+
+   Power, restart, the off-machine copy and an always-on sensor logger. Everything above stands on it.
+
+Every part has a single job. The library feeds every other part, and everything stands on the machine.
+
+Source: HARNESS-V2-DESIGN-2026-11.md �0 and harness-v2/architecture.json.
+
+The blue labels are the loops of harness v2: R marks one that feeds itself, B one that pushes back toward a limit. Part 2
+gives each its numbers under the bottleneck it belongs to.
+
+PART 2
+
+The bottlenecks
+
+A bottleneck is whatever limits one of the seven metrics I judge this work by. Most of them limit any team
+that builds with AI agents; the troubles of our own PC come last. This part gives where we stand on each
+metric, then each bottleneck with what we measured and the ideas we have against it, including the ideas
+that until now lived only in our chats.
+
+The seven metrics, and where we stand
+
+One row per metric: what it means, our best numbers today, the bottleneck I judge limits it most (numbered as in the
+blocks below) and what we cannot yet measure. Quality and hallucinations have catches but no rate yet.
+
+Metric                       Where we stand                                                   What limits it most                                  Not yet measured
+
+Throughput                   The clinic testbed made 432 commits and                          One orchestrator and one usage                       The same work with and
+                             65 merges in eight working days on one                           limit (block 3): ten lanes were                      without the harness, side
+Finished, accepted work per  PC M . FixFlow ran eight lanes at once on                        stopped within about 15                              by side.
+day across everything        13 November M .                                                  minutes M .
+running.
+                             97 % M of our context tokens are the                             No memory between sessions                           Tokens and hours per
+Efficiency                   model re-reading a window it has already                         (block 6) and finding and re-                        accepted slice, on one rate
+                             seen. 64 % M of FixFlow's calls and                              reading (block 5).                                   sheet (WP8).
+How much of what we spend    52 % M of the clinic's only read or
+ends up in accepted work.    searched.
+
+14 November 2026                                                                                                                                                     Page 5 of 24
+
+=== Page 6 ===
+Our AI build harness � Short edition                                                                                        Part 2 � The bottlenecks
+
+Metric                         Where we stand                                  What limits it most                 Not yet measured
+
+Token count                    7.35 billion context tokens M over 35,834       Context growth (block 1):           What a split or an earlier
+                               calls M in two projects. Main sessions          74 % M of the clinic's re-read      compaction saves per
+Tokens one result consumes:    averaged 333k (clinic) and 396k (FixFlow)       tokens sat in calls past 200k.      accepted slice, live; the
+calls times window size.       tokens a call M .                               Then the fixed start (block 4).     replay measured exposure
+                                                                                                                   only (WP12).
+Token cost
+                               Opus read 52 % of our tokens, Sonnet 32 %       Model tier and the fixed start      How cached re-reads count
+What those tokens cost:        and Fable 16 % M . The five-hour limit          (block 4): built-in agents inherit  against the limit, and the
+model tier, cache pricing and  stopped work in 14 episodes in                  the session's model. Then hard      cost per tier.
+the plan's five-hour limit.    October M .                                     problems solved again at the
+                                                                               top tier (block 6).
+Time taken
+                               One model step takes 6,600 ms (median of        This PC and waiting on me           Time per slice by stage,
+Wall-clock time for one piece  10,658 steps) M . The clinic's full check fell  (block 11), one orchestrator and    from start to merge (WP8).
+of work, from start to         from 855.2 s to a mean of 283.8 s M , and a     one limit (block 3), review
+accepted.                      slice took 2.8 review rounds M .                rounds (block 7) and check time
+                                                                               and slots (block 8).
+Quality of output
+                               64 % M of reviews sent a slice back. An         Rework and late discovery           How many defects reach
+Whether accepted work is       Opus reviewer found a serious defect in 9 of    (block 7), no memory between        real use.
+right and complete.            14 M Opus-built slices, and fixes made at       sessions (block 6) and
+                               least 5 more high-severity defects M .          unverified claims (block 2).
+Hallucinations
+                               No rate yet for the latest state, where 2 of    Unverified claims (block 2), and    A rate for statements of the
+A model stating something      2 M summaries we read were wrong. A             summaries after compaction          latest state, by a reader's
+that is not so.                script found 16 of 1,265 M paths, commits       (block 1).                          check (WP12); then rates
+                               and PRs in FixFlow's summaries not borne                                            per session, model and
+                               out, as few as in maintained documents.                                             window fill.
+                               Reports: 20-plus overstatements, no
+                               denominator M .
+
+Which bottleneck limits which metric
+
+Agents sorted every bottleneck in the register and every idea by the metric it moves and by its cause. The causes group
+into the eleven bottlenecks below.
+
+Rows are the 11 bottlenecks of this part, columns the seven metrics. Each cell counts the recorded bottlenecks of that row that limit that
+metric; darker = more. The bar shows how many of the row's bottlenecks are open, partly closed or closed.
+
+Open  Partly closed                   Closed
+
+                                              Through- Effi-  Token  Token     Time                 Halluci-  Bottlenecks,
+                                                              count   cost     taken                nations   by state
+                                              put  ciency                             Quality                                        Ideas
+
+1 Context growth                              1               7      5         1      5             3              8                 30
+2 Unverified claims
+3 One orchestrator, one limit                      5                 2                14            14                          15   78
+4 Fixed start and model tier
+5 Finding and re-reading                      8    4          2      4         6      4                                     11       33
+6 No memory between sessions
+7 Rework and late discovery                        2          4      7                3                            8                 30
+8 Check time and slots
+9 What we cannot measure yet                       8          4      3         3      2                            8                 35
+10 How we brief and equip agents
+11 This PC and waiting on me                       16         1      10        2      14            6                               21 31
+
+                                              2    4                           6      12            2                       12       36
+
+                                              6                                5      3             1              8                 18
+
+                                              1    8                 4         2      7             2                           17   71
+
+                                              1    4          1                1      9             2                       12       78
+
+                                              9    6          1                12     5                                         17   44
+
+Quality is limited from every direction: all eleven rows touch it. Hallucinations come mostly from one, claims accepted without a
+check (14 E ). Token count sits mostly in three rows (context growth, the fixed start, finding and re-reading), and throughput and
+time mostly in three others (one orchestrator, the check, our own PC). 94 E of the 130 M bottlenecks and 381 E of the 484 M
+ideas would hold for any team building with AI agents.
+
+Sorted by eight classifier agents on 14 November E . A blind second reading of 101 records agreed on the main metric for 80 and on the cause for
+86 M . A bottleneck counts once for each metric it limits, and seven register rows have two causes, so they sit in two rows. A cell counts records, not
+how large each one is.
+
+14 November 2026                                                                                                                     Page 6 of 24
+
+=== Page 7 ===
+Our AI build harness � Short edition                                                                                         Part 2 � The bottlenecks
+
+The bottlenecks, one by one
+
+Each block names the metrics the bottleneck limits (the two it limits most are filled in), says what happens, what we
+measured and what we have not, then lists ideas against it with how far each has got. Blocks 1 to 10 hold for any team
+building with AI agents; block 11 is our own PC and plan.
+
+1 The window keeps growing until it must compact or clear
+
+Limits Token count Hallucinations Token cost Quality 8 register rows � 30 ideas
+
+What happens. Every call re-reads the whole window and adds to it, so our orchestrator and long-lived sessions accumulate
+tokens until they must compact or clear. The summary that then replaces the history can misstate the latest state.
+
+What we measured. Cache reads are 96.8 % M of 7.35 B M context tokens, output 0.75 % M . The root compacted at 574k,
+974k, 967k and 970k tokens M , though a second count of the same transcripts finds three compactions M . 2 of 2 summaries
+were wrong on the latest state M ; the verbatim tail corrected both. Vendor figures, not reproduced here, put native
+compaction at 48.7 against 69.3 for the full history S (TOK-41). Our snapshot-and-restore trial matched native compaction on
+recall and task success but used 17.0 % more tokens M (TOK-12). Not yet measured. At what window fill a session's
+judgement starts to fall, for any model, and whether a brief written at a split is right more often than a compaction summary.
+
+Ideas against bottleneck 1, and how far each has got
+
+PAR-22               Orchestration as a distributed B+ tree: split and merge. Designed: my idea of 14 November, aimed first at hallucinations.
+
+        Designed Rule written and replayed on our record (below), not tested live. I said yes to a 300k trial; old summaries are read first.
+
+TOK-44               Take finished material out of a live window. Designed: asked for on 26 October, now settled inside the split rule. A new
+
+        Designed session starts from a brief that points at the repository, so finished material never enters it. Untested.
+
+TOK-16               Compaction snapshot, restore and recall hooks. Built: in the clinic testbed, not yet run live. 85 offline tests M , 53 defects
+             Built   fixed M . Restore quality not yet measured.
+
+TOK-02               Earlier auto-compact window of 400,000 tokens. In use for Opus: 84 of the 117 M compactions in session windows are
+             In use  Opus, 81 M of them at 366-385k. Sonnet ran to 963k M and is not set yet.
+
+Each box is one session and the bar inside is how full its window is. The dashed line is where a session splits. Left: what happens today.
+
+Today: one window keeps growing       Proposed: a session splits at the line                  ...and two small ones merge
+
+The orchestrator's window             Inner: keys 31 %
+
+at the start                                                                                  Leaf           9 %             Leaf              12 %
+
+mid-task                              Leaf 18 % Leaf 43 % Leaf 25 %
+
+when it compacted                                                                                            Leaf            10 %
+
+574k to 974k tokens at each                                                    splits in two  One session takes both scopes;
+compaction [M]. A summary then        Leaf 10 % Leaf 10 %                                     the parent drops a key.
+replaces the history; 2 of 2
+summaries checked were wrong [M].
+
+                                      Two fresh sessions take its work, divided by scope;     the split line: about 40 % [S]
+                                      the parent keeps one more key: who owns what.           of the window, set per model
+
+The rule is written (WP12). A session past the line hands its work to two fresh sessions (one, if it cannot be cut), each started from
+a one-page brief that points at the repository: finished material never enters it (TOK-44), and compaction is only a backstop. An
+inner session's window still grows, so it too is replaced at the line, from its key table, and I open each new root.
+
+My proposal of 14 November (PAR-22). Rule, replay, their check and the trial's set-up: docs/program/SPLIT-RULE-2026-11.md. Left panel: register rows
+B04 and PR-SUMMARY. Tree fills are illustrative I ; the 40 % line is an outside rule of thumb S , unmeasured (TK-FILL).
+
+The rule replayed over our 97 M recorded session windows, with no model calls                 300k (30 %)    400k (40 %)           500k (50 %)
+ Split line, as a share of a 1,000,000-token window E                                                    72             32                    26
+ Session windows that passed the line M
+ Share of what sessions re-read that sat past the line M                                           65.1 %         44.6 %                36.8 %
+ Session-window compactions the line comes before, of 117 M                                            113              28                    26
+ Tokens removed, as a multiple of compacting earlier (middle costs, even split) E                      1.06
+ Briefs written for each summary compacting earlier would write E                                       1.3           1.05                  1.06
+                                                                                                                       1.4                   1.6
+
+What the replay shows. Tokens are not settled: on the middle of three sets of assumed costs the rule removes about as much as
+compacting earlier, and across those sets and three ways of splitting the work, 0.53 to 1.24 times E . Whether a brief is right more
+often than a summary takes a live trial: I said yes to one wave at 300k, scored by a reader first, and on tokens too.
+
+14 November 2026                                                                                                                   Page 7 of 24
+
+=== Page 8 ===
+Our AI build harness � Short edition                                                                               Part 2 � The bottlenecks
+
+Each bar is one project's context tokens split by what they were. Wider = more of the tokens.
+
+Fixed start of every call (system prompt, tool and connector schemas, CLAUDE.md, briefs)            The model's own earlier output carried forward
+
+Content fetched by reading and searching                 Compaction summaries read again       Other (shell output, messages, unclassified)
+
+FixFlow           47%                                                  15%                          23%                13%
+
+2.13 B tokens
+
+Clinic testbed 19% 31%                                                      27%                               11%      12%
+
+5.23 B tokens
+
+Both              27%                                    26%                              26%                      8%  13%
+
+7.35 B tokens
+
+FixFlow's largest share (47 % E ) is the fixed start every agent re-reads; the clinic's largest (31 % E ) is the model's own earlier
+output carried forward. Content fetched by reading, which indexes and knowledge stores aim at, is about a quarter in both.
+
+Source: TOKEN-BOTTLENECK-2026-11.md, "What the windows hold". Estimated from how the context grew between calls, weighted by re-reads; 5-
+8 % stays unclassified. E
+
+Four levers, each with the share of each project's tokens it can act on. Longer bar = more room to save. This is exposure, not a promised
+saving.
+
+FixFlow        Clinic testbed
+
+                                                              0%       25%                          50%       75%      100%
+
+Cache-read tokens in calls past a 200k window                                                  39%                                           [M]
+Lever 1: cap long session windows at 150-200k
+                                                                                                              74%
+
+The fixed start every call re-reads                                                                 47%                                      [E]
+
+Lever 2: strip the fixed start (about 60k tokens per              19%
+
+FixFlow agent, about 70k per clinic agent)
+
+Tokens in calls that only read or search                                                                 55%                                 [M]
+Lever 3: batch two lookups per command (about a third
+fewer calls [E])                                                                               41%
+
+The model's own earlier output, carried                           15%                                                                        [E]
+
+forward                                                                                   31%
+
+Lever 4: write big files by script; compact after heavy
+
+writing
+
+Every lever is a change to how we run sessions, not a new tool. A bare cap on the window is not enough for me: it saves tokens
+now and costs more later, as mistakes and summary problems surface. A 300-400k T window must carry an 800k T history
+(TOK-16). My proposal is to reach lever 1 by splitting sessions at a line (PAR-22). WP12's replay puts 36.8 to 65.1 % M of what
+our sessions re-read past lines of 500k to 300k; the split is not yet tested live, and I said yes to one trial wave at 300k.
+
+Source: TOKEN-BOTTLENECK-2026-11.md, "Levers, in order of size". Lever 1 is a share of the cache-read tokens (the re-reads), the others of all context
+tokens. The shares overlap, so they do not add up.
+
+ 2 Agent reports claim more than was actually done
+
+Limits Hallucinations Quality Efficiency Token cost 15 register rows � 78 ideas
+
+What happens. Agents report tests, evidence or runs that did not happen or do not match, and a model re-reading its own
+claims does not catch it. A check can also go green while testing nothing.
+
+What we measured. 20-plus recorded overstatements, with no denominator M . 5 of 6 high-risk final commits went
+unread M . A citation check re-located 109 M claims, none dead, and 575 of 579 M quotes matched exactly. Not yet
+measured. What share of claims are false: overstatements are counted without a denominator yet.
+
+14 November 2026                                                                                                            Page 8 of 24
+
+=== Page 9 ===
+Our AI build harness � Short edition                                                          Part 2 � The bottlenecks
+
+Ideas against bottleneck 2, and how far each has got
+
+REV-38               Skeptic verdict rules with an unverifiable outcome. Designed: confirmed needs a traced path, refuted needs counter-
+
+        Designed evidence, otherwise unverifiable with what would settle it. Not yet tested.
+
+REV-11               Citation check over every claim. In use: 109 M claims re-located, none dead; 575 of 579 M quotes matched exactly. It
+             In use  checks existence only.
+
+CHK-04               Test-id accounting and planted-fault demos. In use: in the testbed, six planted faults gave CHECK FAILED M , and no test id
+             In use  ran twice. Not yet in FixFlow CI.
+
+REV-30               Claims file checked by a script each round. Designed: a script reruns each cited test at parent and head. Not yet run. Replay
+
+        Designed first, false flags under 10 % T .
+
+3 One orchestrator reviews and merges everything, and its window overflows
+
+Limits Throughput Time taken Token count Efficiency 11 register rows � 33 ideas
+
+What happens. One root session reviews, merges, edits the board and reads every agent's report, so work leaves only as fast as
+it does. Its window keeps growing until it must compact, and one usage limit stops every lane together.
+
+What we measured. Root compacted at 574k, 974k, 967k and 970k tokens M (a second count of the same transcripts finds
+three compactions M ), about 499k per call M , 15.3 % of November tokens M . Subagents made 91 of 104 limit errors M .
+Ten lanes were stopped by the limit within about 15 minutes M . Not yet measured. Whether a gate workflow stops root
+compaction, and how cache reads count against the limit.
+
+Ideas against bottleneck 3, and how far each has got
+
+PAR-10               Bounded session tree: depth three, fan-out three. In use: my proposal of 2 November; 12 slices and about 20 follow-up
+             In use  branches merged in 8 days M . The root still became a serial gate; PAR-22 is its next form.
+
+PAR-13               Planner that sizes lanes just below the knee. Designed: plan accepted 11 Nov, nothing installed. The testbed had about
+
+        Designed three lanes worth running M but ran six to nine M .
+
+PAR-02               Lane sessions: one phase, own worktree, run together. In use: eight lane sessions started on 13 November M and PRs
+             In use  #187-#192 opened that day M . RAM, not CPU, sets the ceiling M .
+
+REV-28               Review as a gate workflow with typed verdict. Designed: gain is bounded, the root is 15.3 % M of tokens. Target: no root
+
+        Designed compaction across five gates T .
+
+4 Each agent pays a fixed start and may inherit the top model
+
+Limits Token count Token cost Efficiency 8 register rows � 30 ideas
+
+What happens. Every agent window first loads system prompt, tool and connector schemas, skills, memory, CLAUDE.md and its
+brief, then re-reads it every call. Fan-out multiplies it, and an unpinned agent inherits the session's model, even for a simple
+lookup.
+
+What we measured. About 70k M tokens per clinic agent before any work (about 60k E per FixFlow agent): tools 34k,
+connectors 17k, skills 9k, system 8k, memory 2k M . That fixed start is 27 % E of all our tokens and 47 % E of FixFlow's. Not
+yet measured. What tiering and a stripped prefix actually save: no per-tier spend is recorded yet.
+
+Ideas against bottleneck 4, and how far each has got
+
+MTH-39               Escalation ladder: raise only the stuck problem a tier. Designed: on guessed inputs, 25.7 G cheap-call equivalents,
+
+        Designed 21.2 % G wrong, versus 29.9 G and 11.2 % G strong model alone.
+
+MTH-66               Fast mode for a fleet of subagents. Proposed: fast mode was on for a 132 M agent run on 3 November. Effect on time and
+             Idea    tokens not measured yet.
+
+TOK-23               Strip the fixed prefix with a short tool list. Designed: tool definitions are 34k M of the 70,000 M each agent pays. Pass
+
+        Designed bar: 20 runs T , zero refused writes.
+
+MTH-08               Model tiers by role, raise effort before tier. In use: 12 M agent definitions pin Haiku, Sonnet or Opus. Tiering has no cost
+             In use  measurement yet.
+
+ 5 Agents spend most calls just finding and re-reading things
+
+Limits Token count Efficiency Time taken 8 register rows � 35 ideas
+
+What happens. Over half our calls only read or search, and each call re-reads the whole window. Fetched file content stays and
+is re-processed every later call, and a small set of files recurs across sessions.
+
+What we measured. FixFlow: 64 % M of calls, 55 % M of tokens only read or search. Fetched content fills 26 % E of
+windows; 72 paths M hold half. One model step takes 6,600 ms M , a 93 KB file read 0.5 ms M . Not yet measured. Whether
+any graph, map or recall aid makes an agent finish faster: 0 M agent runs.
+
+14 November 2026                                                                              Page 9 of 24
+
+=== Page 10 ===
+Our AI build harness � Short edition                                                                                             Part 2 � The bottlenecks
+
+Ideas against bottleneck 5, and how far each has got
+
+MSR-50               Time model steps against disk reads. Tested: a model step takes 6,600 ms M ; a file read 0.5 ms (possibly a warm read), a
+             Tested  618-file search 124 ms M . Count steps saved.
+
+RET-06               Typed symbol-level graph of the repo. Tested: recall 0.700 M vs 0.625 M for scripted search; the gain is on mobile
+             Tested  (+0.151 M ). No agent run yet.
+
+RET-18               Typed-edge map of the planning documents. Built: clinic testbed prototype, 3,361 records for 167 KB M ; extraction recall
+             Built   0.52 M . No agent has used it yet.
+
+TOK-25               Batch lookups into one command. Proposed: batching two lookups would remove about a third of all calls E and a third of
+             Idea    their re-reads E .
+
+Each bar is the share of the files and definitions a real commit changed that a method put in front of the reader within 8,000 tokens. Longer
+= found more.
+
+                                                                                  0%  25%          50%                75%        100%
+
+Typed code store                                                                                                      0.700 [M]
+SQLite = LadybugDB = DuckDB: identical answers
+
+Files that changed together before                                                                                0.638 [M]
+the co-change floor
+
+Scripted search                                                                                                   0.625 [M]
+a fixed search script, not an agent
+
+Same folder                                                                                                0.549 [M]
+the directory floor
+
+The typed store found the most M . The three engines tried (SQLite, LadybugDB and the DuckDB graph layer) gave identical
+answers on 770 of 770 M tasks, so the choice of engine can rest on speed, size and effort, which the timing run reports.
+
+Source: the graph test's held-out run (evidence/harness-bottlenecks/graph2/). Recall within an 8,000-token answer over 75 M held-out commits (July
+and August 2026); settings were frozen on 65 earlier commits.
+
+Each dot is a difference in recall; the line through it is the range the true difference most likely sits in.
+
+                                                      -0.05                           0.00  +0.05          +0.10      +0.15      +0.20
+                                                                                                                                         +0.151
+Typed store vs scripted search                                                                                    +0.076
+all 75 held-out commits
+
+Typed store vs changed-together                                                                                   +0.063
+all 75 held-out commits
+
+Typed store vs search, mobile-app seeds
+31 commits: where the gain sits
+
+Typed store vs search, outside mobile                                                               +0.024
+48 commits with seeds elsewhere
+
+Typed store vs changed-together, outside mobile                                                    +0.001
+48 commits
+
+Community prior added to the ranking                                                        +0.015
+personalised PageRank with and without it
+
+Over all 75 commits the typed store beats both search and the changed-together floor, and the gain sits in the mobile app.
+Outside the mobile app the differences are too small to call, and mobile-app seeds made up 36 % of held-out tasks against 17 %
+of tuning tasks M . No agent used the store in this run; the agent-in-the-loop test follows the zero-token index replay once I
+settle GT-1.
+
+Differences in recall with 95 % intervals from resampling the commits. An interval that stays right of zero is a clear gain.
+
+ 6 Each session starts without what earlier sessions learned
+
+Limits Efficiency Quality Token cost Hallucinations 21 register rows � 31 ideas
+
+What happens. A new session knows only what the repo and memory files carry. Past diagnoses sit in prose nobody can search
+by symptom, so a recurring defect is solved again at the top tier, and docs drift from code.
+
+What we measured. One missing-tool error was re-hit in 54 of 78 M sessions across 9 M projects. 3 to 5 M same-cause
+repeats among 48 M fix commits. 517 of 1,268 backticked file names in docs do not resolve M . A cold-resume trial recovered
+10 of 10 frozen facts M . Not yet measured. How often similar problems recur in our work, which decides whether a library
+pays.
+
+14 November 2026                                                                                                                       Page 10 of 24
+
+=== Page 11 ===
+Our AI build harness � Short edition                                                                                   Part 2 � The bottlenecks
+
+Ideas against bottleneck 6, and how far each has got
+
+MEM-13               Ensemble of simulated runs over the pathway map. Built: my suggestion in the library-pathways chat of 12 November.
+             Built   1000 S runs per setting; 51 M of 60 M unknowns are guesses. It helped by ranking what to measure first. On those
+                     guesses the library was cheaper and no more wrong than the escalation ladder in only 0.3 % G of runs, or 6.1 % G when
+                     its unknowns move together, and the model shows it pays only when much work comes back, reach is high and entries are
+                     good (cost 0.82 G , wrong 0.67 G ; MEM-15). It cannot pick a path on guessed inputs. A trained tree ensemble (MEM-68) is
+                     not started.
+
+MEM-56               Merge partial solutions through a graph. Proposed: not yet tested. In real walks two checked answers did not make a
+             Idea    checked merge (6 cases M ); tests will decide.
+
+MEM-21               Knowledge store of solved problems. Designed: nothing built. Same-cause repeats are 3 to 5 M among 48 M fix
+
+        Designed commits; the recurrence audit decides whether to build.
+
+MEM-02               Memory file holds pointers, not restated state. In use: memory now points to where state lives; the rewrite found and
+             In use  corrected one M stale next step.
+
+Start with 100 pieces of work the cheap model would get wrong on its own. Each bar is how many are still on track after that step.
+
+All-good setting     Middle values
+
+                                      0                               25                      50  75                        100
+                                                                                                                       92
+An entry exists for it
+A lookup is triggered                                           13.1
+The right entry comes back
+The entry is good                                          4.8                                                   67.5
+It passes the screen                                                                                    59.7
+It is in the window when needed                       2.3                                           55.7
+The cheap model then gets it right                                                                 55
+                                                      1.3                                         53.9
+
+                                                      1.1
+
+                                                      0.97
+
+                                                                                        31.7
+                                                      0.35
+
+With every input at its good end the library rescues about 32 G of the 100; at middle values only 4.8 G are still on track after
+the first two steps. That tells us where to build first: make sure entries exist and get looked up.
+
+Source: LIBRARY-PATHWAYS-2026-11.md �2, the model's last simulated period. Model outputs from guessed inputs G ; the 59 M real cases show
+where steps break, not how often.
+
+ 7 Fixes create new defects and gaps surface late
+
+Limits Quality Time taken Throughput Efficiency 12 register rows � 36 ideas
+
+What happens. A fix can add new stored state whose endings no test covers, so each fix round makes fresh defects and the
+rounds do not converge; ours did. Work tested only on synthetic data lets first-use gaps surface on the last day.
+
+What we measured. Round one found 19 high-severity (P1) defects M , and the fixes made at least 5 more P1 and 10 P2 M .
+64 % of reviews sent a slice back, 2.8 rounds per slice M . Two M first-use gaps surfaced on the final day. Not yet measured.
+How many fix-made defects a two-round fix contract would prevent; its replay has not run yet.
+
+Ideas against bottleneck 7, and how far each has got
+
+REV-01               Two-level merge gates with refute-reviewers. In use: every testbed slice; 9 of 11 M gates took three rounds, and fixes
+             In use  created at least 5 M more P1.
+
+REV-22               Fresh critics check each plan revision's changes. Tested: the v6-to-v8 delta check found 1 blocker, 20 major, 20 minor M
+             Tested  before work started; findings folded into the next version.
+
+REV-27               Fix-round contract: two rounds, revert, test per finding. Designed: not yet run. A replay on recorded defect chains would
+
+        Designed show whether it beats 2.8 M review rounds per slice.
+
+REV-50               One drift audit after ten PRs. Proposed: per-PR review cannot see drift that builds across PRs as the repo grows; one fresh
+             Idea    Opus audit after the 10th T merged code PR, pass bar at least 2 T findings I accept. Not yet run.
+
+ 8 Lanes queue behind one slow check slot
+
+Limits Time taken Throughput Quality 8 register rows � 18 ideas
+
+What happens. Every lane must pass the full check before merging, and checks share limited machine capacity, so lanes wait in
+line. On our PC, Windows also adds a slow hop to the database.
+
+14 November 2026                                                                                                                 Page 11 of 24
+
+=== Page 12 ===
+Our AI build harness � Short edition                                                                                 Part 2 � The bottlenecks
+
+What we measured. 19 recorded waits: median 409 s, longest 2,030 s M . Parallel workers cut a full run from 855.2 s M to a
+mean of 283.8 s M , about 3.0�. Two slots gave 1.8-1.9� throughput M . Linux container check: 230.1 s M against 367.2 s M
+on Windows. Not yet measured. One check's peak memory, so we cannot yet size slots safely.
+
+Ideas against bottleneck 8, and how far each has got
+
+CHK-01               Parallel check with one database per worker. In use: 855.2 s M became a mean of 283.8 s M , about 3.0� faster. Eight
+             In use  workers gain only 3 % M .
+
+CHK-26               Linux container check, proposed as the gate. Built: mean 230.1 s M against 367.2 s M native, about 1.6� faster, and
+             Built   found 2 failures M Windows missed.
+
+CHK-22               Two container checks at once. Tested: 266 s and 267 s M together against about 440 s M in a row, least free memory
+             Tested  5.3 GB M .
+
+Each bar is the new time as a share of the old one. Shorter bar = bigger win. The factor on the right is old � new.
+
+                                                                           0%  25%  50%  75%  100%
+
+The test check, run in parallel                                                               3.0� faster
+855 s  284 s (1,972 tests; mean of 12 runs)
+                                                                                              in use in the testbed (M)
+
+The check in a Linux container                                                                1.6� faster
+367 s  230 s (later tree, 2,246 tests)
+                                                                                              built, not yet the gate (M)
+
+Test start-up, after tracing                                                                  3.7� faster
+43 s  11.5 s (16-test run)
+                                                                                              in use (M)
+
+A heavy page at 75,016 documents                                                              about 37� faster
+9-13 s  0.1-0.5 s
+                                                                                              at the midpoints (E); in use
+
+Database queries on that page                                                                 about 1,050� fewer
+29,346  28
+                                                                                              in use (M)
+
+The clinic testbed ran 432 commits and 65 merges in eight working days on one PC M . Every one of these wins was built and
+timed there; all but the Linux check are in use.
+
+Sources: HARNESS-BOTTLENECKS-2026-11.md and its evidence folder (machine-facts.md); HARNESS-V2-DESIGN-2026-11.md. The page factor divides
+the midpoints of 9-13 s and 0.1-0.5 s, so it is an estimate: anywhere from about 18� to 130� E .
+
+9 False statements and gains go uncounted, so fixes stay unproven
+
+Limits Efficiency Quality Hallucinations Token cost 17 register rows � 71 ideas
+
+What happens. We learn of a false statement only when a reviewer, a script or I catch it, and no context aid has run with an
+agent in the loop. So we cannot yet tell whether a change helps.
+
+What we measured. 20-plus recorded overstatements, with no denominator M ; 2 of 2 compaction summaries wrong on the
+latest state M . A script rechecked 1,265 M paths, commits and pull requests in FixFlow's 61 M recorded summaries: 16 were
+not borne out, 1.3 % M , no more than in two maintained documents. 0 M agent runs with a context aid. November token
+tally: 4,252.9M M cache-read tokens; re-measurement agreed within 0.3 % M . Not yet measured. Whether a fuller
+orchestrator window degrades its judgements; keeping context under about 40 % S is an outside rule of thumb.
+
+Ideas against bottleneck 9, and how far each has got
+
+MSR-49               Seven-metric lens for every bottleneck and idea. In use: agents sorted all 606 M earlier records; a blind second reading
+             In use  agreed on the main metric for 80 of 101 M .
+
+MSR-12               Token tally from session transcripts. Tested: November counted 4,252.9M M cache-read tokens over 184 files; re-
+             Tested  measurement agreed within 0.3 % M . Per-slice figures next.
+
+TOK-34               Log context use at each phase close. Proposed: a usage line (tokens, percent, compactions) on the first 4 T phase sessions,
+             Idea    so the split line rests on our own data.
+
+10 Agents start without settled facts, defined values or tested skills
+
+Limits Quality Efficiency Hallucinations Token count 12 register rows � 78 ideas
+
+What happens. Agents were briefed before settled facts existed, output schemas leave values like P0-P3 undefined, and the
+new skill packages have not run yet. Agents re-derive facts, and a cheap first impression can become a priority.
+
+What we measured. 8 of 12 skeptic verdicts in G2 lowered a severity M . 8 of 24 assessment adopts were already programme
+law M . Staged workflows work: discovery covered 16/16 M areas in 14 min M ; the deep-dive gave 139 M findings in
+23 min M . Not yet measured. Whether briefs and skills cut rework: no before-and-after measured; the skills have not run yet.
+
+14 November 2026                                                                                                     Page 12 of 24
+
+=== Page 13 ===
+Our AI build harness � Short edition                                                                   Part 2 � The bottlenecks
+
+Ideas against bottleneck 10, and how far each has got
+
+MTH-67               Borrow from distributed systems, databases and parallel computing. Built: 52 M research agents checked 44 M course
+             Built   series; a lecture list maps each harness problem to its lectures.
+
+MTH-18               Compare whole structures on the problem case. Tested: our structure served the BAML case as well or better on all ten
+             Tested  dimensions (judged); borrows 10 to 40 lines E .
+
+MTH-07               Staged workflows with judging gates between them. In use: discovery covered 16/16 M areas in 14 min M ; the deep-
+             In use  dive gave 139 M findings in 23 min M .
+
+11 Work stops when this PC fails or I am away
+
+Limits Throughput Time taken Efficiency 17 register rows � 44 ideas � specific to our PC and plan
+
+What happens. Everything runs on one PC that powers off without warning and is short of memory. After a stop, Docker,
+databases and sessions wait for me to restart them, and merges and starts wait for my approval.
+
+What we measured. About three days idle after the 6 Nov power-off M . 25 shutdowns since 1 October M , 15 with no Claude
+call ten minutes before M . After a 28-minute M outage all eight M lanes resumed from their worktrees. Dropping Docker's
+cache gave back 2.2 GB M . Not yet measured. What causes the power-offs, and who holds memory when it runs short.
+
+Ideas against bottleneck 11, and how far each has got
+
+OWN-05               Coordinator merges and starts phases for me. In use: in the testbed a limit plus waiting for my turn halted work three
+             In use  days M . In FixFlow the coordinator has merged under it since 13 November.
+
+MAC-05               Push at every green checkpoint, dead locks after boot. In use: after the 28-minute M outage on 13 Nov, all eight M
+             In use  lanes resumed from their worktrees.
+
+MAC-17               Resume list at sign-in, two sessions at a time. Designed: not built yet. Idle time after a stop is about three days M , the
+
+        Designed target is under three hours T .
+
+The 21 bottlenecks the clinic testbed gave us, placed by the harness v2 phase that answers them. Each chip is one bottleneck; its colour is
+its class.
+
+Build                Decide  Diagnose  Trial
+
+Phase 1 � Machine                     Phase 2 � The check              Phase 3 � Gate and review       Phase 4 � First use
+
+B03 Work waits for me when I am        B06 The check is slow on        B01 Fix rounds that create new  B02 Gaps found only on the last
+        away                                   Windows                         defects                         day
+
+B05 The PC powers off without          B07 Checks queue behind each    B04 One orchestrator is the     B19 First-deploy steps not yet
+        warning                                other                           serial gate                     run on a real host
+
+B10 Docker and databases need a        B08 Memory is short on this PC  B12 Agent reports overstate     B20 Load test not rerun after
+        manual start after a reboot                                            what was done                   the fix
+
+B11 The work exists only on            B09 A check hung with no named  B13 Shared documents have one
+        this PC                                cause                           writer
+
+                                       B14 I cannot see progress       B16 Agent reports flow through
+                                                                               the orchestrator
+
+                                       B15 Worktrees and containers    B17 Final commits not yet read
+                                               pile up                         by a person
+
+                                       B18 Tests ran only on Windows   B21 Minor findings pile up
+                                                                               uncounted
+
+Every one of the 21 has a home in the first four phases, a first step and a test that will show whether it is solved.
+
+Source: HARNESS-V2-DESIGN-2026-11.md �3. Class and phase as set by the compile of 11 November.
+
+14 November 2026                                                                                                            Page 13 of 24
+
+=== Page 14 ===
+Our AI build harness � Short edition                                                                                                           Part 3 � The ideas
+
+PART 3
+
+The ideas
+
+Every harness idea we have had, whatever its results, including those said only in chat: 484 M ideas in 12
+themes. Part 2 puts the key ideas under the bottleneck each answers; this part shows all of them at once.
+The reference edition lists every idea in full.
+
+All ideas at a glance
+
+One bar per theme, split by maturity. Darker = further along. The number at the end is the theme's total.
+
+In use  Tested                  Built         Designed    Idea      Parked
+
+MAC � Keep the machine up and the work safe                               12                  14             4 3 35
+
+CHK � Fast, fair, trustworthy checks                                              21              4          8 4 4 43
+
+REV � Review and fix rounds that converge                                         21                4            17             12    5 60
+
+PAR � Planning parallel work                                           10                 12        22
+
+TOK � Spend fewer tokens per result                                   7       64 8                           11      8 44
+
+MEM � Remember what we learned                                      53 8                                         35                       17   3 71
+
+RET � Find the right code fast                                      5             11          5 3 5 30
+
+MTH � How we orchestrate                                                      17              3              20                 17             9 67
+
+SKL � Skills, agents and tools                                                17                 5       27
+
+MSR � Measure, model and test ideas fairly                          6             10                 15              12         5 50
+
+REL � First use, real devices and real hosts                           4          9       15
+
+OWN � Owner-facing outputs and decisions                               9 3 4 3 20
+
+115 M ideas are already in use and 38 M have been tested; 200 M more are designed or built and waiting for their first
+measurement. Those designed and built ideas are where most of the next work is.
+
+Counts of ideas per theme. Maturity is the furthest stage any source reports for the idea; "How to read this" defines the six stages.
+
+Rows are themes, columns are the seven metrics. Darker = more ideas that move that metric.
+
+                                              Throughput  Efficiency              Token                Token             Time         Quality  Hallucinations
+                                                                                  count                 cost             taken
+
+MAC � Machine                                 18                13                    3                                  13           11             4
+CHK � Check
+REV � Review                                  9                 6                                        1               18           31             9
+PAR � Parallel
+TOK � Tokens                                  2                 10                    3                  9               8            53             35
+MEM � Memory
+RET � Retrieval                               13                16                    2                  3               7            7              1
+MTH � Method
+SKL � Skills                                  1                 18                    37                 15              4            19             8
+MSR � Measure
+REL � First use                               1                 30                    8                  19              6            46             18
+OWN � Owner pages
+                                              1                 5                     19                 2               2            24             5
+
+                                              8                 18                    6                  11              3            56             22
+
+                                              1                 5                     7                  3               1            22             11
+
+                                              9                 17                    7                  7               4            35             11
+
+                                              1                                                                          7            14             2
+
+                                              4                 5                                        2               11           12             1
+
+Quality draws the most ideas (330 E ), then efficiency (143 E ) and hallucinations (127 E ); throughput draws the fewest (68 E ).
+Most ideas move more than one metric.
+
+An idea counts once for each metric it moves, as sorted by the classifier agents on 14 November E .
+
+14 November 2026                                                                                                                               Page 14 of 24
+
+=== Page 15 ===
+Our AI build harness � Short edition                                                                                Part 3 � The ideas
+
+The twelve themes
+
+One row per theme: what it is about, how far its ideas have got, the two metrics most of them move, the Part 2 blocks
+where its key ideas appear, and the packages that carry it.
+
+Theme                                 What it is about, and how far its ideas have got                              Moves most; where in Part 2;
+                                                                                                                    packages
+MAC                                   Everything we build runs on one PC that powers off unexpectedly,
+                                      and the clinic testbed still lives only there.                                  Throughput Quality
+Keep the machine up and               35 ideas: 12 in use � 1 tested � 1 built � 14 designed � 4 ideas � 3 parked   Bottlenecks 9, 10, 11 � WP1, WP2a
+the work safe
+                                                                                                                      Quality Time taken
+CHK                                   The check decides whether work can merge, so it must be fast, fair            Bottlenecks 2, 8, 10 � WP2a, WP2b, WP3
+Fast, fair, trustworthy checks        and never pass when it tested nothing.
+                                                                                                                      Quality Hallucinations
+                                      43 ideas: 21 in use � 4 tested � 2 built � 8 designed � 4 ideas � 4 parked    Bottlenecks 2, 7, 10 � WP3, WP7, WP9,
+                                                                                                                    WP10a
+REV                                   In the clinic testbed a slice took 2.8 M review rounds on average,
+                                      and in most high-risk merges nobody read the final commit.                      Throughput Efficiency
+Review and fix rounds that            60 ideas: 21 in use � 1 tested � 4 built � 17 designed � 12 ideas � 5 parked  Bottlenecks 1, 3, 6 � WP3, WP4, WP12
+converge
+                                                                                                                      Token count Quality
+PAR                                   More lanes help only up to the knee; past it they add queues,                 Bottlenecks 1, 4, 5 � WP5, WP6a, WP12
+Planning parallel work                tokens and collisions.
+                                      22 ideas: 10 in use � 12 designed                                               Quality Efficiency
+                                                                                                                    Bottlenecks 2, 6, 9 � WP6a, WP6b, WP6c,
+TOK                                   Almost all our context tokens are re-reads of a window the model              WP7, WP8
+                                      already read, so what we manage is calls times window size.
+Spend fewer tokens per                44 ideas: 7 in use � 6 tested � 4 built � 8 designed � 11 ideas � 8 parked      Token count Quality
+result                                                                                                              Bottlenecks 2, 5, 9 � WP7, WP8, WP10a
+
+MEM                                   Every new session starts without what the last one learned.                     Quality Hallucinations
+Remember what we learned              71 ideas: 5 in use � 3 tested � 8 built � 35 designed � 17 ideas � 3 parked   Bottlenecks 2, 3, 10 � WP3, WP4, WP6b,
+                                                                                                                    WP10a
+RET                                   Before an agent changes code, it must find what the change
+Find the right code fast              touches.                                                                        Quality Hallucinations
+                                      30 ideas: 5 in use � 11 tested � 5 built � 3 designed � 5 ideas � 1 parked    Bottlenecks 2, 4, 10 � WP5, WP6b, WP9,
+MTH                                                                                                                 WP10a, WP10b
+How we orchestrate                    Many agents work at once, so briefing, model choice and judging
+                                      need one written method.                                                        Quality Efficiency
+SKL                                   67 ideas: 17 in use � 1 tested � 3 built � 20 designed � 17 ideas � 9 parked  Bottlenecks 2, 4, 9 � WP2a, WP3, WP5,
+Skills, agents and tools                                                                                            WP6a, WP6b, WP7, WP8
+                                      A subagent inherits the session's model and loads nothing unless
+MSR                                   told, so a simple lookup can run on our most expensive tier.                    Quality Time taken
+Measure, model and test               27 ideas: 1 in use � 17 built � 2 designed � 5 ideas � 2 parked               Bottlenecks 7, 10, 11 � WP3, WP9
+ideas fairly
+                                      To choose fixes we need numbers we can trust and tests that are                 Quality Time taken
+REL                                   fair to the idea they test.                                                   Bottlenecks 7, 10, 11 � WP11
+First use, real devices and           50 ideas: 6 in use � 10 tested � 2 built � 15 designed � 12 ideas � 5 parked
+real hosts
+                                      In the clinic testbed, first-use gaps hid behind test data until the
+OWN                                   last day; nothing ran on a real host.
+Owner-facing outputs and              15 ideas: 1 in use � 1 tested � 4 built � 9 designed
+decisions
+                                      Work waits on my decisions, and I decide quickly when I can see
+                                      the choice on one page.
+                                      20 ideas: 9 in use � 3 built � 4 designed � 3 ideas � 1 parked
+
+14 November 2026                                                                                                    Page 15 of 24
+
+=== Page 16 ===
+Our AI build harness � Short edition                                               Part 4 � Dividing the work
+
+PART 4
+
+Dividing the work
+
+Sixteen packages between them carry every bottleneck in the register and every idea in Part 3. Six can start
+today, one has begun (WP12), six start the day I give my word, and three follow another package. Read the
+box under the map before you take one.
+
+How the packages fit together
+
+Columns are when a package can start. Solid arrows mean the later package needs a deliverable of the earlier one first; dashed ones mean
+it helps to have it first.
+
+Needs the other first (hard)             Easier after the other (soft)
+
+Start today                              Starts on my word                         After another package
+
+WP8 Measurement                          WP6a The library                          WP4 Planner and lanes
+Rate sheet, frozen contract, fair-test   Limitations first, then a held-out pilot  Lane count below the knee, no file
+rules                                                                              collisions
+                                         WP6b Knowledge store
+WP1 Machine and recovery                 Recurrence audit, then my second yes      WP2a The clinic check
+Copy off the PC, resume list, always-on                                            Container gate, slots from one number,
+logger                                   WP7 Retrieval and graphs                  heartbeat
+                                         Index replay at zero tokens, then an
+WP3 Gate and merge scripts               agent                                     WP9 First use, real hosts
+Sealed replay, transcript audit, merge                                             Zero-seed walk in the gate; real-host
+queue                                    WP2b FixFlow gates and CI                 rehearsal
+                                         Per-lane gates, fair slots, CI that can
+WP5 Token budget                         fail
+Written budget per window; the four
+levers                                   WP6c Docs true to code
+                                         CI checks on stated facts; one
+WP10a Briefs and workflows               corrections PR
+Brief contract, skeptics, saved
+workflows                                WP10b Skills and agents
+                                         13 skill packages and 11 pinned agents
+WP11 Decisions and pages
+One decision board; pages I can read
+
+   WP12 Orchestration B+ tree
+   Sessions that split before a window
+   fills
+
+The left column needs no decision from me, no agents and no Docker gate for its first deliverable, though any later step that
+launches agents waits on D07; the middle column waits on my word and the right one on another package.
+
+Dependencies follow the harness v2 plan (docs/program/HARNESS-V2-DESIGN-2026-11.md �2) and the other plans each package names (the ship plan,
+PR #183 and PR #185).
+
+   Before you start
+
+    Two projects, one PC: the ship plan first. Work on a branch, never on main, and never delay or edit FixFlow's next phase for
+    harness work. Before using the Docker gate or an agent, read the lane board (docs/program/W0-results.md) on PR #182's plan
+    branch: FixFlow phases running or awaiting review go first, as they share this PC's memory and our usage limit.
+
+    One budget for the whole team. Two lanes at a time (your own session counts), a written token budget before any launch
+    (D07) and one agent-adding change per five-hour window, shared by everyone. Stop launching after the first empty result, a
+    possible usage limit. Book agent runs in WP11's shared queue; until it exists, wait for my yes.
+
+    One limit on heavy checks. A heavy check from either project takes a slot from ff-slot.sh, FixFlow's machine-wide lock. Its
+    pools and slot counts stay as they are; WP2b may propose only how waiters are ordered.
+
+    The coordinator writes FixFlow's program files. Changes to the ship plan, lane board or FixFlow's gate scripts go to the
+    coordinator as proposals; the coordinator brings them to me and writes them once I say go.
+
+    Machine traps that already cost us time. Never prune Docker networks or restart Docker; new networks get explicit subnets
+    inside 10.77.0.0/16. Under MSYS_NO_PATHCONV, write C:/... paths. Clone with core.longpaths. No python on PATH; use Node.
+    Never touch the antivirus.
+
+14 November 2026                                                                                          Page 16 of 24
+
+=== Page 17 ===
+Our AI build harness � Short edition                                                                                      Part 4 � Dividing the work
+
+The work packages
+
+One row per package. Each size carries its tag: E where a design estimated it, G where it is my guess until the first
+step reports; a package not yet sized says so. "Moves" names the two metrics most of the package's ideas aim at. Write
+your name in the owner column when you take one. Two people can share a package; one person should not hold two
+packages from the same start column (today, on my word, after another package). The reference edition has a full card
+for each package, with the bottlenecks and ideas it carries and the kind of person it suits.
+
+Package                   What it is for, and the first deliverable              Done when, and what it waits on from me             Owner
+
+WP1                       No power-off costs us work or a day: a nightly         Copy verified, never over 24 hours old T ; after
+Machine and               off-machine copy, a resume list and a sensor           a reboot, resume list shown, databases healthy
+recovery                  logger.                                                within 3 minutes T ; shutdowns leave logger
+Size: 1-2 days E                                                                 traces.
+Starts: today             First: Bundle-and-verify and nightly copy scripts,
+Moves: throughput,        covering uncommitted work (B11); first verified        Waits on me: Sleep-off (D04), drive (D02) and
+quality                   copy after my drive step; my steps follow P0a.         logger (D05) steps, copy and Railway-rule
+                                                                                 yeses; D08 later.
+WP2a
+The clinic check          One fast, fair, visible check for the clinic testbed:  Median gate near 230 s T ; zero Linux-only
+Size: 3-4 days E          a Linux container gate, memory-sized slots, a          failures on main; heartbeat gaps within 60 s T ;
+Starts: after WP1; side-  queue, heartbeat and reaper.                           a stall names its test; leftovers cleared.
+by-side runs sooner
+Moves: time taken,        First: Side-by-side container and Windows runs,        Waits on me: D09 (container gate), D10 (what
+quality                   one check's peak memory M ; a quiet machine            may be cleaned), later D11 (who gives up
+                          suffices. Memory table and second slot wait for        memory).
+WP2b                      WP1.
+FixFlow gates and CI
+Size: days per item G     Keep FixFlow's gates and slot lock fast, fair and      Every gate locks per lane first; Node failures re-
+Starts: on my word        honest; CI fails when it should, never passing an      run under Node 22; a planted skip or empty run
+Moves: quality,           empty run.                                             turns CI red, after record-only runs.
+throughput
+                          First: Per-lane gate waits measured under the          Waits on me: My go, through the coordinator,
+WP3                       ticket queue, and proof that CI fails on skipped       before any change to ff-gates.sh or
+Gate and merge            integration tests and empty Jest runs.                 ff-slot.sh.
+scripts
+Size: about a week E      Move the mechanical part of review and                 Each script passes its harness v2 test; the merge
+Starts: today             merging out of the orchestrator into scripts that      queue, record-only over 65 M recorded
+Moves: quality,           spend no tokens.                                       merges, flags unread final heads; no refusals
+hallucinations                                                                   before D15.
+                          First: Replay seal and transcript audit on
+WP4                       recorded data, at no token cost; seal tests run        Waits on me: D12 to D20 as each mechanism
+Planner and lanes         under D07; verdict script easier after WP2a.           reaches me; D13 and D17 are permission
+Size: set by the replay                                                          changes.
+Starts: after WP8
+Moves: throughput,        Know before a wave which slices can run side by        Runs record-only on the next wave first; sets
+quality                   side, how many lanes pay, and where they               the lane count only after the coordinator and I
+                          would collide.                                         accept it.
+WP5
+Token budget              First: The plan check replayed on FixFlow's first      Waits on me: Accepting its recommendation,
+Size: 1 hour E , then     lane wave: its collision graph and lane count.         with the coordinator.
+days G                    Needs WP8's rate sheet; easier after WP2a.
+Starts: today
+Moves: token count,       Give every wave a written token budget and a           Every wave launches with a written budget,
+quality                   governor so the five-hour window lasts; apply          agents booked in the shared queue; each lever
+                          the token report's levers, with lever 1 tried          has a before-and-after number; none claims
+WP6a                      through WP12's split rule before any bare cap.         fewer limit stops.
+The library
+Size: not sized yet       First: A D07 budget proposal from the                  Waits on me: D07 budget, D13 reports folder,
+Starts: on my word        November tally, at no token cost; the fixed-start      D18 tool list, D22 trial; yes before removing
+Moves: quality,           and lookup levers wait for WP3 and D18.                connectors.
+efficiency
+                          Give the harness a memory a cheaper model can          A held-out pilot, under the frozen validation
+WP6b                      use, asked for, never pushed; limitations agreed       contract, measures whether asking the library
+Knowledge store           before any fix.                                        first means reading less and getting more right.
+Size: 1 session, then
+sized E                   First: The limitation list agreed with me, each        Waits on me: Agreeing the limitation list (LIB);
+Starts: on my word        with its alone and last weights; the pilot needs       pilot agent runs wait for D07.
+Moves: quality,           WP8's frozen validation contract and protocol.
+efficiency
+                          If the audit says it pays, build PR #183's             Audit reported; if built, pilot recall at shown
+                          knowledge store: solved hard problems and              60 % or more T , zero acted-on false
+                          traps, looked up on demand.                            positives T , every planted forbidden diff
+                                                                                 caught T .
+                          First: Recurrence audit (KS-0), no code: counts
+                          repeats a store could have served. Runs under          Waits on me: KS-D1 (audit), KS-D1b (build),
+                          D07 in a quiet window; pilots need WP8.                D17 (hooks), my yes before a copy leaves this
+                                                                                 PC.
+
+14 November 2026                                                                                                                     Page 17 of 24
+
+=== Page 18 ===
+Our AI build harness � Short edition                                                                                     Part 4 � Dividing the work
+
+Package                   What it is for, and the first deliverable             Done when, and what it waits on from me              Owner
+
+WP6c                      Make our documents fail a check when they             A planted wrong fact in CLAUDE.md turns CI
+Docs true to code         drift from the code, starting with the facts          red, after record-only runs over recent merges,
+                          CLAUDE.md states.                                     and the corrections PR has merged.
+Size: 1-2 days G
+Starts: on my word        First: Alembic-head CI check for CLAUDE.md            Waits on me: My go through the coordinator,
+Moves: quality,           and one corrections PR for PR #183's listed           and the merge.
+hallucinations            contradictions; lands after the ship phase in
+                          flight.
+
+WP7                       A fast, trustworthy answer to "what does this         Index replay reported against D23's marks; if
+Retrieval and graphs      change touch?": the typed code store, indexes         GT-1 is approved, a tested answer: does the
+                          and the wider graph test.                             typed store beat search alone on speed and
+Size: days, then                                                                tokens?
+sized G                   First: Index replay at no token cost on recorded
+Starts: on my word        windows, once D23 sets its marks; the agent arm       Waits on me: D23 (what the replay must show),
+Moves: token count,       needs WP8's pre-registered protocol.                  GT-1 agent pilot, GT-2 installs, D07 for agents.
+quality
+
+WP8                       Keep the numbers every package depends on             Rate sheet updated each wave, every rate
+Measurement               and the rules that keep tests fair: rates, the        tagged; contract and protocols written before
+                          frozen validation contract, protocols.                any pilot; WP4 and WP5 read their rates there.
+Size: about a day G
+Starts: today             First: Rate sheet from the record (check time,        Waits on me: Nothing to start.
+Moves: quality, token     review rounds, send-backs, limit episodes), each
+cost                      tagged, gaps marked unknown; commit only on
+                          my word. Then, with WP3's verdict script, a first
+                          count of the claims in reports a script could
+                          recheck (PR-HALLU).
+
+WP9                       Find the last-day gaps on day one: a zero-seed        The walk fails before the 11 November real-
+First use, real hosts     walk in every gate, a real-host rehearsal and a       data merge (fb55599) and passes after; the
+                          load-drill rerun.                                     first-deploy checklist has run once on a real
+Size: 2-3 days E                                                                host.
+Starts: after WP2a        First: The zero-seed walk (install to close of day,
+Moves: quality,           fresh database) as a gate step; needs WP2a's          Waits on me: D21 (rehearse on a real host;
+hallucinations            container gate first.                                 renting one needs my yes), D09 via WP2a.
+
+WP10a                     Brief and run agents well: brief contracts,           Every workflow we run is saved and re-
+Briefs and workflows      judgement-free discovery with citations, fresh-       runnable, raw outputs kept with their hashes,
+                          context skeptics, saved workflows, state on disk.     and WP3's sealed replay catches verdict-
+Size: hours per rule G                                                          flipping brief edits.
+Starts: today             First: The save-as-run rule, sent to the
+Moves: quality,           coordinator, and one saved review-stage               Waits on me: Nothing to start.
+hallucinations            workflow script; agent launches wait for D07.
+
+WP10b                     Give agents tested domain skills: PR #185's skills    A trigger tally shows which skills fire; lookups
+Skills and agents         and FixFlow agents, merged on 13 November,            run on the pinned cheaper agents, with token
+                          each with a pinned model and short tool list.         use compared against the built-in agent's.
+Size: 2-3 days G
+Starts: on my word        First: A frontmatter CI check, proposed to the        Waits on me: My go on the CI check through
+Moves: quality,           coordinator and run record-only first.                the coordinator; agent runs for the tally wait for
+efficiency                                                                      D07.
+
+WP11                      Keep me deciding quickly and seeing clearly:          No package waits more than a day T on a
+Decisions and pages       one board for every open decision, readable           decision of mine, with each wait logged.
+                          pages and a current compile.
+Size: about a day G                                                             Waits on me: Answering the board; "accept all
+Starts: today             First: One decision board (D01 to D23, KS-D,          defaults" covers only free decisions staying on
+Moves: quality, time      graph-test decisions, links to my FixFlow items)      this PC.
+taken                     and the shared run queue beside it.
+
+WP12                      Stop any session, the orchestrator first, from        One trial lane wave runs under the rule with no
+Orchestration B+ tree     growing until it must compact: sessions split at a    compaction, and its hallucination catches
+                          set share of their window and small siblings          (wrong hand-over claims first), rework and
+Size: two trial waves G   merge (PAR-22).                                       tokens per result are set beside a matched
+Starts: first done; next                                                        wave that compacts earlier at the same token
+after D07                 First: Done on 14 November: the split rule and        count.
+Moves: token count,       its replay over 97 M recorded session
+hallucinations            windows, both checked                                 Waits on me: I said yes on 14 November to one
+                          (SPLIT-RULE-2026-11.md), then three                   trial wave at 300k, the only line of the three that
+                          instruments for the trial, tested on the record: its  comes before most of our compactions. Still
+                          script found 16 of 1,265 M paths, commits and         mine: D07 before any agent run, which lane
+                          pull requests in FixFlow's recorded summaries         wave is which arm, the Opus compaction
+                          not borne out, no more than in two maintained         setting raised if an Opus session holds a node,
+                          documents. Next: a reader's check on a sample         and opening each new root.
+                          of those summaries, the baseline.
+
+14 November 2026                                                                                                                     Page 18 of 24
+
+=== Page 19 ===
+Our AI build harness � Short edition                                                                     Part 4 � Dividing the work
+
+Decisions waiting on me
+
+Every open decision the package rows name, in one place; go-aheads and permission yeses without an id are in each
+package's "Waits on me". The reference edition gives the options for each and the one the source design recommends.
+I answered D01 to D06 on 11 November and merged PR #185 on 13 November; only D05's power-cut notes are still to
+come.
+
+Id      Decision                                                     When                                Unblocks
+P0a     FixFlow's P0a, my own steps in the ship plan                 next, before my harness steps       every step of mine below
+                                                                                                         that is not marked now
+D05     The power-cut notes                                          now (the rest of D05 is answered)   WP1
+D07                                                                                                      every package that starts
+        What is the token budget per five-hour window?               before the first run that launches  agents
+D08                                                                  agents                              WP1
+D09                                                                                                      WP2a, WP9
+D10     If the mains is the cause: a battery backup?                 after the diagnosis                 WP2a
+D11                                                                                                      WP2a
+D12     Make the Linux container run the gate?                       phase 2                             WP3
+
+D13     What may be cleaned up, and by whom?                         phase 2                             WP3, WP5
+D14                                                                                                      WP3
+D15     Who gives up memory?                                         after the memory table              WP3
+D16                                                                                                      WP3
+D17     Which findings get a second look, and when does a finding phase 3                                WP3, WP6b
+D18     go stale?                                                                                        WP3, WP5
+D19                                                                                                      WP3
+D20     May agents write reports to one folder without asking?       phase 3                             WP3
+D21                                                                                                      WP9
+D22     May the script's verdict replace the root's own reading?     after its replay                    WP5
+D23                                                                                                      WP7
+KS-D1   May a script merge, edit the board and refuse?               after its replay                    WP6b
+KS-D1b                                                                                                   WP6b
+LIB     Will I read the marked lines of high-risk merges?            phase 3, late                       WP6a
+GT-1                                                                                                     WP7
+GT-2    Do hooks stay off?                                           phase 3                             WP7
+
+        A short tool list for gate agents?                           after its test
+
+        A second vendor's model in the review replay?                not now
+
+        Replay three candidate fixes per recorded chain?             after the contract's replay
+
+        Rehearse on a real host?                                     phase 4
+
+        Try the earlier compaction window?                           phase 5
+
+        What must the index replay show?                             before the index replay
+
+        Run the knowledge store's recurrence audit (KS-0)?           now, never ahead of a ship phase
+
+        Build the knowledge store?                                   after the audit
+
+        The library's limitation list                                now
+
+        Put an agent in the loop of the graph test?                  after the index replay
+
+        Installs for the wider graph test: a graph database server,  when each arm is scheduled
+        Graphify, an embedding model
+
+How we work
+
+The rules we follow or are adopting now, so a new person can work the same way from day one. Two more, the ship
+plan first and one budget, are in the box under the map.
+
+Rule                                   What it means in practice
+
+Seven metrics first, and chats count   Every bottleneck and idea names the metric it moves (throughput, efficiency, token count, token
+My correction of 14 November           cost, time taken, quality of output, hallucinations) and the number we have for it; where there is no
+                                       number yet, we say so. An idea said only in chat is recorded with its session and line.
+
+14 November 2026                                                                                         Page 19 of 24
+
+=== Page 20 ===
+Our AI build harness � Short edition                                          Part 4 � Dividing the work
+
+Rule                                       What it means in practice
+
+Script before agent                        Models find things; scripts decide whether a finding is closed. A check a script can make is never left
+Harness v2, standing rules                 to a model.
+
+Replay before live                         A gate or review mechanism is accepted by a replay on our own record wherever one is possible,
+Harness v2, standing rules                 and runs record-only before it may refuse anything.
+
+One fact, one command                      A fact about this PC or the tools becomes a rule only after one command has checked it. Our first
+Harness v2, mechanism 7                    list carried five facts that turned out wrong.
+
+My yes for anything that reaches           No hooks, installs, scheduled tasks, permission changes, deletes, rented hosts or anything leaving
+outside                                    this PC without my decision.
+Harness v2, standing rules
+                                           Discovery agents extract what the sources say, each claim with a citation in the form path:line --
+Discover without judging, and cite         quote. Ranking and verdicts come later, from someone else.
+everything
+Orchestration design                       Anything that becomes a decision is checked by a fresh-context skeptic told to refute it, booked like
+                                           any other agent run; D07 itself, a zero-token proposal that comes before any agent budget, gets my
+A fresh pair of eyes before a              own review. Verdicts are confirmed, partly confirmed, refuted or unverifiable, and an unverifiable
+decision                                   one names what would settle it.
+Orchestration design, verification policy
+                                           The orchestrating session plans and judges; Sonnet discovers and maps; Opus deep-dives and
+The right model for the step               verifies; Haiku looks things up. A step gets the cheapest model that passes.
+Orchestration design, tier guide
+
+Tag every number                           Measured, estimated, guess, setting, target or illustrative. A computed number takes the weakest
+Bottleneck compile and library pathways    tag of its inputs.
+
+Test the best form of an idea              Research and build the strongest version, compare like with like, define the scoring before the run,
+My feedback to the sessions                and fix anything that would handicap one arm instead of noting it as a limitation.
+
+Answer the question that was asked         Test the architecture as I described it, with the popular tool itself as one arm. A clean answer to a
+My feedback to the sessions                narrower question is not the answer.
+
+State lives on disk, in the repo           Plans, results and decisions are files, so a stopped session can resume and anyone can pick up a
+Orchestration design; harness v2           package.
+
+GLOSSARY
+
+The terms this edition uses
+
+135 terms, grouped by where they come from and sorted A to Z inside each group. "Coined by us" means
+the term was made up in one of our own documents, named after it. The reference edition's glossary has all
+399, with longer definitions.
+
+Our own terms                                                                 Claims file A file each slice commits listing what it claims, so a script can
+                                                                              check every cited test exists, ran, and fails when its guard is removed.
+Alone and last weights Alone: the effect of moving only one limitation's      Bottleneck B12; over 20 recorded overstatements M motivate it.
+unknowns. Last: what is lost if only that one stays unsolved. Coined by us
+in the pathway model brief                                                    Cold-resume trial / cold resume A phase-resumption test: a fresh agent
+                                                                              must recover frozen facts from the repository and PR alone. Coined by us
+Brief The written instruction given to a session or subagent. Ordinary        in the ship plan (P1)
+usage; the clinic orchestration page
+                                                                              Coordinator session The single session on the plan branch that owns
+Cheap model / strong model The low-cost tier (Sonnet, or Haiku for            the plan, contracts and merge call, and writes no feature code. Coined by
+lookups) for routine reading and checking, against the high-cost tiers        us in the ship plan
+(Opus, Fable) kept for judgement. The library design, in our library pathway
+documents                                                                     Corners / all-good setting / tie Corners: condition groups at their poor
+                                                                              or good ends. All-good: every library unknown good. Tie: how strongly
+Cheap-call equivalent The library model's cost unit: one call by the          a group's unknowns move together. Coined by us in the pathway model
+cheap model (Sonnet) costs 1 I ; other costs are multiples of it. Coined      brief
+by us in library-pathways model-brief.md, 2026-11.
+                                                                              CureFound My senior design project at university (GIKI): rare-disease
+Check (the seven steps) / container mode The clinic's full check: ruff,       drug repurposing, onto which harness research was mapped. My project;
+format, mypy, Django checks, migrations, database probe, pytest.              mapping in the CureFound research results
+Container mode runs it in a Linux Docker container. Clinic check script
+and linux-test-runner task                                                    Delta check A critic pass that reads only what changed between plan
+                                                                              versions. Coined by us in the harness review.
+Check slot (check lock, Docker-gate slot) A machine-wide permit to run
+the clinic's full check, so heavy checks queue instead of colliding. Coined   Device lab (L3) / lab accounts / edge 404 stand-in Scripted emulator
+by us in the testbed faster-check task                                        rig rehearsing the drain and offline matrix before a real phone. Test-only
+                                                                              accounts and keys. Stand-ins mimic the unreachable host. Coined by us
+Citation check A Sonnet pass that confirms quoted text exists where           in the ship plan
+claimed and has not moved or been fixed. Coined by us in
+ORCHESTRATION-DESIGN-2026-10.
+
+14 November 2026                                                              Page 20 of 24
+
+=== Page 21 ===
+Our AI build harness � Short edition                                                                                                                                 Glossary
+
+Entry kinds (do_not_apply, open_defect, trap, unverified_seed,                Lane (session) One Claude Code session working one slice or phase in
+pending_anchor) In order: forbidden change, unfixed defect, gotcha,           its own git worktree, in parallel with others. Coined by us in the harness v2
+entry awaiting its executable check, entry whose fix sits on a branch.        design and the ship plan
+Coined by us in the knowledge-store design
+                                                                              Lever A change that could cut token use, ranked by size in the token
+Escalation ladder The order a failed problem climbs: one cheap retry,         report. Coined by us in the token bottleneck report
+then Opus, then Fable, with the solution stored on the way back. Coined
+by me in the library goal, 2026-11.                                           Limit episode One time the five-hour usage limit stopped agent work.
+                                                                              Our harness review and token measurement
+Exposure How many tokens an idea or lever could act on; neither a
+saving nor a ceiling. Coined in our bottleneck compile and token report       Lookup A query of the knowledge store or library before exploring,
+                                                                              triggered by an error, escalation or diff; returns leads or abstains. Our
+Fan-out and depth Fan-out is the number of children per parent; depth         knowledge-store design
+is the number of session levels below the root (in the testbed: slice
+leads, their children, then subagents). General usage; the clinic             Merge queue Designed script that merges slices in turn under a lock,
+orchestration page                                                            checks the merge, updates the board. Coined by us in the bottleneck
+                                                                              compile
+ff-gates.sh / ff-slot.sh / slot ff-gates.sh runs backend, mobile or web
+checks in containers. ff-slot.sh is the machine-wide lock, with light and     Model step One call to the model inside a session: it re-reads the whole
+heavy pools of slots. Coined by us in ship-plan phase L1                      window, then acts once. The median step in November's clinic sessions
+                                                                              took 6,600 ms M . Our token measurement and the timing of 11 November
+Final head A branch's last commit at merge; a reader should have read         (MSR-50).
+it, not an earlier one. Bottleneck B17 of our harness review
+                                                                              Off-machine copy A verified nightly copy off the PC of every branch,
+Finding A concrete defect or gap reported with path:line and severity,        uncommitted work and transcripts. Bottleneck B11 and harness v2, phase 1
+closed only by a harness-run test. Review practice in our ship plan and
+testbed                                                                       One budget All agent-adding changes share one written token and lane
+                                                                              budget, with state on disk. Coined by us in the harness v2 design
+Fix round / fix-round contract A pass that fixes findings. The contract: a
+failing-then-passing test per finding, full gate before committing, revert    One fact, one command Environment facts from agents or from me are
+not patch, fresh reviewer. Bottleneck B01, mechanism 9; replay before live    checked by one command before becoming harness rules. Coined by us
+use                                                                           in the harness v2 design
+
+Fixed start (fixed prefix) The tokens each agent re-reads before doing        Orchestrator (root, main session) The long-lived top session that plans,
+work: system prompt, tool schemas, skills and CLAUDE.md. Claude Code          briefs, reads results, judges gates, merges and edits shared files. A
+subagent behaviour; measured in card CR-11                                    Claude Code session role; named in ORCHESTRATION-DESIGN-2026-10
+
+Floor Cheap baseline, like scripted search, that any graph method must        Pathway map Models how work moves through the library, with
+beat to count as a gain. Coined by us in the graph test protocol              chances and costs per branch. Not a forecast. Coined by us; built in
+Footprint (slice) Files a slice declares it will write; the plan check uses   docs/program/library-pathways/
+them to avoid lane collisions. Coined by us in harness v2's plan check
+                                                                              Planner / Scheduler / Governor Harness v2 designs: Planner picks the
+Fresh context A reviewer or agent started without the author's earlier        lane count first; Scheduler starts and resumes sessions; Governor slows
+conversation, so it cannot inherit their assumptions. Our refuter and fresh-  lanes so the usage window lasts. Coined by us in the harness v2 design
+reviewer practice
+                                                                              PR #183 The pull request holding the knowledge-store design. The store
+Frozen validation contract A test sealed before any map or store is           is designed, not proven. This repository on GitHub
+built, so pre-set rules judge each pilot. Our library and graph-test work
+(idea MSR-18)                                                                 PR #184 / PR #186 The pull requests holding the BAML sweep (#184)
+                                                                              and the Horthy sweep (#186), with our verdict on each idea. This
+Gate A check a change must pass before merging: tests, lint, claim            repository on GitHub
+checks, reviewers. Also the step running a store entry's own check.
+General software practice; our gate workflow in HARNESS-BOTTLENECKS           PR #185 The pull request that added the skill packages and the fixflow
+                                                                              agents; merged on 13 November. This repository on GitHub
+Gate script A plain JavaScript workflow script gathering and sorting
+agent results into buckets for the Fable judge. Coined by us in the           Queue A line of waiting items: the check slot queue, the merge queue,
+orchestration design                                                          or the phone's write queues. Bottleneck B07 and our CLAUDE.md
+
+Graph test Our test of whether a typed code store beats baselines at          Quiet window (quiet machine) A time with no FixFlow phase or heavy
+finding what unseen commits touch. Our graph test result, November 2026       check active, so harness runs can't slow shipping. Coined by us in the
+                                                                              harness compile
+Heartbeat / stall watchdog / stall limit A periodic signal naming what a
+long check is doing. A watchdog kills a check that stays silent past the      Reader's check An agent on a fixed prompt reads a brief or a
+stall limit. General systems practice; limit set in the testbed               compaction summary twice and marks each statement of the latest
+Index replay A zero-token test counting how many recorded lookup-             state right or wrong, and each open loop carried or dropped. The split
+only calls an import-and-caller index would have answered. Coined by us       rule (WP12), part 6.4.
+in the harness v2 design
+                                                                              Real-host rehearsal Running the first-deploy checklist on a real host:
+Judgement-free discovery Discovery agents return facts only, never            fresh-machine restore, off-site push, and an alert on a planted failure.
+comparisons, severities or verdicts; the main session judges. Coined by us    Bottleneck B19 and harness v2, phase 4
+in the orchestration design
+                                                                              Reaper (dry-run reaper) A cleanup script removing finished sessions or
+Key table In the split rule, a repository file with one row per piece of      worktrees; its dry run only reports what it would remove. Coined by us in
+work: owner, state and where its result is. A fresh inner session can take    the bottleneck compile (B15)
+over from it. The split rule (WP12).
+                                                                              Reasoning-cache library (the library) Proposed, unbuilt memory of
+Knowledge store (ks) Agents' local database of solved hard problems,          verified solutions a cheap model reuses instead of calling a stronger
+traps and failed approaches, searched by symptom. Designed, unbuilt.          model. Coined by me; see the harness v2 design
+Coined by us in the knowledge-store design                                    Refuter (refute-by-default) A fresh-context agent whose job is to
+                                                                              disprove a claim, fix or design, treating it as wrong until shown
+KS-0..KS-9, KS-6b, KS-T The knowledge store's planned build phases,           otherwise. Coined in our orchestration method and harness sweeps
+one session each. KS-6b is the executable gate; KS-T is teardown. Coined
+by us in the knowledge-store design                                           Replay before live A gate or review mechanism is first replayed, record-
+                                                                              only, on recorded history before refusing anything live. Coined by us in
+L1-L3 (levers) Three levers for scoring ideas: L1 effort routing, L2 context  the harness v2 design
+budget and compaction, L3 output backpressure and verifiers. Not the
+ship-plan phases, nor the four token levers of Part 2. Coined by us in the    Resume list At sign-in, a list of sessions that were mid-work and where
+Horthy sweep                                                                  each branch stands. Bottleneck B03 and decision D06
+
+14 November 2026                                                              Review round One pass where a reviewer reads a branch and returns
+                                                                              findings, followed by fixes. Our testbed record and fix-round contract target
+
+                                                                                                                                                               Page 21 of 24
+
+=== Page 22 ===
+Our AI build harness � Short edition                                                                                                                                  Glossary
+
+Save-as-run rule Workflows are saved as scripts before running, so each        CLAUDE.md / AGENTS.md Project instruction files an agent session
+can be re-run and its result checked. Our orchestration design, adopted        reads first; AGENTS.md is the equivalent for other agent tools.
+through WP10a                                                                  CLAUDE.md: Claude Code feature; AGENTS.md: agent-tool convention
+
+Scripted search The fixed-script search baseline. No agent chose what          Compaction Claude Code replacing a long conversation with a
+to search; none ran in the held-out test. Wording fixed in our graph test      summary plus verbatim tail, so the session continues. Anthropic's Claude
+protocol                                                                       Code
+
+Sealed replay / replay seal Re-running recorded fixes or reviews at a          Compaction summary The summary left after compaction, re-read on
+frozen commit, hiding later commits and the answer key. Coined by us in        every later call. It was 8 % M of context tokens in the study. Claude
+the bottleneck compile                                                         Code feature.
+
+Seed / reference (graph test) The seed is the changed file or symbol           Fast mode A Claude Code setting that returns output faster on the
+given as the query; the reference is what else the same commit                 models that support it. Claude Code feature.
+changed. Coined by us in the graph test protocol
+                                                                               Frontmatter and skills preload Frontmatter is an agent file's header; its
+Send-back A reviewer returning a slice to its author with findings to fix;     skills field loads named skills in full at startup. Anthropic's Claude Code
+each adds a round. Testbed review loop; the fix-round contract limits them
+                                                                               Hook (PreCompact, SessionStart, PostCompact, PreToolUse,
+Seven metrics Throughput, efficiency, token count, token cost, time            PostToolUse, Stop) A script Claude Code runs automatically at events
+taken, quality of output and hallucinations: what I judge every                like session start or stop; it can add text, block, or alter tool calls.
+bottleneck and idea by. Part 2 defines each. My correction of 14 November      Anthropic's Claude Code
+2026.
+                                                                               Session transcript (JSONL) The saved record of a Claude Code session,
+Skeptic A fresh-context Opus verifier tracing or refuting a claim, given       one JSON line per message or call. Anthropic's Claude Code; JSON Lines, a
+only its evidence and failing condition. Coined by us in the orchestration     general format
+design
+                                                                               Skill (SKILL.md) A folder of instructions an agent loads for a kind of
+Slice One bounded unit of build work with its own branch, worktree and         task, starting with a SKILL.md. Anthropic's Claude Code; our conventions in
+record, checked, reviewed and merged. Vertical-slice practice; used in the     .claude/skills/README.md
+clinic wave plan
+                                                                               Models
+Split and merge (of sessions) / split line In my B+ tree proposal (PAR-
+22), sessions are nodes of a distributed system: leaves do the work,           Fable The model that runs the main session as orchestrator, architect
+inner ones route and gate. One whose window passes the split line              and judge, never as a subagent. Anthropic model; role set in our
+hands its work, by scope, to two fresh sessions (a hand-over), and two         orchestration design
+small siblings join into one. The line is a share of the window, set per
+model; about 40 % S is the outside rule of thumb, 400k E on our                Haiku The smallest, cheapest Anthropic tier here, used only for typed
+windows. My proposal of 14 November 2026; the 40 % figure came with the        extraction and locating where code lives. Anthropic's model family
+Dex Horthy sweep and is untested here.
+                                                                               Hallucination A model stating something that is not so: a report that
+Staleness When code changes may make stored entries untrue; handled            overstates what was done, an invented fact, path or API, or a wrong
+by validity conditions and probes, not expiry. Our knowledge-store design      summary after compaction. General language-model field; one of my seven
+                                                                               metrics.
+Three conditions (comes back, reach, entry quality) Comes back: much
+work repeats. Reach: entries get to the cheap model. Entry quality: right      Model tier Lowest to highest: Haiku, Sonnet, Opus, Fable; higher tiers
+and used rightly. Fourth group: running cost. Coined by us in the pathway      think better and cost more per token. Anthropic naming; our routing note
+model brief                                                                    assigns jobs
+
+Transcript audit A script reading sessions' tool-call records to show who      Opus The strongest Anthropic tier routinely used here: deep analysis,
+read the final head and whether the gate ran before fixes. Coined by us in     architects, refuters, skeptics, critics and fresh-context checks. Anthropic's
+the harness v2 design                                                          model family
+
+Typed code store A map of the code whose edges are labelled by kind            Sonnet The mid-tier Anthropic model for discovery, mapping, web
+(import, caller, test-of, crosses-runtime). My objections to the first graph   collection, scouts, citation checks, gates and blind readers. Anthropic's
+test                                                                           model family
+
+Typed verdict A review result in a fixed machine-readable form that            Outside people, tools and ideas
+names the head commit the reviewer read. See also Output shapes and
+Verdicts. Coined by us in the bottleneck compile.                              DuckDB / DuckPGQ An embedded analytical SQL database, plus its
+                                                                               extension for property-graph queries. DuckDB project and a community
+Verdict script A model-free script closing or reopening a gate round by        extension
+counting cited-test failures on pre-fix code. Coined by us in the harness v2
+design                                                                         Graphify (graphifyy) Open-source Python tool that builds a knowledge
+                                                                               graph from mixed files. Used as a comparator arm. Outside project
+W1-W5 (weaknesses) The five weaknesses ideas were scored against:              safishamsi/graphify (PyPI: graphifyy)
+CLAUDE.md length, self-reported compliance, routine never run (cold
+resume), few agents and skills, unsaved workflows. Coined by us in the         LadybugDB / Kuzu An embedded graph database, a maintained fork of
+Horthy ideas sweep                                                             Kuzu, which was archived. It was one graph-engine arm of the test.
+                                                                               Open-source projects; status read in our graph-test research
+Wave A group of slices or lanes run in parallel once their dependencies
+have merged. Coined in our clinic build and ship plan                          General software terms
+
+Zero-seed journey / walk A first-use walk on an empty database with            B+ tree A balanced search tree used by databases. Inner nodes hold
+no synthetic data: first user, import, a transaction, close of day. Coined by  only keys that route a search and all data sits in the leaves; a node that
+us in the clinic testbed work                                                  outgrows its size splits in two, and small neighbours merge. Database
+                                                                               systems, 1970s; in the database lectures on our list (MTH-67).
+Claude Code and Anthropic
+                                                                               Backend gate tools (Alembic, ruff, mypy, lint-imports, pytest, pip-
+Agent definition (.claude/agents, agentType) A markdown file defining          audit) In order: database migrations, lint and format, type check,
+a helper agent's own prompt, tools and pinned model; agentType                 import-boundary check, tests, and an advisory dependency vulnerability
+selects it. Anthropic's Claude Code subagents feature                          scan. Outside open-source Python tools
+
+autoCompactWindow (auto-compact window) A Claude Code setting                  Branch Named line of commits for a slice or lane, separate from main
+naming the context size that triggers automatic compaction. Anthropic's        until reviewed and merged. Git; each lane and slice gets its own
+Claude Code setting (/autocompact)
+                                                                               CI Continuous integration: the automated checks that run on the
+Cache read (cache-read tokens) Tokens re-read more cheaply from the            repository, on GitHub Actions. General software practice
+prompt cache each call; summed, they measure the context carried.
+Anthropic API prompt caching                                                   Co-change How often two files change in the same commit, used as a
+                                                                               hint they belong together. Software-evolution research; measured in our
+14 November 2026                                                               graph test
+
+                                                                                                                                                                Page 22 of 24
+
+=== Page 23 ===
+Our AI build harness � Short edition                                          Glossary
+
+Commit One saved, named change to the code in git. Reviews bind to a         Node 22 / Node 24 Two versions of the JavaScript runtime: the project
+specific commit. Git                                                         targets 22, and the machine has 24. The Node.js project
+
+Community prior / Louvain A stored grouping of related nodes, found          Peak memory A check's highest memory use; never measured, and the
+by Louvain community detection, added to the ranking as a prior. The         second check slot waits on that number. Bottleneck B07 of our harness
+general graph-algorithm field                                                review
+
+Jest / Vitest Test runners for the mobile code (Jest) and the web code       Rented host A one-day rented server to rehearse deployment and rerun
+(Vitest). Open-source JavaScript tools                                       the load drill, using made-up data only. Bottlenecks B19 and B20 of our
+                                                                             harness review
+Main line (main) The branch with the accepted code; work merges in
+only after the check and a review. Git convention; FixFlow's default branch  Sensor logger A small tool recording power, temperature and memory
+Merge Bringing a reviewed branch into main; harness v2 does it by            on the PC, to diagnose unexpected shutdowns from data. Bottleneck B05
+script, through the merge queue. Git; a harness v2 mechanism                 and harness v2, phase 1
+P0, P1, P2, P3 (severity) Finding severity from most serious (P0) to least
+(P3). Review practice in our testbed and ship plan                           SetThreadExecutionState / hybrid sleep / mains / BitLocker Windows
+                                                                             call preventing sleep while a program runs; hybrid sleep saves memory
+PageRank / personalised PageRank Ranks a node higher when well-              to disk first; mains: wall power; BitLocker: Windows disk encryption.
+linked nodes point to it. The personalised version restarts from a seed      Microsoft Windows; electrical supply term
+file, favouring its neighbourhood. Google's PageRank algorithm; used in the
+Aider tool                                                                   Measurement and statistics
+
+Property graph / symbol-level graph A graph whose nodes and links            95 % interval A range holding the true value in 95 of 100 repeats;
+carry a kind and evidence (file, line). Symbol-level: nodes are functions,   smaller differences may be noise. Statistics; used in our held-out graph test
+classes and components, not files. General graph-database and code-
+analysis field                                                               Arm One condition in a comparison. Scientific method
+
+Pull request (PR) A proposal on GitHub to merge a branch into main,          Monte Carlo runs (ensemble) Running a model many times with each
+with its changes, discussion and checks. GitHub; see PR #182 to #186         unknown drawn from its range, to see the spread of outcomes and
+                                                                             which unknowns matter most, instead of one answer. General statistics; I
+SQLite / FTS5 / recursive query A small file-based database, its built-in    proposed it for the library pathway map.
+full-text search with BM25 ranking, and queries that follow links over
+several steps. Open-source SQLite project                                    P@1 / recall at shown / acted false positive Three measures: precision
+                                                                             of the top result, how many true entries appear in what is displayed, and
+Tracing (test start-up) Recording step by step where time goes, to find      wrong leads someone acted on. Information-retrieval metrics, applied in
+and cut slow parts of test start-up. General software practice, also called  our knowledge-store design
+profiling
+                                                                             Recall / precision / recall@8k Recall: share of true items found.
+Worktree A separate git working copy on its own branch, one per slice        Precision: share of results that are true. recall@8k: recall in an
+or lane session. A git feature                                               8,000-token S answer (graph-test score). The information-retrieval field
+
+The machine                                                                  FixFlow
+
+Android emulator / AVD ff34 A software phone for tests; ff34 is the one      P0a My pre-flight: hold notice, Railway state, R2 archive, Supabase
+virtual device set up on this PC. Google Android tools; device name is ours  dump, phone roster and builds. Harness work must not delay it. Coined
+                                                                             by us in the ship plan
+Antivirus (360 Total Security) This PC's third-party real-time scanner; it
+has blocked some Windows library files during unpacking, affecting           PR #182 The pull request on the plan branch docs/orchestration-design-
+installs. Third-party security product from Qihoo 360                        2026-10 holding the ship plan, design notes and evidence. It is not
+core.longpaths A git setting letting Git for Windows create paths longer     merged to main. This repository on GitHub.
+than Windows' old 260-character limit. Git for Windows
+MSYS_NO_PATHCONV A Git Bash setting that stops it rewriting Unix-            Railway, Supabase, R2 (hosts) Railway hosted the apps (old hostnames
+like arguments as Windows paths; write paths as C:/... MSYS2, the Unix       answer an edge 404); Supabase is the managed Postgres; Cloudflare R2
+layer under Git for Windows                                                  stores media and backups. Outside vendors; stack described in CLAUDE.md
+
+SOURCES                                                                      Ticket queue The first-come order of FixFlow's slot lock: jobs take
+                                                                             tickets, and no job waits forever. Our ff-slot.sh slot lock, 13 November 2026
+Where everything comes from
+
+The documents this edition draws on: what each one holds and where it lives.
+
+Orchestration design 31 Oct 2026, updated to 13 Nov                          Dex Horthy sweep 4 Nov 2026, addendum 9 Nov
+How we run work across model tiers: judgement-free discovery with            Horthy's talks and writing, card by card, scored against our weaknesses
+citations, fresh-context checks, and the main session as judge. This         W1 to W5 and levers L1 to L3.
+compile follows it.                                                          HARNESS-IDEAS-HORTHY-2026-11.md (PR #186, branch only)
+docs/ORCHESTRATION-DESIGN-2026-10.md
+                                                                             Skills packages 4 Nov 2026
+Harness review and its gates 1 Nov 2026                                      13 M skill packages and 11 M project agents for FixFlow work.
+Our first full review of the harness, with gate decisions G1 (discovery)     .claude/skills/ and .claude/agents/ (PR #185, merged 13 Nov)
+and G2 (deep dive).
+docs/program/HARNESS-REVIEW-2026-11-01.md, G1-discovery-gate-                Bottleneck compile 11 Nov 2026
+2026-11-01.md, G2-deep-dive-gate-2026-11-01.md                               The 21 M clinic bottlenecks B01 to B21, what the testbed built, and
+                                                                             87 M outside ideas mapped onto them.
+Knowledge-store design 2 to 3 Nov 2026                                       docs/program/HARNESS-BOTTLENECKS-2026-11.md and
+A store of lessons and fixes that sessions ask before they work, with my     evidence/harness-bottlenecks/
+critique (KS-O1 to O20) and a refuter pass (KS-P1 to P27) folded in.
+KNOWLEDGE-STORE-DESIGN-2026-11.md (PR #183, branch only)                     Harness v2 design 11 Nov 2026
+                                                                             The harness as one system: parts, loops, five phases, eleven mechanisms
+BAML sweep 4 Nov 2026                                                        and decisions D01 to D23.
+What BoundaryML's typed-call ideas could do for us, scored as generic        docs/program/HARNESS-V2-DESIGN-2026-11.md and
+trials.                                                                      docs/program/harness-v2/
+HARNESS-IDEAS-BAML-2026-11.md (PR #184, branch only)
+
+14 November 2026                                                              Page 23 of 24
+
+=== Page 24 ===
+Our AI build harness � Short edition                                                                                        Sources
+
+Token report 12 Nov 2026                                                     Split rule and replay 14 Nov 2026
+Every model call on this PC for both projects, counted: where the tokens     The split-and-merge rule for sessions, its replay over 97 M recorded
+go and the four levers.                                                      session windows with no model calls, and what is fixed before the live
+docs/program/TOKEN-BOTTLENECK-2026-11.md and evidence/token-                 trial I approved at 300k.
+spend/                                                                       docs/program/SPLIT-RULE-2026-11.md, evidence/split-replay/ and
+                                                                             docs/program/split-replay/
+Library review and pathway map 12 to 13 Nov 2026
+The reasoning-cache library mapped step by step, with three conditions       Repository ground truth kept current
+and the limitations to agree.                                                FixFlow's stack and the rules every change must respect.
+docs/program/LIBRARY-PATHWAYS-2026-11.md and                                 CLAUDE.md
+docs/program/library-pathways/
+                                                                             My session notes 31 Oct to 13 Nov 2026
+Graph test 12 to 13 Nov 2026                                                 Short notes the main session keeps between sessions: decisions,
+The held-out test of a typed code store against search, co-change and        corrections and where each track stands.
+same-folder baselines.                                                       my Claude Code memory folder for this project
+docs/program/GRAPH-TEST-RESULT-2026-11.md and evidence/harness-
+bottlenecks/graph2/                                                          My chats 6 Oct to 14 Nov 2026
+                                                                             What I typed in 59 M saved Claude Code sessions: 113 M ideas,
+Ship plan and lab 1 to 13 Nov 2026                                           observations and requests, each matched against this compile.
+FixFlow's phases, the lanes plan, the gate harness and the Android           docs/program/evidence/harness-compile/data/chats/chat-
+emulator lab.                                                                ideas.json
+docs/program/SHIP-PLAN-2026-11.md (section 7) and
+docs/program/lab/                                                            This compile's evidence 13 to 14 Nov 2026
+                                                                             Every raw record with its citation, the merge and dedupe decisions, the
+CureFound mapping 13 Nov 2026                                                checkers' corrections and the build scripts for this PDF.
+Our research results restated for my university project; a few idea results  docs/program/evidence/harness-compile/
+are cited from it.
+docs/program/RESEARCH-RESULTS-FOR-CUREFOUND-2026-11-13.md
+
+Paths are relative to the FixFlow repository. Documents marked "branch only" live on their pull request's branch until it
+merges. The bottleneck compile, harness v2, token report, library, graph-test and split-rule documents hold details of the
+clinic testbed and this PC, so they stay uncommitted on this PC until I decide otherwise.
+
+How this compile was made
+
+The reference edition came first, following our orchestration design: Sonnet agents extracted every idea, bottleneck
+and term from the sources with a citation each, fresh-context Opus agents checked the records and every number, and
+nine fresh readers read the draft. On 14 November I changed the lens to the seven metrics and asked for the ideas that
+lived only in chat. Agents then read all 376 M messages I typed in 59 M saved sessions and matched 113 M ideas,
+observations and requests against the records: 5 M were in no record, and the earlier short edition had cut 31 M
+more. Eight classifier agents sorted all 606 M earlier records by metric, and a blind second reading agreed on the
+main metric for 80 of 101 M . Each block of Part 2 was written from its records and checked number by number by a
+second agent. Four fresh readers then read this edition, one of them against my own message line by line, and skeptics
+kept 49 M of their 73 M findings. A final check, against my message and against the records, kept 6 M of its 10 M
+findings, four M separate errors, all corrected here. The same day WP12 wrote the split rule and replayed it over our
+record, with two rounds of independent checking, and this edition carries the result.
+
+14 November 2026                                                             Page 24 of 24

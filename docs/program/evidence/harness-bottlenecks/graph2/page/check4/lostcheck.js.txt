@@ -1,0 +1,34 @@
+// check4: is anything that was on the page before section M gone? Static text per section, before-m vs now.
+// Run: node - < lostcheck.js.txt  (from this folder)
+'use strict';
+const fs = require('fs'), path = require('path');
+const HERE = process.cwd();
+const before = fs.readFileSync(path.join(HERE, '..', 'work4', 'index.before-m.html'), 'utf8');
+const now = fs.readFileSync(path.join(HERE, '..', '..', '..', '..', '..', 'graph-test', 'index.html'), 'utf8');
+const strip = h => h.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, '\n').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+const ids = h => (h.match(/<section class="(?:sec|scope)" id="([a-z]+)"/g) || []).map(s => s.match(/id="([a-z]+)"/)[1]);
+console.log('sections before:', ids(before).join(','), '| now:', ids(now).join(','));
+const navB = (before.match(/<nav class="toc"[\s\S]*?<\/nav>/) || [''])[0], navN = (now.match(/<nav class="toc"[\s\S]*?<\/nav>/) || [''])[0];
+console.log('nav before:', strip(navB).join(' | ')); console.log('nav now:   ', strip(navN).join(' | '));
+function sec(h, id) { const i = h.search(new RegExp('<section class="(?:sec|scope)" id="' + id + '"')); if (i < 0) return ''; return h.slice(i, h.indexOf('</section>', i)); }
+const parts = ['header', ...ids(before), 'footer'];
+let lost = 0;
+for (const p of parts) {
+  const b = p === 'header' ? (before.match(/<header[\s\S]*?<\/header>/) || [''])[0] : p === 'footer' ? (before.match(/<footer[\s\S]*?<\/footer>/) || [''])[0] : sec(before, p);
+  const n = p === 'header' ? (now.match(/<header[\s\S]*?<\/header>/) || [''])[0] : p === 'footer' ? (now.match(/<footer[\s\S]*?<\/footer>/) || [''])[0] : sec(now, p);
+  const nb = strip(b), nn = new Set(strip(n));
+  const gone = nb.filter(l => !nn.has(l));
+  const added = strip(n).filter(l => !new Set(nb).has(l));
+  console.log('\n== ' + p + ': lines before ' + nb.length + ', now ' + nn.size + ', gone ' + gone.length + ', added ' + added.length);
+  gone.forEach(l => console.log('  - ' + l));
+  added.forEach(l => console.log('  + ' + l));
+  lost += gone.length;
+}
+// data: everything outside d.m and d.k unchanged?
+const dB = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'work4', 'data.before-m.json'), 'utf8'));
+const dN = JSON.parse(fs.readFileSync(path.join(HERE, '..', '..', '..', '..', '..', 'graph-test', 'data', 'data.json'), 'utf8'));
+const keys = new Set([...Object.keys(dB), ...Object.keys(dN)]);
+for (const k of keys) { const a = JSON.stringify(dB[k]), b = JSON.stringify(dN[k]); if (a !== b) console.log('data key changed: ' + k + ' (' + (a ? a.length : 0) + ' -> ' + (b ? b.length : 0) + ' chars)'); }
+// within d.k, which subkeys changed
+if (dB.k && dN.k) for (const k of new Set([...Object.keys(dB.k), ...Object.keys(dN.k)])) { const a = JSON.stringify(dB.k[k]), b = JSON.stringify(dN.k[k]); if (a !== b) console.log('  d.k.' + k + ' changed (' + (a ? a.length : 0) + ' -> ' + (b ? b.length : 0) + ')'); }
+console.log('\nstatic lines gone in total:', lost);

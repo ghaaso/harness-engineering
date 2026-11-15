@@ -1,0 +1,214 @@
+export const meta = {
+  name: 'graph-test-wider-h',
+  description: 'Update the owner page with engine results and its scope; revise the wider-test design; run the free steps: feasibility counts and the cache-with-invalidation replay over the cached snapshots',
+  phases: [
+    { title: 'Page', detail: 'engine section filled from the audited timing data, scope banner, a section on what was not covered; then an independent check' },
+    { title: 'Design', detail: 'protocol v2 for the wider test with the design check folded in' },
+    { title: 'Cache replay', detail: 'deterministic test of cached answers with invalidation over the per-commit snapshots; then an audit' },
+    { title: 'Feasibility', detail: 'counts that decide whether an agent pilot is possible on this repository' },
+  ],
+}
+
+const SP = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const BUILD = SP + '/build'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const EVID = REPO + '/docs/program/evidence/harness-bottlenecks/graph2'
+const WIDEN = EVID + '/widen'
+const PAGE = REPO + '/docs/program/graph-test'
+const W2 = SP + '/wider'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const S = { type: 'string' }
+const N = { type: 'number' }
+const BOOL = { type: 'boolean' }
+const SA = { type: 'array', items: S }
+const DEFECTS = { type: 'array', items: { type: 'object', properties: { severity: S, where: S, what: S, fix: S }, required: ['severity', 'where', 'what', 'fix'] } }
+const BUILD_SCHEMA = {
+  type: 'object',
+  properties: { status: S, what_was_done: SA, key_numbers: SA, deviations: SA, problems: SA, files_written: SA },
+  required: ['status', 'what_was_done', 'key_numbers', 'problems'],
+}
+const REFUTE_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: S, ok: BOOL,
+    claims: { type: 'array', items: { type: 'object', properties: { claim: S, result: S, detail: S }, required: ['claim', 'result', 'detail'] } },
+    mismatches: SA, must_not_claim: SA, defects: DEFECTS,
+  },
+  required: ['verdict', 'ok', 'claims', 'mismatches', 'must_not_claim', 'defects'],
+}
+const K0_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S,
+    setup: SA,
+    policies: { type: 'array', items: { type: 'object', properties: { policy: S, lookups: N, hits: N, hit_rate: N, stale_served: N, stale_rate: N, avoidable_recomputes: N, note: S }, required: ['policy', 'lookups', 'hits', 'stale_served'] } },
+    by_question_kind: SA, by_age: SA, dependency_cases: S, token_bound: SA, what_it_shows: SA, what_it_does_not_show: SA, problems: SA, files_written: SA,
+  },
+  required: ['status', 'setup', 'policies', 'by_question_kind', 'by_age', 'dependency_cases', 'token_bound', 'what_it_shows', 'what_it_does_not_show', 'problems', 'files_written'],
+}
+const FEAS_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S,
+    counts: { type: 'array', items: { type: 'object', properties: { question: S, answer: S, how_measured: S, consequence: S }, required: ['question', 'answer', 'how_measured', 'consequence'] } },
+    blockers: SA, pilot_possible: S, problems: SA, files_written: SA,
+  },
+  required: ['status', 'counts', 'blockers', 'pilot_possible', 'problems', 'files_written'],
+}
+
+const OWNER = [
+  'THE OWNER, IN HIS WORDS:',
+  '- "im having difficulty understanding how graph database and spacial and temporal topology used with caching concepts and invalidation ... would not reduce token usage given that we have a lot of files and documents ... its basically ensuring we dont have to search through or fetch unnecessary context into the chat while also fetching it in small small time very fast?? wouldnt cache databases help with this??"',
+  '- "wouldnt graph database to store the semantic relations and actual connections that will or wont break with changes give a lot of info in small size compared to relational and then using caching on top of it so we dont traverse unnecessary nodes?"',
+  '- After the finished test: "if our experiments are all failing then how the hell does graphify show such good results and it has a ton of stars in its repo, are we using strictly graphs or knowledge graphs or TKGs i suspect you are still being narrow minded with the architecture you have flaws in your reasoning and especially your assumptions".',
+].join('\n')
+
+function common(lane, folders, extra) {
+  return [
+    'You are one agent in a program that tests whether a knowledge layer over a code repository lets coding agents work with fewer tokens. A first test is finished: it compared a scripted search, two floors, and three storage engines (SQLite, LadybugDB, DuckDB with a graph extension) holding the same parser-built code graph, scored on which other files a past commit changed. The owner judged it too narrow, and a research and critique pass agreed on the main point: it tested engines and one retrieval score, not a knowledge layer, not caching with invalidation, and not an agent.',
+    '',
+    'YOUR LANE: ' + lane,
+    '',
+    OWNER,
+    '',
+    'WHERE THINGS ARE',
+    '- The finished test: ' + EVID + '/protocol.md and protocol-addendum-1.md to -6.md (addendum 6 binds how its result is reported); results in ' + EVID + '/build-e/result.json and build-f/result.json; audited engine timing in ' + EVID + '/build-f/engines_checked.json.',
+    '- The research and critique: ' + WIDEN + '/ (lane-graphify.md, lane-temporal.md, lane-graphrag.md, lane-agents.md, lane-evaluation.md, critique-assumptions.md, architecture.md, refuter.md, design-draft.md, design-check.md, and result.json with the structured summaries).',
+    '- The build tree of the finished test: ' + BUILD + ' (facts/cache/<sha>/ holds 190 per-commit snapshots of the code graph as nodes.jsonl and edges.jsonl; arms/ holds the frozen code of every arm; tasks/ the task seeds and the 50 questions; sealed/ the reference answers; arms/common/SPEC.md the shared specification).',
+    '',
+    'RULES',
+    '1. The repository at ' + REPO + ' is read-only except for the folders named in your lane. Never check out, switch branch, stash, commit or push. Read a past commit only with git archive into a scratch folder or with read-only object reads.',
+    '2. Never edit anything under ' + BUILD + '/arms, tasks, facts, sealed, results. Copy what you need into your own folder.',
+    '3. Install nothing and download nothing (no npm, pip, apt, docker pull, model or dataset). Never put the project name, file paths, identifiers or code from this repository into a web query or URL. Never stop or change a container or process that is not yours (containers named postiz* and fixflow-* belong to the owner).',
+    '4. Host tool quirks: a Bash command over about 8 KB is cut and doubled backslashes in heredocs collapse, so create files with the Write tool. python is not on PATH; use ' + PY + ' -I . Node 24 is on PATH. node rejects a file ending .js.txt: run it with  cd <its folder> && node - < name.js.txt . The session may be interrupted: write progress to a file in your folder.',
+    '5. Stay inside your folders: ' + folders + '.',
+    '6. Write for a reader with no context: plain complete sentences, every number with its unit, what it refers to and how it was measured. Say plainly what is not done, not measured or failed. Never state a result more strongly than its evidence: the lists of sentences that may not be said are in build-e/result.json (refute:claims and refute:discipline, must_not_claim), build-f/engines_checked.json (must_not_claim) and widen/result.json (refuter.must_not_claim, designCheck.must_not_claim).',
+    extra || '',
+    '',
+  ].join('\n')
+}
+
+// ---------------------------------------------------------------- Page
+const pPage = common(
+  'OWNER PAGE, UPDATE. The page for the finished test exists and reads well. Add three things without removing anything: the engine results, a plain statement of scope on the first screen, and a section on what the owner asked that the test did not cover.',
+  PAGE + ' (sources, data, built page), ' + REPO + '/docs/program/GRAPH-TEST-RESULT-2026-11.md (generated record), ' + EVID + '/page (screenshots and notes)',
+  '7. The reader: the owner has moderate ADHD, reads on a desktop browser about 1870 px wide in light theme, and understands pictures faster than text. Readability comes from layout, hierarchy, plain labels and numbers on the picture, never from dropping content.'
+) + [
+  'HOW THE PAGE IS BUILT. ' + PAGE + '/build.js.txt reads data/data.json, src/client.js.txt and src/page.css and writes index.html (one self-contained file, limit 500,000 bytes) and the record; check.js.txt checks the built page. Run both with  cd ' + PAGE + ' && node - < build.js.txt . Read the sources first. data.json was corrected after an independent check: do not regenerate it from the grader scripts; patch it with a small script of your own that you keep beside the build (so the patch can be re-applied).',
+  'WHAT TO ADD',
+  'A. SCOPE, first thing on the page, above the seven cards, impossible to miss: what this page answers (do three storage engines differ; does a parser-built code graph beat a scripted search at finding the code a change touches) and what it does not (a layer of meaning read from documents by a model, which is what graphify adds; facts with time validity and cached conclusions with invalidation; an agent actually using the tool; token use in a session). One short paragraph and a small picture of the layers: tested (structure) against not tested (meaning, time and cached conclusions, orientation, an agent). Link to the new section K.',
+  'B. ENGINES. Fill section H and card 6 from ' + EVID + '/build-f/engines_checked.json (the audited version: use its table, stores, labels as corrected, safe_sentences_for_owner, and its must_not_claim). Show: for each query class and each graph the warm median per engine with the spread between passes drawn; cold time with and without the facts load that only LadybugDB needs; store size, build time and one-file update; engine statement text length, with the label that LadybugDB ranking code in JavaScript is not counted; where each ranking runs (engine, SQL statements, application code) as a label on the marks. Lead with the plain reading: on the selected method SQLite was fastest; on the PageRank variants the arm that runs PageRank in application code was fastest, which compares implementations and not graph operators; every time is milliseconds while one model step takes seconds, so engine speed does not enter the token bill. Card 6 on the first screen gets its number and its line.',
+  'C. NEW SECTION K, "What you asked that this test did not cover". Three parts. (1) A table of the owner own words against what was measured, what was not, and where the wider test measures it: start from the table in ' + WIDEN + '/design-check.md section P12 and the audit in critique-assumptions.md; keep his words verbatim in the first column. (2) Graphify, as a picture: what it builds (a parser-built code graph of the same family as the tested one, plus a model-read layer over documents, clusters and a report file; no time validity), what its 71.5x measures (draw the two quantities to scale: about 123,488 tokens for the whole 52-file corpus against about 1,726 tokens per graph answer; 8.8x on the code alone; no answer graded; measured once by its maintainer), and the independent measurements with their size and strength (the 940-run agent benchmark: code tasks with a strong model, doc-and-code questions 80 % against 70 % on 20 tasks, the weak-model result; the file-localisation check on 177 issues, 25 % against 32 % for keyword search). Every item carries its source link and a tag: self-reported or independent, and weak, medium or strong. Take every figure from lane-graphify.md and refuter.md, with the refuter downgrade applied. (3) Where the tokens go in his own sessions, as one bar: the measured shares from ' + REPO + '/docs/program/TOKEN-BOTTLENECK-2026-11.md, with the plain line that a knowledge layer acts on the fetched-content part and on repeated lookups, and is at most the third lever after the long orchestrator window and the fixed prefix. Then the wider test in one picture: the layers as switches (structure, meaning, time with cached conclusions, graphify as shipped) on top of a real agent baseline, and its phases with a stop after each, taken from design-draft.md with the corrections of design-check.md. Mark it as a design, not a result.',
+  'D. Section J (what could be tested next) now points to K instead of repeating it. Card 7 stays.',
+  'RULES FOR THE PAGE: plain words (say "SQLite (relational)", "LadybugDB (graph)", "DuckDB graph layer", "scripted search"); every number tagged held-out, tuning, timing run, or outside source; an interval or spread is drawn, not only written; colour never the only carrier; light and dark themes; no horizontal scroll at 1870, 644 and 390 px; body text at least 15 px and chart labels at least 12 px. If the file would pass 500,000 bytes, shrink data that the page does not show (never content the reader sees) and say what you shrank.',
+  'LOOK AT IT: take real screenshots with ' + REPO + '/docs/program/evidence/library-pathways/shot.js.txt (read its header) at 1870 x 1280 light and dark, 644 px and 390 px, of the first screen and of sections H and K and J; read them and fix what does not read at a glance; save the final ones under ' + EVID + '/page/final2/. Run check.js.txt (extend it to cover the new sections) and report its result.',
+].join('\n')
+
+const pPageCheck = common(
+  'CHECK OF THE UPDATED PAGE. Verify the new parts of the owner page against their sources.',
+  EVID + '/page/check2',
+  ''
+) + [
+  'The page is ' + PAGE + '/index.html, built from data/data.json. Final screenshots are in ' + EVID + '/page/final2/.',
+  'CHECKS: (1) every engine number on the page equals ' + EVID + '/build-f/engines_checked.json, with the labels as corrected by the timing audit, and no sentence on the page states or implies one of its must_not_claim items; (2) every graphify figure equals lane-graphify.md with the refuter downgrade applied, each with a working source link and an honest strength tag; open the three most important sources and confirm the figures against them; (3) the token-share bar equals TOKEN-BOTTLENECK-2026-11.md; (4) the scope statement is on the first screen at 1870 x 1280 and says what was not tested; (5) the table of the owner words keeps his words verbatim and marks honestly what is still unmeasured; (6) nothing that was on the page before is gone (compare with the screenshots in ' + EVID + '/page/final/ and with git-less diff of the section list); (7) no sentence anywhere on the page states or implies an item of any must-not-claim list, for graphs or against them; (8) look at the screenshots at 1870 light yourself: name anything that cannot be read at a glance.',
+  'Return ok = true only if checks 1 to 7 hold. Give each defect the exact text or number and the correction.',
+].join('\n')
+
+const pPageFix = (check) => common(
+  'OWNER PAGE, APPLY THE CHECK. Correct what the independent check found, and nothing else.',
+  PAGE + ', ' + REPO + '/docs/program/GRAPH-TEST-RESULT-2026-11.md, ' + EVID + '/page',
+  ''
+) + [
+  'The check returned (JSON):', check, '',
+  'For each defect and mismatch: verify it against the source yourself; if the check is right, fix the data patch or the page source and rebuild; if it is wrong, leave it and say why. Then run check.js.txt, retake the affected screenshots into ' + EVID + '/page/final2/ and report.',
+].join('\n')
+
+// ---------------------------------------------------------------- Design v2
+const pDesign = common(
+  'PROTOCOL V2 FOR THE WIDER TEST. Revise the design draft so that it can deliver what it promises. File: ' + WIDEN + '/protocol-v2.md',
+  WIDEN,
+  ''
+) + [
+  'Read design-draft.md and then design-check.md in full: every problem there has an exact fix. Apply them. Rulings from the judge of the program, which you follow where the check left a choice:',
+  '1. The owner question about graph, knowledge graph and temporal knowledge graph must get measured contrasts: the layers are separate switches (structure; meaning; time validity alone; time with cached conclusions), every step contrast is declared primary or descriptive in advance, and the meaning arm is in the change-task run.',
+  '2. Graphify runs as shipped and in the way its authors intend (its hooks need a git repository: give every export a fresh single-commit repository), code layer and then with its document extraction through the same model provider the agent uses.',
+  '3. The baseline is a real agent with ordinary search tools, the same subagent rights and the same harness prefix as every other arm. A placebo tool and a plain keyword index with the same output format are controls.',
+  '4. The cached-conclusions arm must not depend on the unbuilt knowledge store. Specify the smallest store that tests the idea: conclusions with dependency sets, structure-driven invalidation, re-check before serving. Name what is new engineering and its size.',
+  '5. Verdict rules that can actually fire: redo the power arithmetic with the per-run token figures of this harness (an agent call carries about 60k tokens of fixed prefix; TOKEN-BOTTLENECK-2026-11.md), state the smallest saving the main run can detect, and choose thresholds and guards with the pass probabilities written beside them. The stale bound is computed on the repeat-after-change set, not on change tasks.',
+  '6. The free phases come first and are already running in other lanes: feasibility counts, and the cache replay over the 190 snapshots. The engine timing is done (build-f/engines_checked.json): cite it for his words "very fast" and "small size", it is not re-run.',
+  '7. Fresh held-out change tasks do not exist on main after the frozen commit: design the prospective set honestly (where commits will come from, the wait for the follow-up-fix column) and say what can be concluded without it.',
+  '8. Include the table of the owner words against measurements with no gap left unnamed, including "spatial topology": define it as the structure and location relations of the code graph (containment, slices, runtimes, cross-runtime links) and say where it is measured.',
+  '9. State the ceiling: where the owner tokens go and what share any knowledge layer could touch; and that results on product-code tasks may not transfer to design and document work, with the document stratum that addresses it.',
+  '10. Owner decisions: only those that truly need him, each with a recommendation and its cost: installing graphify (pinned version, container only), the token budget of the pilot and of the main run, optional arms that need a model download or a server, and the order against the two larger levers.',
+  'Keep protocol-v2.md under 300 lines, plain language, no internal jargon. End with a list of every change from the draft and the problem of the check it answers.',
+].join('\n')
+
+// ---------------------------------------------------------------- K0 cache replay
+const pK0 = common(
+  'CACHE REPLAY (K0). Test the owner idea of cached answers with invalidation, in its deterministic form, over the per-commit snapshots. No model is called and no agent runs.',
+  W2 + '/k0 (all code, data and results) and ' + WIDEN + '/k0 (the notes and the result file to keep)',
+  ''
+) + [
+  'THE IDEA UNDER TEST. An answer computed once from the code graph is stored with the set of facts it rests on. At a later commit it is served from the cache if the invalidation rule says it still holds, and recomputed otherwise. The question is how often each invalidation rule serves a wrong (stale) answer, how often it recomputes although the answer had not changed, and how many lookups are served from the cache. Read lane-temporal.md (sections on build systems, early cutoff and "the smallest honest test") and design-check.md first.',
+  'DATA. ' + BUILD + '/facts/cache/<sha>/ holds 190 snapshots (nodes.jsonl, edges.jsonl, commits.jsonl, meta.json). Put them in commit order along the main branch using read-only git on the repository (first-parent ancestry; say how many snapshots lie on one chain and how you treat any that do not, and how many commits lie between consecutive snapshots). Use the reference implementation of the traversal and the question queries as a library by copying it into your folder: arms/reference (in-memory graph) and the question programs in arms/relational/tq.js with arms/common/tqtarget.js; SPEC.md section 12 describes the question kinds.',
+  'QUESTIONS. (a) The 50 structured code-reading questions of the finished test (8 kinds). (b) About 200 more generated mechanically from the first snapshot graph by a stated seeded rule, spread over the same kinds and over the three runtimes (backend, web, mobile), each anchored on a node that exists for at least 20 consecutive snapshots. (c) The frozen change-completion ranking (unbounded reach with degree-normalised ranking, top items inside 8,000 tokens) for 100 seeded files, as a ninth kind. Report the counts actually obtained per kind.',
+  'DEPENDENCY SETS. For each answer record what it rests on at three grains: the files of every node and edge read; the facts themselves (node ids with a content hash of the node record, edge records); and negative dependencies where the answer says "nothing else" (for example no other reader of a setting): record the query pattern so that a new matching fact invalidates it.',
+  'POLICIES, replayed step by step along the chain, each carrying its cache forward: (1) no cache; (2) whole-repository: any change invalidates everything; (3) file-level: invalidate when a file in the dependency set changed (content hash); (4) fact-level: invalidate when a recorded fact changed or a negative dependency gained a match; (5) fact-level with early cutoff: on a changed dependency, recompute, and if the answer is equal keep serving dependents without re-deriving; (6) time-to-live of 5 and of 20 commits with no dependency tracking; (7) no invalidation at all (the stale control).',
+  'MEASURES per policy, per question kind, per runtime and by age of the cached answer in commits: lookups, served from cache, hit rate, stale answers served (cached answer differs from the answer recomputed at that commit) with the rate and a 95 % upper bound, recomputations that returned an identical answer (avoidable), and the number of "dependency cases": steps where an answer changed although none of its own files changed (only these can show that fact-level tracking beats file-level tracking; count them first and report the count plainly even if it is small). A correct fact-level policy must serve zero stale answers: if it serves any, find the missing dependency, fix the recording, and report every such fix.',
+  'TOKEN BOUND, clearly labelled as a bound and not a saving: price a hit at the tokens a derivation costs. Use the two measured prices from the finished test: a typed query answer of about 31 tokens, and the scripted search reading a median of about 695 tokens to reach an answer of that size (build-f/result.json has the per-kind figures). Give the bound per 100 lookups for each policy, and say that deterministic answers are cheap to recompute, so the case that could save much (conclusions that cost a model many tokens to derive) is not tested here.',
+  'ALSO REPORT: how the result depends on the gap between snapshots; the cost of keeping the dependency index (size, time per step); which question kinds have wide dependency sets (hubs) and so low hit rates.',
+  'OUTPUT: code and raw results under ' + W2 + '/k0; a notes file ' + WIDEN + '/k0/NOTES.md and ' + WIDEN + '/k0/result.json with the aggregates (per policy, per kind, per runtime, by age), the list of what it shows and what it does not show. Prove determinism by running twice.',
+].join('\n')
+
+const pK0Audit = common(
+  'AUDIT OF THE CACHE REPLAY. Recompute its headline numbers independently and attack its claims.',
+  W2 + '/k0-audit and ' + WIDEN + '/k0 (one file: AUDIT.md)',
+  ''
+) + [
+  'The replay is in ' + W2 + '/k0 with notes in ' + WIDEN + '/k0/NOTES.md and result.json.',
+  'CHECKS: (1) the snapshot order is the real commit order (verify with read-only git) and no snapshot is used out of order; (2) with your own code, recompute for a seeded sample of at least 300 (question, step) pairs the true answer at that commit and compare with what each policy served: confirm the stale counts of the fact-level policies (must be zero) and of the stale control; (3) the "answer at that commit" used as truth really is recomputed from that snapshot and not taken from a cache; (4) dependency recording: construct by hand five cases where an answer must change without any of its own files changing (a new caller in another file, a new reader of a setting, a new route calling a handler, a removed test, a renamed symbol) and check each policy behaves as claimed; (5) the generated questions are spread as stated and not trivially static (report the share of questions whose answer never changes over the chain: a cache looks perfect on those); (6) the token bound is labelled as a bound, uses the measured prices, and does not count as a saving anything the finished test did not measure; (7) the list "what it does not show" is complete: in particular that conclusions made by a model are untested, that no agent decided to look anything up, and that deterministic answers are cheap to recompute.',
+  'Return ok = true only if checks 1 to 4 hold. Return each claim of the notes with result "survives", "needs qualification" or "refuted", and the sentences that may not be said about this replay.',
+].join('\n')
+
+// ---------------------------------------------------------------- Feasibility
+const pFeas = common(
+  'FEASIBILITY COUNTS (phase 0 of the wider test). Establish, without any model call or agent run, whether an agent pilot on this repository is possible and how large it can be.',
+  W2 + '/feas (scratch) and ' + WIDEN + '/feasibility (the notes and result file to keep)',
+  ''
+) + [
+  'Read design-draft.md (phase 0 and the task sets) and design-check.md. Answer each question with a measured count and how you measured it:',
+  '1. Runnable history. For a seeded sample of 12 past commits on main (spread over June, July and August), export the parent with git archive into your scratch folder and find out whether the project checks can run there with what is already installed on this machine: backend tests (pytest), mypy, ruff and import-linter; web tests and tsc; mobile typecheck and tests. Do not install anything: look for existing environments (a backend virtual environment, node_modules folders) and say exactly what is present and what is missing. If nothing can run without installing dependencies, say so and list exactly what an install would need (packages, source, size, whether it needs the network), because that becomes an owner decision. Never run a check inside the live working tree.',
+  '2. Fresh commits. How many product-code commits exist after the frozen commit a31924a3818f4ac94b695906d107c72c912792b2, on main and on every other ref, by date and by runtime (backend, web, mobile). Read-only git.',
+  '3. Needed-but-not-edited context. For the same 12 commits, count by static means what a careful change would have had to read but did not edit: callers of changed definitions, tests that reference changed definitions and were not changed, invariants in CLAUDE.md whose anchors the diff touches, client call sites of changed routes. Use the facts snapshots for this. Report the distribution: if most commits have none, the change-task design loses its premise.',
+  '4. Recorded sessions. Where the session transcripts of this project are (the finished test drew 27 lookups and counted 139 search-then-read pairs from them; ' + EVID + '/build-a/ and the research notes say where), how many lookups there are now by kind (product code, product documents, program documents), and whether they can be replayed against a tool without sending anything anywhere.',
+  '5. Documents. Count the product documents and the program documents (files, words, estimated tokens), how often each is read in recorded sessions if that is measurable, and how many of the backticked file names and symbols in them resolve at the frozen commit (the earlier research counted 517 of 1,268 unresolved: re-measure).',
+  '6. Graphify fit, without installing it: from lane-graphify.md and its public source, which of this repository languages and edge kinds its parser layer covers (Python, TypeScript, TSX, JavaScript; routes, table reads and writes, cross-runtime URL calls) and what it would miss.',
+  'Give for each count its consequence for the wider test, the blockers, and one plain paragraph: is an agent pilot possible, with how many tasks, and what must be decided or installed first.',
+].join('\n')
+
+const OPUS = { model: 'opus', effort: 'high', agentType: 'general-purpose' }
+
+// ================================================================ run
+const out = await parallel([
+  async () => {
+    const page = await agent(pPage, { label: 'page:update', phase: 'Page', schema: BUILD_SCHEMA, ...OPUS })
+    if (!page) return { failed: 'page' }
+    const check = await agent(pPageCheck, { label: 'page:check', phase: 'Page', schema: REFUTE_SCHEMA, ...OPUS })
+    let fix = null
+    if (check && (!check.ok || check.defects.length > 0 || check.mismatches.length > 0)) {
+      fix = await agent(pPageFix(JSON.stringify({ ok: check.ok, defects: check.defects, mismatches: check.mismatches, claims: check.claims.filter(c => c.result !== 'survives') }, null, 1)), { label: 'page:apply-check', phase: 'Page', schema: BUILD_SCHEMA, ...OPUS })
+    }
+    return { page, check, fix }
+  },
+  () => agent(pDesign, { label: 'design:v2', phase: 'Design', schema: BUILD_SCHEMA, ...OPUS }),
+  async () => {
+    const k0 = await agent(pK0, { label: 'k0:replay', phase: 'Cache replay', schema: K0_SCHEMA, ...OPUS })
+    if (!k0) return { failed: 'k0' }
+    const audit = await agent(pK0Audit, { label: 'k0:audit', phase: 'Cache replay', schema: REFUTE_SCHEMA, ...OPUS })
+    return { k0, audit }
+  },
+  () => agent(pFeas, { label: 'feasibility', phase: 'Feasibility', schema: FEAS_SCHEMA, ...OPUS }),
+])
+
+return { page: out[0], design: out[1], cache: out[2], feasibility: out[3] }

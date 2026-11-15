@@ -1,0 +1,12 @@
+const fs = require('fs');
+const base = process.argv[2];
+const r = JSON.parse(fs.readFileSync(base + '/out/review.json', 'utf8'));
+const adjV = r.adj.flatMap((x) => x.verdicts);
+const refV = r.ref.flatMap((x) => x.verdicts);
+const show = (v) => console.log(v.id + ' ' + v.verdict + ' [' + v.bottlenecks.join(',') + '] ' + (v.merges_into || '') + ' | ' + v.clinic_practice + ' ' + v.clinic_evidence + String.fromCharCode(10) + '    ' + v.why);
+console.log('--- G1 candidates that stayed fallen ---');
+for (const v of adjV.filter((v) => v.id.startsWith('G1-') && v.verdict === 'stays-fallen')) show(v);
+console.log('--- all stays-fallen ids (other groups), one line ---');
+for (const v of adjV.filter((v) => !v.id.startsWith('G1-') && v.verdict === 'stays-fallen')) console.log(v.id + ' [' + v.bottlenecks.join(',') + '] ' + v.why.slice(0, 170));
+console.log('--- refuter on G2-F051 ---');
+const x = refV.find((v) => v.id === 'G2-F051'); console.log(JSON.stringify(x, null, 1));

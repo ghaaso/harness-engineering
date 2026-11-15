@@ -1,0 +1,18 @@
+// sessions: one row per session id (main transcript plus its subagents) with start/end, classes and carried tokens.
+// Output: out/sessions.json. Prints the table (session id prefix, folder, dates, counts) - no transcript text.
+const fs = require('fs'), readline = require('readline');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+(async () => {
+  const S = {};
+  const rl = readline.createInterface({ input: fs.createReadStream(W + '/out/instances-v.jsonl'), crlfDelay: Infinity });
+  for await (const l of rl) {
+    if (!l.trim()) continue; const x = JSON.parse(l); const k = x.sid || 'nosid:' + x.file;
+    const s = (S[k] = S[k] || { sid: k, folders: {}, first: x.date, last: x.date, n: 0, carried: 0, fetched: 0, byClass: {}, transcripts: new Set(), mainTranscripts: new Set() });
+    s.n++; s.carried += x.carried; s.fetched += x.fetched; if (x.date < s.first) s.first = x.date; if (x.date > s.last) s.last = x.date;
+    s.folders[x.folder] = (s.folders[x.folder] || 0) + 1; s.transcripts.add(x.file); if (!x.sub) s.mainTranscripts.add(x.file);
+    const c = (s.byClass[x.cls] = s.byClass[x.cls] || { n: 0, carried: 0 }); c.n++; c.carried += x.carried;
+  }
+  const rows = Object.values(S).map((s) => ({ ...s, transcripts: s.transcripts.size, mainTranscripts: s.mainTranscripts.size })).sort((a, b) => (a.first < b.first ? -1 : 1));
+  fs.writeFileSync(W + '/out/sessions.json', JSON.stringify(rows, null, 1));
+  for (const r of rows) console.log(r.sid.slice(0, 8), r.first.slice(0, 16), r.last.slice(0, 16), 'n', r.n, 'tr', r.transcripts, 'main', r.mainTranscripts, 'carriedM', (r.carried / 1e6).toFixed(1), 'prod', r.byClass.product ? r.byClass.product.n + '/' + (r.byClass.product.carried / 1e6).toFixed(1) : '-', 'prog', r.byClass.program ? r.byClass.program.n + '/' + (r.byClass.program.carried / 1e6).toFixed(1) : '-', Object.keys(r.folders).join(',').slice(0, 60));
+})();

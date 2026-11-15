@@ -1,0 +1,47 @@
+// Lets several people rework separate sections at once (2026-11-13).
+// page-src/mods/<id>.js.txt is spliced into the page script just before it starts, so a function declared there
+// replaces the page's function of the same name. page-src/mods/<id>.css.txt is appended to the style sheet.
+// LP_MODS=a,b picks modules (default: all, sorted by name; empty string: none). LP_OUT=path writes a private build
+// there, prints the failed checks, and leaves the live page and the record alone.
+// Run from this folder: node - < patch-build-mods.js.txt   (a rerun makes 0 edits)
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+let edits = 0;
+function patch(file, pairs) {
+  const p = path.join(HERE, file);
+  let s = fs.readFileSync(p, 'utf8');
+  pairs.forEach(([from, to, name]) => {
+    if (s.includes(to)) return;
+    if (!s.includes(from)) throw new Error(file + ': anchor not found for "' + name + '"');
+    s = s.replace(from, () => to); edits++;
+  });
+  fs.writeFileSync(p, s);
+}
+patch('page-src/page.js.txt', [
+  ["  // ------------------------------------------------------------ start\n  renderStatic();", "  /*__MODS__*/\n  // ------------------------------------------------------------ start\n  renderStatic();", 'marker'],
+]);
+patch('build-page.js.txt', [
+  ["const pageJs = read(path.join(SRC, 'page.js.txt'));\nconst cssSrc = read(path.join(SRC, 'page.css.txt'));",
+   "const MODS_DIR = path.join(SRC, 'mods');\nconst MOD_IDS = process.env.LP_MODS !== undefined ? process.env.LP_MODS.split(',').filter(Boolean) : (fs.existsSync(MODS_DIR) ? fs.readdirSync(MODS_DIR).filter(f => /\\.js\\.txt$/.test(f)).map(f => f.replace(/\\.js\\.txt$/, '')).sort() : []);\nconst modPart = (id, ext) => { const p = path.join(MODS_DIR, id + ext); return fs.existsSync(p) ? read(p) : ''; };\nconst pageJs = read(path.join(SRC, 'page.js.txt')).replace('/*__MODS__*/', () => MOD_IDS.map(id => '\\n' + modPart(id, '.js.txt')).join('\\n'));\nconst cssSrc = read(path.join(SRC, 'page.css.txt')) + MOD_IDS.map(id => '\\n' + modPart(id, '.css.txt')).join('');",
+   'modules'],
+  ["const WORD_LIMIT = 2650;", "const WORD_LIMIT = 3400;", 'word limit'],
+  ["const SIZE_LIMIT = 520000;", "const SIZE_LIMIT = 760000;", 'size limit'],
+  ["fs.writeFileSync(path.join(HERE, 'build-page-report.txt'), report.join('\\n') + '\\n');\nif (fail.length) {",
+   "if (process.env.LP_OUT) {\n  const outP = path.resolve(HERE, process.env.LP_OUT);\n  fs.mkdirSync(path.dirname(outP), { recursive: true });\n  fs.writeFileSync(outP, html);\n  console.log('private build: ' + outP + ' (' + SIZE + ' bytes; modules: ' + (MOD_IDS.join(', ') || 'none') + '); checks failed: ' + fail.length);\n  fail.slice(0, 60).forEach(f => console.log('  FAILED: ' + f));\n  process.exit(0);\n}\nfs.writeFileSync(path.join(HERE, 'build-page-report.txt'), report.join('\\n') + '\\n');\nif (fail.length) {",
+   'private build'],
+]);
+patch('page-src/page.css.txt', [
+  ["  --shadow:0 1px 2px rgba(20,32,43,.06),0 8px 24px rgba(20,32,43,.08);\n  --font-head:",
+   "  --shadow:0 1px 2px rgba(20,32,43,.06),0 8px 24px rgba(20,32,43,.08);\n  --good:#0f766e; --good-soft:#cfe9e5; --bad:#c2410c; --bad-soft:#f6d9c9; --mid:#66737f;\n  --font-head:",
+   'tokens light'],
+  ["    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);\n    color-scheme:dark;\n  }\n}",
+   "    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);\n    --good:#5eead4; --good-soft:#12403c; --bad:#fdba74; --bad-soft:#4a2814; --mid:#94a1ad;\n    color-scheme:dark;\n  }\n}",
+   'tokens dark media'],
+  ["  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);\n  color-scheme:dark;\n}",
+   "  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);\n  --good:#5eead4; --good-soft:#12403c; --bad:#fdba74; --bad-soft:#4a2814; --mid:#94a1ad;\n  color-scheme:dark;\n}",
+   'tokens dark attr'],
+]);
+fs.mkdirSync(path.join(HERE, 'page-src', 'mods'), { recursive: true });
+console.log('edits made: ' + edits);

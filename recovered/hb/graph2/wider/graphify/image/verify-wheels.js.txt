@@ -1,0 +1,31 @@
+// Verify every downloaded wheel against PyPI's published sha256 for that exact file,
+// then write requirements.lock (pip --require-hashes format) and wheels.tsv.
+// Usage: node verify-wheels.js.txt <image dir>
+const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const dir = process.argv[2];
+const wdir = path.join(dir, 'wheels');
+const files = fs.readdirSync(wdir).filter(f => f.endsWith('.whl')).sort();
+(async () => {
+  const rows = [], lock = [], bad = [];
+  let total = 0;
+  for (const f of files) {
+    const buf = fs.readFileSync(path.join(wdir, f));
+    const sha = crypto.createHash('sha256').update(buf).digest('hex');
+    const parts = f.split('-');
+    const dist = parts[0], ver = parts[1];
+    const name = dist.replace(/_/g, '-').toLowerCase();
+    const r = await fetch(`https://pypi.org/pypi/${name}/${ver}/json`);
+    const j = await r.json();
+    const u = (j.urls || []).find(x => x.filename === f);
+    const pypiSha = u ? u.digests.sha256 : null;
+    const ok = pypiSha === sha;
+    if (!ok) bad.push(f);
+    total += buf.length;
+    rows.push([name, ver, f, buf.length, sha, ok ? 'match' : 'MISMATCH', u ? u.upload_time_iso_8601 : '-'].join('\t'));
+    lock.push(`${name}==${ver} --hash=sha256:${sha}`);
+  }
+  fs.writeFileSync(path.join(dir, 'wheels.tsv'), 'name\tversion\tfile\tbytes\tsha256\tpypi_sha256\tpypi_upload_time\n' + rows.join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'requirements.lock'), '# graphifyy 0.9.108 and its core dependencies, no extras; every hash checked against PyPI\n' + lock.join('\n') + '\n');
+  console.log(rows.join('\n'));
+  console.log(`files=${files.length} total_bytes=${total} mismatches=${bad.length} ${bad.join(' ')}`);
+})();

@@ -1,0 +1,302 @@
+# Architecture
+
+FixFlow is a **modular monolith** delivered through **three runtimes** that
+live together in this monorepo:
+
+- **Web manager app** — React + Vite (current root `src/`, served as a SPA).
+- **Technician mobile app** — Expo (React Native), Android target.
+- **Backend** — FastAPI (Python 3.12) + Supabase Postgres (data) + Cloudflare R2 (media).
+
+> For the **why** behind these boundaries — business context, how to decide _where_ a capability
+> belongs, and the decision frameworks — see
+> [`docs/SOLUTION-ARCHITECT-GUIDE.md`](./docs/SOLUTION-ARCHITECT-GUIDE.md).
+
+Code is grouped by **business capability** (jobs, technicians, attendance,
+media, invoices, …), **not** by technical layer. A slice is the same concept
+on every runtime: the `media` slice has a folder on the backend, a folder in
+the Expo app, and (where relevant) a folder in the web app. One person can
+own and ship a slice **end-to-end across all three sides** with minimal
+cross-talk to other slices.
+
+---
+
+## Repo layout (monorepo)
+
+```
+EMS_workshop1/
+  src/                    # web manager app (React + Vite)            ← will move to frontend/ later
+  backend/                # FastAPI + Alembic + Supabase
+    app/
+      main.py             # app factory; mounts every feature router
+      core/               # config (pydantic-settings), async DB session
+      features/<slice>/   # router · schemas · models · service · repository · tests/
+      shared/             # cross-slice helpers (errors, pagination, base schemas)
+    alembic/              # database migrations
+    tests/                # cross-cutting integration tests
+    pyproject.toml        # deps, ruff, mypy, pytest config
+    Dockerfile
+  technician-app/         # Expo (Android demo) — scaffolds in Phase 2
+  docker-compose.yml      # local Postgres + backend dev stack
+  .github/workflows/ci.yml
+```
+
+> The web app stays at the repo root for now (moving it would conflict with
+> in-flight feature branches). When the active branches are merged we'll
+> relocate it to `frontend/` so all three runtimes are siblings.
+
+---
+
+## Vertical slices span the whole stack
+
+A real vertical slice is end-to-end — UI → API → domain → database. So the
+**same slice name** appears on every runtime that needs it:
+
+```
+EMS_workshop1/
+  src/features/jobs/                     ⇄    backend/app/features/jobs/
+  src/features/media/  (web tile/play)   ⇄    backend/app/features/media/      ⇄    technician-app/src/features/media/
+  src/features/invoices/  (manager view) ⇄    backend/app/features/invoices/
+```
+
+A slice ships when all of its sides ship together — that's how we avoid the
+"backend done but UI not wired" anti-pattern.
+
+---
+
+## Frontend (web manager) — three layers
+
+```
+src/
+  app/        Composition root. Wires everything together. May depend on shared + features.
+  shared/     Shared kernel. Pure, reusable. Depends on NOTHING internal.
+  features/   One folder per capability (a vertical slice). Depends on shared + app store.
+```
+
+### `src/app/` — composition root
+
+```
+app/
+  main.jsx                 # entry point (referenced by index.html)
+  App.jsx                  # router; the URL prefix decides the role
+  providers/
+    AppContext.jsx         # the single app store: state + mutators + selectors, useApp()
+  layouts/
+    ManagerLayout.jsx      # desktop sidebar shell
+    TechLayout.jsx         # mobile bottom-tab shell
+    PhoneFrame.jsx         # phone bezel that frames the technician view on desktop
+  components/
+    RoleSwitcher.jsx       # Manager <-> Technician toggle
+    ToastHost.jsx          # global toast outlet
+```
+
+Routing is role-by-URL-prefix: anything under `/tech/*` renders inside
+`TechLayout` (the technician/mobile experience); everything else renders inside
+`ManagerLayout` (the manager/desktop experience). The web app authenticates
+against the backend (Name + PIN → JWT, kept in `localStorage`); `AuthContext`
+holds the session and **refuses non-manager logins** — the manager console is
+manager-only, technicians use the mobile app. The `RoleSwitcher` is a dev/demo
+affordance for previewing the technician layout, not an auth boundary.
+
+### `src/shared/` — shared kernel
+
+```
+shared/
+  ui/        primitives, StatusChip, Avatar, StatCard, Overlay, IntegrationBadge
+  lib/       api (web→API client), currency, date, statusConfig, job, text
+  config/    constants (TODAY, WORKSHOP, APPLIANCE_TYPES, STATUSES, …)
+```
+
+**Rule:** `shared/` imports only npm packages. It must never import from
+`app/` or `features/`. If a "shared" thing needs feature data, it is not shared —
+move it into the feature.
+
+### `src/features/<name>/` — a vertical slice
+
+Each feature is self-contained:
+
+```
+features/jobs/
+  data/         # the feature's API client + response mappers (jobsApi.js, mapJob.js)
+  components/   # components used only by this feature (JobCard, NewJobForm)
+  pages/        # route screens — manager and technician views live together
+  index.js      # PUBLIC API barrel — what the router/other code may import
+```
+
+Current features: `auth`, `dashboard`, `jobs`, `technicians`, `attendance`,
+`media`, `schedule`, `troubleshooting`, `settings`. (A feature may also have a
+`lib/` for feature-local helpers — e.g. `attendance/lib/cells.js`.) A feature's
+`data/` holds its backend API client and response mappers — the web app reads
+**live data from the FastAPI backend**, not bundled mock seeds.
+
+---
+
+## Dependency rules (the contract)
+
+This is what keeps the slices independent. **CI enforces it**: ESLint
+`no-restricted-imports` rules (`eslint.config.js`) fail the build on a
+boundary violation — `shared/` importing anything internal, or `features/`
+reaching past `@app/providers` into the composition root:
+
+1. **`shared/` → nothing internal.** Pure and reusable.
+2. **`features/*` → `shared/*`** and the app store (`useApp()` from
+   `@app/providers/AppContext`). Fine.
+3. **Cross-feature reuse** is allowed but disciplined: import another feature's
+   **data/helpers by their specific path** (e.g.
+   `@features/technicians/data/technicians`). Keep these edges
+   **one-directional and acyclic**. Do **not** import another feature's
+   `pages` or its `index.js` barrel from inside a feature — that risks circular
+   page graphs.
+4. **`app/` composes.** It may import any feature's public barrel to assemble
+   routes and owns cross-cutting concerns (router, layouts, global store, toasts).
+5. **The router imports feature pages only through each feature's `index.js`.**
+
+```
+app  ──▶ features (via index.js barrels)  ──▶ shared
+ │                  │
+ └──▶ AppContext ◀──┘   (features read/write global state via useApp())
+```
+
+---
+
+## State management
+
+All mutable state currently lives in one provider, `app/providers/AppContext.jsx`,
+exposed through the `useApp()` hook: `jobs`, `technicians`, `attendanceToday`,
+toasts, plus mutators (`addJob`, `markReady`, `logPayment`, `closeJob`, …) and
+selectors (`getJob`, `jobsByStatus`, `jobsForTech`, `globalActivity`). On mount
+it **fetches live data from the backend** (`jobsApi`, `fetchTechnicians`,
+`fetchBoard`) — there is no bundled-seed fallback, so state is empty until the
+API answers and a refresh simply re-fetches. Mutators call the API and reconcile
+the returned truth into local state.
+
+This is intentionally simple for the current size. As a slice's state grows, it
+can be extracted into a feature-local provider/store and composed at the app
+root. The boundary rules above keep that refactor local to the feature.
+
+---
+
+## Path aliases
+
+Imports use aliases instead of brittle `../../..` paths. Defined in three
+places, kept in sync:
+
+| Alias       | Path           | Configured in                                         |
+| ----------- | -------------- | ----------------------------------------------------- |
+| `@app`      | `src/app`      | `vite.config.js`, `vitest.config.js`, `jsconfig.json` |
+| `@shared`   | `src/shared`   | same                                                  |
+| `@features` | `src/features` | same                                                  |
+
+---
+
+## Adding a new feature
+
+1. Create `src/features/<name>/` with `data/`, `components/`, `pages/`, and an
+   `index.js` barrel.
+2. Export the feature's route screens from `index.js`.
+3. Register the routes in `src/app/App.jsx` (under the manager and/or technician
+   route group).
+4. Reuse `shared/*`; read/write global state through `useApp()`.
+5. Add tests beside the code as `*.test.js` / `*.test.jsx`.
+
+---
+
+## Backend (FastAPI) — slice-per-folder
+
+Each feature module under `backend/app/features/<slice>/` is self-contained
+and stays inside this rectangle:
+
+```
+features/<slice>/
+  router.py        # APIRouter for this slice
+  schemas.py       # Pydantic request/response models
+  models.py        # SQLAlchemy ORM models
+  service.py       # business logic (the PUBLIC surface for other slices)
+  repository.py    # data access
+  tests/           # unit + integration tests
+```
+
+A slice may add a **pure helper module** for logic worth unit-testing without a DB
+or network — e.g. `attendance/derive.py` (geofence math + the daily status rollup),
+imported only by `service.py`. New ORM models are registered in `app/registry.py`
+so Alembic and the test schema see them.
+
+### Dependency rules
+
+1. **`shared/` is dependency-free in the business sense.** Pure helpers, base
+   schemas, error classes (e.g. `shared/geo.py` — haversine used by both
+   attendance and jobs). May depend on third-party libs only.
+2. **Feature slices may depend on `core/` and `shared/`.** Never on another
+   feature's `repository.py` or `models.py`.
+3. **Cross-slice consumption goes through the target slice's `service.py` and
+   `deps.py`.** `service.py` is the logic surface; `deps.py` exports the
+   FastAPI dependency providers that _construct_ it (e.g. jobs' close-gate
+   uses `media.deps.get_media_service`). Repositories and models are private
+   internals.
+4. **`identity` is the one blessed cross-cutting slice.** Every slice may
+   import `identity.deps` (the auth seam: `CurrentPrincipal`,
+   `CurrentManager`) and `identity.schemas`; identity itself imports no other
+   feature.
+5. **`main.py` only composes.** Mounts routers; no business code.
+
+These rules are **enforced in CI** by [import-linter](https://import-linter.readthedocs.io)
+(`lint-imports`, config in `backend/pyproject.toml` under `[tool.importlinter]`).
+A new legitimate cross-slice edge means adding it to the contract's
+`ignore_imports` in the same PR — which is exactly the review conversation the
+rule exists to force.
+
+### Signed-URL upload pattern (media)
+
+Media bytes live in **Cloudflare R2** (10 GB free, **$0 egress** — the decisive
+factor for video playback). The mobile app **never holds R2 credentials**. The
+flow:
+
+```
+Expo (capture + compress to 720p)
+   ├─ 1. POST /api/jobs/{id}/media         (phase, type, filename)
+   ▼
+FastAPI · media slice                       validate rules, create DB row (pending),
+   │                                        mint a short-lived R2 signed PUT url
+   │  2. returns { signed_url, media_id }
+   ▼
+Expo  ──── 3. PUT bytes DIRECTLY to R2 via signed_url
+   │  4. POST /api/jobs/{id}/media/{mid}/complete   (reports size)
+   ▼
+FastAPI · media slice                       reject+purge if oversized, else mark
+                                            uploaded; mint a signed playback url
+```
+
+R2 is the media store **behind** the monolith; Supabase Postgres holds the
+rows. Bytes flow phone↔R2 directly (no double bandwidth); only control
+messages traverse FastAPI. Because a pre-signed PUT can't bound size
+server-side, the `/complete` step enforces `r2_max_upload_bytes` (client-side
+720p compression keeps clips well under it).
+
+---
+
+## Mobile (Expo technician app)
+
+Same vertical-slice convention: `technician-app/src/features/<slice>/`. The
+app is the mobile half of the `media` slice — the technician captures
+Before/After media, the JS compresses it, and the upload pipeline talks to
+the FastAPI backend exactly like any other consumer. The app never holds a
+Supabase key.
+
+Native modules (`react-native-compressor`, `expo-video`) require an
+**EAS development build** — Expo Go is not enough. See
+[`technician-app/README.md`](./technician-app/README.md) for the local-dev
+setup and EAS instructions.
+
+---
+
+## Tooling
+
+| Side       | Tools                                                          | Commands                                   |
+| ---------- | -------------------------------------------------------------- | ------------------------------------------ |
+| Web        | Vite · ESLint · Prettier · Vitest + Testing Library            | `npm run lint · format · test · build`     |
+| Backend    | Ruff (lint + format) · Mypy (strict) · Pytest + pytest-asyncio | `ruff check · ruff format · mypy · pytest` |
+| Mobile     | Expo · EAS Build · TypeScript strict · Jest (jest-expo)        | `npm run typecheck · npm test · eas build` |
+| Migrations | Alembic (SQLAlchemy 2.0 async)                                 | `alembic upgrade head` / `revision -m`     |
+| Local DB   | docker-compose (Postgres 16) — `docker compose up`             |                                            |
+
+**GitHub Actions** (`.github/workflows/ci.yml`) runs the **frontend**,
+**backend**, and **mobile** jobs in parallel on every PR and push to `main`.

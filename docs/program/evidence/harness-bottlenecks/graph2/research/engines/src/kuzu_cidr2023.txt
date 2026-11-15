@@ -1,0 +1,544 @@
+KÙZU Graph Database Management System
+
+Xiyang Feng Guodong Jin Ziyi Chen Chang Liu Semih Saliholu
+
+                      {x74feng,guodong.jin,z473chen,c.liu,semih.salihoglu}@uwaterloo.ca
+                                                  University of Waterloo
+                                                            Canada
+
+ABSTRACT                                                                              Figure 1: Left: columnar storage of Kùzu. Right: flat and
+                                                                                      factorized output of the 2-hop query in Example 1.
+Datasets and workloads of popular applications that use graph                         as RDF-style triples. This paper presents Kùzu1, a new GDBMS
+database management systems (GDBMSs) require a set of storage                         that we are developing at University of Waterloo that aims to opti-
+and query processing features that RDBMSs do not traditionally                        mize these features through the integration of existing and novel
+optimize for. These include optimizations for: (i) many-to-many                       state-of-art storage, indexing, and query processing techniques.
+(m-n) joins; (ii) cyclic joins; (iii) recursive joins; (iv) semi-structured
+data storage; and (v) support for universal resource identifiers. We                     Kùzu's design is informed by our insights from discussions with
+present Kùzu, a new GDBMS we are developing at University of                          many users of GDBMSs, which we previously published as a user
+Waterloo that aims to integrate state-of-art storage, indexing, and                   survey paper [28], and developing our group's previous system
+query processing techniques to highly optimize for this feature set.                  GraphflowDB [12, 15, 18, 19], from which it differs in many impor-
+                                                                                      tant aspects. GraphflowDB was an in-memory non-transactional
+   This paper serves the dual role of describing our vision for Kùzu                  prototype system we used for our research agenda. Instead, Kùzu
+and the system's factorized query processor, which is based on two                    aims to be a fully functional, user-facing, and a highly scalable
+design goals: (i) achieving good factorization structures under m-n                   GDBMS, which was the most pressing challenge of users in our sur-
+joins; and (ii) ensuring sequential scans that avoid entire scans of                  vey [28]. To that end, Kùzu is disk-based and scales out of memory,
+columns and join indices when possible. As we show these two                          implements disk-based primary key and join indices, and integrates
+goals can sometimes conflict and we describe our core binary and                      more robust and scalable join capabilities than GraphflowDB. In
+worst-case optimal (multiway) join operators that simultaneously                      addition, Kùzu is transactional and aims to provide the core DBMS
+achieve both goals. Kùzu is actively being developed to be a fully                    functionalities to be user-facing. In its current usage vision, Kùzu is
+functional open-source DBMS with the goal of wide user adoption.                      an open source embeddable library suitable for quickly developing
+                                                                                      pipelines in the graph data science ecosystem. This is inspired by
+1 INTRODUCTION                                                                        DuckDB [1, 26] and originally by SQLite [3] 2.
+
+Modern GDBMSs adopt a graph/network data model and SQL-                                  This paper focuses on Kùzu's processor, which is block-based as
+like high-level query languages that have several graph-specific                      in modern analytical DBMSs and further aims to satisfy two goals:
+constructs, such as arrows to describe joins and Kleene star to de-
+scribe reachability between records. At their cores, GDBMSs are                           (i) Intermediate relations of m-n joins should be factorized [23],
+relational in the sense that they map their query language con-                               i.e., represented as Cartesian products instead of flat tuples.
+structs to relational operators, such as join, project, filter, or group
+by, that process and output sets/relations of tuples. In practical                       (ii) Scans should always be sequential and when possible only
+use, GDBMSs power several analytics-oriented applications that                                scan necessary blocks from base columns or join indices.
+are popular in fraud detection systems, recommendation engines,
+master data and knowledge management, among other domains.                            As we next demonstrate, these two design goals are often in conflict
+                                                                                      even in very simple queries:
+   The workloads of these application require several storage and
+processing features that existing RDBMSs are generally not opti-                         Example 1. Consider the query below that asks for the owners
+mized for. These features include: (i) many-to-many (m-n) joins; (ii)                 of the source and destination accounts of each 2-hop money transfer
+cyclic join queries, such as when finding cyclic graph patterns; (iii)                facilitated by Karim's accounts:
+recursive joins, such as those used for reachability computations;
+(iv) ability to store semi-structured data, i.e., whose columns/prop-                 MATCH (c:Acc)-[t2:Trnsfr]->(a:Acc)-[t1:Transfer]->(b:Acc)
+erty names and types are not defined to the system apriori; and                       WHERE a.owner = 'Karim' RETURN c.owner, b.owner
+(v) storage and processing of universal resource identifiers (URIs),
+which are strings identifying entities in knowledge graphs encoded                    1 https://github.com/kuzudb/kuzu
+                                                                                      2Kùzu is also inspired by other open-source DBMS projects originally from research
+*Kù-zu (`bright' + `to know') is a Sumerian word for"wisdom" [13].                    groups, such as PostgreSQL and MonetDB, which have also achieved wide adoption.
+**Equal contributions.
+
+This paper is published under the Creative Commons Attribution 4.0 International
+(CC-BY 4.0) license. Authors reserve their rights to disseminate the work on their
+personal and corporate Web sites with the appropriate attribution, provided that you
+attribute the original work to the authors and CIDR 2023. 13th Annual Conference on
+Innovative Data Systems Research (CIDR '23). January 8-11, 2023, Amsterdam, The
+Netherlands.
+Figure 2: Standard GDBMS plan with INLJ-like operators.                     ASP-Join-based binary and multiway wco join algorithms that
+                                                                            achieve these goals (Section 3). We provide details of integrating
+                                                                            ASP-Join into our system, including data structures to accumulate
+                                                                            tuples, our optimizer, as well as the system's other core operators
+                                                                            and their optimizations. Sections 4, 5, and 6 present experiments,
+                                                                            related work, and conclusions, respectively.
+
+                                                                            2 KÙZU OVERVIEW
+
+Consider a columnar storage that we assume in this paper, where both        Kuzu is a single node (multi-core), disk-based, transactional but
+adjacency lists and node properties are stored in columnar structures       read-optimized GDBMS. It adopts a classic DBMS architecture
+as in Figure 1. Consider a -regular database, where a node  has             that consists of a parser, binder, planner, storage manager, buffer
+outgoing/incoming neighbors {(,1, /), ..., (,, /)}, where (,, /)            manager, query processor, and transaction manager. We give brief
+stands for  's, 'th forward/backward neighbor. Suppose, Karim has           overviews of different components, leaving the details of its query
+one account 1, so the output has 2 tuples. Figure 1 shows both the          processor to Section 3.
+flat and the succinct factorized representation of this output.             Query Language and Data Model: Kùzu adopts the property
+                                                                            graph model (PGM) [27], where databases are modeled as a set
+   A standard plan in GDBMSs for this query, shown in Figure 2,             of labeled nodes and edges with properties. While original PGM
+performs the following: (i) scan a.owner sequentially and identify          supports only semi-structured properties, properties in Kùzu can
+Karim's accounts; (ii) extend the a nodes forward to b neighbors by         also be structured. We allow nodes and edges to have a single label,
+scanning the adjacency lists of the a bindings sequentially (except         which allows us to model them as single relations. The system has a
+due to the previous filter); (iii) scan the b.owner values; and (iv)        data definition language (DDL), through which node and edge rela-
+and (v) repeat (ii) and (iii) for the backward edges of a bindings.         tions with pre-defined property/column names and data types can
+                                                                            be specified. Semi-structured properties, which are supported only
+Note that in steps (ii) and (iv), which implicitly perform an m-n join,     for nodes, are not apriori defined and can be inserted into the data-
+by extending a nodes to their forward and backward edges and                base through update commands. At a logical data level, the system
+b neighbors in factorized format, such as T1 = {(1,1,),..., (1,, )}         supports modeling records in node or edge relations, where node
+× (1, Karim) × {(1,1, ),..., (1,, )} (edge IDs are omitted) one can         relations have an extra "semi-structured" column, where arbitrary
+achieve the factorization structure from Figure 1. Such plans were          key-data type-value triples can be stored. Nodes have a primary
+used in GraphflowDB [12]. However, the scans of b and c's owner             key property where as edges are identified through system-level
+properties perform non-sequential lookups in the owner column,              global numeric identifiers. The query language of Kùzu is open-
+                                                                            Cypher [25], which we extended to define structured properties.
+since the neighbor IDs of nodes have no locality guarantees.                Storage and Indices: Kùzu is a columnar system similar to modern
+                                                                            read-optimized analytical DBMSs [1, 4]. Kùzu's storage structures
+   In a separate experiment and analysis study [14], we showed              are primarily disk-based versions of the columnar in-memory de-
+                                                                            signs described in reference [12]. Structured node properties are
+that because GDBMSs rely on such INLJ-like operators, they are              stored in vanilla column files. Edges are double indexed and stored
+                                                                            in CSR-based adjacency list indices (a very simplified version is
+amenable to performing non-sequential scans when scanning prop-             shown in Figure 1), which are the core join indices in the system
+                                                                            to join node records. Adjacency list indices contain the destination
+erties, which can degrade their performances on many queries. We            node IDs of the edges and their labels, which are omitted if the
+                                                                            labels of all destination nodes are guaranteed to be the same (this
+also showed that RDBMSs, which rely only on hash joins, never               can be specified in DDL statements). Edge properties are similarly
+                                                                            stored in "parallel" but separate CSR-based structures and double-
+suffer from this but they scan entire tables even if only a few tuples      indexed (see reference [12]). This has storage and update costs yet
+                                                                            ensures that we can scan any node's edges and properties of these
+are needed, nor do they factorize intermediate tuples.                      edges sequentially in both forward and backward directions. Each
+                                                                            node relation has by default a hash index to be able to look up nodes
+   Our key technical approach to simultaneously achieve these               on their primary keys. Storage structures are accessed through a
+                                                                            buffer manager, which has fixed page sizes (4KB) and adopts the
+design goals is a novel modified hash join operator that we call            GClock eviction strategy.
+ASP-Join, for accumulate-semijoin-probe, which consist of 3 pipe-           Query Planner: Query planner adopts a standard architecture: a
+                                                                            parser parses the Cypher query and binds the types of the structured
+lines instead of the 2-pipelined vanilla hash join. The first pipeline      properties and results of expressions (using the system catalog).
+accumulates a set of factorized tuples , such as T1 , which form the        The planner generates an initial logical plan, which goes through a
+probe side. We use  to construct a semijoin filter which selects the        dynamic programming-based join optimizer, which also internally
+node IDs on the build side that will successfully join with . Using         performs several optimizations such as pushing filters. Then this
+                                                                            plan is mapped into physical operators.
+sideways information passing (sip), this filter is then passed to the
+
+2nd pipeline. which builds the hash table, but only (sequentially)
+
+scanning the necessary properties/edges. Finally, the 3rd pipeline
+
+re-scans the probe tuples in factorized format and probes the hash
+table. ASP-Join is the core join operator in Kùzu and is also at the
+
+core of our novel multiway worst-case optimal (wco) join algorithm.
+As we demonstrate in our evaluations, ASP-Join-based plans are
+
+robust and can broadly outperform the factorized and flat plans
+
+of several state-of-the art baseline systems on a wide range of
+
+selectivity settings on both acyclic and cyclic queries.
+
+   Our contributions and the outline of this paper are as follows: (1)
+
+We describe the overall vision of Kùzu (Section 2); (2) We describe
+
+Kùzu's factorized query processor, its two design goals and our
+
+                                                                         2
+Figure 3: Example intermediate tuple representation as
+factorized vectors for the 2-hop query in Example 1.
+
+Transaction Support: Kùzu uses write ahead logging to achieve                        Figure 4: An S-Join plan for the query in Example 2.
+atomicity and durability. Transactions are by design serializable
+as we currently allow one writer transaction in the system, which                       In reference [12], we showed how a block-based processor can
+can run concurrently with multiple read transactions. All updates                    represent the same output more succinctly by using multiple fac-
+to the database, from node and edge relation creation to insertion,                  torized vector groups, each containing a set of independent vectors.
+updates or deletions are atomic and durable if committed and can be                  Figure 3 shows an example of such representation, where each
+rolled back. We have so-far designed our transaction management                      vector group has a curIdx field that can be in one of two states:
+for correctness and simplicity. A more advanced multi-version                        · Flat: If curIdx  0, the vector group (e.g., Vector Group1 in the
+concurrency control mechanism supporting multiple concurrent
+writers is in the roadmap of the next phase of the project.                             figure) is flattened and represents a single tuple that consists of
+User Interfaces and APIs: At the time of writing this paper, Kùzu                       the curIdx'th values in the vectors.
+is an embeddable library with Python and C++ APIs. Users can im-                     · Unflat: If curIdx =-1 (e.g., Vector Group2), the vector group
+port the Kùzu library in applications, point to a database directory,                   represents as many tuples as the size of the vectors it contains.
+and issue queries and update statements. In addition, the system                     The intermediate tuples that factorized vector groups represent is
+has a shell console to issue statements.                                             the Cartesian product of the sets of tuples in each vector group. For
+                                                                                     example, the vector groups in Figure 3 represent 2 tuples. In the
+   Our immediate focus is on extending and polishing the system's                    theory of factorization [24], this is known as an f-representation.
+user interfaces and APIs. Many applications need to store, clean,
+query, or extract subgraphs from their graph-structured data before                  3.2 Design Goals for m-n Join Operators
+performing more advanced graph analytics, such as building graph
+neural network models. Such applications need an embeddable                          In reference [12], we obtained factorized structures using INLJ-
+easy-to-use data management system that is optimized for graph                       like join and scan operators. Factorization was achieved by an
+storage and querying. An important usage vision of Kùzu is to                        Extend operator that extended a node binding from a (flattened)
+be the core DBMS for the graph data science ecosystem. To that                       vector group , e.g., a, to its neighbors by writing the neighbors to
+end we plan to integrate Kùzu with popular graph data science                        another vector group  in an unflat format. For example, we could
+libraries in Python, such as Python Geometric [10], Deep Graph                       achieve the factorization structure in Figure 1 for the 2-hop query
+Library [8], Mindspore Graph Learning [2], and NetworkX [20]. In                     with the plan in Figure 2. The use of such INLJ-like operators also
+addition, we plan to develop a REST API to better support user-                      guarantees reading only the adjacency lists that will successfully
+facing applications that need a server to answer interactive queries,                join with a node binding. However, INLJ-like operators cannot
+(e.g., return friends-of-friends of node ), which are common in the                  guarantee sequential scans of adjacency lists or properties, as the
+workloads of recommendation and question answering systems.                          vertices in adjacency lists have no guaranteed locality. In disk-
+                                                                                     based systems this can be very expensive. Our primary research
+3 FACTORIZED QUERY PROCESSOR                                                         question when designing Kùzu's m-n join operators was: how can
+                                                                                     we simultaneously benefit both from factorization and fast sequential
+We next present Kùzu's block-based and factorized processor. We                      scans?
+first review the processor's intermediate factorized tuple represen-
+tation design. We then cover the system's novel join operators.                      3.3 S-Join
+
+3.1 Background: Factorized Vectors                                                   In reference [14], we had designed a modified hash join operator
+                                                                                     for DuckDB, called S-Join, that could pass semijoin filters from
+Kùzu represents intermediate relations passed between operators as                   its build side to probe side to avoid scanning large tables. Our
+factorized vectors as described in reference [12]3. Traditional block-               implementation in DuckDB was based on flat tuple processing.
+based processors represent intermediate data as a set of flat tuples                 We implemented a variant of S-Join in Kùzu that does factorized
+in a single group of vectors. When joins are m-n, this leads to data                 processing, which we describe here. However, as we show S-Join
+redundancy. For example, in traditional block-based processors, the                  can only obtain a limited set of factorized structures, which we will
+output of the 2-hop query from Example 1 would be represented                        address with ASP-Join. We describe S-Join through an example.
+as a single group of vectors similar to the flat representation in
+Figure 1. Even if the output is produced in small batches (e.g., of                     Example 2. Consider the query below:
+size 1024), it would contain 2 tuples with many value repetitions,
+                                                                                     MATCH (a:Account)-[t:Transfer]->(b:Account)
+3The original term we used in reference [12] was list-based processing. The term     WHERE t.amount > 1000 RETURN a.owner, t.amount
+factorized vectors, which we find more suitable, is due to Amine Mhedhbi.
+
+                                                                                  3
+Figure 5: A plan with ASP-Join, whose sub-plan computing                    hash join as a first pipeline before the actual building and probing.
+the (a)-[t1:Transfer]->(b) join is shown in detail.                         Figure 5 shows the plan Kùzu would generate for this query.
+                                                                            Pipeline 1 (Probe Accumulation): We first accumulate the set of
+   A plan using S-Join for this query is shown in Figure 4. Recall          probe factorized tuples and store them in a temporary relation, we
+that Kùzu stores edge properties in CSR structures that are "parallel"      call Factorized Table FT. This computation consists of only sequen-
+to the adjacency lists. So we can scan the edge properties in (a.ID)×       tial operations, as we sequentially write to this temporary relation.
+(t.ID, t.amount) format, where a.ID would be flattened. An exam-            Similar to hash table build pipeline of S-Join we also construct a
+ple tuple would be {1} × {((1,1, ), amount1) ... ((1,, ), amount )}.        semijoin filter to pass to the 2nd pipeline. In Example 1, the filter
+The query further needs the a.owner properties, which needs to              would be on the b.ID values of the accumulated factorized tuples.
+be joined with these factorized tuples. S-Join has two pipelines to         Pipeline 2 (Hash Table Build): The algorithm next evaluates the
+perform this join.                                                          build side sub-plan of the hash join, during which the appropriate
+Pipeline 1 (Hash Table Build): Since a.ID is flattened, we can              scans at the leaves, e.g., of b.owner, use the passed semijoin filter.
+directly hash these factorized tuples on a.ID in a hash table with          Pipeline 3 (Hash Table Probe): The factorized tuples in FT are
+payloads that contain lists of t.amount values. Figure 4 shows the          scanned and probed in the hash table to produce outputs.
+hash table that would be constructed. As part of building this hash
+table, S-Join also constructs a semijoin filter identifying the a.ID           We review the rest of the plan in Figure 5 for completeness. The
+values that are hashed. 1 in location  indicates that a.ID= should          plan contains two other join operators: (i) the S-Join joins the
+be scanned. This filter is passed to the probe side scan to only scan       (a)-[t1]->(b) factorized tuples from the below ASP-Join with
+the a.owner values that are guaranteed to be part of the join.              the (c)<-[t2]-(a) edges. Here, the join key is a.ID which is flat
+Pipeline 2 (Hash Table Probe): Sequentially scans the a.owner               on both sides, so we can use S-Join; and (ii) The top ASP-Join,
+column (only the values that pass the semijoin filter) and probes the       joins the (c)<-[t2]-(a)-[t1]->(b) tuples, with factorization
+hash table to join a.owner values with hashed factorized tuples.            structure (c.ID, t2.ID) × (a.ID, a.owner) × (t1.ID, b.ID,
+                                                                            b.owner), with (c,ID, c.owner) tuples. Here we use ASP-Join
+   S-Join achieves our two goals only if the build side contains            because the . values from the child S-Join operator are unflat.
+a good factorization structure in which the join key is flat. As we
+next demonstrate, sometimes the good factorization structure of                ASP-Join has the overhead of accumulating the probe side tuples
+a sub-query may contain an unflat join keys, so joining requires            and re-scanning them yet as we show its overhead is acceptable
+flattening the join key values and losing the factorization structure.      when the benefits of keeping a good factorization structure is low
+                                                                            and in many settings the benefits far overweighs the overheads.
+3.4 Binary ASP-Join
+                                                                            3.5 Multiway WCO ASP Join
+Let us return to the 2-hop query in Example 1. In this query a
+plan should start scanning a nodes, and then scan the forward (or           WCO join algorithms [21] have asymptotic runtime advantages
+backward) edges of a in factorization structure (a.ID, a.owner) ×           over binary joins for cyclic join queries. Briefly, in graph terms,
+(t.ID, b.ID), where (a.ID, a.owner) is flattened. The plan would            these algorithms take prefixes of tuples  that match parts of a
+next need to scan b.owner column and join with these factorized             cyclic query and extend each    to a common node variable by
+tuples. However, we cannot use S-Join because b.ID values are               intersecting multiple adjacency lists of vertices matched in . We
+unflat. We would need to flatten these values, thereby losing this          review the wco Generic Join algorithm [21] through an example.
+factorization structure. Ideally, we should use these factorized tuples
+on the probe and not the build side, but also pass a semijoin filter           Example 3. Consider the triangle query below:
+to the build side to identify the successfully joining b.ID values. To
+do so, our ASP-Join algorithm first accumulates the probe side of a         MATCH (c:Acc)<-[t3:DD]-(a:Acc)-[t1:Trn]->(b:Acc)-[t2:Trn]->(c)
+                                                                            WHERE a.owner ='Karim' RETURN a.owner, b.ID, c.ID
+
+                                                                            Generic Join would find all (a)-[t1:Transfer]->(b) "prefix" tu-
+                                                                            ples and for each edge (a= , b=  ), would intersect the forward
+                                                                            Transfer list of   and backward DirectDeposit (DD) list of  to
+                                                                            compute a set of c node IDs. We call  the "extension node variable"
+                                                                            and a and b the "bound" variables. This intersection effectively joins
+                                                                            the prefix tuples with two edge relations in a single operation. In other
+                                                                            cyclic queries, such as cliques, more than 2 adjacency lists can be
+                                                                            intersected.
+
+                                                                               The operator implementing wco joins in Kùzu is an extension of
+                                                                            ASP-Join. An example plan for the above triangle query is shown
+                                                                            in Figure 6. Suppose we have a sub-plan that generates the prefix
+                                                                            tuples and that needs to be followed with an -way intersection.
+                                                                            Pipeline 1 (Probe Accumulation): This pipeline is the same as in
+                                                                            the binary ASP-Join. The tuples can arrive in any factorized format
+                                                                            and necessary flattenings will be performed in the last pipeline (see
+                                                                            below). The pipeline computes  semijoin filters, one for each edge
+                                                                            relation that store the adjacency lists that will be intersected.
+
+                                                                         4
+Figure 6: A plan with a multiway ASP-Join operator that                    b) values are unflat and one where b values are flat and (e, a) values
+computes the triangle query from Example 3.                                are unflat. For each sub-plan , we maintain the IDs of the nodes
+                                                                            that can pass sideways information if  were to be joined on  .
+Pipelines 2..+1 (Hash Table Build): For each of the  edge re-              This is based on a simple rule: if there is a predicate on  or on an
+lations, the necessary adjacency lists passing the semijoin filter         edge that  is part of, then we assume that  can pass information.
+are scanned, sorted, and hashed into separate hash tables using            When enumerating plans for larger sub-queries, we pick between
+their bound variables as keys. In practice if multiple adjacency lists     hash join, S-Join, or ASP-Join based on the factorization struc-
+with the same edge labels and in the same direction are needed,            tures of sub-plans and whether sub-plans can do sip. Currently,
+we take the union of these semijoin filters and construct a single         except for primary key predicates, the selectivity estimations use
+hash table. Figure 6 shows one of the hash tables, those storing           magic constants. If a subquery is cyclic, we enumerate at least one
+(b)-[t2:Transfer]->(c) lists, in our example.                              plan where the last operator is a multiway ASP-Join.
+Pipeline +2 (Hash Table Probe): The accumulated factorized                 Expression evaluations: In our approach to integrating factor-
+probe tuples are re-scanned and any bound variable is flattened            ization to a block-based processor, binary expression evaluators
+using a sequence of Flatten operators. For example, in Figure 6,           in the processor can take two types of operands: (i) both sides are
+the  variables of probe tuples are in unflat format and need to be         in the same vector group, in which case the evaluation happens
+flattened as 's forward Transfer lists will be intersected. Flatten        as in standard block-based processors and as both operands are
+takes a factorized prefix tuple  with an unflat vector group               guaranteed to have the same size; and (ii) both sides are in different
+with  values in it and produces  many tuples where   is flat.              vector groups. In this case, we ensure during plan enumeration that
+After flattenings, the necessary adjacency lists are fetched from the      at least one side is flattened and has size 1. Each binary expression
+hash tables and intersected. This produces a factorized output tuple       evaluation has two branches to handle these two cases.
+where the results of the intersections, e.g., the c values, are stored
+in an unflat vector group.                                                    Finally, we note that we need to maintain the multiplicity of each
+                                                                           factorized tuple because projections can effect the multiplicities.
+   Similar to the binary ASP-Join, the multiway ASP-Join opera-            For example, suppose an operator projects out the unflat  values
+tor ensures that the scans of the adjacency lists from storage are         in factorized tuples such as: a.owner=Karim)} × {(b.ID=(1,1, )),
+sequential.                                                                ..., (b.ID=(1,, ))}. After the projection, we need to maintain the
+                                                                           information that the tuple a.owner=Karim)} has multiplicity . So
+   As we show in our evaluations, under many settings, this ap-            some operators, such as aggregations, cannot blindly assume that
+proach is more robust than using INLJ-like operators, such as Graph-       each factorized tuple represents one tuple, and may need to check
+flowDB's Intersect [19] to perform multiway intersections.                 multiplicities to produce correct outputs.
+
+3.6 Further Details                                                        4 EVALUATIONS
+
+We briefly cover several implementation details of Kùzu's processor.       We present experiments demonstrating the robustness and perfor-
+Parallelism: We adopt morsel-driven parallelism [16]. Parallel             mance benefits of using ASP-Join based plans on acyclic and cyclic
+tasks run copies of the same pipeline and coordinate to get morsels        micro-benchmark queries. We also perform end-to-end system-to-
+of node IDs/properties to scan until no morsels remain.                    system comparisons against DuckDB (v0.4.0)4, and Umbra on the
+Optimizer: Kùzu adopts a dynamic programming-based join opti-              LDBC business intelligence benchmark [9] at scale factor 100 (LDBC
+mizer whose cost metric is the number of factorized tuples, which          100). We also compared against Neo4j but did not find its commu-
+we chose for simplicity. Kùzu models the contents of the MATCH             nity edition competitive with the other systems on the majority of
+clause in Cypher as a standard equi-join graph, where each node            our queries. We do not compare against GraphflowDB, which is
+and edge variable is modeled as a relation. For any sub-query, we          an in-memory system (others are disk-based) but use a Kùzu con-
+keep a best plan for each possible factorization structure, which we       figuration (Kùzu-INLJ), which behaves similarly to GraphflowDB
+limit as the number of factorization structures can grow. For edge         plans.
+relations ( )-[]->(  ), we start with two plans: one for scanning
+the edges in the forward direction, so when a values are flat and (e,         We used a machine with two Intel E5-2670 @2.6GHz CPUs and
+                                                                           256 GB of RAM with 16 physical and 32 logical cores. We used 8
+                                                                           threads in each system and gave 64GB to their buffer managers.
+                                                                           We mark experiments that take more than 1000 seconds as timeout
+                                                                           (TO). We repeated each query 3 times and report the fastest runtime.
+
+                                                                           4.1 End-to-end Comparisons.
+
+                                                                           We used the LDBC interactive short reads (IS), which contain a total
+                                                                           of 7 queries. These are 1- to 4-hop "point" queries, i.e., they contain
+                                                                           an equality predicate on the primary key of one node variable.
+                                                                           These queries also scan properties of other nodes in the query. We
+                                                                           changed the outer joins (Optional Match clause in openCypher)
+                                                                           with full joins because our current outer join implementation is not
+
+                                                                           4 https://github.com/duckdb/duckdb/releases/tag/v0.4.0
+
+                                                                        5
+               IS01 IS02 IS03 IS04 IS05 IS06 IS07                              Our results are shown in Table 2 and consistent with our expecta-
+     Kùzu 1.0 16.69 1.77 1.0 1.49 5.66 4.74
+    DuckDB 0.10 5264.00 43.76 0.10 24.10 5496.00 481.80                     tions. At low selectivities, we see Kùzu configurations outperform-
+    Umbra 0.94 189.22 22.37 0.83 1.89 49.92 166.66
+                                                                            ing DuckDB and Umbra (with > 10x factors). At high selectivities of
+Table 1: Runtime (ms) of Kuzu, DuckDB, and Umbra on
+LDBC-SNB IS queries.                                                        10% and 100%, Umbra and DuckDB outperform Kùzu configurations
+                                                                            but Kùzu-S-Join and Kùzu-INLJ degrade much faster than Kùzu.
+optimized. Table 1 shows our results. IS01 and IS04 are 1-hop queries.
+These take sub-millisecond times across all systems and DuckDB              Importantly Kùzu either outperforms other systems/configuration
+performs the best on these. Other queries contain at least 2-hop
+queries over m-n edges. On these Kùzu consistently outperforms              or is within 3.3x of the best performing one, which happens at 100%
+DuckDB and Umbra. These queries still take sub-second time and              selectivity, i.e., when ASP-Join only has overheads.
+the primary benefit of Kùzu is its ability to do sip and avoid scanning
+large chunks of the base relations. This is because the primary key            Our 2-hop query is (1:Comment)<-[:Likes]-(2:Person)-[:Likes]-
+predicate is very selective and the queries contain relatively short        >(3:Comment) where the predicate is on the middle 2 node. This
+paths. Kùzu can do chained sip here to pass semijoin filters to all         ensures that left deep plans that start from 2 can obtain a good fac-
+other node variables, which gives it an advantage on these queries.         torization structure, so we can evaluate a case when factorization
+Kùzu also factorizes the outputs. However, on these queries, this
+benefit is not very visible because the joins are not the dominant          can have major benefits. At low selectivities, we expect systems to
+factor. Finally, we investigated why DuckDB performs very poorly
+on IS06 and we found that its optimizer picked a poor plan that             behave similarly to the 1-hop query for exactly the same reasons. As
+joined two relations without any predicates, which Umbra and
+Kùzu avoided.                                                               selectivity increases, we again expect DuckDB/Umbra to start clos-
+                                                                            ing the gap and outperforming Kùzu-S-Join and Kùzu-INLJ which
+4.2 Acyclic Query Microbenchmarks                                           will suffer for the same reasons above. However, now Kùzu-INLJ
+
+W evaluate different Kùzu configurations, DuckDB and Umbra,                 should remain competitive until higher selectivity levels because
+under three simple acyclic path queries. We use LDBC 100. We use
+path queries of the form (1)-[1]->(2) .. ->( ) and put a predicate          we expect it to win more significantly from factorization. Kùzu now
+<p on a manually inserted ID column/property on one of the  and
+we return the min(  .prop) of two properties every   (including             should not only stay competitive but outperform other systems as
+ ). We show our 1-hop query as an example momentarily. We
+modify the selectivity p on each query to test the effects of sip in        it does not degrade due to random I/O and still maintains a very
+plans with ASP-Join and S-Join. In all of these queries Kùzu picks
+a left-deep plan that scans the node with the predicate and extends         good factorization structure. Our results are shown in Table 2 and
+to the rest of the nodes using solely ASP-Join. This is our "Kùzu"
+configuration. Our Kùzu-S-Join and Kùzu-INLJ use equivalent left-           confirm this expectation. We omit DuckDB which was not com-
+deep plans that use solely S-Join and INLJ operators. For DuckDB
+and Umbra we write the equivalent SQL query and let the systems             petitive in these queries because it picked a poor join plan that
+pick their plans through their optimizers. Our 1-hop query is:
+                                                                            joined two large tables. As shown in the table, Kùzu performs at
+MATCH (1:Person)-[1:Knows]->(2:Person) WHERE 1.ID < p
+RETURN min(1.ID), min(1.bday), min(2.ID), min(2.bday)                       sub-millisecond levels except at the highest selectivity levels, where
+                                                                            it outperforms other configurations and Umbra. Kùzu-INLJ is also
+On low selectivities, the dominant cost is the scan of the adjacency
+lists and the properties and join is not a major cost. Therefore, we        competitive at every level due to benefits from factorization.
+expect all Kùzu configurations to perform well as they all scan small          Finally for our 3-hop query we used (1:P)-[:Knows]->(2:P)-
+amounts of Knows adjacency list index and other properties and ben-
+efits from factorization should be minor. DuckDB and Umbra should           [:Knows]->(3:P)-[:Knows]->(4:P) with the predicate on 2. Our
+perform relatively worse as they need to scan these relations. Grad-        expectations for this query is the same for our 2-hop query (as
+ually as we increase the selectivity, we expect DuckDB and Umbra's
+performances to become more competitive and Kùzu-S-Join and                 explained momentarily) but this query demonstrates Kùzu's ability
+Kùzu-INLJ to perform worse. For Kùzu-INLJ this is because INLJ              to do chained sip, where information is passed from 2 to not only 1
+will lead to random and repeated I/Os of a2.ID/bday properties;             and 3, which are adjacent to 2 but also to 4. Our expectations are
+for Kùzu-S-Join because it loses its factorization structure when           similar to our 2-hop query because putting the predicate on 2 still
+reading a2.ID/bday properties. In contrast we expect ASP-Join's             allows left deep plans used by Kùzu configurations to achieve a very
+performance to degrade slower than other Kùzu configurations.               good factorization where both 1-[1]-> and -[1]->(4) adjacency
+                                                                            lists and the age properties on 1 and 4 can be factored out. We
+                                                                            again omit DuckDB for the same reaons. We now also omit Kùzu-
+                                                                            S-Join because it was not competitive at low selectivities and ran
+
+                                                                            out of memory for storing a large factorized table at higher ones (as
+
+                                                                            in the 2-hop query). As shown in Table 2, the behavior of the systems
+
+                                                                            is generally similar to our 2-hop query. The primary difference is
+                                                                            that, Kùzu can now outperform Kùzu-INLJ at lower selectivities
+                                                                            too, because even at the lowest selectivity level Kùzu-INLJ needs
+                                                                            to scan 2's neighbors of neighbors, which makes Kùzu-INLJ suffer
+                                                                            more from random reads compared to the 2-hop query.
+
+                                                                            4.3 Cyclic Query Microbenchmarks
+
+                                                                            We next evaluate Kùzu's plans with multiway ASP-Join operator
+
+                                                                            on cyclic queries. We picked three queries: (i) a triangle query; (ii) a
+
+                                                                            4-cycle; and (iii) a 4-clique query. Similar to our acyclic queries, we
+
+                                                                            put a predicate on one of the node variables and compute the min of
+
+                                                                            two properties for each variable. We compare Kùzu's performance
+                                                                            against the Kùzu-INLJ configuration, which uses GraphflowDB
+                                                                            style Intersect operator to perform multiway intersections. We
+                                                                            expect Kùzu's performance to be competitive with Kùzu-INLJ on
+
+                                                                         6
+                1-hop query                                                2-hop query  3-hop query
+
+Selectivity Kùzu SJ INLJ DuckDB Umbra Kùzu SJ INLJ Umbra Kùzu INLJ Umbra
+
+0.01% 0.003 0.003 0.002 0.181 0.023 0.33 12.56 0.01 1.90 0.03 0.09 0.15
+
+0.1%  0.005 0.006 0.008 0.181  0.024 0.41 54.47 0.11 4.05 0.10 0.63 0.45
+
+1%    0.016 0.038 0.090 0.186 0.029 0.96 OOM 1.04 12.30 0.73 6.71 6.96
+
+10%   0.097 0.295 0.900 0.224 0.082 3.89 OOM 10.39 230.35 7.85 66.60 17.80
+
+100%  0.637 3.381 9.010 0.240 0.191 31.98 OOM 92.35 TO 80.29 TO 236.42
+
+Table 2: Runtimes (sec) of different Kùzu configurations, DuckDB, and Umbra on acyclic microbenchmark queries on LDBC
+
+100. SJ and INLJ are the Kùzu-S-Join and Kùzu-INLJ configurations. OOM and TO stand for out of memory and timeout.
+
+                web-BerkStan                                                            LiveJournal
+
+      Triangle  4-Cycle        4-Clique                                    Triangle     4-Cycle      4-Clique
+
+Selectivity Kùzu INLJ Umbra Kùzu INLJ Umbra Kùzu INLJ Umbra Kùzu INLJ Umbra Kùzu INLJ Umbra Kùzu INLJ Umbra
+
+0.01% 0.01 0.03 0.05 0.02 0.08 0.11 0.02 0.11 0.50 0.04 0.72 0.39 0.97 13.60 4.06 0.10 2.19 21.87
+
+0.1% 0.02 0.28 0.07 0.21 2.35 0.64 0.12 1.64 2.59 0.11 5.58 0.65 3.91 74.91 19.68 0.89 21.66 Crash
+
+1% 0.08 2.88 0.18 2.01 21.82 2.76 1.28 17.37 8.35 0.78 59.93 2.23 59.70 867.21 25.72 12.67 257.90 26.09
+
+10% 0.59 29.09 1.01 20.87 206.80 8.53 13.69 160.26 17.59 6.43 585.67 14.55 531.88 TO TO 149.79 TO 128.86
+
+100% 6.55 291.2 3.27 230.74 TO 77.39 151.84 TO 87.78 59.39 TO 39.26 TO TO TO TO TO TO
+
+Table 3: Runtimes (sec) of Kùzu, Kùzu-INLJ (INLJ), and Umbra on cyclic queries on web-BerkStan and LiveJournal.
+
+low selectivities and outperform it across higher selectivities, when      WCO join-style multiway joins by building nested hash indices on
+Kùzu-INLJ should degrade due to random and repeated scans of               the fly as we discussed in Section 4.
+adjacency lists from storage. We also used the Umbra system, which
+has a wco join implementation. The main differences are that Kùzu             Another core goal of Kùzu's query processor is to adopt fac-
+scans adjacency lists, sorts them on the fly and hashes them, and          torized processing. The primary goal of factorization is to factor
+probes these sorted tables and intersects them. Instead Umbra              out repeated values when multi-valued dependencies emerge in
+avoids any sorting of sets of values, which is an advantage, and           intermediate results under m-n joins. The theory of factorized
+instead creates nested hash tables and intersects hash sets through        databases [23, 24] has developed both factorization representation
+hash lookups, which is a disadvantage as this is a slower way to           systems for relations as well as a set of algorithms for core relational
+intersect sets. In addition, Kùzu plans can perform sip and semijoins      operators that show that factorized query processing can have as-
+Here forming an expectation is harder at higher levels but for lower       ymptotic time improvements over flat processing. Olteanu et al.
+levels we expect Kùzu to outperform Umbra due to its semijoins.            have also developed a factorized query processor that implements
+                                                                           these core algorithms in the FDB [6] system. These algorithms
+   We use the web-BerkStan and LiveJournal datasets [17], which            however rely on representing input relations as sorted tries and
+respectively contain 7.6M and 69M edges. These datasets are unla-          process and output tries, which does not seem suitable to integrate
+beled, which we modeled with as a single node and single edge rela-        into traditional pipelined DBMS processors.
+tions. Our results are shown in Table 3. As we expected, throughout
+the experiments, Kùzu outperforms Kùzu-INLJ due to sequential              6 CONCLUSIONS
+scans at higher selectivities and is competitive or outperforms Um-
+bra. This indicates that at high selectivities when sip has overheads,     We presented the Kùzu system that is being developed to be a
+pre-sorting and intersecting lists is competitive with or outperforms      highly-scalable and efficient GDBMS that integrates state of the
+Umbra's hash-based approach which avoids explicit sorting.                 art techniques for graph data management and query processing.
+                                                                           We described the system's query processor, which is designed to
+5 RELATED WORK                                                             both use efficient factorization structures under m-n joins as well
+                                                                           as perform only sequential scans. We described how we achieve
+Several of Kùzu's core design choices are based on our prior Graph-        these goals using hash join-based join operators that can perform
+flowDB project [12, 15, 18, 19]. Our work on GraphflowDB focused           sideways information both from the build side to the probe side and
+on integrating factorization and wco join algorithms into tradi-           vice versa. We demonstrated the robustness and high performance
+tional pipelined and block-based processors. GraphflowDB relied            of plans that use these join algorithms. Kùzu is being developed ac-
+heavily on INLJ algorithms and pre-sorted adjacency lists, which           tively and integrating new features and aims to be a widely adopted
+Kùzu completely avoids. Other approaches for integrating WCO               fully functional DBMS. We hope Kùzu can also be a productive
+join algorithms [21, 22, 29] into DBMSs have been proposed in              research infrastructure for researchers to design novel techniques
+prior work [5, 7, 11, 19]. LogicBlox integrates the Leapfrog TrieJoin      for managing databases modeled as graphs.
+(LFTJ) wco join algorithm [29] that processes sorted tries of input
+relations. The implementation description in reference [5] describes       7 ACKNOWLEDGEMENTS
+the system relying solely on LFTJ for equi-joins and not generating
+plans that mix wco and binary joins. Several work have described           We are grateful to Pranjal Gupta, who designed the core storage
+richer join plans that can mix both types of algorithms depending          layer of the system, and Amine Mhedhbi, who helped in the ini-
+on the structures of the join queries [11, 19]. Umbra integrates           tial implementation of the query processor. We also thank both
+                                                                           for numerous useful discussions. We are also grateful to Lori Pa-
+                                                                           niak for his help in solving numerous technical issues during our
+                                                                           development and experiments.
+
+                                                                        7
+REFERENCES                                                                              [15] Chathura Kankanamge, Siddhartha Sahu, Amine Mhedbhi, Jeremy Chen, and
+                                                                                              Semih Salihoglu. 2017. Graphflow: An active graph database. In SIGMOD.
+ [1] 2021. DuckDB. https://duckdb.org
+ [2] 2022. Mindspore Graph Learning https://www.mindspore.cn/graphlearning/             [16] Viktor Leis, Peter Boncz, Alfons Kemper, and Thomas Neumann. 2014. Morsel-
+                                                                                              driven parallelism: a NUMA-aware query evaluation framework for the many-
+      docs/en/master/index.html.                                                              core age. In SIGMOD.
+ [3] 2022. SQLite. https://www.sqlite.org/index.html
+ [4] Daniel Abadi, Peter A. Boncz, Stavros Harizopoulos, Stratos Idreos, and Samuel     [17] Jure Leskovec and Andrej Krevl. 2014. SNAP Datasets: Stanford Large Network
+                                                                                              Dataset Collection. http://snap.stanford.edu/data.
+      Madden. 2013. The Design and Implementation of Modern Column-Oriented
+      Database Systems. Foundations and Trends in Databases (2013).                     [18] Amine Mhedhbi, Pranjal Gupta, Shahid Khaliq, and Semih Salihoglu. 2021. A+
+ [5] Molham Aref et al. 2015. Design and Implementation of the LogicBlox System.              Indexes: Lightweight and Highly Flexible Adjacency Lists for Graph Database
+      In SIGMOD.                                                                              Management Systems. In ICDE.
+ [6] Nurzhan Bakibayev, Dan Olteanu, and Jakub Závodný. 2012. FDB: A Query
+      Engine for Factorised Relational Databases. PVLDB 5, 11 (2012).                   [19] Amine Mhedhbi, Chathura Kankanamge, and Semih Salihoglu. 2021. Optimizing
+ [7] Christopher R. Aberger et al. 2017. EmptyHeaded: A Relational Engine for Graph           One-time and Continuous Subgraph Queries using Worst-Case Optimal Joins.
+      Processing. TODS 42, 4 (2017).                                                          TODS (2021).
+ [8] Minjie Wang et al. 2019. Deep Graph Library: A Graph-Centric, Highly-
+      Performant Package for Graph Neural Networks. arXiv: Learning (2019).             [20] NetworkX 2022. NetworkX https://networkx.org/.
+ [9] Renzo Angles et. al. 2020. The LDBC Social Network Benchmark. CoRR                 [21] H. Ngo, C. Ré, and A. Rudra. 2014. Skew Strikes Back: New Developments in the
+      abs/2001.02299 (2020).
+[10] Matthias Fey and Jan Eric Lenssen. 2019. Fast Graph Representation Learning              Theory of Join Algorithms. SIGMOD Record 42, 4 (2014).
+      with PyTorch Geometric. CoRR abs/1903.02428 (2019).                               [22] Hung Q. Ngo, Ely Porat, Christopher Ré, and Atri Rudra. 2012. Worst-case
+[11] Michael Freitag, Maximilian Bandle, Tobias Schmidt, Alfons Kemper, and Thomas
+      Neumann. 2020. Adopting Worst-Case Optimal Joins in Relational Database                 Optimal Join Algorithms. In PODS.
+      Systems. PVLDB 13, 12 (2020).                                                     [23] Dan Olteanu and Maximilian Schleich. 2016. Factorized databases. ACM SIGMOD
+[12] Pranjal Gupta, Amine Mhedhbi, and Semih Salihoglu. 2021. Columnar Storage
+      and List-based Processing for Graph Database Management Systems. PVLDB 14,              Record 45 (2016).
+      11 (2021).                                                                        [24] Dan Olteanu and Jakub Závodny`. 2015. Size bounds for factorised representations
+[13] John A. Halloran. 2006. Sumerian Lexicon: A Dictionary Guide to the Ancient
+      Sumerian Language. Logogram Publishing.                                                 of query results. TODS 40, 1 (2015).
+[14] Guodong Jin and Semih Salihoglu. 2022. Making RDBMSs Efficient on Graph            [25] openCypher 2022. openCypher. https://www.opencypher.org.
+      Workloads through Predefined Joins. PVLDB 15, 5 (2022).                           [26] Mark Raasveldt and Hannes Mühleisen. 2019. DuckDB: an embeddable analytical
+
+                                                                                              database. In SIGMOD.
+                                                                                        [27] Ian Robinson, Jim Webber, and Emil Eifrem. 2015. Graph Databases: New Oppor-
+
+                                                                                              tunities for Connected Data (2nd ed.). O'Reilly Media, Inc.
+                                                                                        [28] Siddhartha Sahu, Amine Mhedhbi, Semih Salihoglu, Jimmy Lin, and M Tamer
+
+                                                                                              Özsu. 2020. The ubiquity of large graphs and surprising challenges of graph
+                                                                                              processing: extended survey. VLDBJ 29, 2 (2020).
+                                                                                        [29] Todd L. Veldhuizen. 2012. Leapfrog Triejoin: a Worst-Case Optimal Join Algo-
+                                                                                              rithm. CoRR abs/1210.0481 (2012).
+
+                                                                                     8
+

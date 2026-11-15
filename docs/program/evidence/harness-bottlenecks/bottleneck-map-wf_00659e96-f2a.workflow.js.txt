@@ -1,0 +1,116 @@
+export const meta = {
+  name: 'bottleneck-map',
+  description: 'Map each of the 21 unsolved bottlenecks to what the clinic testbed and the FixFlow harness already have, classify what is left (build, decide, diagnose, trial, research), judge thought structures and graph recall, then refute',
+  phases: [
+    { title: 'Map', detail: 'four Opus mappers, one per bottleneck group', model: 'opus' },
+    { title: 'Verdicts', detail: 'two Opus verdicts: thought structures; graph recall topology', model: 'opus' },
+    { title: 'Refute', detail: 'one Opus refuter over the maps and both verdicts', model: 'opus' },
+  ],
+}
+
+const SP = 'C:\\Users\\User\\AppData\\Local\\Temp\\claude\\192654871f6b1294\\e24f17dc-4aea-4914-a9d1-280a723d620e\\scratchpad\\hb'
+const R_WIN = 'C:\\Bilal_Migration\\User\\Downloads\\20_PROJECTS\\24_Clinic_Workshop'
+
+const COMMON = `
+CONTEXT. One owner runs AI-driven builds with Claude Code on one Windows 11 PC (24 logical CPUs, 31 GB RAM, Docker Desktop on WSL2). A root orchestrator session starts slice sessions in git worktrees; each slice passes a gate of model reviewers; the root merges. A testbed build (a Django clinic system; 432 commits and 65 merges in about eight days) ended with 21 UNSOLVED bottlenecks. The owner wants a harness for top-tier development that solves them and asks three things: do these need more research; what did the testbed already build for speed, token efficiency, recall and parallel work; and would Tree, Forest or Graph of Thoughts, or spatial and temporal topology in recall from graphs, help. Today is 2026-11-11.
+YOUR INPUTS (all under ${SP}; read what your task needs, cite what you use):
+- bottlenecks.md: the 21 bottlenecks B01..B21 verbatim and the owner's questions.
+- sweep-index.txt: one line per card for the 158 mechanism cards eight readers and a critic extracted from the testbed repository (id | kind | status | evidence | bottlenecks | name | measured). sweep-cards.txt holds each card in full (grep for the card id, e.g. "\\[A3-07\\]"); sweep-tables.txt holds the data tables (gate rounds per branch, check timings, waits, commits per day); sweep-critic.txt holds what the critic confirmed missing, overturned and found suspect; sweep-notes.txt holds each lane's not-found and unread lists.
+- research.txt: six web-research lanes (B1 thought structures; B2 graph memory and retrieval; B3 fix loops and end-to-end verification; B4 one Windows PC as a build farm; B5 what Claude Code offers for unattended work, from its documentation; B6 multi-orchestrator and merge patterns), each with claims, verdicts, sources marked fetched or snippet-only, and implications per bottleneck.
+- machine-facts.md: what the main session read from this PC today (24 unexpected shutdowns in the event log and what they do and do not show; Docker autostart off and restart policy "no"; no .wslconfig; the app's archive settings; a subagent file-write test that succeeded).
+- refs/: the owner's OTHER repository's harness documents, which the new harness builds on: horthy-ideas.md (ideas from Dex Horthy's work, scored and refuted: section 0 lists the top adopts and trials with ids like G2-F015; section 2 is the post-review list by weakness; section 4 an addendum), baml-ideas.md (section 0: four trials I-13, D-13, T-08, P-10 and five structural borrows S-1..S-5), harness-review.md (what was adopted and deliberately skipped, incl. hooks, a context system, call-graph tooling), ship-plan-section0.md (the phase routine: one phase per new chat, draft PR with a decisions journal, an Opus reviewer naming the head SHA and fail-before/pass-after per finding, six-question close), knowledge-store-design.md (an unbuilt design: SQLite via node:sqlite as a rebuildable index over an append-only git journal of events; entries with handles, checks, footprints, lineage; lookup, verify, record), orchestration-design.md (tiers and output contracts).
+- The testbed repository itself is at ${R_WIN} for spot checks. READ-ONLY: do not create, modify or delete anything there; run none of its checks, tests, scripts or containers; no heavy commands (the PC is memory-limited).
+RULES. Evidence over appeal: say what was MEASURED (with the card id or source) and what is only asserted. Do not repeat the Horthy or BAML ideas at length; cite their ids where one already answers a bottleneck. Nothing here is to be installed or changed; you are writing a judgment. Before you lean on a card, read its full text; for the one or two facts a classification rests on, open the cited file and confirm. Plain words, short sentences. Your final text is the return value: fill the schema only.
+`
+
+const CLASS_HELP = `CLASSES. Give each bottleneck exactly one class for what is LEFT to do: BUILD (the remedy is known and documented; it is engineering, hours to days), DECIDE (the remedy is a choice only the owner can make: money, risk, a setting, a policy), DIAGNOSE (the cause is unknown and a measurement on this PC or this repository would find it), TRIAL (a remedy is plausible but unmeasured here; name the smallest experiment and the number that decides it), RESEARCH (no known remedy fits; state the exact open question and why reading alone would not settle it). Most real items mix these: pick the class of the FIRST step and list the rest under mechanisms.`
+
+const MAP_SCHEMA = {
+  type: 'object',
+  properties: {
+    group: { type: 'string' },
+    items: { type: 'array', items: { type: 'object', properties: {
+      id: { type: 'string' },
+      cause: { type: 'string' },
+      evidence: { type: 'array', items: { type: 'string' } },
+      already_tried: { type: 'array', items: { type: 'object', properties: { card: { type: 'string' }, outcome: { type: 'string' } }, required: ['card', 'outcome'] } },
+      existing_answers: { type: 'array', items: { type: 'object', properties: { source: { type: 'string' }, ref: { type: 'string' }, what: { type: 'string' }, covers: { type: 'string', enum: ['fully', 'partly', 'no'] } }, required: ['source', 'ref', 'what', 'covers'] } },
+      residual_gap: { type: 'string' },
+      class: { type: 'string', enum: ['BUILD', 'DECIDE', 'DIAGNOSE', 'TRIAL', 'RESEARCH'] },
+      research_needed: { type: 'string', enum: ['none', 'light', 'real'] },
+      research_question: { type: 'string' },
+      mechanisms: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, what: { type: 'string' }, cost: { type: 'string' }, proof: { type: 'string' } }, required: ['name', 'what', 'cost', 'proof'] } },
+      thought_structures: { type: 'object', properties: { relevance: { type: 'string', enum: ['none', 'narrow', 'strong'] }, why: { type: 'string' } }, required: ['relevance', 'why'] },
+      graph_recall: { type: 'object', properties: { relevance: { type: 'string', enum: ['none', 'narrow', 'strong'] }, why: { type: 'string' } }, required: ['relevance', 'why'] },
+      priority: { type: 'string', enum: ['P0', 'P1', 'P2'] },
+      expected_gain: { type: 'string' },
+    }, required: ['id', 'cause', 'evidence', 'already_tried', 'existing_answers', 'residual_gap', 'class', 'research_needed', 'research_question', 'mechanisms', 'thought_structures', 'graph_recall', 'priority', 'expected_gain'] } },
+    cross_cutting: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['group', 'items', 'cross_cutting'],
+}
+
+const GROUPS = [
+  { key: 'M1-top-four', ids: 'B01, B02, B03, B04', hint: 'For B01 use the gate-round table and the fix-induced defect chains (cards A2-01..A2-10, A3-13, A4-07) and research lanes B1 and B3: say what the round data shows about convergence, and design the fix-round rule the evidence supports (reproduction test per finding; regression gate with rollback; blast-radius report; bounded rounds; who reviews). For B02 use A2-13, A1-13, CR-10 and lane B3. For B03 use A8-06, CR-02, CR-03, CR-04, A7-07, A5-18, machine-facts.md and lane B5 (auto-continue at a usage limit, workflows that pause and resume, scheduled and cloud tasks; note that lane B5 could not find the documented rule about starting sessions only on an owner turn, while the testbed board records it: treat the rule as real in the desktop app and say what works around it). For B04 use CR-05 (three compactions at 574k, 974k, 967k tokens), A1-02, A1-04, A1-12, A2-07, CR-11 and lanes B5, B6, B2: separate the three things the root does (review, merge, shared-document edits) and say which can leave the root and how.' },
+  { key: 'M2-machine', ids: 'B05, B06, B07, B08, B09, B10, B11', hint: 'Start from machine-facts.md: the event log contradicts the "two shutdowns, memory suspected" framing, so B05 is first a diagnosis. Use cards A3-01..A3-17, A4-01..A4-05, A4-11, A4-12, A8-07, CR-09 and research lane B4. For B06 and B07 the testbed MEASURED: native 367 s versus container 230 s on the same tree, 6 versus 12 workers, slot waits up to 742 s, a memory guard at 8 GiB: say what the next step is (make the Linux container run the gate; put the checkout inside the WSL2 filesystem; one shared Postgres with a database per worker; size slots from measured peak memory) and which of those is measured versus inferred. For B11 note the repository has no remote and the owner controls a VPS in the other project only later.' },
+  { key: 'M3-process', ids: 'B12, B13, B14, B15, B16', hint: 'For B12 use A2-05 (at least 20 recorded overstatements, no denominator), A2-06, A3-12, A8-10, A7-04, A7-13 (RT-01..RT-09), research lanes B5 (Stop and SubagentStop hooks that can block with exit code 2) and B6 (model judges at or below AUROC 0.65; mechanical claim checks), and the Horthy adopts G2-F015, G4-F073, G2-F104 and trial G2-F183 and the BAML trial T-08: design the mechanical claim check and say where it runs. For B13 use A1-04, A1-12, CR-06, A7-22 and lane B6 (per-change fragments compiled into a generated board) and lane B2 (a fact table with valid-from and superseded-at). For B14 use A8-21, lane B5 (status line, agent view, notifications, heartbeat by hook). For B15 use machine-facts.md (auto-archive settings are off), A8-08, A4-02, lane B5 and B6. For B16 use machine-facts.md (a subagent wrote a file here), A8-16, the critic overturn, CR-03 (subagents made 82.4 % of API calls in October) and lane B5.' },
+  { key: 'M4-verification', ids: 'B17, B18, B19, B20, B21', hint: 'For B17 use A2-08 (who read which round; the unreviewed tail of 10 November), A7-18 (cross-model bridge assessment), CR-08, research lane B3 (human maintainers reject a quarter to a third of grader-passing patches; cross-model review evidence is mixed) and lane B1 (executed tests beat model reading as a selector); say what share of review should move to executed checks and where a human or a second model family is worth its cost. For B18 use A4-01, A4-03, A4-04. For B19 use A4-06, A4-08, A7-19, A7-20 and the other repository\'s ship plan (it has a VPS phase): what can be proved before money is spent. For B20 use A4-09, A8-11. For B21 use A2-09 (111 P3 in round 1 alone across ten slices), A2-10, A2-11 and lane B3.' },
+]
+
+phase('Map')
+const mapsP = parallel(GROUPS.map(g => () =>
+  agent(COMMON + `
+TASK (bottleneck mapper, group ${g.key}). Map bottlenecks ${g.ids}. For each: (1) the cause as the evidence shows it, not as the list words it, citing card ids and files; (2) what the testbed already tried and what came of it; (3) what already answers it elsewhere (the Horthy ids, the BAML ids, the ship plan's section 0 rules, the knowledge-store design, the harness review, a documented Claude Code or Windows or Docker setting from the research lanes) and whether it covers the bottleneck fully, partly or not at all; (4) the residual gap; (5) the class of the first step and whether research is needed (none, light = an afternoon of reading or one probe, real = an open question) with the exact question; (6) one to three mechanisms, each with its cost and the measurement that would prove it worked; (7) whether thought structures (trees or forests of candidate solutions, graph aggregation of parallel outputs) and whether graph-structured recall (code-structure neighbourhood; facts with validity over time) bear on it: none, narrow or strong, with the reason; (8) priority and the gain to expect. ${CLASS_HELP}
+GROUP HINT. ${g.hint}
+Also return cross_cutting: mechanisms that answer several bottlenecks at once, and any bottleneck the list misdescribes.`, { label: g.key, phase: 'Map', model: 'opus', effort: 'high', schema: MAP_SCHEMA }).catch(() => null)
+))
+
+phase('Verdicts')
+const VERDICT_SCHEMA = {
+  type: 'object',
+  properties: {
+    question: { type: 'string' },
+    verdict_one_line: { type: 'string' },
+    plain_explanation: { type: 'string' },
+    where_it_helps: { type: 'array', items: { type: 'object', properties: { place: { type: 'string' }, bottleneck: { type: 'string' }, mechanism: { type: 'string' }, evidence: { type: 'string' }, cost: { type: 'string' } }, required: ['place', 'bottleneck', 'mechanism', 'evidence', 'cost'] } },
+    where_it_does_not: { type: 'array', items: { type: 'object', properties: { place: { type: 'string' }, why: { type: 'string' } }, required: ['place', 'why'] } },
+    trial: { type: 'object', properties: { design: { type: 'string' }, measurement: { type: 'string' }, budget: { type: 'string' }, stop_rule: { type: 'string' } }, required: ['design', 'measurement', 'budget', 'stop_rule'] },
+    do_not_build: { type: 'array', items: { type: 'string' } },
+    open_research: { type: 'array', items: { type: 'string' } },
+    confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+  },
+  required: ['question', 'verdict_one_line', 'plain_explanation', 'where_it_helps', 'where_it_does_not', 'trial', 'do_not_build', 'open_research', 'confidence'],
+}
+
+const verdictsP = parallel([
+  () => agent(COMMON + `
+TASK (verdict V1: thought structures). The owner asks: "Could Tree of Thoughts, Forests of Thought or Graph of Thoughts help?" Read research.txt lane B1 in full and the parts of lane B3 on repair loops, the gate-round data (sweep-tables.txt: gate rounds per branch; cards A2-01..A2-10, A3-13), and bottlenecks.md. Answer for THIS harness, not in general. Explain each method in two plain sentences. Then: (a) for each of the 21 bottlenecks where one of these could matter, say exactly what the tree, forest or graph would be made of (candidate fixes? candidate designs? reviewers' findings?), what would score or select among branches (an executed test, a model judge), and what the evidence says about that selector; (b) say where it would make things worse (tokens against the usage limit B03; checks against the check queue B06-B08; model judges against the overstating problem B12); (c) design the ONE trial worth running, if any, small enough for one slice: what is generated, how many candidates, what selects, what is counted (new P1 and P2 findings per fix round against the testbed's recorded baseline), the token and check budget, and the stop rule; (d) say what the frontier models already do internally that makes an outer tree redundant, and what an outer structure still adds (an executable verifier, isolation between candidates, parallel wall-clock). Be direct about what is established and what is not.`, { label: 'V1-thought-structures', phase: 'Verdicts', model: 'opus', effort: 'high', schema: VERDICT_SCHEMA }).catch(() => null),
+  () => agent(COMMON + `
+TASK (verdict V2: graph recall and its topology). The owner asks: "Could spatial and temporal topology in recall from graphs boost token efficiency?" and believes the testbed already holds "a SQLite graph-based library for a self-evolving repository". Read sweep-critic.txt first (it settles what exists: no such library in the testbed; the closest things are the corpus map, the never-installed context system whose only measured token result was an increase, the root session's lesson memory, and the OTHER repository's unbuilt knowledge-store design). Read research.txt lane B2 in full, cards A5-01..A5-18, A6-01..A6-13, A7-03, A7-06, CR-01, CR-03, CR-05, CR-11, and refs/knowledge-store-design.md sections 0, 3, 4 and 5. Define the terms for this harness: "spatial" = the neighbourhood of a thing in the code or in the work (files, symbols, imports, callers, co-changed files; slices, branches, dependencies between slices); "temporal" = when a fact was true and when it was recorded (valid-from, superseded-at; git history). Then: (a) list where tokens actually went in the testbed (the root's context compacting at about 970k tokens three times; an 829-line board reread; mandatory pre-reading per session; subagent reports returning through the root; subagents making 82 % of calls) and for each say whether recall by neighbourhood or by time would cut it, with the evidence (the Zep-style result is retrieval against FULL context; graph against a flat indexed table is not shown; deterministic code graphs have a measured localisation gain; the testbed's own trials measured no gain or a loss); (b) say what the knowledge-store design already has of this (footprints, lineage, event journal, validity by code state) and what it lacks (orchestrator state: slice status, gate verdicts, decisions, open findings; a neighbourhood query for a fix's blast radius); (c) recommend the smallest thing that would cut tokens: what tables, what queries, who writes (deterministic tool output, never a model extracting from prose), who reads, and whether SQLite with recursive queries is enough or a graph engine is needed; (d) design the one measurement that decides it (tokens the root spends per gate with and without, on a replay of the testbed's recorded gates); (e) say what not to build (LLM-extracted knowledge graphs, a graph database server, embeddings) and why; (f) say plainly what "self-evolving" can honestly mean here (entries written at solve time and invalidated by code change; lessons promoted into checks) and what it cannot.`, { label: 'V2-graph-recall', phase: 'Verdicts', model: 'opus', effort: 'high', schema: VERDICT_SCHEMA }).catch(() => null),
+])
+
+const [maps, verdicts] = [await mapsP, await verdictsP]
+const okMaps = maps.filter(Boolean)
+log(`maps returned: ${okMaps.length}/4; verdicts returned: ${verdicts.filter(Boolean).length}/2`)
+
+phase('Refute')
+const refute = await agent(COMMON + `
+TASK (refuter; default verdict REFUTED). Four mappers classified the 21 bottlenecks and two agents wrote verdicts on thought structures and on graph recall. Attack them. For every bottleneck: (1) if it is classed BUILD with research "none", try to show the remedy is NOT known to work here: open the cited testbed file or research claim and check that the measurement exists, that it was on this kind of workload, and that nothing on this PC or in the desktop app blocks it (for example: a remedy that needs a remote for a repository that has none; a hook-based remedy when sessions run in a mode where the hook's prompt cannot be answered; a Linux-gate remedy when two tests fail only on Linux); (2) if it is classed RESEARCH or TRIAL, try to show a documented remedy already exists and the item is really BUILD or DECIDE; (3) check each "existing answer" really covers what is claimed (read the Horthy or BAML id, the ship-plan sentence, the knowledge-store section); (4) look for a remedy that makes another bottleneck worse (more checks against the queue; more agents against the usage limit; more sessions against memory) and say so. For the two verdicts: attack the claimed place of benefit, the trial design (is the baseline real; is the count large enough to show anything; would the trial itself hit the usage limit), and any statement about what frontier models do internally that no source supports. Return one attack per target with a verdict (refuted, narrowed, stands), the evidence you read, and the amendment that would make the claim true. Then list what all six missed.
+THE MAPS:
+${JSON.stringify(okMaps, null, 1)}
+THE VERDICTS:
+${JSON.stringify(verdicts.filter(Boolean), null, 1)}`, {
+  label: 'refuter', phase: 'Refute', model: 'opus', effort: 'high',
+  schema: {
+    type: 'object',
+    properties: {
+      attacks: { type: 'array', items: { type: 'object', properties: { target: { type: 'string' }, claim: { type: 'string' }, verdict: { type: 'string', enum: ['refuted', 'narrowed', 'stands'] }, evidence: { type: 'string' }, amendment: { type: 'string' } }, required: ['target', 'claim', 'verdict', 'evidence', 'amendment'] } },
+      missed: { type: 'array', items: { type: 'string' } },
+      reclassifications: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, why: { type: 'string' } }, required: ['id', 'from', 'to', 'why'] } },
+    },
+    required: ['attacks', 'missed', 'reclassifications'],
+  },
+}).catch(() => null)
+
+log(`refuter: ${refute ? refute.attacks.length + ' attacks, ' + refute.reclassifications.length + ' reclassifications' : 'no result'}`)
+return { maps, verdicts, refute }

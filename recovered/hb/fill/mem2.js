@@ -1,0 +1,10 @@
+const fs = require('fs');
+let t = fs.readFileSync('project-harness-bottlenecks.md', 'utf8');
+const a = t.indexOf('- **What fills the windows**'); const b = t.indexOf('\n', a);
+const neu = "- **What fills the windows** (measured 2026-11-11 after the owner questioned the recall verdict, then checked by two refuters and an independent re-measurement; compile §6, `evidence/harness-bottlenecks/fill/` and `fill/verify/`): of November's 4.33 billion context tokens about 27 to 28.5 % is content fetched by reading and searching (slice main 26.0, root 14.8, subagents 40.1; independent method 22.3, range 20.6 to 32.2), about 32 % the model's own output carried forward, about 29 % the window start re-read every call. Fetched content entered once as about 19M tokens and was processed about 950M times (50 passes): reads cost by staying. Calls that only read or search are 54.7 % of calls and re-read 43.6 % of context tokens, so an index has two exposures (content, and lookup steps); neither is a saving and 27 % is NOT a ceiling. In-window repeats are only 0.5 to 1.5 % (a session-local cache saves nothing); across windows 3.3 % of paths hold half the fetched tokens (a cross-session digest is the form that could pay, unproven). 74 % of fetched tokens went to files the window did not edit (not proof of waste). First test is a zero-token replay of an import-and-caller index against recorded windows. My first answer to the owner overclaimed four things the refuters caught: 'at most 27 %', 'no hot set', 'most was needed', and citing the 6-17 % Codex compaction-adapter result as if it were about an index.";
+if (a >= 0) t = t.slice(0, a) + neu + t.slice(b);
+fs.writeFileSync('project-harness-bottlenecks.md', t);
+let m = fs.readFileSync('MEMORY.md', 'utf8');
+m = m.replace('; fetched content is 27 % of tokens (the recall ceiling)', '; window fill measured: fetched content about 27 % of context tokens, lookup-only calls re-read 43.6 % (exposures, not a ceiling or a saving)');
+fs.writeFileSync('MEMORY.md', m);
+console.log(t.includes('NOT a ceiling'), m.includes('lookup-only calls'));

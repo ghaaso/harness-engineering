@@ -1,0 +1,60 @@
+// Browser check for docs/program/library-pathways/index.html (second build).
+// Paste into the page's console (or run through a browser tool) after the page loads.
+// Run "Many runs" first to include section 6. It reports: digits outside a tagged, labelled or
+// definition container; the grid totals; the visible words with every <details> closed, in all and
+// above the map; the page height at the current width; whether the page scrolls sideways; the funnel
+// and the weights drawn against window.__lp (the page's own engine results, which the build checks
+// against engine.js in node).
+(function () {
+  var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), bad = [], n;
+  while ((n = w.nextNode())) {
+    var t = n.textContent; if (!/\d/.test(t)) continue;
+    var el = n.parentElement;
+    if (!el || el.closest('script,style,[data-tagged],[data-label],.tag,.n,.idchip,.pop')) continue;
+    var host = el, ok = false;
+    for (var k = 0; k < 3 && host; k++) {
+      if (host.querySelector && host.querySelector(':scope > .tag')) { ok = true; break; }
+      var sib = host.nextElementSibling; if (sib && sib.classList.contains('tag')) { ok = true; break; }
+      host = host.parentElement;
+    }
+    if (!ok) bad.push((el.id || el.className || el.tagName) + ': ' + t.trim().slice(0, 90));
+  }
+  var opened = Array.prototype.slice.call(document.querySelectorAll('details[open]'));
+  opened.forEach(function (d) { d.open = false; });
+  var words = function (s) { return s.split(/\s+/).filter(function (x) { return /[A-Za-z]/.test(x); }).length; };
+  var all = words(document.body.innerText);
+  var r = document.createRange(); r.setStartBefore(document.body.firstChild); r.setEndBefore(document.getElementById('map'));
+  var above = words(r.toString());
+  opened.forEach(function (d) { d.open = true; });
+  var lp = window.__lp, fv = lp.funnel(), fgap = 0, wgap = 0;
+  Array.prototype.forEach.call(document.querySelectorAll('.fbar[data-stage]'), function (g) {
+    var s = fv.stages.filter(function (x) { return x.id === g.getAttribute('data-stage'); })[0];
+    fgap = Math.max(fgap, Math.abs(+g.getAttribute('data-v') - s.value), Math.abs(+g.getAttribute('data-u') - s.unfavourable), Math.abs(+g.getAttribute('data-f') - s.favourable));
+  });
+  // a row the engine did not measure carries data-nm (its reason) instead of data-w
+  var nmBad = [];
+  Array.prototype.forEach.call(document.querySelectorAll('.lim[data-lim]'), function (row) {
+    var e = lp.weights.limitations.filter(function (x) { return x.id === row.getAttribute('data-lim'); })[0];
+    var nm = row.querySelector('[data-nm]');
+    if (nm) { if (e.measured || nm.getAttribute('data-nm') !== e.not_measured) nmBad.push(e.id); return; }
+    if (!e.measured) { nmBad.push(e.id); return; }
+    wgap = Math.max(wgap, Math.abs(+row.querySelector('[data-w]').getAttribute('data-w') - e.holds.score));
+  });
+  var gt = document.querySelector('#gridTotals');
+  return {
+    untagged: bad,
+    visibleWordsCollapsed: all,
+    wordsAboveMap: above,
+    height: document.documentElement.scrollHeight,
+    width: window.innerWidth,
+    sideways: document.documentElement.scrollWidth > window.innerWidth,
+    funnelBars: document.querySelectorAll('.fbar[data-stage]').length,
+    funnelGap: fgap,
+    weightRows: document.querySelectorAll('.lim[data-lim]').length,
+    weightGap: wgap,
+    notMeasuredRows: document.querySelectorAll('.lim[data-lim] [data-nm]').length,
+    notMeasuredMismatch: nmBad,
+    gridTotals: gt ? gt.innerText.replace(/\s+/g, ' ') : null,
+    tieTable: (document.querySelector('.tiet') || {}).innerText
+  };
+})();

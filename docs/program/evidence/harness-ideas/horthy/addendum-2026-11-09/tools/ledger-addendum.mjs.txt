@@ -1,0 +1,28 @@
+// Ledger of the addendum's sources: every text, image and audio file the addendum readers or the transcriber used.
+// Usage: node ledger-addendum.mjs <scratchpad> > sources-ledger-addendum.tsv
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+const SP = process.argv[2];
+const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+const words = p => fs.readFileSync(p, 'utf8').split(/\s+/).filter(Boolean).length;
+const first = (p, re) => { for (const l of fs.readFileSync(p, 'utf8').split(/\r?\n/, 4)) { const m = l.match(re); if (m) return m[1]; } return ''; };
+const rows = [['kind', 'path', 'bytes', 'words', 'sha256', 'origin', 'how_obtained']];
+const S = path.join(SP, 'sources');
+for (const f of fs.readdirSync(S).filter(f => f.endsWith('.txt')).sort()) {
+  const p = path.join(S, f); const head = fs.readFileSync(p, 'utf8').slice(0, 600);
+  const how = /TRANSCRIBED: locally/.test(head) ? 'audio stream downloaded, transcribed locally (faster-whisper distil-large-v3)' : /podcast:transcript/.test(head) ? 'publisher transcript from the RSS podcast:transcript tag' : 'page fetched with curl, tags stripped';
+  rows.push(['text', 'sources/' + f, fs.statSync(p).size, words(p), sha(p), first(p, /^SOURCE: (.*)$/), how]);
+}
+const X = path.join(S, 'x');
+for (const f of fs.readdirSync(X).filter(f => f.endsWith('.txt')).sort()) {
+  const p = path.join(X, f);
+  rows.push(['x', 'sources/x/' + f, fs.statSync(p).size, words(p), sha(p), first(p, /^(?:URL|SOURCE): (.*)$/), f.startsWith('x-timeline') ? 'fxtwitter v2 profile timeline endpoint, paged' : 'fxtwitter status endpoint']);
+}
+const C = path.join(S, 'scb-charts');
+for (const f of fs.readdirSync(C).sort()) { const p = path.join(C, f); rows.push(['image', 'sources/scb-charts/' + f, fs.statSync(p).size, '-', sha(p), 'https://github.com/humanlayer/advanced-context-engineering-for-coding-agents/blob/main/images/' + f, 'raw.githubusercontent.com; read as an image by the reader']); }
+const A = path.join(SP, 'audio');
+const origin = { 'beyondcoding-270.mp3': 'https://traffic.megaphone.fm/APO5697032843.mp3 (RSS enclosure, anchor.fm/s/5bb57eac/podcast/rss)' };
+for (const f of fs.readdirSync(A).sort()) { const p = path.join(A, f); rows.push(['audio (not committed)', 'audio/' + f, fs.statSync(p).size, '-', sha(p), origin[f] || 'https://www.youtube.com/watch?v=' + f.replace(/\.[a-z0-9]+$/, ''), origin[f] ? 'curl' : 'yt-dlp audio-only stream (ephemeral uvx run)']); }
+console.log(rows.map(r => r.join('\t')).join('\n'));
+console.error('rows', rows.length - 1);

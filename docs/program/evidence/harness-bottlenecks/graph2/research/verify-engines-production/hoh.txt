@@ -1,0 +1,527 @@
+              Database Performance Comparisons:
+                     An Inspection of Fairness
+
+                          Uwe Hohenstein and Martin Jergler
+
+           Siemens AG, Corporate Technology, Otto-Hahn-Ring 6, Munich, Germany
+
+Keywords:  Performance, Comparison, Benchmark, Neo4j, PostgreSQL.
+Abstract:
+           Special benchmarks and performance comparisons have been published to analyze and stress the
+           outstanding performance of new database technologies. Quite often, the comparisons show that newly
+           upcoming database technologies provide higher performance than traditional relational ones.
+           In this paper, we show that these performance comparisons are not always meaningful and should not
+           encourage one to jump to fast conclusions. We revisit certain statements about comparisons between the
+           Neo4j graph database and relational systems and indicate a couple of possible reasons for coming up with
+           bad performance such as inappropriate or default configurations, and too straightforward implementations.
+           Moreover, we refute some stated issues about the bad performance of relational systems by using a
+           PostgreSQL database for commonly used test scenarios. We conclude with some considerations of fairness.
+
+1 INTRODUCTION                                             connected data" (Khan, 2016)
+
+Despite the dominating market share of relational     · "The main benefit of native graph databases are
+database management systems (DBMSs), new                   performance and scalability" (Khan, Ahmed,
+database technologies permanently come up. Object-         and Shahzad, 2017)
+oriented DBMSs proclaimed in the 90s a revolution,
+promising to substitute traditional relational DBMSs  · "So the graph database was 1000 times faster
+(RDBMSs). A little time later, XML databases arose         for this particular use case" (Adell, 2013)
+focussing on storing XML documents efficiently.
+                                                      · "While MySQL did not finish within 2 hours,
+    Since 2009, the NoSQL movement is gaining a            Neo4j finished a traversal in less than 15
+lot of attention. NoSQL stands for "not only SQL"          minutes" (Rodriguez, 2011).
+(http://www.nosql-database.org) although the name
+has been chosen provokingly. Many products bring      Even if graph databases possess advantages which
+up new ideas taking benefit from distribution, i.e.,  are useful for specific applications, such general
+using a large amount of commodity computers to        statements must be treated carefully.
+scale out, or storing complex graph structures in a
+specialized graph database.                               This led to our motivation for investigating those
+                                                      statements in this paper. Thereby, our goal is not to
+    Every new technology and its promoters claim      state that RDBMSs are still better. Rather we want
+their products to be superior to traditional RDBMSs.  to stress on fairness - better unfairness - of such
+There are a lot of, sometimes emotional, discussions  statements and comparisons and prove our point of
+on which technology is better, NoSQL or SQL.          view by measurements. This discussion of fairness
+(Moran, 2010) talks about techno-religious debates.   tackles several aspects such as:
+
+    Those discussions are indeed very shallow from    · Is it equitable to take rather ad-hoc
+a technical perspective. To make our discussion            configurations and settings?
+more specific, we focus on the NoSQL category of
+graph databases. Looking for existing comparisons,    · Is a warm start-up fair (especially if data sets
+we detected enthusiastic statements stressing the          are larger than available main memory)?
+advantages over RDBMSs accompanied by
+performance measurements:                             · Is it fair to compare a query language (SQL)
+                                                           with programming (e.g., Neo4j Pipes)?
+· "Graph databases outperform RDBMS on
+                                                      · Are synthetic scenarios reasonable?
+                                                      In particular, we show that:
+
+                                                      · seemingly similar scenarios behave differently;
+                                                      · database configurations and tuning are
+
+                                                           important for performance and comparisons;
+
+                                                                                                                            243
+
+Hohenstein, U. and Jergler, M.
+Database Performance Comparisons: An Inspection of Fairness.
+DOI: 10.5220/0007926602430250
+In Proceedings of the 8th International Conference on Data Science, Technology and Applications (DATA 2019), pages 243-250
+ISBN: 978-989-758-377-3
+Copyright c 2019 by SCITEPRESS - Science and Technology Publications, Lda. All rights reserved
+DATA 2019 - 8th International Conference on Data Science, Technology and Applications
+
+· other data structures than the obvious or             constant behaviour is explained as follows: "Using
+     traditional ones are advantageous;                 hash indexing this gives O(1). Then the graph is
+                                                        walked to find all the relevant payments, by first
+· programming instead of using a query language         visiting all employees in the departments, and
+     can improve performance.                           through them, all relevant payments. If we assume
+    The remainder of this paper is structured as        that the number of payment results are k, then this
+                                                        approach takes O(k)." However, it remains unclear
+follows: In Section 2, we collect some related work     what "visiting all employees" in Neo4j means and
+to underline the novelty of our investigation.          how the internal data structures contribute to a better
+                                                        performance compared to hash indexes in RDBMSs.
+    Afterwards, we elaborate in Section 3 upon
+unfairness of existing comparisons and various               (Rodriguez, 2011) uses 1,000,000 nodes and
+influencing factors before we conduct performance       4,000,000 edges with a synthetic distribution:
+measurements on PostgreSQL for common Neo4j             Despite an average fan-out of 4, some nodes have a
+test scenarios in Section 4. In Section 5, we deduct    higher number of edges. A test measures traversal
+criteria for achieving a fair performance comparison.   from a starting node to related nodes via 1 to 5 hops.
+                                                        The result reveals that Neo4j is more than twice as
+    Section 6 concludes the investigation and           fast for 4 hops. For 5 hops, Neo4j required 14.37
+presents some future work.                              minutes while MySQL was stopped after 2 hours.
+
+2 RELATED WORK                                              The test of (Adell, 2013) detects if one person is
+                                                        connected to another in 4 or fewer hops. The data set
+An early paper of (Hohenstein, et al., 1997)            contains 1,000,000 users with an average of 50
+criticizes standard benchmarks for object-oriented      friends. Neo4j required 2ms for the check, while an
+database management systems (ODBMSs) like OO7           RDBMS was stopped after running several days.
+(Carey, et al., 1994) and statements made therein
+like "ODBMSs are faster by factor 100". In a case           Another comparison (Baach, 2015) uses 100,000
+study, a real application using Oracle was              and 1,000,000 nodes with exactly 50 edges each. A
+transformed to several ODBMSs. The surprising           test counts the number of friends up to 5 hops. As a
+result of the performance measurements then             surprising result, MySQL was about 6 times faster
+conducted that only a single ODBMS-based                than Neo4j. One potential reason for that might be
+implementation has the potential to be faster than the  the use of the Cypher query language to perform
+original Oracle-based solution, while one ODBMS         queries while (Rodriguez, 2011) sticks to the Pipes
+was definitively much slower. Consequently, the         framework, which seems to be very beneficial.
+authors state that the best benchmark is the            (Baach, 2015) considers a comparison SQL vs. the
+application itself. The paper presents a methodology    Cypher language as fair, whereas SQL vs. Pipes
+for deriving application-specific benchmarks.           being unfair. Another reason for the result might be
+                                                        some deeper thoughts about configuring MySQL.
+    To our knowledge, no further work on fairness
+of performance comparisons has been published so            (Vicknair et al, 2010) experiment with data sets
+far. Indeed, there are only some critical statements    of size 1,000, 5,000, 10,000 and 100,000 nodes. In
+from (Baach, 2015) "Comparing Neo4j to MySQL            contrast to others, they set up a direct acyclic graph.
+without the use of Cypher is comparing apples and       Several tests traverse the graph, and count the nodes,
+oranges". In the forum (Hacker, 2010) others also       with 4 and 128 hops, count the number of nodes
+argue that some comparisons are meaningless.            with a certain payload, particularly with "<"
+                                                        comparisons, and find all the orphan nodes. In
+    However, several performance investigations can     general, the execution times are less than 200 ms,
+be found in the literature, which we tried to qualify.  and do not show huge differences between Neo4j
+                                                        and MySQL. In fact, the data sets are small and
+    (Khan, 2016) states that the technology of graph    enable in-memory processing.
+databases is better than RDBMSs by explaining why
+joins are bad for graph structures. He uses a simple        (Khan, et al., 2017) compare Oracle 11g and
+scenario that consists of Employees (E), Payments       Neo4j using a Medical Diagnostic System. The data
+(P) and Departments (D), related by one-to-many         set comprises about 28,000 patients, 625,721 patient
+relationships E-P and P-D. Then, qualifying two         visits, 869,666 patient-IssueMed records, to mention
+departments by a query, the related payments are        the main tables. Five count queries join two or three
+retrieved via the employees. The complexity is          tables. While Oracle performs queries in a few
+evaluated in Big-O notation. While RDBMS achieve        seconds (depending on the query), Neo4j requires
+O(|E|*|P|) with nested loop joins and O(|E|+|P|) with   about 0.3 sec.
+hash joins, Neo4j has an O(k) behavior. Neo4j's
+
+244
+                                                        Database Performance Comparisons: An Inspection of Fairness
+
+    (Joishi and Sureka, 2015) use some process-         3.3 Warm Start
+mining algorithms for their comparison of MySQL
+and Neo4j: finding similarity between actors based      The first execution of a query is slow because data is
+on the intersection of activities and analysing causal  fetched from disk and the query execution plan has
+dependencies between actors in carrying out a           to be derived. Further executions, also with different
+business process. MySQL is 32 times faster than         values, are faster because the execution plan is
+Neo4j for similarity, while Neo4j attains a perform-    already available and data is in the cache. That is
+ance boost of a magnitude of 7x over MySQL for          why performance comparisons like (Baach, 2015)
+the second test.                                        first initialize the cache by fetching all the needed
+                                                        data in a warm start. Moreover, the cache size is
+    (Martinez et al., 2016) also compare the per-       perfectly adjusted. This sounds reasonable at a first
+formance of MySQL and Neo4j. Using three                glance, but usually not a few (tested) tables are used
+randomly generated data sets (1,000, 10,000 and         and accessed in applications. Accesses to other
+100,000 entries), 12 multi-join queries of a health     tables will interfere and disturb the first cached data,
+application are tested. MySQL performs better than      but remain untested. Hence, a warm start is
+Neo4j in most cases but has a poor performance for      representative only if all the data - not only that
+larger data sets. It is important to note that no       used in tests - fits into memory completely.
+indexes were added in both database systems.
+                                                        3.4 Using Standard Configurations
+3 FAIRNESS OF COMPARISONS
+                                                        DBMSs possess many parameters, which are
+In the following, we explain why we think that          important for performance. However, in
+published performance comparisons are unfair and        performance comparisons, standard configurations
+should be seen sceptically.                             are used more or less. For example, (Martinez et al.,
+                                                        2016) state that "The deployed database servers
+3.1 Scope of Comparison                                 were not optimized" and "No index was added to the
+                                                        basic implementation".
+As already mentioned, the literature contains many
+exciting statements about the Neo4j performance.            The cache size is one important parameter,
+For example, (Khan, 2016) proves that graph data-       which is partially considered. Other parameters, e.g.,
+bases are better than RDBMSs by a theoretical           the space for temporal data, affect sorting and
+comparison of internal algorithms based on Big Os       eliminating duplicates. Indeed, tuning database
+without explaining in detail why the internal Neo4j     configurations can speed up accesses drastically.
+structures are better. A comparison of technologies
+at that level is not valid anyway.                      3.5 Over-tuning
+
+    Similarly, a comparison between a product X         If a benchmark stimulates only a few parts of an
+and RDBMSs in general as in (Adell, 2013) is            application, tuning the benchmark can lead to a
+wrong per se: Showing that Neo4j is faster than         highly optimal test program for exactly that portion.
+MySQL does not prove that Neo4j is faster than any      There is a danger of over-tuning a specific scenario
+relational DBMS. There are other products, too.         or query (especially with a warm start). However,
+                                                        such a specific tuning might have a negative and
+3.2 Small Test Data Sets                                invisible impact on other - potentially non-tested -
+                                                        scenarios such as inserts or deletes.
+Performance tests are often performed with small
+data sets, e.g., 1000, 5000, 10,000 (Vicknair et al,    3.6 Synthetic Test Scenarios
+2010). Even graphs with 100,000 nodes (Baach,
+2015) are not really large. This means that a test is   Most of the published benchmarks and comparisons
+basically testing in-memory capabilities: All the data  are synthetic in the sense that they abstract from
+fits into the accordingly sized memory.                 concrete applications. They aim at being generic
+                                                        hand and reducing the effort for implementing and
+    These evaluations are only representative for       performing tests. (Barry, 1994) states that it is easy
+applications for which the memory is available w.r.t.   to spend $100,000 for implementing a benchmark,
+the amount of data. Results cannot be generalized       especially if tests have to be implemented on
+for larger data sets since they do not cover disk       severval systems. Certainly, standard and simplified
+accesses, which will then certainly be required.
+                                                                                                                    245
+DATA 2019 - 8th International Conference on Data Science, Technology and Applications
+
+benchmarks help to reduce the implementation            3.8 Data Distribution
+effort. However, it is questionable whether those
+tests are representative for a particular application.  Performance typically depends not only on the test
+Results of comparisons are only representative if       scenario and test data such as the number of nodes
+tests coincide with the application in mind. Thus, the  and the number of edges, but also on the distribution
+tested operations must reflect the characteristic       of data for individual nodes. For example, the
+accesses of a given application.                        selected starting node is relevant, since each node
+                                                        has a different number of related nodes over n hops.
+    Most comparisons fail in this respect. For          The best implementation solution can change when
+example, benchmarks for graph databases use a           using different start and end nodes!
+configurable number of nodes and relationships
+(e.g., Vicknair et al, 2010), thereupon performing      3.9 Evaluation
+typically traversals along connections between nodes
+as the use case. The tests are thus rather synthetic.   Even if a benchmark seems to be representative, the
+Thus, it is not possible to adapt a benchmark to the    evaluation results may be unfair and may diminish
+demands of a specific application beyond con-           the value of the results. Typically, several test sce-
+figuring some few parameters. Tests are performed       narios for traversals, inserts, removals, queries are
+by changing a few factors such as the number of         performed, being simple in nature and executed in
+nodes (Vicknair et al, 2010) (Baach, 2015) or the       isolation and independent of each other. Also, each
+fan-out of relationships. Such a parameterization       test is often parameterized leading to several results.
+does not help to let a benchmark become more
+representative. It is legitimate to question whether        Thus, a benchmark comprises a collection of in-
+simple and slightly configurable tests could be         dependent results. This means particular per-
+representative for an application at all.               formance values have to be somehow aggregated in
+                                                        order to get an overall result. Detailed analyses are
+    There are mostly no tests for mixed scenarios       possible, but it is questionable how to correctly
+with queries, inserts, updates, and deletes combined    extrapolate from results for simple operations to
+in one test. Hence, just a few isolated features are    complex logic of the real application. A particular
+compared. Real life applications surely perform         system is able to win a comparison by just
+other accesses.                                         aggregating and interpreting the results in the right
+                                                        way - a system might have won most test cases,
+    Furthermore, there are different understandings     have best average over all the test cases, be leading
+of what a traversal is. Sometimes, a traversal          for some "relevant" weighting of test cases etc.
+retrieves all related nodes via up to n hops,
+sometimes it only counts the connected nodes. Other     4 PERFORMANCE TESTS
+tests determine all possible connections between two
+nodes, or simply detect whether two nodes are           All these issues often lead to results proving that
+related via up to n hops. Beside the fact that such     graph databases are 100 times faster than relational
+tests are scenarios that are advantageous for graph     systems, (Adell, 2013). Such statements, worded
+databases, these similar scenarios show huge            quite general, must at least be seen relative to the
+differences in performance as we will see later.        test scenarios and their relevance.
+
+3.7 Implementation Issues                                   In order to support our statements, we performed
+                                                        some experiments with a PostgreSQL database. We
+Some comparisons compare tests written in pure          intentionally used an older version 9.5 because
+SQL with the procedural Neo4j Pipes framework           several comparisons of RDBMS vs. Neo4j are also
+instead of the Cypher query language. Moreover, the     older. Hence, there is no advantage for the RDBMS
+test of (Baach, 2015), comparing SQL with the           by using the most recent state of technology.
+Neo4j Cypher query language, comes along with a
+winner MySQL. Obviously, the Cypher language                We take three "traversal" scenarios from
+does not perform as well as the Pipes framework.        published comparisons: Scenario ALL(n) starts with
+We doubt that comparing SQL with the Pipes              a random node and determines all nodes reachable
+framework is fair.                                      by less than n hops. Another scenario PATHS(n)
+                                                        determines only the paths between two given nodes
+    Another point is about using a straightforward      related by k hops, while EXISTS(n) checks whether
+database schema. There are other options partially      two given nodes are related by k hops, k<=n.
+requiring stored procedures, which should be tried
+out in a comparison.
+
+246
+                                                            Database Performance Comparisons: An Inspection of Fairness
+
+Table 1: PATHS(5) results for investigating indexes.        The query computes the complete paths including all
+                                                            the intermediate nodes; :x and :y represent the start
+Test1   Cold Start             Warm Start                   and end nodes, resp. The query is executed after a
+        First [sec]   First [sec] Second [sec]              restart of the computer (cold start), and afterwards
+Index   Ø stdev       Ø stdev Ø stdev                       simply immediately executed additional three times,
+no     62.88 3.26    59.67 0.60 60.25 1.74                  now with a "warm" cache. In a second step, different
+yes    23.78 5.27     4.54 1.55 6.43 1.17                   start and end points are taken for the same query.
+                                                            Results are summarized in Table 1.
+    The tests ran in an isolated environment without
+any parallel database accesses or other running                 The test pinpoints a huge difference: Indexes are
+applications. Each test was performed 3 times. The          essential for achieving performance - this is not a
+average of measurements was taken. All the tests use        surprise. The difference is even higher for a warm
+the same laptop running Windows 7 with a dual-core          start. A lack of basic indexes - maybe due to a too
+processor, 12 GB of RAM, and a 465 GB SSD disk.             naive implementation or a standard configuration
+Hence, the machine is not oversized.                        (cf. Section 3.4) - can heavily falsify benchmark
+                                                            results.
+    It is important to note that we do not perform a
+direct comparison with Neo4j - because benchmarks               Due to the obvious need for indexes, all the
+are unfair. Instead, our goal is to put some published      further tests will be done with indexes.
+statements into perspective.
+                                                            Test 2: Cold/Warm Start.
+4.1 Test Results for 500,000 Nodes                          Table 1 also contains the PATHS(5) results for a
+                                                            comparison between warm and cold start. The
+We experimented with two differently sized                  intention of this test is to investigate how the system
+databases. The first database contains 500,000 nodes        behaves in case of loading data from disk. This is
+with 50 edges to other randomly selected nodes.             relevant since we cannot assume all the data in
+                                                            memory for larger applications.
+Test 1: Impact of Indexes for Scenario PATHS.
+Our test series starts with a PostgreSQL standard               The difference between cold and warm start is
+configuration (especially a very small cache size of        minimal for the test without indexes because table
+128 MB). We apply the frequently used database              data has to be loaded anyway. Using indexes, there
+schema of (Adell, 2013) consisting of one table             is a large difference between cold and warm start.
+Friends (id int, friend int). Each node is identified by    Thus, a test should not only be restricted to warm
+a unique id; friend is a foreign key that refers back to    start tests (cf. Section 3.3).
+a friend's node, i.e., all those records that refer to the
+same id form the collection of friends for that node.       Test 3: Implementation Variants.
+                                                            The next test illustrates the impact of query tuning.
+    The first test has the purpose to illustrate the        Scenario EXISTS checks the existence of
+impact of indexes. A corresponding SQL query for            connections between two nodes. In contrast to
+Scenario PATHS(5) is sketched out in Figure 1.              PATHS, we are satisfied with an answer, connected
+                                                            or not. There are at least three possible queries:
+select f1.id, f2.id, f3.id, f4.id, f5.id, f5.friend         a) simply perform the query for PATHS (cf.
+from Friends f1
+join Friends f2 on f2.id=f1.friend                               Figure 1) and check for a non-empty result;
+join Friends f3 on f3.id=f2.friend                          b) add a LIMIT 1 at the end of the PATHS query to
+join Friends f4 on f4.id=f3.friend
+join Friends f5 on f5.id=f4.friend                               obtain just a single first connection;
+where f1.id = :x and f5.friend = :y                         c) add a LIMIT 1 for each sub-query in order to
+union
+select f1.id, f2.id, f3.id, f4.id, f4.friend, null ...           stop the execution early after the first hit:
+union
+select f1.id, f2.id, f3.id, f3.friend, null, null ...             (select f5.friend ... limit 1) union ... union
+union                                                             (select f1.friend ... limit 1)
+select f1.id, f2.id, f2.friend, null, null, null ...
+union                                                       Table 2 shows the enormous speed-up for Variant c).
+select f1.id, f1.friend, null, null, null, null             Consequently, searching for alternative implementa-
+from Friends f1 where f1.id = :x and f1.friend = :y;        tions or queries can be very effective - even if as
+                                                            simple as here! Taking one straightforward solution
+     Figure 1: SQL statement for Scenario PATHS(5).         is not reasonable (cf. Section 3.7). Note that no
+                                                            connections for 1 to 4 hops exist for our test. Hence,
+                                                            the multi-join queries are executed.
+
+                                                            247
+DATA 2019 - 8th International Conference on Data Science, Technology and Applications
+
+Test 4: Data Distribution.                             ever, there are alternatives for data structures and/or
+Next, we show that test data and parameters have an    implementing the computation logic, which are often
+impact on performance (cf. 3.8). We use PATHS(5)       not considered (cf. Section 3.7). For example, in-
+with different start and end nodes, resulting in       stead of a table Friends(id, friend), we can use an
+different numbers of connections. Table 2 shows        array-valued column in a table FriendsWithArray(id
+how execution times depend on the chosen start and     int, friends int[]). Each node is represented by just a
+end nodes, and. The smaller the number of retrieved    single record independent of the number of friends.
+connections is, the faster the query performs.
+                                                           Turning to Scenario ALL, the query for getting
+        Table 2: Results for Test 3, 4, and 5.         the nodes for 4 hops starting with :x looks like:
+
+Test    Variant      Cold [sec]  Warm [sec]            select distinct f1.id as fid, f1.friends into tmp3
+Test 3               Ø stdev      Ø stdev              from FriendsWithArray f1 where f1.id = :x;
+           a)       23.78 5.27    4.54 1.55
+Test 4     b)       19.81 1.61    4.79 1.07            insert into tmp3 select distinct f2.id, f2.friends
+Test 5     c)        2.39 0.13   0.057 0.02            from FriendsWithArray f1, FriendsWithArray f2,
+          479 recs  15.18 1.27    3.32 0.64
+          797 recs  23.78 5.27    4.54 1.55                  generate_subscripts(f1.friends,1) i1,
+           128MB    23.78 5.27    4.54 1.55            where f1.id = :x and f1.friends[i1] = f2.id
+         1024MB     25.58 0.92    0.46 0.03            union ... union
+                                                       select distinct f4.id, f4.friends
+    Similarly, the order of sub-queries is important   from FriendsWithArray f1, FriendsWithArray f2,
+for Scenario EXISTS(5) in Test 3. If there are no
+hop-1 and hop-2 but hop-3 connections, the query is          generate_subscripts(f1.friends,1) i1,
+fastest if the hop-3 sub-query occurs first and              generate_subscripts(f2.friends,1) i2,
+immediately stops execution. The possibility of              FriendsWithArray f3, FriendsWithArray f4,
+choosing the right nodes has an influence on results.        generate_subscripts(f3.friends,1) i3,
+Knowing the data set, the implementation can be        where f1.id = :x and f1.friends[i1] = f2.id
+"improved". This is also a form of over-tuning (cf.    and f2.friends[i2] = f3.id and f3.friends[i3] = f4.id
+Section 3.5) by consciously "tuning" the order of
+sub-queries according to data.                                Figure 2: Query for ALL scenario with arrays.
+
+Test 5: Larger Cache Size.                             f1.friends is an array that contains the friends of the
+The default cache in PostgreSQL with 128MB is far      1st hop. The built-in function generate_subscripts is
+too small for our table data of 864 MB and index       applied to an array-valued column and returns a set
+data of 1607 MB. Only 5% of the overall data fits      of indices to which a variable i can then be bound.
+into the cache. Consequently, many reads happen        The variable is used to access a the i-th field in the
+from disk. To improve the cache hit ratio, we          array by means of friends[i] to be used in joins
+increase memory by factor 8 to 1024 MB in order to     between array elements (i.e., sons) and Ids.
+have more data in memory, but still not sufficient to
+keep all the data.                                         Test ALL(4) "Old" is computed with a single
+                                                       SQL query similar to Figure 1, however, returning
+    The results for PATHS(5) with a larger cache are   related nodes for a start node :x instead of paths. The
+also presented in Table 2. The difference between a    "New" variant proceeds stepwise using a stored
+small (default) and large cache for a cold start is    procedure following the query structure of Figure 2.
+ignorable; the data must be fetched from disk          The result is stored in a temporary table tmp4, which
+anyway. However for a warm start, we recognize         is then used in another query to unnest the node Ids:
+more than factor 8 of speed up. That is, sticking to
+default configurations falsifies results (cf. 3.4).    select distinct t3.id, friends[i] as friend into tmp4
+                                                       from tmp3 t3, generate_subscripts(t3.friends,1) i
+    Please note there are many further tuning
+parameters, e.g., the use of temporal space to speed   For ALL(5) "New", two additional steps are added:
+up sorting and duplicate elimination.
+                                                       select f5.id, f5.friends into tmp5
+Test 6: Different Implementations and                  from FriendsWithArray f5, tmp4 t4
+Structures.                                            where f5.id = t4.friend;
+So far, we have used straightforward table structures
+and SQL for "implementing" the scenarios. How-         select distinct t5.friends[i] -- unnest
+                                                       from tmp5 t5, generate_subscripts(t5.friends,1) i;
+
+                                                           Table 3 shows that the computation of related
+                                                       nodes over 5 hops is possible in about half a minute
+                                                       - as opposed to several hours as stated in
+                                                       (Rodriguez, 2011) (Adell, 2013). As expected, the
+                                                       results with the larger cache size are even better.
+
+248
+                                                         Database Performance Comparisons: An Inspection of Fairness
+
+Table 3: Results for Scenario ALL.                       (cf. Figure 1) are shown in Table 4. Even n=9 and
+                                                         n=10 achieve moderate execution times despite the
+  Variant [sec]  Small Cache  Large Cache                higher number of hops. Thus, compared to the
+                   Ø stdev      Ø stdev                  previous database, the fan out seems to be one
+ALL(4) "Old"                                             decisive factor for performance results (cf. 3.8).
+ALL(4) "New"     16.43 3.21   16.28 2.87
+ALL(5) "New"      8.76 3.54    4.54 1.98                 Table 4: Results for ALL scenario (large cache).
+                 28.67 3.26   24.55 1.75
+
+The improved performance is paid by some                 ALL(9)   Cold [sec] Warm [sec]     Number of
+drawbacks. The table violates the first normal form      ALL(10)   Ø stdev Ø Stdev       returned values
+but is still easy (maybe even easier) to understand.              20.66 0.22 8.01 0.05
+Also, inserts and deletes become more complicated.                                                334,247
+A stored procedure might help to handle the logic.                37.44 3.86 26.40 0.41         1,172,908
+
+Test 7: Differences in Traversal Scenarios.              5 THOUGHTS ABOUT FAIRNESS
+Comparing the previous results, we recognize the
+different performance behaviour of the various           Having discussed some performance scenarios and
+"traversal" scenarios ALL/PATHS/EXISTS: In a             thereby achieving different results than often
+warm start, PATHS(5) is fast with about 5 seconds,       presented in the literature, we turn to the question
+and EXISTS(5) is even very fast (a few milli-            what fairness of performance comparisons means.
+seconds) with an optimized query. However, finding
+nodes in ALL(5) is slower with half a minute. This           At first, it is an absolute precondition for fairness
+illustrates how important the chosen scenario and its    to supply the same environment with the same
+semantics is, even if scenarios might look quite         resources such as hardware, processor, operating
+similar (cf. Section 3.6).                               system, network, disks, RAM, degree of test
+                                                         isolation and the same overall test conditions etc.
+Test 8: JDBC Configuration.
+So far, we have executed tests interactively with the        But if the size of memory for the DBMS is pre-
+PostgreSQL console. However, database access will        fixed, it is starting to become unfair. DBMSs like
+be typically invoked by means of JDBC, ADO.NET,          Neo4j are Java-based and execute queries at the
+or an object/relational mapping tool. Hence, another     client, making a lot of memory in the JVM more
+factor enters the game having impact on                  advantageous. RDBMSs process queries in the
+performance.                                             server instead. Consequently, a smaller JVM might
+                                                         be sufficient in order to leave more RAM for the
+    We consider fetching the query result in Java        DBMS. Hence, resources cannot be set equally for
+with JDBC. One important option in JDBC is the           all the test candidates since the settings not only
+fetch size, which can be set by setFetchSize(n). The     depend on an application and its data, but also on the
+fetch size determines how many records are               type of DBMS.
+transferred from the database server to the client
+program: If a record is requested by the client, a bulk      The rules for performing benchmarks also have a
+of n records is physically prefetched, already serving   strong impact on the expressiveness of results.
+this and the next n-1 successive requests, too.          Conditions must not be too restrictive: Every test
+                                                         should implement the same universe of discourse
+    We used ALL(4) and executed the "Old" query          with the same functionality. But a tester should not
+with different fetch sizes. The query executed in 30     be forced to use a specific database schema, a query
+seconds with a size of 1 (typically being the default)   language etc. For example, benchmarks for
+and 18 seconds with a size of 1000. This a huge          ODBMSs, e.g., (Carey, DeWitt, and Naughton,
+difference, especially since the query execution itself  1994), often dictated testers the same neutral
+consumes about 15 sec. Again, relying on defaults        implementation. Instead, there should be freedom
+affects the performance negatively (cf. Section 3.4).    for using SQL or not.
+
+4.2 Second Database                                          The execution of benchmarks or tests often relies
+                                                         on default configurations. Parameters such as the
+In order to elaborate more on another facet of 3.8,      database cache size are set to default or configured
+we use a larger database with 5,000,000 nodes each       at good guess, and tuning is neglected. The OO7
+having four randomly chosen friends. The results for     benchmark (Carey, DeWitt, and Naughton, 1994)
+the bad performing One-SQL-statement of ALL(n)           legitimates such a proceeding by stating that normal
+                                                         programmers cannot tune a system effectively. This
+
+                                                                                                           249
+DATA 2019 - 8th International Conference on Data Science, Technology and Applications
+
+statement is doubtful in our opinion. Most DBMSs          instead of blindly believing in published
+do require an appropriate tuning in order to optimize     comparisons. We made an attempt to give some
+performance. As we have demonstrated, simple              recommendations to achieve fair comparisons.
+tuning measures like creating indexes already
+improve performance considerably; but there are               Our future work will enlarge the scope to other
+much more screws to turn. This potential must be          NoSQL categories. That said, we want to focus on
+used for sustainable results.                             covering further potential advantages of NoSQL
+                                                          products such as distribution, scalability etc.
+    Performance comparisons are certainly fair if
+infinite time is at the tester's disposal. This is quite  REFERENCES
+infeasible, however, the following attenuation makes
+sense: Each tester of a DBMS should obtain the            Adell, J., 2013. Performance of Graph vs. Relational
+same, sufficient, amount of time. Furthermore, each           Databases. https://dzone.com/articles/performance-
+implementer of a test must have the same degree of            graph-vs [last access 2019/5/1].
+skills and knowledge of a particular database
+candidate. Otherwise, different skills should be          Baach, J., 2015. Neo4j Performance Compared to
+considered for restricting the time. Anyway, the time         MySQL. https://baach.de/Members/jhb/neo4j-per-for
+limit must not be too tight, there should be sufficient       mance-compared-to-mysql [last access 2019/5/1].
+time to avoid too straightforward, often naive,
+solutions. Having enough time allows a programmer         Barry, D., 1994. Should you take the plunge? Object
+to try out concepts in several variants and to tune the       Magazine 3(6), 1994.
+overall system.
+                                                          Carey, M., DeWitt, D. and Naughton, J., 1994. The OO7
+    Finally, it is important to have realistic and            Benchmark. ACM SIGMOD 1994.
+holistic test scenarios. This particularly means that
+scenarios should cover representative and complete        Hacker, 2010. NoSQL vs. RDBMS: Let the flames begin.
+use cases with a mixed set of operations. This also           https://news.ycombinator.com/item?id=1221598 [last
+reduces the risk of over-tuning and evaluating or             access 2019/5/1].
+aggregating partial results in a convenient manner.
+                                                          Hohenstein, U., Pleßer, V. and Heller, R., 1997.
+6 CONCLUSIONS                                                 Evaluating the Performance of Object-Oriented
+                                                              Database Systems by Means of a Concrete
+Publications about new database technologies often            Application. 8th DEXA Workshop, Toulouse 1997.
+claim to be superior to traditional technologies such
+as relational database products. This is proven by        Joishi, J. and Sureka, A., 2015. Graph or Relational
+means of technical performance comparisons.                   Databases: A Speed Comparison for Process Mining
+                                                              Algorithm. Proc. Of 19th International Database
+    We picked up some published statements that               Engineering & Applications Symposium, Yokohama,
+compare the graph database Neo4j with relational              2015.
+systems coming up with some huge performance
+gains for Neo4j. The overall goal of this paper was       Khan, W., Ahmed, W. and Shahzad, E., 2017. Predictive
+to discuss those "sweeping" statements. We revealed           Performance Comparison Analysis of Relational &
+some common test scenarios with a PostgreSQL                  NoSQL Graph Databases. Int. Journal of Advanced
+database and illustrated a huge spectrum of                   Computer Science and Applications 8(5), January
+performance depending on factors such as                      2017.
+configuration, database schemas, tuning etc.
+Moreover, we achieved good results for those              Khan, Q., 2016. Why Graph Databases Outperform
+critical scenarios that were proven to be bad for             RDBMS on Connected Data. https://dzone.com/
+RDBMSs. One important conclusion was that a                   articles/why-are-native-graph-databases-more-efficient
+good and comparable performance can often be                  -than [last access 2019/5/1].
+achieved if doing it in the right way. The message
+should be that each system can be tuned for               Martinez, A., Mora, R., Alvarado, D. et al., 2016. A
+particular use cases: A deeper investigation becomes          Comparison between a Relational Database and a
+absolutely indispensable for reliable results.                Graph Database in the context of a Personalized
+                                                              Cancer Treatment Application. Proc. of Alberto
+    Hence, we want to encourage people to perform             Mendelzon International Workshop on Foundations of
+own benchmarks if tools have to be compared                   Data Management, Panama City 2016.
+
+                                                          Moran, B., 2010. RDBMS vs. NoSQL: And the Winner
+                                                              is .... http://www.itprotoday.com/microsoft-sql-server
+                                                              /rdbms-vs-nosql-and-winner, 2010 [last access
+                                                              2019/5/1].
+
+                                                          Rodriguez, M., 2011. MySQL vs. Neo4j on a Large-Scale
+                                                              Graph Traversal. https://dzone.com/articles/mysql-vs-
+                                                              neo4j-large-scale [last access 2019/5/1].
+
+                                                          Vicknair, C., Macias, M., Nan. X., et al., 2010. A Com-
+                                                              parison Between a Graph and a Relational Database: A
+                                                              Data Provenance View. Proc. of 48th Annual
+                                                              Southeast Regional Conference, 2010, Oxford, (USA).
+
+250
+

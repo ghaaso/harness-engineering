@@ -1,0 +1,99 @@
+// Revision 4 numbers (model-brief.md section 14), on the real table (params.json) with promoted checks on:
+// p_promote at its middle value. Every number here follows from assumed values: the ranges and middle
+// values of params.json, most of them guesses (tag G). Nothing here is a measurement of the library.
+// Run from this folder:  node - < run-v4.js.txt
+// Writes run-v4-out.json and run-v4-console.txt. Uses process.cwd(), never __dirname.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const real = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const lims = JSON.parse(fs.readFileSync(path.join(dir, 'limitations.json'), 'utf8'));
+const lines = [];
+const say = s => { lines.push(s); console.log(s); };
+const f = (x, d) => (x === null || x === undefined) ? 'n/a' : (isFinite(x) ? Number(x).toFixed(d === undefined ? 3 : d) : String(x));
+const out = { note: 'Every number follows from assumed values in params.json (mostly guesses, tag G). p_promote at its middle value.', version: map.version };
+const rows = E.tableRows(real);
+const R = E.RATIO_IDS;
+
+say('Revision 4, real table, p_promote at its middle value ' + rows.p_promote.best + '. Every number follows from assumed values.');
+
+// counts
+const ids = map.parameters.map(p => p.id);
+const count = key => { const c = {}; ids.forEach(id => { const k = rows[id][key] || 'none'; c[k] = (c[k] || 0) + 1; }); return c; };
+out.counts = { parameters: ids.length, side: count('side'), tag: count('tag'), lib_group: count('lib_group') };
+say('counts: ' + JSON.stringify(out.counts));
+
+// reference settings
+const refs = E.references(map, real);
+out.references = {};
+say('\nreference settings (last period): ' + R.join(', ') + ', funnel end, more caught via promoted checks');
+Object.keys(refs).forEach(id => {
+  const r = refs[id];
+  out.references[id] = { levels: r.levels, ratios: r.last.ratios, library: r.last.library, funnel_end: r.last.funnel_end, promo: r.last.promo, first_ratios: r.first.ratios };
+  say('  ' + id.padEnd(16) + R.map(k => f(r.last.ratios[k])).join('  ') + '   end ' + f(r.last.funnel_end, 2) + '   promo ' + f(r.last.promo, 2) + '   adjusted ' + r.adjusted.length);
+});
+
+// funnel and usage at middle, last period
+const mid = E.referenceParams(map, real, 'middle');
+const fu = E.funnel(map, mid, { period: 'last' });
+const tp = E.timePath(map, mid);
+const lastRow = tp.periods[tp.periods.length - 1];
+out.funnel_middle = { funnels: fu.funnels, end: fu.end, promo: fu.promo, usage: {} };
+map.usage_measures.forEach(m => { out.funnel_middle.usage[m] = lastRow.library.measures[m]; });
+say('\nfunnel at middle, last period');
+Object.keys(fu.funnels).forEach(k => say('  ' + k + ': ' + fu.funnels[k].map(s => s.id + ' ' + f(s.value, 2)).join(' > ')));
+say('  more caught at the first gate through promoted checks, of 100 the cheap model gets wrong alone: ' + f(fu.promo, 2));
+say('  usage: ' + map.usage_measures.map(m => m + ' ' + f(lastRow.library.measures[m], 3)).join(', '));
+const fa = E.funnel(map, E.referenceParams(map, real, 'all_good'), { period: 'last' });
+out.funnel_all_good = { end: fa.end, promo: fa.promo };
+say('  all_good: funnel end ' + f(fa.end, 2) + ', promoted ' + f(fa.promo, 2));
+
+// weights
+const W = E.weights(map, real, lims);
+out.weights = {
+  full: { score: W.full.score, cost_fall: W.full.cost_fall, wrong_fall: W.full.wrong_fall },
+  groups: W.groups.map(g => ({ id: g.id, alone: g.alone, last: g.last, moved: g.moved.length })),
+  steps: W.steps.map(s => ({ step: s.step, alone: s.alone, last: s.last, moved: s.moved.length })),
+  unnamed: { alone: W.unnamed.alone, last: W.unnamed.last, ids: W.unnamed.moved },
+  sequence: W.sequence.map(s => ({ step: s.step, added: s.added, cumulative: s.cumulative })),
+  sequence_end: { added: W.sequence_end.added, cumulative: W.sequence_end.cumulative },
+  unnamed_share: W.unnamed_share,
+  top_limitations: W.ranking.limitations.slice(0, 12).map(r => { const l = W.limitations.find(x => x.id === r.id); return { id: r.id, title: l.title, step: l.step, alone: r.alone, last: r.last, moved: l.moved, same_set: l.same_set ? l.same_set.count : null }; }),
+  unknowns_top: W.unknowns.slice().sort((a, b) => b.last - a.last).slice(0, 10).map(u => ({ id: u.id, group: u.group, alone: u.alone, last: u.last })),
+  same_set_rows: W.limitations.filter(r => r.same_set && r.same_set.count > 0).length,
+  not_measured: W.limitations.filter(r => !r.measured).map(r => r.id + ':' + r.not_measured)
+};
+say('\nweights: S(all_good) ' + f(W.full.score) + ' (cost fall ' + f(W.full.cost_fall) + ', wrong fall ' + f(W.full.wrong_fall) + ')');
+say('  groups (alone / last): ' + W.groups.map(g => g.id + ' ' + f(g.alone) + '/' + f(g.last)).join(', '));
+say('  steps (alone / last): ' + W.steps.map(s => s.step + ' ' + f(s.alone) + '/' + f(s.last)).join(', '));
+say('  unnamed (alone / last): ' + f(W.unnamed.alone) + '/' + f(W.unnamed.last) + ' over ' + W.unnamed.moved.join(', '));
+say('  sequence: ' + W.sequence.map(s => s.step + ' (+' + f(s.added) + ' = ' + f(s.cumulative) + ')').join(', ') + '; unnamed +' + f(W.sequence_end.added) + ' = ' + f(W.sequence_end.cumulative) + '; unnamed share ' + f(W.unnamed_share));
+say('  top 12 limitations by last:');
+out.weights.top_limitations.forEach(r => say('    ' + r.id + ' (step ' + r.step + ') ' + r.title + ': alone ' + f(r.alone) + ', last ' + f(r.last) + ', same set ' + r.same_set + ', moves ' + r.moved.join(' ')));
+say('  limitations with a same-set partner: ' + out.weights.same_set_rows + '; not measured: ' + out.weights.not_measured.length);
+say('  top unknowns by last: ' + out.weights.unknowns_top.map(u => u.id + ' ' + f(u.alone) + '/' + f(u.last)).join(', '));
+
+// shared table
+const T = E.sharedTable(map, real);
+out.shared_table = T.rows;
+say('\nshared groups table (last period): cost and wrong of library / ladder / strong model');
+T.rows.forEach(r => say('  ' + r.base.padEnd(9) + ('[' + r.moved.join('+') + ']').padEnd(14) + 'lib ' + f(r.library.cost, 2) + ' / ' + f(r.library.wrong, 4) + '   ladder ' + f(r.cheap_ladder.cost, 2) + ' / ' + f(r.cheap_ladder.wrong, 4) + '   strong ' + f(r.top_first.cost, 2) + ' / ' + f(r.top_first.wrong, 4) + '   ratios ' + R.map(k => f(r.ratios[k])).join(' ')));
+
+// ensemble at three ties
+out.ensemble = {};
+say('\nensemble, N 2000, seed 20261112, last period, p10/p50/p90');
+[0, 0.5, 1].forEach(tie => {
+  const en = E.ensemble(map, real, { n: 2000, seed: 20261112, tie, percentiles: [10, 50, 90] });
+  const sp = {};
+  R.concat(['funnel_end', 'promo']).forEach(k => { sp[k] = en.spread.last[k]; });
+  out.ensemble['tie_' + tie] = { spread_last: sp, shareBetterVs: en.shareBetterVs, adjustedDraws: en.adjustedDraws };
+  say('  tie ' + tie + ': ' + R.concat(['funnel_end', 'promo']).map(k => k + ' ' + JSON.stringify(sp[k], (key, v) => typeof v === 'number' ? Number(v.toFixed(3)) : v)).join('; '));
+  say('    share better (cheaper, wrong no higher), last: vs strong ' + f(en.shareBetterVs.top_first.last) + ', vs ladder ' + f(en.shareBetterVs.cheap_ladder.last) + '; adjusted draws ' + en.adjustedDraws);
+});
+
+fs.writeFileSync(path.join(here, 'run-v4-out.json'), JSON.stringify(out, null, 1));
+fs.writeFileSync(path.join(here, 'run-v4-console.txt'), lines.join('\n') + '\n');

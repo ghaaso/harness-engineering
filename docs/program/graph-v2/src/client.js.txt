@@ -1,0 +1,216 @@
+/* Page script for the graph v2 owner page. P (the payload) is defined by build.js.txt just before this text.
+   Everything drawn here reads P; numbers that the script computes (sums, model outputs) carry class "cmp". */
+'use strict';
+(function () {
+const $ = (s, r) => (r || document).querySelector(s), $$ = (s, r) => [...(r || document).querySelectorAll(s)];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const num = n => Number(n).toLocaleString('en-US');
+const rnd = (a, n) => { const m = Math.pow(10, n); return (Math.round(a * m + 1e-7) / m).toFixed(n); };
+const p1 = x => rnd(x * 100, 1) + ' %';
+const Mt = n => rnd(n / 1e6, 1) + 'M';
+const C = (s) => '<span class="cmp">' + s + '</span>';
+const MARKW = P.markw;
+const mk = m => '<span class="mkw"><span class="mk m-' + m + '" aria-hidden="true"></span><span class="mword">' + MARKW[m] + '</span></span>';
+function segs(ctl, fn) { $$('[data-ctl="' + ctl + '"]').forEach(g => g.addEventListener('click', ev => { const b = ev.target.closest('button'); if (!b) return; $$('button', g).forEach(x => x.setAttribute('aria-pressed', String(x === b))); fn(b.dataset.v, g); })); }
+
+/* theme */
+segs('theme', v => { if (v === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', v); try { localStorage.setItem('g2theme', v); } catch (e) {} });
+try { const t = localStorage.getItem('g2theme'); if (t && t !== 'auto') { document.documentElement.setAttribute('data-theme', t); $$('[data-ctl="theme"] button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === t))); } } catch (e) {}
+
+/* B: bar scale */
+segs('bscale', v => {
+  const tr = $$('#b-forms .track[data-car]');
+  const maxC = Math.max(...tr.map(t => +t.dataset.car));
+  const cols = [1, 2].map(i => $$('#b-forms .frow:not(.head) > .track:nth-child(' + (i + 1) + ')[data-share]'));
+  const maxS = cols.map(c => Math.max(...c.map(t => +t.dataset.share)));
+  cols.forEach((c, i) => c.forEach(t => { const w = v === 'common' ? 100 * t.dataset.car / maxC : 100 * t.dataset.share / maxS[i];
+    $('.fill', t).style.width = Math.max(w, 0.25).toFixed(3) + '%'; $('.val', t).style.left = Math.min(w, 70).toFixed(2) + '%'; }));
+});
+
+/* C: question picker */
+(function () {
+  const list = $('#cq-list'); if (!list) return;
+  const maxT = Math.max(...P.cq.map(c => c.pc + c.gc));
+  const V1W = { no: 'no path', partly: 'partly', yes: 'had it' };
+  list.innerHTML = P.cq.map((c, i) => '<button type="button" class="cqbtn" data-i="' + i + '" aria-pressed="false"><span>' + esc(c.q) + '<br><small>' + mk(c.mark) + '</small></span><span class="v1 ' + c.v1 + '">' + V1W[c.v1] + '</span><span class="mini"><i class="m-' + c.mark + 'b" style="width:' + Math.max(0.6, 100 * (c.pc + c.gc) / maxT).toFixed(2) + '%"></i></span></button>').join('');
+  function show(i) {
+    const c = P.cq[i];
+    $$('.cqbtn', list).forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.i === i)));
+    $('#cq-layers').innerHTML = P.layers.map(l => { const on = l.kinds.some(k => c.kinds.includes(k));
+      return '<div class="layer' + (on ? ' on' : '') + '"><h4>' + esc(l.name) + (on ? ' <span class="badge">used</span>' : '') + '</h4><p class="ln">' + esc(l.note) + '</p>' + l.kinds.map(k => '<span class="kchip' + (c.kinds.includes(k) ? ' on' : '') + '">' + esc(k) + '</span>').join('') + '</div>'; }).join('');
+    $('#cq-info').innerHTML = '<h3>' + esc(c.q) + '</h3><dl>' +
+      '<dt>Current graph</dt><dd><span class="v1 ' + c.v1 + '">' + V1W[c.v1] + '</span></dd>' +
+      '<dt>Path it needs</dt><dd><code>' + esc(c.mp) + '</code></dd>' +
+      '<dt>Answer shape</dt><dd>' + esc(c.shape) + '</dd>' +
+      '<dt>Token ceiling</dt><dd>' + esc(c.ceil) + '</dd>' +
+      '<dt>Operation</dt><dd>' + esc(c.op) + '</dd>' +
+      '<dt>Built from</dt><dd>' + esc(c.by) + '</dd>' +
+      '<dt>Depends on</dt><dd>' + esc(c.level) + '</dd>' +
+      '<dt>Lookup cost</dt><dd>product ' + Mt(c.pc) + ', program ' + Mt(c.gc) + ' carried tokens <span class="tag meas">measured: use-cases.md</span></dd></dl>';
+  }
+  list.addEventListener('click', ev => { const b = ev.target.closest('.cqbtn'); if (b) show(+b.dataset.i); });
+  show(1);
+})();
+
+/* D: one lookup, step by step */
+(function () {
+  const box = $('#d-box'); if (!box) return;
+  let ex = 0, step = 0, budget = null, order = 'rank', stopPct = 0;
+  const short = p => String(p || '').replace(/^technician-app\/src\//, 'mobile: ').replace(/^backend\/app\//, 'backend: ').replace(/^src\//, 'web: ');
+  const itemName = i => i.n ? i.n : short(i.p);
+  function selection(X) {
+    const val = i => i.rrf / Math.max(1, i.tt);
+    let items = X.items.slice().sort((a, b) => a.rank - b.rank);
+    if (order === 'vpt') items.sort((a, b) => val(b) - val(a));
+    const first = items.length ? val(items[0]) : 0;
+    let used = 0, taken = [], why = 'every candidate fitted';
+    for (const it of items) {
+      if (stopPct > 0 && order === 'vpt' && val(it) < first * stopPct / 100) { why = 'stopped: value per token fell below ' + stopPct + ' % of the first item\'s'; break; }
+      if (used + it.tt > budget) { why = 'stopped: the next item did not fit the budget'; break; }
+      used += it.tt; taken.push(it);
+    }
+    return { items, taken, used, why, val };
+  }
+  function draw() {
+    const X = P.ex[ex];
+    if (budget == null || budget > X.pool.tree_tokens_all) budget = Math.min(400, X.pool.tree_tokens_all);
+    const S0 = selection(X), tt0 = S0.taken.reduce((a, i) => a + i.tt, 0), tr0 = S0.taken.reduce((a, i) => a + i.trt, 0);
+    const SL = ['1 Entry: ' + X.entry.tokens + ' tokens', '2 Candidate pool: ' + X.pool.n + ' candidates, ' + num(X.pool.file_tokens_all) + ' tokens if read', '3 Ranking: top ' + X.items.length + ' of ' + X.pool.n + ' kept', '4 Selection: ' + C(S0.taken.length + ' items, ' + num(S0.used) + ' tokens'), '5 Answer: tree ' + C(num(tt0)) + ' against triples ' + C(num(tr0)) + ' tokens'];
+    $$('#d-steps button').forEach(b => { b.setAttribute('aria-pressed', String(+b.dataset.v === step)); b.innerHTML = SL[+b.dataset.v]; });
+    let h = '';
+    if (step === 0) {
+      h = '<h4>1 · Entry: find the seed</h4><p><b>Question:</b> ' + esc(X.q) + '</p><p class="small"><b>How it was chosen:</b> ' + esc(X.rule) + '</p>' +
+        '<p>The agent names <code>' + esc(X.entry.query) + '</code>; the find operation answers with ' + X.entry.matches + ' match, in ' + X.entry.tokens + ' tokens:</p><pre class="code">' + esc(X.entry.text) + '</pre>' +
+        (X.def ? '<p class="small">The definition: <code>' + esc(X.def.signature) + '</code>, line ' + X.def.line + ', used from ' + X.def.users_files + ' other files.</p>' : '') +
+        '<p class="tokline">Reading the seed file instead would cost ' + num(X.seed.file_tokens) + ' tokens.</p>';
+    } else if (step === 1) {
+      const mx = Math.max(X.pool.file_tokens_all, X.pool.tree_tokens_all);
+      h = '<h4>2 · The candidate pool</h4><p>' + (X.kind === 'rules' ? 'Rules reach the file through their “constrains” anchors: ' + X.pool.hop1 + ' rule anchored directly at one hop, ' + X.pool.hop2 + ' through a definition in the file. The invariants document holds ' + X.inv + ' rules in ' + num(X.invTok) + ' tokens.' :
+        'Two typed hops on the file-level graph, plus the files that changed together with the seed: ' + X.pool.n + ' candidates (' + X.pool.hop1 + ' at one hop, ' + X.pool.hop2 + ' at two hops, ' + X.pool.co_only + ' reached only through changed-together history; ' + X.pool.co_any + ' have changed-together history at all).') + '</p>' +
+        (X.graph ? '<p class="small">The file-level graph has ' + num(X.graph.collapsed_nodes) + ' nodes; ' + X.graph.nodes_reachable_2hop + ' are within two hops of this seed.</p>' : '') +
+        '<div class="hbar" style="--lw:260px"><div class="lab">reading every candidate file</div><div class="track"><div class="fill g-reading" style="width:100%"></div><div class="val" style="left:2%">' + num(X.pool.file_tokens_all) + ' tokens</div></div></div>' +
+        '<div class="hbar" style="--lw:260px"><div class="lab">one tree line per candidate</div><div class="track"><div class="fill g-docs" style="width:' + Math.max(0.4, 100 * X.pool.tree_tokens_all / mx).toFixed(2) + '%"></div><div class="val" style="left:' + Math.min(100 * X.pool.tree_tokens_all / mx + 1, 70).toFixed(2) + '%">' + num(X.pool.tree_tokens_all) + ' tokens</div></div></div>';
+    } else if (step === 2) {
+      const rows = X.items.slice().sort((a, b) => a.rank - b.rank).slice(0, 15), mr = Math.max(...rows.map(r => r.rrf));
+      const second = X.kind === 'rules' ? 'hop rank' : 'changed together (share of commits, count) · rank';
+      h = '<h4>3 · Ranking: rooted PageRank, changed-together evidence, and the two fused</h4><p class="small">Rooted PageRank from the seed (restart 0.15) ranks by graph closeness; changed-together evidence ranks by history; the fused score is 1/(60 + rank by PageRank) + 1/(60 + second rank), the reciprocal-rank fusion of Cormack and others. ' + (X.items.length > rows.length ? 'Top ' + rows.length + ' of ' + X.items.length + ' kept candidates shown.' : '') + '</p><div class="tblwrap"><table class="rk"><thead><tr><th>#</th><th class="l">candidate</th><th>hop</th><th>PageRank · rank</th><th>' + second + '</th><th class="l">fused score</th></tr></thead><tbody>' +
+        rows.map(r => '<tr><td>' + r.rank + '</td><td class="path">' + esc(itemName(r)) + '</td><td>' + (r.hop == null ? 'history only' : r.hop) + '</td><td>' + r.ppr + ' · ' + r.pr + '</td><td>' + (X.kind === 'rules' ? (r.hr || '') : (r.co ? r.co.conf + ', ' + r.co.support + ' · ' + r.cr : 'none')) + '</td><td class="l"><span class="ib" style="width:' + (100 * r.rrf / mr).toFixed(1) + 'px"></span> ' + r.rrf + '</td></tr>').join('') + '</tbody></table></div>';
+    } else if (step === 3 || step === 4) {
+      const S = selection(X);
+      if (step === 3) {
+        const tot = X.pool.tree_tokens_all;
+        h = '<h4>4 · Selection under a token budget</h4><div class="ctl"><label>Budget <input type="range" id="d-bud" min="20" max="' + tot + '" step="10" value="' + budget + '"> ' + C(num(budget)) + ' tokens</label>' +
+          '<span class="lab">Order</span><div class="seg" role="group" aria-label="Order" id="d-ord"><button type="button" data-v="rank" aria-pressed="' + (order === 'rank') + '">by fused rank</button><button type="button" data-v="vpt" aria-pressed="' + (order === 'vpt') + '">by value per token, with a stop</button></div>' +
+          (order === 'vpt' ? '<label>Stop below <input type="range" id="d-stop" min="0" max="60" step="5" value="' + stopPct + '"> ' + C(stopPct) + ' % of the first item\'s value per token</label>' : '') + '</div>' +
+          '<div class="strip" aria-label="Candidates in the chosen order, width = tokens">' + S.items.map(it => '<i class="' + (S.taken.includes(it) ? 'tk' : '') + '" style="flex:' + it.tt + ' 0 0" title="' + esc(itemName(it)) + ': ' + it.tt + ' tokens"></i>').join('') + '</div>' +
+          '<div class="striplab"><span>' + C('taken: ' + S.taken.length + ' of ' + S.items.length + ' candidates, ' + num(S.used) + ' tokens') + '</span><span>' + esc(S.why) + '</span></div>' +
+          '<p class="small"><span class="tag ill">illustration</span> Value here is the fused score, standing in for the probability that the agent needs the item; the design orders by probability per rendered token and stops when that falls below the price of finding a missed item later. That stop rule is a trial and its calibration step was cut (ruling R-2), so the stop slider is ours, not a tuned setting.</p>';
+      } else {
+        const tr = S.taken.map(i => i.tree).join(''), tri = S.taken.map(i => i.tri).join('');
+        const tt = S.taken.reduce((a, i) => a + i.tt, 0), trt = S.taken.reduce((a, i) => a + i.trt, 0), ft = S.taken.reduce((a, i) => a + i.ft, 0);
+        h = '<h4>5 · The answer: grouped tree against raw triples</h4><p class="small">The ' + C(S.taken.length) + ' selected items at the budget set in step 4. The tree groups by file and puts the evidence on the same line; triples repeat full identifiers.</p><div class="grid2"><div><p class="tokline">Tree format: ' + C(num(tt)) + ' tokens</p><pre class="code">' + esc(tr) + (S.items.length > S.taken.length ? '… ' + C(S.items.length - S.taken.length) + ' more candidates not shown\n' : '') + '</pre></div><div><p class="tokline">Triples: ' + C(num(trt)) + ' tokens</p><pre class="code">' + esc(tri) + '</pre></div></div><p class="tokline">Reading these ' + C(S.taken.length) + ' files whole would cost ' + C(num(ft)) + ' tokens.</p>';
+      }
+    }
+    box.innerHTML = h;
+    const bud = $('#d-bud'); if (bud) bud.addEventListener('input', () => { budget = +bud.value; draw(); });
+    const st = $('#d-stop'); if (st) st.addEventListener('input', () => { stopPct = +st.value; draw(); });
+    const od = $('#d-ord'); if (od) od.addEventListener('click', ev => { const b = ev.target.closest('button'); if (b) { order = b.dataset.v; draw(); } });
+  }
+  segs('dex', v => { ex = +v; budget = null; draw(); });
+  $('#d-steps').addEventListener('click', ev => { const b = ev.target.closest('button'); if (b) { step = +b.dataset.v; draw(); } });
+  draw();
+})();
+
+/* E: question-set switch and the slice of history */
+segs('eset', v => { $('#e-all').hidden = v !== 'all'; $('#e-changing').hidden = v !== 'changing'; });
+(function () {
+  const el = $('#e-slice'); if (!el) return;
+  const S = P.slice, pols = S.policies_shown, W = S.words;
+  const SYM = { H: '✓', S: '✗', A: '↻', R: '↻!', C: '·' };
+  $('#e-sub').innerHTML = 'Question: which rules constrain <code>' + esc(S.question.file) + '</code>? Drawn by a seeded rule (' + esc(S.prng) + ', seed ' + S.seed + ') from ' + S.candidates + ' recorded cases where a rule began to match a file although none of its own files changed. The ' + S.steps.length + ' commits around the change are shown; the totals cover all ' + S.lookups_of_question + ' lookups of this question. <span class="tag meas">measured: cache replay, widen/k0</span>';
+  let at = S.steps.findIndex(s => s.is_case);
+  function draw() {
+    const st = S.steps[at];
+    let h = '<div class="tblwrap"><table class="egrid"><thead><tr><th class="l">rule</th>' + S.steps.map((s, i) => '<th><button type="button" class="eb" data-i="' + i + '" aria-pressed="' + (i === at) + '">' + (i + 1) + (s.is_case ? '*' : '') + '</button></th>').join('') + '<th class="l">all ' + S.lookups_of_question + ' lookups</th></tr></thead><tbody>' +
+      pols.map(p => { const t = S.totals[p]; return '<tr><td class="l">' + esc(P.polNames[p]) + '</td>' + S.steps.map((s, i) => { const o = s.outcomes[p]; return '<td class="o o' + o + (i === at ? ' at' : '') + '" title="' + esc(W[o]) + '">' + SYM[o] + '</td>'; }).join('') +
+        '<td class="l small">' + t.H + ' served right, <b>' + t.S + ' served wrong</b>, ' + (t.A + t.R) + ' recomputed' + (t.C ? ', ' + t.C + ' cold first lookup' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    h += '<p class="small">Symbols: ✓ ' + esc(W.H) + ' · ✗ ' + esc(W.S) + ' · ↻ ' + esc(W.A) + ' · ↻! ' + esc(W.R) + ' · the column marked * is the commit where the answer changed.</p>';
+    h += '<div class="stepbox"><h4>Commit ' + (at + 1) + ' of ' + S.steps.length + (st.is_case ? ': the answer changed here' : '') + '</h4><p>' + (st.is_case ? 'A rule line of the invariants document started to match this file (before: ' + esc(S.case.before) + ', after: ' + esc(S.case.after) + '; cause: ' + esc(S.case.cause) + '). No file of the answer changed, so the file-level rule kept serving the old, now wrong answer; the fact-level rule had recorded the “constrains” pattern as a premise and recomputed.' :
+      (at > S.steps.findIndex(x => x.is_case) ? 'The answer did not change at this commit, but rules that missed the change above are still serving the stale answer.' : 'Nothing the answer rests on changed: every rule serves the cached answer, correctly.')) + '</p></div>';
+    el.innerHTML = h;
+  }
+  el.addEventListener('click', ev => { const b = ev.target.closest('.eb'); if (b) { at = +b.dataset.i; draw(); } });
+  draw();
+})();
+
+/* F: filterable table of parts */
+(function () {
+  const tb = $('#f-table'); if (!tb) return;
+  const F = { status: 'all', label: 'all', layer: 'all' };
+  const uniq = k => [...new Set(P.comps.map(c => c[k]))];
+  const STO = ['build-first', 'build', 'build-later', 'build-last', 'trial', 'infrastructure', 'folded', 'deferred', 'cut'];
+  const groups = [['status', 'Status', STO.filter(s => uniq('status').includes(s)).map(s => [s, P.comps.find(c => c.status === s).stn])], ['label', 'Source label', uniq('label').map(s => [s, s])], ['layer', 'Layer', uniq('layer').map(s => [s, s])]];
+  $('#f-ctl').innerHTML = groups.map(([k, lab, opts]) => '<div class="ctlrow"><span class="lab">' + lab + '</span><div class="seg" role="group" aria-label="' + lab + '" data-f="' + k + '"><button type="button" data-v="all" aria-pressed="true">all</button>' + opts.map(o => '<button type="button" data-v="' + esc(o[0]) + '" aria-pressed="false">' + esc(o[1]) + ' (' + P.comps.filter(c => c[k] === o[0]).length + ')</button>').join('') + '</div></div>').join('');
+  $$('#f-ctl [data-f]').forEach(g => g.addEventListener('click', ev => { const b = ev.target.closest('button'); if (!b) return; $$('button', g).forEach(x => x.setAttribute('aria-pressed', String(x === b))); F[g.dataset.f] = b.dataset.v; draw(); }));
+  const LBC = { 'our own choice, no source': 'own', 'measured here': 'meas' };
+  const refs = c => (c.refs || []).map(r => r.url ? '<a href="' + esc(r.url) + '" rel="noreferrer">' + esc(r.text) + '</a>' : esc(r.text)).join('; ');
+  function draw() {
+    const rows = P.comps.slice().sort((a, b) => a.order - b.order).filter(c => (F.status === 'all' || c.status === F.status) && (F.label === 'all' || c.label === F.label) && (F.layer === 'all' || c.layer === F.layer));
+    $('#f-count').innerHTML = rows.length + ' of ' + P.comps.length + ' parts shown';
+    tb.innerHTML = '<div class="comp head"><div>Part · status · source label</div><div>What it is · questions it serves</div><div>Theory and source</div><div>What it replaces · the test that can cut it · installs</div></div>' +
+      rows.map(c => '<div class="comp"><div><div class="nm">' + esc(c.name) + '</div><span class="chip st-' + c.status + '">' + esc(c.stn) + '</span> <span class="lb ' + (LBC[c.label] || '') + '">' + esc(c.label) + '</span><div class="small">layer: ' + esc(c.layer) + (c.rul ? ' · ruling ' + esc(c.rul) : '') + '</div></div>' +
+        '<div>' + esc(c.what) + '<div class="small"><b>Serves:</b> ' + esc(c.cqs) + '</div></div>' +
+        '<div class="small">' + (refs(c) || 'no source') + (c.ln ? '<br><i>' + esc(c.ln) + '</i>' : '') + '</div>' +
+        '<div class="small"><b>Replaces:</b> ' + esc(c.rep || 'nothing') + '<br><b>Cut test:</b> ' + esc(c.test || 'none') + '<br><b>Installs:</b> ' + esc(c.inst || 'none') + '</div></div>').join('');
+  }
+  draw();
+})();
+
+/* I: the token model */
+(function () {
+  const box = $('#i-model'); if (!box) return;
+  const S = { side: 'product', set: 'partly', u: 50, r: 20, n: 2, ptr: 500 };
+  const SETS = { graph: ['graph'], partly: ['graph', 'partly'], index: ['graph', 'partly', 'index'] };
+  box.innerHTML = '<div class="ctlgrid">' +
+    '<div><span class="lab">Work</span><div class="seg" data-i="side"><button type="button" data-v="product" aria-pressed="true">product</button><button type="button" data-v="program" aria-pressed="false">program and documents</button></div></div>' +
+    '<div><span class="lab">Forms the tool answers</span><div class="seg" data-i="set"><button type="button" data-v="graph" aria-pressed="false">graph questions</button><button type="button" data-v="partly" aria-pressed="true">+ partly graph</button><button type="button" data-v="index" aria-pressed="false">+ index questions</button></div></div>' +
+    '<label>How often the agent uses the tool when it could: <span class="v" id="iv-u"></span><input type="range" id="i-u" min="0" max="100" step="5" value="50"></label>' +
+    '<label>Answer size ÷ size of the reads it replaces: <span class="v" id="iv-r"></span><input type="range" id="i-r" min="5" max="100" step="5" value="20"></label>' +
+    '<label>Lookup steps one answer replaces: <span class="v" id="iv-n"></span><input type="range" id="i-n" min="1" max="6" step="1" value="2"></label>' +
+    '<label>Pointer text paid on every call (tokens): <span class="v" id="iv-p"></span><input type="range" id="i-p" min="0" max="2000" step="50" value="500"></label></div>';
+  $$('#i-model .seg').forEach(g => g.addEventListener('click', ev => { const b = ev.target.closest('button'); if (!b) return; $$('button', g).forEach(x => x.setAttribute('aria-pressed', String(x === b))); S[g.dataset.i] = b.dataset.v; draw(); }));
+  [['u', 'i-u'], ['r', 'i-r'], ['n', 'i-n'], ['ptr', 'i-p']].forEach(([k, id]) => $('#' + id).addEventListener('input', ev => { S[k] = +ev.target.value; draw(); }));
+  const SC = 40;
+  function draw() {
+    const T = P.tot[S.side], D = P.der[S.side], rows = P.forms[S.side].filter(f => SETS[S.set].includes(f.m));
+    const u = S.u / 100, r = S.r / 100;
+    const exposed = rows.reduce((a, f) => a + f.sh, 0) * D.car;
+    const moved = exposed * u * (1 - r);
+    const ptr = S.ptr * P.ptr;
+    const stepMoved = rows.reduce((a, f) => a + (f.s / T.ctx) * u * Math.max(0, Math.min(S.n, f.cpe) - 1) / Math.max(f.cpe, 1), 0);
+    $('#iv-u').textContent = S.u + ' %'; $('#iv-r').textContent = rnd(r, 2); $('#iv-n').textContent = S.n; $('#iv-p').textContent = num(S.ptr);
+    $('#i-f1').innerHTML = C(Mt(T.fetched) + ' tokens fetched by lookups');
+    $('#i-f2').innerHTML = C(Mt(T.carried) + ' carried lookup tokens of ' + Mt(T.ctx) + ' context');
+    $('#i-f3').innerHTML = C('(here about ' + Math.round(T.carried / T.fetched) + ' later calls on average)');
+    const bw = v => Math.max(0, Math.min(100, 100 * v / (SC / 100))).toFixed(2) + '%';
+    const lines = [['exposed: carried tokens of the forms the tool answers', exposed, 'g-reading'], ['moves: exposed × use × (1 − answer ÷ reads)', moved, 'g-docs'], ['pointer cost on every call', ptr, 'bad'], ['net share of context that moves', Math.max(0, moved - ptr), 'hl']];
+    $('#i-out').innerHTML = '<div class="tagline"><span class="tag sim">simulation, not a forecast</span></div><div class="outbig">' + C(p1(moved - ptr)) + '</div><p class="small">net share of all ' + (S.side === 'product' ? 'product' : 'program') + ' context tokens that would move, carried-token view, scale 0 to ' + SC + ' %</p>' +
+      lines.map(([l, v, c]) => '<div class="hbar" style="--lw:300px"><div class="lab">' + l + '</div><div class="track"><div class="fill ' + c + '" style="width:' + bw(v) + '"></div><div class="val" style="left:' + Math.min(+bw(v).replace('%', ''), 70) + '%">' + C(p1(v)) + '</div></div></div>').join('') +
+      '<p class="small">Step view (overlaps the carried view, so never added): lookup-step context removed ' + C(p1(stepMoved)) + ' of all context, if one answer replaces ' + S.n + ' lookup steps (the answer itself is one step).</p>';
+    const pw = P.power.map(x => { const m = String(x.cond).match(/s([\d.]+) t([\d.]+)/) || []; return { lab: x.k + ' runs per task, task spread ' + m[1] + ', run noise ' + m[2], a: x.below_100, b: x.below_95 }; });
+    const xp = v => Math.min(100, 100 * v / SC).toFixed(2);
+    const tk = [0, 10, 20, 30, 40];
+    $('#i-power').innerHTML = '<div class="dotc" style="--dl:280px"><div class="dotaxis">' + tk.map(t => '<span class="cmp" style="left:' + xp(t) + '%">' + t + ' %</span>').join('') + '</div>' + pw.map(x => '<div class="drow"><div class="dlab">' + esc(x.lab) + '<small>detects ' + x.a + ' to ' + x.b + ' % and more</small></div><div class="dtrack">' + tk.map(t => '<i class="zero" style="left:' + xp(t) + '%"></i>').join('') + '<i class="ci" style="left:' + xp(x.a) + '%;width:' + (xp(x.b) - xp(x.a)).toFixed(2) + '%"></i><i class="pt" style="left:' + xp(x.b) + '%"></i><i class="you" style="left:' + xp(Math.max(0, (moved - ptr) * 100)) + '%"></i></div></div>').join('') +
+      '<div class="dfoot"><span>bar: smallest saving the pilot detects (below 100 % to below 95 % of baseline)</span><span>orange line: the simulated share above, ' + C(p1(Math.max(0, moved - ptr))) + '</span></div></div>';
+  }
+  draw();
+})();
+/* keep every bar label inside its track: a label that would run past the end sits at the right end instead */
+function fitVals() { $$('.track .val').forEach(v => { if (v.dataset.l == null) v.dataset.l = v.style.left || '0%'; v.style.left = v.dataset.l; v.style.right = 'auto'; const t = v.parentElement;
+  if (t.clientWidth && v.offsetLeft + v.offsetWidth > t.clientWidth - 2) { v.style.left = 'auto'; v.style.right = '3px'; } });
+  // a chip is drawn only when it fits inside its own segment with 4 px on each side; the legend carries every value
+  $$('.stack .sl').forEach(x => { x.style.display = ''; const seg = x.parentElement; if (!seg.clientWidth || x.offsetWidth + 8 > seg.clientWidth) x.style.display = 'none'; }); }
+let fitT = 0; const fitSoon = () => { clearTimeout(fitT); fitT = setTimeout(fitVals, 30); };
+new MutationObserver(ms => { if (ms.some(m => m.type === 'childList')) fitSoon(); }).observe(document.querySelector('main'), { childList: true, subtree: true });
+window.addEventListener('resize', fitSoon); fitVals();
+})();

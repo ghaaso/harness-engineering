@@ -1,0 +1,33 @@
+// Breakdown of CQ1 reads by who wrote the file and how long before the read; and, for tracked files, whether the
+// content read had uncommitted edits (a recorded write after the last commit that touched the path).
+const fs = require('fs');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const rows = fs.readFileSync(W + '/rows.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+// git touches
+const touch = new Map(); { let t = 0; for (const l of fs.readFileSync(W + '/git-touch.txt', 'utf8').split('\n')) { if (l.startsWith('@@')) { t = Date.parse(l.split(' ')[1]); continue; } const p = l.trim().toLowerCase(); if (!p) continue; (touch.get(p) || touch.set(p, []).get(p)).push(t); } }
+const add = (o, k, r) => { const a = (o[k] = o[k] || { calls: 0, tok: 0, car: 0 }); const sh = r.share || 1; a.calls += r.callShare; a.tok += r.tok; a.car += r.car; };
+// recover call shares: rows of the same call share it equally
+const per = new Map(); for (const r of rows) { const k = r.cid; per.set(k, (per.get(k) || 0) + 1); } for (const r of rows) r.callShare = 1 / per.get(r.cid);
+const rel = {}, age = {}, ageBy = {}, dirty = {};
+const isMain = (f) => !/[\\/]subagents[\\/]/.test(f);
+for (const r of rows) {
+  let who;
+  if (r.lvl === 'transcriptFile' || r.lvl === 'transcriptDir') who = 'a same transcript (the agent itself)';
+  else if (r.lvl === 'sessionFile' || r.lvl === 'sessionDir' || r.lvl === 'sessionScratch') who = isMain(r.f) ? 'b same session: orchestrator reads its agents\' or its own earlier files' : (r.lvl === 'sessionScratch' ? (r.birth && r.birth >= r.trStart - 60e3 && r.birth <= r.ts ? 'a2 no recorded writer, file created during the reading agent\'s own run (likely its own script output)' : 'c0 same session: a subagent reads a file in its session scratchpad with no recorded writer') : ((r.lvl === 'sessionFile' ? r.writerMainSame : r.dirWriterMainSame) ? 'c1 same session: a subagent reads a file its orchestrator wrote (brief, inputs, earlier notes)' : 'c2 same session: a subagent reads a file a sibling subagent wrote'));
+  else if (r.lvl === 'otherSession') who = 'd another session wrote it';
+  else if (r.birth && r.birth >= r.trStart - 60e3 && r.birth <= r.ts) who = 'a2 no recorded writer, file created during the reading agent\'s own run (likely its own script output)';
+  else if (r.birth && r.birth < r.trStart) who = 'e1 no recorded writer, file existed before the reading agent started';
+  else who = 'e2 no recorded writer, file gone or created after the read';
+  add(rel, who, r);
+  const h = r.ageFirstWriteH != null ? r.ageFirstWriteH : (r.birth && r.birth <= r.ts ? (r.ts - r.birth) / 3.6e6 : null); const b = h == null ? 'unknown' : h < 1 ? '<1 h' : h < 24 ? '1-24 h' : h < 168 ? '1-7 d' : '>7 d';
+  add(age, b, r); add((ageBy[who] = ageBy[who] || {}), b, r);
+  if (r.vc === 'tracked' && r.lvl !== 'x') { const t = (touch.get(r.cls && r.p ? (r.p.match(/EMS_workshop1(?:\/\.claude\/worktrees\/[^/]+)?\/(.*)$/i) || [])[1]?.toLowerCase() : '') || []).filter((x) => x <= r.ts); const lastC = t.length ? Math.max(...t) : null; const lastW = r.ageLastWriteH == null ? null : r.ts - r.ageLastWriteH * 3.6e6; let st; if (r.clone) st = 'read from a scratch clone (committed content)'; else if (lastC == null) st = 'no commit found before the read (directory or rename)'; else if (lastW != null && lastW > lastC) st = 'uncommitted edits recorded after the last commit'; else st = 'no recorded edit after the last commit'; add(dirty, st, r); }
+}
+const T = rows.reduce((s, r) => ({ calls: s.calls + r.callShare, tok: s.tok + r.tok, car: s.car + r.car }), { calls: 0, tok: 0, car: 0 });
+const fmt = (o) => Object.fromEntries(Object.entries(o).sort().map(([k, a]) => [k, { calls: +a.calls.toFixed(1), callShare: +(a.calls / T.calls).toFixed(4), fetchedShare: +(a.tok / T.tok).toFixed(4), carriedShare: +(a.car / T.car).toFixed(4) }]));
+// sessions: duration
+const sessSpan = {}; for (const r of rows) { const s = (sessSpan[r.sess] = sessSpan[r.sess] || { a: Infinity, b: 0, n: 0 }); s.a = Math.min(s.a, r.ts); s.b = Math.max(s.b, r.ts); s.n += r.callShare; }
+const spans = Object.values(sessSpan).map((s) => ({ h: (s.b - s.a) / 3.6e6, n: s.n })).sort((x, y) => y.n - x.n);
+const res = { totals: T, byWriter: fmt(rel), byAgeSinceFirstWrite: fmt(age), ageByWriter: Object.fromEntries(Object.entries(ageBy).map(([k, o]) => [k, fmt(o)])), trackedReads: fmt(dirty), sessions: Object.keys(sessSpan).length, top5SessionsBySpanHours: spans.slice(0, 5).map((s) => ({ hours: +s.h.toFixed(1), calls: +s.n.toFixed(0) })), callsInTop1Session: +(spans[0].n / T.calls).toFixed(3) };
+fs.writeFileSync(W + '/own.json', JSON.stringify(res, null, 1));
+console.log(JSON.stringify(res, null, 1));

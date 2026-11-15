@@ -1,0 +1,30 @@
+// one-off patch of data/assemble.js.txt for the independent check's defects (2026-11-14). Run from graph-v2:  node - < <this file>
+const fs = require('fs');
+let s = fs.readFileSync('data/assemble.js.txt', 'utf8');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing: ' + a.slice(0, 80)); s = s.split(a).join(b); };
+// new sources: the embeddings install record and the graphify claims audit
+rep("examples: path.join(WORK, 'examples.json'),", "install: path.join(EV, 'embeddings', 'INSTALL.md'), gfclaims: path.join(EV, 'graphify', 'AUDIT-CLAIMS.md'),\n  examples: path.join(WORK, 'examples.json'),");
+// defect 4: the test set holds the read span, confirmed as used only where a later edit, citation or quote shows it
+rep("each with the seed the agent had and the spans it went on to use,", "each with the seed the agent had and the span it read (the used span where a later edit, citation or quote confirms it),");
+// defect 9: the one published gap-based stop did not match fixed budgets (verify-b S-i)
+rep("or about 13,000 (with the carry over later calls).', refs: ['Charnov', 'BMC', 'AdaK']", "or about 13,000 (with the carry over later calls). The one published gap-based stop (Adaptive-k) scored 73.33 against 76.33 to 78.00 for fixed budgets on GPT-4o factoid QA (verify-b S-i).', refs: ['Charnov', 'BMC', 'AdaK']");
+// defect 17: ruling R-5 puts ranking last, not after the premise measure
+{ const i = s.indexOf("X('R1', {"); if (i < 0) throw new Error('R1 missing'); const j = s.indexOf("status: 'build-later'", i); if (j < 0 || j - i > 600) throw new Error('R1 status missing'); s = s.slice(0, j) + "status: 'build-last'" + s.slice(j + "status: 'build-later'".length); }
+rep("// status: build-first | build | build-later |", "// status: build-first | build | build-later | build-last |");
+// facts read from the new sources and from the k0 notes
+rep("/* ---------- check: every number in the hand-written text", `/* ---------- facts for the independent check's corrections (2026-11-14) ---------- */
+{
+  const flat = t => t.replace(/\\s+/g, ' ');
+  const v = must(/venv ([\\d,]+) MB \\(torch ([\\d,]+) MB\\)/, flat(T.install), 'venv size');
+  const im = must(/\\(([\\d.]+) GB\\) disk usage/, flat(T.install), 'image size');
+  const pk = must(/one pure-Python wheel \\(([\\d,]+) bytes\\)/, flat(T.install), 'pykeen wheel');
+  d.install_kge = { venv_mb: v[1], torch_mb: v[2], image_gb: im[1], pykeen_bytes: pk[1], source: 'embeddings/INSTALL.md' };
+  const k = must(/Validation, per snapshot over all (\\d+) lanes and (\\d+) questions \\(median[^)]*\\): fact ([\\d.]+) ms, fact_sem ([\\d.]+) ms, file ([\\d.]+) ms, cutoff ([\\d.]+) ms; loading and hashing a snapshot (\\d+) ms/, flat(T.k0notes), 'k0 validation');
+  d.cache.validation = { lanes: k[1], questions: k[2], fact: k[3], fact_sem: k[4], file: k[5], cutoff: k[6], load: k[7] };
+  const pkr = must(/graphify front-loads large files: (\\d+) against (\\d+) tokens per shown file/, flat(T.gfclaims), 'packer');
+  must(/graphify was below every comparator on tuning, and the held-out mix favoured it/, flat(T.gfclaims), 'tuning');
+  d.gf_audit = { packer: [pkr[1], pkr[2]], tuning: 'graphify was below every comparator on tuning, and the held-out mix favoured it', source: 'graphify/AUDIT-CLAIMS.md section 6' };
+}
+/* ---------- check: every number in the hand-written text`);
+fs.writeFileSync('data/assemble.js.txt', s);
+console.log('patched assemble');

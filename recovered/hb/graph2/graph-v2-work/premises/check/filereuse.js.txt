@@ -1,0 +1,7 @@
+// File-level re-read across sessions from rows.jsonl, under two definitions of "file": (1) row kind not a directory, (2) path has an extension.
+const fs=require('fs'),rl=require('readline');
+(async()=>{const P1={},P2={};let C=0;const r=rl.createInterface({input:fs.createReadStream('../rows.jsonl')});
+for await(const l of r){const o=JSON.parse(l);C+=o.car;const p=o.p.toLowerCase().replace(/\/+$/,'');
+ for(const [P,ok] of [[P1,!o.kind.startsWith('directory')],[P2,/\.[a-z0-9]{1,5}$/.test(p)]]){if(!ok)continue;const x=P[p]=P[p]||{s:new Set(),car:0};x.s.add(o.sess);x.car+=o.car;}}
+const sum=P=>{const f=Object.values(P),m=f.filter(x=>x.s.size>=2);return {files:f.length,read2plus:m.length,pct:+(100*m.length/f.length).toFixed(1),carShare:+(100*m.reduce((a,x)=>a+x.car,0)/522160773).toFixed(1),max:Math.max(...f.map(x=>x.s.size))};};
+console.log(JSON.stringify({byRowKind:sum(P1),byExtension:sum(P2)}));})();

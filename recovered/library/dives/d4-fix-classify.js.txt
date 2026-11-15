@@ -1,0 +1,73 @@
+// D4: one reader's classification of the 50 fix commits on main (48 "fix" + 2 "@ fix").
+// Run: node - < d4-fix-classify.js.txt
+// Class: P = cause in this project's own domain logic or design (not portable)
+//        W = a generic pattern or language/DB fact, but the work was finding this project's instance
+//        G = cause in a third-party tool, library or platform; any project on that stack could hit it
+// G sub-tags: self = error message names the cause; tool = an existing vendor tool already flags it;
+//        ver = bound to a dependency version a new project today would not use; port = version-independent, non-obvious
+// cfg = fix touched only config/manifest/Dockerfile (value-level; a declarative check could be lead-capable)
+// res = falls in an area the routing reserves to Opus (outbox, migrations, auth, PIN, money, job lifecycle); b = borderline
+const rows = [
+ ['24184b2','P','','',''],      // WhatsApp opt-in real opt-in
+ ['da988e2','P','','','res'],   // dispatcher hardening + 0046
+ ['1c546a3','P','','','res'],   // login lockout
+ ['2fe77f5','W','','','res'],   // compare_digest non-ASCII str TypeError, auth holes
+ ['013a86b','P','','',''],      // zero-byte evidence
+ ['370e83a','P','','','res'],   // frozen bill
+ ['4a40423','P','','','res'],   // carry-in loop, lifecycle
+ ['82611de','P','','',''],      // import-linter contract (project rule)
+ ['12c16f1','W','','','res'],   // Postgres now() is txn start; migration 0040
+ ['79a8dd4','G','self','cfg',''], // eas.json empty env ("not allowed to be empty")
+ ['3ce6881','P','','','res'],   // payment amount
+ ['2455eb0','P','','','b'],     // hide manager from roster
+ ['c74b8c2','P','','',''],      // video bounds
+ ['0a3b38e','W','','',''],      // press races (repeat of 789d522)
+ ['a57387d','P','','',''],      // job_type
+ ['109da03','P','','',''],      // travel re-visits
+ ['789d522','W','','',''],      // recorder lifecycle
+ ['8ff3179','P','','',''],      // stopwatch persist
+ ['7b395a5','P','','',''],      // job-type gating
+ ['e5f9347','P','','',''],      // pickup keeps address
+ ['02c2afb','G','self','',''],  // mypy Literal
+ ['981ae08','G','self','',''],  // mypy re-export (repeat of 75b51f9)
+ ['c3754dd','G','self','',''],  // name shadowing under mypy
+ ['f29f62f','W','','',''],      // SQLAlchemy metadata registration, prod 500
+ ['2f09cec','W','','',''],      // same, scripts
+ ['c3a0f8f','G','self','',''],  // cp1252 UnicodeEncodeError
+ ['75b51f9','G','self','',''],  // mypy re-export
+ ['6e8427d','P','','','b'],     // closing video vs close failure
+ ['ce1f9c9','P','','',''],      // upload ceiling
+ ['a60a0a6','P','','','res'],   // require_manager
+ ['76061e0','P','','','res'],   // outbox stale replay
+ ['5609001','W','','','res'],   // dead-letter poison items
+ ['6928828','G','ver+tool','cfg',''], // SDK-52 pins (expo install), Sentry gradle plugin
+ ['9c561b0','G','port','cfg',''], // Debian codename roll-forward
+ ['ff81f70','W','','','res'],   // sequence not max+1, migration
+ ['4a171b4','W','','','res'],   // serialize offline store
+ ['5930377','P','','','res'],   // close-flow guard parity
+ ['83b3ef8','P','','','res'],   // 409 mapping, lifecycle
+ ['89d41d6','P','','',''],      // evidence gaps
+ ['cd94d38','P','','',''],      // truth purge
+ ['67218b1','P','','','res'],   // guarded claim, payment race
+ ['3e07280','P','','','b'],     // manager auto-select
+ ['d440855','G','ver','cfg',''], // expo-audio 0.3.5 stop() bug -> expo-av
+ ['169ca41','P','','','b'],     // signed-in identity
+ ['dbb3661','G','ver','',''],   // expo-audio audio mode before record
+ ['0b8ad39','G','self','',''],  // tsc strict in test
+ ['c2a345e','G','port','','b'], // HS256 base64url spare bits, flaky tamper test
+ ['ca362c0','P','','','b'],     // pre-Jobs audit hardening
+ ['7a8baa0','G','ver','',''],   // pytest-asyncio loop scope
+ ['b7a5b98','G','ver+tool','cfg',''], // expo-asset peer dep SDK 52; expo-doctor flagged it
+];
+const n = rows.length;
+const by = k => rows.reduce((m, r) => (m[r[k]] = (m[r[k]] || 0) + 1, m), {});
+console.log('commits', n);
+console.log('class', by(1));
+const G = rows.filter(r => r[1] === 'G');
+const tag = t => G.filter(r => r[2].includes(t)).length;
+console.log('G self-diagnosing', tag('self'), '| version-bound', tag('ver'), '| existing tool flags', tag('tool'), '| portable non-obvious', tag('port'));
+console.log('config-only (value-level) fixes', rows.filter(r => r[3] === 'cfg').length);
+const res = rows.filter(r => r[4] === 'res'), resb = rows.filter(r => r[4] === 'b');
+console.log('Opus-reserved strict', res.length, '+ borderline', resb.length);
+console.log('reserved strict by class', res.reduce((m, r) => (m[r[1]] = (m[r[1]] || 0) + 1, m), {}));
+console.log('reserved incl borderline by class', [...res, ...resb].reduce((m, r) => (m[r[1]] = (m[r[1]] || 0) + 1, m), {}));

@@ -1,0 +1,118 @@
+// report: aggregates for the lookup test set -> G2/lookup-testset/result.json and tables.md. Aggregates only; no seed,
+// path or transcript text is written to the evidence folder (instance-level data stays in WORK/lookups/out).
+// Inputs: out/instances-v.jsonl, out/split.json, out/split-sessions.tsv, out/baseline-instances.jsonl, out/check2.json
+const fs = require('fs'), readline = require('readline');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+const G = 'C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/graph-v2/lookup-testset';
+const NAME = { CQ1: 'what did an earlier lane, agent or review conclude', CQ2: 'what does the plan or design section say', CQ3: 'how does this subsystem work (orientation read)', CQ4: 'which rule (invariants, handoff, runbook) applies', CQ5: 'where is X defined, what does its body say', CQ6: 'what does this change set change', CQ7: 'which tests exercise X', CQ8: 'who uses or references X', CQ9: 'where is item ID X defined or cited', CQ10: 'what changed here recently and why', CQ11: 'which files exist, where is the file for X', CQ12: 'what sections does this document have', CQ13: 'where is the other half of a contract', CQ14: 'does this file:line citation still hold', CQ15: 'what table, migration or setting is behind X', CQ16: 'what do build, CI, ops and lab scripts do', 'NG-ops': '(not graph) run output, logs, git and CI state', 'NG-instr': '(not graph) skill and agent instructions', 'NG-trans': '(not graph) past-session transcripts', 'NG-web': '(not graph) web pages', 'NG-lib': '(not graph) third-party library source', 'NG-mem': '(not graph) memory notes, artifacts', 'NG-other': '(not graph) other' };
+const part = Object.fromEntries(fs.readFileSync(W + '/out/split-sessions.tsv', 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')));
+const split = JSON.parse(fs.readFileSync(W + '/out/split.json', 'utf8'));
+const med = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
+const pct = (a, b) => (b ? +(100 * a / b).toFixed(1) : null);
+async function* rows(f) { const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity }); for await (const l of rl) if (l.trim()) yield JSON.parse(l); }
+(async () => {
+  const C = {}; const F = {}; const V = {}; const MATCH = { unchangedFrozen: [0, 0], sessionBlob: [0, 0] };
+  const cls0 = () => ({ n: 0, carried: 0, fetched: 0, sessions: new Set(), transcripts: new Set(), confirmedAny: 0, confirmedEditOrCite: 0, confEdit: 0, confCite: 0, quoteOnly: 0, noTruth: 0, carriedConfirmedAny: 0, dev: 0, confirm: 0, approxCommit: 0, afterLatestSnapshot: 0 });
+  for await (const x of rows(W + '/out/instances-v.jsonl')) {
+    const c = (C[x.cls] = C[x.cls] || cls0()); c.n++; c.carried += x.carried; c.fetched += x.fetched; c.sessions.add(x.sid); c.transcripts.add(x.file); c[part[x.sid]]++;
+    if (x.ver.approx) c.approxCommit++; if (x.sessionAfterLatestSnapshot) c.afterLatestSnapshot++;
+    const e = x.truth.some((t) => t.conf.edit > 0), ci = x.truth.some((t) => t.conf.cite > 0), q = x.truth.some((t) => t.conf.quote > 0);
+    if (!x.truth.length) c.noTruth++; if (x.confirmed) { c.confirmedAny++; c.carriedConfirmedAny += x.carried; } if (e || ci) c.confirmedEditOrCite++; if (e) c.confEdit++; if (ci) c.confCite++; if (q && !e && !ci) c.quoteOnly++;
+    const k = x.cls + '|' + x.form; const f = (F[k] = F[k] || { cls: x.cls, form: x.form, n: 0, carried: 0, fetched: [], confirmedAny: 0, confirmedEditOrCite: 0, noTruth: 0, snapshotOk: 0, needsCurrentDocs: 0, outside: 0, needsSessionBuild: 0, dev: 0 });
+    f.n++; f.carried += x.carried; f.fetched.push(x.fetched); if (x.confirmed) f.confirmedAny++; if (e || ci) f.confirmedEditOrCite++; if (!x.truth.length) f.noTruth++; if (part[x.sid] === 'dev') f.dev++;
+    if (x.replayPrimary === 'snapshot-ok') f.snapshotOk++; else if (x.replayPrimary === 'needs-current-docs') f.needsCurrentDocs++; else if (x.replayPrimary === 'outside-repository') f.outside++; else if (x.replayPrimary === 'needs-session-build') f.needsSessionBuild++;
+    const v = (V[x.cls] = V[x.cls] || { n: 0, replayPrimary: {}, replayAll: {}, carriedReplayPrimary: {}, anyTruthChangedOrAddedSinceFrozen: 0, anyTruthUntrackedCurrentOnly: 0, untrackedDocFiles: new Set(), instancesNoLeakSnapshot: 0 });
+    v.n++; v.replayPrimary[x.replayPrimary] = (v.replayPrimary[x.replayPrimary] || 0) + 1; v.replayAll[x.replayAll] = (v.replayAll[x.replayAll] || 0) + 1; v.carriedReplayPrimary[x.replayPrimary] = (v.carriedReplayPrimary[x.replayPrimary] || 0) + x.carried;
+    if (x.truth.some((t) => t.replay === 'changed-since-frozen' || t.replay === 'added-after-frozen')) v.anyTruthChangedOrAddedSinceFrozen++;
+    if (x.truth.some((t) => t.replay === 'untracked-current-only')) v.anyTruthUntrackedCurrentOnly++;
+    for (const t of x.truth) { if (t.replay === 'untracked-current-only') v.untrackedDocFiles.add(t.f); if (t.replay === 'unchanged-since-frozen' && t.matchFrozen != null) { MATCH.unchangedFrozen[0] += t.matchFrozen; MATCH.unchangedFrozen[1]++; } if (t.matchSession != null) { MATCH.sessionBlob[0] += t.matchSession; MATCH.sessionBlob[1]++; } }
+  }
+  // ---- classes ----
+  const instances_by_class = {}; let all = { n: 0, confirmedAny: 0, confirmedEditOrCite: 0, snapshotOk: 0 };
+  for (const [k, c] of Object.entries(C)) {
+    instances_by_class[k] = { instances: c.n, transcripts: c.transcripts.size, session_ids: c.sessions.size, fetched_tokens_M: +(c.fetched / 1e6).toFixed(2), carried_tokens_M: +(c.carried / 1e6).toFixed(1), dev_instances: c.dev, confirm_instances: c.confirm, no_truth: c.noTruth, commit_approximated: c.approxCommit, after_latest_snapshot: c.afterLatestSnapshot };
+    all.n += c.n; all.confirmedAny += c.confirmedAny; all.confirmedEditOrCite += c.confirmedEditOrCite;
+  }
+  const confirmed_truth_share = { definition: 'instance has >=1 read span that a later edit (old_string line), file:line citation, or verbatim quote of a read line (>=40 chars) in the same transcript touches; edit_or_cite excludes quote-only', all: { any_pct: pct(all.confirmedAny, all.n), edit_or_cite_pct: pct(all.confirmedEditOrCite, all.n) } };
+  for (const [k, c] of Object.entries(C)) confirmed_truth_share[k] = { instances: c.n, confirmed_any: c.confirmedAny, any_pct: pct(c.confirmedAny, c.n), confirmed_edit_or_cite: c.confirmedEditOrCite, edit_or_cite_pct: pct(c.confirmedEditOrCite, c.n), by_edit: c.confEdit, by_cite: c.confCite, quote_only: c.quoteOnly, carried_weighted_any_pct: pct(c.carriedConfirmedAny, c.carried) };
+  // ---- forms ----
+  const instances_by_form = {};
+  for (const f of Object.values(F).sort((a, b) => b.carried - a.carried)) {
+    const cc = C[f.cls]; (instances_by_form[f.cls] = instances_by_form[f.cls] || []).push({ form: f.form, plain: NAME[f.form] || f.form, graph_question: /^CQ/.test(f.form) && !['CQ5', 'CQ11', 'CQ12'].includes(f.form) ? 'graph' : /^CQ/.test(f.form) ? 'index' : 'reading/not graph', instances: f.n, carried_M: +(f.carried / 1e6).toFixed(1), carried_share_pct: pct(f.carried, cc.carried), median_fetched_tok: med(f.fetched), confirmed_any: f.confirmedAny, confirmed_any_pct: pct(f.confirmedAny, f.n), confirmed_edit_or_cite: f.confirmedEditOrCite, no_truth: f.noTruth, replay_snapshot_ok: f.snapshotOk, replay_needs_current_docs: f.needsCurrentDocs, replay_outside_repository: f.outside, replay_needs_session_build: f.needsSessionBuild, dev_instances: f.dev });
+  }
+  // ---- version / replay ----
+  const replay = { definition: 'snapshot-ok = every primary-truth file (confirmed files if any, else all read files) is byte-identical at the inferred session commit and at the frozen commit a31924a, whose facts exist in BUILD/facts/cache; all 190 cached snapshots are at or before a31924a (2026-08-03) and every session is later, so no snapshot holds content written after a session', unchanged_file_line_match_pct: pct(MATCH.unchangedFrozen[0], MATCH.unchangedFrozen[1]), unchanged_file_line_match_n: MATCH.unchangedFrozen[1], session_blob_line_match_pct: pct(MATCH.sessionBlob[0], MATCH.sessionBlob[1]), session_blob_line_match_n: MATCH.sessionBlob[1] };
+  let okAll = 0;
+  for (const [k, v] of Object.entries(V)) { okAll += v.replayPrimary['snapshot-ok'] || 0; replay[k] = { instances: v.n, primary: v.replayPrimary, all_truth: v.replayAll, snapshot_ok_pct: pct(v.replayPrimary['snapshot-ok'] || 0, v.n), snapshot_ok_carried_pct: pct(v.carriedReplayPrimary['snapshot-ok'] || 0, Object.values(v.carriedReplayPrimary).reduce((a, b) => a + b, 0)), instances_with_truth_file_changed_or_added_since_frozen: v.anyTruthChangedOrAddedSinceFrozen, instances_with_untracked_doc_truth_current_only: v.anyTruthUntrackedCurrentOnly, distinct_untracked_truth_files: v.untrackedDocFiles.size }; }
+  const replayable_no_leak_share = { all_pct: pct(okAll, all.n), product_pct: replay.product.snapshot_ok_pct, program_pct: replay.program.snapshot_ok_pct, all_instances: okAll };
+  // ---- baselines (development part) ----
+  const B = {}; const reasons = {};
+  for await (const r of rows(W + '/out/baseline-instances.jsonl')) {
+    reasons[r.cls + '|' + r.scorable] = (reasons[r.cls + '|' + r.scorable] || 0) + 1; if (r.scorable !== 'yes') continue;
+    const sk = r.seedKind === 'path' || r.seedKind === 'history' ? 'path-seed' : 'search-seed';
+    for (const grp of ['ALL', r.form]) for (const sg of ['all', sk]) {
+      const key = r.cls + '|' + grp + '|' + sg; const b = (B[key] = B[key] || { cls: r.cls, form: grp, seeds: sg, n: 0, carried: 0, fetched: [], truthTok: [], currentOnlyTruth: 0, union10: 0, arms: {} }); b.n++; b.carried += r.carried; b.fetched.push(r.fetched); b.truthTok.push(r.truthTok); if (r.truthCurrentOnly) b.currentOnlyTruth++;
+      if (['A', 'B', 'C'].some((a) => r.arms[a].spanRank)) b.union10++;
+      for (const a of ['A', 'B', 'C']) { const s = r.arms[a]; const o = (b.arms[a] = b.arms[a] || { s1: 0, s3: 0, s10: 0, f10: 0, carriedHit: 0, tie: 0, hitCurrent: 0, listTok: [], hitTotTok: [], hitMinTok: [], hitFetched: [], empty: 0, hitWholeFile: 0 }); if (s.spanRank === 1) o.s1++; if (s.spanRank && s.spanRank <= 3) o.s3++; if (s.spanRank) { o.s10++; o.carriedHit += r.carried; o.hitTotTok.push(s.listTok + s.readTok); o.hitMinTok.push(s.listTok + s.minReadTok); o.hitFetched.push(r.fetched); if (s.hitCur) o.hitCurrent++; if (s.hitKind === 'file') o.hitWholeFile++; } if (s.fileRank) o.f10++; if (s.tieAtCut) o.tie++; if (!s.n) o.empty++; o.listTok.push(s.listTok); }
+    }
+  }
+  const ARM = { A: 'path+symbol index', B: 'outline+item-ID index', C: 'keyword (BM25) over names, paths, headings' };
+  const baselines = { part: 'development (split hash ' + split.hash_sha256.slice(0, 12) + ')', k: 10, arms: ARM, not_scorable: reasons, definitions: { span_hit: 'a top-k result is a definition, heading section, ID site or whole file whose line span overlaps a primary-truth span (whole-file and file-list truth: any result in that file)', tokens: 'list = the 10 result lines rendered as path:a-b kind name; read = the text of the first span-hit result; chars/2.42', carried_weighted: 'share of the scorable instances\' carried tokens whose truth the arm hit at k=10' }, by: [] };
+  for (const b of Object.values(B).sort((x, y) => (x.cls + x.seeds + (x.form === 'ALL' ? '' : x.form)).localeCompare(y.cls + y.seeds + (y.form === 'ALL' ? '' : y.form)))) {
+    if (b.form !== 'ALL' && b.n < 5) continue;
+    const row = { cls: b.cls, form: b.form, plain: NAME[b.form] || 'all forms', seeds: b.seeds, scorable: b.n, median_fetched_tok: med(b.fetched), median_truth_span_tok: med(b.truthTok), truth_in_current_only_files: b.currentOnlyTruth, any_arm_span_hit10_pct: pct(b.union10, b.n), arms: {} };
+    for (const [a, o] of Object.entries(b.arms)) row.arms[a] = { span_hit1_pct: pct(o.s1, b.n), span_hit3_pct: pct(o.s3, b.n), span_hit10_pct: pct(o.s10, b.n), file_hit10_pct: pct(o.f10, b.n), carried_weighted_hit10_pct: pct(o.carriedHit, b.carried), empty_result_pct: pct(o.empty, b.n), tie_at_cut_pct: pct(o.tie, b.n), hits_on_current_only_file: o.hitCurrent, median_list_tok: med(o.listTok), median_tok_to_hit: med(o.hitTotTok), median_tok_to_cheapest_hit: med(o.hitMinTok), first_hit_is_whole_file_pct: pct(o.hitWholeFile, o.s10), median_agent_fetched_on_hits: med(o.hitFetched) };
+    if (b.form === 'ALL' && b.seeds === 'all') { const nd = C[b.cls].dev; row.dev_instances_all = nd; for (const [a, o] of Object.entries(b.arms)) row.arms[a].span_hit10_pct_of_all_dev = pct(o.s10, nd); row.any_arm_span_hit10_pct_of_all_dev = pct(b.union10, nd); }
+    baselines.by.push(row);
+  }
+  // what a tool must return per form to do better than the index-only arms (all seeds, dev part, forms with >= 5 scorable)
+  const to_beat = [];
+  for (const r of baselines.by) {
+    if (r.form === 'ALL' || r.seeds !== 'all') continue;
+    const best = Object.entries(r.arms).sort((a, b) => b[1].span_hit10_pct - a[1].span_hit10_pct || (a[1].median_tok_to_hit ?? 1e12) - (b[1].median_tok_to_hit ?? 1e12))[0];
+    const fr = (instances_by_form[r.cls] || []).find((f) => f.form === r.form) || {};
+    to_beat.push({ cls: r.cls, form: r.form, plain: r.plain, carried_share_pct: fr.carried_share_pct, scorable: r.scorable, best_arm: best[0], best_arm_span_hit10_pct: best[1].span_hit10_pct, any_arm_span_hit10_pct: r.any_arm_span_hit10_pct, best_arm_median_tok_to_hit: best[1].median_tok_to_hit, best_arm_median_tok_to_cheapest_hit: best[1].median_tok_to_cheapest_hit, median_truth_span_tok: r.median_truth_span_tok, median_agent_fetched_tok: r.median_fetched_tok });
+  }
+  to_beat.sort((a, b) => (a.cls === b.cls ? (b.carried_share_pct || 0) - (a.carried_share_pct || 0) : a.cls < b.cls ? -1 : 1));
+  // use-cases.md R1 falsifier: for CQ1-CQ4, are the used spans identifiable (confirmed) for at least half of the instances?
+  const r1_falsifier = { rule: 'use-cases.md R1: if for CQ1 to CQ4 the spans later used cannot be identified for at least half of the instances, those forms must be scored by an agent run', by: [] };
+  for (const cls of ['product', 'program']) for (const f of instances_by_form[cls]) if (['CQ1', 'CQ2', 'CQ3', 'CQ4'].includes(f.form)) r1_falsifier.by.push({ cls, form: f.form, instances: f.instances, confirmed_any_pct: f.confirmed_any_pct, at_least_half: f.confirmed_any_pct >= 50 });
+  const could_not_measure = [
+    'Run-to-run drift: the untracked program documents are read at their live content when baseline.js.txt runs, and other sessions keep writing them, so a re-run can move a baseline cell by an instance or two (seen once: 29.6 to 29.5 %).',
+    'Containment of the whole needed span: a baseline "hit" means a result points into a truth span (overlap), not that the result covers all of it.',
+    'Which lines of a read the agent actually used: confirmation covers only later edits, file:line citations and verbatim quotes; about 9 % of model calls carry visible text (use-cases.md section 11), so "read but not confirmed" is not "unused".',
+    'The exact code version: transcripts carry no commit; the version is the branch tip at the episode time (main when the branch no longer exists), and uncommitted working-tree changes are invisible.',
+    'Program documents outside version control: they can only be indexed at their current content, which may hold text written after the session (counted per form as needs-current-docs, and per baseline as hits on current-only files).',
+    'Truth outside the repository (scratchpad files, transcripts, memory, web): no repository index can return it; these instances are counted, not scored.',
+    'Whether an agent given the index result would have stopped reading: the baselines score containment of the truth span among the first 10 results and its token cost, not the agent behaviour.',
+    'Program question forms are labelled by rules that a manual check found right on about 3 in 4 calls (use-cases.md section 2.4); "earlier lane findings" (CQ1) is the noisiest label.',
+    'Confirmation-part numbers: the baselines were computed on the development part only, by design; nothing on the confirmation part has been scored.',
+    'Product work is 13 main sessions of one day (2026-11-13) and one plan; the development part holds 8 of them and the confirmation part 5. A per-form product number rests on few sessions.',
+  ];
+  const result = {
+    generated_by: 'WORK/lookups/report.js.txt', inputs: ['out/instances-v.jsonl', 'out/split.json', 'out/baseline-instances.jsonl'], transcript_cutoff: '2026-11-13T14:13:00Z',
+    transcripts: JSON.parse(fs.readFileSync(W + '/out/check2.json', 'utf8')).transcripts,
+    instances_by_class, instances_by_form, confirmed_truth_share, replay, replayable_no_leak_share,
+    split: { rule: split.rule, cut: split.cut, realised: split.realisedByInstanceClass, sessions: split.sessions.map((s) => ({ sid: s.sid, home: s.home, part: s.part, first: s.first, last: s.last, instances: s.n, carried_M: s.carriedM })) },
+    split_hash: split.hash_sha256, baselines, to_beat, r1_falsifier, could_not_measure,
+  };
+  fs.mkdirSync(G, { recursive: true });
+  fs.writeFileSync(G + '/result.json', JSON.stringify(result, null, 1));
+  fs.writeFileSync(G + '/split-sessions.tsv', fs.readFileSync(W + '/out/split-sessions.tsv'));
+  // tables.md (generated)
+  const T = ['# Lookup test set: generated tables', '', 'Generated by `report.js.txt` from `result.json` inputs; do not edit by hand. Tokens: characters / 2.42. "Carried" = fetched tokens x later calls in the same context window (use-cases.md 2.3).', ''];
+  for (const cls of ['product', 'program']) {
+    T.push('## Instances by question form, ' + cls + ' work', '', '| Form | Plain question | Kind | Instances | Carried M (share) | Median fetched tok | Confirmed (any / edit or cite) | Replayable without leak | Needs current docs | Truth outside repo | No truth | Dev instances |', '|---|---|---|---|---|---|---|---|---|---|---|---|');
+    for (const r of instances_by_form[cls]) T.push(`| ${r.form} | ${r.plain} | ${r.graph_question} | ${r.instances} | ${r.carried_M} (${r.carried_share_pct} %) | ${r.median_fetched_tok} | ${r.confirmed_any} (${r.confirmed_any_pct} %) / ${r.confirmed_edit_or_cite} | ${r.replay_snapshot_ok} | ${r.replay_needs_current_docs} | ${r.replay_outside_repository} | ${r.no_truth} | ${r.dev_instances} |`);
+    T.push('');
+  }
+  T.push('## Index-only baselines on the development part (k = 10)', '', 'A = ' + ARM.A + '; B = ' + ARM.B + '; C = ' + ARM.C + '. Cells: span hit@10 % (carried-weighted %) / median tokens to the first hit (list + read) / to the cheapest hit among the 10. Rows with fewer than 5 scorable instances are dropped.', '', '| Class | Seeds | Form | Scorable | Median agent fetched | Median truth span tok | A | B | C | Any arm hit@10 |', '|---|---|---|---|---|---|---|---|---|---|');
+  for (const r of baselines.by) { const c = (a) => `${r.arms[a].span_hit10_pct} (${r.arms[a].carried_weighted_hit10_pct}) / ${r.arms[a].median_tok_to_hit ?? "-"} / ${r.arms[a].median_tok_to_cheapest_hit ?? "-"}`; T.push(`| ${r.cls} | ${r.seeds} | ${r.form}${r.form === 'ALL' ? '' : ' ' + r.plain} | ${r.scorable} | ${r.median_fetched_tok} | ${r.median_truth_span_tok} | ${c('A')} | ${c('B')} | ${c('C')} | ${r.any_arm_span_hit10_pct} |`); }
+  T.push('', '## What a tool has to beat, per form (development part, all seeds, forms with at least 5 scorable instances)', '', 'A tool does better than the index-only arms on a form only if it puts the truth span in its answer more often than the best arm (and than any arm) at fewer tokens than the best arm needs to reach it; it cannot go below the truth span itself.', '', '| Class | Form | Carried share | Scorable | Best arm | Best arm hit@10 % | Any arm hit@10 % | Best arm tok to first hit / cheapest hit | Median truth span tok | Median agent fetched |', '|---|---|---|---|---|---|---|---|---|---|');
+  for (const r of to_beat) T.push(`| ${r.cls} | ${r.form} ${r.plain} | ${r.carried_share_pct} % | ${r.scorable} | ${r.best_arm} | ${r.best_arm_span_hit10_pct} | ${r.any_arm_span_hit10_pct} | ${r.best_arm_median_tok_to_hit ?? '-'} / ${r.best_arm_median_tok_to_cheapest_hit ?? '-'} | ${r.median_truth_span_tok} | ${r.median_agent_fetched_tok} |`);
+  T.push('', '## use-cases.md R1 falsifier (confirmed truth for CQ1 to CQ4)', '', '| Class | Form | Instances | Confirmed % | At least half |', '|---|---|---|---|---|'); for (const r of r1_falsifier.by) T.push(`| ${r.cls} | ${r.form} | ${r.instances} | ${r.confirmed_any_pct} | ${r.at_least_half ? 'yes' : 'no'} |`);
+  T.push('', '## Not scorable on the development part', '', '| Class and reason | Instances |', '|---|---|'); for (const [k, v] of Object.entries(reasons).sort()) T.push(`| ${k} | ${v} |`);
+  fs.writeFileSync(G + '/tables.md', T.join('\n') + '\n');
+  console.log(JSON.stringify({ instances_by_class, confirmed_truth_share, replayable_no_leak_share, replay_match: { u: replay.unchanged_file_line_match_pct, s: replay.session_blob_line_match_pct }, reasons }, null, 1));
+  for (const r of baselines.by.filter((r) => r.form === 'ALL')) console.log(r.cls, r.seeds, r.scorable, 'fetched', r.median_fetched_tok, 'truth', r.median_truth_span_tok, JSON.stringify(Object.fromEntries(Object.entries(r.arms).map(([a, o]) => [a, [o.span_hit1_pct, o.span_hit10_pct, o.carried_weighted_hit10_pct, o.file_hit10_pct, o.median_tok_to_hit, o.median_tok_to_cheapest_hit, o.first_hit_is_whole_file_pct, o.median_list_tok, o.tie_at_cut_pct, o.hits_on_current_only_file]]))), 'any', r.any_arm_span_hit10_pct);
+})();

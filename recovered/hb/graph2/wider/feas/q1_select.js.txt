@@ -1,0 +1,54 @@
+// Q1/Q3 sample: 12 seeded past commits on main (June, July, August), T1 rule, exported at their parent.
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const FROZEN = 'a31924a3818f4ac94b695906d107c72c912792b2';
+const SEED = 'feasibility-phase0-2026-11-13';
+const git = (a, opt = {}) => execFileSync('git', ['-C', REPO, ...a], { encoding: opt.enc === null ? null : 'utf8', maxBuffer: 1 << 30 });
+const CODE = /\.(py|ts|tsx|js|jsx|mjs|cjs)$/;
+const prod = (p) => !/\.md$/i.test(p) && /^(backend|technician-app|src)\//.test(p);
+function runtimeOf(p) { if (p.startsWith('backend/')) return 'backend'; if (p.startsWith('technician-app/')) return 'mobile'; if (p.startsWith('src/')) return 'web'; return null; }
+
+const shas = git(['rev-list', '--no-merges', FROZEN]).split('\n').filter(Boolean);
+const pop = [];
+for (const sha of shas) {
+  const raw = git(['show', '--no-renames', '--name-status', '--format=%H%x09%P%x09%cs%x09%s', sha]).split('\n').filter(Boolean);
+  const [h, parents, cdate, ...subj] = raw[0].split('\t');
+  if (parents.split(' ').length !== 1) continue;
+  if (cdate < '2026-06-01') continue;
+  const files = raw.slice(1).map((l) => { const [st, ...p] = l.split('\t'); return { st, p: p.join('\t') }; });
+  const existingCode = files.filter((f) => prod(f.p) && CODE.test(f.p) && f.st !== 'A');
+  if (existingCode.length < 2 || existingCode.length > 30) continue;
+  pop.push({ sha: h, parent: parents, cdate, month: cdate.slice(0, 7), subject: subj.join(' '), files, runtimes: [...new Set(files.map((f) => runtimeOf(f.p)).filter(Boolean))].sort(), key: crypto.createHash('sha256').update(SEED + '|' + h).digest('hex') });
+}
+const quota = { '2026-06': 5, '2026-07': 5, '2026-08': 2 };
+const byMonth = {};
+for (const c of pop) (byMonth[c.month] ||= []).push(c);
+const sample = [];
+for (const [m, k] of Object.entries(quota)) {
+  const list = (byMonth[m] || []).sort((a, b) => a.key.localeCompare(b.key));
+  sample.push(...list.slice(0, k));
+}
+// spent-split membership: is the parent in the finished test's task parents?
+const tasks = fs.readFileSync('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/tasks.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const splitOfParent = {};
+for (const t of tasks) if (t.set === 'T1') splitOfParent[t.parent] = t.split;
+for (const c of sample) {
+  c.finished_test_split = splitOfParent[c.parent] || 'not a T1 parent';
+  c.facts_snapshot = fs.existsSync(`C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/facts/cache/${c.parent}/nodes.jsonl`);
+}
+const popByMonth = Object.fromEntries(Object.entries(byMonth).map(([m, l]) => [m, l.length]));
+fs.writeFileSync('sample12.json', JSON.stringify({ seed: SEED, rule: 'non-merge commits reachable from of the frozen main, committed 2026-06-01 or later, 2 to 30 existing product code files (backend/, technician-app/, src/; .py/.ts/.tsx/.js/.jsx/.mjs/.cjs; status not A); ordered by sha256(seed|sha) within month; quota June 5, July 5, August 2', population_by_month: popByMonth, sample: sample.map(({ key, ...c }) => c) }, null, 1));
+// export parents
+for (const c of sample) {
+  const dir = 'exp/' + c.parent.slice(0, 10);
+  if (fs.existsSync(dir + '/backend')) continue;
+  fs.mkdirSync(dir, { recursive: true });
+  const tar = git(['archive', '--format=tar', c.parent], { enc: null });
+  fs.writeFileSync(dir + '.tar', tar);
+  execFileSync('tar', ['-xf', dir + '.tar', '-C', dir]);
+  fs.unlinkSync(dir + '.tar');
+}
+console.log(JSON.stringify({ popByMonth, sample: sample.map((c) => [c.sha.slice(0, 8), c.parent.slice(0, 10), c.cdate, c.runtimes.join('+'), c.finished_test_split, c.facts_snapshot, c.subject.slice(0, 60)]) }, null, 1));

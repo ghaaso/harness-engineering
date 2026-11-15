@@ -1,0 +1,30 @@
+// one-off patch of graph-v2/build.js.txt (look-fix round 1): run from graph-v2:  node - < <this file>
+const fs = require('fs');
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const L = s.split('\n');
+const iSC = L.findIndex(l => l.startsWith('const scaleChart'));
+L.splice(iSC, 3,
+  "const scaleChart = (title, lo, hi, here, hereLab, items, posOf, unit) => `<div class=\"scl\"><h4>${title}</h4><div class=\"sclrow head\"><div></div><div class=\"sclaxis\">${[...Array(hi - lo + 1)].map((_, i) => `<span class=\"cmp\" style=\"left:${100 * i / (hi - lo)}%\">${num(Math.pow(10, lo + i))}</span>`).join('')}</div><div class=\"small\">why not now</div></div>",
+  "<div class=\"sclrow here\"><div class=\"scln\"><b>${hereLab}</b></div><div class=\"sclt\"><i class=\"here\" style=\"left:${lx(here, lo, hi).toFixed(2)}%\"></i></div><div></div></div>",
+  "${items.map(x => { const ps = posOf(x); return `<div class=\"sclrow\"><div class=\"scln\"><b>${esc(x.name)}</b><br><span class=\"small\">starts to pay at ${esc(x.revisit)}</span></div><div class=\"sclt\"><i class=\"here\" style=\"left:${lx(here, lo, hi).toFixed(2)}%\"></i>${ps.length > 1 ? `<i class=\"rng\" style=\"left:${lx(ps[0], lo, hi).toFixed(2)}%;width:${(lx(ps[1], lo, hi) - lx(ps[0], lo, hi)).toFixed(2)}%\"></i>` : ''}${ps.map(p => `<i class=\"dot\" style=\"left:${lx(p, lo, hi).toFixed(2)}%\"></i>`).join('')}</div><div class=\"sclr\">${e(x.reason)}</div></div>`; }).join('')}</div>`;");
+s = L.join('\n');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing: ' + a.slice(0, 70)); s = s.split(a).join(b); };
+// graphify dots: numbers into the label column
+rep("<span class=\"dv\" style=\"left:${Math.min(+xp(x.hi) + 1, 74)}%\">${sg(x.d)} [${sg(x.lo)}, ${sg(x.hi)}]</span>", '');
+rep("<div class=\"dlab\">${esc(x.lab)}<small>${esc(x.v)}", "<div class=\"dlab\">${esc(x.lab)}<small><b>${sg(x.d)} [${sg(x.lo)}, ${sg(x.hi)}]</b> · ${esc(x.v)}");
+// remove the duplicate links paragraph (headline item 4 says it, with the source's own rounding)
+s = s.replace(/\n<p class="small">Links it does not build[^\n]*<\/p>/, '');
+// C: info box first, column sticky
+rep('<div><div class="layers" id="cq-layers"></div><div class="cqinfo card" id="cq-info"></div></div></div>', '<div class="cqright"><div class="cqinfo card" id="cq-info"></div><div class="layers" id="cq-layers"></div></div></div>');
+// n-ary picture: wider label box
+rep('<rect x="244" y="68" width="52" height="24" rx="5" class="boxhi"/>', '<rect x="228" y="67" width="84" height="26" rx="5" class="boxhi"/>');
+// plain words: no backticks, component names through pl()
+rep(".replace(/\\bTKGs?\\b/g, 'temporal knowledge graph')", ".replace(/`/g, '').replace(/\\bTKGs?\\b/g, 'temporal knowledge graph')");
+rep('comps: d.components.map(c => ({ name: c.name,', 'comps: d.components.map(c => ({ name: pl(c.name),');
+// tally: solid colours
+rep('<div class="stack tally"><div class="g-index"', '<div class="stack tally"><div class="t-ok"');
+rep('<div class="g-codemap lt" style="width:${100 * rc.qualify / rcT}%">', '<div class="t-warn" style="width:${100 * rc.qualify / rcT}%">');
+// I: what it shows
+s = s.replace(/`With the measured shares fixed, only a large adoption[^`]*`/, "`The share that moves is a fraction of the exposure. At the starting settings it sits well below what an agent pilot of ${PW.n} tasks can detect; only settings near the extremes (the agent uses the tool almost always, and answers are a small fraction of the reads they replace) reach that range. A lookup-level replay is the test that can see effects of this size.`");
+fs.writeFileSync('build.js.txt', s);
+console.log('patched');

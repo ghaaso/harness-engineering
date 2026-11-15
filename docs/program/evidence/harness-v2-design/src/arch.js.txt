@@ -1,0 +1,395 @@
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('arch-data').textContent);
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var TAGL = { m: 'M', s: 'S', t: 'T', e: 'E', i: 'I' };
+  function numHtml(k) { var n = D.numbers[k]; if (!n) return '[?' + esc(k) + ']'; return '<span class="num' + (String(n[0]).length > 26 ? ' long' : '') + '" tabindex="0" data-n="' + k + '"><b>' + esc(n[0]) + '</b> <i class="tag ' + n[1] + '">' + TAGL[n[1]] + '</i></span>'; }
+  function rich(t) {
+    return esc(t).replace(/\{\{n:([a-z0-9_]+)\}\}/g, function (_, k) { return numHtml(k); })
+      .replace(/\{\{t:([a-z0-9_]+)\|([^}]+)\}\}/g, function (_, k, x) { return '<span class="term" tabindex="0" data-t="' + k + '">' + x + '</span>'; });
+  }
+  function tagPill(t) { return '<i class="tag ' + t + '">' + TAGL[t] + '</i>'; }
+  function store(key, val) { try { if (val === undefined) { var v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } localStorage.setItem(key, JSON.stringify(val)); } catch (e) { } return null; }
+
+  /* ---------- notes on numbers and words ---------- */
+  var pop = document.createElement('div'); pop.className = 'pop'; pop.hidden = true; document.body.appendChild(pop);
+  var popFor = null;
+  function tipT(el) { return el && el.closest ? el.closest('[data-n],[data-t],[data-tip]') : null; }
+  function showPop(el) {
+    var h = '';
+    if (el.dataset.n) { var n = D.numbers[el.dataset.n]; h = '<b>' + esc(D.tags[n[1]].word) + '</b>' + esc(n[2]); }
+    else if (el.dataset.t) { var g = D.glossary[el.dataset.t]; h = '<b>' + esc(g[0]) + '</b>' + esc(g[1]); }
+    else h = (el.dataset.tiph ? '<b>' + esc(el.dataset.tiph) + '</b>' : '') + esc(el.dataset.tip);
+    pop.innerHTML = h; pop.hidden = false; popFor = el;
+    var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight, vw = document.documentElement.clientWidth;
+    var x = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, vw - pw - 8)), y = r.top - ph - 8; if (y < 4) y = r.bottom + 8;
+    pop.style.left = (x + window.scrollX) + 'px'; pop.style.top = (y + window.scrollY) + 'px';
+  }
+  function hidePop() { pop.hidden = true; popFor = null; }
+  document.addEventListener('pointerover', function (e) { if (e.pointerType === 'mouse') { var t = tipT(e.target); if (t) showPop(t); } });
+  document.addEventListener('pointerout', function (e) { if (e.pointerType === 'mouse' && popFor && tipT(e.target) === popFor) hidePop(); });
+  document.addEventListener('focusin', function (e) { var t = tipT(e.target); if (t) showPop(t); });
+  document.addEventListener('focusout', function (e) { if (tipT(e.target)) hidePop(); });
+  document.addEventListener('click', function (e) { var t = tipT(e.target); if (t) showPop(t); else if (!pop.hidden) hidePop(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hidePop(); });
+  window.addEventListener('scroll', function () { if (!pop.hidden) hidePop(); }, { passive: true });
+
+  /* =====================================================================
+     THE MODEL. One set of equations drives the stock-and-flow run and the
+     lanes chart. Units: slices, minutes, lane-minutes of token burn.
+     ===================================================================== */
+  var P = D.model.params, pv = function (k) { return P[k].v; };
+  var ST = { lanes: pv('lanes'), window: pv('budget'), on: {}, t: 0, scn: 'v2', plan: 'naive', part: 'planner', res: { size: 5000, calls: pv('callsPerSession') } };
+  D.model.switches.forEach(function (s) { ST.on[s.key] = !!s.onByDefault; });
+
+  function paramsFor(on, lanes) {
+    var two = !!on.slot2;
+    return {
+      N: lanes, S: pv('slices'), width: pv('width'),
+      slots: two ? 2 : 1,
+      tc: on.container ? (two ? pv('tcCon2') : pv('tcCon')) : (two ? pv('tcWin2') : pv('tcWin')),
+      tw: pv('tw'), tv: pv('tv'), k: pv('checksPerRound'),
+      r: on.contract ? pv('rCap') : pv('r0'),
+      mc: on.queue ? 1 : pv('mergeChecks0'),
+      tm: on.queue ? pv('tmQueue') : pv('tmRoot'),
+      shared: !on.queue,            /* testbed: one root both reviews and merges */
+      wq: on.nowait ? 0 : pv('wq0'), stagger: !!on.nowait,
+      mult: on.ceiling ? pv('ctxCap') : 1,
+      lib: !!on.library, e: pv('explore'), hitMax: pv('hitMax'), khalf: pv('khalf'), perSlice: pv('entriesPerSlice'), staleShare: pv('staleShare'), look: pv('lookupCost'),
+      planner: !!on.planner, governor: !!on.governor, margin: pv('margin'),
+      budget: ST.window * 60, win: 300
+    };
+  }
+  var TODAY = {}; D.model.switches.forEach(function (s) { TODAY[s.key] = false; });
+  function libFactor(p, K) { return p.lib ? 1 - p.e * p.hitMax * K / (K + p.khalf) + p.look : 1; }
+
+  /* steady state: what each limit allows in slices per hour, and the knee */
+  function capacity(p) {
+    var f = libFactor(p, p.S * p.perSlice / 2);
+    var cycle = p.r * (p.k * (p.tw + p.tc) + p.tv) + p.tm + p.mc * p.tc;
+    var perSliceBurn = p.r * (p.k * p.tw + p.tv) * p.mult * f;
+    var lim = [{ key: 'check', v: p.slots * 60 / (p.tc * (p.r * p.k + p.mc)) }];
+    if (p.shared) lim.push({ key: 'root', v: 60 / (p.r * p.tv + p.tm + p.mc * p.tc) });
+    else { lim.push({ key: 'review', v: 60 / (p.r * p.tv) }); lim.push({ key: 'merge', v: 60 / (p.tm + p.mc * p.tc) }); }
+    lim.push({ key: 'tokens', v: (p.budget / p.win) / perSliceBurn * 60 });
+    var low = lim.slice().sort(function (a, b) { return a.v - b.v; })[0], perLane = 60 / cycle;
+    return { lim: lim, cap: low.v, which: low.key, perLane: perLane, knee: low.v / perLane, planned: Math.max(1, low.key === "tokens" ? Math.ceil(low.v / perLane) : Math.round(p.margin * low.v / perLane)), at: function (n) { return Math.min(n * perLane, low.v); } };
+  }
+
+  /* stock-and-flow run, one-minute steps */
+  function simulate(p, H) {
+    var Nrun = p.planner ? Math.min(p.N, capacity(p).planned) : p.N;
+    var s = { B: p.S, W: 0, Q: 0, C: 0, V: 0, G: 0, Mg: 0, M: 0, T: 0, K: 0, stopped: false };
+    var out = { t: [], B: [], W: [], Q: [], C: [], V: [], G: [], M: [], T: [], K: [], stop: [] };
+    var acc = { work: 0, check: 0, gate: 0, held: 0, stop: 0 }, done = null, stops = 0, burnt = 0;
+    for (var t = 0; t <= H; t++) {
+      if (t % p.win === 0) { s.T = 0; s.stopped = false; }
+      var f = libFactor(p, s.K), active = s.W + s.Q + s.C + s.V + s.G + s.Mg;
+      if (t % 5 === 0) { out.t.push(t / 60); ['B', 'W', 'Q', 'C', 'V', 'M', 'K'].forEach(function (k) { out[k].push(s[k]); }); out.G.push(s.G + s.Mg); out.T.push(Math.min(100, 100 * s.T / p.budget)); out.stop.push(s.stopped ? 1 : 0); }
+      if (s.M >= p.S - 0.5 && done === null) done = t;
+      if (s.stopped) { acc.stop += active; continue; }
+      var rvCap = p.shared ? Math.max(0, 1 - s.Mg) : 1, reviewing = Math.min(s.V, rvCap), waitRev = s.V - reviewing;
+      /* the governor: slow the lanes so that the window lasts */
+      var left = p.win - (t % p.win), would = ((s.W + reviewing) + (s.Q + s.G + waitRev) * p.wq) * p.mult * f * left, room = 0.98 * p.budget - s.T;
+      var g = p.governor && would > room ? Math.max(0, room / would) : 1;
+      var st = Math.max(0, Math.min(s.B, Math.min(Nrun, p.width) - active)); if (p.stagger) st = Math.min(st, 0.2); if (g < 1) st = 0;
+      s.B -= st; s.W += st;
+      var wOut = g * s.W / p.tw; s.W -= wOut; s.Q += wOut;
+      var mergeShare = p.mc * p.tc / (p.tm + p.mc * p.tc), slotsEff = Math.max(0, p.slots - Math.min(1, s.Mg) * mergeShare);
+      var cIn = Math.max(0, Math.min(s.Q, slotsEff - s.C)); s.Q -= cIn; s.C += cIn;
+      var cOut = s.C / p.tc, more = cOut * (1 - 1 / p.k); s.C -= cOut; s.W += more; s.V += cOut - more;
+      var vOut = g * reviewing / p.tv, back = vOut * (1 - 1 / p.r); s.V -= vOut; s.W += back; s.G += vOut - back;
+      var gIn = Math.max(0, Math.min(s.G, 1 - s.Mg)); s.G -= gIn; s.Mg += gIn;
+      var mOut = s.Mg / (p.tm + p.mc * p.tc); s.Mg -= mOut; s.M += mOut;
+      if (p.lib) { s.K += mOut * p.perSlice; s.K -= s.K * p.staleShare * mOut; }
+      var bn = (g * (s.W + reviewing) + (s.Q + s.G + waitRev) * p.wq) * p.mult * f; s.T += bn; burnt += bn;
+      acc.work += g * (s.W + reviewing); acc.held += (1 - g) * (s.W + reviewing); acc.check += s.Q + s.C; acc.gate += waitRev + s.G + s.Mg;
+      if (s.T >= p.budget) { s.stopped = true; stops++; }
+    }
+    out.done = done; out.acc = acc; out.Nrun = Nrun; out.stops = stops; out.burnt = burnt / 60; return out;
+  }
+
+  /* ---------- drawing helpers ---------- */
+  function linePath(xs, ys, X, Y) { var d = ''; for (var i = 0; i < xs.length; i++) d += (i ? 'L' : 'M') + X(xs[i]).toFixed(1) + ' ' + Y(ys[i]).toFixed(1); return d; }
+  function chart(o) {
+    var W = 520, H = 190, L = 40, R = 86, T = 14, Bm = 28, xmax = o.xmax, ymax = o.ymax;
+    var X = function (v) { return L + v / xmax * (W - L - R); }, Y = function (v) { return H - Bm - Math.min(v, ymax) / ymax * (H - T - Bm); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(o.label) + '"><g class="grid">';
+    for (var k = 0; k <= 4; k++) { var yv = ymax * k / 4; s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(yv) + '" y2="' + Y(yv) + '"/><text class="lbl" text-anchor="end" x="' + (L - 5) + '" y="' + (Y(yv) + 4) + '">' + (ymax >= 20 ? Math.round(yv) : yv.toFixed(1).replace(/\.0$/, '')) + '</text>'; }
+    for (var h = 0; h <= xmax; h += o.xstep) s += '<text class="lbl" text-anchor="middle" x="' + X(h) + '" y="' + (H - 9) + '">' + h + (h === 0 ? ' h' : '') + '</text>';
+    s += '</g>';
+    (o.bands || []).forEach(function (b) { s += '<rect x="' + X(b[0]) + '" y="' + T + '" width="' + Math.max(1, X(b[1]) - X(b[0])) + '" height="' + (H - T - Bm) + '" fill="' + o.bandFill + '" opacity=".16"/>'; });
+    o.series.forEach(function (se) {
+      s += '<path d="' + linePath(se.x, se.y, X, Y) + '" fill="none" stroke="' + se.color + '" stroke-width="' + (se.w || 2) + '" stroke-linejoin="round"' + (se.dash ? ' stroke-dasharray="' + se.dash + '"' : '') + '/>';
+      var n = se.y.length - 1; s += '<text class="lbl-strong" x="' + (W - R + 5) + '" y="' + (Y(se.y[n]) + 4 + (se.dy || 0)) + '">' + esc(se.name) + '</text>';
+    });
+    if (o.cursor !== undefined) s += '<line x1="' + X(o.cursor) + '" x2="' + X(o.cursor) + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="var(--ink)" stroke-width="1"/>';
+    return s + '</svg>';
+  }
+  var INK = 'var(--ink)', MUT = 'var(--quiet)', V2C = 'var(--seq-2)';
+
+  /* =====================================================================
+     1. THE MACHINE: block diagram of the parts and what flows between them
+     ===================================================================== */
+  function renderMachine() {
+    var W = 980, H = 470, s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The parts of the harness and what flows between them"><defs><marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    var by = {}; D.parts.forEach(function (p) { by[p.key] = p; });
+    D.links.forEach(function (l) {
+      var a = by[l.from], b = by[l.to], x1, y1, x2, y2;
+      if (l.side === 'h') { x1 = a.x + a.w; y1 = a.y + a.h / 2 + (l.off || 0); x2 = b.x; y2 = b.y + b.h / 2 + (l.off2 === undefined ? (l.off || 0) : l.off2); if (a.x > b.x) { x1 = a.x; x2 = b.x + b.w; } }
+      else { x1 = a.x + a.w / 2 + (l.off || 0); y1 = a.y + a.h; x2 = b.x + b.w / 2 + (l.off2 === undefined ? (l.off || 0) : l.off2); y2 = b.y; if (a.y > b.y) { y1 = a.y; y2 = b.y + b.h; } }
+      s += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="currentColor" stroke-width="' + (l.kind === 'control' ? 2 : 1.3) + '"' + (l.kind === 'learn' ? ' stroke-dasharray="5 4"' : '') + ' marker-end="url(#am)"/>';
+      var lx = (x1 + x2) / 2 + (l.lx || 0), ly = (y1 + y2) / 2 + (l.ly || 0);
+      s += '<text class="lbl" text-anchor="' + (l.anchor || 'middle') + '" x="' + lx + '" y="' + ly + '" style="fill:var(--ink-2)">' + esc(l.label) + '</text>';
+    });
+    D.parts.forEach(function (p) {
+      var sel = p.key === ST.part;
+      s += '<g class="mpart" data-part="' + p.key + '" tabindex="0" role="button" aria-label="' + esc(p.name) + '"><rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h + '" rx="8" fill="' + (sel ? 'var(--ink)' : 'var(--surface)') + '" stroke="currentColor" stroke-width="' + (p.hub ? 2.4 : 1.6) + '"/>' +
+        '<text class="mname" text-anchor="middle" x="' + (p.x + p.w / 2) + '" y="' + (p.y + 22) + '" style="fill:' + (sel ? 'var(--surface)' : 'var(--ink)') + '">' + esc(p.name) + '</text>' +
+        p.lines.map(function (ln, i) { return '<text class="lbl" text-anchor="middle" x="' + (p.x + p.w / 2) + '" y="' + (p.y + 40 + i * 14) + '" style="fill:' + (sel ? 'var(--surface)' : 'var(--ink-2)') + '">' + esc(ln) + '</text>'; }).join('') + '</g>';
+    });
+    s += '</svg>';
+    var p = by[ST.part];
+    $('#machine').innerHTML = '<div class="chart-scroll">' + s + '</div><div class="legend-row"><span><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="var(--ink)" stroke-width="2.2"/></svg> control</span><span><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="var(--ink)" stroke-width="1.3"/></svg> work and results</span><span><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="var(--ink)" stroke-width="1.3" stroke-dasharray="5 4"/></svg> what the library learns from and gives back</span></div>' +
+      '<div class="partbox"><h3>' + esc(p.name) + '</h3><p class="lede">' + rich(p.job) + '</p><div class="cols3">' +
+      '<div><h4>What it does</h4><ul class="plist">' + p.does.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>Takes in</h4><ul class="plist">' + p.reads.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul><h4 style="margin-top:10px">Gives out</h4><ul class="plist">' + p.writes.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>Loops it controls</h4><ul class="plist">' + D.loops.filter(function (l) { return l.part === p.key; }).map(function (l) { return '<li><b>' + l.id + ' ' + esc(l.name) + '.</b> ' + rich(l.v2) + '</li>'; }).join('') + '</ul></div></div>' + (p.proof ? '<p class="callout"><b>How we will know it works.</b> ' + rich(p.proof) + '</p>' : '') + '</div>';
+  }
+
+  /* =====================================================================
+     2. HOW IT BEHAVES: stock-and-flow diagram with live values, and runs
+     ===================================================================== */
+  var HRS = D.model.hours, runs = null;
+  function rerun() { runs = { today: simulate(paramsFor(TODAY, ST.lanes), HRS * 60), v2: simulate(paramsFor(ST.on, ST.lanes), HRS * 60) }; }
+  function at(run, key) { var i = Math.min(run.t.length - 1, Math.round(ST.t * 12)); return run[key][i]; }
+  function sdDiagram(run) {
+    var W = 1010, H = 440, bw = 100, bh = 58, y = 104, gap = 46;
+    var names = D.sd.stocks, order = ['B', 'W', 'Q', 'C', 'V', 'G', 'M'], xs = {}, i;
+    order.forEach(function (k, n) { xs[k] = 12 + n * (bw + gap); });
+    var p = paramsFor(ST.scn === 'today' ? TODAY : ST.on, ST.lanes), scale = { B: p.S, W: p.N, Q: p.N, C: p.slots, V: p.N, G: p.N, M: p.S };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Stock and flow diagram of the harness"><defs><marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    function stock(k, x, yy, w, val, sc, unit) {
+      var f = Math.max(0, Math.min(1, val / sc));
+      return '<rect x="' + x + '" y="' + yy + '" width="' + w + '" height="' + bh + '" fill="var(--surface)" stroke="currentColor" stroke-width="2"/>' +
+        '<rect x="' + (x + 2) + '" y="' + (yy + bh - 8) + '" width="' + ((w - 4) * f) + '" height="6" fill="' + (ST.scn === 'today' ? MUT : V2C) + '"/>' +
+        '<text class="lbl" text-anchor="middle" x="' + (x + w / 2) + '" y="' + (yy + 17) + '" style="fill:var(--ink-2)">' + esc(names[k]) + '</text>' +
+        '<text class="sval" text-anchor="middle" x="' + (x + w / 2) + '" y="' + (yy + 39) + '">' + (unit === '%' ? Math.round(val) + ' %' : val.toFixed(1)) + '</text>';
+    }
+    function valve(x, yy) { return '<path d="M' + (x - 6) + ' ' + (yy - 7) + 'L' + (x + 6) + ' ' + (yy + 7) + 'L' + (x + 6) + ' ' + (yy - 7) + 'L' + (x - 6) + ' ' + (yy + 7) + 'z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>'; }
+    function flow(x1, x2, yy, label) { return '<line x1="' + x1 + '" y1="' + yy + '" x2="' + (x2 - 2) + '" y2="' + yy + '" stroke="currentColor" stroke-width="4" marker-end="url(#as)"/>' + valve((x1 + x2) / 2 - 2, yy) + (label ? '<text class="lbl" text-anchor="middle" x="' + ((x1 + x2) / 2) + '" y="' + (yy + 24) + '">' + esc(label) + '</text>' : ''); }
+    function cloud(x, yy) { return '<path d="M' + (x - 12) + ' ' + (yy + 6) + 'a7 7 0 0 1 2 -12a8 8 0 0 1 14 -2a7 7 0 0 1 6 12a6 6 0 0 1 -4 6h-16a6 6 0 0 1 -2 -4z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>'; }
+    function link(d, sign, sx, sy) { return '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#as)" opacity=".8"/><text class="sgn" x="' + sx + '" y="' + sy + '">' + sign + '</text>'; }
+    function loop(id, x, yy) { return '<g><circle cx="' + x + '" cy="' + yy + '" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/><text class="lpid" text-anchor="middle" x="' + x + '" y="' + (yy + 4) + '">' + id + '</text></g>'; }
+    /* main chain */
+    var fl = D.sd.flowNames;
+    for (i = 0; i < order.length - 1; i++) s += flow(xs[order[i]] + bw, xs[order[i + 1]], y + bh / 2 - 4, null) + '<text class="lbl" text-anchor="middle" x="' + (xs[order[i]] + bw + gap / 2) + '" y="' + (y + bh + 15) + '" style="fill:var(--ink)">' + esc(fl[i]) + '</text>';
+    order.forEach(function (k) { s += stock(k, xs[k], y, bw, at(run, k), scale[k]); });
+    /* another round: review back to work */
+    var ax = xs.V + bw / 2, bx = xs.W + bw / 2;
+    s += '<path d="M' + ax + ' ' + y + 'C' + ax + ' 14,' + bx + ' 14,' + bx + ' ' + (y - 3) + '" fill="none" stroke="currentColor" stroke-width="4" marker-end="url(#as)"/>' + valve((ax + bx) / 2, 37) + '<text class="lbl" text-anchor="middle" x="' + ((ax + bx) / 2) + '" y="24" style="fill:var(--ink)">' + esc(D.sd.again) + '</text>';
+    var ix = xs.C + bw / 2 - 16, jx = xs.W + bw / 2 + 18;
+    s += '<path d="M' + ix + ' ' + y + 'C' + ix + ' 66,' + jx + ' 66,' + jx + ' ' + (y - 3) + '" fill="none" stroke="currentColor" stroke-width="3" marker-end="url(#as)"/><text class="lbl" text-anchor="middle" x="' + ((ix + jx) / 2) + '" y="97" style="fill:var(--ink)">' + esc(D.sd.more) + '</text>';
+    /* second row: tokens, context, library */
+    var y2 = 300, tx = 150, tw2 = 150, cx = 470, cw = 150, kx = 800, kw = 160;
+    s += cloud(54, y2 + bh / 2 - 4) + flow(70, tx, y2 + bh / 2 - 4, D.sd.burn) + stock('T', tx, y2, tw2, at(run, 'T'), 100, '%') + flow(tx + tw2, tx + tw2 + 86, y2 + bh / 2 - 4, D.sd.reset) + cloud(tx + tw2 + 104, y2 + bh / 2 - 4);
+    s += '<rect x="' + cx + '" y="' + y2 + '" width="' + cw + '" height="' + bh + '" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><text class="lbl" text-anchor="middle" x="' + (cx + cw / 2) + '" y="' + (y2 + 17) + '" style="fill:var(--ink-2)">' + esc(names.X) + '</text><text class="sval" text-anchor="middle" x="' + (cx + cw / 2) + '" y="' + (y2 + 39) + '">' + (p.mult < 1 ? D.sd.ctxCapped : D.sd.ctxOpen) + '</text>';
+    s += cloud(kx - 96, y2 + bh / 2 - 4) + flow(kx - 80, kx, y2 + bh / 2 - 4, D.sd.write) + stock('K', kx, y2, kw, at(run, 'K'), 60) + '<text class="lbl" text-anchor="middle" x="' + (kx + kw / 2) + '" y="' + (y2 + bh + 16) + '">' + esc(D.sd.stale) + '</text>';
+    /* thin causal links with their signs */
+    s += link('M' + (xs.W + 30) + ' ' + (y + bh) + 'C' + (xs.W + 10) + ' 230,110 240,104 ' + (y2 + 12), '+', xs.W - 2, 236);
+    s += link('M' + cx + ' ' + (y2 + 40) + 'C400 ' + (y2 + 70) + ',160 ' + (y2 + 92) + ',112 ' + (y2 + 40), '+', 300, y2 + 92);
+    s += link('M' + (tx + 60) + ' ' + y2 + 'C' + (tx + 60) + ' 240,' + (xs.B + 110) + ' 250,' + (xs.B + bw + 14) + ' ' + (y + bh / 2 + 6), '−', tx + 70, 248);
+    s += link('M' + (kx + 60) + ' ' + y2 + 'C' + (kx + 40) + ' 230,' + (xs.Q - 10) + ' 236,' + (xs.W + bw + 16) + ' ' + (y + bh / 2 + 6), '−', kx + 10, 240);
+    s += link('M' + (xs.M + 30) + ' ' + (y + bh) + 'C' + (xs.M + 30) + ' 240,' + (kx - 20) + ' 250,' + (kx - 42) + ' ' + (y2 + 12), '+', xs.M + 38, 220);
+    s += '<text class="lbl" x="' + (tx + 78) + '" y="232" style="fill:var(--ink)">' + esc(D.sd.limit) + '</text><text class="lbl" x="' + (kx - 60) + '" y="222" style="fill:var(--ink)">' + esc(D.sd.hits) + '</text>';
+    /* loop marks */
+    s += loop('R1', (ax + bx) / 2 + 76, 40) + loop('B1', xs.Q + bw + gap / 2, y + bh + 36) + loop('B2', xs.G + bw + gap / 2, y + bh + 36) + loop('B3', tx + 20, 226) + loop('R2', cx + cw / 2, y2 - 22) + loop('R3', kx + kw - 14, 232) + loop('B4', kx + kw / 2, y2 + bh + 38) + loop('R4', xs.Q + bw / 2, y + bh + 36) + loop('B5', xs.B + bw + gap / 2, y - 24);
+    return s + '</svg>';
+  }
+  function renderSwitches(id) {
+    $(id).innerHTML = D.model.switches.map(function (sw) {
+      return '<label class="swt"><input type="checkbox" data-sw="' + sw.key + '"' + (ST.on[sw.key] ? ' checked' : '') + '><span><b>' + esc(sw.name) + '</b><small>' + esc(sw.effect) + '</small></span></label>';
+    }).join('') + '<label class="ctl" style="margin-top:6px"><span>Lanes: sessions working at once: <b>' + ST.lanes + '</b></span><input type="range" min="1" max="12" value="' + ST.lanes + '" data-lanes="1"></label>' +
+      '<label class="ctl"><span>Token window: <b>' + ST.window + '</b> lane-hours per five hours ' + tagPill('i') + '</span><input type="range" min="2" max="60" step="1" value="' + ST.window + '" data-window="1"></label><p class="small muted">Nobody knows its size. October\u2019s runs fitted ' + numHtml('oct_window') + '.</p>';
+  }
+  function hrs(m) { return m === null ? 'not finished in ' + HRS + ' h' : (m / 60).toFixed(1) + ' h'; }
+  function renderBehave() {
+    var a = runs.today, b = runs.v2, run = runs[ST.scn], S = pv('slices');
+    var bands = function (r) { var o = [], st = null; r.stop.forEach(function (v, i) { if (v && st === null) st = r.t[i]; if (!v && st !== null) { o.push([st, r.t[i]]); st = null; } }); if (st !== null) o.push([st, r.t[r.t.length - 1]]); return o; };
+    var lanesNote = function (r) { return r.Nrun < ST.lanes ? r.Nrun + ' lanes (the planner\u2019s count)' : ST.lanes + ' lanes'; };
+    var PARTS = [['working', 'work', 'var(--seq-2)', '#fff'], ['queue and check', 'check', 'var(--warn)', '#0b0b0b'], ['waiting for review or merge', 'gate', 'var(--serious)', '#0b0b0b'], ['held back by the governor', 'held', 'var(--quiet)', '#0b0b0b'], ['stopped by the limit', 'stop', 'var(--crit)', '#fff']];
+    $('#sdStage').innerHTML =
+      '<div class="controls"><label class="ctl"><span>Show the stocks for</span><span class="seg" role="group"><button type="button" data-scn="today" aria-pressed="' + (ST.scn === 'today') + '">The testbed in November</button><button type="button" data-scn="v2" aria-pressed="' + (ST.scn === 'v2') + '">Harness v2</button></span></label>' +
+      '<label class="ctl" style="flex:1 1 260px"><span>Time: hour <b>' + ST.t.toFixed(1) + '</b> of ' + HRS + '</span><input type="range" min="0" max="' + HRS + '" step="0.25" value="' + ST.t + '" data-time="1"></label>' +
+      '<button class="btn primary" type="button" data-play="1">' + (playing ? 'Pause' : 'Play') + '</button></div>' +
+      '<div class="chart-scroll sdwrap">' + sdDiagram(run) + '</div>' +
+      '<p class="small">' + tagPill('i') + ' Model output. Testbed: <b>' + hrs(a.done) + '</b> to merge all ' + S + ', at ' + lanesNote(a) + ', with ' + a.stops + ' limit stop' + (a.stops === 1 ? '' : 's') + ' and <b>' + a.burnt.toFixed(0) + '</b> lane-hours of tokens. Harness v2: <b>' + hrs(b.done) + '</b>, at ' + lanesNote(b) + ', with ' + b.stops + ' and <b>' + b.burnt.toFixed(0) + '</b>.</p>' +
+      '<div class="charts3">' +
+      '<div class="chartbox"><h4>Slices merged</h4>' + chart({ label: 'Slices merged over time', xmax: HRS, xstep: 10, ymax: S, cursor: ST.t, series: [{ name: 'testbed', x: a.t, y: a.M, color: MUT, dy: 12 }, { name: 'v2', x: b.t, y: b.M, color: V2C, dy: -2 }] }) + '</div>' +
+      '<div class="chartbox"><h4>Waiting for the check</h4>' + chart({ label: 'Slices waiting for the check', xmax: HRS, xstep: 10, ymax: Math.max(2, ST.lanes), cursor: ST.t, series: [{ name: 'testbed', x: a.t, y: a.Q, color: MUT, dy: -2 }, { name: 'v2', x: b.t, y: b.Q, color: V2C, dy: 12 }] }) + '</div>' +
+      '<div class="chartbox"><h4>Tokens used in the window, %</h4>' + chart({ label: 'Share of the token window used', xmax: HRS, xstep: 10, ymax: 100, cursor: ST.t, bands: bands(a), bandFill: 'var(--crit)', series: [{ name: 'testbed', x: a.t, y: a.T, color: MUT, dy: -2 }, { name: 'v2', x: b.t, y: b.T, color: V2C, dy: 12 }] }) + '<p class="small">Shaded: the testbed run stopped by the limit.</p></div></div>' +
+      '<div class="chartbox stack"><h4>Where the lane-hours went</h4>' + [['The testbed in November', a], ['Harness v2', b]].map(function (r) {
+        var x = r[1].acc, tot = PARTS.reduce(function (q, pt) { return q + x[pt[1]]; }, 0) || 1;
+        return '<div class="hbar"><span class="nm">' + r[0] + '<small>' + (tot / 60).toFixed(0) + ' lane-hours</small></span><span class="segbar">' + PARTS.map(function (q) { var pc = 100 * x[q[1]] / tot; return pc < 0.5 ? '' : '<span style="flex:' + pc + ';background:' + q[2] + ';color:' + q[3] + '" tabindex="0" data-tiph="Illustrative" data-tip="' + q[0] + ': ' + pc.toFixed(0) + ' % of lane time.">' + (pc >= 7 ? pc.toFixed(0) + '%' : '') + '</span>'; }).join('') + '</span><span class="val"></span></div>';
+      }).join('') + '<div class="legend-row">' + PARTS.map(function (q) { return '<span><i class="sw2" style="background:' + q[2] + '"></i>' + q[0] + '</span>'; }).join('') + '</div></div>';
+  }
+  var playing = null;
+  function play() {
+    if (playing) { clearInterval(playing); playing = null; renderBehave(); return; }
+    if (ST.t >= HRS) ST.t = 0;
+    playing = setInterval(function () { ST.t = Math.min(HRS, ST.t + 0.5); if (ST.t >= HRS) { clearInterval(playing); playing = null; } renderBehave(); }, 120);
+    renderBehave();
+  }
+  function renderLoops() {
+    $('#loops').innerHTML = D.loops.map(function (l) {
+      return '<div class="loopc"><div class="row"><span class="lpbadge">' + l.id + '</span><b>' + esc(l.name) + '</b><span class="chip">' + (l.kind === 'R' ? 'reinforcing: feeds itself' : 'balancing: holds a limit') + '</span></div><p>' + rich(l.story) + '</p><p class="small"><b>In the testbed.</b> ' + rich(l.today) + '</p><p class="small"><b>In v2.</b> ' + rich(l.v2) + '</p></div>';
+    }).join('');
+    $('#equations').innerHTML = '<ul class="plist mono">' + D.sd.equations.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul><table class="tv"><tr><th>Value used</th><th>Number</th><th>Where it comes from</th></tr>' +
+      Object.keys(P).map(function (k) { var q = P[k]; return '<tr><td>' + esc(q.name) + '</td><td>' + q.v + ' ' + esc(q.unit) + ' ' + tagPill(q.tag) + '</td><td style="text-align:left">' + esc(q.src) + '</td></tr>'; }).join('') + '</table>';
+  }
+
+  /* =====================================================================
+     3. PLANNING FOR PARALLEL WORK
+     ===================================================================== */
+  function wavesOf(slices, check) {
+    var left = slices.slice(), done = {}, waves = [], guard = 0;
+    var clash = function (a, b) { return a.writes.some(function (f) { return b.writes.indexOf(f) >= 0; }); };
+    while (left.length && guard++ < 20) {
+      var ready = left.filter(function (s) { return s.needs.every(function (d) { return done[d]; }); }), wave = [];
+      ready.forEach(function (s) { if (!check || wave.every(function (w) { return !clash(w, s); })) wave.push(s); });
+      if (!wave.length) break;
+      waves.push(wave); wave.forEach(function (s) { done[s.id] = 1; left.splice(left.indexOf(s), 1); });
+    }
+    var hidden = []; waves.forEach(function (w) { for (var i = 0; i < w.length; i++) for (var j = i + 1; j < w.length; j++) if (clash(w[i], w[j])) hidden.push([w[i], w[j]]); });
+    return { waves: waves, hidden: hidden };
+  }
+  function renderPlan() {
+    var PL = D.plancheck, v = PL.variants.filter(function (x) { return x.key === ST.plan; })[0], slices = PL.plans[v.plan], r = wavesOf(slices, v.check);
+    var colW = 190, bw = 164, bh = 62, W = Math.max(4, r.waves.length) * colW + 20, rows = Math.max.apply(null, r.waves.map(function (w) { return w.length; })), H = 44 + rows * (bh + 18) + 10, pos = {};
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The plan laid out in waves"><defs><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    r.waves.forEach(function (w, i) {
+      s += '<text class="lbl-strong" x="' + (14 + i * colW) + '" y="20">Wave ' + (i + 1) + '</text><text class="lbl" x="' + (14 + i * colW + 54) + '" y="20">' + w.length + ' at once</text>';
+      w.forEach(function (sl, j) { pos[sl.id] = { x: 14 + i * colW, y: 34 + j * (bh + 18) }; });
+    });
+    slices.forEach(function (sl) { sl.needs.forEach(function (d) { var a = pos[d], b = pos[sl.id]; if (a && b) s += '<path d="M' + (a.x + bw) + ' ' + (a.y + bh / 2) + 'C' + (a.x + bw + 14) + ' ' + (a.y + bh / 2) + ',' + (b.x - 14) + ' ' + (b.y + bh / 2) + ',' + (b.x - 2) + ' ' + (b.y + bh / 2) + '" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#ap)" opacity=".7"/>'; }); });
+    r.hidden.forEach(function (h) { var a = pos[h[0].id], b = pos[h[1].id]; s += '<path d="M' + (a.x + bw - 8) + ' ' + (a.y + bh) + 'C' + (a.x + bw + 20) + ' ' + ((a.y + b.y + bh) / 2 + 20) + ',' + (b.x + bw + 20) + ' ' + ((a.y + b.y + bh) / 2 + 10) + ',' + (b.x + bw - 8) + ' ' + b.y + '" fill="none" stroke="var(--crit)" stroke-width="2.2" stroke-dasharray="5 3"/>'; });
+    slices.forEach(function (sl) {
+      var p = pos[sl.id]; if (!p) return; var bad = r.hidden.some(function (h) { return h[0] === sl || h[1] === sl; });
+      s += '<rect x="' + p.x + '" y="' + p.y + '" width="' + bw + '" height="' + bh + '" rx="6" fill="var(--surface)" stroke="' + (bad ? 'var(--crit)' : 'currentColor') + '" stroke-width="' + (bad ? 2.4 : 1.5) + '"/><text class="mname" x="' + (p.x + 9) + '" y="' + (p.y + 19) + '">' + esc(sl.name) + '</text>' +
+        sl.writes.slice(0, 3).map(function (f, k) { return '<text class="lblm" x="' + (p.x + 9) + '" y="' + (p.y + 34 + k * 12) + '">' + esc(f) + '</text>'; }).join('');
+    });
+    s += '</svg>';
+    var widest = Math.max.apply(null, r.waves.map(function (w) { return w.length; }));
+    $('#planStage').innerHTML = '<div class="controls"><span class="seg" role="group">' + PL.variants.map(function (x) { return '<button type="button" data-plan="' + x.key + '" aria-pressed="' + (x.key === ST.plan) + '">' + esc(x.label) + '</button>'; }).join('') + '</span></div>' +
+      '<p>' + rich(v.text) + '</p><div class="chart-scroll">' + s + '</div>' +
+      '<div class="statrow"><div class="stat"><span>Waves</span><b>' + r.waves.length + '</b></div><div class="stat"><span>Widest wave</span><b>' + widest + '</b><small>lanes it can use</small></div><div class="stat"><span>Collisions left for the merge</span><b>' + r.hidden.length + '</b><small>' + (r.hidden.length ? r.hidden.map(function (h) { return h[0].name + ' and ' + h[1].name; }).join('; ') : 'none') + '</small></div></div>' +
+      '<p class="small muted">' + esc(PL.sampleNote) + '</p>';
+  }
+  function renderCapacity() {
+    var a = capacity(paramsFor(TODAY, ST.lanes)), b = capacity(paramsFor(ST.on, ST.lanes));
+    var LB = { check: 'the check', root: 'the root: review and merge', review: 'the review', merge: 'the merge', tokens: 'the token window' };
+    var W = 640, H = 300, L = 46, R = 168, T = 16, Bm = 34, xmax = 12, ymax = Math.max(1, Math.min(Math.max(a.cap, b.cap) * 1.7, Math.max(a.cap, b.cap) + 3));
+    var X = function (v) { return L + v / xmax * (W - L - R); }, Y = function (v) { return H - Bm - Math.min(v, ymax) / ymax * (H - T - Bm); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Slices merged per hour against lanes, with the limit that binds"><g class="grid">';
+    for (var k = 0; k <= 4; k++) { var yv = ymax * k / 4; s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(yv) + '" y2="' + Y(yv) + '"/><text class="lbl" text-anchor="end" x="' + (L - 5) + '" y="' + (Y(yv) + 4) + '">' + yv.toFixed(1) + '</text>'; }
+    for (var n = 0; n <= 12; n += 2) s += '<text class="lbl" text-anchor="middle" x="' + X(n) + '" y="' + (H - 14) + '">' + n + '</text>';
+    s += '</g><text class="lbl" text-anchor="middle" x="' + ((L + W - R) / 2) + '" y="' + (H - 1) + '">lanes: sessions working at once</text>';
+    function curve(c, color, w) { var xs = [], ys = []; for (var q = 0; q <= 12; q += 0.25) { xs.push(q); ys.push(c.at(q)); } return '<path d="' + linePath(xs, ys, X, Y) + '" fill="none" stroke="' + color + '" stroke-width="' + w + '" stroke-linejoin="round"/>'; }
+    var lastY = -99; b.lim.slice().sort(function (p, q) { return p.v - q.v; }).forEach(function (l) { if (l.v > ymax) return; var yy = Y(l.v); if (Math.abs(yy - lastY) < 11) yy = lastY - 11; lastY = yy; s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(l.v) + '" y2="' + Y(l.v) + '" stroke="' + V2C + '" stroke-width="1" stroke-dasharray="2 4"/><text class="lbl" x="' + (W - R + 6) + '" y="' + (yy + 4) + '">v2 limit: ' + LB[l.key] + '</text>'; });
+    s += curve(a, MUT, 2) + curve(b, V2C, 2.6);
+    [[a, MUT], [b, V2C]].forEach(function (c) { var kx = Math.min(12, c[0].knee); s += '<circle cx="' + X(kx) + '" cy="' + Y(c[0].at(kx)) + '" r="5" fill="' + c[1] + '" stroke="var(--surface)" stroke-width="2"/>'; });
+    s += '<line x1="' + X(ST.lanes) + '" x2="' + X(ST.lanes) + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="var(--ink)" stroke-width="1"/><text class="lbl" text-anchor="middle" x="' + X(ST.lanes) + '" y="' + (T - 4) + '" style="fill:var(--ink)">' + ST.lanes + ' lanes</text></svg>';
+    var keys = ['check', 'root', 'review', 'merge', 'tokens'], val = function (c, key) { var l = c.lim.filter(function (x) { return x.key === key; })[0]; return l ? (l.key === c.which ? '<b>' + l.v.toFixed(2) + ' \u2190 first</b>' : l.v.toFixed(2)) : '\u2013'; };
+    var rows = keys.map(function (key) { return '<tr><td>Limit of ' + LB[key] + '</td><td>' + val(a, key) + '</td><td>' + val(b, key) + '</td></tr>'; }).join('') +
+      '<tr><td>One lane delivers</td><td>' + a.perLane.toFixed(2) + '</td><td>' + b.perLane.toFixed(2) + '</td></tr>' +
+      '<tr><td>Knee: lanes at which the first limit is reached</td><td>' + a.knee.toFixed(1) + '</td><td>' + b.knee.toFixed(1) + '</td></tr>' +
+      '<tr><td>Lanes the planner would run (about 0.8 of the knee)</td><td>' + a.planned + '</td><td>' + b.planned + '</td></tr>' +
+      '<tr><td>Delivered at ' + ST.lanes + ' lanes</td><td>' + a.at(ST.lanes).toFixed(2) + '</td><td>' + b.at(ST.lanes).toFixed(2) + '</td></tr>';
+    $('#capStage').innerHTML = '<div class="chartbox stack"><h4>Slices merged per hour, against lanes ' + tagPill('i') + '</h4><div class="legend-row"><span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="var(--quiet)" stroke-width="2"/></svg> the testbed in November</span><span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="var(--seq-2)" stroke-width="2.6"/></svg> harness v2, with the switches as set</span><span><svg width="12" height="12"><circle cx="6" cy="6" r="4.5" fill="var(--ink-3)"/></svg> the knee: more lanes add nothing past it</span></div><div class="chart-scroll">' + s + '</div>' +
+      '<table class="tv"><tr><th style="text-align:left">Slices per hour</th><th>The testbed in November</th><th>Harness v2</th></tr>' + rows + '</table>' +
+      '<p class="small">' + rich(D.plancheck.capacityText) + '</p></div>';
+  }
+
+  /* =====================================================================
+     4. THE LIBRARY and 5. TOKENS
+     ===================================================================== */
+  function renderLibrary() {
+    var Lb = D.library;
+    var W = 900, H = 234, s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The life of a library entry"><defs><marker id="al" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    var X = { cand: 16, valid: 286, stale: 556, check: 716 }, bw = 150, bh = 56, y = 40;
+    function st(k, x, yy, name, sub) { return '<rect x="' + x + '" y="' + yy + '" width="' + bw + '" height="' + bh + '" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><text class="mname" text-anchor="middle" x="' + (x + bw / 2) + '" y="' + (yy + 24) + '">' + esc(name) + '</text><text class="lbl" text-anchor="middle" x="' + (x + bw / 2) + '" y="' + (yy + 42) + '">' + esc(sub) + '</text>'; }
+    function fl(x1, y1, x2, y2, label, ly) { return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="currentColor" stroke-width="3.2" marker-end="url(#al)"/><text class="lbl" text-anchor="middle" x="' + ((x1 + x2) / 2) + '" y="' + ly + '" style="fill:var(--ink)">' + esc(label) + '</text>'; }
+    var F = Lb.flow;
+    s += fl(X.cand + bw, y + 28, X.valid - 3, y + 28, F.verify, y + 18) + fl(X.valid + bw, y + 20, X.stale - 3, y + 20, F.drift, y + 10) + fl(X.stale - 3, y + 44, X.valid + bw + 3, y + 44, F.reverify, y + 72) + fl(X.stale + bw, y + 28, X.stale + bw + 78, y + 28, '', 0) + '<path d="M' + (X.stale + bw + 84) + ' ' + (y + 36) + 'a7 7 0 0 1 2 -12a8 8 0 0 1 14 -2a7 7 0 0 1 6 12a6 6 0 0 1 -4 6h-16a6 6 0 0 1 -2 -4z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>';
+    s += '<path d="M' + (X.valid + bw / 2) + ' ' + (y + bh) + 'C' + (X.valid + bw / 2) + ' 178,' + (X.check - 80) + ' 178,' + (X.check - 4) + ' 178" fill="none" stroke="currentColor" stroke-width="3.2" marker-end="url(#al)"/><text class="lbl" x="' + (X.valid + bw / 2 + 64) + '" y="198" style="fill:var(--ink)">' + esc(F.promote) + '</text>';
+    s += '<text class="lbl" x="' + (X.stale + bw + 6) + '" y="' + (y + 14) + '" style="fill:var(--ink)">' + esc(F.retire) + '</text>';
+    s += st('cand', X.cand, y, F.s1, F.s1b) + st('valid', X.valid, y, F.s2, F.s2b) + st('stale', X.stale, y, F.s3, F.s3b) + st('check', X.check, 150, F.s4, F.s4b);
+    s += '<text class="lbl" x="' + X.cand + '" y="' + (y - 12) + '" style="fill:var(--ink)">' + esc(F.inflow) + '</text><text class="lbl" x="' + X.cand + '" y="226">' + esc(F.lookup) + '</text></svg>';
+    $('#libStage').innerHTML = '<div class="chart-scroll">' + s + '</div>' +
+      '<div class="cols3"><div><h4>What it holds</h4><ul class="plist">' + Lb.kinds.map(function (k) { return '<li><b>' + esc(k.name) + '.</b> ' + rich(k.what) + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>How it changes by itself</h4><ul class="plist">' + Lb.evolves.map(function (k) { return '<li><b>' + esc(k.name) + '.</b> ' + rich(k.what) + (k.who ? '<span class="small muted" style="display:block">Written by: ' + esc(k.who) + ' When: ' + esc(k.when) + '</span>' : '') + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>Who reads it, and what for</h4><ul class="plist">' + Lb.readers.map(function (k) { return '<li><b>' + esc(k.name) + '.</b> ' + rich(k.what) + '</li>'; }).join('') + '</ul></div></div>' +
+      '<details class="small"><summary>The tables</summary><table class="tv"><tr><th>Table</th><th style="text-align:left">Holds</th><th style="text-align:left">Written by</th></tr>' + Lb.tables.map(function (t) { return '<tr><td class="mono">' + esc(t.name) + '</td><td style="text-align:left">' + esc(t.holds) + '</td><td style="text-align:left">' + esc(t.by) + '</td></tr>'; }).join('') + '</table></details>' +
+      '<div class="callout">' + Lb.honest.map(function (h) { return '<p>' + rich(h) + '</p>'; }).join('') + '</div>';
+  }
+  function renderResidency() {
+    var r = ST.res, fixed = D.numbers.fixed_cost_n[0] * 1, ans = pv('answerTokens');
+    var rows = [['Read it into the session', r.size * r.calls, 'It stays in the context and is read again on every later call.'], ['Ask the library from the command line', ans * r.calls, 'Only the short answer stays. The lookup itself is a database query: no model tokens.'], ['Send a subagent to find it', fixed + r.size + ans * r.calls, 'The subagent pays its fixed cost once, reads the material once, and hands back the short answer.']];
+    var max = Math.max.apply(null, rows.map(function (x) { return x[1]; }));
+    $('#resStage').innerHTML = '<div class="controls"><label class="ctl" style="flex:1 1 240px"><span>Size of what has to be known: <b>' + r.size.toLocaleString('en-US') + '</b> tokens ' + tagPill('i') + '</span><input type="range" min="500" max="40000" step="500" value="' + r.size + '" data-res="size"></label>' +
+      '<label class="ctl" style="flex:1 1 240px"><span>Calls left in that session: <b>' + r.calls + '</b></span><input type="range" min="10" max="1200" step="10" value="' + r.calls + '" data-res="calls"></label></div>' +
+      '<div class="hbars">' + rows.map(function (x) { return '<div class="hbar"><span class="nm">' + x[0] + '<small>' + x[2] + '</small></span><span class="trk"><span class="seg-b" style="width:' + Math.max(0.5, 100 * x[1] / max) + '%;background:var(--seq-2);border-radius:0 4px 4px 0"></span></span><span class="val">' + (x[1] >= 1e6 ? (x[1] / 1e6).toFixed(1) + 'M' : Math.round(x[1] / 1000) + 'k') + '</span></div>'; }).join('') + '</div>' +
+      '<p class="small">' + rich(D.tokens.residencyNote) + '</p>';
+  }
+  function renderTokens() {
+    var F = D.tokens.fill, fc = { start: 'var(--seq-1)', own: 'var(--seq-2)', fetched: 'var(--seq-3)', other: 'var(--line-2)' }, fi = { start: 'var(--seq-ink-1)', own: '#fff', fetched: 'var(--seq-ink-3)', other: 'var(--ink)' };
+    var BN = { start: 'the start of every window', own: 'the model\u2019s own earlier output', fetched: 'what the session fetched', calls: 'the number of calls' };
+    $('#tokFill').innerHTML = '<h4>What fills a session\u2019s context ' + tagPill('e') + '</h4><div class="segbar">' + F.map(function (x) { return '<span style="flex:' + x.pct + ';background:' + fc[x.key] + ';color:' + fi[x.key] + '" tabindex="0" data-tiph="Estimate" data-tip="' + esc(x.name) + ': ' + esc(x.label) + ' of context. ' + esc(x.what) + '">' + esc(x.label) + '</span>'; }).join('') + '</div>' +
+      '<div class="cols4">' + F.map(function (x) { var ms = D.tokens.methods.filter(function (m) { return m.bucket === x.key; }); return '<div><p><i class="sw2" style="background:' + fc[x.key] + '"></i> <b>' + esc(x.name) + '</b></p><p class="small">' + esc(x.what) + '</p>' + (ms.length ? '<p class="small"><b>Attacked by:</b> ' + ms.map(function (m) { return esc(m.name.toLowerCase()); }).join('; ') + '.</p>' : '') + '</div>'; }).join('') + '</div><p class="small muted">' + rich(D.tokens.fillNote) + '</p>';
+    var C = D.tokens.carry;
+    $('#tokCarry').innerHTML = '<h4>' + esc(C.title) + ' ' + tagPill('e') + '</h4><div class="hbars">' +
+      '<div class="hbar"><span class="nm">' + esc(C.inLabel) + '</span><span class="trk"><span class="seg-b" style="width:' + Math.max(0.8, 100 * C['in'] / C.proc) + '%;background:var(--seq-3);border-radius:0 4px 4px 0" tabindex="0" data-tiph="Estimate" data-tip="About 19 million tokens of fetched content entered the windows."></span></span><span class="val">' + esc(C.inText) + '</span></div>' +
+      '<div class="hbar"><span class="nm">' + esc(C.procLabel) + '</span><span class="trk"><span class="seg-b" style="width:100%;background:var(--seq-2);border-radius:0 4px 4px 0" tabindex="0" data-tiph="Estimate" data-tip="Those tokens were then processed about 950 million times."></span></span><span class="val">' + esc(C.procText) + '</span></div></div><p class="small">' + rich(C.text) + '</p>';
+    $('#tokMethods').innerHTML = '<table class="tv wide"><tr><th style="text-align:left">Method</th><th style="text-align:left">Cuts</th><th style="text-align:left">How</th><th style="text-align:left">What the record says</th><th style="text-align:left">Standing</th></tr>' +
+      D.tokens.methods.map(function (m) { return '<tr><td style="text-align:left"><b>' + esc(m.name) + '</b></td><td style="text-align:left">' + BN[m.bucket] + '</td><td style="text-align:left">' + rich(m.how) + '</td><td style="text-align:left">' + rich(m.basis) + '</td><td style="text-align:left">' + esc(m.status) + '</td></tr>'; }).join('') + '</table>';
+  }
+
+  /* ---------- the rest: text sections ---------- */
+  function renderText() {
+    $('#hero').innerHTML = '<span class="status"><i></i>' + esc(D.meta.status) + '</span><h1>' + esc(D.meta.title) + '</h1><p class="law">' + rich(D.meta.law) + '</p>' + D.meta.thesis.map(function (t) { return '<p class="lede">' + rich(t) + '</p>'; }).join('') +
+      '<p class="small muted">' + ['m', 's', 't', 'e', 'i'].map(function (k) { return tagPill(k) + ' ' + esc(D.tags[k].word.toLowerCase()); }).join(' &nbsp; ') + '. Tap a number for its source. The plan, the 21 problems and your decisions are on the <a href="' + esc(D.meta.planLink) + '">plan page</a>.</p>';
+    $('#behaveIntro').innerHTML = D.model.intro.map(function (t) { return '<p>' + rich(t) + '</p>'; }).join('');
+    $('#behaveNotes').innerHTML = '<b>What this model assumes</b><ul>' + D.model.notes.map(function (n) { return '<li>' + rich(n) + '</li>'; }).join('') + '</ul>';
+    $('#planRules').innerHTML = '<div class="cols2"><div><h4>What every slice in a plan must declare</h4><ul class="plist">' + D.plancheck.declares.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul></div><div><h4>What the check does with it, at no token cost</h4><ol class="plist">' + D.plancheck.rules.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ol></div></div>';
+    $('#tokIntro').innerHTML = D.tokens.intro.map(function (t) { return '<p>' + rich(t) + '</p>'; }).join('');
+    $('#answers').innerHTML = D.parts.map(function (p) { var list = D.answers.filter(function (a) { return a.part === p.key; }); return list.length ? '<div class="ansc"><h4>' + esc(p.name) + '</h4><ul class="plist">' + list.map(function (a) { return '<li><span class="idchip">' + a.id + '</span> <b>' + esc(a.name) + '.</b> ' + rich(a.how) + '</li>'; }).join('') + '</ul></div>' : ''; }).join('');
+    $('#orch').innerHTML = '<p class="lede">' + esc(D.orchestration.question) + '</p>' + D.orchestration.answer.map(function (t) { return '<p>' + rich(t) + '</p>'; }).join('');
+    $('#order').innerHTML = '<ol class="plist">' + D.order.map(function (o) { return '<li><b>' + esc(o.name) + '.</b> ' + rich(o.builds) + '</li>'; }).join('') + '</ol>';
+    $('#foot').innerHTML = '<div><b>Limits</b><ul>' + D.limits.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div><div><b>Sources</b><ul>' + D.sources.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+  }
+  function setTheme(t) { var r = document.documentElement; if (t === 'auto') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', t); $('#themeBtn').textContent = 'Theme: ' + t; store('harness-v2-theme', t); }
+
+  function bothSwitches() { renderSwitches('#switches'); renderSwitches('#switches2'); }
+  function all() { rerun(); renderMachine(); bothSwitches(); renderBehave(); renderPlan(); renderCapacity(); }
+  renderText(); renderLoops(); renderLibrary(); renderResidency(); renderTokens(); all();
+  setTheme(store('harness-v2-theme') || 'auto');
+  $('#themeBtn').addEventListener('click', function () { var c = document.documentElement.getAttribute('data-theme') || 'auto'; setTheme(c === 'auto' ? 'light' : c === 'light' ? 'dark' : 'auto'); });
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('[data-part],[data-scn],[data-play],[data-plan]') : null; if (!t) return;
+    if (t.dataset.part) { ST.part = t.dataset.part; renderMachine(); }
+    else if (t.dataset.scn) { ST.scn = t.dataset.scn; renderBehave(); }
+    else if (t.dataset.play) play();
+    else if (t.dataset.plan) { ST.plan = t.dataset.plan; renderPlan(); }
+  });
+  document.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && e.target.dataset.part) { e.preventDefault(); ST.part = e.target.dataset.part; renderMachine(); } });
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.dataset.sw) { ST.on[t.dataset.sw] = t.checked; rerun(); bothSwitches(); renderBehave(); renderCapacity(); }
+    else if (t.dataset.lanes) { var box = t.closest('#switches2') ? '#switches2' : '#switches'; ST.lanes = +t.value; rerun(); bothSwitches(); renderBehave(); renderCapacity(); var f = $(box + ' [data-lanes]'); if (f) f.focus(); }
+    else if (t.dataset.window) { var bx = t.closest('#switches2') ? '#switches2' : '#switches'; ST.window = +t.value; rerun(); bothSwitches(); renderBehave(); renderCapacity(); var w = $(bx + ' [data-window]'); if (w) w.focus(); }
+    else if (t.dataset.time) { ST.t = +t.value; renderBehave(); var g = $('[data-time]'); if (g) g.focus(); }
+    else if (t.dataset.res) { ST.res[t.dataset.res] = +t.value; renderResidency(); var h = $('[data-res="' + t.dataset.res + '"]'); if (h) h.focus(); }
+  });
+})();

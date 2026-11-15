@@ -1,0 +1,27 @@
+// check2: are out/instances.jsonl and out/instances-v.jsonl complete and sane? Prints aggregates only (no transcript text).
+// Output: out/check2.json
+const fs = require('fs'), readline = require('readline');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+async function* lines(f) { const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity }); for await (const l of rl) if (l.trim()) yield l; }
+(async () => {
+  const R = { instances: { n: 0, bad: 0 }, v: { n: 0, bad: 0, idMismatch: 0, missingFields: 0 }, transcripts: {}, byClass: {} };
+  const ids = [];
+  for await (const l of lines(W + '/out/instances.jsonl')) { try { const x = JSON.parse(l); ids.push(x.id); R.instances.n++; } catch { R.instances.bad++; } }
+  let k = 0; let dmin = null, dmax = null; const uniq = new Set();
+  for await (const l of lines(W + '/out/instances-v.jsonl')) {
+    let x; try { x = JSON.parse(l); } catch { R.v.bad++; k++; continue; }
+    R.v.n++; if (ids[k] !== x.id) R.v.idMismatch++; k++; uniq.add(x.id);
+    if (!x.ver || !x.replayAll || !x.replayPrimary || !Array.isArray(x.truth)) R.v.missingFields++;
+    if (!dmin || x.date < dmin) dmin = x.date; if (!dmax || x.date > dmax) dmax = x.date;
+    const c = (R.byClass[x.cls] = R.byClass[x.cls] || { n: 0, fetched: 0, carried: 0, calls: 0, confirmed: 0, noTruth: 0, sessions: new Set(), transcripts: new Set(), seedKinds: {}, forms: {}, verNull: 0, truthNoReplay: 0 });
+    c.n++; c.fetched += x.fetched; c.carried += x.carried; c.calls += x.nCalls; if (x.confirmed) c.confirmed++; if (!x.truth.length) c.noTruth++;
+    c.sessions.add(x.sid); c.transcripts.add(x.file); c.seedKinds[x.seed.kind] = (c.seedKinds[x.seed.kind] || 0) + 1;
+    c.forms[x.form] = (c.forms[x.form] || 0) + 1; if (!x.ver.commit) c.verNull++;
+    for (const t of x.truth) if (!t.replay) c.truthNoReplay++;
+  }
+  R.v.unique = uniq.size; R.v.dateMin = dmin; R.v.dateMax = dmax;
+  for await (const l of lines(W + '/out/transcripts.jsonl')) { const t = JSON.parse(l); R.transcripts[t.cls] = (R.transcripts[t.cls] || 0) + 1; }
+  for (const c of Object.values(R.byClass)) { c.sessions = c.sessions.size; c.transcripts = c.transcripts.size; c.fetchedM = +(c.fetched / 1e6).toFixed(2); c.carriedM = +(c.carried / 1e6).toFixed(1); delete c.fetched; delete c.carried; }
+  fs.writeFileSync(W + '/out/check2.json', JSON.stringify(R, null, 1));
+  console.log(JSON.stringify(R, null, 1));
+})();

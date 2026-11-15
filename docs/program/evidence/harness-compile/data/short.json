@@ -1,0 +1,2024 @@
+{
+ "coverNote": "This edition is organised by the seven metrics I judge the harness by: throughput, efficiency, token count, token cost, time taken, quality of output and hallucinations. Start with “The short version”, then Part 2 for the bottlenecks and Part 4 for the work. The reference edition, `HARNESS-IDEAS-AND-BOTTLENECKS-2026-11-14-REFERENCE.pdf` beside this file, holds every idea, bottleneck and package card in full. Every number carries a tag that says how sure we are of it.",
+ "howLead": "This is the short edition of the one place where everything we have learned about our build harness sits together. It is organised by the seven metrics I judge the harness by, keeps every diagram, and gives what a teammate needs to pick a piece of work and see why it matters. The reference edition, `HARNESS-IDEAS-AND-BOTTLENECKS-2026-11-14-REFERENCE.pdf` beside this file, holds every idea, every bottleneck and every package card in full. Throughout, “I” is me and “we” is the team.",
+ "howIds": [
+  "**The seven metrics** are throughput, efficiency, token count, token cost, time taken, quality of output and hallucinations. Part 2 defines each and sorts every bottleneck under them.",
+  "**Bottlenecks in Part 2** are numbered 1 to 11. Each groups the register’s rows that share one cause. A register row keeps the id its first session gave it: `B01` to `B21` come from the bottleneck compile of 11 November; `R2`, `R4` and `B3-LOOP` are loops of harness v2, shown on page 5 as R2, R4 and B3 among loops R1 to R4 and B1 to B5; ids that start with `TK` (tokens), `LIB` (memory), `MC` (the machine and the check) or `PR` (process; not a pull request) were added in this compile.",
+  "**Ideas** are numbered by theme: `MAC-03` is the third idea in the machine theme. Six came only from my chats and were added on 14 November: `PAR-22`, `TOK-44`, `MTH-66`, `MTH-67`, `MSR-49` and `MSR-50`.",
+  "**Work packages** are `WP1` to `WP12`; WP2, WP6 and WP10 are split into lettered parts (WP2a, WP2b, WP6a to WP6c, WP10a, WP10b), sixteen in all. **Decisions** waiting on me are harness v2’s `D05` and `D07` to `D23`, the knowledge store’s `KS-D1` and `KS-D1b`, and named ones such as `GT-1`; Part 4 lists them all.",
+  "**Terms** are explained in the text, or in the glossary with where each comes from."
+ ],
+ "shortLead": "I build software with AI agents. The harness is everything around them: how I split work into sessions, the checks that decide whether work is right, and the memory that carries what we learn. I judge it by seven metrics: throughput, efficiency, token count, token cost, time taken, quality of output and hallucinations. This edition says what limits each one, what we have measured, and every idea we have against it, including the ones we only talked about.",
+ "ask": "**What I need from you.** Read this page and Part 4, take a package (two people can share one) and write your name in its row. Parts 2 and 3 give the background for your package, and the reference edition holds every bottleneck and idea behind it.",
+ "p1": {
+  "lead": "FixFlow is the product. The harness is how we build it: everything we wrap around the AI models to build software with them. The word comes from software testing, where a test harness is the code that runs the tests; teams that build with AI agents now use it for the whole system around a model.",
+  "harness": [
+   "**Sessions and agents.** A session is one conversation with Claude Code, Anthropic’s coding tool, which reads and edits code and runs commands on our PC. A session can start **subagents** (helpers that each begin with a fresh context) and **workflows** (scripts that run many subagents to a fixed plan).",
+   "**Checks and gates.** The test runs and reviews that decide whether a piece of work is good enough to merge into the main line of code.",
+   "**Memory.** Whatever carries what we learned from one session to the next: notes, the library we have designed, the knowledge store.",
+   "**The token budget.** A **token** is the unit a model reads and writes in, a short piece of text. The **context window** is everything the model holds in mind for one call, and it re-reads the whole window on every call. Our Claude plan allows a limited amount of use in each five-hour window, so tokens are the resource every part of the harness shares.",
+   "**The machine.** The one PC everything runs on: its power, memory, disk and Docker (the tool that runs our databases and Linux test runs in containers).",
+   "**How results reach me.** Reports, visual pages and decision forms."
+  ],
+  "sources": "Two of our own projects feed this record. **FixFlow** is the workshop management system we are building for a home-appliance repair shop in Karachi: a web app for the manager, an Android app for technicians and a backend in FastAPI (a Python web framework). Its build is laid out in the **ship plan**, the document that orders FixFlow’s work into phases (P0a, P0b and on). **The clinic testbed** is an earlier large build on this same PC that we used to push the harness hard: 432 commits and 65 merges in eight working days [M]. Most of our measured bottlenecks come from its record. Two outside sources were studied card by card: talks and writing by **Dex Horthy** of HumanLayer, and **BAML**, BoundaryML’s language for typed model calls. This edition also draws on what I typed in 59 [M] saved sessions since 6 October, because some ideas were only ever said in chat.",
+  "arch": "On 11 November we put what we had learned into one design, **harness v2**. It treats the harness as one system with four scarce things: time on the check, review, the one-at-a-time merge, and tokens per five-hour window. Each scarce thing gets a part that controls it.",
+  "loops": "The loop labels come from **system dynamics**, the method Jay Forrester began at MIT in the 1950s for studying systems as stocks, flows and feedback. A reinforcing loop (R) feeds itself: more of it makes more of it. A balancing loop (B) pushes back toward a limit.",
+  "loopsNote": "The blue labels are the loops of harness v2: R marks one that feeds itself, B one that pushes back toward a limit. Part 2 gives each its numbers under the bottleneck it belongs to."
+ },
+ "p2": {
+  "lead": "A bottleneck is whatever limits one of the seven metrics I judge this work by. Most of them limit any team that builds with AI agents; the troubles of our own PC come last. This part gives where we stand on each metric, then each bottleneck with what we measured and the ideas we have against it, including the ideas that until now lived only in our chats.",
+  "metricsLead": "One row per metric: what it means, our best numbers today, the bottleneck I judge limits it most (numbered as in the blocks below) and what we cannot yet measure. Quality and hallucinations have catches but no rate yet.",
+  "matrixLead": "Agents sorted every bottleneck in the register and every idea by the metric it moves and by its cause. The causes group into the eleven bottlenecks below.",
+  "matrixCap": "Sorted by eight classifier agents on 14 November [E]. A blind second reading of 101 records agreed on the main metric for 80 and on the cause for 86 [M]. A bottleneck counts once for each metric it limits, and seven register rows have two causes, so they sit in two rows. A cell counts records, not how large each one is. ",
+  "blocksLead": "Each block names the metrics the bottleneck limits (the two it limits most are filled in), says what happens, what we measured and what we have not, then lists ideas against it with how far each has got. Blocks 1 to 10 hold for any team building with AI agents; block 11 is our own PC and plan.",
+  "leversShows": "Every lever is a change to how we run sessions, not a new tool. A bare cap on the window is not enough for me: it saves tokens now and costs more later, as mistakes and summary problems surface. A 300–400k [T] window must carry an 800k [T] history (TOK-16). My proposal is to reach lever 1 by splitting sessions at a line (PAR-22). WP12’s replay puts 36.8 to 65.1 % [M] of what our sessions re-read past lines of 500k to 300k; the split is not yet tested live, and I said yes to one trial wave at 300k.",
+  "splitCap": "My proposal of 14 November (PAR-22). Rule, replay, their check and the trial’s set-up: `docs/program/SPLIT-RULE-2026-11.md`. Left panel: register rows B04 and PR-SUMMARY. Tree fills are illustrative [I]; the 40 % line is an outside rule of thumb [S], unmeasured (TK-FILL).",
+  "splitShows": "**The rule is written (WP12).** A session past the line hands its work to two fresh sessions (one, if it cannot be cut), each started from a one-page brief that points at the repository: finished material never enters it (TOK-44), and compaction is only a backstop. An inner session’s window still grows, so it too is replaced at the line, from its key table, and I open each new root.",
+  "gridShows": "Every one of the 21 has a home in the first four phases, a first step and a test that will show whether it is solved.",
+  "matrixShows": "Quality is limited from every direction: all eleven rows touch it. Hallucinations come mostly from one, claims accepted without a check (14 [E]). Token count sits mostly in three rows (context growth, the fixed start, finding and re-reading), and throughput and time mostly in three others (one orchestrator, the check, our own PC). 94 [E] of the 130 [M] bottlenecks and 381 [E] of the 484 [M] ideas would hold for any team building with AI agents.",
+  "replay": {
+   "title": "The rule replayed over our 97 [M] recorded session windows, with no model calls",
+   "cols": [
+    "Split line, as a share of a 1,000,000-token window [E]",
+    "300k (30 %)",
+    "400k (40 %)",
+    "500k (50 %)"
+   ],
+   "rows": [
+    [
+     "Session windows that passed the line [M]",
+     "72",
+     "32",
+     "26"
+    ],
+    [
+     "Share of what sessions re-read that sat past the line [M]",
+     "65.1 %",
+     "44.6 %",
+     "36.8 %"
+    ],
+    [
+     "Session-window compactions the line comes before, of 117 [M]",
+     "113",
+     "28",
+     "26"
+    ],
+    [
+     "Tokens removed, as a multiple of compacting earlier (middle costs, even split) [E]",
+     "1.06",
+     "1.05",
+     "1.06"
+    ],
+    [
+     "Briefs written for each summary compacting earlier would write [E]",
+     "1.3",
+     "1.4",
+     "1.6"
+    ]
+   ]
+  },
+  "replayShows": "**What the replay shows.** Tokens are not settled: on the middle of three sets of assumed costs the rule removes about as much as compacting earlier, and across those sets and three ways of splitting the work, 0.53 to 1.24 times [E]. Whether a brief is right more often than a summary takes a live trial: I said yes to one wave at 300k, scored by a reader first, and on tokens too."
+ },
+ "p4": {
+  "lead": "Sixteen packages between them carry every bottleneck in the register and every idea in Part 3. Six can start today, one has begun (WP12), six start the day I give my word, and three follow another package. Read the box under the map before you take one.",
+  "packages": "One row per package. Each size carries its tag: [E] where a design estimated it, [G] where it is my guess until the first step reports; a package not yet sized says so. “Moves” names the two metrics most of the package’s ideas aim at. Write your name in the owner column when you take one. Two people can share a package; one person should not hold two packages from the same start column (today, on my word, after another package). The reference edition has a full card for each package, with the bottlenecks and ideas it carries and the kind of person it suits.",
+  "decisions": "Every open decision the package rows name, in one place; go-aheads and permission yeses without an id are in each package’s “Waits on me”. The reference edition gives the options for each and the one the source design recommends. I answered D01 to D06 on 11 November and merged PR #185 on 13 November; only D05’s power-cut notes are still to come.",
+  "mapShows": "The left column needs no decision from me, no agents and no Docker gate for its first deliverable, though any later step that launches agents waits on D07; the middle column waits on my word and the right one on another package."
+ },
+ "howMade": [
+  "The reference edition came first, following our orchestration design: Sonnet agents extracted every idea, bottleneck and term from the sources with a citation each, fresh-context Opus agents checked the records and every number, and nine fresh readers read the draft. On 14 November I changed the lens to the seven metrics and asked for the ideas that lived only in chat. Agents then read all 376 [M] messages I typed in 59 [M] saved sessions and matched 113 [M] ideas, observations and requests against the records: 5 [M] were in no record, and the earlier short edition had cut 31 [M] more. Eight classifier agents sorted all 606 [M] earlier records by metric, and a blind second reading agreed on the main metric for 80 of 101 [M]. Each block of Part 2 was written from its records and checked number by number by a second agent. Four fresh readers then read this edition, one of them against my own message line by line, and skeptics kept 49 [M] of their 73 [M] findings. A final check, against my message and against the records, kept 6 [M] of its 10 [M] findings, four [M] separate errors, all corrected here. The same day WP12 wrote the split rule and replayed it over our record, with two rounds of independent checking, and this edition carries the result."
+ ],
+ "themes": [
+  {
+   "code": "MAC",
+   "summary": "Everything we build runs on one PC that powers off unexpectedly, and the clinic testbed still lives only there. Separate worktrees already pay: when the power went on 13 November, all eight [M] FixFlow lanes resumed from their own copies. Next, WP1 copies the work off the PC nightly, adds a resume list and an always-on sensor logger to find the cause.",
+   "key": [
+    {
+     "id": "MAC-05",
+     "name": "Commit and push at every green checkpoint",
+     "line": "Lanes commit and push at every checkpoint where checks pass, and the gate scripts treat locks older than the last boot as dead. In use since the 28-minute [M] outage."
+    },
+    {
+     "id": "MAC-13",
+     "name": "Shutdown diagnosis and always-on sensor logger",
+     "line": "Our logs showed 15 of 25 [M] shutdowns since 1 October with no Claude call shortly before, so our load alone does not explain them. The logger is allowed, not yet installed."
+    },
+    {
+     "id": "MAC-16",
+     "name": "Off-machine copy of the work",
+     "line": "A verified git bundle of every branch plus uncommitted work and transcripts, copied off the PC nightly. Designed; the first copy comes after I plug in the encrypted drive (D02)."
+    }
+   ],
+   "line": "Everything we build runs on one PC that powers off unexpectedly, and the clinic testbed still lives only there."
+  },
+  {
+   "code": "CHK",
+   "summary": "The check decides whether work can merge, so it must be fast, fair and never pass when it tested nothing. Running tests in parallel took the clinic check from 855.2 s [M] to 283.8 s [M]; FixFlow’s gate harness uses several of these ideas daily. Next, WP2a runs the container and Windows checks side by side, measuring the peak memory that sizes the check slots.",
+   "key": [
+    {
+     "id": "CHK-01",
+     "name": "Parallel check with one database per worker",
+     "line": "Tests run in parallel workers, each with its own PostgreSQL test database, plus a serial pass for race tests. In use in the testbed: the full check averages 283.8 s [M]."
+    },
+    {
+     "id": "CHK-13",
+     "name": "Skip-aware integration gate",
+     "line": "Integration tests run against the real database; a script fails the gate if any was skipped, so a missing database setting cannot go unnoticed. In use in every FixFlow backend gate run."
+    },
+    {
+     "id": "CHK-26",
+     "name": "Linux container check, proposed as the gate",
+     "line": "A Linux container runs the check, faster than on Windows, and it found 2 failures [M] Windows missed. Built in the testbed; I decide in D09 whether it becomes the gate."
+    }
+   ],
+   "line": "The check decides whether work can merge, so it must be fast, fair and never pass when it tested nothing."
+  },
+  {
+   "code": "REV",
+   "summary": "In the clinic testbed a slice took 2.8 [M] review rounds on average, and in most high-risk merges nobody read the final commit. Opus review already works: it found a serious defect in 9 of 14 [M] Opus-built clinic slices. Next, WP3 moves the mechanical part of review into scripts that spend no tokens, starting with the replay seal and transcript audit.",
+   "key": [
+    {
+     "id": "REV-01",
+     "name": "Two-level merge gates with refute-reviewers",
+     "line": "The root runs the full check and read-only Opus reviewers try to refute claims. In use for every testbed slice: it caught 19 [M] high-severity (P1) findings in round one."
+    },
+    {
+     "id": "REV-02",
+     "name": "Close findings only on tests with positive controls",
+     "line": "A finding closes only on a test the harness runs, and every “nothing found” check needs a case it must find. In use in the testbed; a FixFlow trial is proposed."
+    },
+    {
+     "id": "REV-24",
+     "name": "Transcript audit at each merge",
+     "line": "A read-only script over our session transcripts shows whether a reviewer read the final head. Built; its testbed run used 0 [M] model calls. WP3 builds the merge-time version first."
+    },
+    {
+     "id": "REV-27",
+     "name": "Fix-round contract: two rounds, revert, test per finding",
+     "line": "Each finding needs a fail-before, pass-after test, and a failed fix is reverted, not patched over. Designed, not yet run; it starts with a replay on recorded fix chains."
+    }
+   ],
+   "line": "In the clinic testbed a slice took 2.8 [M] review rounds on average, and in most high-risk merges nobody read the final commit."
+  },
+  {
+   "code": "PAR",
+   "summary": "More lanes help only up to the knee; past it they add queues, tokens and collisions. Since 13 November FixFlow runs a coordinator session with one lane session per phase, and all eight [M] lanes resumed after a power loss. Next, WP4 replays the plan check on FixFlow’s first lane wave: where lanes would collide and the lane count it would have chosen.",
+   "key": [
+    {
+     "id": "PAR-02",
+     "name": "Lane sessions: one phase, own worktree, run together",
+     "line": "Each lane is an Opus-led session in its own worktree, taking a single phase to a draft PR. In use in FixFlow; RAM, not CPU, sets the lane ceiling [M]."
+    },
+    {
+     "id": "PAR-01",
+     "name": "Per-checkout isolation of worktree, port and database",
+     "line": "Each checkout gets its own worktree, branch, port and database, and a second, simultaneous check of it is refused. In use in the testbed, where it supported 65 merges [M]."
+    },
+    {
+     "id": "PAR-14",
+     "name": "Plan check with footprints and collision graphs",
+     "line": "Each slice declares its footprint, the files it will write; the plan check maps collisions and refuses overlapping writes. Designed in harness v2, not yet run on a real plan."
+    }
+   ],
+   "line": "More lanes help only up to the knee; past it they add queues, tokens and collisions."
+  },
+  {
+   "code": "TOK",
+   "summary": "Almost all our context tokens are re-reads of a window the model already read, so what we manage is calls times window size. Today each phase starts in a fresh session and Opus sessions compact earlier: 84 of the 117 [M] compactions in session windows are Opus, 81 [M] of them at 366–385k tokens. Next, WP5 proposes the token budget per five-hour window (D07), then puts the four levers to work.",
+   "key": [
+    {
+     "id": "TOK-02",
+     "name": "Earlier auto-compact window",
+     "line": "Compacts sessions earlier so later calls carry a smaller window. In use for Opus; Sonnet sessions ran to 963k [M], and a Sonnet trial waits on my D22."
+    },
+    {
+     "id": "TOK-05",
+     "name": "One token budget: two lanes at a time",
+     "line": "Two lanes at a time, each step written to disk. In use in the testbed; one five-hour window took about 3.4M [M] subagent tokens, the starting point for my D07 budget figure."
+    },
+    {
+     "id": "TOK-23",
+     "name": "Strip fixed prefix with a short tool list",
+     "line": "A short tool list, with tool descriptions loaded only when needed, aims to shrink the fixed start every agent re-reads (about 70,000 tokens [M] in the testbed). Designed; D18 waits on a with-and-without test."
+    }
+   ],
+   "line": "Almost all our context tokens are re-reads of a window the model already read, so what we manage is calls times window size."
+  },
+  {
+   "code": "MEM",
+   "summary": "Every new session starts without what the last one learned. For state, the repository passed its first test: a fresh agent recovered the facts from it alone. For lessons, the library and the knowledge store are designed, not built; next come the library’s limitation list (WP6a) and the store’s recurrence audit, which counts repeated problems (WP6b).",
+   "key": [
+    {
+     "id": "MEM-06",
+     "name": "Short disciplined notes file as context memory",
+     "line": "A short notes file, kept current and read to resume. Tested in a small, interrupted clinic study: recall 15 of 15 [M], matching both other arms; new mechanisms must beat it."
+    },
+    {
+     "id": "MEM-08",
+     "name": "Fresh-agent cold-resume trial",
+     "line": "A fresh Sonnet agent must recover frozen facts from the repository alone. Tested once: it recovered 10 of 10 [M] and exposed plan defects to fix; next, re-run at later phases."
+    },
+    {
+     "id": "MEM-07",
+     "name": "Real-case walkthroughs of the library design",
+     "line": "Agents walked real cases through the library’s design steps. Tested on 59 [M] chosen cases: 69 limitations [M], showing where it breaks, not how often. Next, we agree the list."
+    },
+    {
+     "id": "MEM-21",
+     "name": "Knowledge store of solved problems (PR #183)",
+     "line": "Stores hard solved problems, traps and failed approaches; a cheap agent looks them up by symptom. Designed, not built; next, the recurrence audit counting repeats (KS-D1), then my build decision (KS-D1b)."
+    }
+   ],
+   "line": "Every new session starts without what the last one learned."
+  },
+  {
+   "code": "RET",
+   "summary": "Before an agent changes code, it must find what the change touches. In a test on held-out FixFlow commits, with no agent in the loop, the typed code store reached recall 0.700 [M], ahead of scripted search; the gain sits in the mobile app. Next comes the zero-token index replay (WP7), then a test with an agent, once I settle GT-1.",
+   "key": [
+    {
+     "id": "RET-06",
+     "name": "Typed symbol-level graph of the repo",
+     "line": "A model-free script maps the repo’s symbols and typed links. Tested on held-out commits without an agent: recall 0.700 [M], ahead of scripted search; the gain sits in the mobile app."
+    },
+    {
+     "id": "RET-03",
+     "name": "Same-facts cross-check between engines",
+     "line": "Engines given the same facts must agree; a mismatch is a bug. In use: ours agreed on 770 of 770 [M] tasks, so we can choose one on speed, size and effort."
+    },
+    {
+     "id": "RET-28",
+     "name": "Agent-in-the-loop pilot",
+     "line": "A fixed agent replays fix commits with and without SQL, graph or BM25 tools, counting tokens and success. An idea, not yet run; it follows the index replay, once I settle GT-1."
+    }
+   ],
+   "line": "Before an agent changes code, it must find what the change touches."
+  },
+  {
+   "code": "MTH",
+   "summary": "Many agents work at once, so briefing, model choice and judging need one written method. Its core is in use: a main session plans and judges, cheaper models discover with citations and fresh-context reviewers try to refute; in one staged run, discovery covered 16/16 [M] areas. Next, WP10a starts with a save-as-run rule: every workflow saved as a script before it runs.",
+   "key": [
+    {
+     "id": "MTH-07",
+     "name": "Staged workflows with judging gates",
+     "line": "Cheap discovery, a judging gate, an Opus deep-dive, another gate, then the phase plan; the main session writes a record at each gate. In use; one deep-dive returned 139 [M] findings."
+    },
+    {
+     "id": "MTH-08",
+     "name": "Model tiers by role, raise effort before tier",
+     "line": "Haiku extracts, Sonnet maps and runs gates, Opus analyses and refutes, the main session judges. In use in FixFlow and the clinic testbed; cost per tier not yet measured."
+    },
+    {
+     "id": "MTH-04",
+     "name": "Coordinator session that never implements",
+     "line": "One session owns the plan, shared results and merge calls, dispatches reviews and never implements. In use; it lets 8 [M] lanes run at once; speed effect not yet measured."
+    },
+    {
+     "id": "MTH-36",
+     "name": "Save-rule and run provenance",
+     "line": "Each evidence folder keeps the workflow script as it ran and its arguments, so the run can be repeated and audited. Designed, not yet tested; WP10a writes the rule first."
+    }
+   ],
+   "line": "Many agents work at once, so briefing, model choice and judging need one written method."
+  },
+  {
+   "code": "SKL",
+   "summary": "A subagent inherits the session’s model and loads nothing unless told, so a simple lookup can run on our most expensive tier. Our skill packages and pinned FixFlow agents are merged (PR #185) but not yet run; in use today is local GPU transcription of talks, at 19–45× real time [M]. Next, WP10b adds a frontmatter CI check and tallies which skills fire.",
+   "key": [
+    {
+     "id": "SKL-07",
+     "name": "Agent file: pinned model, tools, preloaded skill",
+     "line": "Each agent file pins its model, tools and preloaded skill; the agent works read-only unless told and cites everything. Built: 11 fixflow agent definitions [M], merged 13 November; not yet run."
+    },
+    {
+     "id": "SKL-17",
+     "name": "[owner] stop markers in agent procedures",
+     "line": "Steps only I may do, such as deploys or live restores, carry an [owner] marker; the agent stops and hands me the exact command. Built into all 13 skills [M], untested."
+    },
+    {
+     "id": "SKL-20",
+     "name": "CI check for skill and agent frontmatter",
+     "line": "A Node CI step fails bad skill and agent frontmatter, such as a name that differs from its folder. Designed, not built; WP10b first runs it record-only, flagging without blocking."
+    }
+   ],
+   "line": "A subagent inherits the session’s model and loads nothing unless told, so a simple lookup can run on our most expensive tier."
+  },
+  {
+   "code": "MSR",
+   "summary": "To choose fixes we need numbers we can trust and tests that are fair to the idea they test. Every number in our program documents carries a tag for how sure we are, and a transcript tally found that, by one count, slice sessions used 66.4 % [M] of November’s tokens. Next, WP8 builds a tagged rate sheet from the record.",
+   "key": [
+    {
+     "id": "MSR-12",
+     "name": "Token tally from session transcripts",
+     "line": "Read-only scripts parse every session transcript, count each call once, and total tokens and compactions per group. Measured for October and November; a re-measurement agreed within 0.3 % [M]."
+    },
+    {
+     "id": "MSR-04",
+     "name": "Pre-registered, sealed held-out test protocol",
+     "line": "Freeze the test sets, metric and smallest worthwhile difference before any arm exists. In use on the graph test; every arm lost 0.05 to 0.17 [M] recall from tuning to held-out."
+    },
+    {
+     "id": "MSR-24",
+     "name": "Measured-rates table feeding planner and governor",
+     "line": "Measured rates, such as check time and rounds per slice, updated each wave for the planner and governor. Designed, not yet tested; WP8 starts it, writing unknowns as unknown."
+    }
+   ],
+   "line": "To choose fixes we need numbers we can trust and tests that are fair to the idea they test."
+  },
+  {
+   "code": "REL",
+   "summary": "In the clinic testbed, first-use gaps hid behind test data until the last day; nothing ran on a real host. The testbed’s local staging rig already rehearses deploy and restore on synthetic data, with a fresh virtual machine serving in 109 s [M]; FixFlow’s lab emulator boots on this PC. Next, WP9 adds a zero-seed walk to every gate, then a real-host rehearsal.",
+   "key": [
+    {
+     "id": "REL-01",
+     "name": "Local staging VM rig with drills",
+     "line": "A script-built Debian virtual machine with re-runnable drills: deploy, upgrade, backup and restore, load, security probe. In use in the testbed on synthetic data; next, a fresh-VM restore with me present."
+    },
+    {
+     "id": "REL-02",
+     "name": "Volume load and page-speed drill",
+     "line": "Times pages on growing synthetic data and fingerprints each page to prove a speed-up changed no figures. Measured in the testbed: slow pages fell to 0.1–0.5 s [M]; next, a load rerun."
+    },
+    {
+     "id": "REL-08",
+     "name": "Zero-seed first-use walk in every gate",
+     "line": "On an empty database, each gate walks install, first user, tills, a real-shaped import, a transaction and close of day. Designed, not built; would add 2 to 3 minutes [E] per gate."
+    }
+   ],
+   "line": "In the clinic testbed, first-use gaps hid behind test data until the last day; nothing ran on a real host."
+  },
+  {
+   "code": "OWN",
+   "summary": "Work waits on my decisions, and I decide quickly when I can see the choice on one page. In use today: W0-results.md, our single working board, which tracked 8 running lanes [M] on 13 November, and decision cards that mark the option the design recommends. Next, WP11 joins every open decision into one board beside the shared run queue.",
+   "key": [
+    {
+     "id": "OWN-04",
+     "name": "W0-results.md as the single working board",
+     "line": "One file holds my P0a steps, my decisions with defaults and the lane board; unknowns are written as unknown, with the reason. In use in FixFlow."
+    },
+    {
+     "id": "OWN-02",
+     "name": "Decision cards D01 to D23",
+     "line": "Each card shows the options, the one the design recommends, the bottlenecks touched and my answer. In use: D01 to D06 are answered; D07, the token budget, follows P0a."
+    },
+    {
+     "id": "OWN-16",
+     "name": "Ship plan first; my yes for outside actions",
+     "line": "FixFlow’s P0a goes first; no hooks, installs, scheduled tasks, permission changes or outbound data without my decision, and no harness agents during a FixFlow phase. Adopted as a standing rule."
+    }
+   ],
+   "line": "Work waits on my decisions, and I decide quickly when I can see the choice on one page."
+  }
+ ],
+ "picks": [
+  {
+   "id": "B05",
+   "name": "The PC powers off without warning",
+   "big": "24 power-offs, 7 Oct–10 Nov, 23 without crash code [M]; on 13 Nov a 28-minute outage cut eight lanes [M].",
+   "unlocks": "Next power-off names its cause; zero sleep-related events in 14 days [T]; every stop is cheap to recover.",
+   "wp": "WP1"
+  },
+  {
+   "id": "B3-LOOP",
+   "name": "Usage limits stop every lane at once",
+   "big": "14 limit episodes, 6–20 Oct [M]; ten lanes were stopped by the limit within about 15 minutes [M].",
+   "unlocks": "A governor slows lanes so the usage window lasts; resumes never pay again for finished agents.",
+   "wp": "WP5"
+  },
+  {
+   "id": "B08",
+   "name": "Memory is short on this PC",
+   "big": "Memory, not CPU, caps check slots and lanes; on 13 Nov FixFlow had 5.5–7.7 of 31 GB free with eight lanes [M].",
+   "unlocks": "Slot and lane counts from a table of who holds memory when under 2 GB [T] is free.",
+   "wp": "WP2a"
+  },
+  {
+   "id": "B07",
+   "name": "Checks queue behind each other",
+   "big": "19 recorded waits: median 409 s, longest 2,030 s [M]; a second slot’s 8 GiB never free in about 980 samples [M].",
+   "unlocks": "Median wait under a minute [T] and up to 1.8–1.9× check throughput [M] with a second slot.",
+   "wp": "WP2a"
+  },
+  {
+   "id": "B01",
+   "name": "Fix rounds that create new defects",
+   "big": "64 % of reviews sent a slice back, 2.8 rounds per slice [M]; fixes made at least 5 more P1 defects [M].",
+   "unlocks": "Review rounds that converge under a stop rule, with fewer new defects per finding fixed.",
+   "wp": "WP3"
+  },
+  {
+   "id": "B12",
+   "name": "Agent reports overstate what was done",
+   "big": "20-plus recorded overstatements of tests, evidence or runs [M]; model re-checks did not stop them.",
+   "unlocks": "Claims a script can recheck, with false flags under 10 % [T]; the orchestrator stops re-verifying by hand.",
+   "wp": "WP3"
+  },
+  {
+   "id": "B17",
+   "name": "Final commits not yet read by a person",
+   "big": "All review is a model reading a model’s code; 5 of 6 high-risk final commits went unread [M].",
+   "unlocks": "Unread high-risk merges cut from 5 of 6 [M] to zero [T].",
+   "wp": "WP3"
+  },
+  {
+   "id": "B04",
+   "name": "One orchestrator is the serial gate",
+   "big": "One root session reviews, merges and runs checks, capping how fast work leaves; it took 15.3 % of November tokens [M].",
+   "unlocks": "No compaction across a wave of five gates [T]; the token gain is bounded by that share.",
+   "wp": "WP3"
+  },
+  {
+   "id": "PR-P0A",
+   "name": "Code phases waited on my P0a",
+   "big": "37 of 56 phases wait behind P0a [M]; on 13 Nov production still answered Railway’s edge 404 [M].",
+   "unlocks": "Finishing P0a unblocks all work that reaches a phone or host; lanes build ahead until then.",
+   "wp": "WP11"
+  },
+  {
+   "id": "B03",
+   "name": "Work waits for me when I am away",
+   "big": "Restarts wait for me: Docker and sessions stay down; about three days idle after the 6 Nov power-off [M].",
+   "unlocks": "Time from “could resume” to next commit falls from about three days [M] to under three hours [T].",
+   "wp": "WP1"
+  },
+  {
+   "id": "B02",
+   "name": "Gaps found only on the last day",
+   "big": "Every clinic slice was tested on synthetic data; two [M] first-use gaps surfaced only on the final day.",
+   "unlocks": "First-use failures caught at every gate, not on the last day, by a zero-seed walk.",
+   "wp": "WP9"
+  },
+  {
+   "id": "R2",
+   "name": "Context growth in long sessions",
+   "big": "Slice sessions took 66.4 % [M] of cache reads at about 306k [M] per call; a Sonnet window reached 963k [M].",
+   "unlocks": "Capping windows at 150–200k [T], with one phase per session, targets our largest exposure.",
+   "wp": "WP5"
+  },
+  {
+   "id": "TK-PREFIX",
+   "name": "Fixed start-up cost per agent",
+   "big": "Every agent re-reads its fixed start on every call: about 70k [M] in the clinic testbed, about 60k [E] in FixFlow; 27 % [E] of all tokens, 47 % [E] of FixFlow’s.",
+   "unlocks": "Deferred schemas, fewer connectors and no skills in agent sessions would remove most of it.",
+   "wp": "WP5"
+  },
+  {
+   "id": "LIB-FUNNEL",
+   "name": "Library reuse funnel: where work drops out",
+   "big": "Modelled at middle values: of 100 pieces the cheap model gets wrong, 0.35 [G] end right; most unknowns are guesses.",
+   "unlocks": "At the all-good setting, 31.7 [G] of 100 end right: the prize if every step holds.",
+   "wp": "WP6a"
+  },
+  {
+   "id": "LIB-KS-RESOLVE",
+   "name": "Hard problems re-solved at the top tier",
+   "big": "Past diagnoses live only as prose, unsearchable by symptom; 3 to 5 [M] same-cause repeats among 48 [M] fix commits on main.",
+   "unlocks": "A cheap agent finds, checks and reuses a recorded fix instead of Fable or Opus re-solving it.",
+   "wp": "WP6b"
+  },
+  {
+   "id": "LIB-EVAL",
+   "name": "Context aids not yet run with an agent",
+   "big": "0 [M] agent runs: the graph test used a fixed search script; a quality comparison was forecast at 156M–512M [E] tokens.",
+   "unlocks": "Answers my real question: whether a graph, map or recall layer saves an agent work.",
+   "wp": "WP7"
+  }
+ ],
+ "rows": [
+  {
+   "id": "WP1",
+   "goal": "No power-off costs us work or a day: a nightly off-machine copy, a resume list and a sensor logger.",
+   "first": "Bundle-and-verify and nightly copy scripts, covering uncommitted work (B11); first verified copy after my drive step; my steps follow P0a.",
+   "done": "Copy verified, never over 24 hours old [T]; after a reboot, resume list shown, databases healthy within 3 minutes [T]; shutdowns leave logger traces.",
+   "waits": "Sleep-off (D04), drive (D02) and logger (D05) steps, copy and Railway-rule yeses; D08 later."
+  },
+  {
+   "id": "WP2a",
+   "goal": "One fast, fair, visible check for the clinic testbed: a Linux container gate, memory-sized slots, a queue, heartbeat and reaper.",
+   "first": "Side-by-side container and Windows runs, one check’s peak memory [M]; a quiet machine suffices. Memory table and second slot wait for WP1.",
+   "done": "Median gate near 230 s [T]; zero Linux-only failures on main; heartbeat gaps within 60 s [T]; a stall names its test; leftovers cleared.",
+   "waits": "D09 (container gate), D10 (what may be cleaned), later D11 (who gives up memory)."
+  },
+  {
+   "id": "WP2b",
+   "goal": "Keep FixFlow’s gates and slot lock fast, fair and honest; CI fails when it should, never passing an empty run.",
+   "first": "Per-lane gate waits measured under the ticket queue, and proof that CI fails on skipped integration tests and empty Jest runs.",
+   "done": "Every gate locks per lane first; Node failures re-run under Node 22; a planted skip or empty run turns CI red, after record-only runs.",
+   "waits": "My go, through the coordinator, before any change to `ff-gates.sh` or `ff-slot.sh`."
+  },
+  {
+   "id": "WP3",
+   "goal": "Move the mechanical part of review and merging out of the orchestrator into scripts that spend no tokens.",
+   "first": "Replay seal and transcript audit on recorded data, at no token cost; seal tests run under D07; verdict script easier after WP2a.",
+   "done": "Each script passes its harness v2 test; the merge queue, record-only over 65 [M] recorded merges, flags unread final heads; no refusals before D15.",
+   "waits": "D12 to D20 as each mechanism reaches me; D13 and D17 are permission changes."
+  },
+  {
+   "id": "WP4",
+   "goal": "Know before a wave which slices can run side by side, how many lanes pay, and where they would collide.",
+   "first": "The plan check replayed on FixFlow’s first lane wave: its collision graph and lane count. Needs WP8’s rate sheet; easier after WP2a.",
+   "done": "Runs record-only on the next wave first; sets the lane count only after the coordinator and I accept it.",
+   "waits": "Accepting its recommendation, with the coordinator."
+  },
+  {
+   "id": "WP5",
+   "goal": "Give every wave a written token budget and a governor so the five-hour window lasts; apply the token report’s levers, with lever 1 tried through WP12’s split rule before any bare cap.",
+   "first": "A D07 budget proposal from the November tally, at no token cost; the fixed-start and lookup levers wait for WP3 and D18.",
+   "done": "Every wave launches with a written budget, agents booked in the shared queue; each lever has a before-and-after number; none claims fewer limit stops.",
+   "waits": "D07 budget, D13 reports folder, D18 tool list, D22 trial; yes before removing connectors."
+  },
+  {
+   "id": "WP6a",
+   "goal": "Give the harness a memory a cheaper model can use, asked for, never pushed; limitations agreed before any fix.",
+   "first": "The limitation list agreed with me, each with its alone and last weights; the pilot needs WP8’s frozen validation contract and protocol.",
+   "done": "A held-out pilot, under the frozen validation contract, measures whether asking the library first means reading less and getting more right.",
+   "waits": "Agreeing the limitation list (LIB); pilot agent runs wait for D07."
+  },
+  {
+   "id": "WP6b",
+   "goal": "If the audit says it pays, build PR #183’s knowledge store: solved hard problems and traps, looked up on demand.",
+   "first": "Recurrence audit (KS-0), no code: counts repeats a store could have served. Runs under D07 in a quiet window; pilots need WP8.",
+   "done": "Audit reported; if built, pilot recall at shown 60 % or more [T], zero acted-on false positives [T], every planted forbidden diff caught [T].",
+   "waits": "KS-D1 (audit), KS-D1b (build), D17 (hooks), my yes before a copy leaves this PC."
+  },
+  {
+   "id": "WP6c",
+   "goal": "Make our documents fail a check when they drift from the code, starting with the facts CLAUDE.md states.",
+   "first": "Alembic-head CI check for CLAUDE.md and one corrections PR for PR #183’s listed contradictions; lands after the ship phase in flight.",
+   "done": "A planted wrong fact in CLAUDE.md turns CI red, after record-only runs over recent merges, and the corrections PR has merged.",
+   "waits": "My go through the coordinator, and the merge."
+  },
+  {
+   "id": "WP7",
+   "goal": "A fast, trustworthy answer to “what does this change touch?”: the typed code store, indexes and the wider graph test.",
+   "first": "Index replay at no token cost on recorded windows, once D23 sets its marks; the agent arm needs WP8’s pre-registered protocol.",
+   "done": "Index replay reported against D23’s marks; if GT-1 is approved, a tested answer: does the typed store beat search alone on speed and tokens?",
+   "waits": "D23 (what the replay must show), GT-1 agent pilot, GT-2 installs, D07 for agents."
+  },
+  {
+   "id": "WP8",
+   "goal": "Keep the numbers every package depends on and the rules that keep tests fair: rates, the frozen validation contract, protocols.",
+   "first": "Rate sheet from the record (check time, review rounds, send-backs, limit episodes), each tagged, gaps marked unknown; commit only on my word. Then, with WP3’s verdict script, a first count of the claims in reports a script could recheck (PR-HALLU).",
+   "done": "Rate sheet updated each wave, every rate tagged; contract and protocols written before any pilot; WP4 and WP5 read their rates there.",
+   "waits": "Nothing to start."
+  },
+  {
+   "id": "WP9",
+   "goal": "Find the last-day gaps on day one: a zero-seed walk in every gate, a real-host rehearsal and a load-drill rerun.",
+   "first": "The zero-seed walk (install to close of day, fresh database) as a gate step; needs WP2a’s container gate first.",
+   "done": "The walk fails before the 11 November real-data merge (fb55599) and passes after; the first-deploy checklist has run once on a real host.",
+   "waits": "D21 (rehearse on a real host; renting one needs my yes), D09 via WP2a."
+  },
+  {
+   "id": "WP10a",
+   "goal": "Brief and run agents well: brief contracts, judgement-free discovery with citations, fresh-context skeptics, saved workflows, state on disk.",
+   "first": "The save-as-run rule, sent to the coordinator, and one saved review-stage workflow script; agent launches wait for D07.",
+   "done": "Every workflow we run is saved and re-runnable, raw outputs kept with their hashes, and WP3’s sealed replay catches verdict-flipping brief edits.",
+   "waits": "Nothing to start."
+  },
+  {
+   "id": "WP10b",
+   "goal": "Give agents tested domain skills: PR #185’s skills and FixFlow agents, merged on 13 November, each with a pinned model and short tool list.",
+   "first": "A frontmatter CI check, proposed to the coordinator and run record-only first.",
+   "done": "A trigger tally shows which skills fire; lookups run on the pinned cheaper agents, with token use compared against the built-in agent’s.",
+   "waits": "My go on the CI check through the coordinator; agent runs for the tally wait for D07."
+  },
+  {
+   "id": "WP11",
+   "goal": "Keep me deciding quickly and seeing clearly: one board for every open decision, readable pages and a current compile.",
+   "first": "One decision board (D01 to D23, KS-D, graph-test decisions, links to my FixFlow items) and the shared run queue beside it.",
+   "done": "No package waits more than a day [T] on a decision of mine, with each wait logged.",
+   "waits": "Answering the board; “accept all defaults” covers only free decisions staying on this PC."
+  },
+  {
+   "id": "WP12",
+   "goal": "Stop any session, the orchestrator first, from growing until it must compact: sessions split at a set share of their window and small siblings merge (PAR-22).",
+   "first": "Done on 14 November: the split rule and its replay over 97 [M] recorded session windows, both checked (`SPLIT-RULE-2026-11.md`), then three instruments for the trial, tested on the record: its script found 16 of 1,265 [M] paths, commits and pull requests in FixFlow’s recorded summaries not borne out, no more than in two maintained documents. Next: a reader’s check on a sample of those summaries, the baseline.",
+   "done": "One trial lane wave runs under the rule with no compaction, and its hallucination catches (wrong hand-over claims first), rework and tokens per result are set beside a matched wave that compacts earlier at the same token count.",
+   "waits": "I said yes on 14 November to one trial wave at 300k, the only line of the three that comes before most of our compactions. Still mine: D07 before any agent run, which lane wave is which arm, the Opus compaction setting raised if an Opus session holds a node, and opening each new root."
+  }
+ ],
+ "before": [
+  {
+   "title": "Two projects, one PC: the ship plan first",
+   "text": "Work on a branch, never on main, and never delay or edit FixFlow’s next phase for harness work. Before using the Docker gate or an agent, read the lane board (`docs/program/W0-results.md`) on PR #182’s plan branch: FixFlow phases running or awaiting review go first, as they share this PC’s memory and our usage limit."
+  },
+  {
+   "title": "One budget for the whole team",
+   "text": "Two lanes at a time (your own session counts), a written token budget before any launch (D07) and one agent-adding change per five-hour window, shared by everyone. Stop launching after the first empty result, a possible usage limit. Book agent runs in WP11’s shared queue; until it exists, wait for my yes."
+  },
+  {
+   "title": "One limit on heavy checks",
+   "text": "A heavy check from either project takes a slot from `ff-slot.sh`, FixFlow’s machine-wide lock. Its pools and slot counts stay as they are; WP2b may propose only how waiters are ordered."
+  },
+  {
+   "title": "The coordinator writes FixFlow’s program files",
+   "text": "Changes to the ship plan, lane board or FixFlow’s gate scripts go to the coordinator as proposals; the coordinator brings them to me and writes them once I say go."
+  },
+  {
+   "title": "Machine traps that already cost us time",
+   "text": "Never prune Docker networks or restart Docker; new networks get explicit subnets inside 10.77.0.0/16. Under `MSYS_NO_PATHCONV`, write `C:/…` paths. Clone with `core.longpaths`. No `python` on PATH; use Node. Never touch the antivirus."
+  }
+ ],
+ "glossInclude": [
+  "g2-199",
+  "g3-281",
+  "g1-14",
+  "g1-43"
+ ],
+ "glossExclude": [
+  "g1-12",
+  "g1-16",
+  "g1-21",
+  "g1-60",
+  "g2-111",
+  "g2-124",
+  "g2-136",
+  "g2-158",
+  "g2-161",
+  "g2-197",
+  "g2-198",
+  "g2-206",
+  "g3-238",
+  "g3-239",
+  "g3-240",
+  "g3-242",
+  "g3-243",
+  "g3-252",
+  "g3-266",
+  "g3-272",
+  "g3-298",
+  "g3-299",
+  "rd-19",
+  "g1-1",
+  "g1-2",
+  "g1-3",
+  "g1-19",
+  "g1-22",
+  "g1-26",
+  "g1-63",
+  "g1-64",
+  "g1-65",
+  "g1-73",
+  "g1-78",
+  "g1-88",
+  "g1-90",
+  "g1-95",
+  "g1-97",
+  "g1-98",
+  "g2-112",
+  "g2-118",
+  "g2-119",
+  "g2-135",
+  "g2-142",
+  "g2-166",
+  "g2-172",
+  "g2-173",
+  "g2-174",
+  "g3-248",
+  "g3-284",
+  "add-1",
+  "add-2",
+  "add-3",
+  "add-42",
+  "add-43",
+  "rd-1",
+  "rd-32",
+  "rd-33",
+  "rd-34",
+  "g2-143"
+ ],
+ "glossNote": {
+  "falseHits": [
+   "g1-12",
+   "g1-16",
+   "g1-21",
+   "g1-60",
+   "g2-111",
+   "g2-124",
+   "g2-136",
+   "g2-158",
+   "g2-161",
+   "g2-197",
+   "g2-198",
+   "g2-206",
+   "g3-238",
+   "g3-239",
+   "g3-240",
+   "g3-242",
+   "g3-243",
+   "g3-252",
+   "g3-266",
+   "g3-272",
+   "g3-298",
+   "g3-299",
+   "rd-19",
+   "g2-143"
+  ],
+  "inPlace": [
+   "g1-1",
+   "g1-2",
+   "g1-3",
+   "g1-19",
+   "g1-22",
+   "g1-26",
+   "g1-63",
+   "g1-64",
+   "g1-65",
+   "g1-73",
+   "g1-78",
+   "g1-88",
+   "g1-90",
+   "g1-95",
+   "g1-97",
+   "g1-98",
+   "g2-112",
+   "g2-118",
+   "g2-119",
+   "g2-135",
+   "g2-142",
+   "g2-166",
+   "g2-172",
+   "g2-173",
+   "g2-174",
+   "g3-248",
+   "g3-284",
+   "add-1",
+   "add-2",
+   "add-3",
+   "add-42",
+   "add-43",
+   "rd-1",
+   "rd-32",
+   "rd-33",
+   "rd-34"
+  ]
+ },
+ "glossShort": {
+  "g1-4": {
+   "def": "My senior design project at university (GIKI): rare-disease drug repurposing, onto which harness research was mapped.",
+   "from": "My project; mapping in the CureFound research results"
+  },
+  "g1-5": {
+   "def": "The model that runs the main session as orchestrator, architect and judge, never as a subagent.",
+   "from": "Anthropic model; role set in our orchestration design"
+  },
+  "g1-6": {
+   "def": "The strongest Anthropic tier routinely used here: deep analysis, architects, refuters, skeptics, critics and fresh-context checks.",
+   "from": "Anthropic’s model family"
+  },
+  "g1-7": {
+   "def": "The mid-tier Anthropic model for discovery, mapping, web collection, scouts, citation checks, gates and blind readers.",
+   "from": "Anthropic’s model family"
+  },
+  "g1-8": {
+   "def": "The smallest, cheapest Anthropic tier here, used only for typed extraction and locating where code lives.",
+   "from": "Anthropic’s model family"
+  },
+  "g1-13": {
+   "def": "The long-lived top session that plans, briefs, reads results, judges gates, merges and edits shared files.",
+   "from": "A Claude Code session role; named in ORCHESTRATION-DESIGN-2026-10"
+  },
+  "g1-14": {
+   "def": "The single session on the plan branch that owns the plan, contracts and merge call, and writes no feature code.",
+   "from": "Coined by us in the ship plan"
+  },
+  "g1-17": {
+   "def": "One bounded unit of build work with its own branch, worktree and record, checked, reviewed and merged.",
+   "from": "Vertical-slice practice; used in the clinic wave plan"
+  },
+  "g1-18": {
+   "def": "A group of slices or lanes run in parallel once their dependencies have merged.",
+   "from": "Coined in our clinic build and ship plan"
+  },
+  "g1-23": {
+   "def": "A check a change must pass before merging: tests, lint, claim checks, reviewers. Also the step running a store entry’s own check.",
+   "from": "General software practice; our gate workflow in HARNESS-BOTTLENECKS"
+  },
+  "g1-24": {
+   "def": "A plain JavaScript workflow script gathering and sorting agent results into buckets for the Fable judge.",
+   "from": "Coined by us in the orchestration design"
+  },
+  "g1-30": {
+   "def": "Project instruction files an agent session reads first; AGENTS.md is the equivalent for other agent tools.",
+   "from": "CLAUDE.md: Claude Code feature; AGENTS.md: agent-tool convention"
+  },
+  "g1-33": {
+   "def": "Discovery agents return facts only, never comparisons, severities or verdicts; the main session judges.",
+   "from": "Coined by us in the orchestration design"
+  },
+  "g1-35": {
+   "def": "A fresh-context Opus verifier tracing or refuting a claim, given only its evidence and failing condition.",
+   "from": "Coined by us in the orchestration design"
+  },
+  "g1-36": {
+   "def": "A fresh-context agent whose job is to disprove a claim, fix or design, treating it as wrong until shown otherwise.",
+   "from": "Coined in our orchestration method and harness sweeps"
+  },
+  "g1-45": {
+   "def": "A markdown file defining a helper agent’s own prompt, tools and pinned model; agentType selects it.",
+   "from": "Anthropic’s Claude Code subagents feature"
+  },
+  "g1-48": {
+   "def": "A folder of instructions an agent loads for a kind of task, starting with a SKILL.md.",
+   "from": "Anthropic’s Claude Code; our conventions in .claude/skills/README.md"
+  },
+  "g1-49": {
+   "def": "Frontmatter is an agent file’s header; its skills field loads named skills in full at startup.",
+   "from": "Anthropic’s Claude Code"
+  },
+  "g1-55": {
+   "def": "A script Claude Code runs automatically at events like session start or stop; it can add text, block, or alter tool calls.",
+   "from": "Anthropic’s Claude Code"
+  },
+  "g1-62": {
+   "def": "The saved record of a Claude Code session, one JSON line per message or call.",
+   "from": "Anthropic’s Claude Code; JSON Lines, a general format"
+  },
+  "g1-67": {
+   "def": "Tokens re-read more cheaply from the prompt cache each call; summed, they measure the context carried.",
+   "from": "Anthropic API prompt caching"
+  },
+  "g1-72": {
+   "def": "The tokens each agent re-reads before doing work: system prompt, tool schemas, skills and CLAUDE.md.",
+   "from": "Claude Code subagent behaviour; measured in card CR-11",
+   "term": "Fixed start (fixed prefix)"
+  },
+  "g1-74": {
+   "def": "Claude Code replacing a long conversation with a summary plus verbatim tail, so the session continues.",
+   "from": "Anthropic’s Claude Code"
+  },
+  "g1-75": {
+   "def": "A Claude Code setting naming the context size that triggers automatic compaction.",
+   "from": "Anthropic’s Claude Code setting (/autocompact)"
+  },
+  "g1-80": {
+   "def": "A change that could cut token use, ranked by size in the token report.",
+   "from": "Coined by us in the token bottleneck report"
+  },
+  "g1-81": {
+   "def": "How many tokens an idea or lever could act on; neither a saving nor a ceiling.",
+   "from": "Coined in our bottleneck compile and token report"
+  },
+  "g1-83": {
+   "def": "A short repository file of state, decisions, ruled-out items and next action that a session reads to resume.",
+   "from": "Convention in the FixFlow and clinic harnesses"
+  },
+  "g1-85": {
+   "def": "The written instruction given to a session or subagent.",
+   "from": "Ordinary usage; the clinic orchestration page"
+  },
+  "g2-116": {
+   "def": "The five weaknesses ideas were scored against: CLAUDE.md length, self-reported compliance, routine never run (cold resume), few agents and skills, unsaved workflows.",
+   "from": "Coined by us in the Horthy ideas sweep"
+  },
+  "add-12": {
+   "def": "A branch’s last commit at merge; a reader should have read it, not an earlier one.",
+   "from": "Bottleneck B17 of our harness review"
+  },
+  "add-13": {
+   "def": "A concrete defect or gap reported with path:line and severity, closed only by a harness-run test.",
+   "from": "Review practice in our ship plan and testbed"
+  },
+  "add-14": {
+   "def": "One pass where a reviewer reads a branch and returns findings, followed by fixes.",
+   "from": "Our testbed record and fix-round contract target"
+  },
+  "add-16": {
+   "def": "A pass that fixes findings. The contract: a failing-then-passing test per finding, full gate before committing, revert not patch, fresh reviewer.",
+   "from": "Bottleneck B01, mechanism 9; replay before live use"
+  },
+  "add-17": {
+   "def": "A reviewer or agent started without the author’s earlier conversation, so it cannot inherit their assumptions.",
+   "from": "Our refuter and fresh-reviewer practice"
+  },
+  "add-20": {
+   "def": "A check’s highest memory use; never measured, and the second check slot waits on that number.",
+   "from": "Bottleneck B07 of our harness review"
+  },
+  "add-22": {
+   "def": "A query of the knowledge store or library before exploring, triggered by an error, escalation or diff; returns leads or abstains.",
+   "from": "Our knowledge-store design"
+  },
+  "add-23": {
+   "def": "When code changes may make stored entries untrue; handled by validity conditions and probes, not expiry.",
+   "from": "Our knowledge-store design"
+  },
+  "add-25": {
+   "def": "A range holding the true value in 95 of 100 repeats; smaller differences may be noise.",
+   "from": "Statistics; used in our held-out graph test"
+  },
+  "add-26": {
+   "def": "A map of the code whose edges are labelled by kind (import, caller, test-of, crosses-runtime).",
+   "from": "My objections to the first graph test"
+  },
+  "add-28": {
+   "def": "A zero-token test counting how many recorded lookup-only calls an import-and-caller index would have answered.",
+   "from": "Coined by us in the harness v2 design"
+  },
+  "add-30": {
+   "def": "A model-free script closing or reopening a gate round by counting cited-test failures on pre-fix code.",
+   "from": "Coined by us in the harness v2 design"
+  },
+  "add-31": {
+   "def": "A script reading sessions’ tool-call records to show who read the final head and whether the gate ran before fixes.",
+   "from": "Coined by us in the harness v2 design"
+  },
+  "add-33": {
+   "def": "Environment facts from agents or from me are checked by one command before becoming harness rules.",
+   "from": "Coined by us in the harness v2 design"
+  },
+  "add-34": {
+   "def": "At sign-in, a list of sessions that were mid-work and where each branch stands.",
+   "from": "Bottleneck B03 and decision D06"
+  },
+  "add-36": {
+   "def": "A verified nightly copy off the PC of every branch, uncommitted work and transcripts.",
+   "from": "Bottleneck B11 and harness v2, phase 1"
+  },
+  "add-37": {
+   "def": "A small tool recording power, temperature and memory on the PC, to diagnose unexpected shutdowns from data.",
+   "from": "Bottleneck B05 and harness v2, phase 1"
+  },
+  "add-38": {
+   "def": "Running the first-deploy checklist on a real host: fresh-machine restore, off-site push, and an alert on a planted failure.",
+   "from": "Bottleneck B19 and harness v2, phase 4"
+  },
+  "add-39": {
+   "def": "A one-day rented server to rehearse deployment and rerun the load drill, using made-up data only.",
+   "from": "Bottlenecks B19 and B20 of our harness review"
+  },
+  "add-45": {
+   "def": "All agent-adding changes share one written token and lane budget, with state on disk.",
+   "from": "Coined by us in the harness v2 design"
+  },
+  "add-46": {
+   "def": "A gate or review mechanism is first replayed, record-only, on recorded history before refusing anything live.",
+   "from": "Coined by us in the harness v2 design"
+  },
+  "add-47": {
+   "def": "A line of waiting items: the check slot queue, the merge queue, or the phone’s write queues.",
+   "from": "Bottleneck B07 and our CLAUDE.md"
+  },
+  "rd-35": {
+   "def": "Our test of whether a typed code store beats baselines at finding what unseen commits touch.",
+   "from": "Our graph test result, November 2026"
+  },
+  "rd-36": {
+   "def": "Recording step by step where time goes, to find and cut slow parts of test start-up.",
+   "from": "General software practice, also called profiling"
+  },
+  "rd-37": {
+   "def": "A test sealed before any map or store is built, so pre-set rules judge each pilot.",
+   "from": "Our library and graph-test work (idea MSR-18)"
+  },
+  "rd-38": {
+   "def": "A time with no FixFlow phase or heavy check active, so harness runs can’t slow shipping.",
+   "from": "Coined by us in the harness compile"
+  },
+  "rd-39": {
+   "def": "The first-come order of FixFlow’s slot lock: jobs take tickets, and no job waits forever.",
+   "from": "Our ff-slot.sh slot lock, 13 November 2026"
+  },
+  "rd-42": {
+   "def": "One time the five-hour usage limit stopped agent work.",
+   "from": "Our harness review and token measurement"
+  },
+  "rd-44": {
+   "def": "Workflows are saved as scripts before running, so each can be re-run and its result checked.",
+   "from": "Our orchestration design, adopted through WP10a"
+  },
+  "g2-117": {
+   "def": "Three levers for scoring ideas: L1 effort routing, L2 context budget and compaction, L3 output backpressure and verifiers. Not the ship-plan phases, nor the four token levers of Part 2.",
+   "from": "Coined by us in the Horthy sweep"
+  },
+  "g2-132": {
+   "def": "The pull request holding the knowledge-store design. The store is designed, not proven.",
+   "from": "This repository on GitHub"
+  },
+  "g2-133": {
+   "def": "The pull requests holding the BAML sweep (#184) and the Horthy sweep (#186), with our verdict on each idea.",
+   "from": "This repository on GitHub"
+  },
+  "g2-134": {
+   "def": "The pull request that added the skill packages and the fixflow agents; merged on 13 November.",
+   "from": "This repository on GitHub"
+  },
+  "g2-137": {
+   "def": "My pre-flight: hold notice, Railway state, R2 archive, Supabase dump, phone roster and builds. Harness work must not delay it.",
+   "from": "Coined by us in the ship plan"
+  },
+  "g2-140": {
+   "def": "A phase-resumption test: a fresh agent must recover frozen facts from the repository and PR alone.",
+   "from": "Coined by us in the ship plan (P1)"
+  },
+  "g2-153": {
+   "def": "Fix evidence: a test failing by assertion on the base commit, passing on the head commit.",
+   "from": "General testing practice; stricter form from Horthy’s material"
+  },
+  "g2-155": {
+   "def": "A separate git working copy on its own branch, one per slice or lane session.",
+   "from": "A git feature"
+  },
+  "g2-159": {
+   "def": "Coordinator-ordered review by a fresh Opus agent. Merge-ready: gates and CI green, verdict names the head SHA, no hold, coordinator read it.",
+   "from": "Coined by us in SHIP-PLAN sections 7.1, 7.7"
+  },
+  "g2-162": {
+   "def": "ff-gates.sh runs backend, mobile or web checks in containers. ff-slot.sh is the machine-wide lock, with light and heavy pools of slots.",
+   "from": "Coined by us in ship-plan phase L1"
+  },
+  "g2-163": {
+   "def": "A machine-wide permit to run the clinic’s full check, so heavy checks queue instead of colliding.",
+   "from": "Coined by us in the testbed faster-check task"
+  },
+  "g2-164": {
+   "def": "The clinic’s full check: ruff, format, mypy, Django checks, migrations, database probe, pytest. Container mode runs it in a Linux Docker container.",
+   "from": "Clinic check script and linux-test-runner task"
+  },
+  "g2-165": {
+   "def": "pytest-xdist runs tests in parallel workers. The serial pass is a second run for tests that cannot run in parallel.",
+   "from": "Open-source pytest plugin; serial pass is our usage"
+  },
+  "g2-167": {
+   "def": "A periodic signal naming what a long check is doing. A watchdog kills a check that stays silent past the stall limit.",
+   "from": "General systems practice; limit set in the testbed"
+  },
+  "g2-169": {
+   "def": "Designed script that merges slices in turn under a lock, checks the merge, updates the board.",
+   "from": "Coined by us in the bottleneck compile"
+  },
+  "g2-170": {
+   "def": "Harness v2 designs: Planner picks the lane count first; Scheduler starts and resumes sessions; Governor slows lanes so the usage window lasts.",
+   "from": "Coined by us in the harness v2 design"
+  },
+  "g2-171": {
+   "def": "Files a slice declares it will write; the plan check uses them to avoid lane collisions.",
+   "from": "Coined by us in harness v2’s plan check"
+  },
+  "g2-175": {
+   "def": "Re-running recorded fixes or reviews at a frozen commit, hiding later commits and the answer key.",
+   "from": "Coined by us in the bottleneck compile"
+  },
+  "g2-177": {
+   "def": "Records every review finding with severity and status. A table is proposed instead of long prose.",
+   "from": "Testbed practice; proposed in the bottleneck compile"
+  },
+  "g2-180": {
+   "def": "A first-use walk on an empty database with no synthetic data: first user, import, a transaction, close of day.",
+   "from": "Coined by us in the clinic testbed work"
+  },
+  "g2-181": {
+   "def": "A case the check must detect, proving it can find something. Every “nothing found” needs one.",
+   "from": "Scientific method (laboratory and statistical practice)"
+  },
+  "g2-183": {
+   "def": "Removing one lock to prove the named test fails. A race test runs two concurrent actions to prove a lock stops conflict.",
+   "from": "Used in the clinic gate; general concurrency testing"
+  },
+  "g2-201": {
+   "def": "Open-source Python tool that builds a knowledge graph from mixed files. Used as a comparator arm.",
+   "from": "Outside project safishamsi/graphify (PyPI: graphifyy)"
+  },
+  "g2-202": {
+   "def": "A call graph maps which functions call which. Blast radius (touch list): what a fix could affect, attached to a reviewer brief.",
+   "from": "Software practice; script proposed in our bottleneck compile"
+  },
+  "g3-209": {
+   "def": "How often two files change in the same commit, used as a hint they belong together.",
+   "from": "Software-evolution research; measured in our graph test"
+  },
+  "g3-210": {
+   "def": "Ranks a node higher when well-linked nodes point to it. The personalised version restarts from a seed file, favouring its neighbourhood.",
+   "from": "Google’s PageRank algorithm; used in the Aider tool"
+  },
+  "g3-211": {
+   "def": "Recall: share of true items found. Precision: share of results that are true. recall@8k: recall in an 8,000-token [S] answer (graph-test score).",
+   "from": "The information-retrieval field"
+  },
+  "g3-214": {
+   "def": "A graph whose nodes and links carry a kind and evidence (file, line). Symbol-level: nodes are functions, classes and components, not files.",
+   "from": "General graph-database and code-analysis field"
+  },
+  "g3-218": {
+   "def": "An embedded graph database, a maintained fork of Kuzu, which was archived. It was one graph-engine arm of the test.",
+   "from": "Open-source projects; status read in our graph-test research"
+  },
+  "g3-219": {
+   "def": "An embedded analytical SQL database, plus its extension for property-graph queries.",
+   "from": "DuckDB project and a community extension"
+  },
+  "g3-221": {
+   "def": "A small file-based database, its built-in full-text search with BM25 ranking, and queries that follow links over several steps.",
+   "from": "Open-source SQLite project"
+  },
+  "g3-223": {
+   "def": "The seed is the changed file or symbol given as the query; the reference is what else the same commit changed.",
+   "from": "Coined by us in the graph test protocol"
+  },
+  "g3-227": {
+   "def": "Cheap baseline, like scripted search, that any graph method must beat to count as a gain.",
+   "from": "Coined by us in the graph test protocol"
+  },
+  "g3-228": {
+   "def": "The fixed-script search baseline. No agent chose what to search; none ran in the held-out test.",
+   "from": "Wording fixed in our graph test protocol"
+  },
+  "g3-229": {
+   "def": "A stored grouping of related nodes, found by Louvain community detection, added to the ranking as a prior.",
+   "from": "The general graph-algorithm field"
+  },
+  "g3-235": {
+   "def": "Three measures: precision of the top result, how many true entries appear in what is displayed, and wrong leads someone acted on.",
+   "from": "Information-retrieval metrics, applied in our knowledge-store design"
+  },
+  "g3-237": {
+   "def": "Agents’ local database of solved hard problems, traps and failed approaches, searched by symptom. Designed, unbuilt.",
+   "from": "Coined by us in the knowledge-store design"
+  },
+  "g3-244": {
+   "def": "In order: forbidden change, unfixed defect, gotcha, entry awaiting its executable check, entry whose fix sits on a branch.",
+   "from": "Coined by us in the knowledge-store design"
+  },
+  "g3-246": {
+   "def": "The knowledge store’s planned build phases, one session each. KS-6b is the executable gate; KS-T is teardown.",
+   "from": "Coined by us in the knowledge-store design"
+  },
+  "g3-250": {
+   "def": "BM25: word-match ranking within one query only. IDF weights rare words. IDF-weighted coverage: share of a query’s rare-word weight an entry matches.",
+   "from": "Information-retrieval field; BM25 is built into SQLite FTS5"
+  },
+  "g3-260": {
+   "def": "Proposed, unbuilt memory of verified solutions a cheap model reuses instead of calling a stronger model.",
+   "from": "Coined by me; see the harness v2 design"
+  },
+  "g3-264": {
+   "def": "Models how work moves through the library, with chances and costs per branch. Not a forecast.",
+   "from": "Coined by us; built in docs/program/library-pathways/"
+  },
+  "g3-267": {
+   "def": "Charts work the cheap model alone would get wrong, and how much stays wrong per step.",
+   "from": "Coined by us when building the pathway page"
+  },
+  "g3-268": {
+   "def": "Comes back: much work repeats. Reach: entries get to the cheap model. Entry quality: right and used rightly. Fourth group: running cost.",
+   "from": "Coined by us in the pathway model brief"
+  },
+  "g3-269": {
+   "def": "Corners: condition groups at their poor or good ends. All-good: every library unknown good. Tie: how strongly a group’s unknowns move together.",
+   "from": "Coined by us in the pathway model brief"
+  },
+  "g3-281": {
+   "def": "In order: database migrations, lint and format, type check, import-boundary check, tests, and an advisory dependency vulnerability scan.",
+   "from": "Outside open-source Python tools"
+  },
+  "g3-283": {
+   "def": "Continuous integration: the automated checks that run on the repository, on GitHub Actions.",
+   "from": "General software practice"
+  },
+  "g3-288": {
+   "def": "Windows call preventing sleep while a program runs; hybrid sleep saves memory to disk first; mains: wall power; BitLocker: Windows disk encryption.",
+   "from": "Microsoft Windows; electrical supply term"
+  },
+  "g3-291": {
+   "def": "A software phone for tests; ff34 is the one virtual device set up on this PC.",
+   "from": "Google Android tools; device name is ours"
+  },
+  "g3-292": {
+   "def": "Two versions of the JavaScript runtime: the project targets 22, and the machine has 24.",
+   "from": "The Node.js project"
+  },
+  "g3-293": {
+   "def": "Scripted emulator rig rehearsing the drain and offline matrix before a real phone. Test-only accounts and keys. Stand-ins mimic the unreachable host.",
+   "from": "Coined by us in the ship plan"
+  },
+  "add-5": {
+   "def": "Lowest to highest: Haiku, Sonnet, Opus, Fable; higher tiers think better and cost more per token.",
+   "from": "Anthropic naming; our routing note assigns jobs"
+  },
+  "add-6": {
+   "def": "The low-cost tier (Sonnet, or Haiku for lookups) for routine reading and checking, against the high-cost tiers (Opus, Fable) kept for judgement.",
+   "from": "The library design, in our library pathway documents"
+  },
+  "add-7": {
+   "def": "The branch with the accepted code; work merges in only after the check and a review.",
+   "from": "Git convention; FixFlow’s default branch"
+  },
+  "add-8": {
+   "def": "Named line of commits for a slice or lane, separate from main until reviewed and merged.",
+   "from": "Git; each lane and slice gets its own"
+  },
+  "add-9": {
+   "def": "One saved, named change to the code in git. Reviews bind to a specific commit.",
+   "from": "Git"
+  },
+  "add-10": {
+   "def": "A proposal on GitHub to merge a branch into main, with its changes, discussion and checks.",
+   "from": "GitHub; see PR #182 to #186"
+  },
+  "add-11": {
+   "def": "Bringing a reviewed branch into main; harness v2 does it by script, through the merge queue.",
+   "from": "Git; a harness v2 mechanism"
+  },
+  "g2-157": {
+   "def": "A single file holding a repository’s history, usable as an off-machine backup.",
+   "from": "A git feature"
+  },
+  "g2-179": {
+   "def": "A cleanup script removing finished sessions or worktrees; its dry run only reports what it would remove.",
+   "from": "Coined by us in the bottleneck compile (B15)"
+  },
+  "g3-282": {
+   "def": "Test runners for the mobile code (Jest) and the web code (Vitest).",
+   "from": "Open-source JavaScript tools"
+  },
+  "g3-289": {
+   "def": "This PC’s third-party real-time scanner; it has blocked some Windows library files during unpacking, affecting installs.",
+   "from": "Third-party security product from Qihoo 360"
+  },
+  "add-15": {
+   "def": "A reviewer returning a slice to its author with findings to fix; each adds a round.",
+   "from": "Testbed review loop; the fix-round contract limits them"
+  },
+  "add-19": {
+   "def": "The check run directly on Windows rather than in a Linux container; slower, at 6.1 minutes [M].",
+   "from": "Our bottleneck work on the gate"
+  },
+  "rd-40": {
+   "def": "A Git Bash setting that stops it rewriting Unix-like arguments as Windows paths; write paths as C:/…",
+   "from": "MSYS2, the Unix layer under Git for Windows"
+  },
+  "rd-41": {
+   "def": "A git setting letting Git for Windows create paths longer than Windows’ old 260-character limit.",
+   "from": "Git for Windows"
+  },
+  "g1-15": {
+   "def": "One Claude Code session working one slice or phase in its own git worktree, in parallel with others.",
+   "from": "Coined by us in the harness v2 design and the ship plan"
+  },
+  "g3-270": {
+   "def": "Alone: the effect of moving only one limitation’s unknowns. Last: what is lost if only that one stays unsolved.",
+   "from": "Coined by us in the pathway model brief"
+  },
+  "g3-279": {
+   "def": "Railway hosted the apps (old hostnames answer an edge 404); Supabase is the managed Postgres; Cloudflare R2 stores media and backups.",
+   "from": "Outside vendors; stack described in CLAUDE.md"
+  },
+  "g2-199": {
+   "term": "Arm",
+   "cat": "statistics",
+   "def": "One condition in a comparison.",
+   "from": "Scientific method"
+  },
+  "g1-43": {
+   "def": "Finding severity from most serious (P0) to least (P3).",
+   "from": "Review practice in our testbed and ship plan"
+  },
+  "g1-86": {
+   "def": "Fan-out is the number of children per parent; depth is the number of session levels below the root (in the testbed: slice leads, their children, then subagents).",
+   "from": "General usage; the clinic orchestration page"
+  }
+ },
+ "rulesSkip": [
+  "The ship plan comes first",
+  "One budget"
+ ],
+ "decisionsSkip": [
+  "PR185"
+ ],
+ "sourcesWhere": {
+  "Skills packages": ".claude/skills/ and .claude/agents/ (PR #185, merged 13 Nov)"
+ },
+ "sourcesNote": "Paths are relative to the FixFlow repository. Documents marked “branch only” live on their pull request’s branch until it merges. The bottleneck compile, harness v2, token report, library, graph-test and split-rule documents hold details of the clinic testbed and this PC, so they stay uncommitted on this PC until I decide otherwise.",
+ "date": "14 November 2026",
+ "cover": {
+  "sub": "What we are building, what limits the seven things I judge it by, the ideas we have against each limit, and the work we can now split across the team.",
+  "from": "Compiled from the documents and chats of 6 October to 14 November 2026",
+  "tiles": [
+   [
+    "7",
+    "metrics every bottleneck and idea is judged by"
+   ],
+   [
+    "{bottlenecks}",
+    "bottlenecks, sorted by the metric each limits"
+   ],
+   [
+    "{ideas}",
+    "ideas, whatever their results, chats included"
+   ],
+   [
+    "{packages}",
+    "work packages, each with an owner slot"
+   ]
+  ]
+ },
+ "short": {
+  "t1v": "97 % [M]",
+  "t1l": "of our context tokens are the model re-reading a window it has already seen",
+  "t2v": "574k–974k [M]",
+  "t2l": "tokens in the orchestrator’s window each time it had to compact",
+  "t3v": "2 of 2 [M]",
+  "t3l": "compaction summaries we checked were wrong about the latest state",
+  "t4v": "6,600 ms [M]",
+  "t4l": "for one model step, against 0.5 ms [M] to read a file: time goes on steps, not on disk",
+  "points": [
+   {
+    "h": "The window keeps growing, and that is the first bottleneck.",
+    "t": "Every call re-reads the whole window, so each step costs more than the last, and the orchestrator’s window reached 574k to 974k tokens [M] before it compacted. Both summaries we checked were then wrong about the latest state [M]. My proposal is to run orchestration as a B+ tree spread over sessions, as in a distributed system: a session past about 40 % [S] of its window (set per model) splits, small ones merge, and we may never have to compact. WP12 wrote the rule and replayed it on our record: tokens are not settled against compacting earlier, and its first aim, fewer hallucinations, needs a live trial. I said yes to one trial wave at 300k, ahead of most of our compactions."
+   },
+   {
+    "h": "Hallucinations and quality have catches, not yet a rate.",
+    "t": "We recorded 20-plus overstated reports, with no denominator [M], and those two wrong summaries [M]. 64 % [M] of reviews sent a slice back, and an Opus reviewer found a serious defect in 9 of 14 [M] Opus-built slices. Two things should bring the numbers down: claims that a script rechecks instead of a model, and windows that stay small (not yet measured). A script rechecked 1,265 [M] paths, commits and pull requests in FixFlow’s summaries: 16 [M] were not borne out, no more than in maintained documents; the latest state needs a reader. WP8 counts reports next."
+   },
+   {
+    "h": "One orchestrator and one usage limit cap throughput.",
+    "t": "Review, merging and checks all pass through one session, and when the five-hour limit hits, every lane stops: ten were stopped within about 15 minutes [M]. The testbed had about three lanes worth running [M] but ran six to nine [M]. The planner, the merge queue and the governor are designed to answer this."
+   },
+   {
+    "h": "Every agent pays a fixed start, often on the most expensive model.",
+    "t": "About 70k tokens [M] per clinic agent before any work, 27 % [E] of all our tokens. A short tool list should shrink it; model tiers by role are in use, and raising only the stuck problem to the top model is designed but not yet measured."
+   },
+   {
+    "h": "Most steps only find and re-read.",
+    "t": "64 % [M] of FixFlow’s calls and 52 % [M] of the clinic’s only read or searched, each one a full re-read. A typed code store found more of what a change touched than a scripted search did (+0.076 overall [M], the gain in the mobile app). The test with an agent in the loop is next."
+   },
+   {
+    "h": "What one session learns, the next does not have.",
+    "t": "The library and the knowledge store are designed, not built. The ensemble of simulated runs I suggested on 12 November helped: it showed which unknowns matter most. The same model’s corner settings (MEM-15) show the library pays only when work comes back, reaches the cheap model and is right, all together. Neither can pick a path, because the inputs are still guesses [G]."
+   },
+   {
+    "h": "A lot already works, and the work splits cleanly.",
+    "t": "The clinic’s full check is 3.0× faster in parallel [M] and 1.6× faster in a Linux container [M]. Sixteen packages each have a goal, a first deliverable and a “done when”: one has begun, six can start today, six start on my word and three follow another package."
+   }
+  ]
+ },
+ "metrics": [
+  {
+   "key": "throughput",
+   "name": "Throughput",
+   "means": "Finished, accepted work per day across everything running.",
+   "stand": "The clinic testbed made 432 commits and 65 merges in eight working days on one PC [M]. FixFlow ran eight lanes at once on 13 November [M].",
+   "limiter": "One orchestrator and one usage limit (block 3): ten lanes were stopped within about 15 minutes [M].",
+   "gap": "The same work with and without the harness, side by side."
+  },
+  {
+   "key": "efficiency",
+   "name": "Efficiency",
+   "means": "How much of what we spend ends up in accepted work.",
+   "stand": "97 % [M] of our context tokens are the model re-reading a window it has already seen. 64 % [M] of FixFlow’s calls and 52 % [M] of the clinic’s only read or searched.",
+   "limiter": "No memory between sessions (block 6) and finding and re-reading (block 5).",
+   "gap": "Tokens and hours per accepted slice, on one rate sheet (WP8)."
+  },
+  {
+   "key": "token_count",
+   "name": "Token count",
+   "means": "Tokens one result consumes: calls times window size.",
+   "stand": "7.35 billion context tokens [M] over 35,834 calls [M] in two projects. Main sessions averaged 333k (clinic) and 396k (FixFlow) tokens a call [M].",
+   "limiter": "Context growth (block 1): 74 % [M] of the clinic’s re-read tokens sat in calls past 200k. Then the fixed start (block 4).",
+   "gap": "What a split or an earlier compaction saves per accepted slice, live; the replay measured exposure only (WP12)."
+  },
+  {
+   "key": "token_cost",
+   "name": "Token cost",
+   "means": "What those tokens cost: model tier, cache pricing and the plan’s five-hour limit.",
+   "stand": "Opus read 52 % of our tokens, Sonnet 32 % and Fable 16 % [M]. The five-hour limit stopped work in 14 episodes in October [M].",
+   "limiter": "Model tier and the fixed start (block 4): built-in agents inherit the session’s model. Then hard problems solved again at the top tier (block 6).",
+   "gap": "How cached re-reads count against the limit, and the cost per tier."
+  },
+  {
+   "key": "time",
+   "name": "Time taken",
+   "means": "Wall-clock time for one piece of work, from start to accepted.",
+   "stand": "One model step takes 6,600 ms (median of 10,658 steps) [M]. The clinic’s full check fell from 855.2 s to a mean of 283.8 s [M], and a slice took 2.8 review rounds [M].",
+   "limiter": "This PC and waiting on me (block 11), one orchestrator and one limit (block 3), review rounds (block 7) and check time and slots (block 8).",
+   "gap": "Time per slice by stage, from start to merge (WP8)."
+  },
+  {
+   "key": "quality",
+   "name": "Quality of output",
+   "means": "Whether accepted work is right and complete.",
+   "stand": "64 % [M] of reviews sent a slice back. An Opus reviewer found a serious defect in 9 of 14 [M] Opus-built slices, and fixes made at least 5 more high-severity defects [M].",
+   "limiter": "Rework and late discovery (block 7), no memory between sessions (block 6) and unverified claims (block 2).",
+   "gap": "How many defects reach real use."
+  },
+  {
+   "key": "hallucination",
+   "name": "Hallucinations",
+   "means": "A model stating something that is not so.",
+   "stand": "No rate yet for the latest state, where 2 of 2 [M] summaries we read were wrong. A script found 16 of 1,265 [M] paths, commits and PRs in FixFlow’s summaries not borne out, as few as in maintained documents. Reports: 20-plus overstatements, no denominator [M].",
+   "limiter": "Unverified claims (block 2), and summaries after compaction (block 1).",
+   "gap": "A rate for statements of the latest state, by a reader’s check (WP12); then rates per session, model and window fill."
+  }
+ ],
+ "p3": {
+  "lead": "Every harness idea we have had, whatever its results, including those said only in chat: {ideas} [M] ideas in {themes} themes. Part 2 puts the key ideas under the bottleneck each answers; this part shows all of them at once. The reference edition lists every idea in full.",
+  "heatCap": "An idea counts once for each metric it moves, as sorted by the classifier agents on 14 November [E].",
+  "themesLead": "One row per theme: what it is about, how far its ideas have got, the two metrics most of them move, the Part 2 blocks where its key ideas appear, and the packages that carry it.",
+  "heatShows": "Quality draws the most ideas (330 [E]), then efficiency (143 [E]) and hallucinations (127 [E]); throughput draws the fewest (68 [E]). Most ideas move more than one metric."
+ },
+ "blocks": [
+  {
+   "key": "context",
+   "title": "The window keeps growing until it must compact or clear",
+   "short": "Context growth",
+   "local": false,
+   "hits": [
+    {
+     "metric": "token_count",
+     "how": "Every call re-reads the whole window, so long sessions multiply tokens"
+    },
+    {
+     "metric": "hallucination",
+     "how": "Compaction summaries got the latest state wrong"
+    },
+    {
+     "metric": "token_cost",
+     "how": "Re-read context is billed again on every call"
+    },
+    {
+     "metric": "quality",
+     "how": "A compaction dropped an open loop of unfinished work"
+    }
+   ],
+   "what": "Every call re-reads the whole window and adds to it, so our orchestrator and long-lived sessions accumulate tokens until they must compact or clear. The summary that then replaces the history can misstate the latest state.",
+   "measured": "Cache reads are 96.8 % [M] of 7.35 B [M] context tokens, output 0.75 % [M]. The root compacted at 574k, 974k, 967k and 970k tokens [M], though a second count of the same transcripts finds three compactions [M]. 2 of 2 summaries were wrong on the latest state [M]; the verbatim tail corrected both. Vendor figures, not reproduced here, put native compaction at 48.7 against 69.3 for the full history [S] (TOK-41). Our snapshot-and-restore trial matched native compaction on recall and task success but used 17.0 % more tokens [M] (TOK-12).",
+   "unmeasured": "At what window fill a session’s judgement starts to fall, for any model, and whether a brief written at a split is right more often than a compaction summary.",
+   "ideas": [
+    {
+     "id": "PAR-22",
+     "name": "Orchestration as a distributed B+ tree: split and merge",
+     "result": "Designed: my idea of 14 November, aimed first at hallucinations. Rule written and replayed on our record (below), not tested live. I said yes to a 300k trial; old summaries are read first."
+    },
+    {
+     "id": "TOK-44",
+     "name": "Take finished material out of a live window",
+     "result": "Designed: asked for on 26 October, now settled inside the split rule. A new session starts from a brief that points at the repository, so finished material never enters it. Untested."
+    },
+    {
+     "id": "TOK-16",
+     "name": "Compaction snapshot, restore and recall hooks",
+     "result": "Built: in the clinic testbed, not yet run live. 85 offline tests [M], 53 defects fixed [M]. Restore quality not yet measured."
+    },
+    {
+     "id": "TOK-02",
+     "name": "Earlier auto-compact window of 400,000 tokens",
+     "result": "In use for Opus: 84 of the 117 [M] compactions in session windows are Opus, 81 [M] of them at 366–385k. Sonnet ran to 963k [M] and is not set yet."
+    }
+   ],
+   "evidence_ids": [
+    "TK-REREAD",
+    "R2",
+    "B04",
+    "PR-SUMMARY",
+    "TK-FILL",
+    "TOK-02",
+    "PAR-22",
+    "TOK-44",
+    "TOK-16"
+   ]
+  },
+  {
+   "key": "claims",
+   "title": "Agent reports claim more than was actually done",
+   "short": "Unverified claims",
+   "local": false,
+   "hits": [
+    {
+     "metric": "hallucination",
+     "how": "Reports cite tests, evidence or runs that do not exist"
+    },
+    {
+     "metric": "quality",
+     "how": "Green checks and unread final commits let defects through"
+    },
+    {
+     "metric": "efficiency",
+     "how": "I re-verify claims by hand instead of trusting them"
+    },
+    {
+     "metric": "token_cost",
+     "how": "Opus skeptics are spent re-checking what a script could"
+    }
+   ],
+   "what": "Agents report tests, evidence or runs that did not happen or do not match, and a model re-reading its own claims does not catch it. A check can also go green while testing nothing.",
+   "measured": "20-plus recorded overstatements, with no denominator [M]. 5 of 6 high-risk final commits went unread [M]. A citation check re-located 109 [M] claims, none dead, and 575 of 579 [M] quotes matched exactly.",
+   "unmeasured": "What share of claims are false: overstatements are counted without a denominator yet.",
+   "ideas": [
+    {
+     "id": "REV-38",
+     "name": "Skeptic verdict rules with an unverifiable outcome",
+     "result": "Designed: confirmed needs a traced path, refuted needs counter-evidence, otherwise unverifiable with what would settle it. Not yet tested."
+    },
+    {
+     "id": "REV-11",
+     "name": "Citation check over every claim",
+     "result": "In use: 109 [M] claims re-located, none dead; 575 of 579 [M] quotes matched exactly. It checks existence only."
+    },
+    {
+     "id": "CHK-04",
+     "name": "Test-id accounting and planted-fault demos",
+     "result": "In use: in the testbed, six planted faults gave CHECK FAILED [M], and no test id ran twice. Not yet in FixFlow CI."
+    },
+    {
+     "id": "REV-30",
+     "name": "Claims file checked by a script each round",
+     "result": "Designed: a script reruns each cited test at parent and head. Not yet run. Replay first, false flags under 10 % [T]."
+    }
+   ],
+   "evidence_ids": [
+    "B12",
+    "B17",
+    "PR-FALSEGREEN",
+    "REV-11",
+    "CHK-04"
+   ]
+  },
+  {
+   "key": "orchestration",
+   "title": "One orchestrator reviews and merges everything, and its window overflows",
+   "short": "One orchestrator, one limit",
+   "local": false,
+   "hits": [
+    {
+     "metric": "throughput",
+     "how": "Every review and merge passes through one session, one at a time"
+    },
+    {
+     "metric": "time",
+     "how": "One usage limit stops every lane together, mid-run"
+    },
+    {
+     "metric": "token_count",
+     "how": "Every agent’s full report lands in the root’s window"
+    },
+    {
+     "metric": "efficiency",
+     "how": "Lanes sit waiting on the one session"
+    }
+   ],
+   "what": "One root session reviews, merges, edits the board and reads every agent’s report, so work leaves only as fast as it does. Its window keeps growing until it must compact, and one usage limit stops every lane together.",
+   "measured": "Root compacted at 574k, 974k, 967k and 970k tokens [M] (a second count of the same transcripts finds three compactions [M]), about 499k per call [M], 15.3 % of November tokens [M]. Subagents made 91 of 104 limit errors [M]. Ten lanes were stopped by the limit within about 15 minutes [M].",
+   "unmeasured": "Whether a gate workflow stops root compaction, and how cache reads count against the limit.",
+   "ideas": [
+    {
+     "id": "PAR-10",
+     "name": "Bounded session tree: depth three, fan-out three",
+     "result": "In use: my proposal of 2 November; 12 slices and about 20 follow-up branches merged in 8 days [M]. The root still became a serial gate; PAR-22 is its next form."
+    },
+    {
+     "id": "PAR-13",
+     "name": "Planner that sizes lanes just below the knee",
+     "result": "Designed: plan accepted 11 Nov, nothing installed. The testbed had about three lanes worth running [M] but ran six to nine [M]."
+    },
+    {
+     "id": "PAR-02",
+     "name": "Lane sessions: one phase, own worktree, run together",
+     "result": "In use: eight lane sessions started on 13 November [M] and PRs #187–#192 opened that day [M]. RAM, not CPU, sets the ceiling [M]."
+    },
+    {
+     "id": "REV-28",
+     "name": "Review as a gate workflow with typed verdict",
+     "result": "Designed: gain is bounded, the root is 15.3 % [M] of tokens. Target: no root compaction across five gates [T]."
+    }
+   ],
+   "evidence_ids": [
+    "B04",
+    "B16",
+    "B3-LOOP",
+    "TK-LIMITACCT",
+    "PAR-10",
+    "PAR-13",
+    "PAR-02",
+    "REV-28"
+   ]
+  },
+  {
+   "key": "start",
+   "title": "Each agent pays a fixed start and may inherit the top model",
+   "short": "Fixed start and model tier",
+   "local": false,
+   "hits": [
+    {
+     "metric": "token_count",
+     "how": "About 70k [M] tokens load before work, re-read every call"
+    },
+    {
+     "metric": "token_cost",
+     "how": "An unpinned lookup agent runs on the session’s model"
+    },
+    {
+     "metric": "efficiency",
+     "how": "Tiny fan-outs pay the prefix many times for little work"
+    }
+   ],
+   "what": "Every agent window first loads system prompt, tool and connector schemas, skills, memory, CLAUDE.md and its brief, then re-reads it every call. Fan-out multiplies it, and an unpinned agent inherits the session’s model, even for a simple lookup.",
+   "measured": "About 70k [M] tokens per clinic agent before any work (about 60k [E] per FixFlow agent): tools 34k, connectors 17k, skills 9k, system 8k, memory 2k [M]. That fixed start is 27 % [E] of all our tokens and 47 % [E] of FixFlow’s.",
+   "unmeasured": "What tiering and a stripped prefix actually save: no per-tier spend is recorded yet.",
+   "ideas": [
+    {
+     "id": "MTH-39",
+     "name": "Escalation ladder: raise only the stuck problem a tier",
+     "result": "Designed: on guessed inputs, 25.7 [G] cheap-call equivalents, 21.2 % [G] wrong, versus 29.9 [G] and 11.2 % [G] strong model alone."
+    },
+    {
+     "id": "MTH-66",
+     "name": "Fast mode for a fleet of subagents",
+     "result": "Proposed: fast mode was on for a 132 [M] agent run on 3 November. Effect on time and tokens not measured yet."
+    },
+    {
+     "id": "TOK-23",
+     "name": "Strip the fixed prefix with a short tool list",
+     "result": "Designed: tool definitions are 34k [M] of the 70,000 [M] each agent pays. Pass bar: 20 runs [T], zero refused writes."
+    },
+    {
+     "id": "MTH-08",
+     "name": "Model tiers by role, raise effort before tier",
+     "result": "In use: 12 [M] agent definitions pin Haiku, Sonnet or Opus. Tiering has no cost measurement yet."
+    }
+   ],
+   "evidence_ids": [
+    "TK-PREFIX",
+    "MSR-08",
+    "TOK-09",
+    "REV-21",
+    "TK-TIER",
+    "MTH-39",
+    "MTH-66",
+    "TOK-23",
+    "MTH-08"
+   ]
+  },
+  {
+   "key": "orientation",
+   "title": "Agents spend most calls just finding and re-reading things",
+   "short": "Finding and re-reading",
+   "local": false,
+   "hits": [
+    {
+     "metric": "token_count",
+     "how": "every lookup call re-reads the whole window"
+    },
+    {
+     "metric": "efficiency",
+     "how": "fetched file content fills windows and is re-processed every call"
+    },
+    {
+     "metric": "time",
+     "how": "each extra lookup adds a whole model step"
+    }
+   ],
+   "what": "Over half our calls only read or search, and each call re-reads the whole window. Fetched file content stays and is re-processed every later call, and a small set of files recurs across sessions.",
+   "measured": "FixFlow: 64 % [M] of calls, 55 % [M] of tokens only read or search. Fetched content fills 26 % [E] of windows; 72 paths [M] hold half. One model step takes 6,600 ms [M], a 93 KB file read 0.5 ms [M].",
+   "unmeasured": "Whether any graph, map or recall aid makes an agent finish faster: 0 [M] agent runs.",
+   "ideas": [
+    {
+     "id": "MSR-50",
+     "name": "Time model steps against disk reads",
+     "result": "Tested: a model step takes 6,600 ms [M]; a file read 0.5 ms (possibly a warm read), a 618-file search 124 ms [M]. Count steps saved."
+    },
+    {
+     "id": "RET-06",
+     "name": "Typed symbol-level graph of the repo",
+     "result": "Tested: recall 0.700 [M] vs 0.625 [M] for scripted search; the gain is on mobile (+0.151 [M]). No agent run yet."
+    },
+    {
+     "id": "RET-18",
+     "name": "Typed-edge map of the planning documents",
+     "result": "Built: clinic testbed prototype, 3,361 records for 167 KB [M]; extraction recall 0.52 [M]. No agent has used it yet."
+    },
+    {
+     "id": "TOK-25",
+     "name": "Batch lookups into one command",
+     "result": "Proposed: batching two lookups would remove about a third of all calls [E] and a third of their re-reads [E]."
+    }
+   ],
+   "evidence_ids": [
+    "TK-LOOKUP",
+    "TK-FETCHED",
+    "LIB-EVAL",
+    "MSR-50",
+    "RET-06",
+    "RET-18",
+    "TOK-25"
+   ]
+  },
+  {
+   "key": "memory",
+   "title": "Each session starts without what earlier sessions learned",
+   "short": "No memory between sessions",
+   "local": false,
+   "hits": [
+    {
+     "metric": "efficiency",
+     "how": "the same errors are re-hit across sessions and projects"
+    },
+    {
+     "metric": "quality",
+     "how": "fresh sessions can start from stale or contradictory facts"
+    },
+    {
+     "metric": "token_cost",
+     "how": "recurring hard problems are solved again at the top tier"
+    },
+    {
+     "metric": "hallucination",
+     "how": "drifted docs and memory state things no longer true"
+    }
+   ],
+   "what": "A new session knows only what the repo and memory files carry. Past diagnoses sit in prose nobody can search by symptom, so a recurring defect is solved again at the top tier, and docs drift from code.",
+   "measured": "One missing-tool error was re-hit in 54 of 78 [M] sessions across 9 [M] projects. 3 to 5 [M] same-cause repeats among 48 [M] fix commits. 517 of 1,268 backticked file names in docs do not resolve [M]. A cold-resume trial recovered 10 of 10 frozen facts [M].",
+   "unmeasured": "How often similar problems recur in our work, which decides whether a library pays.",
+   "ideas": [
+    {
+     "id": "MEM-13",
+     "name": "Ensemble of simulated runs over the pathway map",
+     "result": "Built: my suggestion in the library-pathways chat of 12 November. 1000 [S] runs per setting; 51 [M] of 60 [M] unknowns are guesses. It helped by ranking what to measure first. On those guesses the library was cheaper and no more wrong than the escalation ladder in only 0.3 % [G] of runs, or 6.1 % [G] when its unknowns move together, and the model shows it pays only when much work comes back, reach is high and entries are good (cost 0.82 [G], wrong 0.67 [G]; MEM-15). It cannot pick a path on guessed inputs. A trained tree ensemble (MEM-68) is not started."
+    },
+    {
+     "id": "MEM-56",
+     "name": "Merge partial solutions through a graph",
+     "result": "Proposed: not yet tested. In real walks two checked answers did not make a checked merge (6 cases [M]); tests will decide."
+    },
+    {
+     "id": "MEM-21",
+     "name": "Knowledge store of solved problems",
+     "result": "Designed: nothing built. Same-cause repeats are 3 to 5 [M] among 48 [M] fix commits; the recurrence audit decides whether to build."
+    },
+    {
+     "id": "MEM-02",
+     "name": "Memory file holds pointers, not restated state",
+     "result": "In use: memory now points to where state lives; the rewrite found and corrected one [M] stale next step."
+    }
+   ],
+   "evidence_ids": [
+    "MEM-52",
+    "LIB-KS-RESOLVE",
+    "PR-DOCDRIFT",
+    "W3",
+    "LIB-COMES",
+    "MEM-13",
+    "MEM-56",
+    "MEM-21",
+    "MEM-02"
+   ]
+  },
+  {
+   "key": "rework",
+   "title": "Fixes create new defects and gaps surface late",
+   "short": "Rework and late discovery",
+   "local": false,
+   "hits": [
+    {
+     "metric": "quality",
+     "how": "fix-made defects and late gaps reach review or the end"
+    },
+    {
+     "metric": "time",
+     "how": "extra review rounds stretch every slice"
+    },
+    {
+     "metric": "throughput",
+     "how": "slices sent back are not yet accepted work"
+    },
+    {
+     "metric": "efficiency",
+     "how": "each extra round spends review tokens again"
+    }
+   ],
+   "what": "A fix can add new stored state whose endings no test covers, so each fix round makes fresh defects and the rounds do not converge; ours did. Work tested only on synthetic data lets first-use gaps surface on the last day.",
+   "measured": "Round one found 19 high-severity (P1) defects [M], and the fixes made at least 5 more P1 and 10 P2 [M]. 64 % of reviews sent a slice back, 2.8 rounds per slice [M]. Two [M] first-use gaps surfaced on the final day.",
+   "unmeasured": "How many fix-made defects a two-round fix contract would prevent; its replay has not run yet.",
+   "ideas": [
+    {
+     "id": "REV-01",
+     "name": "Two-level merge gates with refute-reviewers",
+     "result": "In use: every testbed slice; 9 of 11 [M] gates took three rounds, and fixes created at least 5 [M] more P1."
+    },
+    {
+     "id": "REV-22",
+     "name": "Fresh critics check each plan revision’s changes",
+     "result": "Tested: the v6-to-v8 delta check found 1 blocker, 20 major, 20 minor [M] before work started; findings folded into the next version."
+    },
+    {
+     "id": "REV-27",
+     "name": "Fix-round contract: two rounds, revert, test per finding",
+     "result": "Designed: not yet run. A replay on recorded defect chains would show whether it beats 2.8 [M] review rounds per slice."
+    },
+    {
+     "id": "REV-50",
+     "name": "One drift audit after ten PRs",
+     "result": "Proposed: per-PR review cannot see drift that builds across PRs as the repo grows; one fresh Opus audit after the 10th [T] merged code PR, pass bar at least 2 [T] findings I accept. Not yet run."
+    }
+   ],
+   "evidence_ids": [
+    "B01",
+    "B02",
+    "PR-PLANDEFECTS",
+    "REV-01",
+    "REV-22",
+    "REV-27"
+   ]
+  },
+  {
+   "key": "checks",
+   "title": "Lanes queue behind one slow check slot",
+   "short": "Check time and slots",
+   "local": false,
+   "hits": [
+    {
+     "metric": "time",
+     "how": "Lanes sit idle waiting for a free check slot"
+    },
+    {
+     "metric": "throughput",
+     "how": "One open slot caps how many lanes finish at once"
+    },
+    {
+     "metric": "quality",
+     "how": "Windows-only checks miss failures the Linux run catches"
+    }
+   ],
+   "what": "Every lane must pass the full check before merging, and checks share limited machine capacity, so lanes wait in line. On our PC, Windows also adds a slow hop to the database.",
+   "measured": "19 recorded waits: median 409 s, longest 2,030 s [M]. Parallel workers cut a full run from 855.2 s [M] to a mean of 283.8 s [M], about 3.0×. Two slots gave 1.8–1.9× throughput [M]. Linux container check: 230.1 s [M] against 367.2 s [M] on Windows.",
+   "unmeasured": "One check’s peak memory, so we cannot yet size slots safely.",
+   "ideas": [
+    {
+     "id": "CHK-01",
+     "name": "Parallel check with one database per worker",
+     "result": "In use: 855.2 s [M] became a mean of 283.8 s [M], about 3.0× faster. Eight workers gain only 3 % [M]."
+    },
+    {
+     "id": "CHK-26",
+     "name": "Linux container check, proposed as the gate",
+     "result": "Built: mean 230.1 s [M] against 367.2 s [M] native, about 1.6× faster, and found 2 failures [M] Windows missed."
+    },
+    {
+     "id": "CHK-22",
+     "name": "Two container checks at once",
+     "result": "Tested: 266 s and 267 s [M] together against about 440 s [M] in a row, least free memory 5.3 GB [M]."
+    }
+   ],
+   "evidence_ids": [
+    "B07",
+    "B06",
+    "CHK-01",
+    "CHK-26",
+    "CHK-22"
+   ]
+  },
+  {
+   "key": "measurement",
+   "title": "False statements and gains go uncounted, so fixes stay unproven",
+   "short": "What we cannot measure yet",
+   "local": false,
+   "hits": [
+    {
+     "metric": "efficiency",
+     "how": "No context aid tested with an agent, so payoff unknown"
+    },
+    {
+     "metric": "quality",
+     "how": "Wrong output is found only when someone happens to catch it"
+    },
+    {
+     "metric": "hallucination",
+     "how": "No rate per session, model or window fill exists"
+    },
+    {
+     "metric": "token_cost",
+     "how": "Levers cannot be judged without before-and-after token tallies"
+    }
+   ],
+   "what": "We learn of a false statement only when a reviewer, a script or I catch it, and no context aid has run with an agent in the loop. So we cannot yet tell whether a change helps.",
+   "measured": "20-plus recorded overstatements, with no denominator [M]; 2 of 2 compaction summaries wrong on the latest state [M]. A script rechecked 1,265 [M] paths, commits and pull requests in FixFlow’s 61 [M] recorded summaries: 16 were not borne out, 1.3 % [M], no more than in two maintained documents. 0 [M] agent runs with a context aid. November token tally: 4,252.9M [M] cache-read tokens; re-measurement agreed within 0.3 % [M].",
+   "unmeasured": "Whether a fuller orchestrator window degrades its judgements; keeping context under about 40 % [S] is an outside rule of thumb.",
+   "ideas": [
+    {
+     "id": "MSR-49",
+     "name": "Seven-metric lens for every bottleneck and idea",
+     "result": "In use: agents sorted all 606 [M] earlier records; a blind second reading agreed on the main metric for 80 of 101 [M]."
+    },
+    {
+     "id": "MSR-12",
+     "name": "Token tally from session transcripts",
+     "result": "Tested: November counted 4,252.9M [M] cache-read tokens over 184 files; re-measurement agreed within 0.3 % [M]. Per-slice figures next."
+    },
+    {
+     "id": "TOK-34",
+     "name": "Log context use at each phase close",
+     "result": "Proposed: a usage line (tokens, percent, compactions) on the first 4 [T] phase sessions, so the split line rests on our own data."
+    }
+   ],
+   "evidence_ids": [
+    "PR-HALLU",
+    "LIB-EVAL",
+    "MSR-12",
+    "TOK-34",
+    "MSR-49"
+   ]
+  },
+  {
+   "key": "method",
+   "title": "Agents start without settled facts, defined values or tested skills",
+   "short": "How we brief and equip agents",
+   "local": false,
+   "hits": [
+    {
+     "metric": "quality",
+     "how": "Undefined severity values let a first impression harden into priority"
+    },
+    {
+     "metric": "efficiency",
+     "how": "Assessors redo work that was already settled programme law"
+    },
+    {
+     "metric": "hallucination",
+     "how": "Without settled facts, analysts fall back on hypotheses"
+    },
+    {
+     "metric": "token_count",
+     "how": "Agents re-derive project facts each run instead of reading them"
+    }
+   ],
+   "what": "Agents were briefed before settled facts existed, output schemas leave values like P0–P3 undefined, and the new skill packages have not run yet. Agents re-derive facts, and a cheap first impression can become a priority.",
+   "measured": "8 of 12 skeptic verdicts in G2 lowered a severity [M]. 8 of 24 assessment adopts were already programme law [M]. Staged workflows work: discovery covered 16/16 [M] areas in 14 min [M]; the deep-dive gave 139 [M] findings in 23 min [M].",
+   "unmeasured": "Whether briefs and skills cut rework: no before-and-after measured; the skills have not run yet.",
+   "ideas": [
+    {
+     "id": "MTH-67",
+     "name": "Borrow from distributed systems, databases and parallel computing",
+     "result": "Built: 52 [M] research agents checked 44 [M] course series; a lecture list maps each harness problem to its lectures."
+    },
+    {
+     "id": "MTH-18",
+     "name": "Compare whole structures on the problem case",
+     "result": "Tested: our structure served the BAML case as well or better on all ten dimensions (judged); borrows 10 to 40 lines [E]."
+    },
+    {
+     "id": "MTH-07",
+     "name": "Staged workflows with judging gates between them",
+     "result": "In use: discovery covered 16/16 [M] areas in 14 min [M]; the deep-dive gave 139 [M] findings in 23 min [M]."
+    }
+   ],
+   "evidence_ids": [
+    "PR-SEVERITY",
+    "PR-BRIEFFACTS",
+    "W4",
+    "MTH-07",
+    "MTH-09"
+   ]
+  },
+  {
+   "key": "local",
+   "title": "Work stops when this PC fails or I am away",
+   "short": "This PC and waiting on me",
+   "local": true,
+   "hits": [
+    {
+     "metric": "throughput",
+     "how": "Power-offs and hand restarts leave lanes idle for days"
+    },
+    {
+     "metric": "time",
+     "how": "An outage cuts every lane off mid-work"
+    },
+    {
+     "metric": "efficiency",
+     "how": "Short memory caps how many lanes and slots can run"
+    }
+   ],
+   "what": "Everything runs on one PC that powers off without warning and is short of memory. After a stop, Docker, databases and sessions wait for me to restart them, and merges and starts wait for my approval.",
+   "measured": "About three days idle after the 6 Nov power-off [M]. 25 shutdowns since 1 October [M], 15 with no Claude call ten minutes before [M]. After a 28-minute [M] outage all eight [M] lanes resumed from their worktrees. Dropping Docker’s cache gave back 2.2 GB [M].",
+   "unmeasured": "What causes the power-offs, and who holds memory when it runs short.",
+   "ideas": [
+    {
+     "id": "OWN-05",
+     "name": "Coordinator merges and starts phases for me",
+     "result": "In use: in the testbed a limit plus waiting for my turn halted work three days [M]. In FixFlow the coordinator has merged under it since 13 November."
+    },
+    {
+     "id": "MAC-05",
+     "name": "Push at every green checkpoint, dead locks after boot",
+     "result": "In use: after the 28-minute [M] outage on 13 Nov, all eight [M] lanes resumed from their worktrees."
+    },
+    {
+     "id": "MAC-17",
+     "name": "Resume list at sign-in, two sessions at a time",
+     "result": "Designed: not built yet. Idle time after a stop is about three days [M], the target is under three hours [T]."
+    }
+   ],
+   "evidence_ids": [
+    "B03",
+    "B05",
+    "B08",
+    "B10",
+    "MC-DOCKERCACHE",
+    "MAC-11",
+    "OWN-05",
+    "MAC-05",
+    "MAC-17",
+    "MAC-13"
+   ]
+  }
+ ]
+}

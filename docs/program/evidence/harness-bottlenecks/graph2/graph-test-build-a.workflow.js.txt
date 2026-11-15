@@ -1,0 +1,148 @@
+export const meta = {
+  name: 'graph-test-build-a',
+  description: 'Build the engine-independent parts of the graph test: shared typed facts per commit, sealed task sets, the relational and search arms, then audit them',
+  phases: [
+    { title: 'Facts and tasks', detail: 'shared facts extractor with per-commit cache; sealed task sets; 50 code-read questions' },
+    { title: 'Arms', detail: 'relational arm, search baseline, blind second reading of the questions, facts audit' },
+    { title: 'Verify', detail: 'resolve question disagreements; fairness and leakage audit of the arms' },
+  ],
+}
+
+const B = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const COMMON = `
+Read first, in full: ${B}/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it cannot be done, do the nearest honest thing and list it as a deviation) and ${B}/brief.md (the owner's question and the machine). Research results you may need are rendered in ${B}/research/ (critic.txt, verify.txt, lane-*.txt, and the lane folders with scripts and outputs).
+Layout under ${B}/build/ : facts/ (the extractor and its cache at facts/cache/<sha>/), tasks/ (what arms may read: seeds and questions only), sealed/ (reference answers; ARM BUILDERS MUST NEVER READ OR LIST THIS FOLDER), arms/common, arms/relational, arms/search, arms/reference, results/, audit/.
+Rules:
+- The repo at ${REPO} is READ-ONLY. Never edit, create, stage, commit, stash, check out or add a worktree in it. To read a past commit, export it to a scratch folder under ${B}/build/tmp/ with "git -C ${REPO} archive <sha> | tar -x -C <dir>" and delete the export when done.
+- Install nothing. Tools present: Node 24 (node:sqlite built in), the TypeScript compiler at ${REPO}/technician-app/node_modules/typescript (require it by absolute path), Python 3 at ${PY} (the python on PATH is a stub), git.
+- Bash on this PC: commands over about 8 KB are cut silently, so write long files in pieces; in a heredoc a doubled backslash collapses to one.
+- The frozen commit is main = a31924a3818f4ac94b695906d107c72c912792b2. TUNE = usable task commits before 2026-07-01, HELD-OUT = from that date. Nobody runs anything on HELD-OUT in this phase, and nothing may be tuned on it.
+- Keep CPU load modest: at most three heavy processes at once.
+- Write a short NOTES.md in your folder (what you built, how to run it, numbers, deviations). Your final structured output is data for an orchestrator.`
+
+const SUMMARY = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['done', 'partial', 'blocked'] },
+    what_was_built: { type: 'array', items: { type: 'string' } },
+    key_numbers: { type: 'array', items: { type: 'string' } },
+    deviations_from_protocol: { type: 'array', items: { type: 'string' } },
+    problems: { type: 'array', items: { type: 'string' } },
+    how_to_run: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['status', 'what_was_built', 'key_numbers', 'deviations_from_protocol', 'problems', 'how_to_run'],
+}
+const AUDIT = {
+  type: 'object',
+  properties: {
+    checks: { type: 'array', items: { type: 'object', properties: { what: { type: 'string' }, result: { type: 'string' }, detail: { type: 'string' } }, required: ['what', 'result'] } },
+    defects: { type: 'array', items: { type: 'object', properties: { severity: { type: 'string', enum: ['blocks the test', 'biases a result', 'minor'] }, where: { type: 'string' }, what: { type: 'string' }, fix: { type: 'string' } }, required: ['severity', 'where', 'what'] } },
+    verdict: { type: 'string' },
+  },
+  required: ['checks', 'defects', 'verdict'],
+}
+
+const opus = (label, prompt, schema) => () => agent(prompt, { label, phase: undefined, model: 'opus', effort: 'high', agentType: 'general-purpose', schema })
+
+phase('Facts and tasks')
+const [facts, tasks, q1] = await parallel([
+  opus('facts: shared extractor', `You build the shared FACTS extractor for a test of a repo graph against a relational store.
+${COMMON}
+Your folder: ${B}/build/facts
+Implement protocol section 3. Start from the working prototypes in ${B}/research/schema (py_extract.py, ts_extract.js, join.js, join2.js, docs_extract.js, git_extract.js, patch_jsx.js, fix74.js and their stats) and from the earlier file-level import builder at ${REPO}/docs/program/evidence/harness-bottlenecks/graph/build.js.txt; copy them into your folder and fix every defect listed in protocol section 3 and in ${B}/research/verify.txt under verify-schema-scoring.
+Deliver:
+1. One command, "node build_facts.js <commit-sha> <outdir>", that exports that commit, runs every stage and writes nodes.jsonl and edges.jsonl (one JSON object per line: nodes {id, kind, path, name, line_start, line_end, signature, runtime, slice, is_test, tokens}; edges {src, dst, kind, evidence_path, evidence_line, confidence, attrs}) plus meta.json (commit, counts per node and edge kind, stage timings, extractor version hash). co_changed edges must use only commits that are ancestors of the given commit, with same-PR siblings dropped (state how you detect a PR: merge commits and "(#n)" in subjects), and carry support, confidence and a recency weight.
+2. Every edge class from the protocol, each switchable by kind. Build the ones the prototypes lacked: overrides, inherits, mocks (JS jest.mock and vi.mock; Python string patch targets), contract edges from the import-linter config, constrains edges from CLAUDE.md invariants to their anchors, cites with a status, scheduler registration. Attempt the response-schema-field to client-reader class on the jobs and attendance slices and report its precision on a sample; ship it only as a separately switchable class.
+3. Determinism: build the frozen commit twice and show the outputs are byte-identical.
+4. The cache: build facts for the parent of every non-merge commit on main (git rev-list --no-merges a31924a), skipping parents already built, into facts/cache/<parent-sha>/. Record the time per build. If a stage fails on an old commit (for example the mobile app did not exist yet), degrade that stage to empty and record it in meta.json; never fail the whole build.
+5. A precision sample for each new edge class (20 edges each, checked by reading the code) and the counts per kind at the frozen commit.
+Do not look at ${B}/build/sealed.`, SUMMARY),
+
+  opus('tasks: sealed task sets', `You build the SEALED TASK SETS for a test of a repo graph against a relational store. You are the grader's side: arm builders will never see your reference answers.
+${COMMON}
+Your folder: ${B}/build/tasks for what arms may read, ${B}/build/sealed for reference answers.
+Implement protocol section 4 for T1, T1x, T2, T3, T4 and T5 (not TQ; another agent writes those). Start from the scoring lane's scripts in ${B}/research/scoring (task_pool_commits.py, task_pool.py, doc_chains.py, doc_symbols.py, session_lookups.py, history_stats.py) and its verifier's corrections in ${B}/research/verify.txt (verify-schema-scoring). Run Python with ${PY}.
+Deliver:
+1. tasks/tasks.jsonl: one line per task with id, set, split (tune or heldout), parent commit sha (the commit facts must be built at), and the seed (path, and symbol with line range at the parent where the changed hunk falls inside a definition). Nothing else: no commit message, no reference.
+2. sealed/references.jsonl: per task id, the reference files and the reference definitions (changed hunks from "git diff -U0 parent commit" mapped to their enclosing definition at the parent: Python through ast, TypeScript and JavaScript through the TypeScript compiler API). Exclude files added by the task commit and commits with more than 30 files. Record for each task how many reference items were excluded as unreachable.
+3. For T3: the documented chains (the lifecycle audit follow-ups doc, the open-work handoff doc, the CLAUDE.md invariants), each with the commit to build facts at (the commit before the doc was added) and a flag that the doc itself must be removed from the facts.
+4. sealed/SHA256SUMS over tasks.jsonl and every sealed file, and a tasks/README.md that describes the sets, sizes and split without revealing answers.
+5. A table of set sizes by split, the share of reference items that are tests, cross-runtime, or never co-changed with their seed before, and the list of parent commits (tasks/parents.txt) so the facts cache can be checked for coverage.
+Check your own work: re-derive ten tasks by hand from git and compare.`, SUMMARY),
+
+  opus('questions: write and answer', `You write the TQ question set for a test of a repo graph against a relational store, and its reference answers. The answers must come from reading the code, never from running any graph extractor.
+${COMMON}
+Your folder: ${B}/build/sealed/tq_writer (reference answers) and ${B}/build/tasks (questions only).
+Write 50 structured questions about the repo at the frozen commit (export it to a scratch folder and read it there; the working tree is on a different branch). Use the kinds in protocol section 4 (TQ), about six of each: which tables a named screen or client function ends up writing; which tests reach a named function (separating tests that run the real code from tests that replace it with a fake); which invariants in CLAUDE.md constrain a named file; the other half of a rule (the client file and function that mirror a named server rule, or the reverse); every reader of a named setting; the migrations that touch a named table; every client call site of a named route; what a change to a named service function can reach in each runtime. Choose targets by a rule you state first (for example spread across the 12 slices and the three runtimes, mixing hub targets such as the database session provider and the mobile API client with ordinary ones), not by convenience. Include some whose correct answer is empty or small, and some that need many hops across runtimes.
+For each: the question text; the exact answer as a set of items (file paths, and symbol names with file where the answer is a function, table names, test ids); the evidence (file and line for each item); the number of hops you had to follow; and what a naive search would get wrong.
+Write tasks/tq_questions.jsonl (id, kind, question, the form the answer must take; no answers, no evidence, no hop counts) and sealed/tq_writer/answers.jsonl (everything). Split: ids 1 to 20 tune, 21 to 50 held-out, kinds balanced across the split.`, SUMMARY),
+])
+log(`facts ${facts ? facts.status : 'FAILED'} | tasks ${tasks ? tasks.status : 'FAILED'} | questions ${q1 ? q1.status : 'FAILED'}`)
+
+phase('Arms')
+const [rel, search, q2, factsAudit] = await parallel([
+  opus('arm: relational + reference + harness', `You build the RELATIONAL arm, the plain in-memory REFERENCE arm, the shared packer and tokenizer, and the test harness.
+${COMMON}
+Your folders: ${B}/build/arms/common, ${B}/build/arms/relational, ${B}/build/arms/reference, ${B}/build/results. NEVER read or list ${B}/build/sealed. Read ${B}/build/facts/NOTES.md for the facts format and ${B}/build/tasks/README.md, tasks.jsonl and tq_questions.jsonl for the seeds and questions.
+Implement protocol sections 5 (arms b and d), 6 and the output side of 7:
+1. arms/common: a loader for facts/cache/<sha>; one deterministic tokenizer used by every arm (document the rule and show how it compares with characters divided by four on real outputs); one packer that fills a token budget from a ranked list in the four output forms (paths; path plus signature; path plus line range; snippet), counting headers, cutting the last item at the budget; one answer format (ranked items with kind, path, symbol, line range, hop distance, the edge kinds on the path that reached it, and a list of what lay beyond the cut).
+2. arms/relational: SQLite through node:sqlite with the strong design in the protocol (integer ids, typed node and edge tables, covering indexes both ways, WITHOUT ROWID, ANALYZE, FTS5 over names, signatures and doc text, a co-change table, depth-capped recursive queries with set semantics, a bounded closure table, stored rank columns). Implement as SQL, or SQL plus thin application code, every algorithm in protocol section 6: k-hop with a global limit; per-edge-type budgets (metapaths as chained joins); the three directions; edge-class masks; ranking by traversal order, degree-normalised, personalised PageRank (iterated over SQL rows, restart as a parameter), co-change weight, text-match score and hybrids; hub cuts. Show the query plan has no full scans for the hot queries. Record lines of query code per algorithm.
+3. arms/reference: the same algorithms on plain in-memory adjacency arrays, written independently enough to act as a cross-check. Outputs of relational and reference must be identical for identical parameters: prove it on every TUNE task for a spread of parameter settings, and report any mismatch as a defect.
+4. The harness: run a configuration over a task set and split, write ranked answers per task to results/, and refuse the held-out split unless an explicit flag and a frozen configuration hash are given. A sweep driver for TUNE with a fixed, logged list of configurations (the same list size for every arm). A scorer interface that takes answers and a reference file path as arguments, so that the grader, not you, runs it against the sealed references.
+5. Engine measures on this PC for the relational arm at the frozen commit: load time, bytes on disk, memory, p50 and p95 query latency cold and warm per query class, update time for a one-file change.
+6. For TQ: one query function per question kind (inputs: the named target), expressed in SQL, returning the answer set. Run them on the 20 tune questions and write the answers; do not look for the reference answers.
+Do not choose a best configuration; that happens later, for all arms together.`, SUMMARY),
+
+  opus('arm: search baseline', `You build the SEARCH arm: what coding sessions do today, as a script, plus the two floors every arm must beat.
+${COMMON}
+Your folder: ${B}/build/arms/search. NEVER read or list ${B}/build/sealed. Read ${B}/build/tasks/README.md, tasks.jsonl and tq_questions.jsonl. Another agent is writing arms/common (tokenizer, packer, answer format) at the same time: if it is not there yet, write to the answer format described in protocol sections 5 and 7 (ranked items with kind, path, symbol, line range) and keep a thin adapter so the shared packer can be swapped in.
+Implement protocol section 5 arm (a):
+1. Text search at the task's parent commit (export the commit; search the exported tree with git grep --no-index or a Node scan; never the working tree): round one searches for the seed symbol's name, the seed file's module path and import spellings, and any route strings in the seed; round two repeats from the top hits of round one. Rank hits by match count and by whether the hit is a definition, an import or a call. Variants: one round and two rounds; names only and names plus routes; with and without a BM25 ranking over file text (write BM25 yourself or use SQLite FTS5 through node:sqlite).
+2. Floor DIR: other files in the seed's directory, then the same-named capability folder in the other runtimes. Floor CO: files that changed with the seed in ancestor commits only, ranked by confidence, same-PR siblings dropped.
+3. For TQ: a scripted plain-search answer for each of the 20 tune questions (the names in the question, searched and read as a session would in at most three lookups), written as answer sets.
+4. Count for every answer the lookups used and the tokens returned, so the cost of search is measured the same way as the other arms.
+Be a fair baseline: this arm must be as good as a careful person with grep, not a strawman. State what you tuned and on which split (TUNE only).`, SUMMARY),
+
+  opus('questions: blind second reading', `You are the second, blind reader for a set of 50 structured questions about a codebase. Answer each from the code alone.
+${COMMON}
+Your folder: ${B}/build/sealed/tq_second. Read ONLY ${B}/build/tasks/tq_questions.jsonl for the questions. Do NOT read ${B}/build/sealed/tq_writer or any other reader's answers, and do not run or read any graph extractor or its output (nothing under ${B}/build/facts, ${B}/research/schema or the earlier graph evidence): the point is an independent reading.
+Export the frozen commit to a scratch folder and read the code there. For each question give the exact answer set in the form the question asks for, the evidence (file and line per item), and your confidence. Where a question is ambiguous, say how you read it. Write sealed/tq_second/answers.jsonl.`, SUMMARY),
+
+  opus('audit: facts accuracy', `You audit the shared FACTS extractor before anything is scored with it. Assume it has errors until you have checked.
+${COMMON}
+Your folder: ${B}/build/audit/facts. Read ${B}/build/facts/NOTES.md and the code in ${B}/build/facts.
+Check and report numbers:
+1. Precision and recall per edge kind at the frozen commit, by your own independent method (search and read the code; write your own small resolvers; do not reuse the extractor): at least 25 edges per kind for precision, and for recall take 15 symbols or files per major kind (calls, calls_url, writes_table, reads_setting, overrides, mocks, constrains, cites) and list every true edge you can find.
+2. The same spot check at two old commits (one from June, one from July) to show the extractor works on history, and that facts built at a parent contain nothing from the future: no file, symbol or co-change count that only exists after that commit.
+3. Determinism (two builds byte-identical) and the coverage of the cache against ${B}/build/tasks/parents.txt.
+4. Every defect the earlier verifier listed (${B}/research/verify.txt, verify-schema-scoring): is each one fixed?
+5. Anything that would bias the test toward the graph or toward the relational store (both load these same facts, so look instead for facts that favour one kind of algorithm, and for missing edge classes that the protocol promised).
+Do not read ${B}/build/sealed.`, AUDIT),
+])
+log(`relational ${rel ? rel.status : 'FAILED'} | search ${search ? search.status : 'FAILED'} | second reading ${q2 ? q2.status : 'FAILED'} | facts audit defects ${factsAudit ? factsAudit.defects.length : 'FAILED'}`)
+
+phase('Verify')
+const [q3, armAudit] = await parallel([
+  opus('questions: resolve disagreements', `You resolve disagreements between two independent readers of 50 structured code questions and produce the final reference answers.
+${COMMON}
+Your folder: ${B}/build/sealed. Read ${B}/build/tasks/tq_questions.jsonl, ${B}/build/sealed/tq_writer/answers.jsonl and ${B}/build/sealed/tq_second/answers.jsonl. Do not run or read any graph extractor or its output.
+Compare the two answer sets per question by script (exact match, and item-level agreement). For every item on which they differ, read the code at the frozen commit (export it) and decide, with file and line. Where the question itself was ambiguous, fix the wording in tasks/tq_questions.jsonl (keep the id) and say so, or drop the question and say why. Write sealed/tq_reference.jsonl (final answers with evidence and the hop count), sealed/tq_agreement.txt (how many questions matched exactly before resolution, item-level agreement, the kinds of disagreement), and update sealed/SHA256SUMS. Report the agreement figures: they bound how trustworthy this reference is.`, SUMMARY),
+
+  opus('audit: arms fairness and leakage', `You audit the relational arm, the reference arm, the search baseline and the harness of a test that will compare a repo graph with a relational store. You are a refuter for BOTH sides: find what would be unfair to a graph engine added later, and what would be unfair to the relational store or to plain search.
+${COMMON}
+Your folder: ${B}/build/audit/arms. Read the NOTES.md and code under ${B}/build/arms and ${B}/build/results, and ${B}/build/tasks.
+Check and report:
+1. Leakage: does any arm read ${B}/build/sealed, the task commit itself, the commit message, files added by the task commit, or history after the parent? Search the code for those paths and re-run a few tasks with file access logged.
+2. Held-out discipline: prove the harness refuses the held-out split without the flag, and that no result file for held-out exists.
+3. Equivalence: re-run relational against reference on a sample of TUNE tasks and parameter settings and confirm identical outputs; report any mismatch.
+4. The relational design: are the indexes used (query plans), is recursion written with set semantics and a depth cap, are the algorithms in protocol section 6 all present and correct (check personalised PageRank against a small hand-computed case; check a metapath against a hand-walked example)?
+5. The search baseline: is it as good as a careful person with grep, or a strawman? Try to beat it by hand on five TUNE tasks using only search.
+6. The tokenizer and packer: one rule for every arm, headers counted, cuts at the budget, deterministic.
+7. What a graph engine arm will need from these pieces so that it is tuned as hard as the relational arm (same configuration list size, same packer), and anything in the harness that would handicap it.
+You may read ${B}/build/sealed only to run the scorer on TUNE tasks for check 5, never held-out.`, AUDIT),
+])
+
+return { facts, tasks, q1, rel, search, q2, factsAudit, q3, armAudit }

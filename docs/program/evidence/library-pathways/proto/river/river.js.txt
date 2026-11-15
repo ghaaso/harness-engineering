@@ -1,0 +1,960 @@
+/* River prototype of the map section. Every number is computed here by PathwayEngine from the inlined data. */
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('rv-data').textContent);
+  var E = window.PathwayEngine, C = window.PathwayCore;
+  var MAP = D.map, TABLE = D.params, LIMS = D.lims, CASES = C.unpackCases(D.cases), TX = D.text;
+  var CM = E.compile(MAP);
+  var cur = E.paramsFromTable(TABLE, 'best');
+  var PATH = E.timePath(MAP, cur);
+  var NPER = PATH.periods.length;
+  var REACH = C.paramReach(E, MAP);
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+
+  var STATE = {}, BR = {}, STEP = {}, POL = {}, TIER = {}, PMETA = {}, ATTR = {}, OUTC = {};
+  MAP.states.forEach(function (s, i) { s.i = i; STATE[s.id] = s; });
+  MAP.branches.forEach(function (b, i) { b.i = i; BR[b.id] = b; });
+  MAP.steps.forEach(function (s, i) { s.i = i; STEP[s.id] = s; });
+  MAP.policies.forEach(function (p) { POL[p.id] = p; });
+  MAP.tiers.forEach(function (t) { TIER[t.id] = t; });
+  MAP.parameters.forEach(function (p) { PMETA[p.id] = p; });
+  MAP.attributes.forEach(function (a) { ATTR[a.id] = a; });
+  MAP.outcomes.forEach(function (o) { OUTC[o.id] = o; });
+  var WAYS = MAP.policies.map(function (p) { return p.id; });
+  var WNAME = TX.policy_names, WSHORT = TX.policy_short;
+  var STAGES = MAP.steps.filter(function (s) { return s.id !== 'outcome'; });
+  var DSTEPS = Object.keys(LIMS.steps).map(Number).sort(function (a, b) { return a - b; });
+  var DNAME = function (k) { return LIMS.steps[k]; };
+  var DSHORT = function (k) { return String(LIMS.steps[k]).split(':')[0]; };
+  var FAMNAME = {}; CASES.families.forEach(function (f) { FAMNAME[f.id] = f.name; });
+  var LIM = {}; LIMS.items.forEach(function (it) { LIM[it.id] = it; });
+  var LIMS_AT = {}, ALSO_AT = {}, BROKE_AT = {};
+  DSTEPS.forEach(function (k) {
+    LIMS_AT[k] = LIMS.items.filter(function (it) { return it.main_step === k; });
+    ALSO_AT[k] = LIMS.items.filter(function (it) { return it.main_step !== k && (it.steps || []).indexOf(k) >= 0; });
+    BROKE_AT[k] = CASES.cases.filter(function (c) { return c.steps.some(function (s) { return s.step === k && s.status === 'breaks'; }); });
+  });
+  var DSTEPS_OF_STAGE = {};
+  Object.keys(TX.design_steps).forEach(function (k) { TX.design_steps[k].forEach(function (st) { (DSTEPS_OF_STAGE[st] = DSTEPS_OF_STAGE[st] || []).push(+k); }); });
+  var FLAGNAME = {};
+  MAP.attributes.forEach(function (a) { a.values.forEach(function (v) { Object.keys(v.flags).forEach(function (f) { if (v.flags[f] === 1 && !FLAGNAME[f]) FLAGNAME[f] = a.label + ' is "' + v.label + '"'; }); }); });
+  var DERNAME = {}; MAP.derived.forEach(function (d) { DERNAME[d.id] = d.label; });
+  (MAP.stocks.values || []).forEach(function (v) { DERNAME[v.id] = v.label; });
+
+  // ------------------------------------------------------------------ words of the page
+  var W = {
+    lede: 'Start with 100 pieces of work on the left. Each band carries some of them through the eleven stages, left to right. Its width is how many it carries, and the number on it says so. They end in one of four outcomes on the right. Under each river: what the stages cost.',
+    way_says: 'Picks the river. "All three" stacks the three ways on the same columns, so a difference is a difference in width at one place.',
+    work_says: 'All work mixes every kind of work in its real share. One kind re-runs the river for 100 pieces of that kind only.',
+    period_says: 'The library as it stands at the start of that period (30 days each). It starts empty. Only the library river changes.',
+    attr_says: {
+      kind: 'Visible: an error or a failing check shows the problem. Latent: nothing signals that a choice matters.',
+      need: 'What the cheap model would do with no entry, working as it does today with today’s notes.',
+      held: 'What is stored for this piece. It applies only to the library river.',
+      distractor: 'Whether a misleading entry could come back on top. It applies only to the library river.'
+    },
+    attr_name: { kind: 'Kind of problem', need: 'The cheap model alone would be', held: 'What the library holds', distractor: 'A look-alike can be retrieved' },
+    short_val: { visible: 'Visible', latent: 'Latent', cheap_ok: 'Right', cheap_wrong: 'Wrong', exact: 'The same problem', similar: 'One entry, adapted', composite: 'Several parts', nothing: 'Nothing', yes: 'Yes', no: 'No' }
+  };
+
+  // ------------------------------------------------------------------ number formats
+  function fc(v) {
+    if (v === null || v === undefined || !isFinite(v)) return 'none';
+    if (v === 0) return '0';
+    var a = Math.abs(v);
+    if (a >= 99.95) return v.toFixed(0);
+    if (a >= 1) return v.toFixed(1);
+    if (a >= 0.01) return v.toFixed(2);
+    return v.toPrecision(1);
+  }
+  function fk(v) {
+    if (!isFinite(v)) return 'none';
+    if (v === 0) return '0';
+    var a = Math.abs(v);
+    if (a >= 100) return Math.round(v).toLocaleString('en');
+    if (a >= 1) return v.toFixed(1);
+    if (a >= 0.01) return v.toFixed(2);
+    return v.toPrecision(1);
+  }
+  function fpct(v) { var x = 100 * v; return (x !== 0 && Math.abs(x) < 0.1 ? x.toFixed(2) : x.toFixed(1)) + '%'; }
+  function tag(t) { return '<i class="tag ' + t + '" title="' + esc(t + ': ' + TX.tags[t]) + '">' + t + '</i>'; }
+
+  // ------------------------------------------------------------------ state
+  var ST = {
+    way: 'library', compare: false, scope: 'all',
+    cls: { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'no' },
+    period: NPER, sel: null, route: null, stepIdx: null, sortBy: 'chance', routesWay: 'library', open: {}
+  };
+  function classFor(way) {
+    var c = Object.assign({}, ST.cls), fx = POL[way].fixed || {};
+    Object.keys(fx).forEach(function (k) { c[k] = fx[k]; });
+    return c;
+  }
+  function matches(values, want) { return Object.keys(want).every(function (k) { return values[k] === want[k]; }); }
+  function stocksAt(way) { return way === 'library' ? PATH.periods[ST.period - 1].stocks : {}; }
+
+  // ------------------------------------------------------------------ the engine, per way
+  var DATA = {};
+  function computeWay(way) {
+    var stocks = stocksAt(way);
+    var pol = CM.policies[CM.policyIndex[way]];
+    var r = { way: way, stocks: stocks, sf: {}, bf: {}, carried: {}, unit: {}, varies: {}, stage: {}, check: 0 };
+    MAP.branches.forEach(function (b) { r.carried[b.id] = 0; r.unit[b.id] = null; });
+    var combos = pol.combos;
+    if (ST.scope === 'kind') {
+      var cv = classFor(way);
+      var ec = E.evaluateClass(MAP, cur, way, cv, stocks);
+      r.sum = ec; r.share = ec.chance; r.cv = cv;
+      r.sf = ec.stateFlow; r.bf = ec.branchFlow;
+      combos = combos.filter(function (c) { return matches(c.values, cv); });
+    } else {
+      var ev = E.evaluatePolicy(MAP, cur, way, stocks, { classes: false });
+      r.sum = ev.overall; r.share = 1; r.sf = ev.stateFlow; r.bf = ev.branchFlow;
+    }
+    combos.forEach(function (combo) {
+      var one = E.evaluateClass(MAP, cur, way, combo.values, stocks);
+      var w = ST.scope === 'kind' ? 1 : one.chance;
+      if (!w) return;
+      var bv = C.branchValues(E, MAP, cur, way, combo.values, stocks);
+      MAP.branches.forEach(function (b) {
+        var k = bv[b.id].cost;
+        r.carried[b.id] += w * one.branchFlow[b.id] * k;
+        if (r.unit[b.id] === null) r.unit[b.id] = k;
+        else if (Math.abs(r.unit[b.id] - k) > 1e-12) r.varies[b.id] = true;
+      });
+    });
+    STAGES.forEach(function (s) { r.stage[s.id] = { total: 0 }; MAP.tiers.forEach(function (t) { r.stage[s.id][t.id] = 0; }); });
+    var tot = 0;
+    MAP.branches.forEach(function (b) {
+      var v = 100 * r.carried[b.id];
+      tot += r.carried[b.id];
+      if (b.tier && v) { var s = r.stage[STATE[b.from].step]; s[b.tier] += v; s.total += v; }
+    });
+    r.check = Math.abs(tot - r.sum.cost);
+    if (r.check > 1e-9 && window.console) console.warn('cost by branch differs from the engine cost under ' + way + ': ' + r.check);
+    r.reach = reachFrom(POL[way].start);
+    return r;
+  }
+  function reachFrom(start) {
+    var seen = {}; seen[start] = true; var q = [start];
+    while (q.length) { var s = q.shift(); MAP.branches.forEach(function (b) { if (b.from === s && !seen[b.to]) { seen[b.to] = true; q.push(b.to); } }); }
+    return seen;
+  }
+  function computeAll() { WAYS.forEach(function (w) { DATA[w] = computeWay(w); }); }
+
+  // Scope of one class, as the engine builds it (for the plain reasons a branch is empty).
+  function scopeOf(way, values, stocks) {
+    var prep = E.prepareParams(CM, cur);
+    var pol = CM.policies[CM.policyIndex[way]];
+    var combo = pol.combos.filter(function (c) { return matches(c.values, values); })[0];
+    var s = Object.assign({}, prep.values);
+    CM.stockIds.forEach(function (id) { s[id] = stocks && typeof stocks[id] === 'number' ? stocks[id] : 0; });
+    CM.stockValues.forEach(function (v) { s[v.id] = v.fn(s); });
+    Object.assign(s, pol.flags, combo.flags);
+    CM.derived.forEach(function (d) { s[d.id] = d.fn(s); });
+    return s;
+  }
+  function idName(id, v) {
+    if (id === 'capture') return v === 0 ? 'this way writes nothing to a library' : 'this way writes to the library';
+    if (FLAGNAME[id]) return v === 0 ? 'it is not the case that ' + FLAGNAME[id].charAt(0).toLowerCase() + FLAGNAME[id].slice(1) : FLAGNAME[id];
+    if (DERNAME[id]) return DERNAME[id].charAt(0).toLowerCase() + DERNAME[id].slice(1) + ' is ' + fpct(v);
+    if (PMETA[id]) return PMETA[id].name.charAt(0).toLowerCase() + PMETA[id].name.slice(1) + ' is ' + (v <= 1 ? fpct(v) : fk(v));
+    return id + ' is ' + v;
+  }
+  function whyBranch(way, bid) {
+    var d = DATA[way], b = BR[bid];
+    if (d.bf[bid] > 0) return null;
+    if (!(d.sf[b.from] > 0)) return 'Nothing reaches “' + STATE[b.from].label + '” under this choice.';
+    var cb = CM.branches[CM.branchIndex[bid]];
+    var pol = CM.policies[CM.policyIndex[way]];
+    var combos = ST.scope === 'kind' ? [d.cv] : pol.combos.map(function (c) { return c.values; });
+    var found = null;
+    combos.forEach(function (vals) {
+      var s = scopeOf(way, vals, d.stocks);
+      var z = cb.chance.ids.filter(function (id) { return s[id] === 0 || (s[id] === 1 && new RegExp('1\\s*-\\s*' + id + '\\b').test(cb.chance.src)); });
+      var names = z.map(function (id) { return idName(id, s[id]); });
+      if (found === null) found = names; else found = found.filter(function (n) { return names.indexOf(n) >= 0; });
+    });
+    var head = 'Work reaches “' + STATE[b.from].label + '”, but this branch has no chance here.';
+    return head + (found && found.length ? ' Reason: ' + found.join('; ') + '.' : '') + ' Its chance is <code>' + esc(cb.chance.src) + '</code>.';
+  }
+  function whyState(way, sid) {
+    var d = DATA[way];
+    if (d.sf[sid] > 0) return null;
+    if (!d.reach[sid]) return WNAME[way] + ' starts at “' + STATE[POL[way].start].label + '”. Work in this way never passes here.';
+    var ins = MAP.branches.filter(function (b) { return b.to === sid; });
+    return 'Every branch into it carries nothing under this choice: ' + ins.map(function (b) { return '“' + b.label + '” from “' + STATE[b.from].label + '”'; }).join('; ') + '. Open one of them for its reason.';
+  }
+
+  // ------------------------------------------------------------------ text measuring
+  var FONT = getComputedStyle(document.body).fontFamily || 'Segoe UI, system-ui, sans-serif';
+  var CAN = document.createElement('canvas').getContext('2d');
+  function tw(s, f) { CAN.font = f; return CAN.measureText(s).width; }
+  var FS = 13, LH = 16;
+  var F_REG = FS + 'px ' + FONT, F_BOLD = '700 ' + FS + 'px ' + FONT;
+  function wrapText(str, w1, w) {
+    var words = String(str).split(/\s+/), lines = [], line = '', lim = w1;
+    words.forEach(function (wd) {
+      var t = line ? line + ' ' + wd : wd;
+      if (line && tw(t, F_REG) > lim) { lines.push(line); line = wd; lim = w; } else line = t;
+    });
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  // ------------------------------------------------------------------ columns: stage, then order inside a stage
+  var COLS = [], COL_OF = {}, STAGE_COLS = {};
+  (function () {
+    var local = {}; MAP.states.forEach(function (s) { local[s.id] = 0; });
+    for (var it = 0; it < 50; it++) {
+      MAP.branches.forEach(function (b) {
+        if (STATE[b.from].step === STATE[b.to].step) local[b.to] = Math.max(local[b.to], local[b.from] + 1);
+      });
+    }
+    var keys = {};
+    MAP.states.forEach(function (s) { keys[STEP[s.step].i + ':' + local[s.id]] = [STEP[s.step].i, local[s.id], s.step]; });
+    COLS = Object.keys(keys).map(function (k) { return keys[k]; }).sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; }).map(function (k) { return { stage: k[2], local: k[1] }; });
+    MAP.states.forEach(function (s) { COL_OF[s.id] = COLS.findIndex(function (c) { return c.stage === s.step && c.local === local[s.id]; }); });
+    COLS.forEach(function (c, i) { var r = STAGE_COLS[c.stage] = STAGE_COLS[c.stage] || [i, i]; r[0] = Math.min(r[0], i); r[1] = Math.max(r[1], i); });
+  })();
+  var NC = COLS.length;
+
+  // ------------------------------------------------------------------ layout of the river (shared by the three ways)
+  var BW = 10, OBW = 18, MINB = 6, MIND = 2;
+  function maxFlows() {
+    var fs = {}, fb = {};
+    MAP.states.forEach(function (s) { fs[s.id] = Math.max.apply(null, WAYS.map(function (w) { return 100 * DATA[w].sf[s.id]; })); });
+    MAP.branches.forEach(function (b) { fb[b.id] = Math.max.apply(null, WAYS.map(function (w) { return 100 * DATA[w].bf[b.id]; })); });
+    return { fs: fs, fb: fb };
+  }
+  function layout(Wd, targetH, labels) {
+    var mf = maxFlows();
+    var outW = Math.max(150, Math.min(210, Wd * 0.12));
+    var cw = (Wd - outW) / (NC - 1);
+    var colX = function (c) { return c < NC - 1 ? c * cw : Wd - outW; };
+    var cntW = tw('00.00 ', F_BOLD);
+    var nodes = {}, cols = []; for (var c = 0; c < NC; c++) cols.push([]);
+    MAP.states.forEach(function (s) {
+      var c = COL_OF[s.id], out = !!s.outcome;
+      var avail = out ? outW - OBW - 10 : cw - 8;
+      var lines = labels ? wrapText(s.label, avail - cntW, avail) : [];
+      var n = { t: 'n', id: s.id, col: c, out: out, lines: lines, x: colX(c), f: mf.fs[s.id], ord: s.i };
+      n.labelH = out ? 0 : (labels ? lines.length * LH + 4 : LH + 2);
+      nodes[s.id] = n; cols[c].push(n);
+    });
+    var dums = {};
+    MAP.branches.forEach(function (b) {
+      var a = COL_OF[b.from], z = COL_OF[b.to];
+      dums[b.id] = [];
+      for (var c = a + 1; c < z; c++) { var d = { t: 'd', br: b.id, col: c, x: colX(c), f: mf.fb[b.id] }; dums[b.id].push(d); cols[c].push(d); }
+    });
+    // vertical scale: pieces of work to pixels, so the tallest column fits the target height
+    var GN = 10, GD = 3;
+    function fixedOf(items) {
+      return items.reduce(function (a, it) {
+        if (it.t === 'd') return a + (it.f > 0 ? 0 : MIND) + GD;
+        if (it.out) return a + GN + Math.max(0, (labels ? 2 : 1) * LH - 0);
+        return a + it.labelH + (it.f > 0 ? 0 : MINB) + GN;
+      }, 0);
+    }
+    var k = 6;
+    cols.forEach(function (items) {
+      var fl = items.reduce(function (a, it) { return a + it.f; }, 0);
+      if (fl > 0) k = Math.min(k, (targetH - fixedOf(items)) / fl);
+    });
+    k = Math.max(labels ? 1.6 : 1.1, k);
+    function hOf(it) {
+      if (it.t === 'd') return Math.max(MIND, k * it.f);
+      var area = Math.max(MINB, k * it.f);
+      it.area = area;
+      if (it.out) return Math.max(area, (labels ? 2 : 1) * LH + 2);
+      return it.labelH + area;
+    }
+    function centerOf(it) { return it.t === 'd' ? it.y + it.h / 2 : (it.out ? it.y + it.area / 2 : it.y + it.labelH + it.area / 2); }
+    // first pass: nodes only, in map order
+    cols.forEach(function (items) {
+      var y = 0;
+      items.filter(function (it) { return it.t === 'n'; }).forEach(function (n) { n.h = hOf(n); n.y = y; y += n.h + GN; });
+    });
+    for (var pass = 0; pass < 5; pass++) {
+      MAP.branches.forEach(function (b) {
+        var ds = dums[b.id]; if (!ds.length) return;
+        var A = nodes[b.from], Z = nodes[b.to], ya = centerOf(A), yz = centerOf(Z);
+        ds.forEach(function (d) { var t = (d.col - A.col) / (Z.col - A.col); d.est = ya + (yz - ya) * t; });
+      });
+      cols.forEach(function (items) {
+        var ns = items.filter(function (it) { return it.t === 'n'; }).sort(function (a, b) { return a.ord - b.ord; });
+        var ds = items.filter(function (it) { return it.t === 'd'; }).sort(function (a, b) { return a.est - b.est || BR[a.br].i - BR[b.br].i; });
+        var seq = [], j = 0;
+        ns.forEach(function (n) {
+          var nc = centerOf(n);
+          while (j < ds.length && ds[j].est < nc) { seq.push(ds[j]); j++; }
+          seq.push(n);
+        });
+        while (j < ds.length) { seq.push(ds[j]); j++; }
+        var y = 0;
+        seq.forEach(function (it, i) {
+          it.h = hOf(it);
+          var prev = seq[i - 1];
+          if (prev) y += (prev.t === 'n' || it.t === 'n') ? GN : GD;
+          it.y = y; y += it.h;
+        });
+        items.order = seq; items.H = y;
+      });
+    }
+    var H = Math.max.apply(null, cols.map(function (it) { return it.H || 0; })) + 6;
+    return { W: Wd, H: H, k: k, cw: cw, outW: outW, colX: colX, nodes: nodes, dums: dums, cols: cols, labels: labels, centerOf: centerOf };
+  }
+
+  // Band geometry for one way on the shared layout: each band's top edge at every point, and its thickness.
+  function bands(L, way) {
+    var d = DATA[way], k = L.k, geo = {};
+    function refOut(b) { var ds = L.dums[b.id]; return ds.length ? ds[0].y + ds[0].h / 2 : L.centerOf(L.nodes[b.to]); }
+    function refIn(b) { var ds = L.dums[b.id]; return ds.length ? ds[ds.length - 1].y + ds[ds.length - 1].h / 2 : L.centerOf(L.nodes[b.from]); }
+    var outs = {}, ins = {};
+    MAP.branches.forEach(function (b) { (outs[b.from] = outs[b.from] || []).push(b); (ins[b.to] = ins[b.to] || []).push(b); });
+    var srcY = {}, tgtY = {};
+    Object.keys(outs).forEach(function (sid) {
+      var n = L.nodes[sid], top = n.out ? n.y : n.y + n.labelH, off = 0;
+      outs[sid].slice().sort(function (a, b) { return refOut(a) - refOut(b) || a.i - b.i; }).forEach(function (b) { srcY[b.id] = top + off; off += k * 100 * d.bf[b.id]; });
+    });
+    Object.keys(ins).forEach(function (sid) {
+      var n = L.nodes[sid], top = n.out ? n.y : n.y + n.labelH, off = 0;
+      ins[sid].slice().sort(function (a, b) { return refIn(a) - refIn(b) || a.i - b.i; }).forEach(function (b) { tgtY[b.id] = top + off; off += k * 100 * d.bf[b.id]; });
+    });
+    MAP.branches.forEach(function (b) {
+      var v = 100 * d.bf[b.id], th = k * v;
+      var A = L.nodes[b.from], Z = L.nodes[b.to];
+      var pts = [{ xL: A.x + BW, xR: A.x + BW, y: srcY[b.id] }];
+      L.dums[b.id].forEach(function (dm) { var y = dm.y + dm.h / 2 - th / 2; pts.push({ xL: dm.x, xR: dm.x + BW, y: y, dum: dm }); });
+      pts.push({ xL: Z.x, xR: Z.x, y: tgtY[b.id] });
+      geo[b.id] = { th: th, v: v, pts: pts };
+    });
+    return geo;
+  }
+  function bandPath(g, th) {
+    var p = g.pts, d = 'M' + p[0].xR.toFixed(1) + ',' + p[0].y.toFixed(2), i, a, b, mx;
+    for (i = 1; i < p.length; i++) {
+      a = p[i - 1]; b = p[i]; mx = (a.xR + b.xL) / 2;
+      d += 'C' + mx.toFixed(1) + ',' + a.y.toFixed(2) + ' ' + mx.toFixed(1) + ',' + b.y.toFixed(2) + ' ' + b.xL.toFixed(1) + ',' + b.y.toFixed(2);
+      if (b.xR > b.xL) d += 'L' + b.xR.toFixed(1) + ',' + b.y.toFixed(2);
+    }
+    if (th <= 0) return d;
+    var l = p[p.length - 1];
+    d += 'L' + l.xR.toFixed(1) + ',' + (l.y + th).toFixed(2);
+    for (i = p.length - 1; i > 0; i--) {
+      a = p[i]; b = p[i - 1]; mx = (a.xL + b.xR) / 2;
+      if (a.xR > a.xL) d += 'L' + a.xL.toFixed(1) + ',' + (a.y + th).toFixed(2);
+      d += 'C' + mx.toFixed(1) + ',' + (a.y + th).toFixed(2) + ' ' + mx.toFixed(1) + ',' + (b.y + th).toFixed(2) + ' ' + b.xR.toFixed(1) + ',' + (b.y + th).toFixed(2);
+    }
+    return d + 'Z';
+  }
+  function centerPath(g) {
+    var h = g.th / 2;
+    return bandPath({ pts: g.pts.map(function (p) { return { xL: p.xL, xR: p.xR, y: p.y + h }; }) }, 0);
+  }
+
+  // ------------------------------------------------------------------ shared SVG patterns (one visual language)
+  (function () {
+    var s = '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>' +
+      '<pattern id="pt-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" class="pt-bg"/><rect width="2.2" height="6" class="pt-fg-bad"/></pattern>' +
+      '<pattern id="pt-dots" width="5" height="5" patternUnits="userSpaceOnUse"><rect width="5" height="5" class="pt-bg"/><circle cx="2.5" cy="2.5" r="1.3" class="pt-fg-bad"/></pattern>' +
+      '<pattern id="pt-stripe" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="5" height="5" class="pt-bg"/><rect width="1.8" height="5" class="pt-fg"/></pattern>' +
+      '<pattern id="pt-cross" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" class="pt-fg"/><path d="M0 0L6 6M6 0L0 6" class="pt-x"/></pattern>' +
+      '</defs></svg>';
+    document.body.insertAdjacentHTML('afterbegin', s);
+  })();
+  var OUT_FILL = { EQUAL: 'o-right', ESCAPED_FOUND: 'o-found', ESCAPED_SILENT: 'o-silent', UNRESOLVED: 'o-unres' };
+  var TIER_FILL = { cheap: 't-cheap', opus: 't-opus', fable: 't-fable' };
+
+  // ------------------------------------------------------------------ one river as SVG
+  function riverSvg(L, way, opts) {
+    var d = DATA[way], geo = bands(L, way), k = L.k;
+    var sel = ST.sel, route = opts.route;
+    var hiB = {}, hiS = {};
+    if (sel && sel.t === 'state') { hiS[sel.id] = 1; MAP.branches.forEach(function (b) { if (b.from === sel.id || b.to === sel.id) hiB[b.id] = 1; }); }
+    if (sel && sel.t === 'branch') { hiB[sel.id] = 1; hiS[BR[sel.id].from] = 1; hiS[BR[sel.id].to] = 1; }
+    if (sel && sel.t === 'step') { (TX.design_steps[sel.id] || []).forEach(function (stg) { MAP.states.forEach(function (s) { if (s.step === stg) hiS[s.id] = 1; }); MAP.branches.forEach(function (b) { if (STATE[b.from].step === stg) hiB[b.id] = 1; }); }); }
+    var anyHi = Object.keys(hiB).length + Object.keys(hiS).length > 0 && !(sel && sel.t === 'step');
+    var dimAll = !!route || anyHi;
+    var s = '<svg class="rvsvg" width="' + L.W + '" height="' + L.H + '" viewBox="0 0 ' + L.W + ' ' + L.H + '" role="group" aria-label="' + esc('River for ' + WNAME[way]) + '">';
+    // column guides for the stages a selected design step covers
+    if (sel && sel.t === 'step') {
+      (TX.design_steps[sel.id] || []).forEach(function (stg) {
+        var r = STAGE_COLS[stg]; if (!r) return;
+        var x0 = L.colX(r[0]) - 6, x1 = (r[1] + 1 < NC ? L.colX(r[1] + 1) : L.W) - 6;
+        s += '<rect class="stepcol" x="' + x0 + '" y="0" width="' + (x1 - x0) + '" height="' + L.H + '"/>';
+      });
+    }
+    // bands
+    s += '<g class="bands">';
+    MAP.branches.forEach(function (b) {
+      var g = geo[b.id], cls = 'band' + (g.v > 0 ? '' : ' zero') + (hiB[b.id] ? ' hi' : (dimAll ? ' dim' : ''));
+      var lab = b.label + ': ' + fc(g.v) + ' of 100, from “' + STATE[b.from].label + '” to “' + STATE[b.to].label + '”';
+      var dd = g.v > 0 ? bandPath(g, Math.max(g.th, 0.8)) : centerPath(g);
+      s += '<path class="' + cls + '" d="' + dd + '" data-br="' + b.id + '" data-way="' + way + '" tabindex="0" role="button" aria-label="' + esc(lab) + '"/>';
+    });
+    s += '</g>';
+    // the selected route as a thread inside the river
+    if (route) {
+      var upto = ST.stepIdx === null ? route.branches.length - 1 : ST.stepIdx;
+      var tv = 100 * route.chance, th = Math.max(2.5, k * tv);
+      s += '<g class="thread" aria-hidden="true">';
+      route.branches.forEach(function (bid, i) {
+        if (i > upto) return;
+        var g = geo[bid]; if (!g) return;
+        var gg = { pts: g.pts };
+        s += '<path class="thr' + (i === upto && ST.stepIdx !== null ? ' now' : '') + '" d="' + bandPath(gg, Math.min(th, Math.max(g.th, 2.5))) + '"/>';
+      });
+      s += '</g>';
+    }
+    // states
+    var obst = [], counts = [], inline = {};
+    s += '<g class="nodes">';
+    MAP.states.forEach(function (st) {
+      var n = L.nodes[st.id], v = 100 * d.sf[st.id], zero = !(v > 0);
+      var top = n.out ? n.y : n.y + n.labelH, bh = Math.max(zero ? MINB : 1.2, k * v);
+      var cls = 'node' + (zero ? ' zero' : '') + (hiS[st.id] ? ' hi' : (dimAll && !route ? ' dim' : '')) + (n.out ? ' out' : '');
+      var start = POL[way].start === st.id;
+      var lab = st.label + ': ' + fc(v) + ' of 100' + (zero ? ', no work here under this choice' : '') + (start ? ', where this way starts' : '');
+      s += '<g class="' + cls + '" data-st="' + st.id + '" data-way="' + way + '" tabindex="0" role="button" aria-label="' + esc(lab) + '">';
+      if (n.out) {
+        s += '<rect class="blk ' + OUT_FILL[st.id] + (zero ? ' empty' : '') + '" x="' + n.x + '" y="' + top + '" width="' + OBW + '" height="' + bh.toFixed(2) + '"/>';
+        var lx = n.x + OBW + 6, ly = top + Math.min(bh, 40) / 2 - (L.labels ? LH / 2 : 0) + 4;
+        ly = Math.max(top + 12, ly);
+        s += '<text class="olab" x="' + lx + '" y="' + ly.toFixed(1) + '"><tspan class="cnt">' + fc(v) + '</tspan>' + (L.labels ? '' : ' ' + esc(OUTC[st.id].label)) + '</text>';
+        if (L.labels) s += '<text class="olab sub" x="' + lx + '" y="' + (ly + LH).toFixed(1) + '">' + esc(st.label) + '</text>';
+        obst.push({ x: lx - 2, y: ly - 13, w: L.outW - OBW - 6, h: L.labels ? 2 * LH + 2 : LH + 2 });
+      } else {
+        s += '<rect class="blk' + (zero ? ' empty' : '') + '" x="' + n.x + '" y="' + top.toFixed(2) + '" width="' + BW + '" height="' + bh.toFixed(2) + '"/>';
+        if (start) s += '<path class="startmark" d="M' + (n.x - 9) + ',' + (top + 1) + 'l7,5l-7,5z"/>';
+        var ty = n.y + 13;
+        if (L.labels) {
+          n.lines.forEach(function (ln, j) {
+            s += '<text class="nlab" x="' + n.x + '" y="' + (ty + j * LH) + '">' + (j === 0 ? '<tspan class="cnt">' + fc(v) + '</tspan> ' : '') + esc(ln) + '</text>';
+          });
+          var mw = Math.max.apply(null, n.lines.map(function (ln, j) { return tw(ln, F_REG) + (j === 0 ? tw(fc(v) + ' ', F_BOLD) : 0); }));
+          obst.push({ x: n.x - 1, y: n.y, w: mw + 4, h: n.lines.length * LH + 2 });
+        } else {
+          s += '<text class="nlab" x="' + n.x + '" y="' + ty + '"><tspan class="cnt">' + fc(v) + '</tspan></text>';
+          obst.push({ x: n.x - 1, y: n.y, w: tw(fc(v), F_BOLD) + 4, h: LH });
+        }
+      }
+      s += '</g>';
+      obst.push({ x: n.x - 2, y: top - 1, w: (n.out ? OBW : BW) + 4, h: bh + 2 });
+    });
+    s += '</g>';
+    // labels along long transit runs, then a count on every band that carries work
+    var lab = '<g class="blabs" aria-hidden="true">';
+    function free(r) { for (var i = 0; i < obst.length; i++) { var o = obst[i]; if (r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y) return false; } return r.x >= 0 && r.x + r.w <= L.W && r.y >= 0 && r.y + r.h <= L.H; }
+    var order = MAP.branches.slice().sort(function (a, b) { return geo[b.id].v - geo[a.id].v; });
+    order.forEach(function (b) {
+      var g = geo[b.id]; if (!(g.v > 0)) return;
+      var ds = g.pts.filter(function (p) { return p.dum; });
+      if (ds.length >= 2) {
+        var x0 = ds[0].xL + 6, x1 = ds[ds.length - 1].xR - 4, txt = b.label, cnt = fc(g.v);
+        var wtxt = tw(cnt + '  ', F_BOLD) + tw(txt, F_REG);
+        var flat = ds.every(function (p) { return Math.abs(p.y - ds[0].y) < 0.5; });
+        if (flat && wtxt < x1 - x0) {
+          var inside = g.th >= 15;
+          var y = inside ? ds[0].y + g.th / 2 + 4.5 : ds[0].y - 4;
+          var r = { x: x0 - 2, y: y - 13, w: wtxt + 4, h: 16 };
+          if (inside || free(r)) {
+            lab += '<text class="tlab' + (inside ? ' in' : '') + '" x="' + x0 + '" y="' + y.toFixed(1) + '"><tspan class="cnt">' + cnt + '</tspan>  ' + esc(txt) + '</text>';
+            if (!inside) obst.push(r);
+            inline[b.id] = 1;
+          }
+        }
+      }
+    });
+    order.forEach(function (b) {
+      var g = geo[b.id]; if (!(g.v > 0) || inline[b.id]) return;
+      var cnt = fc(g.v), w = tw(cnt, F_BOLD) + 6, p0 = g.pts[0], pl = g.pts[g.pts.length - 1], cy;
+      var cands = [];
+      cy = p0.y + g.th / 2; cands.push({ x: p0.xR + 3, y: cy - 8, ax: p0.xR, ay: cy });
+      cy = pl.y + g.th / 2; cands.push({ x: pl.xL - 3 - w, y: cy - 8, ax: pl.xL, ay: cy });
+      g.pts.forEach(function (p) { if (p.dum) { var c2 = p.y + g.th / 2; cands.push({ x: p.xR + 3, y: c2 - 8, ax: p.xR, ay: c2 }); } });
+      var mid = g.pts[1] ? { x: (p0.xR + g.pts[1].xL) / 2 - w / 2, y: (p0.y + g.pts[1].y) / 2 + g.th / 2 - 8 } : null;
+      if (mid) cands.push({ x: mid.x, y: mid.y, ax: mid.x + w / 2, ay: mid.y + 8 });
+      var pick = null;
+      for (var i = 0; i < cands.length && !pick; i++) { var r = { x: cands[i].x, y: cands[i].y, w: w, h: 16 }; if (free(r)) pick = cands[i]; }
+      for (var j = 1; j <= 8 && !pick; j++) {
+        [1, -1].forEach(function (sg) {
+          if (pick) return;
+          cands.slice(0, 2).forEach(function (c0) {
+            if (pick) return;
+            var r = { x: c0.x + (c0 === cands[0] ? 4 : -4), y: c0.y + sg * j * 15, w: w, h: 16 };
+            if (free(r)) pick = { x: r.x, y: r.y, ax: c0.ax, ay: c0.ay, lead: true };
+          });
+        });
+      }
+      if (!pick) pick = { x: cands[0].x, y: cands[0].y, ax: cands[0].ax, ay: cands[0].ay };
+      obst.push({ x: pick.x, y: pick.y, w: w, h: 16 });
+      if (pick.lead) lab += '<line class="lead" x1="' + pick.ax.toFixed(1) + '" y1="' + pick.ay.toFixed(1) + '" x2="' + (pick.x + (pick.x > pick.ax ? 0 : w)).toFixed(1) + '" y2="' + (pick.y + 8).toFixed(1) + '"/>';
+      lab += '<text class="bcnt' + (hiB[b.id] ? ' hi' : '') + '" x="' + (pick.x + 3).toFixed(1) + '" y="' + (pick.y + 12.5).toFixed(1) + '" data-br="' + b.id + '">' + cnt + '</text>';
+    });
+    lab += '</g>';
+    s += lab;
+    // where the selected route is now
+    if (route && ST.stepIdx !== null) {
+      var gb = geo[route.branches[ST.stepIdx]];
+      if (gb) { var pe = gb.pts[gb.pts.length - 1]; s += '<circle class="nowdot" cx="' + pe.xL + '" cy="' + (pe.y + Math.max(gb.th, 2) / 2) + '" r="6"/>'; }
+    }
+    return s + '</svg>';
+  }
+
+  // ------------------------------------------------------------------ axis: the eleven stages and the ten design steps
+  function axisHtml(L) {
+    var h = '<div class="axis" style="width:' + L.W + 'px">';
+    var hs = '<div class="stages" style="height:44px">';
+    MAP.steps.forEach(function (stg) {
+      var r = STAGE_COLS[stg.id]; if (!r) return;
+      var x0 = L.colX(r[0]), x1 = r[1] + 1 < NC ? L.colX(r[1] + 1) : L.W;
+      if (stg.id === 'outcome') x1 = L.W;
+      hs += '<div class="stg" style="left:' + x0 + 'px;width:' + (x1 - x0 - 6) + 'px"><span>' + esc(stg.id === 'outcome' ? 'Where they end' : stg.label) + '</span></div>';
+    });
+    hs += '</div>';
+    // design steps: a pill over the stages each step covers; steps that share a stage stack
+    var pills = [], rows = [];
+    DSTEPS.forEach(function (k) {
+      var cols = (TX.design_steps[k] || []).map(function (st) { return STAGE_COLS[st]; }).filter(Boolean).sort(function (a, b) { return a[0] - b[0]; });
+      var runs = [];
+      cols.forEach(function (r) { var l = runs[runs.length - 1]; if (l && r[0] === l[1] + 1) l[1] = r[1]; else runs.push([r[0], r[1]]); });
+      runs.forEach(function (run, ri) { pills.push({ k: k, a: run[0], z: run[1], part: runs.length > 1 ? ri + 1 : 0, of: runs.length }); });
+    });
+    pills.forEach(function (p) {
+      var row = 0; while ((rows[row] || []).some(function (q) { return !(p.z < q.a || p.a > q.z); })) row++;
+      (rows[row] = rows[row] || []).push(p); p.row = row;
+    });
+    var PH = 52;
+    var hp = '<div class="dsteps" style="height:' + (rows.length * (PH + 4)) + 'px">';
+    pills.forEach(function (p) {
+      var x0 = L.colX(p.a), x1 = p.z + 1 < NC ? L.colX(p.z + 1) : L.W;
+      var on = ST.sel && ST.sel.t === 'step' && String(ST.sel.id) === String(p.k);
+      var nl = LIMS_AT[p.k].length, nb = BROKE_AT[p.k].length;
+      var name = 'Step ' + p.k + ' · ' + DSHORT(p.k);
+      hp += '<button type="button" class="pill' + (on ? ' on' : '') + '" data-step="' + p.k + '" style="left:' + x0 + 'px;top:' + (p.row * (PH + 4)) + 'px;width:' + (x1 - x0 - 6) + 'px;height:' + PH + 'px" aria-pressed="' + on + '" aria-label="' + esc('Design step ' + p.k + ', ' + DNAME(p.k) + ': ' + nl + ' limitations placed here, ' + nb + ' of ' + CASES.cases.length + ' real cases broke here') + '">' +
+        '<span class="pn">' + esc(name) + (p.of > 1 ? '<small> (part ' + p.part + ' of ' + p.of + ')</small>' : '') + '</span>' +
+        '<span class="pc"><span class="ic lim" aria-hidden="true"></span>' + nl + '<span class="ic brk" aria-hidden="true"></span>' + nb + '</span></button>';
+    });
+    hp += '</div>';
+    return h + hs + hp + '</div>';
+  }
+
+  // ------------------------------------------------------------------ cost strip under one river
+  function costSvg(L, way, maxStage) {
+    var d = DATA[way], H = 78, top = 22, bh = 44;
+    var s = '<svg class="costsvg" width="' + L.W + '" height="' + H + '" viewBox="0 0 ' + L.W + ' ' + H + '" role="img" aria-label="' + esc('Cost by stage for ' + WNAME[way]) + '">';
+    s += '<text class="ctitle" x="0" y="13">Cost of each stage for these 100 pieces, in cheap-call equivalents</text>';
+    STAGES.forEach(function (stg) {
+      var r = STAGE_COLS[stg.id]; if (!r) return;
+      var x0 = L.colX(r[0]), x1 = r[1] + 1 < NC ? L.colX(r[1] + 1) : L.W;
+      var c = d.stage[stg.id], bw = Math.min(34, (x1 - x0) * 0.4), y = top + bh;
+      var bx = x0;
+      ['cheap', 'opus', 'fable'].forEach(function (t) {
+        var v = c[t]; if (!(v > 0)) return;
+        var hh = Math.max(1.5, bh * v / maxStage);
+        y -= hh;
+        s += '<rect class="' + TIER_FILL[t] + '" x="' + bx + '" y="' + y.toFixed(1) + '" width="' + bw + '" height="' + hh.toFixed(1) + '"><title>' + esc(TIER[t].label + ': ' + fk(v)) + '</title></rect>';
+      });
+      s += '<line class="cbase" x1="' + bx + '" x2="' + (bx + bw) + '" y1="' + (top + bh) + '" y2="' + (top + bh) + '"/>';
+      s += '<text class="cval' + (c.total > 0 ? '' : ' z') + '" x="' + (bx + bw + 5) + '" y="' + (top + bh - 2) + '">' + fk(c.total) + '</text>';
+    });
+    var ox = L.colX(NC - 1), ct = d.sum.costByTier;
+    s += '<text class="ctot" x="' + ox + '" y="' + (top + 12) + '"><tspan class="cnt">' + fk(100 * d.sum.cost) + '</tspan> in all</text>';
+    s += '<text class="csub" x="' + ox + '" y="' + (top + 28) + '">' + ['cheap', 'opus', 'fable'].map(function (t) { return (t === 'cheap' ? 'cheap ' : t === 'opus' ? 'Opus ' : 'Fable ') + fk(100 * ct[t]); }).join(' · ') + '</text>';
+    s += '<text class="csub" x="' + ox + '" y="' + (top + 44) + '">' + fk(d.sum.cost) + ' per piece</text>';
+    return s + '</svg>';
+  }
+
+  // ------------------------------------------------------------------ the library's stock, and the link with no lookup
+  function stockSvg(L) {
+    var row = PATH.periods[ST.period - 1], H = 116;
+    var lk = (MAP.links || [])[0];
+    var colOfStage = function (stg) { var r = STAGE_COLS[stg]; return r ? L.colX(r[0]) : 0; };
+    var capX = colOfStage('L10'), gateX = colOfStage(lk ? lk.to_step : 'L6'), lookX = colOfStage('L2');
+    var bx = capX - 20, bw = 168, by = 34, bhh = 54;
+    var s = '<svg class="stocksvg" width="' + L.W + '" height="' + H + '" viewBox="0 0 ' + L.W + ' ' + H + '" role="group" aria-label="The library stock and the checks promoted into the shared tests">';
+    s += '<text class="ctitle" x="0" y="13">The library at the start of period ' + ST.period + ' of ' + NPER + '. What is written at capture feeds back into the lookup.</text>';
+    var good = row.stocks.E_good, bad = row.stocks.E_bad, ng = row.next ? row.next.E_good : null, nb = row.next ? row.next.E_bad : null;
+    function box(x, label, v, nv, cls) {
+      return '<rect class="stock ' + cls + '" x="' + x + '" y="' + by + '" width="' + bw + '" height="' + bhh + '" rx="3"/>' +
+        '<text class="slab" x="' + (x + 10) + '" y="' + (by + 20) + '">' + esc(label) + '</text>' +
+        '<text class="sval" x="' + (x + 10) + '" y="' + (by + 42) + '"><tspan class="cnt">' + fk(v) + '</tspan>' + (nv !== null ? ' → ' + fk(nv) + ' next period' : '') + '</text>';
+    }
+    s += box(bx, MAP.stocks.labels.E_good, good, ng, 'good');
+    s += box(bx + bw + 14, MAP.stocks.labels.E_bad, bad, nb, 'bad');
+    // capture writes into the stock: valves on short pipes from the capture column
+    [bx + 30, bx + bw + 44].forEach(function (x) { s += '<line class="pipe" x1="' + x + '" y1="18" x2="' + x + '" y2="' + by + '"/><path class="valve" d="M' + (x - 6) + ',22l12,8l0,-8l-12,8z"/>'; });
+    // what is stored sets what a lookup can find
+    var ly = by + bhh + 16;
+    s += '<path class="infl" d="M' + (bx + 12) + ',' + (by + bhh) + 'V' + ly + 'H' + (lookX + 6) + 'V4"/>';
+    s += '<path class="arrowhead" d="M' + (lookX + 1) + ',10l5,-8l5,8z"/>';
+    s += '<text class="ilab" x="' + (lookX + 16) + '" y="' + (ly - 5) + '">What is stored sets what a lookup can find (and the look-alikes)</text>';
+    // promoted checks: from the good entries to the gates, with no lookup
+    if (lk) {
+      var m1 = MAP.measures.filter(function (m) { return m.id === 'use_promo_caught_all'; })[0];
+      var v1 = row.library.measures.use_promo_caught_all;
+      var gy = by + 12;
+      s += '<path class="promo" d="M' + bx + ',' + gy + 'H' + (gateX + 6) + 'V4"/>';
+      s += '<path class="arrowhead promo-h" d="M' + (gateX + 1) + ',10l5,-8l5,8z"/>';
+      s += '<text class="ilab promo-t" x="' + (gateX + 16) + '" y="' + (gy - 5) + '">' + esc(lk.label) + ', no lookup: ' + '<tspan class="cnt">' + fc(ST.scope === 'kind' ? NaN : v1) + '</tspan>' + (ST.scope === 'kind' ? '' : ' of these 100 caught at a gate') + '</text>';
+      if (ST.scope === 'kind') s += '<text class="ilab promo-t" x="' + (gateX + 16) + '" y="' + (gy + 12) + '">(' + esc(m1 ? m1.label : '') + ': ' + fc(v1) + ' ' + esc(m1 ? m1.unit : '') + ')</text>';
+      (lk.loops || []).forEach(function (lp, i) {
+        var cx = gateX + 40 + i * 30, cy = gy + 30 + (ST.scope === 'kind' ? 4 : 0);
+        s += '<g class="loop" tabindex="0" role="img" aria-label="' + esc('Loop ' + lp.polarity + ': ' + lp.label) + '"><title>' + esc('Loop ' + lp.polarity + ': ' + lp.label) + '</title><circle cx="' + cx + '" cy="' + cy + '" r="11"/><text x="' + cx + '" y="' + (cy + 4.5) + '" text-anchor="middle">' + esc(lp.polarity) + '</text></g>';
+      });
+    }
+    // the stock over the twelve periods
+    var sx = bx + 2 * bw + 34, sw = Math.min(L.W - sx - 4, 190);
+    if (sw > 80) {
+      var gmax = Math.max.apply(null, PATH.periods.map(function (p) { return Math.max(p.stocks.E_good, p.stocks.E_bad); }).concat([1]));
+      var X = function (i) { return sx + i * sw / (NPER - 1); }, Y = function (v) { return by + bhh - v / gmax * (bhh - 6); };
+      var line = function (key) { return PATH.periods.map(function (p, i) { return (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(p.stocks[key]).toFixed(1); }).join(''); };
+      s += '<text class="ilab" x="' + sx + '" y="' + (by - 6) + '">Stock by period</text>';
+      s += '<path class="spark good" d="' + line('E_good') + '"/><path class="spark bad" d="' + line('E_bad') + '"/>';
+      s += '<line class="spmark" x1="' + X(ST.period - 1) + '" x2="' + X(ST.period - 1) + '" y1="' + (by - 2) + '" y2="' + (by + bhh) + '"/>';
+      s += '<text class="ilab" x="' + sx + '" y="' + (by + bhh + 16) + '">1</text><text class="ilab" x="' + (sx + sw) + '" y="' + (by + bhh + 16) + '" text-anchor="end">' + NPER + '</text>';
+    }
+    return s + '</svg>';
+  }
+
+  // ------------------------------------------------------------------ tributary: the share of all work this kind makes up
+  function tributary(way) {
+    var d = DATA[way], sh = d.share, w = 120, h = 30, t = Math.max(1.5, h * sh);
+    var s = '<svg class="trib" width="' + w + '" height="' + (h + 4) + '" viewBox="0 0 ' + w + ' ' + (h + 4) + '" aria-hidden="true">' +
+      '<rect class="tall" x="0" y="2" width="56" height="' + h + '"/>' +
+      '<path class="tkind" d="M56,2 C84,2 84,' + (h / 2 + 2 - t / 2) + ' 118,' + (h / 2 + 2 - t / 2) + 'V' + (h / 2 + 2 + t / 2) + 'C84,' + (h / 2 + 2 + t / 2) + ' 84,' + (2 + t) + ' 56,' + (2 + t) + 'Z"/></svg>';
+    return s;
+  }
+
+  // ------------------------------------------------------------------ the picture
+  var LAY = null;
+  function wide() { return $('#pic').clientWidth >= 1040; }
+  function riverTargetH(compare) {
+    var vh = window.innerHeight || 1000;
+    if (compare) return Math.max(230, Math.min(330, (vh - 470) / 3));
+    return Math.max(420, Math.min(640, vh - 610));
+  }
+  function wayTitle(way, withName) {
+    var d = DATA[way], o = d.sum.outcomes;
+    var h = '<div class="wt">';
+    if (withName) h += '<h2>' + esc(WNAME[way]) + '</h2>';
+    h += '<p class="wsum"><b>' + fc(100 * o.EQUAL) + '</b> of 100 end accepted and right. <b>' + fc(100 * d.sum.wrong) + '</b> end wrong. They cost <b>' + fk(100 * d.sum.cost) + '</b> cheap-call equivalents (' + fk(d.sum.cost) + ' a piece).</p>';
+    if (ST.scope === 'kind') h += '<div class="tribw">' + tributary(way) + '<p class="small">This kind is <b>' + fc(100 * d.share) + '</b> of every 100 pieces of all work' + (way === 'library' ? ' at period ' + ST.period : '') + '. The river re-counts it as 100.</p></div>';
+    return h + '</div>';
+  }
+  function drawPicture() {
+    var isWide = wide();
+    document.body.classList.toggle('narrow', !isWide);
+    $('#river').hidden = !isWide; $('#list').hidden = isWide; $('#ledgerWrap').hidden = !isWide;
+    var ways = ST.compare ? WAYS : [ST.way];
+    // the sentence above the picture
+    var sum = '';
+    if (ST.compare) sum = '<p class="lead">Three ways of working, the same 100 pieces' + (ST.scope === 'kind' ? ' of one kind' : '') + ', the same columns. Read down a column to compare. The first river carries the names; the same place below is the same state.</p>';
+    else sum = '<p class="lead"><b>' + esc(WNAME[ST.way]) + '.</b> ' + esc(TX.policy_says[ST.way]) + '</p>';
+    $('#sum').innerHTML = sum;
+    if (!isWide) { drawList($('#list'), true); return; }
+    var Wd = $('#river').clientWidth - 2;
+    var tH = riverTargetH(ST.compare);
+    LAY = layout(Wd, tH, true);
+    var LAYc = ST.compare ? layout(Wd, tH * 0.72, false) : null;
+    var maxStage = 0;
+    WAYS.forEach(function (w) { STAGES.forEach(function (s) { maxStage = Math.max(maxStage, DATA[w].stage[s.id].total); }); });
+    var route = ST.route ? currentRoute() : null;
+    var h = axisHtml(LAY);
+    ways.forEach(function (w, i) {
+      var L = ST.compare && i > 0 ? LAYc : LAY;
+      h += '<section class="one' + (ST.compare ? ' cmp' : '') + '" data-way="' + w + '">' + wayTitle(w, ST.compare);
+      h += riverSvg(L, w, { route: route && ST.routesWay === w ? route : null });
+      if (w === 'library') h += stockSvg(L);
+      else h += '<p class="nolib">No library in this way: nothing is looked up and nothing is stored.</p>';
+      h += costSvg(L, w, maxStage) + '</section>';
+    });
+    $('#river').innerHTML = h;
+    drawList($('#ledgerWrap'), false);
+  }
+
+  // ------------------------------------------------------------------ the same picture as a list: every stage, state and branch
+  function bar(v, cls) { return '<span class="lbar"><i class="' + (cls || '') + '" style="width:' + Math.min(100, Math.max(v > 0 ? 0.6 : 0, v)).toFixed(2) + '%"></i></span>'; }
+  function drawList(el, main) {
+    var ways = ST.compare ? WAYS : [ST.way];
+    var h = '';
+    if (main) h += '<p class="note">The river, read top to bottom. Each stage lists its states, and under each state the branches out of it. Bars are of 100 pieces.</p>';
+    else h += '<h2 class="lh">Every state and branch, stage by stage</h2><p class="note">The river in words: all ' + MAP.states.length + ' states and ' + MAP.branches.length + ' branches, with counts of 100 and the cost each carries. Muted rows carry no work under this choice; open one for why.</p>';
+    if (main) h += ways.map(function (w) { return '<div class="lwt">' + wayTitle(w, true) + '</div>'; }).join('');
+    h += '<div class="lgrid">';
+    MAP.steps.forEach(function (stg) {
+      var states = MAP.states.filter(function (s) { return s.step === stg.id; });
+      h += '<div class="lstage"><div class="lsh"><h3>' + esc(stg.id === 'outcome' ? 'Where they end' : stg.label) + '</h3>';
+      var ds = DSTEPS_OF_STAGE[stg.id] || [];
+      if (ds.length) h += '<div class="lpills">' + ds.map(function (k) { return '<button type="button" class="pill sm' + (ST.sel && ST.sel.t === 'step' && String(ST.sel.id) === String(k) ? ' on' : '') + '" data-step="' + k + '"><span class="pn">Step ' + k + ' · ' + esc(DSHORT(k)) + '</span><span class="pc"><span class="ic lim"></span>' + LIMS_AT[k].length + '<span class="ic brk"></span>' + BROKE_AT[k].length + '</span></button>'; }).join('') + '</div>';
+      if (stg.id !== 'outcome') h += '<p class="lcost">Cost here: ' + ways.map(function (w) { return (ST.compare ? esc(WSHORT[w]) + ' ' : '') + '<b>' + fk(DATA[w].stage[stg.id].total) + '</b>'; }).join(' · ') + '</p>';
+      h += '</div>';
+      states.forEach(function (st) {
+        var any = ways.some(function (w) { return DATA[w].sf[st.id] > 0; });
+        h += '<div class="lrow st' + (any ? '' : ' zero') + '"><button type="button" class="lbtn" data-st="' + st.id + '" data-way="' + ways[0] + '"><span class="ll">' + (stg.id === 'outcome' ? '<i class="osw ' + OUT_FILL[st.id] + '"></i>' : '') + esc(st.label) + '</span>';
+        h += ways.map(function (w) { var v = 100 * DATA[w].sf[st.id]; return '<span class="lv">' + (ST.compare ? '<small>' + esc(WSHORT[w]) + '</small>' : '') + bar(v, stg.id === 'outcome' ? OUT_FILL[st.id] : 'f') + '<b>' + fc(v) + '</b></span>'; }).join('') + '</button></div>';
+        MAP.branches.filter(function (b) { return b.from === st.id; }).forEach(function (b) {
+          var anyb = ways.some(function (w) { return DATA[w].bf[b.id] > 0; });
+          h += '<div class="lrow br' + (anyb ? '' : ' zero') + '"><button type="button" class="lbtn" data-br="' + b.id + '" data-way="' + ways[0] + '"><span class="ll">→ ' + esc(b.label) + ' <small>to ' + esc(STATE[b.to].label) + '</small></span>';
+          h += ways.map(function (w) { var v = 100 * DATA[w].bf[b.id], c = 100 * DATA[w].carried[b.id]; return '<span class="lv">' + (ST.compare ? '<small>' + esc(WSHORT[w]) + '</small>' : '') + bar(v, 'f') + '<b>' + fc(v) + '</b>' + (b.tier ? '<small class="lc">cost ' + fk(c) + '</small>' : '') + '</span>'; }).join('') + '</button></div>';
+        });
+      });
+      h += '</div>';
+    });
+    h += '</div>';
+    el.innerHTML = h;
+  }
+
+  // ------------------------------------------------------------------ legend beside the picture
+  function drawLegend() {
+    var row = PATH.periods[ST.period - 1];
+    var h = '<h2>How to read it</h2>';
+    h += '<ul class="lg">';
+    h += '<li><svg width="46" height="18" aria-hidden="true"><path class="band" d="M2,3C20,3 26,9 44,9V15C26,15 20,9 2,9Z"/></svg><span><b>Band:</b> pieces of work moving right. Its width is how many of the 100. The number on it is the count.</span></li>';
+    h += '<li><svg width="46" height="22" aria-hidden="true"><rect class="blk" x="18" y="2" width="10" height="18"/></svg><span><b>Block:</b> a state. The bold number above it is how many pass through.</span></li>';
+    h += '<li><svg width="46" height="18" aria-hidden="true"><rect class="blk empty" x="18" y="5" width="10" height="8"/><path class="band zero" d="M2,9H16"/></svg><span><b>Outline, dotted line:</b> a state or branch with no work under this choice. It stays in place. Click it for why.</span></li>';
+    h += '<li><svg width="46" height="18" aria-hidden="true"><path class="startmark" d="M14,4l9,5l-9,5z"/><rect class="blk" x="26" y="2" width="10" height="14"/></svg><span><b>Triangle:</b> where this way of working starts.</span></li>';
+    h += '<li class="outs"><span><b>Where they end:</b></span>' + MAP.outcomes.map(function (o) { return '<span class="oi"><i class="osw ' + OUT_FILL[o.id] + '"></i>' + esc(o.label) + '</span>'; }).join('') + '</li>';
+    h += '<li class="outs"><span><b>Cost, by who is paid:</b></span>' + ['cheap', 'opus', 'fable'].map(function (t) { return '<span class="oi"><i class="osw ' + TIER_FILL[t] + '"></i>' + esc(TIER[t].label) + '</span>'; }).join('') + '</li>';
+    h += '<li><span class="pill demo"><span class="pn">Step 4 · Match</span><span class="pc"><span class="ic lim"></span>15<span class="ic brk"></span>9</span></span><span><b>Design step:</b> <span class="ic lim"></span> limitations placed there, <span class="ic brk"></span> real cases (of ' + CASES.cases.length + ') that broke there. Click to open their titles.</span></li>';
+    h += '<li><svg width="46" height="20" aria-hidden="true"><rect class="stock good" x="4" y="3" width="38" height="14" rx="2"/></svg><span><b>Box under the library river:</b> a stock of entries, filled at capture through a valve.</span></li>';
+    h += '<li><svg width="46" height="14" aria-hidden="true"><path class="promo" d="M2,7H44"/></svg><span><b>Dashed line:</b> checks promoted into the shared tests. They reach the gates with no lookup.</span></li>';
+    h += '<li><svg width="46" height="24" aria-hidden="true"><g class="loop"><circle cx="23" cy="12" r="10"/><text x="23" y="16.5" text-anchor="middle">R</text></g></svg><span><b>R:</b> a loop that reinforces itself. Hover it for the loop.</span></li>';
+    h += '<li><svg width="46" height="14" aria-hidden="true"><path class="thr" d="M2,4H44V10H2Z"/></svg><span><b>Blue thread:</b> one route picked from the routes list, drawn inside the river.</span></li>';
+    h += '</ul>';
+    h += '<p class="tagnote">' + tag('G') + ' Every count and cost in the picture is a guess: computed at middle values from unknowns that are mostly guesses. ' + tag('M') + ' Limitation and case counts are counted from the walk records. The ' + CASES.cases.length + ' cases are chosen problem cases: they show where steps break, never how often.</p>';
+    $('#legend').innerHTML = h;
+  }
+
+  // ------------------------------------------------------------------ details on demand, beside the picture
+  function threeWays(get, fmt) {
+    return '<table class="tw3"><tbody>' + WAYS.map(function (w) { var v = get(w); return '<tr' + (!ST.compare && w === ST.way ? ' class="cur"' : '') + '><th>' + esc(WSHORT[w]) + '</th><td>' + bar(fmt === 'cost' ? 0 : v, 'f') + '</td><td class="num">' + (fmt === 'cost' ? fk(v) : fc(v)) + '</td></tr>'; }).join('') + '</tbody></table>';
+  }
+  function limsForBranch(bid) {
+    return LIMS.items.filter(function (it) { return (it.params || []).some(function (p) { return REACH[p] && REACH[p].branches.indexOf(bid) >= 0; }); });
+  }
+  function limLi(it) { return '<li><span class="idc">' + esc(it.id) + '</span> ' + esc(it.title) + ' <small class="muted">(' + it.real.cases + ' cases)</small></li>'; }
+  function drawDetail() {
+    var s = ST.sel, h = '';
+    var way = s && s.way ? s.way : (ST.compare ? 'library' : ST.way);
+    if (ST.route) h += stepperHtml();
+    if (!s) {
+      h += '<h2>These 100 pieces, three ways</h2><p class="small">Read across: the same pieces' + (ST.scope === 'kind' ? ' of this kind' : '') + ' under each way of working.</p>';
+      h += '<h3>End accepted and right ' + tag('G') + '</h3>' + threeWays(function (w) { return 100 * DATA[w].sum.outcomes.EQUAL; });
+      h += '<h3>End wrong ' + tag('G') + '</h3>' + threeWays(function (w) { return 100 * DATA[w].sum.wrong; });
+      h += '<h3>Cost, cheap-call equivalents ' + tag('G') + '</h3>' + '<table class="tw3"><tbody>' + WAYS.map(function (w) { var ct = DATA[w].sum.costByTier, tot = 100 * DATA[w].sum.cost, mx = Math.max.apply(null, WAYS.map(function (x) { return 100 * DATA[x].sum.cost; })); return '<tr' + (!ST.compare && w === ST.way ? ' class="cur"' : '') + '><th>' + esc(WSHORT[w]) + '</th><td><span class="lbar stack">' + ['cheap', 'opus', 'fable'].map(function (t) { return '<i class="' + TIER_FILL[t] + '" style="width:' + (100 * 100 * ct[t] / mx).toFixed(2) + '%"></i>'; }).join('') + '</span></td><td class="num">' + fk(tot) + '</td></tr>'; }).join('') + '</tbody></table>';
+      h += '<p class="small muted">Wrong is every outcome except accepted and right. ' + esc(TX.todays_notes) + '</p>';
+      h += '<p class="small">Click any block, band or step on the picture for its details here.</p>';
+      $('#detail').innerHTML = h; return;
+    }
+    h += '<button type="button" class="close" data-close="1" aria-label="Close the details">Close</button>';
+    if (s.t === 'state') {
+      var st = STATE[s.id];
+      h += '<p class="eyebrow">State · ' + esc(st.step === 'outcome' ? 'Where they end' : STEP[st.step].label) + '</p><h2>' + esc(st.label) + '</h2>';
+      h += '<h3>Pieces of 100 that pass here ' + tag('G') + '</h3>' + threeWays(function (w) { return 100 * DATA[w].sf[s.id]; });
+      WAYS.forEach(function (w) { var why = whyState(w, s.id); if (why && (ST.compare || w === way)) h += '<p class="why"><b>Empty in ' + esc(WSHORT[w]) + ':</b> ' + why + '</p>'; });
+      var ins = MAP.branches.filter(function (b) { return b.to === s.id; }), outs = MAP.branches.filter(function (b) { return b.from === s.id; });
+      if (ins.length) h += '<h3>In</h3><ul class="blist">' + ins.map(function (b) { return '<li><button type="button" class="linkbtn" data-br="' + b.id + '" data-way="' + way + '">' + esc(b.label) + '</button> <b>' + fc(100 * DATA[way].bf[b.id]) + '</b></li>'; }).join('') + '</ul>';
+      if (outs.length) h += '<h3>Out</h3><ul class="blist">' + outs.map(function (b) { return '<li><button type="button" class="linkbtn" data-br="' + b.id + '" data-way="' + way + '">' + esc(b.label) + '</button> <b>' + fc(100 * DATA[way].bf[b.id]) + '</b></li>'; }).join('') + '</ul>';
+      h += '<p class="small muted">Counts in the lists: ' + esc(WNAME[way]) + '.</p>';
+      h += stepsOfStage(st.step);
+    } else if (s.t === 'branch') {
+      var b = BR[s.id], d = DATA[way];
+      h += '<p class="eyebrow">Branch · ' + esc(STEP[STATE[b.from].step].label) + '</p><h2>' + esc(b.label) + '</h2>';
+      h += '<p class="small">From <button type="button" class="linkbtn" data-st="' + b.from + '" data-way="' + way + '">' + esc(STATE[b.from].label) + '</button> to <button type="button" class="linkbtn" data-st="' + b.to + '" data-way="' + way + '">' + esc(STATE[b.to].label) + '</button>.</p>';
+      h += '<h3>Pieces of 100 on it ' + tag('G') + '</h3>' + threeWays(function (w) { return 100 * DATA[w].bf[s.id]; });
+      WAYS.forEach(function (w) { var why = whyBranch(w, s.id); if (why && (ST.compare || w === way)) h += '<p class="why"><b>Empty in ' + esc(WSHORT[w]) + ':</b> ' + why + '</p>'; });
+      var fromV = d.sf[b.from];
+      h += '<h3>In ' + esc(WSHORT[way]) + ' ' + tag('G') + '</h3><ul class="facts">';
+      h += '<li>Share of the pieces at “' + esc(STATE[b.from].label) + '” that take it: <b>' + (fromV > 0 ? fpct(d.bf[s.id] / fromV) : 'none reach it') + '</b></li>';
+      h += '<li>Cost each time it is taken: <b>' + (b.tier ? (d.varies[s.id] ? 'varies by kind' : fk(d.unit[s.id] || 0)) + '</b>, paid to ' + esc(TIER[b.tier].label) : 'none</b>') + '</li>';
+      h += '<li>Cost it carries for these 100: <b>' + fk(100 * d.carried[s.id]) + '</b></li></ul>';
+      var ls = limsForBranch(s.id);
+      h += '<h3>Limitations acting through its unknowns ' + tag('M') + '</h3>' + (ls.length ? '<ul class="lims">' + ls.map(limLi).join('') + '</ul>' : '<p class="small">None of the ' + LIMS.items.length + ' limitations names an unknown this branch uses.</p>');
+      h += stepsOfStage(STATE[b.from].step);
+    } else if (s.t === 'step') {
+      var k = +s.id;
+      h += '<p class="eyebrow">Design step ' + k + ' · sits at ' + esc((TX.design_steps[k] || []).map(function (x) { return STEP[x].label; }).join(' and ')) + '</p><h2>' + esc(DNAME(k)) + '</h2>';
+      h += '<h3>' + LIMS_AT[k].length + ' limitations placed here ' + tag('M') + '</h3>' + (LIMS_AT[k].length ? '<ul class="lims">' + LIMS_AT[k].map(limLi).join('') + '</ul>' : '<p class="small">None has this as its main step.</p>');
+      h += '<h3>' + BROKE_AT[k].length + ' of ' + CASES.cases.length + ' real cases broke here ' + tag('M') + '</h3>' + (BROKE_AT[k].length ? '<ul class="cases">' + BROKE_AT[k].map(function (c) { var n = c.steps.filter(function (x) { return x.step === k; })[0]; return '<li><b>' + esc(c.title) + '</b> <small class="muted">' + esc(FAMNAME[c.family] || c.family) + '</small><br><span class="small">' + esc(n ? n.note : '') + '</span></li>'; }).join('') + '</ul>' : '<p class="small">No case broke here.</p>');
+      if (ALSO_AT[k].length) h += '<details><summary>' + ALSO_AT[k].length + ' more limitations also touch this step</summary><ul class="lims">' + ALSO_AT[k].map(limLi).join('') + '</ul></details>';
+      h += '<p class="small muted">' + esc(TX.design_steps_note) + '</p>';
+    }
+    $('#detail').innerHTML = h;
+  }
+  function stepsOfStage(stg) {
+    var ds = DSTEPS_OF_STAGE[stg] || [];
+    if (!ds.length) return '';
+    return '<h3>Design steps at this stage ' + tag('M') + '</h3><p>' + ds.map(function (k) { return '<button type="button" class="pill sm" data-step="' + k + '"><span class="pn">Step ' + k + ' · ' + esc(DSHORT(k)) + '</span><span class="pc"><span class="ic lim"></span>' + LIMS_AT[k].length + '<span class="ic brk"></span>' + BROKE_AT[k].length + '</span></button>'; }).join(' ') + '</p>';
+  }
+
+  // ------------------------------------------------------------------ routes: every path as a tree, one picked as a thread
+  var ROUTES = null, TRIE = null;
+  function computeRoutes() {
+    var w = ST.compare ? ST.routesWay : ST.way;
+    ST.routesWay = w;
+    var o = { stocks: stocksAt(w), sortBy: ST.sortBy };
+    if (ST.scope === 'kind') o.classValues = classFor(w);
+    ROUTES = E.routes(MAP, cur, w, o);
+    TRIE = buildTrie(ROUTES.routes);
+  }
+  function buildTrie(routes) {
+    var root = { kids: {}, order: [], chance: 0, carried: 0, key: '' };
+    routes.forEach(function (r) {
+      var node = root; node.chance += r.chance; node.carried += r.carried;
+      r.branches.forEach(function (bid) {
+        var bi = BR[bid].i, ch = node.kids[bi];
+        if (!ch) { ch = node.kids[bi] = { bid: bid, kids: {}, order: [], chance: 0, carried: 0, key: (node.key ? node.key + '>' : '') + bi }; node.order.push(bi); }
+        ch.chance += r.chance; ch.carried += r.carried; node = ch;
+      });
+      node.route = r;
+    });
+    return root;
+  }
+  function kidsOf(n) { var by = ST.sortBy; return n.order.map(function (k) { return n.kids[k]; }).sort(function (a, b) { return b[by] - a[by]; }); }
+  function chainFrom(n) { var c = [n]; while (!n.route && n.order.length === 1) { n = n.kids[n.order[0]]; c.push(n); } return c; }
+  function nodeAt(key) { var n = TRIE; key.split('>').forEach(function (bi) { n = n && n.kids[bi]; }); return n; }
+  function currentRoute() {
+    if (!ST.route || !TRIE) return null;
+    var n = nodeAt(ST.route);
+    if (!n) return null;
+    if (n.route) return n.route;
+    return { branches: ST.route.split('>').map(function (i) { return MAP.branches[+i].id; }), chance: n.chance, partial: true };
+  }
+  function drawRoutes() {
+    var w = ST.routesWay, total = TRIE.chance || 1;
+    var h = '<h2>Routes: every path one piece can take</h2>';
+    h += '<p class="note">' + ROUTES.count + ' routes under ' + esc(WNAME[w]) + (ST.scope === 'kind' ? ', for this kind of work' : ', for all work') + '. Shares are of 100 pieces; costs are per piece on that route, in cheap-call equivalents ' + tag('G') + '. Pick a route to draw it as a thread in the river, then step along it.</p>';
+    h += '<div class="rtools">';
+    if (ST.compare) h += '<div class="seg" role="group" aria-label="Routes of which way">' + WAYS.map(function (x) { return '<button type="button" data-rway="' + x + '" aria-pressed="' + (x === w) + '">' + esc(WSHORT[x]) + '</button>'; }).join('') + '</div>';
+    h += '<div class="seg" role="group" aria-label="Order the routes by">' + [['chance', 'Share of the 100'], ['carried', 'Cost it carries']].map(function (x) { return '<button type="button" data-sort="' + x[0] + '" aria-pressed="' + (ST.sortBy === x[0]) + '">' + x[1] + '</button>'; }).join('') + '</div></div>';
+    function row(n) {
+      var chain = chainFrom(n), end = chain[chain.length - 1];
+      var kids = end.route ? [] : kidsOf(end);
+      var open = !!ST.open[end.key], inSel = ST.route && (ST.route === end.key || ST.route.indexOf(end.key + '>') === 0);
+      var label = chain.map(function (c) { return esc(BR[c.bid].label); }).join(' <span class="muted">→</span> ');
+      var val = ST.sortBy === 'chance' ? fc(100 * end.chance) : fk(100 * end.carried);
+      var r = '<li><button type="button" class="trow' + (end.route ? ' leaf' : '') + '" data-key="' + end.key + '"' + (ST.route === end.key ? ' aria-current="true"' : '') + '>' +
+        '<span class="tw">' + (end.route ? '•' : (open || inSel) ? '▾' : '▸') + '</span><span class="tl">' + label;
+      if (end.route) r += '<br><b><i class="osw ' + OUT_FILL[end.route.outcome] + '"></i>' + esc(OUTC[end.route.outcome].label) + '</b> <small>cost ' + fk(end.route.cost) + ' a piece</small>';
+      else r += ' <small>(' + kids.length + ' ways on)</small>';
+      r += '</span><span class="tv">' + val + '</span></button>';
+      if (!end.route && (open || inSel)) {
+        var big = kids.filter(function (x) { return x.chance / total >= 0.002; }), small = kids.filter(function (x) { return x.chance / total < 0.002; });
+        r += '<ul>' + big.map(row).join('');
+        if (small.length) {
+          var sk = end.key + '#small', so = !!ST.open[sk], sm = small.reduce(function (a, x) { return a + x.chance; }, 0);
+          r += '<li><button type="button" class="trow" data-small="' + sk + '"><span class="tw">' + (so ? '▾' : '▸') + '</span><span class="tl muted">' + small.length + ' rarer ways on, together</span><span class="tv">' + fc(100 * sm) + '</span></button>' + (so ? '<ul>' + small.map(row).join('') + '</ul>' : '') + '</li>';
+        }
+        r += '</ul>';
+      }
+      return r + '</li>';
+    }
+    h += '<ul class="tree">' + kidsOf(TRIE).map(row).join('') + '</ul>';
+    $('#routes').innerHTML = h;
+  }
+  function stepperHtml() {
+    var r = currentRoute(); if (!r) return '';
+    var n = r.branches.length, k = ST.stepIdx;
+    var h = '<div class="stepper"><p class="eyebrow">Route picked · ' + esc(WSHORT[ST.routesWay]) + '</p>';
+    h += '<h2>' + (r.outcome ? esc(OUTC[r.outcome].label) + ': ' : 'Part of a route: ') + n + ' branches</h2>';
+    h += '<p class="small"><b>' + fc(100 * r.chance) + '</b> of 100 take this route' + (r.cost !== undefined ? '. Cost along it: <b>' + fk(r.cost) + '</b> a piece' : '') + ' ' + tag('G') + '.</p>';
+    if (k !== null) {
+      var bid = r.branches[k], b = BR[bid];
+      var pre = nodeAt(ST.route.split('>').slice(0, k + 1).join('>')), prev = k ? nodeAt(ST.route.split('>').slice(0, k).join('>')) : TRIE;
+      var d = DATA[ST.routesWay];
+      h += '<div class="now"><p class="eyebrow">Branch ' + (k + 1) + ' of ' + n + ' · ' + esc(STEP[STATE[b.from].step].label) + '</p>';
+      h += '<p><b>' + esc(b.label) + '.</b> From “' + esc(STATE[b.from].label) + '” to “' + esc(STATE[b.to].label) + '”.</p>';
+      h += '<p class="small">Of the pieces on this route so far, <b>' + (prev && prev.chance ? fpct(pre.chance / prev.chance) : 'none') + '</b> go this way. Still on it: <b>' + fc(100 * pre.chance) + '</b> of 100. ' + (b.tier ? 'Cost when taken: <b>' + (d.varies[bid] ? 'varies by kind' : fk(d.unit[bid] || 0)) + '</b>, paid to ' + esc(TIER[b.tier].label) + '.' : 'No cost.') + '</p></div>';
+    }
+    h += '<div class="row"><button class="btn" type="button" data-stepr="start">Step from the start</button><button class="btn" type="button" data-stepr="back"' + (k === null || k === 0 ? ' disabled' : '') + '>Back</button><button class="btn primary" type="button" data-stepr="next"' + (k !== null && k >= n - 1 ? ' disabled' : '') + '>Next</button><button class="btn" type="button" data-stepr="all">Whole route</button><button class="btn" type="button" data-stepr="clear">Clear</button></div></div>';
+    return h;
+  }
+
+  // ------------------------------------------------------------------ controls, one line each on what it changes
+  function seg(name, items, curv, key) {
+    return '<div class="seg" role="group" aria-label="' + esc(name) + '">' + items.map(function (it) { return '<button type="button" data-' + key + '="' + esc(it[0]) + '" aria-pressed="' + (it[0] === curv) + '"' + (it[2] ? ' title="' + esc(it[2]) + '"' : '') + '>' + esc(it[1]) + '</button>'; }).join('') + '</div>';
+  }
+  function drawControls() {
+    var wv = ST.compare ? 'all' : ST.way;
+    var h = '<div class="ctl"><span class="cn">Way of working</span>' + seg('Way of working', MAP.policies.map(function (p) { return [p.id, WNAME[p.id], TX.policy_says[p.id]]; }).concat([['all', 'All three, stacked']]), wv, 'way') + '<span class="cs">' + esc(W.way_says) + '</span></div>';
+    h += '<div class="ctl"><span class="cn">Which work</span>' + seg('Which work', [['all', 'All work'], ['kind', 'One kind of work']], ST.scope, 'scope') + '<span class="cs">' + esc(W.work_says) + '</span></div>';
+    h += '<div class="ctl per"><span class="cn">Library at period</span><div class="prow"><input type="range" id="per" min="1" max="' + NPER + '" step="1" value="' + ST.period + '" aria-label="Period of the library"><b>' + ST.period + ' of ' + NPER + '</b></div><span class="cs">' + esc(W.period_says) + '</span></div>';
+    if (ST.scope === 'kind') {
+      h += '<div class="kinds">';
+      ['kind', 'need', 'held', 'distractor'].forEach(function (aid) {
+        var a = ATTR[aid];
+        h += '<div class="ctl"><span class="cn">' + esc(W.attr_name[aid]) + '</span>' + seg(W.attr_name[aid], a.values.map(function (v) { return [v.id, W.short_val[v.id] || v.label, v.label]; }), ST.cls[aid], 'attr-' + aid) + '<span class="cs">' + esc(W.attr_says[aid]) + '</span></div>';
+      });
+      h += '</div>';
+    }
+    $('#controls').innerHTML = h;
+  }
+
+  // ------------------------------------------------------------------ render and events
+  function renderAll(keepRoutes) {
+    computeAll();
+    if (!keepRoutes) computeRoutes();
+    drawControls(); drawLegend(); drawPicture(); drawDetail(); drawRoutes();
+  }
+  function repaint() { drawPicture(); drawDetail(); drawRoutes(); }
+  $('#lede').textContent = W.lede;
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('[data-way],[data-scope],[data-st],[data-br],[data-step],[data-close],[data-key],[data-small],[data-sort],[data-rway],[data-stepr],[data-attr-kind],[data-attr-need],[data-attr-held],[data-attr-distractor]');
+    if (!t) return;
+    var ds = t.dataset;
+    if (t.closest('#controls')) {
+      if (ds.way) { if (ds.way === 'all') ST.compare = true; else { ST.compare = false; ST.way = ds.way; ST.routesWay = ds.way; } ST.route = null; ST.stepIdx = null; ST.open = {}; renderAll(); return; }
+      if (ds.scope) { ST.scope = ds.scope; ST.route = null; ST.stepIdx = null; ST.open = {}; renderAll(); return; }
+      ['kind', 'need', 'held', 'distractor'].forEach(function (aid) { var v = t.getAttribute('data-attr-' + aid); if (v) ST.cls[aid] = v; });
+      ST.route = null; ST.stepIdx = null; ST.open = {}; renderAll(); return;
+    }
+    if (ds.close) { ST.sel = null; repaint(); return; }
+    if (ds.stepr) {
+      var r = currentRoute(); if (!r) return; var n = r.branches.length;
+      if (ds.stepr === 'start') ST.stepIdx = 0;
+      else if (ds.stepr === 'back') ST.stepIdx = Math.max(0, (ST.stepIdx || 0) - 1);
+      else if (ds.stepr === 'next') ST.stepIdx = ST.stepIdx === null ? 0 : Math.min(n - 1, ST.stepIdx + 1);
+      else if (ds.stepr === 'all') ST.stepIdx = null;
+      else { ST.route = null; ST.stepIdx = null; }
+      repaint(); return;
+    }
+    if (ds.sort) { ST.sortBy = ds.sort; drawRoutes(); return; }
+    if (ds.rway) { ST.routesWay = ds.rway; ST.route = null; ST.stepIdx = null; ST.open = {}; computeRoutes(); repaint(); return; }
+    if (ds.small) { ST.open[ds.small] = !ST.open[ds.small]; drawRoutes(); return; }
+    if (ds.key !== undefined && t.classList.contains('trow')) {
+      var leaf = t.classList.contains('leaf');
+      if (!leaf) ST.open[ds.key] = !ST.open[ds.key];
+      ST.route = ds.key; ST.stepIdx = null; repaint(); return;
+    }
+    if (ds.step) { ST.sel = ST.sel && ST.sel.t === 'step' && String(ST.sel.id) === ds.step ? null : { t: 'step', id: ds.step }; repaint(); scrollDetail(); return; }
+    if (ds.st) { ST.sel = { t: 'state', id: ds.st, way: ds.way && ds.way !== 'all' ? ds.way : null }; repaint(); scrollDetail(); return; }
+    if (ds.br) { ST.sel = { t: 'branch', id: ds.br, way: ds.way && ds.way !== 'all' ? ds.way : null }; repaint(); scrollDetail(); return; }
+  });
+  function scrollDetail() { if (!window.matchMedia('(min-width: 1600px)').matches) { var el = $('#detail'); if (el && el.getBoundingClientRect().top > window.innerHeight) el.scrollIntoView({ block: 'start' }); } }
+  document.addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.getAttribute && (e.target.getAttribute('data-st') || e.target.getAttribute('data-br')) && e.target.closest('svg')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+    if (e.key === 'Escape' && ST.sel) { ST.sel = null; repaint(); }
+  });
+  document.addEventListener('input', function (e) { if (e.target.id === 'per') { ST.period = +e.target.value; ST.route = null; ST.stepIdx = null; renderAll(); var p = $('#per'); if (p) p.focus(); } });
+  // tooltip for bands and blocks
+  var tip = $('#tip');
+  document.addEventListener('pointermove', function (e) {
+    var t = e.target.closest && e.target.closest('svg [data-br], svg [data-st]');
+    if (!t) { tip.hidden = true; return; }
+    var way = t.getAttribute('data-way');
+    var txt = t.getAttribute('aria-label');
+    if (t.getAttribute('data-br')) { var bid = t.getAttribute('data-br'), b = BR[bid]; if (b.tier) txt += '. Cost it carries: ' + fk(100 * DATA[way].carried[bid]) + ', paid to ' + TIER[b.tier].label; }
+    tip.textContent = txt + '.'; tip.hidden = false;
+    var x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8), y = e.clientY + 16;
+    if (y + tip.offsetHeight > window.innerHeight - 8) y = e.clientY - tip.offsetHeight - 10;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  });
+  var rz = 0;
+  window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { drawPicture(); }, 120); });
+  renderAll();
+  window.__river = { ST: ST, DATA: DATA, LAY: function () { return LAY; }, renderAll: renderAll, repaint: repaint, select: function (s) { ST.sel = s; repaint(); } };
+})();

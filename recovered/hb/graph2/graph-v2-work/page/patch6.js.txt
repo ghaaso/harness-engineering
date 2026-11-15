@@ -1,0 +1,20 @@
+// one-off patch (E labels): run from graph-v2:  node - < <this file>
+const fs = require('fs');
+let m = fs.readFileSync('src/measured.js.txt', 'utf8');
+const rep = (a, b) => { if (!m.includes(a)) throw new Error('missing: ' + a.slice(0, 70)); m = m.split(a).join(b); };
+rep("const LC = ['g-ledger', 'g-docs', 'g-index', 'g-codemap', 'g-coderel', 'g-reading'];", "const LC = ['g-ledger', 'g-docs', 'g-index', 'g-codemap', 'g-coderel', 'g-reading', 'g-bad'];");
+rep("const val = o.carried_pct ?? o.pct ?? o.share_pct; return pbar(esc(o.label || k.replace(/_/g, ' ')), val, 'g-docs', 220); }).join('');",
+ "const val = o.carried_pct ?? o.pct ?? o.share_pct; const SLAB = { strict_same_transcript: 'the same agent transcript wrote the file', same_session_24h: 'the same session (orchestrator and its subagents) wrote it under 24 hours before', loose_any_age: 'the same session wrote it, at any age (upper bound)' };\n      return pbar(esc(o.label || SLAB[k] || k.replace(/_/g, ' ')) + (has(o.calls_pct) ? `<br><small>${pc(o.calls_pct)} of calls</small>` : ''), val, 'g-docs', 420); }).join('');");
+rep("const ruTxt = kv(RU).map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ');",
+ "const known = (o, ks) => ks.every(k => has(o[k]));\n    const ruTxt = known(RU, ['found', 'sampled']) ? `${fmt(RU.found)} of ${fmt(RU.sampled)} sampled findings that appear in the transcripts were shown again in another session${has(RU.two_or_more) ? `, ${fmt(RU.two_or_more)} in two or more` : ''}${has(RU.median_gap_h) ? `; median gap ${fmt(RU.median_gap_h)} hours` : ''}.${known(RU, ['files_two_plus', 'files_total']) ? ` ${fmt(RU.files_two_plus)} of ${fmt(RU.files_total)} files were read in two or more sessions${has(RU.files_carried_pct) ? `, carrying ${pc(RU.files_carried_pct)} of the carried tokens` : ''}.` : ''} An exposure shows the text was shown, not that it was used.` : kv(RU).map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ');");
+rep("const slTxt = kv(SL).map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ');",
+ "const slTxt = known(SL, ['stale', 'traced']) ? `Of ${fmt(SL.traced)} findings traced through the git history, ${fmt(SL.stale)} had gone stale${has(SL.drifted) ? ` and ${fmt(SL.drifted)} drifted` : ''}.${has(SL.exposures) ? ` The stale ones were shown again ${fmt(SL.exposures)} times after the change${has(SL.pairs) ? `, in ${fmt(SL.pairs)} session-finding pairs` : ''}.` : ''}${has(SL.wrote_after) ? ` Times the stale sentence was written into a file afterwards: ${fmt(SL.wrote_after)}. Whether a decision rested on it was not established.` : ''}` : kv(SL).map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ');");
+rep("<b>On the loop, step 1 → reuse</b><span>Findings shown again in later sessions: ${ruTxt}</span>", "<b>On the loop, step 1 → reuse: are recorded findings read again?</b><span>${ruTxt}</span>");
+rep("<b>On the loop, steps 2 to 4 → stale</b><span>Findings traced through the git history after they were written: ${slTxt}</span>", "<b>On the loop, steps 2 to 4 → stale: did a changed premise matter?</b><span>${slTxt}</span>");
+rep("`<p class=\"small\"><b>Premises per finding:</b> ${kv(PF).map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ')}</p>`",
+ "`<p class=\"small\"><b>Premises per finding:</b> ${kv(PF).map(([k, v]) => `${esc({ q1: 'lower quartile', q3: 'upper quartile' }[k] || k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ')}</p>`");
+fs.writeFileSync('src/measured.js.txt', m);
+let c = fs.readFileSync('src/page.css', 'utf8');
+c += '.track .fill.t-ok{background:var(--ok)}\n.track .fill.t-warn{background:var(--g-hl)}\n.dotaxis span{white-space:nowrap}\n.dotaxis span:last-child{transform:translateX(-100%)}\n.tbsub{margin:14px 0 2px;font-size:16px}\n';
+fs.writeFileSync('src/page.css', c);
+console.log('patched');

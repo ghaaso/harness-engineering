@@ -1,0 +1,48 @@
+// Bring premise-measure/result.json in line with the checker's two corrections (2026-11-14).
+// Touches only deterministic_finding_share.expressible_as_query and reuse.files; every other value is left as it was.
+const fs = require('fs'), rl = require('readline');
+const EV = 'C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/graph-v2/premise-measure';
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const r4 = (x) => +x.toFixed(4);
+function wilson(k, n) { const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d; return [r4(Math.max(0, c - h)), r4(Math.min(1, c + h))]; }
+let seed = 7; const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+(async () => {
+  const R = JSON.parse(fs.readFileSync(EV + '/result.json', 'utf8'));
+  // 1. expressible as a query: type Q or M (the earlier 19 was the r9 "new or typed" count)
+  const F = JSON.parse(fs.readFileSync(EV + '/findings-classified.json', 'utf8'));
+  const A = Array.isArray(F) ? F : (F.findings || Object.values(F)); const N = A.length;
+  const pred = (f) => f.type === 'Q' || f.type === 'M';
+  const k = A.filter(pred).length;
+  const files = [...new Set(A.map((f) => f.id[0]))];
+  const v = []; for (let b = 0; b < 4000; b++) { let kk = 0, n = 0; for (let j = 0; j < files.length; j++) { const fl = files[Math.floor(rnd() * files.length)]; for (const f of A) if (f.id[0] === fl) { n++; if (pred(f)) kk++; } } v.push(kk / n); } v.sort((x, y) => x - y);
+  const old = R.deterministic_finding_share.expressible_as_query;
+  R.deterministic_finding_share.expressible_as_query = {
+    definition: 'expressible as a query if its inputs had been kept: finding type Q (query and answer) or M (one-off script result)',
+    k, n: N, share: r4(k / N), wilson95: wilson(k, N), file_cluster_bootstrap95: [r4(v[100]), r4(v[3899])],
+    correction: 'aligned 2026-11-14 with CHECK.md note 2: earlier k=' + old.k + ' was the r9 "new or typed" count, not type Q or M; bootstrap recomputed by check/align-result.js.txt (seed 7, this row alone)',
+  };
+  // 2. CQ1-read files read in 2+ sessions: a path counts as a file only when it is not a directory row (284 scratch directories outside the repository had been counted)
+  const P = {}; let C = 0;
+  for await (const l of rl.createInterface({ input: fs.createReadStream(W + '/rows.jsonl') })) {
+    const o = JSON.parse(l); C += o.car; if (o.kind.startsWith('directory')) continue;
+    const p = o.p.toLowerCase().replace(/\/+$/, ''); const x = P[p] = P[p] || { s: new Set(), car: 0, t0: Infinity, t1: -Infinity };
+    x.s.add(o.sess); x.car += o.car; if (o.ts) { x.t0 = Math.min(x.t0, o.ts); x.t1 = Math.max(x.t1, o.ts); }
+  }
+  const fl = Object.values(P), m = fl.filter((x) => x.s.size >= 2);
+  const hist = { 1: 0, 2: 0, 3: 0, 4: 0, '5+': 0 }; for (const x of fl) hist[x.s.size >= 5 ? '5+' : x.s.size]++;
+  const days = m.map((x) => (x.t1 - x.t0) / 864e5).sort((a, b) => a - b), q = (p) => +days[Math.floor(p * (days.length - 1))].toFixed(1);
+  const of = R.reuse.files;
+  R.reuse.files = {
+    n: fl.length, read_in_2plus_sessions: m.length,
+    share_of_all_CQ1_carried_on_files_read_in_2plus_sessions: r4(m.reduce((a, x) => a + x.car, 0) / C),
+    all_CQ1_carried_tokens: Math.round(C),
+    max_sessions: Math.max(...fl.map((x) => x.s.size)), sessions_histogram: hist,
+    first_to_last_read_days_files_2plus_sessions: { median: q(0.5), p75: q(0.75), max: +days[days.length - 1].toFixed(1) },
+    read_by_a_session_that_never_wrote_it_on_earlier_2529_path_set: of.read_by_a_session_that_never_wrote_it,
+    share_of_carried_on_those_on_earlier_2529_path_set: of.share_of_carried_on_those,
+    correction: 'aligned 2026-11-14 with CHECK.md note 4: directory rows excluded wherever they sit (earlier 2,529 paths / 108 included 284 scratch directories outside the repository); the share is now of all CQ1 carried tokens (earlier 0.106 was of the per-file set). The two never-wrote fields were not recomputed and keep the earlier path set, as their names say.',
+  };
+  R.reuse.source_files = 'rows.jsonl via check/align-result.js.txt (directory rows excluded); earlier: perfile.json from loc.js.txt';
+  fs.writeFileSync(EV + '/result.json', JSON.stringify(R, null, 1));
+  console.log(JSON.stringify({ expressible: [k, N, r4(k / N)], files: [fl.length, m.length, R.reuse.files.share_of_all_CQ1_carried_on_files_read_in_2plus_sessions], hist }));
+})();

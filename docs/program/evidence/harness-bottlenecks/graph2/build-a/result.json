@@ -1,0 +1,809 @@
+{
+  "summary": "Build the engine-independent parts of the graph test: shared typed facts per commit, sealed task sets, the relational and search arms, then audit them",
+  "agentCount": 9,
+  "logs": [
+    "facts done | tasks done | questions done",
+    "relational done | search done | second reading done | facts audit defects 8"
+  ],
+  "result": {
+    "facts": {
+      "status": "done",
+      "what_was_built": [
+        "build/facts/build_facts.js: orchestrator and join. `node build_facts.js <sha> <outdir> [--task children] [--skip kinds] [--only kinds] [--keep-export]`. It exports the commit with git archive into build/tmp, then runs the py and ts stages in parallel, followed by the URL, outbox, screens, settings, ESLint-contract, docs, structure, git and experimental response-field joins. It writes nodes.jsonl and edges.jsonl in the protocol schemas, plus commits.jsonl, experimental/response_fields.{nodes,edges}.jsonl and meta.json. meta.json holds the commit, counts per node and edge kind, stage status and stats, URL stats, output sha256, extractor_version and timings_ms. A failing stage degrades to empty and is recorded; the build always exits 0.",
+        "build/facts/py_extract.py: stdlib-ast Python stage with light type inference. It emits defines, calls, depends_injects, passes_callable, uses_constant, read/write-labelled table and column edges (test constructor and unit-of-work writes dropped; session.delete and session.get handled), has_column, maps_table, foreign_key, reads_setting, overrides, mocks (patch, patch.object, monkeypatch.setattr), imports, inherits, routes, includes_router, migrations, scheduler registration (registers_job, runs, gate reads_setting) and import-linter contract edges.",
+        "build/facts/ts_extract.js: TypeScript 5.3.3 stage, hermetic and deterministic, building two programs (mobile and web). It emits defs (hook-wrapped and factory callables included), imports, jest.mock/vi.mock/spyOn mocks, calls, renders, inherits, URL sites, navigates, screens, outbox kinds, env and config reads, and snake_case prop reads.",
+        "build/facts/docs_extract.js: doc, doc_section and doc_id nodes. cites carry a status (resolved, resolved_by_context, ambiguous to an ambiguous: node, not-in-repo to a missing: node). It also emits mentions, the 20 invariant nodes with invariant groups, and constrains edges.",
+        "build/facts/git_extract.js: co_changed from ancestor commits only. PRs are detected from 'Merge pull request #n' merges and '(#n)' squash subjects. Commits in the same PR as the task and commits of in-flight PRs are dropped. Each edge carries support, confidence and a recency weight.",
+        "build/facts/build_cache.js: builds the parent of every non-merge commit on main into facts/cache/<parent>/, skips any parent already built with the same extractor_version, and logs build_log.jsonl.",
+        "build/facts/sample.js plus build/facts/samples/*.txt: seeded 20-edge precision samples for overrides, inherits, mocks, contract, constrains, cites, registers_job, runs and reads_response_field.",
+        "build/facts/cache/: all 188 parent builds plus build_log.jsonl.",
+        "build/facts/NOTES.md: what was built, how to run it, the numbers with the kinds each refers to, the precision table and the deviations."
+      ],
+      "key_numbers": [
+        "Frozen commit a31924a3818f4ac94b695906d107c72c912792b2: 5,460 nodes and 18,821 edges in the main files; the experimental response-field class adds 390 nodes and 1,622 edges.",
+        "Edges by kind: calls 4,872 (Python and TS/JS); defines 3,548; co_changed 1,896; mentions 1,379; contains 1,185; imports 1,095; uses_constant 825; cites 533; has_column 439; test_calls_route 435; renders 381; contract 254 (157 independence, 36 forbidden, 61 ESLint; 166 forbid, 88 allow); writes_table 245; migration_touches 223; depends_injects 208; reads_setting 176; reads_table 141; passes_callable 128; writes_column 101; mocks 93; constrains 85; registers_route 85; calls_url 77; foreign_key 70; overrides 57; inherits 49; migration_follows 45; maps_table 42; enqueues_kind 35; registers_screen 32; navigates 28; same_capability 24; includes_router 13; kind_handled_by 10; registers_job 6; runs 6.",
+        "cites by status: resolved 429, resolved_by_context 4, ambiguous 76, not-in-repo 24.",
+        "URL matching, client sites: 121 sites (77 production), all 121 matched. 19 sites had several candidates: 8 were settled by rule (6 by server, 2 by literal segments) and 11 are true ambiguities, all of them '*' assertion sites in tests. Pytest client calls: 380 of 380 matched, 0 ambiguous. 55 of 77 backend routes have a client; there are 8 ops-server routes.",
+        "Python call sites (calls kind, backend/, module level included): 10,036 sites. 2,503 resolve in-repo, 5,260 are external and 2,045 have no repo def of that name. 104 unresolved sites match a repo def name, so worst-case recall is 96.0%. The research lane's old count was 132, not 36.",
+        "Invariants: 20 bullets, 18 of them anchored.",
+        "Co-change at the frozen commit: 177 of 233 ancestor commits used. Pairs: 5,949 at support >= 1, 948 at support >= 2 (the edge threshold), 355 at support >= 3.",
+        "Determinism: two builds of a31924a give byte-identical nodes.jsonl (sha256 7e6816d6c166acc8...), edges.jsonl (fab8981853de78f0...), commits.jsonl and both experimental files; meta.json is identical apart from timings_ms. extractor_version is e409baad8b0c794b.",
+        "Build time at the frozen commit is about 3.8 to 4.5 s.",
+        "Cache: 188 of 188 parents built, 0 failed. Per build: p50 3.1 s, p95 4.0 s, max 5.5 s; 575 s serial in total; 729 MB on disk. A rerun skips all 188. Degraded stages are all genuine absences: ts.mobile absent in 4 builds and py empty in 2 (backend/ not yet present at those commits).",
+        "Precision on 20-edge samples, each checked by reading the code: overrides 20/20, inherits 20/20, mocks 20/20 after the spyOn fix, contract 20/20, constrains 19/20, cites 20/20 (18 resolved and correct, 2 honest ambiguous_ref), imports 20/20. registers_job (6/6), runs (6/6) and the 8 gate edges were checked as whole classes.",
+        "Experimental reads_response_field (jobs and attendance): 10/20 correct. At confidence 1, 2 of 2 were right; at confidence >= 0.5, 5 of 9. It is not reliable and ships only under experimental/, as its own switchable class."
+      ],
+      "deviations_from_protocol": [
+        "TypeScript stage is hermetic, with no node_modules types and no tsconfig extends lookup (the Expo base options are inlined). This buys determinism but means library-typed calls are counted as external, and a few calls typed through libraries are missed.",
+        "Extra node kinds: constant, scheduled_job, missing_ref, ambiguous_ref, invariant_group (doc sections are flat). Extra edge kinds: contains, uses_constant, registers_job, runs, navigates, registers_screen, includes_router, has_column, maps_table.",
+        "Scheduler registration is modelled as registers_job (lifespan to job:) plus runs (job to callable) plus gate reads_setting edges carrying attrs.gate.",
+        "co_changed edges are emitted only at support >= 2. commits.jsonl carries every commit's file list so an arm can use other thresholds.",
+        "Determinism covers nodes, edges, commits and the experimental files byte for byte. meta.json differs only in timings_ms.",
+        "tokens = characters / 4, not a model tokenizer. Self-calls are dropped (7 at the frozen commit).",
+        "An ambiguous bare-name citation with more than 3 candidates points to one ambiguous:<tok> node instead of fanning out. An ESLint allow rule listed under two patterns produces two contract edges for one pair.",
+        "The frozen commit falls in the HELD-OUT date range. The extractor was fixed using code-reading precision samples at that commit only: no task, reference answer or sealed file was read, and no arm or score was run. Cache folders for parents of HELD-OUT commits were built as protocol section 3 requires, and were checked only for build status."
+      ],
+      "problems": [
+        "constrains: invariant 9's bare token 'captured_at' also anchors job_travel_sample.captured_at, at confidence 0.25 (1 wrong in the sample).",
+        "File-name invariant anchors such as service.py, index.js and models.py fan out to every slice at confidence 1/k. This is correct for the rule, but it is broad.",
+        "Two invariants have no anchor.",
+        "The response-field class reaches only about 50% precision. Same-named keys on local queue items and request payloads match too, so it should not be used as a default edge class.",
+        "104 Python call sites whose names match a repo def remain unresolved, mostly dict.get-style collisions, but some are real repo calls.",
+        "The cache takes 729 MB on disk."
+      ],
+      "how_to_run": [
+        "cd .../scratchpad/hb/graph2/build/facts",
+        "node build_facts.js <commit-sha> <outdir> [--task <child-sha>,...] [--skip kind,...] [--only kind,...] [--keep-export]   (writes nodes.jsonl, edges.jsonl, commits.jsonl, experimental/*, meta.json)",
+        "node build_cache.js [--limit N]   (builds the parent of every non-merge commit on main into facts/cache/<parent>/, skips any parent already built, appends to cache/build_log.jsonl)",
+        "node sample.js <factsdir> <exportdir> <edge-kind> [n=20] [seed=1] [--exp]   (needs an export kept with --keep-export)",
+        "Tools used by absolute path: Node 24, TypeScript at EMS_workshop1/technician-app/node_modules/typescript, Python at C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe (run with -I and PYTHONHASHSEED=0), and git (read-only archive of the repo).",
+        "Determinism check: build the same sha into two folders and cmp nodes.jsonl, edges.jsonl and commits.jsonl."
+      ]
+    },
+    "tasks": {
+      "status": "done",
+      "what_was_built": [
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/tasks.jsonl: 1,569 tasks (T1 806, T1x 226, T2 477, T3 25, T4 8, T5 27). Each line has id, set, split, parent SHA and seed; T3/T4 also have remove_paths. Ids are opaque. There is no commit SHA, message or reference in the file.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/references.jsonl: one record per task id. Each has the reference files and definitions with flags (test, runtime, cross_runtime, cochanged_before, cochanged_before_xpr for T1/T2, same_file_as_seed, changed_lines), excluded_unreachable counts and lists (added files, added definitions, definitions inside added files) and not_scored (deleted and unparsed files).",
+        "Definition mapping: changed hunks from 'git diff -U0 -M parent commit' are mapped to their enclosing definition at the parent. Python goes through ast; TS/JS goes through TypeScript 5.3.3 createSourceFile (sealed/build/defs_ts.js). Added lines are mapped on the child side; a name that exists only in the child is counted as unreachable. A pure insertion goes to the parent definition that holds the lines on both sides of the insertion point.",
+        "T3 documented chains come from the lifecycle audit, HANDOFF section 4 and the CLAUDE.md invariants: 73 items parsed, 25 kept. Each item is built at the first parent of the first doc version containing the item, with remove_paths set to the doc. Anchors are files and symbols; symbols also resolve through __tablename__, class or object attributes and names bound inside a definition.",
+        "T4: 13 register items mapped to fix commits, each with an evidence string; 8 kept, over 4 fix commits. T5: 27 session search-then-open pairs whose opened file is tracked at a31924a.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/parents.txt: 128 distinct parent SHAs on 133 lines. Each line is sha, sets, n_tasks, remove_paths. A SHA can appear twice: once for plain facts and once with a doc removed.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/README.md: the sets, sizes by split, seed format and rules for arms, with no answers.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/SHA256SUMS: 21 files, covering tasks.jsonl, parents.txt, README.md and every file this builder owns under sealed/. All checks pass.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/stats.json, NOTES.md and handcheck.txt (ten tasks re-derived by hand). Scripts are in sealed/build/: common.py, defs_ts.js, build_t12.py, anchors.py, build_t34.py, finalize.py, handcheck.py, run_all.sh. Intermediate files are in sealed/work/."
+      ],
+      "key_numbers": [
+        "Frozen main = a31924a3818f4ac94b695906d107c72c912792b2 (2026-08-03). The pool reproduces the protocol: 140 usable commits (65 tune / 75 held-out), 806 T1 seeds.",
+        "T1: tune 388 tasks / 65 commits, held-out 418 / 75. 609 of 806 seeds have a seed symbol. Reference: 5,486 file items and 7,312 definition items.",
+        "T1x (cross-runtime commits): tune 144 tasks / 17 commits, held-out 82 / 9.",
+        "T2: tune 240 tasks / 47 commits, held-out 237 / 49 (96 commits in all).",
+        "T3: 25 items kept of 73 (handoff 13, lifecycle 7, CLAUDE.md 5), all held-out by date. 2 file anchors and 4 symbol anchors are unreachable at the build commit.",
+        "T4: 8 tasks over 4 fix commits (2fe77f5, 1c546a3, 8dafcec, c731e66), all held-out. T5: 27 pairs of 139 distinct, all held-out.",
+        "Share of T1 reference items that are tests: tune 0.233, held-out 0.195 (T1x 0.200 / 0.227; T3 0.032; T4 0.302).",
+        "Share cross-runtime relative to the seed: T1 0.206 / 0.126; T1x 0.432 / 0.462; T2 0.198 / 0.127; T3 0.168; T4 0.189.",
+        "Share never co-changed with the seed in any ancestor commit (and with same-PR siblings dropped): T1 0.350 (0.370) tune, 0.326 (0.388) held-out; T1x 0.444 (0.486) / 0.418 (0.450); T2 0.359 (0.372) / 0.356 (0.397); T3 0.400; T4 0.236.",
+        "Unreachable at commit level in the T1 pool: 378 added files against 806 existing (0.319); 1,162 definitions added inside existing files against 998 changed parent definitions (0.538); 2,202 definitions inside added files.",
+        "The full rebuild takes about 75 s. Two consecutive runs produced byte-identical tasks.jsonl, references.jsonl, parents.txt and stats.json.",
+        "Hand check: 10 of 10 tasks agree after fixes. The first pass found 2 builder defects, both fixed before sealing: a renamed method marked its whole class as changed, and an insertion inside the renamed method also walked up to the class."
+      ],
+      "deviations_from_protocol": [
+        "The builders read commits with read-only git object reads (diff, ls-tree, cat-file --batch, log, rev-list), not by exporting every commit with git archive. The hand check does use git archive exports, which were deleted afterwards. Nothing in the repo was written.",
+        "The 30-file cap is applied as the protocol section-2 rule (at most 30 existing code, test or migration files), which gives 140. One held-out commit, bfb5714 (57 files of all types, 41 of them added), exceeds 30 counting every file. Its references carry commit_n_files_all, so the scorer can drop it (that would give 139 = 65/74).",
+        "Deleted code files (13 in the pool) are not in the references, following the lane rule that existing means status M or R.",
+        "Definition kinds go beyond function, class, method and component: they also include top-level variables, object literals, object-literal methods and JS describe/it/test blocks. Every reference definition carries its kind, so a scorer can filter.",
+        "The seed symbol rule is not set by the protocol. I chose the most specific changed definition (function, method, component or test before a class, a class before a variable), then most changed lines, then earliest. T1 reference definitions include the other changed definitions in the seed's own file, flagged same_file_as_seed.",
+        "T3 is built per item, not per doc. CLAUDE.md was added on 2026-07-01, before most invariants and most of the files they name, so the build commit is the parent of the first doc version that contains the item. Only the doc itself is flagged for removal; other docs at that commit that restate the chain are not removed. 25 of 73 items were kept under strict resolution (ambiguous names dropped), against the lane's 36, which allowed up to 3 candidate files per symbol.",
+        "T3, T4 and T5 all fall on or after 2026-07-01, so they have no TUNE part.",
+        "T4 uses two sub-commits of #170 from branch fix/mobile-completion-guards (8dafcec, c731e66), because the squash da988e2 mixes four fixes. 9 of the 13 mappings rest on commit content or on the handoff doc's own note that B1-B3 are fixed on that branch, not on item ids in the commit body. When one fix commit closes several items, each item gets the same reference. M10, M11, M23 and M25 appear in no tracked doc and are not mapped.",
+        "T5 uses the scoring lane's snapshot of session_lookups.json, because the transcripts keep growing. Its facts are built at a31924a. Some queries name the answer file; those carry query_names_it.",
+        "T1x is written as its own task lines that duplicate T1 seeds; the sealed field 'of' gives the matching T1 id.",
+        "SHA256SUMS covers this builder's files only. sealed/tq_writer/ and tasks/tq_questions.jsonl belong to the TQ writer, which was still writing them during this run, so it should seal them itself (or rerun the checksum step after it finishes)."
+      ],
+      "problems": [
+        "Changed-only ground truth: 0.538 of changed definitions in existing files are newly added (unreachable), and 0.319 of changed files are added. Recall is therefore over the reachable remainder only; per-task excluded counts are recorded.",
+        "T3 resolution drops many cited names as ambiguous: client_id, generic router.py and service.py basenames, submit_completion, bill_sent_at. Some chains therefore lose their central file. One example is jobs/router.py in lifecycle item 5, whose 'router.py:154' resolves to several files.",
+        "T4 is small (8 tasks over 4 commits) and its references include files fixing other items closed by the same commit.",
+        "The T5 query strings include local absolute scratchpad paths taken from the transcripts. This stays local, but it is not a clean text query.",
+        "The hand check found two mapping defects, which are now fixed. Only 10 tasks were checked by hand; the regex-scan comparison is a weak independent method and needed reading each disagreement in the diff.",
+        "Another agent was writing into sealed/tq_writer and tasks/tq_questions.jsonl at the same time, and the shared build/tmp folder holds other agents' files. My temp files went to tmp/sealed-builder, which has been deleted."
+      ],
+      "how_to_run": [
+        "Run from C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build: bash sealed/build/run_all.sh. This rebuilds T1/T1x/T2, T3/T4 and T5, then tasks.jsonl, references.jsonl, parents.txt, stats.json and SHA256SUMS. It takes about 75 s and reads the repo only.",
+        "Verify the seal: cd build && sha256sum -c --quiet sealed/SHA256SUMS",
+        "Repeat the hand check: cd build/sealed/build && C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe handcheck.py ../work/handcheck_ids.json > ../work/handcheck_raw.txt",
+        "Check facts coverage: every line of tasks/parents.txt (sha, sets, n_tasks, remove_paths) needs facts at that SHA, with the named doc removed when remove_paths is not '-'."
+      ]
+    },
+    "q1": {
+      "status": "done",
+      "what_was_built": [
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/tq_questions.jsonl: 50 questions. Each line holds id, split, kind, question (the target, the scope rule for its kind and the commit) and answer_form. There are no answers, no evidence and no hop counts.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_writer/answers.jsonl: everything, plus the target, selection_tags, the exact answer, answer_items, evidence as {item, at: file:line, note}, hops, naive_search_gets_wrong and notes.",
+        "Source files in the same sealed folder: tq_defs.py (the commit, plus the SCOPE and FORM text for each kind), tq_data_a.py (Q1-25), tq_data_b.py (Q26-50) and build_tq.py (validates the questions, checks every evidence file and line against a frozen export, then writes both files).",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_writer/NOTES.md: what was built, how to run it, the numbers, the rule for choosing targets, and the deviations.",
+        "All answers come from reading the code at a31924a3818f4ac94b695906d107c72c912792b2 (a git archive export, since deleted). No extractor was run."
+      ],
+      "key_numbers": [
+        "50 questions: ids 1-20 are tune (20) and ids 21-50 are held-out (30).",
+        "Questions per kind, tune/held-out: screen_tables 3/3, tests_reach 2/4, invariants_on_file 3/3, other_half 2/4, setting_readers 2/4, migrations_touch_table 3/4, route_clients 3/4, change_reach 2/4.",
+        "171 answer items in total. The largest answer is Q44 (change reach of tenancy effective_int, a hub) with 40 items.",
+        "5 answers are fully empty (Q15, Q17, Q27, Q39, Q46). 3 answers have one empty half (Q10 fake, Q22 fake, Q45 real).",
+        "Hops as counted by the reader: 19 questions at 1, 17 at 2, 4 at 3, 3 at 4, 1 at 5, 3 at 6, and one each at 7, 8 and 9.",
+        "Every evidence file:line (about 190 locations) resolved inside the frozen export before it was deleted.",
+        "11 of the 12 backend slices are targeted (health is not), plus the web manager, the ops console with its BFF (ops-server.mjs) and the mobile app."
+      ],
+      "deviations_from_protocol": [
+        "Each answer was produced by one reader with evidence lines. The protocol's blind check by a second reader, and the third pass that resolves disagreements, were not done here and are left to the orchestrator.",
+        "The 8 kinds do not split 50 evenly, so each kind has 6 or 7 questions; migrations_touch_table and route_clients have 7. Tune holds 2 or 3 questions of each kind.",
+        "tests_reach is judged per test file, not per test function. 'real' means the real body executes; 'fake' means the function itself or its module is replaced and a caller of it is exercised.",
+        "change_reach is static call reach. Data guards are recorded in notes but do not shrink the answer. Example (Q8): the web createJob never sends whatsapp_consent.",
+        "invariants_on_file uses an explicit rule set, (a) to (d), stated in the question text. Q18 includes two items under rule (d) (enforced in the file: L199 and L224), which are the most debatable items in the set.",
+        "The health slice has no question; it has one data-free route."
+      ],
+      "problems": [
+        "CLAUDE.md L188 says three clients regex the '(current status: X)' 409 detail. The code has four extraction sites on transition paths: web AppContext.serverReason, plus mobile closeJobWithVideo.apiDetail, JobDetailScreen.apiDetail and syncClassification.failureReason. None of them matches the suffix itself; all regex the whole JSON detail. This is recorded in Q12's notes.",
+        "Scoring Q44 (40 items) and Q1 (6 tables with conditional writes) needs the full transitive closure, so expect low exact-match scores there for every arm.",
+        "Questions where a reader's judgement can differ (best candidates for the second reader): Q12 (what counts as extracting the detail), Q18 (the rule-(d) items), Q21 (device_token only, because the app never sends installation_id) and Q37 (job written by both the negotiate path and the close path; customer_message excluded)."
+      ],
+      "how_to_run": [
+        "cd C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_writer",
+        "Optional, for the evidence check: git -C C:/Users/User/Documents/projects/EMS_workshop1 archive a31924a3818f4ac94b695906d107c72c912792b2 | tar -x -C ../../tmp/tq_frozen (create the folder first, delete it after the run).",
+        "C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe -I build_tq.py ../../tmp/tq_frozen  (leave out the argument to skip the evidence check). It prints the kind/split counts, the empty answers and the hop list, and rewrites both jsonl files.",
+        "Arm builders read only build/tasks/tq_questions.jsonl and must never read or list build/sealed/."
+      ]
+    },
+    "rel": {
+      "status": "done",
+      "what_was_built": [
+        "arms/common: shared code used by both arms (all paths below are under C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/).",
+        "arms/common, loading and mapping: facts loader (facts.js) with a canonical integer-id graph; edge-class table with 12 switchable classes (edgeclasses.js); source text via git archive into a content-addressed srcstore (source.js), each export deleted afterwards; seed mapping (seed.js); shared text terms (textterms.js).",
+        "arms/common, tokenizer and packer: deterministic tokenizer 'regex-bpe-approx v1' (tokenizer.js), compared with chars/4 by tokcompare.js; packer (packer.js) for 4 output forms (paths, signature, range, snippet) at file or symbol granularity, at budgets 2k/4k/8k/16k, with headers counted, the last item cut at the budget, an 8-token '[+N more not shown]' footer, a beyond count and beyond_sample.",
+        "arms/common, answer format: one gzip JSONL line per task. Each item carries kind, path, symbol, ls/le, hop, via (the edge kinds on the path), score, tok and shown.",
+        "arms/common, config and harness: config.js holds the canonical config and its hash plus a fixed, logged list of 40 sweep configs. run.js runs one config over sets and a split. Held-out is refused unless --allow-heldout and --frozen-hash are given and the hash matches results/frozen/<hash>.json; all 3 refusals were tested. run.js also has a 'freeze' subcommand. sweep.js is the TUNE sweep driver and the cross-check, using the same 40 configs per arm. score.js is the scorer interface (--answers, --refs, --rule locate|content) for the grader to run. crosscheck_extra.js adds 10 more parameter combinations and forces each alternative SQL path.",
+        "arms/relational: node:sqlite store (SQLite 3.53.4). Built from schema.sql and db.js: integer ids; typed node/edge/edge_ev/cochange/deg tables; covering indexes in both directions (edge PK and edge_rev); WITHOUT ROWID; ANALYZE plus optimize; FTS5; a co-change table; a bounded closure table (K=3, base mask) with closure_rev; stored prod_in, transport and pagerank columns.",
+        "arms/relational, queries: queries.js holds every statement grouped by algorithm. Covered: depth-capped recursive CTEs with UNION set semantics, a level-wise BFS and a closure lookup for k-hop; a per-edge-class budget state machine; 3 directions; class masks; rankings bfs, degnorm, PPR (restart parameter, cochange weight), co-change, FTS5 bm25 text and RRF hybrids; hub cuts by in-degree and transport. rel.js is the glue; hub sets and PPR transitions are cached per connection.",
+        "arms/relational, TQ: tq.js holds one SQL query function per TQ question kind (11 statements). It ran on the 20 tune questions and wrote results/tq/relational.tune.jsonl. Reference answers were not read.",
+        "arms/relational, engine measures: bench.js measures load time, disk use (via dbstat), memory (in a child process), cold and warm p50/p95 latency for 16 query classes, a one-file incremental update checked against a fresh build, the query plans and the lines of query code. Outputs: results/engine/relational.json and results/engine/query_plans.txt.",
+        "arms/reference: ref.js implements the same algorithms on in-memory adjacency arrays, written from the specification, including an exact FTS5 bm25 reimplementation.",
+        "results/: relational/tune and reference/tune each hold 80 files (40 configs x T1, T2, as <hash>.<set>.jsonl.gz). Also: sweep/configs.json, sweep/summary.json, sweep/crosscheck_mismatches.jsonl (empty), sweep/crosscheck_extra.json, tokenizer/compare.json, engine/*, tq/relational.tune.jsonl, and the run logs.",
+        "NOTES.md files: arms/common/NOTES.md is the main note (files, how to run, algorithm spec, tokenizer, packer and answer format, results, deviations). Short pointer notes are in arms/relational/NOTES.md and arms/reference/NOTES.md."
+      ],
+      "key_numbers": [
+        "Cross-check size: 628 TUNE tasks (T1 388 + T2 240, 53 parent commits) x 40 configs x 2 arms. 25,120 ranked lists and 25,120 answers compared.",
+        "Cross-check result: 0 mismatches, wall time 2,121 s.",
+        "Extra cross-check: 10 more combinations, including closure-off CTE, forced closure, and level-wise BFS with the CTE off. 6,280 ranked lists compared, 0 mismatches.",
+        "Sweep size per arm: 40 configs. Base config hash ba68ab71ebbff9b2.",
+        "Seed mapping on TUNE: id 470, file-only 129, members 24, none 5.",
+        "Frozen-commit graph: 5,460 nodes, 17,370 unique edges, 18,821 evidence rows, 300,946 closure rows.",
+        "Load time: facts 91-116 ms, SQLite build 1.08-1.34 s.",
+        "Bytes on disk: 13,684,736 (closure plus closure_rev 7.2 MB).",
+        "Memory (RSS): 48.5 MB before open, 48.6 MB after open, 115 MB with facts loaded, 193 MB after all query classes.",
+        "Latency, p50/p95 ms, cold then warm. Cold means a fresh connection; the OS file cache stays warm.",
+        "Latency, name lookup and k-hop: name lookup 2.2/3.3, 1.0/2.0; k-hop 1 1.7/2.5, 0.26/0.49; k-hop 3 7.1/19.1, 4.7/17.5; k-hop 6 49/66, 49/70; unbounded 37/41, 35/39; closure k-hop 3 2.3/3.0, 0.9/1.6.",
+        "Latency, budget and hub: budget B1 317/680, 332/706; hub cut 3.0/4.6, 0.7/2.1.",
+        "Latency, rankings: degnorm 3.1/7.8, 1.3/6.3; PPR 385/417, 350/378; co-change 2.7/7.0, 1.2/5.6; text 12/72, 10/80; hybrid PPR+text 382/474, 355/447.",
+        "Latency, TQ queries: 1.2/2.1 cold, 0.4/1.1 warm.",
+        "Sweep per-task time, p50/p95 ms, relational vs reference: base 92/150 vs 16/26; budget B2 218/722 vs 45/167; dependents 9/18 vs 2/4; bfs, degnorm or cochange about 1 vs 0.2.",
+        "One-file update, backend/app/features/jobs/service.py (67 nodes, 697 edges): delete 11 ms, insert 4, degree/transport 7, closure 1,054 (1,174 affected sources), ANALYZE 35, global PageRank 330. The result equals a fresh build on node, edge, deg, closure, cochange and fts.",
+        "Query plans: no full scans on any per-query statement. The only scans are the per-configuration cached builds: the in-degree hub set, the transport hub set (a partial index holding exactly the hub rows) and the PPR transitions.",
+        "Lines of SQL per algorithm: k-hop CTE 21, level-wise 7, closure 6, budgets 20, hub cuts 8, bfs 2, degnorm 7, PPR 30, co-change 5, text 2, hybrid 4, shared ordering 8. Also: rel.js glue 141, schema 31, reference ref.js 219.",
+        "Tokenizer vs chars/4 (tokens / (chars/4)): file/signature 1.12, file/snippet 1.19, file/paths 1.30, file/range 1.49, symbol forms 1.13-1.22. That is 2.7-3.6 characters per token.",
+        "TQ: 20 tune answers at 0.3-1.5 ms each. Q15 (route_clients) and Q17 (screen_tables) came back empty."
+      ],
+      "deviations_from_protocol": [
+        "At the very start, one 'ls build/*' listed the file names inside build/sealed/. No content was read, and no script opened sealed/ afterwards.",
+        "The tokenizer is a deterministic regex approximation, not a model tokenizer, because none is installed. Its ratio to chars/4 is documented.",
+        "The loader, seed mapping, text terms and packer are shared by both arms. The cross-check therefore covers traversal and ranking code only, not those shared stages.",
+        "'Cold' latency means a fresh SQLite connection; the OS file cache stays warm.",
+        "Hub sets and PPR transitions are global by nature, so they are computed once per (connection, configuration) and cached. Those builds are the only full scans in the query plans.",
+        "The closure table is bounded to K=3 and to the base class mask only. Other masks use the CTE or the level-wise path.",
+        "The one-file update re-inserts the same facts with the same ids. The facts extractor has no incremental mode.",
+        "TQ other_half is a heuristic (call sites plus direct callers). TQ tests_reach ignores provider overrides along the path.",
+        "T1x is not in the default sweep; run it with --sets T1x. No configuration was chosen or frozen, and results/frozen/ was never created."
+      ],
+      "problems": [
+        "score.js was tested only on synthetic references, now deleted, because the real references are sealed. The grader must check the reference adapter against the real key names; it accepts id/task_id, files/ref_files, defs/definitions, start/line_start and similar variants.",
+        "TQ Q15 (route_clients) is empty because the extracted facts have no client URL call site for the consent route; this is an extractor gap. TQ Q17 (screen_tables) is also empty: no table is reached from that screen.",
+        "The relational arm is about 5-6x slower than the reference per task, mainly because PPR runs 40 SQL iterations (about 350 ms at the frozen commit). Budget B2 p95 reaches 722 ms.",
+        "The one-file closure update costs about 1 s because 1,174 closure sources are recomputed.",
+        "build/tmp contains cache_run.log, which is not mine and was left in place. None of my exports remain there."
+      ],
+      "how_to_run": [
+        "cd C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/common",
+        "node sweep.js --arms relational,reference --sets T1,T2   (TUNE sweep plus cross-check; writes results/<arm>/tune/<hash>.<set>.jsonl.gz and results/sweep/summary.json; about 35 min)",
+        "node crosscheck_extra.js   (writes results/sweep/crosscheck_extra.json)",
+        "node run.js run --arm relational|reference --config <sweep name|config.json> --sets T1 --split tune [--out dir]",
+        "node run.js freeze --config <...>  then  node run.js run ... --split heldout --allow-heldout --frozen-hash <hash>   (refused without both flags and a matching frozen file)",
+        "node score.js --answers <answers.jsonl.gz> --refs <references.jsonl> [--rule locate|content] [--budgets 2000,4000,8000,16000] [--per-task]   (the grader runs this)",
+        "node tokcompare.js   (writes results/tokenizer/compare.json)",
+        "cd ../relational && node tq.js   (TUNE only; writes results/tq/relational.tune.jsonl)",
+        "cd ../relational && node bench.js   (writes results/engine/relational.json and query_plans.txt)",
+        "Use node 24 (node:sqlite). Nothing needs installing."
+      ]
+    },
+    "search": {
+      "status": "done",
+      "what_was_built": [
+        "Search arm (protocol 5a) in C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/search. Each task's parent is exported with git archive and the tar is parsed in memory; the working tree is never read. The search is a Node line scan. Round one reads the seed and greps three things: the seed name, the module-path and import spellings (Python dotted, from-import and relative; JS/TS specifiers resolved through the repo aliases), and the route strings in the seed (client /api literals, backend decorators plus the router prefix). The imports seen in the seed are included. Round two opens the top k files and greps their hit definitions, their spellings and their routes. Hits are ranked by an idf-weighted count with type weights: def 3, import 2, mock 1.5, call 1. BM25 is written by hand (k1 1.2, b 0.75). The variants cover one or two rounds, names only or names plus routes, and with or without BM25, plus a BM25-only variant.",
+        "Floor DIR: the seed's own directory first, then the same-named capability folder in the other runtimes, then outward by parent directory. Floor CO: built from facts/cache/<parent>/commits.jsonl, which holds ancestor commits only, with same-PR siblings and in-flight PRs already dropped. Files are ranked by confidence, then recency, with DIR order as the tail.",
+        "40-configuration TUNE sweep (sweep.js), the same count as arms/common/config.js: one factor at a time around a base. Every answer was packed by the shared packer (arms/common/packer.js) and tokenizer through a thin adapter (pack.js). Each is packed at 2k, 4k, 8k and 16k in four forms: paths, signature, range and snippet. Both file and symbol granularity are covered. Output is out/<config>.jsonl for the 772 TUNE tasks (T1 388, T1x 144, T2 240). The 8 floor files cover DIR and CO in each of the four forms.",
+        "Cost ledger on every answer: the lookups used (each grep, read or list), the tokens returned (grep output is counted as path:line:text lines, up to the 250 lines shown), and the lookup index at which each item was first surfaced. From these come tokens-to-80% and lookups-to-80%.",
+        "TQ: tq.js has one generic script per question kind, at most three lookups each, run at a31924a. It produced 20 TUNE answer sets in out_tq/tq_answers.jsonl, with lookups and tokens recorded.",
+        "score.js computes recall of files plus definitions per seed, then per commit, at each budget, along with Rf@k, MRR, nDCG@10, AUC, tok80 and lk80. select.js picks the best configuration, then the simplest within one SE. Results are in results/tune_T1|T1x|T2.{json,txt} and results/selection.json. NOTES.md is in the folder."
+      ],
+      "key_numbers": [
+        "T1 TUNE, 65 commits, proxy labels, recall@8k: frozen search config 'rounds=1 names-only' (file granularity, signature form, hash 8545654b462f1263) = 0.735 (SE 0.023). Best search config 'prox=1.5' = 0.742. Floor CO = 0.752 (SE 0.025). Floor DIR = 0.717.",
+        "Frozen config curve: R2k 0.446, R4k 0.565, R8k 0.735, R16k 0.855; Rf@10 0.466; MRR 0.535; nDCG@10 0.396. CO: 0.436 / 0.613 / 0.752 / 0.873; Rf@10 0.487; MRR 0.486. DIR: 0.393 / 0.537 / 0.717 / 0.855; Rf@10 0.376; MRR 0.300.",
+        "Paired R8k on the 65 TUNE commits: frozen minus DIR +0.017 (SE 0.007); frozen minus CO -0.017 (SE 0.016). Best search config minus CO -0.010 (SE 0.016).",
+        "Cost per answer, frozen config: 5.2 lookups on average (p50 6, p95 13); tokens read p50 2,127, p95 7,513; 4 ms p50. Two rounds plus routes (base) cost 24.5 lookups and a median of 7,584 tokens read, for R8k 0.733, which is no better. CO costs 2 lookups and about 1,053 tokens; DIR costs 1 lookup and about 788.",
+        "Tokens to 80% recall (signature form, commits that reach it): frozen 5,959 tokens (61/65 commits), CO 5,565 (62/65), DIR 6,302 (60/65). Lookups to 80%: frozen 4.8, CO 1.6, DIR 1.0.",
+        "T1x TUNE (17 commits), R8k: frozen 0.600, CO 0.626, DIR 0.580; best search there is bm25, 0.628. T2 TUNE (47 commits), R8k: frozen 0.694, CO 0.773, DIR 0.669; best search is bm25, 0.783.",
+        "File-granularity paths form fits the whole code/test/migration universe at the parent in a median of 2,496 tokens, and range form in 3,262. So file recall at 8k is 1.000 for every padded arm, including both floors.",
+        "TQ: 20 TUNE answers, mean 2.3 lookups (max 3), mean 2,743 tokens read (max 8,606); 3 answers are empty. They are unscored because the reference is sealed.",
+        "Runtime: the sweep took about 4 minutes on two processes; scoring takes about 2 minutes per set; out/ is 675 MB."
+      ],
+      "deviations_from_protocol": [
+        "Tuning labels were re-derived from git for TUNE commits only, by tune_labels.js. For each task it takes the child of the task's parent that changes the seed, then that commit's other existing code/test/migration files, plus the definitions at the parent touched by the diff's old-side hunks. The script exits if it reaches a HELD-OUT commit. sealed/ was never read or listed. These labels may differ from the sealed reference; score.js accepts any labels file of the same shape, so the choice can be re-checked on the sealed TUNE file.",
+        "The commit export is parsed in memory from git archive output instead of being extracted under build/tmp. Nothing is written, so there is nothing to delete.",
+        "Enclosing definitions (symbol names and line ranges) come from the shared facts node table. No edges are used, so search answers name symbols exactly as the other arms do.",
+        "Round one includes the seed's own in-repo imports, which a person reading the seed sees. The sweep has an ablation (seedImports=off) that costs about 0.007 R8k.",
+        "Round two greps at most 3 hit definitions per opened file (namesPerFile 3). A term with more than 300 grep lines is dropped as too generic, as a person would refine or abandon it.",
+        "Under the shared packer rule, symbol granularity cannot carry file-only units. An import hit is therefore followed to the definitions that use the imported names, and that step is costed as a grep. Fill at symbol granularity uses the fill files' top-level definitions.",
+        "Selection rule: the highest R8k among the 40 search configs, then the lowest complexity within one SE. Complexity counts rounds, routes, BM25, fill, proximity, seed imports and symbol granularity. The selection used T1 TUNE only. Nothing was run on HELD-OUT. T3, T4 and T5 are entirely HELD-OUT and were not run.",
+        "Tuned on TUNE only: rounds (1, 2); terms (names only, names plus routes); BM25 (off, on, only); DIR fill (on, off); round-two k (3, 5, 8); decay (0.25, 0.5, 1); proximity prior (0, 0.5, 1.5); type weights (typed, flat, def-heavy); null-seed name cap (0, 8, 16); seed imports (on, off); generic cap (100, 300, 1000); granularity (file, symbol); form (paths, signature, range, snippet). The TQ scripts are generic per question kind and were not tuned against any answer. During debugging I looked at the frozen commit's text for two TQ terms (ops_proxy_token, 'current status'). The fixes I then made are generic: the screen import closure is limited to the transport layer plus the screen's own feature folder; direct callers are limited to client code; the route grep broadens to the last literal segment when nothing is found."
+      ],
+      "problems": [
+        "The primary metric degenerates at file granularity. Paths and range forms list every code/test/migration file at the parent in about 2.5k to 3.3k tokens. File recall at 8k is therefore 1.000 for every arm that pads with a tail (both floors and every fill config), and the combined recall there is about 0.42 for everyone. Recall at 8k only discriminates in signature or snippet form, at symbol granularity, or if padding is ruled out. The orchestrator should decide this before HELD-OUT.",
+        "On TUNE, plain search does not beat plain co-change. CO is 0.752 against the frozen search's 0.735 at 8k. Search beats DIR by only +0.017 (SE 0.007). Search's MRR is higher (0.535 vs CO 0.486), so it puts a relevant file first more often, but co-change covers more. Round two, routes and BM25 add 4 to 5 times the lookups without a gain beyond one SE on T1. On T2, BM25 is the best search variant (0.783).",
+        "The TQ answers cannot be scored here because the reference is sealed. Expected weak spots of plain search are visible. The screen-to-table answers include every write in the reached slice; for example, dispatch_cursor appears for the job-create wizard. Other-half questions return nothing when the client does not repeat the server's wording (question 12). The route-clients answer for POST /api/customers/{customer_id}/consent found no client.",
+        "The answers were packed with the arms/common packer as it stood at about 14:05. If another agent changes packer.js or tokenizer.js, run.js must be re-run, which takes about 4 minutes. common/SPEC.md did not exist yet.",
+        "out/ is 675 MB of uncompressed JSONL."
+      ],
+      "how_to_run": [
+        "cd C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/search",
+        "node run.js --shard 0/2 --out out  and  node run.js --shard 1/2 --out out  (in parallel; then concatenate each <config>.part0.jsonl and .part1.jsonl into <config>.jsonl). run.js refuses any split other than tune unless --allow-heldout is passed.",
+        "node tune_labels.js > tune_labels.jsonl   (TUNE-only proxy labels; or pass the sealed TUNE reference in the same shape)",
+        "node score.js tune_labels.jsonl out --set T1 --json results/tune_T1.json   (likewise for --set T1x and --set T2)",
+        "node select.js   (writes results/selection.json with the frozen configuration and hash)",
+        "node tq.js > out_tq/tq_answers.jsonl"
+      ]
+    },
+    "q2": {
+      "status": "done",
+      "what_was_built": [
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_second/answers.jsonl: blind second-reader answers to all 50 TQ questions, one record per question with id, split, kind, answer (in the form each question asks for), evidence (file:line notes per item), confidence, reading (how ambiguity was resolved), reader and commit.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_second/build_answers.py and part_routes.py: the answers held as data, plus a writer that checks all 50 ids are present and emits answers.jsonl.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_second/NOTES.md: method, how to rebuild, numbers and the readings chosen for ambiguous questions.",
+        "Method: exported a31924a3818f4ac94b695906d107c72c912792b2 with git archive to build/tmp/tq2 (deleted afterwards), then answered every question by grep and reading code: call chains, routes, ORM writes, test mocks and migration upgrade() bodies. No extractor, facts cache, research/schema, tq_writer or other reader output was read."
+      ],
+      "key_numbers": [
+        "50 of 50 questions answered: 20 tune, 30 held-out.",
+        "Confidence: 39 high, 11 medium (ids 3, 12, 18, 20, 21, 23, 25, 31, 33, 39, 44). Tune: 16 high, 4 medium. Held-out: 23 high, 7 medium.",
+        "170 answer items in total. 5 answers are empty: Q15 (no client calls the consent route), Q17 (Schedule page is demo data), Q27 (no client calls /api/shop/settings), Q39, Q46 (no client handles login 429 / Retry-After).",
+        "Migrations: technician 0004/0012/0013/0020; dispatch_cursor 0027/0046; job_event 0006/0027/0043/0044/0045/0046; job_media 0001/0009/0015/0032/0036/0044; attendance_event 0002/0003/0018/0020/0032/0033; customer 0021/0022; ops_metric_rollup 0031.",
+        "Q44 (effective_int) reaches 18 backend entry points through JobService._detail -> _fuel_rate, plus 9 web and 14 mobile client functions."
+      ],
+      "deviations_from_protocol": [
+        "None. Nothing was run on any held-out task commit; the pass only read code at the frozen main commit, as the task asked. The scratch export was deleted when done."
+      ],
+      "problems": [
+        "Q21: answered ['device_token']. The 'device' upsert runs only when installation_id is sent, and the mobile client never sends it (devicesApi.ts body is {token, platform}). A purely static reading would add 'device'.",
+        "Q39: answered []. The JobDetail.evidence in CLAUDE.md L224 is the backend schema, not the web page's JobDetail component, so it was treated as a name collision. L199 is borderline: the web Edit button is hidden once the job is closed.",
+        "Q12: no client regexes the literal '(current status: X)'. Answered with the functions that pull the FastAPI detail out of a rejected transition: AppContext serverReason, JobDetailScreen apiDetail, closeJobWithVideo apiDetail, and syncClassification failureReason (generic, borderline).",
+        "Q25: counted only the env-settings reader (0040_shop_settings.py::upgrade). JobService._money_rates reads the per-shop registry key instead.",
+        "Q31: answered only CLAUDE.md:L231. L239, L243 and L246 are implemented in jobs/service.py and customer_messaging; main.py only wires them, so they are borderline.",
+        "Q20: call site taken as ops-server.mjs::backendHealthComponents, where the path literal is. backendOps, the generic transport, could also be listed.",
+        "Naming: nested functions are written Outer.inner, for example AppProvider.markReady and ArrivalAfterVideoScreen.recordVideo. A matcher that expects only the outer function, or only the inner one, may need to normalise.",
+        "CLAUDE.md L218 ('Both client guards are pure functions') is a bullet in the invariants section too; it matched no file asked about."
+      ],
+      "how_to_run": [
+        "cd C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build",
+        "C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe -I sealed/tq_second/build_answers.py tasks/tq_questions.jsonl sealed/tq_second/answers.jsonl",
+        "This regenerates answers.jsonl from the answer data in build_answers.py and part_routes.py and checks that all 50 question ids are covered. Re-checking an answer needs a fresh export of the commit: git -C C:/Users/User/Documents/projects/EMS_workshop1 archive a31924a3818f4ac94b695906d107c72c912792b2 | tar -x -C <scratch dir>"
+      ]
+    },
+    "factsAudit": {
+      "checks": [
+        {
+          "what": "Precision per edge kind at frozen a31924a (30 per kind, or the whole kind when small; every PLAUS/FAIL read by hand)",
+          "result": "100% for most kinds; 90-97% for reads_setting, SQL-text table edges, cites (strict), constrains and mentions",
+          "detail": "100%: calls 30/30 (all 4,872 machine-checked; every FAIL was a checker limit), calls_url 77/77, test_calls_route, imports (654/654 TS), defines, contains, renders, depends_injects, passes_callable, overrides 57/57, mocks 93/93, inherits 49/49, foreign_key 70/70, has_column, maps_table, migration_follows 45/45, migration_touches 223/223, enqueues_kind 35/35, kind_handled_by, navigates, registers_*, runs, same_capability, uses_constant, writes_column, contract, co_changed (948/948 pairs reproduced exactly). Below 100%: reads_setting 29/30; reads_table about 136/141 and writes_table about 244/245 (all errors are SQL-text edges taken from docstrings); cites 29/30 strict; constrains 29/30; mentions 27/30 strict (1,054 of 1,379 mentions have confidence below 1)."
+        },
+        {
+          "what": "Recall at frozen (15+ symbols per major kind, or the whole population)",
+          "result": "High except mobile config reads_setting (0/~10) and constrains 46/51",
+          "detail": "calls 37/37. calls_url, production code: 77/78. pytest routes 380/386; client tests 44/44. writes_table 19/20 functions; uow probe 101/111 lines. reads_setting: py settings 94/94, shop KEY_ 48/48, JS env 21/23, os.environ 0/2, mobile config.* 0/~10. overrides 57/57. mocks: JS 53/53, patch 7/7, monkeypatch 27/27. cites: unique 482/485, ambiguous 88/88. constrains 46/51 tokens."
+        },
+        {
+          "what": "Spot check at June ded44c8 and July d18205d",
+          "result": "Same precision and recall pattern as frozen",
+          "detail": "co_changed reproduced exactly (June 488 pairs, July 855). Mentions about 27/30 at each commit; July constrains 28/30. The same misses repeat: the test_router loop URLs and the sentry ternary URL. cites and mocks at 100%."
+        },
+        {
+          "what": "No future leak in facts built at a parent (all 188 cache builds checked against git)",
+          "result": "Content clean; labels leak",
+          "detail": "0 node or evidence paths missing at P, 0 commits that are not ancestors of P or come after P, 0 bad co-change commit refs, and symbol ranges fit the file at P. The leak is in labels. commits.jsonl keeps 413 dropped commits (3,599 file entries) labelled same_pr_as_task:#n or pr_in_flight_at_parent:#n, and meta.json names the task SHAs and PRs in 181 builds."
+        },
+        {
+          "what": "Determinism",
+          "result": "Pass",
+          "detail": "Two builds at frozen are byte-identical (nodes, edges, commits and experimental files). Rebuilds of 5 cache entries (June, July, 00c0a1f7, 8f0da52c, 013a86b7) match the cache byte for byte."
+        },
+        {
+          "what": "Cache coverage of tasks/parents.txt",
+          "result": "126/128 distinct parents cached",
+          "detail": "188 folders, all at version e409baad8b0c794b, sha256 checks pass, no degraded stages. Missing: 8dafcecc (T4, not on main) and a31924a (T5); both are descriptive sets. There are no doc-removed variants for the 9 remove_paths lines."
+        },
+        {
+          "what": "Earlier verifier defects (verify-schema-scoring)",
+          "result": "All fixed; 2 small residuals",
+          "detail": "Fixed: URL ambiguity, test detection by path, deterministic TS stage, read/write split, test ctor/uow noise, ancestors-only co-change, tracked-docs-only corpus, 20 invariants, get_service alias, unresolved counts stated with scope, build at the parent. Residuals: is_test does not match what NOTES claims (vitest.setup, *_test.py), and session.delete over-matches repo.delete."
+        },
+        {
+          "what": "Bias toward graph or relational arms",
+          "result": "Several conventions need declaring",
+          "detail": "Parallel edges: 18,821 edges collapse to 17,370 distinct (kind,src,dst). co_changed is stored in both directions; every other kind in one. Ambiguous 1/k fan-outs inflate BFS and recursive CTE results but not confidence-weighted PPR. Hubs: get_current_principal 101, table:job 88. Missing edge classes the protocol promised: mobile config reads, os.environ, Protocol dispatch, loop-variable uow, test URL loops, ternary URL."
+        }
+      ],
+      "defects": [
+        {
+          "severity": "biases a result",
+          "where": "git_extract.js output: commits.jsonl and meta.json in every cache build",
+          "what": "Facts built at a parent carry knowledge from after the parent. commits.jsonl keeps 413 dropped commits (3,599 file entries) labelled same_pr_as_task:#n or pr_in_flight_at_parent:#n. On the 9 TUNE parents that have same-PR drops, the dropped siblings touch 27 of the children's 62 changed files (44%). meta.json switches.task and git stats task_children/task_prs name the task SHAs and PRs (181 builds). Separately, the in-flight rule drops real ancestor history using knowledge of later merges (25 drops on task parents, e.g. P=2920d3d drops itself and d26c2b0). That goes beyond the protocol's same-PR sibling rule.",
+          "fix": "Remove dropped commits from commits.jsonl entirely, or strip their files and labels. Remove the task SHAs and PRs from meta.json. Drop only same-PR siblings as the protocol says, or justify the in-flight rule in protocol terms. Rebuild the cache and check that no arm reads these fields."
+        },
+        {
+          "severity": "biases a result",
+          "where": "ts_extract.js reads_setting, the cfg branch",
+          "what": "Mobile config-object reads produce 0 edges (about 10 sites, e.g. config.attendance.maxDutyHours and config.video.*). This includes the anchor of CLAUDE.md invariant #9, so constrains also misses that token. Tasks touching the mobile privacy and time limits lose a setting hop.",
+          "fix": "Resolve member chains on the imported config object to setting nodes. Add a test that config.attendance.maxDutyHours yields a reads_setting edge."
+        },
+        {
+          "severity": "biases a result",
+          "where": "edges.jsonl conventions, graph versus relational cross-check",
+          "what": "Parallel multi-edges: 18,821 edges collapse to 17,370 distinct (kind,src,dst) and 16,662 distinct (src,dst). Examples: calls 4,872 to 4,130, migration_touches 223 to 82, writes_table 245 to 135. co_changed is stored in both directions while other kinds are one-way. A graph engine that collapses multi-edges will disagree with SQL counts, degree or PageRank.",
+          "fix": "Declare one convention in the protocol (dedupe on (kind,src,dst) with max confidence, or keep multiplicity as a weight) and how to treat the direction of co_changed. Apply it in a shared loader that both arms use."
+        },
+        {
+          "severity": "biases a result",
+          "where": "Ambiguous fan-outs in constrains and mentions (confidence 1/k)",
+          "what": "Invariant #3 constrains every service.py, deps.py and index.js; 309 mentions are ambiguous; captured_at constrains 3 wrong tables. Algorithms that ignore confidence (BFS, recursive CTE) get flooded; PPR does not.",
+          "fix": "Require every arm to respect confidence, or drop and cap fan-outs above k in a shared view. State this in the protocol."
+        },
+        {
+          "severity": "minor",
+          "where": "py_extract.py SQL-text table edges",
+          "what": "About 7 false edges come from prose in docstrings: LocalPunch to shop, run_outcome_auto_link_scan to customer, file-level docstrings in 0038, 0044 and 0045, and a 0012 downgrade DELETE labelled as a read. Evidence lines are 1 or the function start. reads_table precision is about 96.5%.",
+          "fix": "Parse SQL only from string literals passed to text(), execute or op.execute, never from docstrings. Classify DELETE, UPDATE and INSERT as writes. Point the evidence at the statement line."
+        },
+        {
+          "severity": "minor",
+          "where": "Recall holes",
+          "what": "Missed: the ops opsApi getSentryIssues ternary URL (no edge for GET /api/ops/sentry/issues); 6 pytest URLs looped over a tuple (attendance tests/test_router.py:367-372); loop-variable uow writes in scripts (unlock_account to technician, backfill_* to job); Protocol-typed calls (self._rail.disburse); VITE_BASE and os.environ reads; constrains tokens start.sh, transition(), JobDetail.evidence, cursor.last_seq.",
+          "fix": "Add ternary and loop-literal URL expansion, Protocol-to-implementation dispatch, and os.environ/VITE env reads. Otherwise list these holes in the extractor NOTES."
+        },
+        {
+          "severity": "minor",
+          "where": "docs_extract.js cites",
+          "what": "3 markdown links whose URL ends in a :line suffix become false missing: nodes. security.py with 2 candidates gets an edge to core/security.py when the target is identity.",
+          "fix": "Strip a :line or :line-line suffix before resolving. Use the doc's slice context to break ties."
+        },
+        {
+          "severity": "minor",
+          "where": "Small labelling issues",
+          "what": "is_test does not match what NOTES claims (vitest.setup.js has is_test=false). session.delete also matches self._repo.delete. The method assert_safe_for_production became a setting node. A test write values[KEY_...] = True is labelled reads_setting. There is a spurious slice backend/features. --skip leaves orphan nodes. No doc-removed cache variants exist for the 9 remove_paths lines.",
+          "fix": "Make the code match NOTES (or the reverse); require a session receiver for session.delete; filter callables from setting nodes; skip subscript assignment targets; fix the slice root; prune orphans; build doc-removed variants or document that arms must filter them."
+        }
+      ],
+      "verdict": "Usable for TUNE, after fixes. Precision is 97-100% for nearly every kind. Recall is high, except mobile config reads (0 edges) and 5 invariant tokens. Builds are deterministic, and the cache covers 126/128 parents; the 2 missing are descriptive sets. Every earlier verifier defect is fixed. File and commit content contains nothing from after the parent. Before any scoring, the label leak must be removed: commits.jsonl's dropped same-PR and in-flight commits with their files and PR labels, and the task SHAs and PRs in meta.json. The in-flight drop rule also needs to be brought within the protocol. Also declare a shared convention for multi-edges, co_changed direction and confidence-weighted fan-outs, so that neither the graph arm nor the relational arm gains from how the facts are stored. Add the mobile config reads_setting edges. The SQL-from-docstring edges and the other recall holes are minor and can be documented."
+    },
+    "q3": {
+      "status": "done",
+      "what_was_built": [
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_reference.jsonl: the 50 final TQ reference answers. Each record has the answer, answer_items, accept_aliases, hops (the writer's count), the writer's structured evidence, the second reader's evidence, pre_resolution (exact or resolved), a resolution block with file:line for the 4 resolved questions, and the flagged judgement readings.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_agreement.txt: agreement before resolution (exact and item-level), a table of the 4 disagreements with their kind and decision, the wording changes, and the judgement calls both readers made the same way.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/tq_questions.jsonl: 31 questions reworded, ids kept, none dropped. The pre-resolution copy is sealed/tq_resolve/tq_questions.before.jsonl.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_resolve/: compare.py (raw comparison), check_names.py (every path::symbol resolves at the frozen commit), resolve_data.py (the decisions), resolve.py (idempotent writer of the reference and the questions, which also checks evidence lines), resolve_stats.json, NOTES.md.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/SHA256SUMS: rebuilt with 34 entries. The existing entries are kept, the hash of sealed/NOTES.md is updated (a TQ section was appended to it), and the TQ question, reference, agreement, both reader answer files and the tq_resolve files are added. All 34 verify."
+      ],
+      "key_numbers": [
+        "Exact match before resolution: 46/50 (92%). Tune 17/20, held-out 29/30.",
+        "Items: writer 171, second reader 170, union 179, both 162. Pooled item-level agreement 0.905. Mean per-question Jaccard 0.954 (the 5 answers empty in both count as 1.0).",
+        "With the spelling of nested functions normalised: 48/50 exact, item agreement 169/172 = 0.983.",
+        "Disagreements by kind: naming of nested functions, 2 questions (Q7, Q12; 7 mismatched items per side, the same functions); class field vs class, 1 question (Q24); rule interpretation, 1 question (Q18, one invariant). Substantive disagreement (a different code entity): 1 item in 1 question.",
+        "Final reference: 171 items. It equals the writer's answer on 47 questions and the second reader's on 49 (it differs from the second reader only on Q18, where CLAUDE.md:L127 is included).",
+        "Evidence check: 0 bad file:line pairs at a31924a3818f4ac94b695906d107c72c912792b2. 75 distinct path::symbol items checked; only the writer's 7 bare AppContext names failed to resolve to a top-level declaration.",
+        "Both readers made the same judgement call on 12 borderline decisions, about 7% of 171 items: 3 items included (Q12 failureReason; Q18 L199 and L224) and 9 candidate items left out (Q3 L191, Q20 backendOps, Q21 device, Q25 _money_rates, Q31 L239/L243/L246, Q39 L224/L199).",
+        "Questions reworded: 31 of 50. None dropped."
+      ],
+      "deviations_from_protocol": [
+        "No question was dropped. The ambiguity was fixed in the wording instead, and the wording changes were applied to every question of the affected kinds, not only the 4 disputed ones. Two clauses were added: a naming clause on 25 questions with path:: answers (a nested function is path::Outer.inner, an object-literal method is object.method, a class field is given as its class), and a clarification of rule (a) on the 6 invariants_on_file questions (a bare basename that names a family of files counts). The examples in both clauses were chosen so they do not name any answer. No agreed answer changes under the new wording.",
+        "Hop counts come from the writer alone. The second reader gave none, so they were not checked blind.",
+        "Agreed answers were not re-read against the code, because only disagreements were in scope. The shared judgement calls are listed as a trust bound instead.",
+        "Q24: the canonical answer is at class level (TravelSampleBatch), because the protocol's symbol nodes are functions, classes, methods and components. The field-level name TravelSampleBatch.samples is kept as an accepted alias. Q7 and Q12 likewise keep the bare names as aliases."
+      ],
+      "problems": [
+        "The two readings are not fully independent. The writer also wrote the questions, and the scope text encodes its choices. The second reader's blindness rests on its own notes, though its evidence lines differ from the writer's in many places. Treat the high agreement as an upper bound.",
+        "The writer was inconsistent: it left nested functions unqualified in Q7 and Q12 but qualified them in Q41. Scorers should match through accept_aliases.",
+        "If tq_writer/build_tq.py is re-run, it rewrites tasks/tq_questions.jsonl with the old wording. Re-run sealed/tq_resolve/resolve.py afterwards, then refresh SHA256SUMS.",
+        "The 12 shared judgement decisions could go the other way under a third reader. TQ should be reported both with and without them."
+      ],
+      "how_to_run": [
+        "Export the frozen commit: git -C C:/Users/User/Documents/projects/EMS_workshop1 archive a31924a3818f4ac94b695906d107c72c912792b2 | tar -x -C <build>/tmp/tq_resolve",
+        "Resolve: C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe -I <build>/sealed/tq_resolve/resolve.py <build> <build>/tmp/tq_resolve. It is idempotent because it reads tq_resolve/tq_questions.before.jsonl. It writes tasks/tq_questions.jsonl, sealed/tq_reference.jsonl and tq_resolve/resolve_stats.json.",
+        "Name check: the same Python with -I <build>/sealed/tq_resolve/check_names.py <build> <build>/tmp/tq_resolve",
+        "Delete the export afterwards. Verify the checksums from <build> with: sha256sum -c sealed/SHA256SUMS. Here <build> = C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build"
+      ]
+    },
+    "armAudit": {
+      "verdict": "The relational and reference arms are sound. Their outputs match on 7,040 random configurations with 0 mismatches. PPR and the budget walk match hand-computed answers. Query plans use the indexes. The tokenizer and packer are shared, deterministic and respect the budget. No arm reads sealed/, a held-out commit or the task commit when it answers. The held-out lock refuses every case tested.\n\nThe harness is not ready to score yet, for three reasons:\n(1) The default \"locate\" rule saturates in paths and range forms. Listing every file scores 0.94 recall in about 2.4k tokens, so the primary metric stops telling arms apart.\n(2) There are two scorers. On the same answers, common/score.js and search/score.js differ by +0.035 recall at 8k in signature form, and by +0.48 in paths form.\n(3) Padding decides the primary metric. The search arm pads with the same-directory floor (DIR). Without that padding it scores 0.333 at 8k; with it, 0.734, while DIR alone scores 0.719 and co-change alone 0.750. The relational arm and any graph arm have no padding option and leave the budget unused on 66% of base answers.\n\nTwo leakage channels are latent rather than active:\n- every facts meta.json names the task commit SHA;\n- arms/search/tune_labels.jsonl rebuilds 99.7% of the sealed TUNE reference files inside the arms folder, and the search configuration was selected on it.\n\nThe search baseline is not a strawman. On five TUNE tasks my own grep scored 0.231 at 8k against the script's 0.181, with no padding. With the same padding both scored 0.776. But it is only DIR plus about 0.015.\n\nTo be tuned as hard as the relational arm, a graph arm needs:\n- an async rank() in the harness;\n- an equivalence rule that tolerates native PPR and path-order differences;\n- its own 40-configuration list around its own base;\n- the same padding option and one scorer for every arm.",
+      "checks": [
+        {
+          "what": "1. Leakage: static grep of arms, facts and harness code",
+          "result": "pass at query time; two latent channels",
+          "detail": "No reference to sealed/ in any query path. git calls: search uses git archive <parent> only. Relational and reference start no child process. Latent channel 1: arms/search/tune_labels.js runs git diff from each parent to its task commit. Its output, arms/search/tune_labels.jsonl, reproduces 4,958/4,973 sealed TUNE reference files and 5,320/6,764 definitions, and sits in the arms folder. Latent channel 2: facts/cache/<parent>/meta.json switches.task holds the task commit SHA for 53/53 TUNE parents, and every arm loads meta.json. Only extractor_version is used today. The co-change extractor reads post-parent history (task PR ids, later merges) but only to drop ancestor commits, as the protocol requires."
+        },
+        {
+          "what": "1. Leakage: re-run with file and process access logged",
+          "result": "pass",
+          "detail": "Ran relational and reference 'base' on 628 TUNE tasks, and search with 40 configs + 8 floors on 18 tasks, under audit/arms/accesslog.js. 0 sealed paths, 0 held-out SHAs, 0 non-parent commit SHAs (the remaining 40-hex strings are srcstore content hashes). Facts files read: meta, nodes, edges, commits. The 3 commits.jsonl entries checked for one parent are all ancestors. Logs and analysis: audit/arms/leak/."
+        },
+        {
+          "what": "2. Held-out discipline",
+          "result": "pass (lock weaker in search)",
+          "detail": "common/run.js exits 2 before reading tasks.jsonl in all four cases: no flag; --allow-heldout without hash; wrong hash; correct hash ba68ab71ebbff9b2 never frozen. search/run.js exits 2 without --allow-heldout but has no frozen-hash check. results/frozen/ does not exist. No result file or record has split heldout. 54 SQLite stores = 53 TUNE parents + 1 bench. The only held-out-parent artefact is srcstore/trees/a31924a.json (the frozen commit, also T5's parent), written by bench/TQ, not by a task run."
+        },
+        {
+          "what": "3. Equivalence relational vs reference",
+          "result": "pass, 0 mismatches",
+          "detail": "Random configurations, almost none in the 40-config sweep: random class subsets incl. membership/docs/capability, hops 1-6/null, budgets, indeg k 2-25, transport, PPR restart 0.1-0.7 and co-change weight 0-5, 2-3-part hybrids, all forms and granularities, closure/CTE/level-wise paths. 960 comparisons on 32 tasks (seed 7) + 6,080 on 152 tasks across all 53 TUNE parents (seed 2026): 0 mismatches in ranked lists and packed answers. Re-running 'base' reproduced the stored sweep byte-for-byte (1,256 answers, ms excluded). One defect found: a budget config with about 9 classes at 2-3 crashes the reference arm (Set maximum size exceeded); later runs capped the state space at 2,000."
+        },
+        {
+          "what": "4. Relational design: indexes and query plans",
+          "result": "pass",
+          "detail": "Re-derived EXPLAIN QUERY PLAN on a cached store. k-hop CTE, reach DAG and budget CTE use edge PRIMARY KEY (src=?) and COVERING INDEX edge_rev (dst=?). sqlite_stat1 present (ANALYZE ran). Full scans only in per-configuration cached builds (hub sets, PPR transitions). The class mask is filtered after the index probe (cid not in the key): fine at this degree."
+        },
+        {
+          "what": "4. Recursion semantics and depth cap",
+          "result": "pass",
+          "detail": "k-hop CTE uses UNION over (node, depth) with r.d < $H, so a node can be re-expanded once per depth level, bounded by H. Unbounded runs level by level with INSERT OR IGNORE into hop (true visited set). Budget CTE uses UNION over (node, state, depth) and terminates because the state counters only grow. The closure table is bounded at K=3 and the base mask, and is used only when it applies."
+        },
+        {
+          "what": "4. Personalised PageRank against hand computation",
+          "result": "pass",
+          "detail": "4-node graph (a->b, a->c, b->c, c->d; seed a; restart 0.3; d dangles to the seed). Hand values b 0.148211, c 0.251959, d 0.176371. Relational result: max abs error 1.25e-9, same order c,d,b, reference identical. Second case (direction both, co-change arc x3, restart 0.15) against an exact Gaussian solve: max abs error 1.46e-8, order d,c,b,e identical."
+        },
+        {
+          "what": "4. Metapath (per-class budget) against a hand walk",
+          "result": "pass, with a definitional caveat",
+          "detail": "Budget imports<=1, calls<=2 on an 8-node toy graph. Reach, hops and via paths equal the hand walk: a1 calls, b1 imports, c2 calls>calls, e2 calls>imports, f3 calls>calls>imports; g and h unreached. Caveat: the budget is a multiset of counts per CLASS, not per edge type and not an ordered type sequence. An ordered metapath (e.g. calls then imports) cannot be expressed in config.js. The state space grows exponentially with the number of classes."
+        },
+        {
+          "what": "4. Section 6 algorithms present",
+          "result": "mostly present",
+          "detail": "Present: hops 1-6 and unbounded; per-class budgets; three directions; edge classes added one at a time; bfs, degnorm, PPR 0.15/0.30/0.50, co-change weight 0.5/1/3, co-change rank, FTS5 text, two hybrids; indeg 5/10/15 and transport hubs; file and symbol granularity; 4 forms; 4 budgets. Missing from the sweep: symbol+paths form, symbol+signature-only variants beyond 'gran=symbol', any interaction (one-factor-at-a-time around a base fixed before any data), the optional global cap in budget mode, and the experimental response-field class. The global PageRank column is stored but no ranking uses it."
+        },
+        {
+          "what": "5. Search baseline quality (sealed TUNE T1, 65 commits)",
+          "result": "reasonable search, but it is the DIR floor plus padding",
+          "detail": "R8k common-locate / search-scorer: frozen 'rounds=1 names-only' 0.734/0.698; best 'prox=1.5' 0.744/0.708; DIR floor 0.719/0.683; CO floor 0.750/0.713; frozen without DIR fill 0.333/0.319; 'nofill' 0.489. The frozen choice holds on sealed TUNE: it is within one SE of the best under both scorers. The proxy labels inflated the reported R8k (0.735 under the search scorer vs 0.698 on sealed). Co-change, which a careful person also checks with git log, is a floor and not part of the arm."
+        },
+        {
+          "what": "5. Beat the search by hand on five TUNE tasks",
+          "result": "small edge only before padding",
+          "detail": "Tasks T1-0051, T1-0086, T1-0103, T1-0132, T1-0318. Lists written from 4-8 greps each before opening the references (audit/arms/manual_lists.json). Unpadded R8k: hand 0.231 vs scripted 0.181. With the same DIR fill: 0.776 vs 0.776 at 8k, 0.33 vs 0.24 at 2k, 0.51 vs 0.39 at 4k. Most misses were files the commit changed with no code link to the seed: T1-0318 (conftest seed, 14 attendance/web reference files); T1-0103 (api.ts seed, reference = App.tsx only). No search or graph method reaches these files; only proximity padding does."
+        },
+        {
+          "what": "6. Tokenizer and packer",
+          "result": "pass",
+          "detail": "One tokenizer and one packer (common/) used by search (pack.js adapter), relational and reference; search's tokens-read ledger uses the same tokenizer. Headers are counted: a path line costs 12 tokens; the footer costs 7-8 and is counted in used. 21,928 stored answers (relational, reference, search incl. paths/snippet/symbol forms): 0 over budget, 0 where used fails to recompute from items + cut + footer. Re-runs are byte-identical. The cut item is truncated at atomic tokenizer segments. Minor: a truncated path in paths/range form still counts as a full hit in the common scorer. The footer exceeds its 8-token reserve only above 999,999 units."
+        },
+        {
+          "what": "7. Scorer consistency (affects every arm)",
+          "result": "fail",
+          "detail": "Two scorers. common/score.js 'locate' credits every definition of a listed file in paths/range form and any shown signature line inside a definition's range. search/score.js credits a definition only by name, or by its start line being shown. Same search answers, R8k: signature 0.734 vs 0.698; paths 0.941 vs 0.459. Under 'locate', DIR in paths form reaches 0.925 at 2k. Every arm can reach 0.94 by listing all files, so selecting by the primary metric would pick paths/range form for every arm. 5.3% of reference definitions are in the seed's own file and no file-granularity answer can show them. That caps everyone equally."
+        },
+        {
+          "what": "7. What a graph arm needs and harness handicaps",
+          "result": "several changes required",
+          "detail": "(a) common/arms.js openArm hard-codes relational/reference. run.js and sweep.js call arm.rank() synchronously, but graph-engine drivers are async, so the harness must await. (b) Equivalence is byte-identical over rounded scores, via paths chosen by minimum (u id, kind id), and PPR with fixed 40 iterations and dangling mass returned to the seeds. Native engine PageRank uses tolerance stopping and different dangling handling, so native algorithms will not match bitwise; the protocol needs a stated rank-equivalence tolerance or the graph arm must re-implement these semantics. (c) The 40-config list is one-factor-at-a-time around a base fixed by the relational builder (PPR r0.30, hops 2). The graph arm should get its own 40 around its own base, scored and selected by the grader with the same scorer and sealed TUNE references, as should relational and search. (d) The via explanation is never shown to the model or scored, so the graph's explanation paths carry no measurable value in this harness. Communities and ordered metapaths have no config slot. (e) Latency: SQLite is in-process; a server engine adds IPC, so use an embedded engine or report IPC separately. One store per commit means 128 loads. (f) Padding: give every arm the same optional DIR/CO tail, or compare recall at equal tokens; otherwise unpadded graph answers (relational base median 5,853 tokens at 8k, 66% fully under budget) are compared with search answers padded to about 7,926 tokens. (g) There is no shared TQ scorer and no lookups-to-80% measure for single-query arms."
+        }
+      ],
+      "defects": [
+        {
+          "severity": "blocks the test",
+          "where": "arms/common/score.js locate() (default rule 'locate')",
+          "what": "In paths and range forms at file granularity, a listed file counts as showing every reference definition in it. Listing every file then reaches 0.925 recall at 2k and 0.941 at 8k in about 2.4k tokens (DIR floor, form=paths, sealed TUNE T1). Choosing configurations by the primary metric would therefore pick paths/range plus padding for every arm and tie them all.",
+          "fix": "Make 'content' the primary rule: paths/range credit files only, never definitions. Or drop paths/range from the primary metric and report them under file recall only. Freeze the rule before any selection."
+        },
+        {
+          "severity": "biases a result",
+          "where": "arms/search/score.js vs arms/common/score.js",
+          "what": "The same answers get different recall from the two scorers. Signature form at 8k: 0.734 (common) vs 0.698 (search). Paths form: 0.941 vs 0.459. Definitions are matched by line overlap in one and by name or start line in the other. MRR is item-level in one and file-level in the other. The search arm's published numbers come from its own scorer and proxy labels.",
+          "fix": "Score every arm with one scorer (common/score.js with the fixed rule) against sealed TUNE references, run by the grader. Retire search/score.js or make it a wrapper around common/score.js."
+        },
+        {
+          "severity": "biases a result",
+          "where": "arms/search/arm.js fill (DIR tail); common harness has no equivalent",
+          "what": "The search arm pads every answer with the directory/capability floor: frozen R8k 0.734 with padding, 0.333 without, DIR floor alone 0.719. Relational and graph answers stop at their reach set: relational base uses a median 5,853 of 8,000 tokens and 66% of answers end under 8k. Recall at 8k then rewards padding, not retrieval, and the win rule's token clause pulls the other way.",
+          "fix": "Make padding a shared, arm-independent packer option (the same DIR/CO tail) that every arm may switch on, counted in the same configuration budget. Also report recall at matched tokens and the unpadded curve."
+        },
+        {
+          "severity": "biases a result",
+          "where": "arms/search/tune_labels.js and tune_labels.jsonl; search/select.js",
+          "what": "The search builder rebuilt the TUNE references from the task commits (git diff parent..child). The result reproduces 99.7% of sealed reference files and 79% of definitions and is stored inside arms/. The search configuration was self-selected on it, while the relational arm left selection to the grader. Tuning procedures differ between arms, and another arm builder can read the file.",
+          "fix": "Move or delete tune_labels.jsonl out of arms/. Let the grader select every arm's configuration with the same sealed TUNE references and scorer. Record the deviation."
+        },
+        {
+          "severity": "minor",
+          "where": "facts/cache/<parent>/meta.json (switches.task, git stats); loaded by arms/common/facts.js",
+          "what": "Every facts meta.json the arms load names the task commit SHA (53/53 TUNE parents). No arm uses it today, but any arm, including a future graph arm, could git show the answer.",
+          "fix": "Strip switches.task and task_children/task_prs from the meta.json the arms read, or keep them in a sealed side file."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/search/run.js held-out check",
+          "what": "Search refuses held-out without --allow-heldout but does not require a frozen configuration hash, unlike common/run.js.",
+          "fix": "Route the search arm through common/harness.js checkSplit (flag + matching frozen hash + results/frozen file)."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/reference/ref.js budget mode (and the budget state machine in general)",
+          "what": "The budget state space is the product of (b_c+1) over classes per node. With about 9 classes at budget 2-3 the reference arm crashes with 'Set maximum size exceeded' while the SQL CTE keeps running. The sweep's B1/B2 (768 and 1,944 states per node) are already the slowest queries (p95 680-722 ms).",
+          "fix": "Cap the state space (reject or warn above a limit), or restrict budgets to a few classes. If true metapaths are wanted, add an ordered metapath mode (a sequence of edge types), which grows linearly."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/common/config.js SWEEP and the protocol's 'metapath' wording",
+          "what": "'Budget per edge type (metapaths)' is implemented per CLASS as a multiset count, not per edge type or as an ordered type sequence. The 40 configurations vary one factor at a time around a base fixed before any data (PPR r0.30, hops 2), so interactions such as unbounded PPR with hub cuts are never tried.",
+          "fix": "State the definition in the protocol record. Give each arm its own 40-configuration list around its own base under the same rules. Consider a second-stage sweep on TUNE around the best first-stage point, the same for every arm."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/common/arms.js openArm, run.js and sweep.js (synchronous rank())",
+          "what": "The harness calls arm.rank() synchronously and only knows relational/reference. A graph-engine driver is asynchronous, so a graph arm cannot plug in without harness changes. ms timing is in-process for SQLite but would include IPC for a server engine.",
+          "fix": "Make rank() awaitable in run.js and sweep.js, register the graph arm in openArm, and time query execution separately from client IPC."
+        },
+        {
+          "severity": "minor",
+          "where": "Cross-check rule (protocol 5d) as implemented in sweep.js",
+          "what": "Identity is checked byte-for-byte over 12-decimal scores, via paths chosen by minimum (u id, kind id), and PPR with fixed 40 iterations and dangling mass returned to the seeds. A graph engine's native PageRank and path functions will not reproduce these bitwise, so a graph arm would fail the cross-check for reasons unrelated to answer quality.",
+          "fix": "Define equivalence as an identical reach set plus an identical rank order wherever score gaps exceed a stated tolerance (e.g. 1e-9), with via compared as a set of valid shortest paths. Or require the graph arm to state where its native algorithm departs from this specification."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/common/packer.js + score.js (cut item in paths/range form)",
+          "what": "When the cut lands in a paths or range item, the truncated path text still counts as a full hit for that file.",
+          "fix": "Count a cut paths/range item only if the whole path line fits."
+        }
+      ]
+    }
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Facts and tasks"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Arms"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "facts: shared extractor",
+      "phaseIndex": 1,
+      "phaseTitle": "Facts and tasks",
+      "agentId": "af35db65bcfdff1ed",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794470823325,
+      "queuedAt": 1794470822855,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "done",
+      "promptPreview": "You build the shared FACTS extractor for a test of a repo graph against a relational store.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it cannot be done, do the nearest honest thing and list it as a deviation) and C:…",
+      "promptFramed": true,
+      "lastProgressAt": 1794473227201,
+      "tokens": 127782,
+      "toolCalls": 132,
+      "durationMs": 2403875,
+      "resultPreview": "{\"status\":\"done\",\"what_was_built\":[\"build/facts/build_facts.js: orchestrator and join. `node build_facts.js <sha> <outdir> [--task children] [--skip kinds] [--only kinds] [--keep-export]`. It exports the commit with git archive into build/tmp, then runs the py and ts stages in parallel, followed by the URL, outbox, screens, settings, ESLint-contract, docs, structure, git and experimental response-…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "tasks: sealed task sets",
+      "phaseIndex": 1,
+      "phaseTitle": "Facts and tasks",
+      "agentId": "af4bcf65535f80452",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794470823325,
+      "queuedAt": 1794470822855,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "done",
+      "promptPreview": "You build the SEALED TASK SETS for a test of a repo graph against a relational store. You are the grader's side: arm builders will never see your reference answers.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it canno…",
+      "promptFramed": true,
+      "lastProgressAt": 1794472522326,
+      "tokens": 300076,
+      "toolCalls": 91,
+      "durationMs": 1697008,
+      "resultPreview": "{\"status\":\"done\",\"what_was_built\":[\"C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/tasks.jsonl: 1,569 tasks (T1 806, T1x 226, T2 477, T3 25, T4 8, T5 27). Each line has id, set, split, parent SHA and seed; T3/T4 also have remove_paths. Ids are opaque. There is no commit SHA, message or reference in the file.\",\"C:/Users…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "questions: write and answer",
+      "phaseIndex": 1,
+      "phaseTitle": "Facts and tasks",
+      "agentId": "a16d82953ef3ac6d7",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794470823325,
+      "queuedAt": 1794470822856,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "done",
+      "promptPreview": "You write the TQ question set for a test of a repo graph against a relational store, and its reference answers. The answers must come from reading the code, never from running any graph extractor.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not cha…",
+      "promptFramed": true,
+      "lastProgressAt": 1794472366243,
+      "tokens": 127177,
+      "toolCalls": 153,
+      "durationMs": 1540924,
+      "resultPreview": "{\"status\":\"done\",\"what_was_built\":[\"C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tasks/tq_questions.jsonl: 50 questions. Each line holds id, split, kind, question (the target, the scope rule for its kind and the commit) and answer_form. There are no answers, no evidence and no hop counts.\",\"C:/Users/User/AppData/Local/Temp…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "arm: relational + reference + harness",
+      "phaseIndex": 2,
+      "phaseTitle": "Arms",
+      "agentId": "acdd7b93646ca2a40",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794473227227,
+      "queuedAt": 1794473227206,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "done",
+      "promptPreview": "You build the RELATIONAL arm, the plain in-memory REFERENCE arm, the shared packer and tokenizer, and the test harness.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it cannot be done, do the nearest honest thing and li…",
+      "promptFramed": true,
+      "lastProgressAt": 1794478849720,
+      "tokens": 136891,
+      "toolCalls": 161,
+      "durationMs": 5622492,
+      "resultPreview": "{\"status\":\"done\",\"what_was_built\":[\"arms/common: shared code used by both arms (all paths below are under C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/).\",\"arms/common, loading and mapping: facts loader (facts.js) with a canonical integer-id graph; edge-class table with 12 switchable classes (edgeclasses.js); source text v…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "arm: search baseline",
+      "phaseIndex": 2,
+      "phaseTitle": "Arms",
+      "agentId": "aa36da6f972764192",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794473227228,
+      "queuedAt": 1794473227206,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "done",
+      "promptPreview": "You build the SEARCH arm: what coding sessions do today, as a script, plus the two floors every arm must beat.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it cannot be done, do the nearest honest thing and list it as …",
+      "promptFramed": true,
+      "lastProgressAt": 1794475154799,
+      "tokens": 279338,
+      "toolCalls": 83,
+      "durationMs": 1927569,
+      "resultPreview": "{\"status\":\"done\",\"what_was_built\":[\"Search arm (protocol 5a) in C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/search. Each task's parent is exported with git archive and the tar is parsed in memory; the working tree is never read. The search is a Node line scan. Round one reads the seed and greps three things: the seed…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "questions: blind second reading",
+      "phaseIndex": 2,
+      "phaseTitle": "Arms",
+      "agentId": "ac87b7810321410f1",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794473227228,
+      "queuedAt": 1794473227207,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "done",
+      "promptPreview": "You are the second, blind reader for a set of 50 structured questions about a codebase. Answer each from the code alone.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it cannot be done, do the nearest honest thing and l…",
+      "promptFramed": true,
+      "lastProgressAt": 1794474280251,
+      "tokens": 320558,
+      "toolCalls": 151,
+      "durationMs": 1053021,
+      "resultPreview": "{\"status\":\"done\",\"what_was_built\":[\"C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_second/answers.jsonl: blind second-reader answers to all 50 TQ questions, one record per question with id, split, kind, answer (in the form each question asks for), evidence (file:line notes per item), confidence, reading (how ambigu…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "audit: facts accuracy",
+      "phaseIndex": 2,
+      "phaseTitle": "Arms",
+      "agentId": "abcad7b01b81b856d",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794473227228,
+      "queuedAt": 1794473227207,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Usable for TUNE, after fixes. Precision is 97-100% for near…",
+      "promptPreview": "You audit the shared FACTS extractor before anything is scored with it. Assume it has errors until you have checked.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it cannot be done, do the nearest honest thing and list …",
+      "promptFramed": true,
+      "lastProgressAt": 1794474852761,
+      "tokens": 86481,
+      "toolCalls": 122,
+      "durationMs": 1625530,
+      "resultPreview": "{\"checks\":[{\"what\":\"Precision per edge kind at frozen a31924a (30 per kind, or the whole kind when small; every PLAUS/FAIL read by hand)\",\"result\":\"100% for most kinds; 90-97% for reads_setting, SQL-text table edges, cites (strict), constrains and mentions\",\"detail\":\"100%: calls 30/30 (all 4,872 machine-checked; every FAIL was a checker limit), calls_url 77/77, test_calls_route, imports (654/654 T…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "questions: resolve disagreements",
+      "phaseIndex": 3,
+      "phaseTitle": "Verify",
+      "agentId": "aafcc7a5da0fedce2",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794478849730,
+      "queuedAt": 1794478849724,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "done",
+      "promptPreview": "You resolve disagreements between two independent readers of 50 structured code questions and produce the final reference answers.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/protocol.md (the frozen protocol: you implement it, you do not change it; if something in it cannot be done, do the nearest honest t…",
+      "promptFramed": true,
+      "lastProgressAt": 1794479183152,
+      "tokens": 132486,
+      "toolCalls": 31,
+      "durationMs": 333421,
+      "resultPreview": "{\"status\":\"done\",\"what_was_built\":[\"C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/tq_reference.jsonl: the 50 final TQ reference answers. Each record has the answer, answer_items, accept_aliases, hops (the writer's count), the writer's structured evidence, the second reader's evidence, pre_resolution (exact or resolve…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 9,
+      "label": "audit: arms fairness and leakage",
+      "phaseIndex": 3,
+      "phaseTitle": "Verify",
+      "agentId": "a99b88b39cceb8e7d",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794478849730,
+      "queuedAt": 1794478849724,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "The relational and reference arms are sound. Their outputs …",
+      "promptPreview": "You audit the relational arm, the reference arm, the search baseline and the harness of a test that will compare a repo graph with a relational store. You are a refuter for BOTH sides: find what would be unfair to a graph engine added later, and what would be unfair to the relational store or to plain search.\n\nRead first, in full: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4…",
+      "promptFramed": true,
+      "lastProgressAt": 1794481171437,
+      "tokens": 309306,
+      "toolCalls": 84,
+      "durationMs": 2321704,
+      "resultPreview": "{\"verdict\":\"The relational and reference arms are sound. Their outputs match on 7,040 random configurations with 0 mismatches. PPR and the budget walk match hand-computed answers. Query plans use the indexes. The tokenizer and packer are shared, deterministic and respect the budget. No arm reads sealed/, a held-out commit or the task commit when it answers. The held-out lock refuses every case tes…"
+    }
+  ],
+  "totalTokens": 1820095,
+  "totalToolCalls": 1008
+}

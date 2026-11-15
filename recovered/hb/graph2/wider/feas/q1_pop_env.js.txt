@@ -1,0 +1,49 @@
+// Q1 extension: over the whole 141-commit population, how many parents match the existing node_modules
+// (non-optional packages: same version, none missing). Read-only git object reads.
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const FROZEN = 'a31924a3818f4ac94b695906d107c72c912792b2';
+const git = (a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', maxBuffer: 1 << 28 });
+const CODE = /\.(py|ts|tsx|js|jsx|mjs|cjs)$/;
+const prod = (p) => !/\.md$/i.test(p) && /^(backend|technician-app|src)\//.test(p);
+const inst = { web: JSON.parse(fs.readFileSync('env/web/node_modules/.package-lock.json', 'utf8')).packages, mobile: JSON.parse(fs.readFileSync('env/mobile/node_modules/.package-lock.json', 'utf8')).packages };
+const cache = {};
+function check(parent, rt) {
+  const key = parent + rt;
+  if (key in cache) return cache[key];
+  let lock;
+  try { lock = JSON.parse(git(['show', parent + ':' + (rt === 'web' ? '' : 'technician-app/') + 'package-lock.json'])).packages; } catch { return (cache[key] = 'no lockfile'); }
+  let diff = 0, miss = 0;
+  for (const [k, v] of Object.entries(lock)) {
+    if (!k.startsWith('node_modules/') || v.optional || v.os || v.cpu) continue;
+    const h = inst[rt][k];
+    if (!h) miss++; else if (h.version !== v.version) diff++;
+  }
+  return (cache[key] = { diff, miss, exact: diff === 0 && miss === 0 });
+}
+const shas = git(['rev-list', '--no-merges', FROZEN]).split('\n').filter(Boolean);
+const rows = [];
+for (const sha of shas) {
+  const raw = git(['show', '--no-renames', '--name-status', '--format=%H%x09%P%x09%cs', sha]).split('\n').filter(Boolean);
+  const [h, parents, cdate] = raw[0].split('\t');
+  if (parents.split(' ').length !== 1 || cdate < '2026-06-01') continue;
+  const files = raw.slice(1).map((l) => { const [st, ...p] = l.split('\t'); return { st, p: p.join('\t') }; });
+  const ex = files.filter((f) => prod(f.p) && CODE.test(f.p) && f.st !== 'A');
+  if (ex.length < 2 || ex.length > 30) continue;
+  const rts = [...new Set(files.filter((f) => prod(f.p)).map((f) => f.p.split('/')[0]))];
+  rows.push({ sha: h, parent: parents, cdate, rts, web: check(parents, 'web'), mobile: check(parents, 'mobile') });
+}
+const n = rows.length;
+const webExact = rows.filter((r) => r.web.exact).length, mobExact = rows.filter((r) => r.mobile.exact).length;
+const bothExact = rows.filter((r) => r.web.exact && r.mobile.exact).length;
+// what the commit touches decides which JS env it needs
+const needWeb = rows.filter((r) => r.rts.includes('src')), needMob = rows.filter((r) => r.rts.includes('technician-app'));
+const ok = rows.filter((r) => (!r.rts.includes('src') || r.web.exact) && (!r.rts.includes('technician-app') || r.mobile.exact)).length;
+const out = { population: n, parents_web_env_exact: webExact, parents_mobile_env_exact: mobExact, parents_both_exact: bothExact,
+  commits_touching_web: needWeb.length, of_which_web_exact: needWeb.filter((r) => r.web.exact).length,
+  commits_touching_mobile: needMob.length, of_which_mobile_exact: needMob.filter((r) => r.mobile.exact).length,
+  commits_whose_touched_js_runtimes_match_existing_env: ok,
+  by_month: Object.fromEntries(['2026-06', '2026-07', '2026-08'].map((m) => [m, { n: rows.filter((r) => r.cdate.startsWith(m)).length, web_exact: rows.filter((r) => r.cdate.startsWith(m) && r.web.exact).length, mobile_exact: rows.filter((r) => r.cdate.startsWith(m) && r.mobile.exact).length }])) };
+fs.writeFileSync('q1_pop_env.json', JSON.stringify({ ...out, rows }, null, 1));
+console.log(JSON.stringify(out, null, 1));

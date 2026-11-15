@@ -1,0 +1,42 @@
+const fs=require("fs");
+const root=process.cwd();
+const L=require(root+"/walkthroughs/walkthroughs.json").result.lanes;
+const fam=[
+["same-mistake","Same mistake, new session","Errors on this PC that came back in later sessions, other projects and subagents."],
+["silent-defect","Silent defect found later","Faults that passed every test and were found weeks later."],
+["build-new-from-old","Building new beside old","New features built next to older ones that held the same hazard."],
+["vendor-build-deploy","Outside vendor causes","Build and deploy failures caused by Expo, Railway, Docker and Windows."],
+["flaky-race-data","Races and flaky failures","Failures that do not repeat on demand, or depend on timing and other processes."],
+["composite-merge","Two correct pieces, one fault","Fixes that were right alone but wrong when merged."],
+["research-design","Research and design cases","Research verdicts, plans and lessons that later proved wrong or ignored."],
+["cross-project","Across projects","Facts learned in one project that another project needed."],
+["ladder-real-life","The ladder in real life","Cases where top models made or endorsed the error."],
+["libraries-over-time","Existing notes over time","How the owner's small libraries behaved as facts aged."]];
+const FX=JSON.parse(fs.readFileSync(root+"/cases-parts/fixes.json","utf8"));const used=new Set();const wc=s=>s.trim().split(/\s+/).filter(Boolean).length;
+const cases=[],warn=[],mism=[];
+fam.forEach((f,i)=>{
+ const part=JSON.parse(fs.readFileSync(root+"/cases-parts/f"+String(i+1).padStart(2,"0")+".json","utf8"));
+ const walks=L[i].walks;
+ if(part.length!==walks.length)mism.push("family "+(i+1)+" count "+part.length+" vs "+walks.length);
+ if(wc(f[1])>6)warn.push("famname "+f[0]);if(wc(f[2])>20)warn.push("famdesc "+f[0]+" "+wc(f[2]));
+ part.forEach((c,j)=>{
+  const w=walks[j];const id="f"+String(i+1).padStart(2,"0")+"-"+c.id;
+  if(c.steps.length!==10)mism.push(id+" steps "+c.steps.length);
+  if(FX[id+"|story"]){c.story=FX[id+"|story"];used.add(id+"|story")}
+  const steps=c.steps.map((s,k)=>{const fk=id+"|"+(k+1);if(FX[fk]){s=[s[0],FX[fk]];used.add(fk)}
+   const src=(w&&w.steps.find(x=>x.step===k+1))||null;
+   const exp=src?src.status:"not_reached";
+   if(s[0]!==exp)mism.push(id+" step"+(k+1)+" "+s[0]+" vs source "+exp);
+   if(wc(s[1])>25)warn.push(id+" s"+(k+1)+" note "+wc(s[1]));
+   return {step:k+1,status:s[0],note:s[1]};});
+  const lim=[["title",9],["story",35],["entry",60],["worked",25]];
+  for(const [k,n] of lim)if(wc(c[k]||"")>n)warn.push(id+" "+k+" "+wc(c[k]));
+  cases.push({id,family:f[0],title:c.title,story:c.story,when:c.when,source:c.source,entry:c.entry,steps,worked:c.worked||""});
+ });
+});
+Object.keys(FX).filter(k=>!used.has(k)).forEach(k=>mism.push("unused fix "+k));
+const families=fam.map(f=>({id:f[0],name:f[1],covers:f[2]}));
+fs.writeFileSync(root+"/../../library-pathways/cases.json",JSON.stringify({families,cases},null,1));
+const tot={};cases.forEach(c=>c.steps.forEach(s=>{const t=tot[s.step]=tot[s.step]||{};t[s.status]=(t[s.status]||0)+1}));
+console.log(cases.length,families.length,new Set(cases.map(c=>c.id)).size);
+console.log(JSON.stringify(tot));console.log("MISMATCH",mism.length,mism.join("\n"));console.log("WARN",warn.length,warn.join("\n"));

@@ -1,0 +1,823 @@
+// Builds the inventory of the library pathways page: every item a reader can reach on the current page,
+// each with a test that finds it in a page again after a redesign.
+// Run from this folder:   node - < build-inventory.js.txt
+// Reads   ../../../library-pathways/{map.json, params.json, engine.js, limitations.json, cases.json}
+//         ../page-src/{text.json, core.js.txt}   (page.js.txt is the source of the strings the page itself writes)
+// Writes  inventory.json  (one entry per item, each with tests)   inventory.md  (the same list for a person)
+// The expected numbers are computed here by the engine, with the same calls the page makes, at the middle values.
+// Nothing here is hand-typed except the strings that page.js.txt itself writes; those are marked "page.js" in "from".
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const EV = path.resolve(HERE, '..');
+const LP = path.resolve(EV, '..', '..', 'library-pathways');
+const SRC = path.join(EV, 'page-src');
+const read = p => JSON.parse(fs.readFileSync(p, 'utf8'));
+const MAP = read(path.join(LP, 'map.json')), TABLE = read(path.join(LP, 'params.json')), LIMS = read(path.join(LP, 'limitations.json')), CASES = read(path.join(LP, 'cases.json')), TX = read(path.join(SRC, 'text.json'));
+const E = require(path.join(LP, 'engine.js'));
+const C = require(path.join(SRC, 'core.js.txt'));
+const T0 = Date.now();
+
+// ------------------------------------------------------------------ the page's own number formats (page.js fmt)
+function fmt(v, kind) {
+  if (typeof v === 'string') return v;
+  if (v === null || v === undefined || !isFinite(v)) return 'none';
+  const a = Math.abs(v);
+  if (kind === 'pct') { const x = v * 100; return (x !== 0 && Math.abs(x) < 0.1 ? x.toFixed(2) : x.toFixed(1)) + '%'; }
+  if (kind === 'ratio') return a >= 10 ? v.toFixed(1) : v.toFixed(2);
+  if (kind === 'cost') return a >= 100 ? v.toFixed(0) : v.toFixed(1);
+  if (kind === 'int') return Math.round(v).toLocaleString('en');
+  if (kind === 'rho') return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+  if (kind === 'funnel') return v === 0 ? '0' : a >= 1 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(1);
+  if (kind === 'weight') { const y = 100 * v; return (y < 0 ? '−' : '') + (y === 0 ? '0' : Math.abs(y) >= 0.1 ? Math.abs(y).toFixed(1) : Math.abs(y) >= 0.01 ? Math.abs(y).toFixed(2) : Math.abs(y).toPrecision(1)) + '%'; }
+  if (v === 0) return '0';
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  if (a >= 1) return v.toFixed(2);
+  return v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
+}
+
+// ------------------------------------------------------------------ the model at the middle values
+const ROWS = E.tableRows(TABLE);
+const PMETA = {}; MAP.parameters.forEach(p => { PMETA[p.id] = p; });
+const pname = id => (PMETA[id] && PMETA[id].name) || id;
+const BEST = E.paramsFromTable(TABLE, 'best');
+const PATH = E.timePath(MAP, BEST);
+const NPER = PATH.periods.length;
+const LAST = PATH.periods[NPER - 1], FIRST = PATH.periods[0];
+const REACH = C.paramReach(E, MAP);
+const CNT = C.counts(MAP, TABLE, LIMS, CASES);
+const FACTS = C.bestFacts(E, MAP, TABLE);
+const REFS = E.references(MAP, TABLE);
+const W8 = E.weights(MAP, TABLE, LIMS.items, { stepLabels: LIMS.steps });
+const SHT = E.sharedTable(MAP, TABLE);
+const FCOUNT = C.funnelCounts(LIMS, CASES, TX.funnel_steps);
+const STATE = {}; MAP.states.forEach(s => { STATE[s.id] = s; });
+const BR = {}; MAP.branches.forEach(b => { BR[b.id] = b; });
+const STEP = {}; MAP.steps.forEach(s => { STEP[s.id] = s; });
+const OUT = {}; MAP.outcomes.forEach(o => { OUT[o.id] = o; });
+const POL = {}; MAP.policies.forEach(p => { POL[p.id] = p; });
+const TIER = {}; MAP.tiers.forEach(t => { TIER[t.id] = t; });
+const PNAME = TX.policy_names, PSHORT = TX.policy_short;
+const LIBG = MAP.lib_groups, LIBGI = {}; LIBG.forEach(g => { LIBGI[g.id] = g; });
+const CT = TX.sections.conditions;
+const ATTR = {}; MAP.attributes.forEach(a => { ATTR[a.id] = a; });
+const SHORT_VAL = { cheap_ok: 'Right', cheap_wrong: 'Wrong', visible: 'Visible', latent: 'Latent', exact: 'The same problem', similar: 'One entry, adapted', composite: 'Several parts', nothing: 'Nothing', yes: 'Yes', no: 'No' }; // page.js
+const STATUS_WORD = { works: 'works', strains: 'strains', breaks: 'breaks', not_specified: 'not specified', not_reached: 'not reached' }; // page.js
+const RATIOS4 = [['cost_vs_ladder', 'Cost', 'ladder'], ['wrong_vs_ladder', 'Wrong rate', 'ladder'], ['cost_vs_top', 'Cost', 'strong'], ['wrong_vs_top', 'Wrong rate', 'strong']]; // page.js
+const DSTEP_OF_STAGE = {}; Object.keys(TX.design_steps).forEach(k => { TX.design_steps[k].forEach(st => { (DSTEP_OF_STAGE[st] = DSTEP_OF_STAGE[st] || []).push(+k); }); });
+const stageWords = stage => { const ds = DSTEP_OF_STAGE[stage] || []; return !ds.length ? '' : ds.length === 1 ? 'design step ' + ds[0] : 'design steps ' + ds.join(', '); };
+const CASE = {}; CASES.cases.forEach(c => { CASE[c.id] = c; });
+const FAM = {}; CASES.families.forEach(f => { FAM[f.id] = f; });
+const LIM_FAM_NAME = {}; Object.keys(LIMS.families).forEach((k, i) => { LIM_FAM_NAME[k] = CASES.families[i] ? CASES.families[i].name : LIMS.families[k]; });
+const LIM = {}; LIMS.items.forEach(it => { LIM[it.id] = it; });
+const WLIM = {}, WSTEP = {}, WGROUP = {};
+W8.limitations.forEach(r => { WLIM[r.id] = r; }); W8.steps.forEach(r => { WSTEP[r.step] = r; }); W8.groups.forEach(r => { WGROUP[r.id] = r; });
+const DEFCLS = { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'no' };
+const classFor = (pol, cls) => Object.assign({}, cls || DEFCLS, POL[pol].fixed || {});
+const stocksAt = (pol, p) => pol === 'library' ? PATH.periods[p - 1].stocks : {};
+
+// ------------------------------------------------------------------ entries and tests
+const entries = [];
+const usedText = new Set();
+const R = raw => { usedText.add(raw); return raw; };
+const SECTIONS = [
+  ['top', 'Top bar and opening'], ['map', '1 The map'], ['funnel', '2 The funnel'], ['conditions', '3 Three conditions'], ['cases', '4 Where real cases broke'],
+  ['lims', '5 The limitations, by step'], ['run', '6 Run it'], ['many', '7 Many runs'], ['leaves', '8 What the map leaves out'], ['words', '9 Words used on this page'], ['footer', 'Footer'], ['data', 'Carried in the data, not shown']
+];
+let seqNo = 0;
+function add(id, kind, section, from, label, tests, extra) {
+  const e = Object.assign({ id, kind, section, from, label: label === undefined ? '' : label, tests: [] }, extra || {});
+  const seen = {};
+  (tests || []).filter(Boolean).forEach(t => {
+    let f = t.f || t.t; if (seen[f]) { seen[f]++; f += seen[f]; } else seen[f] = 1;
+    t.id = id + '#' + f; t.f = t.f || t.t; e.tests.push(t);
+  });
+  if (entries.some(x => x.id === id)) throw new Error('duplicate entry id ' + id);
+  entries.push(e);
+  return e;
+}
+const tx = (s, o) => Object.assign({ t: 'text', s: String(s) }, o || {});
+const prts = (a, o) => Object.assign({ t: 'parts', parts: a.map(String) }, o || {});
+const cl = (strings, w, o) => Object.assign({ t: 'cluster', strings: strings.map(String), w: w || 600 }, o || {});
+const clo = (strings, w, o) => cl(strings, w, Object.assign({ ordered: true }, o || {}));
+const tip = (strings, o) => Object.assign({ t: 'tip', strings: strings.map(String) }, o || {});
+const ctl = (label, ctype, o) => Object.assign({ t: 'control', label, ctype: ctype || 'any' }, o || {});
+const soft = t => Object.assign(t, { soft: true });
+// text with tokens: the literal pieces must appear; the token values must sit near them
+function tok(raw) {
+  const values = [], parts = []; let last = 0, m; const re = /\{\{(c|g|n):([^}|]+)(?:\|([MSG]))?\}\}/g;
+  while ((m = re.exec(raw))) {
+    parts.push(raw.slice(last, m.index));
+    values.push(m[1] === 'c' ? (typeof CNT[m[2]] === 'number' ? fmt(CNT[m[2]], 'int') : String(CNT[m[2]])) : m[1] === 'g' ? String(FACTS[m[2]]) : m[2]);
+    last = m.index + m[0].length;
+  }
+  parts.push(raw.slice(last));
+  return { parts: parts.map(s => s.trim()).filter(s => s.length >= 3), values };
+}
+function rich(raw, o) {
+  R(raw);
+  const k = tok(raw);
+  if (!values0(k)) return [prts(k.parts, Object.assign({ f: 'text' }, o || {}))];
+  const out = [prts(k.parts, Object.assign({ f: 'text' }, o || {}))];
+  const anchor = k.parts.slice().sort((a, b) => b.length - a.length)[0];
+  out.push(cl([anchor].concat(k.values), 900, Object.assign({ f: 'numbers', where: 'open' }, o && o.soft ? { soft: true } : {})));
+  return out;
+}
+const values0 = k => k.values.length > 0;
+const layoutText = t => Object.assign(t, { soft: true, why: 'describes the old layout or its interaction; may change in a redesign' });
+
+// ================================================================== TOP
+const S_TOP = 'top';
+add('top:brand', 'heading', S_TOP, 'page.html.txt header', 'Library pathways (brand)', [tx('Library pathways')]);
+[['map', 'Map'], ['funnel', 'Funnel'], ['conditions', 'Conditions'], ['cases', 'Cases'], ['lims', 'Limitations'], ['run', 'Run it'], ['many', 'Many runs'], ['leaves', 'Left out'], ['words', 'Words']].forEach(([id, lab]) => {
+  add('nav:' + id, 'nav_link', S_TOP, 'page.html.txt nav', lab, [ctl(lab, 'link', { changes: 'Scrolls to the ' + lab + ' section.' })]);
+});
+add('ctl:theme', 'control', S_TOP, 'page.js theme button', 'Theme: auto', [
+  ctl('Theme: auto', 'button', { changes: 'Cycles the page between automatic, light and dark colours.' }),
+  { t: 'probe', phase: 'misc', f: 'click', steps: [{ click: 'Theme: auto' }], then: [tx('Theme: light'), { t: 'attr', sel: 'html', attr: 'data-theme', eq: 'light' }], after: [{ click: 'Theme: light' }, { click: 'Theme: dark' }] }
+]);
+add('hero:title', 'heading', S_TOP, 'text.json title', TX.title, [tx(R(TX.title))]);
+TX.hero.forEach((h, i) => add('hero:line' + (i + 1), 'text', S_TOP, 'text.json hero[' + i + ']', h, rich(h)));
+['M', 'S', 'G'].forEach(t => {
+  add('tag:' + t, 'tag', S_TOP, 'text.json tags.' + t, t + ': ' + TX.tags[t], [
+    tx(R(TX.tags[t])),
+    tip([t + ': ' + TX.tags[t], TX.computed_tag], { f: 'chip_tip', note: 'shown when a tag chip is hovered or focused' })
+  ]);
+});
+add('tag:computed', 'note', S_TOP, 'text.json computed_tag', 'A computed number takes the weakest tag', [tx(R(TX.computed_tag))]);
+
+// ================================================================== MAP
+const SM = TX.sections.map;
+add('map:title', 'heading', 'map', 'text.json sections.map', SM.title, [tx(R(SM.title)), rich(SM.lede)[0]]);
+add('map:graph_note', 'note', 'map', 'text.json sections.map.graph_note', SM.graph_note, [layoutText(tx(R(SM.graph_note)))]);
+add('map:scroll_note', 'note', 'map', 'text.json sections.map.scroll_note', SM.scroll_note, [layoutText(tx(R(SM.scroll_note)))]);
+add('map:promo_legend', 'note', 'map', 'text.json sections.map.promo_legend', SM.promo_legend, [tx(R(SM.promo_legend))]);
+
+// ---- the three ways of working
+const startNow = {};
+MAP.policies.forEach(p => {
+  const tests = [
+    ctl(PNAME[p.id], 'button', { changes: 'Chooses the way of working. The map, the piece panel, the tree and the stepper redraw for it.' }),
+    tx(R(TX.policy_says[p.id]), { f: 'says', note: 'tip on the button' }),
+    { t: 'probe', phase: 'class', f: 'start', steps: [{ click: PNAME[p.id] }], then: [tip([STATE[p.start].label, 'This way of working starts here.'])] }
+  ];
+  add('way:' + p.id, 'way_of_working', 'map', 'map.json policies / text.json policy_names, policy_says', PNAME[p.id], tests, { meaning: p.meaning, start_state: p.start, fixed: p.fixed });
+});
+// ---- kinds of work (the four attributes and their values)
+const ATTR_LABEL = { kind: 'Kind of problem', need: 'The cheap model alone would be', held: 'What the library holds', distractor: 'A look-alike can be retrieved' }; // page.js renderPickers
+['kind', 'need', 'held', 'distractor'].forEach(aid => {
+  const a = ATTR[aid];
+  add('picker:' + aid, 'control_group', 'map', 'map.json attributes[' + aid + '] / page.js renderPickers', ATTR_LABEL[aid], [tx(ATTR_LABEL[aid], { f: 'label' })], { changes: 'Picks the ' + a.label.toLowerCase() + ' of the piece of work drawn on the map.' });
+  a.values.forEach(v => {
+    add('kind:' + aid + '=' + v.id, 'kind_of_work', 'map', 'map.json attributes[' + aid + '].values[' + v.id + ']', SHORT_VAL[v.id] + ' — ' + v.label, [
+      ctl(SHORT_VAL[v.id], 'button', { changes: 'Sets "' + a.label + '" to "' + v.label + '".', in_group: ATTR_LABEL[aid] }),
+      tx(v.label, { f: 'tip', note: 'tip on the button' })
+    ]);
+  });
+});
+add('ctl:period_map', 'control', 'map', 'page.js renderPickers (perPick)', 'Library as it stands at period', [
+  tx('Library as it stands at period', { f: 'label' }), ctl('Period', 'range', { nth: 0, changes: 'Sets the period at which the library\'s stock of entries is read. Library way only; the map, the piece panel and the stock drawing follow.' }),
+  tx(NPER + ' of ' + NPER, { f: 'value' })
+]);
+['top_first', 'cheap_ladder'].forEach(p => add('way_note:' + p, 'note', 'map', 'page.js renderPickers', PNAME[p] + ' has no library, so for it the library holds nothing and no look-alike exists.', [
+  { t: 'probe', phase: 'class', f: 'note', steps: [{ click: PNAME[p] }], then: [tx(PNAME[p] + ' has no library, so for it the library holds nothing and no look-alike exists.')] }
+]));
+
+// ---- the graph: stages, states, branches
+const defStocks = LAST.stocks;
+const EVC = E.evaluateClass(MAP, BEST, 'library', DEFCLS, defStocks);
+const BVAL = C.branchValues(E, MAP, BEST, 'library', DEFCLS, defStocks);
+MAP.steps.forEach((s, i) => {
+  const dw = stageWords(s.id);
+  add('stage:' + s.id, 'stage', 'map', 'map.json steps[' + i + '] / text.json design_steps', s.label + (dw ? ' (' + dw + ')' : ''), [tx(s.label, { f: 'label' }), dw ? tx(dw, { f: 'design_steps', note: 'which of the design\'s ten steps this stage holds' }) : null]);
+});
+MAP.states.forEach((st, i) => {
+  const dw = stageWords(st.step);
+  const tests = [
+    tx(st.label, { f: 'label' }),
+    tip([st.label, 'Stage: ' + STEP[st.step].label + (dw ? ' (' + dw + ')' : '')], { f: 'tip_stage' }),
+    tip([st.label, 'Share of this piece passing here: ' + fmt(EVC.stateFlow[st.id] || 0, 'pct')], { f: 'share', where: 'base', note: 'at the default choice: library, visible, cheap model wrong, one entry adapted, no look-alike, last period' }),
+    st.id === POL.library.start ? tip([st.label, 'This way of working starts here.'], { f: 'start' }) : null,
+    soft({ t: 'attrq', sel: '[data-state="' + st.id + '"]', n: 1, f: 'convention', note: 'convention: data-state on every drawn state' })
+  ];
+  add('state:' + st.id, 'state', 'map', 'map.json states[' + i + ']', st.label, tests, { stage: st.step, outcome: !!st.outcome, entry: st.entry });
+});
+const dupBranch = {}; MAP.branches.forEach(b => { dupBranch[b.label] = (dupBranch[b.label] || 0) + 1; });
+MAP.branches.forEach((b, i) => {
+  const v = BVAL[b.id], f = EVC.branchFlow[b.id] || 0;
+  const strings = [b.label, 'Stage: ' + STEP[STATE[b.from].step].label, 'Chance at this branch: ' + fmt(v.chance, 'pct'), 'Share of this piece taking it: ' + fmt(f, 'pct')];
+  if (b.tier) { strings.push('Cost when taken: ' + fmt(v.cost, 'cost')); strings.push('cheap-call equivalents, paid at ' + TIER[b.tier].label); }
+  add('branch:' + b.id, 'branch', 'map', 'map.json branches[' + i + ']', b.label + ' (' + STATE[b.from].label + ' → ' + STATE[b.to].label + ')', [
+    tip(strings, { f: 'tip', where: 'base', note: 'at the default choice' }),
+    tx(b.label, { f: 'label' }),
+    soft({ t: 'attrq', sel: '[data-branch="' + b.id + '"]', n: 1, f: 'convention', note: 'convention: data-branch on every drawn branch' })
+  ], { from: b.from, to: b.to, tier: b.tier, shared_label: dupBranch[b.label] > 1 });
+});
+MAP.outcomes.forEach((o, i) => {
+  add('outcome:' + o.id, 'outcome', 'map', 'map.json outcomes[' + i + ']', o.label, [tx(o.label, { f: 'label' })], { right: o.right });
+});
+const OUT_LEGEND = ['Accepted and right', 'Escaped, found later', 'Escaped, never found', 'Caught, never solved']; // page.js OUT_LEGEND
+const TIER_LEGEND = ['Cheap model', 'Opus', 'Fable']; // page.js TIER_LEGEND
+add('legend:outcomes', 'legend', 'map', 'page.js OUT_LEGEND', OUT_LEGEND.join(' | '), OUT_LEGEND.map(s => tx(s, { f: s })));
+add('legend:tiers', 'legend', 'map', 'page.js TIER_LEGEND', TIER_LEGEND.join(' | '), TIER_LEGEND.map(s => tx(s, { f: s })));
+MAP.tiers.forEach((t, i) => add('tier:' + t.id, 'tier', 'map', 'map.json tiers[' + i + ']', t.label, [tx(t.label, { f: 'label', note: 'shown in the tips of priced branches as "paid at ..."' })]));
+add('legend:graph', 'legend', 'map', 'page.js renderGraphLegend', 'all of this piece | none of it | start | accepted and right | a wrong outcome | promoted checks', [
+  layoutText(tx('all of this piece', { f: 'all' })), layoutText(tx('none of it', { f: 'none' })), tx('start', { f: 'start' }), tx('accepted and right', { f: 'right' }), tx('a wrong outcome', { f: 'wrong' }), tx('promoted checks', { f: 'promo' })
+]);
+add('legend:design_steps', 'caveat', 'map', 'text.json design_steps_note / page.js renderGraphLegend', 'How the stages match the ten steps', [tx('How the stages match the ten steps', { f: 'label' }), prts(tok(R(TX.design_steps_note)).parts, { f: 'text' })]);
+const PL = MAP.links[0];
+add('link:' + PL.id, 'link', 'map', 'map.json links[0]', PL.label, [
+  tx(R(SM.promo_label), { f: 'label' }), tx(MAP.stocks.labels[PL.from_stock], { f: 'stock' }),
+  tx(fmt(defStocks[PL.from_stock], 'cost') + ' at the start of the period', { f: 'stock_value', where: 'base' }),
+  tip([PL.label, SM.promo_legend, 'Unknowns: ' + PL.unknowns.map(pname).join(', ')], { f: 'tip', where: 'base' })
+], { measure: PL.measure });
+
+// ---- the piece panel, the three-way table, the tree, the stepper
+const pcLast = LAST;
+function pieceTests(pol, cls, per) {
+  const ev = E.evaluateClass(MAP, BEST, pol, cls, stocksAt(pol, per));
+  return { ev, strings: [fmt(ev.chance, 'pct'), fmt(ev.wrong, 'pct'), fmt(ev.cost, 'cost')] };
+}
+const defPiece = pieceTests('library', DEFCLS, NPER);
+add('piece:panel', 'panel', 'map', 'page.js renderPiece', 'This piece of work', [
+  tx('This piece of work', { f: 'title' }), tx('Share of all work like this', { f: 'chance_label' }), tx('How it ends', { f: 'ends_label' }), tx('cheap-call equivalents', { f: 'cost_unit' }), tx('wrong', { f: 'wrong_label' }),
+  cl(defPiece.strings, 500, { f: 'numbers', where: 'base', note: 'chance, wrong rate and cost of the default piece' }),
+  tx('The same piece, three ways', { f: 'three_ways_title' })
+]);
+MAP.policies.forEach(p => {
+  const ev = E.evaluateClass(MAP, BEST, p.id, classFor(p.id), stocksAt(p.id, NPER));
+  add('threeways:' + p.id, 'table_row', 'map', 'page.js renderPiece (three ways table)', PNAME[p.id] + ': wrong ' + fmt(ev.wrong, 'pct') + ', cost ' + fmt(ev.cost, 'cost'), [cl([PNAME[p.id], fmt(ev.wrong, 'pct'), fmt(ev.cost, 'cost')], 160, { f: 'row', where: 'base' })]);
+});
+add('threeways:head', 'table_head', 'map', 'page.js renderPiece', 'Way of working | Wrong rate | Cost', [tx('Way of working', { f: 'c1' }), tx('Wrong rate', { f: 'c2' }), tx('Cost', { f: 'c3' })]);
+// the tree at the default choice: header, order control, first-level rows
+const ROUTES = E.routes(MAP, BEST, 'library', { classValues: DEFCLS, stocks: defStocks, sortBy: 'chance' });
+function buildTrie(routes) {
+  const root = { kids: {}, order: [], chance: 0, carried: 0, key: '' };
+  routes.forEach(r => {
+    let node = root; node.chance += r.chance; node.carried += r.carried;
+    r.branches.forEach(bid => {
+      const bi = MAP.branches.indexOf(BR[bid]); let ch = node.kids[bi];
+      if (!ch) { ch = node.kids[bi] = { bid, kids: {}, order: [], chance: 0, carried: 0, key: (node.key ? node.key + '>' : '') + bi }; node.order.push(bi); }
+      ch.chance += r.chance; ch.carried += r.carried; node = ch;
+    });
+    node.route = r;
+  });
+  return root;
+}
+const kidsOf = n => n.order.map(k => n.kids[k]).sort((a, b) => b.chance - a.chance);
+const chainFrom = n => { const chain = [n]; while (!n.route && n.order.length === 1) { n = n.kids[n.order[0]]; chain.push(n); } return chain; };
+const TRIE = buildTrie(ROUTES.routes);
+add('tree:head', 'panel', 'map', 'page.js renderTree', 'The route tree', [
+  tx(ROUTES.count + ' routes for this piece. Shares are of this piece; costs in cheap-call equivalents.', { f: 'head', where: 'base' }), tx('share', { f: 'col' }),
+  tx('Order the tree by', { f: 'order_label' }),
+  ctl('Share of this piece', 'button', { changes: 'Orders the route tree by the share of the piece that takes each route.' }),
+  ctl('Cost it carries (share × cost)', 'button', { changes: 'Orders the route tree by share times cost.' })
+]);
+kidsOf(TRIE).forEach((k, i) => {
+  const chain = chainFrom(k), end = chain[chain.length - 1];
+  const label = chain.map(c => BR[c.bid].label).join(' → ');
+  const kids = end.route ? 0 : end.order.length;
+  const strings = [chain[0] && BR[chain[0].bid].label, fmt(end.chance, 'pct')].concat(end.route ? [OUT[end.route.outcome].label] : ['(' + kids + ' ways on)']);
+  add('tree:row' + (i + 1), 'route_row', 'map', 'page.js renderTree (first level, default choice)', label + ' ' + fmt(end.chance, 'pct'), [cl(strings, 400, { f: 'row', where: 'base' })]);
+});
+// the stepper at the default choice: selected route, then every branch step by step
+const topRoute = ROUTES.routes.slice().sort((a, b) => b.chance - a.chance)[0];
+const allB = topRoute.branches.slice();
+add('stepper:route', 'panel', 'map', 'page.js renderStepper', 'Selected route', [
+  tx('Selected route', { f: 'label' }), tx(OUT[topRoute.outcome].label + ': ' + allB.length + ' branches', { f: 'summary', where: 'base' }),
+  cl(['Share of this piece on it: ' + fmt(topRoute.chance, 'pct'), 'Cost along it: ' + fmt(topRoute.cost, 'cost'), 'cheap-call equivalents.'], 260, { f: 'numbers', where: 'base' })
+]);
+[['Step through from the start', 'Lights the first branch of the selected route and opens the step-by-step view.'], ['Back', 'Goes back one branch on the route.'], ['Next', 'Goes forward one branch on the route.'], ['Light up the whole route', 'Lights the whole selected route on the map at once.']].forEach(([lab, ch]) => {
+  add('ctl:' + lab.toLowerCase().replace(/[^a-z]+/g, '_'), 'control', 'map', 'page.js renderStepper', lab, [ctl(lab, 'button', { changes: ch })]);
+});
+let sofar = 1;
+allB.forEach((bid, k) => {
+  const b = BR[bid], v = BVAL[bid]; sofar *= v.chance;
+  const strings = ['Branch ' + (k + 1) + ' of ' + allB.length, b.label + '.', 'From ' + STATE[b.from].label.toLowerCase() + ' to ' + STATE[b.to].label.toLowerCase() + '.', 'Chance at this branch: ' + fmt(v.chance, 'pct'), b.tier ? 'Cost when taken: ' + fmt(v.cost, 'cost') : 'No cost.', b.tier ? 'paid at ' + TIER[b.tier].label + '.' : 'No cost.', 'Share of this piece still on the route: ' + fmt(sofar, 'pct')];
+  add('stepper:branch' + (k + 1), 'stepper_state', 'map', 'page.js renderStepper (default route, branch ' + (k + 1) + ')', 'Branch ' + (k + 1) + ' of ' + allB.length + ': ' + b.label, [
+    { t: 'probe', phase: 'stepper', f: 'step', steps: [{ click: k === 0 ? 'Step through from the start' : 'Next' }], then: [prts(strings, { f: 'text' })] }
+  ]);
+});
+
+// ---- the 40 classes of work, under each way of working
+let classN = 0;
+MAP.policies.forEach(p => {
+  const lib = p.id === 'library';
+  const combos = [];
+  ATTR.kind.values.forEach(k => ATTR.need.values.forEach(n => {
+    if (lib) ATTR.held.values.forEach(h => ATTR.distractor.values.forEach(d => combos.push({ kind: k.id, need: n.id, held: h.id, distractor: d.id })));
+    else combos.push({ kind: k.id, need: n.id, held: POL[p.id].fixed.held, distractor: POL[p.id].fixed.distractor });
+  }));
+  combos.forEach(cls => {
+    classN++;
+    const pc = pieceTests(p.id, cls, NPER);
+    const rt = E.routes(MAP, BEST, p.id, { classValues: cls, stocks: stocksAt(p.id, NPER), sortBy: 'chance' });
+    const steps = [{ click: PNAME[p.id] }, { click: SHORT_VAL[cls.kind] }, { click: SHORT_VAL[cls.need] }];
+    if (lib) { steps.push({ click: SHORT_VAL[cls.held] }); steps.push({ click: SHORT_VAL[cls.distractor] }); }
+    const then = [cl(pc.strings, 500, { f: 'numbers' }), cl([rt.count + ' routes for this piece'], 100, { f: 'routes' })];
+    MAP.policies.forEach(q => { const ev = E.evaluateClass(MAP, BEST, q.id, classFor(q.id, cls), stocksAt(q.id, NPER)); then.push(cl([PNAME[q.id], fmt(ev.wrong, 'pct'), fmt(ev.cost, 'cost')], 160, { f: 'threeways_' + q.id })); });
+    const name = p.id + ' | ' + cls.kind + ' | ' + cls.need + ' | ' + cls.held + ' | look-alike ' + cls.distractor;
+    add('class:' + p.id + ':' + cls.kind + ':' + cls.need + ':' + cls.held + ':' + cls.distractor, 'class_of_work', 'map', 'map.json attributes + policies; engine evaluateClass at the middle values, last period', name + ' — share ' + pc.strings[0] + ', wrong ' + pc.strings[1] + ', cost ' + pc.strings[2] + ', ' + rt.count + ' routes', [
+      { t: 'probe', phase: 'class', f: 'numbers', steps, then }
+    ], { chance: pc.ev.chance, wrong: pc.ev.wrong, cost: pc.ev.cost, routes: rt.count });
+  });
+});
+
+// ================================================================== FUNNEL
+const SF = TX.sections.funnel;
+add('funnel:title', 'heading', 'funnel', 'text.json sections.funnel', SF.title, [tx(R(SF.title)), tx(R(SF.lede)), tx(R(SF.marks))]);
+add('funnel:under', 'note', 'funnel', 'text.json sections.funnel.under', SF.under, [layoutText(prts([R(SF.under).split('.')[0]], { f: 'text' })), tx(R(SF.match_note), { f: 'match_note', where: 'open' }), tx('How bars match the design steps', { f: 'match_label' }), tx('all-good setting', { f: 'legend' })]);
+Object.keys(SF.stage_notes).forEach(k => {
+  const n = SF.stage_notes[k];
+  add('funnel:note' + k, 'note', 'funnel', 'text.json sections.funnel.stage_notes[' + k + ']', n.under, [tx(R(n.under), { f: 'under', where: 'base' }), tx(R(n.tip), { f: 'tip' })]);
+});
+add('funnel:after', 'stage', 'funnel', 'text.json sections.funnel.after_label / funnel_steps.after', SF.after_label, [tx(R(SF.after_label), { f: 'label', where: 'base' }),
+  cl(['steps ' + FCOUNT.after.steps.join(', '), FCOUNT.after.lims.length + ' limitations', FCOUNT.after.cases.length + ' cases broke'], 250, { f: 'under', where: 'base' })]);
+['which_cheap', 'which_all'].forEach(k => {
+  add('ctl:funnel_' + k, 'control', 'funnel', 'text.json sections.funnel.' + k, SF[k], [ctl(SF[k], 'button', { changes: k === 'which_cheap' ? 'Draws the funnel for the 100 pieces of work the cheap model would get wrong alone.' : 'Draws the funnel for 100 pieces of work of every kind.' })]);
+});
+add('ctl:funnel_period', 'control_group', 'funnel', 'page.js renderFunnelControls', 'Period: First | Last', [tx('Which work', { f: 'label_which' }), tx('Period', { f: 'label_period' }), ctl('First', 'button', { changes: 'Draws the funnel for the first period of the library.' }), ctl('Last', 'button', { changes: 'Draws the funnel for the last period of the library.' })]);
+// each funnel, each period: the bars, the all-good marks, the extra figure, the promoted-check line
+MAP.funnels.forEach((def, fi0) => {
+  ['first', 'last'].forEach(period => {
+    const v = C.funnelView(E, MAP, TABLE, BEST, { period, which: def.id, refs: REFS });
+    const stepsClick = [{ click: fi0 === 0 ? SF.which_cheap : SF.which_all }, { click: period === 'first' ? 'First' : 'Last' }];
+    const then = [tx(def.label, { f: 'funnel_label' }), tx('Period ' + (v.period + 1) + ' of ' + NPER + ', at the settings in “Run it”.', { f: 'period_note' })];
+    v.stages.forEach((s, i) => {
+      if (s.bar) {
+        then.push(tip([s.label, 'At these settings: ' + fmt(s.value, 'funnel'), 'All-good setting: ' + fmt(s.mark, 'funnel')], { f: 'bar_' + s.id }));
+        const fc = FCOUNT.stages[i];
+        if (fc.steps.length) then.push(cl([(fc.steps.length === 1 ? 'step ' : 'steps ') + fc.steps.join(', '), fc.lims.length + ' limitations', fc.cases.length + ' cases broke'], 250, { f: 'under_' + s.id }));
+        else if (SF.stage_notes[String(i)]) then.push(tx(SF.stage_notes[String(i)].under, { f: 'under_' + s.id }));
+      } else then.push(cl([s.label, fmt(s.value, 'funnel')], 120, { f: 'extra_' + s.id }));
+    });
+    then.push(cl([SF.promo, SF.promo_at, fmt(v.promo, 'funnel'), 'at these settings', fmt(v.mark_promo, 'funnel'), 'at the all-good setting'], 800, { f: 'promo' }));
+    add('funnel:' + def.id + ':' + period, 'funnel_view', 'funnel', 'map.json funnels[' + fi0 + '] + funnel_mark; engine funnel() at the middle values', def.label + ' — ' + period + ' period: ' + v.stages.map(s => fmt(s.value, 'funnel')).join(' → '), [{ t: 'probe', phase: 'funnel', f: 'view', steps: stepsClick, then }], { stages: v.stages.map(s => ({ id: s.id, label: s.label, value: s.value, mark: s.mark, bar: s.bar })) });
+  });
+});
+const fb = FCOUNT.stages.findIndex(g => g.steps.length);
+add('funnel:bar_click', 'control', 'funnel', 'page.js openFromFunnel', 'A funnel bar', [{ t: 'probe', phase: 'funnel', f: 'click', steps: [{ click: SF.which_cheap }, { clickSel: ['[data-fi="' + fb + '"]', '.fbar[data-fi="' + fb + '"]'] }], then: [prts(LIMS.items.filter(it => FCOUNT.stages[fb].steps.indexOf(it.main_step) >= 0).map(it => it.title), { f: 'limitations_open' })], note: 'a bar opens the limitations placed at its steps' }], { changes: 'Opens the limitations of the steps that sit under the bar.' });
+
+// ================================================================== CONDITIONS
+add('cond:title', 'heading', 'conditions', 'text.json sections.conditions', CT.title, [tx(R(CT.title)), rich(CT.lede)[0]]);
+CT.items.forEach((it, i) => {
+  const g = LIBGI[it[0]], sh = g.short.replace(/^./, c => c.toUpperCase());
+  add('cond:item_' + it[0], 'condition', 'conditions', 'text.json sections.conditions.items[' + i + '] + map.json lib_groups[' + it[0] + ']', sh, [
+    tx(sh + '. ' + R(it[1]), { f: 'text' }), tx(g.poor, { f: 'poor_end', where: 'any', soft: true, note: 'shown on the square axes' }), tx(g.good, { f: 'good_end', soft: true, note: 'shown on the square axes' })
+  ], { poor: g.poor, good: g.good, group_note: g.note });
+});
+add('cond:item_running_cost', 'condition', 'conditions', 'text.json sections.conditions.running_cost + map.json lib_groups[running_cost]', 'Running cost', [tx('Running cost. ' + R(CT.running_cost), { f: 'text' })], { poor: LIBGI.running_cost.poor, good: LIBGI.running_cost.good });
+add('cond:corner_title', 'heading', 'conditions', 'text.json sections.conditions', CT.table_title, [tx(R(CT.table_title)), tx(R(CT.table_note)), tx(R(CT.more_title), { f: 'more_title' })]);
+add('cond:corner_head', 'table_head', 'conditions', 'page.js renderCorners', 'Setting | Library over the ladder | Library over the strong model | cost | wrong rate', ['Setting', 'Library over the ladder', 'Library over the strong model', 'cost', 'wrong rate'].map(s => tx(s, { f: s })));
+const nearBand = CT.near_band;
+const sideOf = v => !isFinite(v) ? 'none' : Math.abs(v - 1) <= nearBand ? 'near' : v < 1 ? 'below' : 'above';
+const nlev = r => Object.keys(r.levels).length;
+const cornerOrder = MAP.reference_settings.filter(r => nlev(r) === 0).concat(MAP.reference_settings.filter(r => nlev(r) > 0 && r.levels.running_cost === undefined),
+  MAP.reference_settings.filter(r => r.levels.running_cost !== undefined).sort((a, b) => (a.levels.quality === 'poor') - (b.levels.quality === 'poor') || (a.levels.running_cost === 'poor') - (b.levels.running_cost === 'poor')));
+const sideCount = { below: 0, near: 0, above: 0 };
+cornerOrder.forEach(r => {
+  const b = REFS[r.id].last, vals = RATIOS4.map(q => b.ratios[q[0]]);
+  [vals[0], vals[1]].forEach(v => { sideCount[sideOf(v)]++; });
+  add('corner:' + r.id, 'table_row', 'conditions', 'map.json reference_settings[' + r.id + ']; engine references() last period', r.label + ': ' + vals.map(v => fmt(v, 'ratio')).join(' / '), [
+    cl([r.label].concat(vals.map(v => fmt(v, 'ratio'))), 400, { f: 'row', where: 'open' }),
+    soft({ t: 'attrq', sel: '[data-ref="' + r.id + '"]', n: 4, f: 'convention', note: 'convention: data-ref and data-r on each ratio cell, data-v holds the exact value' }),
+    soft({ t: 'attrv', sel: '[data-ref="' + r.id + '"][data-r="cost_vs_ladder"]', attr: 'data-v', num: vals[0], f: 'exact_cost_vs_ladder' }),
+    soft({ t: 'attrv', sel: '[data-ref="' + r.id + '"][data-r="wrong_vs_ladder"]', attr: 'data-v', num: vals[1], f: 'exact_wrong_vs_ladder' }),
+    soft({ t: 'attrv', sel: '[data-ref="' + r.id + '"][data-r="cost_vs_top"]', attr: 'data-v', num: vals[2], f: 'exact_cost_vs_top' }),
+    soft({ t: 'attrv', sel: '[data-ref="' + r.id + '"][data-r="wrong_vs_top"]', attr: 'data-v', num: vals[3], f: 'exact_wrong_vs_top' })
+  ], { sides_vs_ladder: [sideOf(vals[0]), sideOf(vals[1])] });
+});
+add('corner:marks', 'legend', 'conditions', 'page.js mark() / text.json sections.conditions.near_note', 'Marks against the ladder: below one, near one, above one', [
+  ...rich(CT.near_note), tx(R(CT.promo_note)),
+  soft({ t: 'ariacount', s: 'below one', eq: sideCount.below, f: 'below', note: 'the mark carries its side as an accessible name' }), soft({ t: 'ariacount', s: 'near one', eq: sideCount.near, f: 'near' }), soft({ t: 'ariacount', s: 'above one', eq: sideCount.above, f: 'above' })
+], { side_counts: sideCount });
+add('cond:todays_notes', 'caveat', 'conditions', 'text.json todays_notes, opus_line', 'Today\'s notes cancel out; the Opus price ratio', [tx(R(TX.todays_notes)), ...rich(TX.opus_line)]);
+// the square
+add('square:title', 'heading', 'conditions', 'text.json sections.conditions.square_*', CT.square_title, [tx(R(CT.square_title)), tx(R(CT.square_lede)), tx(R(CT.square_tap), { soft: true, f: 'tap', why: 'describes the interaction of the old layout' }), tx(R(CT.square_line)), tx(R(CT.square_level))]);
+const sq = MAP.square, gx = LIBGI[sq.x], gy = LIBGI[sq.y], capital = s => s.replace(/^./, c => c.toUpperCase());
+add('square:axes', 'axis', 'conditions', 'map.json square + lib_groups', gx.label + ' (across) × ' + gy.short + ' (up)', [tx(gx.poor, { f: 'x_poor' }), tx(gx.good, { f: 'x_good' }), tx(gx.label + ' →', { f: 'x_title' }), tx(gy.poor, { f: 'y_poor' }), tx(gy.good, { f: 'y_good' }), tx(capital(gy.short) + ' →', { f: 'y_title' })]);
+add('ctl:square_ratio', 'control_group', 'conditions', 'page.js renderSqControls', 'Library over the ladder: Cost | Wrong rate', [
+  tx('Library over the ladder', { f: 'label' }), ctl('Cost', 'button', { changes: 'Draws the square for the library\'s cost over the ladder\'s.' }), ctl('Wrong rate', 'button', { changes: 'Draws the square for the library\'s wrong rate over the ladder\'s.' })
+]);
+const SQ = {};
+sq.sheets.forEach(s => { const r = E.square(MAP, TABLE, { sheets: [s.id] }); SQ[s.id] = { levels: r.levels, sheet: r.sheets[0] }; });
+sq.sheets.forEach((s, si) => {
+  add('ctl:square_sheet_' + s.id, 'control', 'conditions', 'map.json square.sheets[' + si + ']', s.label, [ctl(s.label, 'button', { changes: 'Draws the square with ' + s.label.toLowerCase() + ' held fixed; reach and entry quality vary across the grid.' }), tx('How much comes back', { f: 'group_label' })]);
+  const q = SQ[s.id], cells = q.sheet.cells, n = q.levels.length;
+  ['cost_vs_ladder', 'wrong_vs_ladder'].forEach(ratio => {
+    const asc = [], descRows = [];
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) asc.push(fmt(cells[i][j].ratios[ratio], 'ratio'));
+    for (let i = n - 1; i >= 0; i--) for (let j = 0; j < n; j++) descRows.push(fmt(cells[i][j].ratios[ratio], 'ratio'));
+    const cols = []; for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) cols.push(fmt(cells[i][j].ratios[ratio], 'ratio'));
+    add('square:' + s.id + ':' + ratio, 'square_grid', 'conditions', 'map.json square; engine square() sheet ' + s.id + ', ratio ' + ratio, s.label + ' — ' + (ratio === 'cost_vs_ladder' ? 'cost' : 'wrong rate') + ' over the ladder: ' + n + ' x ' + n + ' cells', [
+      { t: 'probe', phase: 'square', f: 'grid', steps: [{ click: s.label }, { click: ratio === 'cost_vs_ladder' ? 'Cost' : 'Wrong rate' }, { waitGone: 'Computing the square' }], then: [{ t: 'seq', seqs: [asc, descRows, cols], f: 'values', note: 'all ' + n * n + ' cell values, consecutive, row by row (either direction) or column by column' }] }
+    ], { cells: n * n });
+  });
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const x = cells[i][j];
+    add('square:' + s.id + ':cell_' + i + '_' + j, 'square_cell', 'conditions', 'engine square() sheet ' + s.id + ' cell [' + i + '][' + j + ']', s.label + ': reach ' + j + ', entry quality ' + i + ' — ' + RATIOS4.map(r => fmt(x.ratios[r[0]], 'ratio')).join(' / '), [
+      { t: 'probe', phase: 'square', f: 'cell', steps: [{ click: s.label }, { waitGone: 'Computing the square' }, { clickSel: ['[data-cell="' + i + ',' + j + '"]', 'g.sqc[data-i="' + i + '"][data-j="' + j + '"]'] }], then: [clo([s.label].concat(RATIOS4.map(r => fmt(x.ratios[r[0]], 'ratio'))), 700, { f: 'four_ratios' })] }
+    ]);
+  }
+});
+
+// ================================================================== CASES
+const SC = TX.sections.cases;
+add('cases:title', 'heading', 'cases', 'text.json sections.cases', SC.title, [tx(R(SC.title)), rich(SC.lede)[0], ...rich(SC.warning), ...rich(SC.ks_note), layoutText(tx(R(SC.pick), { f: 'pick' })), prts(tok(R(SC.numbers_tag)).parts, { f: 'numbers_tag', where: 'open' })]);
+add('legend:statuses', 'legend', 'cases', 'page.js renderCellLegend', C.STATUSES.map(s => STATUS_WORD[s]).join(' | '), [clo(C.STATUSES.map(s => STATUS_WORD[s]), 150, { f: 'five_words', where: 'base' })]);
+add('grid:header', 'table_head', 'cases', 'page.js renderGrid', 'Case · design step →', [tx('Case · design step →', { f: 'corner' })]);
+Object.keys(LIMS.steps).forEach(k => add('grid:step' + k, 'grid_column', 'cases', 'limitations.json steps[' + k + ']', 'Step ' + k + ': ' + LIMS.steps[k], [tip(['Step ' + k + ': ' + LIMS.steps[k]], { f: 'tip', where: 'base' }), tx(k, { f: 'number', soft: true })]));
+CASES.families.forEach((f, i) => add('family:' + f.id, 'case_family', 'cases', 'cases.json families[' + i + ']', f.name, [tx(f.name, { f: 'name' }), tx(f.covers, { f: 'covers', note: 'tip on the family header' })], { covers: f.covers }));
+const TOT = C.statusTotals(CASES.cases);
+add('grid:totals', 'table', 'cases', 'page.js renderGrid; C.statusTotals', 'Totals per step', [tx('Totals per step', { f: 'label' }), tx('(cells of the ' + CNT.cases + ' cases)', { f: 'caption' })]);
+C.STATUSES.forEach(s => add('grid:total_' + s, 'table_row', 'cases', 'C.statusTotals over cases.json', STATUS_WORD[s] + ': ' + TOT[s].join(' '), [clo([STATUS_WORD[s]].concat(TOT[s].map(String)), 260, { f: 'row', where: 'open' })]));
+// every case, every field
+CASES.cases.forEach((c, ci) => {
+  const f = FAM[c.family];
+  const lims = LIMS.items.filter(it => it.real.case_ids.some(x => C.caseId(x) === c.id)).map(it => it.title);
+  const tests = [
+    tx(f.name, { f: 'family' }), tx(c.id, { f: 'id' }), tx(c.title, { f: 'title' }), tx(c.story, { f: 'story' }),
+    tx('When: ' + c.when + '. Source: ' + c.source, { f: 'when_source' }), tx('The entry, as it would have been written', { f: 'entry_label' }), tx(c.entry, { f: 'entry' }), tx('Step by step', { f: 'steps_label' })
+  ];
+  c.steps.forEach(s => {
+    tests.push(tx(LIMS.steps[s.step] + '. ' + s.note, { f: 'step' + s.step + '_note' }));
+    tests.push(clo(['Step ' + s.step + ' · ' + STATUS_WORD[s.status]].concat(s.ks ? ['judged with the earlier design'] : []).concat([LIMS.steps[s.step] + '. ' + s.note]), 700, { f: 'step' + s.step + '_status' }));
+  });
+  if (c.worked) { tests.push(tx('Saving the walk saw or estimated.', { f: 'saving_label' })); tests.push(tx(c.worked, { f: 'saving' })); }
+  if (lims.length) { tests.push(tx('Limitations this case showed:', { f: 'lims_label' })); tests.push(prts(lims, { f: 'lims' })); }
+  tests.push(soft({ t: 'attrq', sel: '[data-case="' + c.id + '"]', n: 1, f: 'convention', note: 'convention: data-case on the control that opens the case' }));
+  const probe = { t: 'probe', phase: 'case', f: 'open', steps: [{ clickSel: ['[data-case="' + c.id + '"]', '.cg-row.case[data-case="' + c.id + '"]'] }], then: tests.filter(t => t.t !== 'attrq') };
+  add('case:' + c.id, 'case', 'cases', 'cases.json cases[' + ci + ']', f.name + ': ' + c.title, [probe, tests.find(t => t.t === 'attrq')], { family: c.family, statuses: c.steps.map(s => s.status), ks_steps: c.steps.filter(s => s.ks).map(s => s.step) });
+});
+add('cases:cell_marks', 'caveat', 'cases', 'page.js renderCase', 'A step judged with the earlier design carries a mark', [tx('judged with the earlier design', { f: 'mark', note: 'shown on the steps of a case whose note names the earlier design' }), tip(['The walk note for this step names the owner’s earlier knowledge-store design. That design is not the library mapped here.'], { f: 'tip', soft: true })]);
+
+// ================================================================== LIMITATIONS
+const SL = TX.sections.lims;
+add('lims:title', 'heading', 'lims', 'text.json sections.lims', SL.title, [tx(R(SL.title)), tx(R(SL.lede), { soft: true, f: 'lede', why: 'describes the interaction of the old layout' })]);
+add('lims:two_weights', 'panel', 'lims', 'text.json sections.lims; engine weights()', SL.two_title, [
+  tx(R(SL.two_title), { f: 'title' }), tx(R(SL.alone_def), { f: 'alone_def' }), tx(R(SL.last_def), { f: 'last_def' }), tx(R(SL.add_def), { f: 'add_def' }), tx(R(SL.sign_def), { f: 'sign_def' }), tx(R(SL.full_def), { f: 'full_def' }),
+  cl(['There the library’s cost falls ' + fmt(W8.full.cost_fall, 'weight'), 'its wrong rate ' + fmt(W8.full.wrong_fall, 'weight'), 'The full fall is their mean, ' + fmt(W8.full.score, 'weight')], 400, { f: 'full_fall', where: 'open' })
+], { full: W8.full.score, cost_fall: W8.full.cost_fall, wrong_fall: W8.full.wrong_fall });
+const nmText = r => SL['nm_' + r.not_measured] + (r.not_measured === 'gate_or_ladder' ? ' ↓' : '');
+const wvals = r => r.measured ? [fmt(r.alone, 'weight'), fmt(r.last, 'weight')] : [SL['nm_' + r.not_measured]];
+add('rank:groups_title', 'heading', 'lims', 'text.json sections.lims.rank_groups', SL.rank_groups, [tx(R(SL.rank_groups), { f: 'title' }), tx(R(SL.bars), { f: 'bars_note' }), tx('alone', { f: 'alone_head' }), tx('last', { f: 'last_head' })]);
+const gOrder = W8.ranking.groups;
+add('rank:groups', 'ranking', 'lims', 'engine weights().ranking.groups', gOrder.map(g => LIBGI[g.id].label).join(' > '), [
+  clo([SL.rank_groups].concat(...gOrder.map(g => [LIBGI[g.id].label].concat(wvals(WGROUP[g.id])))), 1600, { f: 'order', where: 'open' })
+]);
+gOrder.forEach(g => {
+  const r = WGROUP[g.id];
+  add('weight:group:' + g.id, 'weight', 'lims', 'engine weights().groups[' + g.id + ']', LIBGI[g.id].label + ': alone ' + fmt(r.alone, 'weight') + ', last ' + fmt(r.last, 'weight'), [clo([LIBGI[g.id].label].concat(wvals(r)), 220, { f: 'row', where: 'open' })], { alone: r.alone, last: r.last });
+});
+add('rank:steps_title', 'heading', 'lims', 'text.json sections.lims.rank_steps', SL.rank_steps, [tx(R(SL.rank_steps), { f: 'title' })]);
+const stepName = k => LIMS.steps[k].split(':')[0];
+add('rank:steps', 'ranking', 'lims', 'engine weights().ranking.steps', W8.ranking.steps.map(q => q.step).join(' > '), [
+  clo([SL.rank_steps].concat(...W8.ranking.steps.map(q => ['Step ' + q.step + ' · ' + stepName(q.step)].concat(wvals(WSTEP[q.step])))), 2400, { f: 'order', where: 'open' })
+]);
+Object.keys(LIMS.steps).forEach(k => {
+  const r = WSTEP[+k], list = LIMS.items.filter(it => String(it.main_step) === k);
+  add('weight:step:' + k, 'weight', 'lims', 'engine weights().steps[' + k + ']', 'Step ' + k + ' · ' + stepName(k) + ': ' + wvals(r).join(' / '), [
+    clo(['Step ' + k + ' · ' + stepName(k), '(' + list.length + ')'].concat(wvals(r)), 260, { f: 'step_head', where: 'open' }),
+    ctl('Step ' + k + ' · ' + stepName(k), 'any', { f: 'opens', changes: 'Opens the list of the limitations whose main step is ' + k + '.' }),
+    tx(LIMS.steps[k], { f: 'full_label', soft: true, note: 'the full step label is shown on the case grid tip and in each case' })
+  ], { limitations: list.map(it => it.id) });
+});
+add('rank:seq_title', 'heading', 'lims', 'text.json sections.lims.seq_*', SL.seq_title, [tx(R(SL.seq_title), { f: 'title' }), tx(R(SL.seq_note), { f: 'note' })]);
+const seqStrings = [SL.seq_title];
+W8.sequence.forEach(q => { seqStrings.push('Step ' + q.step + ' · ' + stepName(q.step)); seqStrings.push(fmt(q.cumulative, 'weight')); });
+seqStrings.push(SL.unnamed); W8.sequence_end.ids.forEach(id => seqStrings.push(pname(id))); seqStrings.push(fmt(W8.sequence_end.cumulative, 'weight'));
+add('rank:sequence', 'ranking', 'lims', 'engine weights().sequence', 'Steps moved one after another: ' + W8.sequence.map(q => q.step).join(', '), [clo(seqStrings, 2600, { f: 'order', where: 'open' })]);
+W8.sequence.forEach((q, i) => add('weight:seq:' + (i + 1), 'weight', 'lims', 'engine weights().sequence[' + i + ']', 'Round ' + (i + 1) + ': step ' + q.step + ' → ' + fmt(q.cumulative, 'weight'), [clo(['Step ' + q.step + ' · ' + stepName(q.step), fmt(q.cumulative, 'weight')], 120, { f: 'row', where: 'open' })], { cumulative: q.cumulative, added: q.added }));
+add('weight:seq:unnamed', 'weight', 'lims', 'engine weights().sequence_end', SL.unnamed + ': ' + W8.sequence_end.ids.map(pname).join('; '), [tx(SL.unnamed, { f: 'label' }), prts(W8.sequence_end.ids.map(pname), { f: 'names' }), tx(fmt(W8.sequence_end.cumulative, 'weight'), { f: 'cumulative' })], { ids: W8.sequence_end.ids });
+const zeroSteps = W8.sequence.filter(q => q.added === 0).map(q => q.step);
+if (zeroSteps.length) add('weight:seq:zero', 'note', 'lims', 'page.js renderRanks', 'Steps adding nothing', [tx((zeroSteps.length === 1 ? 'Step ' + zeroSteps[0] : 'Steps ' + zeroSteps.slice(0, -1).join(', ') + ' and ' + zeroSteps[zeroSteps.length - 1]) + ' ' + SL.seq_zero, { f: 'text', where: 'open' })]);
+const columnsHead = [['Limitation', null], ['cases', 'M'], ['families', 'M'], ['other way', 'M'], ['alone', 'G'], ['last', 'G']];
+add('lims:list_head', 'table_head', 'lims', 'page.js renderLims', 'Limitation | cases | families | other way | alone | last', columnsHead.map(c => tx(c[0], { f: c[0] })).concat([tx(R(SL.shares), { f: 'shares_note', where: 'open' })]));
+
+// ---- every limitation
+const SHOWN = it => it.shown === 'no' ? SL.shown_no : SL.shown_partly;
+const paramTip = id => { const row = ROWS[id], m = PMETA[id]; const sd = row.side === 'library' ? 'Library unknown; group: ' + LIBGI[row.lib_group].short + '; good end ' + row.good_end + '.' : 'Shared by all three ways of working; the weights keep it at its middle value.'; return [pname(id), m.meaning, 'Range ' + fmt(row.low) + ' to ' + fmt(row.high), sd, 'Name in the files: ' + id]; };
+const limBranchCount = it => { const set = {}; (it.params || []).forEach(p => { REACH[p].branches.forEach(b => { set[b] = 1; }); }); return Object.keys(set).length; };
+const classNote = it => {
+  const cls = (it.params || []).filter(p => REACH[p].classes).map(pname), stk = (it.params || []).filter(p => REACH[p].stocks && !REACH[p].branches.length).map(pname); const out = [];
+  if (cls.length) out.push(cls.join(', ') + ' also ' + (cls.length === 1 ? 'shapes' : 'shape') + ' which work arrives and what the library holds.');
+  if (stk.length) out.push(stk.join(', ') + ' ' + (stk.length === 1 ? 'acts' : 'act') + ' on the stock of entries over time.');
+  return out;
+};
+LIMS.items.forEach((it, idx) => {
+  const w = WLIM[it.id], k2 = x => C.caseId(x);
+  const t = [];
+  t.push(tx(it.title, { f: 'title' }));
+  if (!it.real.cases) t.push(clo([it.title, 'thought experiment'], 200, { f: 'thought_experiment', where: 'open' }));
+  const row = [it.title]; if (!it.real.cases) row.push('thought experiment'); if (w.same_set && w.same_set.count) row.push('↔' + w.same_set.count);
+  if (it.real.cases) row.push(String(it.real.cases)); if (it.real.families) row.push(String(it.real.families)); if (it.contradicted.length) row.push(String(it.contradicted.length));
+  t.push(clo(row.concat(wvals(w)), 360, { f: 'row_numbers', where: 'open', note: 'cases, families, other-way counts, then the two weights (or the reason there is none)' }));
+  t.push(tx(it.what, { f: 'what' }));
+  if (it.note) t.push(tx(it.note, { f: 'note' }));
+  t.push(clo(['Steps it touches:', it.steps.join(', ')], 80, { f: 'steps' }));
+  t.push(cl(['On the map:', limBranchCount(it) ? limBranchCount(it) + ' branches use its unknowns.' : 'no branch uses its unknowns.'], 100, { f: 'branches', where: 'open' }));
+  classNote(it).forEach((s, i) => t.push(tx(s, { f: 'class_note' + (i || '') })));
+  (it.real.examples || []).forEach((x, i) => { const cs = CASE[k2(x.case)]; t.push(tx(cs ? cs.title : k2(x.case), { f: 'example' + (i + 1) + '_case' })); t.push(tx(x.evidence, { f: 'example' + (i + 1) + '_evidence' })); });
+  if ((it.real.examples || []).length) t.push(tx('Examples', { f: 'examples_label' }));
+  if (it.contradicted.length) { t.push(tx('Where real cases went the other way', { f: 'other_way_label' })); it.contradicted.forEach((cn, i) => t.push(tx((LIM_FAM_NAME[cn.family] || cn.family_name) + ': ' + cn.reason, { f: 'other_way' + (i + 1) }))); }
+  if (it.shown && it.shown !== 'yes') t.push(tx(SHOWN(it) + ' ' + (it.not_shown || ''), { f: 'shown_note' }));
+  t.push(tx('Unknowns:', { f: 'unknowns_label' }));
+  if (it.params.length) it.params.forEach((id, i) => { t.push(tx(pname(id), { f: 'unknown' + (i + 1) })); t.push(tip(paramTip(id), { f: 'unknown' + (i + 1) + '_tip', where: 'any' })); });
+  else t.push(tx('none in the model.', { f: 'unknowns_none' }));
+  if (!w.measured) {
+    t.push(tx(SL['nm_why_' + w.not_measured], { f: 'not_measured_reason' }));
+    if (w.not_measured === 'gate_or_ladder') t.push(ctl(SL.gate_title, 'any', { f: 'gate_link', changes: 'Scrolls to the gate and ladder table.' }));
+  } else {
+    if (w.same_set && w.same_set.count) t.push(prts(['Same library unknowns, so the same weights:'].concat(w.same_set.ids.map(id => LIM[id].title)), { f: 'same_set' }));
+    t.push(tx(SL.parts_title + ':', { f: 'parts_label' }));
+    w.parts.forEach((q, i) => t.push(cl([pname(q.id), fmt(q.alone, 'weight'), fmt(q.last, 'weight')], 140, { f: 'part' + (i + 1), where: 'open' })));
+    const cols = [['Middle values', W8.base], ['Only this at its good end', w.alone_values], ['All-good setting', W8.full.values], ['All good but this', w.last_values]];
+    t.push(prts(cols.map(c => c[0]), { f: 'table_heads' }));
+    const nums = [];
+    RATIOS4.forEach(r => cols.forEach(c => nums.push(fmt(c[1].ratios[r[0]], 'ratio')))); cols.forEach(c => nums.push(fmt(c[1].funnel_end, 'funnel')));
+    t.push(cl(nums, 1800, { f: 'table_numbers', where: 'open', note: '4 ratios and the funnel figure, under 4 settings: 20 numbers' }));
+  }
+  t.push(tx(it.id, { f: 'id', note: '"Name in the files"' }));
+  (it.real.case_ids || []).forEach((cid, i) => { t.push(tx(k2(cid), { f: 'case_id' + (i + 1), soft: true, note: 'the case id on a link' })); });
+  t.push(soft({ t: 'attrq', sel: '[data-lim="' + it.id + '"]', n: 1, f: 'convention', note: 'convention: data-lim on the control that opens the limitation' }));
+  {
+    const uses = {}; (it.params || []).forEach(p => { REACH[p].branches.forEach(b => { (uses[b] = uses[b] || []).push(pname(p)); }); });
+    const bl = Object.keys(uses);
+    if (bl.length) {
+      const then = [soft(tx(R(SL.map_note), { f: 'map_note', why: 'the old page shows the limitation on a small map; the wording may change' }))];
+      bl.forEach(b => then.push(soft(tip([BR[b].label, 'Stage: ' + STEP[STATE[BR[b].from].step].label, 'Uses: ' + uses[b].join(', ')], { f: 'uses_' + b, note: 'the branch that uses the unknowns of this limitation' }))));
+      t.push({ t: 'probe', phase: 'lim', f: 'on_map', steps: [{ open: 'Step ' + it.main_step + ' · ' + LIMS.steps[it.main_step].split(':')[0] }, { open: it.title }, { wait: 60 }], then, note: 'open the limitation, then the branches that use its unknowns are marked on its small map' });
+    }
+  }
+  add('lim:' + it.id, 'limitation', 'lims', 'limitations.json items[' + idx + ']', it.title, t, { main_step: it.main_step, steps: it.steps, cases: it.real.cases, families: it.real.families, other_way: it.contradicted.length, shown: it.shown, thought_experiment: !it.real.cases, measured: w.measured, not_measured: w.not_measured, params: it.params, alone: w.measured ? w.alone : null, last: w.measured ? w.last : null });
+});
+// ---- savings (works)
+add('works:title', 'heading', 'lims', 'text.json sections.lims.works_*', SL.works_title, [tx(R(SL.works_title), { f: 'title' }), ...rich(SL.works_lede), tx(R(SL.works_show), { f: 'show_label' }), tx(R(SL.channel), { f: 'channel_word', soft: true })]);
+LIMS.works.forEach((w, i) => {
+  const k = C.caseId(w.case), c = CASE[k], f = FAM[c.family];
+  const t = [tx(c.title, { f: 'case_title' }), tx(w.text, { f: 'text' }), clo([c.title, w.basis === 'seen' ? 'seen' : 'estimate'], 200, { f: 'basis', where: 'open' }), tx(f.name, { f: 'family' }), tx(k, { f: 'case_id', soft: true })];
+  if (w.channel) { t.push(tx(SL.channel, { f: 'channel_word' })); t.push(tx('Carried by ' + w.channel + ', a channel that exists today.', { f: 'channel' })); }
+  if (w.caveat) t.push(tx(w.caveat, { f: 'caveat' }));
+  add('saving:' + (i + 1), 'saving', 'lims', 'limitations.json works[' + i + ']', c.title + ' (' + w.basis + ', tag ' + w.tag + ')', t, { tag: w.tag, basis: w.basis, channel: w.channel || null, case: k });
+});
+// ---- the gate and the ladder table
+add('gate:title', 'heading', 'lims', 'text.json sections.lims.gate_*', SL.gate_title, [tx(R(SL.gate_title)), tx(R(SL.gate_lede)), tx(R(SL.gate_moved), { f: 'moved_label' }), tx('Last period', { f: 'corner' })]);
+['library', 'cheap_ladder', 'top_first'].forEach(p => add('gate:col_' + p, 'table_head', 'lims', 'page.js renderGate', PSHORT[p] + ': cost | wrong', [tx(R(PSHORT[p]), { f: 'label' })]));
+const REFL = {}; MAP.reference_settings.forEach(r => { REFL[r.id] = r.label; });
+const moveName = mv => !mv.length ? 'As it is' : mv.length === 2 ? 'Both moved' : (mv[0] === 'gate' ? 'Gate moved' : 'Ladder moved');
+SHT.rows.forEach((r, i) => {
+  const strings = []; ['library', 'cheap_ladder', 'top_first'].forEach(p => { strings.push(fmt(r[p].cost, 'cost')); strings.push(fmt(r[p].wrong, 'pct')); });
+  add('gate:row' + (i + 1), 'table_row', 'lims', 'map.json shared_table; engine sharedTable() row ' + i, REFL[r.base] + ' — ' + moveName(r.moved) + ': ' + strings.join(' / '), [
+    clo([REFL[r.base], moveName(r.moved)].concat(strings), 500, { f: 'row', where: 'open', note: 'base setting, the move, then cost and wrong rate for library, ladder, strong directly' }),
+    soft({ t: 'attrv', sel: '[data-st="' + i + '"][data-p="library"][data-k="cost"]', attr: 'data-v', num: r.library.cost, f: 'exact_library_cost' })
+  ], { base: r.base, moved: r.moved });
+});
+MAP.shared_groups.forEach(g => add('gate:group_' + g.id, 'note', 'lims', 'map.json shared_groups[' + g.id + ']', g.label, [tx(g.label + ':', { f: 'label', where: 'open' }), prts(Object.keys(g.moves).map(id => pname(id) + ' to its ' + g.moves[id] + ' end'), { f: 'moves', where: 'open' })]));
+
+// ================================================================== RUN IT
+const SR = TX.sections.run;
+add('run:title', 'heading', 'run', 'text.json sections.run', SR.title, [tx(R(SR.title)), tx(R(SR.lede), { soft: true, f: 'lede', why: 'says the page follows the sliders; the wording may change' })]);
+add('ctl:reset', 'control', 'run', 'page.js (resetBtn)', 'Back to middle values', [ctl('Back to middle values', 'button', { changes: 'Puts every slider back to its middle value and redraws the page.' }),
+  { t: 'probe', phase: 'misc', f: 'note', steps: [], then: [tx('All settings at their middle values.', { f: 'unchanged_note' })] }]);
+add('run:liveline', 'panel', 'run', 'page.js renderOutputs (liveLine)', 'Last period, library over: ladder / strong directly', [
+  tx('Last period, library over:', { f: 'label', where: 'base' }),
+  cl(['ladder: cost ' + fmt(LAST.ratios.cost_vs_ladder, 'ratio'), 'wrong ' + fmt(LAST.ratios.wrong_vs_ladder, 'ratio'), 'strong directly: cost ' + fmt(LAST.ratios.cost_vs_top, 'ratio'), 'wrong ' + fmt(LAST.ratios.wrong_vs_top, 'ratio')], 300, { f: 'numbers', where: 'base' })
+]);
+add('run:sliders_group', 'control', 'run', 'page.js renderSliders', 'Every unknown, with its slider', [tx('Every unknown, with its slider', { f: 'label' })], { changes: 'Opens the list of every unknown, each with its slider.' });
+// the groups the sliders sit under
+const REACHSTAGE = {}; MAP.parameters.forEach(p => { REACHSTAGE[p.id] = C.paramStage(MAP, REACH, p.id); });
+const GROUPS = ['before'].concat(MAP.steps.filter(s => s.id !== 'outcome').map(s => s.id)).concat(['time']);
+const groupTitle = g => g === 'before' ? 'Before the steps: the work that arrives and what the library can hold' : g === 'time' ? 'Over time: the stock of entries and the horizon' : STEP[g].label + (stageWords(g) ? ' (' + stageWords(g) + ')' : '');
+GROUPS.forEach(g => {
+  const ids = MAP.parameters.filter(p => REACHSTAGE[p.id] === g).map(p => p.id);
+  if (!ids.length) return;
+  add('slidergroup:' + g, 'slider_group', 'run', 'page.js renderSliders; C.paramStage', groupTitle(g) + ' — ' + ids.length + ' settings', [tx(groupTitle(g), { f: 'title', where: 'open' }), tx(ids.length + ' settings', { f: 'count', where: 'open' }), ctl(groupTitle(g), 'any', { f: 'opens', changes: 'Opens or closes the sliders of this group.' })], { params: ids });
+});
+const tagWord = t => t;
+const pageOut = (cur2) => {
+  const p2 = E.timePath(MAP, cur2); const l2 = p2.periods[p2.periods.length - 1], f2 = p2.periods[0];
+  return { top: p2.top_first, lad: p2.cheap_ladder, last: l2, first: f2 };
+};
+MAP.parameters.forEach((p, i) => {
+  const row = ROWS[p.id]; const meta = PMETA[p.id];
+  const t = [
+    tx(p.name, { f: 'name' }), tx(p.meaning, { f: 'meaning' }),
+    cl([p.name, 'range ' + fmt(row.low) + ' to ' + fmt(row.high) + ', middle ' + fmt(row.best)], 900, { f: 'range', where: 'open' }),
+    cl([p.name, tagWord(row.tag)], 900, { f: 'tag', where: 'open', note: 'the tag M, S or G sits with the range' }),
+    ctl(p.name, 'range', { f: 'slider', changes: 'Moves the unknown "' + p.name + '" between ' + fmt(row.low) + ' and ' + fmt(row.high) + '. The page recomputes.' }),
+    tx('Tag ' + row.tag + '. ' + row.source, { f: 'source', where: 'open' }),
+    tx(p.id, { f: 'id', where: 'open', note: '"name in the files"' }), ctl('source', 'button', { f: 'source_button', changes: 'Shows or hides where the figure comes from.' })
+  ];
+  if (row.note) t.push(tx(row.note, { f: 'source_note', where: 'open' }));
+  if (p.run_setting || meta.run_setting) t.push(tx('a chosen horizon, never drawn', { f: 'horizon', where: 'open' }));
+  // the slider moves the whole page: the three ways and the ratios must read what the engine says
+  const cur2 = Object.assign({}, BEST); cur2[p.id] = row.high;
+  const o2 = pageOut(cur2);
+  const r2 = o2.last.ratios;
+  const then = [cl(['ladder: cost ' + fmt(r2.cost_vs_ladder, 'ratio'), 'wrong ' + fmt(r2.wrong_vs_ladder, 'ratio'), 'strong directly: cost ' + fmt(r2.cost_vs_top, 'ratio'), 'wrong ' + fmt(r2.wrong_vs_top, 'ratio')], 300, { f: 'live_line' }),
+    cl([PNAME.top_first, fmt(o2.top.cost, 'cost'), fmt(o2.top.wrong, 'pct')], 220, { f: 'top_row' }), cl([PNAME.cheap_ladder, fmt(o2.lad.cost, 'cost'), fmt(o2.lad.wrong, 'pct')], 220, { f: 'ladder_row' }),
+    cl([PNAME.library, fmt(o2.last.library.cost, 'cost'), fmt(o2.last.library.wrong, 'pct')], 220, { f: 'library_row' }), tx('moved from middle values', { f: 'moved_note' })];
+  t.push({ t: 'probe', phase: 'slider', f: 'move', open: true, steps: [{ range: { label: p.name, value: row.high } }, { wait: 350 }], then, after: [{ range: { label: p.name, value: row.best } }, { wait: 250 }] });
+  t.push(soft({ t: 'attrq', sel: '[data-param="' + p.id + '"]', n: 1, f: 'convention', note: 'convention: data-param on the slider row' }));
+  add('param:' + p.id, 'unknown', 'run', 'params.json parameters[' + i + '] + map.json parameters[' + i + ']', p.name + ' (' + p.id + '): ' + fmt(row.low) + ' to ' + fmt(row.high) + ', middle ' + fmt(row.best) + ', tag ' + row.tag, t, { tag: row.tag, side: row.side, lib_group: row.lib_group || null, good_end: row.good_end || null, stage_group: REACHSTAGE[p.id], low: row.low, high: row.high, best: row.best });
+});
+// the output panels
+add('run:policy_table', 'table', 'run', 'page.js renderOutputs', 'Three ways of working, at these settings', [tx('Three ways of working, at these settings', { f: 'title' }), tx(R(SR.outputs_note), { f: 'note' }), tx('Cost per piece', { f: 'c_cost' }), tx('Wrong rate', { f: 'c_wrong' })]);
+[['top_first', PATH.top_first], ['cheap_ladder', PATH.cheap_ladder], ['library', LAST.library]].forEach(([p, r]) => {
+  const strings = [PNAME[p], fmt(r.cost, 'cost')]; if (p === 'library') { strings.push('first period ' + fmt(FIRST.library.cost, 'cost')); }
+  strings.push(fmt(r.wrong, 'pct')); if (p === 'library') strings.push('first period ' + fmt(FIRST.library.wrong, 'pct'));
+  add('run:policy_' + p, 'table_row', 'run', 'engine timePath() at the middle values', PNAME[p] + ': cost ' + fmt(r.cost, 'cost') + ', wrong ' + fmt(r.wrong, 'pct'), [cl(strings, 300, { f: 'row', where: 'base' })]);
+});
+const O1 = E.variant(MAP, BEST, 'opus_one').last.ratios;
+add('run:ratio_ladder', 'panel', 'run', 'page.js renderOutputs; engine timePath ratios', 'The library over the ladder, last period', [
+  tx('The library over each, last period', { f: 'title' }), tx('Against ' + PNAME.cheap_ladder.toLowerCase(), { f: 'heading' }), tx(R(SR.ladder_sub), { f: 'sub' }),
+  cl(['Cost ratio', 'Wrong-rate ratio', fmt(LAST.ratios.cost_vs_ladder, 'ratio'), fmt(LAST.ratios.wrong_vs_ladder, 'ratio'), 'first period ' + fmt(FIRST.ratios.cost_vs_ladder, 'ratio'), 'first period ' + fmt(FIRST.ratios.wrong_vs_ladder, 'ratio')], 400, { f: 'numbers', where: 'base' })
+]);
+add('run:ratio_top', 'panel', 'run', 'page.js renderOutputs; engine timePath ratios, variants opus_one', 'The library over the strong model, last period', [
+  tx('Against ' + PNAME.top_first.toLowerCase(), { f: 'heading' }), tx(R(SR.top_sub), { f: 'sub' }), tx('With an Opus price ratio of one, cost: ' + fmt(O1.cost_vs_top, 'ratio'), { f: 'opus_one', where: 'base' }),
+  cl(['Cost ratio', 'Wrong-rate ratio', fmt(LAST.ratios.cost_vs_top, 'ratio'), fmt(LAST.ratios.wrong_vs_top, 'ratio'), 'first period ' + fmt(FIRST.ratios.cost_vs_top, 'ratio'), 'first period ' + fmt(FIRST.ratios.wrong_vs_top, 'ratio')], 400, { f: 'numbers', where: 'base' })
+]);
+add('usage:title', 'heading', 'run', 'text.json sections.run.usage_title', SR.usage_title, [tx(R(SR.usage_title), { f: 'title' })]);
+C.usage(MAP, LAST).forEach((u, i) => {
+  const pct = /^of 100/.test(u.unit || '');
+  add('usage:' + u.id, 'measure', 'run', 'map.json usage_measures / measures; engine timePath() last period', u.label + ': ' + fmt(u.value, pct ? 'funnel' : 'auto'), [clo([u.label + ', ' + (pct ? u.unit.replace(/^of 100/, 'of a hundred') : u.unit), fmt(u.value, pct ? 'funnel' : 'auto')], 400, { f: 'cell', where: 'open' })], { measure: u.id, value: u.value });
+});
+// the two line charts
+[['Against the cheap model with the ladder', 'cost_vs_ladder', 'wrong_vs_ladder'], ['Against the strong model directly', 'cost_vs_top', 'wrong_vs_top']].forEach(([title, kc, kw], ci) => {
+  const t = [tx(title, { f: 'title' }), tx('period (30 days each)', { f: 'x_axis' }), tx('cost', { f: 'legend_cost' }), tx('wrong rate', { f: 'legend_wrong' }), tx('equal', { f: 'equal_line' })];
+  PATH.periods.forEach((p, i) => { t.push(soft({ t: 'attrv', sel: '[data-chart="' + kc + '"][data-period="' + (i + 1) + '"]', attr: 'data-v', num: p.ratios[kc], f: 'p' + (i + 1) + '_cost', note: 'convention: each plotted point carries data-chart, data-period and data-v' })); t.push(soft({ t: 'attrv', sel: '[data-chart="' + kw + '"][data-period="' + (i + 1) + '"]', attr: 'data-v', num: p.ratios[kw], f: 'p' + (i + 1) + '_wrong' })); });
+  add('chart:ratio_' + ci, 'chart', 'run', 'page.js ratioChart; engine timePath().periods[].ratios', title + ': ratios by period (' + NPER + ' points each)', t, { cost: PATH.periods.map(p => p.ratios[kc]), wrong: PATH.periods.map(p => p.ratios[kw]) });
+});
+// the stock-and-flow drawing, period by period
+const SFD = ['Good entries', 'Bad entries (wrong or stale)', 'written as good', 'per period', 'written as bad', 'go stale', 'repaired when an escape is found', 'retired', 'How full the library is', 'Share of entries that are bad', 'Chance a look-alike can be found', 'Share of work that climbs to Opus or Fable']; // page.js renderStockFlow
+add('sfd:title', 'heading', 'run', 'page.js (sfd section)', 'The stock of entries, period by period', [tx('The stock of entries, period by period', { f: 'title' }), tx('Stocks at the start of the period. Flows during it, in entries per period. Every number here is computed', { f: 'note' }), tx('Period', { f: 'label' }),
+  ctl('Period', 'range', { nth: -1, f: 'slider', changes: 'Sets the period drawn in the stock-and-flow picture, and the period of the map.' }), ctl('Play the periods', 'button', { f: 'play', changes: 'Steps through every period, half a second each. The button then reads Stop.' }),
+  { t: 'probe', phase: 'misc', f: 'play', steps: [{ click: 'Play the periods' }, { wait: 1300 }, { click: 'Stop' }], then: [ctl('Play the periods', 'button')] }]);
+SFD.forEach((s, i) => add('sfd:label' + (i + 1), 'sfd_part', 'run', 'page.js renderStockFlow', s, [tx(s, { f: 'label' })], { drawn: ['stock', 'stock', 'flow', 'flow', 'flow', 'flow', 'flow', 'flow', 'auxiliary', 'auxiliary', 'auxiliary', 'auxiliary'][i] }));
+PATH.periods.forEach((row, i) => {
+  const p = i + 1, m = row.library.measures, ep = BEST.episodes_per_period, good = row.stocks.E_good, bad = row.stocks.E_bad, sv = row.stockValues;
+  const fGood = ep * m.W_good, fBadR = ep * m.W_bad_right, fBadE = ep * m.W_bad_escape, fRep = ep * m.W_repair, fStale = BEST.delta_stale * good, fRet = BEST.retire_bad * bad;
+  const pmLab = MAP.measures.filter(x => x.id === 'use_promo_caught_all')[0];
+  const then = [
+    cl(['Good entries', fmt(good, 'cost')], 120, { f: 'good_stock' }), cl(['Bad entries (wrong or stale)', fmt(bad, 'cost')], 120, { f: 'bad_stock' }),
+    cl(['written as good', fmt(fGood, 'cost'), 'per period'], 120, { f: 'flow_good' }), cl(['written as bad', fmt(fBadR + fBadE, 'cost'), 'after right solves ' + fmt(fBadR, 'cost'), 'after escapes ' + fmt(fBadE, 'cost')], 220, { f: 'flow_bad' }),
+    cl(['go stale ' + fmt(fStale, 'cost') + ' per period'], 60, { f: 'flow_stale' }), cl(['repaired when an escape is found ' + fmt(fRep, 'cost')], 60, { f: 'flow_repair' }), cl(['retired', fmt(fRet, 'cost')], 80, { f: 'flow_retired' }),
+    cl(['How full the library is', fmt(sv.fill, 'pct')], 80, { f: 'aux_fill' }), cl(['Share of entries that are bad', fmt(sv.wrong_share, 'pct')], 80, { f: 'aux_bad_share' }), cl(['Chance a look-alike can be found', fmt(sv.distract, 'pct')], 80, { f: 'aux_distract' }),
+    cl(['Share of work that climbs to Opus or Fable', fmt(m.P_climbs, 'pct')], 120, { f: 'aux_climb' }), cl([pmLab.label, fmt(m.use_promo_caught_all, 'funnel') + ' of a hundred pieces'], 120, { f: 'promo_all' }), tx(p + ' of ' + NPER, { f: 'period_label' })
+  ];
+  add('sfd:period' + p, 'sfd_period', 'run', 'engine timePath().periods[' + i + '] stocks, measures, stockValues', 'Period ' + p + ': good ' + fmt(good, 'cost') + ', bad ' + fmt(bad, 'cost') + ', written as good ' + fmt(fGood, 'cost'), [{ t: 'probe', phase: 'period', f: 'numbers', steps: [{ range: { label: 'Period', nth: -1, value: p } }, { wait: 200 }], then }], { good, bad });
+});
+// loops
+function mapLoops() {
+  const n = { R: 0, B: 0 }; TX.loops.forEach(l => { n[l.kind]++; });
+  const name = id => { if (MAP.stocks.labels[id]) return MAP.stocks.labels[id]; const v = MAP.stocks.values.filter(x => x.id === id)[0]; if (v) return v.label; const k = (MAP.links || []).filter(x => x.id === id)[0]; if (k) return k.label; const b = BR[id]; if (b) return b.label; const mm = MAP.measures.filter(x => x.id === id)[0]; return mm ? mm.label : id; };
+  const out = []; (MAP.links || []).forEach(ln => { (ln.loops || []).forEach(lp => { const k = lp.polarity === 'B' ? 'B' : 'R'; out.push({ id: k + (++n[k]), kind: k, name: lp.label, text: lp.path.map(name).join(' → ') + '.' }); }); });
+  return out;
+}
+TX.loops.concat(mapLoops()).forEach(l => add('loop:' + l.id, 'loop', 'run', l.id.length && TX.loops.some(x => x.id === l.id) ? 'text.json loops' : 'map.json links[0].loops', l.id + ' ' + (l.kind === 'R' ? 'reinforcing' : 'balancing') + ': ' + l.name, [tx(l.id, { f: 'badge' }), tx(l.name, { f: 'name' }), tx(l.kind === 'R' ? 'Reinforcing: feeds itself.' : 'Balancing: holds itself back.', { f: 'kind' }), tx(l.text, { f: 'text' })], { polarity: l.kind }));
+
+// ================================================================== MANY RUNS
+const SMY = TX.sections.many;
+add('many:title', 'heading', 'many', 'text.json sections.many', SMY.title, [tx(R(SMY.title)), tx(R(SMY.lede)), tx(R(SMY.tie), { f: 'tie_note' }), tx(R(SMY.follows), { f: 'follows_note' }), ...rich('{{c:guess}} of the {{c:drawn}} drawn unknowns are guesses.', {})]);
+add('ctl:ens_n', 'control', 'many', 'page.js renderEnsControls', 'Runs at each tie', [tx('Runs at each tie', { f: 'label' }), ctl('Runs at each tie', 'select', { changes: 'Sets how many runs are drawn at each of the three ties: 300, 1000 or 2000.' }), { t: 'option', in: 'Runs at each tie', option: '300', f: 'o300' }, { t: 'option', in: 'Runs at each tie', option: '1000', f: 'o1000' }, { t: 'option', in: 'Runs at each tie', option: '2000', f: 'o2000' }]);
+add('ctl:ens_seed', 'control', 'many', 'page.js renderEnsControls', 'Seed', [tx('Seed', { f: 'label' }), ctl('Seed', 'number', { changes: 'Fixes the random draws. The same seed always gives the same runs.' }), tip(['A whole number that fixes the random draws. The same seed always gives the same runs.'], { f: 'tip', soft: true })]);
+add('ctl:ens_run', 'control', 'many', 'page.js renderEnsControls', 'Run at all three ties', [ctl('Run at all three ties', 'button', { changes: 'Runs the model many times with random draws, at ties 0, 0.5 and 1, and fills the tables and charts below.' }), tx('Progress', { f: 'progress_label' }), tx('not run yet', { f: 'progress_idle', soft: true }), tx('Press the button. The page stays usable while it runs.', { f: 'before_run', soft: true, why: 'instruction text; may change' })]);
+
+// the ensemble outputs, computed here at 300 runs a tie and the page's default seed
+const ENS_N = 300, ENS_SEED = 20261112, TIES = (MAP.ensemble_ties && MAP.ensemble_ties.levels) || [0, 0.5, 1];
+const ENSR = {};
+TIES.forEach(tie => { const r = C.ensembleRunner(E, MAP, TABLE, { n: ENS_N, seed: ENS_SEED, tie }); while (!r.done()) r.step(100); ENSR[tie] = r.result(); });
+const CM = E.compile(MAP);
+function rankRows(w, tie, r) {
+  let list = ENSR[tie].spearman[w][r];
+  if (tie === 1) {
+    const seen = {};
+    list = list.filter(e => { const row = ROWS[e.id]; if (row.side !== 'library') return true; if (seen[row.lib_group]) return false; seen[row.lib_group] = true; return true; })
+      .map(e => { const row = ROWS[e.id]; return row.side === 'library' ? { id: e.id, group: row.lib_group, rho: row.good_end === 'high' ? e.rho : -e.rho } : e; });
+  }
+  return list.slice(0, 8);
+}
+const ENS_ROWS = [['cost_vs_ladder', 'Cost against the ladder', 'ratio'], ['wrong_vs_ladder', 'Wrong rate against the ladder', 'ratio'], ['cost_vs_top', 'Cost against the strong model', 'ratio'], ['wrong_vs_top', 'Wrong rate against the strong model', 'ratio']];
+if (CM.funnelEnd) ENS_ROWS.push(['funnel_end', 'Funnel’s last number, of a hundred', 'funnel']);
+if (CM.promoMeasure) ENS_ROWS.push(['promo', 'More caught at the first gate by promoted checks, of the same hundred', 'funnel']);
+const RANK_TITLES = [['cost_vs_ladder', 'Cost, against the ladder'], ['wrong_vs_ladder', 'Wrong rate, against the ladder'], ['cost_vs_top', 'Cost, against the strong model'], ['wrong_vs_top', 'Wrong rate, against the strong model']];
+['first', 'last'].forEach(w => {
+  TIES.forEach(tie => {
+    const S = ENSR[tie].spread[w], noise = 2 / Math.sqrt(ENSR[tie].n);
+    const steps = [{ select: { label: 'Runs at each tie', value: String(ENS_N) } }, { number: { label: 'Seed', value: ENS_SEED } }, { runOnce: { label: 'Run at all three ties', done: (ENS_N * TIES.length) + ' of ' + (ENS_N * TIES.length) + ' runs', max: 240000 } }, { click: w + ' period' }, { click: 'tie ' + tie }];
+    const then = [tx(ENSR[tie].n + ' runs at each tie, seed ' + ENS_SEED, { f: 'run_note' }), tx('Middle run, and 5 to 95 in 100', { f: 'table_head' })];
+    // all three ties in the table
+    ENS_ROWS.forEach(r => {
+      const strings = [r[1]]; TIES.forEach(t2 => { const q = ENSR[t2].spread[w][r[0]]; strings.push(fmt(q.p50, r[2])); strings.push(fmt(q.p5, r[2])); strings.push(fmt(q.p95, r[2])); });
+      then.push(cl(strings, 600, { f: 'row_' + r[0] }));
+    });
+    const b1 = ['Runs cheaper with a wrong rate no higher, against the ladder'].concat(TIES.map(t2 => fmt(ENSR[t2].shareBetterVs.cheap_ladder[w], 'pct')));
+    const b2 = ['The same, against the strong model'].concat(TIES.map(t2 => fmt(ENSR[t2].shareBetterVs.top_first[w], 'pct')));
+    then.push(cl(b1, 300, { f: 'row_better_ladder' })); then.push(cl(b2, 300, { f: 'row_better_top' }));
+    TIES.forEach(t2 => then.push(tx('tie ' + t2, { f: 'head_tie' + t2 })));
+    // charts
+    ['Against the cheap model with the ladder', 'Against the strong model directly'].forEach((tt, ci) => { then.push(tx(tt, { f: 'chart_title' + ci })); });
+    then.push(tx('Cost ratio against wrong-rate ratio, one dot per run', { f: 'scatter_title' }));
+    then.push(tx('cost ratio (left of the dotted line: cheaper)', { f: 'scatter_x' })); then.push(tx('wrong-rate ratio (below: fewer wrong)', { f: 'scatter_y' }));
+    then.push(tx('Box: the middle half of the runs. Thick tick: the middle run. Whiskers: 5 and 95 in every hundred. Dashed box: wrong-rate ratio.', { f: 'chart_help' }));
+    then.push(tx('Which unknowns move each ratio most', { f: 'rank_title' }));
+    then.push(tx(SMY.rank_read, { f: 'rank_read' })); then.push(cl(['Values closer than about', fmt(noise, 'ratio'), 'are not well separated.'], 160, { f: 'noise' }));
+    if (tie === 1) then.push(tx(SMY.rank_tied, { f: 'rank_tied' })); else if (tie > 0) then.push(tx(SMY.rank_half, { f: 'rank_half' }));
+    RANK_TITLES.forEach(([r, title]) => {
+      const rows = rankRows(w, tie, r), strs = [title];
+      rows.forEach(e => { strs.push(e.group ? 'Group: ' + LIBGI[e.group].short : pname(e.id)); strs.push(fmt(e.rho, 'rho')); });
+      then.push(clo(strs, 1400, { f: 'ranks_' + r }));
+    });
+    // spread chart exact marks (a convention)
+    ENS_ROWS.slice(0, 4).forEach(r => { const q = S[r[0]]; then.push(soft({ t: 'attrv', sel: '[data-spread="' + r[0] + '"]', attr: 'data-p50', num: q.p50, f: 'spread_' + r[0], note: 'convention: each spread row carries data-spread, data-p5, data-p25, data-p50, data-p75, data-p95' })); });
+    add('ens:' + w + ':tie' + tie, 'ensemble_view', 'many', 'engine ensemble at ' + ENS_N + ' runs, seed ' + ENS_SEED + ', tie ' + tie + ', ' + w + ' period', 'Many runs, ' + w + ' period, details for tie ' + tie, [{ t: 'probe', phase: 'ens', f: 'view', steps, then }], { n: ENS_N, seed: ENS_SEED, tie, period: w });
+  });
+});
+['first period', 'last period'].forEach(l => add('ctl:ens_' + l.split(' ')[0], 'control', 'many', 'page.js renderEnsemble', l, [ctl(l, 'button', { changes: 'Shows the results of the runs for the ' + l + ' of the library. The table, the charts and the rankings redraw.' })]));
+TIES.forEach(t => add('ctl:ens_tie' + t, 'control', 'many', 'map.json ensemble_ties.levels', 'tie ' + t, [ctl('tie ' + t, 'button', { changes: 'Shows the charts and rankings for tie ' + t + ': how far the library unknowns of one group move together across the runs.' })]));
+add('many:labels', 'note', 'many', 'page.js renderEnsemble', 'Show the | Details for | runs at each tie', [tx('Show the', { f: 'show' }), tx('Details for', { f: 'details' })]);
+
+// ================================================================== LEFT OUT, WORDS, FOOTER
+const SLV = TX.sections.leaves;
+add('leaves:title', 'heading', 'leaves', 'text.json sections.leaves', SLV.title, [tx(R(SLV.title)), tx(R(SLV.lede), { soft: true, f: 'lede', why: 'says tap one to read it; may change' })]);
+TX.leaves_out.forEach((l, i) => add('leftout:' + (i + 1), 'left_out', 'leaves', 'text.json leaves_out[' + i + ']', l.t, [tx(R(l.t), { f: 'title' }), ...rich(l.x)], { changes: 'Opens or closes this note.' }));
+add('words:title', 'heading', 'words', 'page.html.txt', 'Words used on this page', [tx('Words used on this page', { f: 'label' }), ctl('Words used on this page', 'any', { f: 'opens', changes: 'Opens the list of words used on this page.' })]);
+TX.words.forEach((w, i) => add('word:' + (i + 1), 'word', 'words', 'text.json words[' + i + ']', w[0], [clo([R(w[0]), R(w[1])], 700, { f: 'entry', where: 'open' }), tx(w[1], { f: 'definition' })]));
+add('footer:built', 'footer', 'footer', 'page.js renderStatic', 'Built date, source folder, map version, record', [tx('Built ' + TX.date + ' from docs/program/library-pathways/ (map version ' + MAP.version + ')', { f: 'built' }), tx('docs/program/LIBRARY-PATHWAYS-2026-11.md', { f: 'record', soft: true })]);
+
+// ================================================================== CARRIED IN THE DATA, NOT SHOWN
+const D0 = 'data';
+const dataEntry = (id, label, path, n, from) => add('data:' + id, 'data', D0, from, label, [{ t: 'data', path, eq: n, f: 'length', note: 'inlined in the page' }]);
+dataEntry('states', 'map.states: ' + MAP.states.length + ' states', 'map.states', MAP.states.length, 'map.json');
+dataEntry('branches', 'map.branches: ' + MAP.branches.length + ' branches', 'map.branches', MAP.branches.length, 'map.json');
+dataEntry('steps', 'map.steps: ' + MAP.steps.length + ' stages', 'map.steps', MAP.steps.length, 'map.json');
+dataEntry('outcomes', 'map.outcomes: ' + MAP.outcomes.length, 'map.outcomes', MAP.outcomes.length, 'map.json');
+dataEntry('policies', 'map.policies: ' + MAP.policies.length, 'map.policies', MAP.policies.length, 'map.json');
+dataEntry('attributes', 'map.attributes: ' + MAP.attributes.length, 'map.attributes', MAP.attributes.length, 'map.json');
+dataEntry('measures', 'map.measures: ' + MAP.measures.length + ' measures', 'map.measures', MAP.measures.length, 'map.json');
+dataEntry('parameters', 'map.parameters: ' + MAP.parameters.length + ' unknowns', 'map.parameters', MAP.parameters.length, 'map.json');
+dataEntry('param_rows', 'params.parameters: ' + TABLE.parameters.length + ' ranges', 'params.parameters', TABLE.parameters.length, 'params.json');
+dataEntry('reference_settings', 'map.reference_settings: ' + MAP.reference_settings.length, 'map.reference_settings', MAP.reference_settings.length, 'map.json');
+dataEntry('lib_groups', 'map.lib_groups: ' + MAP.lib_groups.length, 'map.lib_groups', MAP.lib_groups.length, 'map.json');
+dataEntry('derived', 'map.derived: ' + MAP.derived.length + ' (not shown)', 'map.derived', MAP.derived.length, 'map.json');
+dataEntry('entry_kinds', 'map.entry_kinds: ' + MAP.entry_kinds.length + ' (not shown)', 'map.entry_kinds', MAP.entry_kinds.length, 'map.json');
+dataEntry('constraints', 'map.constraints: ' + MAP.constraints.length + ' (not shown)', 'map.constraints', MAP.constraints.length, 'map.json');
+dataEntry('groups', 'map.groups: ' + MAP.groups.length + ' (not shown; the sliders are grouped by stage)', 'map.groups', MAP.groups.length, 'map.json');
+dataEntry('limitations', 'lims.items: ' + LIMS.items.length + ' limitations', 'lims.items', LIMS.items.length, 'limitations.json');
+dataEntry('works', 'lims.works: ' + LIMS.works.length + ' savings', 'lims.works', LIMS.works.length, 'limitations.json');
+dataEntry('cases', 'cases.cases: ' + CASES.cases.length + ' cases', 'cases.cases', CASES.cases.length, 'cases.json');
+dataEntry('families', 'cases.families: ' + CASES.families.length + ' families', 'cases.families', CASES.families.length, 'cases.json');
+// the measures the page does not show (the three used only inside the stock equations)
+MAP.measures.forEach(m => {
+  const shown = /^(fw_|fa_|use_)/.test(m.id) || ['fw_promo_caught', 'P_climbs', 'W_good', 'W_bad_right', 'W_bad_escape', 'W_repair'].includes(m.id);
+  if (!shown) add('measure:' + m.id, 'measure_not_shown', D0, 'map.json measures[' + m.id + ']', m.label + ' (not shown on the current page)', [{ t: 'data', path: 'map.measures', has: m.id, f: 'has', note: 'inlined in the page' }]);
+});
+['kind', 'integer', 'group'].forEach(k => add('field:param_' + k, 'field_not_shown', D0, 'map.json parameters[].' + k, 'Parameter field "' + k + '" is carried, not shown', [{ t: 'data', path: 'map.parameters', fieldHas: k, f: 'has', note: 'inlined in the page' }]));
+
+// ------------------------------------------------------------------ conventions and coverage
+const conventions = [
+  { id: 'C1', text: 'The page inlines its model as one <script type="application/json"> holding the keys map, params, lims, cases and text (the shapes in the data files; cases may be packed). The picture is the model: the check reads the counts from here.', tested: 'data entries (hard on the current page)' },
+  { id: 'C2', text: 'Every drawn state carries data-state="<state id>" and every drawn branch carries data-branch="<branch id>".', tested: 'soft' },
+  { id: 'C3', text: 'The control that opens a limitation carries data-lim="LIM-nn"; the control that opens a case carries data-case="<case id>"; each slider row carries data-param="<unknown id>".', tested: 'soft; the case probes also fall back to the selectors of the current page' },
+  { id: 'C4', text: 'Every reveal is a <details> element or a control with aria-expanded. Every choice that stays pressed carries aria-pressed. Every click-to-select mark is a button or has role="button". The check opens everything by these.', tested: 'soft, through what the check can open' },
+  { id: 'C5', text: 'A mark that has no printed number (a plotted point, a spread row, a square cell) carries its exact value: data-chart + data-period + data-v on each ratio point; data-spread + data-p5/p25/p50/p75/p95 on each spread row; data-cell="i,j" + data-v on each square cell.', tested: 'soft' },
+  { id: 'C6', text: 'Numbers keep the rounding they have now, so that a check can find them: ratios 2 decimals (1 decimal from 10), costs 1 decimal (0 from 100), shares and weights 1 decimal with a percent sign, correlations signed with 2 decimals.', tested: 'hard (the check searches the formatted text)' },
+  { id: 'C7', text: 'A step judgment shows its status as a word (works, strains, breaks, not specified, not reached) in text beside its note, or as an accessible name on a mark inside the same element.', tested: 'hard (in the case probes)' },
+  { id: 'C8', text: 'A control that is renamed in the redesign is listed in an aliases file: { "<test id>": "<new text>" } or an array of accepted texts. The check reads it with --aliases and reports every alias it used.', tested: 'by the check' },
+  { id: 'C9', text: 'The redesign may drop interaction hints that describe the old layout ("Tap a bar…", "The map scrolls sideways"). These tests are marked soft with a reason. Everything else is a hard test.', tested: 'soft where marked' }
+];
+const testStrings = []; entries.forEach(e => (function walkT(o) { if (typeof o === 'string') testStrings.push(o); else if (Array.isArray(o)) o.forEach(walkT); else if (o && typeof o === 'object') Object.keys(o).forEach(k => { if (k !== 'sel' && k !== 'note' && k !== 'why') walkT(o[k]); }); })(e.tests));
+const covered = s => testStrings.some(x => x.indexOf(s.slice(0, 60)) >= 0) || usedText.has(s);
+const unaccounted = [];
+(function walk(o, p) {
+  if (typeof o === 'string') { if (!covered(o) && !/(^|\.)(note|layout|funnel_steps|design_steps|policy_short|policy_names|policy_says|words|tags|hero|leaves_out|loops|date|title)$/.test(p) && !/^sections\.[a-z]+\.(title)$/.test(p)) unaccounted.push(p + ': ' + o.slice(0, 80)); return; }
+  if (Array.isArray(o)) { o.forEach((x, i) => walk(x, p + '[' + i + ']')); return; }
+  if (o && typeof o === 'object') Object.keys(o).forEach(k => walk(o[k], p ? p + '.' + k : k));
+})(TX, '');
+
+// ------------------------------------------------------------------ write
+const testCount = entries.reduce((a, e) => a + e.tests.length, 0);
+const byKind = {}; entries.forEach(e => { byKind[e.kind] = (byKind[e.kind] || 0) + 1; });
+const bySection = {}; entries.forEach(e => { bySection[e.section] = (bySection[e.section] || 0) + 1; });
+const testsByType = {}; entries.forEach(e => e.tests.forEach(t => { testsByType[t.t] = (testsByType[t.t] || 0) + 1; }));
+const hardTests = entries.reduce((a, e) => a + e.tests.filter(t => !t.soft).length, 0);
+const inv = {
+  meta: {
+    title: 'Inventory of the library pathways page', built: new Date().toISOString().slice(0, 10), page_date: TX.date, map_version: MAP.version,
+    sources: ['docs/program/library-pathways/{map,params,limitations,cases}.json', 'docs/program/library-pathways/engine.js', 'docs/program/evidence/library-pathways/page-src/{text.json,page.js.txt,core.js.txt}'],
+    default_choice: { policy: 'library', class: DEFCLS, period: NPER },
+    ensemble: { runs_per_tie: ENS_N, seed: ENS_SEED, ties: TIES },
+    entries: entries.length, tests: testCount, hard_tests: hardTests, soft_tests: testCount - hardTests, entries_by_kind: byKind, entries_by_section: bySection, tests_by_type: testsByType,
+    how_to_read: 'Each entry is one item a reader can reach. Each test says how to find it again in a page. Tests are hard unless "soft" is set. where: base = the page as it opens; open = after every disclosure is opened; any = either, or after clicking through. A probe clicks or sets controls, then checks the page.'
+  },
+  conventions, sections: SECTIONS.map(s => ({ id: s[0], title: s[1] })), entries
+};
+fs.writeFileSync(path.join(HERE, 'inventory.json'), JSON.stringify(inv));
+console.log('entries ' + entries.length + ', tests ' + testCount + ' (hard ' + hardTests + ', soft ' + (testCount - hardTests) + '), built in ' + ((Date.now() - T0) / 1000).toFixed(1) + ' s');
+console.log('by kind: ' + JSON.stringify(byKind));
+console.log('by section: ' + JSON.stringify(bySection));
+console.log('tests by type: ' + JSON.stringify(testsByType));
+console.log('text.json strings not covered by a test (' + unaccounted.length + '):'); unaccounted.forEach(u => console.log('  ' + u));
+fs.writeFileSync(path.join(HERE, 'inventory-stats.json'), JSON.stringify({ byKind, bySection, testsByType, unaccounted, entries: entries.length, tests: testCount, hardTests }, null, 1));

@@ -1,0 +1,67 @@
+// Maps inventory items to the cards (and reader source statuses) that came from them.
+// Usage: node build-appendix.mjs <inventory-items.json> <prereview-dir> > appendix.md
+import fs from 'node:fs';
+import path from 'node:path';
+const [itemsPath, dir] = process.argv.slice(2);
+const items = JSON.parse(fs.readFileSync(itemsPath, 'utf8'));
+const merged = JSON.parse(fs.readFileSync(path.join(dir, 'cards-merged.json'), 'utf8'));
+const readers = fs.readdirSync(path.join(dir, 'readers')).map(f => JSON.parse(fs.readFileSync(path.join(dir, 'readers', f), 'utf8')));
+
+function keys(u) {
+  if (!u) return [];
+  let s = String(u).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^(www|m|mobile)\./, '').replace(/[),.;]+$/, '');
+  const out = [];
+  let m;
+  if ((m = s.match(/(?:youtube\.com\/(?:watch\?v=|live\/|embed\/)|youtu\.be\/)([a-z0-9_-]{11})/i))) out.push('yt:' + m[1]);
+  if ((m = s.match(/(?:x\.com|twitter\.com|nitter\.net|fxtwitter\.com)\/[^/]+\/status\/(\d+)/))) out.push('x:' + m[1]);
+  if ((m = s.match(/news\.ycombinator\.com\/item\?id=(\d+)/))) out.push('hn:' + m[1]);
+  if ((m = s.match(/github\.com\/([^/]+\/[^/#?]+)/))) out.push('gh:' + m[1].replace(/\.git$/, ''));
+  if ((m = s.match(/(?:humanlayer\.dev|hlyr\.dev)\/blog\/([a-z0-9-]+)/))) out.push('blog:' + m[1]);
+  if ((m = s.match(/ai-that-works\/ai-that-works\/(?:tree|blob)\/main\/([0-9a-z-]+)/))) out.push('aitw:' + m[1]);
+  out.push('url:' + s.replace(/\/$/, '').split('#')[0]);
+  return out;
+}
+const STOP = new Set('a an the of to in on for and or with from at by is are be 2025 2026 dex horthy humanlayer ai that works podcast video talk episode'.split(' '));
+const ttoks = s => new Set(String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP.has(w)));
+const jacc = (a, b) => { let i = 0; for (const t of a) if (b.has(t)) i++; const u = a.size + b.size - i; return u ? i / u : 0; };
+
+// index cards by key
+const cardKeys = new Map();
+for (const c of merged) {
+  const ks = new Set([...keys(c.source_url), ...(c.also || []).flatMap(a => keys(a.source_url))]);
+  cardKeys.set(c.card, ks);
+}
+const srcIndex = []; // reader sources
+for (const r of readers) for (const s of r.sources) srcIndex.push({ reader: r.reader_id, keys: new Set(keys(s.url)), title: s.title, status: s.status, words: s.words_read, note: s.note, ttoks: ttoks(s.title) });
+
+const rows = [];
+for (const it of items) {
+  if (/^Search angles/.test(it.section)) continue;
+  const ik = new Set(it.urls.flatMap(keys));
+  const itt = ttoks(it.text);
+  const cards = merged.filter(c => { const ks = cardKeys.get(c.card); for (const k of ik) if (ks.has(k)) return true; return false; });
+  // fallback by title tokens for items without a URL match
+  let fallback = [];
+  if (!cards.length) fallback = merged.filter(c => jacc(itt, ttoks(c.source_title)) >= 0.5);
+  const srcs = srcIndex.filter(s => { for (const k of ik) if (s.keys.has(k)) return true; return jacc(itt, s.ttoks) >= 0.6; });
+  const statuses = [...new Set(srcs.map(s => `${s.reader}:${s.status}`))];
+  rows.push({ it, cards: cards.map(c => c.card), fallback: fallback.map(c => c.card), statuses });
+}
+const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+const out = [];
+out.push('| # | Inventory section | Date | Item (truncated) | Cards | Reader status | Note |');
+out.push('| --- | --- | --- | --- | --- | --- | --- |');
+let n = 0, withCards = 0, readNoCard = 0, unread = 0;
+for (const r of rows) {
+  n++;
+  const cardCell = r.cards.length ? `${r.cards.length}: ${r.cards.slice(0, 12).join(', ')}${r.cards.length > 12 ? ' …' : ''}` : (r.fallback.length ? `(by title) ${r.fallback.length}: ${r.fallback.slice(0, 8).join(', ')}` : '—');
+  let note = '';
+  const isOther = /^\(C\)/.test(r.it.section);
+  if (r.cards.length || r.fallback.length) { withCards++; }
+  else if (r.statuses.length) { readNoCard++; note = isOther ? 'follow-on (critique-only source); no critique card' : 'read; yielded no distinct card'; }
+  else { unread++; note = isOther ? 'follow-on by others; not a source of ideas' : 'not read by any reader'; }
+  out.push(`| ${n} | ${esc(r.it.section).slice(0, 40)} | ${r.it.date} | ${esc(r.it.text).slice(0, 110)} | ${cardCell} | ${r.statuses.join('; ') || '—'} | ${note} |`);
+}
+console.log(`Items mapped: ${n}; with cards: ${withCards}; read but no card: ${readNoCard}; no reader touched: ${unread}.`);
+console.log('');
+console.log(out.join('\n'));

@@ -1,0 +1,14 @@
+## Ruling 58 scripts
+sha256 81bd6dbd4c5f8d3bc8f63ab67433ca6b53a6f1b3be30c45e5543cbdf1c961d5a item27 train/other27.py
+sha256 a807bcfb55bfe2bc0c0130eeef6a19afeb18c3f06941f37ccc289fd209117118 heldout-driver train/heldout.py
+sha256 f121ffdedec1bd2ffbe2f19d1b531170c6bc47f57855b6faee214c4591632735 item24-adapter train/answer_level.py
+sha256 97ecea4fd179686783a5d9c5a240f5f6e68151b1adc01ed312d2ff72677eab09 leak-audit train/leak_audit.py
+sha256 4e89be7ad5dd8b6f000a764fc5f3771d3d21b9021aa5b5621fb6ca6ebe2859f7 selectB train/selectB.py
+sha256 d2f56516fd6c35644826ae6f1876a47870b7fa19acedac3e52fb6f2a94aa2624 report train/report.py
+PASS item27 train/logs/item27.log
+PASS heldout-driver train/logs/heldout-driver.log
+PASS item24-adapter train/logs/item24-adapter.log
+PASS leak-audit train/logs/leak-audit.log
+PASS selectB train/logs/selectB.log
+PASS report train/logs/report.log
+PASS assemble-checks orchestrator/end-of-run/ac.log tables_digest 904bec681d606a86ec753cd6b9d627765edaa4de8bd01a9451d2450753196bfa

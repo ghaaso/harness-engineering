@@ -1,0 +1,51 @@
+// Build the numbers prototype: one self-contained page, index.html, in this folder.
+// Run from this folder:  node - < build.js.txt
+// Reads the live data (map.json, params.json, limitations.json, cases.json, engine.js), the live page's
+// text.json and core.js.txt, and this folder's proto.html.txt, proto.css.txt and proto.js.txt.
+// Nothing here sets a value: every number on the page is computed in the browser by engine.js.
+// The data are trimmed to the fields the prototype reads (long prose of limitations and cases is left
+// out, because this prototype draws no detail cards); the live page keeps everything.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const LP = path.resolve(here, '../../../../library-pathways');
+const SRC = path.resolve(here, '../../page-src');
+const rd = p => fs.readFileSync(p, 'utf8');
+
+const map = JSON.parse(rd(path.join(LP, 'map.json')));
+const params = JSON.parse(rd(path.join(LP, 'params.json')));
+const lims = JSON.parse(rd(path.join(LP, 'limitations.json')));
+const cases = JSON.parse(rd(path.join(LP, 'cases.json')));
+const text = JSON.parse(rd(path.join(SRC, 'text.json')));
+
+const limsSlim = {
+  steps: lims.steps,
+  families: lims.families,
+  items: lims.items.map(it => ({
+    id: it.id, key: it.key, main_step: it.main_step, title: it.title, steps: it.steps, params: it.params, shown: it.shown,
+    real: { cases: it.real.cases, families: it.real.families, case_ids: it.real.case_ids },
+    contradicted: it.contradicted.map(c => ({ family: c.family }))
+  }))
+};
+const casesSlim = {
+  families: cases.families.map(f => ({ id: f.id, name: f.name })),
+  cases: cases.cases.map(c => ({ id: c.id, family: c.family, steps: c.steps.map(s => ({ step: s.step, status: s.status })) }))
+};
+const textSlim = { sections: text.sections, funnel_steps: text.funnel_steps, policy_names: text.policy_names, policy_short: text.policy_short, tags: text.tags, todays_notes: text.todays_notes, opus_line: text.opus_line, loops: text.loops };
+
+const data = JSON.stringify({ map, params, lims: limsSlim, cases: casesSlim, text: textSlim }).replace(/</g, '\\u003c');
+let html = rd(path.join(here, 'proto.html.txt'));
+const parts = {
+  '/*__CSS__*/': rd(path.join(here, 'proto.css.txt')),
+  '/*__DATA__*/': data,
+  '/*__ENGINE__*/': rd(path.join(LP, 'engine.js')),
+  '/*__CORE__*/': rd(path.join(SRC, 'core.js.txt')),
+  '/*__JS__*/': rd(path.join(here, 'proto.js.txt'))
+};
+Object.keys(parts).forEach(k => {
+  if (html.indexOf(k) < 0) throw new Error('placeholder missing: ' + k);
+  html = html.replace(k, () => parts[k]);
+});
+fs.writeFileSync(path.join(here, 'index.html'), html);
+console.log('index.html ' + Buffer.byteLength(html) + ' bytes');

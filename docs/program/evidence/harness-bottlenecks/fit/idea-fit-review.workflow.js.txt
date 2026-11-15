@@ -1,0 +1,258 @@
+export const meta = {
+  name: 'idea-fit-review',
+  description: 'Adjudicate the dropped-idea candidates, attack the survivor mappings, then consolidate what fits into mechanisms under one budget',
+  phases: [
+    { title: 'Adjudicate and refute', detail: 'three Opus adjudicators on 142 dropped candidates; three Opus refuters on 87 mappings', model: 'opus' },
+    { title: 'Consolidate', detail: 'one Opus pass grouping what survived into mechanisms, conflicts and a per-bottleneck verdict', model: 'opus' },
+  ],
+}
+
+const IN = args.inDir
+const IN2 = args.in2Dir
+const COMPILE = args.compile
+const BN = args.bottlenecks
+const EV = args.evDir
+
+const PRE = `You are one lane of a read-only review job. Read these files first, in full, with the Read tool:
+1. ${IN}\\brief.md  (the lens, the fit scale and the hard rules; it governs)
+2. ${COMPILE}  (the bottleneck compile: corrected diagnoses in section 1, what the testbed built in section 2, class / first step / proof for each of B01 to B21 in section 3, cross-cutting mechanisms in section 7)
+3. ${BN}  (the owner's 21 bottlenecks, verbatim)
+4. ${EV}\\sweep-index.txt  (one line per mechanism card of what the clinic testbed actually practised, ids like A1-06 or CR-11; the full cards are in ${EV}\\sweep-cards.txt and the data tables in ${EV}\\sweep-tables.txt: Grep those by id when you need the detail)
+Then read your lane file in full. If a Read is truncated, continue with offset until you have every item.`
+
+const BIDS = { type: 'array', items: { type: 'string', pattern: '^B(0[1-9]|1[0-9]|2[01])$' } }
+const COST = { type: 'string', enum: ['none', 'script', 'brief-or-config-line', 'extra-agents-per-phase', 'extra-agents-per-finding', 'standing-process'] }
+
+const ADJ_SCHEMA = {
+  type: 'object',
+  properties: {
+    lane_file: { type: 'string' },
+    items_read: { type: 'integer' },
+    verdicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          verdict: { type: 'string', enum: ['promote-direct', 'promote-supporting', 'merge', 'stays-fallen'] },
+          bottlenecks: BIDS,
+          merges_into: { type: 'string', description: 'For merge: the surviving idea id, or "compile first step Bxx". Otherwise empty.' },
+          clinic_practice: { type: 'string', enum: ['absent', 'present-and-failed', 'present-and-worked', 'unknown', 'not-applicable'] },
+          clinic_evidence: { type: 'string', description: 'A sweep card id or compile section that shows it, or empty.' },
+          idea_for_v2: { type: 'string', description: 'For promote: the idea as it would stand in harness v2, at most 45 words, no wider than the source row. Otherwise empty.' },
+          why: { type: 'string', description: 'At most 50 words: why the recorded reason does or does not hold against the bottleneck, and what you checked.' },
+          added_cost: COST,
+          needs_owner_decision: { type: 'boolean' },
+        },
+        required: ['id', 'verdict', 'bottlenecks', 'merges_into', 'clinic_practice', 'clinic_evidence', 'idea_for_v2', 'why', 'added_cost', 'needs_owner_decision'],
+      },
+    },
+    notes: { type: 'string', description: 'At most 120 words.' },
+  },
+  required: ['lane_file', 'items_read', 'verdicts', 'notes'],
+}
+
+const REF_SCHEMA = {
+  type: 'object',
+  properties: {
+    lane_file: { type: 'string' },
+    items_read: { type: 'integer' },
+    verdicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          verdict: { type: 'string', enum: ['stands', 'narrowed', 'downgraded-to-fixflow-only'] },
+          corrected_fit: { type: 'string', enum: ['direct', 'supporting', 'fixflow-only', 'conflicts', 'none'] },
+          corrected_bottlenecks: BIDS,
+          faithful_to_source: { type: 'boolean' },
+          fact_errors: { type: 'string', description: 'Each cited testbed fact you could not find or found wrong, or empty.' },
+          reopened_part: { type: 'string', enum: ['none', 'accept', 'reject'] },
+          corrected_cost: COST,
+          needs_owner_decision: { type: 'boolean' },
+          reason: { type: 'string', description: 'At most 60 words: what you checked and why the verdict.' },
+          what_survives: { type: 'string', description: 'For stands or narrowed: the fit in at most 40 words, as it should be written. Otherwise empty.' },
+        },
+        required: ['id', 'verdict', 'corrected_fit', 'corrected_bottlenecks', 'faithful_to_source', 'fact_errors', 'reopened_part', 'corrected_cost', 'needs_owner_decision', 'reason', 'what_survives'],
+      },
+    },
+    notes: { type: 'string', description: 'At most 120 words.' },
+  },
+  required: ['lane_file', 'items_read', 'verdicts', 'notes'],
+}
+
+const EXCL_SCHEMA = {
+  type: 'object',
+  properties: {
+    items_read: { type: 'integer' },
+    verdicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          verdict: { type: 'string', enum: ['stays-fixflow-only', 'should-map'] },
+          bottlenecks: BIDS,
+          fit: { type: 'string', enum: ['direct', 'supporting', 'fixflow-only', 'none'] },
+          how: { type: 'string', description: 'For should-map: at most 45 words naming the thing in the testbed record it would have changed. Otherwise empty.' },
+          added_cost: COST,
+          needs_owner_decision: { type: 'boolean' },
+          why: { type: 'string', description: 'At most 30 words.' },
+        },
+        required: ['id', 'verdict', 'bottlenecks', 'fit', 'how', 'added_cost', 'needs_owner_decision', 'why'],
+      },
+    },
+    notes: { type: 'string' },
+  },
+  required: ['items_read', 'verdicts', 'notes'],
+}
+
+const CONS_SCHEMA = {
+  type: 'object',
+  properties: {
+    mechanisms: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'A plain name of at most 8 words.' },
+          bottlenecks: BIDS,
+          absorbs_ids: { type: 'array', items: { type: 'string' } },
+          what_it_is: { type: 'string', description: 'At most 50 words: the one artefact in harness v2.' },
+          what_the_ideas_add: { type: 'string', description: 'At most 70 words: what these ideas add beyond the compile\'s own first step for those bottlenecks. Say "nothing new" when that is true.' },
+          cost: COST,
+          needs_owner_decision: { type: 'boolean' },
+          owner_decision_what: { type: 'string' },
+          order: { type: 'integer', description: '1 = take first. Zero-token scripts that guard the compile\'s replays come before anything that adds agents.' },
+          proof: { type: 'string', description: 'At most 40 words: the replay or count on the testbed record that tests it.' },
+        },
+        required: ['name', 'bottlenecks', 'absorbs_ids', 'what_it_is', 'what_the_ideas_add', 'cost', 'needs_owner_decision', 'owner_decision_what', 'order', 'proof'],
+      },
+    },
+    conflicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          between: { type: 'string' },
+          why: { type: 'string' },
+          resolution: { type: 'string' },
+        },
+        required: ['between', 'why', 'resolution'],
+      },
+    },
+    per_bottleneck: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^B(0[1-9]|1[0-9]|2[01])$' },
+          contribution: { type: 'string', enum: ['none', 'supporting-only', 'direct'] },
+          line: { type: 'string', description: 'At most 30 words: what the two idea lists contribute to this bottleneck, or why nothing in them fits.' },
+        },
+        required: ['id', 'contribution', 'line'],
+      },
+    },
+    do_not_take: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, why: { type: 'string' } }, required: ['id', 'why'] } },
+    budget_note: { type: 'string', description: 'At most 120 words: the summed extra agents if everything were taken, what to drop to stay inside one budget, and which mechanisms are zero-token scripts.' },
+    unabsorbed_ids: { type: 'array', items: { type: 'string' } },
+    missing: { type: 'string', description: 'At most 100 words: anything the mapping and review missed.' },
+  },
+  required: ['mechanisms', 'conflicts', 'per_bottleneck', 'do_not_take', 'budget_note', 'unabsorbed_ids', 'missing'],
+}
+
+const adjPrompt = (file) => `${PRE}
+
+Your lane file: ${IN2}\\${file}
+Each item is an idea that the Horthy sweep (PR #186) or the BAML sweep (PR #184) dropped as skip or already-done, and that a Sonnet screener has now proposed as bearing on one of the 21 bottlenecks. The screen was built for recall, so most candidates should not survive you. Default verdict: stays-fallen.
+
+For each item:
+1. Open the source row. The lane file's title names the source files, which are in ${IN}. Grep the id and read the full claim and the full recorded reason. Do not rule from the screener's summary alone.
+2. Decide whether the reason it fell still holds when the question is the bottleneck and not FixFlow's W1 to W5. Weak outside evidence still holds unless the testbed record supplies the evidence itself.
+3. For an already-done item, establish what the testbed practised, from sweep-index.txt and the cards: was the mechanism absent, present and failed, or present and worked? Cite the card id or compile section. Present-and-worked means it is not a gap. Present-and-failed means the idea is not enough by itself.
+4. Check whether the compile's own first step for that bottleneck (section 3) or a surviving idea already says the same thing. The surviving ideas and their fits are in ${IN2}\\ref-1.md and ${IN2}\\ref-2.md. If so the verdict is merge, naming what it merges into.
+5. Promote only when the idea adds something that neither the compile's first step nor a surviving idea has, and you can name the thing in the testbed record it would have changed. promote-direct only when it would move the number in the bottleneck's Proof column.
+Flag needs_owner_decision for anything that reopens hooks, the context system, a measurement pipeline or a pre-commit gate, installs anything, sends data off the machine, or adds a standing process.
+
+Return one verdict per item, none skipped. Return only the structured result.`
+
+const refPrompt = (file) => `${PRE}
+
+Your lane file: ${IN2}\\${file}
+Each item is an Opus mapper's claim that a surviving idea from the Horthy or BAML sweep fits one of the 21 bottlenecks. Attack every one. Default verdict: downgraded-to-fixflow-only.
+
+A mapping stands only if all three hold:
+(a) Faithful. Open the source row (the lane file's title names the files, in ${IN}; Grep the id). The "idea as mapped" must be no wider than the narrowed version that survived the PR's refuter, with its addendum where one exists. A re-inflated idea is narrowed back or downgraded.
+(b) True. Every fact the mapping cites about the testbed (numbers, dates, card ids such as A7-13 or CR-11, counts such as "4 of 5 merges") must be in the compile or the sweep files. Check each one and list any you cannot find.
+(c) Real counterpart. The FixFlow file or phase the idea names must have a counterpart in the testbed (a slice gate, a claims line, the board, a resume, a merge), so that adopting it in harness v2 would have changed the thing the mapping names. "The same shape" or "a transfer of the procedure" is not enough for direct. It is enough for supporting only when the procedure is what the compile's first step for that bottleneck needs.
+
+Also: check direct against supporting on the brief's scale (direct means the Proof column number would move). Rule on each reopened part: accept only when the reason for the original cut plainly does not apply to the testbed. Correct the cost class and the owner-decision flag (anything that reopens hooks, installs something, sends code to another vendor or adds a standing process needs the owner). Drop bottleneck ids that do not hold.
+
+Return one verdict per item, none skipped. Return only the structured result.`
+
+const exclPrompt = `${PRE}
+
+Your lane file: ${IN2}\\excl.md
+Each item is a surviving idea from the Horthy sweep that an Opus mapper ruled fixflow-only: useful to FixFlow's ship plan but bearing on none of the 21 bottlenecks. Your job is to find false negatives. Open the source rows (${IN}\\horthy-survivors-A.md, -B.md, -C.md; Grep the id) and read the narrowed version in full.
+
+Default verdict: stays-fixflow-only. Rule should-map only when you can name the thing in the testbed record (a gate round, a claims line, the check queue, a resume, a merge, the board) that the narrowed idea would have changed, on the brief's scale. Topic overlap is not fit. Do not re-inflate a narrowed idea.
+
+Return one verdict per item, none skipped. Return only the structured result.`
+
+phase('Adjudicate and refute')
+const first = await parallel([
+  () => agent(adjPrompt('adj-A.md'), { label: 'adjudicate:G1-G2', phase: 'Adjudicate and refute', schema: ADJ_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(adjPrompt('adj-B.md'), { label: 'adjudicate:G3-G5-BAML', phase: 'Adjudicate and refute', schema: ADJ_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(adjPrompt('adj-C.md'), { label: 'adjudicate:G4', phase: 'Adjudicate and refute', schema: ADJ_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(refPrompt('ref-1.md'), { label: 'refute:G1-G2-G3-G5', phase: 'Adjudicate and refute', schema: REF_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(refPrompt('ref-2.md'), { label: 'refute:G4-BAML', phase: 'Adjudicate and refute', schema: REF_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(exclPrompt, { label: 'refute:exclusions', phase: 'Adjudicate and refute', schema: EXCL_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+])
+const adj = first.slice(0, 3)
+const ref = first.slice(3, 5)
+const excl = first[5]
+const failed = first.map((r, i) => (r ? null : ['adj-A', 'adj-B', 'adj-C', 'ref-1', 'ref-2', 'excl'][i])).filter(Boolean)
+log(`First pass done; failed lanes: ${failed.length ? failed.join(', ') : 'none'}`)
+
+const refVerdicts = ref.filter(Boolean).flatMap((r) => r.verdicts)
+const lines = []
+for (const v of refVerdicts) {
+  if (v.verdict === 'downgraded-to-fixflow-only' || !(v.corrected_fit === 'direct' || v.corrected_fit === 'supporting' || v.corrected_fit === 'conflicts')) continue
+  lines.push(`- ${v.id} [refuter: ${v.verdict}] ${v.corrected_fit} -> ${v.corrected_bottlenecks.join(',')} | cost ${v.corrected_cost}${v.needs_owner_decision ? ' | OWNER' : ''} | fit: ${v.what_survives}${v.reopened_part === 'accept' ? ' | reopened part accepted' : ''}`)
+}
+for (const v of (excl ? excl.verdicts : [])) {
+  if (v.verdict !== 'should-map') continue
+  lines.push(`- ${v.id} [added by the exclusion check] ${v.fit} -> ${v.bottlenecks.join(',')} | cost ${v.added_cost}${v.needs_owner_decision ? ' | OWNER' : ''} | fit: ${v.how}`)
+}
+const promoted = []
+for (const a of adj.filter(Boolean)) for (const v of a.verdicts) {
+  if (v.verdict === 'promote-direct' || v.verdict === 'promote-supporting') promoted.push(`- ${v.id} [dropped in the PR; ${v.verdict}; testbed practice: ${v.clinic_practice}${v.clinic_evidence ? ' (' + v.clinic_evidence + ')' : ''}] -> ${v.bottlenecks.join(',')} | cost ${v.added_cost}${v.needs_owner_decision ? ' | OWNER' : ''} | idea: ${v.idea_for_v2} | why: ${v.why}`)
+}
+log(`Into consolidation: ${lines.length} survivor mappings, ${promoted.length} promoted dropped ideas`)
+
+phase('Consolidate')
+const consPrompt = `${PRE.replace('Then read your lane file in full. If a Read is truncated, continue with offset until you have every item.', 'There is no lane file; your input is the two lists below.')}
+
+Two idea lists (Dex Horthy's published work, PR #186; BAML, PR #184) have been mapped onto the 21 bottlenecks, attacked by refuters, and the ideas those PRs dropped have been re-screened and adjudicated. What survived is below. Your job is to turn it into something a harness designer can use, and to be honest about how little or how much the two lists contribute.
+
+The idea text for every surviving id (the narrowed version, under the heading with its id, on the line 'idea as mapped') is in ${IN2}/ref-1.md, ${IN2}/ref-2.md and ${IN2}/excl.md: read those three files before you group anything. Lanes that failed in the first pass: ${failed.length ? failed.join(', ') : 'none'}; for an id whose refuter lane failed, use the mapper's own fit from the lane file and mark it unverified.
+
+SURVIVING IDEAS THAT FIT A BOTTLENECK (after the refuters):
+${lines.join('\n')}
+
+IDEAS THE PRs DROPPED THAT THE ADJUDICATORS PROMOTED UNDER THE BOTTLENECK LENS:
+${promoted.join('\n') || '(none)'}
+
+Do five things.
+1. Mechanisms. Group the ideas into the fewest mechanisms, where one mechanism is one artefact in harness v2: a script, a set of brief clauses, a workflow, a rule. Several ideas are halves or duplicates of one thing; say which ids each mechanism absorbs. For each, say what the ideas add beyond the compile's own first step for those bottlenecks (section 3), and say "nothing new" when the compile already has it. Give an order: zero-token scripts that guard the compile's replays come before anything that adds agents; anything needing an owner decision says what the decision is.
+2. Conflicts. Name ideas that pull against each other or against a measured fact in the compile (one check slot; owner waits against B03; a cheaper verifier against an extra reviewer; tool allow-lists against refused writes), each with a resolution.
+3. Per bottleneck, B01 to B21, all 21: whether the two lists contribute nothing, supporting only, or something direct, in one line. Many will be "none": say why nothing in a body of work about prompts, context and review reaches a power cut or a check queue.
+4. do_not_take: ids that survived but should not be taken into v2 now, with the reason (duplicate, cost against the one budget, unverified premise).
+5. budget_note, unabsorbed_ids (every id above must be in a mechanism, in do_not_take, or here), and missing.
+
+Use ids exactly as written. Plain short sentences. Return only the structured result.`
+
+const cons = await agent(consPrompt, { label: 'consolidate', phase: 'Consolidate', schema: CONS_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' })
+
+return { adj, ref, excl, cons, consolidation_input: { survivors: lines, promoted }, failed }

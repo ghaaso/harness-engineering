@@ -1,0 +1,46 @@
+# refute:KS-C11:repo
+
+```json
+{
+ "claim_id": "KS-C11",
+ "lens": "repo",
+ "verdict": "NARROWED",
+ "counter_evidence": "(1) The first falsifier holds, and I reproduced it. I implemented ex3's probe as architect-A.md:349 specifies it: regex_in_span on src/app/providers/AppContext.jsx, anchored at 'const logPayment = useCallback(', PRESENT when crypto.randomUUID() appears inside the balanced block. I ran it over four trees built in the scratchpad from the a31924a blobs:\n- T0, unfixed: PRESENT.\n- T1, correct P12a fix (the id is held in PaymentModal state and rotated on success only; logPayment takes clientId and returns a boolean): ABSENT.\n- T2, naive fix (`const [clientId] = useState(() => crypto.randomUUID())`, never rotated): ABSENT.\n- T3, correct fix plus a defensive default `clientId = crypto.randomUUID()`: PRESENT.\n\nThe correct and naive fixes leave AppContext.jsx byte-identical. `cmp` reports no difference, and `git hash-object --path=src/app/providers/AppContext.jsx` gives a3870bdb362f2737f626dbb1422b4bc716946e02 for both. The whole difference is 5 lines in JobDetail.jsx (PaymentModal, JobDetail.jsx:866). So no check on the ex3 file can separate the two fixes, and both get not_applies. This matches judge-2.md:338. T3 is fixed on its only reachable path: JobDetail.jsx:680 is the sole caller, and it always passes the id. Yet the probe reads applies there, so the fix text would be shown on a fixed tree.\n\n(2) \"No event is written for a per-caller answer\" holds only for the trace/suspect recompute (design:318). The gate runs against the caller's tree too, through `git stash create` (design:279), and its results are written to the shared store:\n- Probe-in-lookup: \"that run is the recorded gate run\" (design:276).\n- not_applies writes gate_absent plus a proposed_not_when built from query handles (design:288). That treats a code-state result as a mismatch in the query's wording. Per design:291, a second session's confirmation activates the proposal, so the not_when can then demote the entry for an unfixed worktree that uses the same wording.\n- With mechanical outcome reporting (design:292), \"applies then resolved → confirmed\" (design:287) records a confirmed +1 from a worktree that carries the worse naive fix.\n- verify can write a `reaffirmed` event (design:318).\n\n(3) The second falsifier fails. HEAD:AppContext.jsx is c8873c8bb94c442541f36c5be689f0e99b273b43. The working-tree file gives the same OID under `git hash-object`, `--no-filters`, `--stdin` and `--stdin --path`. The reason is .gitattributes `* text=auto eol=lf`, added in c256d0c on 2026-06-01: `git ls-files --eol` shows i/lf w/lf, with zero i/crlf or w/crlf files, and the file has 0 CR bytes. An LF copy outside the repo hashes the same. A CRLF copy also normalises to c8873c8 when hashed with a path. It only diverges, to b440a9c4eea1d1cc9062bcbe47faa3c0a485b671, under `--no-filters` or `--stdin` without `--path`.",
+ "trace": "Partial confirmation:\n- The probe reads PRESENT at a31924a/HEAD (blob c8873c8, AppContext.jsx:312 anchor, :319 randomUUID). It reads ABSENT on a tree where the id is no longer minted in logPayment.\n- Path-aware `git hash-object` over the caller's working-tree bytes matches the committed blob on this Windows box despite system core.autocrlf=true, so per-caller change detection is mechanically sound here.",
+ "narrowed_claim": "Per-call validity against the caller's working tree does give one shared store a per-tree verdict, but for ex3 that verdict only separates two cases: logPayment's block still contains crypto.randomUUID(), or it does not. The verdict depends on the text pattern, not on whether the code is correct:\n- The correct P12a fix and the naive useState fix produce a byte-identical AppContext.jsx and the same not_applies.\n- A correct fix with a randomUUID default parameter reads applies.\n\nOn this box, path-aware `git hash-object` (with filters, or with `--path`) matches committed blobs, because .gitattributes forces LF; raw-byte hashing does not.\n\n\"No event is written\" is true only of the trace/suspect computation. Gate verdicts and outcomes from a caller's working tree are written to the shared journal.",
+ "what_would_settle_it": "",
+ "design_consequence": "(a) The ex3 presence probe's ABSENT must render as \"root-cause pattern gone; fix correctness unverified\". It must never feed a mechanical resolved→confirmed. Bar the gate from judging a candidate fix for open-defect entries until a behavioural check exists: a Vitest test asserting that a retry after a failure reuses the id, and that a success followed by close and reopen gets a new id.\n(b) A gate run on a working-tree or non-mainline target must be tagged with its target. Its not_applies must not produce a proposed_not_when, since a code-state result is not a query mismatch. It must not count toward KS-R3's \"second independent confirmation\" or the confirmed counters. Alternatively, it is simply not written, which makes the \"no event\" promise true.\n(c) Add the naive (T2) and default-fallback (T3) variants as golden fixtures. Tighten the probe to match randomUUID as logPaymentApi's client-id argument rather than anywhere in the block.\n(d) Implementation pins:\n- Run `git hash-object` with a repo-relative `--path`, or on the in-worktree path. Never use `--stdin` without `--path`, and never `--no-filters`.\n- Normalise CRLF to LF before any span or region hash computed in Node.\n- Keep `* text=auto eol=lf` in .gitattributes as a stated dependency of the trace.",
+ "commands_run": [
+  "sed -n 290,345p src/app/providers/AppContext.jsx",
+  "sed -n 52,100p docs/program/evidence/knowledge-store/sweep/lane-R-02.md",
+  "grep -n ... docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md (ex3, hash-object, KS-A5, gate_absent, proposal activation)",
+  "sed -n 270,330p docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md",
+  "grep -n ex3/naive/P12a docs/program/evidence/knowledge-store/panel/judge-1.md judge-2.md architect-A.md architect-B.md architect-C.md architect-D.md",
+  "git --version; git config --show-origin --get-all core.autocrlf; cat .gitattributes; git ls-files --eol <files>; git check-attr -a src/app/providers/AppContext.jsx",
+  "git rev-parse HEAD:src/app/providers/AppContext.jsx; git rev-parse a31924a:src/app/providers/AppContext.jsx; git hash-object [--no-filters|--stdin|--stdin --path] src/app/providers/AppContext.jsx",
+  "git ls-files --eol | grep -E 'i/crlf|i/mixed|w/crlf|w/mixed'",
+  "git log --diff-filter=A -- .gitattributes",
+  "git hash-object --path=... on LF and CRLF scratchpad copies; git hash-object --no-filters / --stdin on CRLF copy",
+  "git show a31924a:src/app/providers/AppContext.jsx and a31924a:src/features/jobs/pages/JobDetail.jsx into scratchpad",
+  "node make_variants.mjs (builds T1 correct, T2 naive, T3 fallback variants in scratchpad)",
+  "node probe.mjs (regex_in_span ex3 probe + blob OIDs over T0-T3); git hash-object --path for T1/T2; cmp T1 T2 AppContext.jsx; diff T1 T2 JobDetail.jsx",
+  "sed -n 670,686p and 866,910p src/features/jobs/pages/JobDetail.jsx; sed docs/HANDOFF-2026-07-28-open-work.md:255-268,594-600",
+  "grep -rn logPayment src"
+ ],
+ "sources": [
+  "src/app/providers/AppContext.jsx:312-327 (logPayment, randomUUID at :319)",
+  "src/features/jobs/pages/JobDetail.jsx:675-682, :866 (PaymentModal, always mounted)",
+  "src/features/jobs/data/jobsApi.js:97",
+  ".gitattributes (* text=auto eol=lf, added c256d0c 2026-06-01)",
+  "C:/Program Files/Git/etc/gitconfig core.autocrlf=true",
+  "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:255, :276, :279, :287-292, :318, :508, :699, :715",
+  "docs/program/evidence/knowledge-store/panel/architect-A.md:349 (ex3 regex_in_span spec)",
+  "docs/program/evidence/knowledge-store/panel/architect-D.md:196",
+  "docs/program/evidence/knowledge-store/panel/judge-2.md:338",
+  "docs/program/evidence/knowledge-store/sweep/lane-R-02.md:52-70",
+  "docs/HANDOFF-2026-07-28-open-work.md:257-266, :596-598",
+  "C:/Users/User/AppData/Local/Temp/claude/C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-knowledge-store-research-9c609c/f3bbe503-2a20-4258-976b-7d457d3bf63a/scratchpad/ks-c11/probe.mjs",
+  "C:/Users/User/AppData/Local/Temp/claude/C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-knowledge-store-research-9c609c/f3bbe503-2a20-4258-976b-7d457d3bf63a/scratchpad/ks-c11/make_variants.mjs"
+ ]
+}
+```

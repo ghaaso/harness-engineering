@@ -1,0 +1,100 @@
+export const meta = {
+  name: 'horthy-addendum-sweep',
+  description: 'Addendum round: Sonnet readers card the newly published or newly readable Dex Horthy sources, then Sonnet mappers attach each card to one of the 838 fixed families (no re-clustering) or mark it NEW',
+  phases: [
+    { title: 'Read', detail: 'one Sonnet reader per source bundle, blind to the others' },
+    { title: 'Map', detail: 'one Sonnet mapper per reader: card to existing family id, or NEW (organising, not judging)' },
+  ],
+}
+
+const READERS = args.readers, INV = args.INV, FAMIDX = args.familiesIndex
+
+const CARD = {
+  type: 'object', additionalProperties: false,
+  required: ['id','source_title','source_url','source_date','source_type','author','read_mode','quote','claim','evidence_type','evidence_detail','bears_on','landing','in_inventory','inventory_ref'],
+  properties: {
+    id: { type: 'string', description: 'READERID-n, e.g. R47-3' },
+    source_title: { type: 'string' }, source_url: { type: 'string' },
+    source_date: { type: 'string', description: 'YYYY-MM-DD; YYYY-MM if the day is unknown' },
+    source_type: { type: 'string', enum: ['repo','blog','docs','release-notes','talk','podcast','x-article','x-thread','aitw-episode','hn','follow-on','other'] },
+    author: { type: 'string', enum: ['Dex','Kyle','Dex+others','other'] },
+    read_mode: { type: 'string', enum: ['read','summarised'], description: 'read = the primary text, a publisher transcript or a local machine transcript of the audio was in your context; summarised = only a third party\'s summary' },
+    quote: { type: 'string', description: 'verbatim, at most 15 words' },
+    claim: { type: 'string', description: 'the idea as one sentence, in your words' },
+    evidence_type: { type: 'string', enum: ['measured','anecdotal','asserted','marketing'] },
+    evidence_detail: { type: 'string' },
+    bears_on: { type: 'array', items: { type: 'string', enum: ['W1','W2','W3','W4','W5','L1','L2','L3','none'] } },
+    landing: { type: 'string', description: 'first guess at where it would land in the FixFlow harness, or "nowhere obvious"' },
+    in_inventory: { type: 'boolean' }, inventory_ref: { type: 'string' },
+  },
+}
+const OUT = {
+  type: 'object', additionalProperties: false, required: ['reader_id','sources','cards','gaps','new_sources'],
+  properties: {
+    reader_id: { type: 'string' },
+    sources: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['title','url','date','status','words_read','note'], properties: { title: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' }, status: { type: 'string', enum: ['read','partial','summarised','unreadable','not-by-dex'] }, words_read: { type: 'integer' }, note: { type: 'string' } } } },
+    cards: { type: 'array', items: CARD },
+    gaps: { type: 'array', items: { type: 'string' } },
+    new_sources: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['title','url','date','why'], properties: { title: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' }, why: { type: 'string' } } } },
+  },
+}
+const MAP = {
+  type: 'object', additionalProperties: false, required: ['reader_id','mappings'],
+  properties: {
+    reader_id: { type: 'string' },
+    mappings: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['card_id','family','relation','second_family','second_relation','note'], properties: {
+      card_id: { type: 'string' },
+      family: { type: 'string', description: 'an existing family id exactly as printed in the index (e.g. G1-F159), or the literal NEW' },
+      relation: { type: 'string', enum: ['restates','supports','updates','contradicts','new'], description: 'restates = same claim, nothing new; supports = same claim with new evidence or a later restatement worth noting; updates = same topic but the author changed the number or position; contradicts = argues against the family\'s claim; new = no family matches' },
+      second_family: { type: 'string', description: 'a second existing family id this card also bears on, or ""' },
+      second_relation: { type: 'string', enum: ['restates','supports','updates','contradicts',''] },
+      note: { type: 'string', description: 'one short line: what in the card changes or adds to the family, or why it is new' },
+    } } },
+  },
+}
+
+const CONTEXT = `You are one of the blind readers in the ADDENDUM round of a research sweep of Dex Horthy's (HumanLayer, now at Factory) published work. The first pass (2026-11-04) produced 1,906 idea cards; this round reads sources that were published since, or that could not be read then (X posts from September to November 2026 pulled through an API, publisher podcast transcripts, and local machine transcripts of audio). Nothing you write changes any harness; the output is IDEA CARDS. Do not judge or rank; record.
+
+The review scores every card against five weaknesses and three levers of the FixFlow agent harness:
+W1 CLAUDE.md is 390 lines (~2x the length at which adherence is known to fall); a trim is gated behind a knowledge-store pilot.
+W2 Compliance with the phase routine is self-reported; with no hooks, "the store was never consulted" and "the routine was skipped" look the same from outside.
+W3 The phase routine has never run; P1's cold-resume trial (a fresh agent must recover ten frozen facts from the repository alone) is its first test.
+W4 One custom agent exists (a Haiku file locator); 13 skill packages and 11 agent definitions are being added; no reusable workflow library.
+W5 Workflows (multi-agent scripts) are authored per task and not saved.
+L1 Effort routing: most verifiers run at xhigh effort (his Oct-2026 SlopCodeBench report says medium often matched or beat xhigh at lower cost).
+L2 Context budget and compaction: the defence is one phase per new session, with an auto-compaction window considered only past 500k tokens; his material covers the "dumb zone", context forking, long-context limits.
+L3 Output backpressure and verifiers: outputs are capped and refuters run first; his material covers backpressure scripts, "no software factory without better verifiers", the software-factory essays.
+What the harness already has: an always-loaded CLAUDE.md; a phase routine (one phase per new chat; a draft PR whose body starts "Plan @ <sha>" and keeps a decisions journal; an Opus reviewer per PR, refute-by-default, bound to the head SHA; a six-question closing message; a one-page owner view); Workflow-tool orchestration with a main session that briefs and judges, Sonnet readers, Opus reviewers, fresh-context Opus refuters (default verdict refuted), completeness critics, evidence folders with sha256 manifests; CI with three jobs and import-boundary contracts; one custom agent; skills being added; a knowledge-store design. A harness review deliberately SKIPPED hooks, a context system, call-graph tooling, a pre-commit gate and a measurement pipeline.
+
+RULES
+1. Read every file you are given with the Read tool (absolute Windows paths below). Text files: read in chunks with offset/limit until the end. PNG files are charts: Read them as images and transcribe the numbers you can see.
+2. One card per distinct idea. Be generous and literal: any practice, rule, mechanism, heuristic, number, warning, retraction or change of position that COULD change how this harness is configured or run gets a card, even if the harness already does it and even if he said it before (the mapping stage will attach repeats to the existing family). Card what he argues AGAINST too, and every measured number. Where he CHANGES an earlier position (a number, a rule), say so in the claim.
+3. Only Dex's own ideas. Co-hosts, interviewers and guests: no cards unless Dex adopts the point (then author "other" only if it is clearly theirs). Kyle Mistele: author "Kyle". Unsigned company posts: "Dex+others". Third-party recaps: read_mode "summarised".
+4. Local machine transcripts (files that say TRANSCRIBED: locally) have no speaker labels and mishear names and jargon: attribute by content, quote exactly as transcribed, and say in the source note that it is a machine transcript.
+5. quote = at most 15 words, verbatim. claim = one sentence. evidence_type: measured (numbers from an experiment or benchmark), anecdotal (no numbers), asserted, marketing.
+6. in_inventory: open the inventory file and check whether this exact source is listed; inventory_ref = its section or "".
+7. Card ids: your reader id + dash + running number. Return ONLY the structured object.
+Inventory file: ${INV}
+Today: ${args.today}.`
+
+const results = await pipeline(READERS,
+  async (r) => {
+    const out = await agent(
+      CONTEXT + '\n\nYOUR READER ID: ' + r.id + '\nYOUR BUNDLE: ' + r.title + '\nNOTES FOR THIS BUNDLE: ' + r.note + '\nFILES TO READ (absolute paths; read every one, in chunks if large):\n' + r.files.map(f => '- ' + f).join('\n') + '\nReturn the structured object (reader_id = ' + r.id + ').',
+      { label: r.id + ' ' + r.title.slice(0, 60), phase: 'Read', model: 'sonnet', effort: r.effort, schema: OUT }
+    )
+    return out
+  },
+  async (out, r) => {
+    if (!out || !out.cards || !out.cards.length) return { reader: out, mapping: null }
+    const cardsText = out.cards.map(c => `${c.id} [${c.source_date}; ${c.source_type}; ${c.author}; evidence ${c.evidence_type}] ${c.claim}\n   quote: "${c.quote}"\n   evidence: ${c.evidence_detail}\n   bears on: ${(c.bears_on || []).join(',')} | source: ${c.source_title}`).join('\n')
+    const mapping = await agent(
+      `You are organising new idea cards for an addendum review. This is NOT judging: do not score, rank or drop anything. The first pass grouped 1,906 cards into 838 claim FAMILIES whose ids are FIXED. Read the families index at ${FAMIDX} in full (use Read with offset/limit until the end; one line per family: id | final disposition | bears on | cards | claim). Then, for each of the ${out.cards.length} new cards below, decide which existing family it belongs to, if any.\n\nRules: use a family id exactly as printed; never invent, merge, split or rename families. Choose the family whose CLAIM the card restates, supports, updates or contradicts (the relation matters: "updates" when the same author has changed a number or position the family records; "contradicts" when the card argues against the family's claim; "supports" when it adds evidence or a later restatement; "restates" when it adds nothing). If no family makes that claim, answer NEW with relation "new" (do not force a weak match). Give a second family only when the card clearly bears on two. One mapping per card, every card exactly once.\n\nNEW CARDS:\n${cardsText}\n\nReturn the structured object (reader_id = "${out.reader_id}").`,
+      { label: 'map ' + r.id + ' (' + out.cards.length + ' cards)', phase: 'Map', model: 'sonnet', effort: 'medium', schema: MAP }
+    )
+    return { reader: out, mapping }
+  }
+)
+const done = results.filter(Boolean)
+log(`readers ${done.length}/${READERS.length}; cards ${done.reduce((n, x) => n + ((x.reader && x.reader.cards.length) || 0), 0)}; mapped ${done.reduce((n, x) => n + ((x.mapping && x.mapping.mappings.length) || 0), 0)}`)
+return { stats: { readers: done.length, cards: done.reduce((n, x) => n + ((x.reader && x.reader.cards.length) || 0), 0) }, results: done }

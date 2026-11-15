@@ -1,0 +1,257 @@
+export const meta = {
+  name: 'graph-test-heldout-e',
+  description: 'The single held-out run from the frozen plan, scoring with bootstrap, three refuters, then load-tolerant engine timing with its own audit',
+  phases: [
+    { title: 'Held-out', detail: 'the 89 declared invocations, once, with reference answers hidden; resumable' },
+    { title: 'Score', detail: 'one scorer, paired cluster bootstrap, pre-declared comparisons and wording; the timing bench is rewritten alongside' },
+    { title: 'Refute', detail: 'independent re-score, run-discipline forensics, and an attack on every headline claim' },
+    { title: 'Timing', detail: 'engines alternate in short blocks; wall and CPU time; host load recorded; then an independent check' },
+  ],
+}
+
+const SP = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const BUILD = SP + '/build'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const S = { type: 'string' }
+const N = { type: 'number' }
+const BOOL = { type: 'boolean' }
+const SA = { type: 'array', items: S }
+const DEFECTS = { type: 'array', items: { type: 'object', properties: { severity: S, where: S, what: S, fix: S }, required: ['severity', 'where', 'what', 'fix'] } }
+const BUILD_SCHEMA = {
+  type: 'object',
+  properties: { status: S, what_was_done: SA, key_numbers: SA, deviations_from_protocol: SA, problems: SA, how_to_run: SA },
+  required: ['status', 'what_was_done', 'key_numbers', 'deviations_from_protocol', 'problems'],
+}
+const RUN_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S, complete: BOOL, needs_fix: BOOL,
+    runs: { type: 'array', items: { type: 'object', properties: { n: N, arm: S, role: S, set: S, n_answers: N, ok: BOOL, note: S }, required: ['arm', 'role', 'set', 'ok'] } },
+    equivalence: SA, repeats: SA, input_hashes: S, observations: SA, problems: SA,
+  },
+  required: ['status', 'complete', 'needs_fix', 'runs', 'equivalence', 'repeats', 'input_hashes', 'observations', 'problems'],
+}
+const HELDOUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S,
+    per_arm: { type: 'array', items: { type: 'object', properties: { arm: S, role: S, set: S, n_tasks: N, n_clusters: N, primary: N, se: N, r2k: N, r4k: N, r16k: N, auc: N, median_tokens: N, lookups_median: N, primary_tune: N, note: S }, required: ['arm', 'role', 'set', 'primary'] } },
+    comparisons: { type: 'array', items: { type: 'object', properties: { id: S, a: S, b: S, set: S, metric: S, diff: N, ci_low: N, ci_high: N, verdict: S, note: S }, required: ['id', 'a', 'b', 'set', 'metric', 'diff', 'ci_low', 'ci_high', 'verdict'] } },
+    tq: { type: 'array', items: { type: 'object', properties: { arm: S, questions: S, f1: N, precision: N, recall: N, median_tokens: N, mean_lookups: N, note: S }, required: ['arm', 'questions', 'f1'] } },
+    draws: SA, headline: SA, limits: SA, files_written: SA, problems: SA,
+  },
+  required: ['status', 'per_arm', 'comparisons', 'tq', 'draws', 'headline', 'limits', 'files_written', 'problems'],
+}
+const REFUTE_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: S,
+    claims: { type: 'array', items: { type: 'object', properties: { claim: S, result: S, detail: S }, required: ['claim', 'result', 'detail'] } },
+    mismatches: SA, must_not_claim: SA, defects: DEFECTS,
+  },
+  required: ['verdict', 'claims', 'mismatches', 'must_not_claim', 'defects'],
+}
+const BENCH_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S, host_load: S,
+    table: { type: 'array', items: { type: 'object', properties: { engine: S, graph: S, query_class: S, threads: S, cold_wall_ms: N, warm_wall_p50_ms: N, warm_wall_p95_ms: N, warm_cpu_p50_ms: N, app_ms: N, pass_spread_ms: N, flagged_blocks: N, note: S }, required: ['engine', 'query_class', 'warm_wall_p50_ms'] } },
+    stores: { type: 'array', items: { type: 'object', properties: { engine: S, graph: S, size_mb: N, build_wall_s: N, build_cpu_s: N, update_one_file_ms: N, note: S }, required: ['engine', 'size_mb'] } },
+    query_text: { type: 'array', items: { type: 'object', properties: { engine: S, query_class: S, chars: N, lines: N, statements: N, note: S }, required: ['engine', 'query_class', 'chars'] } },
+    differences_that_hold: SA, differences_within_noise: SA, labels: SA, problems: SA,
+  },
+  required: ['status', 'host_load', 'table', 'stores', 'query_text', 'differences_that_hold', 'differences_within_noise', 'labels', 'problems'],
+}
+
+function common(lane, folders, sealedRule, heldRule) {
+  return [
+    'You are one agent in a controlled experiment on one code repository. It compares ways of answering "what is connected to this code?": a search baseline with two floors (same directory, co-change), a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph. Fairness between arms and a clean one-time held-out run matter more than speed.',
+    '',
+    'YOUR LANE: ' + lane,
+    '',
+    'READ FIRST (short files): ' + SP + '/protocol.md, then ' + SP + '/protocol-addendum-1.md to -5.md. Addenda 4 and 5 hold the rules for this phase and override earlier text where they differ. Then ' + BUILD + '/arms/common/NOTES.md (the "Held-out lock" section has the exact commands).',
+    '',
+    'WHERE THE TEST STANDS: tuning is finished and one configuration per arm and role is frozen with a code hash (results/frozen/<arm>/). Three pre-flight audits ran and the third passed. The complete list of held-out runs is ' + BUILD + '/results/frozen/PLAN.json (85 set runs and 4 question runs). An earlier session was interrupted during engine timing; no held-out task or question had run then.',
+    '',
+    'LAYOUT (under ' + BUILD + '): facts/cache/<parent sha>/ (shared facts), tasks/ (tasks.jsonl with seeds, tq_questions.jsonl: inputs), sealed/ (reference answers; sealed/grader/ holds the grader files), arms/common (harness run.js, score.js, compare.js, tq_score.js, equiv.js, SPEC.md), arms/<arm>/ for relational, reference, search, floor-dir, floor-co, ladybug, duckpgq, results/<arm>/ (tuning answers), results/frozen/, results/heldout/, bench/, results/bench/, audit/, tmp/.',
+    '',
+    'HARD RULES',
+    '1. The repository at ' + REPO + ' is read-only. Never check out, switch branch, add a worktree, stash, commit or write there.',
+    '2. ' + heldRule,
+    '3. ' + sealedRule,
+    '4. Every arm process runs inside the Docker image graphtest:1, started with the container template in PLAN.json (it hides /build/sealed and /build/audit behind empty mounts). Store files stay on a named volume or the container filesystem, never on the /build bind mount. Three containers named postiz, postiz-postgres and postiz-redis belong to the owner and are unrelated: never stop, restart or change them. Other programs of the owner may be using the CPUs: never stop or change any process that is not yours.',
+    '5. Install nothing and download nothing (no npm, pip, apt, extension or model download, no docker pull or build). Never put the project name, file paths, identifiers or code from this repository into a web query or URL.',
+    '6. Host tool quirks: a Bash command over about 8 KB is cut and doubled backslashes in heredocs collapse, so create files with the Write tool. python is not on PATH on the host; use ' + PY + ' -I . Node 24 is on PATH. A long command should run in the background and be waited on; the session may be interrupted, so write progress to files.',
+    '7. Stay inside your folders: ' + folders + '. Never edit a file under arms/, tasks/, facts/ or results/frozen/.',
+    '8. Report for a reader with no context: plain complete sentences, every number with its unit and what it refers to. If something is not done or failed, say so plainly.',
+    '',
+  ].join('\n')
+}
+const NO_SEALED = 'You are a run or bench agent: never read, list or open ' + BUILD + '/sealed/ or ' + BUILD + '/audit/. A grader scores.'
+const GRADER = 'You are the grader: you may read ' + BUILD + '/sealed/ and ' + BUILD + '/audit/. Never copy reference content or per-task scores into any folder an arm process can read (arms/, results/, tasks/, tmp/). Your own working files go under ' + BUILD + '/sealed/grader/.'
+const AUDITOR = 'You are an independent auditor: you may read everything, including ' + BUILD + '/sealed/. You change no file outside your own audit folder. Do not trust any note or report: check the files and recompute what you can.'
+const POST = 'The held-out run is over. Never start an arm on a held-out task or question, and never change an arm, a configuration or an answer file.'
+const TUNE_ONLY = 'Benches use tuning inputs and the frozen-commit graph only. Never run anything on a held-out task or question.'
+
+// ---------------------------------------------------------------- Held-out
+const pR1 = common(
+  'HELD-OUT RUNNER. Run the declared held-out invocations once, exactly as written in results/frozen/PLAN.json. You have no reference answers and compute no score.',
+  BUILD + '/results/heldout (through harness commands only), tmp/runner',
+  NO_SEALED,
+  'You run HELD-OUT, and only the 89 invocations ' + BUILD + '/results/frozen/PLAN.json lists (85 set runs, 4 question runs), each with its lock_check first, in the container template of the plan. Nothing else may run on held-out tasks or questions.'
+) + [
+  'RULES OF THE RUN (addendum 4 section D, addendum 5 section D, and the rules array of PLAN.json)',
+  '- You change no file under arms/, bench/, tasks/, facts/ or results/frozen/. If the lock refuses a declared run, or a run cannot complete without a code change, stop that entry, leave everything as it is, set needs_fix to true and describe the failure exactly (command, output, log line). Do not work around the lock.',
+  '- This step may be a restart after an interruption. FIRST read results/heldout/runs.jsonl (if it exists), results/heldout/_running/ and the answer files present. An entry whose answer file is complete (the expected number of answers) is done: never repeat it. An entry that was cut off is repeated through the harness with --repeat --reason "interrupted". Keep a progress file tmp/runner/progress.json that you update after every entry.',
+  '- A repeat is allowed only for a mechanical failure (crash, killed container, incomplete file, interruption) and only through the harness --repeat --reason option. Report every repeat with its reason.',
+  '- At most two containers at once, and never two containers on the same named volume. Follow the order of n within each arm.',
+  'STEPS',
+  '0. Input hashes: run  node tmp/runner/input_hashes.js ' + BUILD + ' tmp/runner/input_hashes.before.json  on the host and compare with tmp/runner/input_hashes.json (field "all" and the three files). If they differ, stop and report. Repeat after the last entry into input_hashes.after.json.',
+  '1. Run every entry of PLAN.json: lock_check, then the command, only when the check prints allowed.',
+  '2. Mechanical checks, without references: every answer file holds every task of its set exactly once (T1 418, T1x 82, T2 237, T3 25, T4 8; 30 questions per question arm); no answer is over its token budget; for T3 and T4 no removed path appears as a whole path in an answer; the typed arms (relational, ladybug, duckpgq) primary and s1 answers are equivalent to the reference arm by arms/common/equiv.js (report comparisons and failures) and say how many packed answers are byte-identical across the three typed arms; the question answers of ladybug and duckpgq against relational (identical or not, with counts); how many questions returned an error or an empty answer per arm.',
+  '3. Write results/heldout/INVENTORY.json (file, arm, role, set, draw, answers, bytes, sha256) and report it. Give the wall time per arm.',
+  'complete is true only if all 89 invocations finished and every mechanical check passed or is explained. Do not open, estimate or guess any score.',
+].join('\n')
+
+// ---------------------------------------------------------------- Score
+const pG3 = common(
+  'GRADER, HELD-OUT. Score the held-out answers once and state the pre-declared comparisons in the pre-declared wording.',
+  BUILD + '/sealed/grader/heldout, tmp/grader; one marker file results/heldout/SCORING_STARTED',
+  GRADER, POST
+) + [
+  'FIRST: check results/heldout/runs.jsonl and INVENTORY.json against results/frozen/PLAN.json (nothing missing, nothing extra, repeats explained, sha256 of every answer file equals the inventory). Then write results/heldout/SCORING_STARTED (UTC time from the shell) before you open any held-out answer for scoring. From then on nothing may be re-run.',
+  'SCORING (addendum 2 section A; the same code as on TUNE): arms/common/score.js with rule content against sealed/references.jsonl; arms/common/compare.js paired cluster bootstrap with 10,000 resamples, cluster = commit; arms/common/tq_score.js for the questions. The primary measure is recall of reference files and definitions inside the 8,000-token answer on T1 HELD-OUT, averaged per commit. Read sealed/grader/NOTES.md for how the tuning tables were made and reuse those scripts.',
+  'TABLES: for every (arm, role, set): tasks, clusters, primary with standard error, recall at 2,000, 4,000 and 16,000 tokens, area under the recall-tokens curve, median tokens, median lookups, tokens to reach 80 % recall where defined, and the TUNE primary beside it. T1x and T4 are descriptive.',
+  'COMPARISONS (addendum 3 section E, addendum 4 section C), each with difference, 95 % interval and the wording:',
+  '- H1: ladybug primary against relational primary, T1. H2: each graph arm primary against relational primary on T1, T2, T3.',
+  '- H1b: ladybug s2 (personalised PageRank fused with the stored community prior, a native engine mode) against relational primary on T1, also T2 and T3, with the spread of the T1 primary over the stored draw and the four further draws.',
+  '- H3: the typed primary (ladybug and relational) against search primary, floor-dir and floor-co on T1, T2, T3; also against search s2; the s1 rows without a verdict. Also recall at 2,000 tokens and area under the curve for these pairs.',
+  '- H4 (addendum 5 item 5): the held-out questions, typed stores (relational; say whether the graph arms returned identical answers) against search: macro F1 difference with a paired bootstrap over questions, precision, recall, median tokens and lookups. Report it on all 30 questions and on the 23 untouched ones (without ids 24, 27, 33, 40, 41, 46, 47), each with and without the shared judgement items. The verdict uses all 30; if the 23-question result has a different sign or verdict, H4 is inconclusive and both are shown. Also list, per touched question, the score of each arm.',
+  '- H5 (engine measures) is measured after you by another lane (addendum 5 section C): say only that.',
+  'WORDING (addendum 3 item 18): "better" only if the 95 % interval of the T1 primary difference excludes zero, the median tokens are no higher, and the sign agrees on at least three of T1, T2, T3 and the questions; "equivalent" only if the whole 95 % interval lies within plus or minus 0.05; otherwise "inconclusive". Say for each verdict which condition decided it. Do not soften or strengthen the wording. For H1 and H2, if the answers are identical say that the difference is exactly zero by construction and what that does and does not show.',
+  'ALSO REPORT: where a floor beats a typed arm or the search arm; whether the T1 result holds at 2,000 and 4,000 tokens; results by runtime (backend, web, mobile) if the references allow it; the share of reference definitions with no node; the T3 and T4 whole-path check that no removed document is in an answer (addendum 5 item 11); anything in the data that contradicts a simple summary.',
+  'FILES: sealed/grader/heldout/scores.json, comparisons.json, tq.json, NOTES.md, and report_data.json (aggregates only: the tables above, the comparison list with verdicts, per-commit paired differences as plain number arrays without file names, the question tables, the recall-by-token-budget curves per arm). Put the same aggregates in your structured answer; headline holds at most eight sentences a reader with no context can follow.',
+].join('\n')
+
+// ---------------------------------------------------------------- Bench rewrite (runs beside the grader)
+const pB3 = common(
+  'ENGINE BENCH, REWRITE FOR A BUSY MACHINE. The sequential bench in bench/ needs a quiet machine and this PC is never quiet. Rewrite the driver so the measures tolerate load (addendum 5 section C). Numbers you see now are discarded; a later agent takes the real ones.',
+  BUILD + '/bench, results/bench (new subfolders only), tmp/bench',
+  NO_SEALED, TUNE_ONLY
+) + [
+  'Read bench/NOTES.md, bench/lib.js, bench/relational.js, bench/ladybug.js, bench/duckpgq.js, bench/update.js, bench/run_all.sh and bench/summary.js first, and tmp/bench/hostload.ps1 and tmp/bench/measure.sh (a host CPU sampler the earlier timing agent wrote; it separates the Docker VM from other host work). Keep what works: plan, seeds, query classes, labels, checks.',
+  'WHAT TO BUILD (addendum 4 items 16, 18, 19, 20 stand; item 17 is replaced by addendum 5 item 8)',
+  'a. One driver that alternates the three engines (SQLite, LadybugDB, DuckDB with DuckPGQ) in short blocks of the same seeds, in a rotating order, so that load falls on all engines alike and only one engine works at any moment. Persistent warm workers for the warm measures; fresh processes, also alternated, for the cold measures. One container may hold all three (allow it up to 6 GB), or one container per engine driven in turns: choose what gives the cleanest measure and say why.',
+  'b. Every measure in wall time and in CPU time of the process that does the work (for LadybugDB that is its child process), with the time inside the engine apart from application code and client round trips, and the number of statements per ranking.',
+  'c. Host load per block: a sampler on the host writes a timeline to a file both sides can see; the driver records the load during each block. A block taken while other host work (everything except this test) used more than half of the CPUs is repeated, up to three times, then kept and flagged.',
+  'd. At least five passes over: the frozen typed primary (unbounded k-hop with degree-normalised ranking), S1 (4 hops with personalised PageRank), the 2-hop base, LadybugDB S2 (ladybug only) and the 20 tuning question lookups; on the largest tuning parent graph (200 tuning seeds) and the frozen-commit graph (200 seeded random file nodes); at one thread and at each engine best setting.',
+  'e. Store build time (wall and CPU), store size on disk, the one-file update, and query text length per class, each engine in turn, at least three times.',
+  'f. A summary script: per engine and class the median over passes, the spread between passes, and a list that separates differences that hold (same direction in wall and CPU time, larger than the spread between passes) from differences inside the noise. The labels of addendum 4 item 20 and the label saying where each ranking runs are printed with every table.',
+  'g. One command that runs everything (bench/run_interleaved.sh) and can restart after an interruption without losing finished passes. Prove it end to end with 10 seeds and 2 passes.',
+  'Report how to run it, how long the full run should take, and anything that makes a number not comparable across engines.',
+].join('\n')
+
+// ---------------------------------------------------------------- Refute
+const pV1 = common(
+  'REFUTER 1, INDEPENDENT RE-SCORE. Recompute every headline number of the held-out result with code that is not the grader code.',
+  BUILD + '/audit/heldout/rescore',
+  AUDITOR, POST
+) + [
+  'Write your own scorer from the text of addendum 2 section A (audit/selection/myscore.js from the tuning audit was written that way and may be extended; do not import arms/common/score.js or compare.js) and your own paired cluster bootstrap (cluster = commit, 10,000 resamples, a seed of your choice). Read the answers in results/heldout/ and the references in sealed/.',
+  'Recompute: the primary, its standard error and the median tokens for every (arm, role, set); the difference and 95 % interval for every comparison in sealed/grader/heldout/comparisons.json; the question F1, precision, recall and tokens on 30 and on 23 questions. Hand-check 10 answers by reading them against their reference.',
+  'A point estimate must agree to 4 decimals; an interval end may differ by up to 0.005 because the resampling seed differs. List every disagreement in mismatches with both values. Then say whether any verdict wording (better, equivalent, inconclusive) would change under your numbers. Default to "not reproduced" when unsure.',
+].join('\n')
+
+const pV2 = common(
+  'REFUTER 2, RUN DISCIPLINE. Establish from files, logs and timestamps whether the held-out run was clean. Assume it was not and look for the evidence.',
+  BUILD + '/audit/heldout/discipline',
+  AUDITOR, POST
+) + [
+  'CHECKS',
+  '1. results/heldout/runs.jsonl against results/frozen/PLAN.json: every declared invocation happened; nothing undeclared ran; each repeat has a mechanical reason; superseded files are kept. Compare superseded answers with the final ones: a repeat that changed answers needs an explanation.',
+  '2. Code freeze: the code_hash and deps_hash in every frozen record equal the hashes of the files now; no file under arms/ is newer than its frozen record, apart from stored community priors.',
+  '3. Order: every held-out answer file is older than results/heldout/SCORING_STARTED, and no answer file changed afterwards (INVENTORY.json sha256 against the files now). The input hashes before and after the run equal the pre-flight record.',
+  '4. Hiding: the runner commands (its scripts and logs under tmp/runner and the run log) used the container template with both empty mounts for every arm process. No reference content and no per-task held-out score sits in any arm-readable folder (arms/, results/ outside results/heldout, tasks/, tmp/).',
+  '5. T3 and T4: no removed path appears as a whole path in any answer.',
+  '6. Identity claims: recompute from the stored answers how many typed-arm answers are identical to the reference arm and to each other, for primary and s1.',
+  '7. T5 was not run; the question runs used the frozen question code.',
+  '8. Pre-flight changes (addendum 5 section A): question code was changed after held-out question text was read. Check from the pre-flight notes (audit/preflight/NOTES.md, tmp/lock/preflight1, tmp/lock/preflight2) that no arm answered a held-out question before the run and that no fix lane read a reference answer. Say exactly which held-out questions could have been affected.',
+  '9. Leak re-check on the held-out parents: facts/tools/verify_cache.js; for 10 sampled held-out tasks, files added by the task commit are absent from the facts and from the search source tree of the parent.',
+  'For each check say pass or fail with the evidence. Then give a verdict: clean, clean with declared exceptions, or not clean, and what must be said in the report.',
+].join('\n')
+
+const pV3 = common(
+  'REFUTER 3, CLAIMS. Attack every headline claim of the held-out result. Your job is to find the claim that does not survive.',
+  BUILD + '/audit/heldout/claims',
+  AUDITOR, POST
+) + [
+  'Read sealed/grader/heldout/ (NOTES.md, comparisons.json, scores.json, tq.json, report_data.json), the protocol and all five addenda, and the tuning record in sealed/grader/NOTES.md.',
+  'For each headline sentence and each verdict:',
+  '- Is the wording rule applied exactly (interval excludes zero; median tokens no higher; sign on at least three of T1, T2, T3 and the questions; equivalence within plus or minus 0.05)? Recompute the conditions from the tables.',
+  '- Could the difference come from something other than the arm: the padding tail, the budget being filled, the seed-match rate, tasks whose reference is unreachable for one arm, a few large commits, one runtime? Test what you can from the stored answers (for example drop the three largest commits; split by runtime; compare at 2,000 and 4,000 tokens).',
+  '- Is any arm a strawman? Compare each frozen configuration with the best its own tuning table offered, and say whether the s1 and s2 rows change the picture.',
+  '- Do the floors (same directory, co-change) explain the result? Say plainly where a floor is as good as or better than a typed store or search.',
+  '- "The engines are equivalent": the three typed arms ran the same specification on the same facts, so identical answers show the engines compute the same thing, not that a graph model adds nothing. What exactly does H1b add, and how strong is it with 75 commits?',
+  '- Are the question results a fair comparison (the graph arms return translations of the relational queries; search was built on the tuning questions; seven held-out questions had their handling changed after their text was read)? Is the token difference real work saved or an artefact of answer form?',
+  '- What does the test NOT show? (For example: an agent finishing a task faster; needed-but-unchanged context; another repository; engine speed, which is measured apart.)',
+  'Return each claim with result "survives", "needs qualification" (give the exact qualification) or "refuted", and a list must_not_claim of sentences the report to the owner must not contain. Default to "needs qualification" when unsure.',
+].join('\n')
+
+// ---------------------------------------------------------------- Timing
+const pB4 = common(
+  'ENGINE TIMING. Take the engine measures with the load-tolerant bench (addendum 5 section C).',
+  BUILD + '/results/bench, tmp/bench',
+  NO_SEALED, TUNE_ONLY
+) + [
+  'Read bench/NOTES.md for the new driver (bench/run_interleaved.sh). Do not change bench code except to fix a crash; say so if you do.',
+  'a. Start the host load sampler, then the full run: at least five passes, full seed counts. It can take long: run it in the background, write progress to files, and restart it with its own restart option if it is interrupted.',
+  'b. Never stop or slow another program to get a quieter machine. Record the host load; flagged blocks are handled by the driver rule.',
+  'c. Run the summary. Return the table (engine, graph, query class, threads, cold wall, warm wall median and 95th percentile, warm CPU median, application time, spread between passes, flagged blocks), stores (size, build wall and CPU time, one-file update), query text length and statements per class, the labels, and the two lists: differences that hold in wall and CPU time beyond the spread between passes, and differences inside the noise.',
+].join('\n')
+
+const pB5 = common(
+  'TIMING AUDIT. Check the engine measures independently before anyone quotes them.',
+  BUILD + '/audit/bench',
+  AUDITOR, TUNE_ONLY
+) + [
+  'Read addendum 4 section E and addendum 5 section C, bench/ and results/bench/ (the newest run).',
+  'CHECKS: (1) recompute the summary table from the raw samples with your own code; (2) the engines really alternated (timestamps), with the same seeds and the same configurations, and each engine returned the same ranked answers (the bench check); (3) host load per block is recorded and flagged blocks were treated by the rule; (4) every "difference that holds" does hold in wall and CPU time and exceeds the spread between passes; nothing inside the noise is stated as a difference; (5) the labels are honest: which numbers time a graph operator, which time recursive SQL, which time application code or a cache; thread settings stated; (6) what a reader could wrongly conclude from the table.',
+  'Return each quoted H5 statement with result "survives", "needs qualification" or "refuted", and the list must_not_claim.',
+].join('\n')
+
+const OPUS = { model: 'opus', effort: 'high', agentType: 'general-purpose' }
+
+// ================================================================ run
+phase('Held-out')
+const run = await agent(pR1, { label: 'run:heldout', phase: 'Held-out', schema: RUN_SCHEMA, ...OPUS })
+if (!run || !run.complete) return { stopped: 'runner', run }
+
+phase('Score')
+const sc = await parallel([
+  () => agent(pG3, { label: 'grade:heldout', phase: 'Score', schema: HELDOUT_SCHEMA, ...OPUS }),
+  () => agent(pB3, { label: 'bench:rewrite', phase: 'Score', schema: BUILD_SCHEMA, ...OPUS }),
+])
+const grade = sc[0]
+const benchWrite = sc[1]
+if (!grade) return { failed: 'grade', run, benchWrite }
+
+phase('Refute')
+const ref = await parallel([
+  () => agent(pV1, { label: 'refute:rescore', phase: 'Refute', schema: REFUTE_SCHEMA, ...OPUS }),
+  () => agent(pV2, { label: 'refute:discipline', phase: 'Refute', schema: REFUTE_SCHEMA, ...OPUS }),
+  () => agent(pV3, { label: 'refute:claims', phase: 'Refute', schema: REFUTE_SCHEMA, ...OPUS }),
+])
+
+phase('Timing')
+let bench = null
+let benchAudit = null
+if (benchWrite) {
+  bench = await agent(pB4, { label: 'bench:run', phase: 'Timing', schema: BENCH_SCHEMA, ...OPUS })
+  if (bench) benchAudit = await agent(pB5, { label: 'bench:audit', phase: 'Timing', schema: REFUTE_SCHEMA, ...OPUS })
+} else {
+  log('Engine timing skipped: the bench rewrite did not finish.')
+}
+
+return { run, grade, refuters: { rescore: ref[0], discipline: ref[1], claims: ref[2] }, benchWrite, bench, benchAudit }

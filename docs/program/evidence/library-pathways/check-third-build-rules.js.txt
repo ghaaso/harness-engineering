@@ -1,0 +1,66 @@
+// Check of the third build, part 3: the standing rules, scanned in every text the page or the record shows.
+// Run from this folder:  node - < check-third-build-rules.js.txt
+// Writes check-third-build-rules-console.txt. Changes no data file. Hits are leads for a reading by hand,
+// not findings by themselves.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const read = p => fs.readFileSync(p, 'utf8');
+const map = JSON.parse(read(path.join(dir, 'map.json')));
+const table = JSON.parse(read(path.join(dir, 'params.json')));
+const lims = JSON.parse(read(path.join(dir, 'limitations.json')));
+const cases = JSON.parse(read(path.join(dir, 'cases.json')));
+const tx = JSON.parse(read(path.join(here, 'page-src', 'text.json')));
+const pageJs = read(path.join(here, 'page-src', 'page.js.txt'));
+const record = read(path.join(here, '..', '..', 'LIBRARY-PATHWAYS-2026-11.md'));
+const out = [];
+const say = s => { out.push(s); console.log(s); };
+const texts = [];
+function walk(v, where) {
+  if (typeof v === 'string') texts.push([where, v]);
+  else if (Array.isArray(v)) v.forEach((x, i) => walk(x, where + '[' + i + ']'));
+  else if (v && typeof v === 'object') Object.keys(v).forEach(k => walk(v[k], where + '.' + k));
+}
+walk(tx, 'text');
+lims.items.forEach(it => { texts.push([it.id + '.title', it.title], [it.id + '.what', it.what], [it.id + '.not_shown', it.not_shown || '']); it.contradicted.forEach((c, i) => texts.push([it.id + '.other_way[' + i + ']', c.reason])); (it.real.examples || []).forEach((x, i) => texts.push([it.id + '.example[' + i + ']', x.evidence])); });
+lims.works.forEach(w => texts.push(['works ' + w.case, w.text + ' ' + (w.caveat || '')]));
+Object.keys(lims.steps).forEach(k => texts.push(['step ' + k, lims.steps[k]]));
+cases.cases.forEach(c => { ['title', 'story', 'entry', 'worked'].forEach(k => texts.push([c.id + '.' + k, c[k] || ''])); c.steps.forEach(s => texts.push([c.id + '.step' + s.step, s.note])); });
+map.parameters.forEach(p => texts.push(['map ' + p.id, p.name + '. ' + p.meaning]));
+table.parameters.forEach(r => texts.push(['params ' + r.id, (r.note || '') + ' ' + (r.source || '')]));
+(map.lib_groups || []).forEach(g => texts.push(['group ' + g.id, [g.label, g.poor, g.good, g.note].join('. ')]));
+(map.reference_settings || []).forEach(r => texts.push(['ref ' + r.id, r.label]));
+(map.links || []).forEach(l => { texts.push(['link ' + l.id, l.label]); (l.loops || []).forEach(lp => texts.push(['loop ' + lp.id, lp.label])); });
+map.states.forEach(s => texts.push(['state ' + s.id, s.label]));
+map.branches.forEach(b => texts.push(['branch ' + b.id, b.label || '']));
+(pageJs.match(/'(?:[^'\\\n]|\\.)*'/g) || []).forEach(s => { const t = s.slice(1, -1); if (/[a-z]{3,} [a-z]{3,}/i.test(t)) texts.push(['page.js', t]); });
+record.split('\n').forEach((l, i) => texts.push(['record:' + (i + 1), l]));
+say('texts scanned: ' + texts.length);
+const RULES = [
+  ['fix or advice', /\b(should|ought|recommend|we propose|propose[sd]?|mitigat|remed(y|ies)|the fix (is|would|will)|to fix (it|this|the)|would (fix|solve|prevent|stop|block)|could (fix|solve|prevent|stop|block)|needs? to be|must be|it is better|worth (it|building|doing|solving|fixing)|start with|focus on|prioriti[sz]|first solve|solve first|leave (it|this) unsolved|most worth)\b/i],
+  ['verdict', /\b(library (works|fails|will|would (work|succeed|fail|pay))|will (not )?work|won'?t work|does not work|pays off|does not pay|cannot pay|is not worth|viable|break[- ]even point|the design (works|fails))\b/i],
+  ['cases as a rate', /\b(most|often|usually|commonly|typically|frequently|rarely|majority|in general|tends? to|almost always|seldom|common)\b/i],
+  ['weight as advice', /\b(weight|alone|last)\b[^.]{0,60}\b(fix|solve|target|priority|first|matters most|biggest lever)\b/i]
+];
+RULES.forEach(([name, re]) => {
+  const hits = texts.filter(([w, s]) => re.test(s));
+  say('\n' + name + ': ' + hits.length);
+  hits.forEach(([w, s]) => { const m = s.match(re); const i = Math.max(0, m.index - 60); say('  ' + w + ': ...' + s.slice(i, m.index + 70).replace(/\s+/g, ' ') + '...'); });
+});
+// terms used on the page or in the record, and whether the word list defines them
+const defined = tx.words.map(w => w[0].toLowerCase());
+const TERMS = ['screen', 'window', 'handoff', 'mechanical check', 'escape', 'escaped', 'stale', 'compaction', 'helper window', 'cached tokens', 'token', 'quantile', 'percentile', 'level', 'shared level', 'composite', 'some parts', 'capture', 'afterlife', 'fill', 'ceiling', 'look-alike', 'corner', 'square', 'funnel', 'stock', 'loop', 'tie', 'seed', 'rank correlation', 'middle run', 'opus', 'sonnet', 'fable', 'cheap-call', 'retire', 'repair', 'promoted check', 'worst corner', 'thought experiment', 'family', 'families', 'other way', 'knowledge-store', 'subagent', 'lookup', 'trigger'];
+say('\nterms (uses in texts | defined in the word list)');
+TERMS.forEach(t => { const re = new RegExp('\\b' + t.replace(/[-]/g, '[- ]') + '\\b', 'i'); const n = texts.filter(([w, s]) => re.test(s)).length; say('  ' + t.padEnd(18) + n + ' | ' + (defined.some(d => d.includes(t)) ? 'yes' : 'no')); });
+// numbers in the record outside a tagged span: a number not followed (on its line, within 40 characters) by a tag
+say('\nrecord: numbers with no tag within the same sentence (tables are covered by their heading tag)');
+record.split('\n').forEach((l, i) => {
+  if (/^\|/.test(l) || /^#/.test(l)) return;
+  l.split(/(?<=[.;:])\s+/).forEach(sent => {
+    const t = sent.replace(/`[^`]*`/g, ' ').replace(/\b(LIM|f|R|B|L)-?\d+[a-z]?\b/g, ' ').replace(/\bsteps? \d+(, \d+)*( and \d+)?\b/gi, ' ').replace(/\b20\d\d-\d\d(-\d\d)?\b/g, ' ').replace(/\b\d\d-\d\d\b/g, ' ').replace(/§\d+/g, ' ').replace(/\bsections? \d+(, \d+)*( and \d+)?\b/g, ' ').replace(/\b\d+ (to|of) \d+ in 100\b/g, ' ');
+    if (/\d/.test(t) && !/\[(M|S|G)\]/.test(sent)) say('  line ' + (i + 1) + ': ' + sent.slice(0, 140));
+  });
+});
+fs.writeFileSync(path.join(here, 'check-third-build-rules-console.txt'), out.join('\n') + '\n');

@@ -1,0 +1,11 @@
+// Reuse with the rules NOTES/sample_note imply: drop the measuring lane's own scan transcript, count 'shown' hits at or after origin.
+const fs=require('fs'),rl=require('readline');const LANE=/agent-a2b9edd46ed6e48db/;
+(async()=>{const H={};let dropped=0;const r=rl.createInterface({input:fs.createReadStream('../reuse-hits.jsonl')});
+for await(const l of r){const o=JSON.parse(l);if(!o.ts)continue;if(LANE.test(o.f)){dropped++;continue;}(H[o.id]=H[o.id]||[]).push({sess:o.sess,ts:Date.parse(o.ts),kind:o.kind,f:o.f});}
+const res={ids:Object.keys(H).length,dropped,shownAny:0,other:0,two:0,shown:0,shownOther:0,dedupShown:0};const gaps=[];
+for(const hs of Object.values(H)){hs.sort((a,b)=>a.ts-b.ts);const w=hs.find(h=>h.kind==='written')||hs[0];
+ const sh=hs.filter(h=>h.kind==='shown'&&h.ts>=w.ts);if(sh.length)res.shownAny++;res.shown+=sh.length;res.dedupShown+=new Set(sh.map(h=>h.f+'|'+h.ts)).size;
+ const os=new Map();for(const h of sh)if(h.sess!==w.sess){res.shownOther++;if(!os.has(h.sess))os.set(h.sess,h.ts);}
+ if(os.size)res.other++;if(os.size>=2)res.two++;for(const t of os.values())gaps.push((t-w.ts)/3.6e6);}
+gaps.sort((a,b)=>a-b);const mid=gaps.length%2?gaps[(gaps.length-1)/2]:(gaps[gaps.length/2-1]+gaps[gaps.length/2])/2;
+res.gapN=gaps.length;res.gapMedian=+mid.toFixed(1);console.log(JSON.stringify(res));})();

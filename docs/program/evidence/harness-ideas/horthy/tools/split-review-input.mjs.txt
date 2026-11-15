@@ -1,0 +1,17 @@
+// Splits each group's card file into parts of at most N cards for the clusterers. Usage: node split-review-input.mjs <review-input-dir> [N=330]
+import fs from 'node:fs'; import path from 'node:path';
+const [dir, nArg] = process.argv.slice(2); const N = Number(nArg || 330);
+const groups = JSON.parse(fs.readFileSync(path.join(dir, 'groups.json'), 'utf8'));
+for (const g of groups) {
+  const text = fs.readFileSync(g.file, 'utf8');
+  const blocks = text.split(/\n(?=## C\d{4}\n)/); const header = blocks.shift();
+  const parts = []; for (let i = 0; i < blocks.length; i += N) parts.push(blocks.slice(i, i + N));
+  g.parts = parts.map((bs, k) => {
+    const ids = bs.map(b => b.match(/^## (C\d{4})/)[1]);
+    const file = g.file.replace(/-cards\.md$/, `-part${k + 1}-cards.md`);
+    fs.writeFileSync(file, `${header.trim()} — part ${k + 1} of ${parts.length} (${ids.length} cards)\n\n` + bs.join('\n'));
+    return { file, ids };
+  });
+  console.error(g.id, g.ids.length, 'cards ->', g.parts.map(p => p.ids.length).join('+'));
+}
+fs.writeFileSync(path.join(dir, 'groups.json'), JSON.stringify(groups, null, 1));

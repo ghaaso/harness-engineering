@@ -1,0 +1,21 @@
+const fs=require('fs');const dir=__dirname;
+const C={N:'NOT_A_SEARCH',K:'CONNECTION',D:'DEFINITION',C:'CONTENT',S:'STATE_OR_LISTING',U:'UNCLEAR'};
+const G={f:'full',p:'partial',n:'none'};const T={l:'likely',u:'unlikely',c:'cannot tell'};
+const rows=(fs.readFileSync(dir+'/rows1.txt','utf8')+fs.readFileSync(dir+'/rows2.txt','utf8')).split('\n').filter(Boolean).map(l=>{const [id,c,g,s,...n]=l.split('|');return {id:+id,cls:C[c],graph_answer:G[g],step_saved:T[s],note:n.join('|')};});
+if(rows.length!==200||rows.some((r,i)=>r.id!==i+1||!r.cls||!r.graph_answer||!r.step_saved))throw new Error('bad rows');
+const sample=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const cnt=(f,a=rows)=>a.reduce((o,r)=>(o[f(r)]=(o[f(r)]||0)+1,o),{});
+console.log('cls',cnt(r=>r.cls));console.log('graph',cnt(r=>r.graph_answer));console.log('step',cnt(r=>r.step_saved));
+console.log('cls x graph',cnt(r=>r.cls+'/'+r.graph_answer));
+const sub=new Set(sample.filter(x=>x.sub).map(x=>x.id));
+console.log('subagent items',sub.size,'cls in sub',cnt(r=>r.cls,rows.filter(r=>sub.has(r.id))));
+console.log('cls in main',cnt(r=>r.cls,rows.filter(r=>!sub.has(r.id))));
+const searches=rows.filter(r=>!['NOT_A_SEARCH','UNCLEAR'].includes(r.cls));
+console.log('real lookups',searches.length,'graph among them',cnt(r=>r.graph_answer,searches));
+// batching: count of ';' or '&&' separated grep/sed/cat sub-commands
+const multi=sample.filter(x=>{const s=x.search;const n=(s.match(/(^|[;&|]\s*)(grep|sed|cat|awk|ls|find|git grep|head|tail)\b/g)||[]).length;return n>=2;}).length;
+console.log('items with 2+ lookup sub-commands (rough regex)',multi);
+const kinds=cnt(x=>x.kind,sample);console.log('kinds',kinds);
+const ctx=sample.filter(x=>/-A ?\d+|-B ?\d+|sed -n/.test(x.search)).length;console.log('items reading ranges (-A/-B/sed -n)',ctx);
+const whole=sample.filter(x=>/(^|[;&]\s*)cat( -n)? /.test(x.search)).length;console.log('items with cat of whole file',whole);
+fs.writeFileSync(dir+'/classification.json',JSON.stringify(rows.map(r=>r.note?r:{id:r.id,cls:r.cls,graph_answer:r.graph_answer,step_saved:r.step_saved}),null,1));

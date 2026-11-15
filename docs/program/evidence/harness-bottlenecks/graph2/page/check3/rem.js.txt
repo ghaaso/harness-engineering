@@ -1,0 +1,23 @@
+const fs = require('fs');
+const base = 'C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/';
+const a = JSON.parse(fs.readFileSync(base + 'page/work3/k0-result.before.json', 'utf8'));
+const b = JSON.parse(fs.readFileSync(base + 'widen/k0/result.json', 'utf8'));
+function flat(o, p, out) { if (o && typeof o === 'object') { for (const k of Object.keys(o)) flat(o[k], p ? p + '.' + k : k, out); } else out[p] = o; return out; }
+const fa = flat(a, '', {}), fb = flat(b, '', {});
+for (const k of Object.keys(fa)) if (!(k in fb) && !k.startsWith('results.token_bound')) console.log('REMOVED non-token:', k, JSON.stringify(fa[k]).slice(0, 200));
+// token_bound renamed: map keys
+const ren = { bound_with_overall_prices_695_minus_31: 'estimate_median_prices_694_5_minus_31', bound_if_each_hit_replaces_a_search_derivation_per_kind_prices: 'estimate_per_kind_median_prices_before_subtracting_answer_tokens', same_minus_the_cached_answer_tokens_still_read: 'estimate_per_kind_median_prices', bound_if_each_hit_replaces_a_typed_query: 'typed_answer_tokens_still_read_per_kind' };
+const old = a.results.token_bound.per_100_lookups_tree_kinds_1_to_8, nw = b.results.token_estimate.per_100_lookups_tree_kinds_1_to_8;
+let bad = 0;
+for (const p of Object.keys(old)) for (const [k, v] of Object.entries(old[p])) {
+  const nk = ren[k] || k; if (k === 'note') continue;
+  if (JSON.stringify(nw[p][nk]) !== JSON.stringify(v)) { bad++; console.log('token mismatch', p, k, v, nk, nw[p][nk]); }
+}
+console.log('token per-policy mismatches', bad);
+console.log('old token_bound other keys', Object.keys(a.results.token_bound));
+for (const k of Object.keys(a.results.token_bound)) if (!['per_100_lookups_tree_kinds_1_to_8','prices','label'].includes(k)) console.log(k, JSON.stringify(a.results.token_bound[k]).slice(0,1500), '\n  NEW:', String(JSON.stringify(b.results.token_estimate[k])).slice(0,400));
+console.log('NEW correction', JSON.stringify(b.results.token_estimate.correction));
+console.log('NEW completion', JSON.stringify(b.results.token_estimate.completion));
+const A = JSON.parse(fs.readFileSync('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/k0-audit/a5_spread.json', 'utf8'));
+console.log('a5 keys', Object.keys(A));
+console.log(JSON.stringify(A, null, 0).slice(0, 5000));

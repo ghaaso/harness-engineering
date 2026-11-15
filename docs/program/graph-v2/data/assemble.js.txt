@@ -1,0 +1,309 @@
+// Assembles data/data.json for the graph-v2 owner page from the measured sources. No number here is typed by hand:
+// numbers are read from the source files (JSON fields, or regular expressions over the notes' own sentences and tables).
+// Text that is not in a source (labels, component statuses after the judge's rulings) is written below as data, and
+// any number it carries is checked against the sources at the end.
+// Run from the graph-v2 folder:  node - < data/assemble.js.txt
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
+const HERE = process.cwd();
+const REPO = path.resolve(HERE, '..', '..', '..');
+const PROG = path.join(REPO, 'docs', 'program');
+const EV = path.join(PROG, 'evidence', 'harness-bottlenecks', 'graph2');
+const GV2 = path.join(EV, 'graph-v2');
+const SCR = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad';
+const WORK = path.join(SCR, 'hb', 'graph2', 'graph-v2-work', 'page');
+const rdT = f => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
+const rdJ = f => JSON.parse(rdT(f));
+const SRC = {
+  usecases: path.join(GV2, 'use-cases.md'), v1audit: path.join(GV2, 'v1-audit.md'), design: path.join(GV2, 'DESIGN.md'), refute: path.join(GV2, 'REFUTE.md'),
+  verifya: path.join(GV2, 'verify-a.md'), verifyb: path.join(GV2, 'verify-b.md'), modelling: path.join(GV2, 'lane-modelling.md'), ranking: path.join(GV2, 'lane-ranking.md'),
+  selection: path.join(GV2, 'lane-selection-interface.md'), result: path.join(GV2, 'result.json'), k0notes: path.join(EV, 'widen', 'k0', 'NOTES.md'), k0audit: path.join(EV, 'widen', 'k0', 'AUDIT.md'),
+  tokens: path.join(PROG, 'TOKEN-BOTTLENECK-2026-11.md'), architecture: path.join(EV, 'widen', 'architecture.md'), power: path.join(EV, 'widen', 'protocol-v2-power.txt'),
+  qf: path.join(SCR, 'usecases', 'out', 'qf.json'), cpt: path.join(SCR, 'usecases', 'out', 'cpt.json'),
+  install: path.join(EV, 'embeddings', 'INSTALL.md'), gfclaims: path.join(EV, 'graphify', 'AUDIT-CLAIMS.md'),
+  examples: path.join(WORK, 'examples.json'), cacheslice: path.join(WORK, 'cacheslice.json'), rulings: path.join(HERE, 'data', 'rulings.json')
+};
+const T = {}; for (const [k, f] of Object.entries(SRC)) if (/\.(md|txt)$/.test(f)) T[k] = rdT(f);
+const R = rdJ(SRC.result), QF = rdJ(SRC.qf), CPT = rdJ(SRC.cpt), EX = rdJ(SRC.examples), CS = rdJ(SRC.cacheslice), RUL = rdJ(SRC.rulings);
+const num = s => { s = String(s).trim().replace(/,/g, ''); const m = s.match(/^(-?[\d.]+)\s*([kKM])?/); if (!m) return null; let v = parseFloat(m[1]); if (m[2] === 'k' || m[2] === 'K') v *= 1e3; if (m[2] === 'M') v *= 1e6; return v; };
+const must = (re, text, what) => { const m = text.match(re); if (!m) throw new Error('not found in source: ' + what + ' ' + re); return m; };
+// markdown table after a line matching `start`
+function mdTable(text, start) {
+  const L = text.split('\n'); let i = L.findIndex(l => start.test(l)); if (i < 0) throw new Error('table not found ' + start);
+  while (i < L.length && !L[i].startsWith('|')) i++;
+  const rows = []; for (; i < L.length && L[i].startsWith('|'); i++) { const c = L[i].replace(/\|e\|/g, '(set size)').split('|').slice(1, -1).map(x => x.trim()); if (c.every(x => /^-+$/.test(x))) continue; rows.push(c); }
+  return { head: rows[0], rows: rows.slice(1) };
+}
+const d = { meta: { built_from: Object.fromEntries(Object.entries(SRC).map(([k, f]) => [k, f.replace(/\\/g, '/').replace(REPO.replace(/\\/g, '/') + '/', '')])), date: '2026-11-13' } };
+
+/* ---------- B. question forms ---------- */
+const FORM = { // key -> competency question and mark (graph, partly, index, reading); marks follow use-cases.md section 5 and 6
+  'Q-prior': ['CQ1', 'graph'], 'Q-doc': ['CQ2', 'graph'], 'Q-phase': ['CQ2', 'graph'], 'Q-how': ['CQ3', 'partly'], 'Q-rule': ['CQ4', 'graph'], 'Q-def': ['CQ5', 'index'],
+  'Q-diff': ['CQ6', 'graph'], 'Q-tests': ['CQ7', 'graph'], 'Q-uses': ['CQ8', 'graph'], 'Q-id': ['CQ9', 'partly'], 'Q-hist': ['CQ10', 'graph'], 'Q-where': ['CQ11', 'index'],
+  'Q-toc': ['CQ12', 'index'], 'Q-contract': ['CQ13', 'graph'], 'Q-cite': ['CQ14', 'graph'], 'Q-model': ['CQ15', 'graph'], 'Q-build': ['CQ16', 'reading'] };
+const markWhy = { graph: 'a graph question: typed relations answer it', partly: 'partly: an index or reading does most of it; relations add a part', index: 'an index question: a symbol, file, outline or ID index answers it; relations add nothing', reading: 'reading: not a graph question' };
+function forms(side) { const S = QF[side]; return S.rows.map(r => { const key = r.qf.split(':')[0]; const f = FORM[key] || [null, 'reading'];
+  return { key, label: r.qf.slice(r.qf.indexOf(':') + 1).trim(), cq: f[0], mark: f[1], calls: r.calls, episodes: r.episodes, transcripts: r.transcripts, fetched: r.fetchTok, carried: r.carriedTok, step: r.lookupStepCtx, mean_fetch: r.meanFetchPerCall, empty: r.empty, reread_same_window: r.rereadSameWindow, never_named: r.neverNamedAgain, named: r.namedAgain }; }); }
+const sum = (a, k) => a.reduce((s, x) => s + x[k], 0);
+d.usecases = { product: { rows: forms('product') }, program: { rows: forms('program') }, mark_why: markWhy, first_test_form: 'Q-hist', chars_per_token: CPT,
+  accuracy: { product: must(/product (\d+ to \d+) of (\d+)\s+right/, T.usecases, 'acc prod').slice(1, 3).join(' of '), program: must(/program (\d+ to \d+) of (\d+)\s+right/, T.usecases, 'acc prog').slice(1, 3).join(' of ') } };
+for (const s of ['product', 'program']) { const rows = d.usecases[s].rows; d.usecases[s].totals = { transcripts: QF[s].totals.transcripts, ctx: QF[s].totals.ctx, calls: sum(rows, 'calls'), fetched: sum(rows, 'fetched'), carried: sum(rows, 'carried'), step: sum(rows, 'step') }; }
+{ // session start (use-cases 3.2) and repeated reads
+  const t = mdTable(T.usecases, /^Per main product session/);
+  d.usecases.session_start = { sessions: t.rows.filter(r => !/Sum/.test(r[0])).map(r => ({ name: r[0], lookups_before: num(r[1]), fetched_before: num(r[2]), carried_before: num(r[3]), fetched_all: num(r[4]), carried_all: num(r[5]) })) };
+  const ss = d.usecases.session_start; const sr = t.rows.find(r => /Sum/.test(r[0])).map(x => x.replace(/\*/g, ''));
+  ss.sum = { fetched_before: num(sr[2]), carried_before: num(sr[3]), fetched_all: num(sr[4]), carried_all: num(sr[5]) };
+  ss.share_fetched = ss.sum.fetched_before / ss.sum.fetched_all; ss.share_carried = ss.sum.carried_before / ss.sum.carried_all;
+  ss.n_sessions = ss.sessions.length;
+  const t2 = mdTable(T.usecases, /^\| Repeated orientation read/); d.usecases.repeated = t2.rows.map(r => ({ what: r[0], calls: num(r[1]), transcripts: num(r[2]), fetched: num(r[3]), carried: num(r[4]) }));
+  d.usecases.batching = { shell_share: +must(/(\d+) % of product lookups are shell commands, and (\d+) % of those chain/, T.usecases, 'batch')[1], chained_share: +must(/(\d+) % of product lookups are shell commands, and (\d+) % of those chain/, T.usecases, 'batch')[2] };
+  d.usecases.waste = { empty_product: must(/Empty searches: (\d+) of ([\d,]+) lookups \(([\d.]+) %\)/, T.usecases, 'empty')[3], reread_product: must(/re-read in the same window: (\d+) \(([\d.]+) %\)/, T.usecases, 'reread')[2] };
+  d.usecases.n_transcripts = +must(/\*\*([\d,]+) transcripts, ([\d,]+) model calls\*\*/, T.usecases, 'transcripts')[1].replace(/,/g, '');
+  d.usecases.n_calls_all = +must(/\*\*([\d,]+) transcripts, ([\d,]+) model calls\*\*/, T.usecases, 'transcripts')[2].replace(/,/g, '');
+  d.usecases.n_main_sessions = ss.n_sessions;
+}
+/* ---------- B/I. context-level shares from the token records ---------- */
+{
+  const tb = T.tokens;
+  d.tokens = { fixflow_calls: +must(/\| API calls \| ([\d,]+) \|/, tb, 'calls')[1].replace(/,/g, ''), fixflow_ctx_b: +must(/context tokens processed[^|]*\| ([\d.]+) B \|/, tb, 'ctx')[1],
+    fetched_share_fixflow: +must(/content fetched by reads and searches \| (\d+) % \| (\d+) %/, tb, 'fetched')[2], lookup_only_tokens_fixflow: +must(/calls that only read or searched[^|]*\| (\d+) % of calls, (\d+) % of tokens/, tb, 'lookup')[2],
+    lookup_only_calls_fixflow: +must(/calls that only read or searched[^|]*\| (\d+) % of calls, (\d+) % of tokens/, tb, 'lookup')[1],
+    prefix_share_fixflow: +must(/fixed prefix re-read every call[^|]*\| (\d+) % \| \*\*(\d+) %\*\*/, tb, 'prefix')[2],
+    cap_lever: must(/1\. \*\*Cap the orchestrator window\*\* at ([^.]+)\. Exposure: ([^.]+?)\./, tb, 'lever1').slice(1, 3), strip_lever: must(/2\. \*\*Strip the subagent prefix\.\*\* ([^.]+?)\./, tb, 'lever2')[1],
+    fill_fetched: must(/Content fetched by reads and searches \| ([\d.]+) % of FixFlow's context tokens/, T.architecture, 'fill')[1], testbed_lookup_reread: must(/re-read ([\d.]+) % of context tokens \(testbed\)/, T.architecture, 'testbed')[1] };
+  d.tokens.pointer_per_1000 = must(/each 1,000 tokens present in every window is about ([\d.]+) %/, T.design, 'ptr')[1];
+  d.tokens.codexgraph = must(/CodexGraph's graph interface used (\d+) to (\d+) times the tokens of BM25/, T.design, 'codex').slice(1, 3);
+}
+/* ---------- C. competency questions, layers, n-ary ---------- */
+{
+  const t = mdTable(T.modelling, /^\| CQ \| Question \(short\) \| Type/);
+  const noPath = must(/v1 has \*\*no path\*\* for five CQs\. (.+)/, T.modelling, 'no path')[1].match(/CQ\d+/g);
+  const partial = must(/v1 has only a \*\*partial\*\* path for (.+)/, T.modelling, 'partial')[1].match(/CQ\d+/g).slice(0, 2);
+  const dt = mdTable(T.design, /^\| CQ \| Question \(short\) \| Product/);
+  const served = Object.fromEntries(dt.rows.map(r => [r[0], { role: r[4], served_by: r[5] }]));
+  const OP = { CQ1: 'notes (conclusion ledger)', CQ2: 'brief', CQ3: 'brief (slice card plus spans)', CQ4: 'rules', CQ5: 'find', CQ6: 'around --intent impact', CQ7: 'around --intent tests', CQ8: 'around --intent uses', CQ9: 'find (item ID)', CQ10: 'since', CQ11: 'find', CQ12: 'outline (index)', CQ13: 'around --intent contract', CQ14: 'rules (citation status)', CQ15: 'around', CQ16: 'none: left to reading' };
+  const cap = { find: must(/`find <words>` \(exact name then BM25; at most (\d+) lines\)/, T.design, 'find cap')[1], around: must(/default ([\d,]+) tokens, hard ([\d,]+)\)/, T.design, 'around cap').slice(1, 3) };
+  const ceil = op => /^find|outline/.test(op) ? 'at most ' + cap.find + ' lines (the find cap)' : /^around/.test(op) ? 'default ' + cap.around[0] + ' tokens, hard cap ' + cap.around[1] : /none/.test(op) ? 'none' : 'not set yet: to be fixed at the knee of the tuning curve';
+  const KINDS = { // node kinds each question's path touches (read from the metapath column)
+    CQ1: ['claim', 'evidence', 'source', 'definition', 'section'], CQ2: ['phase', 'item', 'section', 'decision', 'definition'], CQ3: ['slice', 'file', 'definition', 'entry point', 'route', 'table', 'setting', 'outbox kind', 'rule'],
+    CQ4: ['rule', 'definition', 'table', 'setting', 'route', 'item', 'change set'], CQ5: ['definition'], CQ6: ['change set', 'definition', 'route', 'client site'], CQ7: ['test', 'definition', 'route', 'fixture'],
+    CQ8: ['definition', 'string key', 'route'], CQ9: ['item', 'section'], CQ10: ['change set', 'definition', 'file'], CQ11: ['file'], CQ12: ['document', 'section'],
+    CQ13: ['client site', 'route', 'definition', 'outbox kind', 'setting', 'string key'], CQ14: ['section', 'span hash', 'definition'], CQ15: ['definition', 'table', 'column', 'migration', 'setting'], CQ16: ['entry point', 'file'] };
+  const pr = Object.fromEntries(d.usecases.product.rows.map(r => [r.cq + '|' + r.key, r]));
+  const carriedOf = (side, cq) => d.usecases[side].rows.filter(r => r.cq === cq).reduce((a, r) => a + r.carried, 0);
+  d.cqs = t.rows.map(r => { const id = r[0]; const op = OP[id];
+    return { id, question: r[1], level: r[3], metapath: r[4].replace(/\\\*/g, '*'), answer_shape: r[5], v1: noPath.includes(id) ? 'no' : partial.includes(id) ? 'partly' : 'yes', op, ceiling: ceil(op), kinds: KINDS[id],
+      role: served[id] && served[id].role, served_by: served[id] && served[id].served_by, mark: (Object.values(FORM).find(f => f[0] === id) || [null, 'reading'])[1],
+      product_carried: carriedOf('product', id), program_carried: carriedOf('program', id) }; });
+  d.cq_v1 = { no: noPath, partly: partial };
+  d.layers = [
+    { id: 'code', name: 'Code structure', kinds: ['runtime', 'slice', 'file', 'definition', 'test', 'fixture', 'entry point', 'table', 'column', 'setting', 'migration'], note: 'Definitions now include module variables and exported object members (the current graph has no node for them).' },
+    { id: 'contract', name: 'Contracts across the runtimes', kinds: ['route', 'client site', 'outbox kind', 'string key', 'schema field'], note: 'The places where two runtimes must agree: a route and its client calls, an outbox kind and its handler, a storage key or message text matched by two programs.' },
+    { id: 'docs', name: 'Documents, items, rules and decisions', kinds: ['document', 'section', 'item', 'phase', 'rule', 'decision', 'span hash'], note: 'Sections keyed by heading path and content hash, never by line number; ambiguity is a status, not k edges of weight 1/k.' },
+    { id: 'ledger', name: 'Conclusion ledger', kinds: ['claim', 'evidence', 'source'], note: 'A conclusion with the premises it rests on; only premises inside the repository can be re-checked.' },
+    { id: 'change', name: 'Change sets', kinds: ['change set'], note: 'One node per commit or PR with its message; changed-together counts become a derived view of these sets.' },
+    { id: 'time', name: 'Identity and time', kinds: ['stable key', 'lineage', 'validity'], note: 'Stable keys, rename and move lineage, validity over the commit graph for code and over content hashes for documents.' } ];
+  const nt = mdTable(T.modelling, /^\| Fact \| Participants \| Right model/);
+  d.nary = nt.rows.slice(0, 3).map(r => ({ fact: r[0].replace(/\*/g, ''), participants: r[1], model: r[2], loses: r[3], evidence: r[4] }));
+  d.nary_counts = { cochange_edges: +must(/(\d+) of ([\d,]+) co_changed edges have only commits of 10\+ files/, T.verifya, 'nary')[2].replace(/,/g, ''), big_commit_edges: +must(/(\d+) of ([\d,]+) co_changed edges have only commits of 10\+ files/, T.verifya, 'nary')[1],
+    pair_share_16: must(/hold ([\d,]+) of ([\d,]+) pair incidences \(([\d.]+)%\)/, T.verifya, 'pairs').slice(1, 4) };
+}
+/* ---------- D. computed examples ---------- */
+d.examples = EX;
+/* ---------- E. cache replay ---------- */
+{
+  const t = mdTable(T.k0notes, /^\| Policy \| Served \| Hit rate/); const tb = mdTable(T.k0notes, /^\| Policy \| Hit rate, changing questions/); const tc = mdTable(T.k0notes, /^\| Policy \| Hit rate \| Stale served/);
+  const pct = s => { if (s == null) return null; const m = String(s).match(/[\d.]+/); return m ? +m[0] : null; };
+  const POLN = { none: 'recompute every time', repo: 'any file change clears all', file: 'file level', fact_pos: 'facts, without negative patterns', fact: 'fact level with negative patterns', fact_sem: 'fact level, compare only fields read', cutoff: 'fact level + early cutoff', cutoff_sem: 'fields read + early cutoff', ttl5: 'time-to-live 5 commits', ttl20: 'time-to-live 20 commits', never: 'never invalidate (stale control)' };
+  d.cache = { lookups: +must(/served 87\.6 % of ([\d,]+) lookups/, T.k0notes, 'lookups')[1].replace(/,/g, ''), questions: +must(/On (\d+) structured code questions/, T.k0notes, 'q')[1], snapshots: +must(/holds (\d+) snapshots/, T.k0notes, 'snap')[1],
+    changing_questions: +must(/On the (\d+) questions whose\s+answer changes at least once \(([\d,]+) lookups\)/, T.k0notes, 'chg')[1], changing_lookups: +must(/On the (\d+) questions whose\s+answer changes at least once \(([\d,]+) lookups\)/, T.k0notes, 'chg')[2].replace(/,/g, ''),
+    never_change: must(/(\d+) of the 250 questions \((\d+\.\d) %\) never change their answer over the replay, and ([\d,]+) of the ([\d,]+) lookups\s+\((\d+\.\d) %\)/, T.k0notes, 'never').slice(1, 6),
+    policies: t.rows.map(r => { const k = r[0].replace(/ \(extra\)/, ''); const b = tb.rows.find(x => x[0].replace(/ \(extra\)/, '') === k); const c = tc.rows.find(x => x[0].replace(/ \(extra\)/, '') === k);
+      return { id: k, name: POLN[k], extra: /extra/.test(r[0]), hit_all: pct(r[2]), stale_all: pct(r[4].split('(')[0]), stale_upper: r[4].includes('(') ? pct(r[4].split('(')[1]) : null, stale_n: num(r[3]), hit_changing: b ? pct(b[1]) : null, stale_changing: b ? pct(b[2].split('(')[0]) : null, completion_hit: c ? pct(c[1]) : null, completion_stale: c ? pct(c[3].split('(')[0]) : null }; }),
+    dep_cases: +must(/Of the (\d+)\s+"dependency cases"/, T.k0notes, 'dep')[1], dep_new_relation: +must(/(\d+) were of\s+this kind/, T.k0notes, 'dep2')[1],
+    completion_nodes: must(/a median of ([\d,]+) nodes, ([\d,]+)\s+edges and (\d+) files per answer/, T.k0notes, 'compl').slice(1, 4), validation_ms: must(/fact ([\d.]+) ms, fact_sem ([\d.]+) ms/, T.k0notes, 'ms').slice(1, 3),
+    slice: CS };
+}
+/* ---------- F. components after the rulings ---------- */
+{
+  const refs = {}; const sec = T.design.slice(T.design.indexOf('## 13. References'));
+  for (const m of sec.matchAll(/\[([A-Za-z0-9]+)\] ([^[]+?)(?= \[[A-Za-z0-9]+\] |\n|$)/g)) { const txt = m[2].trim().replace(/\s*\.$/, ''); const ax = txt.match(/arXiv (\d{4}\.\d{4,5})/); const url = txt.match(/https?:\/\/\S+/);
+    refs[m[1]] = { text: txt.replace(/\s+\.\s*$/, ''), url: url ? url[0].replace(/[ .]+$/, '') : ax ? 'https://arxiv.org/abs/' + ax[1] : null }; }
+  refs.Kersten = { text: 'Kersten, Murphy, "Using task context to improve programmer productivity", FSE 2006, DOI 10.1145/1181775.1181777 (abstract level)', url: 'https://doi.org/10.1145/1181775.1181777' };
+  refs.Charnov = { text: 'Charnov, marginal value theorem, Theoretical Population Biology 9(2), 1976; Pirolli and Card, information foraging, Psychological Review 106(4), 1999 (records only, not opened)', url: null };
+  refs.Doyle = { text: 'Doyle 1979, justification-based truth maintenance (not opened; described through de Kleer 1986)', url: null };
+  refs.Piork = { text: 'Piorkowski et al., VL/HCC 2011 (one participant, Java)', url: null };
+  d.refs = refs;
+  const C = Object.fromEntries(R.design.components.map(c => [c.component.split(' ')[0], c]));
+  const L = { src: 'from a named source', simp: 'simplified from a named source', own: 'our own choice, no source', meas: 'measured here' };
+  // status: build-first | build | build-later | build-last | trial | deferred | cut | folded | infrastructure ; order = build step of ruling R-5 (1 first)
+  const X = (id, o) => { const c = C[id] || {}; return Object.assign({ id, name: (c.component || '').replace(/^\S+ /, ''), layer: c.layer, what: c.what_it_is, theory: c.from_theory, replaces: c.replaces_in_v1, test: c.tuning_test_that_decides_it, installs: c.installs || 'None', cost: c.build_cost }, o); };
+  d.components = [
+    { id: 'N1', name: 'Test set of real lookups', layer: 'test', what: 'Recorded lookups taken from the sessions, each with the seed the agent had and the span it read (the used span where a later edit, citation or quote confirms it), weighted by the carried tokens of its question form.', cqs: 'all', status: 'build-first', order: 1, label: L.meas, label_note: 'The lookups and their token weights are measured from the recorded sessions (use-cases.md).', refs: ['Gru'], replaces: 'Changed-together truth (what changed together), which is one small question form.', test: 'Cut condition from the use-case lane: if for the largest forms the spans an agent later used cannot be identified for at least half the instances, those forms must be scored by an agent run instead.', installs: 'None', ruling: 'R-4 (a), R-5' },
+    { id: 'N2', name: 'Index-only arm', layer: 'test', what: 'Document outline, item-ID lookup, symbol and file index and keyword search, with no relation edges; run in every test beside the graph.', cqs: 'all', status: 'build-first', order: 1, label: L.own, label_note: 'The refuter\u2019s arm. Its reason has a source (answering the questions cannot rank two designs that both answer them, Uschold and Gruninger 1996); the arm itself is our choice.', refs: ['Gru'], replaces: 'Nothing: the first test had no arm that isolates what relations add.', test: 'It is the control. A graph component that does not beat it on tokens per answered lookup is not kept.', installs: 'None', ruling: 'R-4 (b), R-5' },
+    { id: 'N3', name: 'Scripted-search arm', layer: 'test', what: 'grep for the seed\u2019s identifiers plus the changed-together and folder tails: what an agent does today.', cqs: 'all', status: 'build-first', order: 1, label: L.meas, label_note: 'Built and measured in the first test, where the typed store could not be told apart from it outside the mobile app.', refs: [], replaces: 'Missing from the ranker\u2019s declared arms in the design.', test: 'It is a competitor arm, not a component.', installs: 'None', ruling: 'R-4 (c)' },
+    { id: 'N4', name: 'Lookup-level replay', layer: 'test', what: 'Recorded lookups answered by each arm, scored on whether the needed span is in the answer and on tokens. Step 1 of the two-step evidence.', cqs: 'all', status: 'build-first', order: 1, label: L.own, label_note: 'The judge\u2019s test design; no published protocol is cited for it.', refs: [], replaces: 'The agent pilot as the first decisive test.', test: 'Its own power must be stated before it runs.', installs: 'None', ruling: 'R-7' },
+    { id: 'N5', name: 'Leak rule and cut rules', layer: 'test', what: 'Every document fact used at a commit is extracted as of that commit; hand-assigned roles are dated; predictive tests stay in the tuning range; every test gets a written cut rule.', cqs: 'all', status: 'build-first', order: 1, label: L.own, label_note: 'Rules of the evaluation, written for this design.', refs: [], replaces: 'Tests with no cut rule (the framework export, calibration, lexical entry, the what-breaks ranker, ledger test ii).', test: 'n/a (a rule, not a component).', installs: 'None', ruling: 'R-4 (h), (i)' },
+    X('Q1', { cqs: 'all', status: 'build-first', order: 1, label: L.simp, label_note: 'Competency-question design as published; the prune test is changed to per-question answerability, because the recall test the design wrote is biased toward cutting.', refs: ['Gru', 'Noy', 'Keet', 'Shi'], ruling: 'R-1' }),
+    X('K6', { cqs: 'all', status: 'build-first', order: 1, label: L.simp, label_note: 'Quality measures per Hogan section 7 and sampling per Gao et al.; at this size bins with Wilson intervals replace a fitted calibration, and per-method confidence is folded in here.', refs: ['Hogan', 'Gao19', 'KV'], ruling: 'R-3' }),
+    X('M3', { cqs: 'CQ2, CQ4, CQ9, CQ12, CQ14', status: 'build', order: 2, label: L.simp, label_note: 'Qualified relations (PROV-O), ranks for refuted claims (Wikidata), decision records (ADR), n-ary rules as nodes (W3C note). The role vocabulary (guard, client half, condition input, example, violation) is our own.', refs: ['PROV', 'Wikidata', 'ADR', 'Nary', 'DR12'], ruling: 'R-1, R-5' }),
+    X('K5', { cqs: 'CQ2, CQ4, CQ9, CQ12, CQ14', status: 'build', order: 2, label: L.simp, label_note: 'Context-based document-to-code linking (Dagenais and Robillard, abstract only) with a no-match status; roles assigned by hand once, dated (leak rule).', refs: ['DR12', 'CtxRot'], ruling: 'R-4 (h)' }),
+    { id: 'A1b', name: 'Session-start brief (the brief operation)', layer: 'agent tool', what: 'For a phase or slice: the phase\u2019s sections, its items with their defining blocks, the rules on its area and the slice card, under a budget.', cqs: 'CQ2, CQ3, CQ4', status: 'build', order: 2, label: L.own, label_note: 'Follows from the measured session start; the budgeted-selection framing has sources, the brief\u2019s content rule is ours. Its test must score the content the agent would still have to read, not names.', refs: [], replaces: 'Nothing: the current graph answers only after a seed is given.', test: 'On recorded phase starts, against the orchestrator-written brief, heading-and-ID extraction and the task-context store; cut if it does not beat the best of them on tokens the agent still reads.', installs: 'None', ruling: 'R-4 (d), R-5, R-7' },
+    { id: 'N6', name: 'Competitors for the brief: orchestrator brief and heading-and-ID extraction', layer: 'test', what: 'The sections the orchestrator already names in its subagent prompt, and the phase\u2019s own sections pulled by heading and ID.', cqs: 'CQ2, CQ4', status: 'build', order: 2, label: L.own, label_note: 'The strongest simple arms the refuter named.', refs: [], replaces: 'No baseline was stated for the brief.', test: 'Competitor arms, not components.', installs: 'None', ruling: 'R-4 (d)' },
+    { id: 'N7', name: 'Task-context store (degree of interest)', layer: 'test', what: 'Per phase or slice, the sections and files that earlier sessions read and then edited, ranked by frequency and recency.', cqs: 'CQ2, CQ3', status: 'build', order: 2, label: L.simp, label_note: 'Degree-of-interest task context (Kersten and Murphy 2006, abstract level); simplified: weights from recorded reads and edits instead of IDE interaction events. In the one head-to-head study read, recency predicted navigation better than call-graph distance (Piorkowski et al. 2011, one participant).', refs: ['Kersten', 'Piork'], replaces: 'Nothing.', test: 'The documented competitor any graph-derived brief must beat.', installs: 'None', ruling: 'R-4 (e)' },
+    { id: 'N8', name: 'Edit-time warning hook', layer: 'agent tool', what: 'When the agent edits code that a rule or citation is anchored to, push the anchor and its status into the window.', cqs: 'CQ4, CQ14', status: 'build', order: 2, label: L.own, label_note: 'Agents trust documents and rarely ask (measured: citation checks are a rare lookup); adoption of pulled tools needs steering (round 2). The hook design itself has no source.', refs: [], replaces: 'Nothing.', test: 'Report its trigger rate, tokens per edit and false-alarm rate on recorded sessions; cut if the false-alarm rate is high or the token cost exceeds what it replaces (thresholds to be fixed before the run).', installs: 'None', ruling: 'R-4 (f)' },
+    X('T5', { cqs: 'CQ14', status: 'build', order: 2, label: L.simp, label_note: 'A content hash at citing time, re-checked like a build trace; crosses both histories (code by commit, documents by content hash).', refs: ['BSaC', 'CtxRot'], ruling: 'R-4 (g)' }),
+    X('M6', { cqs: 'CQ1, CQ2, CQ4, CQ14', status: 'build', order: 2, label: L.simp, label_note: 'Git rename detection, origin analysis and a body-similarity ladder (HistoryFinder thresholds 0.70 and 0.75, Java, self-evaluated). Two histories: code by commit, program documents by content hash.', refs: ['HF', 'SCIP', 'PROV'], ruling: 'R-4 (g)' }),
+    X('A2', { cqs: 'all graph questions', status: 'build', order: 2, label: L.meas, label_note: 'Token ratio measured here with the regex tokenizer; accuracy evidence is about one sample of 37 in one study.', refs: ['LocAgent', 'TLG'], ruling: 'R-1' }),
+    X('A3', { cqs: 'all', status: 'build', order: 2, label: L.meas, label_note: 'The cost per 1,000 tokens in every window is measured here; the 500-token cap is our choice.', refs: ['AnthTools', 'Desc'], ruling: 'R-1' }),
+    X('ST1', { cqs: 'all', status: 'build', order: 2, label: L.meas, label_note: 'Engines gave identical answers in the first test; query times measured in milliseconds.', refs: ['GRAIL', 'Hohenstein'], ruling: '' }),
+    X('M4', { cqs: 'CQ1', status: 'build-later', order: 3, label: L.simp, label_note: 'Verifying traces from Build Systems \u00e0 la Carte; the in-list and out-list idea is Doyle\u2019s (1979), not de Kleer\u2019s as the design cited. Built only after measuring what share of earlier conclusions rest on things inside the repository.', refs: ['BSaC', 'Doyle', 'Green'], ruling: 'R-5' }),
+    X('T2', { cqs: 'CQ1, CQ14', status: 'build-later', order: 3, label: L.src, label_note: 'Verifying traces and early cutoff (build systems); negative dependencies are the phantom problem and predicate locks (Eswaran et al. 1976).', refs: ['BSaC', 'Eswaran', 'Blakeley'], ruling: 'R-5' }),
+    X('T4', { cqs: 'CQ1', status: 'build-later', order: 3, label: L.simp, label_note: 'Premise re-checking from build systems; the four statuses are ours; the trigger is an external diff, never a model\u2019s self-check (Huang et al.). Test (ii) still needs a number.', refs: ['BSaC', 'Huang'], ruling: 'R-4 (i), R-5' }),
+    X('M1', { cqs: 'CQ3, CQ7, CQ8, CQ15', status: 'build', order: 4, label: L.simp, label_note: 'Kinds derived from the questions; the literal-edge threshold (a third of usage searches) is our own.', refs: ['Gru'], ruling: 'R-1' }),
+    X('K1', { cqs: 'CQ13, CQ15', status: 'build', order: 4, label: L.src, label_note: 'The framework\u2019s own public schema export; pin the version. Needs a cut rule (the design had none).', refs: ['FastAPI'], ruling: 'R-4 (i)' }),
+    X('K2', { cqs: 'CQ8', status: 'build', order: 4, label: L.src, label_note: 'Kept as is: the type checker and scope-and-import binding already resolve every call edge.', refs: ['Jarvis', 'DyPy'], ruling: 'R-8 (a)' }),
+    X('M2', { cqs: 'CQ13, CQ8', status: 'trial', order: 4, label: L.src, label_note: 'Interface-description linking; tiers 1 and 2 only (the backend schema export and the TypeScript checker).', refs: ['FastAPI'], ruling: 'R-2' }),
+    X('M5', { cqs: 'CQ6, CQ10', status: 'build', order: 4, label: L.src, label_note: 'Hypergraph weights (Zhou et al. 2006) and transactions (ROSE). Expect meaning (the message and PR), not a ranking gain.', refs: ['Zhou06', 'ROSE', 'Fatemi20'], ruling: '' }),
+    X('R1', { name: 'Two-stage ranker (rooted PageRank and changed-together evidence, fused)', cqs: 'CQ10 (and the unrecorded question \u201cwhich other files will I edit\u201d)', status: 'build-last', order: 5, label: L.simp, label_note: 'Rooted PageRank (Liben-Nowell and Kleinberg) and reciprocal-rank fusion (Cormack et al.) are published; the pool (two typed hops plus changed-together neighbours) and the restart value come from our own pilot on the same tuning commits. Arm L (the learned many-feature ranker) is cut.', refs: ['LNK', 'RRF', 'HistoRank'], ruling: 'R-2, R-5' }),
+    X('R2', { cqs: 'CQ10', status: 'trial', order: 5, label: L.simp, label_note: 'Resource-allocation projection (measured on random-split movie data, not code) and hypergraph weights; one of twelve swept variants.', refs: ['NBI', 'Zhou06', 'AnyBURL'], ruling: '' }),
+    X('R4', { cqs: 'CQ5, CQ11, CQ2', status: 'build', order: 5, label: L.src, label_note: 'BM25 as in SQLite FTS5; the evidence for its weight in agents is one fine-tuned 7B ablation (direction only). Needs a margin in its test.', refs: ['LocAgent'], ruling: 'R-4 (i)' }),
+    X('S2', { cqs: 'all graph questions', status: 'trial', order: 5, label: L.simp, label_note: 'The marginal value theorem and the information patch model (Charnov 1976; Pirolli and Card 1999; records only). The price F of a missed item is disputed: about 695 tokens (one lookup) or about 13,000 (with the carry over later calls). The one published gap-based stop (Adaptive-k) scored 73.33 against 76.33 to 78.00 for fixed budgets on GPT-4o factoid QA (verify-b S-i).', refs: ['Charnov', 'BMC', 'AdaK'], ruling: 'R-2' }),
+    X('S3', { cqs: 'all graph questions', status: 'trial', order: 5, label: L.simp, label_note: 'The information diet model and the tree knapsack; the mapping to code is our inference.', refs: ['Charnov', 'TKP'], ruling: '' }),
+    X('T6', { cqs: 'CQ10', status: 'trial', order: 5, label: L.meas, label_note: 'Digest sizes measured on the snapshots; its predictive test must stay in the tuning range.', refs: ['DBSP'], ruling: 'R-4 (h)' }),
+    X('T1', { status: 'infrastructure', order: 2, cqs: 'none directly', label: L.src, label_note: 'Snapshots and validity over a partial order (differential dataflow, DBSP). Infrastructure for stored conclusions, citations and leak-free tests; not an agent feature by itself.', refs: ['DBSP', 'McSherry', 'Glean'], ruling: 'R-3' }),
+    X('M7', { status: 'folded', order: 1, cqs: 'all', label: L.simp, label_note: 'Folded into the quality card.', refs: ['KV'], ruling: 'R-3' }),
+    X('R5', { status: 'deferred', order: 6, cqs: 'CQ8, CQ6', label: L.simp, label_note: 'Static test selection (Legunsen et al., Java, revision shares). Needs test-failure ground truth from differential test runs.', refs: ['Leg16'], ruling: 'R-3' }),
+    X('R3', { status: 'deferred', order: 6, cqs: 'CQ10', label: L.own, label_note: 'Serves the minor changed-together truth.', refs: [], ruling: 'R-3' }),
+    X('K3', { status: 'deferred', order: 6, cqs: 'CQ8', label: L.src, label_note: 'Independent indexers and a dynamic call record as ground truth. Extraction is not the measured bottleneck.', refs: ['DyPy', 'Jelly', 'sysmon'], ruling: 'R-3' }),
+    X('S4', { status: 'cut', order: 9, cqs: 'none recorded', label: L.src, label_note: 'Exact Steiner tree (Dreyfus and Wagner). No recorded question asks how named things connect.', refs: ['DW', 'GR'], ruling: 'R-2' }),
+    X('T3', { status: 'cut', order: 9, cqs: 'none (speed only)', label: L.src, label_note: 'Irrelevant-update detection (Blakeley et al.); validation already takes milliseconds.', refs: ['Blakeley'], ruling: 'R-2' }),
+    X('S5', { status: 'cut', order: 9, cqs: 'none', label: L.own, label_note: 'Kept only as a measurement inside the answer-size test.', refs: ['MMR', 'Pack'], ruling: 'R-2' }),
+    X('S1', { status: 'cut', order: 9, cqs: 'none unless the stop rule survives', label: L.src, label_note: 'Isotonic calibration. Cut with the many-feature learned ranker unless the stop rule first survives a simpler test (precision per rank position).', refs: [], ruling: 'R-2' }),
+    { id: 'K4t3', name: 'Field contracts, tier 3 (pass over untyped web JavaScript)', layer: 'construction', what: 'A small def-use pass over the web app\u2019s untyped JavaScript to link field reads to schema fields.', cqs: 'CQ13', status: 'cut', order: 9, label: L.simp, label_note: 'Rests on one abstract (ARISE); serves a small form.', refs: ['ARISE'], replaces: 'v1\u2019s name-keyed field reads.', test: 'n/a (cut).', installs: 'None', ruling: 'R-2' },
+    { id: 'E1', name: 'Embeddings and graph neural models (trial)', layer: 'ranking', what: 'A knowledge-graph embedding model trained on this graph as a ranking feature, compared with the simple rankers on the same pool.', cqs: 'CQ10', status: 'trial', order: 7, label: L.own, label_note: '\u201cNot at this size\u201d is an argued position from published evidence and a density argument, not a measurement on this graph; a small measured trial can settle it if the owner approves the install.', refs: ['Pujara', 'Akrami', 'Sun20', 'HGB'], replaces: 'Nothing.', test: 'Tuned and multi-seed, pool-restricted, fused; cut if the paired interval over the fused simple ranker does not exclude zero.', installs: 'PyKEEN 1.11.1 (MIT) plus PyTorch CPU; owner decision', ruling: 'R-6' }
+  ];
+  for (const c of d.components) { if (!c.what) throw new Error('component without text ' + c.id); c.ref_list = (c.refs || []).map(k => refs[k] ? Object.assign({ key: k }, refs[k]) : null).filter(Boolean); }
+}
+/* ---------- G. not worth it ---------- */
+{
+  d.notworth = R.design.not_worth_it_at_this_size.map(s => { const i = s.indexOf(':'); const name = s.slice(0, i); const rest = s.slice(i + 1).trim();
+    const rv = rest.match(/revisit (?:at|past|when) ([^;]+)$/); const nodesExp = rest.match(/10\^(\d)/g);
+    const commits = /commits/.test(rv ? rv[1] : '') ? (rv[1].match(/about ([\d,]+) usable commits/) ? +rv[1].match(/about ([\d,]+) usable commits/)[1] : /thousands of commits/.test(rv[1]) ? 1000 : null) : null;
+    return { name, reason: rest.replace(/;?\s*revisit (?:at|past|when) [^;]+$/, ''), revisit: rv ? rv[1] : null, at_nodes_exp: nodesExp ? nodesExp.map(x => +x.slice(3)) : null, at_commits: commits }; });
+  d.scale = { nodes: +must(/the frozen commit has ([\d,]+) nodes/, T.design, 'nodes')[1].replace(/,/g, ''), commits_nonmerge: +must(/about (\d+) non-merge commits/, T.design, 'commits')[1],
+    density_here: must(/([\d.]+) triples per entity vs about (\d+) in FB15k-237/, T.design, 'density').slice(1, 3), density_note: must(/(The FB15k-237 figure of about 37 is not in Pujara; it is the lane's own arithmetic\.)/, T.verifyb, 'dens note')[1],
+    grail_small: must(/"small" sets are ([\d,]+)–([\d,]+) nodes/, T.verifya, 'grail').slice(1, 3), adjacency_kb: must(/adjacency is (\d+) KB/, T.design, 'adj')[1],
+    pykeen: must(/PyKEEN 1\.11\.1 \(MIT, (\d+) kB wheel/, T.ranking, 'pykeen')[1], ranking_share: d.usecases.product.rows.find(r => r.key === 'Q-hist').carried / d.usecases.product.totals.carried };
+}
+/* ---------- H. refuter findings ---------- */
+{
+  const t = T.refute;
+  const section = (h1, h2) => t.slice(t.indexOf(h1), h2 ? t.indexOf(h2) : undefined);
+  const items = (s, re) => [...s.matchAll(re)].map(m => m[1].trim());
+  const s1 = section('## 1. Still improvised', '## 2. Over-engineering'); const s4 = section('## 4. Learning on little data', '## 5. Can each'); const s5 = section('## 5. Can each', '## 6. Does the design'); const s7 = section('## 7. Missing', '## 8. The owner');
+  const num1 = items(s1, /^\d+\. ([\s\S]+?)(?=\n\d+\. |\n## |$)/gm); const num4 = items(s4, /^\d+\. ([\s\S]+?)(?=\n\d+\. |\n## |$)/gm); const b5 = items(s5, /^- ([\s\S]+?)(?=\n- |\n## |$)/gm); const num7 = items(s7, /^\d+\. ([\s\S]+?)(?=\n\d+\. |\n## |$)/gm);
+  const head = s => { const m = s.match(/^\*\*(.+?)\*\*\s*([\s\S]*)$/); return m ? { title: m[1].replace(/\.$/, ''), detail: m[2].replace(/\s+/g, ' ').trim() } : { title: s.split(/(?<=\.)\s/)[0], detail: s.replace(/\s+/g, ' ').trim() }; };
+  const rule1 = ['R-1 (the knowledge-graph wording: v1 already was one in Hogan\u2019s inclusive sense)', 'R-1 (say which sense of temporal knowledge graph is meant)', 'R-1 (cite Doyle; the ledger uses build-system traces)', 'R-1 and R-2 (the stop rule now cites the marginal value theorem; it stays a trial and the calibration it needs is cut unless it survives first)', 'R-1 (each threshold carries the label \u201cour own choice, no source\u201d)', 'R-1 (the role vocabulary is labelled as our own)', 'R-1 (the pool and restart are labelled as from our own pilot)', 'R-1 (shown as an analogy only)'];
+  const cat1 = ['source', 'source', 'source', 'source', 'nosource', 'nosource', 'nosource', 'source'];
+  const rule4 = ['R-4 (i) and R-7 (no clean confirmation set remains for ranking; ranking is moved last)', 'R-4 (i) (nested selection inside the bootstrap)', 'R-4 (h) (leak rule)', 'R-4 (g) (two histories)', 'R-4 (h) (predictive tests stay in the tuning range)', 'R-4 (a) and R-7 (the replay must first establish which commit each session saw)'];
+  const rule5 = ['R-4 (a), (i): decide kinds by per-question answerability', 'R-4 (i): a build check, not a test', 'R-4 (d), (e): content-based scoring and stronger competitors', 'R-4 (d): score the content the agent still reads', 'R-4 (i): kept, but its value waits on the ledger', 'R-4 (i): a cut rule is required', 'R-4 (c): the scripted-search arm is added', 'R-4 (i): a margin is required', 'R-1: zero stale is relative to the extractor\u2019s facts', 'R-4 (i): a number is required', 'R-2: calibration is cut unless the stop rule survives'];
+  const rule7 = ['R-4 (a)', 'R-4 (b)', 'R-4 (d), (e)', 'R-4 (f)', 'K (owner decision: not yet listed with a size)', 'R-7', 'R-4 (g)'];
+  d.refute = { verdict: R.refute.verdict, findings: [
+    ...num1.map((s, i) => Object.assign(head(s), { cat: cat1[i] || 'source', ruling: rule1[i] || '' })),
+    ...b5.map((s, i) => Object.assign(head(s), { cat: 'cannotfail', ruling: rule5[i] || '' })),
+    ...num4.map((s, i) => Object.assign(head(s), { cat: 'leak', ruling: rule4[i] || '' })),
+    ...num7.map((s, i) => Object.assign(head(s), { cat: 'missing', ruling: rule7[i] || '' })) ],
+    claims: R.refute.claims, counts: { survives: R.refute.claims.filter(c => c.result === 'survives').length, qualify: R.refute.claims.filter(c => c.result === 'needs qualification').length, refuted: R.refute.claims.filter(c => c.result === 'refuted').length },
+    docs_tracked: must(/(\d+) files under `docs\/program` are tracked \(on a docs branch, not main\) and ([\d,]+) are untracked/, t, 'docs')[1], docs_untracked: must(/(\d+) files under `docs\/program` are tracked \(on a docs branch, not main\) and ([\d,]+) are untracked/, t, 'docs')[2],
+    commits_after_frozen: must(/only (\d+) commits \((\d+) touching product code\) exist after the frozen commit/, t, 'after').slice(1, 3) };
+  const s11 = section('## 11. Sentences nobody may say', '## 12.');
+  d.mustnot = { from_result: R.refute.must_not_claim, from_refute: [...s11.matchAll(/^\d+\. (.+)$/gm)].map(m => m[1]) };
+}
+/* ---------- I. model inputs and test power ---------- */
+{
+  const pw = T.power; const lines = pw.split('\n').filter(l => /^n=40 k=[23] \|/.test(l));
+  const det = []; for (const l of lines) for (const m of l.matchAll(/(s[\d.]+ t[\d.]+) SE ([\d.]+): ([\d.]+)% \/ ([\d.]+)%/g)) det.push({ k: +l.match(/k=(\d)/)[1], cond: m[1], se: +m[2], below_100: +m[3], below_95: +m[4] });
+  d.power = { n: 40, detectable: det, ruling_band: must(/can only see a saving of about (\d+) to (\d+) %/, RUL.rulings.find(r => r.id === 'R-7').text, 'r7').slice(1, 3) };
+  d.model = { note: 'Fixed inputs are the measured per-form numbers of section B; the controls are unknowns the reader sets.', product_calls_share: null };
+}
+/* ---------- J. corrections ---------- */
+{
+  const a = T.v1audit; const t = mdTable(a, /^\| How the call was resolved \| Call rows/);
+  d.v1 = { calls_how: t.rows.filter(r => !/Total/.test(r[0])).map(r => ({ how: r[0].replace(/`/g, ''), rows: num(r[1]), shared_name: num(r[2]) })),
+    calls_total: +must(/\*\*Total\*\* \| \*\*([\d,]+)\*\* \| \*\*([\d,]+) \(([\d.]+) %\)\*\*/, a, 'total')[1].replace(/,/g, ''), shared_total: must(/\*\*Total\*\* \| \*\*([\d,]+)\*\* \| \*\*([\d,]+) \(([\d.]+) %\)\*\*/, a, 'total').slice(2, 4),
+    by_name: +must(/\*\*(\d+) call edges were chosen by name alone\.\*\*/, a, 'byname')[1],
+    no_node: must(/Held-out T1 reference definitions with no node: (\d+) of ([\d,]+) \(([\d.]+) %\), of which variables\s+and object members (\d+) \(([\d.]+) %\)/, a, 'nonode').slice(1, 6),
+    median_used: must(/median ([\d,]+) tokens used\)/, a, 'med')[1], budget: must(/inside an ([\d,]+)-token answer/, a, 'budget')[1], rank_move: must(/every ranking mode moved T1 primary by at most \+([\d.]+) over plain breadth-first order\s+\(se ([\d.]+)\)/, a, 'rank').slice(1, 3),
+    recall16k: must(/recall at 16,000 tokens was identical \(([\d.]+)\)/, a, 'r16')[1], reach: must(/reaches a median of ([\d,]+) of ([\d,]+) nodes \((\d+) %\) and (\d+) files per query/, a, 'reach').slice(1, 5),
+    giant: must(/(\d+\.\d) %\s+of nodes sit in one weakly connected component/, a, 'giant')[1], configs: must(/How the (\d+) configurations were chosen/, a, 'configs')[1], unbounded_span: must(/the eight rankings spanned only ([\d.]+)/, a, 'span')[1],
+    first_test_share: d.usecases.product.rows.find(r => r.key === 'Q-hist').carried / d.usecases.product.totals.carried };
+}
+/* ---------- K. owner decisions ---------- */
+d.decisions = R.design.owner_decisions; d.rulings = RUL.rulings;
+d.design_summary = R.design.summary; d.refute_verdict = R.refute.verdict;
+/* ---------- derived values the page shows (computed here so every displayed number is in the data) ---------- */
+{
+  const D = d.derived = {};
+  const GROUP = { CQ1: 'ledger', CQ2: 'docs', CQ4: 'docs', CQ9: 'docs', CQ14: 'docs', CQ3: 'codemap', CQ6: 'coderel', CQ7: 'coderel', CQ8: 'coderel', CQ10: 'coderel', CQ13: 'coderel', CQ15: 'coderel', CQ5: 'index', CQ11: 'index', CQ12: 'index', CQ16: 'reading' };
+  d.group_names = { docs: 'Documents, items, rules and decisions', ledger: 'Earlier conclusions (ledger)', codemap: 'Code map for orientation (partly)', coderel: 'Code relations', index: 'Index questions', reading: 'Reading (not a graph question)' };
+  for (const s of ['product', 'program']) {
+    const U = d.usecases[s], t = U.totals; const g = D[s] = { carried_of_ctx: t.carried / t.ctx, step_of_ctx: t.step / t.ctx, fetched_of_ctx: t.fetched / t.ctx, marks: {}, groups: {} };
+    for (const r of U.rows) { r.share = r.carried / t.carried; r.share_ctx = r.carried / t.ctx; r.step_per_call = Math.round(r.step / r.calls); r.group = r.cq ? GROUP[r.cq] : 'reading';
+      g.marks[r.mark] = g.marks[r.mark] || { carried: 0, calls: 0 }; g.marks[r.mark].carried += r.carried; g.marks[r.mark].calls += r.calls;
+      g.groups[r.group] = g.groups[r.group] || { carried: 0 }; g.groups[r.group].carried += r.carried; }
+    for (const m of Object.values(g.marks)) { m.share = m.carried / t.carried; m.share_ctx = m.carried / t.ctx; }
+    const served = g.groups.docs.carried + g.groups.ledger.carried + g.groups.coderel.carried + g.groups.codemap.carried;
+    for (const x of Object.values(g.groups)) { x.share = x.carried / t.carried; x.share_served = x.carried / served; x.share_ctx = x.carried / t.ctx; }
+    g.served = served; g.served_share = served / t.carried; g.served_ctx = served / t.ctx;
+    g.graph_only = g.marks.graph.carried; g.graph_only_share = g.marks.graph.share; g.graph_only_ctx = g.marks.graph.share_ctx;
+  }
+  for (const s of d.usecases.session_start.sessions) { s.share_carried = s.carried_before / s.carried_all; s.after = s.carried_all - s.carried_before; }
+  d.usecases.repeated_total = d.usecases.repeated.reduce((a, r) => a + r.carried, 0);
+  D.first_test = d.v1.first_test_share;
+  D.pointer_ratio = d.tokens.fixflow_calls / (d.tokens.fixflow_ctx_b * 1e9);
+  D.comp_counts = {}; for (const c of d.components) D.comp_counts[c.status] = (D.comp_counts[c.status] || 0) + 1;
+  D.label_counts = {}; for (const c of d.components) D.label_counts[c.label] = (D.label_counts[c.label] || 0) + 1;
+  D.added = d.components.filter(c => /R-4/.test(c.ruling || '') && /^N|A1b/.test(c.id)).length;
+  D.cq_v1 = { no: d.cq_v1.no.length, partly: d.cq_v1.partly.length, yes: d.cqs.length - d.cq_v1.no.length - d.cq_v1.partly.length };
+  D.find_counts = {}; for (const f of d.refute.findings) D.find_counts[f.cat] = (D.find_counts[f.cat] || 0) + 1;
+  D.det_min = Math.min(...d.power.detectable.map(x => x.below_95)); D.det_max = Math.max(...d.power.detectable.map(x => x.below_95));
+  D.det_min100 = Math.min(...d.power.detectable.map(x => x.below_100)); D.det_max100 = Math.max(...d.power.detectable.map(x => x.below_100));
+  D.big_commit_share = d.nary_counts.big_commit_edges / d.nary_counts.cochange_edges;
+  D.giant_reach_share = num(d.v1.reach[0]) / num(d.v1.reach[1]);
+  D.program_docs_ledger_share = D.program.groups.docs.share + D.program.groups.ledger.share; // section A card 2 (page session 2)
+  for (const ex of d.examples.examples) { ex.items.forEach(it => { it.tree_lines = it.tree.split('\n').filter(Boolean).length; }); ex.top_rrf = ex.items.length ? ex.items[0].rrf : 0; }
+}
+/* ---------- facts for the independent check's corrections (2026-11-14) ---------- */
+{
+  const flat = t => t.replace(/\s+/g, ' ');
+  const v = must(/venv ([\d,]+) MB \(torch ([\d,]+) MB\)/, flat(T.install), 'venv size');
+  const im = must(/\(([\d.]+) GB\) disk usage/, flat(T.install), 'image size');
+  const pk = must(/one pure-Python wheel \(([\d,]+) bytes\)/, flat(T.install), 'pykeen wheel');
+  d.install_kge = { venv_mb: v[1], torch_mb: v[2], image_gb: im[1], pykeen_bytes: pk[1], source: 'embeddings/INSTALL.md' };
+  const k = must(/Validation, per snapshot over all (\d+) lanes and (\d+) questions \(median[^)]*\): fact ([\d.]+) ms, fact_sem ([\d.]+) ms, file ([\d.]+) ms, cutoff ([\d.]+) ms; loading and hashing a snapshot (\d+) ms/, flat(T.k0notes), 'k0 validation');
+  d.cache.validation = { lanes: k[1], questions: k[2], fact: k[3], fact_sem: k[4], file: k[5], cutoff: k[6], load: k[7] };
+  const pkr = must(/graphify front-loads large files: (\d+) against (\d+) tokens per shown file/, flat(T.gfclaims), 'packer');
+  must(/graphify was below every comparator on tuning, and the held-out mix favoured it/, flat(T.gfclaims), 'tuning');
+  d.gf_audit = { packer: [pkr[1], pkr[2]], tuning: 'graphify was below every comparator on tuning, and the held-out mix favoured it', source: 'graphify/AUDIT-CLAIMS.md section 6' };
+  { const a = flat(T.v1audit), g = flat(T.design);
+    const pr = (re, n) => { const m = must(re, a, n); return [m[1], m[2]]; };
+    d.v1_precision = { calls: pr(/the whole call kind sampled (\d+) of (\d+) correct/, 'calls precision'),
+      cites: pr(/cites (\d+) of (\d+) strict/, 'cites precision'), constrains: pr(/; constrains (\d+) of (\d+);/, 'constrains precision'),
+      mentions: pr(/mentions (\d+) of (\d+) strict/, 'mentions precision'), reads_setting: pr(/reads_setting (\d+) of (\d+) before the fix/, 'reads_setting precision'),
+      source: 'v1-audit.md (sampled precision of the first test\'s typed graph)' };
+    const lb = must(/precision on (\d+) to (\d+) labels per link type/, g, 'label sizes');
+    d.link_labels = { min: lb[1], max: lb[2], source: 'DESIGN.md' }; }
+}
+/* ---------- check: every number in the hand-written text of this script's data is in a source ---------- */
+{
+  const allSrc = Object.values(T).join('\n') + JSON.stringify(R) + JSON.stringify(QF) + JSON.stringify(EX) + JSON.stringify(CS);
+  const srcNums = new Set((allSrc.match(/\d[\d,]*(?:\.\d+)?/g) || []).map(x => x.replace(/,/g, '')));
+  const hand = JSON.stringify([d.components.map(c => [c.label_note, c.what, c.test, c.name]), d.layers, RUL.rulings.map(r => r.text)]);
+  const bad = [...new Set((hand.match(/\d[\d,]*(?:\.\d+)?/g) || []).map(x => x.replace(/,/g, '')))].filter(x => !srcNums.has(x));
+  if (bad.length) throw new Error('numbers in hand-written text not found in any source: ' + bad.join(' '));
+}
+fs.writeFileSync(path.join(HERE, 'data', 'data.json'), JSON.stringify(d, null, 1));
+console.log('data.json', Buffer.byteLength(JSON.stringify(d, null, 1)), 'bytes;', d.components.length, 'components;', d.refute.findings.length, 'refuter findings;', d.cqs.length, 'questions');

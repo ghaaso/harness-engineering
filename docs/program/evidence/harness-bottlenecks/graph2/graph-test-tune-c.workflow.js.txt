@@ -1,0 +1,255 @@
+export const meta = {
+  name: 'graph-test-tune-c',
+  description: 'Close the phase B audit defects, score stage 1 on the tuning set, give every arm 20 stage-2 configurations, select and freeze one configuration per arm, then audit the selection',
+  phases: [
+    { title: 'Fix', detail: 'specification gap, harness accounting, graph-arm reproducibility and speed fixes; re-run stage 1' },
+    { title: 'Score 1', detail: 'four-arm cross-check gate, then stage-1 scores on the tuning set' },
+    { title: 'Tune', detail: 'one tuner per arm proposes and runs 20 stage-2 configurations' },
+    { title: 'Select', detail: 'score stage 2, apply the selection rule, freeze one configuration per arm' },
+    { title: 'Audit', detail: 'independent check of scoring, selection and readiness for the held-out run' },
+  ],
+}
+
+const SP = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const BUILD = SP + '/build'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const S = { type: 'string' }
+const SA = { type: 'array', items: S }
+const BUILD_SCHEMA = {
+  type: 'object',
+  properties: { status: S, what_was_done: SA, key_numbers: SA, deviations_from_protocol: SA, problems: SA, needs_from_other_lanes: SA, how_to_run: SA },
+  required: ['status', 'what_was_done', 'key_numbers', 'deviations_from_protocol', 'problems'],
+}
+const GRADE1_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S,
+    gate_ok: { type: 'boolean' },
+    gate_detail: S,
+    leaderboard: { type: 'array', items: { type: 'object', properties: { arm: S, set: S, best_config: S, primary: { type: 'number' }, se: { type: 'number' }, r2k: { type: 'number' }, r4k: { type: 'number' }, r16k: { type: 'number' }, median_tokens: { type: 'number' }, base_primary: { type: 'number' }, note: S }, required: ['arm', 'set', 'best_config', 'primary'] } },
+    tq: { type: 'array', items: { type: 'object', properties: { arm: S, f1: { type: 'number' }, precision: { type: 'number' }, recall: { type: 'number' }, median_tokens: { type: 'number' }, note: S }, required: ['arm', 'f1'] } },
+    tables_written: SA, observations: SA, problems: SA,
+  },
+  required: ['status', 'gate_ok', 'gate_detail', 'leaderboard', 'tq', 'tables_written', 'observations', 'problems'],
+}
+const SELECT_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: S,
+    frozen: { type: 'array', items: { type: 'object', properties: { arm: S, config_name: S, hash: S, stage: S, complexity: { type: 'number' }, primary_tune: { type: 'number' }, se: { type: 'number' }, best_config: S, best_primary_tune: { type: 'number' }, median_tokens: { type: 'number' }, modes: S, spec_equivalent: { type: 'boolean' } }, required: ['arm', 'config_name', 'hash', 'primary_tune'] } },
+    h1_graph_arm: S,
+    tune_comparisons: { type: 'array', items: { type: 'object', properties: { a: S, b: S, set: S, metric: S, diff: { type: 'number' }, ci_low: { type: 'number' }, ci_high: { type: 'number' } }, required: ['a', 'b', 'metric', 'diff'] } },
+    tq_tune: { type: 'array', items: { type: 'object', properties: { arm: S, f1: { type: 'number' }, median_tokens: { type: 'number' } }, required: ['arm', 'f1'] } },
+    observations: SA, problems: SA,
+  },
+  required: ['status', 'frozen', 'h1_graph_arm', 'tune_comparisons', 'observations', 'problems'],
+}
+const AUDIT_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: S,
+    ready_for_heldout: { type: 'boolean' },
+    checks: { type: 'array', items: { type: 'object', properties: { what: S, result: S, detail: S }, required: ['what', 'result', 'detail'] } },
+    defects: { type: 'array', items: { type: 'object', properties: { severity: S, where: S, what: S, fix: S }, required: ['severity', 'where', 'what', 'fix'] } },
+  },
+  required: ['verdict', 'ready_for_heldout', 'checks', 'defects'],
+}
+
+function common(lane, folders, sealedRule) {
+  return [
+    'You are one agent in a controlled experiment on one code repository. It compares ways of answering "what is connected to this code?": a search baseline with two floors (same directory, co-change), a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph. Fairness between arms and the strongest honest form of EVERY arm matter more than speed: a strawman on either side makes the result worthless.',
+    '',
+    'YOUR LANE: ' + lane,
+    '',
+    'READ FIRST (short files): ' + SP + '/protocol.md, then addenda ' + SP + '/protocol-addendum-1.md, -2.md and -3.md (addendum 3 holds the rules you implement now), then ' + BUILD + '/arms/common/SPEC.md and NOTES.md.',
+    '',
+    'LAYOUT (under ' + BUILD + '): facts/cache/<parent sha>/ (shared facts, extractor 59da7b753a4d908e), tasks/ (seeds and questions any arm may read), sealed/ (reference answers and grader files), arms/common (loader, tokenizer, packer, padding, harness run.js and sweep.js, score.js, compare.js, tq_score.js, equiv.js, SPEC.md), arms/relational, arms/reference, arms/search, arms/floor-dir, arms/floor-co, arms/ladybug, arms/duckpgq, results/<arm>/, results/tq/, audit/, tmp/. Each arm folder has a NOTES.md that says how to run it.',
+    '',
+    'HARD RULES',
+    '1. The repository at ' + REPO + ' is read-only. Never check out, switch branch, add a worktree, stash, commit or write there. Read a past commit only with git archive <sha> into ' + BUILD + '/tmp/<your-lane>/ (delete it afterwards) or with read-only object reads.',
+    '2. Never run anything on HELD-OUT tasks or questions (split "heldout"). Keep the harness lock. Freezing a configuration does not permit a held-out run in this phase.',
+    '3. ' + sealedRule,
+    '4. Every arm run happens inside the Docker image graphtest:1. Start it like:  MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v "' + BUILD + ':/build" -v "' + REPO + ':/repo:ro" -v gt-<arm>:/store graphtest:1 bash -lc "git config --global --add safe.directory /repo; export GT_BUILD=/build GT_REPO=/repo GT_STORE=/store; <commands>"  (see the arm NOTES.md for its exact variables). At most 6 CPUs and 4 GB per container: other agents run at the same time. Store files stay on the named volume or the container filesystem, never on the /build bind mount. Host runs are for development only.',
+    '5. Install nothing and download nothing (no npm, pip, apt, extension or model download, no docker pull or build). You may read public documentation on the web, but never put the project name, file paths, identifiers or code from this repository into a web query or URL.',
+    '6. Host tool quirks: a Bash command over about 8 KB is cut and doubled backslashes in heredocs collapse, so create files with the Write tool. python is not on PATH on the host; use ' + PY + ' -I . Node 24 is on PATH.',
+    '7. Stay inside your folders: ' + folders + '. If another lane must change something, put it in needs_from_other_lanes (or problems) instead of editing its files.',
+    '8. Report for a reader with no context: plain complete sentences, every number with its unit and what it refers to. Finish by updating the NOTES.md of your folder.',
+    '',
+  ].join('\n')
+}
+const NO_SEALED = 'You are an arm or harness builder: never read, list or open ' + BUILD + '/sealed/ or ' + BUILD + '/audit/. A grader scores.'
+const GRADER = 'You are the grader: you may read ' + BUILD + '/sealed/ and ' + BUILD + '/audit/. Never copy reference content, per-task scores or per-commit scores into any folder an arm builder can read (arms/, results/, tasks/, tmp/). Your own working files go under ' + BUILD + '/sealed/grader/.'
+
+const CATALOGUE = [
+  'MODE CATALOGUE (what exists in any arm; names and meanings only, no scores). Definitions are in arms/common/SPEC.md and in each arm NOTES.md and sweep.js, which you may read. You may NOT read another arm score table.',
+  '- Shared, specified in SPEC.md and run by the relational, reference and both graph arms: traversal khop (hops 1 to 6 or unbounded; direction dependencies, dependents or both; edge-class mask; minConf), per-class budget traversal, ordered metapath traversal; hub cuts (in-degree above k, transport nodes); rankings bfs, degnorm, ppr (restart 0.15, 0.30, 0.50; co-change weight), cochange, text (BM25), hybrid (reciprocal-rank fusion of parts); output granularity file or symbol; form paths, signature, range, snippet; padding tail none, DIR, CO.',
+  '- LadybugDB native: x_wsp (rank by weighted shortest path, cost = kind cost / confidence), x_comm (Louvain community prior), x_prank (stored global PageRank prior), a core-number hub cut, an engine personalised PageRank (undirected, unweighted), metapaths written as typed path patterns.',
+  '- DuckDB/DuckPGQ native: x_wsp (cheapest path length), a global PageRank prior, a weakly-connected-component prior, and two extra ordered metapaths named MP_HTTP (client call site, URL, route, handler, service, table) and MP_HIST (history: co-change then code edges) which are ordinary specified metapaths any arm can run.',
+  '- Search arm: rounds 1 to 3, name terms or names plus route strings, BM25, proximity prior, hit-type weights, import following.',
+].join('\n')
+
+const pA1 = common(
+  'HARNESS AND SPECIFICATION FIX, then re-run. Close the gaps the phase B audits found in the shared code, then re-run stage 1 for the relational, reference, search and floor arms.',
+  BUILD + '/arms/common, arms/relational, arms/reference, arms/search, arms/floor-dir, arms/floor-co, results/relational, results/reference, results/search, results/floor-dir, results/floor-co, results/tq, tmp/harness-fix2',
+  NO_SEALED
+) + [
+  'WHAT TO DO (addendum 3, items 1, 4, 11, 12)',
+  'a. SPEC.md section 8.1 and the code: when a node has out-degree 0 under the configured direction, the degree-normalised ranking uses the number of reach-DAG arcs leaving that node (at least 1). Implement it in arms/reference and arms/relational (the two graph arms are fixed by their own lanes from the same sentence). Add a self-test with a tiny metapath graph where this case occurs, with the expected scores worked out by hand in a comment.',
+  'b. A metapath step whose edge kinds are all absent at a commit reaches nothing; confirm reference and relational do that.',
+  'c. Harness: carry rank().meta (at least tokens_read and the lookup ledger length) into the answer record; count the lookups of a padding tail the same way for every arm (1 for DIR, 2 for CO), in one place; let the floors run on exactly the same task set as swept arms (a --tasks option in run.js or a floor list accepted by sweep.js); one question answer file name (results/tq/<arm>.<split>.answers.jsonl) with the old duplicate removed; fix the stale comments in padding.js; paths.js must not fall back to the deleted arms/common/frozen-facts folder.',
+  'd. Stage-2 support: sweep.js --stage 2 runs arms/<arm>/stage2.json (exactly 20 entries) and writes answers beside stage 1 with the list hash logged. Make sure an arm-only mode whose name starts with x_ passes through config validation for any arm, including relational.',
+  'e. Re-run, inside the image, TUNE only: the strict relational versus reference cross-check on 500 seeded random (configuration, task) pairs that include metapath traversals with every direction and degnorm and hybrid rankings (must be zero mismatches); then the full stage-1 sweeps for relational and reference (with the strict cross-check), search, and both floors, on T1, T1x and T2; then the question answers for relational and search. Before overwriting, keep the old answer files and report how many ranked lists changed against them (expected: none outside the changed rule).',
+  'f. Check every answer file as the earlier re-run did (budgets respected, tokens recompute, every configuration present for every task, list hashes).',
+  'Report mismatches, how many ranked lists changed and why, run times, and anything the graph lanes or the grader must know.',
+].join('\n')
+
+function pA2(engine, folder, items) {
+  return common(
+    'GRAPH ARM FIX on ' + engine + ', then re-run. Close the defects the phase B audit found in this arm, then re-run its cross-check and its stage-1 sweep.',
+    BUILD + '/arms/' + folder + ', results/' + folder + ', results/tq (your file only), tmp/' + folder,
+    NO_SEALED
+  ) + [
+    'The harness lane has just finished changing arms/common (SPEC.md section 8.1, answer record fields, lookup accounting, stage-2 support): re-read SPEC.md and arms/common/NOTES.md first.',
+    'WHAT TO DO (addendum 3, sections A, B, C)',
+    items,
+    'Then, inside the image, TUNE only: (1) equivalence against the reference arm on the relational stage-1 list for all TUNE T1 and T2 tasks, plus 300 seeded random (configuration, task) pairs over T1, T1x and T2 that include metapath traversals with every direction combined with degnorm and hybrid rankings, and metapath steps whose kinds are absent at the parent: zero failures, or each one explained exactly; (2) your full stage-1 sweep on T1, T1x and T2, written to results/' + folder + '/tune/ in the layout the harness uses for the other arms (move or remove older copies such as results/' + folder + '/stage1 so there is exactly one current set, and say where it is); (3) your question answers on the 20 TUNE questions; (4) the answer-file checks (budgets respected, every configuration present for every task). Report how many ranked lists changed against your previous stage-1 answers and why.',
+    'Do not take final engine timings: a later quiet-machine run does. Do run bench.js once to prove it still works.',
+  ].join('\n')
+}
+const pA2L = pA2('LadybugDB 0.22.3', 'ladybug', [
+  'a. Degree-normalised ranking when the out-degree is 0: follow the new SPEC 8.1 sentence (use the number of reach-DAG arcs leaving the node).',
+  'b. Community prior (x_comm): community detection gives a different grouping for each store build. Store the grouping once per canonical graph, keyed by the canonical content hash, in a small file under ' + BUILD + '/arms/ladybug/priors/ and make every store build reuse it, so a rebuild reproduces the prior exactly. Provide a switch that draws a fresh grouping into a numbered alternative file (draw 1 to 4) for the later spread measurement. Prove: two fresh builds of the same parent give identical x_comm answers.',
+  'c. x_prank: count a co-change edge in both directions in the projection; say in NOTES how dangling mass is handled.',
+  'd. x_wsp: the cost of an edge is its kind cost divided by its confidence, and a node removed by a hub cut cannot be passed through. Write the kind-cost table in NOTES.md so the DuckPGQ lane can use the same one (read arms/duckpgq/NOTES.md for theirs; if the two tables differ, use the table already in YOUR arm and state it; the DuckPGQ lane is told to adopt the LadybugDB table).',
+  'e. Name in NOTES.md and in the bench output that the default PageRank iterations run in application code over a cached adjacency, so its repeated-call latency is flattered; make bench.js also report the uncached first call.',
+].join('\n'))
+const pA2D = pA2('DuckDB 2.0.0 with DuckPGQ', 'duckpgq', [
+  'a. Degree-normalised ranking when the out-degree is 0: follow the new SPEC 8.1 sentence (use the number of reach-DAG arcs leaving the node), not a silent zero.',
+  'b. k-hop must not compute path lengths beyond the hop limit (bound the search or use reachability); keep the answers identical.',
+  'c. A metapath step whose kinds are all absent at a parent reaches nothing (today it produces the SQL fragment AND () and an error).',
+  'd. Build the property graph and any projection once when the store is built, not on every connection, if the engine allows a stored property graph; if it cannot be stored, say exactly why and keep the setup time out of the per-query engine time while reporting it separately. Use as many threads as the container has CPUs.',
+  'e. x_wsp: adopt the LadybugDB definition and kind-cost table (cost of an edge = kind cost / confidence; a node removed by a hub cut cannot be passed through); the table is in arms/ladybug/NOTES.md and arms/ladybug source. If the LadybugDB lane has not written it yet when you get there, read the costs from its source file.',
+  'f. Relabel MP_HTTP and MP_HIST in your list as ordinary specified metapaths, not native modes.',
+].join('\n'))
+
+const pG1 = common(
+  'GRADER, STAGE 1. Gate the arms with an independent four-arm cross-check, then score every arm stage-1 answers on the tuning set and hand each arm tuner its own score table.',
+  BUILD + '/sealed/grader, ' + BUILD + '/results/tuner (aggregate tables only), ' + BUILD + '/tmp/grader',
+  GRADER
+) + [
+  'WHAT TO DO',
+  '1. GATE. Inside the image, run a seeded random cross-check of 300 (configuration, TUNE task) pairs across relational, reference, ladybug and duckpgq (reuse ' + BUILD + '/audit/fixes/c7_crosscheck.js and the audit/graph cross-check scripts as a starting point). Include metapath traversals with every direction combined with degnorm and hybrid rankings, and metapath steps whose kinds are absent. Relational versus reference must be strictly identical; each graph arm must be equivalent to the reference under arms/common/equiv.js. Set gate_ok=false only if a failure touches a configuration shape that appears in some arm stage-1 list or is a plausible stage-2 choice; describe every failure.',
+  '2. Locate the current stage-1 answer files of every arm (relational, search, ladybug, duckpgq: 40 configurations each; floor-dir and floor-co: 8 each) for T1, T1x and T2 on TUNE. Confirm each holds every TUNE task of its set exactly once and comes from the current facts (extractor 59da7b753a4d908e) and the current list hash.',
+  '3. Score them with arms/common/score.js under the content rule against sealed/references.jsonl (TUNE lines only). Before trusting it, hand-check 3 answers yourself. Keep full outputs (including per-cluster values) under sealed/grader/stage1/.',
+  '4. For each of relational, search, ladybug and duckpgq write results/tuner/<arm>.stage1.json and a readable .md: one row per configuration with its name, the configuration itself, and for T1, T1x and T2 the primary (recall of reference files plus definitions in the 8,000-token answer; null for paths and range forms), its standard error over commits, recall at 2k, 4k and 16k, area under the curve, definition-only recall, file recall@10, nDCG@10, MRR, median tokens used, tokens to 80% recall, and median engine milliseconds. Aggregates only: no per-task, per-commit or reference content. Each arm file holds only that arm rows. Also add the complexity number of each configuration as defined in addendum 3 item 10 (write the function once in sealed/grader/complexity.js and reuse it later).',
+  '5. Questions: score the TUNE answers of relational, search, ladybug and duckpgq with arms/common/tq_score.js against sealed/tq_reference.jsonl, with and without the 12 judgement items both readers shared (they are identified in sealed/tq_agreement.txt and sealed/tq_resolve). Keep details under sealed/grader/tq/.',
+  '6. Do not select or freeze anything.',
+  'Return the leaderboard (for each arm and set: best configuration by primary, its primary and standard error, the curve, median tokens, and the base configuration primary), the question scores, and observations a careful reader should know (for example which factor moves the primary most in each arm, how padding changes each arm, whether the two graph arms and the relational arm give identical numbers on specification-equivalent configurations). Use plain words.',
+].join('\n')
+
+function pT(arm, folder, engineLine) {
+  return common(
+    'TUNER for the ' + arm + ' arm. Propose and run exactly 20 stage-2 configurations that give this arm its best honest chance on the primary metric, using only this arm own tuning-set score table.',
+    BUILD + '/arms/' + folder + (folder === 'relational' ? ', arms/reference (mirror only)' : '') + ', results/' + folder + ', tmp/tune-' + folder,
+    NO_SEALED + ' You may read ONLY your own score table ' + BUILD + '/results/tuner/' + folder + '.stage1.json (and .md); never open another arm table in results/tuner/.'
+  ) + [
+    CATALOGUE,
+    '',
+    'WHAT TO DO (addendum 3, section D)',
+    '1. Study your stage-1 table: which factors move the primary on T1 (recall of reference files plus definitions inside the 8,000-token answer, signature or snippet form), by how much against the standard error, and what the base lacks. The selection rule later picks the highest primary on T1 TUNE, then the simplest configuration within one standard error (complexity as in addendum 3 item 10), so a simple strong configuration is worth more than a baroque one.',
+    '2. Write arms/' + folder + '/stage2.json: exactly 20 configurations around your stage-1 best, aimed at interactions between the factors that mattered (for example ranking with padding, hop limit with hub cut, hybrid parts and their weights, granularity with form). ' + engineLine,
+    '3. You may add a mode from the catalogue that your arm lacks, if your engine can run it in its own language. A new mode needs a written definition in NOTES.md and a hand check on a toy graph with the expected values worked out by hand; it counts inside the 20. Do not add a mode you cannot check.',
+    '4. Run stage 2 inside the image on TUNE T1, T1x and T2 through the common harness (sweep.js --stage 2; see arms/common/NOTES.md). For every stage-2 configuration that follows the shared specification, check equivalence against the reference arm on all TUNE T1 and T2 tasks (zero failures or each explained). Check the answer files (budgets respected, every configuration present for every task).',
+    '5. You get no stage-2 scores: one round only, the same for every arm. Record in NOTES.md the reasoning for each of the 20 in one line.',
+    'Report the 20 names with a one-line reason each, new modes and their hand checks, cross-check counts, run times and problems.',
+  ].join('\n')
+}
+const pTR = pT('relational (SQLite)', 'relational', 'Everything must run as SQL in the engine (recursive queries, join chains, iterated statements driven by a thin loop as the existing PageRank is); mirror each specification-following configuration into the reference arm list so the strict cross-check covers it. If you add an arm-only x_ mode in SQL, the reference arm does not cover it: hand-check it.')
+const pTS = pT('search', 'search', 'Stay a search: greps, reads and listings a careful person or agent would make, with every lookup and every token read counted. No facts edges.')
+const pTL = pT('LadybugDB graph', 'ladybug', 'Use the engine native features where they help (typed path patterns, weighted shortest paths, stored priors, the native algorithms listed in your NOTES.md as untried, such as Leiden or label propagation communities, Katz, ALL SHORTEST). If x_comm is used, it must use the stored grouping (arms/ladybug/priors/).')
+const pTD = pT('DuckDB/DuckPGQ graph', 'duckpgq', 'Answer through the property-graph layer wherever it can express the step; where you fall back to plain SQL, label it. Stay inside what the installed extension offers.')
+
+function pG2(stage1, tuners) {
+  return common(
+    'GRADER, STAGE 2 AND SELECTION. Score every arm stage-2 answers, apply the one selection rule, and freeze one configuration per arm.',
+    BUILD + '/sealed/grader, ' + BUILD + '/results/frozen, ' + BUILD + '/results/tuner (aggregate tables only), ' + BUILD + '/tmp/grader',
+    GRADER
+  ) + [
+    'WHAT TO DO (addendum 2 item 9; addendum 3 items 10, 13 to 18)',
+    '1. Confirm each of relational, search, ladybug and duckpgq has exactly 20 stage-2 configurations with answers for every TUNE task of T1, T1x and T2, from the current facts. Score them exactly as stage 1 was scored (same scorer, content rule, sealed/grader/complexity.js). Keep outputs under sealed/grader/stage2/.',
+    '2. Selection, the same for every arm, over its 60 configurations (stage 1 plus stage 2): the highest primary on T1 TUNE; then, among configurations within one standard error of that best (use the standard error of the best), the lowest complexity; ties by lower median tokens, then by name. The floors choose among their 8 the same way. Write sealed/grader/selection.json with, per arm, the chosen configuration, the best configuration, both primaries, the standard error, the complexity, and the full ranked table.',
+    '3. Freeze each chosen configuration through the harness (run.js freeze --arm <arm> --config <...>) so results/frozen/ holds one file per arm (relational, search, ladybug, duckpgq, floor-dir, floor-co). Do NOT run anything on held-out.',
+    '4. Name the H1 graph arm: the graph engine arm (ladybug or duckpgq) whose frozen configuration has the higher T1 TUNE primary (tie: lower median tokens, then ladybug).',
+    '5. Tuning-set preview, clearly labelled optimistic: paired cluster bootstrap over commits (arms/common/compare.js, 10,000 resamples) of the primary on T1, T1x and T2 TUNE for: each graph arm against relational; the H1 graph arm and relational each against search, floor-dir and floor-co. Also recall at 2k and area under the curve for the same pairs.',
+    '6. Say for each frozen configuration whether it follows the shared specification (then two arms with the same parameters must give identical answers: check and report) or uses an engine-only mode; whether it uses the stored community prior; and its median tokens.',
+    '7. Questions on TUNE: scores for the four arms again after the fixes.',
+    'Return the frozen table, the H1 arm, the preview comparisons and plain-word observations.',
+    '',
+    'CONTEXT FROM EARLIER STEPS (self-reports; verify what you rely on)',
+    'stage-1 grader: ' + stage1,
+    'tuners: ' + tuners,
+  ].join('\n')
+}
+
+function pV(sel) {
+  return common(
+    'AUDIT OF SCORING AND SELECTION. Decide independently whether the frozen configurations were chosen by the written rule, on clean inputs, and whether the test is ready for its single held-out run.',
+    BUILD + '/audit/selection, ' + BUILD + '/tmp/audit-selection (read everything, change nothing outside these)',
+    'You are an auditor: you may read sealed/ and audit/. Never copy reference content into a folder an arm can read.'
+  ) + [
+    'CHECK',
+    '1. Scoring: write your own small scorer from addendum 2 section A (do not reuse arms/common/score.js) and score 40 TUNE T1 answers spread over all six arms and both stages; compare with the grader numbers.',
+    '2. Selection: recompute each arm choice from the grader tables under addendum 3 item 10 and addendum 2 item 9; confirm exactly 60 configurations per swept arm (40 plus 20) and 8 per floor, and that the frozen files match.',
+    '3. Tuner hygiene: results/tuner/ holds aggregates only (no per-task, per-commit or reference content); search each tuner transcript-independent evidence you can (file contents of arms/*/stage2.json and NOTES.md) for signs that another arm scores or sealed content was used; confirm no file under arms/ or results/ (outside results/frozen and results/tuner) contains scores.',
+    '4. Stage-2 correctness: for each stage-2 configuration that follows the shared specification, run 100 seeded random TUNE tasks of that arm against the reference arm (strict for relational, equivalence for the graph arms). For each new arm-only mode, redo the toy-graph hand check yourself.',
+    '5. Reproducibility of the frozen graph configurations: rebuild 3 stores from scratch for each graph arm and confirm the frozen configuration gives identical answers on 30 tasks (this covers the stored community prior).',
+    '6. Held-out discipline: no answer, result or score file anywhere has split heldout; try a held-out run of each arm WITHOUT its frozen hash and confirm refusal (do not run one with the right hash).',
+    '7. Fairness review in plain words: did any arm get an option the others were denied; is any arm frozen configuration visibly a weak choice against its own table (a strawman); does the relational arm have every specified mode the graph arms used; is the search arm a search a careful agent would actually run.',
+    '8. Engine-timing readiness: list what must be true before the quiet-machine timing (stores built, caches named, thread settings, client overhead separated) and whether it is.',
+    'Grade each defect: blocks the held-out run, biases a result, or minor. Set ready_for_heldout.',
+    '',
+    'GRADER SELF-REPORT (claims to verify): ' + sel,
+  ].join('\n')
+}
+
+const opts = (label, ph, schema, effort) => ({ label, phase: ph, schema, model: 'opus', effort: effort || 'high', agentType: 'general-purpose' })
+const brief = o => o ? JSON.stringify(o).slice(0, 6000) : 'NO RESULT (the agent failed)'
+
+phase('Fix')
+const a1 = await agent(pA1, opts('fix:harness+rerun', 'Fix', BUILD_SCHEMA))
+if (!a1) return { failed: 'harness fix returned nothing' }
+const [a2, a3] = await parallel([
+  () => agent(pA2L, opts('fix:ladybug', 'Fix', BUILD_SCHEMA)),
+  () => agent(pA2D, opts('fix:duckpgq', 'Fix', BUILD_SCHEMA)),
+])
+log('harness ' + a1.status.slice(0, 120) + ' | ladybug ' + (a2 ? a2.status.slice(0, 120) : 'FAILED') + ' | duckpgq ' + (a3 ? a3.status.slice(0, 120) : 'FAILED'))
+if (!a2 || !a3) return { harnessFix: a1, ladybugFix: a2, duckpgqFix: a3, failed: 'a graph arm fix returned nothing' }
+
+phase('Score 1')
+const g1 = await agent(pG1 + '\n\nFIXERS SELF-REPORTS (verify what you rely on)\nharness: ' + brief(a1) + '\nladybug: ' + brief(a2) + '\nduckpgq: ' + brief(a3), opts('grade:stage1', 'Score 1', GRADE1_SCHEMA))
+if (!g1 || !g1.gate_ok) {
+  log('stage-1 gate not passed: ' + (g1 ? g1.gate_detail.slice(0, 300) : 'grader failed'))
+  return { harnessFix: a1, ladybugFix: a2, duckpgqFix: a3, grade1: g1, stopped: 'gate' }
+}
+log('stage 1 scored; gate ok')
+
+phase('Tune')
+const tuners = await parallel([
+  () => agent(pTR, opts('tune:relational', 'Tune', BUILD_SCHEMA)),
+  () => agent(pTS, opts('tune:search', 'Tune', BUILD_SCHEMA)),
+  () => agent(pTL, opts('tune:ladybug', 'Tune', BUILD_SCHEMA)),
+  () => agent(pTD, opts('tune:duckpgq', 'Tune', BUILD_SCHEMA)),
+])
+const names = ['relational', 'search', 'ladybug', 'duckpgq']
+const tunersBrief = tuners.map((t, i) => names[i] + ': ' + (t ? JSON.stringify({ status: t.status, key_numbers: t.key_numbers, problems: t.problems }).slice(0, 2500) : 'NO RESULT')).join('\n')
+log('tuners done: ' + tuners.map((t, i) => names[i] + (t ? ' ok' : ' FAILED')).join(', '))
+
+phase('Select')
+const g2 = await agent(pG2(JSON.stringify({ leaderboard: g1.leaderboard, tq: g1.tq, observations: g1.observations, problems: g1.problems }).slice(0, 7000), tunersBrief), opts('grade:select', 'Select', SELECT_SCHEMA))
+
+phase('Audit')
+const v = g2 ? await agent(pV(JSON.stringify(g2).slice(0, 9000)), opts('audit:selection', 'Audit', AUDIT_SCHEMA)) : null
+log('selection ' + (g2 ? 'done' : 'FAILED') + ' | audit ' + (v ? ('ready_for_heldout=' + v.ready_for_heldout + ', defects ' + v.defects.length) : 'FAILED'))
+return { harnessFix: a1, ladybugFix: a2, duckpgqFix: a3, grade1: g1, tuners: { relational: tuners[0], search: tuners[1], ladybug: tuners[2], duckpgq: tuners[3] }, selection: g2, audit: v }

@@ -1,0 +1,135 @@
+  // ------------------------------------------------------------ section 4 (module "cases"): where real cases broke
+  // Replaces renderCellLegend (now draws the summary picture above the grid), renderGrid and renderCase.
+  // Every case, step, note and total is still here. The grid is turned on its side: the ten steps are named rows,
+  // the cases are narrow columns grouped by family.
+  var CASES_RANK = ['breaks', 'strains', 'not_specified', 'not_reached', 'works'];
+  var CASES_WORD = { works: 'worked', strains: 'strained', breaks: 'broke', not_specified: 'not specified', not_reached: 'not reached' };
+  var CASES_MEAN = {
+    works: 'The step did its job in that case.',
+    strains: 'The step held, under strain.',
+    breaks: 'The step failed in that case.',
+    not_specified: 'The design says nothing for this step.',
+    not_reached: 'The case never got to this step.'
+  };
+  function cases_short(k) { return String(LIMS.steps[k]).split(':')[0]; }
+  function cases_rest(k) { var s = String(LIMS.steps[k]), i = s.indexOf(':'); return i < 0 ? '' : s.slice(i + 1).trim(); }
+  function cases_mark(st, label) { return '<span class="ux-cases-mark m-' + st + '" role="img" aria-label="' + esc(label || STATUS_WORD[st]) + '"></span>'; }
+  function cases_famCases(f) { return CASES.cases.filter(function (c) { return c.family === f.id; }); }
+  function cases_stepKeys() { return Object.keys(LIMS.steps); }
+
+  // the sentences under "What it shows now" for the step summary
+  function cases_sumNow(T) {
+    var ks = cases_stepKeys(), N = CNT.cases;
+    var by = ks.map(function (k) { return { k: +k, n: T.breaks[k - 1] }; });
+    var top = by.slice().sort(function (a, b) { return b.n - a.n || a.k - b.k; });
+    var low = by.slice().sort(function (a, b) { return a.n - b.n || a.k - b.k; });
+    var nm = function (x) { return 'step ' + x.k + ', ' + cases_short(x.k).toLowerCase(); };
+    var s = [];
+    s.push('The ' + cases_short(top[0].k).toLowerCase() + ' step (step ' + top[0].k + ') broke in ' + num(top[0].n, 'M', 'int') + ' of the ' + num(N, 'M', 'int') + ' cases, the most of the ten steps.');
+    s.push('Next came ' + nm(top[1]) + ', with ' + num(top[1].n, 'M', 'int') + ', and ' + nm(top[2]) + ', with ' + num(top[2].n, 'M', 'int') + '.');
+    s.push('Fewest breaks: ' + nm(low[0]) + ', with ' + num(low[0].n, 'M', 'int') + ', and ' + nm(low[1]) + ', with ' + num(low[1].n, 'M', 'int') + '.');
+    s.push('The trigger step (step 2) broke in ' + num(T.breaks[1], 'M', 'int') + ' cases and was not specified in ' + num(T.not_specified[1], 'M', 'int') + '.');
+    return s;
+  }
+
+  // the sentences under "What it shows now" for the case grid
+  function cases_gridNow() {
+    var N = CNT.cases, per = function (c) { return c.steps.filter(function (s) { return s.status === 'breaks'; }).length; };
+    var five = CASES.cases.filter(function (c) { return per(c) >= 5; }).length;
+    var fam = CASES.families.map(function (f) { var cs = cases_famCases(f); return { f: f, avg: cs.reduce(function (a, c) { return a + per(c); }, 0) / cs.length, n: cs.length }; });
+    var hi = fam.slice().sort(function (a, b) { return b.avg - a.avg; })[0], lo = fam.slice().sort(function (a, b) { return a.avg - b.avg; })[0];
+    return [
+      num(five, 'M', 'int') + ' of the ' + num(N, 'M', 'int') + ' cases broke at five or more of the ten steps.',
+      'Cases in “' + esc(hi.f.name) + '” broke at ' + num(hi.avg, 'M', 'funnel') + ' steps on average, the most of any group.',
+      'Cases in “' + esc(lo.f.name) + '” broke at ' + num(lo.avg, 'M', 'funnel') + ', the fewest.'
+    ];
+  }
+
+  // The legend's job now: draw the step summary. (It keeps its old name so the page's start-up call reaches it.)
+  function renderCellLegend() {
+    var T = C.statusTotals(CASES.cases), ks = cases_stepKeys(), N = CNT.cases;
+    var h = '<div class="ux-cases-sum" data-tagged="M">';
+    h += '<h3 class="ux-cases-q">At which of the ten design steps did the cases break?</h3>';
+    h += '<p class="ux-cases-how"><b>How to read it.</b> Each bar is one design step. Its whole length is all ' + num(N, 'M', 'int') + ' cases. Broken cases count from the left, working cases from the right.</p>';
+    h += '<p class="ux-cases-now"><b>What it shows now.</b> ' + cases_sumNow(T).join(' ') + '</p>';
+    h += '<div class="ux-cases-keyrow" aria-hidden="true">' + CASES_RANK.map(function (s) { return '<span class="ux-cases-keyitem">' + '<i class="ux-cases-sw k-' + s + '"></i>' + esc(CASES_WORD[s]) + '</span>'; }).join('') + '<span class="ux-cases-keyhint">Bars run: broke, strained, not specified, not reached, worked.</span></div>';
+    h += '<div class="ux-cases-bars">';
+    ks.forEach(function (k) {
+      var i = +k - 1;
+      h += '<div class="ux-cases-brow" data-step="' + k + '">' +
+        '<div class="ux-cases-bl"><span class="ux-cases-sn">' + k + '</span><span class="ux-cases-bt"><b>' + esc(cases_short(k)) + '</b><span>' + esc(cases_rest(k)) + '</span></span></div>' +
+        '<div class="ux-cases-bar" role="img" aria-label="' + esc(cases_short(k) + ': ' + CASES_RANK.map(function (s) { return T[s][i] + ' ' + CASES_WORD[s]; }).join(', ')) + '">' +
+        CASES_RANK.map(function (s) {
+          var n = T[s][i]; if (!n) return '';
+          var label = n >= 7 ? n + '<span class="w"> ' + CASES_WORD[s] + '</span>' : (n >= 2 ? String(n) : '');
+          return '<i class="ux-cases-seg k-' + s + '" style="flex:' + n + ' 1 0" data-tip="' + esc(cases_short(k) + ': ' + n + ' of the ' + N + ' cases ' + CASES_WORD[s] + '.') + '">' + (label ? '<b>' + label + '</b>' : '') + '</i>';
+        }).join('') + '</div>' +
+        '<div class="ux-cases-br"><b>' + T.breaks[i] + '</b> broke</div></div>';
+    });
+    h += '</div>';
+    // the original totals table, kept for the exact numbers
+    var head = '<div class="cg-row ux-cases-th"><span class="cl">Judgment \\ step</span>' + ks.map(function (k) { return '<span class="ux-cases-thc" data-tip="' + esc('Step ' + k + ': ' + LIMS.steps[k]) + '"><b>' + k + '</b> ' + esc(cases_short(k)) + '</span>'; }).join('') + '</div>';
+    h += '<details class="ux-cases-nums"><summary>Show the numbers</summary>' +
+      '<div class="cg-tot" data-tagged="M" id="gridTotals"><div class="small" style="margin-bottom:4px"><b>Totals per step</b> ' + tagEl('M') + ' <span class="muted">(cells of the ' + CNT.cases + ' cases)</span></div>' + head +
+      C.STATUSES.map(function (s) { return '<div class="cg-row" data-status="' + s + '"><span class="cl">' + cases_mark(s) + ' ' + STATUS_WORD[s] + '</span>' + T[s].map(function (v) { return '<span class="num">' + v + '</span>'; }).join('') + '</div>'; }).join('') + '</div></details>';
+    h += '</div>';
+    $('#cellLegend').className = 'ux-cases-slot'; $('#cellLegend').innerHTML = h;
+  }
+
+  var LIMS_BY_CASE = {};
+  LIMS.items.forEach(function (it) { it.real.case_ids.forEach(function (cid) { var k = C.caseId(cid); (LIMS_BY_CASE[k] = LIMS_BY_CASE[k] || []).push(it.id); }); });
+
+  function renderGrid() {
+    var ks = cases_stepKeys();
+    var h = '<div class="ux-cases-gridbox" data-tagged="M">';
+    h += '<div class="ux-cases-gh"><h3 class="ux-cases-q">Where did each of the ' + num(CNT.cases, 'M', 'int') + ' cases break?</h3>';
+    h += '<p class="ux-cases-how"><b>How to read it.</b> Each column is one case, grouped by the kind of problem. Each row is a design step. Tap a column to read the case.</p>';
+    h += '<p class="ux-cases-now"><b>What it shows now.</b> ' + cases_gridNow().join(' ') + '</p></div>';
+    h += '<div class="ux-cases-top"><div class="ux-cases-scroll"><div class="ux-cases-gridwrap">';
+    // the step names, fixed at the left
+    h += '<div class="ux-cases-labels"><div class="ux-cases-lspace"><span>Design step</span><span class="muted">Case number →</span></div>' +
+      ks.map(function (k) { return '<div class="ux-cases-lab" data-tip="' + esc('Step ' + k + ': ' + LIMS.steps[k]) + '"><span class="ux-cases-sn">' + k + '</span><b>' + esc(cases_short(k)) + '</b></div>'; }).join('') + '</div>';
+    CASES.families.forEach(function (f) {
+      var cs = cases_famCases(f);
+      h += '<div class="ux-cases-fam" style="width:' + (cs.length * 20) + 'px"><div class="ux-cases-fh" data-tip="' + esc(f.covers) + '">' + esc(f.name) + '</div><div class="ux-cases-cols">';
+      cs.forEach(function (c, ci) {
+        var sts = {}; c.steps.forEach(function (s) { sts[s.step] = s.status; });
+        h += '<div class="ux-cases-col" role="button" tabindex="0" data-case="' + c.id + '" aria-label="' + esc(f.name + ', case ' + (ci + 1) + ': ' + c.title) + '"' + (ST.caseId === c.id ? ' aria-current="true"' : '') + '>' +
+          '<span class="ux-cases-n" data-label="1" data-tip="' + esc(c.title) + '">' + (ci + 1) + '</span>' +
+          ks.map(function (k) { return '<span class="ux-cases-c" data-tip="' + esc('Step ' + k + ', ' + cases_short(k) + ': ' + STATUS_WORD[sts[k]] + '. ' + c.title) + '">' + cases_mark(sts[k], cases_short(k) + ': ' + STATUS_WORD[sts[k]]) + '</span>'; }).join('') + '</div>';
+      });
+      h += '</div></div>';
+    });
+    h += '</div></div>';
+    // the legend, right beside the grid
+    h += '<div class="ux-cases-key"><h4>What the marks mean</h4>' + C.STATUSES.map(function (s) { return '<div class="ux-cases-ki">' + cases_mark(s) + '<span><b>' + esc(STATUS_WORD[s]) + '</b><br>' + esc(CASES_MEAN[s]) + '</span></div>'; }).join('') +
+      '<p class="ux-cases-ksn">' + rich(TX.sections.cases.ks_note) + '</p><p class="ux-cases-ksn">The agents that walked the cases set these judgments.</p></div>';
+    h += '</div></div>';
+    $('#cgrid').innerHTML = h;
+  }
+
+  function selectCase(id, scroll) {
+    ST.caseId = id;
+    renderCase();
+    if (scroll) document.getElementById('cases').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function renderCase() {
+    $$('#cgrid [data-case]').forEach(function (r) { r.setAttribute('aria-current', r.dataset.case === ST.caseId ? 'true' : 'false'); });
+    if (!ST.caseId) { $('#casebox').innerHTML = '<p class="muted ux-cases-pick">' + 'Tap a column in the grid to read the case.' + '</p>'; return; }
+    var c = CASE[ST.caseId], f = FAM[c.family], ci = cases_famCases(f).indexOf(c) + 1;
+    var h = '<div data-tagged="M" class="ux-cases-head"><span class="eyebrow">' + esc(f.name) + '</span> <span class="idchip" data-label="1">' + esc(c.id) + '</span><h3>' + esc(c.title) + '</h3></div>';
+    h += '<div data-tagged="M" class="stack ux-cases-body"><div class="ux-cases-two"><div class="stack"><p>' + esc(c.story) + '</p><p class="small muted">When: ' + esc(c.when) + '. Source: <span class="mono">' + esc(c.source) + '</span></p></div>';
+    h += '<div><h4 style="margin-bottom:6px">The entry, as it would have been written</h4><blockquote>' + esc(c.entry) + '</blockquote></div></div>';
+    h += '<div><h4 style="margin-bottom:4px">What happened at each of the ten steps?</h4><p class="ux-cases-how"><b>How to read it.</b> Each card is one design step of this case, with its mark and the walker’s note.</p>';
+    h += '<ul class="ux-cases-cards">' + c.steps.map(function (s) {
+      return '<li class="ux-cases-card j-' + s.status + '"><div class="ux-cases-ch">' + cases_mark(s.status) + '<span><b data-label="1">Step ' + s.step + ': ' + esc(cases_short(s.step)) + '</b><span class="ux-cases-jw">' + esc(STATUS_WORD[s.status]) + '</span></span></div>' +
+        (s.ks ? '<span class="kmark" data-tip="' + esc('The walk note for this step names the owner’s earlier knowledge-store design. That design is not the library mapped here.') + '">judged with the earlier design</span>' : '') +
+        '<p class="ux-cases-sd">' + esc(cases_rest(s.step)) + '</p><p class="ux-cases-note">' + esc(s.note) + '</p></li>';
+    }).join('') + '</ul></div>';
+    if (c.worked) h += '<p><b>Saving the walk saw or estimated.</b> ' + esc(c.worked) + '</p>';
+    var lims = LIMS_BY_CASE[c.id] || [];
+    if (lims.length) h += '<p class="small"><b>Limitations this case showed:</b> ' + lims.map(function (id) { return '<button type="button" class="linkbtn" data-golim="' + id + '">' + esc(LIM[id].title) + '</button>'; }).join('; ') + '</p>';
+    h += '<p class="small muted">' + esc(TX.sections.cases.numbers_tag) + ' ' + tagEl('M') + ' ' + tagEl('G') + '</p></div>';
+    $('#casebox').innerHTML = h;
+  }

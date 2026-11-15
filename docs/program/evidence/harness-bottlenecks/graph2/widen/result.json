@@ -1,0 +1,1354 @@
+{
+ "lanes": {
+  "graphify": {
+   "summary": "Graphify (now Graphify-Labs/graphify; PyPI graphifyy; v0.9.108 on 2026-11-12; 146,932 stars in about 7 months; Apache-2.0) builds a NetworkX property graph in two layers: a deterministic tree-sitter code layer (files, classes, functions, imports, calls, inheritance, SQL schema) and an optional model-read layer over docs, PDFs and images (concept nodes, rationale text, cross-document and doc-to-code edges). It is not temporal, not a TKG, not a graph database, and stores no summaries (a summaries RFC is unmerged). Query is lexical seed-finding (substring, trigram, IDF on labels) followed by breadth-first expansion cut at a 2,000-token budget; clustering is Leiden with Louvain fallback; a report file lists god nodes, surprising links and communities; an always-on CLAUDE.md block and advisory hooks tell the agent to query first. The 71.5x headline is a ratio of two estimates (whole 52-file corpus, about 123,488 tokens, mostly five PDFs, against about 1,726 tokens per graph answer, five generic questions), with no correctness check, run once by the maintainer in April 2026; the same corpus code-only gives 8.8x; a later contributor fix says it was never re-run. The README's lead numbers are for conversational memory (LOCOMO, LongMemEval), and the one code-agent number is 6 questions on ERPNext (82.0% vs 70.8%, no interval, harness not public). Independent measurements are mostly null or negative on code for a strong model, and the one clear positive is doc-versus-code questions, which is the model-read layer the owner's finished test did not include.",
+   "findings": [
+    {
+     "claim": "The 71.5x figure compares the whole 52-file corpus put in context (about 123,488 tokens, estimated as words x 4/3) with the average size of one graph-traversal answer (about 1,726 tokens) for five generic questions. No answer was graded and no selective-search baseline was used. On the same corpus, code only, the ratio is 8.8x.",
+     "evidence": "worked/karpathy-repos/review.md: corpus 52 files, about 92,616 words, 123,488 naive tokens; avg query 1,726; 71.5x; code-only 16,997 vs 1,929 tokens = 8.8x. graphify/benchmark.py computes corpus_words*100//75 and, if no word count is given, nodes*50. how-it-works.md lists 5.4x for a 4-file corpus and about 1x for a 6-file one and says six files already fit in a context window.",
+     "source": "https://github.com/Graphify-Labs/graphify/blob/v8/worked/karpathy-repos/review.md ; https://github.com/Graphify-Labs/graphify/blob/v8/graphify/benchmark.py ; https://github.com/Graphify-Labs/graphify/blob/v8/docs/how-it-works.md",
+     "how_measured": "By the maintainer, once, 2026-04-04; ratio of two token estimates (characters/4 for the answer, words x 4/3 for the corpus). No agent run; no correctness metric. The sibling httpx review is labelled an analytical simulation by a model without running code.",
+     "strength": "weak"
+    },
+    {
+     "claim": "The 71.5x was not re-run after the benchmark's answer-side counting was changed in v0.9.87, and the ratio is driven by the 2,000-token cap against a growing corpus. The project's own benchmark command still does not measure whether answers are right.",
+     "evidence": "PR 4348 (shipped v0.9.87 per maintainer): 'I did not re-run it because the corpus is not in the repo'; the benchmark's own output moved from 10.2x to 32.4x (requests), 10.8x to 113.3x (flask), 78.7x to 153.6x (pytest), 11.0x to 1,893.5x (django). Issue 4341 'graphify benchmark measures answer size but never whether the answer is right' is open.",
+     "source": "https://github.com/Graphify-Labs/graphify/pull/4348 ; https://github.com/Graphify-Labs/graphify/issues/4341",
+     "how_measured": "Contributor reran the project's benchmark script on four public repositories before and after a code fix.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Graphify's current README lead numbers (recall@10 0.497, QA 45.3%, LongMemEval-S 76%) are for conversational memory, not code. Graph expansion adds about 2.6 points over seed-only retrieval on 300 questions, within one binomial standard error (about 2.9 points, my arithmetic). The benchmark arm uses a local embedder and hybrid retrieval while the README says no embeddings. The harness (memory/, crosstool/) is not in the public repository.",
+     "evidence": "BENCHMARKS.md: LOCOMO n=300: graphify 45.3%, hybrid RRF 43.3%, dense 41.3%, BM25 31.3%, mem0 27.3%, supermemory 49.7%; seed-only ablation 42.7%. Judge Kimi K2.6, 90.6% agreement with a second judge, kappa 0.81. Repository tree at v8 (1,311 entries) has no crosstool or memory directory.",
+     "source": "https://github.com/Graphify-Labs/graphify/blob/v8/BENCHMARKS.md ; https://api.github.com/repos/Graphify-Labs/graphify/git/trees/v8?recursive=1",
+     "how_measured": "Maintainers' own harness with competitors run as adapters, shared model and grader, one repetition, key-fact coverage graded by a model.",
+     "strength": "weak"
+    },
+    {
+     "claim": "The only code-agent result in the project's materials is 6 questions on ERPNext (about 1M lines): key-fact coverage 82.0% with one graph tool vs 70.8% for grep and read, at about 140K tokens per query, Opus-class agent capped at 14 turns. No interval, no baseline token figure, harness not public.",
+     "evidence": "BENCHMARKS.md 'Results: code intelligence'. A difference of 11.2 points on 6 questions is about one question's worth (my arithmetic).",
+     "source": "https://github.com/Graphify-Labs/graphify/blob/v8/BENCHMARKS.md",
+     "how_measured": "Maintainers; fixed agent; key-fact coverage graded by a model; n=6.",
+     "strength": "weak"
+    },
+    {
+     "claim": "Independent retrieval check on 177 SWE-bench Lite issues: graphify's query_graph showed the right file first in 25% of cases (first 5: 38%, anywhere: 62%) against BM25 over .py files at 32% first, 64% in first 5, 92% in top 50.",
+     "evidence": "Issue 4341 tables, graphify 0.9.85, MCP defaults (BFS, depth 3, about 2,000 tokens), nine Python repositories each built at the commit of the issue; question = issue title; right answer = files the real fix changed.",
+     "source": "https://github.com/Graphify-Labs/graphify/issues/4341",
+     "how_measured": "Contributor rohit-jsfreaky; known-answer public benchmark; file localisation only, no agent.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Controlled agent benchmark (940 Claude Code runs, 105 tasks, one synthetic SaaS, 477 code files plus 139 design docs): on Sonnet 5 code tasks graphify changes nothing measurable (tokens +32k [-8k,+75k], accuracy 78% vs 84%; against a no-subagent baseline +107k [+38k,+180k] tokens). It helps a weak explorer (Haiku 4.5: -119k tokens [-245k,-12k], 82% vs 80%) and doc-and-code questions (Sonnet 5: 80% vs 70%, cost -0.084 USD [-0.180,-0.005]); in the planted doc-vs-code contradiction hunt it found 4 of 4 (F1 0.94) vs 2 of 4 (0.68).",
+     "evidence": "Author's caveats: one corpus, one repetition per task, intervals resample tasks, subagent tokens uncounted (inflates graphify cost on code tasks), affected/god-nodes/save-result/reflect called zero times, strict first-read block never fired in 45 runs. Graph v1 code-only: 2,545 nodes, 10,202 edges, 4.6 s, no model; v2 with doc extraction: about 7 USD of Sonnet subagent calls.",
+     "source": "https://github.com/ohta-rh/graphify-bench (README read in full)",
+     "how_measured": "Independent author; real headless agent sessions; set-F1 vs key, blind model judge, or hidden tests; bootstrap intervals over tasks; all transcripts published.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Smaller independent tests mostly show no session-level saving: two agents x 5 questions x 2 repos (tokens 79.6k vs 53.1k and 83.5k vs 62.1k, more tool calls, agent re-read files because 82% of nodes and edges had no source line, one fabricated line citation); six production feature sessions (cost 60.28 vs 47.83, 25.60 vs 27.06, 10.55 vs 12.85 USD per round, blind quality 44/50 vs 45/50, 46 grep calls vs 18 graphify calls); a 60-session audit with 0 graph calls and about 1,500 ignored hook reminders; a V-library 8-question test with 67.5 vs 68.5 of 69 items and 361k vs 414k weighted input tokens.",
+     "evidence": "Issues 3307/3308 (graphify 0.9.53); KubeBlogs three-round study (n=1 per arm per round; arm-to-cost mapping inferred by the page reader); rentierdigital 14-day audit of two projects; quaesitor-scientiam PR 100 (two runs per tool, blind key).",
+     "source": "https://github.com/Graphify-Labs/graphify/issues/3307 ; https://www.kubeblogs.com/graphify-claims-71-5x-fewer-tokens-we-tested-it-on-real-production-work/ ; https://rentierdigital.xyz/blog/claude-code-knowledge-graph-audit-failed ; https://github.com/quaesitor-scientiam/graphify/pull/100",
+     "how_measured": "Third parties; small n, mostly single runs; authors call them directional or anecdotal.",
+     "strength": "weak"
+    },
+    {
+     "claim": "The query engine is lexical seed-finding plus graph expansion, not graph-native ranking: nodes scored by substring, trigram and IDF match on labels and paths; top few become seeds; BFS or DFS to a depth with a token cut; the skill adds a model-run vocabulary-expansion step because the engine has no stemming, synonyms or cross-language match. No embeddings or personalised PageRank in the query path.",
+     "evidence": "serve.py functions _score_query, _pick_seeds, _bfs, _subgraph_to_text, _query_graph_text; references/query.md Step 0.",
+     "source": "https://github.com/Graphify-Labs/graphify/blob/v8/graphify/serve.py ; https://github.com/Graphify-Labs/graphify/blob/v8/graphify/skills/claude/references/query.md",
+     "how_measured": "Read the current source; not executed.",
+     "strength": "strong"
+    },
+    {
+     "claim": "Graph type: NetworkX multigraph saved as node-link JSON with arc-order direction, hyperedges in a side list, node file_type in {code, document, paper, image, rationale, concept}, edge confidence EXTRACTED (1.0) / INFERRED (0.55 to 0.95 rubric) / AMBIGUOUS (0.1 to 0.3). Cross-file code edges from the parser's resolver are tagged INFERRED. No validity intervals, no history, no invalidation through the graph; cache invalidation is per file by content hash (plus extraction-prompt hash for model results). Temporal sub-suite in the benchmark is 689 separate weekly AST snapshots with only node and edge counts reported. Summaries exist only as an unmerged RFC.",
+     "evidence": "ARCHITECTURE.md, how-it-works.md, extraction-spec.md, node-summaries-rfc.md; search of serve.py, report.py, README and ARCHITECTURE for valid-from, as-of, bitemporal, invalidation found only cache comments.",
+     "source": "https://github.com/Graphify-Labs/graphify/blob/v8/ARCHITECTURE.md ; https://github.com/Graphify-Labs/graphify/blob/v8/docs/how-it-works.md ; https://github.com/Graphify-Labs/graphify/blob/v8/docs/node-summaries-rfc.md",
+     "how_measured": "Read source and docs.",
+     "strength": "strong"
+    },
+    {
+     "claim": "What an installed agent is told to do: run graphify query before the first grep or source read, read raw files only for located lines, read the report only for broad review, run graphify update after edits. On Claude Code and Gemini CLI an advisory PreToolUse hook nudges (capped at 5 per session); strict mode denies the first raw Read/Grep once per session unless a graph query occurred in the last 30 minutes. Other platforms get an instruction file only. Measured behaviour: advisory text was often ignored.",
+     "evidence": "always_on/claude-md.md, skills/claude/references/hooks.md, README 'Make your assistant always use the graph'; behavioural counts in graphify-bench, KubeBlogs and the 60-session audit.",
+     "source": "https://github.com/Graphify-Labs/graphify/blob/v8/graphify/always_on/claude-md.md ; https://github.com/Graphify-Labs/graphify/blob/v8/README.md",
+     "how_measured": "Read source; behaviour from third-party counts.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Build and data cost: code is parsed locally at zero model tokens (4.6 s for 477 files in the independent bench). Every uncached non-code file is read in full by a model: about 7 USD of Sonnet subagents for 139 markdown files (261k words) in the independent bench; a blog reports about 240k tokens (range 200k to 280k) for a 140-file project and about 40k for a 3-file update, and that graphify's own cost tracker reported zero. No published figure for a 1,000-file mixed repository. Code never leaves the machine; documents, PDFs and images go to the host model or the configured backend (Kimi routes to Moonshot servers in China); no telemetry; local query log unless disabled; Cloud is hosted by the vendor.",
+     "evidence": "README Privacy section; how-it-works.md three passes; graphify-bench graph v1/v2 lines; exchangepedia build-cost section.",
+     "source": "https://github.com/Graphify-Labs/graphify/blob/v8/README.md ; https://github.com/ohta-rh/graphify-bench ; https://exchangepedia.com/articles/graphify-honest-benchmark-real-codebase.html",
+     "how_measured": "Maintainer statements plus two third-party builds; no controlled cost study.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Adoption and project facts: 146,932 stars, 14,093 forks, 423 watchers, 1,639 open issues and pull requests; created 2026-04-03; roughly one release per day (v0.9.108 on 2026-11-12, 276 PyPI releases); Apache-2.0; Python 3.10 to 3.14; wheel 1.9 MB, sdist 3.4 MB; core deps networkx, numpy, rapidfuzz, pyyaml, tree-sitter plus about 25 grammars. The organisation sells a hosted product (Graphify Cloud, claims '80% fewer tokens' with no stated method) and the founder sells a book; the README is partly marketing. Star count is attention and adoption, not an effect size.",
+     "evidence": "GitHub API repo, releases, contributors; PyPI JSON; pyproject.toml; README banners.",
+     "source": "https://api.github.com/repos/Graphify-Labs/graphify ; https://pypi.org/pypi/graphifyy/json ; https://www.graphify.com/llms.txt",
+     "how_measured": "Read from live API on 2026-11-13.",
+     "strength": "strong"
+    }
+   ],
+   "what_it_means_for_the_test": [
+    "The contrast 'our experiments failed but graphify looks good' is not like for like. Graphify's lead numbers are a whole-corpus-in-context baseline with no correctness check (71.5x), a conversational-memory task (LOCOMO), and 6 questions on one repository (ERPNext). Its independent controlled code results are mostly null or negative on a strong model, which agrees with the finished test (typed store slightly better than scripted search; graph-native step +0.015 with an interval including zero).",
+    "The owner is right that the finished test left out the one layer graphify adds: model-read meaning over documents, doc-to-code links, and an always-on pointer. The only independent positive result found (doc-versus-code questions, Sonnet 5 80% vs 70%, contradiction hunt 4 of 4 vs 2 of 4, from graphify-bench) sits in that layer. A next test should include a model-extracted doc-and-code layer, with its build cost counted, and an agent in the loop.",
+    "The owner's 31-token versus 695-token answer-size comparison is the same kind of quantity as graphify's token-reduction ratio, and is subject to the same limitation: it says nothing about whether an agent given a typed query program finds the right query to ask. The independent agent runs show the dominant cost is behaviour (agents ignore the tool, re-read files after a graph answer), so an agent-in-the-loop arm with usage counted across subagents is what would separate the claims.",
+    "Graphify is not a temporal knowledge graph: no validity intervals, no history, per-file hash caching. Nothing in its evidence speaks for or against temporal knowledge graphs. If temporal graphs are to be tested, graphify cannot serve as the evidence or as a stand-in arm; the closest in-graph time signal in the owner's graph is git co-change, which graphify lacks (open PR only).",
+    "Graphify's retrieval is lexical seeds plus breadth-first expansion; its code layer is a parser-built typed graph, the same family as the tested graph. An established-tool arm for the next round could be graphify run as shipped (code layer, then with doc extraction) against the same tasks, scored for correctness, with the same agent and with usage counted across subagents. Its `affected` command is the direct analogue of the changed-file recall task, and no public measurement of it exists (graphify-bench called it zero times).",
+    "Score for correctness in any graphify arm: the project's own benchmark command measures only answer size, and the maintainers' tracker has an open request to add correctness. Use known-answer sets (the owner's held-out commits; a SWE-bench-style localisation check as in issue 4341) so a smaller answer cannot be mistaken for a better one."
+   ],
+   "could_not_verify": [
+    "The memory/ and crosstool/ harnesses behind the README numbers are not in the public repository; the ERPNext questions, keys and baseline token counts could not be read, so 82.0% vs 70.8% cannot be reproduced.",
+    "What the graph contains in the LOCOMO and LongMemEval arms, and why a local embedder and hybrid retrieval are used when the README says no embeddings and no vector store.",
+    "Any independent reproduction of 71.5x on the Karpathy corpus; none found, and the maintainers' later benchmark fix says the old figure was not re-run.",
+    "Whether the 146,932 stars are organic; not investigated, no evidence either way.",
+    "Whether graphify extracts code-to-table read and write edges (it advertises SQL schema, foreign keys and joins).",
+    "Installed size on disk; the model-token cost of building a 1,000-file mixed repository (only two third-party data points for about 140 files); the behaviour and method of the hosted Graphify Cloud and its '80% fewer tokens' claim; undisclosed network calls (code not audited).",
+    "The dev.to review returned 404; model names such as 'Sonnet 5' and 'Opus 5.5' in third-party write-ups could not be confirmed. I did not run graphify; all figures are readings of sources, except my own arithmetic (binomial standard error about 2.9 points at n=300; six-question sensitivity; words-to-token estimates)."
+   ]
+  },
+  "temporal": {
+   "summary": "A temporal knowledge graph gives an agent nothing that one snapshot per commit cannot answer about a past state. The snapshot at commit K is the \"as of K\" view. What an interval store adds is economy, cross-time questions in one pass, and one real primitive: a derived conclusion that carries the set of facts it rests on and stays valid until one of them changes. That primitive is the build-systems idea (verifying traces, early cutoff), not a knowledge-graph novelty. The owner is right that the finished test never tried cached conclusions, because its facts were parser-extracted and cost no model tokens. He is wrong that published temporal-graph results are evidence for the code case. They are conversation-memory benchmarks, mostly self-reported, against a full-context baseline. The one independent benchmark of contradictory updates (MemoryAgentBench) ranked Zep lowest of all methods tried. The independent code-agent evidence on cached conclusions is negative or flat. I found no controlled study that caches LLM-made conclusions about code, invalidates them by dependency, and measures agent tokens and success. That gap is where the next test should go.",
+   "findings": [
+    {
+     "claim": "Zep's headline result is a context reduction against a full-conversation baseline, with a modest accuracy gain, and no plain-RAG row.",
+     "evidence": "LongMemEval (about 115k tokens per conversation): average context 1.6k tokens against 115k (about 72 times fewer). Accuracy 63.8% against 55.4% (gpt-4o-mini) and 71.2% against 60.2% (gpt-4o), i.e. +8.4 and +11.0 points. The paper's '15.2%' and '18.5%' are relative gains. Latency 3.2 s against 31.3 s, but Zep's figure includes a laptop-to-AWS network hop the baseline did not have. Knowledge-update, the category closest to invalidation: 76.9% to 74.4% (gpt-4o-mini, a drop) and 78.2% to 83.3% (gpt-4o). The authors call the DMR benchmark inadequate because conversations fit in context.",
+     "source": "https://arxiv.org/abs/2501.13956 (HTML read); independent review https://github.com/lhl/agentic-memory/blob/main/ANALYSIS-arxiv-2501.13956-zep.md (read)",
+     "how_measured": "By Zep's own authors, Dec 2024 to Jan 2025, gpt-4o as judge, baseline = whole conversation in context. No measured precision or recall for contradiction detection.",
+     "strength": "weak to medium"
+    },
+    {
+     "claim": "Even in the memory vendors' own tables, memory systems trade a few judge points for large token and latency savings against full context, and the vendors dispute each other's numbers.",
+     "evidence": "Mem0 paper on LoCoMo (about 26,031 tokens per conversation): full context 72.90 judge score; Mem0g 68.44 at 3,616 context tokens; Mem0 66.88 at 1,764 tokens; Zep 65.99 at 3,911 tokens; best plain RAG 60.97. p95 total latency: Mem0 1.44 s, Zep 2.93 s, full context 17.1 s. Mem0 reports a stored Zep graph of over 600k tokens per conversation against 26k raw. Zep replies with a corrected 75.14 +/- 0.17 and says Mem0 mis-ran Zep (timestamps in text, wrong user role, sequential searches); it also says full context scores about 73%. Mem0's re-run put Zep at 58.44% (secondary report, not read at source). No resolution found.",
+     "source": "https://arxiv.org/abs/2504.19413 (HTML read); https://www.getzep.com/blog/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/ (read)",
+     "how_measured": "Self-run by each vendor, LLM judge, 10 runs for Mem0's table, baselines full context and RAG at several chunk sizes.",
+     "strength": "weak"
+    },
+    {
+     "claim": "The benchmarks behind the memory-system numbers are themselves unreliable, and a grep-style agent matched or beat the graph memories on their own benchmark.",
+     "evidence": "LoCoMo audit: 99 of 1,540 answer-key entries (6.4%) wrong, so the ceiling is about 93.6%; the judge accepted 62.81% of deliberately vague on-topic wrong answers and 10.61% of specific wrong answers. LoCoMo and LongMemEval both fit in current context windows. Letta's agent with grep, search_files, open and close scored 74.0% on LoCoMo with gpt-4o-mini against the 68.5% Mem0 reported for its best graph variant.",
+     "source": "https://penfieldlabs.substack.com/p/we-audited-locomo-64-of-the-answer ; https://github.com/dial481/locomo-audit ; https://www.letta.com/blog/benchmarking-ai-agent-memory (all read)",
+     "how_measured": "Audit by an unnamed or lightly identified author with no independent confirmation found; Letta result by a competing memory vendor.",
+     "strength": "weak to medium"
+    },
+    {
+     "claim": "Independent evidence on contradictory updates is poor for memory systems that use an LLM to invalidate.",
+     "evidence": "MemoryAgentBench FactConsolidation (newer fact must win, contexts 6k to 262k tokens, 100 questions per variant), single-hop / multi-hop accuracy in percent: GPT-4o long context 60/5; HippoRAG-v2 54/5; BM25 48/3; Cognee 28/3; MemGPT 28/3; Mem0 18/2; GraphRAG 14/2; Zep 7/3. All methods at most 7% on multi-hop. Caveats: recency is encoded as a serial number in the text, not as the timestamp field Zep expects; the paper does not describe vendor-recommended configuration or explain the low scores.",
+     "source": "https://arxiv.org/html/2507.05257v2 (read; UC San Diego, ICLR 2026 poster)",
+     "how_measured": "Independent group, same backbone (gpt-4o-mini) and same chunk size across memory agents, long-context and plain-retrieval baselines.",
+     "strength": "medium"
+    },
+    {
+     "claim": "In Graphiti's code, invalidation is decided by a small LLM over embedding-similar candidates, with no semantic check afterwards.",
+     "evidence": "A new fact is embedded; duplicate candidates are limited to the same two endpoints, but contradiction candidates are any semantically close edge in the group; a 'small' model returns index lists of duplicates and contradictions; invalid_at on the older fact is set to the new fact's valid_at only when windows overlap and the older started earlier; candidates with a missing date are skipped; out-of-range indices are logged and ignored. The README states temporal facts, episodes, hybrid retrieval, Neo4j, FalkorDB, Neptune and a deprecated Kuzu driver, 32.8k stars, Apache-2.0, no retrieval benchmark of its own, and warns that smaller models may cause ingestion failures.",
+     "source": "https://raw.githubusercontent.com/getzep/graphiti/main/graphiti_core/utils/maintenance/edge_operations.py ; https://github.com/getzep/graphiti (both read 2026-11-13)",
+     "how_measured": "Reading current source and README. Stars are adoption, not effect.",
+     "strength": "strong for what the code does; says nothing about how accurate it is"
+    },
+    {
+     "claim": "Independent code-agent evidence on cached or summarised conclusions is negative or flat.",
+     "evidence": "VibeMemBench (111 targets, 90 repositories, executable tests, matched memory-off baselines): 11 of 12 pairings of solver and memory system (Mem0, SimpleMem, MemoryOS, A-MEM) did not beat memory off, e.g. deepseek-v4-pro 67.1% off against Mem0 62.8% (-4.3 points); 160 of 231 failures were in the form of the stored record, not retrieval. ETH AGENTS.md study (138 instances, 300 SWE-bench Lite tasks, 4 agent and model pairs): LLM-written repository context files changed resolution by -0.5% and -2% (not significant) and raised cost about 20% to 23% (significant); repository overviews did not help find the files. SWE Context Bench (99 related tasks): resolution no experience 26.26%, oracle summary reuse 34.34%, free summary reuse 22.22% (below baseline); cost per instance $0.79 none, $0.77 oracle summary, $0.85 free summary. None of the three studies staleness.",
+     "source": "https://arxiv.org/html/2609.23570 ; https://arxiv.org/html/2602.11988 ; https://arxiv.org/html/2602.08316v1 (all read)",
+     "how_measured": "Resolution by executable tests against a no-memory or no-context baseline; cost from agent logs. Python-heavy, small n, one sample per instance in the ETH study.",
+     "strength": "medium to strong"
+    },
+    {
+     "claim": "The only code-specific token-saving number for a graph-plus-index layer is self-reported, small, and comes with a resolution drop it cannot resolve.",
+     "evidence": "ContextSniper (not temporal): 50 SWE-bench Lite tasks per host agent. OpenClaw: tokens 1.36M to 0.66M per task (-51.5%), cost -36.4%, resolution 26.0% to 24.0%. Claude Code: tokens -38.9%, cost $15.09 to $10.97, resolution 32.0% to 30.0%. No confidence intervals; authors say repair-success conclusions are not firm. It keeps the index fresh with hooks and by reconciling against the working tree with repository diffs.",
+     "source": "https://arxiv.org/html/2607.01916v1 (read)",
+     "how_measured": "By the tool's own authors against each host agent's default tools.",
+     "strength": "weak to medium"
+    },
+    {
+     "claim": "Temporal-validity results on code are single-author or small-benchmark and use facts already in triple form, which removes the hard extraction step.",
+     "evidence": "MemStrata (deterministic supersession of (subject, relation, object) triples): 130 clean transitions mined from 707 SWE-bench issues; accuracy 0.91 against 0.57 to 0.59 for plain RAG; plain RAG served the superseded value 36 to 38% of the time, MemStrata about 0%. Only about 18% of real fixes were clean transitions. VersionRAG (versioned documents): 90% against 58% (plain RAG) and 64% (GraphRAG) on the authors' own 100 questions; 97% fewer indexing tokens than GraphRAG. AgenticSZZ (temporal graph of commits for bug-inducing commit search): F1 0.47 to 0.79, up to 34% over prior methods; a history-forensics task, not context retrieval.",
+     "source": "https://arxiv.org/abs/2608.20685 ; https://arxiv.org/abs/2606.26511 ; https://arxiv.org/abs/2510.08109 ; https://arxiv.org/abs/2602.02934 (abstracts read)",
+     "how_measured": "Authors' own benchmarks; baselines plain RAG, RAG with LLM reranker, GraphRAG.",
+     "strength": "weak"
+    },
+    {
+     "claim": "Dependency-tracked caching with early cutoff is the well-understood, production-proven form of 'cached conclusions with invalidation', and Glean is the nearest existing design to facts valid per file with derived facts that carry their dependencies.",
+     "evidence": "Skyframe: bottom-up invalidation, change pruning when a rebuilt value is unchanged, unregistered dependencies cause incorrect incremental builds. Salsa: per-input changed-revision, backdating, durability. rustc red-green: result-hash comparison stops propagation. Glean: facts labelled by unit, stacked databases hide changed units, ownership propagates so no visible fact points to a hidden one, a derived fact is visible only when all its sources are; about 2 to 3% indexing overhead for Python, about 7% larger database, typical queries under 10% slower, incremental derivation only for some query kinds. Cursor re-embeds only chunks under changed Merkle-tree branches and caches embeddings by chunk content.",
+     "source": "https://bazel.build/reference/skyframe ; https://salsa-rs.github.io/salsa/reference/algorithm.html ; https://rustc-dev-guide.rust-lang.org/queries/incremental-compilation.html ; https://glean.software/blog/incremental ; https://cursor.com/blog/secure-codebase-indexing (all read); trace-type definitions from slides https://www.sambuz.com/doc/build-systems-ppt-presentation-809664",
+     "how_measured": "Documentation and engineering posts by the systems' builders; Glean's overhead numbers are Meta's own. No agent-token measurements in any of them. The Build Systems a la Carte PDF could not be read.",
+     "strength": "strong as engineering description; no token evidence"
+    },
+    {
+     "claim": "graphify, the tool the owner cites, is not a temporal graph and its published benchmarks are self-reported on small samples, mostly conversation memory.",
+     "evidence": "README: tree-sitter parsing with no model for code, model pass for documents and images, edges tagged EXTRACTED or INFERRED, incremental re-extraction of changed files, git hooks, no validity or history model. Its stated benchmarks: LoCoMo n=300 recall at 10 of 0.497 against Mem0 0.048; LongMemEval-S n=50 76% accuracy tied with dense RAG; ERPNext n=6 82.0% key-fact coverage against 70.8% for grep and read. The '80%' token figure appears only in cloud-product promotion with no baseline. 146.9k stars is adoption, not effect.",
+     "source": "https://github.com/safishamsi/graphify (README read 2026-11-13); BENCHMARKS.md not read",
+     "how_measured": "Self-reported by the project; judge blind-validated against a second judge (90.6% agreement, kappa 0.81) per README.",
+     "strength": "weak"
+    },
+    {
+     "claim": "A full rebuild of the facts is cheap in this repository, so caching deterministic extraction saves seconds, not tokens; the only place token saving could come from is cached conclusions that are expensive to derive.",
+     "evidence": "190 per-parent builds: median 10,847 edges, p50 5.3 s per build with three concurrent (4.5 to 7 s alone), 778 MB total (about 4.1 MB per commit), byte-identical on rebuild, cache keyed on commit plus an extractor version hash. Typed query 31 tokens against about 695 tokens for scripted search on the structured questions (from the task description).",
+     "source": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/build-b/facts-NOTES.md (read); task description",
+     "how_measured": "The finished test's own build log; per-kind token numbers in build-e/result.json were not re-read in this lane.",
+     "strength": "strong (own measurement)"
+    }
+   ],
+   "what_it_means_for_the_test": [
+    "Do not cite published temporal-graph numbers as support for the code case. They compare to full context on chat transcripts and are mostly vendor-reported; the independent tests (MemoryAgentBench, VibeMemBench, the ETH AGENTS.md study) do not show those systems or LLM-written summaries helping on updates or repository tasks.",
+    "The owner's cached-conclusions idea is untested by the finished test, not refuted by it. The finished test used deterministic parser facts that cost no tokens, so there was nothing expensive to cache. State that plainly in any report.",
+    "Run the smallest honest test in two steps, no model first. Test 1: replay the 190 existing per-commit snapshots; for the 50 structured questions plus about 200 mechanically generated ones, record each answer's dependency set, apply policies (no cache, whole-repo, file-hash, fact-level, fact-level with early cutoff, mtime-style) and compare with the answer recomputed at the next commit. Report stale-served rate (must be zero), avoidable-recompute rate, and hit rate by age. Test 2: price the hits using the measured 695 versus 31 tokens on the 75 held-out commits to get an upper bound on saving, and compare it with the session's total token cost.",
+    "Only if Test 1 and Test 2 are positive, run an agent pilot of 24 to 30 fix commits with four matched arms: grep, grep plus typed queries on the current snapshot, plus cached conclusions with invalidation, and plus the same cached conclusions with no invalidation as the stale control. Score tests passed and total tokens including prompt-prefix re-reads. Score stale uses as wrong and treat the result as a pilot.",
+    "Put the cache key (commit, extractor version, query-program version, and for any model-made conclusion the model and prompt version) in the protocol, record negative dependencies ('no other caller') explicitly, and handle the uncommitted working tree by content hash or diff, since commits form a DAG and an agent's edits match no snapshot.",
+    "Add deterministic validity checks where they are free: close a doc-to-file citation edge when the target file disappears. The earlier research recorded 517 of 1,268 backticked file names in docs that do not resolve."
+   ],
+   "could_not_verify": [
+    "The Build Systems a la Carte paper text (the PDF was unreadable through the fetch tool); early-cutoff and trace-type definitions rest on the authors' slides and on Bazel, Salsa and rustc documentation. GHC recompilation-avoidance documentation was not read.",
+    "Mem0's re-run of Zep at 58.44% and the original GitHub issue, seen only in search summaries; no resolution of the Mem0 and Zep dispute found.",
+    "Whether MemoryAgentBench configured Zep, Mem0 and Cognee as their vendors recommend, and why they scored low; the paper does not say, and recency was encoded as serial numbers in text rather than Zep's native timestamps.",
+    "Bodies of DreamBench-SWE (stale-suppression design), KCoEvo, the two agent-memory surveys, CoCC, DocPrism, RepoAgent and DocAgent; cited from abstracts or search summaries only. VibeMemBench's last 19k characters were not read and the authors' independence from the four systems' vendors was not stated in what I read.",
+    "Any independent evaluation of Graphiti or Zep as a coding-agent memory: one search found none, and absence of results is not proof of absence.",
+    "Any controlled study that caches LLM-made conclusions about code, invalidates by dependency and measures agent tokens and success: two extended searches found only neighbours.",
+    "Star counts for graphify differed across sources (3.7k, 41.6k, 88k, 146.9k); only the README figure as fetched is reported. graphify's BENCHMARKS.md was not read.",
+    "Per-kind token numbers of the finished test's structured questions (31 against 695 tokens comes from the task description), and whether dependency recording is feasible in all three engines (specified for the in-memory reference only)."
+   ]
+  },
+  "graphrag": {
+   "summary": "Graph-plus-summary retrieval (GraphRAG and relatives) was built for whole-corpus questions over prose. Independent benchmarks show small and inconsistent gains on ordinary QA, losses on single-fact lookup, and mostly higher query tokens and 10-1000x indexing cost. For coding agents there is no rigorous evidence for community detection plus LLM summaries; the evidence that exists concerns parser-built structural graphs (helpful for small models, modest for frontier models, tied with grep in two tiny tests). The owner is right that the finished test never covered model-extracted meaning, summaries, orientation questions, or an agent in the loop, and that the single study excluding model-extracted graphs is weak (45 questions, one author, one repo carries the whole effect, thin LLM-graph design). He is not supported on two points: star counts are adoption not effect, and Graphify (about 147k stars) builds its code graph with a deterministic tree-sitter parser, so its popularity says nothing for model-extracted code graphs. Full notes are in the notes file.",
+   "findings": [
+    {
+     "claim": "Graphs with summaries help on whole-corpus sensemaking, as measured by their own authors, but the judging method is biased and most of the lift comes from summarising everything rather than from the graph.",
+     "evidence": "GraphRAG: 72-83% win rate on comprehensiveness vs vector retrieval (podcast), 72-80% (news), 62-82% on diversity; vs map-reduce over raw text (no graph) only 'small, consistent gains' except at root level. Corpora about 1M tokens, 125 questions each. Root-level summaries used about 2.5% of the query tokens of map-reduce over raw text (not vs vector retrieval). Indexing about 281 min with gpt-4-turbo.",
+     "source": "https://arxiv.org/html/2404.16130",
+     "how_measured": "Authors' own benchmark; LLM judge, 5 repeats per pair; baselines vector RAG (SS) and source-text map-reduce (TS)",
+     "strength": "medium"
+    },
+    {
+     "claim": "The LLM-judge protocol used in GraphRAG and LightRAG evaluations is badly biased; corrected numbers shrink or reverse the claimed gains.",
+     "evidence": "A method compared with itself got 90 vs 10% depending on answer order; a 25-token length difference on ~200-token answers moved win rates over 50 points. LightRAG vs plain RAG (Agriculture) fell from the reported 66.70% to 39.06% after correction; LightRAG vs MGRAG 56.38% to 32.33%. Also GPT-4o picked the first-shown summary 97-100% in some comparisons in the RAG-vs-GraphRAG study.",
+     "source": "https://arxiv.org/html/2506.06331 ; https://arxiv.org/html/2502.11371v4",
+     "how_measured": "Independent re-evaluation with order-swapped, length-controlled judging and self-comparison sanity checks",
+     "strength": "medium to strong"
+    },
+    {
+     "claim": "On single-fact and detail questions plain retrieval ties or beats graph methods in every independent benchmark read; graphs help on multi-hop, temporal and summary-style questions, and only some graph methods do.",
+     "evidence": "NQ F1: plain RAG 64.78, Community-local 63.01, Community-global 54.48, triple-only KG 34.28 (Llama-3.1-8B). MultiHop-RAG accuracy: RAG 67.02, Community-local 69.01, HippoRAG2 70.27; temporal questions RAG 30.70 vs about 50 for graph methods; null questions RAG 96.01 vs Community-global 19.27. GraphRAG-Bench (Novel) fact retrieval RAG-rerank 60.92 vs MS-GraphRAG 49.29; complex reasoning 42.93 vs 50.93 (MS-GraphRAG) and 53.38 (HippoRAG2); Medical: MS-GraphRAG below plain RAG on all task types (e.g. 38.63 vs 64.73 on fact retrieval) while HippoRAG2 is at or above. Microsoft's own docs recommend Basic (vector) search where it suffices.",
+     "source": "https://arxiv.org/html/2502.11371v4 ; https://arxiv.org/html/2506.05690v3 ; https://microsoft.github.io/graphrag/",
+     "how_measured": "Independent benchmarks with one protocol across methods; accuracy/F1 per task type; Llama-3.1-8B and 70B readers (2502.11371), GPT-4o-mini (2506.05690)",
+     "strength": "strong"
+    },
+    {
+     "claim": "On textbook QA, graph methods give gains under 2 points over plain keyword search and half of them are at or below it, with a no-retrieval floor only about 1 point below BM25.",
+     "evidence": "Average accuracy: BM-25 71.66, TF-IDF 71.71, no retrieval 70.68; RAPTOR 73.58, HippoRAG 72.64, GraphRAG 72.50, GFM-RAG 72.10, KGP 71.86, ToG 71.71, LightRAG 71.22, G-Retriever 69.84, DALK 69.30. All graph methods hurt math. Construction tokens: RAPTOR 10.1M, KG methods about 33M, GraphRAG 79.9M, LightRAG 83.9M.",
+     "source": "https://arxiv.org/html/2506.02404v3",
+     "how_measured": "Independent benchmark (16 disciplines, 20 textbooks), GPT-4o-mini, nine methods vs BM-25/TF-IDF/no-retrieval",
+     "strength": "strong on headline, medium on generality"
+    },
+    {
+     "claim": "Gains are in answer quality, not tokens: query-time tokens are mostly higher than plain retrieval, indexing is much higher, and a token-matched plain-RAG control erased most of the gain in one benchmark.",
+     "evidence": "Per-query tokens: vanilla RAG 879; HippoRAG2 1,008; RAPTOR 3,441; MS-GraphRAG local 38,707; LightRAG 100,832; MS-GraphRAG global 331,375. Community-GraphRAG retrieved 9,770 vs 3,631 tokens (MultiHop-RAG). Token-matched RAG scored 71.01 vs 71.17 for GraphRAG (70B reader, MultiHop-RAG). Construction time 135 s (RAG) vs 5,560 s (Community-GraphRAG). HippoRAG 2 indexing 9.2M input tokens vs 115.5M (GraphRAG) and 68.5M (LightRAG) on an 11.6k-passage corpus. Total tokens on LongBench-v2: RAG 32.9M, RAPTOR 85.9M, HippoRAG2 220.6M.",
+     "source": "https://arxiv.org/html/2506.05690v3 ; https://arxiv.org/html/2502.11371v4 ; https://arxiv.org/html/2502.14802",
+     "how_measured": "Independent token counting per query and per build; token-matched control in Appendix C of 2502.11371",
+     "strength": "strong"
+    },
+    {
+     "claim": "Indexing-cost reductions exist but each is vs a specific baseline and mostly vendor-reported.",
+     "evidence": "LazyGraphRAG: indexing 'identical to vector RAG and 0.1% of full GraphRAG', matching global-search quality at 'more than 700 times lower query cost' (AP news, 5,590 articles, 100 synthetic queries, LLM judge; did not beat GraphRAG global at lowest budget). Dynamic community selection: 77% average token cost reduction, no significant quality difference (50 queries). HippoRAG: 10-30x cheaper than iterative retrieval (IRCoT), not than single-step retrieval. Tree structures (RAPTOR) are cheapest to build; rich KGs cost up to about 40x a tree.",
+     "source": "https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/ ; https://www.microsoft.com/en-us/research/blog/graphrag-improving-global-search-via-dynamic-community-selection/ ; https://arxiv.org/html/2405.14831 ; https://arxiv.org/html/2503.04338",
+     "how_measured": "Vendor blog benchmarks with LLM judges; independent cost taxonomy in 2503.04338",
+     "strength": "weak to medium (LazyGraphRAG, dynamic selection); strong (cost taxonomy)"
+    },
+    {
+     "claim": "HippoRAG 2 is the most consistent graph method: near plain-retrieval query cost with modest quality gains confirmed independently; its own gains are small versus a strong dense retriever.",
+     "evidence": "Own benchmark: average F1 59.8 vs 57.0 for NV-Embed-v2; recall at 5 78.2 vs 73.4; query 1.2 s vs 0.3 s; needs a 70B extraction model. HippoRAG 1: 2Wiki recall at 5 89.1 vs 68.2, but HotpotQA 77.7 vs 79.3. Independent: HippoRAG2 70.27 vs RAG 67.02 on MultiHop-RAG; 1,008 vs 879 tokens per query. The paper's LightRAG F1 of 6.6 looks like a failed reproduction.",
+     "source": "https://arxiv.org/html/2502.14802 ; https://arxiv.org/html/2405.14831 ; https://arxiv.org/html/2502.11371v4 ; https://arxiv.org/html/2506.05690v3",
+     "how_measured": "Authors' benchmark vs dense retrievers; confirmed in two independent benchmarks",
+     "strength": "medium to strong"
+    },
+    {
+     "claim": "No rigorous study shows community detection plus LLM summaries helps a coding agent; the nearest evidence is for parser-built structural graphs as agent tools, plus a few summary-based retrieval studies.",
+     "evidence": "(a) Code Isn't Memory: Claude Opus 4.7, 91 tasks, tree-sitter+embeddings+call-graph index: localisation at 5 84.5% vs 44.3% same harness without vs 75.3% agentic-grep tool; resolve 50.4 vs 41.9 vs 45.3%; index vs without p=0.003, turns 28.3 vs 36.2, per-task cost $1.15 vs $1.19 (p=0.73); index vs agentic grep resolve p=0.087 and localisation p=0.080 (not significant); likely vendor-authored. (b) Small-agents study, 10 open models, SWE-bench Verified 500 tasks: graph tools Qwen3-4B 26.8 to 37.1, Qwen3-8B 16.7 to 27.4, Qwen3-32B 32.0 to 34.0 function Acc@10; gain peaks 17-21 points at 1.7-4B and shrinks to 4-5 at 32B; embeddings matched the graph at larger sizes. (c) gl-code-search: grep, grep+Graphify and grep alone all 100% (SWE-bench Lite) and 85% (fresh issues), 20 issues, extra tools rarely called. (d) File summaries: role-aware summaries up to +40% Hit@5 over bare paths, but raw source often wins; Agentless Hit@6 0.898 to 0.918. (e) Hierarchical NL summaries, one proprietary 46-repo Java system, 87 tickets: Pass@10 0.82 vs 0.57-0.62 for Cursor/Copilot/GraphCodeBERT. (f) Cursor semantic search (embeddings): +12.5% average on its own offline eval.",
+     "source": "https://arxiv.org/html/2606.22417 ; https://arxiv.org/html/2610.33958v1 ; https://github.com/soham504/gl-code-search ; https://arxiv.org/html/2607.11046v1 ; https://arxiv.org/html/2512.05908 ; https://cursor.com/blog/semsearch",
+     "how_measured": "(a) paired Wilcoxon, within-harness ablation, n=75-80; (b) McNemar/GEE/bootstrap, no multiple-comparison correction; (c) 20 issues one model; (d)(e) retrieval Hit@k and Pass@k on benchmark/industrial data; (f) vendor offline and online A/B, no variance reported",
+     "strength": "medium for (a)(b)(d); weak for (c)(e)(f)"
+    },
+    {
+     "claim": "The study that excluded model-extracted graphs is weak, and its LLM-graph arm was a thin design; stronger evidence either way is indirect.",
+     "evidence": "arXiv 2601.08773: 3 Java repos, 15 questions each, one author, Gemini (version unnamed), single annotator, no stats. Correct of 45: no-graph 31, LLM graph 38, parser graph 43. ThingsBoard no-graph already 14/15, so the gap sits in Shopizer (6/15 baseline; LLM graph 13/15; parser graph 15/15). LLM graph = class-name nodes with one generic depends_on edge, files cut to 15,000 characters, 377 Shopizer files skipped; parser graph had typed injects/extends/implements edges. Cost: $0.79 vs $0.09 (Shopizer), $6.80 vs $0.317 (two larger repos). Indirect support for parsers: 24 LLMs lose to static analysers PyCG/Jelly on call-graph generation in Python and JavaScript (models win on type inference); graph-builder quality changes prose results (GPT-4o builder 75.08 vs GPT-4o-mini 71.17 on MultiHop-RAG; only about 65% of answer entities land in the graph). No benchmark of model-extracted semantic relations (responsibility, intent) vs parser graphs exists that I could find.",
+     "source": "https://arxiv.org/html/2601.08773v1 ; https://arxiv.org/abs/2410.00603 ; https://arxiv.org/html/2502.11371v4",
+     "how_measured": "Small human-labelled QA study; independent call-graph benchmark of 24 LLMs vs static tools (precision/recall not read); prose-RAG builder ablation",
+     "strength": "weak (excluding study); medium to strong (call-graph result); medium (builder sensitivity)"
+    },
+    {
+     "claim": "Graphify (about 146.9k stars) builds its code graph with a deterministic tree-sitter parser; model extraction is for docs, PDFs, images and audio; its token claim is vs reading all raw files and its README states no accuracy evaluation.",
+     "evidence": "README: code parsed locally with tree-sitter 'deterministic, no LLM'; edges tagged EXTRACTED/INFERRED; Leiden clustering. Worked examples: 71.5x reduction on 52 files, 5.4x on 4 files, about 1x on 6 files (httpx), baseline = reading raw files; README says savings scale with corpus size and small corpora fit in a context window. 146.9k stars and 14.1k forks are adoption, not an effect size. One fetch showed a benchmark table (LOCOMO n=300, LongMemEval-S n=50, ERPNext n=6 82.0% vs 70.8% grep) but later fetches found no benchmark file, so it is unconfirmed.",
+     "source": "https://github.com/Graphify-Labs/graphify ; https://raw.githubusercontent.com/Graphify-Labs/graphify/main/README.md",
+     "how_measured": "Self-reported by the tool's authors; baseline is read-everything; n tiny where given",
+     "strength": "weak"
+    },
+    {
+     "claim": "Community detection itself may produce 'phantom' communities on sparse graphs; a hypothesis to test on any code graph before paying for summaries.",
+     "evidence": "Structureless synthetic graph: 159 leaf communities, 197 billed summaries, p=0.875; three novels: 65 of 83 billed summaries (78%) unsupported by a degree-preserving null test. Regex-extracted character networks only, repo has 0 stars and no review.",
+     "source": "https://github.com/umar-thedataguy/graphrag-phantom-communities",
+     "how_measured": "Single-author degree-preserving permutation test on synthetic and three public-domain novels",
+     "strength": "weak"
+    },
+    {
+     "claim": "In the unified-framework study 'TKG' means textual knowledge graph, not temporal knowledge graph; no study of temporal graph structures for agent retrieval was found in this lane.",
+     "evidence": "Taxonomy in the paper: TreeKG, passage graph, KG, TKG (textual KG), RKG (rich KG). The only 'temporal' result found concerns questions with time content (MultiHop-RAG temporal: RAG 30.70 vs about 50 for graph methods), not time-stamped graph structure.",
+     "source": "https://arxiv.org/html/2503.04338 ; https://arxiv.org/html/2502.11371v4",
+     "how_measured": "Reading of the paper's taxonomy and results tables",
+     "strength": "medium"
+    }
+   ],
+   "what_it_means_for_the_test": [
+    "The owner is right that the finished test cannot speak for 'graphs' in general: it tested parser-extracted typed facts on structural and co-change questions, and did not test model-extracted meaning, summaries, community-summary retrieval, orientation questions, or an agent in the loop.",
+    "The owner's suspicion that the one excluding study was too thin is correct (45 questions, one author, one repo carries the whole effect, thin LLM-graph design), but the stronger indirect evidence (static analysers beat LLMs on call graphs; builder quality sensitivity) still leans toward parsers for syntactic relations. The open gap is semantic relations that parsers cannot produce.",
+    "Do not read Graphify's or GraphRAG's star counts as an effect size; Graphify's code graph is parser-built, so it resembles the finished test's graph plus community detection rather than contradicting it.",
+    "Highest-value additions: (1) an agent-in-the-loop arm (agentic grep alone vs grep plus the typed store as tools, scored on task success and total tokens), because only two small mixed studies address it; (2) an orientation-question arm comparing community summaries vs plain retrieval vs read-everything map-reduce, with a community-validity null test; (3) HippoRAG-2-style personalised PageRank over a model-extracted entity graph of docs and comments only, alongside the parser graph; (4) a LazyGraphRAG-style no-LLM-at-index graph for docs; (5) role-aware file summaries as an added index.",
+    "Every arm needs a no-retrieval floor and a token-matched plain-retrieval control (both changed conclusions in independent studies), and answers should be scored against ground truth or with order-swapped, length-controlled judging, not a single-order LLM judge.",
+    "Expect different outcomes by model size: structural graph tools gave 17-21 points to 1.7-4B models and only 2-5 points at 32B, and a frontier model with agentic grep was not significantly beaten by an index (p=0.08-0.09), so the agent model used in the test must be named and matched to the intended deployment."
+   ],
+   "could_not_verify": [
+    "Full text of arXiv 2606.22417 (PDF undecodable; only an HTML summary was used), 2607.11046 and 2610.33958 (read only to about 100,000 characters of 124,271 and 204,116), and whether the authors of 2606.22417 sell the tool they tested.",
+    "LocAgent, RepoGraph and CodexGraph numbers beyond their abstract pages; the Code Graph Model graph-vs-no-graph ablation (truncated).",
+    "GraphRAG-Bench (Xiang) graph-construction cost appendix and the accuracy tables of the unified-framework paper 2503.04338 (truncated); CheapRAG results.",
+    "The Graphify benchmark table (LOCOMO, LongMemEval-S, ERPNext n=6): one fetch showed it, later fetches and the folder listing showed no benchmark file; also how the 71.5x token figure is computed (the README does not say).",
+    "DeepDiscovery (arXiv 2606.22906): PDF unreadable through the tool; contents unknown.",
+    "HippoRAG 2's reported LightRAG F1 of 6.6 looks like a failed reproduction; not checked.",
+    "Precision and recall figures of the 24-LLM vs static-analyser call-graph study (only the abstract page was read); the error-rate claims from other call-graph studies came from a search snippet only.",
+    "Any independent replication of LazyGraphRAG or BenchmarkQED numbers (none found; all from the same Microsoft group).",
+    "Any study of temporal knowledge graphs (time-stamped edges) as a retrieval structure for agents; none found in this lane.",
+    "The web-fetch tool returns a small model's summary of each page, so numbers are as that summary reported them and were not independently re-read from raw pages."
+   ]
+  },
+  "agents": {
+   "summary": "The owner is right that the finished test had no agent in the loop, but wrong that it \"failed\" while graphify \"works\". No controlled evidence was found that a graph tool raises a frontier agent's success against ordinary search tools. The best-controlled study (170,500 episodes, pre-registered, with a placebo arm, small open-weight models) found the embedding index explained the gain better than the graph. For frontier agents, the reported effect is fewer tool calls and usually fewer tokens, with success flat or slightly lower. That is the same mechanism as our 31-versus-695-token result. Graphify's headline \"71.5x\" is a size estimate against reading every file, with no model run. Its one agent-level code result is 82.0 % versus 70.8 % key-fact coverage on 6 questions at about 1.3x the baseline tokens. The graph it builds for code is the same kind of deterministic parser graph we used, not a temporal knowledge graph. Independent users report equal or higher token use. Star count is adoption only.",
+   "findings": [
+    {
+     "claim": "Pre-registered, placebo-controlled study: the embedding index, not the code-graph tools, carries the localisation gain in small agents; graph tools on top of embeddings add little.",
+     "evidence": "9 open-weight models, 170,500 episodes on 500 SWE-bench tasks, 5 seeds. Function Acc@10: Qwen3-4B grep 0.114, embedding 0.218, graph tools 0.191, both 0.214; Qwen3-14B 0.282/0.318/0.309/0.354; Qwen3-32B 0.289/0.321/0.306/0.314. 'Embedding arm is never below the graph arm.' Graph tools added to embeddings gained significantly for one model (Qwen3-14B +0.036). At 32B the tools gain is +0.026 (adjusted p=0.056). Random-entity placebo lowered accuracy for the two smallest models (-0.020, -0.044). Tokens for Qwen3-4B: 3.8k grep-only vs 3.5k with tools; steps 15.1 vs 8.4.",
+     "source": "https://arxiv.org/abs/2610.33958 ; https://arxiv.org/html/2610.33958",
+     "how_measured": "Authors' pre-registered design, grep-only vs graph tools vs embedding vs both vs placebo, function-level localisation Acc@10, Holm-corrected tests. Small models only, Python only. I could not confirm the author's independence from any tool and did not read the last 11k characters or the hop-stratified results.",
+     "strength": "medium to strong"
+    },
+    {
+     "claim": "Graphify's '71.5x fewer tokens per query' is a size ratio, not an agent measurement.",
+     "evidence": "About 123k estimated corpus tokens divided by about 1.7k average graph-answer tokens for 5 fixed questions on a 52-file self-curated corpus (3 repos, 5 papers, 4 diagrams). No model call, no answer-correctness check; baseline is reading all raw files, which the project's own analysis calls the worst possible strategy. Its 6-file example is about 1x and the page says small corpora gain little. Extraction cost is excluded. Independent analyses found no reproduction harness or fixtures.",
+     "source": "https://pantheon-org.github.io/agentic-context/analysis/graphify/ ; https://pantheon-org.github.io/agentic-context/benchmarks/graphify/ ; https://graphify.com/blog/what-the-graphify-benchmark-measures ; https://raw.githubusercontent.com/safishamsi/graphify/main/README.md",
+     "how_measured": "Word count to tokens (100 words to 133 tokens), answer characters / 4, ratio of the two; run inline by the tool.",
+     "strength": "weak"
+    },
+    {
+     "claim": "Graphify's only agent-in-the-loop code result is small, self-run, and costs more tokens than the baseline.",
+     "evidence": "ERPNext (about 1M lines Python), fixed agent (Claude Opus 4.8), up to 14 turns, n=6 questions, key-fact coverage 82.0 % with graphify versus 70.8 % grep/read baseline, about 140k tokens per query. A secondary write-up states graphify used about 1.3x baseline tokens, cost about $0.320 vs $0.322, and other retrieval tools scored 79.1-80.5 %. The benchmark page gives no per-arm token or turn counts. Its LOCOMO results are conversational memory, not code; there graph-expand 45.3 % vs seed-only 42.7 % at n=300 (one standard error about 2.9 points by my arithmetic) is inside noise. Its temporal ERPNext suite (689 weekly checkpoints) has no QA results.",
+     "source": "https://raw.githubusercontent.com/safishamsi/graphify/v8/BENCHMARKS.md ; https://www.besthub.dev/articles/graphify-code-knowledge-graphs-without-vectors-boost-agent-accuracy-11-cf064078ed96 ; https://wavect.io/blog/graphify-review-codebase-knowledge-graph/",
+     "how_measured": "Maintainers' own harness, judge validated at 90.6 % agreement with a second judge on a sample; no independent party. The 1.3x token and 79-80 % figures are from a secondary page, not the primary.",
+     "strength": "weak"
+    },
+    {
+     "claim": "Independent users of graphify and a similar tool report equal or higher token or dollar cost, and mixed quality.",
+     "evidence": "GitHub issue 985: one user, 1,484 files, each query about 2k tokens, grep workflows often cheaper; another, Copilot CLI on a .NET monorepo, graphify MCP cost about 1.6-1.9x a code-only agent with higher peak context and partial answers. CodeGraph replication on Hono (Opus 4.8, 5 questions x 4 repeats x 2 arms): tool calls 14.0 to 6.3, tokens 9,385 to 7,261 (-22.6 %), cost $0.338 to $0.361 (+6.8 %); answers identical; the tool's README claims -71 % calls and -35 % cost. First run silently never connected the tool.",
+     "source": "https://github.com/safishamsi/graphify/issues/985 ; https://dev.to/harrisonsec/i-tested-codegraph-on-hono-the-tool-call-savings-reproduce-the-cost-savings-dont-389p ; https://hackernoon.com/i-tested-graphify-on-a-real-python-repo-heres-what-happened",
+     "how_measured": "User-reported A/B in issue comments (anecdote); a single-author replication with 40 valid runs and per-run connection checks; one single-lookup test (628 vs 13,659 tokens) explicitly not a session.",
+     "strength": "weak to medium"
+    },
+    {
+     "claim": "With a frontier agent, map-based code tools cut tokens 17-39 % mainly by displacing file reads, with success about flat and test-generation tokens up.",
+     "evidence": "Claude Code, Haiku 4.5 low effort, built-ins pinned. LinuxFLBench n=152: recall@10 0.717 to 0.757-0.829, tokens 1,008,163 to 610,910-754,768. SWE-bench Pro n=253: resolved 49.0 % vs 44.3-50.6 % (inside about 3-point noise), tokens 3,116,193 to 2,310,653-2,590,046. SWT-bench n=161: tokens and time up. SecBench n=166: callgraph 34.3 % vs 28.9 %. Tool calls 25.4 to 8.5-13.1 (LinuxFLBench), 44.5 to 3.4-5.2 (Pro). Fewer-token runs are read-displacement cases (109/109 for callgraph on LinuxFLBench). A BM25-only docs arm ties the call graph on LinuxFLBench (0.770). A hook forces one map query before reads, so steering and graph are confounded.",
+     "source": "https://arxiv.org/html/2611.07286",
+     "how_measured": "Authors' controlled arms, one run per task, no significance tests; map-construction cost excluded; token definition not clear in what I read.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Graph tools are often not used unless steered, and can lose to BM25 on some task types.",
+     "evidence": "CodeCompass, Claude Sonnet 4.5, 258 trials on a 3,500-line FastAPI repo: 51 of 88 graph-condition trials (58 %) made no graph call despite instruction; those scored 80.2 % coverage vs 99.5 % for the 37 that used it. Coverage by group (vanilla / BM25 / graph): semantic 90.0/100.0/88.9; structural 79.7/85.1/76.4; hidden-dependency 76.2/78.2/99.4. Prompt was changed for the hidden group only. No token data. Hono replication: on a control question the tool was never invoked.",
+     "source": "https://arxiv.org/html/2602.20048 ; https://dev.to/harrisonsec/i-tested-codegraph-on-hono-the-tool-call-savings-reproduce-the-cost-savings-dont-389p",
+     "how_measured": "Single-author preprint; metric is fraction of required files read or edited, not working code; paper has internal inconsistencies (42/38/61 % adoption, 20 vs 23.2 point gain).",
+     "strength": "weak to medium"
+    },
+    {
+     "claim": "Codebase-Memory: about 10x fewer tokens per question but 9 points lower answer quality than a file-reading agent.",
+     "evidence": "Tree-sitter property graph in SQLite, 14 MCP tools, 31 repos (one per language); 83 % vs 92 % answer quality; about 10x fewer tokens and 2.1x fewer tool calls (earlier notes: about 1,000 vs 10,000 tokens per question, 2.3 vs 4.8 calls, Opus 4.6 both arms). Graph arm won hub detection and caller ranking on 19 of 31 languages; explorer won full-source and exhaustive-grep questions.",
+     "source": "https://arxiv.org/abs/2603.27277",
+     "how_measured": "Preprint by the tool's authors; first author grades per earlier notes; question counts small; indexing cost excluded.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Research localisation systems (RepoGraph, LocAgent, CodexGraph, KGCompass, CGM) report gains on SWE-bench Lite, but token cost rises or is not reported, ablations are inside each author's own system, and nothing is independently replicated.",
+     "evidence": "RepoGraph: resolved +2-2.3 points on three agents, tokens up in every case (Agentless 42,376 to 47,323); 2-hop flattened 26.00 % is below the 27.33 % baseline at 10,505 graph tokens. LocAgent: file-level up to 92.7 %, 32B fine-tuned about 86 % cheaper; ablation (earlier notes) removing SearchEntity costs 19 points file Acc@5 vs about 2 for removing TraverseGraph. CodexGraph: 102.25k tokens vs AutoCodeRover 76.01k, equal 22.96 % on Lite, collapses on a weaker model (1.95 % vs 9.34 %). KGCompass (graph of issues, PRs, files, classes, functions): 58.3 % Lite, 56.0 % function localisation, about $0.20 per repair, abstract only, earlier notes record 15.3 % in another harness. CGM: 43.00 % Lite via a trained model.",
+     "source": "https://arxiv.org/abs/2410.14684 ; https://arxiv.org/abs/2503.09089 ; https://arxiv.org/abs/2408.03910 ; https://arxiv.org/abs/2503.21710 ; https://arxiv.org/abs/2505.16901 ; research/lane-agent-graphs.txt",
+     "how_measured": "Authors' own papers on SWE-bench Lite or similar, mostly one run, Python only; abstracts re-checked this session, tables from earlier notes.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Where savings exist they come from fewer reads and fewer tool calls, smaller capped outputs, and steering; non-graph methods save as much.",
+     "evidence": "FlowPlan (planning, no graph): tokens 0.32x-0.76x of baseline on SWE-bench Verified/Pro with Haiku 4.5 and Sonnet 5, resolved rates not significantly different (McNemar). FastContext explorer subagent: 457k to 338k tokens (-26 %) with 71.7 to 74.7 resolved on SWE-bench Multilingual (GPT-5.4). Augment (vendor, harness differs): -30 % tokens, -23 % cost, 61.8 vs 59.9 % on SWE-Bench Pro, attributed to fewer cache reads. Cursor A/B with same model: code retention +0.3 % overall, +2.6 % in 1,000+ file repos, grep plus semantic search best. Cognition: over 60 % of first turn spent retrieving context; precision favoured because polluted context hurt more than missing context. Claude Code's builder says they moved from a vector index to glob/grep (index drifts, security, 'outperformed by a lot' on partly internal 'vibes' comparisons), at a cost in latency and tokens, no numbers. AGENTS.md study (abstract): overview files raised cost over 20 % without a general success gain.",
+     "source": "https://arxiv.org/html/2611.13241v1 ; https://arxiv.org/html/2606.14066v3 ; https://www.augmentcode.com/blog/auggie-beats-claude-code-on-cost-and-quality ; https://cursor.com/blog/semsearch ; https://cognition.com/blog/swe-grep ; https://www.latent.space/p/claude-code",
+     "how_measured": "Authors or vendors on their own benchmarks; Cursor includes a live A/B on real traffic; FlowPlan has McNemar tests; Augment and Cognition are vendor posts (Augment seen via search summary).",
+     "strength": "medium to weak"
+    },
+    {
+     "claim": "Reading and searching are a large but variable share of agent tokens in published traces; most counted tokens are re-read cache reads.",
+     "evidence": "SWE-Pruner: read 76.1 %, execute 12.1 %, edit 11.8 % (Mini SWE Agent, Sonnet 4.5; GLM-4.6 read 67.5 %). FastContext: reading and searching 56.2 % of tool-use turns and 46.5 % of main-agent tokens (GPT-5.4, 300 SWE-bench Multilingual trajectories). FlowPlan: about two-thirds of tokens after the first edit; cache reads 96-98 % of tokens. Token study (8 models, 500 problems, OpenHands): cache reads dominate volume and cost, input spikes from file views and test output, same-task runs differ by up to 30x (abstract) vs about 2x (body). SHERLOC (summary only): reasoning 19.5k vs tool output 9.0k tokens for Qwen3-235B thinking. The owner's 27 % fetched content and 59 % orchestrator window are a different agent shape (long multi-turn orchestrator) from these short SWE-bench episodes.",
+     "source": "https://arxiv.org/html/2601.16746v1 ; https://arxiv.org/html/2606.14066v3 ; https://arxiv.org/html/2611.13241v1 ; https://arxiv.org/html/2604.22750v2 ; https://arxiv.org/pdf/2606.24820",
+     "how_measured": "Authors' trajectory analyses with different agents, models and token definitions (cumulative vs unique not stated in SWE-Pruner and FastContext); not comparable with each other.",
+     "strength": "medium"
+    },
+    {
+     "claim": "What graphify builds is a deterministic code property graph plus LLM-extracted document concepts; it is not a temporal knowledge graph, and no source shows temporal graphs helping coding agents.",
+     "evidence": "Graphify code: tree-sitter AST, about 40 languages, no LLM, edges tagged EXTRACTED or INFERRED (calls, imports, inherits, mixes_in), Leiden communities, query depth 2 and 2,000-token budget, hooks nudging Claude Code and Gemini CLI toward the graph; docs, PDFs, images go through an LLM pass. Its temporal part is weekly AST checkpoints with no QA results. Git2KG mines temporal graphs from git for socio-technical analysis; GREPO uses temporal anchors for graph neural network localisation; AgenticSZZ targets bug-inducing commits; Axon adds co-change edges with no evaluation. Graphiti/Zep is a temporal graph for conversation memory with self-reported scores and no independent reproduction found.",
+     "source": "https://github.com/safishamsi/graphify ; https://arxiv.org/pdf/2611.15509 ; https://arxiv.org/pdf/2602.13921 ; https://arxiv.org/html/2602.02934 ; https://github.com/harshkedia177/axon",
+     "how_measured": "Readme and benchmark page reading for graphify; search-summary-level reading for the temporal systems (no evaluations of the kind the owner asks about were found).",
+     "strength": "medium for what graphify is; no evidence on temporal graphs for agents"
+    },
+    {
+     "claim": "Recurring design choices in tools that report gains: deterministic parsers, a lexical entry point before traversal, 1-2 hop capped expansion, token-capped outputs of paths and signatures, a few on-demand tools beside grep and read, steering so the tool gets used, incremental updates, and lightweight stores.",
+     "evidence": "Parser vs LLM graph (Java, 3 repos): 15/15 correct at $0.09 and 22 s vs 13/15 at $0.79 and 215 s (earlier notes, weak to medium). LocAgent ablation: lexical search tool matters far more than traversal. RepoGraph: 2-hop uncapped hurt. Aider 1k-token map budget, graphify 2,000-token query budget. Codebase-Memory about 1.2 s incremental re-index; SQLite or NetworkX in the working systems; the only graph database in the agent studies (Neo4j in CodexGraph) ran out of memory on 43 tasks and used the most tokens. No source holds facts and algorithm fixed while varying the engine, so our identical answers across three engines is unpublished elsewhere.",
+     "source": "https://arxiv.org/abs/2601.08773 ; https://arxiv.org/abs/2503.09089 ; https://arxiv.org/abs/2410.14684 ; https://aider.chat/docs/repomap.html ; https://arxiv.org/abs/2408.03910 ; research/lane-agent-graphs.txt",
+     "how_measured": "Synthesis across the sources above; most items are design observations from tools and papers rather than isolated ablations.",
+     "strength": "medium"
+    }
+   ],
+   "what_it_means_for_the_test": [
+    "The next test needs an agent in the loop with model and harness held fixed, measuring per task: cumulative tokens and uncached tokens separately, turns, tool calls, success against a checked answer, and wall time, plus build and tool-description tokens. This is where the owner is right.",
+    "Arms should include grep-and-read only, a lexical/BM25 symbol search with the same capped output format, an embedding search, the typed graph tool, graph plus lexical, and a placebo returning plausible but wrong entities. The placebo and the lexical/embedding arm are the controls missing from almost every code-graph paper except the one pre-registered study.",
+    "Check in every run that the tool server connected and the tool was actually called; two independent sources lost whole runs to silent non-connection, and one paper found 58 % of graph-condition trials made no graph call.",
+    "Test steering (a hook or short orientation file) as its own condition so graph effect and steering effect are separable; the published positive results confound them.",
+    "Report by task type (cross-file navigation, impact analysis, edit, test writing) and repeat each condition several times; treat differences under 3 to 5 points as noise at 100 to 300 tasks. Expect no gain or a loss on edit and test-writing tasks.",
+    "Keep the graph deterministic and add natural-language nodes (docs, commit messages, issues) and a temporal layer as separately switchable arms, so the owner's question about knowledge graphs versus temporal knowledge graphs becomes a measured contrast. No source gives evidence either way for the temporal layer in coding agents.",
+    "Do not treat graphify's 71.5x or its 82.0 vs 70.8 % as an effect size to match: one is a size ratio against reading everything, the other is n=6 at about 1.3x tokens. Our 31 vs about 695 token result on questions is the same mechanism the tools report; the open question is whether it survives inside an agent and what it does to success.",
+    "Non-graph levers (explorer subagent, planning, capped lexical search output) saved as many or more tokens in published tests, so they should be arms beside the graph rather than assumed away.",
+    "Compare token shares carefully: published read shares of 46 % to 76 % come from short single-task episodes; the owner's 27 % fetched content and 59 % orchestrator window come from a long multi-turn orchestrator where re-sent context dominates, and most counted tokens in published traces (96-98 % in one) are cache re-reads."
+   ],
+   "could_not_verify": [
+    "Graphify's BENCHMARKS.md gives no per-arm token or turn counts; the 1.3x tokens, $0.320 vs $0.322 cost, and 79.1-80.5 % scores for other tools come from a secondary write-up, not the primary page.",
+    "Why graphify's stars roughly doubled (about 69k in June to 146.9k as read now); no history series obtained.",
+    "Serena: documentation describes self-graded agent runs with no token or call totals in the pages I read; no independent measurement found. No agent-level measurement of language-server or SCIP tools found.",
+    "GitNexus 68.4 % vs 37.0 % (a directory site citing a vendor report I could not locate) and code-review-graph per-repo ratios (6.8x to 82x): primary reports and reproduction not opened; treated as unverified.",
+    "The Orbit graph token-usage benchmark pages returned 404; a search summary of an accuracy comparison for a different tool was not used.",
+    "Token definitions (cumulative processed vs unique) in 2611.07286, SWE-Pruner and FastContext were not clear in what the fetch tool returned.",
+    "arXiv 2608.13867 (Engineering Reliable Coding Agents): only the contents and abstract reached me, so its evidence on when to keep a typed index is unread.",
+    "KGCompass: abstract only, no independent reproduction, repair model behind 58.3 % unnamed.",
+    "Small-model study 2610.33958: last 11k characters and the hop-stratified results not read; an earlier version's hop figures (odds multiplied by 0.47-0.55 per extra hop) are from a superseded version; author independence from any tool not established.",
+    "Augment and SHERLOC figures are from search summaries, not the primary pages.",
+    "No decomposition exists in the sources I found of how much of a graph tool's token saving is the avoided read versus the avoided later re-reads of that read.",
+    "Nothing was run or installed; all fetched pages are small-model extractions, not raw text."
+   ]
+  },
+  "evaluation": {
+   "summary": "The finished test scored co-change and ran no agent, so it cannot answer the owner's question about tokens, turns or mistakes. The owner is right on that. He is not shown right that \"graphs fail\", and the finished test's own addendum 6 forbids that wording. The graphify headline the owner points to is a size ratio: whole-corpus tokens divided by graph-answer tokens, with no model called and no answers graded. Its README reports accuracy only on conversation-memory sets and a code-like set of n = 6, both self-reported. I found no independent, controlled, paired agent study of a code knowledge graph. The two closest studies are by the tools' own authors, with weak design details. I propose five designs: a replayed-commit live agent ablation (D1), an execution-derived break oracle (D2), recorded-session lookup replay for screening only (D3), a cached-conclusion invalidation test over replayed history (D4), and a fresh typed-question set with an agent in the loop (D5). A realistic main run is about 40 tasks x 3 arms x 3 runs after a 12-task pilot. That detects roughly a 12 to 16 percent token change; a +10 point success change is out of reach on this repo. All sizing figures are my own calculation, not source figures.",
+   "findings": [
+    {
+     "claim": "Graphify's published benchmark measures size, not quality: whole-corpus token estimate divided by average graph-answer size over five fixed questions; no model call, no grading.",
+     "evidence": "Docs page: corpus tokens estimated from word count (about 133 tokens per 100 words); each answer is up to 3 matched nodes with a 3-hop breadth-first search written as text; authors say it does not check correctness, speed or cost and that small repos (under about 50,000 words) may not benefit. The 71.5x figure in secondary articles (52-file mixed corpus, about 1,700 versus 123,000 tokens) is this ratio, per a search summary.",
+     "source": "https://graphify.com/blog/what-the-graphify-benchmark-measures.md",
+     "how_measured": "Read the vendor's own documentation page; no independent run.",
+     "strength": "weak for any claim about agents (honest about itself)"
+    },
+    {
+     "claim": "Graphify's README accuracy benchmarks are on conversation-memory sets plus one code-like set of 6 questions, all self-reported; stars are adoption, not effect.",
+     "evidence": "LOCOMO n=300: recall@10 0.497 but QA accuracy 45.3% versus supermemory 49.7%; LongMemEval-S n=50: 76%, tied with dense RAG; ERPNext cross-tool n=6: key-fact coverage 82.0% versus grep-and-read baseline 70.8%. Judge validated against a second judge (90.6% agreement, kappa 0.81). Header showed about 147k stars (another source said 88k at a different date).",
+     "source": "https://github.com/safishamsi/graphify (via page summary); BENCHMARKS.md returned 404 at two URLs",
+     "how_measured": "Authors' own harness; run counts, who ran it and ERPNext design not verifiable.",
+     "strength": "weak"
+    },
+    {
+     "claim": "The best controlled graph-versus-no-graph agent design found is an on/off ablation with 3 seeds, but it is by the tool's own authors and underpowered on success.",
+     "evidence": "91 instances (SWE-PolyBench Verified and SWE-bench Pro), Claude Opus 4.7, same harness with index tools on versus off, 3 seeds, git scrub plus post-run leak audit (26 cells excluded). Localisation acc@5 44.3 to 84.5%; resolve 41.9 to 50.4% (p=0.003); cost per run unchanged (p=0.73). Versus a grep harness: resolve 50.4 vs 45.3% (p=0.087, not significant). Wilcoxon, unadjusted, no intervals; authors flag conflict of interest.",
+     "source": "arXiv 2606.22417 https://arxiv.org/html/2606.22417",
+     "how_measured": "Vendor's own harness, paired by instance, mean of 3 seeds.",
+     "strength": "medium-weak"
+    },
+    {
+     "claim": "Codebase-Memory's graph agent used about one tenth of the tokens but scored lower quality than file exploration, graded by the tool's author with no run counts or intervals.",
+     "evidence": "31 repos (one per language), 12 fixed questions, Claude Opus 4.6 both arms: quality 0.83 vs 0.92, tokens about 1,000 vs about 10,000 per question, tool calls 2.3 vs 4.8. Explorer better on full source context (16 of 31) and exhaustive call-site grep (10 of 31). Explorer's tool set and budget not described.",
+     "source": "arXiv 2603.27277 https://arxiv.org/html/2603.27277",
+     "how_measured": "First author graded against references from manual inspection; no judge, no inter-rater check.",
+     "strength": "weak-medium"
+    },
+    {
+     "claim": "Needed-but-unchanged context has working label recipes: execution-based (apply production diff without test edits), change-evidence rules (code2test, edit2ripple, trace2code, comment2context), expert annotation with a sufficiency test, and follow-on-reasoning rules for mined session reads. Logged agent reads miss all gold files on 27 to 35% of samples, so reads alone are a poor label.",
+     "evidence": "TEBench builds parent / non-test-changes-applied / full-commit versions (314 tasks after filtering 67,670 commits). Agent Retrieval Bench: 427 samples, logged trajectories miss all gold on 35.2% (OpenAI) and 27.2 to 29.3% (Codex). ContextBench: 1,136 tasks, gold checked by whether GPT-5 given only that context passes the tests; no formal rule for needed-but-not-edited.",
+     "source": "arXiv 2605.06125; arXiv 2607.24882; arXiv 2602.05892; TraceProbe arXiv 2607.06184",
+     "how_measured": "Benchmark papers; mostly single-run, descriptive, no intervals.",
+     "strength": "medium"
+    },
+    {
+     "claim": "Agent token use is noisy: within one cell the median geometric SD is x1.34 on one model and five tasks; spread scales with mean cost; single-run pass@1 varies 2.2 to 6.0 points on SWE-bench Verified.",
+     "evidence": "2,700 runs (5 tasks x 12 specs x 3 effort levels x 15 repeats), per-spec medians x1.29 to x1.40, log-log slope 1.08. Separate study: 4 runs per problem, 8 models, most expensive run about 2x the cheapest on average and up to 30x in some cases (not reconciled in the page). 10 runs per task on 500 tasks: single-run SD 0.7 to 1.8 points; +2 points at SD 1.5 needs 9 runs, +1 point needs 36.",
+     "source": "arXiv 2608.25399; arXiv 2604.22750; arXiv 2602.07150 (HTML pages)",
+     "how_measured": "Repeated runs of agents on SWE-bench Verified tasks; token variance studies by independent authors, pass@1 study with 60,000 trajectories.",
+     "strength": "medium (tokens), strong (pass@1 noise)"
+    },
+    {
+     "claim": "Future-history and online leaks are real in agent evaluations; the controls are single-commit repo, no network, blind transcript audit, and non-public repos.",
+     "evidence": "SWE-bench issue 465: agents used git log --all, remote branches, reflog, tags, dangling objects to find the fix; fixed in v4.1.0. Cursor audit of 731 trajectories: 63% of successful runs retrieved the fix (57% online, 9% from bundled .git); sealing history and limiting internet dropped scores from 87.1 to 73.0% and 74.7 to 54.0% for two models. The finished test mounted the live working tree (full history) read-only in every arm container (addendum 6 item 7).",
+     "source": "https://github.com/SWE-bench/SWE-bench/issues/465; https://cursor.com/blog/reward-hacking-coding-benchmarks; protocol-addendum-6.md",
+     "how_measured": "Maintainers' tracker; vendor blind auditor over 731 trajectories.",
+     "strength": "strong (SWE-bench tracker), medium (vendor audit)"
+    },
+    {
+     "claim": "No benchmark found that injects a code change and scores whether a cached conclusion about the code went stale; adjacent benchmarks are non-code (STALE, MemoryAgentBench) or small and fabricated (stale-context-bench).",
+     "evidence": "STALE: 400 scenarios, 1,200 queries, best model 55.2%. MemoryAgentBench: multi-hop conflict resolution at most 7% (secondary). Meetless harness: 6 and 20 fabricated facts, keyword graders, authors call rankings directional only.",
+     "source": "arXiv 2605.06527; arXiv 2507.05257; https://github.com/Meetless/stale-context-bench",
+     "how_measured": "Abstract / README reads; MemoryAgentBench via summaries.",
+     "strength": "medium-weak; gap confirmed by one search only"
+    },
+    {
+     "claim": "Impact-analysis ground truth from execution (inject a change, take what fails) exists in the literature and is independent of any graph extractor.",
+     "evidence": "Musco et al.: 10 Java projects, about 17,000 mutants; more sophisticated call graphs raised recall, the basic call graph gave the best precision-recall trade-off. A snippet said tests detect only 47% of direct and 35% of indirect artificial faults (unverified).",
+     "source": "arXiv 1812.06286 (abstract read)",
+     "how_measured": "Mutation-based impact sets on Java programs.",
+     "strength": "medium (design); weak (47/35 figure)"
+    },
+    {
+     "claim": "The sample-size result for a 20% token change: about 24 tasks at 3 runs per arm if the task-by-arm spread tau is 0.30, about 13 if 0.15; roughly 52 if run-to-run SD is double; success at +10 points needs 80 to 120 tasks at 3 runs.",
+     "evidence": "Formula: variance of per-task mean log ratio = 2 sigma^2/k + tau^2 with sigma = ln 1.34; 80% power, two-sided 5%. n=40, k=3: min detectable token reduction 11.7% (tau 0.15) or 15.6% (tau 0.30). Success simulation: power 0.32 to 0.39 at n=30, k=3; 0.66 to 0.80 at n=80; 0.84 to 0.94 at n=120. Paired success-difference SE about 5 to 6 points at n=40, k=3.",
+     "source": "scratchpad/eval/power.js and se.js (my arithmetic); sigma from arXiv 2608.25399",
+     "how_measured": "My own calculation and simulation with assumptions written out; not a measurement of this repo; tau unknown until a pilot.",
+     "strength": "weak (model, not data)"
+    }
+   ],
+   "what_it_means_for_the_test": [
+    "Next test must run an agent. The finished test cannot say anything about tokens, turns, success or mistakes, and its label (files the commit changed) gives zero credit to context that is read but not edited. Do not describe it as 'graphs fail'; describe it as 'stores and one ranking tweak scored on co-change'.",
+    "Add labels for needed-but-unchanged context, each kept as its own column: tests that fail when the production diff is applied without test edits, follow-on-reasoning reads from recorded sessions, files edited by a follow-up fix to the same area, invariants whose anchors the diff touches, and a sufficiency check. Build them by execution or blind reading, not from the extractor the arms share.",
+    "Run paired live arms: default tools, plus a typed store, plus a model-built graph, plus a placebo tool of equal description size. Count tool schema tokens against each arm and report uncached input, cache write, cache read and output separately. Primary outcome is tokens to a passing change, with success as a non-inferiority guard.",
+    "Size it from a pilot: 12 tasks x 4 arms x 3 runs to estimate run noise and the task-by-arm spread, then about 40 tasks x 3 arms x 3 runs. Expect to detect roughly a 12 to 16 percent token change, not a small success change.",
+    "Leak control for the model-built graph: build from a git archive of each parent, or build once at the oldest parent and update commit by commit; no .git, no network, no mounted live tree, memory files off, blind transcript audit, exclusion ledger. The finished test mounted the live tree with full history in every arm container.",
+    "Test caching and invalidation separately (D4): replay 10 to 20 commits, ask the same 40 claim-questions, compare no cache, no invalidation, time-to-live, file-hash anchored, and dependency-propagated invalidation. Only claims whose answer changed while their own anchors did not can show value from a graph; count them first.",
+    "Use fresh data. The 75 held-out commits are spent for T1 and were seen in aggregate; use them as development material for the new label kinds and take the final set from commits after the freeze or from a prospective set with a hashed protocol; report the two separately."
+   ],
+   "could_not_verify": [
+    "graphify BENCHMARKS.md (404 at two URLs): ERPNext n=6 design, run counts, who ran it, and how 71.5x is defined in the repo are unverified; 71.5x corpus figures come from secondary summaries; star count differs by source (about 147k on the repo page header relayed by a summary, 88k elsewhere).",
+    "Unreadable or truncated: PDF bodies of arXiv 2608.25399 and 2604.22750 (HTML used); ContextBench appendix H (usage drop and redundancy definitions) and the last 27,705 characters of its page; the last about 25,000 characters of the Agent Retrieval Bench page.",
+    "Seen only in search summaries, not opened: RepoQA, CoReQA, CodeRepoQA, CATM/CodeGrep, MemoryAgentBench paper, SWE-Bench-CL, AgingBench, HybridRAG-Bench, 'Don't ask the LLM to track freshness', code-judge bias studies, Anthropic's 'Demystifying evals' post, the 47%/35% fault-detection claim, and the knowledge-graph build-variance snippets (94 vs 91 entities; 68% correct tuples).",
+    "No independent, controlled, paired agent study of a code knowledge graph reporting tokens, success and uncertainty was found; one may exist beyond what a few searches reached.",
+    "Unknown for this repo and needing a feasibility step: whether tests, mypy, tsc and import-linter run at old parents; how many needed-but-unchanged labels exist per commit; how many dependency-case staleness events history holds; the task-by-arm spread tau; the orientation share of an agent's tokens.",
+    "All sample-size and power figures are my own calculation or simulation with stated assumptions; the token variance input (geometric SD 1.34) comes from one model and five tasks and may understate this repo's variance."
+   ]
+  }
+ },
+ "audit": {
+  "verdict": "The owner is right that the test was narrow, and the narrowing happened before any arm was built. He asked about meaning stored as relations, time and caching with invalidation, and fetching small pieces fast. The protocol turned that into one task: recall of the files a commit changed, inside a fixed 8,000-token answer, with no agent in the loop, from deterministic parser facts at one snapshot per commit. Its headline axis was the storage engine, and the answer on that axis was predicted to be exactly zero before the held-out run (addendum 3 item 21, addendum 4 item 22). Five pre-run warnings in critic.txt and verify.txt were not acted on: an agent pilot, labels for context a change needed but did not edit, an embedding arm, community summaries, and scoring the store as an addition to grep.\n\nHe is not right on three points.\n1. \"Experiments all failing\" is false. The typed graph store beat scripted search and both floors on T1: +0.076 recall against search, interval [+0.036, +0.118]. The win is confined to mobile-app seeds; outside them it is +0.024 against search, interval [-0.024, +0.074].\n2. Graphify's results are mostly not evidence of effect. The 71.5x headline is a size ratio against reading the whole corpus, with no correctness check; on code alone it is 8.8x, and it was never re-run. 146,932 stars measure adoption. Independent controlled runs on code with a strong model are null or negative. The one independent positive (graphify-bench) is on doc-and-code questions: Sonnet 5 scored 80 % with graphify against 70 % without it, and that comes from the model-read document layer our test left out.\n3. Graph type is not the deciding variable. Graphify is not a temporal knowledge graph, and its code layer is the same parser-built typed graph family as ours. No source found shows that choosing graph, knowledge graph or temporal knowledge graph separates a win from a loss. What does separate them: the entry point, the output cap and format, steering, model size and task type.",
+  "assumptions": [
+   {
+    "assumption": "'Graph against relational' is a contest of storage engines",
+    "where": "brief.md (owner's fairness objection); protocol.md §1 and §5; protocol-addendum-3.md E13-E14 (H1 and H2 as the primary comparison)",
+    "status": "weakly supported as a reading of the owner's objection; contradicted as a test of his question",
+    "why": "With the same facts and the same algorithm, every engine returns the same answer (protocol §1; verify.txt verify-schema-scoring error 9). No coding-agent paper varies the engine (research/lane-agent-graphs.txt line 85). The owner asked what is stored and how it is used, not which engine stores it.",
+    "consequence": "H1 and H2 are zero by construction. SQLite held the same property graph, so all three typed arms were graph arms. The only informative contrast in the test was typed graph (any engine) against scripted search.",
+    "fix": "Keep the engine only for H5 (speed, size, update cost, effort). Vary the representation instead: parser facts, model-extracted facts, a document layer, stored conclusions, stored time validity."
+   },
+   {
+    "assumption": "Identical answers from three engines say something about graphs",
+    "where": "build-e/result.json, grade:heldout headline bullet 1",
+    "status": "contradicted as evidence about graphs; supported as an implementation check",
+    "why": "Identity follows from shared facts plus a cross-check arm. Even so, the answers shown match on 770 of 770 tasks, but the full ranked lists differ on 5 SQLite and 3 DuckPGQ tasks (refute:discipline). The only graph-native step tested was a stored Louvain community prior on personalised PageRank, and the PageRank iterations ran in application code.",
+    "consequence": "H1b: +0.015 recall, interval [-0.010, +0.042]; draws range +0.009 to +0.032; T2 -0.037. This speaks to one prior on one repository, not to graph algorithms in general.",
+    "fix": "Report identity as an implementation check only. Test the algorithms that have no cheap SQL form: multi-seed personalised PageRank, Steiner subgraphs, typed explanation paths that are scored, community summaries. Score them on tasks with several seeds and on 'explain why' tasks."
+   },
+   {
+    "assumption": "Co-change (other files changed in the same commit) is the right primary reference",
+    "where": "protocol.md §4 T1 and §7; research/lane-scoring.txt; warned in critic.txt FAIRNESS 'Truth circularity' and in verify.txt (verify-schema-scoring error 7; the [protocol] line)",
+    "status": "weakly supported as a proxy; warned before the run and not acted on",
+    "why": "The label is the co-change signal itself. Context that is needed but not edited (callers, contracts, tests) earns zero. Before the run only 62 % of targets had ever co-changed with the seed (verify.txt).",
+    "consequence": "Half of the typed arm's credited recall (0.337 of 0.670 per task) came through paths containing a co-change edge. Outside mobile seeds the typed store ties the co-change floor: +0.001, interval [-0.051, +0.055]. The owner's 'connections that will or won't break' were never scored.",
+    "fix": "Use labels that do not come from the shared extractor, each in its own column: tests that fail when the production diff is applied without test edits; invariants whose anchors the diff touches; files touched by a follow-up fix; a blind sufficiency check (widen/lane-evaluation.md D2)."
+   },
+   {
+    "assumption": "Model-extracted graphs can be excluded",
+    "where": "research/lane-agent-graphs.txt BUILD RECS ('Do NOT use: ... LLM-extracted graphs'); HARNESS-BOTTLENECKS-2026-11.md §6 'Do not build'; protocol.md §3 (one deterministic extractor)",
+    "status": "weakly supported for syntactic relations; untested for semantic relations",
+    "why": "The direct study (arXiv 2601.08773) is weak: 45 questions, one author, a thin model-built graph, one repository carrying the effect. Parsers beating models on call graphs (arXiv 2410.00603) says nothing about intent, rationale or doc-to-code claims. The only independent positive for graphify is in its model-read document layer (graphify-bench, Sonnet 5, doc-and-code tasks: 80 % against 70 %, cost -0.084 USD, interval [-0.180, -0.005]; contradiction hunt 4 of 4 found against 2 of 4; Haiku 4.5: 75 % against 80 %).",
+    "consequence": "The test cannot speak to the layer graphify adds. This repo has much documentation: 87 markdown files, about 574k tokens (bytes/4); 517 of 1,268 backticked file names in docs do not resolve.",
+    "fix": "Add a switchable model-extracted layer over docs and comments: concepts, rationale, doc-to-code links, each with confidence and source line. Count its build tokens. Score it on doc-versus-code questions and planted contradictions with an agent in the loop. Keep code relations from the parser."
+   },
+   {
+    "assumption": "No summaries, reports or orientation layer are needed",
+    "where": "protocol.md §3 (no summary node); critic.txt MISSING algorithms bullet (community summaries), not acted on",
+    "status": "untested here; outside evidence leans against summaries as a substitute for code and is unknown for summaries used as pointers",
+    "why": "Code summaries answered 4 of 45 behavioural questions against 27 of 45 for source (arXiv 2607.09691, abstract only). Model-written context files cost about 20 % more with no success gain (ETH AGENTS.md study). RepoGraph's 2-hop summary held resolution (28.67 % at 1,229 tokens) where the flattened 2-hop dump hurt it (26.00 % at 10,505 tokens). Across windows, 294 paths read in five or more windows hold 73 % of fetched tokens (HARNESS §6).",
+    "consequence": "Orientation questions, where graphify's report and the owner's 'small small' fetch would act, were never asked.",
+    "fix": "Add an orientation-question set. Compare community summaries, role-aware file summaries used as an index (pointer, not substitute), plain retrieval and map-reduce reading. Run a degree-preserving null test that the communities are real before paying for summaries."
+   },
+   {
+    "assumption": "Temporal validity, caching and invalidation can be left out",
+    "where": "protocol.md §3 (one snapshot per parent; the cache is a build cache keyed by SHA); HARNESS-BOTTLENECKS-2026-11.md §6 ('Do not build ... time-based expiry'; 'a cache over traversal has nothing to save')",
+    "status": "untested; it is exactly what the owner asked about",
+    "why": "Parser facts cost zero model tokens and rebuild in about 5.3 s per commit (build-b/facts-NOTES.md), so the test had nothing expensive to cache. The primitive that could save tokens is a conclusion that carries its dependencies and is invalidated by early cutoff, as in build systems; this is strong as engineering description with no token evidence. Published temporal-graph numbers are conversation-memory results, mostly vendor-run. Independent MemoryAgentBench ranked Zep lowest: 7 % single-hop, 3 % multi-hop.",
+    "consequence": "'Caching does not help' holds only for traversal over cheap facts. Caching conclusions that cost tokens to derive, with dependency-based invalidation, has never been tested.",
+    "fix": "Test 1: replay the 190 per-commit snapshots, record each answer's dependency set, and compare cache policies (none, whole-repo, file-hash, fact-level, fact-level with early cutoff). Test 2: report stale-served rate (must be 0), avoidable recompute and hit rate, priced with measured lookup costs. Only then an agent pilot with a no-invalidation stale control. Close a doc citation edge when its target file disappears."
+   },
+   {
+    "assumption": "A retrieval proxy can stand in for an agent",
+    "where": "protocol.md §8 (agent pilot left to the owner); critic.txt MISSING 'An end-to-end agent evaluation' (24 to 30 commits, four tool sets), not acted on; protocol-addendum-6.md D19; no record in graph2/ that the decision was put to the owner",
+    "status": "untested; outside evidence says the proxy misses the main effect",
+    "why": "Behaviour dominates. In CodeCompass, 58 % of graph-condition trials made no graph call. Agents re-read files after a graph answer. In graphify-bench, Sonnet 5 on code used +32k tokens, interval [-8k, +75k], with accuracy 78 % against 84 %. Graph tools give +17 to 21 points at 1.7 to 4B model size and 2 to 5 at 32B.",
+    "consequence": "No claim can be made about tokens, turns, success or mistakes. This is the largest gap against the owner's actual goal.",
+    "fix": "Run agent arms with the deployment model fixed: grep only; plus BM25; plus embeddings; plus the graph tool; plus graph and lexical; plus a placebo tool of equal description size. Count tokens including subagents, uncached tokens separately, and tool-schema tokens. Check every run that the tool connected and was called. Make steering its own condition. Pilot 12 tasks x 4 arms x 3 runs, then about 40 x 3 x 3."
+   },
+   {
+    "assumption": "A scripted search is a fair baseline",
+    "where": "protocol.md §5(a); protocol-addendum-6.md item 13",
+    "status": "weakly supported",
+    "why": "About half of search's credited recall is co-change padding, and it does not beat the co-change floor: -0.013, interval [-0.032, +0.006] (refute:claims). It is not an agent searching. The embedding arm was left out although verify.txt called embeddings the strongest non-graph baseline. critic.txt asked that the stores be scored 'as additions to grep'; they were scored instead of it.",
+    "consequence": "The T1 win is over a weak, padded baseline and comes from mobile seeds. It does not show a win over how agents search today.",
+    "fix": "Use live agentic grep as the baseline. Add a BM25 symbol-search arm with the same output cap, and an embedding arm (needs a model download, the owner's decision). Score the graph as an addition to grep."
+   },
+   {
+    "assumption": "A fixed 8,000-token answer budget measures token efficiency",
+    "where": "protocol.md §7; protocol-addendum-2.md A3; protocol-addendum-4.md item 2; grade:heldout limits bullet 1",
+    "status": "contradicted",
+    "why": "The median answer size was 7,999 tokens for every arm and set, so the tokens condition never decided a verdict. Tokens to 80 % recall, where reached: typed 7,152, search 7,014, co-change floor 6,283. Share reaching 80 % within 16k: 66 %, 52 %, 56 %. The medians are on different subsets, but none shows the typed store reaching the same recall in fewer tokens.",
+    "consequence": "The test measured ranking at a fixed spend, not the owner's 'fetch small pieces'. About 0.70 recall for about 8,000 tokens per seed is not small.",
+    "fix": "Make tokens to sufficiency the primary outcome: an agent stop, or a stop rule with a sufficiency check. Report precision and recall at matched tokens, and count carry cost."
+   },
+   {
+    "assumption": "The session-lookup set (T5) can be dropped and every task can start from a known seed",
+    "where": "protocol-addendum-4.md item 7; protocol.md §4 (seed = a changed file and symbol; commit message excluded)",
+    "status": "weakly supported as a fairness ruling; it creates a silent assumption that the entry node is known",
+    "why": "The literature says the entry point matters more than the traversal: in LocAgent's ablation, removing the search tool costs 19 points against about 2 for removing graph traversal (verify.txt). Graphify's query path starts with lexical seed-finding. The research itself recommended a lexical entry point (lane-agent-graphs BUILD RECS).",
+    "consequence": "Every arm got a perfect seed. The decisive step from natural language to a node was never measured, and the only real-usage task set was dropped.",
+    "fix": "Add natural-language entry tasks (issue text, first prompt of a session). Give every arm the same tuned lexical or embedding entry. Replay the 139 recorded lookups as screening (lane-evaluation D3)."
+   },
+   {
+    "assumption": "Question kinds can be answered by programs written per kind",
+    "where": "protocol-addendum-3.md item 19; protocol-addendum-5.md A2; protocol-addendum-6.md item 14",
+    "status": "untested; the token comparison was misread",
+    "why": "The typed side's costs (knowing the schema, writing the query programs) were not counted. Final answers were the same size, 31 tokens against 29.5; the 695 is what search read to get there (refute:claims). 8 of 30 held-out questions needed handling changes after their text was read. Question 40 is answered empty. H4 is inconclusive, interval [-0.060, +0.257].",
+    "consequence": "31 against 695 shows fewer steps for a caller that already holds the right query. It is not a session saving, and it is the same kind of number as graphify's ratio.",
+    "fix": "Expose one generic tool API from every backend (neighbors, impact, path, explain, search), let the agent choose the call, and count tool-schema tokens in every call's prefix."
+   },
+   {
+    "assumption": "One repository is enough",
+    "where": "protocol.md §2; protocol-addendum-6.md item 21",
+    "status": "untested for generality",
+    "why": "The repo is small (477 code files, about 5,400 nodes) and organised as vertical slices: same-folder padding alone scored 0.72 on TUNE. Index gains are smaller at small scale; graphify's own figures are about 1x on 6 files, 8.8x on code only, 71.5x on 52 mixed files. Mobile seeds rose from 17 % on TUNE to 36 % on held-out, and the whole typed win sits there. Every arm fell 0.06 to 0.17 from tuning to held-out.",
+    "consequence": "The result can under- or over-state graph value elsewhere, and within this repo it depends on the runtime mix.",
+    "fix": "Stratify by runtime. Use fresh commits after the freeze (the 75 held-out commits are spent). If generality matters, add a larger, docs-heavy second repository."
+   },
+   {
+    "assumption": "UNNAMED: token cost equals the size of a retrieval answer",
+    "where": "protocol.md §7; the 31/695 framing",
+    "status": "contradicted by the program's own measurement",
+    "why": "Usage is calls x window size; 97 % of context tokens are cache re-reads (TOKEN-BOTTLENECK-2026-11.md). A fetched token is re-processed about 50 times (HARNESS §6). FixFlow's fixed prefix is 47 % of its tokens, about 60k per agent window, about 50k of it tool and connector schemas.",
+    "consequence": "Cuts both ways: a smaller answer saves its size times the remaining calls, and a new graph tool adds its schema to every call. Neither was measured.",
+    "fix": "Measure inside sessions: per arm, report schema tokens, carried tokens, and tokens up to a passing change."
+   },
+   {
+    "assumption": "UNNAMED: fetched context is the bottleneck a graph should attack",
+    "where": "the owner's first question; brief.md",
+    "status": "weakly supported as a target, but bounded",
+    "why": "Fetched content is 23 % to 27 % of context tokens. The larger levers are the orchestrator window, the fixed subagent prefix and the number of steps. 74 % of fetched tokens went to files that were not edited; whether they were needed is unmeasured.",
+    "consequence": "Even perfect retrieval caps the saving at about a quarter of tokens, before its own costs.",
+    "fix": "State the bound. Test the cross-session form (hot paths read in many windows), where a store could act."
+   },
+   {
+    "assumption": "UNNAMED: a single seed is the query shape, and co-change recall stands in for 'what will break'",
+    "where": "protocol.md §4; HARNESS-BOTTLENECKS-2026-11.md §6 line 246",
+    "status": "untested",
+    "why": "Contract, invariant and URL edges were built, but no task asked what a change breaks. Multi-seed and Steiner algorithms, named by the critic, were not built.",
+    "consequence": "The owner's 'connections that will or won't break' were never scored.",
+    "fix": "Add tasks with several seeds, and a break-prediction task with an execution oracle (inject a change and see what fails)."
+   },
+   {
+    "assumption": "UNNAMED: tuning and held-out data are exchangeable",
+    "where": "protocol-addendum-4.md selection rules",
+    "status": "contradicted in part",
+    "why": "Every arm fell 0.06 to 0.17 from tuning to held-out. The rejected configuration S1 scored +0.011 higher, interval [-0.004, +0.026]. The mobile share of seeds doubled.",
+    "consequence": "A configuration chosen on tuning data may not be the best for new work.",
+    "fix": "Use rolling-origin splits and stratify by runtime."
+   },
+   {
+    "assumption": "UNNAMED: arm code alone keeps future commits out of reach",
+    "where": "protocol-addendum-6.md item 7",
+    "status": "held for parser arms; would fail for an agent",
+    "why": "Every container mounted the live working tree with its full git history. In one outside audit of 731 agent runs (Cursor), 63 % of successful runs retrieved the fix from history or the web.",
+    "consequence": "Any agent arm run the same way would be leaky.",
+    "fix": "Mount a clean export or a bare clone limited to the parent commit; no network; a blind transcript audit."
+   },
+   {
+    "assumption": "UNNAMED: model size does not matter",
+    "where": "no model named, because no agent was run",
+    "status": "contradicted by outside evidence",
+    "why": "Graph-tool gains shrink from +17 to 21 points at 1.7 to 4B to 2 to 5 at 32B. A frontier model with agentic grep was not significantly beaten by an index (p = 0.08 to 0.09).",
+    "consequence": "A result with a small model would not predict one with the deployment model.",
+    "fix": "Use the deployment model; report by model if more than one is used."
+   },
+   {
+    "assumption": "OWNER'S: stars and headline ratios show effect, and the graph type (graph / knowledge graph / temporal knowledge graph) decides the result",
+    "where": "the owner's latest message",
+    "status": "contradicted",
+    "why": "Graphify's 146,932 stars measure adoption. Its 71.5x is a ratio of two estimates (whole corpus against answer size), with no grading and run once; code-only it is 8.8x. Its code-agent result is n = 6 (ERPNext). Independently, on 177 SWE-bench Lite issues graphify ranked the right file first in 25 % of cases against 32 % for BM25. Graphify has no validity intervals and no history, and its code layer is the same family as ours. No source found shows graph type separates wins from losses (widen/lane-agents.md line 185).",
+    "consequence": "'Graphify works and ours failed' is not like for like.",
+    "fix": "Run graphify as shipped as an arm, code layer then with document extraction, scored for correctness. Its 'affected' command is the analogue of T1 and has no public measurement. Make each layer (model semantics, summaries, validity) a separately switchable arm."
+   }
+  ],
+  "carries_over": [
+   "With the same facts and algorithm, SQLite, LadybugDB 0.22.3 and DuckDB with DuckPGQ return the same answers on this repo (shown content identical on 770 of 770 held-out tasks). The engine is an operations choice; H5 timing is still unmeasured.",
+   "The fact layer: a deterministic, leak-free build per commit (about 5.3 s per build with three running at once, about 4.1 MB per commit, byte-identical on rebuild, 190 snapshots cached) with typed cross-runtime edges. It is a zero-token base for a temporal or cached-conclusion test.",
+   "Typed store against scripted search on co-change recall at 8,000 tokens: +0.076, interval [+0.036, +0.118], holding at 2k and 4k tokens. It comes from mobile seeds (+0.151). Outside mobile it is +0.024 [-0.024, +0.074] against search and +0.001 [-0.051, +0.055] against the co-change floor.",
+   "Ranking matters more than hop count. A stored community prior on personalised PageRank gave no gain of 0.05 or more (draws +0.009 to +0.032; T2 -0.037). Unbounded traversal in both directions with degree-normalised ranking was selected; 4 hops did as well.",
+   "In a vertical-slice repo, folder structure and co-change history are strong floors (same-folder 0.72 and co-change 0.75 on TUNE) that any method must beat.",
+   "On structural questions a typed query reaches the answer in 1 lookup against 2.13, and search read about 695 tokens to produce an answer of the same size (31 against 29.5 tokens). This is an exposure for saved steps, not a measured session saving. F1 was inconclusive.",
+   "Reusable apparatus: the sealed tasks; 50 blind-checked questions (now development material); the shared scorer and packer; the cross-check equivalence arm; the held-out lock; the three-refuter process; the removed-document path."
+  ],
+  "does_not_carry_over": [
+   "Anything about agent tokens, turns, success or mistakes: no agent was run.",
+   "Anything about model-extracted meaning, a document layer, doc-to-code links or contradiction finding, which is where graphify's only independent positive result sits.",
+   "Anything about summaries, reports or orientation questions.",
+   "Anything about temporal validity, caching of derived conclusions, or invalidation: the facts cost zero model tokens, so caching had nothing to save.",
+   "Anything about context a change needed but did not edit, or about predicting what a change breaks: the label was co-change.",
+   "Anything about the natural-language entry step: every task was handed a perfect seed node; the session-lookup set was dropped.",
+   "Anything about an embedding baseline or live agentic grep: neither was an arm.",
+   "Token efficiency: every arm filled its 8,000-token budget (median 7,999).",
+   "The '31 against 695 tokens' figure as a session saving: it compares answer size with tokens read, and leaves out schema knowledge, query programs and tool-schema prefix cost.",
+   "'Graph against relational' as a statement about graphs: H1 and H2 were zero by construction.",
+   "Other repositories or scales, and runtime mixes unlike the held-out one (mobile seeds 17 % to 36 %).",
+   "The 75 held-out commits as a fresh test set: they are spent."
+  ],
+  "notes_file": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/widen/critique-assumptions.md"
+ },
+ "arch": {
+  "summary": "The finished test used a typed property graph built by parsers and git. It had a small deterministic layer over the documents: 20 CLAUDE.md invariants with 90 anchors to code, 529 citations and 1,380 mentions. Time was one snapshot per parent commit plus co-change edges. By the loose definition that is a knowledge graph. It was not a model-built semantic knowledge graph and not a temporal knowledge graph (TKG). It had no cached conclusions, no orientation layer and no agent in the loop.\n\nGraphify is the same kind of graph for code: a tree-sitter graph, built with no model. It adds a model-read layer over documents, Leiden clusters with a report file, and an always-on instruction block with hooks. It is not temporal and stores no summaries. Its 71.5x is a ratio of two size estimates against reading the whole corpus, with no answer graded. Its one agent number on code is 6 questions. The only independent gain found for it is on doc-versus-code questions, which is the layer the finished test left out.\n\nThe owner is right on these points:\n- The architecture was narrow.\n- His library idea (cached conclusions with invalidation) is the only part with a mechanism for large savings, and it was untested. The tested facts cost zero model tokens, so there was nothing to cache.\n\nHe is not right on these points:\n- Stars are adoption, not evidence of an effect.\n- Engines did not differ: three engines returned identical answers on 770 of 770 tasks.\n- Traversal speed and a cache over traversal save nothing here, because traversal takes about 1 ms.\n- Published TKG numbers are chat-memory scores against putting the whole conversation in context.\n\nOur own assumptions were also weak:\n- The label gave no credit for context that was needed but not edited.\n- The question side's cost of writing queries was not counted.\n- The containers mounted the live tree.\n- The code graph aimed at the smaller target. My reading of the FixFlow token records shows the most re-read content is the harness's own design documents: the top 30 paths hold 7.1 % of all tokens, and the 15 documents among them hold 4.9 %.\n\nThe strongest honest design has seven layers:\n1. A working-tree overlay.\n2. The existing structure graph with line anchors, symbol-span hashes, a negative-dependency index and a lexical entry point.\n3. Meaning: a deterministic doc layer plus model-read typed claims (invariants, decisions, reasons, hazards), bound to code only by a deterministic resolver.\n4. Time: validity by commit ancestry, with invalidation driven by the structure and early cutoff.\n5. Cached conclusions: the owner's knowledge-store design, given graph footprints.\n6. Orientation: pulled, except a small stable pointer and edit-time invariant warnings.\n7. One command-line tool whose answers cite lines.\n\nCeilings are stated against the measured token spend. 97 % of tokens are re-reads, fetched content is 22.5 to 28.5 %, and the prefix is 47 % of FixFlow's tokens. CLAUDE.md alone is about 5 % of FixFlow's context tokens by my arithmetic, as an exposure. Any knowledge layer is at best the third lever, after capping the orchestrator window and stripping the subagent prefix.",
+  "layers": [
+   {
+    "layer": "L0 substrate: snapshots and working-tree overlay",
+    "what_it_holds": "Facts per (commit SHA, extractor version), already byte-reproducible. Plus an overlay for the agent's uncommitted and untracked files: their units hide the base's units, so no visible fact points at a hidden one.",
+    "how_built": "Git plus the existing extractor (version 59da7b753a4d908e). The overlay follows Glean's stacked-database design. No model.",
+    "what_it_saves": "Nothing directly. It is what makes every other layer correct while an agent edits: agents work in five worktrees with uncommitted files, so a commit-keyed store is stale on the first edit.",
+    "evidence": "Own: full rebuild 4.5 to 7 s alone, 5.3 s median at three concurrent, 4.1 MB per commit (build-b/facts-NOTES.md; strong). Glean: about 2 to 3 % indexing overhead for Python, about 7 % larger database, queries under 10 % slower (Meta's own figures; strong as engineering, no token evidence; lane-temporal.md 2.4).",
+    "cost_to_build": "Extractor work only; seconds per change; zero model tokens.",
+    "risk": "A one-file overlay must re-run the cross-runtime joins (client URL to route), not only the file's parser. Rename identity is heuristic."
+   },
+   {
+    "layer": "L1 structure: typed code property graph",
+    "what_it_holds": "Exists: functions, classes, tests, files, routes, tables, columns, settings, migrations, screens, outbox kinds, jobs, slices. 35+ edge kinds, including calls, imports, client-URL-to-route, test-to-route, table read and write, setting reads, enqueue and handler, co-change. 5,464 nodes and 18,875 edge rows at the frozen commit. Four upgrades: (1) a line anchor printed on every answer; (2) content hashes per symbol span; (3) a negative-dependency index (in-edges of a kind into X); (4) a lexical BM25 entry point in SQLite FTS5. Embedding entry would be a separate optional arm. Algorithms by question kind: typed path queries for chains, reverse reachability with a budget per edge kind, personalised PageRank with a co-change prior for ranking, and the repository's own slices as clusters (Leiden only as a diagnostic). The store is SQLite.",
+    "how_built": "Parsers (Python ast, TypeScript compiler API) and git; no model.",
+    "what_it_saves": "Lookup steps and fetched tokens on connection, impact and chain questions. A typed answer is a median 31 tokens (40 on the untouched subset), where scripted search read about 695 (819) tokens. That is answer size, not session tokens. Ceiling: connection questions were about 7 % of sampled searches.",
+    "evidence": "Own, held-out (build-e/result.json):\n- Engines identical on 770 of 770 tasks (strong).\n- Typed store against scripted search: +0.076 recall [+0.036, +0.118], only on mobile seeds (+0.151).\n- Question F1 0.745 against 0.645, interval [-0.060, +0.257], inconclusive.\n- Community prior on PPR: +0.015 [-0.010, +0.042].\n\nOutside:\n- Map tools with a frontier agent cut tokens 17 to 39 % with success flat (arXiv 2611.07286; medium; steering confounded).\n- Codebase-Memory: about 10x fewer tokens but quality 0.83 against 0.92 (authors grading; weak to medium).\n- The entry point mattered more than traversal: LocAgent ablation 19 points against about 2 (medium).\n- A pre-registered 170,500-episode study credits the embedding index, not the graph (medium to strong; small open models).",
+    "cost_to_build": "Zero model tokens; seconds per build; the upgrades are extractor work.",
+    "risk": "Answers questions sessions rarely ask. Hubs: 73 % of code commits touch a file with reach over 15, so answers need caps and grouping. 11.2 % of held-out reference definitions had no node. Published results show possible losses on edit and test-writing tasks."
+   },
+   {
+    "layer": "L2 meaning: deterministic doc layer (L2a) plus model-read claims bound to code (L2b)",
+    "what_it_holds": "L2a (exists): doc, section and doc-id nodes; 529 cites, 1,380 mentions (1,054 low confidence); 20 invariant nodes with 90 constrains anchors. Add a validity check on every citation, because 517 of 1,268 backticked names in the docs do not resolve today.\n\nL2b (new): typed claims read from document sections, commit messages and pull-request bodies.\n- Kinds: invariant, decision, rationale, rejected_alternative, hazard, contract, procedure, open_defect.\n- Each claim has a statement of at most about 40 words, a polarity, a scope, its source span and blob hash, and its anchors as written.\n- Edges: constrains and explains (to code); supersedes and contradicts (as candidates).",
+    "how_built": "A model reads each section once into a fixed schema (structured output). A deterministic resolver, using the docs extractor's existing anchor rules, binds anchors to structure nodes. An unresolved anchor stays raw and is shown as unanchored (the repository's own raw-plus-resolved pattern). The model never makes a code edge. Cache key: section hash, model and prompt hash. Claim ids come from the span hash plus the normalised statement, to avoid the id churn graphify issue #3004 reports.",
+    "what_it_saves": "Two things: (a) 'which rule applies here and why', answered in a few hundred cited tokens instead of reading a 41 KB handoff or a 44 KB code map; (b) the reasons in pushed text could become pulled. CLAUDE.md is about 7,400 tokens in every call, about 5.1 % of FixFlow's context tokens if every call carried it (my arithmetic, exposure).",
+    "evidence": "For:\n- graphify-bench (independent; medium): doc-and-code questions 80 % against 70 % with Sonnet, cost -0.084 USD [-0.180, -0.005]; contradiction hunt 4 of 4 against 2 of 4.\n- GraphRAG summaries help whole-corpus sensemaking, but the judging is biased: self-comparison 90 against 10 by answer order; LightRAG fell from 66.70 to 39.06 % after correction (medium to strong).\n\nAgainst:\n- LLM-written repository context files: resolution -0.5 and -2 % (not significant), cost +20 to 23 % (ETH; medium to strong).\n- Free summary reuse 22.22 % against 26.26 % (SWE Context Bench; medium).\n- Static analysers beat 24 LLMs on call graphs (medium to strong), which is why L2b never makes code edges.",
+    "cost_to_build": "One model read of the in-scope prose, plus prompt and output. Product docs outside docs/program: 29 files, 73,398 words, about 98k tokens. Commit messages: 38,941 words, about 52k tokens (my measurement). Roughly 2 USD by scaling graphify-bench's 7 USD for 261k words (weak). Incremental per changed section after that. docs/program, where the hot reads are, is much larger and partly untracked.",
+    "risk": "Extraction errors persist. Docs are partly stale. Prose describes later fixes, so building from the live tree leaks into replays. Build non-determinism. Moving rules from push to pull runs into the trigger problem ('nothing fails, so no lookup starts': 21 cases in 5 families in LIBRARY-PATHWAYS)."
+   },
+   {
+    "layer": "L3 time: validity by commit ancestry, invalidation driven by the structure",
+    "what_it_holds": "For each fact and claim: the commit it appeared at and the commit it stopped holding at, by stable identity. Validity at commit K means 'A is an ancestor of K and B is not', which is a set over the commit graph, not a linear interval. For each claim and conclusion: a dependency set (node ids with span hashes, digests for negative dependencies, the prose source span) and a status (valid, suspect or invalid). Two time axes: valid time (commits) and record time (from the journal).",
+    "how_built": "A diff of consecutive snapshots by stable id, with git rename detection plus signature similarity for identity. The build-systems policy: when a dependency hash changes, mark dependents suspect; re-run the cheap deterministic check; if the result is equal, re-stamp and stop (early cutoff, as in Skyframe, Salsa and rustc red-green); otherwise invalidate. For model claims a changed anchor means suspect, never false. No model.",
+    "what_it_saves": "Directly little. It is what lets L2b and L4 be served without stale content, and it lets a resuming agent read 'what changed near X since K' instead of re-reading whole files or documents (unmeasured anywhere).",
+    "evidence": "Mechanism: Bazel Skyframe, Salsa, rustc and Glean (strong as engineering; no token evidence). Deterministic supersession: MemStrata 0.91 against 0.57 to 0.59, with plain retrieval serving the superseded value 36 to 38 % of the time (single author; weak). Model-decided invalidation does poorly on independent tests: MemoryAgentBench multi-hop at most 7 % for every method, Zep 7 % single-hop (medium). Graphiti's invalidation is a small-model judgment with no check (read in source). No study of temporal graphs for coding agents was found by any lane.",
+    "cost_to_build": "Zero model tokens; seconds per commit. The storage economy against 190 snapshots (778 MB) is negligible at this size.",
+    "risk": "Identity errors across renames split or merge histories (unmeasured for code). An unrecorded dependency serves stale answers; file-level invalidation throws away the hits. Dependency recording so far is specified only for the in-memory reference arm."
+   },
+   {
+    "layer": "L4 cached conclusions: the owner's library",
+    "what_it_holds": "Verified answers and analyses. Kinds: solved problems, traps, do-not-apply rules, impact analyses, flow explanations, decisions with reasons, slice summaries. Each has the question in searcher's words, the answer, evidence spans, a graph-derived dependency set (symbol spans, typed neighbours crossed, negative dependencies), the producer (model, prompt, session), the tokens the derivation cost, and a status.",
+    "how_built": "Write-through at solve time by the strong model, with a reviewer's refutation pass. An event journal plus a SQLite index. Lazy invalidation with early cutoff at lookup and at phase close. The entry's own check runs before an actionable entry is served. This is KNOWLEDGE-STORE-DESIGN-2026-11.md v1.3.1 (commit 6fba000), with footprints upgraded from file blobs to graph footprints. That upgrade covers the blind spot the design itself names: semantic changes outside the footprint.",
+    "what_it_saves": "Re-derivations not paid. Unmeasured as a rate; single cases run to millions of tokens (a stored design that had cost about 15M helper tokens was reused, LIBRARY-PATHWAYS f07-4 [M]). The library-pathways model, mostly guessed inputs: 1.03 times the ladder's cost at middle values, 0.82 only when much work comes back, reach is high and entries are good [G].",
+    "evidence": "Mostly negative or flat on code:\n- VibeMemBench: 11 of 12 solver and memory pairings no better than memory off; 160 of 231 failures in the form of the record (medium to strong).\n- SWE Context Bench: oracle summary reuse 34.34 % against 26.26 % with none, free reuse 22.22 % (medium).\n- The design's own 59 chosen cases break most at match, use, check and afterlife.\n- No controlled study of cached model conclusions about code with dependency invalidation exists.",
+    "cost_to_build": "About 10 to 20 minutes of the solving session per recorded problem (design estimate), a reviewer pass, one capped command per lookup. Design build to the go/stop point: about six sessions (design section 0).",
+    "risk": "The trigger problem (no lookup starts). Entry quality. Stale service when a later fix silently changes a stored analysis. Look-alike matches. Private details travelling with entries. Placebo-like effects of a tool's mere presence."
+   },
+   {
+    "layer": "L5 orientation: pointer, slice cards, edit-time warnings",
+    "what_it_holds": "Three parts:\n- (a) A pushed pointer of at most about 500 tokens, stable across commits: which tools exist, when to call them, and that answers cite lines.\n- (b) Pulled slice cards of at most about 800 tokens per slice and runtime: entry points, routes, tables, settings, outbox kinds, constraining invariants, co-change partners and open defects. The skeleton is deterministic; an optional model paragraph is stored as an L4 conclusion.\n- (c) Event-driven one-line invariant warnings when an edit or diff touches a constrains anchor.",
+    "how_built": "Generators over L1 to L4, plus a Claude Code edit hook for (c). Clusters are the repository's slices.",
+    "what_it_saves": "Orientation reads, and the pushed-to-pulled shift. Moving half of CLAUDE.md's reasons out of the prefix is about 54M tokens, about 2.5 % of FixFlow's context tokens (my arithmetic, exposure). The pointer costs about 0.34 %; each 1,000 tokens of schema costs about 0.7 %.",
+    "evidence": "ETH: repository overviews did not help find files; LLM-written context files raised cost about 20 % (medium to strong). Graphify's report and always-on block have no independent measurement, and advisory text was often ignored (0 graph calls in a 60-session audit; grep against graph 46 to 18; weak). The diff warning under the knowledge-store v1.3 rule would have fired on 48.7 % of 154 commits before the refuters narrowed it (own).",
+    "cost_to_build": "Generator scripts and one hook; zero model tokens except optional card paragraphs.",
+    "risk": "Push to pull is the biggest single risk: CLAUDE.md's traps were each paid for, and an agent that does not know a rule exists will not ask for it. Changing CLAUDE.md is the owner's decision and only an arm in tests. Generated content in the prefix breaks prompt caching. Noisy hooks get ignored."
+   },
+   {
+    "layer": "L6 tools: one CLI with capped, cited answers",
+    "what_it_holds": "Every answer is typed items with path:line, grouped and capped, with a 'more available' count and explicit unknown or unanchored markers. Target caps per call are design targets, not measurements:\n- find: 300 to 600 tokens\n- neighbors: 500 to 1,500\n- impact: 800 to 2,000 (contracts, tests and invariants across runtimes, grouped by slice; graphify's affected is the analogue)\n- rules: 100 to 500\n- explain: 200 to 800 (a valid conclusion, else a deterministic card)\n- changed --since: 200 to 800\n- recall: 2,000 characters, with the entry's check run first\n- record: write-through",
+    "how_built": "A Node CLI called through Bash over SQLite, so it costs no tool-schema tokens in the prefix. A tool server with schemas is a factor to test, not a default.",
+    "what_it_saves": "Fewer steps and smaller results. Cited lines stop the 'graph answer, then re-read the file' pattern.",
+    "evidence": "Graphify users re-read files because 82 % of nodes had no source line (third party; weak to medium). The prefix is 47 % of FixFlow's tokens, about 50k of the roughly 60k per agent window being tool and connector schemas (TOKEN-BOTTLENECK-2026-11.md; strong). Recurring choices in tools that report gains: lexical entry, 1 to 2 hop capped expansion, token-capped outputs, a few tools beside grep and read (lane-agents.md section 4; medium).",
+    "cost_to_build": "Moderate engineering; no model.",
+    "risk": "Agents may not call the tools (adoption from 0 in 60 sessions to 42 % of trials in published work). Caps can drop a prerequisite: fewer tokens with a missing prerequisite is not a win."
+   }
+  ],
+  "arms_to_test": [
+   "A0: default tools (search and read), parent-era CLAUDE.md. The baseline.",
+   "A0p: placebo CLI with an equal-length pointer that returns plausible but uninformative output. Separates the effect of any extra tool and its description tokens from the effect of the content.",
+   "A0x: non-graph index. Capped lexical (BM25/FTS) search over symbols, signatures and doc sections, in the same output format as A1. Separates 'an index with capped, cited output' from 'a graph'.",
+   "A1: structure layer as a tool (find, neighbors, impact over L1 plus the deterministic doc layer). The finished test's graph, now with an agent.",
+   "A2: A1 plus model-read claims bound to code, plus the rules tool and slice cards. Tests the meaning layer.",
+   "A3: A2 plus the time layer and cached conclusions, seeded by replaying earlier commits and served with invalidation. Tests the owner's library.",
+   "A3s: A3 with invalidation switched off. The stale control.",
+   "G1: graphify as shipped, code layer only (tree-sitter, no model), with its own instruction block and default hooks.",
+   "G2: graphify as shipped with document extraction by a model. Its one independently measured gain is in this layer.",
+   "Factor S on A2 and G2: advisory steering against a forced first query, to separate steering from content.",
+   "Factor P on A2: rules fully pushed (today's CLAUDE.md) against one-liners pushed and reasons pulled through rules. Measures the push-to-pull lever and its risk.",
+   "Optional E (owner's decision; needs a model download and reverses an earlier 'do not build'): A1 with an embedding entry point instead of a lexical one.",
+   "Optional T (owner's decision; needs a graph-database server): Graphiti as shipped, ingesting docs and commit messages, used only on the D4 invalidation test. Model-decided against structure-decided invalidation.",
+   "Order:\n- D2 break oracle (repo checkers as reference, scripted, no agent) and D4 invalidation replay (no model first), across all arms that apply.\n- D3 recorded-lookup screen.\n- D5, about 100 fresh questions including doc-versus-code and 'which invariant applies', with all arms.\n- D1 replayed commits with a live agent: a 12x4x3 pilot, then about 40 tasks x 3 arms x 3 runs plus placebo.\n- Primary outcome: tokens to a correct result in four buckets, with each arm's own prefix counted. Success is a non-inferiority guard only."
+  ],
+  "reuse_from_finished_test": [
+   "Facts extractor (build_facts.js, py_extract.py, ts_extract.js, docs_extract.js, git_extract.js; version 59da7b753a4d908e; 28 of 28 self-tests) at C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/facts/. These are L1 and L2a as they stand. Note that this is a session scratchpad: whether it survives is unknown, and copying it somewhere durable is the owner's decision.",
+   "The 190-parent facts cache (746 MiB on disk) in the same folder's cache/ subfolder. It is the ground truth for the D4 invalidation replay, because recomputing at the next commit is free.",
+   "Task sets and sealed references:\n- tasks/tasks.jsonl, parents.txt, tq_questions.jsonl\n- sealed/references.jsonl, tq_reference.jsonl\n- the two-reader method (tq_writer, tq_second, tq_resolve, tq_agreement.txt)\nThe 75 held-out commits and 30 held-out questions are spent for their original claims. Reuse them as development material for new label and question kinds, not as a clean final set.",
+   "Arm harness: arms/common loader and output format (spec at docs/program/evidence/harness-bottlenecks/graph2/build-b/arms-common-SPEC.md). Keep the SQLite arm as the store, the same-directory and co-change floors as cheap baselines, and scripted search as a non-agent baseline. The LadybugDB and DuckPGQ arms are needed only for the pending timing question (H5), since their answers were identical.",
+   "Grader and statistics: the held-out scoring scripts and cluster bootstrap under sealed/grader/heldout/, plus the protocol discipline (hashes before the run, SCORING_STARTED, three refuters, must-not-claim lists, binding wording rules of addendum 6).",
+   "The Linux image definition at docs/program/evidence/harness-bottlenecks/graph2/engines-linux/Dockerfile.txt. Fix the mount: export the parent with git archive, no live tree, no .git history.",
+   "Token accounting parsers in docs/program/evidence/token-spend/ (per-call, four buckets, counted once per message id), for live-agent arms.",
+   "The layer-4 specification: docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md v1.3.1 (commit 6fba000, not on the current branch). It gives the journal, footprints, early cutoff and ancestry validity; its audit KS-0 is still unrun."
+  ],
+  "open_questions": [
+   "Target content: the measured hottest reads in FixFlow sessions are the harness's own design documents (the top 30 paths hold 7.1 % of tokens; the 15 documents among them hold 4.9 %). Should the meaning layer cover docs/program, which is mostly untracked and changes daily (121 untracked .md files now), or only the product docs and code?",
+   "The real prefix cost of each layer's pointer and tool schemas, measured. And does a CLI through Bash keep tool use as high as a tool server with schemas?",
+   "Adoption: will agents call the tools without being forced? Published adoption ranges from 0 calls in 60 sessions to 42 % of trials, and forcing confounds steering with content.",
+   "Can tests, mypy strict, tsc and import-linter run at old parents? D1 and D2 need this, and it has not been verified.",
+   "Does the history hold enough 'dependency case' changes (an answer changed while its own anchors did not) for D4 to show anything? Count them first.",
+   "How many needed-but-unchanged labels exist per commit? If few, D1's premise fails, and that is itself a result.",
+   "How non-deterministic is the model-read claim build? Build twice on 10 parents and compare.",
+   "Would the owner ever accept moving the reasons in CLAUDE.md from push to pull, given that each trap was paid for? If not, the largest lever (about 2.5 to 5 % of context tokens as exposure, my arithmetic) is off the table.",
+   "Does graphify fully parse this stack (Python, TS, TSX, JS) and extract table read and write edges? Installing it, and the pending graph-engine install, are the owner's decisions.",
+   "Which agent model is the deployment target? Published structural-graph gains shrink with model size.",
+   "Do cache reads count against the plan's limits? This decides whether prefix savings matter to the owner.",
+   "Where do fresh tasks come from? Product history on main runs 2026-05-31 to 2026-08-03 (391 commits); a prospective set may be needed.",
+   "How often does rename identity fail on this history, and does a failure split a claim's validity?",
+   "Even at its ceiling, is a knowledge layer worth building before the two larger levers? Those are capping the orchestrator window (39 to 74 % of cache-read tokens sit past 200k) and stripping the subagent prefix."
+  ],
+  "notes_file": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/widen/architecture.md"
+ },
+ "refuter": {
+  "verdict": "The audit is mostly right that the finished test was narrow. It overstates in five places and is wrong in one. It also missed four real flaws.\n\nOverstatements:\n1. The engine axis was the owner's own literal request. The protocol (section 1) said in advance that the engines would give identical answers.\n2. Co-change was not the only label. TQ (questions answered by readers and checked blind) and T3 (chains named in documents) were built without it, and TQ credits context that is read but not edited.\n3. Smaller answers were measured. Recall was scored at 2k, 4k and 16k tokens and as an area under the curve; the typed store won at 2k by +0.070.\n4. \"Graph type: contradicted\" should read \"untested\".\n5. The \"+17 to 21 points\" figure comes from the superseded v1 of arXiv 2610.33958. The pre-registered version gives +7.7 points for Qwen3-4B, and there embeddings are never below the graph.\n\nWrong: \"perfect retrieval caps the saving at about a quarter\". Removing lookup steps also removes window re-reads, which carry 43.6 to 55 % exposure.\n\nMissed flaws:\n1. Answers were path-and-signature pointer lists, so the reads that follow them were never counted.\n2. The token records that motivate the work are mostly design and document sessions. Every proposed agent test replays product-code commits.\n3. H5 never ran, so the engine axis produced nothing at all.\n4. The co-change floor is weak on mobile seeds (0.484 against 0.691 on backend). That suggests an untested hypothesis: the typed store helps where history is thin.\n\nOn the architecture: most layers have cheaper substitutes. CLAUDE.md is already in the prefix; docs/CODE-MAP.md maps the repo; git log and diff give history; a co-change list ties the typed store outside mobile seeds. The one layer with a large-saving mechanism is model-made cached conclusions. That is exactly where the build-systems early-cutoff argument fails, because re-checking a model conclusion needs a model call. Its own pathway model puts it at 1.03 times the ladder's cost at middle values. The ceiling figures are exposures measured on cache-read tokens.\n\nThe evidence for the document layer (graphify-bench) is weak and directional, not medium. Doc-and-code tasks: 20, a 2-task difference. Contradiction hunt: 4 tasks. Haiku 4.5 reverses the sign. The arms differ in skill text, hooks and subagent use.\n\nGraphify's 71.5x is evidence about its baseline (reading the whole corpus), not about any graph architecture.",
+  "claims": [
+   {
+    "claim": "Audit: the headline axis became the storage engine; the protocol narrowed the owner's question before any arm was built",
+    "result": "needs qualification",
+    "detail": "The engine comparison was the owner's literal request (brief.md: 'a merely self made graph vs a established relational engine is not a fair enough comparison'). protocol.md section 1 stated before any arm was built that identical facts and algorithm give identical answers, and that engines would be scored on speed, size and effort. Fair criticism remains in two places. First, addendum 3 item 13 still labelled H1 'primary', and the grader's headline led with it. Second, H5, the only measure on which engines could differ, never ran: build-e/result.json bench:rewrite proved the bench but did not run it. So the engine axis yielded no information of any kind."
+   },
+   {
+    "claim": "Audit: five pre-run warnings were not acted on",
+    "result": "needs qualification",
+    "detail": "The agent pilot and the embedding arm are listed in the frozen protocol.md section 8 as owner decisions. They were escalated, not dropped silently. Nothing in graph2/ records whether the owner answered. Community summaries with multi-seed algorithms, and labels for needed-but-unedited context, truly got no response."
+   },
+   {
+    "claim": "Audit: 'experiments are all failing' is false because the typed graph beat search",
+    "result": "needs qualification",
+    "detail": "The literal statement holds: H3 is better, +0.076 [+0.036, +0.118]. But the gain is confined to mobile seeds (+0.151). Outside them it is +0.024 [-0.024, +0.074] against search and +0.001 [-0.051, +0.055] against the co-change floor (build-e/result.json refute:claims). On the owner's metric, tokens, nothing was measured: every answer filled its budget and no agent ran. Accurate wording: the test did not fail; it did not measure what he asked."
+   },
+   {
+    "claim": "Audit: co-change is literally the label (truth circularity), and co-change stayed the only label",
+    "result": "refuted",
+    "detail": "The T1 label is the task commit's changes. The co-change feature comes from ancestor commits only (protocol.md section 3), and 38 % of targets had never co-changed with the seed (verify.txt). TQ (30 held-out of 50, answered by reading the code, checked blind) and T3 (chains named in documents) use labels built without co-change. TQ credits read-but-unedited context: tests reaching a function, invariants on a file, readers of a setting, change reach. What survives: the primary T1 gives no credit for needed-but-unedited context, and TQ is small (H4 inconclusive, [-0.060, +0.257])."
+   },
+   {
+    "claim": "Audit: 'connections that will or won't break' were never scored",
+    "result": "needs qualification",
+    "detail": "Partial proxies existed: T2 (tests changed with the production change), the TQ 'change reach' kind (question 44: typed F1 0.99 against 0 for search) and 'tests reaching a function'. There was no execution oracle. Correct wording: scored only through edit-history and reader-built proxies, never by execution."
+   },
+   {
+    "claim": "Audit: the fixed 8,000-token budget means the test never measured 'small pieces' (status contradicted)",
+    "result": "needs qualification",
+    "detail": "Recall at 2k, 4k and 16k tokens, the area under the curve and the share of tasks reaching 80 % recall were all scored (grader NOTES). The typed store beat search at 2k by +0.070 [0.029, 0.112]. 66 % of its tasks reached 80 % recall within 16k, against 52 % for search and 56 % for the co-change floor. Small answers cost recall: typed recall at 2k is 0.416. What survives: no arm could stop when it had enough, so tokens to sufficiency were not measured."
+   },
+   {
+    "claim": "Audit: 31 against 695 tokens is the same kind of number as graphify's 71.5x",
+    "result": "needs qualification",
+    "detail": "Both compare an answer's size with what a baseline consumes. Ours used a scripted search that actually ran: it read a median of 695 tokens, and its final answers were 29.5 tokens. Graphify's baseline is the whole 52-file corpus put in context (about 123,488 tokens against about 1,726 per answer, ungraded; review.md, fetched). Our comparison is far tighter. Neither is a session saving."
+   },
+   {
+    "claim": "Audit and architecture: graphify-bench's doc-and-code result (80 % against 70 %) is a medium-strength independent positive for a model-read document layer",
+    "result": "needs qualification",
+    "detail": "From the fetched README, I downgrade it to weak and directional:\n- 20 tasks, so 80 against 70 % is a 2-task difference, with no accuracy interval.\n- Sonnet 5 tokens -129k [-325k, +33k] cross zero. Only the cost interval, -0.084 USD [-0.180, -0.005], excludes zero.\n- Haiku 4.5 reverses the sign: 75 % against 80 %.\n- The contradiction hunt is n = 4, on contradictions planted in a synthetic corpus.\n- The author says the graphify arms carry skill text and per-read nudges and never spawn subagents, while the baseline used subagents in about half its runs.\n- One repetition per task; the page gives both 65 and 105 as the task count.\n- The author: treat direction, not magnitude, as the finding."
+   },
+   {
+    "claim": "Audit: graph type (graph, knowledge graph or temporal knowledge graph) is contradicted as the deciding variable",
+    "result": "needs qualification",
+    "detail": "No source varied graph type with the other factors held fixed. That is absence of evidence, so the status is 'untested'. 'No source found shows graph type separates wins from losses' survives."
+   },
+   {
+    "claim": "Audit and architecture: graph tools give +17 to 21 points at 1.7 to 4B parameters and 2 to 5 points at 32B",
+    "result": "needs qualification",
+    "detail": "lane-graphrag.md line 152 takes this from the exploratory v1 of arXiv 2610.33958 (79,000 episodes). lane-agents.md reads the pre-registered version (170,500 episodes, with a placebo arm): Qwen3-4B grep 0.114, graph 0.191 (+7.7 points), embedding 0.218, and embedding is never below graph. The direction (gains shrink with model size) holds in both. The size of the gain and the credit given to the graph do not."
+   },
+   {
+    "claim": "Audit: even perfect retrieval caps the saving at about a quarter of tokens",
+    "result": "refuted",
+    "detail": "Fetched content is 22.5 to 28.5 % of context tokens. But removing a lookup step also removes a full window re-read: lookup-only calls carry 43.6 % (testbed) to 55 % (FixFlow) exposure (architecture.md table, citing the token records). Both are overlapping exposures, so no single cap is established. The architecture states this correctly; the audit does not."
+   },
+   {
+    "claim": "Audit: the live working tree, with full git history, was mounted in every arm container and would leak to an agent",
+    "result": "survives",
+    "detail": "protocol-addendum-6.md item 7 confirms it. Parser arms were protected only by their code (a git archive of the parent), and a check of 10 tasks found no leak. An agent arm needs a clean export, no .git directory and no network."
+   },
+   {
+    "claim": "Missed by the audit: answers were pointer lists whose follow-up reads were never counted",
+    "result": "survives",
+    "detail": "The frozen primary is file granularity in signature form (addendum 4 item 4). An 8,000-token answer is paths and signature lines that an agent must then open. Recall at 8k measures pointer quality. The token cost of acting on the pointers was uncounted for every arm."
+   },
+   {
+    "claim": "Missed by the audit: the workload behind the token figures is not the workload the next test replays",
+    "result": "survives",
+    "detail": "brief.md says this repo's recorded sessions are almost all document and research work: 767 edits with only 10 on product code, and 94 of 1,527 reads on product code. The architecture measures the hottest re-reads as harness design documents (15 documents hold 4.9 % of FixFlow tokens). D1 and D2 replay product-code commits. A win or a null there does not transfer to where this owner's tokens go."
+   },
+   {
+    "claim": "Missed by the audit: a candidate explanation of the mobile win was never stated or tested",
+    "result": "survives",
+    "detail": "On mobile seeds the co-change floor reached only 0.484 recall, against 0.691 on backend seeds (refute:claims). One hypothesis: the typed store helps where history is thin, such as newer code. Untested; offered as a hypothesis only."
+   },
+   {
+    "claim": "Architecture: a graph database does not store connections more compactly, and traversal (about 1 ms) gives a cache nothing to save",
+    "result": "needs qualification",
+    "detail": "Bytes on disk and latency (H5) were never measured for the finished engines. The 1 ms figure comes from the first, rejected test's in-memory JSON graph (HARNESS section 6). The conclusion that speed does not matter survives on other grounds: a model step takes about 6.6 s (brief.md), and the bill is in tokens. Storage size does not enter token cost, so the compactness point is moot for the owner's question."
+   },
+   {
+    "claim": "Architecture: the owner's library (cached conclusions with invalidation) is the only part with a mechanism for large savings",
+    "result": "needs qualification",
+    "detail": "It is a mechanism per case (one reuse avoided about 15M tokens), not a measured rate. The design's own pathway model, with mostly guessed inputs, gives 1.03 times the cheap-model ladder's cost at middle values and 0.82 only in the favourable corner. Outside code evidence is flat or negative: VibeMemBench 11 of 12 pairings no better than memory off; SWE Context Bench free reuse 22.22 % against 26.26 % with none. The larger levers, capping the orchestrator window and stripping the subagent prefix, are not graph features."
+   },
+   {
+    "claim": "Architecture: commit-ancestry validity with early cutoff (L3) lets cached conclusions be served safely and cheaply",
+    "result": "needs qualification",
+    "detail": "Early cutoff works when re-checking means re-running the same cheap deterministic function. Deterministic conclusions here are already cheap: 31 tokens, about one query. The expensive conclusions are model-made, and a changed anchor makes them 'suspect, never false'. Re-checking them needs a model call; not serving them lowers the hit rate. Fan-out (73 % of code commits touch a file with reach over 15) and negative dependencies widen invalidation. 'What changed near X since K' is mostly git log or git diff on a path."
+   },
+   {
+    "claim": "Architecture: model-read claims bound to code by a deterministic resolver (L2b) add meaning cheaply and safely",
+    "result": "needs qualification",
+    "detail": "517 of 1,268 backticked file names in the docs (41 %) do not resolve, so many claims will be unanchored and cannot be invalidated by structure. The roughly 2 USD build cost is one third-party figure scaled by word count (weak). Build non-determinism is unmeasured. Supporting evidence is weak (graphify-bench). Opposing evidence is medium to strong: the ETH AGENTS.md study found cost up about 20 to 23 % with no success gain."
+   },
+   {
+    "claim": "Architecture: the rules tool, slice cards and edit-time warnings (L2a and L5) save orientation tokens",
+    "result": "needs qualification",
+    "detail": "Cheaper substitutes already exist:\n- The 20 invariants come from CLAUDE.md, which is already in every call's prefix, so a rules answer repeats content the agent holds unless CLAUDE.md shrinks.\n- Slice cards overlap docs/CODE-MAP.md Part 3.\n- Edit-time warnings need only the 90-row anchor table and a hook, not a graph."
+   },
+   {
+    "claim": "Architecture: moving CLAUDE.md's reasons from push to pull is about 2.5 to 5 % of FixFlow context tokens",
+    "result": "needs qualification",
+    "detail": "This is an exposure on prefix tokens, which are mostly cache reads. Whether cache reads count against the owner's limits is the architecture's own open question 11. Pulled text enters the uncached tail of the window and is re-read on every later call, so pulling often can cost more than the cached prefix it replaced. The risk of a missed paid-for trap is real."
+   },
+   {
+    "claim": "Architecture: the structure graph (L1) as impact and neighbour tools beats reading",
+    "result": "needs qualification",
+    "detail": "Outside mobile seeds the typed store tied the co-change floor (+0.001 [-0.051, +0.055]). A precomputed co-change list from git history is a cheaper substitute there. The pre-registered small-model study credits the embedding entry more than graph tools."
+   },
+   {
+    "claim": "Graphify's 71.5x headline is evidence for the proposed architecture",
+    "result": "refuted",
+    "detail": "It is about 123,488 estimated corpus tokens divided by about 1,726 per answer, over 5 generic questions. No answer was graded. Code only, it is 8.8x (16,997 against 1,929 tokens) (review.md, fetched 2026-11-13; weak). Any retrieval beats reading everything, so it is evidence about its baseline only. Independent check (issue 4341, fetched; medium): on 177 SWE-bench Lite issues graphify ranked the right file first in 25 % of cases against 32 % for BM25 (first 5: 38 % against 64 %)."
+   },
+   {
+    "claim": "The wider test could look good for the wrong reason",
+    "result": "survives",
+    "detail": "Ways it could happen:\n- Weak baselines: reading every file, padded scripted search, an A0 arm with a weakened CLAUDE.md.\n- Tokens without correctness.\n- An index built after the answer exists: model layers or seeded conclusions built from the live tree; D5 'which invariant applies' questions labelled from the same CLAUDE.md that L2a is built from; contradictions planted by people who know the layer.\n- Uncounted costs: build, seeding, suspect re-checks, subagents (graphify-bench counted the main session only), prefix schemas, reads after pointer answers.\n- Confounds from steering and subagent use.\n- Forking paths: 11 or more arms and factors against a 3-arm main run chosen from the pilot. Confirm on fresh commits.\n- Workload mismatch: product commits against spend on design documents.\n- Low power: about 40 x 3 detects only a 12 to 16 % token change."
+   }
+  ],
+  "must_not_claim": [
+   "Graphify proves that graphs cut tokens 71.5x, or graphify's star count shows that it works.",
+   "Our experiments show that graphs, graph databases or knowledge graphs do not help or add nothing.",
+   "Our typed graph beat search, stated without all of: on co-change recall, mobile seeds only, against a scripted search, at a filled answer budget.",
+   "Typed queries answer questions in 20 times fewer tokens, or 31 against 695 tokens is a session saving.",
+   "The finished test measured whether a graph cuts an agent's tokens, turns or mistakes.",
+   "A knowledge graph or a temporal knowledge graph would have won, or graph type does not matter: both are untested.",
+   "Temporal knowledge graphs are proven to help (Zep, Mem0 and LoCoMo results are vendor-run conversation-memory scores against full context).",
+   "Cached conclusions with invalidation will save tokens, or caching does not help: the first is untested; the second was shown only for traversal over facts that cost no model tokens.",
+   "A model-extracted document layer is proven to help (graphify-bench: 20 tasks, a 2-task difference, sign reversed on Haiku, arms confounded).",
+   "Model-extracted graphs are worse than parser graphs in general (shown only for syntactic relations such as call graphs).",
+   "Graph tools give 17 to 21 points, without saying small open models, the superseded v1 of the paper, and that embeddings matched or beat the graph.",
+   "A knowledge layer could cut the bill by a quarter, a half or any stated share: these are overlapping exposures on mostly cache-read tokens, not savings.",
+   "A graph database stores connections more or less compactly than a relational store, or is faster or slower: H5 was never run.",
+   "The protocol ignored the owner's request: it ran the engine comparison he asked for and said in advance that answers would be identical.",
+   "The finished test never scored context a change needed but did not edit (TQ did, for 8 question kinds, on 30 held-out questions).",
+   "Even perfect retrieval can save at most about a quarter of tokens.",
+   "Early cutoff makes cached model conclusions cheap to keep fresh."
+  ],
+  "notes_file": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/widen/refuter.md"
+ },
+ "design": {
+  "summary": "Protocol draft written (about 190 lines) for a second test of the owner's actual question. It asks whether a knowledge layer lets an agent on this repository do the same work with fewer total tokens and no loss of correctness, and which layer earns its cost.\n\nEach layer is a switch on top of a real agent baseline: structure (the existing typed graph as a tool), meaning (model-read claims from docs bound to code), time with cached conclusions and invalidation, and graphify as shipped. That turns the owner's \"graph vs knowledge graph vs TKG\" question into measured contrasts; it is untested anywhere I found.\n\nVerdict rules (yes, no, cannot tell) are fixed in advance:\n- The primary outcome is total tokens per task, including subagents, tool descriptions and layer build cost spread over use.\n- Correctness against sealed references is a guard.\n- Stale answers served is a must-be-zero measure for the caching arms.\n\nThe draft starts with two free phases that use no agent and no model calls: a feasibility count, then scripted screens (a break oracle and a cache replay over the 190 cached snapshots).\n\nThe agent pilot is estimated at 0.17 to 0.55 billion tokens and the main run at 0.6 to 2.0 billion, against about 2.2 billion for all recorded FixFlow context tokens. All of these figures are my estimates, to be measured in the pilot.\n\nThe draft says plainly:\n- The finished test did not fail; it did not measure tokens.\n- Graphify's 71.5x is a ratio against reading the whole corpus.\n- The main run can detect only about a 12 to 16 % token change.\n- Results on product-code tasks may not transfer to the owner's real spend, which is mostly design and document work.",
+  "question_tested": "On this repository, does a knowledge layer (structure, meaning, time with cached conclusions, orientation) let an agent do the same work with fewer total tokens (build, update and tool-description cost included) and no loss of correctness, and which layer earns its cost?",
+  "arms": [
+   {
+    "arm": "A0 baseline",
+    "what_it_is": "Agent with ordinary search and read tools only, parent-era CLAUDE.md",
+    "why_included": "The real baseline: how agents work today, not a script and not 'read every file'",
+    "build_cost": "None",
+    "installs": "None",
+    "data_leaving_machine": "Prompts and file text to the model provider (same in every arm)"
+   },
+   {
+    "arm": "A0p placebo",
+    "what_it_is": "A0 plus a tool with an equal-length description returning plausible but useless output",
+    "why_included": "Separates the effect of any extra tool and its description tokens from the effect of content",
+    "build_cost": "Minutes of scripting, zero model tokens",
+    "installs": "None",
+    "data_leaving_machine": "As A0"
+   },
+   {
+    "arm": "A0x plain index",
+    "what_it_is": "A0 plus capped keyword (BM25, SQLite full-text) search over symbols, signatures and doc sections, same output format as A1",
+    "why_included": "Separates 'an index with capped, cited answers' from 'a graph'",
+    "build_cost": "Seconds per commit, zero model tokens",
+    "installs": "None expected (SQLite full-text module, to confirm)",
+    "data_leaving_machine": "As A0"
+   },
+   {
+    "arm": "A1 structure",
+    "what_it_is": "A0 plus the finished test's typed code graph as one CLI tool (find, neighbors, impact, path, changed-since), answers cite path:line, capped, with a working-tree overlay",
+    "why_included": "The existing graph tested with an agent; scores 'connections that will or won't break'",
+    "build_cost": "About 5.3 s per commit rebuild, zero model tokens",
+    "installs": "None",
+    "data_leaving_machine": "As A0"
+   },
+   {
+    "arm": "A2 meaning",
+    "what_it_is": "A1 plus model-read typed claims (invariant, decision, reason, hazard, contract) from product docs and commit messages, bound to code by a deterministic resolver, plus a rules lookup",
+    "why_included": "The model-read document layer graphify adds and the finished test left out",
+    "build_cost": "Estimate 0.3 to 1M tokens per full build (about 98k tokens of product docs plus 52k of commit messages read once), then per changed section",
+    "installs": "None",
+    "data_leaving_machine": "Document and commit-message text to the model provider (owner decision)"
+   },
+   {
+    "arm": "A3 time + cached conclusions",
+    "what_it_is": "A2 plus validity by commit ancestry and a store of verified conclusions with dependency sets, marked suspect on change and re-checked before use (knowledge-store design v1.3.1)",
+    "why_included": "The owner's caching-with-invalidation idea; the only layer with a per-case mechanism for large savings; untested so far",
+    "build_cost": "Seeding while solving development tasks plus model re-checks of suspect conclusions, all counted against the arm; amount unknown until the pilot",
+    "installs": "None",
+    "data_leaving_machine": "As A2"
+   },
+   {
+    "arm": "A3s stale control",
+    "what_it_is": "A3 with invalidation switched off",
+    "why_included": "Measures what invalidation is worth and whether stale answers cause harm",
+    "build_cost": "As A3",
+    "installs": "None",
+    "data_leaving_machine": "As A2"
+   },
+   {
+    "arm": "G1 graphify code layer",
+    "what_it_is": "Graphify as shipped, tree-sitter code graph with no model, own instruction block and default advisory hooks",
+    "why_included": "The established tool the owner cites; its 'affected' command is the analogue of the change tasks and has no public measurement",
+    "build_cost": "Seconds to minutes per build, zero model tokens",
+    "installs": "graphifyy v0.9.108 from PyPI (wheel 1.9 MB plus networkx, numpy, rapidfuzz, pyyaml, tree-sitter and about 25 grammars; Apache-2.0)",
+    "data_leaving_machine": "None for code, per its README"
+   },
+   {
+    "arm": "G2 graphify with document extraction",
+    "what_it_is": "G1 plus graphify's own model extraction of documents",
+    "why_included": "Its only independently measured gain (weak, directional) is in this layer",
+    "build_cost": "Third-party figures: about 240k tokens for a 140-file project; about 7 USD of a mid-size model for 261k words",
+    "installs": "As G1",
+    "data_leaving_machine": "Document text to the model provider, pinned to the same provider as the agent (not graphify's other backends)"
+   },
+   {
+    "arm": "Factor S (on A2 and G2)",
+    "what_it_is": "Advisory pointer against a forced first query",
+    "why_included": "Separates the effect of steering from the effect of content; published positive results mix the two",
+    "build_cost": "None",
+    "installs": "None",
+    "data_leaving_machine": "As the arm it modifies"
+   },
+   {
+    "arm": "Optional E and T (owner decision)",
+    "what_it_is": "E: A1 with an embedding entry point instead of keyword search. T: Graphiti as shipped on the repeat-after-change set only",
+    "why_included": "E: the pre-registered small-model study credits embeddings more than graph tools. T: model-decided against structure-decided invalidation",
+    "build_cost": "E: local embedding pass. T: model tokens per ingested document",
+    "installs": "E: a local model download, size set by the model chosen. T: a graph-database server plus Graphiti",
+    "data_leaving_machine": "E: none. T: document text to a model provider"
+   }
+  ],
+  "tasks": [
+   {
+    "set": "Q questions",
+    "what": "New questions of 8 to 12 kinds (single and multi-hop across runtimes, impact, which rule applies, the other half of a rule, doc-against-code contradictions) plus 25 to 30 free-text orientation questions; optional harness-document stratum",
+    "size": "100 (30 tuning, 70 held-out)",
+    "reference": "Two readers per question who never see arm output, with evidence lines, third on disagreement; rubric questions by judge (shuffled order, five passes) plus a human sample",
+    "what_it_can_credit": "Correct answers per token, orientation, the meaning layer, honest 'unknown' over a wrong answer"
+   },
+   {
+    "set": "R replayed lookups",
+    "what": "The 139 distinct recorded search-then-read lookups (106 of 181 pairs open programme documents, 26 product code), seeded by one frozen rule",
+    "size": "139",
+    "reference": "The file opened next, kept only if edited, cited or reasoned about within 6 calls",
+    "what_it_can_credit": "Screening only: whether the needed file is in the tool answer at 2k and 4k tokens, by stratum; decides nothing"
+   },
+   {
+    "set": "C change tasks",
+    "what": "Past commits replayed from a task statement written without seeing the diff, at a clean export of the parent",
+    "size": "12 pilot, 40 held-out from fresh commits",
+    "reference": "Three separate columns: edited files; needed-but-not-edited (tests failing when the production change lands without test edits, follow-up fixes within 14 days, invariants whose anchors the diff touches, files a recorded session read and used, a sufficiency check); hidden tests pass or fail by script",
+    "what_it_can_credit": "Tokens to a passing change, needed context opened before the first edit, wasted reads, invariants cited"
+   },
+   {
+    "set": "B break oracle",
+    "what": "Real production diffs plus scripted small changes (route field rename, response shape, return type, setting key, dropped column); about a third break nothing",
+    "size": "80 scripted, then 30 with an agent",
+    "reference": "Apply at the parent and run the repo's tests, mypy, TypeScript compiler and import-linter by script; failures are the reference; tools may not run the checkers",
+    "what_it_can_credit": "Predicting what a change breaks, precision and recall at 4k, 8k and 16k tokens, independent of any arm's extractor"
+   },
+   {
+    "set": "K repeat after change",
+    "what": "The same 40 claim-questions at each of 15 consecutive commits, cache carried forward only by each arm's invalidation rule; K0 deterministic over the 190 cached snapshots, K1 model-made conclusions",
+    "size": "40 claims x 15 steps",
+    "reference": "Blind readers decide whether each answer changed at each step; strata fixed in advance, including 'answer changed while its own anchors did not'",
+    "what_it_can_credit": "Stale answers served (must be zero), needless re-derivations, net tokens saved after re-check costs"
+   }
+  ],
+  "measures": [
+   "Tokens in four separate buckets (uncached input, cache-write, cache-read, output), summed over all model calls including subagents; peak context; tokens added by tool results; tool-description tokens",
+   "Layer build and per-commit update tokens divided by the tasks served by that index state, added to each task's total; reads that follow pointer answers counted as the agent makes them",
+   "Primary: geometric-mean token ratio against A0, paired by task, 95 % cluster-bootstrap interval",
+   "Turns, tool calls, wall time with tool latency shown separately",
+   "Tool connected and tool called, per run (adoption)",
+   "Correctness against the sealed reference (tests pass, set F1, or rubric); needed-context recall before the first edit; wasted reads",
+   "Stale answers served, in every arm; outside set K a stale tool answer that is used counts as wrong",
+   "All runs counted in their assigned arm, with a 'tool used' view beside it, marked as non-randomised"
+  ],
+  "fairness_rules": [
+   "Every index is built from a git archive export of the parent commit, or at the oldest parent and updated commit by commit in order; never from the live tree or a later commit",
+   "Agent environment: one-commit export, no .git history, no live tree mounted, no network except the model provider, memory files off, parent-era CLAUDE.md only; a blind transcript audit with a published list of exclusions",
+   "Same model, version and effort for every arm; same turn, time and token caps; arms interleaved in time and in random order",
+   "Tool descriptions of matched length and style; their tokens count against the arm",
+   "Graphify runs as shipped at a pinned version with its own instructions and hooks, not tuned by us",
+   "References sealed and hashed before any arm runs; writers never see arm output; no reference produced by an extractor an arm uses; 'which rule applies' questions reported as their own stratum",
+   "Tuning split (pilot tasks plus the spent 75 commits and 50 questions) for all choices; held-out split run once after protocol, sample size and thresholds are frozen and hashed",
+   "Scoring by script wherever the answer is a set or test result; judge only for rubric questions, shuffled order, human sample; scorer independent of whoever built the arms",
+   "Three refuters before reporting; refuter.md's must-not-claim list binds the wording",
+   "Model-built layers built twice on 10 parents and the difference reported",
+   "Three pre-declared primary contrasts (A1, A3 and G2 each against A0), corrected for testing three; everything else secondary; splits by runtime and task kind are descriptive only"
+  ],
+  "phases": [
+   "0 Feasibility, no agent and no model calls: can tests, mypy, tsc and import-linter run at old parents; how many change commits survive; how many needed-but-not-edited items per commit (12 sampled); how many 'answer changed, anchors did not' steps for K; are there enough fresh commits. STOP if fewer than 25 runnable commits or the needed-but-not-edited column is near empty; drop K1 if fewer than 30 such steps",
+   "1 Screens, no agent and no model calls: B scripted on A0x, A1, scripted search and G1; K0 cache replay with five policies; R replay. STOP and fix if any invalidation policy serves a stale answer",
+   "2 Model layers (after the owner's decision on sending docs): build A2 claims and G2 extraction twice on 10 parents. STOP if cost exceeds the agreed budget or the builds disagree on more than a quarter of anchored claims",
+   "3 Agent pilot: C 12x4x3 and Q 30x5x2; measure spread, adoption, orientation share, leaks, judge reliability; freeze and hash. STOP if adoption is below 20 % in every tool arm without steering, or leaks got past the environment",
+   "4 Held-out main run, once, interleaved: C 40x4x3 plus placebo on 20, Q 70x6x2, B with an agent on 30, K1 if allowed",
+   "5 Score by script and judge, three refuters, report verdicts only as defined in advance"
+  ],
+  "owner_decisions": [
+   {
+    "decision": "Copy the extractor and the 190-commit facts cache out of the session scratchpad into a durable folder",
+    "options": "Copy now; leave in the scratchpad (may be lost)",
+    "recommendation": "Copy now",
+    "cost": "About 750 MB of disk; no tokens"
+   },
+   {
+    "decision": "Model reads of documents for A2 and G2 (sends document text out)",
+    "options": "None (drops A2 and G2); product docs and commit messages only; also harness documents",
+    "recommendation": "Product docs and commit messages, through the same provider the agent already uses",
+    "cost": "Estimate 0.3 to 1M tokens per build, twice for the determinism check, then per change"
+   },
+   {
+    "decision": "Include the harness design documents (where most measured spend goes) as a frozen document stratum in Q and R",
+    "options": "Include as a separate stratum; exclude",
+    "recommendation": "Include as a separate stratum",
+    "cost": "About 20 extra questions, two readers each; a frozen copy of untracked files"
+   },
+   {
+    "decision": "Install graphify for G1 and G2",
+    "options": "Install a pinned graphifyy v0.9.108 in the test container only; do not install (drops G1 and G2)",
+    "recommendation": "Install, pinned, container only",
+    "cost": "Minutes; 1.9 MB wheel plus dependencies; no tokens for G1"
+   },
+   {
+    "decision": "Optional arms E (embedding entry) and T (Graphiti temporal graph)",
+    "options": "E as a phase-1 screen, E in the main run, or neither; T now or not",
+    "recommendation": "E as a phase-1 screen on B and R if a download is acceptable; T not now, because K tests time validity and invalidation without a server",
+    "cost": "E: a local model download of a size set by the model chosen. T: a server install plus model tokens per ingested document"
+   },
+   {
+    "decision": "Agent model and effort",
+    "options": "The deployment model; a cheaper model",
+    "recommendation": "The model the harness actually runs (published graph-tool gains shrink with model size)",
+    "cost": "Sets the per-run token cost"
+   },
+   {
+    "decision": "Verdict thresholds",
+    "options": "15 % token saving and a 10-point correctness margin, or other values",
+    "recommendation": "15 % and 10 points",
+    "cost": "Smaller thresholds need more tasks than this repo has"
+   },
+   {
+    "decision": "Judge for rubric questions",
+    "options": "Another provider's model (sends answers and excerpts out); the same provider plus a larger human sample",
+    "recommendation": "The same provider plus a 30 % human sample",
+    "cost": "Human reading time"
+   },
+   {
+    "decision": "Run the pilot first, and the token budget",
+    "options": "Pilot then decide; go straight to the main run; phases 0 and 1 only",
+    "recommendation": "Run phases 0 and 1 now (free), then the pilot, and decide on the main run after it",
+    "cost": "Estimates: pilot 0.17 to 0.55 billion tokens and 4 to 16 h of change runs; main 0.6 to 2.0 billion tokens and 15 to 60 h; for comparison, all recorded FixFlow context tokens are about 2.2 billion (my arithmetic)"
+   },
+   {
+    "decision": "Order against the larger levers (capping the orchestrator window, stripping the subagent prefix)",
+    "options": "Knowledge-layer agent phases first; the levers first; in parallel",
+    "recommendation": "Run the free phases now and decide on the agent phases alongside those two levers",
+    "cost": "None to decide"
+   }
+  ],
+  "estimated_cost": "These are my estimates, assuming 1 to 3M tokens per change-task run and 0.1 to 0.4M per question run, mostly cache reads; the pilot will measure the real figures.\n- Phases 0 and 1: zero model tokens.\n- Model-layer builds: 0.3 to 1M tokens each, built twice.\n- Pilot: about 0.17 to 0.55 billion tokens (144 change runs plus 300 question runs) and 4 to 16 hours of change runs at three in parallel.\n- Main run: about 0.6 to 2.0 billion tokens and 15 to 60 hours of change runs.\n- For comparison, all recorded FixFlow context tokens are about 2.2 billion (my arithmetic from the token records). The main run alone could cost as much as everything recorded so far.",
+  "risks": [
+   "Low power: 40 tasks x 3 runs detects only about a 12 to 16 % token change, and correctness only as a guard against a large loss; a smaller real effect will read as 'cannot tell'",
+   "Workload mismatch: the owner's measured spend is mostly design and document work, while the change and break tasks replay product commits; only Q's document stratum targets his spend",
+   "Adoption: agents may not call the tools (published range: from 0 calls in 60 sessions to 42 % of trials); forcing a call mixes up steering and content, hence factor S",
+   "Feasibility unknown: tests and type checkers may not run at old parents; the needed-but-not-edited and 'answer changed, anchors did not' cases may be too few",
+   "Re-checking a cached model conclusion needs a model call, so early cutoff may not make A3 cheap; the per-case saving is not a measured rate",
+   "Model-built layers may be non-deterministic, and 41 % of backticked file names in the docs do not resolve, so many claims will have no anchor",
+   "Forking paths: many arms and factors; only three pre-declared contrasts may carry a verdict, and the held-out split runs once",
+   "Leaks if any index or agent reaches later commits or the live tree; mitigated by clean exports and a blind audit",
+   "Token per-run estimates are assumptions from published SWE-bench traces, not this harness"
+  ],
+  "design_file": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/widen/design-draft.md"
+ },
+ "designCheck": {
+  "verdict": "The draft is the right shape: a real agent in the loop, every token bucket counted, build cost included, a placebo and a plain-index control, sealed references, invalidation tested first with no model, and the live-tree leak fixed. As drafted, though, it cannot deliver its central promise. The owner's graph / knowledge graph / TKG question gets no verdict, for four reasons:\n- A2 is missing from the main change-task run.\n- The step contrasts are secondary.\n- A3 bundles time validity with cached conclusions.\n- No temporal knowledge graph as shipped runs (T is optional and not recommended).\n\nThe verdict rules make \"cannot tell\" likely even for an arm that truly helps:\n- The correctness guard passes a truly harmless arm only about 51-64 % of the time (33-47 % if also corrected for three contrasts).\n- YES has about 50 % power at the 15 % threshold.\n- The under-2 % stale bound needs about 150 or more cache hits, which change tasks cannot supply.\n\nTwo rules are wrong as written:\n- The phase-1 STOP rule fires on the file-hash policy, which is expected to serve stale answers.\n- The CLAUDE.md-invariant reference column would reuse the docs extractor's anchors unless they are rewritten by hand.\n\nHidden costs and blockers:\n- A3 needs the unbuilt knowledge store: about six sessions, half on Opus, behind the owner's own D1/D1b gate.\n- The per-run token figure is likely 2-4x low if the real harness (about 60k-token prefix per call) is used.\n- No fresh held-out commits exist on main. There are 31 product commits since August on other refs, 27 dated today.\n\nThe owner's literal words are only partly covered: spatial topology is undefined, graph-database speed and size (H5) is dropped although free, traversal caching is dropped, and factor P is dropped without saying so.\n\nEach problem has an exact fix in the notes file.",
+  "claims": [
+   {
+    "claim": "The finished test did not fail; it did not measure tokens",
+    "result": "needs qualification",
+    "detail": "It measured answer tokens (about 31 vs 695) and recall at 2k-16k tokens. It did not measure agent session tokens. Sources: build-e/result.json; refuter.md R6."
+   },
+   {
+    "claim": "Graphify's 71.5x is a ratio against reading the whole corpus",
+    "result": "survives",
+    "detail": "It is about 123,488 estimated corpus tokens divided by the average of five ungraded answers, about 1,726 tokens; it falls to 8.8x on code alone. Weak, self-reported. Source: lane-graphify.md §3.1, from the v8 review.md."
+   },
+   {
+    "claim": "Graphify's one code-agent figure is 6 questions",
+    "result": "survives",
+    "detail": "BENCHMARKS.md ERPNext: n=6, 82.0 vs 70.8 % key-fact coverage, no interval, harness not public (weak)."
+   },
+   {
+    "claim": "Independent controlled runs on code with a strong model are flat or negative",
+    "result": "needs qualification",
+    "detail": "Essentially one controlled independent study (graphify-bench: one synthetic corpus, one repetition). The others are anecdotes or a retrieval-only check (issue 4341). On Haiku, graphify saved tokens on code tasks (-119k [-245k, -12k])."
+   },
+   {
+    "claim": "The one independent positive (doc-and-code, 80 vs 70 % on 20 tasks) is weak and directional",
+    "result": "survives",
+    "detail": "refuter.md R8: a 2-task difference; the token interval crosses zero; accuracy reverses on Haiku."
+   },
+   {
+    "claim": "Graphify is a parser graph plus a model-read document layer and is not temporal",
+    "result": "survives",
+    "detail": "lane-graphify.md §1, read from source v0.9.108."
+   },
+   {
+    "claim": "Whether graph type decides the outcome is untested anywhere",
+    "result": "survives",
+    "detail": "Absence of evidence only: no source varies graph type with everything else held fixed."
+   },
+   {
+    "claim": "Making each layer a switch turns graph vs KG vs TKG into measured contrasts",
+    "result": "refuted",
+    "detail": "A2 is absent from the main change-task run (arms A0, A1, A3, G2). Step contrasts are secondary. A3 bundles time validity with the conclusion cache. T (Graphiti) is optional and not recommended. Fix: split A3 into A3t (time only) and A3c (time plus cached conclusions), put A2 in the change-task main run, and make the step contrasts primary or label them descriptive."
+   },
+   {
+    "claim": "A0 is the real baseline (how agents work today)",
+    "result": "needs qualification",
+    "detail": "The draft does not say whether A0 may spawn subagents (graphify-bench: subagent use moved the delta from +32k to +107k tokens). With no .git, agents lose git diff. The harness prefix is unspecified (about 60k per call in reality). Fix: give each export a fresh single-commit git repo, give all arms the same subagents, pin the Claude Code version."
+   },
+   {
+    "claim": "Graphify runs as shipped, not tuned",
+    "result": "needs qualification",
+    "detail": "Its post-commit hook finds changes via git diff HEAD~1 (hooks.md, fetched 2026-11-13), and the draft gives agents no .git. Measure G2's build cost from transcripts; one user found graphify's own tracker under-counts subagent usage."
+   },
+   {
+    "claim": "Indexes built from a git archive of the parent cannot see the future",
+    "result": "needs qualification",
+    "detail": "A2's commit-message reads must be limited to ancestors of the parent, never the task commit's own message. A3's seeding must respect ancestry. The replayed-lookup programme documents can only be frozen later than the lookups were recorded."
+   },
+   {
+    "claim": "No reference is produced by an extractor an arm uses",
+    "result": "needs qualification",
+    "detail": "The change-task invariant column would reuse the 90 constrains anchors from the docs extractor that A1 and A2 use. The break oracle's tsc reference overlaps A1's TypeScript compiler API facts. Fix: hand-written anchors; report the oracle by reference source, with the headline on test failures only."
+   },
+   {
+    "claim": "The main run can detect about a 12-16 % token change",
+    "result": "needs qualification",
+    "detail": "Rests on a run-to-run spread taken from one 5-task, one-model study. With YES requiring a point estimate of 0.85 or lower, P(YES) at a true 15 % saving is about 0.50, and about 0.84-0.91 at 20 % (my arithmetic, SE of the log ratio 0.044-0.061)."
+   },
+   {
+    "claim": "Correctness against sealed references is a guard",
+    "result": "needs qualification",
+    "detail": "With a paired SE of 5-6 points, a truly harmless arm passes the -10 point guard only 51-64 % of the time, or 33-47 % if corrected for three contrasts (my arithmetic)."
+   },
+   {
+    "claim": "For caching arms, the stale rate's upper 95 % bound must be below 2 %",
+    "result": "refuted",
+    "detail": "By the rule of three this needs about 150 or more hits with zero stale answers, which change tasks will not reach. Compute it on set K (600 claim-steps) instead."
+   },
+   {
+    "claim": "Phase 1: STOP and fix if any invalidation policy serves a stale answer",
+    "result": "refuted",
+    "detail": "The file-hash and whole-repo policies are expected to serve stale answers in dependency cases; that is the finding (lane-temporal.md §5.2). STOP only if a fact-level policy serves a stale answer."
+   },
+   {
+    "claim": "Pilot 0.17-0.55 billion tokens, main run 0.6-2.0 billion",
+    "result": "needs qualification",
+    "detail": "Likely understated. In this harness an agent call averages 113-123k tokens of context, about 60k of it fixed prefix (TOKEN-BOTTLENECK-2026-11.md). A change run is then about 3.5-10M tokens, not 1-3M. The estimate omits A3 seeding, K1, the 90 break-oracle agent runs, sufficiency checks, judge passes, reruns, per-parent dependency environments, engineering builds, owner reading hours and machine or quota contention."
+   },
+   {
+    "claim": "All recorded FixFlow context tokens are about 2.2 billion",
+    "result": "needs qualification",
+    "detail": "2.13 billion context tokens plus 24.6 million output tokens (TOKEN-BOTTLENECK-2026-11.md)."
+   },
+   {
+    "claim": "A3: installs none; build cost is seeding; knowledge-store design v1.3.1 is its specification",
+    "result": "refuted",
+    "detail": "v1.3.1 is an unbuilt store of solved defects and traps. Reaching its pilot takes about six sessions, half on Opus, gated by the owner's D1 audit and D1b. The widened kinds and the graph upgrades (span hashes, negative-dependency index, overlay, claim resolver) are new, uncounted engineering."
+   },
+   {
+    "claim": "Held-out change tasks come from fresh commits",
+    "result": "needs qualification",
+    "detail": "Main has 0 product-code commits after a31924a, and all 140 usable historical commits are spent. All refs hold 31 product commits since 2026-08-04, 27 dated 2026-11-13 (my git count). The set must be prospective, with 14 days' wait for the follow-up-fix column."
+   },
+   {
+    "claim": "A2 build costs 0.3-1M tokens",
+    "result": "needs qualification",
+    "detail": "Depends on the route: through harness subagents, every call carries an about 60k prefix. Make the route an owner decision."
+   },
+   {
+    "claim": "Results on product-code tasks may not transfer to the owner's spend",
+    "result": "survives",
+    "detail": "Strengthen it: the document stratum (about 20 questions) cannot carry a verdict, so no verdict is possible on design and document work."
+   },
+   {
+    "claim": "Engine re-testing is not needed because speed does not enter token cost",
+    "result": "needs qualification",
+    "detail": "True for tokens, but the owner asked about a graph database and 'very fast'. The H5 timing and size bench is built, never run, and costs zero tokens. Run it in phase 1."
+   },
+   {
+    "claim": "Factor S separates steering from content",
+    "result": "survives",
+    "detail": "Applies to A2 and G2 only. A1 and A3 have no forced-call condition, so low adoption there reads as 'agents did not use it'."
+   },
+   {
+    "claim": "Arms interleaved in time and in random order",
+    "result": "needs qualification",
+    "detail": "Conflicts with A3's store, which accumulates chronologically. Run 3 independent A3 store chains in commit order and interleave the other arms around them."
+   },
+   {
+    "claim": "The draft covers the owner's asks (graph DB, spatial and temporal topology, caching, invalidation, semantic relations, small and fast)",
+    "result": "refuted",
+    "detail": "Spatial topology is undefined. H5 speed and size and traversal caching are dropped. No TKG as shipped runs. Factor P (push to pull) and slice-card orientation from architecture.md §7 are dropped without saying so. Fix: a table mapping the owner's words to measurements (in the notes file, P12)."
+   }
+  ],
+  "must_not_claim": [
+   "This test answers whether a graph, a knowledge graph or a temporal knowledge graph is the right choice.",
+   "A3 tests a temporal knowledge graph.",
+   "The test can detect a 12 % token saving.",
+   "A 'cannot tell' result means the layer does not help.",
+   "A 'no' on change tasks means no saving on the owner's own sessions.",
+   "A3 needs no installs or build.",
+   "The main run costs at most 2 billion tokens.",
+   "Held-out tasks are fresh commits.",
+   "References are independent of every arm's extractor.",
+   "Graphify was tested exactly as its users run it.",
+   "The graph database question is settled.",
+   "Caching on top of the graph (traversal caching) was tested.",
+   "Graphify's stars or its 71.5x show it works on code.",
+   "The finished test failed.",
+   "Graphs add nothing.",
+   "The owner's design-document spend is covered by this test.",
+   "Graphify's 71.5x is one answer against the corpus (it is an average of five ungraded answers)."
+  ],
+  "notes_file": "C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/widen/design-check.md"
+ }
+}

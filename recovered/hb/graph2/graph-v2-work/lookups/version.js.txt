@@ -1,0 +1,65 @@
+// version: infer the code version each instance saw (branch + session date), compare each truth file with the frozen
+// commit a31924a, and classify replayability against the cached snapshots (all of which are at or before a31924a).
+// Read-only git commands only (log, cat-file). Output: out/instances-v.jsonl, out/version-summary.json
+const fs = require('fs'), cp = require('child_process'), crypto = require('crypto');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const FROZEN = 'a31924a3818f4ac94b695906d107c72c912792b2';
+const CACHE = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/facts/cache';
+const git = (args, input) => cp.execFileSync('git', ['-C', REPO, ...args], { input, maxBuffer: 1 << 30 });
+const h8 = (s) => crypto.createHash('sha1').update(s.trim()).digest('hex').slice(0, 8);
+const I = fs.readFileSync(W + '/out/instances.jsonl', 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const snaps = fs.readdirSync(CACHE).filter((d) => /^[0-9a-f]{40}$/.test(d));
+const snapTimes = snaps.map((s) => +JSON.parse(fs.readFileSync(CACHE + '/' + s + '/meta.json', 'utf8')).commit_time).sort((a, b) => a - b);
+const latestSnap = Math.max(...snapTimes);
+// branch commit lists
+const branches = [...new Set(I.map((x) => x.branch).filter(Boolean))];
+const refs = new Set(git(['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes']).toString().split('\n').filter(Boolean));
+const LOG = {};
+function logOf(b) { if (LOG[b]) return LOG[b]; LOG[b] = git(['log', '--format=%H %ct', b]).toString().split('\n').filter(Boolean).map((l) => { const [h, t] = l.split(' '); return [h, +t]; }).sort((a, b2) => b2[1] - a[1]); return LOG[b]; }
+const branchOk = {}; for (const b of branches) branchOk[b] = refs.has(b) ? b : refs.has('origin/' + b) ? 'origin/' + b : null;
+function commitAt(b, iso) { const ref = (b && branchOk[b]) || 'main'; const t = Date.parse(iso) / 1000; const l = logOf(ref); for (const [h, ct] of l) if (ct <= t) return { commit: h, ref, approx: !(b && branchOk[b]) }; return { commit: null, ref, approx: true }; }
+// blob lookups in bulk
+const need = new Set(); const plan = [];
+const untracked = new Set(fs.readFileSync(W + '/out/files-untracked.txt', 'utf8').split('\n').map((s) => s.trim()).filter(Boolean));
+const OUTSIDE = new Set(['scratch', 'transcripts', 'memory', 'web', 'dependency', 'unknown']);
+const isRepoRel = (f) => f && !/^[A-Za-z]:\//.test(f) && !f.startsWith('/') && !f.startsWith('~') && !f.startsWith('$') && !f.startsWith('..');
+for (const x of I) { x.ver = commitAt(x.branch, x.date); for (const t of x.truth) if (isRepoRel(t.f) && !OUTSIDE.has(t.zone)) { const vc = t.rev || x.ver.commit; if (vc) need.add(vc + ":" + t.f); need.add(FROZEN + ':' + t.f); } }
+const keys = [...need]; const blobOf = new Map();
+for (let k = 0; k < keys.length; k += 5000) { const part = keys.slice(k, k + 5000); const out = git(['cat-file', '--batch-check=%(objectname) %(objecttype)'], part.join('\n') + '\n').toString().split('\n'); part.forEach((key, j) => { const m = (out[j] || '').match(/^([0-9a-f]{40}) blob/); blobOf.set(key, m ? m[1] : null); }); }
+// contents of the blobs needed for the line check
+const blobs = new Set([...blobOf.values()].filter(Boolean)); const content = new Map();
+{ const list = [...blobs]; for (let k = 0; k < list.length; k += 400) { const part = list.slice(k, k + 400); const buf = git(['cat-file', '--batch'], part.join('\n') + '\n'); let p = 0; for (const b of part) { const nl = buf.indexOf(10, p); const hdr = buf.slice(p, nl).toString(); const size = +hdr.split(' ')[2]; const body = buf.slice(nl + 1, nl + 1 + size).toString('utf8'); content.set(b, body.split('\n').map((s) => s.replace(/\r$/, ''))); p = nl + 1 + size + 1; } } }
+function lineMatch(lines, samples) { if (!lines || !samples.length) return null; let ok = 0; for (const [n, h] of samples) if (lines[n - 1] != null && h8(lines[n - 1]) === h) ok++; return ok / samples.length; }
+const curCache = new Map();
+function current(f) { if (curCache.has(f)) return curCache.get(f); let v = null; try { v = fs.readFileSync(REPO + '/' + f, 'utf8').split('\n').map((s) => s.replace(/\r$/, '')); } catch { } curCache.set(f, v); return v; }
+const S = { instances: I.length, byClass: {} };
+const wO = fs.createWriteStream(W + '/out/instances-v.jsonl');
+for (const x of I) {
+  const T = Date.parse(x.date) / 1000;
+  for (const t of x.truth) {
+    if (!isRepoRel(t.f) || OUTSIDE.has(t.zone)) { t.replay = 'outside-repository'; continue; }
+    const vc = t.rev || x.ver.commit; const bs = vc ? blobOf.get(vc + ":" + t.f) : null; const bf = blobOf.get(FROZEN + ':' + t.f);
+    t.blobSession = bs; t.blobFrozen = bf;
+    if (bs && bf) t.replay = bs === bf ? 'unchanged-since-frozen' : 'changed-since-frozen';
+    else if (bs && !bf) t.replay = 'added-after-frozen';
+    else if (!bs && untracked.has(t.f)) t.replay = 'untracked-current-only';
+    else if (!bs && bf) t.replay = 'not-at-session-commit';
+    else t.replay = current(t.f) ? 'untracked-current-only' : 'unresolved';
+    t.matchSession = bs ? lineMatch(content.get(bs), t.samples) : null;
+    t.matchFrozen = bf ? lineMatch(content.get(bf), t.samples) : null;
+    t.matchCurrent = t.replay === 'untracked-current-only' ? lineMatch(current(t.f), t.samples) : null;
+  }
+  const inRepo = x.truth.filter((t) => t.replay !== 'outside-repository');
+  const primary = x.truth.filter((t) => t.level === 'confirmed').length ? x.truth.filter((t) => t.level === 'confirmed') : x.truth;
+  x.sessionAfterLatestSnapshot = T > latestSnap;
+  x.replayAll = !x.truth.length ? 'no-truth' : x.truth.every((t) => t.replay === 'unchanged-since-frozen') ? 'snapshot-ok' : x.truth.every((t) => t.replay === 'outside-repository') ? 'outside-repository' : x.truth.some((t) => t.replay === 'untracked-current-only') ? 'needs-current-docs' : 'needs-session-build';
+  x.replayPrimary = !primary.length ? 'no-truth' : primary.every((t) => t.replay === 'unchanged-since-frozen') ? 'snapshot-ok' : primary.every((t) => t.replay === 'outside-repository') ? 'outside-repository' : primary.some((t) => t.replay === 'untracked-current-only') ? 'needs-current-docs' : 'needs-session-build';
+  x.inRepoTruthFiles = inRepo.length;
+  wO.write(JSON.stringify(x) + '\n');
+}
+wO.end();
+const sum = { latestSnapshotTime: new Date(latestSnap * 1000).toISOString(), nSnapshots: snaps.length, branches: Object.fromEntries(branches.map((b) => [b, branchOk[b]])), byClass: {} };
+for (const x of I) { const c = (sum.byClass[x.cls] = sum.byClass[x.cls] || { n: 0, afterLatestSnap: 0, approxCommit: 0, replayAll: {}, replayPrimary: {}, fileReplay: {}, match: { sessionN: 0, sessionSum: 0, frozenN: 0, frozenSum: 0, currentN: 0, currentSum: 0 } }); c.n++; if (x.sessionAfterLatestSnap) c.afterLatestSnap++; if (x.ver.approx) c.approxCommit++; c.replayAll[x.replayAll] = (c.replayAll[x.replayAll] || 0) + 1; c.replayPrimary[x.replayPrimary] = (c.replayPrimary[x.replayPrimary] || 0) + 1; for (const t of x.truth) { c.fileReplay[t.replay] = (c.fileReplay[t.replay] || 0) + 1; if (t.matchSession != null) { c.match.sessionN++; c.match.sessionSum += t.matchSession; } if (t.matchFrozen != null) { c.match.frozenN++; c.match.frozenSum += t.matchFrozen; } if (t.matchCurrent != null) { c.match.currentN++; c.match.currentSum += t.matchCurrent; } } }
+fs.writeFileSync(W + '/out/version-summary.json', JSON.stringify(sum, null, 1));
+console.log(JSON.stringify(sum, null, 1).slice(0, 4000));

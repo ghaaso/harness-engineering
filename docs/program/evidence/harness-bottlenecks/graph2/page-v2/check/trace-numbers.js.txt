@@ -1,0 +1,46 @@
+// Independent number trace: every number in the page text dump (and the generated record)
+// is looked for in the SOURCES (not in the page's own data.json). Lenient match: any source
+// number that, scaled by 1, 100, 1/100, 1e-6, 1e-3, 1e3 or 1e6, rounds to the shown value at the
+// shown precision, or whose complement to 100 does. Unmatched numbers are printed with context.
+// Run: cd EVID/page-v2/check && node - < trace-numbers.js.txt
+const fs = require('fs'), path = require('path');
+const EV = path.resolve(process.cwd(), '..', '..');           // graph2
+const PROG = path.resolve(EV, '..', '..', '..');               // docs/program
+const src = [
+  'graph-v2/use-cases.md', 'graph-v2/v1-audit.md', 'graph-v2/DESIGN.md', 'graph-v2/REFUTE.md', 'graph-v2/verify-a.md', 'graph-v2/verify-b.md',
+  'graph-v2/lane-construction.md', 'graph-v2/lane-modelling.md', 'graph-v2/lane-ranking.md', 'graph-v2/lane-selection-interface.md',
+  'graph-v2/lane-storage.md', 'graph-v2/lane-time-incremental.md', 'graph-v2/result.json',
+  'graph-v2/lookup-testset/NOTES.md', 'graph-v2/lookup-testset/result.json', 'graph-v2/lookup-testset/tables.md',
+  'graph-v2/premise-measure/NOTES.md', 'graph-v2/premise-measure/result.json',
+  'graphify/RESULT.md', 'graphify/AUDIT-RUN.md', 'graphify/AUDIT-CLAIMS.md', 'graphify/result.json',
+  'embeddings/INSTALL.md', 'widen/k0/NOTES.md', 'widen/k0/AUDIT.md', 'widen/k0/result.json', 'widen/protocol-v2-power.txt',
+].map(f => path.join(EV, f)).concat([path.join(PROG, 'TOKEN-BOTTLENECK-2026-11.md'), path.join(EV, 'graph-v2-page-m.workflow.js.txt')]);
+const vals = new Set();
+for (const f of src) {
+  if (!fs.existsSync(f)) { console.log('MISSING SOURCE', f); continue; }
+  const t = fs.readFileSync(f, 'utf8').replace(/(\d),(?=\d{3}\b)/g, '$1');
+  (t.match(/\d+(?:\.\d+)?(?:e-?\d+)?/g) || []).forEach(x => vals.add(+x));
+}
+const V = [...vals];
+const scales = [1, 100, 0.01, 1e-6, 1e-3, 1e3, 1e6, 1e-9];
+function ok(numStr) {
+  const n = +numStr; const dec = (numStr.split('.')[1] || '').length; const tol = 0.5 * Math.pow(10, -dec) + 1e-9;
+  if (Number.isInteger(n) && n <= 20) return true;
+  for (const v of V) for (const k of scales) { const x = v * k; if (Math.abs(x - n) <= tol || Math.abs(100 - x - n) <= tol) return true; }
+  return false;
+}
+const lines = fs.readFileSync(path.join(EV, 'page-v2/work/text/alltext.txt'), 'utf8').split('\n');
+const order = 'ABCDEFGHIJK'; let sec = '-', idx = -1; const out = []; let total = 0;
+lines.forEach((ln, i) => {
+  const s = ln.trim();
+  if (s.length === 1 && order.indexOf(s) === idx + 1) { idx++; sec = s; return; }
+  const toks = ln.replace(/(\d),(?=\d{3}\b)/g, '$1').replace(/[−–]/g, '-').match(/\d+(?:\.\d+)?/g) || [];
+  for (const t of toks) { total++; if (!ok(t)) out.push(sec + ' L' + (i + 1) + ' [' + t + '] ' + s.slice(0, 160)); }
+});
+const rec = fs.readFileSync(path.join(PROG, 'GRAPH-V2-DESIGN-2026-11.md'), 'utf8').split('\n');
+rec.forEach((ln, i) => { const toks = ln.replace(/(\d),(?=\d{3}\b)/g, '$1').match(/\d+(?:\.\d+)?/g) || [];
+  for (const t of toks) { total++; if (!ok(t)) out.push('RECORD L' + (i + 1) + ' [' + t + '] ' + ln.slice(0, 160)); } });
+console.log('sources', src.length, 'source values', V.length, 'page+record number tokens', total, 'unmatched', out.length);
+fs.writeFileSync('unmatched-numbers.txt', out.join('\n') + '\n');
+console.log(out.filter(x => !x.startsWith('D ')).join('\n'));
+console.log('(section D lines omitted above: ' + out.filter(x => x.startsWith('D ')).length + ')');

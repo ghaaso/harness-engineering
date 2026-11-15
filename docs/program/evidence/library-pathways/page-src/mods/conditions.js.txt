@@ -1,0 +1,312 @@
+  // ------------------------------------------------------------ mod: three conditions, as pictures
+  // The corners become a bar picture measured from a line at one; the square becomes a heat map with
+  // the three "how much comes back" sheets beside it. The full corner table stays behind "Show the numbers".
+  ST.conditions_vs = ST.conditions_vs || 'ladder';
+  ST.conditions_open = false;
+  var conditions_pending = {};
+  function conditions_w(sel, fallback) { try { var el = $(sel); var w = el && el.clientWidth; return w && w > 200 ? w : fallback; } catch (e) { return fallback; } }
+  function conditions_t(x, y, s, cls, extra) { return '<text class="' + cls + '" x="' + x + '" y="' + y + '"' + (extra || '') + '>' + esc(s) + '</text>'; }
+  function conditions_base(vs) { return vs === 'ladder' ? 'the ladder without the library' : 'the strong model alone'; }
+  function conditions_side(v) { return Math.abs(v - 1) <= BAND ? 'near' : v < 1 ? 'below' : 'above'; }
+  function conditions_fill(v) { var k = conditions_side(v); return k === 'near' ? 'var(--mid)' : k === 'below' ? 'var(--good)' : 'var(--bad)'; }
+  function conditions_cap(s) { return String(s).replace(/^./, function (c) { return c.toUpperCase(); }); }
+
+  function renderCondText() {
+    $('#condTitle').textContent = CT.title;
+    $('#condLede').innerHTML = rich(CT.lede);
+    $('#condList').innerHTML = CT.items.map(function (it) { return '<li><b>' + esc(conditions_cap(LIBGI[it[0]].short)) + '.</b> ' + esc(it[1]) + '</li>'; }).join('') +
+      '<li class="muted"><b>' + esc(conditions_cap(LIBGI.running_cost.short)) + '.</b> ' + esc(CT.running_cost) + '</li>';
+  }
+
+  // one mark per condition: filled = good end, open = poor end, a dash = middle value
+  function conditions_lvMark(x, y, lv) {
+    if (lv === 'good') return '<circle cx="' + x + '" cy="' + y + '" r="7" fill="var(--ink)"/>';
+    if (lv === 'poor') return '<circle cx="' + x + '" cy="' + y + '" r="6.2" fill="none" stroke="var(--ink)" stroke-width="1.8"/>';
+    return '<line x1="' + (x - 6) + '" y1="' + y + '" x2="' + (x + 6) + '" y2="' + y + '" stroke="var(--ink-3)" stroke-width="2"/>';
+  }
+
+  function conditions_cornerSvg(rows, vs) {
+    var kc = vs === 'ladder' ? 'cost_vs_ladder' : 'cost_vs_top', kw = vs === 'ladder' ? 'wrong_vs_ladder' : 'wrong_vs_top';
+    var val = function (r, k) { return REFS[r.id].last.ratios[k]; };
+    var all = rows.mid.concat(rows.corners, rows.more), vals = [];
+    all.forEach(function (r) { vals.push(val(r, kc), val(r, kw)); });
+    var lo = Math.min(0.5, Math.floor(Math.min.apply(null, vals) * 4) / 4), hi = Math.max(1.5, Math.ceil(Math.max.apply(null, vals) * 4) / 4 + 0.1);
+    var corners = rows.corners.slice().sort(function (a, b) { return val(a, kc) - val(b, kc); });
+    var W = Math.max(1080, conditions_w('#cornerOut', 1240) - 34);
+    var LW = 380, MW = 74, M0 = LW + 10, GAP = 54, P0 = M0 + 4 * MW + 30, PW = (W - P0 - GAP - 70) / 2, RH = 40, HH = 104;
+    var lines = [];
+    rows.mid.forEach(function (r) { lines.push({ r: r }); });
+    lines.push({ head: 'The eight corners, lowest cost first' });
+    corners.forEach(function (r) { lines.push({ r: r }); });
+    lines.push({ head: CT.more_title });
+    rows.more.forEach(function (r) { lines.push({ r: r }); });
+    var H = HH, ys = [];
+    lines.forEach(function (ln) { ys.push(H); H += ln.head ? 30 : RH; });
+    H += 46;
+    var s = '<svg class="ux-conditions-csvg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc('The eight corners against ' + conditions_base(vs)) + '">';
+    // column heads: the marks
+    var heads = [['recurrence', 'comes back'], ['reach', 'reach'], ['quality', 'entries'], ['running_cost', 'running cost']];
+    s += conditions_t(M0, 22, 'Filled: good end. Open: poor end.', 'ux-conditions-small') + conditions_t(M0, 40, 'Dash: middle value.', 'ux-conditions-small');
+    heads.forEach(function (h, i) {
+      var x = M0 + i * MW + MW / 2;
+      wrapWords(h[1], 9).forEach(function (w, k) { s += conditions_t(x, 70 + k * 16, w, 'ux-conditions-colh', ' text-anchor="middle"'); });
+    });
+    s += conditions_t(0, 70, 'Setting', 'ux-conditions-colh');
+    // labels and marks per row, drawn first so the bars sit on top of the row shading
+    lines.forEach(function (ln, li) {
+      var y = ys[li];
+      if (ln.head) { s += '<line x1="0" y1="' + (y + 29) + '" x2="' + W + '" y2="' + (y + 29) + '" class="ux-conditions-rule"/>' + conditions_t(0, y + 21, ln.head, 'ux-conditions-gh'); return; }
+      if (li % 2) s += '<rect x="0" y="' + y + '" width="' + W + '" height="' + RH + '" class="ux-conditions-zebra"/>';
+      var lab = wrapWords(ln.r.label, 46), cy = y + RH / 2;
+      lab.slice(0, 2).forEach(function (w, k) { s += conditions_t(4, cy + 5 + (lab.length > 1 ? (k - 0.5) * 16 : 0), w, 'ux-conditions-rl'); });
+      heads.forEach(function (h, i) { s += conditions_lvMark(M0 + i * MW + MW / 2, cy, ln.r.levels[h[0]] || 'middle'); });
+    });
+    // the two panels
+    [[kc, 'Cost'], [kw, 'Wrong rate']].forEach(function (p, pi) {
+      var x0 = P0 + pi * (PW + GAP), X = function (v) { return x0 + (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * PW; };
+      s += conditions_t(x0, 22, p[1], 'ux-conditions-ph') + conditions_t(x0, 42, 'times the figure for ' + conditions_base(vs), 'ux-conditions-small');
+      // light grid every half
+      for (var g = Math.ceil(lo * 2) / 2; g <= hi + 1e-9; g += 0.5) {
+        s += '<line x1="' + X(g) + '" y1="' + (HH - 8) + '" x2="' + X(g) + '" y2="' + (H - 40) + '" class="ux-conditions-grid"/>' + conditions_t(X(g), H - 24, fmt(g, 'ratio').replace(/\.00$/, '').replace(/0$/, ''), 'ux-conditions-tick', ' text-anchor="middle"');
+      }
+      // rows
+      lines.forEach(function (ln, li) {
+        if (ln.head || !ln.r) return;
+        var v = val(ln.r, p[0]), y = ys[li] + RH / 2, a = X(1), b = X(v), k = conditions_side(v);
+        var x1 = Math.min(a, b), w = Math.max(3, Math.abs(b - a));
+        if (k === 'near' && b < a) x1 = a - w;
+        s += '<rect x="' + x1.toFixed(1) + '" y="' + (y - 11) + '" width="' + w.toFixed(1) + '" height="22" rx="2" fill="' + conditions_fill(v) + '" class="ux-conditions-bar" data-conditions-ref="' + ln.r.id + '" data-conditions-r="' + p[0] + '"/>';
+        var tx = v < 1 ? Math.min(a, b) - 7 : Math.max(a, b) + 7;
+        s += conditions_t(tx.toFixed(1), y + 5, fmt(v, 'ratio'), 'ux-conditions-val', v < 1 ? ' text-anchor="end"' : '');
+      });
+      // the line at one, named on the picture
+      s += '<line x1="' + X(1) + '" y1="' + (HH - 14) + '" x2="' + X(1) + '" y2="' + (H - 40) + '" class="ux-conditions-one"/>';
+      s += conditions_t(X(1), HH - 22, '1 = same as ' + conditions_base(vs), 'ux-conditions-onel', ' text-anchor="' + (X(1) - x0 < PW * 0.35 ? 'start' : 'middle') + '"');
+      s += conditions_t(X(1) - 8, H - 6, '← lower', 'ux-conditions-lo', ' text-anchor="end"') + conditions_t(X(1) + 8, H - 6, 'higher →', 'ux-conditions-hi');
+    });
+    return s + '</svg>';
+  }
+
+  function conditions_cornerSummary(rows, vs) {
+    var kc = vs === 'ladder' ? 'cost_vs_ladder' : 'cost_vs_top', kw = vs === 'ladder' ? 'wrong_vs_ladder' : 'wrong_vs_top';
+    var v = function (r, k) { return REFS[r.id].last.ratios[k]; };
+    var c = rows.corners, n = c.length;
+    var bc = c.filter(function (r) { return v(r, kc) < 1; }).length, bw = c.filter(function (r) { return v(r, kw) < 1; }).length;
+    var nearc = c.filter(function (r) { return conditions_side(v(r, kc)) === 'near'; }).length;
+    var srt = c.slice().sort(function (a, b) { return v(a, kc) - v(b, kc); }), lo = srt[0], hi = srt[n - 1];
+    var low = function (r) { return r.label.charAt(0).toLowerCase() + r.label.slice(1); };
+    var ag = MAP.reference_settings.filter(function (r) { return r.id === 'all_good'; })[0];
+    return '<b>' + bc + '</b> of the <b>' + n + '</b> corners cost less than ' + conditions_base(vs) + '. <b>' + bw + '</b> of them go wrong less often. ' +
+      (nearc ? '<b>' + nearc + '</b> more sit within <b>' + fmt(BAND, 'ratio') + '</b> of one on cost. ' : '') +
+      'The lowest cost is <b>' + fmt(v(lo, kc), 'ratio') + '</b>, at ' + esc(low(lo)) + '. The highest is <b>' + fmt(v(hi, kc), 'ratio') + '</b>, at ' + esc(low(hi)) + '.' +
+      (ag ? ' The all-good setting sits at <b>' + fmt(v(ag, kc), 'ratio') + '</b> for cost and <b>' + fmt(v(ag, kw), 'ratio') + '</b> for wrong rate.' : '');
+  }
+
+  function renderCorners() {
+    var rows = cornerRows(), vs = ST.conditions_vs;
+    function tr(r) {
+      var b = REFS[r.id].last;
+      return '<tr><td>' + esc(r.label) + '</td>' + RATIOS4.map(function (q) {
+        var v = b.ratios[q[0]];
+        return '<td data-ref="' + r.id + '" data-r="' + q[0] + '" data-v="' + v + '">' + esc(fmt(v, 'ratio')) + (q[2] === 'ladder' ? mark(v) : '') + '</td>';
+      }).join('') + '</tr>';
+    }
+    var head = '<tr><th rowspan="2">Setting</th><th colspan="2">Library over the ladder ' + tagEl('G') + '</th><th colspan="2">Library over the strong model ' + tagEl('G') + '</th></tr><tr><th>cost</th><th>wrong rate</th><th>cost</th><th>wrong rate</th></tr>';
+    var q = vs === 'ladder' ? 'Which settings cost less, or go wrong less, than the ladder without the library?' : 'Which settings cost less, or go wrong less, than the strong model alone?';
+    $('#cornerOut').innerHTML = '<span class="eyebrow">' + esc(CT.table_title) + '</span><h3 class="ux-conditions-q">' + esc(q) + ' ' + tagEl('G') + '</h3>' +
+      '<div class="ux-conditions-read"><p><b>How to read it.</b> Each row is one setting, named in words and by its marks. ' +
+      'Each bar starts at the line at one. A teal bar to the left is lower than ' + esc(conditions_base(vs)) + '. An orange bar to the right is higher. A grey bar is within ' + esc(fmt(BAND, 'ratio')) + ' of one.</p>' +
+      '<p data-tagged="G" class="ux-conditions-now"><b>What it shows now.</b> ' + conditions_cornerSummary(rows, vs) + '</p></div>' +
+      '<div class="ctl ux-conditions-vs"><span>Compare against</span>' + seg('Compare against', [['ladder', 'The ladder without the library'], ['strong', 'The strong model alone']], vs) + '</div>' +
+      '<p class="note">' + esc(CT.table_note) + ' The ladder is the cheap model with its retry, Opus and Fable steps.</p>' +
+      '<div class="chart-scroll ux-conditions-cwrap" data-tagged="G">' + conditions_cornerSvg(rows, vs) + '</div>' +
+      '<p class="note">' + esc(TX.todays_notes) + ' ' + rich(TX.opus_line) + '</p>' +
+      '<details class="ux-conditions-nums"' + (ST.conditions_open ? ' open' : '') + '><summary>Show the numbers: all four ratios for every setting</summary>' +
+      '<div class="chart-scroll"><table class="ptable corners" data-tagged="G">' + head + rows.mid.map(tr).join('') + rows.corners.map(tr).join('') +
+      '<tr class="sub"><td colspan="5">' + esc(CT.more_title) + '</td></tr>' + rows.more.map(tr).join('') + '</table></div>' +
+      '<p class="note">' + rich(CT.near_note) + (CM.promoMeasure ? ' ' + esc(CT.promo_note) : '') + '</p></details>';
+  }
+  $('#cornerOut').addEventListener('click', function (e) {
+    var sm = e.target.closest && e.target.closest('summary');
+    if (sm) { ST.conditions_open = !ST.conditions_open; return; }
+    var b = e.target.closest && e.target.closest('button[data-v]'); if (!b) return;
+    if (b.dataset.v === 'ladder' || b.dataset.v === 'strong') { ST.conditions_vs = b.dataset.v; renderCorners(); }
+  });
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    var conditions_rt = null, conditions_lastW = 0;
+    window.addEventListener('resize', function () {
+      clearTimeout(conditions_rt);
+      conditions_rt = setTimeout(function () { var w = conditions_w('#cornerOut', 0); if (Math.abs(w - conditions_lastW) > 30) { conditions_lastW = w; renderCorners(); } }, 200);
+    });
+  }
+
+  function renderSqControls() {
+    var sq = MAP.square;
+    $('#sqControls').innerHTML = '<div class="ctl"><span>How much comes back (the large sheet)</span>' + seg('How much comes back', sq.sheets.map(function (s) { return [s.id, s.label]; }), ST.sqSheet) + '</div>' +
+      '<div class="ctl"><span>Library over the ladder</span>' + seg('Ratio', [['cost_vs_ladder', 'Cost'], ['wrong_vs_ladder', 'Wrong rate']], ST.sqRatio) + '</div>';
+  }
+
+  // depth scale shared by every computed sheet, so the three sheets compare by eye
+  function conditions_dev(ratio) {
+    var dev = 1e-9;
+    Object.keys(SQ).forEach(function (id) { SQ[id].sheet.cells.forEach(function (row) { row.forEach(function (x) { var v = x.ratios[ratio]; if (isFinite(v)) dev = Math.max(dev, Math.abs(v - 1)); }); }); });
+    return dev;
+  }
+  function conditions_alpha(v, dev) { return 0.14 + 0.76 * Math.min(1, Math.abs(v - 1) / dev); }
+  function conditions_word(ratio) { return /^cost/.test(ratio) ? 'cost' : 'wrong rate'; }
+  function conditions_pick(q) { var m = Math.floor((q.levels.length - 1) / 2); return ST.sqCell || [m, m]; }
+
+  // The square as SVG for one sheet and one ratio: a heat map. Teal below one, orange above, deeper is further
+  // from one. Every cell prints its value. The thick line runs between cells on either side of one.
+  function squareSvg(sheetId, ratio) {
+    var q = sheetOf(sheetId), cells = q.sheet.cells, n = q.levels.length, c = 50, L = 150, T = 78, R = 200, W = L + n * c + R, H = T + n * c + 84;
+    var dev = conditions_dev(ratio), pk = conditions_pick(q);
+    var X = function (j) { return L + j * c; }, Y = function (i) { return T + (n - 1 - i) * c; };
+    var s = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" data-sheet="' + sheetId + '" data-ratio="' + ratio + '" role="img" aria-label="' + esc(CT.square_title) + '">';
+    // key, in words, on the picture
+    s += '<rect x="0" y="8" width="18" height="18" rx="2" fill="var(--good)"/>' + conditions_t(26, 22, 'teal: below one, lower ' + conditions_word(ratio) + ' than without the library', 'ux-conditions-small') +
+      '<rect x="0" y="34" width="18" height="18" rx="2" fill="var(--bad)"/>' + conditions_t(26, 48, 'orange: above one, higher. Deeper colour is further from one.', 'ux-conditions-small');
+    cells.forEach(function (row, i) {
+      row.forEach(function (x, j) {
+        var v = x.ratios[ratio], below = C.sideOfOne(v, 0) === 'below', a = conditions_alpha(v, dev);
+        var sel = pk[0] === i && pk[1] === j;
+        s += '<g class="sqc" role="button" tabindex="0" data-i="' + i + '" data-j="' + j + '" data-v="' + v + '">' +
+          '<rect x="' + X(j) + '" y="' + Y(i) + '" width="' + c + '" height="' + c + '" fill="' + (below ? 'var(--good)' : 'var(--bad)') + '" fill-opacity="' + a.toFixed(3) + '"/>' +
+          '<rect x="' + X(j) + '" y="' + Y(i) + '" width="' + c + '" height="' + c + '" class="sqf' + (sel ? ' sel' : '') + '"/>' +
+          '<text class="sqv ux-conditions-cv' + (a > 0.56 ? ' inv' : '') + '" x="' + (X(j) + c / 2) + '" y="' + (Y(i) + c / 2 + 5) + '" text-anchor="middle">' + esc(fmt(v, 'ratio')) + '</text></g>';
+      });
+    });
+    // the line where the ratio is one: every cell edge with one side below one and the other not
+    var d = '', rightY = null, topX = null;
+    for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+      var lo = cells[i][j].ratios[ratio] < 1;
+      if (j + 1 < n && lo !== (cells[i][j + 1].ratios[ratio] < 1)) { d += 'M' + X(j + 1) + ' ' + Y(i) + 'v' + c; if (i === n - 1 && topX === null) topX = X(j + 1); }
+      if (i + 1 < n && lo !== (cells[i + 1][j].ratios[ratio] < 1)) { d += 'M' + X(j) + ' ' + Y(i) + 'h' + c; if (j === n - 1) rightY = Y(i); }
+    }
+    var gx = LIBGI[q.x], gy = LIBGI[q.y], by = T + n * c, rx = L + n * c + 12;
+    if (d) {
+      s += '<path class="sqone" d="' + d + '"/>';
+      var ly = rightY !== null ? rightY : topX !== null ? T + 8 : T + n * c / 2;
+      if (rightY === null && topX !== null) s += '<path d="M' + topX + ' ' + T + 'L' + topX + ' ' + (T - 10) + 'L' + (rx - 4) + ' ' + (T - 10) + '" class="ux-conditions-lead"/>';
+      ['← thick line: one,', 'the same ' + conditions_word(ratio), 'as without the library'].forEach(function (w, k) { s += conditions_t(rx, ly + 5 + k * 17 - (rightY !== null ? 0 : 0), w, k ? 'ux-conditions-small' : 'ux-conditions-onel'); });
+    } else {
+      ['No crossing line:', 'every cell is ' + (cells[0][0].ratios[ratio] < 1 ? 'below' : 'above') + ' one', 'on this sheet'].forEach(function (w, k) { s += conditions_t(rx, T + n * c / 2 + k * 17, w, k ? 'ux-conditions-small' : 'ux-conditions-onel'); });
+    }
+    // axes in words, with level numbers
+    for (var t = 0; t < n; t++) {
+      s += conditions_t(X(t) + c / 2, by + 18, String(t), 'ux-conditions-tick', ' text-anchor="middle"');
+      s += conditions_t(L - 8, Y(t) + c / 2 + 5, String(t), 'ux-conditions-tick', ' text-anchor="end"');
+    }
+    s += conditions_t(L, by + 40, '← ' + gx.poor, 'ux-conditions-end') + conditions_t(L + n * c, by + 40, gx.good + ' →', 'ux-conditions-end', ' text-anchor="end"') +
+      conditions_t(L + n * c / 2, by + 66, conditions_cap(gx.label.toLowerCase()) + ', level 0 to ' + (n - 1), 'ux-conditions-axt', ' text-anchor="middle"');
+    s += conditions_t(L - 30, Y(n - 1) + c / 2 + 5, gy.good + ' ↑', 'ux-conditions-end', ' text-anchor="end"') + conditions_t(L - 30, Y(0) + c / 2 + 5, gy.poor + ' ↓', 'ux-conditions-end', ' text-anchor="end"');
+    var yl = wrapWords(conditions_cap(gy.short) + ', level 0 to ' + (n - 1), 14);
+    yl.forEach(function (w, k) { s += conditions_t(L - 30, T + n * c / 2 - (yl.length - 1) * 9 + k * 18, w, 'ux-conditions-axt', ' text-anchor="end"'); });
+    return s + '</svg>';
+  }
+
+  // a small sheet: same colours, no numbers, a click picks it for the large picture
+  function conditions_miniSvg(sh, ratio, dev) {
+    var c = 16, n = MAP.square.steps, W = n * c + 2, H = n * c + 2, chosen = sh.id === ST.sqSheet;
+    var head = '<span class="ux-conditions-mh">' + esc(sh.label) + (chosen ? ' <em>(shown large)</em>' : '') + '</span>';
+    if (!SQ[sh.id]) return '<div class="ux-conditions-mini">' + head + '<span class="note">Computing…</span></div>';
+    var cells = SQ[sh.id].sheet.cells, below = 0, s = '';
+    cells.forEach(function (row, i) { row.forEach(function (x, j) {
+      var v = x.ratios[ratio], b = v < 1; if (b) below++;
+      s += '<rect x="' + (1 + j * c) + '" y="' + (1 + (n - 1 - i) * c) + '" width="' + c + '" height="' + c + '" fill="' + (b ? 'var(--good)' : 'var(--bad)') + '" fill-opacity="' + conditions_alpha(v, dev).toFixed(3) + '" stroke="var(--surface)" stroke-width=".6"/>';
+    }); });
+    var d = '';
+    for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+      var lo = cells[i][j].ratios[ratio] < 1;
+      if (j + 1 < n && lo !== (cells[i][j + 1].ratios[ratio] < 1)) d += 'M' + (1 + (j + 1) * c) + ' ' + (1 + (n - 1 - i) * c) + 'v' + c;
+      if (i + 1 < n && lo !== (cells[i + 1][j].ratios[ratio] < 1)) d += 'M' + (1 + j * c) + ' ' + (1 + (n - 1 - i) * c) + 'h' + c;
+    }
+    if (d) s += '<path d="' + d + '" fill="none" stroke="var(--ink)" stroke-width="3"/>';
+    return '<div class="ux-conditions-mini' + (chosen ? ' on' : '') + '" role="button" tabindex="0" data-conditions-sheet="' + sh.id + '">' + head +
+      '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">' + s + '</svg>' +
+      '<span class="ux-conditions-mc"><b>' + below + '</b> of ' + (n * n) + ' cells below one</span></div>';
+  }
+
+  function conditions_pos(q, i, j) {
+    var n = q.levels.length - 1, gx = LIBGI[q.x], gy = LIBGI[q.y];
+    var xs = j === 0 ? gx.poor : j === n ? gx.good : gx.short + ' ' + j + ' of ' + n;
+    var ys = i === 0 ? gy.poor : i === n ? gy.good : gy.short + ' ' + i + ' of ' + n;
+    return xs + ', ' + ys;
+  }
+  function conditions_sqSummary(q, ratio) {
+    var cells = q.sheet.cells, N = 0, below = 0, mn = null, mx = null;
+    cells.forEach(function (row, i) { row.forEach(function (x, j) {
+      var v = x.ratios[ratio]; N++; if (v < 1) below++;
+      if (!mn || v < mn[0]) mn = [v, i, j];
+      if (!mx || v > mx[0]) mx = [v, i, j];
+    }); });
+    var w = conditions_word(ratio);
+    var s = 'On this sheet, <b>' + below + '</b> of <b>' + N + '</b> cells are below one on ' + w + '. ' +
+      'The ' + w + ' ratio runs from <b>' + fmt(mn[0], 'ratio') + '</b>, at ' + esc(conditions_pos(q, mn[1], mn[2])) + ', to <b>' + fmt(mx[0], 'ratio') + '</b>, at ' + esc(conditions_pos(q, mx[1], mx[2])) + '.';
+    var others = MAP.square.sheets.filter(function (sh) { return SQ[sh.id]; }).map(function (sh) {
+      var b = 0; SQ[sh.id].sheet.cells.forEach(function (row) { row.forEach(function (x) { if (x.ratios[ratio] < 1) b++; }); });
+      return sh.label.toLowerCase() + ' <b>' + b + '</b>';
+    });
+    if (others.length === MAP.square.sheets.length) s += ' Cells below one on each sheet: ' + others.join(', ') + '.';
+    return s;
+  }
+
+  function renderSquare() {
+    var el = $('#sqChart');
+    if (!SQ[ST.sqSheet]) {
+      el.innerHTML = '<p class="note">Computing the square…</p>';
+      var want = ST.sqSheet;
+      later(function () { sheetOf(want); if (ST.sqSheet === want) renderSquare(); });
+      return;
+    }
+    var q = SQ[ST.sqSheet], ratio = ST.sqRatio, w = conditions_word(ratio), dev = conditions_dev(ratio);
+    try { $('#sqTitle').textContent = w === 'cost' ? 'Where on the square does the library cost less than the ladder without it?' : 'Where on the square does the library go wrong less often than the ladder without it?'; } catch (e) { /* no title box */ }
+    el.innerHTML = '<div class="ux-conditions-read"><p><b>How to read it.</b> Reach runs across and entry quality runs up. Level 0 is the poor end and 10 the good end. ' +
+      'Each cell is the library’s ' + w + ' over the ladder without it. The thick line separates cells below one from cells above one.</p>' +
+      '<p data-tagged="G" class="ux-conditions-now"><b>What it shows now.</b> ' + conditions_sqSummary(q, ratio) + '</p></div>' +
+      '<div class="ux-conditions-sqwrap"><div class="ux-conditions-big" data-tagged="G">' + squareSvg(ST.sqSheet, ratio) + '</div>' +
+      '<div class="ux-conditions-minis" data-tagged="G"><span class="ux-conditions-mt">The three sheets of how much comes back, same colours. Click one to show it large.</span>' +
+      MAP.square.sheets.map(function (sh) { return conditions_miniSvg(sh, ratio, dev); }).join('') + '</div></div>';
+    renderSqCell();
+    MAP.square.sheets.forEach(function (sh) {
+      if (SQ[sh.id] || conditions_pending[sh.id]) return;
+      conditions_pending[sh.id] = true;
+      later(function () { sheetOf(sh.id); renderSquare(); });
+    });
+  }
+
+  function renderSqCell() {
+    var box = $('#sqCell');
+    if (!SQ[ST.sqSheet]) { box.innerHTML = '<p class="note">' + esc(CT.square_tap) + '</p>'; return; }
+    var q = SQ[ST.sqSheet], pk = conditions_pick(q), x = q.sheet.cells[pk[0]][pk[1]], n = q.levels.length - 1;
+    var vals = RATIOS4.map(function (r) { return x.ratios[r[0]]; });
+    var hi = Math.max(2, Math.ceil(Math.max.apply(null, vals) * 2) / 2), Wd = 470, L0 = 200, PW = Wd - L0 - 60, RH = 50, Hh = 30 + RH * 4 + 24;
+    var X = function (v) { return L0 + Math.max(0, Math.min(hi, v)) / hi * PW; };
+    var s = '<svg class="ux-conditions-cell" width="' + Wd + '" height="' + Hh + '" viewBox="0 0 ' + Wd + ' ' + Hh + '" role="img" aria-label="The four ratios at the chosen cell">';
+    s += '<line x1="' + X(1) + '" y1="22" x2="' + X(1) + '" y2="' + (Hh - 22) + '" class="ux-conditions-one"/>' + conditions_t(X(1), 16, '1 = the same', 'ux-conditions-onel', ' text-anchor="middle"');
+    RATIOS4.forEach(function (r, k) {
+      var v = x.ratios[r[0]], y = 30 + k * RH + RH / 2, a = X(1), b = X(v);
+      wrapWords(r[1] + ' against ' + (r[2] === 'ladder' ? 'the ladder without the library' : 'the strong model alone'), 26).forEach(function (w, m, arr) { s += conditions_t(0, y + 5 + (m - (arr.length - 1) / 2) * 16, w, 'ux-conditions-rl'); });
+      s += '<rect x="' + Math.min(a, b).toFixed(1) + '" y="' + (y - 11) + '" width="' + Math.max(3, Math.abs(b - a)).toFixed(1) + '" height="22" rx="2" fill="' + conditions_fill(v) + '"/>';
+      s += conditions_t((v < 1 ? Math.min(a, b) - 7 : Math.max(a, b) + 7).toFixed(1), y + 5, fmt(v, 'ratio'), 'ux-conditions-val', v < 1 ? ' text-anchor="end"' : '');
+    });
+    s += conditions_t(X(1) - 8, Hh - 4, '← lower', 'ux-conditions-lo', ' text-anchor="end"') + conditions_t(X(1) + 8, Hh - 4, 'higher →', 'ux-conditions-hi');
+    s += '</svg>';
+    box.innerHTML = '<h4 class="ux-conditions-ch">The four ratios at the outlined cell</h4>' +
+      '<p class="small"><b>' + esc(q.sheet.label) + '.</b> <span data-label="1">' + esc(LIBGI[q.x].short) + ' ' + pk[1] + ' of ' + n + ', ' + esc(LIBGI[q.y].short) + ' ' + pk[0] + ' of ' + n + ' steps from the poor end.</span>' +
+      (ST.sqCell ? '' : ' <span class="muted">This is the middle cell. ' + esc(CT.square_tap) + '</span>') + '</p>' + s +
+      '<div class="sqr ux-conditions-sqr">' + RATIOS4.map(function (r) { return '<span>' + esc(r[1]) + ' over the ' + (r[2] === 'ladder' ? 'ladder' : 'strong model') + ' <b data-sqr="' + r[0] + '" data-v="' + x.ratios[r[0]] + '">' + esc(fmt(x.ratios[r[0]], 'ratio')) + '</b>' + tagEl('G') + '</span>'; }).join('') + '</div>';
+  }
+
+  function renderSqText() {
+    $('#sqTitle').textContent = CT.square_title;
+    $('#sqLede').innerHTML = esc(CT.square_lede);
+    $('#sqNote').innerHTML = esc('The thick line is where the ratio crosses one. Teal cells are below one and orange cells above. Deeper colour is further from one.') + ' ' + esc(CT.square_level);
+  }
+
+  function conditions_pickSheet(e) {
+    var m = e.target.closest && e.target.closest('[data-conditions-sheet]'); if (!m) return;
+    ST.sqSheet = m.getAttribute('data-conditions-sheet'); renderSqControls(); renderSquare();
+  }
+  $('#sqChart').addEventListener('click', conditions_pickSheet);
+  $('#sqChart').addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { if (e.target.closest && e.target.closest('[data-conditions-sheet]')) { e.preventDefault(); conditions_pickSheet(e); } } });

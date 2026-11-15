@@ -1,0 +1,42 @@
+// Session 2: assemble the kept result files in graph-v2/premise-measure from this folder's outputs.
+const fs = require('fs');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+const OUT = 'C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/graph-v2/premise-measure';
+const J = (f) => JSON.parse(fs.readFileSync(W + '/' + f, 'utf8'));
+const m = J('measure.json'); const s2 = J('stale2.json'); const C = J('classify2.json'); const rank = J('rank.json');
+const sel = fs.readFileSync(W + '/sample-selected.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((o) => o.selected);
+const byId = Object.fromEntries(sel.map((o) => [o.id, o]));
+// per-finding hand classification, with the finding text and where it sits
+const findings = C.findings.map((f) => ({ id: f.id, source_kind: byId[f.id].kind, source_path: byId[f.id].path, line: byId[f.id].line, text: byId[f.id].text, type: f.type, r9: f.r9, premises_first_pass: f.p, premises: f.p2, query_in_words: f.q || null, note: f.note, c_where: f.c_where || null, ax_why: f.ax_why || null, staleness: f.stale || null }));
+fs.writeFileSync(OUT + '/findings-classified.json', JSON.stringify({ legend: C.legend, sample_rule: 'seeded shuffle (seed 20261113) of the candidate units of 12 files (sample.js.txt); per file the candidates were taken in shuffled order, skipping units that state no conclusion (procedure steps, file or schema descriptions, source links, sentence fragments), 5 per file, 4 for I and J, 6 for K and L (sel.js.txt)', files_rank_among_cq1_files: rank, findings }, null, 1));
+const stale = m.stale_use;
+stale.after_change_exposures = s2.map((r) => ({ finding: r.id, reader: r.sub ? 'subagent' : 'main session', exposure: r.exposure, corrected_fact_seen_in_same_transcript: r.awareAfter + r.awareBefore > 0, stale_statement_written_afterwards: r.staleCopiesWritten, edits_afterwards_by_place: r.writesAfter }));
+stale.source_after_change = 'stale2.js.txt -> stale2.json';
+const ex = s2.length, aware = s2.filter((r) => r.awareAfter + r.awareBefore > 0).length, prop = s2.reduce((a, r) => a + r.staleCopiesWritten, 0);
+stale.headline = { stale_findings_in_sample: stale.findings.filter((x) => x.status === 'stale').length, drifted: stale.findings.filter((x) => x.status === 'drifted').length, checked: stale.findings.length, exposures_after_change: ex, sessions_after_change_summed_per_finding: stale.findings.filter((x) => x.after_change).reduce((a, x) => a + x.after_change.sessions, 0), exposures_with_corrected_fact_also_seen: aware, stale_statement_written_into_a_file_afterwards: prop, window_hours_between_change_and_end_of_corpus: +((Date.parse(stale.last_exposure_in_scan) - Date.parse('2026-11-13T10:03:19Z')) / 3.6e6).toFixed(1), acted_on: 'not established: the scan cannot tell whether a decision rested on the stale sentence' };
+const result = {
+  measured: '2026-11-14, from the outputs of two agent sessions (2026-11-13 steps 0-3a, 2026-11-14 the rest); local transcripts, nothing left the machine',
+  question: 'what share of earlier conclusions (question form CQ1 of use-cases.md) rest on things inside the repository, how often findings are reused, and whether a stale one was acted on',
+  reads_by_location: m.reads_by_location,
+  same_task_reread_share: m.same_task_reread_share,
+  premise_kind_shares: m.premise_kind_shares,
+  in_repo_premise_share: m.in_repo_premise_share,
+  deterministic_finding_share: m.deterministic_finding_share,
+  reuse: m.reuse,
+  stale_use: stale,
+  could_not_measure: [
+    'Whether a stale finding was acted on: the scan finds where the sentence was shown again and what the transcript wrote next, not whether a decision rested on it; judging that needs a reading of the transcripts, which this lane did not do.',
+    'Staleness of findings whose premises are outside git (scratch files, untracked evidence, the other repository, outside sources, one-off measurements): there is no history to compare against; only 8 findings with repository premises were traced, 3 of them changed.',
+    'Use as opposed to exposure: a finding shown in a tool result was not necessarily read or used (9 % of model calls carry visible text, use-cases.md 2.3).',
+    'Four sampled findings (C4, G2, I4, J4) were not found in any transcript: their needle crosses a line break in the source file.',
+    'The CQ1 label is the noisiest of use-cases.md: it is a heuristic label on reads of notes, reports and verdict files, not a judged intent.',
+    'Premise counts are one coder\'s hand judgement (first pass 2026-11-13, kind c split 2026-11-14), with no second coder and no agreement figure.',
+    'The 12 source files were chosen by hand among files with high CQ1 reads, sessions or carried tokens that hold findings; the ranks are in findings-classified.json, the choice itself is not random.',
+    'Commit state of untracked files at the time a finding was written: untracked files have no history; c_repo is judged by where a copy sits now.',
+    'The window after the two stale changes is 5.4 hours (the transcript corpus ends 2026-11-13 15:24 UTC), so the stale-use count covers almost no time.',
+    'Web: no CQ1 call was a web fetch (web share 0); outside sources enter only as premises cited inside notes.',
+  ],
+};
+fs.writeFileSync(OUT + '/result.json', JSON.stringify(result, null, 1));
+fs.writeFileSync(OUT + '/stale-exposures.json', JSON.stringify(s2, null, 1));
+console.log(JSON.stringify(stale.headline));

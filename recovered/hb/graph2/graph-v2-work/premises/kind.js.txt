@@ -1,0 +1,9 @@
+const fs=require('fs');const rows=fs.readFileSync('rows.jsonl','utf8').split('\n').filter(Boolean).map(JSON.parse);
+const per=new Map();for(const r of rows)per.set(r.cid,(per.get(r.cid)||0)+1);
+const A={},B={};let T={c:0,t:0,k:0};
+for(const r of rows){const cs=1/per.get(r.cid);const k=r.kind;const a=A[k]=A[k]||{c:0,t:0,k:0};a.c+=cs;a.t+=r.tok;a.k+=r.car;T.c+=cs;T.t+=r.tok;T.k+=r.car;
+ const kk=r.cls.slice(0,1)+' x '+k;const b=B[kk]=B[kk]||{c:0,t:0,k:0};b.c+=cs;b.t+=r.tok;b.k+=r.car;}
+const f=(o)=>Object.fromEntries(Object.entries(o).sort().map(([k,a])=>[k,{calls:+a.c.toFixed(1),callShare:+(a.c/T.c).toFixed(4),fetchedShare:+(a.t/T.t).toFixed(4),carriedShare:+(a.k/T.k).toFixed(4)}]));
+const res={byKind:f(A),byClassKind:f(B)};fs.writeFileSync('kind.json',JSON.stringify(res,null,1));
+for(const [k,v] of Object.entries(res.byKind))console.log(k.padEnd(40),v.calls,(v.callShare*100).toFixed(1),(v.fetchedShare*100).toFixed(1),(v.carriedShare*100).toFixed(1));
+console.log('--');for(const [k,v] of Object.entries(res.byClassKind))console.log(k.padEnd(48),v.calls,(v.callShare*100).toFixed(1),(v.fetchedShare*100).toFixed(1),(v.carriedShare*100).toFixed(1));

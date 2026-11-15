@@ -1,0 +1,218 @@
+// Revision 4 regression (model-brief.md section 14). Run from this folder:  node - < rev4-regression.js.txt
+// With p_promote pinned at 0 (its row set to 0 / 0 / 0 in memory), the revision-4 engine and map must
+// (1) reproduce every target section 14 lists, to the precision printed there, and
+// (2) give every number of revision 3: the frozen engine-v3.js.txt on map-v3.json and params-v3.json.
+// Writes rev4-regression-console.txt here. Exit code 1 on any miss. Every number follows from assumed
+// values (tag G); none is a finding about the library.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const real = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const lims = JSON.parse(fs.readFileSync(path.join(dir, 'limitations.json'), 'utf8'));
+const E3 = require(path.join(here, 'engine-v3.js.txt'));
+const map3 = JSON.parse(fs.readFileSync(path.join(here, 'map-v3.json'), 'utf8'));
+const t3 = JSON.parse(fs.readFileSync(path.join(here, 'params-v3.json'), 'utf8'));
+const run3 = JSON.parse(fs.readFileSync(path.join(here, 'run-v3-out.json'), 'utf8'));
+const lims3 = JSON.parse(fs.readFileSync(path.join(here, 'limitations-v3.json'), 'utf8'));
+
+// p_promote pinned at 0
+const pinned = JSON.parse(JSON.stringify(real));
+pinned.parameters.forEach(r => { if (r.id === 'p_promote') { r.low = 0; r.best = 0; r.high = 0; } });
+const NEW_IDS = ['p_promote', 'k_promo_exact', 'k_promo_similar'];
+
+const lines = [];
+const say = s => { lines.push(s); console.log(s); };
+let misses = 0, checks = 0;
+function fx(v, dp) { return (Math.round(v * Math.pow(10, dp)) / Math.pow(10, dp)).toFixed(dp); }
+function target(label, got, want, dp) {
+  checks++;
+  const ok = fx(got, dp) === fx(want, dp);
+  if (!ok) misses++;
+  say((ok ? 'ok   ' : 'MISS ') + label.padEnd(58) + ' target ' + fx(want, dp).padStart(8) + '  got ' + fx(got, dp).padStart(8) + (ok ? '' : '   (' + got + ')'));
+}
+let worstGap = 0, gapChecks = 0;
+function same(label, a, b, tol) {
+  gapChecks++;
+  const t = tol === undefined ? 1e-12 : tol;
+  const gap = Math.abs(a - b) / Math.max(1, Math.abs(b));
+  if (!(gap <= t) && !(a === b)) { misses++; say('MISS ' + label + ': ' + a + ' vs ' + b); }
+  if (isFinite(gap) && gap > worstGap) worstGap = gap;
+}
+
+// ---------------------------------------------------------------- 1. targets of section 14
+say('1. Section 14 targets, p_promote = 0, last period, all G.');
+const refs = E.references(map, pinned);
+const R4 = x => [x.last.ratios.cost_vs_ladder, x.last.ratios.wrong_vs_ladder, x.last.ratios.cost_vs_top, x.last.ratios.wrong_vs_top];
+const NAMES = ['cost/ladder', 'wrong/ladder', 'cost/strong', 'wrong/strong'];
+function four(label, x, want) { R4(x).forEach((v, i) => target(label + ' ' + NAMES[i], v, want[i], 3)); }
+four('middle', refs.middle, [1.034, 1.008, 0.887, 1.911]);
+target('middle funnel end', refs.middle.last.funnel_end, 0.35, 2);
+const CORNERS = { '000': [1.034, 1.023, 0.887, 1.940], '001': [1.011, 1.000, 0.868, 1.897], '010': [1.429, 1.558, 1.226, 2.956], '011': [1.062, 0.997, 0.912, 1.891],
+  '100': [1.035, 1.025, 0.889, 1.944], '101': [1.007, 0.997, 0.864, 1.890], '110': [1.530, 1.713, 1.313, 3.250], '111': [0.803, 0.710, 0.689, 1.348] };
+Object.keys(CORNERS).forEach(c => four('corner ' + c, refs['corner_' + c], CORNERS[c]));
+four('all_good', refs.all_good, [0.739, 0.710, 0.634, 1.348]);
+target('all_good funnel end', refs.all_good.last.funnel_end, 31.71, 2);
+four('worst_corner', refs.worst_corner, [1.750, 1.713, 1.502, 3.250]);
+const W = E.weights(map, pinned, lims, { stepLabels: lims.steps });
+target('S(all_good)', W.full.score, 0.290, 3);
+const GT = { recurrence: [-0.4, 82.0], reach: [-13.0, 75.5], quality: [5.4, 105.1], running_cost: [3.5, 10.7] };
+W.groups.forEach(g => { target('group ' + g.id + ' alone %', 100 * g.alone, GT[g.id][0], 1); target('group ' + g.id + ' last %', 100 * g.last, GT[g.id][1], 1); });
+const ST = { 1: [1.5, 19.4], 2: [-5.6, 74.9], 3: [2.0, 26.5], 4: [11.3, 95.7], 5: [-0.3, 13.0], 6: [0.5, 33.3], 7: [2.1, 12.6], 8: [-3.8, 10.0], 9: [8.9, 78.3], 10: [3.9, 31.2] };
+W.steps.forEach(s => { target('step ' + s.step + ' alone %', 100 * s.alone, ST[s.step][0], 1); target('step ' + s.step + ' last %', 100 * s.last, ST[s.step][1], 1); });
+const SEQ = [[4, 11.3], [2, 24.7], [9, 52.4], [6, 59.6], [7, 61.9], [1, 63.3]];
+SEQ.forEach(([st, cum], i) => {
+  checks++;
+  const s = W.sequence[i];
+  if (s.step !== st) { misses++; say('MISS sequence ' + (i + 1) + ': step ' + s.step + ', target step ' + st); }
+  else say('ok   sequence ' + (i + 1) + ' is step ' + st);
+  target('sequence ' + (i + 1) + ' cumulative %', 100 * s.cumulative, cum, 1);
+});
+const GL = E.sharedTable(map, pinned);
+const GLT = {
+  'middle|': [[26.6, 21.4], [25.7, 21.2], [29.9, 11.2]], 'middle|gate': [[39.2, 7.9], [37.9, 7.9], [36.4, 8.5]],
+  'middle|ladder': [[23.7, 17.1], [23.1, 16.9], [26.0, 1.6]], 'middle|gate,ladder': [[32.9, 2.8], [31.8, 2.8], [31.4, 0.5]],
+  'all_good|': [[19.0, 15.1]], 'all_good|gate': [[29.0, 5.5]], 'all_good|ladder': [[17.0, 12.0]], 'all_good|gate,ladder': [[24.8, 2.0]]
+};
+GL.rows.forEach(r => {
+  const key = r.base + '|' + r.moved.join(',');
+  const want = GLT[key];
+  ['library', 'cheap_ladder', 'top_first'].slice(0, want.length).forEach((w, i) => {
+    target('gate/ladder ' + key + ' ' + w + ' cost', r[w].cost, want[i][0], 1);
+    target('gate/ladder ' + key + ' ' + w + ' wrong %', 100 * r[w].wrong, want[i][1], 1);
+  });
+});
+say('section 14 targets: ' + (checks) + ' checked, ' + misses + ' missed');
+const targetMisses = misses;
+
+// ---------------------------------------------------------------- 2. every number of revision 3
+say('\n2. Revision 3 against revision 4 (p_promote = 0): relative gap at most 1e-12 unless stated.');
+const best3 = E3.paramsFromTable(t3, 'best'), best4 = E.paramsFromTable(pinned, 'best');
+function cmpSummary(label, a, b) {
+  Object.keys(b.outcomes).forEach(k => same(label + ' outcome ' + k, a.outcomes[k], b.outcomes[k]));
+  same(label + ' cost', a.cost, b.cost); same(label + ' wrong', a.wrong, b.wrong); same(label + ' calls', a.calls, b.calls);
+  Object.keys(b.costByTier).forEach(k => { same(label + ' cost ' + k, a.costByTier[k], b.costByTier[k]); same(label + ' calls ' + k, a.callsByTier[k], b.callsByTier[k]); });
+  Object.keys(b.measures).forEach(k => same(label + ' measure ' + k, a.measures[k], b.measures[k]));
+}
+function cmpPath(label, p4, p3) {
+  const a = E.timePath(map, p4), b = E3.timePath(map3, p3);
+  cmpSummary(label + ' top_first', a.top_first, b.top_first);
+  cmpSummary(label + ' cheap_ladder', a.cheap_ladder, b.cheap_ladder);
+  b.periods.forEach((row, t) => {
+    cmpSummary(label + ' period ' + t, a.periods[t].library, row.library);
+    E.RATIO_IDS.forEach(r => same(label + ' period ' + t + ' ' + r, a.periods[t].ratios[r], row.ratios[r]));
+    Object.keys(row.stocks).forEach(s => same(label + ' period ' + t + ' stock ' + s, a.periods[t].stocks[s], row.stocks[s]));
+    Object.keys(row.branchFlow).forEach(k => same(label + ' period ' + t + ' flow ' + k, a.periods[t].branchFlow[k], row.branchFlow[k]));
+  });
+}
+const before = gapChecks;
+cmpPath('best', best4, best3);
+// the three revision-3 settings: unfavourable = every group poor, best = middle, favourable = all_good
+const ref3 = E3.references(map3, t3);
+const S4 = { unfavourable: E.settingParams(map, pinned, { recurrence: 'poor', reach: 'poor', quality: 'poor', running_cost: 'poor' }), best: refs.middle.params, favourable: refs.all_good.params };
+['unfavourable', 'best', 'favourable'].forEach(w => {
+  map3.parameters.forEach(p => same('setting ' + w + ' value ' + p.id, S4[w][p.id], ref3[w].params[p.id], 0));
+  cmpPath('setting ' + w, S4[w], ref3[w].params);
+  ['first', 'last'].forEach(at => {
+    const m4 = E.timePath(map, S4[w]);
+    const row = at === 'first' ? m4.periods[0] : m4.periods[m4.periods.length - 1];
+    E.RATIO_IDS.forEach(r => same('run-v3-out ' + w + ' ' + at + ' ' + r, row.ratios[r], run3.references[w][at].ratios[r]));
+    same('run-v3-out ' + w + ' ' + at + ' funnel end', row.library.measures.fw_right, run3.references[w][at].funnel_end);
+  });
+});
+// random parameter sets, drawn by the revision-3 engine, read by both
+const rr = E3.rng(4404);
+for (let i = 0; i < 40; i++) {
+  const p3 = E3.drawParams(map3, t3, rr, { tie: [0, 0.5, 1][i % 3], level: rr() });
+  const p4 = Object.assign({}, p3, { p_promote: 0, k_promo_exact: rr(), k_promo_similar: rr() });
+  cmpPath('random set ' + i, p4, p3);
+}
+// variant, funnel, swings, routes
+const v3 = E3.variant(map3, best3, 'opus_one'), v4 = E.variant(map, best4, 'opus_one');
+E.RATIO_IDS.forEach(r => same('variant opus_one ' + r, v4.last.ratios[r], v3.last.ratios[r]));
+['first', 'last'].forEach(at => {
+  const f3 = E3.funnel(map3, best3, { period: at }), f4 = E.funnel(map, best4, { period: at });
+  Object.keys(f3.funnels).forEach(fid => f3.funnels[fid].forEach((s, i) => same('funnel ' + at + ' ' + s.id, f4.funnels[fid][i].value, s.value)));
+});
+const sw3 = E3.swings(map3, t3), sw4 = E.swings(map, pinned);
+sw3.rows.forEach(r => {
+  const n = sw4.rows.find(x => x.id === r.id);
+  ['first', 'last'].forEach(at => E.RATIO_IDS.forEach(k => { same('swing ' + r.id + ' low ' + at + ' ' + k, n.low[at][k], r.low[at][k]); same('swing ' + r.id + ' high ' + at + ' ' + k, n.high[at][k], r.high[at][k]); }));
+});
+['top_first', 'cheap_ladder', 'library'].forEach(pol => {
+  const a = E.routes(map, best4, pol, { stocks: { E_good: 300, E_bad: 60 } }), b = E3.routes(map3, best3, pol, { stocks: { E_good: 300, E_bad: 60 } });
+  if (a.count !== b.count) { misses++; say('MISS routes ' + pol + ' count'); }
+  b.routes.forEach((r, i) => { same('route ' + pol + ' ' + i + ' chance', a.routes[i].chance, r.chance); same('route ' + pol + ' ' + i + ' cost', a.routes[i].cost, r.cost); });
+});
+say('time paths, settings, variant, funnel, swings and routes: ' + (gapChecks - before) + ' numbers compared, largest relative gap ' + worstGap.toExponential(2));
+
+// the weight of revision 3 (holds and score of each limitation and step) against alone in revision 4
+const W3 = E3.weights(map3, t3, lims3, { stepLabels: lims3.steps });
+let wg = gapChecks;
+W3.limitations.forEach(r => {
+  const n = W.limitations.find(x => x.id === r.id);
+  E.RATIO_IDS.concat(['funnel_end']).forEach(k => same('weight ' + r.id + ' ' + k, n.alone_change[k], r.holds[k]));
+  same('weight ' + r.id + ' score = alone score', n.alone_score, r.holds.score, 1e-9);
+});
+W3.steps.forEach(r => {
+  const n = W.steps.find(x => x.step === r.step);
+  E.RATIO_IDS.concat(['funnel_end']).forEach(k => same('step weight ' + r.step + ' ' + k, n.alone_change[k], r.holds[k]));
+  same('step weight ' + r.step + ' score = alone score', n.alone_score, r.holds.score, 1e-9);
+});
+same('favourable score = S(all_good)', W.full.score, W3.favourable.holds.score, 1e-9);
+say('weights: ' + (gapChecks - wg) + ' numbers compared (revision-3 holds against revision-4 alone; score against alone score within 1e-9)');
+
+// the ensemble at tie 0: draw for draw, and every reported number
+const N = 2000, SEED = 20261112;
+const en3 = E3.ensemble(map3, t3, { n: N, seed: SEED, tie: 0, percentiles: [10, 50, 90], keepDraws: true });
+const en4 = E.ensemble(map, pinned, { n: N, seed: SEED, tie: 0, percentiles: [10, 50, 90], keepDraws: true });
+let drawsSame = 0;
+en3.draws.forEach((d, i) => {
+  let ok = true;
+  map3.parameters.forEach(p => { if (en4.draws[i].params[p.id] !== d.params[p.id]) ok = false; });
+  E.RATIO_IDS.forEach(r => { if (en4.draws[i].last[r] !== d.last[r] || en4.draws[i].first[r] !== d.first[r]) ok = false; });
+  if (ok) drawsSame++;
+});
+checks++;
+if (drawsSame !== N) misses++;
+say((drawsSame === N ? 'ok   ' : 'MISS ') + 'ensemble tie 0: ' + drawsSame + ' of ' + N + ' runs equal number for number (every revision-3 value and the four ratios, first and last)');
+['first', 'last'].forEach(at => Object.keys(en3.spread[at]).forEach(k => Object.keys(en3.spread[at][k]).forEach(p => same('ensemble spread ' + at + ' ' + k + ' ' + p, en4.spread[at][k][p], en3.spread[at][k][p], 0))));
+['top_first', 'cheap_ladder'].forEach(w => ['first', 'last'].forEach(at => same('ensemble share ' + w + ' ' + at, en4.shareBetterVs[w][at], en3.shareBetterVs[w][at], 0)));
+['first', 'last'].forEach(at => E.RATIO_IDS.forEach(r => {
+  const a = en4.spearman[at][r].filter(e => !NEW_IDS.includes(e.id)), b = en3.spearman[at][r];
+  checks++;
+  if (JSON.stringify(a) !== JSON.stringify(b)) { misses++; say('MISS spearman ' + at + ' ' + r); }
+}));
+// and the numbers revision 3 wrote down (run-v3-out.json, tie 0)
+const r30 = run3.ensemble.ties['0'] || run3.ensemble.ties[0];
+if (r30) {
+  const flat = (o, pre, out) => { Object.keys(o).forEach(k => { const v = o[k]; if (v && typeof v === 'object') flat(v, pre + k + '.', out); else if (typeof v === 'number') out[pre + k] = v; }); return out; };
+  const want = flat(r30, '', {});
+  let found = 0;
+  Object.keys(want).forEach(k => {
+    const parts = k.split('.');
+    let v = null;
+    if (parts[0] === 'spread' && en4.spread[parts[1]] && en4.spread[parts[1]][parts[2]]) v = en4.spread[parts[1]][parts[2]][parts[3]];
+    if (parts[0] === 'shareBetterVs' && en4.shareBetterVs[parts[1]]) v = en4.shareBetterVs[parts[1]][parts[2]];
+    if (parts[0] === 'adjustedDraws') v = en4.adjustedDraws;
+    if (typeof v === 'number') { found++; same('run-v3-out ensemble ' + k, v, want[k]); }
+  });
+  // the drivers revision 3 wrote (rounded to 3 places): the same ids, in the same order, the same rho
+  let drv = 0;
+  ['first', 'last'].forEach(at => E.RATIO_IDS.forEach(r => {
+    const old = (r30.drivers && r30.drivers[at] && r30.drivers[at][r]) || [];
+    const now = en4.spearman[at][r].filter(e => !NEW_IDS.includes(e.id)).slice(0, old.length);
+    old.forEach((e, i) => { drv++; checks++; if (now[i].id !== e.id || fx(now[i].rho, 3) !== fx(e.rho, 3)) { misses++; say('MISS driver ' + at + ' ' + r + ' ' + i); } });
+  }));
+  say('run-v3-out.json tie-0 ensemble: ' + found + ' written numbers and ' + drv + ' drivers compared');
+}
+say('ensemble tie 0 (' + N + ' runs, seed ' + SEED + '): spread, shares and rank correlations compared exactly.');
+say('Ties 0.5 and 1 change by design (R18b: four shared levels per run instead of one), so they are not compared.');
+
+say('\nlargest relative gap over ' + gapChecks + ' compared numbers: ' + worstGap.toExponential(2));
+say('section 14 targets missed: ' + targetMisses + '; all misses: ' + misses);
+fs.writeFileSync(path.join(here, 'rev4-regression-console.txt'), lines.join('\n') + '\n');
+process.exitCode = misses ? 1 : 0;

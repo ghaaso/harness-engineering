@@ -1,0 +1,793 @@
+{
+ "lane": "M-01",
+ "tool_status": "ok",
+ "summary": "The agent-memory field is built for conversational personalisation, not for verified, code-anchored defect knowledge. Its useful contribution is a small set of data-model ideas. (1) Graphiti/Zep's bitemporal edges: valid_at/invalid_at for when a fact was true in the world, created_at/expired_at for when the system learned and retired it. Facts are retired, never deleted. (2) A non-lossy raw \"episode\" store with derived facts that point back to the episodes they came from. (3) Letta Code's git-backed memory files, with one worktree per concurrent subagent and merge by git. (4) LangMem's hot-path vs background write split. (5) ReasoningBank's explicit storage of failed experiences. The hazards are just as consistent. Every system lets an LLM decide at write time what to store, so it can store hallucinated or junk memories. Contradiction handling is LLM-judged semantic comparison, not dependency-event driven. Mem0's April 2026 rewrite went ADD-only and keeps contradicting memories side by side, leaving retrieval to surface the current one, which is the false-positive failure the owner wants to avoid. The benchmarks (LoCoMo, LongMemEval, DMR) measure chat recall, are disputed or flawed, and say nothing about code, defects, or verification. Self-hosted paths default to OpenAI for LLM and embeddings, and Mem0 and Graphiti ship PostHog telemetry. Mem0's is on by default and sends provider class paths. Graphiti's is opt-out and described as anonymous. All of these systems are designed for orders of magnitude more data than tens to hundreds of entries. Verdict: borrow patterns, adopt no engine. Cite Graphiti, ReasoningBank, Letta context repositories and LangMem for design only.",
+ "facts": [
+  {
+   "id": "M01-F01",
+   "statement": "Zep/Graphiti is a bi-temporal graph. Timeline T (event time): edges carry t_valid (when the fact became true) and t_invalid (when it stopped being true). Timeline T' (transaction time): edges carry t'_created (added to the system) and t'_expired (invalidated in the system). Graph has three tiers: episode subgraph (raw input, 'non-lossy'), semantic entity subgraph (entities and fact edges), community subgraph.",
+   "source": "https://arxiv.org/html/2501.13956v1 (Zep: A Temporal Knowledge Graph Architecture for Agent Memory, arXiv 2501.13956, v1 Jan 2025)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F02",
+   "statement": "Graphiti invalidation is LLM-judged: a new edge is compared with semantically related existing edges, and an LLM flags contradictions. If a contradicted edge overlaps in time, the old edge's invalid_at is set to the new edge's valid_at and expired_at is set to now. Old facts are marked invalid, not deleted. In code the check is plain timestamp comparison, and a candidate with valid_at None is never invalidated. The trigger is new conversational text arriving, not a change in what the fact depends on.",
+   "source": "https://arxiv.org/html/2501.13956v1 ; https://raw.githubusercontent.com/getzep/graphiti/main/graphiti_core/utils/maintenance/edge_operations.py (resolve_edge_contradictions, _apply_temporal_invalidation)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F03",
+   "statement": "Graphiti EntityEdge fields: uuid, group_id, source_node_uuid, target_node_uuid, created_at, name (relation), fact (text), fact_embedding, episodes (list of episode ids referencing the edge, i.e. provenance), expired_at, valid_at, invalid_at, reference_time, attributes (dict). EpisodicEdge adds no fields of its own.",
+   "source": "https://raw.githubusercontent.com/getzep/graphiti/main/graphiti_core/edges.py (read at main, Nov 2026)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F04",
+   "statement": "Graphiti ingestion makes 0 to 3 LLM calls per extracted edge (dedupe, optional attribute extraction, timestamp extraction). Exact endpoint-plus-normalised-fact matches are deduplicated without an LLM. Entity extraction uses the current message plus the previous 4, a reflection step, embedding plus full-text candidate search, then an LLM resolution prompt. Graph writes use predefined Cypher, not LLM-generated queries.",
+   "source": "https://raw.githubusercontent.com/getzep/graphiti/main/graphiti_core/utils/maintenance/edge_operations.py ; https://arxiv.org/html/2501.13956v1",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "canonicalisation",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F05",
+   "statement": "Zep retrieval is search, then rerank, then context construction. Search combines cosine similarity, Okapi BM25 (Neo4j/Lucene) and breadth-first graph traversal. Rerankers are RRF, MMR, episode-mention frequency, node-distance, and an LLM cross-encoder (highest cost). The paper used BGE-m3 for embeddings and gpt-4o-mini for graph construction.",
+   "source": "https://arxiv.org/html/2501.13956v1",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F06",
+   "statement": "Graphiti defaults to OpenAI for LLM inference and embeddings. Anthropic, Gemini, Groq and OpenAI-compatible endpoints are supported. The README says it works best with LLMs that support structured output, and other or smaller models may produce wrong schemas and ingestion failures. Telemetry is PostHog, opt-out via GRAPHITI_TELEMETRY_ENABLED=false, and the README says it covers OS, Python and Graphiti versions and provider choices but not data. SEMAPHORE_LIMIT defaults to 10 to avoid LLM 429s.",
+   "source": "https://github.com/getzep/graphiti (README, read Nov 2026)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "egress",
+    "ops_cost",
+    "engine"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F07",
+   "statement": "Graphiti backends: Neo4j 5.26, FalkorDB 1.1.2, Amazon Neptune plus OpenSearch Serverless, and Kuzu 0.11.2 (flagged deprecated because upstream Kuzu is unmaintained). The MCP server defaults to FalkorDB in Docker (Neo4j optional) with 13 tools including add_memory, search_nodes, search_memory_facts and delete_episode. It is a reference implementation with no authentication, and the page says not to use it in production or expose it to untrusted networks. Ollama works via an OpenAI-compatible endpoint, but small local models often fail JSON schema checks.",
+   "source": "https://github.com/getzep/graphiti ; https://github.com/getzep/graphiti/blob/main/mcp_server/README.md",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "access",
+    "egress",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F08",
+   "statement": "FalkorDB is licensed under SSPLv1. It is a Redis module (GraphBLAS sparse-matrix graph), so running it self-hosted means running Redis plus the module as an extra service.",
+   "source": "https://github.com/FalkorDB/FalkorDB (README, read Nov 2026)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F09",
+   "statement": "Zep Community Edition is deprecated and no longer supported. Zep recommends Zep Cloud (hosted) or the open-source Graphiti library. This was reported by a web-search summary of help.getzep.com/ce-deprecation-notice; the page itself returned 404 on direct fetch.",
+   "source": "https://help.getzep.com/ce-deprecation-notice (search snippet only)",
+   "source_kind": "primary_docs",
+   "confidence": "reported",
+   "bears_on": [
+    "engine",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F10",
+   "statement": "Zep paper reports DMR 94.8% (gpt-4-turbo) vs MemGPT 93.4%, and LongMemEval_s gains of 63.8% vs 55.4% full-context (gpt-4o-mini) and 71.2% vs 60.2% (gpt-4o), with latency of about 3 s vs about 31 s. The authors note DMR is small and mostly single-turn fact retrieval. They could not get successful MemGPT runs on LongMemEval.",
+   "source": "https://arxiv.org/html/2501.13956v1",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F11",
+   "statement": "Mem0 (paper, Apr 2025): an LLM extraction phase over the last 10 messages plus a summary yields candidate facts. For each fact the top 10 similar memories are retrieved, and the LLM picks ADD, UPDATE, DELETE or NOOP via tool call. GPT-4o-mini was used throughout. The graph variant Mem0g uses Neo4j and has an LLM update resolver that marks outdated relationships invalid instead of deleting them. Reported LoCoMo J: Mem0 66.88%, Mem0g 68.44%, full-context 72.90%, and full-context still has a slight accuracy edge. Mem0g adds latency and gives no gain on single-hop or multi-hop questions. The adversarial category was excluded.",
+   "source": "https://arxiv.org/html/2504.19413 (arXiv 2504.19413)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "ops_cost",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F12",
+   "statement": "Mem0's April 2026 'new memory algorithm' replaced ADD/UPDATE/DELETE with single-pass, ADD-only extraction (one LLM call, no UPDATE or DELETE), plus entity linking, multi-signal retrieval (semantic, BM25, entity match) and temporal reasoning. The reported LoCoMo 92.5 and LongMemEval 94.4 are from the managed platform, which has proprietary optimisations. OSS users should expect 'directionally similar' gains only.",
+   "source": "https://github.com/mem0ai/mem0 (README, read Nov 2026)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "data_model",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F13",
+   "statement": "In the Mem0 additive path, reported by participants in a GitHub discussion and not a maintainer statement: existing nearby memories are passed to the extraction prompt, and new facts are still written as ADD, possibly with linked_memory_ids. Dedupe is LLM skipping plus exact MD5 hash, not cosine-threshold merging, so reworded facts persist as separate rows. Contradicting memories are both kept, and retrieval is expected to surface the current belief. Retrieval quality at 10k+ memories depends on filters, scoping and reranking. This is a stale-fact false-positive hazard by design.",
+   "source": "https://github.com/mem0ai/mem0/discussions/4787 (replies by community users; no clear maintainer reply)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "invalidation",
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F14",
+   "statement": "A vendor page from a competing memory tool, citing mem0 issue #4573, claims an audit of a 10,134-entry store found 97.8% junk (duplicates, trivia, dead states), and 808 entries asserting 'User prefers Vim' that the user never stated. The same source says the figure was dominated by a weak 2B local model and was 89.6% for a frontier model. Unverified: the issue itself could not be opened and the source is an interested party. It is evidence of the failure shape (hallucinated or junk memories compounding through recall), not of a measured rate.",
+   "source": "https://socket.dev/npm/package/jamgate/diff/0.11.2 (search result, promotional); mem0 issue #4573 not opened",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "limits",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F15",
+   "statement": "Mem0 OSS library defaults: local Qdrant at /tmp/qdrant, SQLite history at ~/.mem0/history.db, OpenAI gpt-5-mini and text-embedding-3-small (needs OPENAI_API_KEY). The self-hosted Docker server uses Postgres+pgvector, a dashboard, per-user API keys and an audit log, with OpenAI, Anthropic and Gemini as bundled providers. Telemetry is PostHog to https://us.i.posthog.com and is ON by default (MEM0_TELEMETRY must be set to something other than true/1/yes to disable). OSS events include the collection name, vector size and the class paths of the vector store, LLM and embedder. Hot-path events are sampled at 0.1. Hosted client events use the user's email as the distinct ID.",
+   "source": "https://docs.mem0.ai/open-source/overview ; https://raw.githubusercontent.com/mem0ai/mem0/main/mem0/memory/telemetry.py",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "egress",
+    "engine",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F16",
+   "statement": "MemGPT (Oct 2023) is 'virtual context management' in tiers. Main context holds read-only system instructions, a fixed-size read/write working context, and a FIFO queue whose first entry is a recursive summary. Recall storage holds the full message history. Archival storage is read/write text, using PostgreSQL with vector search in the QA setup. The LLM edits memory by function call, with request_heartbeat for chaining. A memory-pressure warning fires at about 70% of the window, with eviction of about 50% at 100%. Performance depends heavily on the underlying model: GPT-3.5 degraded because of weak function calling. DMR accuracy 93.4% with GPT-4 Turbo.",
+   "source": "https://arxiv.org/html/2310.08560v2 (arXiv 2310.08560)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F17",
+   "statement": "Letta: memory blocks are editable context pinned to the system prompt (shareable across agents). All state is in a database, and message history (recall) remains retrievable after eviction. The Docker image is stated to be 'no longer an actively maintained or supported Letta product surface', and the docs recommend local mode in the Letta app/CLI or the Letta App Server. The Docker route uses Postgres with pgvector via LETTA_PG_URI, requires an embedding model, and takes provider keys (OpenAI, Anthropic, or Ollama via OLLAMA_BASE_URL). The docs read did not cover telemetry.",
+   "source": "https://docs.letta.com/guides/agents/memory ; https://docs.letta.com/guides/selfhosting (Apache-2.0 per https://github.com/letta-ai/letta)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "engine",
+    "egress",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F18",
+   "statement": "Letta Code 'context repositories' (blog, 12 Feb 2026): agent memory is plain files with YAML frontmatter in a git repo, and every change is committed with a message. Each concurrent subagent gets an isolated git worktree and merges back through git conflict resolution. Previously memory formation was single-threaded. A background 'sleep-time' reflection writes in a worktree and merges automatically. Defragmentation backs up, then a subagent splits and merges files into 15-25 focused files. The post reports no benchmarks and little detail on conflict resolution beyond standard git merges. This is the closest prior art to the owner's parallel-worktree, multi-agent write scenario.",
+   "source": "https://www.letta.com/blog/context-repositories",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "workflow",
+    "provenance",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F19",
+   "statement": "LangMem (MIT) separates semantic memory (collections or a single profile), episodic memory (past experiences with context, reasoning and outcome) and procedural memory (instructions evolving via feedback and prompt optimisation). It offers hot-path (agent-written, immediate, adds latency) and background (post-conversation) formation. A memory manager reconciles new information by insert, update or delete, and the guide names the over-extraction (precision) vs under-extraction (recall) tradeoff. Storage is via LangGraph BaseStore with hierarchical namespaces. The README example uses InMemoryStore and recommends AsyncPostgresStore for production. No default models; the example uses OpenAI embeddings. No releases are listed on the page read.",
+   "source": "https://langchain-ai.github.io/langmem/concepts/conceptual_guide/ ; https://github.com/langchain-ai/langmem",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "workflow",
+    "engine",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F20",
+   "statement": "Cognee (Apache-2.0, v1.6.1 dated 24 Sep 2026 on its README) has operations remember, recall, improve and forget. With an LLM key set it uses OpenAI for LLM and embeddings by default. With no LLM key it falls back to local GLiNER extraction and local fastembed embeddings (BAAI/bge-small-en-v1.5). .env.template defaults: DB_PROVIDER=sqlite, VECTOR_DB_PROVIDER=lancedb, GRAPH_DATABASE_PROVIDER=kuzu. Providers include ollama and anthropic. It supports ontologies and has an MCP server (cognee-mcp). The telemetry default was not stated (the template shows TELEMETRY_DISABLED commented as 1). The default graph store is Kuzu, which Graphiti's README calls unmaintained upstream.",
+   "source": "https://github.com/topoteretes/cognee ; https://raw.githubusercontent.com/topoteretes/cognee/main/.env.template",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "egress",
+    "access",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F21",
+   "statement": "A-MEM (2025) stores each memory as a note with raw content, timestamp, LLM-generated keywords, tags, a contextual description, an embedding and links. A new note triggers link generation (top-k by embedding, then an LLM decides links) and 'memory evolution', where an LLM rewrites the context, keywords and tags of neighbouring notes, so a write needs several LLM calls. The paper reports no error bars, and quality depends on the LLM used. Evaluated on LoCoMo and DialSim.",
+   "source": "https://arxiv.org/html/2502.12110 (A-MEM, arXiv 2502.12110)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "canonicalisation",
+    "retrieval",
+    "ops_cost",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F22",
+   "statement": "HippoRAG indexes offline: an LLM runs open information extraction over passages into a schemaless KG, with synonymy edges between similar noun phrases. At query time an LLM extracts query entities and Personalized PageRank spreads from those seeds, giving multi-hop retrieval in one step. It is comparable to IRCoT at about 10-30x lower cost. Most errors come from NER/OpenIE, consistency weakens on longer documents, and scalability to much larger corpora is untested.",
+   "source": "https://arxiv.org/html/2405.14831 (HippoRAG, arXiv 2405.14831)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F23",
+   "statement": "MemoryBank (2023) updates memory with an Ebbinghaus-style mechanism that forgets or reinforces by elapsed time and relative significance. This is time-based decay, the opposite of the owner's event-driven invalidation. Evaluation was qualitative plus ChatGPT-simulated users. Only the abstract was read.",
+   "source": "https://arxiv.org/abs/2305.10250",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F24",
+   "statement": "ReasoningBank (Google, 2025) distils generalisable reasoning strategies from an agent's self-judged successful AND failed experiences, retrieves them at test time and writes new learnings back. Memory-aware test-time scaling adds contrastive experiences. The abstract claims it beats memories storing raw trajectories or only successes on web browsing and software engineering tasks, without figures. The benchmark names and entry schema were not confirmed from the page read. This is the closest published match to 'store the failed approaches and why', though it relies on self-judged success labels.",
+   "source": "https://arxiv.org/abs/2509.25140",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F25",
+   "statement": "Benchmark coverage and reliability: LoCoMo (about 300 turns, up to 35 sessions per conversation, QA/summarisation/multimodal) and LongMemEval (500 questions on extraction, multi-session reasoning, temporal reasoning, knowledge updates and abstention) are both chat-memory benchmarks, with no code, defect or verification content. A Penfield audit (blog, 2026) claims 6.4% of the LoCoMo answer key is wrong (99 of 1,540 questions) and that the gpt-4o-mini judge accepts about 63% of intentionally wrong but topical answers. It also claims LongMemEval-S mostly tests context-window capacity. Zep and Mem0 publicly disputed each other's LoCoMo numbers (Zep corrected its own score to 75.14% +/- 0.17 and says Mem0 misconfigured Zep). MemoryAgentBench names four competencies (accurate retrieval, test-time learning, long-range understanding, selective forgetting) and concludes current methods do not master all four. None of these benchmarks measures false-positive reuse of a stale memory.",
+   "source": "https://arxiv.org/abs/2402.17753 ; https://arxiv.org/abs/2410.10813 ; https://dev.to/penfieldlabs/we-audited-locomo-64-of-the-answer-key-is-wrong-and-the-judge-accepts-up-to-63-of-intentionally-33lg ; https://www.getzep.com/blog/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/ ; https://arxiv.org/abs/2507.05257",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F26",
+   "statement": "Persistent memory poisoning is a documented attack class. MINJA (arXiv 2503.03704) injects malicious records via ordinary queries, with reported injection success over 95% (98.2% by the paper's own headline). MemoryGraft (arXiv 2512.16962) plants fake 'successful experiences' that are retrieved later and cause persistent behavioural drift. arXiv 2601.05504 reports detection-based moderation and memory sanitisation largely ineffective against MINJA. Only search-result summaries were read, so the figures are as reported by those sources.",
+   "source": "https://arxiv.org/html/2503.03704v2 ; https://arxiv.org/pdf/2512.16962.pdf ; https://arxiv.org/html/2601.05504v1 (via search summary)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "provenance",
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M01-F27",
+   "statement": "Memary (MIT) keeps a timestamped 'memory stream', an entity store with frequency and recency counts, and 2-hop recursive retrieval over Neo4j or FalkorDB, and defaults to local Ollama models (Llama 3, LLaVA). No explicit maintenance status; the page shows 250 commits and says the demo agent is slated for removal.",
+   "source": "https://github.com/kingjulio8238/Memary",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M01-F28",
+   "statement": "Scale mismatch: Zep's paper benchmarks conversations of about 115k tokens per user, and Mem0's evaluation uses 10 conversations of about 26k tokens each. The systems are built around per-user conversational streams and hybrid graph or vector search over potentially large fact stores. The target here is tens to a few hundred curated entries, where a single relational or FTS store can scan them all.",
+   "source": "https://arxiv.org/html/2501.13956v1 ; https://arxiv.org/html/2504.19413 ; workload stated in task context",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "retrieval"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "Graphiti (getzep/graphiti) bitemporal edge model",
+   "kind": "pattern",
+   "verdict": "cite_design_only",
+   "why": "The valid_at/invalid_at plus created_at/expired_at split, retire-don't-delete, and episodes[] provenance back to raw episodes map directly onto an entry model. But the engine is a graph database (Neo4j or FalkorDB) plus an LLM extraction pipeline defaulting to OpenAI, and it is built for streaming conversation facts. Invalidation is LLM contradiction detection on new text, not dependency-event driven. Borrow the field semantics only.",
+   "egress_posture": "Default OpenAI for LLM and embeddings; PostHog telemetry opt-out. Self-hostable with an OpenAI-compatible local endpoint, but small local models often fail structured output.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "M01-F01",
+    "M01-F02",
+    "M01-F03",
+    "M01-F06",
+    "M01-F07"
+   ],
+   "maturity": "Apache-2.0; actively developed; Kuzu backend deprecated; MCP server is a no-auth reference implementation",
+   "footprint": "Python library plus Neo4j (5.26) or FalkorDB (SSPLv1, Redis module) service plus an LLM for every ingestion",
+   "windows_dev_fit": "Docker Desktop for the graph DB; Python not on PATH",
+   "linux_prod_fit": "Good, but a second stateful service to back up and secure",
+   "agent_access": "MCP server with 13 tools (reference only, no auth)"
+  },
+  {
+   "name": "Zep (hosted Zep Cloud / Community Edition)",
+   "kind": "system",
+   "verdict": "rejected",
+   "why": "Hosted Zep Cloud sends content to a third party and is disqualified. Community Edition is reported deprecated and unsupported. Graphiti is the only self-hostable path.",
+   "egress_posture": "Zep Cloud: all content to vendor. CE: deprecated.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "M01-F09",
+    "M01-F01"
+   ],
+   "maturity": "CE deprecated (reported)",
+   "footprint": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "Mem0 (OSS library / self-hosted server)",
+   "kind": "system",
+   "verdict": "weak",
+   "why": "Apache-2.0 and self-hostable (Postgres+pgvector server, SQLite history), but it needs an LLM on every write, defaults to OpenAI, and has telemetry ON by default to PostHog that includes provider class paths. The April 2026 ADD-only algorithm keeps contradicting memories side by side and relies on retrieval to pick the current one, which is the stale-hit hazard. Reported junk-accumulation claims are unverified but fit the failure shape. The headline scores come from the managed platform. Cite for design (extract, compare against nearest memories, ADD/UPDATE/DELETE/NOOP vocabulary).",
+   "egress_posture": "Default OpenAI LLM and embeddings; telemetry on by default (MEM0_TELEMETRY opt-out); self-host possible with other providers",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M01-F11",
+    "M01-F12",
+    "M01-F13",
+    "M01-F14",
+    "M01-F15"
+   ],
+   "maturity": "Widely used; algorithm rewritten Apr 2026 (OSS v2 to v3 migration)",
+   "footprint": "Python or Node library with local Qdrant+SQLite, or a Docker Compose server with Postgres/pgvector and a dashboard",
+   "windows_dev_fit": "Docker Desktop for the server; library needs Python",
+   "linux_prod_fit": "Good",
+   "agent_access": "Python/Node SDK and REST server; MCP plugins exist (not examined)"
+  },
+  {
+   "name": "Letta / MemGPT (Docker server)",
+   "kind": "system",
+   "verdict": "weak",
+   "why": "Apache-2.0, Postgres+pgvector, supports Ollama. But it is an agent runtime that owns the agent loop, which is a different product from a lookup store, and its Docker image is stated to be no longer actively maintained or supported. Models need good function calling. Cite the MemGPT tiers and memory-pressure idea for design only.",
+   "egress_posture": "Provider keys (OpenAI, Anthropic) or Ollama; embeddings required; telemetry not determined",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "M01-F16",
+    "M01-F17"
+   ],
+   "maturity": "Docker route unmaintained per its own docs",
+   "footprint": "Server plus Postgres/pgvector",
+   "windows_dev_fit": "Docker Desktop",
+   "linux_prod_fit": "Docker image unsupported",
+   "agent_access": "REST API (v1) and SDKs"
+  },
+  {
+   "name": "Letta Code context repositories (git-backed memory files with worktree-per-subagent)",
+   "kind": "pattern",
+   "verdict": "viable",
+   "why": "Plain files with frontmatter, git history for every change, and concurrent writers isolated in worktrees and merged by git. This matches a one-developer, parallel-worktree, subagent workflow, with no database service to run, and git history gives provenance for free. Weaknesses: the blog reports no evaluation and says little about merge conflicts. Fuzzy lookup by symptom, outcome analytics and event-driven invalidation would still need an index (for example SQLite FTS) built over the files. Adopt the storage-of-record idea, not Letta's product.",
+   "egress_posture": "None inherent. The pattern is git plus local files; Letta's cloud sync is optional and not needed.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M01-F18"
+   ],
+   "maturity": "Blog Feb 2026; pattern only",
+   "footprint": "A git repo of markdown with YAML frontmatter",
+   "windows_dev_fit": "Git Bash and git are present",
+   "linux_prod_fit": "Excellent",
+   "agent_access": "Agents read and write files via CLI/shell tools"
+  },
+  {
+   "name": "LangMem (LangChain)",
+   "kind": "tool",
+   "verdict": "cite_design_only",
+   "why": "MIT and storage-agnostic, but it is built around a LangGraph BaseStore and an LLM memory manager. Borrow the vocabulary: semantic vs episodic vs procedural, hot-path vs background writes, and the insert/update/delete reconciliation with its over/under-extraction tradeoff. Episodic ('outcome and reasoning') is the closest fit for a defect entry. Do not adopt the library.",
+   "egress_posture": "User-supplied provider; the example uses Anthropic and OpenAI embeddings",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M01-F19"
+   ],
+   "maturity": "No releases visible on the page read; 157 commits",
+   "footprint": "Python plus a LangGraph store (Postgres in production)",
+   "windows_dev_fit": "Needs Python",
+   "linux_prod_fit": "OK",
+   "agent_access": "Python tool functions for LangGraph agents"
+  },
+  {
+   "name": "Cognee",
+   "kind": "system",
+   "verdict": "weak",
+   "why": "Apache-2.0 with a fully local default stack (SQLite, LanceDB, Kuzu) and an offline GLiNER and fastembed mode, which is the best egress posture of the systems read. But its graph-extraction pipeline is LLM-driven, Kuzu is reported unmaintained upstream, and it is a general document-to-knowledge-graph platform that is far larger than this workload.",
+   "egress_posture": "OpenAI by default when a key is set; offline mode available; telemetry default not determined",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M01-F20"
+   ],
+   "maturity": "v1.6.1 (Sep 2026); active",
+   "footprint": "Python package with embedded DBs",
+   "windows_dev_fit": "Needs Python",
+   "linux_prod_fit": "Good",
+   "agent_access": "MCP server (cognee-mcp), HTTP API, CLI"
+  },
+  {
+   "name": "ReasoningBank (failure-aware strategy memory)",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "The only paper read that explicitly stores strategies from failed as well as successful experiences, retrieves them at test time and writes back learnings. It matches the owner's insight that negative results are the thing to save. Its success labels are self-judged, so it has no verification gate and no invalidation story. Borrow the idea, add the gate.",
+   "egress_posture": "n/a (paper)",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M01-F24"
+   ],
+   "maturity": "arXiv Sep 2025; abstract read only",
+   "footprint": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "A-MEM note model (keywords, tags, context description, links, evolution)",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Gives the multi-handle idea: LLM-written keywords, tags and a contextual description per note, plus links between notes. But 'evolution' lets an LLM rewrite older notes on each write, which silently changes verified content and costs several calls per write. Borrow the handle types and links; reject automatic rewriting of existing entries.",
+   "egress_posture": "n/a (paper)",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M01-F21"
+   ],
+   "maturity": "Paper, 2025",
+   "footprint": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "HippoRAG (OpenIE KG plus Personalized PageRank)",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Multi-hop retrieval over an entity graph is built for corpora of passages, not a few hundred curated entries. At that size entity-overlap or link expansion can be done in SQL. Cite the idea of seeding retrieval from canonical entities extracted from the query (symbols, files, error templates).",
+   "egress_posture": "LLM for indexing and query NER; open-weight Llama 3.1 works",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M01-F22"
+   ],
+   "maturity": "Paper, 2024",
+   "footprint": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "MemoryBank (Ebbinghaus decay)",
+   "kind": "technique",
+   "verdict": "rejected",
+   "why": "Time-based forgetting and reinforcement contradicts the agreed rule that invalidation is event-driven. A verified defect entry does not become less true with age; it becomes false when its dependencies change.",
+   "egress_posture": "n/a",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M01-F23"
+   ],
+   "maturity": "Paper, 2023",
+   "footprint": "n/a",
+   "agent_access": "n/a"
+  },
+  {
+   "name": "Memary",
+   "kind": "tool",
+   "verdict": "weak",
+   "why": "MIT, local Ollama default and a graph (Neo4j/FalkorDB), but it is a chatbot-oriented memory stream with entity frequency and recency counting, no temporal validity, and a thin maintenance signal.",
+   "egress_posture": "Local Ollama by default",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M01-F27"
+   ],
+   "maturity": "250 commits; status unclear",
+   "footprint": "Python plus a graph DB",
+   "agent_access": "Python"
+  },
+  {
+   "name": "LLM extraction at write time (memory-system write policy)",
+   "kind": "pattern",
+   "verdict": "rejected",
+   "why": "Every system read has an LLM decide what a memory is. That brings hallucinated and junk memories (the unverified Mem0 audit claim), schema failures on small models (Graphiti), a per-write cost, and a poisoning surface (MINJA, MemoryGraft). For this store the solving agent should write a schema-constrained entry directly, with the tool only checking required fields. Free-form extraction from transcripts should not be the write path.",
+   "egress_posture": "Sends every write's text to the extraction LLM provider",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M01-F04",
+    "M01-F06",
+    "M01-F13",
+    "M01-F14",
+    "M01-F26"
+   ],
+   "maturity": "Universal in the field",
+   "footprint": "n/a",
+   "agent_access": "n/a"
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Borrow Graphiti's two-clock idea, re-anchored: store both 'when was this root cause true of the code' (valid-from and valid-to as commit or version ranges plus dependency and platform versions, not only wall-clock) and 'when did we record or retire the entry' (created, expired). Never delete; retire with an expired_at and a reason. This gives point-in-time answers such as 'was this entry in force at commit X'.",
+   "fact_ids": [
+    "M01-F01",
+    "M01-F03"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Do not copy Graphiti's or Mem0's invalidation trigger. Both retire a fact when new conversational text contradicts it, judged by an LLM. Here the trigger must be a change in what the entry depends on (files, symbols, dependency versions, platform), which no agent-memory system implements. An entry can go stale with no contradicting text ever arriving. This part is original to the knowledge store; cite Graphiti only for the retire-not-delete semantics.",
+   "fact_ids": [
+    "M01-F02",
+    "M01-F12",
+    "M01-F13"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Keep raw episode and derived entry as separate layers, like Graphiti's non-lossy episode subgraph with episodes[] on each fact. The full diagnosis transcript, tool output and commit are the raw record. The curated entry (symptom handles, failed approaches and why, fix, validity conditions, verification check) points back to them. Provenance then lets a reviewer, or a refuting agent, audit an entry.",
+   "fact_ids": [
+    "M01-F01",
+    "M01-F03"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "The write path should be the solving agent filling a fixed schema, not an LLM extracting memories from a transcript. Free-form extraction is the documented source of junk, duplicate and hallucinated memories, costs LLM calls per write, and is the poisoning route. Cheap writes can be a validated form plus an exact-hash and nearest-entry duplicate check shown to the writer. Mem0 and LangMem both name the over- versus under-extraction tradeoff; a schema removes it.",
+   "fact_ids": [
+    "M01-F04",
+    "M01-F13",
+    "M01-F14",
+    "M01-F19",
+    "M01-F26"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Contradiction or supersession must be explicit and resolved at write time, not left for retrieval to sort out. Mem0's ADD-only design keeps old and new beliefs side by side and expects retrieval to surface the right one, which is a stale-hit generator for a precision-tuned store. Use a 'supersedes/superseded-by' link and exclude retired entries from default retrieval.",
+   "fact_ids": [
+    "M01-F12",
+    "M01-F13"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "No benchmark in this lane can validate the store. LoCoMo and LongMemEval measure chat recall, the LoCoMo answer key and judge are disputed, and none measures code, defects, verification or the cost of a false-positive reuse. The store must carry its own outcome log (hit, confirmed, refuted, invalidated, revised, miss) and be evaluated from that, with a hand-built replay set of past defects.",
+   "fact_ids": [
+    "M01-F25"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Store failed approaches and why as first-class fields, following ReasoningBank. Add what it lacks: an independent verification outcome instead of self-judged success, and a pointer to the check that reproduces the root cause on current code.",
+   "fact_ids": [
+    "M01-F24"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Treat stored entries as untrusted input until the verification gate passes. Persistent memory poisoning (MINJA, MemoryGraft) and hallucinated memories that compound through recall mean a retrieved entry from a cheap session can steer later work. Log every read and write with the writing agent and model tier.",
+   "fact_ids": [
+    "M01-F14",
+    "M01-F26"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "For concurrency across parallel sessions, git worktrees and subagents, the strongest prior art is Letta Code's git-backed memory: plain files with frontmatter, one worktree per concurrent writer, merge by git, and the commit history as the provenance log. A database server is not required for write coordination at a few writes per phase. Whether this beats a single SQLite file with a write lock is a question for the engine lanes.",
+   "fact_ids": [
+    "M01-F18",
+    "M01-F28"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "None of the graph machinery (communities, label propagation, Personalized PageRank, BFS over a graph DB, LLM cross-encoder reranking) is justified at tens to a few hundred entries. It is built for large streams of conversational facts. Multiple handle types (error-template text, symbol and file paths, tags, a short LLM-or-human-written description) with lexical plus vector search over a scan-sized table, and links between entries, cover the same ground. Adopt A-MEM's handle types and links, but not LLM rewriting of existing entries.",
+   "fact_ids": [
+    "M01-F05",
+    "M01-F21",
+    "M01-F22",
+    "M01-F28"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Egress: every self-hostable system read defaults to OpenAI for LLM and embeddings, and Mem0 (on by default) and Graphiti (opt-out) send telemetry to PostHog. Mem0's includes provider class paths and, for hosted clients, the user's email. Using any of them in production would need the provider pinned to a local or owner-controlled endpoint and telemetry disabled and verified. Local models have a reported weakness in structured output. Avoiding write-time LLM extraction removes most of this risk, and local embeddings (for example BGE or fastembed models) are the only model dependency left.",
+   "fact_ids": [
+    "M01-F06",
+    "M01-F15",
+    "M01-F20",
+    "M01-F04"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Do not use time-based decay or 'importance/recency' scoring as a validity mechanism. MemoryBank-style forgetting and LangMem's recency weighting are retrieval ranking heuristics. Validity must come from dependency-change events and the verification gate.",
+   "fact_ids": [
+    "M01-F23",
+    "M01-F19"
+   ],
+   "strength": "moderate"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Adopting Zep Cloud or Zep Community Edition",
+   "why": "Cloud sends code and defect data to a third party. Community Edition is reported deprecated.",
+   "fact_ids": [
+    "M01-F09"
+   ]
+  },
+  {
+   "what": "Running Mem0, Graphiti, Cognee or Letta as the production store",
+   "why": "Each makes an LLM decide what to store, defaults to OpenAI, and (Mem0, Graphiti) sends telemetry unless disabled. Each also adds a stateful service or a heavy dependency for tens to hundreds of entries. Letta's Docker route is unmaintained and Kuzu is reported unmaintained upstream.",
+   "fact_ids": [
+    "M01-F06",
+    "M01-F12",
+    "M01-F15",
+    "M01-F17",
+    "M01-F20",
+    "M01-F28"
+   ]
+  },
+  {
+   "what": "Using LoCoMo or LongMemEval scores to choose a system",
+   "why": "They measure conversational recall, not code, defects or verification. The LoCoMo answer key and judge are disputed, vendors publish mutually non-comparable numbers, and vendor scores come from managed platforms.",
+   "fact_ids": [
+    "M01-F10",
+    "M01-F12",
+    "M01-F25"
+   ]
+  },
+  {
+   "what": "Time-decay forgetting (MemoryBank) as the invalidation policy",
+   "why": "Contradicts the event-driven invalidation rule; a correct defect fix does not weaken with age.",
+   "fact_ids": [
+    "M01-F23"
+   ]
+  },
+  {
+   "what": "Automatic LLM rewriting of existing entries (A-MEM memory evolution, Mem0 UPDATE)",
+   "why": "Mutates verified content without re-verification and cannot be audited as a revision. Revisions should be explicit new versions with provenance.",
+   "fact_ids": [
+    "M01-F11",
+    "M01-F21"
+   ]
+  }
+ ],
+ "open_questions": [
+  "Letta and Cognee telemetry defaults were not determined from the pages read. Check before ever citing either as a deployable option.",
+  "Mem0 issue #4573 and the maintainer notes in issues #4896 and #4904 were not opened, so the junk-memory figures stay unverified. A direct read of those issues would turn M01-F13 and M01-F14 from reported into verified.",
+  "The Zep paper's appendix prompts (temporal extraction, fact resolution) were not read. They could show how time is extracted from text, which is irrelevant if validity is anchored to commits, but is worth a look if relative dates in diagnosis notes matter.",
+  "Does Letta Code's git-merge approach hold up in practice when two worktrees add near-duplicate entries or both retire the same entry? The blog gives no detail, so a small experiment or a read of the letta-code repo would be needed.",
+  "ReasoningBank's entry schema, its benchmarks and its judge design were not confirmed from the abstract page. Read the full paper before borrowing its entry format.",
+  "Do any of these systems expose a bitemporal point-in-time query in a form that maps to commit ranges? Graphiti stores timestamps, not commits. Whether a commit-hash-valued 'valid_at' is natural belongs to the data-model lane.",
+  "Which of the 2026 figures (Mem0 92.5/94.4, Zep 94.7) are reproducible on open code is unknown. Not needed for the design, but it affects how much to cite them."
+ ],
+ "urls_attempted": [
+  "https://arxiv.org/abs/2501.13956",
+  "https://arxiv.org/abs/2504.19413",
+  "https://arxiv.org/abs/2310.08560",
+  "https://github.com/getzep/graphiti",
+  "https://arxiv.org/pdf/2501.13956",
+  "https://arxiv.org/pdf/2504.19413",
+  "https://arxiv.org/pdf/2310.08560",
+  "https://arxiv.org/html/2501.13956v1",
+  "https://arxiv.org/html/2504.19413",
+  "https://arxiv.org/html/2310.08560v2",
+  "https://github.com/mem0ai/mem0",
+  "https://github.com/letta-ai/letta",
+  "https://github.com/langchain-ai/langmem",
+  "https://github.com/topoteretes/cognee",
+  "https://raw.githubusercontent.com/getzep/graphiti/main/graphiti_core/edges.py",
+  "https://raw.githubusercontent.com/getzep/graphiti/main/graphiti_core/utils/maintenance/edge_operations.py",
+  "https://help.getzep.com/graphiti/getting-started/overview",
+  "https://github.com/getzep/graphiti/blob/main/mcp_server/README.md",
+  "https://docs.letta.com/guides/agents/memory",
+  "https://docs.letta.com/guides/selfhosting",
+  "https://docs.mem0.ai/open-source/overview",
+  "https://raw.githubusercontent.com/mem0ai/mem0/main/mem0/memory/telemetry.py",
+  "https://arxiv.org/html/2502.12110",
+  "https://arxiv.org/html/2405.14831",
+  "https://arxiv.org/abs/2410.10813",
+  "https://arxiv.org/abs/2305.10250",
+  "https://arxiv.org/abs/2402.17753",
+  "https://dev.to/penfieldlabs/we-audited-locomo-64-of-the-answer-key-is-wrong-and-the-judge-accepts-up-to-63-of-intentionally-33lg",
+  "https://github.com/mem0ai/mem0/discussions/4787",
+  "https://github.com/FalkorDB/FalkorDB",
+  "https://docs.cognee.ai/",
+  "https://raw.githubusercontent.com/topoteretes/cognee/main/.env.template",
+  "https://docs.letta.com/guides/agents/memfs (404)",
+  "https://help.getzep.com/ce-deprecation-notice (404 on direct fetch)",
+  "https://langchain-ai.github.io/langmem/concepts/conceptual_guide/",
+  "https://www.letta.com/blog/context-repositories",
+  "https://github.com/kingjulio8238/Memary",
+  "https://blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/ (301)",
+  "https://www.getzep.com/blog/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/",
+  "https://arxiv.org/abs/2509.25140",
+  "https://arxiv.org/abs/2507.05257",
+  "WebSearch: mem0 junk memories audit",
+  "WebSearch: Zep response Mem0 LoCoMo",
+  "WebSearch: Zep Community Edition deprecated",
+  "WebSearch: Letta context repositories",
+  "WebSearch: memory poisoning MINJA"
+ ],
+ "anomalies": [
+  "WebFetch answers are produced by an intermediate small model, so every 'verified' fact means I read the statement in that tool's output for the cited page, not the raw page. Some outputs contained oddities that I did not reproduce: for instance, the Graphiti MCP README summary named an implausible default model ('gpt-6-luna'), and the Cognee env template summary named a similar one. I recorded only that the default provider is OpenAI and left out the model names.",
+  "Direct PDF fetches of the arXiv papers returned binary FlateDecode streams that could not be read. I used the arXiv HTML versions (2501.13956v1, 2504.19413, 2310.08560v2, 2502.12110, 2405.14831) instead.",
+  "MemoryBank, LoCoMo, LongMemEval, ReasoningBank and MemoryAgentBench were read from arXiv abstract pages only, so details beyond the abstracts (schemas, category definitions, per-system results) are not covered and none is asserted.",
+  "The Zep Community Edition deprecation is a search-result claim only: help.getzep.com/ce-deprecation-notice returned 404 when fetched directly, so I marked it 'reported'.",
+  "The Zep blog's page metadata is inconsistent (a banner date of 'December 9, 2015', and a meta description claiming 24% against 10% in the body). I used only the body figures.",
+  "Zep's corrected LoCoMo score (75.14%) is Zep's own claim and is disputed by other sources (a third-party recalculation near 58%, argument over category 5 handling). It is not treated as settled.",
+  "The junk-memory audit claim (97.8%) comes from a promotional page of a competing product, found only through a search snippet, and the underlying GitHub issue was not opened.",
+  "The Letta self-hosting page says the Docker image is no longer an actively maintained product surface. That conflicts with some third-party material suggesting Docker as the main self-hosting route, so I followed the primary doc.",
+  "Paper dates were taken from arXiv ids. 'Today' in the environment is 2026-11-02, so statements about 'current' versions (Cognee v1.6.1 on 24 Sep 2026, Mem0 April 2026 algorithm, Letta Feb 2026 blog) reflect the pages as fetched in this run."
+ ]
+}

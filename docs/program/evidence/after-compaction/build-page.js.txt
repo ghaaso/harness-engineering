@@ -1,0 +1,17 @@
+// build-page.js.txt — put after.json into page-template.html and write the self-contained page.
+// Run from this folder, after the count stage:   node - < build-page.js.txt
+// The page shows what after.js.txt printed. The one thing it works out itself is the slider in the trial
+// section, which uses the same formula as table section I (7.85 x 2 x variance / hand-overs, square root).
+'use strict';
+const fs = require('fs'), path = require('path');
+const here = process.cwd();
+const data = JSON.parse(fs.readFileSync(path.join(here, 'after.json'), 'utf8'));
+if (data.dry) throw new Error('after.json is from a dry run: the hand read is not complete');
+const tpl = fs.readFileSync(path.join(here, 'page-template.html'), 'utf8');
+if (!tpl.includes('/*DATA*/null')) throw new Error('template has no data slot');
+const json = JSON.stringify(data).replace(/</g, '\\u003c');
+const out = tpl.replace('/*DATA*/null', () => json);
+const dir = path.resolve(here, '..', '..', 'after-compaction');
+fs.mkdirSync(dir, { recursive: true });
+fs.writeFileSync(path.join(dir, 'index.html'), out);
+console.log(`wrote ${path.join(dir, 'index.html')}  ${out.length.toLocaleString('en-US')} bytes`);

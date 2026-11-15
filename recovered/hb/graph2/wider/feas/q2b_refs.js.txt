@@ -1,0 +1,29 @@
+// Q2b: for each post-freeze off-main product commit, which refs contain it; group into work units (refs).
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const git = (a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', maxBuffer: 1 << 28 });
+const r = JSON.parse(fs.readFileSync('q2_fresh.json', 'utf8'));
+const FROZEN_T = Number(git(['log', '-1', '--format=%ct', r.frozen]).trim());
+const post = [];
+for (const c of r.off_main_list) {
+  const ct = Number(git(['log', '-1', '--format=%ct', c.sha]).trim());
+  if (ct <= FROZEN_T) continue;
+  const refs = git(['for-each-ref', '--contains', c.sha, '--format=%(refname:short)']).split('\n').filter(Boolean)
+    .map((x) => x.replace(/^origin\//, '')).filter((x) => x !== 'origin' && x !== 'HEAD');
+  c.refs = [...new Set(refs)].sort();
+  post.push(c);
+}
+// main commit subjects carry the ship-plan tag, e.g. [P6a]
+const mainTags = new Set(r.main_list.map((c) => (c.subject.match(/\[(P[0-9a-z-]+)\]/i) || [])[1]).filter(Boolean).map((s) => s.toLowerCase()));
+const units = {};
+for (const c of post) {
+  const key = c.refs.join(',') || '(no ref)';
+  (units[key] ||= []).push(c);
+}
+const out = { frozen_commit_time_unix: FROZEN_T, main_tags_merged: [...mainTags], post_freeze_off_main_product_commits: post.length, units: {} };
+for (const [k, list] of Object.entries(units)) {
+  out.units[k] = { commits: list.length, usable_2_30: list.filter((c) => c.usable_2_30).length, dates: [...new Set(list.map((c) => c.cdate))], runtimes: [...new Set(list.flatMap((c) => c.runtimes))].sort(), first_subjects: list.slice(0, 3).map((c) => c.subject.slice(0, 70)) };
+}
+fs.writeFileSync('q2b_units.json', JSON.stringify(out, null, 1));
+console.log(JSON.stringify(out, null, 1));

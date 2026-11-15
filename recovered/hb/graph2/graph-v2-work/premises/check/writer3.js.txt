@@ -1,0 +1,21 @@
+// Writer classes, rule as NOTES states it: same agent = transcript-level writer or file born during the reading agent's run (60 s slack);
+// age for "under 24 h" = age since first recorded write, else since file birth.
+const fs=require('fs'),rl=require('readline');
+(async()=>{const rows=[];const per={};const r=rl.createInterface({input:fs.createReadStream('../rows.jsonl')});
+for await(const l of r){const o=JSON.parse(l);const key=o.f+'|'+o.cid+'|'+o.i;per[key]=(per[key]||0)+1;rows.push(o);}
+const n=Object.keys(per).length;let T=0,C=0;const W={};
+for(const o of rows){T+=o.tok;C+=o.car;const w=1/per[o.f+'|'+o.cid+'|'+o.i];
+ const born=o.birth!=null&&o.birth>=o.trStart-60000&&o.birth<=o.ts;
+ const sameTr=o.lvl.startsWith('transcript')||(o.lvl==='none'&&born)||(o.lvl==='sessionScratch'&&born&&o.sub);
+ const sameS=o.lvl.startsWith('session');
+ const age=o.ageFirstWriteH!=null?o.ageFirstWriteH:(o.birth!=null&&o.birth<=o.ts?(o.ts-o.birth)/3.6e6:null);
+ let c=sameTr?'a':(sameS&&age!=null&&age<24)?'b':sameS?'c':o.lvl==='otherSession'?'d':'e';
+ W[c]=W[c]||[0,0,0];W[c][0]+=w;W[c][1]+=o.tok;W[c][2]+=o.car;}
+const f=ks=>ks.reduce((a,k)=>a.map((v,i)=>v+(W[k]||[0,0,0])[i]),[0,0,0]).map((v,i)=>+(100*v/[n,T,C][i]).toFixed(1));
+console.log(JSON.stringify({a:f(['a']),b:f(['b']),c:f(['c']),d:f(['d']),e:f(['e']),task24:f(['a','b']),loose:f(['a','b','c']),lastWriteAgeVariant:null}));
+// sensitivity: same rule but age = last write age
+const W2={};for(const o of rows){const w=1/per[o.f+'|'+o.cid+'|'+o.i];const born=o.birth!=null&&o.birth>=o.trStart-60000&&o.birth<=o.ts;
+ const sameTr=o.lvl.startsWith('transcript')||(o.lvl==='none'&&born)||(o.lvl==='sessionScratch'&&born&&o.sub);const sameS=o.lvl.startsWith('session');
+ const age=o.ageLastWriteH!=null?o.ageLastWriteH:(o.birth!=null&&o.birth<=o.ts?(o.ts-o.birth)/3.6e6:null);
+ const c=sameTr?'a':(sameS&&age!=null&&age<24)?'b':'x';W2[c]=W2[c]||[0,0,0];W2[c][0]+=w;W2[c][2]+=o.car;}
+console.log('lastWrite-age task24 calls%',+(100*(W2.a[0]+W2.b[0])/n).toFixed(1),'car%',+(100*(W2.a[2]+W2.b[2])/C).toFixed(1));})();

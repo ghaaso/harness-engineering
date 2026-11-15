@@ -1,0 +1,181 @@
+  // ------------------------------------------------------------ module: weights (paired bars, staircase, gate picture)
+  var weights_NAME_A = 'If only this is solved', weights_NAME_L = 'If only this is left unsolved';
+  function weights_scale() { var lo = Math.min(0, WLO), hi = Math.max(1, WHI); return { lo: lo, span: (hi - lo) || 1 }; }
+  function weights_pos(v, sc) { return 100 * (v - sc.lo) / sc.span; }
+  function weights_head(q, how, now, small) {
+    return '<h3>' + esc(q) + ' ' + tagEl('G') + '</h3>' + (small ? '<p class="ux-weights-small">' + small + '</p>' : '') +
+      '<p class="ux-weights-how"><b>How to read it:</b> ' + how + '</p><p class="ux-weights-now"><b>What it shows now:</b> ' + now + '</p>';
+  }
+  // One bar on the shared weights axis, with its number printed at its end.
+  function weights_bar(v, kind, sc, word) {
+    var z = weights_pos(0, sc), x = weights_pos(v, sc), neg = v < 0;
+    var cls = 'ux-weights-bar ux-weights-' + kind + (neg ? ' ux-weights-neg' : '');
+    var lab = (word ? '<span class="ux-weights-word">' + esc(word) + '</span> ' : '') + '<b>' + esc(fmt(v, 'weight')) + '</b>';
+    var labStyle = neg ? 'right:calc(' + (100 - Math.min(x, z)).toFixed(2) + '% + 6px)' : 'left:calc(' + Math.max(x, z).toFixed(2) + '% + 6px)';
+    return '<span class="' + cls + '" style="left:' + Math.min(x, z).toFixed(2) + '%;width:' + Math.max(0.4, Math.abs(x - z)).toFixed(2) + '%"></span>' +
+      '<span class="ux-weights-lab ux-weights-lab-' + kind + '" style="' + labStyle + '">' + lab + '</span>';
+  }
+  function weights_plot(r, sc, first) {
+    var z = weights_pos(0, sc), o = weights_pos(1, sc);
+    if (!r.measured) return '<span class="ux-weights-plot ux-weights-nmplot"><small>' + esc(TX.sections.lims['nm_' + r.not_measured]) + '</small></span>';
+    return '<span class="ux-weights-plot" aria-hidden="true"><span class="ux-weights-zero" style="left:' + z.toFixed(2) + '%"></span><span class="ux-weights-one" style="left:' + o.toFixed(2) + '%"></span>' +
+      '<span class="ux-weights-lane ux-weights-lane-a">' + weights_bar(r.alone, 'a', sc, first ? 'solved alone' : '') + '</span>' +
+      '<span class="ux-weights-lane ux-weights-lane-l">' + weights_bar(r.last, 'l', sc, first ? 'left unsolved' : '') + '</span></span>';
+  }
+  function weights_axis(sc) {
+    var z = weights_pos(0, sc), o = weights_pos(1, sc);
+    return '<div class="ux-weights-row ux-weights-axisrow" aria-hidden="true"><span></span><span class="ux-weights-plot ux-weights-axis"><span class="ux-weights-tick" style="left:' + z.toFixed(2) + '%">zero</span><span class="ux-weights-tick" style="left:' + o.toFixed(2) + '%">the whole gain</span></span></div>';
+  }
+  function weights_attr(r) { return ' data-tagged="G" data-alone="' + r.alone + '" data-last="' + r.last + '"'; }
+  function weights_nowPair(rows, nameOf) {
+    var m = rows.filter(function (r) { return r.measured; });
+    if (!m.length) return '';
+    var topL = m.reduce(function (a, b) { return b.last > a.last ? b : a; }), topA = m.reduce(function (a, b) { return b.alone > a.alone ? b : a; });
+    var negs = m.filter(function (r) { return r.alone < 0; }).length;
+    return 'Leaving “' + esc(nameOf(topL)) + '” unsolved loses ' + num(topL.last, 'G', 'weight') + ' of the gain. ' +
+      'Solved alone, the most any one gives is ' + num(topA.alone, 'G', 'weight') + ', by “' + esc(nameOf(topA)) + '”. ' +
+      (negs ? '<span data-label="1">' + negs + '</span> of <span data-label="1">' + m.length + '</span> fall below zero when solved alone.' : '');
+  }
+
+  function renderTwoWeights() {
+    var S = TX.sections.lims, el = $('#twoWeights');
+    if (!W8) { el.innerHTML = '<h3>' + esc(S.two_title) + '</h3><p class="note">Computing the weights…</p>'; return; }
+    var f = W8.full;
+    el.innerHTML = '<h3>How much of the whole gain hangs on each part? ' + tagEl('G') + '</h3>' +
+      '<p class="ux-weights-lead">The whole gain runs from the middle values to the all-good setting. Each part gets two shares of it.</p>' +
+      '<div class="ux-weights-defs"><p><span class="ux-weights-key ux-weights-key-a"></span><b>' + esc(weights_NAME_A) + '</b>: this part at its good end, all else at middle values. <small class="muted">(called alone)</small></p>' +
+      '<p><span class="ux-weights-key ux-weights-key-l"></span><b>' + esc(weights_NAME_L) + '</b>: all else at its good end, this part back at middle values. <small class="muted">(called last)</small></p></div>' +
+      '<p class="ux-weights-why"><b>Why solving one alone gives little:</b> the steps multiply, so one good step is held back by the others.</p>' +
+      '<p class="small" data-full="' + f.score + '" data-cost-fall="' + f.cost_fall + '" data-wrong-fall="' + f.wrong_fall + '">' + esc(S.full_def) + ' There the library’s cost falls ' + num(fmt(f.cost_fall, 'weight'), 'G') + ' and its wrong rate ' + num(fmt(f.wrong_fall, 'weight'), 'G') + '. The full fall is their mean, ' + num(fmt(f.score, 'weight'), 'G') + '.</p>' +
+      '<details class="inline ux-weights-terms"><summary>The terms in small print</summary><ul class="twol"><li>' + esc(S.alone_def) + '</li><li>' + esc(S.last_def) + '</li><li>' + esc(S.add_def) + ' ' + esc(S.sign_def) + '</li></ul></details>';
+  }
+
+  function renderRanks() {
+    var S = TX.sections.lims, el = $('#limRanks');
+    if (!W8) { el.innerHTML = ''; return; }
+    var sc = weights_scale();
+    var how = 'Each part has two bars on one scale. The <b>teal</b> upper bar is ' + esc(weights_NAME_A.toLowerCase()) + '; the <b>orange</b> lower bar is ' + esc(weights_NAME_L.toLowerCase()) + '. Rows are sorted by the lower bar.';
+    var gname = function (r) { return LIBGI[r.id].label; };
+    var sname = function (r) { return 'Step ' + r.step + ' · ' + LIMS.steps[r.step].split(':')[0]; };
+    var grows = W8.ranking.groups.map(function (g) { return WGROUP[g.id]; });
+    var srows = W8.ranking.steps.map(function (q) { return WSTEP[q.step]; });
+    var groups = grows.map(function (r, i) {
+      return '<div class="ux-weights-row" data-wgroup="' + r.id + '"' + weights_attr(r) + '><span class="ux-weights-name">' + esc(gname(r)) + '</span>' + weights_plot(r, sc, i === 0) + '</div>';
+    }).join('');
+    var steps = srows.map(function (r, i) {
+      return '<button type="button" class="ux-weights-row ux-weights-btn" data-gostep="' + r.step + '"><span class="ux-weights-name"><span data-label="1">Step ' + r.step + '</span> · ' + esc(LIMS.steps[r.step].split(':')[0]) + '</span>' +
+        '<span class="ux-weights-cellwrap" data-wstep="' + r.step + '"' + (r.measured ? weights_attr(r) : '') + '>' + weights_plot(r, sc, i === 0) + '</span></button>';
+    }).join('');
+    var below = '<p class="ux-weights-small">Below zero, to the left: solving only this part leaves the library worse off than at middle values.</p>';
+    // The staircase: each round adds the step that gives the most.
+    var prev = 0, rows = '';
+    W8.sequence.forEach(function (q) {
+      var a = prev; prev = q.cumulative;
+      var x0 = 100 * Math.min(a, q.cumulative), w = 100 * Math.abs(q.cumulative - a), zero = q.added === 0;
+      rows += '<div class="ux-weights-wfrow" data-seq="' + q.step + '" data-cum="' + q.cumulative + '"><span class="ux-weights-name"><span data-label="1">Step ' + q.step + '</span> · ' + esc(LIMS.steps[q.step].split(':')[0]) + '</span>' +
+        '<span class="ux-weights-wft" aria-hidden="true"><span class="ux-weights-one" style="left:100%"></span>' + (a > 0 ? '<span class="ux-weights-prev" style="left:' + (100 * a).toFixed(2) + '%"></span>' : '') +
+        (zero ? '<span class="ux-weights-dot" style="left:' + x0.toFixed(2) + '%"></span>' : '<span class="ux-weights-rise" style="left:' + x0.toFixed(2) + '%;width:' + w.toFixed(2) + '%"></span>') +
+        '<span class="ux-weights-lab" style="left:calc(' + (100 * Math.max(a, q.cumulative)).toFixed(2) + '% + 8px)">' + (zero ? 'adds nothing' : 'adds ' + esc(fmt(q.added, 'weight'))) + ' · <b>' + esc(fmt(q.cumulative, 'weight')) + '</b> so far</span></span></div>';
+    });
+    var e = W8.sequence_end;
+    rows += '<div class="ux-weights-wfrow ux-weights-end" data-seq="unnamed" data-cum="' + e.cumulative + '" data-added="' + e.added + '"><span class="ux-weights-name">' + esc(S.unnamed) + '</span>' +
+      '<span class="ux-weights-wft" aria-hidden="true"><span class="ux-weights-one" style="left:100%"></span><span class="ux-weights-prev" style="left:' + (100 * prev).toFixed(2) + '%"></span><span class="ux-weights-rise ux-weights-rest" style="left:' + (100 * prev).toFixed(2) + '%;width:' + (100 * Math.max(0, e.cumulative - prev)).toFixed(2) + '%"></span>' +
+      '<span class="ux-weights-lab ux-weights-labin" style="right:calc(' + (100 - 100 * prev).toFixed(2) + '% + 8px)">the rest, ' + esc(fmt(e.added, 'weight')) + ' →</span>' +
+      '<span class="ux-weights-lab" style="left:calc(100% + 8px)"><b>' + esc(fmt(e.cumulative, 'weight')) + '</b> the whole gain</span></span>' +
+      '<span class="ux-weights-names">' + e.ids.map(function (id) { return esc(pname(id)); }).join('; ') + '</span></div>';
+    var zeroL = W8.sequence.filter(function (q) { return q.added === 0; }).map(function (q) { return q.step; });
+    var zeroNote = zeroL.length ? '<p class="small muted" data-zero="' + zeroL.join(',') + '"><span data-label="1">' + (zeroL.length === 1 ? 'Step ' + zeroL[0] : 'Steps ' + zeroL.slice(0, -1).join(', ') + ' and ' + zeroL[zeroL.length - 1]) + '</span> ' + esc(S.seq_zero) + '</p>' : '';
+    var named = W8.sequence.length ? W8.sequence[W8.sequence.length - 1].cumulative : 0;
+    var top3 = W8.sequence.slice(0, 3), top3c = top3.length ? top3[top3.length - 1].cumulative : 0;
+    var wfNow = 'All ten steps together reach ' + num(named, 'G', 'weight') + ' of the whole gain. ' +
+      (top3.length ? '<span data-label="1">Steps ' + top3.map(function (q) { return q.step; }).join(', ') + '</span> alone reach ' + num(top3c, 'G', 'weight') + '. ' : '') +
+      'The last ' + num(e.added, 'G', 'weight') + ' sits in unknowns no limitation names.';
+    var axis = '<div class="ux-weights-wfrow ux-weights-axisrow" aria-hidden="true"><span></span><span class="ux-weights-wft ux-weights-axis"><span class="ux-weights-tick" style="left:0%">zero</span><span class="ux-weights-tick" style="left:100%">the whole gain</span></span></div>';
+    el.innerHTML = '<div class="rkbox ux-weights-card" data-tagged="G">' + weights_head('Which of the four groups carries the gain?', how, weights_nowPair(grows, gname), esc(S.rank_groups)) + weights_axis(sc) + groups + below + '</div>' +
+      '<div class="rkbox ux-weights-card" data-tagged="G">' + weights_head('Which of the ten steps carries the gain?', how + ' Tap a step to open its limitations.', weights_nowPair(srows, sname), esc(S.rank_steps)) + weights_axis(sc) + steps + below + '</div>' +
+      '<div class="rkbox wf ux-weights-card ux-weights-wide" data-tagged="G">' + weights_head('How does the gain build up as steps are solved one after another?',
+        'Each row starts where the row above ended. The teal riser is what that step adds. The striped riser is the rest.', wfNow, esc(S.seq_title) + '. ' + esc(S.seq_note)) + axis + rows + zeroNote + '</div>';
+  }
+
+  // The limitation rows: two small bars, each with its number.
+  function wcells(r, attrs, bars) {
+    var S = TX.sections.lims;
+    if (!r) return '<span class="wv nm" style="grid-column:span 2"><small>…</small></span>';
+    if (!r.measured) {
+      var why = '<small>' + esc(S['nm_' + r.not_measured]) + (r.not_measured === 'gate_or_ladder' ? ' ↓' : '') + '</small>';
+      return '<span class="wv nm"' + (attrs || '') + ' data-nm="' + r.not_measured + '" data-tip="' + esc(S['nm_why_' + r.not_measured]) + '"' + (r.not_measured === 'gate_or_ladder' ? ' data-gogate="1"' : '') + '>' + why + '</span>';
+    }
+    var sc = weights_scale(), z = weights_pos(0, sc);
+    var mini = function (v, k) {
+      var x = weights_pos(v, sc);
+      return '<span class="ux-weights-mini"><span class="ux-weights-mt" aria-hidden="true"><span class="ux-weights-zero" style="left:' + z.toFixed(2) + '%"></span><span class="ux-weights-bar ux-weights-' + k + (v < 0 ? ' ux-weights-neg' : '') + '" style="left:' + Math.min(x, z).toFixed(2) + '%;width:' + Math.max(0.6, Math.abs(x - z)).toFixed(2) + '%"></span></span><b class="w' + k + '">' + esc(fmt(v, 'weight')) + '</b></span>';
+    };
+    return '<span class="wv ux-weights-cells"' + (attrs || '') + ' data-tagged="G" data-alone="' + r.alone + '" data-last="' + r.last + '">' + mini(r.alone, 'a') + mini(r.last, 'l') + '</span>';
+  }
+  // The list header is drawn by renderLims; rename its two weight columns after each draw.
+  function weights_relabel() {
+    var h = document.querySelector && document.querySelector('#limlist .lhead');
+    if (!h || h.getAttribute('data-ux-weights')) return;
+    var sp = h.children; if (!sp || sp.length < 6) return;
+    h.setAttribute('data-ux-weights', '1');
+    sp[4].innerHTML = '<span class="ux-weights-key ux-weights-key-a"></span>solved alone ' + tagEl('G');
+    sp[5].innerHTML = '<span class="ux-weights-key ux-weights-key-l"></span>left unsolved ' + tagEl('G');
+  }
+  if (typeof MutationObserver !== 'undefined' && document.getElementById('limlist')) {
+    try { new MutationObserver(weights_relabel).observe(document.getElementById('limlist'), { childList: true }); } catch (err) { /* no observer: the old header words stay */ }
+  }
+
+  // The gate and the ladder: one picture per base setting, wrong rate and cost side by side.
+  function renderGate() {
+    var S = TX.sections.lims, el = $('#gateOut');
+    if (!SHT) { el.innerHTML = '<h3>' + esc(S.gate_title) + '</h3><p class="note">Computing…</p>'; return; }
+    var REFL = {}; MAP.reference_settings.forEach(function (r) { REFL[r.id] = r.label; });
+    var moveName = function (mv) { return !mv.length ? 'As it is' : mv.length === 2 ? 'Both moved' : (mv[0] === 'gate' ? 'Gate moved' : 'Ladder moved'); };
+    var WAYS = ['library', 'cheap_ladder', 'top_first'];
+    var maxW = 0, maxC = 0;
+    SHT.rows.forEach(function (r) { WAYS.forEach(function (p) { maxW = Math.max(maxW, r[p].wrong); maxC = Math.max(maxC, r[p].cost); }); });
+    maxW = maxW || 1; maxC = maxC || 1;
+    var bases = [], byBase = {};
+    SHT.rows.forEach(function (r, i) { if (!byBase[r.base]) { byBase[r.base] = []; bases.push(r.base); } byBase[r.base].push({ r: r, i: i }); });
+    var lowest = function (r, k) { return WAYS.reduce(function (a, b) { return r[b][k] < r[a][k] ? b : a; }); };
+    var cell = function (r, p, k, max, word) {
+      var x = 100 * r[p][k] / max, ref = 100 * r.top_first[k] / max, low = lowest(r, k) === p;
+      return '<span class="ux-weights-gc"><span class="ux-weights-gref" style="left:' + ref.toFixed(2) + '%"></span><span class="ux-weights-gbar ux-weights-g-' + p + '" style="width:' + Math.max(0.5, x).toFixed(2) + '%"></span>' +
+        '<span class="ux-weights-lab" style="left:calc(' + x.toFixed(2) + '% + 6px)"><b>' + esc(fmt(r[p][k], k === 'wrong' ? 'pct' : 'cost')) + '</b>' + (low ? ' <span class="ux-weights-low">' + word + '</span>' : '') + '</span></span>';
+    };
+    var panels = bases.map(function (b) {
+      var blocks = byBase[b].map(function (o) {
+        var r = o.r;
+        var refW = 100 * r.top_first.wrong / maxW, refC = 100 * r.top_first.cost / maxC;
+        return '<div class="ux-weights-gblock" data-ux-row="' + o.i + '"><div class="ux-weights-grow ux-weights-gtitle"><span><b>' + esc(moveName(r.moved)) + '</b></span>' +
+          '<span class="ux-weights-gc"><span class="ux-weights-gref" style="left:' + refW.toFixed(2) + '%"></span><span class="ux-weights-reflab" style="left:calc(' + refW.toFixed(2) + '% + 4px)">strong model line</span></span>' +
+          '<span class="ux-weights-gc"><span class="ux-weights-gref" style="left:' + refC.toFixed(2) + '%"></span><span class="ux-weights-reflab" style="left:calc(' + refC.toFixed(2) + '% + 4px)">strong model line</span></span></div>' +
+          WAYS.map(function (p) { return '<div class="ux-weights-grow"><span class="ux-weights-gname">' + esc(PNAME[p]) + '</span>' + cell(r, p, 'wrong', maxW, 'least wrong') + cell(r, p, 'cost', maxC, 'cheapest') + '</div>'; }).join('') + '</div>';
+      }).join('');
+      return '<div class="ux-weights-gp" data-tagged="G"><h4>' + esc(REFL[b]) + ' ' + tagEl('G') + '</h4>' +
+        '<div class="ux-weights-grow ux-weights-ghead"><span></span><span>Wrong rate: share of pieces of work that end wrong</span><span>Cost: cheap-call equivalents per piece of work</span></div>' + blocks + '</div>';
+    }).join('');
+    var nowParts = bases.map(function (b) {
+      var cntW = {}, cntC = {}, n = byBase[b].length;
+      byBase[b].forEach(function (o) { var w = lowest(o.r, 'wrong'), c = lowest(o.r, 'cost'); cntW[w] = (cntW[w] || 0) + 1; cntC[c] = (cntC[c] || 0) + 1; });
+      var list = function (cnt) { return Object.keys(cnt).map(function (p) { return esc(PNAME[p]) + ' in <span data-label="1">' + cnt[p] + '</span> of <span data-label="1">' + n + '</span>'; }).join(', '); };
+      return '<span class="ux-weights-nowline"><b>' + esc(REFL[b]) + ':</b> least wrong is ' + list(cntW) + ' settings; cheapest is ' + list(cntC) + '.</span>';
+    }).join('');
+    var h = '<h3 id="gateTable">Which way of working is less wrong, and which is cheaper, as the gate and the ladder move? ' + tagEl('G') + '</h3>' +
+      '<p class="ux-weights-small">' + esc(S.gate_title) + '. ' + esc(S.gate_lede) + '</p>' +
+      '<p class="ux-weights-how"><b>How to read it:</b> each block is one setting, with one bar per way of working. A shorter bar is less wrong, or cheaper. The dashed line marks the strong model directly.</p>' +
+      '<p class="ux-weights-now"><b>What it shows now:</b> ' + nowParts + '</p>' +
+      '<div class="ux-weights-gpanels chart-scroll">' + panels + '</div>';
+    h += '<details class="inline ux-weights-nums"><summary>Show the numbers</summary><div class="chart-scroll"><table class="ptable gatet" data-tagged="G"><tr><th rowspan="2">Last period</th>' + WAYS.map(function (p) { return '<th colspan="2">' + esc(PSHORT[p]) + ' ' + tagEl('G') + '</th>'; }).join('') + '</tr><tr>' + '<th>cost</th><th>wrong</th>'.repeat(3) + '</tr>';
+    var lastBase = null;
+    SHT.rows.forEach(function (r, i) {
+      if (r.base !== lastBase) { lastBase = r.base; h += '<tr class="sub"><td colspan="7">' + esc(REFL[r.base]) + '</td></tr>'; }
+      h += '<tr><td>' + esc(moveName(r.moved)) + '</td>' + WAYS.map(function (p) {
+        return '<td data-st="' + i + '" data-p="' + p + '" data-k="cost" data-v="' + r[p].cost + '">' + esc(fmt(r[p].cost, 'cost')) + '</td><td data-st="' + i + '" data-p="' + p + '" data-k="wrong" data-v="' + r[p].wrong + '">' + esc(fmt(r[p].wrong, 'pct')) + '</td>';
+      }).join('') + '</tr>';
+    });
+    h += '</table></div></details><details class="inline"><summary>' + esc(S.gate_moved) + '</summary>' + MAP.shared_groups.map(function (g) {
+      return '<p><b>' + esc(g.label) + ':</b> ' + Object.keys(g.moves).map(function (id) { return esc(pname(id)) + ' to its ' + g.moves[id] + ' end'; }).join('; ') + '.</p>';
+    }).join('') + '</details>';
+    el.innerHTML = h;
+  }

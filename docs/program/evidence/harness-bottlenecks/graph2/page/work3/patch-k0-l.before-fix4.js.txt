@@ -1,0 +1,194 @@
+// Re-appliable patch of data/data.json (owner page, section L and section K update, 2026-11-13).
+// Run from the graph-test folder, AFTER data/patch-engines-k.js.txt (which rewrites d.k from scratch):
+//   node - < data/patch-engines-k.js.txt  &&  node - < data/patch-k0-l.js.txt
+// It sets d.l (section L: the K0 cache replay and its audit) and adds to d.k: the feasibility counts (d.k.feas),
+// the protocol-v2 cost stages (d.k.wider.cost_v2), done-markers on phases 0 and 1, and the owner-table rows on
+// caching and invalidation pointing to L. Nothing else in data.json is touched.
+// Inputs (read-only):
+//   ../evidence/harness-bottlenecks/graph2/widen/k0/result.json      (replay aggregates, corrected after the audit;
+//                                                                       the audit's recomputed figures are inside it)
+//   ../evidence/harness-bottlenecks/graph2/widen/k0/AUDIT.md          (wording of the audit; numbers come from result.json)
+//   ../evidence/harness-bottlenecks/graph2/widen/feasibility/NOTES.md (feasibility counts, transcribed below with section numbers)
+//   ../evidence/harness-bottlenecks/graph2/widen/protocol-v2.md       (cost stages, section 9, transcribed below)
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const DATA = path.join(HERE, 'data', 'data.json');
+const W2 = path.join(HERE, '..', 'evidence', 'harness-bottlenecks', 'graph2', 'widen');
+const d = JSON.parse(fs.readFileSync(DATA, 'utf8'));
+if (!d.k || !d.k.rows) throw new Error('run data/patch-engines-k.js.txt first');
+const K = JSON.parse(fs.readFileSync(path.join(W2, 'k0', 'result.json'), 'utf8'));
+const RS = K.results;
+if (!RS.static_and_changing_questions_tree || !RS.token_estimate) throw new Error('k0/result.json lacks the audit corrections');
+const r3 = x => Math.round(x * 1000) / 1000;
+const T = RS.per_policy.tree;
+
+/* ---------- the rules drawn in L ---------- */
+const RULES = [
+  { key: 'never', name: 'No invalidation', what: 'a saved answer is served for ever (the stale control)', group: 'time' },
+  { key: 'ttl20', name: 'Time-to-live, 20 commits', what: 'served while the answer is at most 20 commits old', group: 'time' },
+  { key: 'ttl5', name: 'Time-to-live, 5 commits', what: 'served while the answer is at most 5 commits old', group: 'time' },
+  { key: 'file', name: 'File level', what: 'recomputed when a file the answer read has changed', group: 'dep' },
+  { key: 'fact_pos', name: 'Fact level, without the "nothing else" patterns', what: 'recomputed when a fact the answer read has changed; a new fact elsewhere is not noticed', group: 'dep' },
+  { key: 'fact', name: 'Fact level, with the "nothing else" patterns', what: 'also recomputed when a query such as "who calls this route" gains or loses a match', group: 'dep' },
+  { key: 'cutoff_sem', name: 'Fact level, only the fields read, with early cutoff', what: 'as above, comparing only the fields the program read, and keeping the answer when a re-run part comes out the same', group: 'dep' }
+];
+const fromCounts = (o) => ({ lookups: o.lookups, served: o.served, stale: o.stale_served, hit: r3(o.served / o.lookups * 100), stalePct: o.served ? r3(o.stale_served / o.served * 100) : null });
+const SC = RS.static_and_changing_questions_tree;
+const sets = {
+  all: { questions: 250, lookups: T.fact.kinds_1_to_8.lookups, rows: {} },
+  changing: { questions: SC.kinds_1_to_8.changing_questions, lookups: SC.rates_on_changing_questions.lookups, rows: {} },
+  completion: { questions: SC.completion.questions, lookups: T.fact.completion.lookups, rows: {} }
+};
+for (const R of RULES) {
+  sets.all.rows[R.key] = fromCounts(T[R.key].kinds_1_to_8);
+  sets.completion.rows[R.key] = fromCounts(T[R.key].completion);
+  const c = SC.rates_on_changing_questions[R.key];
+  sets.changing.rows[R.key] = { lookups: SC.rates_on_changing_questions.lookups, hit: c.hit_pct, stalePct: c.stale_per_served_pct, stale: c.stale };
+}
+sets.completion.rows.cutoff = fromCounts(T.cutoff.completion);
+sets.completion.rows.fact_sem = fromCounts(T.fact_sem.completion);
+
+/* ---------- where stale answers come from (dependency cases, kinds 1-8) ---------- */
+const DC = RS.dependency_cases, FC = RS.stale_file_level_tree_by_cause;
+const KINDS = [
+  ['invariants_on_file', 'Rules on a file', 'a new rule in CLAUDE.md that points at the file'],
+  ['route_clients', 'Who calls a route', 'a new client call to the route'],
+  ['other_half', 'The other half of a backend function', 'a new client call reaching it'],
+  ['tests_reach', 'Tests that reach the code', 'a new test reaching the code'],
+  ['change_reach', 'What a change reaches', 'a new caller or route'],
+  ['migrations_touch_table', 'Migrations of a table', 'a new migration touching the table'],
+  ['setting_readers', 'Readers of a setting', 'a new reader of the setting'],
+  ['screen_tables', 'Tables a screen reaches', 'none in this history']
+];
+const causes = KINDS.map(([k, label, what]) => {
+  const pk = DC.per_kind[k] || { cases: 0, by_cause: {} };
+  return { kind: k, label, what, cases: pk.cases, pattern: pk.by_cause['pattern gained or lost a match'] || 0, fact: pk.by_cause['positive fact changed'] || 0,
+    fileStale: FC[k + ' | pattern gained or lost a match'] || 0 };
+});
+const nPat = causes.reduce((a, c) => a + c.pattern, 0), nFact = causes.reduce((a, c) => a + c.fact, 0);
+if (nPat + nFact !== DC.total_kinds_1_to_8) throw new Error('dependency cases do not add up');
+
+/* ---------- gap lanes (main chain) ---------- */
+const SL = RS.stride_lanes_main_chain, LN = ['main_s1', 'main_s2', 'main_s4', 'main_s8'];
+const meanGap = s => +K.setup.main_chain_gaps[s].match(/mean ([\d.]+)/)[1];
+const gap = {
+  lanes: LN.map((l, i) => ({ lane: l, every: [1, 2, 4, 8][i], meanGap: meanGap(['stride_1', 'stride_2', 'stride_4', 'stride_8'][i]), lookups: SL[l].fact.kinds_1_to_8.lookups })),
+  series: ['cutoff_sem', 'fact', 'file', 'ttl20'].map(p => ({ key: p, hit: LN.map(l => r3(SL[l][p].kinds_1_to_8.hit_rate * 100)),
+    stale: LN.map(l => SL[l][p].kinds_1_to_8.stale_rate_per_served == null ? null : r3(SL[l][p].kinds_1_to_8.stale_rate_per_served * 100)) })),
+  completionFact: LN.map(l => r3(SL[l].fact.completion.hit_rate * 100)),
+  note: 'Main-chain lanes only (99 snapshots on main\'s first-parent chain), kinds 1-8. The audit did not re-check these lanes.'
+};
+
+/* ---------- token estimate ---------- */
+const TE = RS.token_estimate, TF = TE.per_100_lookups_tree_kinds_1_to_8.fact, TC = TE.per_100_lookups_tree_kinds_1_to_8.cutoff_sem;
+const tokens = {
+  assumption: 'Every answer served from the cache replaces one scripted search that would otherwise have read files to derive it, minus the answer tokens a served answer still costs to read.',
+  served: TF.served, lookups: TF.lookups,
+  fact: { median: TF.estimate_median_prices_694_5_minus_31, mean: TF.estimate_mean_prices_1903_6_minus_59_9, perKind: TF.estimate_per_kind_median_prices, typed: TF.against_typed_queries },
+  cutoffSem: { median: TC.estimate_median_prices_694_5_minus_31, mean: TC.estimate_mean_prices_1903_6_minus_59_9, perKind: TC.estimate_per_kind_median_prices },
+  prices: { medianSearch: TE.prices.overall.search, medianTyped: TE.prices.overall.typed, meanSearch: TE.prices.overall_mean.search, meanTyped: TE.prices.overall_mean.typed,
+    largest: TE.prices.largest_single_search, n: TE.prices.held_out_questions, perKindN: '3 to 4' },
+  computeMs: 6.0, benchQuestions: 247, recordMs: 11.3, arraysMs: 18.6
+};
+
+/* ---------- lists (from NOTES.md sections 4 and 5 and AUDIT.md sections 1, 8 and 10) ---------- */
+const nf = n => Number(n).toLocaleString('en-US');
+const S = sets;
+d.l = {
+  status: 'done and audited (2026-11-13); deterministic answers only; no model was called and no agent ran',
+  setup: { questions: 350, kinds18: 250, completionQ: 100, kinds: 8, snapshots: K.setup.snapshots.cached, steps: K.setup.tree.steps, onMain: K.setup.snapshots.on_main_first_parent_chain,
+    offChain: K.setup.snapshots.off_chain, merged: K.setup.snapshots.off_chain_merged_into_main, lookups18: S.all.lookups, lookupsC: S.completion.lookups, lookupsAll: S.all.lookups + S.completion.lookups,
+    span: K.setup.snapshots.main_chain_span, programs: 9, rules: 11 },
+  rules: RULES, sets,
+  stat: { neverChange: SC.kinds_1_to_8.never_change, of: SC.kinds_1_to_8.questions, pct: SC.kinds_1_to_8.never_change_pct, lookupsOn: SC.kinds_1_to_8.lookups_on_never_changing, lookupsPct: SC.kinds_1_to_8.lookups_on_never_changing_pct,
+    alwaysEmpty: SC.kinds_1_to_8.never_change_and_always_empty, atChange: SC.kinds_1_to_8.lookups_at_a_change, atChangePct: SC.kinds_1_to_8.lookups_at_a_change_pct,
+    changingQ: SC.kinds_1_to_8.changing_questions, changingLookups: SC.kinds_1_to_8.lookups_on_changing, compNeverChange: SC.completion.never_change, compDistinctMedian: SC.completion.distinct_answers_median },
+  hub: { files: RS.dependency_index.sizes_per_answer_by_kind_over_all_derivations.completion.files.median, nodes: RS.dependency_index.sizes_per_answer_by_kind_over_all_derivations.completion.nodes.median,
+    edges: RS.dependency_index.sizes_per_answer_by_kind_over_all_derivations.completion.edges.median, changed: RS.answer_changes_tree.completion.answer_changed, changedPct: r3(RS.answer_changes_tree.completion.answer_changed / RS.answer_changes_tree.completion.consecutive_lookup_pairs * 100) },
+  causes: { total: DC.total_kinds_1_to_8, pattern: nPat, fact: nFact, steps: DC.distinct_steps, all: DC.total, kinds: causes, completion: DC.per_kind.completion.cases,
+    completionCochange: DC.per_kind.completion.by_cause['positive fact changed'], completionEdges: DC.per_kind.completion.by_cause['pattern gained or lost a match'],
+    fileStale: T.file.kinds_1_to_8.stale_served, note: 'Read from the replay\'s own dependency records (133 plus 1, none unexplained); the audit did not recompute this count, and its seven hand-built cases agree with it.' },
+  gap, tokens,
+  audit: { recomputed: RS.audit_recomputation.warm_lookups_recomputed, disagreements: RS.audit_recomputation.disagreements, kinds18: RS.audit_recomputation.kinds_1_to_8, completion: RS.audit_recomputation.completion },
+  shows: [
+    `With the "nothing else" patterns recorded, the fact-level rule served ${nf(S.all.rows.fact.served)} of ${nf(S.all.lookups)} lookups from the cache (87.6 %), and none of the answers it served differed from the answer recomputed from the extractor's facts. On the ${S.changing.questions} questions whose answer changes at least once it served 82.5 %. An independent audit recomputed all ${nf(RS.audit_recomputation.warm_lookups_recomputed)} lookups with its own code and found ${RS.audit_recomputation.disagreements} disagreements.`,
+    'Comparing only the fields a program read, with early cutoff, raised the share served to 96.2 % (94.2 % on the changing questions), still with no stale answer.',
+    `File-level invalidation, and fact level without the patterns, served wrong answers: 6.5 % and 6.8 % of what they served over all questions, 13.2 % and 13.6 % on the changing questions. ${nPat} of the ${DC.total_kinds_1_to_8} cases behind them were a new relation appearing in another file.`,
+    'Rules based on age cannot tell a stale answer from a fresh one: a time-to-live of 20 commits served 94.4 % of lookups, and 12.0 % of what it served was wrong (23.0 % on the changing questions).',
+    `The change-completion ranking rests on a median of ${RS.dependency_index.sizes_per_answer_by_kind_over_all_derivations.completion.files.median} files per answer. No rule that checks what the answer rests on served more than 24.5 % of its lookups; the age-based rules served most lookups, and 41.8 to 89.5 % of what they served was wrong.`,
+    'The share served by every safe rule falls as the gap between lookups grows (main-chain lanes, not re-checked by the audit).',
+    `${SC.kinds_1_to_8.never_change} of the ${SC.kinds_1_to_8.questions} questions (55.2 %) never changed their answer over this history, and ${nf(SC.kinds_1_to_8.lookups_on_never_changing)} of the lookups (47.6 %) are of those questions. Every rule is right on them, so the rates over all questions are higher than on the questions that test invalidation.`
+  ],
+  notShows: [
+    'Model-made conclusions were not cached, and they are the costly ones: only answers that a program computes from the graph in milliseconds were. And no agent decided to look anything up: the replay asked every live question at every saved version, and trusted the rule, not a reader.',
+    'That fact-level invalidation is safe in general. Zero stale answers is what a correct recorder must give when a program reads the graph only through it: it is expected by construction. It shows the recorder has no gaps for these nine programs on this history, not for conclusions a model draws from reads nobody records.',
+    'That the cached answers are right about the code. "Stale" means different from the answer recomputed from the same extractor\'s facts; an extraction error that persists is invisible.',
+    'Any token saving. No tokens were measured. The token picture is an estimate under one assumption, priced three ways, and against a typed query it is zero.',
+    'A share served that an agent would see: the replay set the schedule, and nearly half the lookups are of questions that never change.',
+    'A temporal knowledge graph, a graph database, facts read by a model, or traversal caching.',
+    'Other repositories, larger graphs or other change rates (about 155 commits on main over 9 weeks), or that a wide question cannot be cached in a bounded form, which was not tried.'
+  ],
+  sources: { notes: 'graph2/widen/k0/NOTES.md', result: 'graph2/widen/k0/result.json', audit: 'graph2/widen/k0/AUDIT.md' },
+  must_not_claim: K.must_not_claim
+};
+
+/* ---------- section K: owner rows on caching and invalidation point to L ---------- */
+const rowCache = d.k.rows.find(r => /^caching concepts and invalidation/.test(r.words));
+const rowTrav = d.k.rows.find(r => /^using caching on top of it/.test(r.words));
+if (!rowCache || !rowTrav) throw new Error('owner rows on caching not found');
+rowCache.measured = `Partly, since the finished test: a replay (section L) of cached answers with invalidation, for deterministic answers only. 350 questions were asked again at each of 190 saved versions of the code graph under seven rules; no model was called and no agent ran. The fact-level rule with the "nothing else" patterns served 87.6 % of lookups from the cache with no stale answer against the extractor's facts; file level served 6.5 % of its answers stale.`;
+rowCache.not = 'Still unmeasured: conclusions made by a model (the costly ones) cached and re-checked; whether an agent\'s tokens go down; a share served that a real workload would see. Your prompt cache already serves 94.9 % of FixFlow context tokens as cache reads; those are still tokens the model processes (the prompt cache lowers price and delay, not the token count). The token report also measured that only 0.5 to 1.5 % of a window is content fetched a second time inside the same window, so a cache that only stops repeat reads within one session would save little; stopping a first, unneeded read is the untested part.';
+rowCache.wider = 'K0 has run (L). K1 and A3c, model-made conclusions with invalidation in agent runs, against A3s (the same store with invalidation switched off), remain a design.';
+rowCache.status = 'partly';
+rowCache.go = ['l', 'k-wider', 'k-tokens'];
+rowTrav.measured = 'Traversal time in three engines, cold and warm: milliseconds per ranking. The replay in section L cached whole answers, not traversals.';
+rowTrav.not = 'A cache over traversals, still unmeasured. It cannot move the token bill: a traversal costs milliseconds, one model step about 6.6 s, and the bill is counted in tokens.';
+rowTrav.go = ['h', 'l'];
+
+/* ---------- section K: wider test, done-markers, protocol-v2 costs ---------- */
+const KW = d.k.wider;
+KW.status = 'A design, not a result. No agent phase has been built or run; only the free phase-0 counts (below) and the K0 replay (section L) have run, with no model and no agent. The corrections of the design check are applied.';
+KW.phases[0].done = 'Done since: the feasibility counts, in "Can it run here?" below.';
+KW.phases[1].done = 'Partly done since: the K0 replay (section L). No fact-level rule served a stale answer, so the stop rule did not fire. The break oracle and the lookup replay have not run.';
+KW.cost_v2 = {
+  source: 'protocol-v2.md section 9 (estimates; a cost probe replaces them)',
+  stages: [
+    { name: 'Cost probe', what: '4 tuning tasks, baseline agent only, 3 runs each', lo: 0.04, hi: 0.12 },
+    { name: 'Pilot', what: '12 change tasks with 4 arms and 3 runs; 30 tuning questions with 6 arms and 2 runs; 8 cached claims over 5 steps', lo: 0.8, hi: 1.9 },
+    { name: 'Main stage A', what: 'no fresh commits needed: 70 questions with 7 arms, 40 document questions, 400 cached-claim steps, the break oracle with an agent, readers and judge', lo: 1.6, hi: 3.2 },
+    { name: 'Main stage B', what: 'needs 40 fresh commits: 40 change tasks with 3 arms and 3 runs, plus the placebo arm on 20', lo: 1.7, hi: 4.7 },
+    { name: 'Option: more arms on change tasks', what: 'time, cached conclusions, graphify with documents and the keyword index on 20 tasks with 2 runs', lo: 0.6, hi: 1.6, optional: true }
+  ],
+  total: { lo: 4.0, hi: 10.0, what: 'probe, pilot and both main stages' }, recorded: 2.13, reserve: '10 % of the above for reruns',
+  per_run: 'A change-task run of 30 to 80 calls at 113,000 to 123,000 tokens per call is about 3.5 to 10 million tokens; a question run about 0.6 to 1.2 million.',
+  not_in_tokens: 'Not in tokens: model-built layer builds, 7 to 11 engineering sessions, about 8 to 15 owner hours and about 25 to 80 hours of container time (estimates).'
+};
+
+/* ---------- section K: feasibility counts (feasibility/NOTES.md) ---------- */
+d.k.feas = {
+  source: 'graph2/widen/feasibility/NOTES.md (2026-11-13; no model call, no agent run, nothing installed)',
+  history: { population: 141, sample: 12, june: 5, july: 5, august: 2,
+    checks: [
+      { name: 'Backend: lint, format, type-check, unit tests', ran: 12, passed: 12, note: 'ruff, ruff format, mypy and pytest without a database, with an existing environment' },
+      { name: 'Backend: import contracts', ran: 10, passed: 10, note: 'the 2 earliest June parents have no contracts yet' },
+      { name: 'Backend: integration tests against Postgres', ran: 2, passed: 2, note: 'run at 2 parents only; 751 tests in 370 s at the August parent' },
+      { name: 'Web: tests, lint and build', ran: 12, passed: 12, note: 'vitest, eslint and vite build' },
+      { name: 'Mobile: tests', ran: 12, passed: 12, note: 'jest, 13 to 334 tests' },
+      { name: 'Mobile: type-check', ran: 12, passed: 7, note: 'all 5 failures come from one package removed later, missing from the installed tree (June to July parents)' }
+    ],
+    packagesOk: 89, note: 'Run natively on Windows at 12 seeded parents with nothing installed; the same results at the 12 task commits themselves. Over all 141 commits, 89 have every JavaScript package they need already present. The backend has no lockfile, so its historical package versions cannot be recovered.' },
+  fresh: { usable: 25, needed: 40, mainUsable: 6, unmergedUsable: 19, day: '2026-11-13', followUp: '2026-11-27',
+    note: 'About 25 fresh usable change tasks exist at most (6 on main and 19 not yet merged), almost all dated 2026-11-13. A held-out main run of 40 fresh change tasks is not possible yet, and the 14-day follow-up column cannot be filled before 2026-11-27.' },
+  needed: { commits: 12, unionNonzero: 11, unionMedian: 2, unionMax: 7, unionSum: 31, strictEmpty: 6, strictMedian: 0.5, strictSum: 18, ratio: 0.35,
+    note: 'Files a change did not edit but that call, test or call the route of what it changed, counted statically from the graph snapshots. Mostly 1 to 3 files; the strict set (signature changes, unedited tests, route clients, invariants) is empty in half the commits. Needed context should therefore be scored by running the tests, not from these items alone.' },
+  lookups: { distinct: 301, earlier: 139, transcripts: 1402, kinds: [['program documents', 212], ['product code', 32], ['product documents', 6], ['other files in the repository', 52]],
+    note: 'Search-then-read pairs recorded in your sessions: a search whose result names a file that the same session then reads. They can be replayed offline with no model, but they carry no commit, and the program documents they open are mostly untracked and change daily. The four counts add up to 302, one more than the 301 distinct pairs, as the feasibility notes give them.' },
+  graphify: { edges: 18875, analogue: 11969, none: 4604, unclear: 2302, route: 604, routes: { registers_route: 85, calls_url: 78, test_calls_route: 441 }, data: 1325, settings: 188, mocks: 93, cochange: 1896, contracts: 254, invariants: 90,
+    neededViaRoutes: 5, neededTotal: 31,
+    note: 'Graphify parses every language here (Python, JavaScript, TypeScript, TSX). Of the 18,875 edges of the frozen commit\'s graph, 4,604 are of kinds it has no analogue for: no route or URL edges (a route decorator keeps only its name, not its path), no table or column edges (its SQL reader needs .sql files; this repository has none), no settings, mocks, import contracts or changed-together history. 11,969 are of kinds it does have, which is not the same as the same edges. In the 12 sampled commits, 5 of the 31 needed-but-not-edited files were reachable only through route edges.' }
+};
+
+fs.writeFileSync(DATA, JSON.stringify(d, null, 1));
+console.log('patched data.json: l rules', d.l.rules.length, '; causes', d.l.causes.total, '(' + nPat + ' + ' + nFact + '); feas checks', d.k.feas.history.checks.length, '; bytes', fs.statSync(DATA).size);

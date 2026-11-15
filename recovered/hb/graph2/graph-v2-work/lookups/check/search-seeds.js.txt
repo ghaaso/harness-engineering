@@ -1,0 +1,8 @@
+// Program "search seeds" cell with pattern+glob seeds; upper-middle median for even n.
+const fs=require('fs'),rl=require('readline');const pct=(a,b)=>Math.round(1000*a/b)/10;
+const medU=a=>{a=[...a].sort((x,y)=>x-y);return a[Math.floor(a.length/2)]};
+(async()=>{const rows=[];const r=rl.createInterface({input:fs.createReadStream('../out/baseline-instances.jsonl')});
+for await(const l of r){const o=JSON.parse(l);if(o.cls==='program'&&o.scorable==='yes'&&(o.seedKind==='pattern'||o.seedKind==='glob'))rows.push(o);}
+const cw=rows.reduce((a,o)=>a+o.carried,0);const out={n:rows.length,median_fetched:medU(rows.map(o=>o.fetched))};
+for(const a of ['A','B','C']){const h=rows.filter(o=>o.arms[a].spanRank>=1&&o.arms[a].spanRank<=10);out[a]={hit10:pct(h.length,rows.length),cw:pct(h.reduce((x,o)=>x+o.carried,0),cw),tok:medU(h.map(o=>o.arms[a].listTok+o.arms[a].readTok)),cheap:medU(h.filter(o=>o.arms[a].minReadTok!=null).map(o=>o.arms[a].listTok+o.arms[a].minReadTok))};}
+console.log(JSON.stringify(out));})();

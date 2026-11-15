@@ -1,0 +1,22 @@
+const fs=require('fs');let s=fs.readFileSync('q5_docs.js.txt','utf8');
+s=s.replace("const resFrozen = makeResolver(frozenFiles)", `function cleanResolve(all, tok) {
+  // cleaned rule: placeholders and globs are not citations; brace groups expand; a directory resolves if any file lies under it
+  if (/[<*]/.test(tok)) return 'placeholder';
+  let t = tok.replace(/^\.?\//, '').replace(/[:#].*$/, '').replace(/\)$/, '');
+  const m = t.match(/^(.*)\{([^}]*)\}(.*)$/);
+  const cands = m ? m[2].split(',').map((x) => m[1] + x + m[3]) : [t];
+  let ok = 0, amb = 0;
+  for (const c of cands) {
+    if (c.endsWith('/')) { if (all.some((f) => f.startsWith(c) || f.includes('/' + c))) ok++; continue; }
+    if (all.includes(c)) { ok++; continue; }
+    const hits = all.filter((f) => f.endsWith('/' + c));
+    if (hits.length === 1) ok++; else if (hits.length > 1) amb++;
+  }
+  if (ok === cands.length) return 'resolved';
+  if (ok + amb === cands.length) return 'ambiguous';
+  return 'none';
+}
+const resFrozen = makeResolver(frozenFiles)`);
+s=s.replace("symbol_tokens: 0,", "clean_placeholder: 0, clean_resolved: 0, clean_ambiguous: 0, clean_none: 0, clean_none_examples: [], symbol_tokens: 0,");
+s=s.replace("      const r = resFrozen(tok);\n      if (r) {\n        R.file_tokens++;", "      const r = resFrozen(tok);\n      if (r) {\n        const cr = cleanResolve(frozenFiles, tok); R['clean_' + cr]++; if (cr === 'none' && R.clean_none_examples.length < 15 && Math.random() < 0.15) R.clean_none_examples.push(tok);\n        R.file_tokens++;");
+fs.writeFileSync('q5_docs.js.txt',s);

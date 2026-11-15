@@ -1,0 +1,417 @@
+// Builds params.json and params-notes.md from one table, then checks them against map.json.
+// Revision 3 (model-brief.md section 13): m_opus drawn from 1 to 2, retire_bad added, side and good_end on every row.
+// Revision 4 (model-brief.md section 14): lib_group on every library-side row (R18); p_promote, k_promo_exact and
+// k_promo_similar added (R21), library side, group quality, good end high, tag G.
+// Run from this folder:  node - < build-params.js.txt
+// Reads ../../library-pathways/map.json (relative to process.cwd()). Writes params.json there and params-notes.md here.
+const fs = require("fs");
+const path = require("path");
+const cwd = process.cwd();
+const mapPath = path.join(cwd, "..", "..", "library-pathways", "map.json");
+const outJson = path.join(cwd, "..", "..", "library-pathways", "params.json");
+const outNotes = path.join(cwd, "params-notes.md");
+const map = JSON.parse(fs.readFileSync(mapPath, "utf8"));
+
+// Each row: id, low, best, high, tag, source, note (under 35 words), why (one line for params-notes.md)
+const T = [
+  // ---- workload
+  ["p_visible", 0.1, 0.4, 0.8, "G",
+    "No source. Hints: F3 s4 (tool errors are 2.2 % of calls); R10 s1.2 (windows with an edit or a failed check: 10.9 % of FixFlow tokens, 77.9 % of Clinic).",
+    "Hint only. Errors are 2.2 % of calls. And 11 to 78 % of tokens sit in windows with an edit or a failed check. Neither counts pieces of work.",
+    "The two nearest numbers are far apart and neither counts pieces of work, so the range is wide."],
+  ["need_visible", 0.15, 0.3, 0.6, "G",
+    "No source. Hints: F6 s(iii) and R4 s1 (vendor scores, Sonnet 5.5 vs Opus 5.5); F6 s(i) (AgentBrew student alone 45.3 on Terminal-Bench 2.0).",
+    "Hint. On whole benchmarks Sonnet 5.5 fails about 29 % (Terminal-Bench 4.0) to 54 % (FrontierCode 1.1). Those are whole tasks, not one error or one failing check.",
+    "Whole-task failure rates run 29 to 55 percent; an error with text in hand should be easier than a whole task, so the range is centred lower."],
+  ["need_latent", 0.2, 0.4, 0.7, "G",
+    "No source. Hint: R4 s1 (Clinic slice table, read again in this run).",
+    "Hint. Round-one review found a serious defect in 9 of 14 Opus-built slices. It found one in 2 of the 4 Sonnet slices that have counts. These are slices, found by review.",
+    "Defect rates in reviewed slices (50 to 64 %) are the nearest numbers; slices are bigger than pieces of work and the Sonnet count is only four, so the range is wide."],
+  ["u_exact", 0.02, 0.06, 0.22, "M",
+    "R3 s1 (3 to 5 same-cause repeats in 48 to 50 fix commits on main; 95 % interval on 5 of 50 reaches 22 %); F5 H2 (outside study: 2.1 to 3.2 % of fixes rebuildable from past fixes).",
+    "3 to 5 of 48 to 50 fix commits repeated an earlier cause (6 to 10 %). One repository, 64 days. The ceiling now means beyond today's notes; this count does not separate them.",
+    "Low end is the outside one-project study (2.1 %), high end is the top of the 95 % interval on 5 of 50; best sits just under the measured 6 to 10 % because some counted repeats were not the very same problem."],
+  ["u_similar", 0.03, 0.15, 0.45, "S",
+    "F2 s1 (X-05 F01 to F03: 17 to 45 % of bug fixes follow recurring fix patterns, secondary reads); F5 H2 (2.1 to 3.2 % rebuildable from past fixes in one project, unconfirmed summary).",
+    "Outside studies: 17 to 45 % of fixes follow recurring patterns; one project: 2.1 to 3.2 %. The middle, 0.15, sits between. They had nothing like today's notes: a lean toward the library, unsized.",
+    "The many-contributor figures set the top; the one-project figure sets the bottom; this repository is one developer, so best sits in the lower half, below the many-contributor range."],
+  ["u_composite", 0.0, 0.05, 0.25, "G",
+    "No source. Hints: F4 (one retrieved item scored best in ReasoningBank and SWE-Exp); F5 H2 (2.1 and 3.2 % of fixes buildable from one or several past fixes).",
+    "No study counts problems made of several stored parts. One project found 2.1 % and 3.2 % of fixes buildable from past fixes. The range predates reading ceilings as beyond today's notes.",
+    "No measurement of parts at all; the range runs from none to a quarter, and the three ceilings together stay under 1."],
+  ["latent_coverage_factor", 0.05, 0.3, 1.0, "G",
+    "No source. Hints: F1 s5 (the diff check is the only route to problems the agent does not notice); F3 s4 (0 of 200 sampled search steps judged likely saved by an index).",
+    "No measurement. The design reaches silent problems only through a diff check. A 200-step sample found no step an index would likely save. The range runs from almost nothing to no penalty.",
+    "Nothing measures silent-problem coverage, so the range spans almost nothing to full; best leans low because the design has no route in."],
+  ["ok_coverage_factor", 0.05, 0.4, 1.0, "G",
+    "No source. Brief section 12, R2 (entries come from strong-tier solves, and under the library the strong tier works only on what the cheap model failed).",
+    "No measurement. Entries exist for problems the cheap model failed. So a piece of work it gets right alone is less likely to have one. The top, 1, means no penalty.",
+    "Nothing counts how often an entry made from a cheap failure also covers work the cheap model gets right; the range runs from almost never to no penalty."],
+  ["k_fill", 10, 40, 300, "S",
+    "F4 (APC: hit rate 2 % at 1 entry and 46 to 48 % at 100 entries; its 14.29 % is at the 20th percentile of queries, a cold-start curve over the query stream, not at 20 entries; AWM: most gain within about 40 examples; SWE-Exp: gains level off near 300). Corrected in revision 2 after verify-engine.md section 6.",
+    "A plan-caching study: 2 % at 1 entry, 46 % at 100, ceiling near 55 %. A fit gives 27 to 55 entries. Another study levelled off near 300. Both templated.",
+    "Fit to APC's two cache-size points gives 27 to 55, AWM says about 40, SWE-Exp says 300; the 10 floor allows for a fast start. Messy repair work likely fills slower than templated work."],
+  ["v_max", 0.1, 0.4, 0.9, "G",
+    "No source for a lookup. Hint: R8 s2 (forward replay over 154 changes, projected to 133 entries: some entry fired wrongly on 16 to 51 % of changes for the selective key types).",
+    "Hint. Diff-keyed warnings were replayed forward over 154 changes, projected to 133 entries. Some entry fired falsely on 16 to 51 % of changes. That is a push channel, not a lookup.",
+    "The replay figure is for a different channel and rests on four true repeats, so the range is wide on both sides."],
+  ["k_distract", 15, 60, 250, "G",
+    "No source. Hint: R8 s2 (projections from per-entry false-fire rates).",
+    "Hint. Projected from replay fire rates, the false-fire chance reaches about 63 % of its top. That happens near 20 entries for loose keys and near 180 for selective keys.",
+    "The two key types in the replay give 20 and 180; the range is widened on both sides because the replay is of a different channel."],
+
+  // ---- mechanism
+  ["t_visible", 0.2, 0.5, 1.0, "G",
+    "No source. Hints: F1 s5 and s8 (pull-only design; compliance is self-reported and escalations without a lookup are undercounted).",
+    "No measured lookup rate exists. The design relies on the agent choosing to look up, and compliance is self-reported. The top of the range means every visible problem triggers a lookup.",
+    "Nothing was measured; the range covers a rarely used lookup to a lookup on every visible problem."],
+  ["t_latent", 0.02, 0.15, 0.6, "G",
+    "No source. Hint: F6 s(ii) (agents that succeed 22 % of the time predict 77 %).",
+    "No measured rate. Some agents that succeeded 22 % of the time predicted 77 %, so asking only when in doubt is unreliable. Nothing signals these problems, so the rate is set low.",
+    "Nothing signals a latent problem, so a lookup needs a trigger the agent lacks; the range runs from almost never to sometimes."],
+  ["c_lookup", 0.1, 1.0, 2.0, "G",
+    "No source. Hints: F3 s7 (no measured number for one lookup turn exists); R1 s2 (one extra call per exploration run costs 11 to 16 % of tokens).",
+    "Hint. A pulled lookup is one extra model call, which is 1 by this map's unit. Low end: a script with no model turn. High end: a lookup plus a follow-up turn.",
+    "One call is the unit; a script-run lookup costs far less and a lookup with a follow-up costs about two."],
+  ["r_exact", 0.4, 0.75, 0.95, "G",
+    "No source for a lookup's recall. Hints: F2 s1 (KS-O19 table: duplicate bug reports sharing no words, 33.6 % by title, 19.0 % by description, 5.1 % in both); F1 s1 (pilot target: recall at shown at least 60 %, a target not a result).",
+    "Hint. 5 to 34 % of duplicate bug reports share no words with their twin, so word-matching misses them. That is bug-report text, not stored fixes. The design's pilot target is 60 %.",
+    "Misses of 5 to 34 % give 0.66 to 0.95; the low end 0.4 allows for a stored fix being phrased differently from its symptom."],
+  ["r_similar", 0.2, 0.5, 0.8, "G",
+    "No source for a chance. Hint: F2 s1 (BM25 scored 10.2 to 18.45 points lower on dissimilar duplicate bug reports than on similar ones).",
+    "Hint. Word-matching scored 10 to 18 points lower on dissimilar duplicate bug reports than on similar ones. That is a ranking score on bug reports, not a hit chance.",
+    "Lower than the exact case by construction; no chance was measured, so the range is wide."],
+  ["r_comp_full", 0.02, 0.1, 0.4, "G",
+    "No source. Hints: F1 s3 (a lookup shows at most one lead and one candidate); F4 (one retrieved item beat several in ReasoningBank and SWE-Exp; Memento found more cases did not help).",
+    "No measurement. One lookup shows at most one lead and one candidate, and three outside studies did best with one retrieved item. Returning every part at once is therefore unlikely.",
+    "A two-item display cap makes full return rare; the high end allows several lookups per piece of work."],
+  ["r_comp_part", 0.1, 0.35, 0.6, "G",
+    "No source. Hint: F1 s3 (display cap of one lead and one candidate).",
+    "No measurement. One lookup shows at most two items, so some parts is likelier than all. Its good end is high: some parts beat none. With the previous value, at most 1.",
+    "Some-but-not-all is the likelier outcome under a two-item cap; the highs of the two values sum to exactly 1."],
+  ["f_false", 0.1, 0.35, 0.8, "G",
+    "No source for a chance. Hints: F2 s2 (KS-C7: one error template with 2 to 3 causes scores a full match on the wrong cause); F4 (MeanCache test: 12.7 to 33 % false hits on queries that should all miss, search summary only).",
+    "Hint. Error templates here carry 2 to 3 causes, so a wrong-cause match scores full. Semantic caches gave 13 to 33 % false hits on queries that should miss (unconfirmed summary).",
+    "Multi-cause templates and cache false-hit rates point to 0.1 to 0.8; best is a third."],
+  ["c_check_share", 0.03, 0.2, 0.4, "M",
+    "F1 s3, R9 s1.6 (3 of about 15 worked-example entries can return 'applies' without Docker, 6 of 15 with it; about 3 of 116 entry-bearing seed rows).",
+    "Counted in the design's seed. 3 of 15 worked-example entries carry a check usable without Docker, and 6 of 15 with it. Across the whole seed it is about 3 of 116.",
+    "Low end is 3 of 116 (whole seed), best is 3 of 15 (worked examples, no Docker), high end is 6 of 15 (Docker). A design count, not a run."],
+  ["c_screen", 1, 2, 3, "G",
+    "F1 s1 (design estimate, labelled inferred: a native verify adds 2 to 3 turns).",
+    "Design estimate, not measured: a verify adds 2 to 3 extra turns. The check itself runs in 0.2 s with no tokens, so the low end is one call.",
+    "Design says 2 to 3 turns; one call if the check runs inside a turn already being taken."],
+  ["a_right", 0.5, 0.85, 0.98, "G",
+    "No source. Hint: F5 A1 (Xiong: agents copy stored records whose inputs resemble the new one, correlation near 1).",
+    "Hint. Agents tend to copy stored records that look like the current input. One study found a correlation near 1. So good entries are probably accepted. Not measured on coding work.",
+    "Copying behaviour suggests high acceptance; the low end allows a model that sets entries aside often."],
+  ["a_wrong", 0.35, 0.65, 0.95, "S",
+    "F5 C1 (ClashEval, arXiv 2404.10198: six top models adopted wrong retrieved content over a correct prior more than 60 % of the time).",
+    "Six top models took wrong retrieved content over their own correct answer more than 60 % of the time. Question answering with planted wrong values, not look-alike repair notes.",
+    "The study says over 60 %; a look-alike is less blatant than a planted wrong value, so the low end is 0.35; high end 0.95 allows agents that copy."],
+  ["d_deliver", 0.5, 0.85, 0.98, "G",
+    "No source. Hint: F3 s1 (48 compactions in Clinic main sessions; what a compaction drops was never measured).",
+    "Hint. An entry stays in the window until a compaction or a handoff drops it. Clinic main sessions compacted 48 times. What compaction loses has not been measured here.",
+    "Most entries should survive a short piece of work; compaction and handoffs can lose some, so the range is wide below."],
+  ["c_carry", 0.1, 0.73, 1.5, "G",
+    "No measurement of carrying cost. Hint: D1 s2 (860 tokens x about 260 remaining calls / 306k tokens per call = 0.73, derived); answer size from KS-C9 (0.4 tokens per character on 2,904 results); 306k and 519 calls from F3 s1 and s7.",
+    "Hint, derived not measured. It assumes an 860-token answer, 306k tokens per slice call and 519 calls per slice. It also assumes 260 remaining calls (half the session).",
+    "Best is D1's 0.73. Low is a 300-token entry over 100 calls. High is 860 tokens over the whole 519-call session (1.46)."],
+  ["q_exact", 0.35, 0.75, 0.99, "S",
+    "F4 (Dynamic Cheatsheet: Game of 24 10 to 99, Equation Balancer 44.8 to 100, both one repeated template).",
+    "On a repeated template a stored solution fixed 89 of 90 failures (Game of 24). Net gain over baseline failures, on same-template puzzles. The design stores a diagnosis, not the whole fix.",
+    "Same-template puzzles give 0.99; the design stores a diagnosis and not the whole solve, and cheap models gain less, so best is 0.75 and low is 0.35."],
+  ["q_similar", 0.07, 0.2, 0.5, "S",
+    "F4 and F5 (net gain divided by baseline failures, my arithmetic: SWE-Exp 6.8 %, ReasoningBank 7.0 to 7.4 %, AgentBrew 11.5 to 20.8 %, Agent KB 11.4 %, AWM 15.7 %, ExpeL 15 to 32 %).",
+    "Net gain over baseline failures: 7 % (SWE-Exp, ReasoningBank), 12 to 21 % (AgentBrew, Agent KB), 16 to 32 % (AWM, ExpeL). These average over all retrievals, so a good fit should do better.",
+    "Outside gains run 7 to 32 percent but average good and poor matches; the map's entry is a good match, so best is above the median and high is 0.5."],
+  ["q_comp", 0.03, 0.15, 0.5, "G",
+    "No source. Hint: F4 (ReasoningBank 49.7 at one item vs 44.4 at four; SWE-Exp 42.0 vs 39.0).",
+    "No study measures all parts of a composite. Two studies scored lower with more retrieved items, so this is set at or under the similar-entry value.",
+    "Set near the similar-entry value because more items did not help in two studies; wide because nothing measures it."],
+  ["q_part", 0.0, 0.08, 0.3, "G",
+    "No source. Hint: same as q_comp.",
+    "No measurement. With only some parts the cheap model must work out the rest, so this is set below the all-parts value.",
+    "Below the all-parts value by construction; the range runs from no help to a modest help."],
+  ["h_harm", 0.2, 0.55, 0.9, "G",
+    "No source for this step on its own. Hints: F5 C1 (ClashEval: wrong content beat a correct prior over 60 % of the time; the same figure a_wrong cites); F5 C3 (MemCollab raw memory: HumanEval 42.7 to 34.1, GSM8K 73.0 to 56.6, MATH500 27.4 to 18.8).",
+    "Hint. The over-60 % figure is the one a_wrong cites, so one figure supports two steps. Raw stronger-model memory cut weaker models' scores by 4 to 31 %. Question answering, not repair.",
+    "MemCollab net drops of 4 to 31 percent set the low end; ClashEval's over 60 percent sets the best and the high end."],
+  ["n_cheap", 3, 10, 30, "G",
+    "No source. Hints: F3 s1 (FixFlow agent windows average about 12 calls); R9 s1.2 (median agent window 7 calls, p25 4).",
+    "Hint. FixFlow agent windows average about 12 calls (median 7). That is a whole agent run. The map sets one piece of work at about ten cheap calls (brief R6).",
+    "Agent windows are the nearest unit: 4 to 12 calls typical; high end allows a long attempt."],
+  ["s_exact", 0.1, 0.5, 0.9, "G",
+    "No source. Hint: W L01 C3a and C3b (a stored route would have cut 2 to 8 calls per wave-2 agent; one wave-1 agent spent about 8; with the route in its brief an agent recovered in 2 calls).",
+    "Hint. In one real case a stored route would have saved 2 to 8 calls per agent, of about 8 spent. On a ten-call task that is 0.2 to 0.8. One case only.",
+    "The one case with a call count gives 0.2 to 0.8 of an attempt; the range is widened both ways because it is a single case."],
+  ["s_similar", 0.0, 0.25, 0.7, "G",
+    "No source. Hint: W L05-4 (a stored fix would have saved a detour of a commit, its revert, stopped full runs and one Opus review; the entry showed the cause, not the fix, so adapting was needed).",
+    "Hint. In one case a stored fix would have saved a wrong commit, its revert and a review. It gave the cause, not the fix, so adapting still costs calls.",
+    "An entry that must be adapted saves less than an exact one; one case, no call count, so the range is wide."],
+  ["s_comp", 0.0, 0.2, 0.6, "G",
+    "No source. Hint: same as s_similar; F4 (two outside studies scored lower with more retrieved items).",
+    "No measurement. Several parts must be read and joined, so the saving is set at or below the similar-entry value.",
+    "Joining parts costs calls of its own; nothing measures it, so the range is wide."],
+  ["s_part", 0.0, 0.1, 0.4, "G",
+    "No source. Hint: same as s_comp.",
+    "No measurement. With only some parts, the cheap model must work out the rest. So the saving is set below the all-parts value.",
+    "Below the all-parts value by construction; the range runs from no saving to a modest one."],
+
+  // ---- gate
+  ["g_tests_visible", 0.5, 0.8, 0.95, "G",
+    "No source for a catch rate. Hints: R2 s1 (CI caught both mypy repeats; CI stayed green on both Expo pin failures); F2 s1 (SapFix: 131 of 165 patches passed tests, only 27 of 57 crashes fixed correctly).",
+    "Hint. CI caught both mypy repeats but passed both Expo pin failures. In SapFix, passing tests alone let wrong patches through. No catch rate was counted.",
+    "Tests are sharp on errors with text and blind to build-time failures; the range runs from half to nearly all."],
+  ["g_tests_latent", 0.05, 0.25, 0.5, "G",
+    "No source for a catch rate. Hint: R4 s1 (serious defect in 9 of 14 Opus-built slices at round-one review).",
+    "Hint. Opus-built slices still had a serious defect found by round-one review in 9 of 14. The record does not split what tests had already passed from what review found.",
+    "A latent problem gives tests nothing to fail on, so best is low; the rate is unmeasured, so the range is wide."],
+  ["s_review", 0.2, 0.5, 1.0, "G",
+    "No source for the share per piece of work. Hints: R4 s1 (every slice in the Clinic table had an Opus review); V2 (a reviewer on every PR).",
+    "Measured per slice: every Clinic slice had an Opus review. A slice holds many pieces of work, so the share per gate pass is lower. The middle value is a guess.",
+    "100 percent per slice and 100 percent per PR, but a piece of work is smaller than a slice; the low end assumes about five pieces of work per reviewed unit."],
+  ["g_review", 0.3, 0.65, 0.85, "G",
+    "No source for a catch rate. Hints: HB s3.3 (19 serious findings at round one; at least 5 more later, made by the fixes); R4 s1.",
+    "Hint. Round one found 19 serious defects; at least 5 more appeared later, made by the fixes. What reviews missed was never counted, so no catch rate exists.",
+    "Reviews find many defects (9 of 14 slices) but nobody counted misses; range is wide and best is above half."],
+  ["c_review", 2, 5, 15, "G",
+    "No source for review length. Hints: R9 s1.2 (reviewer as a fresh agent of 3 to 7 calls); D7 s2 (reviewer 3 to 5 turns).",
+    "Estimates only: a reviewer agent of 3 to 7 calls (R9) or 3 to 5 turns (D7). The length of an actual Opus review was not measured.",
+    "R9 and D7 give 3 to 7; the range is widened for large diffs."],
+  // revision 4, R21: checks promoted into the shared test run
+  ["p_promote", 0, 0.5, 1, "G",
+    "No source. Brief section 14, R21 (the orchestrator's ruling on the range).",
+    "No measurement. It counts only checks that exist because an entry was written. Regression tests a team writes anyway are in every way of working. At 0 nothing is promoted.",
+    "Nothing counts promoted checks; the range runs from none to all, and best sits in the middle."],
+  ["k_promo_exact", 0.3, 0.7, 0.95, "G",
+    "No source. Brief section 14, R21 (the orchestrator's ruling on the range). Hint: W, LIM-35 (tests written with the work asserted the wrong behaviour).",
+    "No measurement. A check aimed at the very problem catches much of what goes wrong on it. The walks also saw tests that asserted the wrong behaviour.",
+    "A check aimed at the same problem catches much, but tests can assert the wrong behaviour, so the range is wide."],
+  ["k_promo_similar", 0, 0.05, 0.3, "G",
+    "No source. Brief section 14, R21 (the orchestrator's ruling on the range). Hint: W L04 C4 (a stored check tested the old defect while the same cause returned in a new form).",
+    "No measurement. A check written for one problem rarely tests a different one. One walk saw a stored check miss the same cause in a new form.",
+    "A check aimed at another problem rarely fits a new one, so best is low; the top allows checks written broadly."],
+
+  // ---- ladder
+  ["rho_retry", 0.2, 0.36, 0.6, "G",
+    "No source for one cheap retry. Hint: V2 table row R1 and HB s3.3 (Clinic: 64 % of reviews sent a slice back; 2.8 rounds per slice). R4 clinic-gates-out.txt read again in this run.",
+    "Hint. 64 % of Clinic reviews sent a whole slice back, so a round passes 36 % of the time. Slices, not pieces of work; first and later rounds mixed; fixes mostly Opus-led.",
+    "Best is 1 minus 0.64. Low end allows for fixes that create new defects (9 of 14 slices); high end allows a cheap retry with sharper feedback."],
+  ["c_handoff", 1, 3, 10, "G",
+    "No source for a price. Hints: R9 s1.2 (a fresh agent's first call is about 66k tokens); R1 s3.4 (opening exploration is 55 to 61 % of subagent tokens).",
+    "Hint. A fresh agent starts at about 66k tokens, and 55 to 61 % of subagent tokens go on opening exploration. Neither prices one handoff in cheap calls.",
+    "One call to write the brief at the least; ten if the new agent must re-read most of what the first one saw."],
+  ["n_opus", 3, 10, 35, "G",
+    "No source for calls per attempt. Hint: R5 s2 (Opus slice sessions: median 388 calls; Sonnet 283; different work).",
+    "Hint. Calls per slice session: Opus median 388, Sonnet 283, on different work. No calls-per-attempt by tier exists. Set equal to the cheap attempt.",
+    "Same range as n_cheap because the record shows no difference in calls per task by tier."],
+  ["n_fable", 3, 10, 35, "G",
+    "No source. Hint: F3 s3 (Fable mostly ran long root sessions: 1,158 root calls in November).",
+    "No measurement. Fable mostly ran long root sessions, not single attempts. Set equal to the cheap attempt, with the same wide range.",
+    "Same range as n_cheap; nothing separates Fable's calls per attempt."],
+  ["m_opus", 1, 2, 2, "G",
+    "Brief section 13, R10, after refute-map.md MF1. Vendor price list supplied for this task (2026-11-12); F6 s(iv) (Opus 5.5 is 2 x Sonnet 5.5 per token, new and re-read); F3 line 49 (call sizes).",
+    "Per token, Opus costs 2 x Sonnet (price list, S). The setting is per call. Calls here averaged about 222,000 cache-read tokens for Opus and 440,000 for Sonnet, nearer 1 per call.",
+    "An unknown drawn from 1 to 2 (brief R10). The per-token ratio, 2, is the top and the best; the per-call figure on this PC's call sizes, near 1, is the bottom."],
+  ["m_fable", 2, 3, 4, "S",
+    "Vendor price list supplied for this task (2026-11-12); F6 s(iv) (Fable 5.2: 2 x Sonnet on re-read tokens, 4 x on new input and output).",
+    "Vendor price ratio: 2 x Sonnet on re-read tokens, 4 x on new input and output. The middle value, 3, weights a typical call by its cost mix; that arithmetic gives 3 to 3.3.",
+    "Bounds are the two vendor ratios; best is 3 because a call's cost splits about evenly between re-reads, output and cache writes."],
+  ["o_opus", 0.15, 0.55, 0.9, "G",
+    "No source for the conditional chance. Hint: F6 s(iii) and R4 s1 (vendor FrontierCode 1.1: Opus 54.4, Sonnet 46.2; Terminal-Bench 4.0: Sonnet ahead).",
+    "Hint. From vendor scores: if Opus's failures sit inside Sonnet's, Opus fixes 15 % of Sonnet's failures; if independent, 54 %. The overlap is unknown.",
+    "Nested failures give 0.15 and independent failures give 0.54; best is the upper end because the ladder escalates only after a caught failure."],
+  ["o_fable", 0.2, 0.5, 0.9, "G",
+    "No source. Hint: R4 s1 (20 of 48 fix commits on main carry a Fable trailer; no failure rate by model exists).",
+    "No measurement. Fable authored 20 of 48 fix commits on main, but no failure rate by model exists. After Opus fails what is left is harder, which pulls this down.",
+    "Stronger model but a harder remainder; no data, so the range is wide."],
+
+  // ---- capture
+  ["w_write", 0.2, 0.45, 1.0, "G",
+    "No entry was ever written, so no write rate exists. Hint: R9 s1.1 and R9-git.json (a keyword reading flags 22 of 50 fix commits as meeting the design's write rule; 3 of the 5 first fixes in repeat pairs did).",
+    "Hint. A crude keyword reading found 22 of 50 fix commits eligible under the write rule. So were 3 of 5 first fixes in repeat pairs. The top, 1.0, stores every strong solve.",
+    "Best is 22 of 50; 3 of 5 gives 0.6; the owner's description (every strong solve stored) gives 1.0; the low end allows for compliance gaps."],
+  ["c_write", 2, 5, 15, "G",
+    "No source for a call count. Hint: R9 s1.2 (0.4 to 3.8 M tokens per strict entry, from measured contexts and guessed turn counts); F1 s1 (design says 7 to 14k tokens).",
+    "Hint. R9 priced one strict entry at 0.4 to 3.8 million tokens, about 2 to 15 calls at 250k. It used measured contexts and guessed turns. The design says 7 to 14 thousand.",
+    "R9's 0.4 to 3.8 M tokens converts to about 2 to 15 calls; best near the centre of R9's range (1 M)."],
+  ["e_right", 0.35, 0.75, 0.95, "S",
+    "R2 s1 (first lesson wrong in 1 of 5 repeat pairs); D7 s3 W2 (5 of 8 seed examples had a check or history error); P-proponent line 27 (AgentBrew curator rejected 24 to 38 % of drafts).",
+    "First lessons were wrong in 1 of 5 repeat pairs. But 5 of 8 seed examples had an error before refuters found it. An outside study rejected 24 to 38 % of drafted notes.",
+    "1 of 5 wrong gives 0.8, an outside rejection rate gives 0.62 to 0.76, and 5 of 8 seed examples flawed gives 0.375; best is the middle."],
+  ["l_found", 0.2, 0.6, 0.95, "G",
+    "No source for a chance. Hints: R9 s1.1 (50 of 233 non-merge commits on main are fixes); F1 s3 (about 128 open defects stay in the register); F3 s8 (183 minor findings with no status).",
+    "Hint. 50 of 233 commits on main were fixes. About 128 known defects sit open in the register, and 183 findings have no status. None counts escapes found against escapes never found.",
+    "The share found later cannot be counted by looking at records of found defects; range is wide with best above half because fixes are 21 percent of commits."],
+  ["R_rework", 5, 15, 60, "G",
+    "R9 s1.4 (a fix in a main session at 430 to 544k per call, 10 to 30 calls; R9 marks it an estimate).",
+    "Estimate: a fix in a main session takes 10 to 30 calls (R9, itself a guess). The high end allows a production incident.",
+    "R9's 10 to 30 calls is the only figure; the range is widened both ways."],
+  ["fix_on_found", 0.05, 0.3, 0.8, "G",
+    "No source for a chance. Hints: W L09-4 (a correction reached two files; verdicts.txt:30 still carries 742 s); W L10-2 (a refuted line was rewritten and still stands); W L08-2 (the record still says \"They can\").",
+    "Hint. In three real cases a correction did not reach every stored copy. An old figure, a refuted line and a refuted claim all still stand. Three cases, no rate.",
+    "Corrections often did not reach the stored copy in the walkthroughs, so best is well below 1; no rate was counted, so the range is wide."],
+  ["delta_stale", 0.01, 0.05, 0.25, "G",
+    "No source for a rate. Hints: R3 s1 (the fix's own lines stay in main: 47 of 50 keep half or more); R10 s1.5 (fix footprint unchanged: 61 % at 1 day, 13 % at 30 days); R6 (value half-life 2 to 11 months, unmeasured).",
+    "Hint. 3 of 50 fixes lost half their lines within about two months. Yet 87 % of fix footprints changed within 30 days. One period is 30 days (brief R6).",
+    "Lost lines (6 percent over two months) give the low end; a half-life of 2 months would give 29 percent a month; 30-day period assumed."],
+  ["retire_bad", 0, 0.05, 0.3, "G",
+    "No source for a rate. Brief section 13, R12 (both designs have a step that withdraws, replaces or invalidates entries); refute-map.md C3 and C8b (bad entries fading at the stale rate).",
+    "No measurement. Both designs can withdraw, replace or invalidate an entry, but no entry was ever retired. The middle value equals the staleness rate; the low end, 0, means bad entries never leave.",
+    "Nothing counts retirements; the range runs from never to almost a third each period, and best matches the staleness rate."],
+
+  // ---- time
+  ["episodes_per_period", 50, 300, 1500, "G",
+    "No source for a count of pieces of work. Hints: R3 s1 and F3 s8 (FixFlow 233 non-merge commits in 64 days; Clinic 432 commits in 8 days); F2 s4 (20 hard encounters per 8 weeks).",
+    "Hint. About 110 commits per 30 days in FixFlow, and about 1,600 at the Clinic's pace. Also 20 hard encounters per 8 weeks. A piece of work is not a commit.",
+    "FixFlow's pace is the low end, the Clinic's peak pace the high end; pieces of work are not commits, so the range is wide."],
+  ["periods", 6, 12, 36, "G",
+    "Run setting (map.json). Hints: R6 (mid-tier models arrive every 90 to 141 days; value half-life 2 to 11 months, unmeasured).",
+    "A chosen horizon, not an unknown, and not drawn in the ensemble. 12 periods of 30 days is one year; mid-tier models arrive every 3 to 5 months.",
+    "A horizon of half a year to three years; best is one year."]
+];
+
+// Brief section 13, R13. Library-side unknowns exist only because of the library; each names the end of
+// its range at which the mechanism works as intended (good_end). Every other unknown is side "other":
+// the mix of work, the gate, the ladder, prices and the horizon.
+const LIBRARY_SIDE = {
+  // coverage ceilings and factors, fill, look-alikes
+  u_exact: "high", u_similar: "high", u_composite: "high", latent_coverage_factor: "high", ok_coverage_factor: "high",
+  k_fill: "low", v_max: "low", k_distract: "high",
+  // trigger, lookup, what comes back, screen, delivery, carry
+  t_visible: "high", t_latent: "high", c_lookup: "low", r_exact: "high", r_similar: "high", r_comp_full: "high", r_comp_part: "high",
+  f_false: "low", c_check_share: "high", c_screen: "low", a_right: "high", a_wrong: "low", d_deliver: "high", c_carry: "low",
+  // use with an entry, calls saved, harm from a wrong entry
+  q_exact: "high", q_similar: "high", q_comp: "high", q_part: "high", h_harm: "low",
+  s_exact: "high", s_similar: "high", s_comp: "high", s_part: "high",
+  // writing, entry quality, repair, staleness, retiring
+  w_write: "high", c_write: "low", e_right: "high", fix_on_found: "high", delta_stale: "low", retire_bad: "high",
+  // checks promoted into the shared test run (revision 4, R21)
+  p_promote: "high", k_promo_exact: "high", k_promo_similar: "high"
+};
+
+// Brief section 14, R18. Four groups of library-side unknowns; the groups and their labels are declared in
+// map.json (lib_groups). Every library-side unknown is in exactly one group; no other-side unknown is in any.
+const LIB_GROUP = {
+  recurrence: ["u_exact", "u_similar", "u_composite", "latent_coverage_factor", "ok_coverage_factor", "k_fill"],
+  reach: ["t_visible", "t_latent", "r_exact", "r_similar", "r_comp_full", "r_comp_part", "d_deliver", "w_write"],
+  quality: ["v_max", "k_distract", "f_false", "c_check_share", "a_right", "a_wrong", "q_exact", "q_similar", "q_comp", "q_part", "h_harm",
+    "e_right", "fix_on_found", "delta_stale", "retire_bad", "s_exact", "s_similar", "s_comp", "s_part", "p_promote", "k_promo_exact", "k_promo_similar"],
+  running_cost: ["c_lookup", "c_screen", "c_carry", "c_write"]
+};
+const groupOf = {};
+for (const g of Object.keys(LIB_GROUP)) for (const id of LIB_GROUP[g]) groupOf[id] = (groupOf[id] ? groupOf[id] + "," : "") + g;
+
+const sources = {
+  F1: "scratchpad/lib/facts/F1-ks-mechanics.md",
+  F2: "scratchpad/lib/facts/F2-ks-research-and-refutes.md",
+  F3: "scratchpad/lib/facts/F3-v2-numbers.md",
+  F4: "scratchpad/lib/facts/F4-lit-positive.md",
+  F5: "scratchpad/lib/facts/F5-lit-negative.md",
+  F6: "scratchpad/lib/facts/F6-lit-tiers-baselines.md",
+  D1: "scratchpad/lib/dives/D1-token-arithmetic.md",
+  D7: "scratchpad/lib/dives/D7-write-side.md",
+  "P-proponent": "scratchpad/lib/dives/P-proponent.md",
+  R1: "scratchpad/lib/refute/R1-ceiling.md",
+  R2: "scratchpad/lib/refute/R2-drain.md",
+  R3: "scratchpad/lib/refute/R3-flat.md",
+  R4: "scratchpad/lib/refute/R4-gap-coverage.md (table re-read from scratchpad/lib/refute/r4/clinic-gates-out.txt)",
+  R5: "scratchpad/lib/refute/R5-price-time.md",
+  R6: "scratchpad/lib/refute/R6-clock.md",
+  R8: "scratchpad/lib/refute/R8-push-precision.md",
+  R9: "scratchpad/lib/refute/R9-trust-cost.md (and R9-git.json, R9-econ.out.txt)",
+  R10: "scratchpad/lib/refute/R10-critic.md",
+  W: "docs/program/evidence/library-pathways/walkthroughs/ (the 59 real-case walkthroughs; case ids such as L01 C3a name the file and section)",
+  V2: "docs/program/HARNESS-V2-DESIGN-2026-11.md",
+  HB: "docs/program/HARNESS-BOTTLENECKS-2026-11.md",
+  TB: "docs/program/TOKEN-BOTTLENECK-2026-11.md",
+  scratchpad: "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/0bf1c4f3-76dc-4144-995c-2af5a213db41/scratchpad/lib (prefix of the scratchpad paths above, minus the leading 'scratchpad/lib')"
+};
+
+// ---------- checks
+const errs = [];
+const mapIds = map.parameters.map(p => p.id);
+const rowIds = T.map(r => r[0]);
+for (const id of mapIds) if (!rowIds.includes(id)) errs.push("missing parameter " + id);
+for (const id of Object.keys(LIBRARY_SIDE)) {
+  if (!mapIds.includes(id)) errs.push("side given for unknown parameter " + id);
+  if (!["high", "low"].includes(LIBRARY_SIDE[id])) errs.push(id + ": good_end must be high or low");
+}
+for (const id of rowIds) if (!mapIds.includes(id)) errs.push("unknown parameter " + id);
+const mapGroups = (map.lib_groups || []).map(g => g.id);
+if (JSON.stringify(mapGroups) !== JSON.stringify(Object.keys(LIB_GROUP))) errs.push("lib groups differ from map.json lib_groups: " + mapGroups.join(","));
+for (const id of Object.keys(LIBRARY_SIDE)) if (!groupOf[id] || groupOf[id].includes(",")) errs.push(id + ": needs exactly one lib_group, has " + (groupOf[id] || "none"));
+for (const id of Object.keys(groupOf)) if (!LIBRARY_SIDE[id]) errs.push(id + ": in a lib_group but not library-side");
+if (new Set(rowIds).size !== rowIds.length) errs.push("duplicate ids");
+const words = s => s.trim().split(/\s+/).length;
+const byId = {};
+for (const r of T) {
+  const [id, low, best, high, tag, src, note, why] = r;
+  const mp = map.parameters.find(p => p.id === id);
+  byId[id] = { low, best, high };
+  if (!(low <= best && best <= high)) errs.push(id + ": need low <= best <= high");
+  if (!["M", "S", "G"].includes(tag)) errs.push(id + ": bad tag");
+  if (mp && (mp.kind === "chance" || mp.kind === "fraction") && (low < 0 || high > 1)) errs.push(id + ": chance or fraction outside 0..1");
+  if (words(note) > 34) errs.push(id + ": note has " + words(note) + " words");
+  if (!src || !note || !why) errs.push(id + ": empty text");
+  if (/\bshould (add|use|build|fix)|\brecommend|\bwe suggest/i.test(note + why)) errs.push(id + ": reads like a fix");
+}
+for (const c of map.constraints || []) {
+  for (const k of ["low", "best", "high"]) {
+    const s = c.ids.reduce((a, id) => a + byId[id][k], 0);
+    if (s > c.limit + 1e-9) errs.push(c.id + " broken at " + k + ": sum " + s.toFixed(3));
+  }
+}
+if (errs.length) { console.error("PROBLEMS:\n" + errs.join("\n")); process.exit(1); }
+
+// ---------- outputs
+const params = T.map(r => {
+  const mp = map.parameters.find(p => p.id === r[0]);
+  const o = { id: r[0], group: mp.group, low: r[1], high: r[3], best: r[2], tag: r[4], side: LIBRARY_SIDE[r[0]] ? "library" : "other" };
+  if (LIBRARY_SIDE[r[0]]) { o.good_end = LIBRARY_SIDE[r[0]]; o.lib_group = groupOf[r[0]]; }
+  o.source = r[5];
+  o.note = r[6];
+  if (mp.run_setting) o.run_setting = true;
+  if (mp.integer) o.integer = true;
+  return o;
+});
+const out = {
+  title: "Parameter table for the pathway map of the reasoning library",
+  version: 4,
+  map: "map.json",
+  note: "Facts only. Tags: M measured on this PC in the owner's repositories or session records; S taken from an outside study; G a guess. A number that only loosely relates to a parameter is a hint: the tag is G and the note says how it differs. Each parameter has a low, a high and a best value. The best value is the middle value the map starts from. The map draws values evenly between low and high. Each row has a side: library (exists only because of the library) or other. A library-side row also has a good_end: the end at which the mechanism works as intended. It also has a lib_group, one of the four groups map.json declares (brief section 14, R18). With tied draws, library-side values share one level per group per run (R18b).",
+  tags: { M: "Measured on this PC, in this owner's repositories or session records", S: "Taken from an outside study or the vendor's price list", G: "A guess. The note may cite a hint and say how it differs from the parameter" },
+  assumptions: [
+    "Cost unit: one call by the cheap model (Sonnet) is 1. Calls are treated as equal in size inside a tier.",
+    "One period is 30 days and one piece of work is a fix-sized task of about ten cheap calls (brief section 12, R6).",
+    "Revision 2 (brief section 12): z_wrongstore removed; s_exact, s_similar, s_comp, s_part, ok_coverage_factor and fix_on_found added; c_carry, rho_retry, w_write, r_exact and h_harm re-tagged G (hints, not measurements); the k_fill source corrected.",
+    "m_opus runs from 1 to 2 and m_fable from 2 to 4. The tops come from the vendor price ratios supplied for this task (2026-11-12), which are per token; the settings are per call.",
+    "Map refuter pass (2026-11-12, refute-map.md): m_opus re-tagged G (a per-token price standing in for a per-call setting); e_right re-tagged S (one of its three sources is an outside study); the notes of m_fable and u_similar now say where their best values sit.",
+    "Where a refuter corrected a first-round number, the corrected number is used.",
+    "Revision 3 (brief section 13): m_opus is an unknown from 1 to 2, best 2, tag G (R10); retire_bad added, 0 to 0.3, best 0.05, tag G (R12); every row has a side, and library-side rows a good_end (R13); k_fill now counts every stored entry, good or bad (R11).",
+    "Revision 4 (brief section 14): every library-side row has a lib_group: recurrence, reach, quality or running_cost (R18). Three unknowns were added (R21): p_promote, k_promo_exact and k_promo_similar. All are library side, group quality, good end high, tag G. Their ranges are 0 / 0.5 / 1, 0.3 / 0.7 / 0.95 and 0 / 0.05 / 0.3. The three are drawn from a stream of their own, so every earlier draw stays the same.",
+    "Check of the third build (2026-11-13, check-third-build.md): the visible notes of u_similar, s_review, m_fable and retire_bad say 'the middle value' instead of 'best'. No number changed.",
+    "Today's notes are CLAUDE.md, the memory notes and the checks in the shared test run. They are present in every way of working, so they cancel out. need_visible and need_latent describe the cheap model as it works today, with those notes. The ceilings u_exact, u_similar and u_composite mean what the library could hold beyond today's notes."
+  ],
+  source_key: sources,
+  parameters: params
+};
+fs.writeFileSync(outJson, JSON.stringify(out, null, 2) + "\n");
+
+let md = "# Why each parameter has its range\n\nOne line per parameter. Tag, then low / best / high, then the side (and for a library-side unknown, its good end), then the reason. Source codes are listed in `params.json` under `source_key`. Written 2026-11-12. Facts only: this file proposes no fixes.\n\n";
+const groups = {};
+for (const r of T) { const g = map.parameters.find(p => p.id === r[0]).group; (groups[g] = groups[g] || []).push(r); }
+for (const g of map.groups) {
+  md += "## " + g.label + "\n\n";
+  for (const r of groups[g.id] || []) md += "- `" + r[0] + "` (" + r[4] + ", " + r[1] + " / " + r[2] + " / " + r[3] + ", " + (LIBRARY_SIDE[r[0]] ? "library side, good end " + LIBRARY_SIDE[r[0]] + ", group " + groupOf[r[0]] : "other side") + "): " + r[7] + "\n";
+  md += "\n";
+}
+fs.writeFileSync(outNotes, md);
+const count = { M: [], S: [], G: [] };
+for (const r of T) count[r[4]].push(r[0]);
+console.log("library side", Object.keys(LIBRARY_SIDE).length, "other side", T.length - Object.keys(LIBRARY_SIDE).length);
+console.log("wrote", outJson, T.length, "parameters");
+console.log("M", count.M.length, count.M.join(" "));
+console.log("S", count.S.length, count.S.join(" "));
+console.log("G", count.G.length, count.G.join(" "));

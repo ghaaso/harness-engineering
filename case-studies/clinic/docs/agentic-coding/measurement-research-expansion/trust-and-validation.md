@@ -1,0 +1,84 @@
+# How the measurement system earns trust
+
+Date: 2 October 2026. Status: research and proposed validation requirements, not performed calibration. Root integration track for [WF-04](../../tasks/workflow-measurement-expansion/task.md). Read the [methods](methods-and-standards.md), [quality](coding-quality-and-evaluators.md) and [tools](tools-and-integration.md) reports alongside this document. The gate names below are local design decisions derived from the cited evidence; they are not clauses copied from an international standard.
+
+An accurate token counter can coexist with an invalid quality evaluator. A repeatable evaluator can consistently reject valid solutions. A valid pilot can still be unrepresentative of future work. Trust must be earned separately for acquisition, outcome judgment and the interpretation of a comparison.
+
+## Evidence behind this requirement
+
+[NIST AI RMF's MEASURE function](https://airc.nist.gov/airmf-resources/airmf/5-sec-core/) calls for documenting unmeasured risks, methods, uncertainty and independent assessment, and evaluating the measurement process itself. Its [Generative AI Profile](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf), especially MS-2.5-001 and MS-2.13-001, discourages broad inference from narrow assessments and asks for measurement-error models and construct validity. These are voluntary risk-management resources, not a certification of this workflow.
+
+Anthropic's [agent-evaluation engineering guidance](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) distinguishes the final environment outcome from the agent's account, recommends reference solutions and calibrated judges, and discusses grading mistakes, isolation and evaluator maintenance. This is first-party practice guidance, not independently replicated evidence for our repo. Its suggested starter task counts are not a statistical guarantee.
+
+Anthropic's [infrastructure-noise experiment](https://www.anthropic.com/engineering/infrastructure-noise) found a six-percentage-point Terminal-Bench difference across resource configurations in its setup. The result supports controlling and reporting resources; it does not supply a universal memory multiplier or expected local gain. Inspecting the full substantive article showed that additional resources both reduced infrastructure failures and enabled different solving strategies.
+
+These sources reinforce the distinction between reliable measurement and impressive-looking numbers. No document or vendor automatically supplies an appropriate task population, a correct business oracle or observed human effort.
+
+The National Physical Laboratory's [2007 guide on validating measurement software](https://www.nist.gov/system/files/documents/2017/05/09/NPL-Best-Practice-Guide-No-1-Validation-of-Software-in-Measurement-Systems-Jan2007.pdf), sections 9-10 and 12.18-12.19, supplies an older metrology foundation: select assurance by consequences, validate reference data/results, and compare numerical implementations with trusted independent references and justified tolerances. Its physical-measurement and safety context is different from developer productivity; this report transfers those validation principles, not its Measurement Software Index, historical legal requirements or IEC safety certification. The guide excludes research/feasibility software from its formal scope. Its principles become relevant to the future operational collector, without making this research a conformity assessment.
+
+## Decision-to-measure map
+
+Every metric needs a small record specifying the decision it supports, scope/unit, source, evaluator, exclusions, uncertainty, review owner and conditions that invalidate its use. Existing WF-03 provenance fields remain useful, but the decision and validity argument need to be explicit.
+
+| Decision | Evidence to use | Tempting substitute that cannot establish it |
+| --- | --- | --- |
+| Is this task acceptable? | Current artifact checked against the frozen applicable contract; required review and known unresolved requirements visible | Agent says done; zero process exit; schema-valid final text |
+| Did quality improve? | Contract acceptance, confirmed defect classes/severity, regression retention and change exercises on an eligible task population | More tests, coverage or lint warnings alone; arbitrary weighted quality score |
+| Did we reduce human work? | Complete active person-time for all assigned work, including failed attempts, supervision, review and measurement upkeep | Agent elapsed time; fewer user messages; retrospective speed impression |
+| Did we reduce context resources? | Reconciled input usage across all relevant workers and attempts, with acceptance and condition evidence | Packet size alone; one successful worker's tokens; unsupported repeated-read zeros |
+| Did development cost fall? | Disclosed complete billing scope, route and pricing/allocation basis | API estimate treated as subscription charge; account-limit percentage |
+| Can someone continue or change the code? | Frozen resume/change task, actual result and effort, relevant-source freshness | Longer handoff; automated praise of readability |
+
+“Quality is good” is a claim about selected requirements under stated conditions. A system must retain scope and uncertainty rather than imply proof of every possible behavior. Proposed clinic business rules remain provisional until their evidence questions are resolved; their tests cannot establish client acceptance.
+
+## Qualification gates before automatic results become decision evidence
+
+| Gate | Validation exercise | Required observable result |
+| --- | --- | --- |
+| G0: decision and oracle validity | Map each decisive assertion to an applicable requirement; review valid alternative solutions and ambiguous cases | No undocumented requirement becomes a hidden acceptance condition; unresolved policy remains unresolved |
+| G1: acquisition correctness | Use independently calculated synthetic ledgers with deltas, cumulative counters, cache subsets, duplicate/reordered/reset/fork/truncated events and missing workers | Arithmetic matches the independent expected result; ambiguous scope remains partial/unavailable; repeated import cannot inflate totals |
+| G2: live route calibration | On a separately scoped owned run, bind actual process/thread/worker events and compare usage/result references, recording their independence and limits | Qualify identity, transport and reported-counter interpretation separately; completion/failure/loss behavior retained. Without an independent reference, upstream resource/billing accuracy remains unvalidated even if capture of the selected stream is complete |
+| G3: evaluator sensitivity and specificity | Evaluate known defective artifacts and separately reviewed correct alternatives, including boundary errors and legitimate implementation variation | Report false accepts, false rejects and unresolved labels by class; every decisive seeded defect is detected or the gap is disclosed and repaired |
+| G4: evaluator integrity | Define trusted capture/sealing/validation boundaries and a tested access/attack model; alter artifacts, remove checks, fake claims, hide zero-test execution, poison verdict text and probe answer access | Within the tested configuration, these negative controls do not gain acceptance and worker identity is denied access to protected answers. Hashes alone identify changes relative to a trusted reference, not producer authenticity or confidentiality |
+| G5: judgment calibration | Human experts label a held-out set before seeing the model's judgment; record artifact/oracle involvement and treatment exposure, then compare verdicts and inspect disagreements | Clear reviewer identity, independence limits and rubric; class-specific errors, abstentions and disagreement retained; automated reviewers not relabelled human |
+| G6: reproducibility and drift | Regenerate reports offline; change the client/provider/evaluator/source version; repeat reference checks | Same sealed inputs yield the same derivation; changed assumptions create a new epoch or invalidate the affected comparison |
+| G7: comparative validity | Freeze assignment, estimand, budgets, retry/failure policies, tolerances and analysis before examining confirmatory outcomes | Every assigned task and its effort remain in scope; uncertainty respects task/trajectory clustering; insufficient evidence yields an inconclusive result |
+| G8: operational usefulness | Observe collection overhead and whether ordinary reports reveal actionable defects, waits and missingness | Collection burden measured and included; findings can trigger retain/change/drop decisions without inventing a headline multiplier |
+
+G3's seeded-defect requirement applies to the explicitly selected decisive fixtures. Detecting all of them is a release check for that evaluator version, not an estimate of perfect sensitivity over unknown future defects. Mutation testing adds diagnostic evidence; equivalent mutations and invalid test setups need adjudication. G4 requires a trusted evaluator and reference/seal store outside the worker's effective write/control boundary; a worker able to rewrite the validator or recompute its trusted manifest invalidates that assurance. Test filesystem, mount, history, cache, network and tool access rather than assuming a sibling folder protects answers. G5 requires humans when a claim is about agreement with human judgment; three research agents agreeing is not a substitute.
+
+Synthetic replay can qualify G1 and parts of G4/G6. It cannot qualify G2 or establish live provider resource completeness. A dashboard export cannot qualify G0/G3/G7. Ordinary code work may continue when a nonessential resource metric is unavailable, but an improvement claim requiring that metric must be withheld.
+
+Tool qualification must reconcile native records and expected workers independently of exported spans. A successful flush/upload is delivery evidence; it does not prove every source record, step or child was converted. The tools review identifies concrete malformed-record, duplicate-snapshot/reopened-step, missing-child and partial-conversion fixtures. Keep source/scorer errors alongside any retained partial scores; the experiment's prespecified acceptance rule governs their eligibility.
+
+## Calibration data and labels
+
+Use three distinct collections with frozen versions:
+
+1. **Instrument fixtures:** independently calculated observations, duplicates, corruption, missingness and counter boundary cases. These establish accounting behavior.
+2. **Evaluator reference artifacts:** known valid alternatives, deliberately defective artifacts and ambiguous/unjudgeable cases. Record who established the reference label, against which contract and with what evidence.
+3. **Representative workflow tasks:** bug repair, bounded implementation, integration, iterative change and cold resumption from relevant repository conditions. These establish empirical behavior and scope; they are not instrument fixtures.
+
+Keep development/calibration examples separate from confirmatory holdouts. Hidden inputs may vary, but required behavior must be inferable from the task and permitted authoritative context. Preserve evaluator revisions and rerun decisions: correcting a faulty grader creates a new evaluation version, not a silent overwrite of an old score. Retain both interpretations when explaining changed results.
+
+Binary acceptance calibration should record a confusion matrix against independently established labels. Report false accepts per labelled-defective case and false rejects per labelled-correct case, with abstention/invalid-evaluation coverage separate. Show class prevalence; deliberately seeded calibration prevalence does not establish operational prevalence or predictive value. A single accuracy percentage can conceal failure on rare decisive defects. Human disagreement is evidence about reference uncertainty; adjudicate rather than force a convenient label. Model judges remain optional supplementary evidence until their error profile is established for the specific rubric and artifact class.
+
+## Uncertainty is more than a confidence interval
+
+Keep distinct records for instrumentation error, evaluator/reference-label uncertainty, run-to-run variation, task-sampling uncertainty and generalization limits. A bootstrap interval around scores does not fix an incorrect oracle or missing reviewer tokens. A precise operational mean does not establish a causal effect.
+
+As an arithmetic illustration, for independent identically distributed Bernoulli failure observations with zero observed failures, a one-sided 95% exact upper bound is `1 - 0.05^(1/n)`. At n=10 it is about 25.9%; at n=59 about 5.0%. This follows the binomial probability of observing zero failures, consistent with [NIST's exact-binomial methods](https://itl.nist.gov/div898/software/dataplot/refman2/auxillar/exacbino.htm) and [confidence-interval guide](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm). These numbers are illustrative calculations, not a prescribed acceptable defect rate or a trial result. Repeated tests/stages from the same trajectory do not supply n independent observations. Unchecked defects are not observed nonfailures.
+
+Select tolerances from the decision's consequences and acceptable uncertainty before confirmation. For a quality-preservation claim, specify a noninferiority margin and gather adequate precision; failure to find a significant difference does not establish noninferiority. Different severities or critical invariants need explicit gates rather than compensation by many easy successes.
+
+## New research/tool leads and limits
+
+[NIST's agentic evaluation-probe project](https://www.nist.gov/programs-projects/building-evaluation-probes-agentic-ai) is ongoing research into source-grounded verdicts and audit trails, including faithfulness, completeness and sufficiency. The project is useful for evaluating the grounding of context/research claims. Its evolving demonstration is not a validated coding oracle, product-quality certificate or proof of factual truth beyond the selected reference corpus. The project page was inspected; its implementation and webinar were not audited or run.
+
+[Dioptra](https://pages.nist.gov/dioptra/) is a NIST-developed reproducible AI test platform. Its [architecture](https://pages.nist.gov/dioptra/explanation/architecture-overview.html) uses an API, data storage, Redis queues and container workers. Reusable experiment snapshots are relevant, but adopting the whole service stack needs a demonstrated workload/integration benefit. For this local coding measurement problem, defer it rather than infer that a NIST-developed platform makes our metrics correct. Documentation was inspected; no installation, capacity or Codex compatibility test was performed.
+
+The tools track discovered native Codex providers in Promptfoo. Root independently inspected the [SDK-provider documentation](https://www.promptfoo.dev/docs/providers/openai-codex-sdk/) and [coding-agent guide](https://www.promptfoo.dev/docs/guides/evaluate-coding-agents/). Reuse is promising, but documented fresh versus persistent thread behavior, cost-estimate semantics and separate app-server processes must survive local calibration. See the tools report for version/code evidence and selection gates.
+
+## Root source coverage
+
+Access date: 2 October 2026. NIST AI RMF: MEASURE categories and related scope, not full compliance review. NIST AI 600-1: introduction and targeted actions/limitations, especially PDF pages 32-42 and 52; no full 64-page reading or visual audit. Anthropic eval guidance: task/trial/outcome/grader definitions, non-determinism and implementation/maintenance sections; no linked experiments reproduced. Infrastructure-noise article: all substantive text; graph pixels/raw data not independently reconstructed. NIST statistics: exact/one-sided interval sections; no Dataplot execution. NPL 2007 guide: overview plus selected one-based PDF pages 13, 22, 51-53, 86-89 and 107, especially requirements, numerical reference results and independent back-to-back testing; no full 144-page reading or current legal/safety-standard verification. The retrieved PDF's SHA-256 is `047746160854c72eebb1a02ebe81200e687c5273bceb7147b70b9092df64ec11`. Web follow-up extraction failed, so the same NIST-hosted PDF was retrieved to ignored scratch storage and its selected text inspected locally. The guessed NPL website URL and ACM badging page failed to load; neither supplies unseen evidence here. NIST probes/Dioptra: project/architecture text only. Promptfoo: selected semantics and caveats, with deeper source inspection delegated to the tools researcher. Search-only results and newer unaudited preprints are not evidence for adoption.

@@ -1,0 +1,63 @@
+// Harness v2, phase 1: join every unexpected shutdown to what Claude sessions and the clinic repository were doing.
+// Read-only. Inputs: shutdown-events.json (from the Windows System log), every transcript under ~/.claude/projects
+// (timestamps only), and `git log` of the clinic repository. Run from this folder:  node - < shutdown-join.js.txt
+'use strict';
+const fs = require('fs'), path = require('path'), readline = require('readline'), cp = require('child_process');
+const P = 'C:/Users/User/.claude/projects';
+const CLINIC = 'C:/Bilal_Migration/User/Downloads/20_PROJECTS/24_Clinic_Workshop';
+const raw = JSON.parse(fs.readFileSync('shutdown-events.json', 'utf8').replace(/^\uFEFF/, ''));
+const boots = raw.filter(e => e.kind === 'boot41').map(e => ({ at: Date.parse(e.at), bug: +e.bugcheck || 0, sleep: +e.sleep || 0, button: e.button && e.button !== '0' ? 1 : 0 }));
+const events = raw.filter(e => e.kind === 'unexpected6008').map(e => {
+  const m = /at (\d+):(\d+):(\d+) (AM|PM) on (\d+)\/(\d+)\/(\d+)/.exec(e.msg); if (!m) return null;
+  let h = +m[1] % 12; if (m[4] === 'PM') h += 12;
+  const iso = m[7] + '-' + String(m[5]).padStart(2, '0') + '-' + String(m[6]).padStart(2, '0') + 'T' + String(h).padStart(2, '0') + ':' + m[2].padStart(2, '0') + ':' + m[3].padStart(2, '0') + '+05:00';
+  const logged = Date.parse(e.at); const b = boots.slice().sort((x, y) => Math.abs(x.at - logged) - Math.abs(y.at - logged))[0];
+  return { down: Date.parse(iso), local: iso.slice(0, 19).replace('T', ' '), boot: logged, bug: b && Math.abs(b.at - logged) < 120000 ? b.bug : null, sleep: b && Math.abs(b.at - logged) < 120000 ? b.sleep : null, button: b && Math.abs(b.at - logged) < 120000 ? b.button : null,
+    calls: { clinic: 0, fixflow: 0, other: 0 }, sessions: new Set(), last: 0, commits30: 0 };
+}).filter(Boolean).sort((a, b) => a.down - b.down);
+const WIN = 10 * 60 * 1000;
+const days = new Set(); events.forEach(e => { [e.down, e.down - WIN, e.down - 6 * 3600e3].forEach(t => days.add(new Date(t).toISOString().slice(0, 10))); });
+const groupOf = d => /Clinic-Workshop/.test(d) ? 'clinic' : /EMS-workshop1/.test(d) ? 'fixflow' : 'other';
+const walk = (d, out) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p, out); else if (e.name.endsWith('.jsonl')) out.push(p); } return out; };
+(async () => {
+  let files = 0;
+  for (const d of fs.readdirSync(P)) {
+    let list; try { list = walk(path.join(P, d), []); } catch { continue; }
+    const g = groupOf(d);
+    for (const f of list) {
+      const st = fs.statSync(f); if (st.mtimeMs < Date.parse('2026-10-01')) continue; files++;
+      const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+      for await (const line of rl) {
+        const i = line.indexOf('"timestamp":"2026-1'); if (i < 0) continue;
+        const day = line.substr(i + 13, 10); if (!days.has(day)) continue;
+        if (line.indexOf('"usage"') < 0) continue;
+        const t = Date.parse(line.substr(i + 13, 24)); if (!t) continue;
+        for (const e of events) {
+          if (t > e.down) continue;
+          if (t > e.last) e.last = t;
+          if (t >= e.down - WIN) { e.calls[g]++; e.sessions.add(f); }
+        }
+      }
+    }
+  }
+  let commits = [];
+  try { commits = cp.execFileSync('git', ['-C', CLINIC, 'log', '--all', '--since=2026-10-01', '--format=%cI'], { encoding: 'utf8', maxBuffer: 1 << 26 }).split('\n').filter(Boolean).map(Date.parse); } catch (err) { commits = null; }
+  if (commits) events.forEach(e => { e.commits30 = commits.filter(t => t <= e.down && t >= e.down - 30 * 60000).length; });
+  const L = ['Harness v2 phase 1: every unexpected shutdown, joined to Claude activity and clinic commits', 'Run ' + new Date().toISOString() + '. Read-only. Transcript files read: ' + files + '. Times are local (+05:00).', ''];
+  L.push(['shutdown (local)'.padEnd(20), 'back on'.padEnd(12), 'down for'.padStart(9), 'flags'.padEnd(14), 'calls in last 10 min (clinic/fixflow/other)'.padEnd(44), 'sessions'.padStart(8), 'last call before'.padStart(17), 'commits 30m'.padStart(11)].join(' '));
+  const fmt = ms => { const m = Math.round(ms / 60000); return m < 90 ? m + ' min' : m < 2880 ? (m / 60).toFixed(1) + ' h' : (m / 1440).toFixed(1) + ' d'; };
+  let busy = 0, quiet = 0;
+  for (const e of events) {
+    const n = e.calls.clinic + e.calls.fixflow + e.calls.other; if (n > 0) busy++; else quiet++;
+    const flags = [e.bug ? 'crash code' : '', e.sleep ? 'sleep' : '', e.button ? 'button' : ''].filter(Boolean).join(',') || (e.bug === null ? '?' : '-');
+    const gap = e.last ? e.down - e.last : null;
+    L.push([e.local.padEnd(20), new Date(e.boot + 5 * 3600e3).toISOString().slice(5, 16).replace('T', ' ').padEnd(12), fmt(e.boot - e.down).padStart(9), flags.padEnd(14),
+      (n + '  (' + e.calls.clinic + '/' + e.calls.fixflow + '/' + e.calls.other + ')').padEnd(44), String(e.sessions.size).padStart(8), (gap === null ? 'none' : gap < 120000 ? Math.round(gap / 1000) + ' s' : fmt(gap)).padStart(17), (commits ? String(e.commits30) : '?').padStart(11)].join(' '));
+  }
+  L.push('', 'events: ' + events.length + '. With a Claude call in the last 10 minutes: ' + busy + '. With none: ' + quiet + '.');
+  const byHour = {}; events.forEach(e => { const h = e.local.slice(11, 13); byHour[h] = (byHour[h] || 0) + 1; });
+  L.push('by local hour: ' + Object.keys(byHour).sort().map(h => h + 'h:' + byHour[h]).join('  '));
+  L.push('', 'What this cannot show: whether a check was running, the temperature, the power draw, or whether the house lost power.');
+  fs.writeFileSync('shutdown-join-2026-11.txt', L.join('\n') + '\n');
+  console.log(L.join('\n'));
+})();

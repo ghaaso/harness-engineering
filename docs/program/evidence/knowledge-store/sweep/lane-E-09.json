@@ -1,0 +1,860 @@
+{
+ "lane": "E-09",
+ "tool_status": "ok",
+ "summary": "Best answer to \"history plus branch/worktree merge without a second server\" is the index-is-a-cache pattern, with immutable event files in git as truth and a rebuildable local index. Fossil tickets do this today, git-bug does it via an op-DAG, and Beads did it as JSONL plus SQLite until it abandoned it for Dolt (v1.x). That pivot is the main warning: mutable one-record-per-line JSONL needed a custom merge driver and a daemon. Recommended shape (inferred): append-only, immutable events, one small file per event named by content hash, with supersede and refute recorded as new events. Git then merges them as pure adds, so no conflicts and no custom driver (the built-in merge=union is the fallback). Truth lives on a branch, or in a shared custom ref if instant cross-worktree visibility is needed (refs/ are shared across worktrees; branch files are not). The index is a gitignored node:sqlite (RC in Node 24, no install) or in-memory file rebuilt from the events. A hash chain like the repo's staff_ledger_chain gives tamper evidence at zero cost. Dolt is the real alternative for native branch/merge/diff/cell-level conflicts and can sync through a git remote, but costs a ~103 MB binary, usually a server process, and shows no worktree story. A SQLite file in git is rejected as truth (binary, WAL/journal pairing hazards, no merge). immudb, XTDB, Datomic, TerminusDB and lakeFS are cite-design-only or rejected: wrong scale, server/JVM weight, or licence. Egress: everything here is self-hostable. The only documented egress is the explicit Dolt/git remote and the Beads install script. Dolt's own telemetry stance is unverified.",
+ "facts": [
+  {
+   "id": "F01",
+   "statement": "Beads (bd) now describes itself as a distributed graph issue tracker 'powered by Dolt'. Embedded mode (default) runs Dolt in-process with a single writer, data in .beads/embeddeddolt/. Server mode connects to an external dolt sql-server for multiple concurrent writers, data in .beads/dolt/. README says '.beads/issues.jsonl is an export for viewers and interchange, not the source of truth or a backup.' Latest release seen: v1.3.2 (24 Oct, 2026 per release notes), embedded Dolt 2.2.0.",
+   "source": "https://github.com/steveyegge/beads (README, fetched 2026-11-02); https://github.com/steveyegge/beads/releases",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "engine",
+    "concurrency",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F02",
+   "statement": "Beads classic (v0.30.0 README): 'Source of truth is JSONL (.beads/issues.jsonl, committed to git)'; per-machine SQLite cache (.beads/*.db, gitignored) auto-synced; a background daemon per workspace; auto-export after a 5 s debounce; auto-import when JSONL is detected newer (e.g. after git pull); optional pre-commit/post-merge hooks; a custom git merge driver ('git config merge.beads.driver \"bd merge %A %O %A %B\"' plus a .gitattributes line); hash-based IDs from v0.20.1; .exclusive-lock and socket files must be gitignored.",
+   "source": "https://pkg.go.dev/github.com/steveyegge/beads@v0.30.0",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "engine",
+    "concurrency",
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F03",
+   "statement": "The Beads storage pivot: v1.0.1 stores issues in a Dolt database, not the git repo; JSONL is no longer written by default (still available). Beads and git branches are decoupled: all issues live on Dolt's main branch, so switching git branches does not change which issues you see. The Dolt DB 'travels with' the repo via the 'origin' remote, synced with bd dolt push/pull; multiple clones sharing one remote can get non-fast-forward rejections and merge conflicts when agents edit the same issue. The post does not mention git worktrees.",
+   "source": "https://www.dolthub.com/blog/2026-04-15-common-beads-workflows/",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "concurrency",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F04",
+   "statement": "A search summary of Beads docs reports the move from SQLite+git to Dolt was motivated by Dolt offering 'both fast SQL queries and proper merge semantics', and that the 'bd migrate --to-dolt' command was removed in v0.58.0. Treat the stated reasons as secondary.",
+   "source": "https://beads.gascity.com/architecture/dolt (surfaced via WebSearch; direct fetch failed with DNS error)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "engine",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F05",
+   "statement": "Fossil tickets are stored only as append-only 'ticket change artifacts' (ticket id, timestamp, user, key/value pairs). Current state is computed by applying changes in timestamp order. The TICKET/TICKETCHNG tables are summaries that 'can always be reconstructed from the ticket change artifacts'; only the artifacts are synced and the tables are rebuilt on receipt. This is the index-is-a-cache pattern in production for ~15+ years.",
+   "source": "https://fossil-scm.org/home/doc/trunk/www/tickets.wiki",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "provenance",
+    "concurrency"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F06",
+   "statement": "Fossil stores content in an SQLite database, is a single self-contained executable with prebuilt Linux/Mac/Windows binaries, 2-clause BSD licence, and bundles bug tracking, wiki, forum, technotes and autosync. It is its own SCM, not a git add-on.",
+   "source": "https://fossil-scm.org/home/doc/trunk/www/index.wiki",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F07",
+   "statement": "git's built-in 'union' merge driver: 'Run 3-way file level merge for text files, but take lines from both versions, instead of leaving conflict markers. This tends to leave the added lines in the resulting file in random order and the user should verify the result.' Custom drivers are defined in .git/config (merge.<name>.driver with %O %A %B), exit 0 if clean, non-zero on conflict. The 'binary' driver leaves the path conflicted.",
+   "source": "https://git-scm.com/docs/gitattributes",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F08",
+   "statement": "git worktree: linked worktrees share everything except per-worktree files such as HEAD and index; all refs under refs/ are shared except refs/bisect, refs/worktree, refs/rewritten; repo config is shared unless extensions.worktreeConfig is enabled; the same branch cannot be checked out in two worktrees by default. Consequence: a store kept in a custom ref (or notes ref) is instantly visible to every worktree; a store kept as files on a branch is visible only after that branch is merged/checked out.",
+   "source": "https://git-scm.com/docs/git-worktree",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "workflow",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F09",
+   "statement": "Dolt (Apache-2.0) is 'a SQL database you can fork, clone, branch, merge, push and pull just like a Git repository'; it is 'a single ~103 megabyte program'; Windows via .msi or Chocolatey, Docker images exist; sql-server is MySQL-wire compatible so any MySQL client (so, inferred, Node mysql2) connects.",
+   "source": "https://github.com/dolthub/dolt ; https://www.dolthub.com/docs/introduction/what-is-dolt",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "access"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F10",
+   "statement": "Dolt merge semantics: CALL DOLT_MERGE('branch'); data conflicts are reported per column with base/ours/theirs values in dolt_conflicts and dolt_conflicts_$table; resolve by deleting/updating rows; schema conflicts in dolt_schema_conflicts; FK/unique violations in dolt_constraint_violations; transactions with conflicts roll back unless dolt_allow_commit_conflicts=1. Beads README separately claims 'cell-level merge'.",
+   "source": "https://dolthub.com/docs/sql-reference/version-control/merges ; https://github.com/steveyegge/beads",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "provenance",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F11",
+   "statement": "Dolt can use a plain git repository as a remote (blog dated 2026-02-13): data stored under refs/dolt/data (override with --ref), Git must be on PATH, the repo must already have at least one branch, Bitbucket unsupported. Git-remote history is NOT an audit trail: git-remote.max-history-commits defaults to 64, then the next write starts a parentless commit, and reset-history-on-prune defaults true; writers to the same remote must coordinate these settings. Docs describe no locking for git remotes. SSH remotes cannot push into a data dir locked by a running sql-server.",
+   "source": "https://www.dolthub.com/docs/sql-reference/version-control/remotes ; https://dolthub.com/blog/2026-02-13-announcing-git-remote-support-in-dolt (surfaced via search)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "concurrency",
+    "engine",
+    "egress",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F12",
+   "statement": "dolthub/driver is an Apache-2.0 Go database/sql embedded driver for Dolt (no server), mentions open retries for lock contention via Config.BackOff. It is Go-only, so not usable from Node without a sidecar.",
+   "source": "https://github.com/dolthub/driver",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "access"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F13",
+   "statement": "git-bug (GPL-3.0, Go) stores nothing in the working tree. Each entity is an operation-based log: operations (type, author, Lamport clock, data, nonce, hash ID) are grouped in OperationPacks stored as git blobs, chained by commits, exposed under refs/<namespace>/<id> so ordinary git push/fetch moves them. Concurrent edits make merge commits forming a DAG; replicas sort operations by Lamport clock with pack id as tiebreak and so converge deterministically. The doc ties this to operation-based CRDTs. Windows support and a local cache are not stated in the fetched pages.",
+   "source": "https://github.com/git-bug/git-bug ; https://github.com/git-bug/git-bug/blob/master/doc/design/data-model.md",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency",
+    "provenance",
+    "engine"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F14",
+   "statement": "git notes: stored in refs/notes/commits by default (override via core.notesRef/--ref); every change makes a commit on the notes ref; merge strategies manual (default), ours, theirs, union, cat_sort_uniq (settable per ref via notes.<name>.mergeStrategy); notes.rewriteRef must be set to carry notes across amend/rebase (not default). Notes attach to an object (commit), not to a symptom. The page does not state that notes are pushed/fetched by default; general git behaviour (inferred) is that they are not.",
+   "source": "https://git-scm.com/docs/git-notes",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F15",
+   "statement": "git diff textconv: a program converts a binary file to text for git diff/log/show only; one-way, not suitable for applying; cachetextconv caches in refs/notes/textconv/<driver>. Gist/blog pattern: diff.sqlite3.textconv = 'sqlite3 $1 .dump' with '*.db diff=sqlite3' in .gitattributes, which gives readable diffs of a committed SQLite file but not a merge.",
+   "source": "https://git-scm.com/docs/gitattributes ; https://blog.simonwillison.net/2023/Nov/1/tracking-sqlite-database-changes-in-git/",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F16",
+   "statement": "sqldiff pairs rows by rowid or PRIMARY KEY and emits SQL (INSERT/UPDATE/DELETE) or a binary changeset; it omits tables without an explicit primary key from changesets silently; does not diff TRIGGERs/VIEWs; virtual-table (FTS5) shadow tables are diffed by default and applying that output can corrupt the virtual table unless --vtab; 'not designed for schema migrations'. It produces a diff of two files; it does not three-way merge. Doc last updated 2023-01-06.",
+   "source": "https://www.sqlite.org/sqldiff.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F17",
+   "statement": "SQLite hazards for committing a live DB file: copying a database mid-transaction can yield a corrupt copy; the -journal/-wal file must be kept with the database; safe copies use the backup API, VACUUM INTO, or sqlite3_rsync (3.47.0+); network filesystems and differing lock protocols are corruption causes. The page does not mention version control.",
+   "source": "https://www.sqlite.org/howtocorrupt.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F18",
+   "statement": "sqlite-diffable (Simon Willison, pip) dumps each SQLite table to a .metadata.json plus a .ndjson file (one JSON array per row) and loads it back (load fails on existing tables without --replace). It is a text-dump-for-git pattern; it needs Python/pip, which this machine lacks on PATH and which this research may not install.",
+   "source": "https://github.com/simonw/sqlite-diffable",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F19",
+   "statement": "Node's built-in node:sqlite is marked '1.2 Release candidate' in the v24.x docs (RC since v24.15.0), needs no flag, has DatabaseSync with exec/prepare, serialize/deserialize/backup, and session/changeset APIs (createSession, applyChangeset). FTS5 availability in the bundled SQLite is NOT stated on the page (probe with sqlite_compileoption_used('ENABLE_FTS5')). This allows a zero-install rebuildable index on Node 24.",
+   "source": "https://nodejs.org/docs/latest-v24.x/api/sqlite.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "access",
+    "ops_cost",
+    "retrieval"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "F20",
+   "statement": "Kleppmann's 'Turning the database inside-out' (2015): treat the append-only event log as the source of truth and derive indexes, caches and materialized views that 'can be rebuilt at any time'; argues this removes cache-invalidation and cold-start problems and preserves full history for audit/recovery.",
+   "source": "https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F21",
+   "statement": "immudb: Business Source License 1.1 (not OSI open source), Go, SQL/KV/document models, Postgres wire protocol, Merkle-tree verifiable proofs, embeddable as a Go library, Windows supported, example release v1.9.5. Page states nothing about telemetry or footprint.",
+   "source": "https://github.com/codenotary/immudb",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "provenance",
+    "egress",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F22",
+   "statement": "XTDB: 'an immutable SQL database' with automatic bitemporal history (SQL:2011), MPL 2.0, run via Docker image ghcr.io/xtdb/xtdb exposing Postgres wire on 5432 and HTTP monitoring on 8080; default storage is temporary inside the container unless a host dir is mounted (UID 20000). JVM and storage backends not covered on the fetched pages.",
+   "source": "https://docs.xtdb.com/ ; https://docs.xtdb.com/intro/installation-via-docker.html",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F23",
+   "statement": "Datomic: 'All editions of Datomic are free, with binaries licensed under the Apache 2.0 license'; developed by Nubank; written in Clojure on the JVM; Datomic Local is embedded, single-process, local disk; Datomic Pro needs a self-managed transactor. A 2023 summary says Datomic states it is not open source (binaries licensed, source closed).",
+   "source": "https://docs.datomic.com/datomic-overview.html ; https://blog.datomic.com/2023/04/datomic-is-free.html (via search)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "egress"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F24",
+   "statement": "TerminusDB: Apache-2.0 knowledge-graph DB with git-like branch/merge/diff/push/pull, WOQL, JSON document API; runs as a server (docker compose, port 6363); README shows v12.0.7 and 'maintained by the Gettier team' (ownership changed from earlier vendor, direction unclear); server language apparently Prolog (inferred from badge).",
+   "source": "https://github.com/terminusdb/terminusdb",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "engine",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F25",
+   "statement": "lakeFS: Git-like branching/merging over object storage (S3/Azure/GCS); needs an object store plus a KV/metadata store (DynamoDB or PostgreSQL drivers since 0.80.2); its sizing guide's reference cases are ~180M objects (~7.5 PB) per commit and 500 TiB / 20M objects. Designed orders of magnitude above a few hundred knowledge entries.",
+   "source": "https://docs.lakefs.io/howto/sizing-guide.html ; https://docs.lakefs.io/understand/how/kv/ (via search summary)",
+   "source_kind": "primary_docs",
+   "confidence": "reported",
+   "bears_on": [
+    "engine",
+    "ops_cost",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F26",
+   "statement": "Beads install/footprint: installable by Homebrew, npm (@beads/bd), install script (fetched from raw.githubusercontent.com), go install; Windows 11 is a documented platform; MIT licence; bd init writes/updates AGENTS.md and installs Claude Code/Codex/Cursor integrations unless --skip-agents/--stealth; --stealth sets no-git-ops but 'does not stop Dolt network sync; set dolt.local-only: true'; HTTP mode refuses plaintext to non-loopback hosts. README states no telemetry either way.",
+   "source": "https://github.com/steveyegge/beads (README)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "egress",
+    "ops_cost",
+    "access"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F27",
+   "statement": "Repo's own .gitattributes sets '* text=auto eol=lf', so JSONL/event files committed from this Windows box are LF-normalised (no CRLF merge noise). Local git is 2.56.0.windows.4. None of sqlite3, sqldiff, dolt, bd, fossil are on PATH here.",
+   "source": "C:/Users/User/Documents/projects/EMS_workshop1/.claude/worktrees/knowledge-store-research-9c609c/.gitattributes:2 ; `git --version`; `which` probe",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "ops_cost",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F28",
+   "statement": "The repo already has an in-house precedent for tamper-evidence: staff_ledger_chain, a separate append-only hash-linked log with row_hash = sha256(version||payload||prev_hash), canonical serialisation pinned in a stdlib-only module (attendance/chain.py). The same pattern could chain knowledge events without immudb.",
+   "source": "CLAUDE.md (Staff money section, in context; backend/app/features/attendance/chain.py named there, not opened)",
+   "source_kind": "local_file",
+   "confidence": "reported",
+   "bears_on": [
+    "provenance",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F29",
+   "statement": "git-bug, Fossil and the Beads-classic design all avoid mutable shared state by making the unit of merge an immutable, uniquely-identified record (operation / change artifact / hash-ID issue), then deriving current state. Beads classic still kept one mutable issue per JSONL line and so needed a bespoke merge driver and a daemon; that is the part the project later abandoned.",
+   "source": "F02, F03, F05, F13 (synthesis)",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "data_model",
+    "concurrency",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "F30",
+   "statement": "Design sketch: one immutable file per event (named by content hash, written temp-then-rename), types create/confirm/refute/invalidate/revise, living either in a tracked directory or in a shared custom ref. Git sees only add-only paths, so branch and worktree merges never conflict and no custom driver is needed; merge=union on a single JSONL is the weaker fallback (random line order, duplicates if a record is edited in place). Costs: file-count growth (hundreds to low thousands, fine) and the need for a compaction/snapshot step eventually.",
+   "source": "inferred from F05, F07, F08, F13",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "data_model",
+    "concurrency",
+    "workflow",
+    "provenance"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "Immutable event files in git + rebuildable local index (node:sqlite)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Gives history (git log), branch/worktree merge via add-only files with no second server, and a throwaway index for fuzzy lookup. Prior art: Fossil tickets, git-bug op log, Beads classic, Kleppmann log-as-truth. Refutations and invalidations are just more events, matching the revise/retain loop. Weaknesses: branch-visibility lag across parallel worktrees unless a shared ref or a post-merge sync step is used; eventual compaction; index must be rebuilt after pull (cheap at this scale).",
+   "egress_posture": "None. Local files and git only; sync only if the owner pushes the repo.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F02",
+    "F05",
+    "F07",
+    "F08",
+    "F13",
+    "F19",
+    "F20",
+    "F27",
+    "F29",
+    "F30"
+   ],
+   "windows_dev_fit": "Good: git 2.56 present, Node 24 built-in node:sqlite, LF normalised by existing .gitattributes.",
+   "linux_prod_fit": "Good: same files, same git, same Node.",
+   "footprint": "Files plus a gitignored index; no new binary.",
+   "agent_access": "CLI or MCP tool written in Node reading events and the index.",
+   "maturity": "Pattern mature; node:sqlite is a release candidate and FTS5 is unprobed."
+  },
+  {
+   "name": "Dolt (embedded or sql-server) with git-remote sync",
+   "kind": "engine",
+   "verdict": "viable",
+   "why": "Only candidate with native SQL branch/merge/diff, column-level conflict tables and history per row, plus git-remote sync under refs/dolt/data with no extra hosted service. But it adds a ~103 MB binary, a server process for concurrent writers (embedded is single-writer in Beads), no worktree story (the Beads post ignores worktrees), git-remote history that squashes after 64 commits so it is not an audit trail, and a MySQL-flavoured schema. Heavy for tens to hundreds of rows. Keep as the fallback if event-file merging proves too limited, behind the abstraction layer.",
+   "egress_posture": "No egress unless a remote is configured (git remote or DoltHub). Dolt's own usage-stats behaviour was not verified; treat as unknown until checked.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F09",
+    "F10",
+    "F11",
+    "F12",
+    "F01"
+   ],
+   "windows_dev_fit": "MSI/Chocolatey; server mode on localhost; Go embedded driver not usable from Node.",
+   "linux_prod_fit": "Good: Linux binary and Docker image; Apache-2.0.",
+   "footprint": "~103 MB single binary plus data dir plus optional server process.",
+   "agent_access": "CLI (dolt sql) or MySQL protocol from Node (mysql2, inferred); MCP wrapper would need writing.",
+   "maturity": "Mature, actively released (v2.x engine seen in Beads)."
+  },
+  {
+   "name": "Beads (bd) as the product",
+   "kind": "tool",
+   "verdict": "cite_design_only",
+   "why": "An issue and dependency-graph tracker, not a symptom-keyed knowledge store with verification gates. It now runs on Dolt (JSONL is export only), its storage backend changed completely within about a year (migration 0059, v0.x to v1.3), and it installs agent hooks and AGENTS.md by default. Valuable design to cite: hash IDs to avoid merge collisions, JSONL-as-truth plus SQLite cache plus custom merge driver (and why they left it), stealth mode.",
+   "egress_posture": "No documented telemetry; Dolt sync to git remotes and the install-script fetch are the documented network paths; dolt.local-only disables sync.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F01",
+    "F02",
+    "F03",
+    "F04",
+    "F26"
+   ],
+   "windows_dev_fit": "Windows 11 documented; npm package exists.",
+   "linux_prod_fit": "Good.",
+   "footprint": "Go binary plus embedded Dolt data in .beads/embeddeddolt/.",
+   "agent_access": "CLI plus beads-mcp (PyPI).",
+   "maturity": "Fast-moving; 11k+ commits; storage backend rewritten once."
+  },
+  {
+   "name": "git-bug",
+   "kind": "tool",
+   "verdict": "cite_design_only",
+   "why": "Best-documented git-native operation-log model (Lamport clocks, OperationPacks as blobs, refs/<ns>/<id>, deterministic replay), but it is an issue/bug tracker with fixed entity types and a GPL-3.0 licence, and Windows support is not stated. Reuse the design, not the code.",
+   "egress_posture": "None by itself; bridges to GitHub/GitLab/Jira are opt-in.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F13",
+    "F29"
+   ],
+   "windows_dev_fit": "Unverified.",
+   "linux_prod_fit": "Good (Go binary).",
+   "footprint": "Go binary; data lives as git objects/refs.",
+   "agent_access": "CLI and GraphQL; no MCP seen.",
+   "maturity": "Active (about 10.8k stars); GPL-3.0."
+  },
+  {
+   "name": "Custom git ref (git-bug / Dolt style) as the shared event store",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Because refs under refs/ are shared across worktrees, events written to one ref are visible to every parallel session immediately, with git push/fetch for transport and no working-tree files. Costs: plumbing commands (hash-object, commit-tree, update-ref) wrapped in a small CLI, ref update races need compare-and-swap (update-ref old-value) with retry, and it is less discoverable than files for a solo developer.",
+   "egress_posture": "None unless pushed.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F08",
+    "F13",
+    "F11",
+    "F30"
+   ],
+   "windows_dev_fit": "Fine with Git for Windows; plumbing wrapped in Node.",
+   "linux_prod_fit": "Good.",
+   "footprint": "Zero new binaries.",
+   "agent_access": "CLI or MCP written in Node.",
+   "maturity": "Technique proven by git-bug and Dolt git remotes; custom implementation needed."
+  },
+  {
+   "name": "git notes",
+   "kind": "technique",
+   "verdict": "weak",
+   "why": "Notes are keyed to git objects (commits), not to symptoms, are not carried across rebase unless notes.rewriteRef is set, and are not fetched/pushed by default (inferred). Has real merge strategies (cat_sort_uniq, union) and a shared ref. Usable only as a pointer from a fix commit to a knowledge-entry id.",
+   "egress_posture": "None.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F14",
+    "F08"
+   ],
+   "windows_dev_fit": "Fine.",
+   "linux_prod_fit": "Fine.",
+   "footprint": "Zero.",
+   "agent_access": "git CLI.",
+   "maturity": "Core git, stable."
+  },
+  {
+   "name": "merge=union on a single JSONL file",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Zero-code fallback: built-in driver keeps both sides' added lines, which is safe for pure appends with unique ids. Fails if a record is edited in place (both versions survive), gives random line order, and a single hot file invites merge noise. Prefer one file per event.",
+   "egress_posture": "None.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "F07",
+    "F27",
+    "F29"
+   ],
+   "windows_dev_fit": "Fine; LF normalised.",
+   "linux_prod_fit": "Fine.",
+   "footprint": "Zero.",
+   "agent_access": "Any.",
+   "maturity": "Core git; vendor warns to verify results."
+  },
+  {
+   "name": "Fossil SCM (tickets, wiki, technotes in one SQLite repo)",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Ticket change artifacts as append-only truth with tables rebuilt on sync is the clearest production precedent for this store, but adopting Fossil means a second SCM beside git, a separate sync and auth model, and nothing that maps to worktrees. Cite its design; do not adopt.",
+   "egress_posture": "None; self-hosted single executable.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F05",
+    "F06"
+   ],
+   "windows_dev_fit": "Precompiled Windows binary.",
+   "linux_prod_fit": "Excellent.",
+   "footprint": "Single executable plus a repo file.",
+   "agent_access": "CLI and web UI; no MCP seen.",
+   "maturity": "Very mature, BSD."
+  },
+  {
+   "name": "SQLite database file committed to git (with textconv/sqlite3 .dump diffs, sqldiff)",
+   "kind": "technique",
+   "verdict": "rejected",
+   "why": "Binary blobs have no three-way merge, so two worktrees changing it yield a conflict that can only be resolved by choosing a side; a live file copy can corrupt (journal/WAL pairing); each commit stores a new binary version. textconv and sqldiff improve reading diffs, not merging, and sqldiff skips tables without primary keys and mishandles FTS5. Keep SQLite only as a gitignored, rebuildable index.",
+   "egress_posture": "None.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F15",
+    "F16",
+    "F17"
+   ],
+   "windows_dev_fit": "Needs sqlite3/sqldiff binaries not currently on PATH.",
+   "linux_prod_fit": "Fine.",
+   "footprint": "Small file, growing git history.",
+   "agent_access": "sqlite3 CLI or node:sqlite.",
+   "maturity": "SQLite is mature; the pattern is a known anti-pattern for merging."
+  },
+  {
+   "name": "sqlite-diffable-style text dump (NDJSON per table)",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Shows the dump-to-line-oriented-text route, but it reverses the direction: the DB stays truth and the dump is a derived artifact, so the merge problem remains. The tool needs pip and Python, which are not available or allowed here.",
+   "egress_posture": "None.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F18"
+   ],
+   "windows_dev_fit": "Poor: no Python on PATH.",
+   "linux_prod_fit": "Fine.",
+   "footprint": "Python package.",
+   "agent_access": "CLI.",
+   "maturity": "Small utility."
+  },
+  {
+   "name": "immudb",
+   "kind": "engine",
+   "verdict": "weak",
+   "why": "Cryptographic verifiable history is more than needed (single trusted developer; the repo already has an in-house hash-chain pattern), BSL 1.1 is not open source, it runs as a server, and it gives no branch or merge story across worktrees. Cite for Merkle-proof design only.",
+   "egress_posture": "Telemetry not stated on the fetched page; unverified.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "F21",
+    "F28"
+   ],
+   "windows_dev_fit": "Windows supported.",
+   "linux_prod_fit": "Good.",
+   "footprint": "Go server or embedded Go library.",
+   "agent_access": "Postgres wire protocol or gRPC.",
+   "maturity": "Established; v1.9.x."
+  },
+  {
+   "name": "XTDB (bitemporal)",
+   "kind": "engine",
+   "verdict": "cite_design_only",
+   "why": "Bitemporal modelling is a good fit for 'recorded when' versus 'valid for which code state', but XTDB runs as a Docker/JVM server, has no git branching, and is sized for much larger systems. Borrow the vocabulary (valid time versus system time) for the data model.",
+   "egress_posture": "No egress stated; self-hosted.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F22"
+   ],
+   "windows_dev_fit": "Docker Desktop available; extra container.",
+   "linux_prod_fit": "Good.",
+   "footprint": "Container with a JVM (JVM not confirmed on fetched pages).",
+   "agent_access": "Postgres wire (psql, pg drivers).",
+   "maturity": "v2 line, MPL 2.0."
+  },
+  {
+   "name": "Datomic (Pro/Local)",
+   "kind": "engine",
+   "verdict": "cite_design_only",
+   "why": "Datomic's immutable facts and as-of queries are the classic prior art, but it needs the JVM and Clojure, Pro needs a transactor, binaries are free under Apache 2.0 but the source is closed, and it has no git-style merge. Not worth the stack addition.",
+   "egress_posture": "None required for Pro or Local; binaries pulled from Maven Central.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F23"
+   ],
+   "windows_dev_fit": "JVM install needed.",
+   "linux_prod_fit": "Good.",
+   "footprint": "JVM plus transactor or Datomic Local.",
+   "agent_access": "JVM clients only; no Node client confirmed.",
+   "maturity": "Mature; Nubank-maintained."
+  },
+  {
+   "name": "TerminusDB",
+   "kind": "engine",
+   "verdict": "weak",
+   "why": "Git-like branch/merge for graphs is on target, but it is a separate server (Docker), its WOQL/Prolog stack is an unusual operational and skill load for a one-developer ADHD workflow, and ownership recently moved to the Gettier team. Rated against the constraints, it adds a second server for little benefit.",
+   "egress_posture": "None stated; self-hosted.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F24"
+   ],
+   "windows_dev_fit": "Docker only.",
+   "linux_prod_fit": "Docker or Snap.",
+   "footprint": "Server container.",
+   "agent_access": "REST, GraphQL, JS client.",
+   "maturity": "v12.0.7, Apache-2.0, maintenance uncertain."
+  },
+  {
+   "name": "lakeFS",
+   "kind": "system",
+   "verdict": "rejected",
+   "why": "Designed for petabyte-scale object-store data lakes and requires an object store and a KV store (Postgres or DynamoDB); it is orders of magnitude above this workload.",
+   "egress_posture": "Depends on the object store chosen; none needed locally but it is not a sensible local deployment.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "F25"
+   ],
+   "windows_dev_fit": "Poor.",
+   "linux_prod_fit": "Server only.",
+   "footprint": "Server plus object store plus KV.",
+   "agent_access": "S3 gateway or API.",
+   "maturity": "Mature at its own scale."
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Make immutable, uniquely identified events the unit of truth and merge, with each state change (create, confirm, refute, invalidate, revise) a new event, never an in-place edit. Every successful prior system that merges across clones does this (Fossil, git-bug), and Beads classic, which kept mutable records per line, is the one that needed a custom merge driver and was later replaced.",
+   "fact_ids": [
+    "F02",
+    "F05",
+    "F13",
+    "F29"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Treat any query engine (SQLite via node:sqlite, or later another) as a disposable, gitignored index rebuilt from the events, with a recorded 'built from event set X' watermark. This gives engine swappability behind the abstraction layer and removes the need to merge database files.",
+   "fact_ids": [
+    "F05",
+    "F20",
+    "F19",
+    "F17"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Do not commit a SQLite database file or rely on sqldiff/textconv as the merge story: those only improve reading diffs, and the merge of two binary versions is a conflict. Use .dump or NDJSON only as read-only views.",
+   "fact_ids": [
+    "F15",
+    "F16",
+    "F17"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Cross-worktree visibility is a separate problem from merge. Files on a branch are seen only after merge or checkout, while refs are shared by all worktrees at once. Decide explicitly between (a) a tracked directory plus a sync step at phase boundaries and (b) a custom shared ref with compare-and-swap writes. Option (a) is simpler for a solo developer; (b) is what git-bug and Dolt's git remote do.",
+   "fact_ids": [
+    "F08",
+    "F13",
+    "F11"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "One file per event, named by content hash and written temp-then-rename, is the lowest-risk layout: it removes line-level merge conflicts, avoids multi-writer append races on one file, and keeps merge=union as an unneeded fallback. It matches the CLAUDE.md preference for less to track.",
+   "fact_ids": [
+    "F07",
+    "F30",
+    "F27"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Dolt is the credible upgrade path if native branch/merge/diff semantics on tabular data become necessary, since it gives column-level conflict tables and git-remote sync with no hosted service. It should sit behind the abstraction layer as an optional engine, not be the first choice: ~103 MB binary, a server process for concurrent writers, no worktree guidance, and git-remote history squashes after 64 commits so git history is not a provenance record.",
+   "fact_ids": [
+    "F09",
+    "F10",
+    "F11",
+    "F01",
+    "F03"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Provenance and tamper evidence can reuse the repo's existing hash-chain pattern (sha256 of version, payload, previous hash) or content-addressed filenames; a verifiable-ledger database such as immudb is unneeded for one trusted developer.",
+   "fact_ids": [
+    "F28",
+    "F21"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "A zero-install, no-new-binary path exists: git 2.56 plus Node 24's node:sqlite (RC). The unprobed items are FTS5 availability and the stability of an RC module, so the abstraction layer should keep a plain in-memory fallback index.",
+   "fact_ids": [
+    "F19",
+    "F27"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Beads is evidence about failure modes of the JSONL+SQLite+daemon design (auto-import timing, per-workspace daemon, socket/lock files to gitignore, a merge driver per file) and is a signal that the most visible adopter chose Dolt for 'proper merge semantics'. It is the strongest argument for keeping events immutable and index-free of any daemon.",
+   "fact_ids": [
+    "F02",
+    "F03",
+    "F04"
+   ],
+   "strength": "moderate"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Committing a SQLite database (or SQLite plus textconv/sqldiff) to git as the source of truth",
+   "why": "No three-way merge for binary files; WAL/journal pairing and live-copy corruption hazards; sqldiff skips PK-less tables and can corrupt FTS5; textconv diffs are one-way.",
+   "fact_ids": [
+    "F15",
+    "F16",
+    "F17"
+   ]
+  },
+  {
+   "what": "Adopting Beads as the knowledge store",
+   "why": "It is an issue/dependency tracker on a fast-changing Dolt backend with default agent-hook installation; the schema does not model symptom handles, verification gates or outcome history. Cite its design only.",
+   "fact_ids": [
+    "F01",
+    "F03",
+    "F26"
+   ]
+  },
+  {
+   "what": "Adopting Fossil alongside git",
+   "why": "A second SCM and sync model for a one-developer, git-worktree workflow, however elegant its append-only ticket design.",
+   "fact_ids": [
+    "F05",
+    "F06"
+   ]
+  },
+  {
+   "what": "git notes as the primary store",
+   "why": "Keyed to commits rather than symptoms; need extra config to survive rebase and to push or fetch.",
+   "fact_ids": [
+    "F14"
+   ]
+  },
+  {
+   "what": "lakeFS, TerminusDB, XTDB, Datomic, immudb as the production store",
+   "why": "Each adds a server or JVM stack, a restrictive or non-OSS licence (BSL, closed-source binaries) or a scale mismatch of orders of magnitude, and none improves on git for cross-worktree merge.",
+   "fact_ids": [
+    "F21",
+    "F22",
+    "F23",
+    "F24",
+    "F25"
+   ]
+  }
+ ],
+ "open_questions": [
+  "Does Dolt (and the Beads binary) send usage statistics or other telemetry by default, and how is it disabled? Neither the docs fetched nor two searches answered this, so the egress posture of Dolt is unverified; read the Dolt source or run it with network blocked before approving it.",
+  "How does Beads (v1.x embedded Dolt) behave across git worktrees: does each worktree get its own .beads/embeddeddolt/ and is there a shared-database redirect? The docs read mention only clones, not worktrees; the old WORKTREES.md was not read.",
+  "Is FTS5 compiled into Node 24's bundled SQLite for node:sqlite (probe with sqlite_compileoption_used), and will the RC API change before the program ends?",
+  "Concurrent writers inside ONE worktree (parallel subagents): is one-file-per-event with rename atomic enough on NTFS and on Linux, or is a lock file or ref compare-and-swap needed? This needs a small local experiment later; none was run here.",
+  "If the shared-ref option is chosen, what does the repo's CI or any branch protection do to refs outside refs/heads and refs/tags on GitHub (custom refs are accepted for push; whether the gh/Actions clone fetches them was not checked)?",
+  "Does git-bug build and run on Windows, and does it keep a local rebuildable cache? Neither was stated in the pages fetched. This matters only if its design is reused closely.",
+  "Direct fetches of Beads architecture docs (beads.gascity.com, upd.dev mirror) failed, so the exact Dolt-mode concurrency and worktree guidance in Beads is known only from the README and a DoltHub blog post."
+ ],
+ "urls_attempted": [
+  "https://github.com/steveyegge/beads",
+  "https://docs.dolthub.com/introduction/what-is-dolt",
+  "https://www.dolthub.com/docs/introduction/what-is-dolt",
+  "https://www.sqlite.org/sqldiff.html",
+  "https://github.com/steveyegge/beads/releases",
+  "https://raw.githubusercontent.com/steveyegge/beads/main/docs/ARCHITECTURE.md (404)",
+  "https://github.com/steveyegge/beads/tree/main/docs",
+  "https://beads.gascity.com/architecture/dolt.md (DNS failure)",
+  "https://beads.gascity.com/architecture.md (DNS failure)",
+  "https://upd.dev/steveyegge/beads/src/branch/main/docs/DOLT.md (403)",
+  "https://www.dolthub.com/blog/2026-04-15-common-beads-workflows/",
+  "https://dolthub.com/docs/sql-reference/version-control/merges",
+  "https://github.com/dolthub/dolt",
+  "https://www.dolthub.com/docs/introduction/installation",
+  "https://github.com/dolthub/driver",
+  "https://www.dolthub.com/docs/reference/cli/ (404)",
+  "https://github.com/dolthub/dolt/blob/main/go/cmd/dolt/commands/sendmetrics/send_metrics.go (404)",
+  "https://www.dolthub.com/docs/sql-reference/server/configuration",
+  "https://github.com/git-bug/git-bug",
+  "https://git-scm.com/docs/git-notes",
+  "https://fossil-scm.org/home/doc/trunk/www/index.wiki",
+  "https://fossil-scm.org/home/doc/trunk/www/tickets.wiki",
+  "https://github.com/git-bug/git-bug/blob/master/doc/design/data-model.md",
+  "https://docs.xtdb.com/",
+  "https://docs.xtdb.com/intro/installation-via-docker.html",
+  "https://github.com/codenotary/immudb",
+  "https://github.com/terminusdb/terminusdb",
+  "https://docs.lakefs.io/latest/understand/how/versioning-internals/ (redirect only)",
+  "https://docs.lakefs.io/latest/understand/architecture/ (redirect only)",
+  "https://docs.lakefs.io/latest/concepts/architecture/ (404)",
+  "https://www.datomic.com/pricing.html (404)",
+  "https://docs.datomic.com/datomic-overview.html",
+  "https://git-scm.com/docs/gitattributes",
+  "https://github.com/simonw/sqlite-diffable",
+  "https://git-scm.com/docs/git-worktree",
+  "https://www.sqlite.org/howtocorrupt.html",
+  "https://til.simonwillison.net/sqlite/sqlite-dump-git-diff (404)",
+  "https://pkg.go.dev/github.com/steveyegge/beads@v0.30.0",
+  "https://martin.kleppmann.com/2015/03/04/turning-the-database-inside-out.html",
+  "https://www.dolthub.com/docs/sql-reference/version-control/remotes",
+  "https://dolthub.com/blog/2026-02-13-announcing-git-remote-support-in-dolt (redirect, only seen via search)",
+  "https://raw.githubusercontent.com/steveyegge/beads/main/README.md",
+  "https://github.com/steveyegge/beads/blob/main/docs/INSTALLING.md (404)",
+  "https://nodejs.org/docs/latest-v24.x/api/sqlite.html",
+  "WebSearch (query text contained only public project names): Beads/Dolt migration; bd merge driver; Dolt telemetry (twice, no result); Dolt git remote; Dolt embedded lock (no result); lakeFS requirements; Datomic licence; Simon Willison SQLite textconv"
+ ],
+ "anomalies": [
+  "The Beads README now says JSONL is only an export and Dolt is the source of truth. Older descriptions (and the lane brief) say JSONL plus a SQLite cache; that is the v0.x design, not the current one.",
+  "Release dates on the Beads releases page show no year; '2026' is taken from the page's own release notes and the footer copyright, so the v1.3.2 date is approximate.",
+  "Several fetch results are summaries produced by a small model, so 'verified' means the statement appeared in the fetched page text, not that the raw page was read by this agent. Quotes were relayed, not independently re-read.",
+  "Two Dolt statements conflict: an older concepts page (per a search summary) says a local git directory is unsupported as a remote, while the current remotes docs describe git remotes (including local .git paths). The newer docs were used.",
+  "The git version on this machine reports as 2.56.0.windows.4, which is newer than this agent's training knowledge; the git doc pages fetched were the current online ones and may differ in detail from that build."
+ ]
+}

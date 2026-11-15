@@ -1,0 +1,16 @@
+// Fails (exit 1) unless result.json and NOTES.md agree on the corrected headline numbers, and only the two aligned blocks differ from the pre-change copy.
+const fs = require('fs');
+const EV = 'C:/Users/User/Documents/projects/EMS_workshop1/docs/program/evidence/harness-bottlenecks/graph2/graph-v2/premise-measure';
+const R = JSON.parse(fs.readFileSync(EV + '/result.json', 'utf8')), B = JSON.parse(fs.readFileSync('result.before-align.json', 'utf8'));
+const N = fs.readFileSync(EV + '/NOTES.md', 'utf8');
+const e = R.deterministic_finding_share.expressible_as_query, f = R.reuse.files, bad = [];
+const t = (ok, m) => { if (!ok) bad.push(m); };
+t(e.k === 22 && e.n === 60 && Math.round(e.share * 100) === 37, 'expressible in result.json');
+t(/22 of 60 = 37 %/.test(N) && /37 % \(22 of 60/.test(N), 'expressible in NOTES.md');
+t(f.n === 2245 && f.read_in_2plus_sessions === 94 && (f.share_of_all_CQ1_carried_on_files_read_in_2plus_sessions * 100).toFixed(1) === '9.9' && f.max_sessions === 5, 'files in result.json');
+t(/94 of 2,245 files/.test(N) && /9\.9 % of all CQ1 carried tokens/.test(N) && /of 2,245 files\s+so read, 94/.test(N), 'files in NOTES.md');
+t(!/32 % could be/.test(N) && !/2,529 files\s+so read, 108/.test(N), 'stale wording left in NOTES.md');
+const strip = (o) => { const c = JSON.parse(JSON.stringify(o)); delete c.deterministic_finding_share.expressible_as_query; delete c.reuse.files; delete c.reuse.source_files; return JSON.stringify(c); };
+t(strip(R) === strip(B), 'a value outside the two aligned blocks changed');
+console.log(bad.length ? 'FAIL: ' + bad.join('; ') : 'OK: NOTES.md and result.json agree; nothing else changed');
+process.exit(bad.length ? 1 : 0);

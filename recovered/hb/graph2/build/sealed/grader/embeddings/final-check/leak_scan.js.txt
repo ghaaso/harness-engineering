@@ -1,0 +1,18 @@
+const fs=require('fs'),path=require('path');
+const jl=f=>fs.readFileSync(f,'utf8').split('\n').filter(Boolean).map(JSON.parse);
+const S=new Set();
+for(const r of jl('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/references.jsonl')){for(const f of r.files||[]){if(typeof f==='string')S.add(f);else{S.add(f.path);if(f.child_path)S.add(f.child_path);}}for(const d of r.defs||[])S.add(d.path);}
+const tr=jl('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/grader/embeddings/truth/truth.jsonl');for(const t of tr){t.truth.forEach(x=>S.add(x));S.add(t.seed);}
+S.delete('');S.delete(undefined);
+const shas=new Set(jl('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/sealed/grader/embeddings/truth/commits.jsonl').map(c=>c.commit));for(const t of tr)shas.add(t.parent);
+const files=[];(function w(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);e.isDirectory()?w(p):files.push(p);}})('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/grader-returns');
+const res=[];
+for(const f of files){const txt=fs.readFileSync(f,'utf8');const o=JSON.parse(txt);
+ let nums=0,strs=0,lists=0,nonfinite=0,oor=0;const keys=new Set();
+ (function v(x,k){if(Array.isArray(x)){lists++;x.forEach(y=>v(y,k));}else if(x&&typeof x==='object'){for(const [kk,vv] of Object.entries(x)){keys.add(kk);v(vv,kk);}}else if(typeof x==='number'){nums++;if(!Number.isFinite(x))nonfinite++;if(!['tasks','commits','tasks_checked','equal_to_lane','task_commit_in_checkpoint_history','parent_mismatch'].includes(k)&&(x<-1||x>1))oor++;}else if(typeof x==='string')strs++;})(o,null);
+ const refHits=[...S].filter(s=>txt.includes(s)).length;
+ const shaHits=[...shas].filter(s=>txt.includes(s.slice(0,12))).length;
+ const idHits=(txt.match(/T[0-9][a-z]?-[0-9]{3,}/g)||[]).length;
+ const keyIds=[...keys].filter(k=>/T[0-9]|[0-9a-f]{12}|\//.test(k)).length;
+ res.push({file:path.relative('C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/grader-returns',f),bytes:txt.length,top_keys:Object.keys(o).sort(),numbers:nums,strings:strs,lists,nonfinite,out_of_range:oor,ref_path_hits:refHits,commit_or_parent_sha_hits:shaHits,task_id_hits:idHits,suspicious_keys:keyIds});}
+console.log(JSON.stringify({ref_strings:S.size,shas:shas.size,files:res},null,1));

@@ -1,0 +1,57 @@
+// Tilt test for the second build: a tie that couples how much the library is used with poor entry quality.
+// Run from this folder: node - < check-second-build-2.js.txt. Changes only copies in memory; writes check-second-build-2-console.txt.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const lib = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(lib, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(lib, 'map.json'), 'utf8'));
+const table = JSON.parse(fs.readFileSync(path.join(lib, 'params.json'), 'utf8'));
+const out = [];
+const log = (...a) => { const s = a.join(' '); out.push(s); console.log(s); };
+const r = (v, d = 3) => Number(v.toFixed(d));
+const rows = E.tableRows(table);
+const ids = map.parameters.map(p => p.id);
+// "Volume": the 14 library unknowns whose good end (by meaning) means more use: more held, more looked up, more returned, more delivered, more written.
+const VOLUME = ['u_exact', 'u_similar', 'u_composite', 'latent_coverage_factor', 'ok_coverage_factor', 'k_fill', 't_visible', 't_latent', 'r_exact', 'r_similar', 'r_comp_full', 'r_comp_part', 'd_deliver', 'w_write'];
+function draw(random, tie, U, mode) {
+  const o = {};
+  ids.forEach(id => {
+    const row = rows[id];
+    const u = random();
+    if (row.run_setting) { o[id] = row.best; return; }
+    let pos = u;
+    if (row.side === 'library' && tie > 0) {
+      // q: quantile counted from the unfavourable end
+      let lvl = U;
+      if (mode === 'anti' && VOLUME.indexOf(id) < 0) lvl = 1 - U; // quality runs against volume
+      const own = row.good_end === 'high' ? u : 1 - u; // own draw from the unfavourable end
+      const q = tie * lvl + (1 - tie) * own;
+      pos = row.good_end === 'high' ? q : 1 - q;
+    }
+    o[id] = row.low === row.high ? row.low : row.low + pos * (row.high - row.low);
+  });
+  return o;
+}
+function run(n, seed, tie, mode) {
+  const g = E.rng(seed), s = E.rng(seed ^ 0x5bd1e995);
+  const cl = [], wl = [], ct = []; let betterL = 0, betterT = 0;
+  for (let i = 0; i < n; i++) {
+    const p = draw(g, tie, s(), mode);
+    const tp = E.timePath(map, p, { lean: true });
+    const last = tp.periods[tp.periods.length - 1];
+    cl.push(last.ratios.cost_vs_ladder); wl.push(last.ratios.wrong_vs_ladder); ct.push(last.ratios.cost_vs_top);
+    if (last.library.cost < tp.cheap_ladder.cost && last.library.wrong <= tp.cheap_ladder.wrong) betterL++;
+    if (last.library.cost < tp.top_first.cost && last.library.wrong <= tp.top_first.wrong) betterT++;
+  }
+  const q = (a, p) => E.percentile(a.slice().sort((x, y) => x - y), p);
+  return { cl: [q(cl, 5), q(cl, 50), q(cl, 95)], wl: [q(wl, 5), q(wl, 50), q(wl, 95)], ct: [q(ct, 5), q(ct, 50), q(ct, 95)], betterL: betterL / n, betterT: betterT / n };
+}
+// check: mode 'same' with this draw reproduces the engine's tied draw rule (positions only; streams differ)
+log('Tie that couples volume with poor quality (anti) against the build\'s tie (same). 500 runs each, seed 424242, last period. All values G.');
+[0.5, 1].forEach(tie => ['same', 'anti'].forEach(mode => {
+  const x = run(500, 424242, tie, mode);
+  log('tie', tie, mode.padEnd(4), 'cost vs ladder', x.cl.map(v => r(v)).join(' / '), '| wrong vs ladder', x.wl.map(v => r(v)).join(' / '), '| cost vs strong', x.ct.map(v => r(v)).join(' / '), '| better than ladder', r(100 * x.betterL, 1) + '%', '| better than strong', r(100 * x.betterT, 1) + '%');
+}));
+fs.writeFileSync(path.join(here, 'check-second-build-2-console.txt'), out.join('\n') + '\n');

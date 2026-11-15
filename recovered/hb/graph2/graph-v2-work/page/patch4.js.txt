@@ -1,0 +1,16 @@
+// one-off patch (measured blocks, round 2): run from graph-v2:  node - < <this file>
+const fs = require('fs');
+let s = fs.readFileSync('build.js.txt', 'utf8');
+const rep = (a, b) => { if (!s.includes(a)) throw new Error('missing: ' + a.slice(0, 70)); s = s.split(a).join(b); };
+// the extras "headline" of these two is a table head; the page's own headline rule reads the NOTES file
+rep("p.head = p.exists ? plH(p.headline || headlineOf(fs.readFileSync(abs, 'utf8'))) : null;", "p.head = p.exists ? plH(headlineOf(fs.readFileSync(abs, 'utf8'))) : null;");
+rep("require(path.join(HERE, 'src', 'measured.js.txt'))({ esc, e, tag, fold, num, CQS });",
+ "require(path.join(HERE, 'src', 'measured.js.txt'))({ esc, e: s => esc(plH(String(s).replace(/`/g, '').replace(/\(E1 to E3\)/g, '(three of the sampled findings)'))).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'), tag, fold, num, CQS });");
+fs.writeFileSync('build.js.txt', s);
+let m = fs.readFileSync('src/measured.js.txt', 'utf8');
+const a = m.indexOf('    const blRows = BL.map('), b = m.indexOf('\n', a);
+if (a < 0) throw new Error('blRows missing');
+m = m.slice(0, a) + "    const grp = []; for (const b of BL) { const k = b.cls + '|' + b.seeds; let g = grp.find(x => x.k === k); if (!g) grp.push(g = { k, cls: b.cls, seeds: b.seeds, rows: [] }); g.rows.push(b); }\n" +
+  "    const blRows = grp.map(g => { const b0 = g.rows[0]; return `<div class=\"blg\"><h5>${clsName(g.cls)} lookups, ${g.seeds === 'all' ? 'every seed' : 'seeds that a search found'}: ${fmt(b0.n_scorable)} scorable of ${fmt(b0.n_dev)} development lookups${has(b0.any_arm_pct) ? ` · any arm hits ${pc(b0.any_arm_pct)}` : ''}</h5>` + g.rows.map(b => `<div class=\"hbar\" style=\"--lw:330px\"><div class=\"lab\"><b>${armN(b.arm)}</b><br><small>${has(b.tokens_first) ? fmt(b.tokens_first) + ' tokens to first hit' : ''}${has(b.tokens_cheapest) ? ' · ' + fmt(b.tokens_cheapest) + ' cheapest' : ''}${has(b.share_of_all_dev) ? ' · ' + pc(b.share_of_all_dev) + ' of all development lookups' : ''}</small></div><div class=\"track\"><div class=\"fill ${b.arm === 'C' ? 'hl' : 'g-index'}\" style=\"width:${Math.max(0.3, +b.hit10_pct).toFixed(2)}%\"></div><div class=\"val\" style=\"left:${Math.min(+b.hit10_pct, 62).toFixed(2)}%\">${pc(b.hit10_pct)} in top 10${has(b.carried_weighted_pct) ? ' · ' + pc(b.carried_weighted_pct) + ' by carried tokens' : ''}</div></div></div>`).join('') + '</div>'; }).join('');" + m.slice(b);
+fs.writeFileSync('src/measured.js.txt', m);
+console.log('patched');

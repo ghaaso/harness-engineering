@@ -1,0 +1,235 @@
+export const meta = {
+  name: 'graph-test-build-b',
+  description: 'Fix the phase A audit defects, build the graph arm on LadybugDB and DuckDB/DuckPGQ inside the Linux image, re-run every arm on TUNE, then audit',
+  phases: [
+    { title: 'Fix', detail: 'facts leak and extractor holes; one scorer, shared padding, async harness; search through the harness' },
+    { title: 'Build', detail: 'graph arm on both engines; re-run relational, reference and search in the Linux image' },
+    { title: 'Audit', detail: 'verify the fixes; cross-check and fairness of the graph arms' },
+  ],
+}
+
+const SP = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2'
+const BUILD = SP + '/build'
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const PY = 'C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+
+const BUILD_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: { type: 'string' },
+    what_was_built: { type: 'array', items: { type: 'string' } },
+    key_numbers: { type: 'array', items: { type: 'string' } },
+    deviations_from_protocol: { type: 'array', items: { type: 'string' } },
+    problems: { type: 'array', items: { type: 'string' } },
+    needs_from_other_lanes: { type: 'array', items: { type: 'string' } },
+    how_to_run: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['status', 'what_was_built', 'key_numbers', 'deviations_from_protocol', 'problems', 'how_to_run'],
+}
+const AUDIT_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string' },
+    checks: { type: 'array', items: { type: 'object', properties: { what: { type: 'string' }, result: { type: 'string' }, detail: { type: 'string' } }, required: ['what', 'result', 'detail'] } },
+    defects: { type: 'array', items: { type: 'object', properties: { severity: { type: 'string' }, where: { type: 'string' }, what: { type: 'string' }, fix: { type: 'string' } }, required: ['severity', 'where', 'what', 'fix'] } },
+  },
+  required: ['verdict', 'checks', 'defects'],
+}
+
+function common(lane, folders, sealedRule) {
+  return [
+    'You are one agent in a controlled experiment on one code repository. It compares ways of answering "what is connected to this code?": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more than speed.',
+    '',
+    'YOUR LANE: ' + lane,
+    '',
+    'READ FIRST (short files): ' + SP + '/protocol.md, ' + SP + '/protocol-addendum-1.md, ' + SP + '/protocol-addendum-2.md (the rules you implement), then ' + BUILD + '/arms/common/NOTES.md and ' + BUILD + '/facts/NOTES.md.',
+    '',
+    'LAYOUT (everything is under ' + BUILD + '): facts/ (extractor scripts and facts/cache/<parent sha>/ with nodes.jsonl, edges.jsonl, commits.jsonl, meta.json), tasks/ (tasks.jsonl, parents.txt, tq_questions.jsonl: seeds and questions any arm may read), sealed/ (reference answers), arms/common (shared loader, tokenizer, packer, harness, scorer), arms/relational, arms/reference, arms/search, results/, audit/, tmp/.',
+    '',
+    'HARD RULES',
+    '1. The repository at ' + REPO + ' is read-only. Never check out, switch branch, add a worktree, stash, or write there. Read a past commit only with git archive <sha> into ' + BUILD + '/tmp/<your-lane>/ (delete the export when done) or with read-only object reads (git show, cat-file, ls-tree, log, diff).',
+    '2. Never run anything on HELD-OUT tasks (split "heldout"). Keep the harness lock that refuses them.',
+    '3. ' + sealedRule,
+    '4. Linux image: every arm run happens inside the Docker image graphtest:1 (Node 24, LadybugDB 0.22.3 with its algo extension, DuckDB 2.0.0 with DuckPGQ, git, python3; it works with the network off). Its recipe and a working example of loading both engines are in ' + SP + '/engines-linux/ (Dockerfile, warm.js, smoke.js). Start it like this:  MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v "' + BUILD + ':/build" -v "' + REPO + ':/repo:ro" graphtest:1 bash -lc "<commands>"  . Inside, run  git config --global --add safe.directory /repo  before any git call. Use at most 6 CPUs and 4 GB: other agents run containers at the same time. Keep database and store files on the container filesystem or a named Docker volume (for example gt-<arm>), never on the /build bind mount, which is slow and can break file locking; write only results, logs and code to /build. Runs on the Windows host are for development only and are never reported as results.',
+    '5. Install nothing and download nothing: no npm install, pip, apt, extension or model download, no docker pull or build. If the image lacks something you need, stop and say so in your result. You may read public documentation on the web, but never put the project name, file paths, identifiers or code from this repository into a web query or URL.',
+    '6. Tool quirks on this Windows host: a Bash command longer than about 8 KB is cut, and doubled backslashes inside heredocs collapse. Create files with the Write tool, not long heredocs. python is not on PATH on the host; use ' + PY + ' -I . Node 24 is on PATH.',
+    '7. Stay inside your folders: ' + folders + '. If another lane must change something, put the request in needs_from_other_lanes instead of editing its files.',
+    '8. Do not commit, push, or touch git state anywhere. Do not create files inside the repository.',
+    '9. Report for a reader with no context: plain complete sentences, every number with its unit and what it refers to, no invented labels. Finish by updating a NOTES.md in your folder that says what exists, how to run it, and every deviation.',
+    '',
+  ].join('\n')
+}
+
+const NO_SEALED = 'You are an arm or harness builder: never read, list or open ' + BUILD + '/sealed/ or ' + BUILD + '/audit/. You get no scores. A grader scores later.'
+
+const REF_SCHEMA = [
+  'REFERENCE FILE SHAPES (given here so you never need to open sealed/):',
+  'sealed/references.jsonl, one JSON object per task: id, set (T1, T1x, T2, T3, T4 or T5), split (tune or heldout), parent, seed {path, symbol {name, kind, start, end, occ} or null}, files [ {path, class, runtime, test, cross_runtime, cochanged_before, cochanged_before_xpr, status, child_path} ], defs [ {path, name, kind, start, end, class, runtime, test, cross_runtime, same_file_as_seed, changed_lines, cochanged_before, cochanged_before_xpr} ], excluded_unreachable {...}, not_scored {...}. T1, T1x and T2 lines also carry commit (the cluster to average over) and commit_n_files_all; T1x carries of (the matching T1 id); T3 carries doc, doc_path, item, remove_paths; T4 carries fix_commit, item; T5 has seed {query, tool} and files [ {path, class, query_names_it, test} ] and no defs. start and end are 1-based inclusive line numbers in the file at the parent commit.',
+  'sealed/tq_reference.jsonl, one object per question: id (number), split, kind, answer_form, answer (a JSON array of strings, or an object of named arrays such as {"real": [...], "fake": [...]} or {"backend": [...], "web": [...], "mobile": [...]} or {"call_sites": [...], "via_bff": [...], "direct_callers": [...]}), accept_aliases (object: canonical item string -> array of accepted alternative strings), selection_tags, plus notes. Item strings look like "path::Outer.inner", a table name, a 4-digit revision id, "CLAUDE.md:L151", or "METHOD /api/path". The question text and answer_form for each id are in tasks/tq_questions.jsonl.',
+].join('\n')
+
+const pF1 = common(
+  'FACTS FIX. Remove the leak from the shared facts, fill the extractor holes the audit found, rebuild the cache.',
+  BUILD + '/facts and ' + BUILD + '/tmp/facts-fix. You may also WRITE the new side files under ' + BUILD + '/sealed/facts_meta/',
+  'You may write task identifiers into ' + BUILD + '/sealed/facts_meta/ but never read ' + BUILD + '/sealed/references.jsonl, tq_reference.jsonl or anything else in sealed/. You may read ' + BUILD + '/audit/facts/NOTES.md, which lists the defects with examples.'
+) + [
+  'WHAT TO DO (addendum 2, section D)',
+  'a. Leak. commits.jsonl in every cache folder must hold only commits an arm may use: remove dropped commits entirely (no file lists, no labels such as same_pr_as_task or pr_in_flight_at_parent). meta.json must name no task commit SHA and no PR number (remove switches.task, task_children, task_prs and anything similar); write those to ' + BUILD + '/sealed/facts_meta/<parent>.json instead.',
+  'b. Co-change drop rule. Drop only commits that are in the same PR as a task commit built on that parent (protocol section 3). Remove the in-flight rule. When one parent serves task commits from several PRs, drop the union and say so in NOTES.',
+  'c. Mobile config reads: member chains on the imported config object (for example config.attendance.maxDutyHours, config.video.*) must produce reads_setting edges, and the CLAUDE.md invariant that names maxDutyHours must get its constrains anchor. Add a self-test.',
+  'd. SQL-text table edges: take SQL only from string literals passed to text(), execute() or op.execute(), never from docstrings or comments. Classify DELETE, UPDATE and INSERT as writes. Point the evidence at the statement line.',
+  'e. Recall holes: URLs built with a ternary; URL literals looped over a tuple or list in tests; unit-of-work writes through a loop variable in scripts; calls through a Protocol-typed attribute (resolve to the implementing classes, each edge with confidence 1/k); os.environ and import.meta.env (VITE_*) reads; the invariant tokens start.sh, transition(), JobDetail.evidence and cursor.last_seq.',
+  'f. Citations: strip a :line or :line-line suffix before resolving a markdown link; break a two-candidate tie by the document or slice context.',
+  'g. Small labelling: make is_test match what NOTES claims (vitest.setup.js, *_test.py); session.delete needs a session receiver; a method must not become a setting node; a subscript assignment target is not a read; fix the spurious slice backend/features; prune orphan nodes when a stage is skipped.',
+  'h. Build the two parents missing from the cache: 8dafcecc (reachable in the object store although not on main) and a31924a3818f4ac94b695906d107c72c912792b2.',
+  'i. Rebuild the whole cache with the new extractor_version. Build into ' + BUILD + '/facts/cache.new/ and swap it in only when it is complete and verified (rename the old one to cache.old, then delete cache.old once the new one passes), because another agent reads the current cache while you work.',
+  'j. Verify: two builds of the frozen commit are byte-identical; three cached parents rebuild byte-identical; a script proves for EVERY cache folder that no commit in commits.jsonl or meta.json is outside the ancestors-or-self of that parent and that no dropped-commit label remains; every parent in tasks/parents.txt has a folder.',
+  'k. Precision: for each edge kind you added or changed, read 20 sampled edges against the code at the frozen commit (whole kind if smaller) and report correct/total.',
+  'Fix the extractor from code reading at the frozen commit only. Do not look at task seeds or tune anything to them. Keep the node and edge file formats unchanged so the loader keeps working; if a format must change, list it in needs_from_other_lanes.',
+  'Report: the new extractor_version, node and edge counts by kind at the frozen commit (before and after), cache build time and size, the precision table, and the verification results.',
+].join('\n')
+
+const pF2a = common(
+  'HARNESS FIX. One scorer with the content rule, shared padding, a harness any arm (including asynchronous graph-engine drivers) plugs into, the shared edge conventions, an ordered metapath mode, and a precise algorithm specification.',
+  BUILD + '/arms/common, ' + BUILD + '/arms/relational, ' + BUILD + '/arms/reference, ' + BUILD + '/tmp/harness-fix (read arms/search to port its directory and co-change ordering, but do not edit it: the next agent does)',
+  NO_SEALED
+) + [
+  REF_SCHEMA,
+  '',
+  'WHAT TO DO (addendum 2, sections A, B, C, D.15, E)',
+  'a. score.js: the single scorer. Rule "content" is the default (addendum A.2); keep "locate" only as a non-default flag. Metrics per configuration, set and split, averaged per cluster (commit for T1, T1x, T2): the primary (recall of reference files plus definitions inside the 8,000-token answer, counted only for signature and snippet forms), recall at 2k, 4k, 16k, area under that curve, tokens to 80% recall, definition-only recall, file recall@10, nDCG@10 and MRR (the only measures reported for paths and range forms), median tokens used, each with a standard error over clusters. Write per-cluster values to a file. Add compare.js: a paired cluster bootstrap over commits between two answer files (10,000 resamples, a seeded generator, 95% interval). A cut item counts only if its whole line fits. Test the scorer on small synthetic references you write yourself.',
+  'b. Padding (addendum B): move the tail into the shared packer as option pad = none | DIR | CO, identical for every arm, where DIR is the same directory, then the same-named capability folder in the other runtimes, then outward by parent directory, and CO is co-change order from the facts with DIR order as the tail. An arm passes its ranked head; the packer appends the tail without duplicates. Record how many tokens the head and the tail used.',
+  'c. Harness: an arm registry by convention, arms/<name>/arm.js exporting open(G, opts) that returns { rank(seedIds, cfg, seed), close(), optional tq(question) }; rank may return a promise and run.js and sweep.js must await it. Record engine query time as reported by the arm apart from wall time. Per-arm sweep lists: arms/<name>/sweep.js exports the arm base and exactly 40 stage-1 configurations (one factor at a time around the base); an optional stage2.json holds exactly 20 more. The harness refuses a list of another size and logs the hash of each list. Keep the held-out lock for every arm.',
+  'd. Loader conventions (addendum D.15): one edge per (kind, source, target), weight = highest confidence, evidence count kept, co_changed symmetric, other kinds directed, minConf as a shared factor (default 0.5). Add exportCanon(G, dir): write the canonical graph as plain files (nodes.csv, edges.csv with kind, class, src, dst, weight, n_ev, and one edges_<kind>.csv per kind) with a content hash, so every engine loads byte-identical input. The loader must not depend on meta.json fields other than extractor_version, and must tolerate commits.jsonl holding only kept commits.',
+  'e. Ordered metapath mode in config.js: a sequence of steps, each a set of edge kinds or classes with a direction and an optional repeat range, implemented in the reference arm and in the relational arm as SQL (join chains or a recursive query). Cap the per-class budget state space the same way in both (reject above a stated limit). Cross-check both.',
+  'f. equiv.js (addendum E.19): compare two ranked lists as equivalent when the reach sets are equal, the order is equal wherever two scores differ by more than 1e-9, and each explanation path is a valid shortest path. sweep.js uses it for any pair of arms and keeps the strict byte comparison for relational versus reference.',
+  'g. tq_score.js: one scorer for the code-reading questions: precision, recall and F1 of answer items against the reference with accept_aliases, per question and averaged, plus tokens returned and lookups used; object-shaped answers are scored per named array and pooled. Define the answer file format every arm writes (one line per question: id, answer in the answer_form shape, tokens, lookups, ms) in SPEC.md.',
+  'h. Regenerate the relational stage-1 list (exactly 40, own base) so it includes the new shared factors: pad, minConf, an ordered metapath configuration, symbol granularity with paths form. The reference arm mirrors it.',
+  'i. paths.js: honour environment overrides GT_BUILD, GT_REPO and GT_FACTS_CACHE so the same code runs on the host and in the container (/build, /repo).',
+  'j. SPEC.md in arms/common: the exact specification of every algorithm a graph-arm builder must match for the cross-check: seed mapping, k-hop with direction and class mask, hub cuts, each ranking (bfs, degree-normalised, personalised PageRank with its iteration count, restart handling, dangling handling and co-change weight, co-change rank, text rank, reciprocal-rank hybrids), per-class budgets, ordered metapaths, tie-breaks, how the explanation path is chosen, the rank() return shape, and the configuration schema. Two other agents will build graph-engine arms from this file alone, so make it complete and exact.',
+  'k. Smoke test inside the Linux image: relational and reference on 20 TUNE tasks with a few configurations including a metapath one and each pad option, cross-check with zero mismatches. Another agent is rebuilding facts/cache while you work: copy the few cache folders you test with into tmp/harness-fix/cache-snap and point GT_FACTS_CACHE at it. Do not run the full sweep.',
+  'Report what changed, the scorer self-test results, the smoke-test results, and anything a graph-arm builder should know.',
+].join('\n')
+
+const pF2b = common(
+  'SEARCH FIX. Put the search arm and the two floors through the common harness so they are packed, padded, locked and scored exactly like every other arm.',
+  BUILD + '/arms/search, ' + BUILD + '/arms/floor-dir, ' + BUILD + '/arms/floor-co, ' + BUILD + '/tmp/search-fix. You may move (not read) the proxy label files into ' + BUILD + '/sealed/search_tune_labels/',
+  NO_SEALED
+) + [
+  'The harness agent has just finished: read ' + BUILD + '/arms/common/SPEC.md and NOTES.md for the arm contract (arms/<name>/arm.js), the shared padding option, the per-arm sweep list rule and the question answer format.',
+  'WHAT TO DO (addendum 2, items 1, 7, 8, 11, 12)',
+  'a. arms/search/arm.js follows the registry contract and returns only its own ranked head with its lookup and tokens-read ledger; remove its private directory fill and use the shared packer option pad instead. It reads a parent tree through git archive; make it work in the container (/repo) through paths.js.',
+  'b. Floors as arms of their own: arms/floor-dir and arms/floor-co return an empty head and rely on pad = DIR or CO, so a floor is exactly what padding alone gives.',
+  'c. Retire arms/search/score.js and select.js (delete or turn into thin wrappers around the common scorer) and move tune_labels.js and tune_labels.jsonl out of arms/ into ' + BUILD + '/sealed/search_tune_labels/ without reading other sealed files. The earlier self-selection is void: record that in NOTES.',
+  'd. A new stage-1 list of exactly 40 configurations around the search arm own base (written without any score), including the shared factors pad, form, granularity and budget, and the search factors (rounds, terms, BM25, proximity, weights). The floors have no sweep beyond form, granularity and budget.',
+  'e. Question answers in the common format through arm.tq().',
+  'f. Delete the old 675 MB arms/search/out folder once the new path works. Smoke test inside the Linux image on 20 TUNE tasks; another agent may be swapping facts/cache, so retry if a folder is briefly missing. Do not run the full sweep: the next agent does.',
+  'Report what changed and the smoke-test output.',
+].join('\n')
+
+const pR = common(
+  'RE-RUN. Run stage 1 for the relational, reference, search and floor arms on the rebuilt facts, inside the Linux image, with the cross-check.',
+  BUILD + '/results, ' + BUILD + '/tmp/rerun (you may fix a crash in harness glue under arms/common, arms/relational, arms/reference, arms/search only if a run cannot proceed; list every such change)',
+  NO_SEALED
+) + [
+  'The facts cache was rebuilt with a new extractor version and the harness was changed (read arms/common/SPEC.md and NOTES.md). Old results under results/ belong to the old facts: move them to results/_phaseA_old/ first.',
+  'WHAT TO DO, all inside graphtest:1, TUNE only',
+  'a. Relational and reference: the full stage-1 sweep (40 configurations each) on T1, T1x and T2, with the strict cross-check between them. Report the number of ranked lists compared and mismatches (must be zero; if not, find the cause and report it).',
+  'b. Search, floor-dir and floor-co: their stage-1 lists on T1, T1x and T2.',
+  'c. Question answers on the 20 TUNE questions for relational and search (arm.tq), written in the common format to results/tq/<arm>.tune.jsonl.',
+  'd. Check every answer file: no answer over its budget, used tokens recompute from the items, every configuration present for every task, the logged list hashes match.',
+  'Keep store files off the bind mount (a named volume gt-relational is fine). Do not score anything and do not read sealed/. Report counts, mismatches, run times per arm, failures and any glue you had to change.',
+].join('\n')
+
+function pG(engine, folder, extra) {
+  return common(
+    'GRAPH ARM on ' + engine + '. Build the strongest honest graph arm on this engine: a schema and queries designed for this repository and this workload, using the engine native graph features, not a generic prototype.',
+    BUILD + '/arms/' + folder + ', ' + BUILD + '/results/' + folder + ', ' + BUILD + '/results/tq (your file only), ' + BUILD + '/tmp/' + folder,
+    NO_SEALED
+  ) + [
+    'The harness agent has finished: read ' + BUILD + '/arms/common/SPEC.md (the exact algorithm specification, the arm contract arms/<name>/arm.js, the configuration schema, the question answer format) and look at arms/reference/ref.js (the same algorithms in plain code) and arms/relational (the SQL arm you are compared with). The canonical graph every engine must load comes from the shared loader (exportCanon); never build your own facts.',
+    'WHAT TO DO (addendum 2, section E; protocol sections 5c, 5d, 6)',
+    '1. Study the engine first, from its public documentation for the installed version and by trying things in the image: bulk load, typed node and relationship tables, variable-length and recursive path patterns with filters on kind and direction, shortest and weighted shortest paths, the built-in algorithms and whether PageRank can be personalised, projected graphs, prepared statements, indexes, thread and memory settings, in-memory versus on-disk. Write down what exists and what does not.',
+    '2. Loader and schema: load the canonical graph into a schema chosen for this workload (for example a relationship table or label per edge kind or class, weight and evidence count as properties, precomputed properties such as degree, community id or core number where they help). One store per (parent commit, removed document), built once and cached on the container filesystem or the named volume gt-' + folder + '. Record build time and bytes.',
+    '3. arm.js under the registry contract. Implement every algorithm in SPEC.md so that it is specification-equivalent, using the engine own query language and native functions wherever it can. For each algorithm say which of three it is: a native engine algorithm, a query in the engine language, or application code outside the engine (allowed only when the engine cannot express it; it is then recorded as "not in the engine" and timed with its data fetch).',
+    '4. Engine-native options beyond the shared specification, each as a configuration mode with a written definition: ranking by weighted shortest path with a cost per edge kind; ordered metapaths as path patterns; a community prior from the engine community detection (if results vary between runs, compute once per store with a fixed seed if the engine allows, otherwise store one run and report the spread over 5 runs); native PageRank variants; a core-number or degree hub cut; anything else documented that plausibly helps on this graph. Do not leave a relevant native feature untried without saying why.',
+    '5. Your own stage-1 list: a base and exactly 40 configurations, one factor at a time around your base, written before any score exists (you get none). Include the shared factors (pad, minConf, form, granularity, budget, hops, direction, edge classes, hub cuts) and your native modes.',
+    '6. Cross-check (arm d): run the specification-equivalent configurations (the relational stage-1 list wherever your arm can express it, plus 10 seeded random ones) on all TUNE T1 and T2 tasks against the reference arm with the shared equivalence rule. Fix until there are zero mismatches or explain each remaining one exactly.',
+    '7. Run your stage-1 sweep on TUNE T1, T1x and T2 inside the image and write the answer files where the harness puts them.',
+    '8. Code-reading questions: one query per question kind in the engine language (typed path patterns are the point here), run on the 20 TUNE questions through arm.tq, written to results/tq/' + folder + '.tune.jsonl. You may read the frozen commit code to design a query for a question KIND, but not tune a query to one question.',
+    '9. bench.js mirroring arms/relational/bench.js: load time, bytes on disk, memory, cold and warm p50 and p95 latency for the same query classes, a one-file incremental update checked against a fresh build, and lines of query code per algorithm. Run it once to prove it works and report the numbers as indicative only; the final measurement is taken later on a quiet machine.',
+    '10. NOTES.md: what is native and what is not, every departure from SPEC.md, engine limits you hit, and anything in the shared harness that handicaps this engine.',
+    extra,
+    'Report the cross-check counts and mismatches, the sweep sizes and run times, store build time and size, the indicative latencies, which algorithms are native, and the problems.',
+  ].join('\n')
+}
+
+const pG1 = pG('LadybugDB 0.22.3 (embedded graph database, Cypher, the maintained fork of Kuzu)', 'ladybug',
+  'ENGINE NOTES: the Node package is @ladybugdb/core (NODE_PATH is set in the image). The algo extension is already installed in the image: LOAD EXTENSION algo, then CALL PROJECT_GRAPH(...) and page_rank, louvain, weakly_connected_components, strongly_connected_components, k_core_decomposition, as in smoke.js. Community detection gave different groupings between runs in a first trial. Kuzu documentation applies where the fork has not diverged; verify behaviour in the image rather than trusting a page.')
+const pG2 = pG('DuckDB 2.0.0 with the DuckPGQ community extension (SQL/PGQ property graph queries inside an analytical SQL engine)', 'duckpgq',
+  'ENGINE NOTES: the Node package is @duckdb/node-api. In the image the extension loads with: SET extension_directory=\'/opt/eng/ext-duckdb\'; LOAD duckpgq; SET active_grammar_extensions=[\'duckpgq\']; then CREATE PROPERTY GRAPH and GRAPH_TABLE(... MATCH ...) as in smoke.js. Known limit from a first trial: a filter on an edge property inside a quantified path pattern is rejected, so give each edge kind its own edge table (label). This arm must answer through the property-graph layer (MATCH patterns, path-finding, the extension graph functions) wherever it can express the algorithm; plain SQL over the edge tables is the relational arm design, so where you must fall back to it, say so per algorithm: that fallback is itself a finding about this engine.')
+
+const pV1 = common(
+  'AUDIT OF THE FIXES. Check independently that the phase A defects are really closed. Trust nothing the fixers reported; re-measure.',
+  BUILD + '/audit/fixes, ' + BUILD + '/tmp/audit-fixes (read everything, change nothing outside these)',
+  'You are an auditor: you may read sealed/ and audit/. Never copy reference content into any folder an arm can read.'
+) + [
+  'The earlier audits are in ' + BUILD + '/audit/facts/NOTES.md and ' + BUILD + '/audit/arms/NOTES.md. The fixers reported the following; verify each claim yourself.',
+  'CHECK',
+  '1. Facts leak: scan EVERY folder of facts/cache: no commit in commits.jsonl or meta.json outside the ancestors-or-self of that parent; no label or field naming a task commit, a PR or a drop reason; the co-change edges at 5 parents recomputed by you from git under the same-PR-siblings-only rule match the cache. Every parent of tasks/parents.txt present, one extractor version.',
+  '2. Extractor fixes: the mobile config reads_setting edges exist; SQL-text edges no longer come from docstrings; ternary and looped URLs, Protocol-typed calls and environment reads are present; precision on 20 sampled edges of each new or changed kind, read against the code at the frozen commit.',
+  '3. Scorer: hand-score 5 TUNE T1 answers (pick answers of different arms and forms) under the content rule and compare with score.js; confirm paths and range forms earn no definition credit and are left out of the primary; confirm a list of every file no longer scores high on the primary; confirm one scorer is used for every arm and the old search scorer is gone.',
+  '4. Padding: for 10 tasks the DIR and CO tails are byte-identical across arms for the same task and budget; the floors equal padding alone.',
+  '5. Selection hygiene: no label or score file derived from task commits remains anywhere under arms/; the search arm goes through the common held-out lock (try to run a held-out split and confirm refusal, for every arm).',
+  '6. Leak re-run with file and process access logged (reuse audit/arms/accesslog.js) for relational, search and both graph arms on 30 TUNE tasks: no sealed path, no held-out or task commit SHA read.',
+  '7. Relational versus reference strict cross-check on 500 seeded random configurations times tasks, including metapath and pad options.',
+  'Grade each defect: blocks the test, biases a result, or minor. Say plainly whether the harness is ready for scoring.',
+].join('\n')
+
+const pV2 = common(
+  'AUDIT OF THE GRAPH ARMS. Decide whether each graph arm is correct, fair, and the strongest honest form of a graph approach on its engine.',
+  BUILD + '/audit/graph, ' + BUILD + '/tmp/audit-graph (read everything, change nothing outside these)',
+  'You are an auditor: you may read sealed/ and audit/. Never copy reference content into any folder an arm can read.'
+) + [
+  'Two builders produced arms/ladybug and arms/duckpgq. Their self-reports follow in the appended text. Verify them yourself.',
+  'CHECK',
+  '1. Identical input: both engines and the relational arm load the same canonical graph (compare content hashes and node and edge counts at 5 parents).',
+  '2. Cross-check: run each graph arm against the reference arm on 300 seeded random (configuration, TUNE task) pairs that the builders did not use, under the shared equivalence rule. Report mismatches with one worked example each.',
+  '3. Native or not: read the code. For each algorithm, is the work done by a native engine algorithm, by a query in the engine language, or by application code? Does the builder label match? For DuckPGQ, how much really goes through the property-graph layer?',
+  '4. Hand checks: on a small toy graph compute by hand a weighted shortest-path ranking, an ordered metapath reach, and a PageRank, and compare with each engine output. Check the community prior is reproducible as stated.',
+  '5. Strongest form: read the engine public documentation for the installed version and list every documented feature that plausibly helps on this graph and was left unused or misused (indexes, projected graphs, prepared statements, thread settings, path semantics, algorithm options). For each say what it would change. Also say whether the schema is really designed for this repository.',
+  '6. Fair tuning: each arm has exactly 40 stage-1 configurations around its own base, written without scores; the lists cover the protocol section 6 factors; no arm has options the others were denied without a stated reason.',
+  '7. Handicaps: anything in the shared harness, the container setup or the measurement that disadvantages a graph engine against SQLite (store on a bind mount, client overhead counted as query time, one connection per query, cold caches) or the other way round.',
+  '8. Question queries: the per-kind queries were not fitted to single questions (compare with the question texts) and run on TUNE only.',
+  'Grade each defect: blocks the test, biases a result, or minor. Say plainly whether stage-1 scoring can start, and what to fix first if not.',
+].join('\n')
+
+phase('Fix')
+const f1P = agent(pF1, { label: 'fix:facts', phase: 'Fix', schema: BUILD_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' })
+const f2aP = agent(pF2a, { label: 'fix:harness', phase: 'Fix', schema: BUILD_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' })
+const f2bP = f2aP.then(r => r ? agent(pF2b, { label: 'fix:search', phase: 'Fix', schema: BUILD_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }) : null)
+
+const gP = Promise.all([f1P, f2aP]).then(([f1, f2a]) => {
+  if (!f1 || !f2a) return [null, null]
+  return parallel([
+    () => agent(pG1, { label: 'graph:ladybug', phase: 'Build', schema: BUILD_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+    () => agent(pG2, { label: 'graph:duckpgq', phase: 'Build', schema: BUILD_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  ])
+})
+const rP = Promise.all([f1P, f2bP]).then(([f1, f2b]) => {
+  if (!f1 || !f2b) return null
+  return agent(pR, { label: 'rerun:relational+search', phase: 'Build', schema: BUILD_SCHEMA, model: 'opus', effort: 'medium', agentType: 'general-purpose' })
+})
+
+const [f1, f2a, f2b, g, rerun] = await Promise.all([f1P, f2aP, f2bP, gP, rP])
+const [ladybug, duckpgq] = g || [null, null]
+log('facts ' + (f1 ? f1.status : 'FAILED') + ' | harness ' + (f2a ? f2a.status : 'FAILED') + ' | search ' + (f2b ? f2b.status : 'FAILED') + ' | ladybug ' + (ladybug ? ladybug.status : 'FAILED') + ' | duckpgq ' + (duckpgq ? duckpgq.status : 'FAILED') + ' | rerun ' + (rerun ? rerun.status : 'FAILED'))
+
+phase('Audit')
+const brief = o => o ? JSON.stringify({ status: o.status, key_numbers: o.key_numbers, deviations: o.deviations_from_protocol, problems: o.problems }) : 'NO RESULT (the agent failed)'
+const audits = await parallel([
+  () => agent(pV1 + '\n\nFIXERS AND RE-RUN SELF-REPORTS (claims to verify)\nfacts fix: ' + brief(f1) + '\nharness fix: ' + brief(f2a) + '\nsearch fix: ' + brief(f2b) + '\nre-run: ' + brief(rerun), { label: 'audit:fixes', phase: 'Audit', schema: AUDIT_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+  () => agent(pV2 + '\n\nBUILDER SELF-REPORTS (claims to verify)\nladybug: ' + brief(ladybug) + '\nduckpgq: ' + brief(duckpgq), { label: 'audit:graph-arms', phase: 'Audit', schema: AUDIT_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' }),
+])
+log('audit fixes defects ' + (audits[0] ? audits[0].defects.length : 'FAILED') + ' | audit graph defects ' + (audits[1] ? audits[1].defects.length : 'FAILED'))
+return { factsFix: f1, harnessFix: f2a, searchFix: f2b, rerun, ladybug, duckpgq, auditFixes: audits[0], auditGraph: audits[1] }

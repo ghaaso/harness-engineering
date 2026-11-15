@@ -1,0 +1,2073 @@
+{
+ "bottlenecks": [
+  {
+   "id": "B01",
+   "name": "Fix rounds that create new defects",
+   "family": "review",
+   "what_it_is": "Every branch needed two to four review rounds. Fixes added new stored state (a hold, lock, marker or cutoff) with an untested ending, which produced new P1s. The clinic build stopped on the owner's instruction, not by converging. Harness v2 calls this loop R1, the fix spiral.",
+   "evidence": "19 P1 in round one; fixes then created 5+ more P1 and 10 P2 (M). 9 of 11 gates took three rounds (M). 64 % of reviews sent a slice back, averaging 2.8 rounds per slice (M). The context-system waves reproduced 6+15+22+10 defects (M).",
+   "potential": "Review rounds that converge, with a defined stop rule; breaks the fix spiral (R1). One stated bound: at most 1.25x faster if 20 % of rounds were avoidable (I).",
+   "class": "Trial",
+   "state": "open: fix-round contract designed (harness v2 phase 3), replay not run",
+   "first_step": "Replay a fix-round contract (two-round cap, revert, fresh reviewer, state-ending table) sealed against the recorded defect chains",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:7 — fixes introduced new P1s",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:334 — The replay is sealed. Fail-before must be an assertion failure.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:256 — B01 | Fixes that create new defects | trial | 3",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:517 — defects reproduced then fixed: 6 (first external review) + 15 (first adversarial) + 22 (wave 1) + 10 (wave 2)"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B02",
+   "name": "Gaps found only on the last day",
+   "family": "first-use",
+   "what_it_is": "Every clinic slice was tested on a synthetic seeder. The real-data paths were missing: the app refused real data and a fresh install could not create tills or accounts. Nobody walked a clean install end to end.",
+   "evidence": "Found on the last day (M). No clean-install walk was ever run (M). Five 'claim without attested premise' flags were raised in coverage ledgers (M).",
+   "potential": "First-use failures caught at every gate instead of on the last day.",
+   "class": "Build",
+   "state": "partly closed: real-data switch reported merged 11 Nov; clean-install walk not run (harness v2 phase 4)",
+   "first_step": "Run a zero-seed journey against a fresh container database in every gate",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:8 — nobody ever walked a clean install end to end",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:335 — The gap was missing production creation paths behind a synthetic seeder.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:257 — Gaps found only on the last day | build | 4",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:818 — a cheap honesty device against B12 overstated reports"
+   ],
+   "conflicts": "The compile (2026-11-11) says the real-data switch merged on 11 Nov. The clinicC lane's reading says 'real-data switch built, unmerged'."
+  },
+  {
+   "id": "B03",
+   "name": "Everything stops when the owner is away",
+   "family": "owner-process",
+   "what_it_is": "Nothing restarts without the owner. Parked sessions wait for his release message. The orchestrator can start sessions only when his message begins the turn. After a stop, nothing resumes, and a resumed session can drift from its record.",
+   "evidence": "About three days idle from 6 Nov (M); no commits from 6 Nov 14:57 to 9 Nov (M). Three more power-offs followed the reboot (M). One WF-02 wait lasted 3 h 06 min (M).",
+   "potential": "Idle time between 'could resume' and the next commit falls from about three days to under three hours (T).",
+   "class": "Decide",
+   "state": "open: D06 answered; one resume guard (G2-F054) proposed; nothing restarts Docker or sessions after a power-off",
+   "first_step": "Build a restart chain and a resume list, then release sessions two at a time",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:9 — nothing resumed for three days",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:336 — a released session whose branch holds commits its record does not cover parks itself",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:258 — from about three days [M] to under three hours [T]"
+   ],
+   "conflicts": "The original list (bottlenecks.md:9) says a usage limit halted all sessions on 6 Nov. The compile correction (2026-11-11) says the halt began with a PC power-off at 14:58:23, 31 seconds after the last commit, not with a limit."
+  },
+  {
+   "id": "B04",
+   "name": "One orchestrator is the serial gate",
+   "family": "orchestrator",
+   "what_it_is": "One root session reviews, merges, edits the shared board and runs the check, so it sets the maximum output rate (harness v2 loop B2). Its context overflows and is summarised again and again; after a new chat it refills.",
+   "evidence": "Compactions at 574k, 974k, 967k and 970k tokens (M). The root is 15.3 % of tokens (M). Sessions peaked at 731,239 and 869,982 tokens, with 53-69 % of the growth being the model's own output (M). Owner reports a refill from 700k to 800k.",
+   "potential": "No compaction across a wave of five gates (T). The gain is bounded, because the root is 15.3 % of tokens (M). Compaction steering could hold the window near 300-400k.",
+   "class": "Trial",
+   "state": "open: compaction steering built but not installed; gate workflow is in harness v2 phase 3",
+   "first_step": "Build a gate workflow with a typed verdict and a local merge queue; move review out of the root",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:10 — context has overflowed and been summarised more than once",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:337 — The root is 15 % of tokens",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:259 — No compaction across a wave of five gates [T].",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:38 — However many lanes run, nothing leaves faster than that.",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:525 — sessions peaked 731,239 and 869,982; 53-69% of growth is the model's own retained output"
+   ],
+   "conflicts": "The compileA reading (2026-11-11) counts 4 compactions (574k/974k/967k/970k). The clinicC reading counts 3 (573,774; 974,246; 967,210)."
+  },
+  {
+   "id": "B05",
+   "name": "The PC powers off unexpectedly",
+   "family": "machine",
+   "what_it_is": "The PC shuts down without warning and stops all agent work. The cause is not found. Most shutdowns leave no crash code, and most came when there was no Claude activity just before.",
+   "evidence": "24 Kernel-Power 41 events since 7 Oct, 23 with no crash code (M). 25 since 1 Oct; 15 had no Claude call in the prior ten minutes; build load explains at most 6 (M). On 13 Nov the PC was off for 28 minutes with eight lanes running (M).",
+   "potential": "The trace ends at the next event; zero sleep events in 14 days (T). Resume lists, commit-and-push checkpoints and an off-machine copy make each stop cheap to recover from.",
+   "class": "Diagnose",
+   "state": "open: cause unknown; phase-1 join done, logger pending; FixFlow lanes mitigated by push checkpoints",
+   "first_step": "Join event times to commits, add a sensor logger, decode the 7 Oct dump, turn off sleep",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/machine-facts.md:7 — 24 Kernel-Power Event 41 records since 2026-10-07",
+    "docs/program/harness-v2/phase1/FINDINGS.md:25 — 25 unexpected shutdowns since 1 October",
+    "docs/program/RESEARCH-RESULTS-FOR-CUREFOUND-2026-11-13.md:87 — 25 unexpected power-offs since 1 October, 15 with no Claude call in the prior ten minutes",
+    "docs/program/SHIP-PLAN-2026-11.md:1719 — the PC lost power at about 13:25 on 2026-11-13 and was off for 28 minutes",
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:14 — Cause never diagnosed; memory pressure suspected.",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:622 — none diagnoses the clinic's two unclean shutdowns (B05)"
+   ],
+   "conflicts": "The original list says two unclean shutdowns under load, with memory suspected. The compile (2026-11-11) says 24 since 7 Oct, with memory the least supported cause. Harness v2 phase-1 FINDINGS says 25 since 1 Oct, and the v2 design notes 'compile: 24'."
+  },
+  {
+   "id": "B06",
+   "name": "The check is slow on Windows",
+   "family": "check",
+   "what_it_is": "On Windows, the test runner reaches the database through Docker Desktop's published port. Workers sit waiting on that network hop instead of using the CPU. A faster Linux-container run exists but is optional.",
+   "evidence": "0.63 ms vs 0.13 ms per query round trip; workers about 40 % busy; whole check 367.2 s on Windows vs 230.1 s in a container (M).",
+   "potential": "A median gate near 230 s (T), about 1.5x faster (M).",
+   "class": "Decide",
+   "state": "partly closed: container run exists but is not the gate; decision D09 (harness v2 phase 2)",
+   "first_step": "Make the container run the gate",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:15 — Linux container mode is faster but optional",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:339 — The cost is the Docker Desktop network hop.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:261 — Median gate near 230 s [T]. Zero Linux-only failures on main."
+   ],
+   "conflicts": "The original list framed this as the Windows-to-Docker path with Linux mode optional. The 2026-11-11 correction places the cost in the network hop through Docker Desktop's published port, not in file access."
+  },
+  {
+   "id": "B07",
+   "name": "Checks queue behind each other",
+   "family": "check",
+   "what_it_is": "Check capacity is slots divided by run time; past that, lanes queue (harness v2 loop B1). A second slot opens only with 8 GB free, so in practice there is one slot.",
+   "evidence": "Longest wait 2,030 s, median 409 s (M). Two lane readings recorded waits of 169-726 s and 256-647 s (M). 8 GiB was never free in about 980 samples (M). One slot at 367 s per run (M).",
+   "potential": "Median wait under a minute (T). A second slot open on at least half of polls (T). Two slots give 1.8-1.9x throughput (M).",
+   "class": "Build",
+   "state": "open: mitigated by a memory guard; harness v2 phase 2",
+   "first_step": "Measure peak memory per check, size the slots, add a fair queue",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:16 — waits of 6 to 34 minutes",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:405 — the one check slot, where waits reached 2,030 s",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:262 — Median wait under a minute [T].",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:37 — One slot and 367 s [M] on Windows."
+   ],
+   "conflicts": "The owner's list says waits of 6 to 34 minutes; clinicA found no file recording 34 minutes. The compile measured waits from 3 s to 2,030 s. ClinicA and clinicC lane readings record narrower ranges (169-726 s and 256-647 s)."
+  },
+  {
+   "id": "B08",
+   "name": "Memory is short on this PC",
+   "family": "machine",
+   "what_it_is": "RAM, not CPU, sets how many check slots, sessions and lanes can run at once. The browser, the WSL2 machine and the Claude processes hold most of it.",
+   "evidence": "Clinic: free memory 2-6 GB, with lows of 0.0-0.8 GB in paired runs; browser 6.1 GB, WSL2 5.2 GB, Claude 3.2 GB (M). FixFlow: 31 GB total, about 11 GB free, 5.5-7.7 GB free with eight lanes; commit 35-41.5 of 50.1 GB (M).",
+   "potential": "A table of who holds memory, plus a cap, so slot and database choices are informed. Eight FixFlow sessions fit today; more would need memory measured free.",
+   "class": "Diagnose",
+   "state": "open in the clinic; FixFlow managed by a slot lock and an eight-session ceiling",
+   "first_step": "Run one build day with a per-group memory sampler",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:17 — free memory often 2 to 6 GB",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:341 — The memory holders are the browser, the WSL2 machine and Claude processes",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:263 — A table of who holds memory when less than 2 GB [T] is free.",
+    "docs/program/SHIP-PLAN-2026-11.md:1713 — RAM: 31 GB, about 11 GB free with other sessions running — the binding resource"
+   ],
+   "conflicts": "The original list blames about 20 idle sessions and 26 database containers. The 2026-11-11 correction says the idle ones were not shown to be the main consumers, and 25 of the 26 containers were stopped."
+  },
+  {
+   "id": "B09",
+   "name": "A check hung with no named cause",
+   "family": "check",
+   "what_it_is": "A parallel check pass stalled and a watchdog killed it. There was no signal naming which test was running, and the stall has not been reproduced.",
+   "evidence": "Stall limit 600 s (S). The clinicA reading has the run killed after 961 s, whole check 1,116 s (M); clinicC records a 754 s hang in a demo (M). Separately, a host suspension once created a false 14,227 s gap (M).",
+   "potential": "The next stall names its test and cause; the stall limit drops to about 120 s (T).",
+   "class": "Diagnose",
+   "state": "open: bounded by the watchdog; not reproduced",
+   "first_step": "Add a heartbeat that records the running test, dump worker stacks, check sleep/wake records",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:18 — Cause unknown, not reproduced.",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:342 — A stall needs a heartbeat naming the running test.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:264 — Lower the stall limit from 600 s [S] to about 120 s [T]",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:621 — 14,227.125 s suspended gap"
+   ],
+   "conflicts": "The list says 600 s. The lane readings of the recorded events give a 961 s kill (clinicA) and a 754 s hang (clinicC)."
+  },
+  {
+   "id": "B10",
+   "name": "Nothing restarts after a reboot",
+   "family": "machine",
+   "what_it_is": "After a restart, Docker and the databases stay down until someone starts them by hand. In FixFlow, a stopped Docker engine blocks every backend gate and dump restore.",
+   "evidence": "Docker AutoStart is false; 31 of 34 clinic containers have restart policy 'no' (M). Docker was restarted by hand on 9 Nov. FixFlow's design time found the engine down, blocking the backend gates.",
+   "potential": "Databases healthy within 3 minutes of sign-in with no command (T); backend gates and restores unblocked.",
+   "class": "Decide",
+   "state": "open: D03 'not now'",
+   "first_step": "Start Docker at sign-in and set unless-stopped on the databases in use",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:19 — No automation.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:265 — the databases are healthy within 3 minutes [T] with no command",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:32 — Docker CLI present but the engine is down",
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:520 — Docker Desktop does not auto-start"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B11",
+   "name": "The work exists only on this PC",
+   "family": "machine",
+   "what_it_is": "The clinic repository has no remote and no off-machine copy. The context-system line is untracked. The planned FixFlow knowledge store would be mirrored only to a VPS that does not exist yet.",
+   "evidence": "432 commits, 19 worktrees, 55 MB packed, no remote, one C: drive (M). Six folders are in no commit. The knowledge store's restore point is its last push; until then a single disk holds it.",
+   "potential": "Work survives losing the PC; a clone from the copy shows the same heads; the copy is under 24 hours old (T).",
+   "class": "Decide",
+   "state": "open: D02 answered (encrypted drive); the knowledge store accepts single-disk risk by default (D14)",
+   "first_step": "Make a verified git bundle and a nightly copy to the encrypted drive",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:20 — No remote and no off-machine copy.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:266 — The work exists only on this PC",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:606 — all of this work currently exists only as untracked files in a repository with no remote",
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:362 — The restore point of the store is the last push",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:713 — accept the bounded single-disk risk"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B12",
+   "name": "Agent reports overstate what was done",
+   "family": "review",
+   "what_it_is": "Session and agent reports claimed tests, evidence or runs that did not exist or did not match, and model re-checks did not stop it. FixFlow findings can be convincing and still wrong. Line numbers drift.",
+   "evidence": "20-plus recorded overstatements (M). Owner reviews corrected the model's counts three times; 4 of 579 quotes could not be verified (M). Clinic S11 round 2 had two unsupported claims (M).",
+   "potential": "False flags under 10 % (T); less re-checking by the orchestrator; claims anyone can recheck by reopening the cited lines.",
+   "class": "Trial",
+   "state": "open: quote scripts, cite-and-tag rules and FixFlow skeptics used in research; claims script not built",
+   "first_step": "Build a claims file checked by script (record-only, with an allow-list) and replay it on recorded gates",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:24 — Records cited tests that did not exist",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:345 — The claims script runs record-only with an allow-list and no retry.",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:826 — owner reviews corrected the model's counts three times",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:775 — which the handoff's provenance shows is where confident-",
+    "compile/src/SKILLS-PACKAGES.md:451 — Never copy a line number from an evidence file: they drift"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B13",
+   "name": "Shared documents have one writer",
+   "family": "orchestrator",
+   "what_it_is": "The root session hand-edits a large shared board at every merge. Routing documents and state files go stale (AGENTS.md, task.md, a model-written state file).",
+   "evidence": "Board 829 lines, 219,111 bytes (M). AGENTS.md grew from 6,709 to 10,698 bytes (M). A model-written state file was stale within hours. 4,053 dangling endpoints in the map (M).",
+   "potential": "Board under 20 KB (T) and zero root edits at merge (T), from a generated board and state fragments per slice.",
+   "class": "Build",
+   "state": "open: harness v2 phase 3",
+   "first_step": "Write per-slice state fragments, a board generator and a merge script that applies the board diff",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:25 — the board is over 800 lines",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:346 — The merge script applies the generated board diff.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:268 — Board from 221 KB [M] to under 20 KB [T].",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:825 — SESSION_STATE.md is a model-written checkpoint that was already stale within hours"
+   ],
+   "conflicts": "The compile and harness v2 give the board as 221 KB [M]; the lane readings give 219,111 bytes. This may be the same board measured at different times or rounded differently; the sources do not reconcile it."
+  },
+  {
+   "id": "B14",
+   "name": "The owner cannot see progress",
+   "family": "owner-process",
+   "what_it_is": "During long calls the owner gets no sign of whether work is waiting, running or stalled, and cannot see queue position or the running test.",
+   "evidence": "Waits of up to 2,700 s and a 49-minute polling loop (M).",
+   "potential": "The longest gap between heartbeats under 60 s (T); the owner sees waiting, running and stalled.",
+   "class": "Build",
+   "state": "open: harness v2 phase 2",
+   "first_step": "A heartbeat file with queue position; run checks in the background",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:26 — did not move for an hour",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:347 — The cause was a long foreground call. The remedy is the heartbeat",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:269 — Longest gap between heartbeats under 60 s [T]."
+   ],
+   "conflicts": "The original list says a step display froze for an hour. The 2026-11-11 correction says it was most likely one long foreground call, not a frozen display."
+  },
+  {
+   "id": "B15",
+   "name": "Worktrees and containers pile up",
+   "family": "machine",
+   "what_it_is": "Leftover worktrees, branches, sessions and containers use disk and memory. The orchestrator no longer archives without the owner's word, since it once archived a session he was still using.",
+   "evidence": "19 worktrees, 36 branches and 34 containers in the clinic (M).",
+   "potential": "Counts return to the active slices plus one (T); no session lost to cleanup.",
+   "class": "Decide",
+   "state": "open: D10; the archive rule is the owner's",
+   "first_step": "Write an archive rule and a dry-run reaper that checks for a clean worktree at merge",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:27 — once archived a session the owner was still using",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:348 — A clean-worktree check at merge, so the dry-run reaper meets no surprise.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:270 — worktree and container counts return to the active slices plus one"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B16",
+   "name": "Agent reports flow through the orchestrator",
+   "family": "orchestrator",
+   "what_it_is": "Subagents' full reports come back into the root's context instead of being written to files, so the root fills up. In FixFlow, the root also risks drowning in prose from sixteen results at one gate.",
+   "evidence": "The root runs about 499k tokens of context per call (M). Subagents make 82.4 % of API calls (M). A probe showed a subagent can write and read back a file (M). FixFlow W1 has 16 results (T).",
+   "potential": "Zero refused writes over 20 runs (T); a smaller root window; gate decisions that fit in the window.",
+   "class": "Build",
+   "state": "open, premise corrected; FixFlow mitigates with schemas and reading results by id",
+   "first_step": "Agents write reports to a pre-allowed folder and return only the path and hash (a 2,500-character handback rule (S))",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:28 — Their long reports come back through the orchestrator's context.",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:349 — stopped the false 'subagents cannot write' rule forming from an unchecked agent report",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:271 — Refused writes: zero over 20 runs [T]",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:666 — subagents can hand results back as files that a script validates",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:272 — it never loads all sixteen objects into one pass."
+   ],
+   "conflicts": "The original list says 'subagents cannot write files', and the clinicA reading treats that as given. The 2026-11-11 probe shows they can; refusals came from read-only agent types or unanswered permission prompts."
+  },
+  {
+   "id": "B17",
+   "name": "Nobody reads the final commit",
+   "family": "review",
+   "what_it_is": "All review is a model reading a model's code, with no independent human review. High-risk merges went in with the final head commit unread.",
+   "evidence": "4 of 5 merges on 10 Nov unread (M). 5 of 6 high-risk final heads unread, out of 65 recorded merges (M). Round 3 was root-only in 9 of 11 gates (M). 21 attacks, 12 accepted, none closed by a human (M).",
+   "potential": "Unread high-risk merges cut from 5 of 6 to zero (T).",
+   "class": "Trial",
+   "state": "open: the only bottleneck with direct idea-list fits (G2-F118, G4-F140); harness v2 phase 3",
+   "first_step": "Merge queue that records the final-head reader and refuses a wrong head (record-only first); replay seven misses with a second model family",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:32 — No independent human review",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:350 — G2-F118 refuses a merge whose verdict does not name the merged head.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:272 — from 5 of 6 [M] to zero.",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:698 — it is a model-reading-model review"
+   ],
+   "conflicts": "The original list says no independent human review at all. The 2026-11-11 correction says executed proofs ran at every gate, and the real gap is the unread final head. The two counts, 4 of 5 and 5 of 6, use different sets of merges (all 10 Nov merges vs high-risk merges)."
+  },
+  {
+   "id": "B18",
+   "name": "Tests ran only on Windows",
+   "family": "check",
+   "what_it_is": "Production runs on Linux, but the gate check runs on Windows, so failures that happen only on Linux can reach main. This is the same decision as B06.",
+   "evidence": "2 of 2,472 tests failed only on Linux (M). Linux run 230 s vs Windows 367 s (M).",
+   "potential": "Zero Linux-only failures on main (T).",
+   "class": "Decide",
+   "state": "partly closed: a Linux run exists but is not the gate; D09",
+   "first_step": "Make the container run the gate (same step as B06)",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:33 — the Linux run is not the gate",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:351 — A decision to make the Linux container run the gate",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:273 — The same decision as the slow check"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B19",
+   "name": "Nothing has run on a real host",
+   "family": "first-use",
+   "what_it_is": "The first-deploy steps have never run on a real host: certificate, off-site backups, alerts and a second-host restore. Several of them are not built yet.",
+   "evidence": "No certificate script, backup push or alert channel exists (M). A local VM rehearsal hung 3 of 3 times (M).",
+   "potential": "A result file from a real host for each checklist gap (T); each step carries its command, its expected result and a negative run.",
+   "class": "Decide",
+   "state": "open: harness v2 phase 4; D21",
+   "first_step": "Do the free steps with the owner present, then a one-day rented-host rehearsal",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:34 — Nothing has run on a real host.",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:352 — Each first-deploy step carries its command, its expected result and a negative run.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:274 — Each checklist gap has a result file from a real host."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B20",
+   "name": "Load test not rerun after the fix",
+   "family": "check",
+   "what_it_is": "After the query fix, page speed was shown again, but the 12-concurrent-user load test was not rerun.",
+   "evidence": "Pages took 109-524 ms at p95 with 75,016 documents (M). Drill e ran 11,000-110,000 ms (M). The 12-user drill has not been rerun. A bulk generator should reach 250,000 stock movements (T).",
+   "potential": "A regression signal now; proof of the capacity envelope on a rented host.",
+   "class": "Build",
+   "state": "open: harness v2 phase 4",
+   "first_step": "Rerun the 12-user drill on current main; build the bulk generator",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:35 — 12 concurrent users is not.",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:353 — Rerun the 12-user drill.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:275 — A bulk generator to reach 250,000 [T] stock movements."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B21",
+   "name": "Minor findings pile up uncounted",
+   "family": "review",
+   "what_it_is": "Low-priority (P3) review findings were carried forward without a status column, so nobody can count how many are still open. An unmapped status would make that count impossible.",
+   "evidence": "111 P3 findings in round one across ten slices (M); 183 distinct P3 ids with no status (M).",
+   "potential": "An open count, plus a verdict for every pilot-critical finding.",
+   "class": "Build",
+   "state": "open: harness v2 phase 3; D12 (owner's expiry rule)",
+   "first_step": "Write a script that parses the board's finding tables, with one P0-P3 scale and one status table",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/bottlenecks.md:36 — Dozens of P3 findings carried.",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:354 — One written P0 to P3 scale and one status table",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:276 — An open count exists. Every pilot-critical finding has a verdict."
+   ],
+   "conflicts": "The original list says 'dozens'. The compile (2026-11-11) counts 111 in round one and 183 distinct ids."
+  },
+  {
+   "id": "R2",
+   "name": "Context growth in long sessions",
+   "family": "tokens",
+   "what_it_is": "Every call re-reads the whole context and adds to it, so long-lived sessions (slice sessions and orchestrators) run at very large windows for long stretches. This is token lever 1: the largest token exposure.",
+   "evidence": "Slice sessions average about 306k per call and take 66.4 % of cache-read tokens (M). Average window 396k (FixFlow) and 333k (clinic); 39 % and 74 % of tokens in calls past 200k (M). A FixFlow call reached 971k at first compaction; Sonnet reached 963k (M).",
+   "potential": "A ceiling near 367k on every model; capping at 150-200k addresses the largest exposure; one phase per session.",
+   "class": "Trial",
+   "state": "partly closed: one phase per new session adopted (HR-C1); compaction-window trial not run",
+   "first_step": "One phase per session, plus a compaction-window trial with a peak-context log",
+   "sources": [
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:40 — A ceiling near 367k on every model, and one phase per session.",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:175 — slice-session windows, 66 % of tokens at about 306k per call",
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:26 — share of cache-read tokens in calls whose context had passed 200k",
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:318 — Cost: 50.3M cache-read tokens by transcript line 2177",
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:73 — The owner's `autoCompactWindow: 400000` is keyed to",
+    "HARNESS-IDEAS-HORTHY-2026-11.md:30 — Context budget and compaction: the defence is one phase per new session",
+    "memory/MEMORY.md:7 — 400k compaction window built in the testbed and never switched on"
+   ],
+   "conflicts": "Sources disagree on whether a compaction window is in effect. Memory (2026-11-11/12): a 400k compaction window was built in the testbed and never switched on. Harness v2 design: 'Opus already capped'. Harness review (2026-11-01): autoCompactWindow 400000 is keyed to claude-opus-5-5, does not apply to the claude-fable-5-1 session, and was deferred (HR-C4)."
+  },
+  {
+   "id": "R4",
+   "name": "The pile-up after a stop",
+   "family": "orchestrator",
+   "what_it_is": "A waiting lane keeps holding its context. After a stop, every lane is released at once, and they all queue again for the same check slot (harness v2 loop R4).",
+   "evidence": "Every session was released together on 9 Nov; one check then waited 2,030 s (M).",
+   "potential": "Release sessions two at a time and park the waits.",
+   "class": "",
+   "state": "open: designed, not built",
+   "first_step": "A scheduler that releases two sessions at a time",
+   "sources": [
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:41 — Every session was released together on 9 November."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "B3-LOOP",
+   "name": "Usage limits stop every lane at once",
+   "family": "machine",
+   "what_it_is": "When the account reaches its usage or session limit, every lane stops at once (harness v2 loop B3). Agents die mid-run, leaving nulls and agents that never started, and work must be resumed or paid for again. This is the most often recorded harness failure.",
+   "evidence": "14 limit episodes in October; ten lanes lasted about 15 minutes (M). Subagents caused 91 of 104 limit errors (M). 7 of 101 refuters lost (M). Seven agents died on a session limit (M). Six of eight clinic lanes failed in run 1 (M).",
+   "potential": "A governor that slows lanes instead of stopping them; runs that resume without paying again for completed agents.",
+   "class": "",
+   "state": "partly closed: FixFlow workflows have a circuit breaker and journal resume; harness v2 calls it unmanaged; the lost refuters were not rerun",
+   "first_step": "Write a token budget and a governor; keep fan-out small; resume with the knownDead list",
+   "sources": [
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:39 — 14 [M] limit episodes in October",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:586 — completed agents are in",
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:7 — (94 completed, 7 refuters lost to a usage limit)",
+    "HARNESS-IDEAS-BAML-2026-11.md:320 — HARNESS-REVIEW:9 records 7 refuters lost to a usage limit",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:824 — Six interruptions (SESSION_STATE.md section 5)",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:907 — The first run of the workflow was lost to a session restart"
+   ],
+   "conflicts": "The clinicC reading says 14 limit episodes in 15 days. Harness v2 and the token records say 14 in October."
+  },
+  {
+   "id": "TK-LIMITACCT",
+   "name": "How the usage limit counts is unknown",
+   "family": "tokens",
+   "what_it_is": "Nobody knows how cache-read tokens count against the five-hour usage limit. Until that is known, no token cut can be promised to reduce limit stops.",
+   "evidence": "14 limit episodes in October (M). About 70k tokens per agent before any work (M). The accounting rule itself is unmeasured.",
+   "potential": "Knowing which cuts actually reduce stops. If cache reads count lightly, token cuts may not reduce stops at all.",
+   "class": "Diagnose",
+   "state": "open",
+   "first_step": "Rerun the limit forensics; probe with scheduled tasks",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:90 — How cache-read tokens count against the five-hour limit is unknown",
+    "docs/program/RESEARCH-RESULTS-FOR-CUREFOUND-2026-11-13.md:87 — subagents caused 91 of 104 limit errors; each agent pays about 70k tokens before work"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "TK-REREAD",
+   "name": "Every call re-reads the whole window",
+   "family": "tokens",
+   "what_it_is": "Token use equals the number of calls times the window size. Nearly every token is a re-read of a context window that is already there; the model's output is a tiny share.",
+   "evidence": "Cache reads are 96.8 % of 7.35 B context tokens; output is 0.75 %; 35,834 calls (M). 4.25 billion cache-read tokens in November (M).",
+   "potential": "Any cut to the number of calls or the window size cuts tokens in proportion. Harness v2 estimates by source: own output 32 % (E), session start 29 % (E), fetched content 27-28.5 % (E).",
+   "class": "",
+   "state": "measured; this is the frame that levers 1-4 act on",
+   "first_step": "Cap window size and batch lookups",
+   "sources": [
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:18 — Token usage is **calls × window size**. Nothing else comes close.",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:95 — Nearly every token the build used was a re-read: 4.25 billion [M] cache-read tokens in November."
+   ],
+   "conflicts": "The totals use different scopes: 7.35 B context tokens across both repos (token doc, 2026-11-12), 4.25 B cache-read tokens in November (harness v2), and 4.33 B context tokens (HARNESS-BOTTLENECKS window-fill measure)."
+  },
+  {
+   "id": "TK-PREFIX",
+   "name": "Fixed start-up cost per agent",
+   "family": "tokens",
+   "what_it_is": "Every agent window first loads a fixed prefix (system prompt, tool and connector schemas, skills, memory, CLAUDE.md, the brief) and re-reads it on every call. Many small agents can cost more than their work. This is token lever 2.",
+   "evidence": "About 70,000 tokens: tools 34k, connectors 17k, skills 9k, system 8k, memory 2k (M). Elsewhere about 60k, which is 56 % of each agent's tokens, 27 % of all tokens and 47 % of FixFlow's (E). FixFlow ran 1,118 agent windows.",
+   "potential": "Deferred schemas, fewer connectors and no skills in agent sessions 'remove most of it'; fewer tiny fan-outs.",
+   "class": "Trial",
+   "state": "measured; trial not run; FixFlow mitigates with inline commands and batched claims",
+   "first_step": "Trial agents with deferred schemas, no connectors and no skills; use a short tool list",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:85 — About 70,000 tokens before any work",
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:44 — 56 % of every agent's tokens is its fixed prefix, about 60k tokens",
+    "docs/program/HARNESS-V2-DESIGN-2026-11.md:106 — Tool definitions are 34k [M] of the about 70,000 tokens [M] each agent pays.",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:90 — subagent also pays a fixed overhead (CLAUDE.md ≈ 7.5k tokens plus the CONTEXT block)",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:794 — every subagent starts above 63k prompt tokens"
+   ],
+   "conflicts": "Sizes differ by source and date: about 70k [M] (compile 2026-11-11 and harness v2), about 60k [E] (token doc 2026-11-12), above 63k (knowledge-store design), and CLAUDE.md alone at about 7.5k [E] (orchestration design 2026-10)."
+  },
+  {
+   "id": "TK-LOOKUP",
+   "name": "Calls that only read or search",
+   "family": "tokens",
+   "what_it_is": "Many calls only read or search, and each one is a full re-read of the window. This is token lever 3. It is an exposure, not a saving.",
+   "evidence": "FixFlow: 64 % of calls and 55 % of tokens; clinic: 52 % and 41 % (M). Testbed: 8,701 of 15,921 calls (54.7 %) re-read 43.6 % of context tokens; in subagents, 70.9 % (M).",
+   "potential": "Batching two lookups into one call removes about a third of all calls (E); 151 of 200 sessions already chain two or more.",
+   "class": "",
+   "state": "measured, unsolved",
+   "first_step": "Batch lookups in one command; replay a zero-token index on recorded windows",
+   "sources": [
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:28 — calls that only read or searched, each one a full re-read",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:229 — 8,701 of the 15,921 calls (54.7 %) issued nothing but read or search tools"
+   ],
+   "conflicts": "The memory note gives 58 % pooled; the token doc gives 64 % (FixFlow) and 52 % (clinic); the testbed measure gives 54.7 %. These are different scopes."
+  },
+  {
+   "id": "TK-OWNOUTPUT",
+   "name": "The model's own output is carried forward",
+   "family": "tokens",
+   "what_it_is": "Thinking, echoed commands and the contents of files the model writes stay in the window and are re-read on every later call. Filtering what is read cannot remove them. This is token lever 4.",
+   "evidence": "26 % of all tokens: 15 % FixFlow, 31 % clinic (E). In the clinic: thinking 12 %, echoed commands 9 %, written files 8 % (E). In one session's window growth: thinking 31.5 %, Write 13.9 %, Edit 7.4 % (M).",
+   "potential": "Writing big files through a script, and compacting after write-heavy phases, removes it.",
+   "class": "",
+   "state": "estimated; the breakdown is measured on two clinic sessions only",
+   "first_step": "Write big files by script; run the same breakdown on FixFlow orchestrator sessions",
+   "sources": [
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:36 — the model's own earlier output carried forward (thinking, commands, file contents it wrote)",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:525 — thinking blocks 205,329 tokens (31.5%), Write file content 90,710 (13.9%)"
+   ],
+   "conflicts": "Harness v2 estimates own output at 32 % [E]; the token doc estimates 26 % [E]."
+  },
+  {
+   "id": "TK-SUMMARIES",
+   "name": "Compaction summaries re-read every call",
+   "family": "tokens",
+   "what_it_is": "Each compaction leaves a summary in the window, and it is re-read on every later call.",
+   "evidence": "8 % of all tokens: 11 % clinic, 2 % FixFlow (E). 48 compactions in main sessions (M).",
+   "potential": "Fewer or shorter summaries; a plain notes file matched heavier machinery at a lower token cost.",
+   "class": "",
+   "state": "measured",
+   "first_step": "Compact earlier and keep summaries short",
+   "sources": [
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:38 — compaction summaries re-read | 8 % | 2 % | 11 %"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "TK-FETCHED",
+   "name": "Fetched file content fills the windows",
+   "family": "tokens",
+   "what_it_is": "Content fetched by reading and searching fills about a quarter of the windows and is processed again on every later call. A small hot set of files is re-read across many sessions, not inside one. How much of it was actually needed is unknown.",
+   "evidence": "26 % of tokens (E), 22.3 % when re-measured; 27-28.5 % of 4.33 B (E). 72 paths (3.3 %) hold half; 294 paths read in five or more windows hold 73 % (M). Repeats within a window are 0.5-1.5 % (E). 74 % went to files not edited (M).",
+   "potential": "This is what indexes, digests and knowledge stores aim at. A digest shared across sessions could pay if a shorter form can stand in for the lines. No saving is stated.",
+   "class": "",
+   "state": "measured; digest idea untested; share actually needed unmeasured",
+   "first_step": "Test digests of the 72 hot paths; define needed context from review findings",
+   "sources": [
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:46 — Fetched content, the thing indexes and knowledge stores aim at, is a quarter of the tokens in both repos.",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:227 — about 27 to 28.5 % was content the sessions fetched by reading and searching",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:231 — 294 paths read in five or more windows hold 73 %",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:232 — 74 % of fetched tokens went to files the window did not edit"
+   ],
+   "conflicts": "Three figures: 26 % [E] (token doc), 22.3 % on its re-measure, and 27-28.5 % [E] (HARNESS-BOTTLENECKS, 2026-11-11). Memory says 'about 27 %'."
+  },
+  {
+   "id": "TK-BLIND",
+   "name": "Gaps in the token measurement",
+   "family": "tokens",
+   "what_it_is": "Some calls never appear in transcripts, some groups include unrelated sessions, and part of the window content is unclassified, so the token shares have small gaps.",
+   "evidence": "About 1 % of calls missing (harness-internal Haiku); about 3 % of the FixFlow group unrelated; 5-8 % of window content unclassified (E).",
+   "potential": "Closing the gaps firms up every share above.",
+   "class": "",
+   "state": "known; caveats kept beside the tables",
+   "first_step": "Keep the caveats beside every table",
+   "sources": [
+    "docs/program/TOKEN-BOTTLENECK-2026-11.md:65 — About 1 % of calls (harness-internal Haiku for web fetch and titles) never appear in transcripts."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "TK-BUDGET",
+   "name": "Remedies and tracks compete for one budget",
+   "family": "tokens",
+   "what_it_is": "Adopting every remedy at once would recreate the usage-limit stops. Side tracks such as the knowledge store compete with ship phases for limited Opus quota and for the owner's attention.",
+   "evidence": "A ceiling of two lanes at a time (M). The knowledge store needs about ten sessions, about half on Opus (E).",
+   "potential": "One shared budget across remedies; the ship plan stays unblocked.",
+   "class": "Decide",
+   "state": "open: the knowledge-store rule is designed (a KS phase yields when it hits a limit)",
+   "first_step": "Set one budget across all remedies; start KS sessions only when no ship phase is waiting on Opus",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:177 — adopting them all at once recreates the stops",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:554 — a KS phase that hits a usage limit yields, never the ship phase"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "TK-HAIKUCLIFF",
+   "name": "Haiku price cliff above 100k",
+   "family": "tokens",
+   "what_it_is": "Haiku loses its price advantage once a prompt goes above about 100k input tokens.",
+   "evidence": "Threshold about 100k input tokens (S).",
+   "potential": "Cheap extractor agents stay cheap.",
+   "class": "",
+   "state": "mitigated by splitting dumps",
+   "first_step": "Check extractor prompt sizes",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:95 — Keep each prompt under ~100k input tokens (Haiku's price cliff)"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "TK-TIER",
+   "name": "Built-in agents inherit the expensive model",
+   "family": "tokens",
+   "what_it_is": "The built-in Explore agent runs on whatever model the session uses, so a cheap lookup can be billed at the top tier. The model tier has to be pinned in each agent file.",
+   "evidence": "Not measured.",
+   "potential": "A tier pinned per role: a Haiku locator, Sonnet gates, Opus refuters.",
+   "class": "",
+   "state": "partly closed: pinned agents on PR #185; savings unmeasured",
+   "first_step": "Use the pinned agents in a workflow and compare token use",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:99 — The built-in Explore agent inherits the session model's tier",
+    ".claude/agents/fixflow-explorer.md:3 — the built-in Explore agent, which inherits the session model's tier; this one is pinned to Haiku"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "TK-CACHEBREAK",
+   "name": "Pushed context breaks the prompt cache",
+   "family": "tokens",
+   "what_it_is": "Putting graph or memory output into the system prompt or CLAUDE.md changes the start of every window. Each commit then invalidates the cached start of all of them.",
+   "evidence": "Not measured.",
+   "potential": "Pull-only tool results keep the cache intact.",
+   "class": "",
+   "state": "rule defined",
+   "first_step": "Adopt the pull-only rule",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:242 — where every commit would invalidate the cached start of every window"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "L1",
+   "name": "Effort level for verifiers is unmeasured",
+   "family": "tokens",
+   "what_it_is": "Most verifiers run at xhigh effort, chosen without paired evidence. Dex Horthy's October 2026 SlopCodeBench report says medium effort often matched or beat xhigh at lower cost.",
+   "evidence": "The outside data is one run per setting: 28 vs 25 of 196 strict passes (S). 87 idea families and 224 cards bear on it (M).",
+   "potential": "Cheaper verifiers at the same quality if medium matches xhigh; target at most 0.6x the tokens (T).",
+   "class": "Trial",
+   "state": "open: trials designed, none run",
+   "first_step": "Run 30 blind paired medium-vs-xhigh shadow runs on the same build",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:29 — Effort routing: most verifiers run at xhigh",
+    "HARNESS-IDEAS-HORTHY-2026-11.md:346 — L1 effort routing — 87 families, 224 cards"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "W1",
+   "name": "CLAUDE.md is too long",
+   "family": "tokens",
+   "what_it_is": "CLAUDE.md is the only guaranteed way for an agent to see a lesson, and every agent pays for it on every call. At 390 lines it is nearly twice the length at which rule adherence is known to fall.",
+   "evidence": "390 lines vs about 200 at which adherence falls (M/S). About 7.5k tokens per agent (E), or about 10k (E). 150 idea families and 313 cards bear on it (M).",
+   "potential": "Higher rule adherence without dropping any rule; a shorter file once diagnostic stories move into the knowledge store.",
+   "class": "",
+   "state": "open: trim gated behind the knowledge-store pilot (KS-7/D11 keeps every rule)",
+   "first_step": "Run the E1 adherence probes: a split vs the full CLAUDE.md on a frozen commit",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:23 — CLAUDE.md` is 390 lines, nearly twice the length at which adherence is known to fall",
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:59 — injected into every agent at about 7.5k tokens"
+   ],
+   "conflicts": "The token cost is about 7.5k [E] per the knowledge-store and orchestration designs, and about 10k [E] per the Horthy sweep."
+  },
+  {
+   "id": "W2",
+   "name": "Agents' compliance is self-reported",
+   "family": "review",
+   "what_it_is": "No hooks check the routine, so compliance is self-reported. From outside, 'the routine was skipped', 'the store was never consulted' and 'the store is useless' look the same. Analysts' reading rules are brief text, and their extra reads are self-listed and never audited.",
+   "evidence": "148 idea families and 339 cards bear on it; 10 adopt and 19 trial ideas survive (M). The missed-existing count is only a lower bound. Read compliance has not been measured.",
+   "potential": "An outside check of compliance without hooks: a transcript tally, a PR-body CI check, reviewer-brief clauses, and a read audit.",
+   "class": "",
+   "state": "open: no hooks (a deliberately skipped area); measurement designed",
+   "first_step": "Tally transcripts after P1-P3; run an advisory PR-body CI check over five PRs; measure one analyst's read mismatch",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:24 — Compliance with the phase routine is self-reported",
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:480 — look the same from the outside",
+    "HARNESS-IDEAS-BAML-2026-11.md:675 — the reading rules are brief text, extras self-listed, unenforced"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "W3",
+   "name": "Resuming from repo state is untested",
+   "family": "orchestrator",
+   "what_it_is": "The phase routine has never run. Nobody has shown that a fresh session can pick up work from the repository and PR body alone.",
+   "evidence": "Never run. 102 idea families and 266 cards bear on it (M).",
+   "potential": "Proof that a fresh agent can resume a phase from repo state alone, by recovering ten frozen facts.",
+   "class": "",
+   "state": "open: awaiting P1",
+   "first_step": "Run P1's cold-resume trial with a sha256-committed answer key and a fault-injected resume",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:25 — The phase routine has never run; P1's cold-resume trial",
+    "HARNESS-IDEAS-HORTHY-2026-11.md:302 — W3 routine never run, cold resume — 102 families, 266 cards"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "W4",
+   "name": "Agents lack tested domain skills",
+   "family": "orchestrator",
+   "what_it_is": "At sweep time there was one custom agent (a Haiku locator), and no skills for Android background execution, recovery operations or the Odoo API. The packages now being added have no trigger, preload, size or retirement check.",
+   "evidence": "13 domain-skill rows wanted (M). 13 skills and 11 agents with about 24k characters of descriptions (E). A cap of about 150 KB per package (S). 72 idea families and 147 cards (M).",
+   "potential": "Every agent starts with the right domain rules; skills are verified, trimmed, and retired when unused.",
+   "class": "",
+   "state": "partly closed: packages on draft PR #185; trigger and preload checks not run",
+   "first_step": "CI check on skill and agent frontmatter; trigger tally over six phases; confirm skills preload in the harness",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:27 — One custom agent exists (a Haiku locator); skills are being added now",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:715 — Skills that would make these agents materially better",
+    "compile/src/SKILLS-PACKAGES.md:107 — the body still says so for a host that does not preload",
+    "compile/src/SKILLS-PACKAGES.md:89 — A package stays under ~150 KB"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "W5",
+   "name": "Workflows are not saved for reuse",
+   "family": "orchestrator",
+   "what_it_is": "Workflow scripts are written for each task and not saved; no rule decides what is kept.",
+   "evidence": "29 idea families and 43 cards; none reached adopt or trial (M).",
+   "potential": "A curated library of proven workflow shapes.",
+   "class": "",
+   "state": "open: a save rule is proposed",
+   "first_step": "Adopt the save-as-run rule; commit one saved review-stage script after P1",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:28 — Workflows are authored per task and not saved"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "L3",
+   "name": "Verifiers not shown to catch defects",
+   "family": "review",
+   "what_it_is": "Outputs are capped and refuters run first, but no reviewer, gate or verifier has been shown to catch defects that slipped through before. The per-PR reviewer has never run.",
+   "evidence": "95 idea families and 255 cards (M). The first-pass table gave 1 adopt and 9 trials.",
+   "potential": "Stronger sensors and reviewer briefs (gate-file lists, deviation reports, verifying commands) that catch recurring defect shapes.",
+   "class": "",
+   "state": "open: one adopt and nine narrowed trials",
+   "first_step": "A/B retrospective of defect shapes on three known defects; add reviewer-brief lines",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:31 — Output backpressure and verifiers: outputs are capped and refuters run first",
+    "HARNESS-IDEAS-HORTHY-2026-11.md:378 — L3 backpressure and verifiers — 95 families, 255 cards"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-FUNNEL",
+   "name": "Reasoning-cache library reuse funnel",
+   "family": "library",
+   "what_it_is": "In the reasoning-cache library, a cached answer is reused only if a chain of conditions all hold in turn. At middle values the modelled yield is tiny; the match and capture steps carry most of the weight.",
+   "evidence": "At middle values, 0.35 of 100 pieces end right (G). 69 limitations; 51 of 60 unknowns are guesses. Match carries 94.0 % and capture 78.1 % of the 'last' weight (G).",
+   "potential": "At the all-good setting, 53.9 of 100 reach the window and 31.7 end right (G).",
+   "class": "",
+   "state": "modelled, no verdict; limitation list not yet agreed with the owner",
+   "first_step": "Agree the limitation list with the owner; then test match and capture",
+   "sources": [
+    "docs/program/RESEARCH-RESULTS-FOR-CUREFOUND-2026-11-13.md:61 — by 'last' weight the match step carries 94.0 % and capture 78.1 %"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S1",
+   "name": "Step 1: window contents at task start",
+   "family": "library",
+   "what_it_is": "Too much applies at the start of a task, and short helper windows start without the session's lessons.",
+   "evidence": "Alone 1.4 %, last 17.9 % (G); 2 limitations (LIM-01, LIM-02).",
+   "potential": "A part of the 30.6 % (G) full fall.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed; limitations first",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:83 — Step 1: A task arrives: what is in the window (alone 1.4%, last 17.9% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S2",
+   "name": "Step 2: nothing triggers a lookup",
+   "family": "library",
+   "what_it_is": "Nothing fails, so no lookup starts. A lookup can cost as much as the fix; it comes only after the failed call is paid for; and the cause sits outside the failing window.",
+   "evidence": "Alone -5.3 %, last 68.0 % (G); 6 limitations; 24 of 59 cases break, 11 more not specified (M).",
+   "potential": "Large: 68.0 % (G) of the full fall.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:86 — Step 2: Trigger: does anything start a lookup, and when (alone −5.3%, last 68.0% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S3",
+   "name": "Step 3: query words miss the lessons",
+   "family": "library",
+   "what_it_is": "A query in symptom words misses lessons stored in mechanism words, and the query carries the asker's worry.",
+   "evidence": "Alone 1.9 %, last 24.8 % (G); 2 limitations; 10 cases break (M).",
+   "potential": "24.8 % (G) of the full fall.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:93 — Step 3: Query: what is asked, in what words (alone 1.9%, last 24.8% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S4",
+   "name": "Step 4: the match returns the wrong thing",
+   "family": "library",
+   "what_it_is": "What comes back can be a stored strong-model defect, a look-alike, one fact with different answers per project, or partial matches that disagree. There is no path between projects.",
+   "evidence": "Alone 10.9 %, last 94.0 % (G), the highest of any step; 15 limitations; 26 cases break (M).",
+   "potential": "94.0 % (G) of the full fall.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed; an oracle-match trial would test fit",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:96 — Step 4: Match: what comes back (alone 10.9%, last 94.0% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S5",
+   "name": "Step 5: delivery into the window",
+   "family": "library",
+   "what_it_is": "Parallel windows pay before any entry can exist, and a compaction can drop a fetched entry.",
+   "evidence": "Alone -0.3 %, last 11.7 % (G); 2 limitations; 2 cases break (M). Real cases showed index lines do arrive.",
+   "potential": "Small: 11.7 % (G).",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:112 — Step 5: Delivery: which window receives it, and does it stay (alone −0.3%, last 11.7% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S6",
+   "name": "Step 6: present in the window but unused",
+   "family": "library",
+   "what_it_is": "An entry present in the window is not applied. Two checked answers do not make a checked merge, and order matters in merges.",
+   "evidence": "Alone 0.5 %, last 30.3 % (G); 3 limitations; 31 cases break (M).",
+   "potential": "30.3 % (G) of the full fall.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:115 — Step 6: Use: the cheap model adapts and applies it (alone 0.5%, last 30.3% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S7",
+   "name": "Step 7: the check cannot confirm equality",
+   "family": "library",
+   "what_it_is": "Matching the strong model also matches its mistakes. Reviews are costly, tests stay green while defects are found later, and an entry's own test can certify the defect.",
+   "evidence": "Alone 2.3 %, last 16.2 % (G); 10 limitations; 38 cases break, the most of any step (M).",
+   "potential": "16.2 % (G). The gate sets whether output equals the strong model's; the library sets cost.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:119 — Step 7: Check: what decides the result equals the strong model's (alone 2.3%, last 16.2% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S8",
+   "name": "Step 8: failure and the escalation ladder",
+   "family": "library",
+   "what_it_is": "Higher tiers lack the missing fact too, and a higher tier was not always who caught the error. Trade-offs between lessons end with the owner, and handoffs pollute windows.",
+   "evidence": "Alone -3.6 %, last 8.8 % (G); 7 limitations; 21 cases break and 23 are not reached (M).",
+   "potential": "8.8 % (G); most of it acts through the shared gate and ladder unknowns.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:130 — Step 8: Failure and the ladder (alone −3.6%, last 8.8% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S9",
+   "name": "Step 9: capturing the lesson",
+   "family": "library",
+   "what_it_is": "'Solved' moves after the entry is written, and a conditional 'no' hardens into 'never'. The writer cannot know which details matter, and side remarks never count as a solved problem.",
+   "evidence": "Alone 9.2 %, last 78.1 % (G); 10 limitations; 22 cases break (M).",
+   "potential": "78.1 % (G) of the full fall.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:138 — Step 9: Capture: what is written, by whom, when, from what (alone 9.2%, last 78.1% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-S10",
+   "name": "Step 10: entries go stale",
+   "family": "library",
+   "what_it_is": "Facts outside the repository change with no event. Corrections do not reach copies, and a later fix changes an older entry's truth. There are privacy and untrusted-text risks.",
+   "evidence": "Alone 3.7 %, last 29.9 % (G); 12 limitations, 3 of them not in the model; 29 cases break (M).",
+   "potential": "29.9 % (G) of the full fall.",
+   "class": "",
+   "state": "mapped and weighed, not fixed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:149 — Step 10: Afterlife: what happens to the entry later (alone 3.7%, last 29.9% [G])"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-Q",
+   "name": "Condition: entry quality",
+   "family": "library",
+   "what_it_is": "Whether what arrives is right and is used rightly. It covers look-alikes, staleness and promoted checks.",
+   "evidence": "Alone 6.0 %, last 104.1 % (G); 22 unknowns (M).",
+   "potential": "The one group whose left-alone stage puts the library above the ladder on cost (1.029) and wrong rate (1.038) (G).",
+   "class": "",
+   "state": "mapped and weighed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:79 — entry quality 6.0% and 104.1%; comes back 0.2% and 82.4%"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-COMES",
+   "name": "Condition: how much work repeats",
+   "family": "library",
+   "what_it_is": "An entry can exist only if much of the work repeats. Files repeat but questions mostly do not, so the ceiling is how often work repeats, and the verified hit rate is small.",
+   "evidence": "Alone 0.2 %, last 82.4 % (G); 6 unknowns (M). Files are 65-76 % of reading; questions repeat in 7-9 % of tokens (E). A perfect question cache tops out at 8-13 % (E); hit rate 0.5-4 % per hard encounter (E).",
+   "potential": "Break-even at about half the work repeating, or a fifth at low running cost (G). Halving cost needs about 3 in 4 exploration steps to repeat (E).",
+   "class": "",
+   "state": "mapped; narrowed by refuters; similar-case coverage unmeasured on the owner's work",
+   "first_step": "Label similar-problem coverage over about 200 runs",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:11 — comes back 6, reach 8, entry quality 22, running cost 4 [M]",
+    "memory/project-library-plausibility-review.md:17 — files repeat (65–76 % of reading), questions do not (7–9 % of all tokens"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-REACH",
+   "name": "Condition: reach of an entry",
+   "family": "library",
+   "what_it_is": "Whether an entry gets to the cheap model when one could exist: it must be written, looked up, found and present in the window.",
+   "evidence": "Alone -12.4 %, last 68.2 % (G); 8 unknowns (M).",
+   "potential": "High reach with good entries is the winning corner; high reach with poor entries is worse, at a cost of 1.43-1.53 (G).",
+   "class": "",
+   "state": "mapped and weighed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:79 — reach −12.4% and 68.2%; running cost 3.3% and 10.4%"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-RUN",
+   "name": "Condition: library running cost",
+   "family": "library",
+   "what_it_is": "What a lookup, a screen, carrying an entry, and writing an entry each cost.",
+   "evidence": "Alone 3.3 %, last 10.4 % (G); 4 unknowns (M). A strict entry costs 0.4-3.8M processed tokens to write (E).",
+   "potential": "At the all-good setting, high running cost moves the cost ratio from 0.75 to 0.92 (G).",
+   "class": "",
+   "state": "mapped and weighed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:53 — All-good setting with running cost at its high end | 0.92 | 0.67"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-GATE",
+   "name": "Shared unknowns: the gate and ladder",
+   "family": "library",
+   "what_it_is": "Tests, review, retries, and Opus and Fable accuracy decide the wrong rate for all three ways of working (library, ladder, strong model), not only the library. The weights therefore give them none.",
+   "evidence": "At middle values the wrong rate is 21.4 % (library), 21.2 % (ladder), 11.2 % (strong) (G). With gate and ladder at their good ends: 2.8 %, 2.8 %, 0.5 % (G).",
+   "potential": "A gate at its good end cuts the ladder's wrong rate to 7.9 %, against the strong model's 8.5 % (G).",
+   "class": "",
+   "state": "modelled; not library-specific",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:163 — These unknowns are shared by all three ways of working. So the weights give them none."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-UNNAMED",
+   "name": "Unknowns no limitation names",
+   "family": "library",
+   "what_it_is": "Some library unknowns carry part of the fall without any named limitation: the ceiling on parts held, whether a lookup finds the same problem, and whether promoted checks run in the shared tests.",
+   "evidence": "37.1 % (G) of the full fall.",
+   "potential": "The unattributed share of the 30.6 % (G) full fall.",
+   "class": "",
+   "state": "listed",
+   "first_step": "No fix agreed",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:79 — carry the last 37.1% [G]"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-REACHPAY",
+   "name": "Little FixFlow work the library could reach",
+   "family": "library",
+   "what_it_is": "Only a small share of FixFlow's recorded tokens are in windows that edit code or fail a check; most of the record is programme and harness work. This is one critic's statement, not refuted.",
+   "evidence": "11 % of FixFlow's tokens are in code-editing or failing-check windows (78 % in the clinic) (M). About 85 % of the record is harness or library work (M). Building it for ten sessions costs about 1.5-1.6B processed tokens (E).",
+   "potential": "",
+   "class": "",
+   "state": "stated by one critic in the first review; not refuted",
+   "first_step": "",
+   "sources": [
+    "memory/project-library-plausibility-review.md:22 — only 11 % of FixFlow's recorded tokens sit in windows that edit code or fail a check"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-PRICE",
+   "name": "Opus price ratio is uncertain",
+   "family": "library",
+   "what_it_is": "The price list says Opus costs 2x per token, but per call Opus read about half the cached tokens Sonnet did, so the ratio per call may be nearer 1.",
+   "evidence": "Opus about 222,000 cached tokens per call vs Sonnet about 440,000 (M). Cost against the strong model: 0.89 at ratio 2, 1.23 at ratio 1 (G).",
+   "potential": "Decides whether the library beats the strong model on cost.",
+   "class": "",
+   "state": "the model draws the ratio between 1 and 2",
+   "first_step": "",
+   "sources": [
+    "docs/program/LIBRARY-PATHWAYS-2026-11.md:221 — On this PC an Opus call read about 222,000 [M] cached tokens. A Sonnet call read about 440,000 [M]."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-RESOLVE",
+   "name": "Hard problems re-solved at the top tier",
+   "family": "library",
+   "what_it_is": "Past diagnoses exist only as prose in CLAUDE.md, HANDOFF, the G2 register and the W2 notes, and none can be searched by symptom. When a defect recurs, it is paid for again at the tier that first solved it.",
+   "evidence": "3 to 5 same-cause repeats among 48 fix commits on main; 72 fix commits across all refs (M). HANDOFF section 6 lists 7 recurring defect shapes (M).",
+   "potential": "A cheap agent finds, checks and reuses a recorded fix instead of Fable or Opus working it out again.",
+   "class": "",
+   "state": "designed (knowledge store v1.3.1, PR #183); audit not run",
+   "first_step": "Run the D1 recurrence audit (KS-0)",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:64 — HANDOFF §6 lists seven shapes that 'keep recurring'"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-VALUE",
+   "name": "Knowledge store value not yet proven",
+   "family": "library",
+   "what_it_is": "No source shows hard defects recur, for one developer in a young repo, often enough for a symptom store to beat grep. Avoided cost has no historical baseline, and only a few entries can lead without Docker.",
+   "evidence": "Recurrence and avoided cost are unmeasured. Every past fix was top-tier, so solve cost S has no prior. The build is about ten sessions (E). Only 3 worked examples plus traps can lead without Docker (M).",
+   "potential": "A pilot verdict, with a kill criterion, that decides whether to invest further; break-even measured going forward.",
+   "class": "",
+   "state": "pilot planned; audit KS-0 not run; owner decision D1",
+   "first_step": "Owner says yes to D1; run the audit, then a blind replay against grep and git log --grep",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:209 — no source measures recurrence of hard defects for one developer in a young repo",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:544 — S is measured only by the prospective log",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:690 — With W about ten sessions, the store repays itself only through h·S",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:495 — only ex7, ex2a and (with its conjunctive probe) ex8 are lead-capable without Docker",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:547 — only the prospective checkpoint measures new encounters"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-DIFF",
+   "name": "Forbidden changes merge silently",
+   "family": "review",
+   "what_it_is": "A refuted fix or a known open-defect pattern raises no error, so it merges silently. A diff warning that joins on file paths alone fires on busy files too often to read.",
+   "evidence": "A file-level join would have warned on 47 of 154 past commits, vs 13 with distinctive handles (M). Under the v1.3 rule, 48.7 % of 154 commits would warn; ex3 fired on 11 of 154 (M).",
+   "potential": "Do-not-apply entries that stop wrong changes before review, with warnings that are readable.",
+   "class": "",
+   "state": "diff lookup designed, with a selectivity gate and a 5 % fire cap",
+   "first_step": "Build the diff join with author-named handles and replay it on git history",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:447 — with distinctive handles ex4 warned on 13 of 154 past commits",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:913 — under the v1.3 rule 48.7 % of past commits would have warned"
+   ],
+   "conflicts": "47 of 154 (about 30.5 %) for a file-level join vs 48.7 % under the v1.3 rule. The two figures come from different rule versions in the same design."
+  },
+  {
+   "id": "LIB-KS-BLIND",
+   "name": "Changes the store's warnings cannot see",
+   "family": "review",
+   "what_it_is": "Some changes leave no git diff: a dispatcher env flip on Railway, a cursor reset by hand, a snapshot restore. Others escape the warnings: a new code path outside the protective tests, or edits made through Bash or PowerShell that bypass Edit/Write hooks.",
+   "evidence": "Not sized.",
+   "potential": "Preventing a permanent mass message to customers and keeping the correct-PIN lock invariant.",
+   "class": "",
+   "state": "partly mitigated: action handles, the D17 caller-pin test, diff lookup at review; hook deferred",
+   "first_step": "Land the D17 caller-pin test; seed action handles for ex4",
+   "sources": [
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:522 — reached only by the wording-based `action` handle",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:523 — a forbidden change outside the code the protective tests drive ... is caught by neither",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:720 — it can never be the backstop"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-FALSELEAD",
+   "name": "Wrong matches acted on as leads",
+   "family": "retrieval",
+   "what_it_is": "Agents copy near-matching records, wrong ones included. One error template can have several causes, a probe can prove a condition rather than the cause, the code under test can fake test artifacts, and Jest/Vitest report no test phase.",
+   "evidence": "3 causes for one Node error code; EAS build 15 had two causes (M). One of four fooling modes is fixed by a parser. Target: zero acted-on false leads (T); not yet measured.",
+   "potential": "Leads that cheap agents can trust and act on.",
+   "class": "",
+   "state": "gate, abstention, multiplicity flag and runner overlay designed; not built",
+   "first_step": "Declarative probes with control pairs and hard-negative same-template probes (KS-3)",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:185 — agents copy near-matching records, wrong ones included",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:792 — an exact-template query from a different cause is a lead with coverage 1.0",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:518 — The gate proves a condition, not a cause.",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:521 — A symptom match is a candidate; an ambiguous template never leads alone.",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:519 — A refactored `conftest.py` can manufacture or suppress a failure",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:520 — Jest and Vitest report no test phase"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-STALE",
+   "name": "Stored fixes go stale",
+   "family": "library",
+   "what_it_is": "Fixes go stale when code, versions or remote resolvers change. Hashing whole files invalidates too much. Some changes (the EAS cloud image, Railway defaults, data state) leave no local trace at all.",
+   "evidence": "Not quantified.",
+   "potential": "Entries stay useful through early cutoff, and stale ones are flagged by an event.",
+   "class": "",
+   "state": "designed",
+   "first_step": "file_blob and config_key traces in KS-3",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:358 — Remote-resolver changes (the EAS cloud image and schema"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-OUTSIDE",
+   "name": "Root causes outside the repository",
+   "family": "retrieval",
+   "what_it_is": "EAS builds and secrets, Railpack detection, the Supabase pooler and phone vendor behaviour leave no local trace. A race looks the same on a good run and a bad one, and production data is not in git.",
+   "evidence": "Not sized.",
+   "potential": "Entries can lead when the owner pastes logs; races need tests that encode them or an operator query.",
+   "class": "",
+   "state": "accepted limit; such entries are candidates only",
+   "first_step": "Let ks lookup --log accept pasted logs; write a race-encoding test per entry",
+   "sources": [
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:515 — a silent server-side change has no local trace",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:516 — A race's footprint is identical between a good and a bad run"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-RECALL",
+   "name": "Lexical lookup misses reworded symptoms",
+   "family": "retrieval",
+   "what_it_is": "A word-matching lookup misses a symptom that shares no word with any stored handle. Misses are counted only when a later record examines them, and the missed-existing measure had nothing writing to it.",
+   "evidence": "Expected 0.2 or fewer counted misses per 8-week window (E). The zero-shared-terms classifier misclassed 6 of 7 measured paraphrase misses (M).",
+   "potential": "Recovering vocabulary misses, and a real trigger for adding embeddings (D16).",
+   "class": "",
+   "state": "accepted limit; writer and classifier designed",
+   "first_step": "Build the missed-existing writer with KS-2 fixtures",
+   "sources": [
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:522 — A symptom phrased with no word in common with any handle is a miss",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:915 — classed six of seven measured paraphrase misses as `threshold`"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-RUNCHECKS",
+   "name": "Stored checks cannot run safely on Windows",
+   "family": "check",
+   "what_it_is": "Claude Code's sandbox does nothing on native Windows. Backend tests TRUNCATE every table at the URL they are given. Docker Desktop does not start automatically, so test-id and database checks often come back inconclusive.",
+   "evidence": "1-5 minutes of extra wall time per Docker verify (E).",
+   "potential": "Executable gates for code defects; for now, realistic v1 value stays in the config-trap class.",
+   "class": "",
+   "state": "Docker half deferred to KS-6b; declarative half first",
+   "first_step": "Owner starts Docker for the two gate phases (KS-6a entry)",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:203 — Docker (WSL2 backend on the dev box, same image on the VPS)",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:520 — Docker Desktop does not auto-start, so test-id and database checks are usually `inconclusive`"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-COST",
+   "name": "Each store lookup costs time and tokens",
+   "family": "tokens",
+   "what_it_is": "Checking the index against the journal on every call takes time. Each Bash lookup re-reads the caller's context, and the skill description rides along on every call.",
+   "evidence": "23-35 ms at 5k entries, 57-87 ms at 20k; 49-55 ms with 4-8 callers (M). 2,000 characters is about 860 tokens; the skill description is about 620 tokens (M).",
+   "potential": "Cheap lookups: a quiet phase is about three cheap turns plus one reviewer call.",
+   "class": "",
+   "state": "bound pinned and benchmarked; output cap designed",
+   "first_step": "Benchmark test fails above 50 ms at 5k; one total output cap",
+   "sources": [
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:789 — Measured fresh-process medians 23–35 ms at 5k and 57–87 ms at 20k",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:794 — every subagent starts above 63k prompt tokens"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-DUP",
+   "name": "Parallel sessions solve the same problem",
+   "family": "orchestrator",
+   "what_it_is": "Two sessions can miss on the same symptom and both escalate to the expensive tier.",
+   "evidence": "Not measured; the v_concurrent_misses view will show it.",
+   "potential": "One session solves it while the other carries on elsewhere.",
+   "class": "",
+   "state": "claim table designed; expiry deferred",
+   "first_step": "Claim table in KS-2",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:462 — nothing blocks (an expensive agent waiting is the real cost"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-PRIVACY",
+   "name": "Private data can reach the model provider",
+   "family": "library",
+   "what_it_is": "Everything an agent reads reaches Anthropic under the owner's account terms. Customer names and addresses slip past local pattern scrubbing.",
+   "evidence": "A documented known miss. Consumer account with 30-day retention assumed (S).",
+   "potential": "A safe store with a structural rule: no raw production data.",
+   "class": "",
+   "state": "mitigated by rule; D7 scopes it",
+   "first_step": "Owner states the account type; a fixture with a known-miss case in every test run",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:211 — Names and addresses cannot be detected locally",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:550 — Egress to the model provider is unavoidable"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-KS-POLICY",
+   "name": "Store safeguards are policy, not locks",
+   "family": "review",
+   "what_it_is": "The journal is plain JSON on disk, so withholding a fix is policy, not a lock. Writer ids are self-declared, so 'the approver is not the author' rests on review, not a control.",
+   "evidence": "Not sized.",
+   "potential": "Gated fixes and stronger curation control.",
+   "class": "",
+   "state": "accepted; D20 optional; binding ids to transcripts is a later option",
+   "first_step": "Skill instruction plus review",
+   "sources": [
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:525 — an agent with Bash or Read can open it",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:549 — actor ids are self-declared"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-GRAPH-CONTRACTS",
+   "name": "Cross-runtime contracts break silently",
+   "family": "retrieval",
+   "what_it_is": "Client calls to routes, settings keys, the migration chain, slice contracts, outbox kinds and file-bound invariants are not imports. Neither search nor an import graph sees them, so they break silently.",
+   "evidence": "65 of 73 client URL literals matched to 77 route decorators; 46 settings keys; 46 migration links (M).",
+   "potential": "A scripted contract map used as a review input could show what a change breaks.",
+   "class": "",
+   "state": "partly mapped; value unproven",
+   "first_step": "Zero-token test on recorded defect chains",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:246 — The connections that break silently are not imports."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-GRAPH-HUBS",
+   "name": "Hub files make impact lists too long",
+   "family": "retrieval",
+   "what_it_is": "The files that change most are hubs with many dependants, so a raw list of everything downstream is too long to use.",
+   "evidence": "42 % of code-file changes and 73 % of code commits touch a file with reach over 15; median reach 2 (M).",
+   "potential": "Depth limits, grouping and a hub cut keep lists near 15 files.",
+   "class": "",
+   "state": "measured; partly handled in tuning",
+   "first_step": "Depth limit and grouping in the touch list",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:245 — the files that change are the hubs"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-GRAPH-POWER",
+   "name": "Test sets too small for small gains",
+   "family": "retrieval",
+   "what_it_is": "The graph test's held-out set can detect only large differences, so 'inconclusive' is a likely and honest result. CureFound's strict test has two held-out positives.",
+   "evidence": "75 held-out tasks; smallest detectable recall difference about 0.09 (E); about 110 paired commits needed to detect 0.05 (E).",
+   "potential": "A larger or rolling-origin task set, or many diseases in one area split by date, would give the test power.",
+   "class": "",
+   "state": "known limit, handled in the protocol",
+   "first_step": "Rolling-origin rerun over several split dates; report 'inconclusive' as no evidence either way",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:259 — a difference under about 0.09 in recall cannot be detected",
+    "docs/program/RESEARCH-RESULTS-FOR-CUREFOUND-2026-11-13.md:67 — smallest detectable at this size about 0.09, so 'inconclusive' is likely"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-GRAPH-MOBILE",
+   "name": "Graph gain is concentrated in mobile",
+   "family": "retrieval",
+   "what_it_is": "The typed graph's advantage comes from mobile-app seeds, and every arm lost recall from the tuning set to the held-out set. Mobile's share of seeds rose from 17 % to 36 %.",
+   "evidence": "Mobile +0.151 vs backend +0.012 and web +0.025; every arm lost 0.06-0.17 (M).",
+   "potential": "Understanding why mobile helps could show where a graph pays.",
+   "class": "",
+   "state": "measured, unexplained",
+   "first_step": "Split every report by seed runtime",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/graph2/build-e/grader-heldout-NOTES.md:109 — mobile +0.151 [0.097, 0.207] (31)"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-GRAPH-BASELINE",
+   "name": "Folder layout already a strong baseline",
+   "family": "retrieval",
+   "what_it_is": "In a vertical-slice layout the folders already encode much of the connection information, and co-change history is thin, so any method must beat both of these floors.",
+   "evidence": "Nothing beat the co-change floor by 0.05 on the tuning set; floors 0.752 and 0.719 (M). 432 commits; repos under 10,000 commits lost 13 points (M).",
+   "potential": "Fusing signals helped a few points (precision 0.28 vs 0.26).",
+   "class": "",
+   "state": "measured",
+   "first_step": "Always report results beside the floors",
+   "sources": [
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:216 — repositories under 10,000 commits lost 13 points, and the testbed has 432"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-GRAPH-TRUTH",
+   "name": "Graph-test answer keys can mislead",
+   "family": "retrieval",
+   "what_it_is": "Using co-change history as the answer key favours any arm that uses co-change. Many changed files were added in the same commit, so no store could have returned them.",
+   "evidence": "33-36 % of changed files were added in the same unit; 15-19 % of the rest are more than 5 hops away (M).",
+   "potential": "Questions read from the code give an answer key independent of the extractor.",
+   "class": "",
+   "state": "mitigated",
+   "first_step": "Score only reachable answers and report the unreachable share",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/graph2/research/critic.txt:37 — 33-36 % of files changed in a unit were added in that unit"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "LIB-EVAL",
+   "name": "Context aids never tested with an agent",
+   "family": "retrieval",
+   "what_it_is": "No context aid (a graph, a map, or a recall journal) has been run with an agent in the loop, so nobody knows whether an agent finishes faster or with fewer mistakes. A fair comparison at 400k windows is expensive.",
+   "evidence": "0 agent runs (M); 0 of 30 planned map runs (M). No arm used journal recall in the 2026-10-14 screen (M). A quality comparison was forecast at 156M-512M tokens (E); the final study spent 4,350,448 input tokens (M).",
+   "potential": "The answer to the owner's real question: whether a graph, map or recall layer saves an agent work.",
+   "class": "",
+   "state": "open: first graph test (2026-11-12) rejected by the owner, verdict withdrawn; replacement test frozen; engine install is the owner's decision",
+   "first_step": "Agent-in-the-loop pilot on 24-30 fix commits, with a plain-notes control",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/graph2/protocol-addendum-6.md:63 — Whether an agent finishes a task faster or with fewer mistakes with any of these tools.",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:541 — quality comparison 156M to 512M tokens total (three arms)",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:704 — The runs/ directory under 09-operational is empty",
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:509 — In the 2026-10-14 screen 'No arm used journal recall'"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-FS",
+   "name": "Windows file-system traps for shared stores",
+   "family": "machine",
+   "what_it_is": "On Windows, renaming a file over an existing one fails with EPERM. AppData is virtualised for Claude-launched processes. SQLite reports busy errors with many writers. A worktree on an old branch can run an older CLI against a newer journal.",
+   "evidence": "99-126 failures per 8 x 1,000 identical events with a plain rename (M). 2-4 busy failures per 1,200 writes at 8+ writers (M).",
+   "potential": "A journal that never loses or duplicates a write, shared reliably across worktrees.",
+   "class": "",
+   "state": "designed around (fixes F1-F3, ks doctor, exit 5 cli_outdated)",
+   "first_step": "Put the store home at the profile root; test the no-replace publisher with 8-16 writers",
+   "sources": [
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:229 — Plain rename-over-existing fails with `EPERM` on NTFS",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:786 — a new folder under `%LOCALAPPDATA%` is a different, uninstall-deleted file",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:788 — renaming over an existing name fails with `EPERM`",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:526 — refuses to answer a lookup, `--diff` included"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-DOCKERCACHE",
+   "name": "Docker VM page cache hoards RAM",
+   "family": "machine",
+   "what_it_is": "The WSL2 virtual machine that runs Docker kept disk cache it was not using while the host was short of memory.",
+   "evidence": "8.3 GB held, 4.4 GB of it unused cache (M). 6.9 GB of cache vs 0.4-0.5 GB per gate stack (M).",
+   "potential": "2.2 GB returned at once by the first drop (M).",
+   "class": "",
+   "state": "closed for backend runs: cache dropped at the start and end",
+   "first_step": "Extend the drop to other heavy kinds if needed",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1750 — the Docker VM held 8.3 GB of which 4.4 GB was disk cache it was"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-NETPOOL",
+   "name": "Docker network address pools exhausted",
+   "family": "check",
+   "what_it_is": "Another project's 29 networks used up Docker's predefined subnets, so docker network create failed and the original gate design could not run.",
+   "evidence": "29 networks belonging to another project (M).",
+   "potential": "Parallel gates running in a shared network namespace.",
+   "class": "",
+   "state": "closed for gates; design Appendix C still cannot run as written",
+   "first_step": "Use an explicit 10.77.0.0/16 subnet for anything that needs a real network",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1739 — `docker network create` fails with 'all predefined address pools have been fully subnetted'"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-AV",
+   "name": "Antivirus blocks toolchain files",
+   "family": "machine",
+   "what_it_is": "360 Total Security blocks one emulator DLL every time (and once blocked a JDK DLL), so sdkmanager abandons the package.",
+   "evidence": "One emulator file permanently absent; the rest of the 8.6 GB toolchain installed (M).",
+   "potential": "Allowing the folder is the owner's decision; nothing needs it today.",
+   "class": "",
+   "state": "worked around; the block is left alone",
+   "first_step": "Run the emulator only in -gpu host or swiftshader_indirect mode",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1718 — it blocks, every time, the creation of the emulator's `lib64/gles_angle/d3dcompiler_47.dll`"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-QUEUE",
+   "name": "Unfair gate queue starved FixFlow lanes",
+   "family": "check",
+   "what_it_is": "Random retries let later arrivals jump the queue, and exclusive Android builds at the head held up short runs. This is the FixFlow lab's version of B07.",
+   "evidence": "One lane waited 20 minutes; eight short runs were held for most of an hour (M).",
+   "potential": "Predictable waits for every lane.",
+   "class": "",
+   "state": "closed by a ticket queue with 900-second patience for heavy jobs; waits not re-measured",
+   "first_step": "Measure waits after the change",
+   "sources": [
+    "docs/program/lab/ff-slot.sh:21 — Measured before this existed (2026-11-13): one lane waited 20 minutes while later arrivals"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-GATETIME",
+   "name": "Gate runs take minutes",
+   "family": "check",
+   "what_it_is": "The backend gate stack is the slowest check a lane runs, and it queues for a slot. Gates set the elapsed time of the discovery workflow (W1).",
+   "evidence": "Backend 7 min 23 s cold with 757 tests; web 33 s; mobile 29 s warm (M). The design estimated 25-40 min of W1 gate wall-clock (E).",
+   "potential": "Shorter inner loops: pass pytest arguments and keep full runs for merge-readiness.",
+   "class": "",
+   "state": "accepted; managed by argument-limited inner runs",
+   "first_step": "Run only the tests being worked on in the inner loop",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1857 — 7 min 23 s cold (image pulls and a cold pip cache included)",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:578 — wall-clock set by S-07a/S-07b (25–40 min)"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-NATIVE",
+   "name": "No native Android compile gate",
+   "family": "check",
+   "what_it_is": "CI's expo export bundles JavaScript only, so Gradle and native breaks are caught nowhere, and the EAS build queue is slow. The mobile app has no testIDs to drive device checks.",
+   "evidence": "Compile time not measured. 0 testID or accessibilityLabel hits in technician-app/src (M).",
+   "potential": "Compile checks in minutes, answering the SDK compile question before any phone is involved; device smoke tests.",
+   "class": "",
+   "state": "being built as lab lane L2",
+   "first_step": "Record main's compile time, size and certificate; add testIDs",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1767 — It is the native compile gate CLAUDE.md says does not exist",
+    "compile/src/SKILLS-PACKAGES.md:921 — 0 hits"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-NOEMU",
+   "name": "No Android emulator inside Docker",
+   "family": "check",
+   "what_it_is": "The Docker VM has no /dev/kvm, so a device lab must run natively on the Windows Hypervisor Platform.",
+   "evidence": "0 svm flags in the VM (M); one emulator at a time until measured.",
+   "potential": "A native emulator with -gpu host; the GPU has no other job in the program.",
+   "class": "",
+   "state": "worked around by a native emulator (lab lane L3)",
+   "first_step": "Run the emulator boot proof",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1714 — no `/dev/kvm` inside it (0 `svm` flags): no emulator in Docker"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-SHAREDDB",
+   "name": "Two test runs could share a database",
+   "family": "check",
+   "what_it_is": "A second pytest run against the same database deadlocks. A check-then-remove race let two runs for one lane touch the same containers. Compose names and ports could also clash.",
+   "evidence": "1 major finding (M); handoff section 2.4 deadlock.",
+   "potential": "Reliable gates; 'never a second pytest against one database' holds per lane.",
+   "class": "",
+   "state": "closed by a per-lane lock and fixed container names",
+   "first_step": "Verify with a forced second start",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1879 — Two gate runs for one lane could share a database",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:622 — `pytest` against one DB (handoff §2.4 deadlock)"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-TOOLS",
+   "name": "Missing local tools on the PC",
+   "family": "machine",
+   "what_it_is": "No Python on PATH and no installed node_modules, so gates run only in Docker and native questions are answered from cached sources.",
+   "evidence": "The backend gate set was blocked at G1 (M).",
+   "potential": "Full CI-equivalent gates locally; no Docker-only constraint.",
+   "class": "",
+   "state": "partly corrected: a Python exists at the Codex runtime path; gates use the Docker recipe",
+   "first_step": "P0a item 10 tool check",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:32 — no Python on PATH",
+    "docs/program/G1-discovery-gate-2026-11-01.md:60 — Backend gates were blocked on the Docker"
+   ],
+   "conflicts": "Orchestration design (2026-10) and memory say there is no Python on PATH. The harness review (2026-11-01) says a Python exists at the Codex runtime path, though it was believed absent."
+  },
+  {
+   "id": "MC-ENVSKEW",
+   "name": "Local gates differ from CI and prod",
+   "family": "check",
+   "what_it_is": "Gate results can differ from CI and production: this PC runs Node 24 while CI pins 22; the backend has open dependency ranges and no lockfile; CI runs Postgres 16 while production runs 17.",
+   "evidence": "Node: 2 major versions apart (M). No backend lockfile.",
+   "potential": "Fewer false defects; gates that reproduce what production ran.",
+   "class": "",
+   "state": "mitigated by rerunning under node:22; P3a moves CI to Postgres 17",
+   "first_step": "Prepare the node:22 container command; record open ranges in gate notes",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:596 — CI pins Node 22, this machine has 24.",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:624 — Open ranges, no lockfile in `backend/pyproject.toml`",
+    "compile/src/SKILLS-PACKAGES.md:773 — No PostgreSQL manual page was fetched for this package"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-PREBUILD",
+   "name": "Native prebuild would pollute the repo",
+   "family": "machine",
+   "what_it_is": "Running Expo prebuild would create an untracked technician-app/android folder that is not gitignored and changes how EAS treats the project.",
+   "evidence": "Not sized.",
+   "potential": "Safe builds.",
+   "class": "",
+   "state": "forbidden in the agent rules",
+   "first_step": "Keep it in the rules",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:599 — It creates `technician-app/android`, which is not gitignored"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-TIMEOUT",
+   "name": "Re-issuing a command after a timeout",
+   "family": "check",
+   "what_it_is": "Re-issuing a mutating command after the tool times out can duplicate its effects.",
+   "evidence": "Tool timeout 600,000 ms (S).",
+   "potential": "Safe retries.",
+   "class": "",
+   "state": "mitigated by a rule: re-check state first",
+   "first_step": "Use docker wait again instead of re-issuing",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:619 — never re-issue a mutating command"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-INJECT",
+   "name": "Bypass-mode agents near stored credentials",
+   "family": "machine",
+   "what_it_is": "Subagents run in bypass mode while Railway and GitHub CLI credentials sit in the user profile, so a prompt injection could reach private data.",
+   "evidence": "Not quantified.",
+   "potential": "Cutting the private-data leg removes this risk class.",
+   "class": "",
+   "state": "canary trial designed",
+   "first_step": "Define a restricted agent type and run the ten-minute canary",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:418 — Railway and GitHub CLI credentials sit in the user profile and subagents run in bypass mode"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-ACCESS",
+   "name": "Research sources blocked or unread",
+   "family": "retrieval",
+   "what_it_is": "YouTube captions, X posts and podcast transcripts were blocked, and research agents can lack web tools (which risks them filling gaps by inventing). Some talks, threads and slides are still unread.",
+   "evidence": "YouTube 429 for at least 5 days; X returned 402 (M). About 7 hours of audio; 9 recordings transcribed in about 12 min of GPU time (M). 29 items unread in the first pass; 6 groups still unread (M).",
+   "potential": "Fuller research coverage; the verifiers talk and the Twelve Factor Factories talk may bear on L3.",
+   "class": "",
+   "state": "partly closed: audio solved by local GPU transcription; X replies, LinkedIn and slides unread; tool_status rules in place",
+   "first_step": "Reuse the local GPU transcription and RSS routes; read the 12-Factor Factories talk when published",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:847 — YouTube's caption endpoint still answered HTTP 429 from this address five days",
+    "HARNESS-IDEAS-HORTHY-2026-11.md:889 — The North America talk of 22 October (no recording, slides or write-up exists",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:609 — after two denials; record `tool_status` and `urls_attempted`."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-HEREDOC",
+   "name": "Shell tool mangles long scripts",
+   "family": "orchestrator",
+   "what_it_is": "The Bash tool collapses doubled backslashes in heredocs and cuts commands longer than about 8 KB, and Workflow scripts cannot read files.",
+   "evidence": "One review run lost to a mangled regex: 1.38M tokens and 15 minutes (M).",
+   "potential": "No more review runs lost to tooling.",
+   "class": "",
+   "state": "worked around by writing scripts with the file tool",
+   "first_step": "Keep the rule",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:434 — first pass lost its families to a mangled regex in the script",
+    "memory/MEMORY.md:11 — commands over about 8 KB are cut; double backslashes in heredocs collapse"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-CPU",
+   "name": "CPU contention from parallel sessions",
+   "family": "machine",
+   "what_it_is": "When other sessions run test suites on all cores, CPU work slows sharply; GPU work was the one thing not slowed.",
+   "evidence": "CPU transcription ran at 2.7x real time vs 19-45x on the GPU (M).",
+   "potential": "Offloading heavy side jobs to the GPU.",
+   "class": "",
+   "state": "known; the GPU route is used",
+   "first_step": "Prefer the GPU for transcription and similar jobs",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:884 — with other sessions running test suites on all cores, GPU work was the one thing not slowed"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-ENGINE",
+   "name": "Graph engines hard to run here",
+   "family": "machine",
+   "what_it_is": "Graph engines were hard to run on Windows: LadybugDB's algorithm extension would not load, Docker is off by default, and the session died twice. CPU contention made timing unreliable.",
+   "evidence": "Image 1.26 GB; 172 MB of Windows copies unused (M).",
+   "potential": "A reproducible Linux image fixes the setup; a timing redesign gives usable timings.",
+   "class": "",
+   "state": "worked around; timing redesigned",
+   "first_step": "Interleaved timing blocks with host load logged per block",
+   "sources": [
+    "memory/project-harness-bottlenecks.md:37 — waiting for quiet does not work on this PC, so timing is decoupled and redesigned"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "MC-HOOKCOST",
+   "name": "Hook and proxy overhead is unmeasured",
+   "family": "machine",
+   "what_it_is": "Added hooks and proxies are new moving parts whose cost on the owner's PC has not been measured on FixFlow's setup.",
+   "evidence": "Hook launch about 2.1 s native, 243 ms via the registered Windows wrapper, 4.9 ms in-process (M).",
+   "potential": "Measuring before adding per-event hooks avoids a hidden tax.",
+   "class": "",
+   "state": "open",
+   "first_step": "Measure hook launch cost on FixFlow's setup",
+   "sources": [
+    "docs/program/evidence/harness-bottlenecks/sweep-cards.txt:573 — in-process hook+storage median 4.9 ms (4.862 in json), direct Python startup 71 ms, registered Windows wrapper 243 ms"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-P0A",
+   "name": "Code phases waited on the owner's P0a",
+   "family": "owner-process",
+   "what_it_is": "Ship plan v8 ran one phase at a time, and its first phase, P0a (the owner's pre-flight: hold notice, Railway, R2 archive, Supabase dump, roster, field builds), was the owner's. So every code phase waited, and nothing reaches a phone or host until P0a is done.",
+   "evidence": "Twelve days after v8, nothing had been built (M, 2026-11-13). Production still answers with Railway's edge 404 on both hostnames (M). P0a has 16 items; 'done' needs items 1-4, 6, 10 and 12.",
+   "potential": "Parallel lanes and build-ahead start work the same day: 8 lanes started on 2026-11-13 (M). Finishing P0a unblocks P3b, P9-0b and the owner chain.",
+   "class": "",
+   "state": "partly closed: SHIP-PLAN section 7 lanes build ahead; P0a kit built, owner steps not started",
+   "first_step": "Owner sends item 1, the fleet hold notice, by hand",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1559 — Twelve days after v8 nothing was built, because P0a had not happened",
+    "docs/program/lab/p0a/README.md:15 — Item 1, the fleet hold notice, first and by hand."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-OWNERWAIT",
+   "name": "Agent work waits on owner actions",
+   "family": "owner-process",
+   "what_it_is": "By design, deploys, restores over live data, key rotation and installs are owner-only. The Odoo and self-host design agents need his answers, and test-rig fixes need an administrator prompt, so they cannot run while he is away.",
+   "evidence": "2 decision forms (T); one administrator prompt per VM start.",
+   "potential": "Agents prepare exact commands and design agents spend on facts; the owner executes safely; drills can run unattended once prompts are cleared.",
+   "class": "Decide",
+   "state": "open, by design",
+   "first_step": "Issue the decision forms at G1; owner present for rig prompts",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:564 — Owner decisions gate the design agents.",
+    "compile/src/SKILLS-PACKAGES.md:80 — Nothing in a skill instructs an agent to deploy, restore over live data, rotate a key",
+    "docs/program/HARNESS-BOTTLENECKS-2026-11.md:292 — Rig-based remedies need an administrator prompt"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-VERIFYBUDGET",
+   "name": "Verification budget spent first-come",
+   "family": "review",
+   "what_it_is": "The skeptic cap was used up by the first analysts to finish, so plan-critical claims (geofence, security, drain) overflowed unchecked. The design accepts going past the harness's agent warnings on purpose.",
+   "evidence": "12 skeptics for 109 claims, used up by the first four analysts (M). Up to 12 Opus skeptics per run (T).",
+   "potential": "Allocating by priority keeps plan-critical claims checked; verification spend stays bounded, with any overflow carried as a risk.",
+   "class": "",
+   "state": "partly closed: budget-by-priority and a corroboration policy adopted",
+   "first_step": "Reserve skeptic slots for P0/P1 claims; log overflow ids",
+   "sources": [
+    "docs/program/G2-deep-dive-gate-2026-11-01.md:13 — The twelve skeptics were consumed by the",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:331 — This stage will cross the harness's agent/token warnings; that is deliberate."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-SEVERITY",
+   "name": "Severity labels drift between stages",
+   "family": "review",
+   "what_it_is": "Output schemas carry no descriptions, so P0-P3 and limits are undefined to the model. A cheap agent's first impression can harden into a priority by inertia, and skeptics often lowered severities.",
+   "evidence": "8 of 12 skeptic verdicts in G2 lowered a severity (M).",
+   "potential": "Defining each value once could raise agreement between analysts and skeptics and give cleaner priorities.",
+   "class": "",
+   "state": "open; inertia mitigated by the judgement-free discovery rule",
+   "first_step": "Run the one-agent schema-description probe",
+   "sources": [
+    "HARNESS-IDEAS-BAML-2026-11.md:68 — G2 recorded eight of twelve skeptic verdicts lowering a severity.",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:116 — This stops a Stage-1 impression from becoming a P0 by inertia"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-CAPS",
+   "name": "Silent caps hid findings",
+   "family": "review",
+   "what_it_is": "Per-analyst caps and truncation made omitted findings invisible.",
+   "evidence": "6 findings per analyst in v2 (S).",
+   "potential": "Every claim either visible or logged.",
+   "class": "",
+   "state": "closed in v3 by a backlog and an open-risks list; two design lines still describe the old cap (see PR-DOCDRIFT)",
+   "first_step": "Check the logged drop counts",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:807 — Six findings per analyst hides omissions"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-SCRIPTTEST",
+   "name": "Workflow-script bugs found only by review",
+   "family": "check",
+   "what_it_is": "Nothing runs a workflow gate script without a model, so bookkeeping defects (not_started on HALT, a swallowed catch, a cached null re-served on resume) were found by review, not by tests.",
+   "evidence": "3 defects (M).",
+   "potential": "A stub harness would test the script body at zero model spend; resume becomes reliable.",
+   "class": "",
+   "state": "open: the script contract was fixed; stub harness S-3 proposed",
+   "first_step": "Build the stub harness and re-introduce the three defects",
+   "sources": [
+    "HARNESS-IDEAS-BAML-2026-11.md:279 — script bookkeeping defects found by review, not by tests",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:210 — a journaled null is never re-served as a result."
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-AGENTNULL",
+   "name": "Agent failures are indistinguishable",
+   "family": "orchestrator",
+   "what_it_is": "agent() returns an object or null, with no attempt count. A schema-exhaustion failure looks the same as a usage-limit null, and typed failures would need a Workflow tool change.",
+   "evidence": "Not sized; one open unknown.",
+   "potential": "Tagged results let the circuit breaker count only nulls that really suggest a limit.",
+   "class": "",
+   "state": "open",
+   "first_step": "Haiku/low-effort probe with an impossible schema to see what agent() returns",
+   "sources": [
+    "HARNESS-IDEAS-BAML-2026-11.md:733 — what `agent()` returns on schema exhaustion"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-BRIEFTEST",
+   "name": "Brief edits cannot be tested cheaply",
+   "family": "review",
+   "what_it_is": "A brief's inputs are the live repo and the web, so a regression run after a brief edit costs many Opus agent runs, the programme's scarcest resource.",
+   "evidence": "60-180 agent runs per brief edit (E).",
+   "potential": "A cheap regression path would let briefs be edited with confidence.",
+   "class": "",
+   "state": "parked; no brief edit has yet been recorded flipping a verdict",
+   "first_step": "Wait for such a recorded brief edit, then freeze skeptic inputs at a pinned commit",
+   "sources": [
+    "HARNESS-IDEAS-BAML-2026-11.md:74 — the cost is 60–180 agent runs per brief edit"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-BRIEFFACTS",
+   "name": "Agents start without the settled facts",
+   "family": "orchestrator",
+   "what_it_is": "Agents were briefed without the settled facts. The G1 gate record did not exist when W2 started, so analysts fell back on hypotheses. Sweep assessors lacked the design rules. A lane could read uncommitted plan text.",
+   "evidence": "One missing gate record (M). 8 of 24 assessment 'adopts' were already programme law (M). 1 blocker and 1 minor finding on lanes reading off-main plan text (M).",
+   "potential": "Every analyst and lane starts from settled, committed facts; fewer wasted assessment and refuter passes.",
+   "class": "",
+   "state": "partly closed: gate record written before dispatch; commit-push-tag before briefing; §5.2 text in the next assessment brief still pending",
+   "first_step": "Check the gate file exists before dispatch; decide whether to merge docs PRs #182 and #185",
+   "sources": [
+    "docs/program/G2-deep-dive-gate-2026-11-01.md:10 — The G1 gate record did not exist when W2 started",
+    "HARNESS-IDEAS-BAML-2026-11.md:436 — Eight of the assessment's 24 adopts were already program law",
+    "docs/program/SHIP-PLAN-2026-11.md:1892 — A lane could read uncommitted plan text"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-EVFORMAT",
+   "name": "Evidence-format checks misfire",
+   "family": "check",
+   "what_it_is": "A naive 'path:line - quote' regex flags many legitimate evidence strings (library paths, commands, web forms), so a check script needs an allow-list.",
+   "evidence": "174 of 707 W2 evidence strings flagged (M).",
+   "potential": "A tuned check finds real violations at zero tokens.",
+   "class": "",
+   "state": "open",
+   "first_step": "Write the allow-list and run the check record-only",
+   "sources": [
+    "HARNESS-IDEAS-BAML-2026-11.md:69 — flagged 174 of 707 W2 evidence strings"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-DOCDRIFT",
+   "name": "Docs and memory drift from the code",
+   "family": "review",
+   "what_it_is": "CLAUDE.md facts, prose docs, design lines and memory drift from the code and from each other. For example, HANDOFF A2 prescribes what CLAUDE.md forbids. No trap in the existing registers carries a verification command.",
+   "evidence": "517 of 1,268 backticked file names in docs do not resolve (M). 4 or 7 contradictions found (M). 2 stale design lines (M). 1 stale memory next step (M). 121 seed rows (M).",
+   "potential": "Agents trust current facts; a cleaned, checkable seed corpus; graph links from docs that are not stale.",
+   "class": "",
+   "state": "partly closed: CLAUDE.md head check planned (P1); corrections PR planned (KS-4); memory made pointer-only",
+   "first_step": "Build the Alembic-head CI check; resolve each contradiction against git",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:264 — CI check that CLAUDE.md's Alembic head equals the `down_revision` chain head",
+    "KNOWLEDGE-STORE-DESIGN-2026-11.md:503 — HANDOFF A2 prescribes what CLAUDE.md forbids",
+    "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md:193 — No trap has a verification command",
+    "docs/program/evidence/harness-bottlenecks/graph2/research/critic.txt:38 — 517 of 1,268 backticked file names in docs do not resolve in the repo",
+    "HARNESS-IDEAS-BAML-2026-11.md:705 — Lines 219 and 487 are stale against v3.",
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:266 — it carried a stale next step"
+   ],
+   "conflicts": "The knowledge-store design gives 4 contradictions found (ksA reading of the seed section) and 7 named contradictions (ksB reading of §8-5). Both counts are from the same document."
+  },
+  {
+   "id": "PR-SUMMARY",
+   "name": "Compaction summaries misstate the latest state",
+   "family": "orchestrator",
+   "what_it_is": "Both compaction summaries got the very latest state wrong (what was committed, whether the closing message was written), and one dropped an open loop. The verbatim tail corrected them.",
+   "evidence": "2 of 2 summaries wrong; no mistake or rework resulted (M).",
+   "potential": "Keeping state in the repo makes compaction harmless.",
+   "class": "",
+   "state": "mitigated by PR-body rules",
+   "first_step": "Put the plan sha and the decisions list in the PR body",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:313 — wrong about the latest commit state, corrected by the verbatim tail"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-TEMPOUT",
+   "name": "Raw workflow outputs only in temp",
+   "family": "orchestrator",
+   "what_it_is": "The raw W1/W2 outputs that the register cites lived only in a %TEMP% scratchpad folder.",
+   "evidence": "All W1/W2 outputs (M).",
+   "potential": "Every register id traceable to a durable source.",
+   "class": "",
+   "state": "closed by an evidence folder with a sha256 manifest",
+   "first_step": "Commit the evidence at each gate",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:265 — they lived only in a %TEMP% scratchpad"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-PLANLOSS",
+   "name": "Plan rewrites can lose content",
+   "family": "review",
+   "what_it_is": "A plan rewrite was reported from its commit message and content was lost. This is the programme's one recorded state loss.",
+   "evidence": "1 recorded loss, commit 093b793 (M).",
+   "potential": "Plan changes that can be trusted.",
+   "class": "",
+   "state": "closed by a verify-by-content rule",
+   "first_step": "Diff the content at every plan bump",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:282 — verify a plan rewrite by content, not by commit"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-PLANDEFECTS",
+   "name": "Plan revisions carry defects",
+   "family": "review",
+   "what_it_is": "Major plan revisions carried defects. The v6 delta had a blocker that would have stripped every crossing of its coordinates, plus many major issues.",
+   "evidence": "1 blocker, 20 major, 20 minor, 7 notes (M).",
+   "potential": "A plan that survives review before work starts.",
+   "class": "",
+   "state": "closed in v7/v8; a delta check on every major revision",
+   "first_step": "Delta-check every major revision",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:358 — 1 blocker, 20 major, 20 minor, 7 notes"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-PHASESIZE",
+   "name": "Phases too big for one session",
+   "family": "orchestrator",
+   "what_it_is": "A delta check found phases too large to finish in one session.",
+   "evidence": "3 phases: P5b, P9-0 and P1's CI check (M).",
+   "potential": "Predictable, session-sized phases.",
+   "class": "",
+   "state": "closed by splitting into P5b-1/P5b-2, P9-0a/P9-0b and a P5 spike",
+   "first_step": "Test fit with Opus critics",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:365 — three phases that no longer fit one session"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-FALSEGREEN",
+   "name": "Green checks that test nothing",
+   "family": "check",
+   "what_it_is": "A check can pass while testing nothing. Backend integration tests are all skipped when FIXFLOW_TEST_DATABASE_URL is unset; mobile CI passes with no tests; an installer printed success with nothing installed.",
+   "evidence": "All backend integration tests skippable (M, verified in code). One installer case reported 'INSTALL OK' falsely (M).",
+   "potential": "Gates whose green means something; trustworthy toolchain status.",
+   "class": "",
+   "state": "partly closed: installer now reports only files found on disk; skip-aware gates planned in P1",
+   "first_step": "Make the gate fail when integration tests were skipped",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:263 — fail when integration tests were skipped",
+    "docs/program/SHIP-PLAN-2026-11.md:1802 — a PowerShell pipe into `sdkmanager.bat` installs nothing and exits 0"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-MOBILEBOUNDARY",
+   "name": "Mobile code boundaries not enforced",
+   "family": "check",
+   "what_it_is": "No call-graph tool is in use and the mobile app has no import contract, so the rule that writes go only through the outbox exists only in prose.",
+   "evidence": "1 of 3 runtimes unenforced (M); repo about 56k lines.",
+   "potential": "The invariant enforced by CI.",
+   "class": "",
+   "state": "planned: dependency-cruiser in P5b-2",
+   "first_step": "Write the import rules",
+   "sources": [
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:51 — mobile has no boundary enforcement"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-SCREENTEST",
+   "name": "No screen tests for the mobile app",
+   "family": "check",
+   "what_it_is": "The mobile app has no screen-test harness (no React Native testing library), so UI logic is kept in pure functions and device smoke tests are the only route.",
+   "evidence": "Not measured.",
+   "potential": "An automated arrival-flow smoke test on a device.",
+   "class": "",
+   "state": "open; worked around with pure functions",
+   "first_step": "Add testIDs for the flows; source a Maestro skill",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:733 — the app has no screen-test harness",
+    "compile/src/SKILLS-PACKAGES.md:915 — has no screen-test harness (no `@testing-library/react-native`, no `react-test-renderer`)"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-FIELDEVIDENCE",
+   "name": "Code reading cannot settle field questions",
+   "family": "first-use",
+   "what_it_is": "Field data is thin and the backend is down. Many premises (commercial SDK behaviour, phone-maker background rules) can be settled only by a device trial. The installed field app is older than main.",
+   "evidence": "attendance_event had 9 rows lifetime (M). The field APK is 10 commits behind the handoff (M). Several claims are labelled unmeasured.",
+   "potential": "A device protocol settles what code cannot; findings correctly labelled against the build in the field; reliability evidence per phone maker.",
+   "class": "",
+   "state": "open; owner action on the APK",
+   "first_step": "Write the discriminating field protocol; owner lists the EAS build commit; per-OEM runs (P5d-1b)",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:35 — `attendance_event` had **9 rows lifetime**",
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:30 — the field APK is **older than `main`**",
+    "docs/program/HARNESS-REVIEW-2026-11-01.md:43 — that is a one-session trial, not a decision anyone can make from a desk",
+    "compile/src/SKILLS-PACKAGES.md:133 — never ... makes a field-reliability claim without device evidence"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-PRIMARYSOURCES",
+   "name": "Agent knowledge lacks primary sources",
+   "family": "retrieval",
+   "what_it_is": "Agent skills rest on unchecked facts: PostgreSQL lock-level claims come from FixFlow code comments (no manual page fetched), and Odoo-side facts stay OPEN until fetched or recorded by the owner.",
+   "evidence": "Not measured.",
+   "potential": "Trustworthy migration review and exactly-once Odoo postings.",
+   "class": "",
+   "state": "open",
+   "first_step": "Fetch the PostgreSQL manual pages; ask the owner the Odoo questions in P9-0b",
+   "sources": [
+    "compile/src/SKILLS-PACKAGES.md:773 — No PostgreSQL manual page was fetched for this package",
+    "compile/src/SKILLS-PACKAGES.md:420 — Every Odoo-side unknown the skill lists as OPEN ... stays OPEN"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-SECRETS",
+   "name": "Journaled agent output could keep secrets",
+   "family": "orchestrator",
+   "what_it_is": "Every workflow output is journaled, so any secret pasted into an output would persist.",
+   "evidence": "Not sized.",
+   "potential": "Secret scanning that is safe.",
+   "class": "",
+   "state": "mitigated by a fingerprint-only rule",
+   "first_step": "Inspect the journal after S-08",
+   "sources": [
+    "docs/ORCHESTRATION-DESIGN-2026-10.md:189 — never the value, never a quoted line"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-AUTHORBRIEF",
+   "name": "Author wrote its own reviewer's brief",
+   "family": "review",
+   "what_it_is": "When the implementing lead decides what its binding reviewer attacks, the review can miss the author's blind spots.",
+   "evidence": "1 major finding (M).",
+   "potential": "Independent binding review of every PR.",
+   "class": "",
+   "state": "closed: the coordinator dispatches binding review",
+   "first_step": "First binding review on the first READY",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1881 — The implementing lead wrote its own reviewer's brief"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-DRAIN",
+   "name": "Drain branch could absorb unrelated work",
+   "family": "review",
+   "what_it_is": "A drain branch cut at P1's squash assumes nothing merges first, but build-ahead lanes may merge earlier work, which would end up in the drain image unreviewed.",
+   "evidence": "1 blocker (M).",
+   "potential": "A reviewed drain image.",
+   "class": "",
+   "state": "closed in the plan (cut at a31924a with cherry-picks); the cut is not yet verified",
+   "first_step": "Cut the branch and verify the log",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1875 — `release/drain` 'at P1's squash commit' would swallow anything merged before P1"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-CONFLICTS",
+   "name": "Parallel lanes edit the same files",
+   "family": "orchestrator",
+   "what_it_is": "Several lanes touch the same files: CLAUDE.md, config.py, conftest.py, specs.py and the attendance constants.",
+   "evidence": "6 shared-file groups listed (M).",
+   "potential": "Conflicts resolved at rebase instead of by waiting.",
+   "class": "",
+   "state": "managed by shared-file rules",
+   "first_step": "P6a rebases after P1",
+   "sources": [
+    "docs/program/SHIP-PLAN-2026-11.md:1688 — Shared files: `CLAUDE.md` (a PR edits only the lines its phase names"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-DELIVERY",
+   "name": "Corrections cannot interrupt a busy lane",
+   "family": "orchestrator",
+   "what_it_is": "A message to a lane arrives only when its current turn ends, so a correction cannot interrupt a lane mid-turn.",
+   "evidence": "Not measured.",
+   "potential": "Corrections delivered as follow-up turns.",
+   "class": "",
+   "state": "accepted",
+   "first_step": "Send corrections early",
+   "sources": [
+    "docs/program/W0-results.md:117 — Messages to lanes are delivered when a lane's current turn ends, not mid-turn"
+   ],
+   "conflicts": ""
+  },
+  {
+   "id": "PR-OUTSIDEEVIDENCE",
+   "name": "Outside harness ideas have weak evidence",
+   "family": "review",
+   "what_it_is": "Most claims in outside harness material are anecdotal or simply asserted, so few ideas can be adopted on evidence alone.",
+   "evidence": "311 addendum cards: 37 measured, 141 anecdotal, 128 asserted, 5 marketing (M).",
+   "potential": "Rules for fair experiments turn claims into tested ideas.",
+   "class": "",
+   "state": "handled by narrowing the ideas and designing trials",
+   "first_step": "Run the narrowed trials",
+   "sources": [
+    "HARNESS-IDEAS-HORTHY-2026-11.md:685 — 37 carry a measured number (almost all from the SlopCodeBench article, charts and breakdown)"
+   ],
+   "conflicts": ""
+  }
+ ],
+ "notes": "The register has 112 records, built from about 330 raw records.\n\nIds: B01-B21 are the clinic testbed list (compiled 2026-11-11). Each one merges the compileA, compileB, harness v2 and clinicA/B/C lane readings of the same item. R2 and R4 are harness v2 loops. 'B3-LOOP' is harness v2 loop B3 (the limit stop); it is renamed so it cannot be confused with the clinic list's B03. Harness v2 loop B1 is merged into B07, loop B2 into B04, and loop R1 (the fix spiral) is named inside B01; no raw record carried R3. L1, L3 and W1-W5 are the Horthy sweep's own ids. L2 is merged into R2, since both describe context growth and compaction. All TK-, LIB-, MC- and PR- ids are invented here because the sources give none. Reader lane ids such as OB4, REV-B4, TOK-3, ksA-1, KS-C1 and G-B1 were not used as ids; the source citations cover them instead.\n\nMerges (each record lists all its sources):\n- TOK-13 and B-POWER into B05.\n- B-RAM into B08.\n- OB1 and the Docker-autostart parts of ksA-8/§9-no-docker into B10.\n- ksA-11 and D14 into B11.\n- OB15 and SK-3 into B12.\n- OB14 into B16.\n- T1, TOK-2, REV-B1, REV-B3 and L2 into R2.\n- OB6, REV-B5, BML-1, §12-lost-runs and TOK-8's stop count into B3-LOOP.\n- T2, TOK-3, OB4, 'Fixed cost' and KS-C9's 63k figure into TK-PREFIX.\n- G-B1 into TK-LOOKUP.\n- A5-06 into TK-OWNOUTPUT.\n- G-B2, G-B3 and G-B10 into TK-FETCHED.\n- T4 and KS-K8 into TK-BUDGET.\n- ksA-3 into W1.\n- ksA-7, KS-K24 and BML-5 into W2.\n- OB21, SK-2 and SK-4 into W4.\n- LIB-CEIL into LIB-COMES.\n- TOK-10 into LIB-GRAPH-POWER.\n- G-B9, A5-08, A6-10 and A5-04 into LIB-EVAL.\n- B-SERIAL and B-P0A into PR-P0A.\n- OB22, SK-5 and T5 into PR-OWNERWAIT.\n- REV-B4, TOK-11 and OB7 into PR-VERIFYBUDGET.\n- BML-3 and OB13 into PR-SEVERITY.\n- BML-2 and OB24 into PR-SCRIPTTEST.\n- REV-B6, BML-7 and B-PLANOFFMAIN into PR-BRIEFFACTS.\n- REV-B10, KS-R5, ksA-13, G-B13, BML-9 and REV-B15 into PR-DOCDRIFT.\n- REV-B9 and B-INSTALLER into PR-FALSEGREEN.\n- OB16, OB17, REV-B16 and SK-7 into PR-FIELDEVIDENCE.\n- OB3, OB20 and SK-10's PG16/17 part into MC-ENVSKEW.\n- OB2 and REV-B13 into MC-TOOLS.\n- OB8 and B-BACKEND-GATE into MC-GATETIME.\n- B-NATIVECOMPILE and SK-6 into MC-NATIVE.\n- OB9 and B-SHAREDDB into MC-SHAREDDB.\n- OB19 and SK-11 into PR-SCREENTEST.\n- B-ACCESS, B-UNREAD and OB11 into MC-ACCESS.\n- B-CPU stays separate from MC-ENGINE (G-B11).\n- The knowledge-store records are grouped by mechanism into the LIB-KS-* records and MC-FS.\n\nOne record left out: SK-9, the outbox race. It is a FixFlow product defect (the CLAUDE.md 'KNOWN DEFECT, UNFIXED'), not a harness bottleneck, so it falls outside the task's definition of 'harness'.\n\nConflicts are recorded, not resolved. The main ones:\n- Power-off counts: 2, then 24 since 7 Oct, then 25 since 1 Oct (B05).\n- What caused the 6 Nov halt: a usage limit or a power-off (B03).\n- Compaction window: 'never switched on' (memory), 'Opus already capped' (harness v2), or 'keyed to Opus, not applied to the Fable session' (review 2026-11-01) (R2).\n- Number of root compactions: 3 or 4 (B04).\n- Fixed prefix per agent: 70k M, 60k E or 63k (TK-PREFIX).\n- Limit episodes: 14 in October, or 14 in 15 days (B3-LOOP).\n- Queue waits: 6-34 min (owner's list) vs measured ranges (B07).\n- Real-data switch: merged or unmerged (B02).\n- Number of doc contradictions: 4 or 7 (PR-DOCDRIFT).\n- Diff fire rate: 47/154 or 48.7 % (LIB-KS-DIFF).\n- Fetched-content share: 26 %, 22.3 % or 27-28.5 % (TK-FETCHED).\n- Own-output share: 26 % or 32 % (TK-OWNOUTPUT).\n- CLAUDE.md cost: 7.5k or 10k (W1).\n\nTags follow the sources. All library weights ('alone' and 'last' percentages, the 30.6 % full fall, and the yields) are G, meaning guesses. The source defines the 'alone/last' weighting in docs/program/LIBRARY-PATHWAYS-2026-11.md; the PDF should quote that definition rather than paraphrase it.\n\nCitation paths without a 'docs/program/' prefix (HARNESS-IDEAS-*, KNOWLEDGE-STORE-DESIGN-*, compile/src/SKILLS-PACKAGES.md, memory/*) are the branch-only documents extracted to the scratchpad compile/src folder, or the memory folder at C:/Users/User/.claude/projects/C--Users-User-Documents-projects-EMS-workshop1/memory.\n\nThe 'class' field uses the source's own Build/Decide/Diagnose/Trial label where one exists, taken from the compile's B01-B21, T3/T4/T5 and the L1/B-list trials. Otherwise it is left blank, as the task instructs."
+}

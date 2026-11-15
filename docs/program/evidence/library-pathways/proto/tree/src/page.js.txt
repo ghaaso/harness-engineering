@@ -1,0 +1,527 @@
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('lp-data').textContent);
+  var E = window.PathwayEngine, C = window.PathwayCore, T = window.TreeCore;
+  var MAP = D.map, TABLE = D.params, LIMS = D.lims, CASES = C.unpackCases(D.cases), TX = D.tx, PTX = D.ptx;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+
+  var BEST = E.paramsFromTable(TABLE, 'best');
+  var ST = T.structure(MAP);
+  var S = ST.S;
+  var BR = {}; MAP.branches.forEach(function (b) { BR[b.id] = b; });
+  var STEP = {}; MAP.steps.forEach(function (s) { STEP[s.id] = s; });
+  var TIER = {}; MAP.tiers.forEach(function (t) { TIER[t.id] = t; });
+  var PMETA = {}; MAP.parameters.forEach(function (p) { PMETA[p.id] = p; });
+  var DERIV = {}; MAP.derived.forEach(function (d) { DERIV[d.id] = d; });
+  MAP.stocks.values.forEach(function (d) { DERIV[d.id] = d; });
+  var POLS = MAP.policies.map(function (p) { return p.id; });
+  var PNAME = PTX.policy_names, PSHORT = PTX.policy_short;
+  var LIM = {}; LIMS.items.forEach(function (it) { LIM[it.id] = it; });
+  var CASE = {}; CASES.cases.forEach(function (c) { CASE[c.id] = c; });
+  var FAM = {}; CASES.families.forEach(function (f) { FAM[f.id] = f; });
+  var EVID = T.stepEvidence(LIMS, CASES);
+  var DSTEPS_OF = {};
+  Object.keys(PTX.design_steps).forEach(function (k) { PTX.design_steps[k].forEach(function (st) { (DSTEPS_OF[st] = DSTEPS_OF[st] || []).push(+k); }); });
+  var STAGES = MAP.steps.map(function (s) { return s.id; });
+  var STAGE_NO = {}; STAGES.forEach(function (s, i) { STAGE_NO[s] = s === 'outcome' ? 'end' : String(i + 1); });
+  var PATH = E.timePath(MAP, BEST);
+  var NPER = PATH.periods.length;
+  var OUTS = MAP.outcomes.map(function (o) { return o.id; });
+  var GATE_CAUGHT = (MAP.links && MAP.links[0]) ? MAP.links[0].to_branches.filter(function (b) { return /_caught$/.test(b); }) : [];
+
+  // ------------------------------------------------------------ state
+  var V = {
+    policy: 'library', mode: 'all',
+    kind: { kind: 'visible', need: 'cheap_wrong', held: 'similar', distractor: 'no' },
+    period: NPER, compare: false,
+    forkMode: 'auto', open: {}, why: {}, ev: {}, inc: {},
+    route: null, stepIdx: null, sortBy: 'chance', shown: 20
+  };
+  var PIC = {}, STT = null, ROUTES = null;
+
+  function stocksFor(pol) { return pol === 'library' ? PATH.periods[V.period - 1].stocks : {}; }
+  function kindFor() { return V.mode === 'kind' ? Object.assign({}, V.kind) : null; }
+  function recompute() {
+    POLS.forEach(function (p) { PIC[p] = T.picture(E, C, MAP, BEST, p, kindFor(), stocksFor(p)); });
+    STT = T.stageTotals(MAP, ST, PIC[V.policy], V.policy);
+    var ro = { stocks: stocksFor(V.policy), sortBy: V.sortBy };
+    if (V.mode === 'kind') { var pol = MAP.policies.filter(function (p) { return p.id === V.policy; })[0]; ro.classValues = Object.assign({}, V.kind, pol.fixed || {}); }
+    ROUTES = E.routes(MAP, BEST, V.policy, ro);
+    if (V.route && !ROUTES.routes.some(function (r) { return r.id === V.route; })) { V.route = null; V.stepIdx = null; }
+    var bad = POLS.filter(function (p) { return PIC[p].parity > 1e-9; });
+    if (bad.length) console.error('Cost parity failed for ' + bad.join(', '));
+  }
+
+  // ------------------------------------------------------------ numbers
+  function n100(v) {
+    var x = 100 * v;
+    if (!(x > 0)) return '0';
+    if (x >= 1) return x.toFixed(1);
+    if (x >= 0.01) return x.toFixed(2);
+    return '<0.01';
+  }
+  function pct(v) { if (v === null || v === undefined || !isFinite(v)) return '–'; var x = 100 * v; return (x !== 0 && x < 0.1 ? x.toFixed(2) : x.toFixed(1)) + '%'; }
+  function cst(v) { if (v === null || v === undefined || !isFinite(v)) return '–'; var a = Math.abs(v); return a >= 100 ? Math.round(v).toLocaleString('en') : a >= 10 ? v.toFixed(1) : a >= 0.01 || v === 0 ? v.toFixed(2) : '<0.01'; }
+  function tag(t) { return '<i class="tag ' + t + '" title="' + esc(t + ': ' + PTX.tags[t]) + '">' + t + '</i>'; }
+  function live(pol, sid) { return PIC[pol].stateFlow[sid] > 1e-12; }
+  function liveAny(sid) { return V.compare ? POLS.some(function (p) { return live(p, sid); }) : live(V.policy, sid); }
+  function bLive(pol, bid) { return PIC[pol].branchFlow[bid] > 1e-12; }
+  function isOpen(sid) {
+    if (V.open[sid] !== undefined) return V.open[sid];
+    if (V.forkMode === 'all') return true;
+    if (V.forkMode === 'none') return false;
+    return liveAny(sid);
+  }
+  function stepLabel(st) { return st === 'outcome' ? 'Outcome' : STEP[st].label; }
+  function q(sid) { return TX.question[sid] || S[sid].label; }
+  function swatchTier(t) { return '<i class="sw t-' + t + '" title="Paid to ' + esc(TIER[t].label) + '"></i>'; }
+  function swatchOut(o) { return '<i class="sw o-' + o + '" role="img" aria-label="' + esc(S[o].label) + '"></i>'; }
+
+  // ------------------------------------------------------------ why a part carries no work
+  function whyText(ref, pol) {
+    var list = T.zeroWhy(E, MAP, ST, BEST, pol, kindFor(), stocksFor(pol), PIC[pol], ref);
+    var parts = [], factors = [];
+    list.forEach(function (r) {
+      if (r.type === 'start') parts.push(TX.why.start.replace('{way}', PNAME[r.policy]).replace('{start}', q(r.start)));
+      else if (r.type === 'upstream') parts.push(TX.why.upstream.replace('{state}', q(r.state)));
+      else if (r.type === 'factor') factors.push(r);
+      else parts.push(TX.why.rule);
+    });
+    if (factors.length) {
+      var words = factors.map(function (f) {
+        var k = f.id + '=' + f.value;
+        if (TX.why.words[k]) return TX.why.words[k];
+        var lab = (PMETA[f.id] && PMETA[f.id].name) || (DERIV[f.id] && DERIV[f.id].label) || f.id;
+        return lab + ' is ' + f.value;
+      });
+      var uniq = words.filter(function (w, i) { return words.indexOf(w) === i; });
+      var t = (factors[0].all ? TX.why.factor_all : TX.why.factor_kind).replace('{words}', uniq.join('; and '));
+      if (factors[0].all && pol === 'library') {
+        var stk = stocksFor(pol);
+        t += ' At period ' + V.period + ' the library holds ' + cst(stk.E_good) + ' good and ' + cst(stk.E_bad) + ' bad entries.';
+      }
+      parts.push(t);
+    }
+    return parts.join(' ');
+  }
+
+  // ------------------------------------------------------------ controls
+  function seg(name, items, cur, dis) {
+    return '<div class="seg" role="group" aria-label="' + esc(name) + '">' + items.map(function (it) {
+      return '<button type="button" data-v="' + esc(it[0]) + '" aria-pressed="' + (it[0] === cur) + '"' + (dis ? ' disabled' : '') + (it[2] ? ' title="' + esc(it[2]) + '"' : '') + '>' + esc(it[1]) + '</button>';
+    }).join('') + '</div>';
+  }
+  function ctl(key, inner, extra) {
+    var c = TX.controls[key];
+    return '<div class="ctl" data-ctl="' + key + '"' + (extra || '') + '><span class="lab">' + esc(c.label) + '</span>' + inner + '<span class="says">' + esc(c.says) + '</span></div>';
+  }
+  function renderControls() {
+    var h = ctl('policy', seg('Way of working', POLS.map(function (p) { return [p, PNAME[p], PTX.policy_says[p]]; }), V.policy));
+    h += ctl('work', seg('Which work', [['all', 'All work'], ['kind', 'One kind of work']], V.mode));
+    h += ctl('period', '<div class="per"><input type="range" id="perPick" min="1" max="' + NPER + '" step="1" value="' + V.period + '" aria-label="Period"><b>' + V.period + ' of ' + NPER + '</b></div>');
+    var kh = '';
+    ['kind', 'need', 'held', 'distractor'].forEach(function (aid) {
+      var a = MAP.attributes.filter(function (x) { return x.id === aid; })[0];
+      var dis = V.policy !== 'library' && (aid === 'held' || aid === 'distractor');
+      kh += ctl(aid, seg(TX.controls[aid].label, a.values.map(function (v) { return [v.id, TX.short_val[v.id] || v.label, v.label]; }), V.kind[aid], dis), ' data-attr="' + aid + '"');
+    });
+    var share = V.mode === 'kind' ? PIC[V.policy].share : 1;
+    kh += '<div class="share">This kind is <b>' + pct(share) + '</b> of all work ' + tag('G') + (V.policy === 'library' ? ' at period ' + V.period : '') + '.</div>';
+    h += '<div class="ctl kindset" id="kindset"' + (V.mode === 'kind' ? '' : ' hidden') + '>' + kh + '</div>';
+    $('#controls').innerHTML = h;
+  }
+  $('#controls').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-v]'); if (!b || b.disabled) return;
+    var c = b.closest('[data-ctl]'), key = c && c.dataset.ctl, v = b.dataset.v;
+    if (key === 'policy') V.policy = v;
+    else if (key === 'work') V.mode = v;
+    else if (key === 'compare') V.compare = v === 'three';
+    else if (key === 'forks') { V.forkMode = v; V.open = {}; }
+    else if (c && c.dataset.attr) { V.kind[c.dataset.attr] = v; }
+    if (key !== 'forks' && key !== 'compare') { V.route = null; V.stepIdx = null; V.shown = 20; }
+    update();
+  });
+  $('#controls').addEventListener('input', function (e) {
+    if (e.target.id === 'perPick') { V.period = +e.target.value; e.target.nextElementSibling.textContent = V.period + ' of ' + NPER; update(true); }
+  });
+
+  // ------------------------------------------------------------ stage strip and legend
+  function stageEvidence(stage) {
+    var steps = DSTEPS_OF[stage] || [], lims = 0, cases = {};
+    steps.forEach(function (k) { lims += EVID[k].main.length; EVID[k].broke.forEach(function (c) { cases[c] = 1; }); });
+    return { steps: steps, lims: lims, cases: Object.keys(cases).length };
+  }
+  function renderStrip() {
+    var h = '<h2>The eleven stages</h2><ol class="stg-list">';
+    STAGES.forEach(function (stg) {
+      var t = STT[stg], ev = stageEvidence(stg), enter = stg === 'outcome' ? 1 : t.enter;
+      var zero = !(enter > 1e-12);
+      h += '<li><button type="button" class="stg-btn' + (zero ? ' zero' : '') + '" data-stage="' + stg + '" aria-label="Stage ' + STAGE_NO[stg] + ': ' + esc(stepLabel(stg)) + '. ' + n100(enter) + ' of 100 enter.">' +
+        '<span class="no">' + STAGE_NO[stg] + '</span><span class="nm">' + esc(stepLabel(stg)) + '</span>' +
+        '<span class="q">' + esc(TX.stage_q[stg]) + '</span>' +
+        '<span class="wk"><span class="trk"><i style="width:' + Math.min(100, 100 * enter).toFixed(1) + '%"></i></span><span>' + n100(enter) + (stg === 'outcome' ? ' end' : ' in') + (t.cost > 0 ? ' · cost ' + cst(100 * t.cost) : '') + '</span></span>' +
+        (ev.steps.length ? '<span class="ev">step' + (ev.steps.length > 1 ? 's ' : ' ') + ev.steps.join(', ') + ' · ⚑ ' + ev.lims + ' · ' + ev.cases + ' cases broke</span>' : '') +
+        '</button></li>';
+    });
+    h += '</ol><p class="cap" id="stripCap"></p>';
+    h += '<div class="legend">' + legendHtml() + '</div>';
+    $('#strip').innerHTML = h;
+    markInView();
+  }
+  function legendHtml() {
+    var L = TX.legend;
+    var bar = '<span class="ct" style="gap:4px"><span class="trk" style="width:22px"><i style="width:60%"></i></span></span>';
+    return '<h2>How to read it</h2><dl>' +
+      '<dt>' + bar + '</dt><dd>' + esc(L.count) + ' ' + tag('G') + '</dd>' +
+      '<dt><span style="border-left:2px solid var(--line-2);height:20px;display:inline-block;width:12px;border-bottom:2px solid var(--line-2)"></span></dt><dd>' + esc(L.nest) + '</dd>' +
+      '<dt><span class="dest" style="padding:0 5px"><span class="arrow">→</span></span></dt><dd>' + esc(L.shared) + '</dd>' +
+      '<dt><span class="dest same" style="padding:0 5px"><span class="arrow">↑</span></span></dt><dd>' + esc(L.same) + '</dd>' +
+      '<dt><span style="opacity:.42;font-weight:650">Aa</span></dt><dd>' + esc(L.quiet) + '</dd>' +
+      '<dt><span style="display:grid;grid-template-columns:auto auto;gap:3px">' + OUTS.map(swatchOut).join('') + '</span></dt><dd>' + OUTS.map(function (o) { return esc(S[o].label); }).join('; ') + '.</dd>' +
+      '<dt><span style="display:flex;gap:2px">' + ['cheap', 'opus', 'fable'].map(swatchTier).join('') + '</span></dt><dd>' + esc(L.tiers) + ' Cheap model; Opus; Fable.</dd>' +
+      '<dt><span class="stgchip" style="font-size:13px;border:1px solid var(--line-2);border-radius:999px;padding:0 6px">⚑</span></dt><dd>' + esc(L.lims) + ' ' + esc(L.cases) + '</dd>' +
+      '<dt><span class="promo" style="margin:0;padding:0 5px">+</span></dt><dd>' + esc(L.promo) + '</dd>' +
+      '</dl><p style="margin:10px 0 0">' + esc(L.tags) + '</p><p class="muted" style="margin:6px 0 0">' + esc(TX.design_steps_note) + '</p>';
+  }
+  $('#strip').addEventListener('click', function (e) {
+    var b = e.target.closest('.stg-btn'); if (!b) return;
+    var stg = b.dataset.stage;
+    if (stg === 'outcome') { $('#ends').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    var first = MAP.states.filter(function (s) { return s.step === stg; }).map(function (s) { return s.id; });
+    // the first of this stage's questions in reading order
+    var target = null;
+    ST.roots.some(function (r) { return order(r).some(function (sid) { if (first.indexOf(sid) >= 0) { target = sid; return true; } return false; }); });
+    if (target) goTo(target);
+  });
+  function order(root) {
+    var list = [];
+    (function walk(sid) { list.push(sid); ST.out[sid].forEach(function (b) { if (!ST.shared[b.to] && ST.owner[b.to] === b.id) walk(b.to); }); })(root);
+    return list;
+  }
+  var seen = new Set(), io = null;
+  function markInView() {
+    var stages = {};
+    seen.forEach(function (el) { if (el.isConnected) stages[el.dataset.stage] = 1; });
+    $$('.stg-btn').forEach(function (b) { b.classList.toggle('inview', !!stages[b.dataset.stage]); });
+    var cap = $('#stripCap');
+    if (cap) {
+      var k = STAGES.filter(function (s) { return stages[s]; });
+      cap.textContent = k.length ? 'In view: ' + k.map(function (s) { return STAGE_NO[s] + ' ' + stepLabel(s); }).join(' · ') : '';
+    }
+  }
+  function observe() {
+    if (!('IntersectionObserver' in window)) return;
+    if (io) io.disconnect();
+    seen = new Set();
+    io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) seen.add(en.target); else seen.delete(en.target); });
+      markInView();
+    }, { rootMargin: '-90px 0px -15% 0px' });
+    $$('.fh[data-stage], .ends[data-stage]').forEach(function (el) { io.observe(el); });
+  }
+
+  // ------------------------------------------------------------ the tree
+  function countCells(kindOf, id) {
+    // kindOf: 'b' branch or 's' state. One cell per way shown.
+    var pols = V.compare ? POLS : [V.policy];
+    return pols.map(function (p) {
+      var v = kindOf === 'b' ? PIC[p].branchFlow[id] : PIC[p].stateFlow[id];
+      var z = !(v > 1e-12);
+      return '<span class="ct' + (z ? ' zero' : '') + (V.compare && p === V.policy ? ' me' : '') + '" data-w="' + esc(PSHORT[p]) + '"' + (V.compare ? ' title="' + esc(PNAME[p]) + '"' : '') + '><span class="trk"><i style="width:' + Math.min(100, 100 * v).toFixed(2) + '%' + (v > 0 && 100 * v < 1 ? ';min-width:2px' : '') + '"></i></span><b>' + n100(v) + '</b></span>';
+    }).join('');
+  }
+  function costCell(bid) {
+    var b = BR[bid], P = PIC[V.policy];
+    if (!b.tier) return '<span class="co"><span class="each">no cost</span></span>';
+    var flow = P.branchFlow[bid], carried = P.carried[bid];
+    var each = P.bv ? P.bv[bid].cost : (flow > 1e-12 ? carried / flow : null);
+    return '<span class="co" title="Cost when taken, and the cost it carries for the 100 pieces. Paid to ' + esc(TIER[b.tier].label) + '.">' + swatchTier(b.tier) + '<span class="each">' + cst(each) + ' each ·</span> <b>' + cst(100 * carried) + '</b></span>';
+  }
+  function destCell(b) {
+    var to = b.to;
+    if (S[to].outcome) return '<button type="button" class="dest end" data-go="end:' + to + '">' + swatchOut(to) + '<span>Ends: ' + esc(S[to].label) + '</span></button>';
+    if (ST.shared[to]) return '<button type="button" class="dest" data-go="' + to + '"><span class="arrow">→</span><span>' + esc(q(to)) + ' <span class="st">stage ' + STAGE_NO[S[to].step] + '</span></span></button>';
+    if (ST.owner[to] === b.id) return '';
+    return '<button type="button" class="dest same" data-go="' + to + '"><span class="arrow">↑</span><span>Same next question as “' + esc(BR[ST.owner[to]].label) + '”</span></button>';
+  }
+  function chanceAt(bid) { return PIC[V.policy].chanceAt[bid]; }
+  function routeSet() {
+    if (!V.route) return null;
+    var r = ROUTES.routes.filter(function (x) { return x.id === V.route; })[0];
+    return r ? r.branches : null;
+  }
+  function answer(b, depth, onR, cur) {
+    var z = !(V.compare ? POLS.some(function (p) { return bLive(p, b.id); }) : bLive(V.policy, b.id));
+    var on = onR && onR.indexOf(b.id) >= 0, isCur = cur === b.id;
+    var promo = V.policy === 'library' && GATE_CAUGHT.indexOf(b.id) >= 0 ? '<button type="button" class="promo linkbtn" data-gostock="1" style="text-decoration:none;color:var(--ink-2)" title="' + esc(TX.legend.promo) + '">+ promoted checks</button>' : '';
+    var h = '<li class="a' + (z ? ' quiet' : '') + (on ? ' onroute' : '') + (isCur ? ' current' : '') + '" id="a-' + b.id + '">';
+    h += '<div class="r" data-b="' + b.id + '"><span class="lbl"><button type="button" class="linkbtn lb" data-route-through="' + b.id + '" style="color:inherit;text-decoration:none" title="Light the most common route through this answer">' + esc(b.label) + '</button>' + promo +
+      (z ? '<button type="button" class="linkbtn why" data-why="b:' + b.id + '" aria-expanded="' + !!V.why['b:' + b.id] + '">Why 0?</button>' : '') + (function () { var d = destCell(b); return d ? '<span class="de">' + d + '</span>' : ''; })() + '</span>' +
+      '<span class="ch num" title="Chance at this question">' + pct(chanceAt(b.id)) + '</span>' +
+      '<span class="ctwrap">' + countCells('b', b.id) + '</span>' + costCell(b.id) + '</div>';
+    if (z && V.why['b:' + b.id]) h += '<p class="whyline">' + esc(whyText({ branch: b.id }, V.policy)) + '</p>';
+    if (!ST.shared[b.to] && ST.owner[b.to] === b.id) h += fork(b.to, depth + 1, onR, cur);
+    return h + '</li>';
+  }
+  function stageChip(sid) {
+    var stg = S[sid].step, ev = stageEvidence(stg), open = !!V.ev[sid];
+    var t = '<span>Stage ' + STAGE_NO[stg] + ' · ' + esc(stepLabel(stg)) + '</span>';
+    if (!ev.steps.length) return t;
+    return t + '<button type="button" class="evchip" data-ev="' + sid + '" aria-expanded="' + open + '" title="Open the limitations and real cases of design step' + (ev.steps.length > 1 ? 's ' : ' ') + ev.steps.join(' and ') + '">⚑ ' + ev.lims + ' limitations · ' + ev.cases + ' cases broke · design step' + (ev.steps.length > 1 ? 's ' : ' ') + ev.steps.join(', ') + '</button>';
+  }
+  function fork(sid, depth, onR, cur) {
+    var z = !liveAny(sid), open = isOpen(sid), stg = S[sid].step;
+    var starts = (ST.starts[sid] || []);
+    var h = '<section class="fork' + (z ? ' quiet' : '') + '" id="f-' + sid + '" data-sid="' + sid + '">';
+    h += '<div class="fh r" data-stage="' + stg + '"><div class="qcell"><button type="button" class="tog" data-tog="' + sid + '" aria-expanded="' + open + '" aria-label="' + (open ? 'Close' : 'Open') + ' this question">' + (open ? '▾' : '▸') + '</button><div><div class="q">' + esc(q(sid)) + '</div><div class="meta">' + stageChip(sid) +
+      starts.map(function (p) { return '<span class="start">' + esc(PNAME[p]) + ' starts here</span>'; }).join('') +
+      (ST.shared[sid] && ST.inc[sid].length ? '<button type="button" class="linkbtn" data-inc="' + sid + '" aria-expanded="' + !!V.inc[sid] + '" style="font-size:13.5px">arrives from ' + ST.inc[sid].length + ' answers' + (starts.length ? ' and a start' : '') + '</button>' : '') +
+      (sid === 'L6_wrong' && V.policy === 'library' && PIC.library.measures ? '<span>promoted checks catch <b>' + n100(PIC.library.measures.use_promo_caught_first / 100) + '</b> of 100 here</span>' : '') +
+      (z ? '<span class="zr"><b>No work here.</b> ' + esc(whyText({ state: sid }, V.policy)) + '</span>' : '') +
+      '</div></div></div>';
+    h += '<div class="arrive">' + (V.compare ? '<span class="tri">' + POLS.map(function (p) { return '<span' + (p === V.policy ? ' class="me"' : '') + ' data-w="' + esc(PSHORT[p]) + '" title="' + esc(PNAME[p]) + '"><b>' + n100(PIC[p].stateFlow[sid]) + '</b></span>'; }).join('') + '</span> <span>arrive</span>' : '<b>' + n100(PIC[V.policy].stateFlow[sid]) + '</b> of 100 arrive') + '</div></div>';
+    if (V.inc[sid]) h += incList(sid);
+    if (V.ev[sid]) h += evPanel(sid);
+    if (open) {
+      h += '<ol class="ans">' + ST.out[sid].map(function (b) { return answer(b, depth, onR, cur); }).join('') + '</ol>';
+    } else if (!z) {
+      h += '<p class="reason">' + ST.out[sid].length + ' answer' + (ST.out[sid].length > 1 ? 's' : '') + ' hidden. <button type="button" class="linkbtn" data-tog="' + sid + '">Open</button></p>';
+    }
+    return h + '</section>';
+  }
+  function incList(sid) {
+    var P = PIC[V.policy];
+    var items = ST.inc[sid].map(function (b) {
+      return '<li><button type="button" class="linkbtn" data-goa="' + b.id + '">' + esc(q(b.from)) + ' → ' + esc(b.label) + '</button>: <b>' + n100(P.branchFlow[b.id]) + '</b> of 100</li>';
+    });
+    (ST.starts[sid] || []).forEach(function (p) { items.unshift('<li>' + esc(PNAME[p]) + ' starts here: <b>' + (p === V.policy ? '100' : '0') + '</b> of 100 under the way shown</li>'); });
+    return '<div class="inc"><ul>' + items.join('') + '</ul></div>';
+  }
+  function evPanel(sid) {
+    var stg = S[sid].step, steps = DSTEPS_OF[stg] || [];
+    var h = '<div class="evp" role="region" aria-label="Limitations and real cases at this stage">';
+    steps.forEach(function (k) {
+      var ev = EVID[k], text = LIMS.steps[k];
+      var other = (PTX.design_steps[k] || []).filter(function (s) { return s !== stg; });
+      h += '<h3>Design step ' + k + ': ' + esc(text) + '</h3>';
+      h += '<p class="sub">' + (other.length ? 'This design step also covers stage ' + other.map(function (s) { return STAGE_NO[s] + ' (' + stepLabel(s) + ')'; }).join(' and ') + '. The same list shows there. ' : '') + 'Counts are from the files ' + tag('M') + '. The cases are chosen problem cases: they show where steps break, not how often.</p>';
+      h += '<div class="cols2"><div><h4>' + ev.main.length + ' limitations sit here</h4><ul>' + ev.main.map(function (id) {
+        var it = LIM[id];
+        return '<li><details><summary>' + esc(it.title) + ' <span class="fam">' + (it.real.cases ? it.real.cases + ' real case' + (it.real.cases > 1 ? 's' : '') : 'thought experiment') + '</span></summary><p>' + esc(it.what) + (it.params && it.params.length ? '<br><span class="fam">Acts through: ' + esc(it.params.map(function (p) { return (PMETA[p] && PMETA[p].name) || p; }).join(', ')) + '</span>' : '<br><span class="fam">No unknown in the model carries it.</span>') + '</p></details></li>';
+      }).join('') + '</ul>';
+      if (ev.also.length) h += '<details class="also"><summary>' + ev.also.length + ' more limitations also touch this step</summary><ul>' + ev.also.map(function (id) { return '<li>' + esc(LIM[id].title) + ' <span class="fam">(main step ' + LIM[id].main_step + ')</span></li>'; }).join('') + '</ul></details>';
+      h += '</div><div><h4>' + ev.broke.length + ' of ' + CASES.cases.length + ' real cases broke here</h4><ul>' + ev.broke.map(function (cid) {
+        var c = CASE[cid], note = c.steps[k - 1].note;
+        return '<li><details><summary>' + esc(c.title) + ' <span class="fam">' + esc(FAM[c.family].name) + '</span></summary><p>' + esc(note) + '</p></details></li>';
+      }).join('') + (ev.broke.length ? '' : '<li class="fam">None of the 59 walks broke at this step.</li>') + '</ul></div></div>';
+    });
+    return h + '</div>';
+  }
+  function ranges(ns) {
+    var out = [], i = 0;
+    while (i < ns.length) { var j = i; while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++; out.push(j - i >= 2 ? ns[i] + ' to ' + ns[j] : j > i ? ns[i] + ', ' + ns[j] : String(ns[i])); i = j + 1; }
+    return out.join(', ');
+  }
+  function renderTreeHead() {
+    var what = 'Of <b>100 pieces of ' + (V.mode === 'kind' ? 'this kind of work' : 'all work') + '</b>, under <b>' + esc(PNAME[V.policy]) + '</b>' + (V.policy === 'library' ? ', with the library as it stands at period <b>' + V.period + '</b>' : '') + '. ' + esc(TX.tag_line) + ' ' + tag('G');
+    var cols = V.compare
+      ? '<span>Question, then its answers and where they go</span><span class="num">chance</span>' + POLS.map(function (p) { return '<span class="num"' + (p === V.policy ? ' style="color:var(--ink)"' : '') + '>' + esc(PSHORT[p]) + '<br>of 100</span>'; }).join('') + '<span class="num">cost: each · for 100</span>'
+      : '<span>Question, then its answers and where they go</span><span class="num">chance</span><span class="num">pieces of 100</span><span class="num">cost: each · for 100</span>';
+    var pol = MAP.policies.filter(function (p) { return p.id === V.policy; })[0];
+    var empty = STAGES.filter(function (sg) { return sg !== 'outcome' && !(STT[sg].enter > 1e-12); });
+    var lead = '<b>' + esc(PNAME[V.policy]) + '</b> starts at stage ' + STAGE_NO[S[pol.start].step] + ': <button type="button" class="linkbtn" data-go="' + pol.start + '">' + esc(q(pol.start)) + '</button>' + (empty.length ? ' Stage' + (empty.length > 1 ? 's ' : ' ') + ranges(empty.map(function (sg) { return +STAGE_NO[sg]; })) + ' carr' + (empty.length > 1 ? 'y' : 'ies') + ' no work under this choice. ' + (empty.length > 1 ? 'They stay listed, faint, each with its reason.' : 'It stays listed, faint, with its reason.') : ' Every stage carries some work.');
+    var tools = '<div class="treetools"><span class="tt" data-tt="compare"><span class="lab">' + esc(TX.controls.compare.label) + '</span>' + seg('Counts shown', [['one', 'This way only'], ['three', 'All three ways']], V.compare ? 'three' : 'one') + '<span class="muted">' + esc(TX.controls.compare.says) + '</span></span><span class="tt" data-tt="forks"><span class="lab">' + esc(TX.controls.forks.label) + '</span>' + seg('Questions', [['all', 'Open all'], ['auto', 'Only with work'], ['none', 'Close all']], V.forkMode) + '<span class="muted">' + esc(TX.controls.forks.says) + '</span></span></div>';
+    $('#treehead').innerHTML = '<p class="what">' + what + '</p><p class="lead">' + lead + '</p>' + tools; $('#colsbar').innerHTML = '<div class="cols">' + cols + '</div>';
+  }
+  var ROOT_KIND = { L1_trigger: 'Start of the library way', L5_none: 'Shared: the cheap attempt with no entry', L6_right: 'Shared: a right output at the gate', L6_wrong: 'Shared: a wrong output at the gate', L8_opus: 'Shared: the Opus attempt', L11_escaped: 'Shared: a wrong output that got through', L11_stored: 'Shared: a wrong output that got through and was stored' };
+  function renderTree() {
+    var onR = routeSet(), cur = onR && V.stepIdx !== null ? onR[V.stepIdx] : null;
+    var h = '';
+    ST.roots.forEach(function (r) {
+      var nIn = ST.inc[r].length;
+      if (!liveAny(r) && !isOpen(r)) { h += '<div class="root quietroot">' + fork(r, 0, onR, cur) + '</div>'; return; }
+      h += '<div class="root"><div class="root-head"><span class="kind">' + esc(ROOT_KIND[r] || 'Shared question') + '</span><span class="from">' + (nIn ? 'Reached from ' + nIn + ' answer' + (nIn > 1 ? 's' : '') + ' above' : 'The first question') + ((ST.starts[r] || []).length ? '; ' + (ST.starts[r]).map(function (p) { return PNAME[p]; }).join(', ') + ' starts here' : '') + '.</span></div>';
+      h += fork(r, 0, onR, cur) + '</div>';
+    });
+    $('#tree').innerHTML = h;
+    $('#treecol').classList.toggle('compare', V.compare);
+  }
+  function renderEnds() {
+    var h = '<h2 data-stage="outcome">Where the 100 pieces end</h2>';
+    OUTS.forEach(function (o) {
+      var vals = (V.compare ? POLS : [V.policy]).map(function (p) { return '<span' + (V.compare ? ' title="' + esc(PNAME[p]) + '"' : '') + (V.compare && p === V.policy ? ' style="text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px"' : '') + '>' + (V.compare ? esc(PSHORT[p]) + ' ' : '') + '<b>' + n100(PIC[p].stateFlow[o]) + '</b></span>'; }).join(V.compare ? ' · ' : '');
+      h += '<div class="endrow" id="end-' + o + '">' + swatchOut(o) + '<div><div class="nm">' + esc(S[o].label) + '</div><div class="says">' + esc(TX.outcome_says[o]) + ' <button type="button" class="linkbtn" data-inc="' + o + '" aria-expanded="' + !!V.inc[o] + '">Arrives from ' + ST.inc[o].length + ' answers</button></div>' + (V.inc[o] ? incList(o) : '') + '</div><div class="v">' + vals + (V.compare ? '' : ' <span class="muted" style="font-size:14px">of 100</span>') + '</div></div>';
+    });
+    $('#ends').innerHTML = h;
+    $('#ends').setAttribute('data-stage', 'outcome');
+  }
+
+  $('#treehead').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-v]'); if (!b) return;
+    var tt = b.closest('[data-tt]').dataset.tt;
+    if (tt === 'compare') { V.compare = b.dataset.v === 'three'; update(true); return; }
+    V.forkMode = b.dataset.v; V.open = {}; renderTreeHead(); renderTree(); observe();
+  });
+  // ------------------------------------------------------------ routes and the stepper
+  function routeLine(r) {
+    return r.branches.map(function (bid) { return esc(BR[bid].label); }).join(' <span class="muted">›</span> ') + ' <span class="muted">›</span> <span class="end">' + swatchOut(r.outcome) + ' ' + esc(S[r.outcome].label) + '</span>';
+  }
+  function renderRoutes() {
+    var list = ROUTES.routes.slice();
+    var h = '<h2>' + esc(TX.routes.title) + '</h2><p class="says">' + esc(TX.routes.says) + '</p>';
+    h += '<div class="tools"><span><b>' + ROUTES.count.toLocaleString('en') + '</b> routes ' + (V.mode === 'kind' ? 'for this kind of work' : 'for all work') + ' under ' + esc(PNAME[V.policy]) + '. Shares are of 100 pieces; cost per piece on the route, in cheap-call equivalents ' + tag('G') + '.</span>' +
+      '<span>Order by ' + seg('Order', [['chance', 'Pieces on it'], ['carried', 'Cost it carries']], V.sortBy) + '</span></div>';
+    h += '<ol class="rlist">' + list.slice(0, V.shown).map(function (r, i) {
+      return '<li><button type="button" class="rbtn" data-route="' + r.id + '"' + (V.route === r.id ? ' aria-current="true"' : '') + '><span class="no">' + (i + 1) + '</span><span class="path">' + routeLine(r) + '</span><span class="v"><b>' + n100(r.chance) + '</b><small>of 100</small></span><span class="v c2">' + cst(r.cost) + '<small>cost each</small></span></button></li>';
+    }).join('') + '</ol>';
+    if (list.length > V.shown) h += '<p><button type="button" class="btn" data-more="1">Show ' + Math.min(50, list.length - V.shown) + ' more</button> <button type="button" class="btn" data-more="all">Show all ' + list.length.toLocaleString('en') + '</button></p>';
+    $('#routes').innerHTML = h;
+  }
+  $('#routes').addEventListener('click', function (e) {
+    var s = e.target.closest('button[data-v]');
+    if (s) { V.sortBy = s.dataset.v; recompute(); renderRoutes(); return; }
+    var m = e.target.closest('button[data-more]');
+    if (m) { V.shown = m.dataset.more === 'all' ? ROUTES.routes.length : V.shown + 50; renderRoutes(); return; }
+    var r = e.target.closest('button[data-route]');
+    if (r) lightRoute(r.dataset.route, 0);
+  });
+  function lightRoute(id, step) {
+    V.route = id; V.stepIdx = step;
+    var br = routeSet() || [];
+    br.forEach(function (bid) { openPath(BR[bid].from); });
+    renderTree(); renderRoutes(); renderStepper(); observe();
+    if (step !== null) scrollToAnswer(br[step]);
+  }
+  function renderStepper() {
+    var el = $('#stepper');
+    var r = V.route ? ROUTES.routes.filter(function (x) { return x.id === V.route; })[0] : null;
+    if (!r) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    var k = V.stepIdx, n = r.branches.length;
+    var h = '<div><div class="rt">Lit route: ' + n + ' answers, ends <b>' + esc(S[r.outcome].label) + '</b>. <b>' + n100(r.chance) + '</b> of 100 pieces take it; cost <b>' + cst(r.cost) + '</b> each ' + tag('G') + '.</div>';
+    if (k !== null) {
+      var bid = r.branches[k], b = BR[bid];
+      var still = '';
+      if (V.mode === 'kind') { var so = 1; for (var i = 0; i <= k; i++) so *= PIC[V.policy].bv[r.branches[i]].chance; still = ' Still on this route: <b>' + n100(so) + '</b> of 100.'; }
+      h += '<div class="now">Answer <b>' + (k + 1) + ' of ' + n + '</b> · stage ' + STAGE_NO[S[b.from].step] + ' ' + esc(stepLabel(S[b.from].step)) + ': <b>' + esc(b.label) + '</b></div>' +
+        '<div class="nums">Chance at this question ' + pct(chanceAt(bid)) + '. ' + n100(PIC[V.policy].branchFlow[bid]) + ' of 100 take this answer on any route.' + still + (b.tier ? ' Cost ' + cst(PIC[V.policy].bv ? PIC[V.policy].bv[bid].cost : PIC[V.policy].carried[bid] / PIC[V.policy].branchFlow[bid]) + ' each, paid to ' + esc(TIER[b.tier].label) + '.' : ' No cost.') + '</div>';
+    }
+    h += '</div><div class="row"><button type="button" class="btn" data-step="start">From the start</button><button type="button" class="btn" data-step="back"' + (k === null || k === 0 ? ' disabled' : '') + '>Back</button><button type="button" class="btn primary" data-step="next"' + (k !== null && k >= n - 1 ? ' disabled' : '') + '>Next</button><button type="button" class="btn" data-step="clear">Clear</button></div>';
+    el.innerHTML = h;
+  }
+  $('#stepper').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-step]'); if (!b || b.disabled) return;
+    var a = b.dataset.step, r = routeSet(); if (!r) return;
+    if (a === 'clear') { V.route = null; V.stepIdx = null; renderTree(); renderRoutes(); renderStepper(); observe(); return; }
+    if (a === 'start') V.stepIdx = 0;
+    else if (a === 'back') V.stepIdx = Math.max(0, V.stepIdx - 1);
+    else V.stepIdx = V.stepIdx === null ? 0 : Math.min(r.length - 1, V.stepIdx + 1);
+    lightRoute(V.route, V.stepIdx);
+  });
+
+  // ------------------------------------------------------------ totals column
+  function renderTotals() {
+    var h = '<div class="twocol"><div class="card"><h2>Where the 100 pieces end</h2><p class="sub">' + (V.mode === 'kind' ? 'Of 100 pieces of this kind.' : 'Of 100 pieces of all work.') + ' The three ways side by side ' + tag('G') + '.</p>';
+    h += '<table class="ttab"><thead><tr><th>Outcome</th>' + POLS.map(function (p) { return '<th' + (p === V.policy ? ' class="me"' : '') + '>' + esc(PSHORT[p]) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    OUTS.forEach(function (o) {
+      h += '<tr><td><span class="lc">' + swatchOut(o) + esc(S[o].label) + '</span></td>' + POLS.map(function (p) { var v = PIC[p].outcomes[o]; return '<td' + (p === V.policy ? ' class="me"' : '') + '>' + n100(v) + '<span class="mb"><i style="width:' + (100 * v).toFixed(1) + '%"></i></span></td>'; }).join('') + '</tr>';
+    });
+    h += '<tr class="sum"><td>All wrong outcomes</td>' + POLS.map(function (p) { return '<td' + (p === V.policy ? ' class="me"' : '') + '>' + n100(PIC[p].wrong) + '</td>'; }).join('') + '</tr>';
+    if (V.mode === 'kind') h += '<tr><td>Share of all work this kind is</td>' + POLS.map(function (p) { return '<td' + (p === V.policy ? ' class="me"' : '') + '>' + pct(PIC[p].share) + '</td>'; }).join('') + '</tr>';
+    h += '</tbody></table></div>';
+    // cost
+    var max = Math.max.apply(null, POLS.map(function (p) { return PIC[p].cost; })) || 1;
+    h += '<div class="card"><h2>What the 100 pieces cost</h2><p class="sub">Cheap-call equivalents for the 100, split by who is paid ' + tag('G') + '.</p>';
+    h += '<div class="cbars" role="img" aria-label="Cost of the 100 pieces for the three ways">' + POLS.map(function (p) {
+      var P = PIC[p];
+      return '<div class="cbar' + (p === V.policy ? ' me' : '') + '"><b>' + cst(100 * P.cost) + '</b><span class="stack" style="height:' + (100 * P.cost / max).toFixed(1) + '%">' + ['cheap', 'opus', 'fable'].map(function (t) { var v = P.costByTier[t]; return v > 0 ? '<i class="t-' + t + '" style="flex:' + v.toFixed(4) + ' 1 0;min-height:2px" title="' + esc(TIER[t].label + ': ' + cst(100 * v)) + '"></i>' : ''; }).join('') + '</span></div>';
+    }).join('') + '</div><div class="cnames">' + POLS.map(function (p) { return '<span' + (p === V.policy ? ' style="color:var(--ink);font-weight:650"' : '') + '>' + esc(PSHORT[p]) + '</span>'; }).join('') + '</div>';
+    h += '<table class="ttab" style="margin-top:8px"><thead><tr><th>Paid to</th>' + POLS.map(function (p) { return '<th' + (p === V.policy ? ' class="me"' : '') + '>' + esc(PSHORT[p]) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    ['cheap', 'opus', 'fable'].forEach(function (t) {
+      h += '<tr><td><span class="lc">' + swatchTier(t) + esc(TIER[t].label) + '</span></td>' + POLS.map(function (p) { return '<td' + (p === V.policy ? ' class="me"' : '') + '>' + cst(100 * PIC[p].costByTier[t]) + '</td>'; }).join('') + '</tr>';
+    });
+    h += '<tr class="sum"><td>All 100 pieces</td>' + POLS.map(function (p) { return '<td' + (p === V.policy ? ' class="me"' : '') + '>' + cst(100 * PIC[p].cost) + '</td>'; }).join('') + '</tr>';
+    h += '<tr><td>One piece, on average</td>' + POLS.map(function (p) { return '<td' + (p === V.policy ? ' class="me"' : '') + '>' + cst(PIC[p].cost) + '</td>'; }).join('') + '</tr></tbody></table></div></div>';
+    h += stockCard();
+    h += '<div class="card legend tlegend">' + legendHtml() + '</div>';
+    $('#totals').innerHTML = h;
+  }
+  function valve() { return '<svg width="18" height="12" viewBox="0 0 18 12" aria-hidden="true" style="vertical-align:-1px"><path d="M1 1L9 6L1 11Z M17 1L9 6L17 11Z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>'; }
+  function stockCard() {
+    var row = PATH.periods[V.period - 1], m = PIC.library.measures || {}, ml = row.library.measures;
+    var lk = MAP.links[0];
+    var h = '<div class="card stock" id="stockCard"><h2>The library at period ' + V.period + '</h2><p class="sub">' + esc(TX.stock_note) + ' ' + tag('G') + '</p>';
+    h += '<div style="display:grid;grid-template-columns:1fr auto 1fr;gap:6px 8px;align-items:center;font-size:14px">';
+    h += '<div style="border:2px solid var(--ink);border-radius:6px;padding:6px 8px"><b>' + esc(MAP.stocks.labels.E_good) + '</b><br><span style="font-size:20px;font-weight:700">' + cst(row.stocks.E_good) + '</span><br><span class="muted">next period ' + cst(row.next ? row.next.E_good : PATH.periods[Math.min(NPER - 1, V.period)].stocks.E_good) + '</span></div>';
+    h += '<div style="text-align:center;color:var(--ink-2)">' + valve() + '<br><span style="border-top:2px dashed var(--ink-3);display:block;width:56px;margin:3px auto"></span>no lookup</div>';
+    h += '<div style="border:1.5px dashed var(--ink-3);border-radius:6px;padding:6px 8px"><b>Every gate</b><br>' + esc(lk.label) + ' catch <b>' + n100((ml.use_promo_caught_all || 0) / 100) + '</b> of 100 pieces of all work</div>';
+    h += '<div style="border:2px solid var(--ink);border-radius:6px;padding:6px 8px"><b>' + esc(MAP.stocks.labels.E_bad) + '</b><br><span style="font-size:20px;font-weight:700">' + cst(row.stocks.E_bad) + '</span><br><span class="muted">next period ' + cst(row.next ? row.next.E_bad : row.stocks.E_bad) + '</span></div>';
+    h += '<div></div><div class="muted">Bad share ' + pct(row.stockValues ? row.stockValues.wrong_share : (row.stocks.E_bad / ((row.stocks.E_good + row.stocks.E_bad) || 1))) + '</div></div>';
+    h += '<ul><li>' + valve() + ' Written per 100 pieces of all work at stage 10: <b>' + n100(ml.W_good) + '</b> good, <b>' + n100(ml.W_bad_right) + '</b> bad after a right solve, <b>' + n100(ml.W_bad_escape) + '</b> bad after an escape.</li><li>' + valve() + ' Corrected when a stored escape is found: <b>' + n100(ml.W_repair) + '</b> per 100.</li><li>Good entries go stale into bad ones, and bad ones are retired, each period.</li></ul>';
+    h += '<p class="note"><b>Loops:</b> ' + lk.loops.map(function (l) { return '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1.5px solid var(--ink);border-radius:50%;font-weight:700;font-size:13px">' + esc(l.polarity) + '</span> ' + esc(l.label) + '.'; }).join(' ') + '</p>';
+    h += '<p class="note">' + esc(TX.promo_note) + (V.policy !== 'library' ? ' ' + esc(PNAME[V.policy]) + ' has no library, so these stocks do not act on its tree.' : '') + '</p></div>';
+    return h;
+  }
+
+  // ------------------------------------------------------------ moving around
+  function ancestors(sid) {
+    var list = [];
+    while (sid && !ST.shared[sid] && ST.owner[sid]) { var b = BR[ST.owner[sid]]; list.push(b.from); sid = b.from; }
+    return list;
+  }
+  function openPath(sid) { V.open[sid] = true; ancestors(sid).forEach(function (a) { V.open[a] = true; }); }
+  function flash(el) { if (!el) return; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+  function goTo(sid) {
+    var need = ancestors(sid).some(function (a) { return !isOpen(a); });
+    if (need) { ancestors(sid).forEach(function (a) { V.open[a] = true; }); renderTree(); observe(); }
+    var el = document.getElementById('f-' + sid);
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); flash(el.querySelector('.fh')); }
+  }
+  function scrollToAnswer(bid) {
+    var el = document.getElementById('a-' + bid);
+    if (el) { el.firstElementChild.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }
+  $('#layout').addEventListener('click', function (e) {
+    var t;
+    if ((t = e.target.closest('[data-tog]'))) { var sid = t.dataset.tog; V.open[sid] = !isOpen(sid); renderTree(); observe(); var f = document.getElementById('f-' + sid); if (f) f.querySelector('.tog').focus(); return; }
+    if ((t = e.target.closest('[data-why]'))) { var k = t.dataset.why; V.why[k] = !V.why[k]; renderTree(); observe(); return; }
+    if ((t = e.target.closest('[data-ev]'))) { var s2 = t.dataset.ev; V.ev[s2] = !V.ev[s2]; renderTree(); observe(); return; }
+    if ((t = e.target.closest('[data-inc]'))) { var s3 = t.dataset.inc; V.inc[s3] = !V.inc[s3]; if (S[s3].outcome) renderEnds(); else renderTree(); observe(); return; }
+    if ((t = e.target.closest('[data-gostock]'))) { var sc = $('#stockCard'); if (sc) { sc.scrollIntoView({ behavior: 'smooth', block: 'center' }); flash(sc); } return; }
+    if ((t = e.target.closest('[data-goa]'))) { var bid = t.dataset.goa; openPath(BR[bid].from); renderTree(); observe(); scrollToAnswer(bid); flash(document.getElementById('a-' + bid).firstElementChild); return; }
+    if ((t = e.target.closest('[data-go]'))) {
+      var g = t.dataset.go;
+      if (g.indexOf('end:') === 0) { var er = document.getElementById('end-' + g.slice(4)); if (er) { er.scrollIntoView({ behavior: 'smooth', block: 'center' }); flash(er); } }
+      else goTo(g);
+      return;
+    }
+    if ((t = e.target.closest('[data-route-through]')) || (t = e.target.closest('.a > .r'))) {
+      var b2 = t.dataset.routeThrough || t.dataset.b;
+      var best = ROUTES.routes.filter(function (r) { return r.branches.indexOf(b2) >= 0; }).sort(function (a, b) { return b.chance - a.chance; })[0];
+      if (best) lightRoute(best.id, best.branches.indexOf(b2));
+    }
+  });
+
+  // ------------------------------------------------------------ theme (no storage)
+  var themes = ['auto', 'light', 'dark'], ti = 0;
+  $('#themeBtn').addEventListener('click', function () {
+    ti = (ti + 1) % 3;
+    if (themes[ti] === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', themes[ti]);
+    this.textContent = 'Theme: ' + themes[ti];
+  });
+
+  function update(keepControls) {
+    recompute();
+    if (!keepControls) renderControls();
+    else { var sh = $('#kindset .share'); if (sh) sh.innerHTML = 'This kind is <b>' + pct(PIC[V.policy].share) + '</b> of all work ' + tag('G') + (V.policy === 'library' ? ' at period ' + V.period : '') + '.'; }
+    renderStrip(); renderTreeHead(); renderTree(); renderEnds(); renderRoutes(); renderStepper(); renderTotals();
+    observe();
+  }
+  $('#title').textContent = TX.title;
+  $('#lede').textContent = TX.lede;
+  update();
+  // for the picture harness and checks
+  window.__tree = { V: V, update: update, lightRoute: lightRoute, goTo: goTo, routes: function () { return ROUTES; }, pic: function () { return PIC; } };
+})();

@@ -1,0 +1,49 @@
+// Step 3b: per sampled finding, origin and later exposures (distinct transcripts and sessions, and the time gap).
+const fs = require('fs');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/premises';
+// this lane's own transcript is excluded; each exposure is labelled by the call that produced it
+const viaKind = (v) => /\.claude[\\/]+projects|\.jsonl/.test(v) ? 'transcript scan' : /subagent_type|"prompt"/.test(v) ? 'agent result returned to its caller' : /file_path|cat |sed -n|head |tail |Get-Content|awk /.test(v) ? 'read of a file' : /grep|rg |pattern|Select-String/.test(v) ? 'search' : 'other';
+const H = fs.readFileSync(W + '/reuse-hits.jsonl', 'utf8').split('\n').filter(Boolean).map(JSON.parse).filter((x) => !/agent-a2b9edd46ed6e48db/.test(x.f)).map((x) => ({ ...x, vk: x.kind === 'shown' ? viaKind(x.via) : null }));
+const C = Object.fromEntries(JSON.parse(fs.readFileSync(W + '/classify.json', 'utf8')).findings.map((f) => [f.id, f]));
+const ids = [...new Set(Object.keys(C))].sort();
+const res = []; const gapsOther = []; const gapsSame = [];
+for (const id of ids) {
+  const h = H.filter((x) => x.id === id && x.ts).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  if (!h.length) { res.push({ id, found: false }); continue; }
+  const w = h.find((x) => x.kind === 'written') || h[0];
+  const t0 = Date.parse(w.ts), s0 = w.sess;
+  const shown = h.filter((x) => x.kind === 'shown' && Date.parse(x.ts) >= t0);
+  const trs = new Set(shown.map((x) => x.f)); const sess = new Set(shown.map((x) => x.sess));
+  const other = shown.filter((x) => x.sess !== s0); const otherSess = new Set(other.map((x) => x.sess));
+  const otherTr = new Set(other.map((x) => x.f));
+  const firstOther = other.length ? (Date.parse(other[0].ts) - t0) / 3.6e6 : null;
+  const lastShown = shown.length ? (Date.parse(shown[shown.length - 1].ts) - t0) / 3.6e6 : null;
+  // per later session: first exposure gap
+  for (const s of otherSess) { const x = other.find((y) => y.sess === s); gapsOther.push((Date.parse(x.ts) - t0) / 3.6e6); }
+  for (const x of shown.filter((y) => y.sess === s0)) gapsSame.push((Date.parse(x.ts) - t0) / 3.6e6);
+  const quoted = h.filter((x) => (x.kind === 'model-text' || x.kind === 'tool-input' || x.kind === 'written') && x !== w).length;
+  res.push({ id, type: C[id].type, found: true, origin: { ts: w.ts, kind: w.kind, sess: s0.slice(0, 8), sub: w.sub }, shownCalls: shown.length, shownTranscripts: trs.size, shownSessions: sess.size, otherSessions: otherSess.size, otherSessionTranscripts: otherTr.size, otherSessionCalls: other.length, firstOtherSessionGapH: firstOther == null ? null : +firstOther.toFixed(1), lastShownGapH: lastShown == null ? null : +lastShown.toFixed(1), laterQuotesOrCopies: quoted });
+}
+const q = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return +s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(1); };
+const found = res.filter((r) => r.found);
+const summ = {
+  findings: res.length, foundInTranscripts: found.length,
+  shownAgainAtAll: found.filter((r) => r.shownCalls > 0).length,
+  shownInAnotherSession: found.filter((r) => r.otherSessions > 0).length,
+  shownInTwoOrMoreOtherSessions: found.filter((r) => r.otherSessions >= 2).length,
+  medianShownTranscripts: q(found.map((r) => r.shownTranscripts), 0.5),
+  maxShownTranscripts: Math.max(...found.map((r) => r.shownTranscripts)),
+  totalShownCalls: found.reduce((s, r) => s + r.shownCalls, 0),
+  shownCallsInOriginSession: found.reduce((s, r) => s + r.shownCalls - r.otherSessionCalls, 0),
+  shownCallsInOtherSessions: found.reduce((s, r) => s + r.otherSessionCalls, 0),
+  gapToEachOtherSessionHours: { n: gapsOther.length, p25: q(gapsOther, 0.25), median: q(gapsOther, 0.5), p75: q(gapsOther, 0.75), max: q(gapsOther, 0.999) },
+  gapSameSessionHours: { n: gapsSame.length, median: q(gapsSame, 0.5), p75: q(gapsSame, 0.75), p90: q(gapsSame, 0.9) },
+};
+const vk = {}; for (const x of H) if (x.kind === 'shown') { const k = (x.vk || 'other') + (C[x.id] ? '' : ''); vk[k] = (vk[k] || 0) + 1; }
+summ.exposuresByCall = vk;
+// exposures in other sessions by call kind
+const vko = {}; for (const r of res) if (r.found) { const s0 = H.find((x) => x.id === r.id && x.ts === r.origin.ts)?.sess; for (const x of H) if (x.id === r.id && x.kind === 'shown' && x.sess !== s0 && Date.parse(x.ts) >= Date.parse(r.origin.ts)) vko[x.vk] = (vko[x.vk] || 0) + 1; }
+summ.otherSessionExposuresByCall = vko;
+fs.writeFileSync(W + '/reuse.json', JSON.stringify({ summary: summ, perFinding: res }, null, 1));
+console.log(JSON.stringify(summ, null, 1));
+for (const r of res) console.log(r.id, r.found ? [r.origin.ts.slice(0, 16), r.origin.kind, r.origin.sess, 'shown', r.shownCalls, 'tr', r.shownTranscripts, 'sess', r.shownSessions, 'other', r.otherSessions, r.firstOtherSessionGapH, 'last', r.lastShownGapH].join(' ') : 'NOT FOUND');

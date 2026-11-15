@@ -1,0 +1,774 @@
+{
+  "summary": "Fix the phase A audit defects, build the graph arm on LadybugDB and DuckDB/DuckPGQ inside the Linux image, re-run every arm on TUNE, then audit",
+  "agentCount": 8,
+  "logs": [
+    "facts complete. Every item in addendum 2 section D, (a) to (k), is done. The new cache, built by extractor version 59da7b753a4d908e, has been swapped into build/facts/cache, and cache.old has been deleted. All four verification checks pass. build/facts/NOTES.md has been rewritten. | harness Complete. Addendum 2 sections A, B, C, D.15 and E are implemented in arms/common, arms/relational and arms/reference. Results:\n- The self-test passes 49 of 49 checks.\n- The 20-task TUNE smoke test inside graphtest:1 found 0 mismatches.\n- The held-out lock refused all 3 attempts.\n\nThe full sweep was not run, as instructed. Nothing was committed, and nothing was written to the repository. sealed/ and audit/ were never opened. | search Done. The search arm and both floors now go through the common harness: shared packer, shared pad option, held-out lock, common answer format and TQ format. The smoke test inside graphtest:1 on 20 TUNE tasks passed every check. Nothing was scored, selected or frozen. sealed/ and audit/ were never read or listed; the only touch was moving files into sealed/. The full sweep was not run. | ladybug Complete. The LadybugDB graph arm is built. Across 47,244 comparisons with the reference arm there were 0 mismatches. The stage-1 sweep (40 configurations on 772 TUNE tasks), the 20 TUNE TQ questions (0 errors, all 20 identical to the relational arm's SQL answers) and one bench run are done, and NOTES.md is written. HELD-OUT was never run. build/sealed and build/audit were never touched. The repository was not written to. | duckpgq Complete. The DuckDB 2.0.0 + DuckPGQ graph arm is built and matches the reference arm on every check run on TUNE tasks: 0 equivalence failures. The stage-1 sweep (40 configurations on TUNE T1, T1x and T2), the TQ run (20 TUNE questions, 0 errors), the engine bench (run once) and NOTES.md are all done. Nothing was run on held-out tasks and nothing was written to the repository. | rerun Done. Every requested stage-1 run finished inside graphtest:1 on the rebuilt facts (extractor 59da7b753a4d908e, loader L5), on TUNE tasks only. The relational and reference arms agree exactly: 30,880 ranked lists were compared with 0 mismatches. The answer-file check found 0 problems. Nothing was scored, sealed/ and audit/ were never opened, and no harness or arm code was changed.",
+    "audit fixes defects 6 | audit graph defects 10"
+  ],
+  "result": {
+    "factsFix": {
+      "status": "complete. Every item in addendum 2 section D, (a) to (k), is done. The new cache, built by extractor version 59da7b753a4d908e, has been swapped into build/facts/cache, and cache.old has been deleted. All four verification checks pass. build/facts/NOTES.md has been rewritten.",
+      "what_was_built": [
+        "The extractor at build/facts was fixed in five source files: build_facts.js, py_extract.py, ts_extract.js, docs_extract.js and git_extract.js. The new extractor_version is 59da7b753a4d908e; the old one was e409baad8b0c794b.",
+        "(a) Leak removal. commits.jsonl now lists only commits an arm may use; a dropped commit is removed entirely, with no file list and no label. Each listed commit's pr label is computed only from the build commit's own history. meta.json names no task commit and no PR number. The task switch, the task PRs and the dropped commits go to build/sealed/facts_meta/<parent>.json (190 files) and to build/sealed/facts_meta/build_log.jsonl (190 lines).",
+        "(b) Co-change drop rule. A commit is dropped only when it belongs to the same PR as a task commit. The in-flight rule is removed. When a parent has task commits from several PRs, the union of their sibling commits is dropped; this happens on 26 of the 190 parents.",
+        "(c) Mobile config reads. Member chains on the mobile config object (such as config.attendance.maxDutyHours, config.video.* and config.compress.*) now produce reads_setting edges; the cause was that the walk stopped at the `as const` wrapper. The maxDutyHours invariant now has its constrains anchor.",
+        "(d) SQL table edges. SQL is now read only from string literals passed to text(), execute(), op.execute() or exec_driver_sql(). DELETE, UPDATE and INSERT count as writes. The evidence line is the line of the statement inside the literal.",
+        "(e) Recall holes closed: URLs built with a ternary; URL literals looped over a tuple or list, in Python and JS; unit-of-work writes through query-flow-typed loop variables; calls through a Protocol-typed attribute, which now also go to each implementing class at confidence 1/k; os.environ and os.getenv reads in Python; process.env and import.meta.env reads in the root Vite config files; and the invariant tokens start.sh, transition(), JobDetail.evidence and cursor.last_seq.",
+        "(f) Citations. A link's :line or :a-b suffix is stripped before resolving. Ambiguous citations are tie-broken by context, in this order: a path relative to a runtime root, then the document's folder, then the directories and slices of the files the section or document cites. attrs.context records which rule decided.",
+        "(g) Labelling fixes. is_test now covers vitest.setup.* and *_test.py. session.delete counts as a write only when the receiver is a session. A Settings method call is no longer a setting node. The key of a subscript assignment is no longer a setting read. The spurious slice backend/features is gone. When --skip or --only switches an edge kind off, nodes left without edges are pruned.",
+        "(h) Two parents were added to the cache: 8dafcecc (off main) and the frozen commit a31924a.",
+        "(i) The whole cache was rebuilt into cache.new and verified, then swapped in as build/facts/cache; cache.old was deleted. build_cache.js was rewritten and now takes the options --out, --conc, --only and --limit.",
+        "New tools in build/facts/tools/: selftest.js (28 synthetic checks), verify_cache.js (leak and coverage check, with its own independent recomputation of PR membership), same_build.js (byte comparison of two builds), compare.js (counts by kind and edge differences between two builds) and precision.js (seeded edge sampler).",
+        "build/facts/NOTES.md was rewritten. It covers the files, how to run each tool, every fix, the format changes, the before and after counts, the co-change rules, the cache statistics, the verification results, the precision table and every deviation."
+      ],
+      "key_numbers": [
+        "extractor_version: 59da7b753a4d908e (the previous version was e409baad8b0c794b).",
+        "Frozen commit a31924a: nodes went from 5,460 to 5,464, and edge rows from 18,821 to 18,875. The experimental files are unchanged at 390 nodes and 1,622 edges.",
+        "Edge rows by kind that changed at the frozen commit: calls 4,872 to 4,886; calls_url 77 to 78; test_calls_route 435 to 441; cites 533 to 529; constrains 85 to 90; mentions 1,379 to 1,380; migration_touches 223 to 230; reads_setting 176 to 188; reads_table 141 to 136; writes_table 245 to 252; writes_column 101 to 111. All other edge kinds are unchanged; the full table is in build/facts/NOTES.md.",
+        "Node kinds that changed at the frozen commit: setting 78 to 87, client_url_site 121 to 122, missing_ref 18 to 13, slice 51 to 50. All other node kinds are unchanged.",
+        "Recall holes closed at the frozen commit: mobile config reads 10 of 10; invariant anchors 5 of 5 that were missing; production client URL sites now matched 78 of 78; pytest looped URLs 6 of 6; os.environ reads 2 of 2. Protocol implementation call edges: 13, for 2 Protocols with 1 implementation each.",
+        "Precision, counted as correct out of edges read, at the frozen commit: reads_table from SQL text 11/11; writes_table from SQL text 13/13; query-flow writes_table and writes_column 20/20; session.delete writes_table 1/1; migration_touches from SQL text 20/20 (20 sampled of 24); new reads_setting 14/14; new Protocol calls 14/14; new calls_url and test_calls_route 7/7; new or changed cites 11/11; new constrains 5/5; uses_constant marked subscript_store 1/1. Groups of 20 edges or fewer were read whole.",
+        "Wrong edges removed at the frozen commit: 5 SQL edges read from docstrings, 2 writes_table edges from repo.delete, 1 setting node for a Settings method, and 1 setting read from a subscript-assignment key.",
+        "Cache: 190 folders built (188 main parents plus 8dafcecc and a31924a), 0 failures. Wall time was 356 s with 3 builds in parallel; the per-build times sum to 1,060 s. Per build: median 5.3 s, 95th percentile 8.7 s, maximum 13.4 s. Size on disk is 778 MB (777,987,930 bytes). Edge rows per build: minimum 800, median 10,847, maximum 18,875.",
+        "Co-change drops across the cache: 378 same-PR commits dropped on 78 parents, and 26 parents whose task commits come from several PRs. The old cache carried drop labels on 413 commits, covering same-PR and in-flight drops together.",
+        "verify_cache.js on the new cache: 0 failures over 190 folders. It checked 22,495 commit rows, 577,980 commit references inside co_changed edges, 190 commit hashes in meta.json files and 378 same-PR sibling commits. All 133 lines of tasks/parents.txt (128 distinct parents) have a folder, all 188 main parents have a folder, and the whole cache carries one extractor version. The same script on the old cache reports 23,958 failures and 2 missing parents.",
+        "Determinism: two builds of the frozen commit are byte-identical to each other and to the cache folder. Lone rebuilds of 3 cached parents (d683faa4, d3103498 and 8dafcecc) are byte-identical to the cache, and so are their sealed side records. The self-test passes 28 of 28 checks."
+      ],
+      "deviations_from_protocol": [
+        "The facts were built on the Windows host, as addendum 1 directs, not in the graphtest:1 image. The cache build ran 3 builds at a time.",
+        "The citation tie-break applies to ties between up to 3 candidates (the existing fan-out limit), not only to two-candidate ties. It decided 2 ties at the frozen commit.",
+        "Each Protocol call keeps its edge to the Protocol's stub method beside the new edges to the implementations. Classes in test files are not counted as implementations.",
+        "The walk through the `as const` wrapper (the holder-chain fix) is applied to config reads only. Applying it to definitions as well created 72 spurious test-file nodes, so that change was reverted.",
+        "ALTER TABLE statements produce migration_touches edges only. They are not counted as data reads or writes.",
+        "Environment reads in the root build-config files (vite.config.js and vite.ops.config.js) are found by a line regex, because no TypeScript program compiles those files.",
+        "Data formats changed. The node and edge line formats are unchanged; the new values appear only inside attrs (typed, op, sql, context, subscript_store, how=protocol_impl). There is a new setting node id form, setting:env/<KEY>. commits.jsonl rows lose the `dropped` field. In meta.json, switches.task is removed, the stages.git.stats keys changed, and counts.pruned_orphan_nodes is new.",
+        "The JobDetail.evidence anchor is limited to class nodes, because a backend class and a web component share that name.",
+        "build_cache.js reads back the sealed side record it has just written, only to print counts (dropped commits, parents with several task PRs). Nothing else in sealed/ was read."
+      ],
+      "problems": [
+        "Known and not fixed, because it was not in the task list: invariant 9's token captured_at is still anchored to 3 tables' captured_at columns, which is wrong. The old sample scored constrains 19/20 because of this.",
+        "1,054 low-confidence mentions edges are unchanged from the previous version.",
+        "The precision samples kept in build/facts/samples/ come from the previous extractor version. They are still valid for edge kinds this version did not change.",
+        "The folder arms/common/frozen-facts is now stale. The shared loader prefers facts/cache/<sha>, so it now loads the frozen commit from the new cache."
+      ],
+      "how_to_run": [
+        "Run all commands from build/facts on the Windows host with Node. The Python stage is run automatically with C:/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe -I.",
+        "Build one commit: node build_facts.js <commit-sha> <outdir> [--task <child-sha>,...] [--sealed-out <file>] [--skip kind,...] [--only kind,...]",
+        "Rebuild the cache: node build_cache.js --out cache.new [--conc 3] [--only sha,sha] [--limit N]. Then run node tools/verify_cache.js cache.new, rename cache to cache.old, rename cache.new to cache, and delete cache.old.",
+        "Run the self-test: node tools/selftest.js",
+        "Check the cache for leaks and coverage: node tools/verify_cache.js [cache-dir]. It exits with code 1 on any failure.",
+        "Byte-compare two builds: node tools/same_build.js <dirA> <dirB>",
+        "Compare counts and edges between two builds: node tools/compare.js <before-dir> <after-dir> [kind,kind]",
+        "Sample edges for precision checks: node tools/precision.js <before-dir> <after-dir> <export-dir> [n=20] [seed=7]",
+        "Supporting outputs are kept in build/tmp/facts-fix: compare_frozen.txt, precision.txt, cache_build.out, before/ (the old-version build of the frozen commit) and src-old/ (the old sources)."
+      ],
+      "needs_from_other_lanes": [
+        "Every arm lane: re-run against the new cache, extractor version 59da7b753a4d908e. Results from the old cache were produced with leaking co-change data and a different extractor version.",
+        "Arm and loader lanes: the shared loader now finds the frozen commit a31924a in facts/cache, which takes precedence over arms/common/frozen-facts. That folder is stale and should be removed or regenerated.",
+        "Search-arm lane: commits.jsonl rows are now {sha, time, pr, n_files, used, files}. The `dropped` field is gone, and the `used` and `files` fields are kept, so existing readers still work. The pr labels now come only from history up to the build commit.",
+        "Any lane that reads meta.json: switches.task is gone, and stages.git.stats no longer has task_children, task_prs, commits_dropped_same_pr, commits_dropped_in_flight or ancestor_non_merge_commits. It now has commits_listed, commits_used and the pair counts. counts.pruned_orphan_nodes is new.",
+        "Harness or orchestrator lane: the task switches and drop lists now live only in build/sealed/facts_meta. Arms must never read that folder."
+      ]
+    },
+    "harnessFix": {
+      "status": "Complete. Addendum 2 sections A, B, C, D.15 and E are implemented in arms/common, arms/relational and arms/reference. Results:\n- The self-test passes 49 of 49 checks.\n- The 20-task TUNE smoke test inside graphtest:1 found 0 mismatches.\n- The held-out lock refused all 3 attempts.\n\nThe full sweep was not run, as instructed. Nothing was committed, and nothing was written to the repository. sealed/ and audit/ were never opened.",
+      "what_was_built": [
+        "a. arms/common/score.js is now the single scorer.\n- Rule content is the default; --rule locate stays as a flag.\n- A cut item counts only for the lines it shows in full. The packer records cut.path_shown and cut.shown.\n- Per-task metrics are averaged within a cluster, then over clusters, each with a standard error over clusters:\n  - primary = recall at 8,000 tokens, for signature and snippet forms only;\n  - recall at 2,000, 4,000 and 16,000 tokens;\n  - AUC on a 32-point grid of 500 tokens;\n  - tokens to 80 percent recall;\n  - definition-only recall, file recall and unpadded recall at each budget, and precision at each budget;\n  - file recall@10, nDCG@10 and MRR, which are the only measures for the paths and range forms;\n  - median tokens used.\n- --per-cluster and --per-task write files.\n- Cluster = the reference's commit, else fix_commit, else group, else the task id.",
+        "arms/common/compare.js:\n- paired cluster bootstrap with 10,000 resamples, using mulberry32 with seed 20261112 and a percentile 95 percent interval;\n- sign-flip permutation p-value;\n- wins, losses and ties per cluster;\n- a 'matched' metric at the smaller of the two median tokens-used values, rounded down to the 500-token grid.",
+        "arms/common/selftest.js: 49 checks on synthetic references covering score, compare, tq_score, the packer cut rule, config and metapath validation, and equiv.",
+        "b. Padding: arms/common/padding.js (DIR and CO tails ported from arms/search) and packer.js. pad = none, DIR or CO is a shared configuration factor. Each budget records head_tok and tail_tok, and each item carries pad 0 or 1. The built-in arm 'none' with pad DIR or CO gives the floors.",
+        "c. Arm registry, arms/common/arms.js:\n- Each arm is arms/<name>/arm.js with open(G, opts) returning {rank, close, tq?}; open, rank and close may return promises.\n- engine_ms is recorded separately from the harness wall time ms.\n- register() adds in-process arms for tests.\n\nharness.js loadArmList:\n- Requires exactly 40 stage-1 configurations (arms/<arm>/sweep.js STAGE1) and exactly 20 stage-2 (arms/<arm>/stage2.json). Other sizes, duplicate names and duplicate configurations are refused.\n- Logs list hashes to <results>/sweep/lists.jsonl.\n\nThe held-out lock (LOCK token, --allow-heldout, a matching --frozen-hash, and a frozen record for the same arm) applies to every arm. run.js gained the commands run, freeze, tq, freeze-tq and canon, each taking any arm.",
+        "d. Loader L5, arms/common/facts.js (D.15):\n- one edge per (kind, src, dst); weight = highest confidence; evidence count kept;\n- co_changed stored once with src < dst and sym = 1, traversed from both ends;\n- minConf is a shared factor, default 0.5;\n- reads only extractor_version from meta.json and tolerates a commits.jsonl of kept commits only.\n\nexportCanon writes nodes.csv, edges.csv, edges_<kind>.csv and canon.json with a sha256 content hash.",
+        "e. The ordered metapath mode, an automaton over states (j, c):\n- at most 8 steps, a step repeats at most 6 times, emit all or end;\n- the state space is capped at 8,192 states, and budget mode shares that cap;\n- implemented in reference/ref.js and in relational SQL (queries.js mp_* statements);\n- explanation paths follow state parents in budget and metapath modes.",
+        "f. arms/common/equiv.js (E.19): same reach set and hops, scores within 1e-9, order valid within score ties, explanation paths validated by the reference's explainChecker. sweep.js runs equiv for every pair of arms and keeps the strict byte comparison for relational vs reference.",
+        "g. arms/common/tq_score.js: precision, recall and F1, macro and micro averages, aliases, and optional judgement items. The TQ answer format is SPEC.md section 12: {id, answer, tokens, lookups, ms, arm, error}.",
+        "h. arms/relational/sweep.js holds BASE, METAPATH and the regenerated 40-entry STAGE1 list (list hash 5efda93e9c470eb9).\n- New entries: metapath, minConf 0 and 1, pad DIR and CO, and symbol granularity with paths form.\n- arms/reference/sweep.js re-exports the list.\n- New arm.js files: relational (SQLite store on opts.store) and reference.",
+        "i. arms/common/paths.js honours GT_BUILD, GT_REPO and GT_FACTS_CACHE, plus GT_STORE, GT_TMP, GT_SRCSTORE and GT_RESULTS.",
+        "j. arms/common/SPEC.md: a complete specification for graph-arm builders, in 12 sections:\n- contract and canonical CSV input;\n- classes, arcs and hubs;\n- traversals including the metapath automaton, and explanation rules;\n- rankings with exact formulas and tie rules;\n- config schema with x_ extensions and variants;\n- seeds, projection, padding, packing and the answer record;\n- cross-check usage and the TQ format.",
+        "k. Smoke test script and outputs:\n- C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/harness-fix/smoke.sh\n- smoke.log and smoke/ in the same folder;\n- a hash-verified 6-parent cache snapshot in cache-snap/.\n\nTwo host development checks:\n- async_test.js: an asynchronous arm run through the harness;\n- e2e/: score.js and compare.js run on the smoke answers with synthetic references.",
+        "NOTES.md files rewritten in the build folder C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build:\n- arms/common/NOTES.md\n- arms/relational/NOTES.md\n- arms/reference/NOTES.md"
+      ],
+      "key_numbers": [
+        "Self-test: 49 of 49 checks pass, inside graphtest:1 and on the host.",
+        "Held-out lock: refused 3 of 3 attempts (no --allow-heldout, wrong frozen hash, direct loadTasks call).",
+        "Canonical export at parent c89e021f:\n- 1,810 nodes and 4,723 edges;\n- content hash 4d5c93898f43791899f270b67f1155d9fb4f0e959461d99ae714ecdf46a3a84a;\n- byte-identical across two exports in the image, and the same hash on the host.",
+        "Smoke sweep:\n- 20 TUNE tasks (16 T1, 4 T2) × 40 stage-1 configurations, giving 800 relational-vs-reference comparisons;\n- 0 equivalence failures, 0 strict ranked-list differences, 0 strict answer differences;\n- wall time 58 seconds;\n- seed match: id 13 tasks, file only 6, none 1.",
+        "Extra cross-check: 13 combinations × 20 tasks = 260 comparisons, 0 mismatches, 7 seconds.",
+        "Median query time, relational vs reference:\n- base PPR 76 vs 13 ms;\n- budget B2 297 vs 62 ms;\n- metapath 72 vs 13.5 ms;\n- bfs 0.7 vs 0.2 ms.\nEngine time is about equal to wall time.",
+        "Padding:\n- The CO tail's first 5 files differ from the DIR tail's on 13 of 16 T1 answers.\n- The mean tail at the 8,000-token budget is 2,303 tokens over 20 tasks.",
+        "TQ: 20 tune questions answered, 0 errors. The relational store is 25 MB on the named volume.",
+        "Asynchronous arm test: 12 of 12 lists equivalent to the reference (3 tasks × 4 configurations, reach 26 to 363 nodes)."
+      ],
+      "deviations_from_protocol": [
+        "The tokenizer is still a deterministic approximation, because no model tokenizer is installed.",
+        "minConf does not apply to PPR transitions (weighted), the cochange score, or the hub measures (in-degree and transport), which are defined independently of the configuration. It does apply to unweighted traversals, the reach DAG and the degnorm out-degree.",
+        "Explanation paths in budget and metapath modes follow state parents (the smallest (u, kind, state)), not node parents, because node-parent chains could break a budget. This is specified in SPEC.md section 7.",
+        "Padding:\n- At symbol granularity, the seed file's own definitions come before the tail files' definitions.\n- The CO pad counts commits as search did: the 'used' field when present, otherwise commits of 2 to 30 files that are not dropped, weighted by 0.5^(age in days / 30).",
+        "To keep the stage-1 list at exactly 40 configurations, six entries were dropped:\n- file granularity with range form;\n- hops 5;\n- hub indeg above 15;\n- the 6-class ladder step;\n- PPR with cochange weight 0.5;\n- symbol granularity with range form (replaced by symbol granularity with paths form).",
+        "The 'matched' comparison metric rounds the matched token count down to the 500-token grid.",
+        "In tq_score.js, judgement items come only from a --judgement file or a judgement_items field in the reference.",
+        "arms/relational/tq.js still writes its diagnostic file results/tq/relational.<split>.jsonl beside the SPEC-format answers file.",
+        "The smoke test used a snapshot of 6 parent folders from the existing facts cache, built by the old extractor.",
+        "bench.js was updated but only syntax-checked, not re-run."
+      ],
+      "problems": [
+        "The engine figures in results/engine/ predate loader L5 and are stale. bench.js needs a re-run inside graphtest:1.",
+        "Other outputs that predate loader L5 are also stale: the stores in arms/relational/db/ and the old results/sweep/ files. They will be replaced by a new build and sweep.",
+        "The full TUNE sweep was not run, as instructed.",
+        "arms/search/arm.js does not yet export open(). The search arm cannot be driven by the shared run.js and sweep.js until it does.",
+        "score.js and compare.js have run only on synthetic references (the self-test, plus an end-to-end plumbing check on the smoke answers). No real labels were used."
+      ],
+      "how_to_run": [
+        "All paths below are relative to the build folder C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build.",
+        "Self-test: node arms/common/selftest.js",
+        "Sweep, TUNE only: node arms/common/sweep.js --arms relational,reference[,<arm>] [--list relational] [--stage 1|2] [--sets T1,T2] [--limit N | --tasks id,id] [--only names] [--out <results root>]",
+        "Extra cross-check: node arms/common/crosscheck_extra.js [--tasks ids] [--out <root>]",
+        "One configuration: node arms/common/run.js run --arm <arm> --config <list name|config.json> --sets T1 --split tune\n\nOther run.js commands:\n- freeze --arm <arm> --config <...>\n- tq --arm relational --split tune\n- freeze-tq --arm <arm>\n- canon --parent <sha> [--remove p] --out <dir>",
+        "Scoring:\n- node arms/common/score.js --answers <gz> | --answers-dir <dir> --refs <refs.jsonl> [--rule content|locate] [--out f] [--per-cluster f] [--per-task f]\n- node arms/common/compare.js --a <A.gz> --b <B.gz> --refs <refs.jsonl> [--metric primary,r2000,auc,matched]\n- node arms/common/tq_score.js --answers <answers.jsonl> --refs <tq refs> [--judgement f] [--split tune]",
+        "Smoke test in the image: MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v \"<build>:/build\" -v \"C:/Users/User/Documents/projects/EMS_workshop1:/repo:ro\" -v gt-harness-fix:/store graphtest:1 bash -lc \"bash /build/tmp/harness-fix/smoke.sh\"",
+        "For real runs, set GT_STORE to a container path or a named volume (never /build). Set GT_FACTS_CACHE, GT_RESULTS and GT_TMP as smoke.sh does."
+      ],
+      "needs_from_other_lanes": [
+        "Search lane:\n- add arms/search/arm.js exporting open(G, opts) that returns {rank, close};\n- export a STAGE1 of exactly 40 named configurations from arms/search/sweep.js;\n- use the shared pad factor (common/padding.js through the packer) instead of its own fill.",
+        "Grader:\n- use arms/common/score.js (content rule by default), compare.js and tq_score.js;\n- supply references with id, files, defs (path, start, end) and a commit or cluster field;\n- move tune_labels.jsonl to wherever the grader keeps its labels.",
+        "Facts lane: rebuilt caches may keep or drop the 'used' and 'dropped' fields in commits.jsonl, since both are tolerated. meta.json needs only extractor_version.",
+        "Graph-arm builders:\n- follow arms/common/SPEC.md and read the canonical CSVs from 'run.js canon';\n- mark native algorithm variants with 'variant' and arm-only modes with 'x_' names;\n- check equivalence with: node arms/common/sweep.js --arms relational,reference,<arm> --list relational."
+      ]
+    },
+    "searchFix": {
+      "status": "Done. The search arm and both floors now go through the common harness: shared packer, shared pad option, held-out lock, common answer format and TQ format. The smoke test inside graphtest:1 on 20 TUNE tasks passed every check. Nothing was scored, selected or frozen. sealed/ and audit/ were never read or listed; the only touch was moving files into sealed/. The full sweep was not run.",
+      "what_was_built": [
+        "arms/search/arm.js was rewritten to the registry contract. open(G, opts) exports the parent tree once with git archive from paths.js REPO (GT_REPO=/repo in the image), parsed in memory so nothing is written. rank(seedIds, cfg, seed) returns {ranked, engine_ms, lookups, meta} with only the search's own head as canonical graph nodes. tq(q) returns {answer, tokens, lookups}. close() is a no-op.",
+        "New arms/search/search.js holds the search core with the private directory fill removed; padding now comes only from the shared packer option pad. It validates every search field and maps the result to graph nodes in one ranked list that does not depend on granularity, form or pad, as the harness rankKey requires. Each ranked entry has hop = the round (1 to 3), score = the file score rounded to 9 decimals, via = [\"L<k>\", \"read<t>\"] (k = the ledger index of the lookup that first found the node, t = tokens read up to that lookup), and path = null.",
+        "engine.js and lib.js now build the per-parent context from the canonical graph G: definitions come from G's nodes by integer id, and G.removed paths are dropped. Hard-coded Windows paths were replaced by arms/common/paths.js, and the tokenizer is the shared one.",
+        "arms/search/sweep.js has a new STAGE1 of exactly 40 configurations, written without any score, one factor at a time around the arm's own BASE. The base is file granularity, signature form, pad none, plus the pre-score search defaults. The entries: 7 shared-factor entries (pad DIR and CO, symbol granularity, paths and snippet forms); rounds 5 (rounds=1, rounds=3, k2=3, 8, 12); decay 2; terms 11 (routes, spellings, seedImports, nullNames, namesPerFile, genericCap, followImports); BM25 5; proximity 3; weights 6 (typeW, countW, idf). Plus a complexity() function for the simplest-within-one-SE rule. List hash ef02c4a27f96928a.",
+        "tq.js is now a module (answerTq) called through arm.tq(). It returns the SPEC section 12 format with tokens = the total of the search ledger. A question-specific hard-coded list of CLAUDE.md line numbers (116, 119, 127) was removed; no TUNE answer changed.",
+        "New arms/floor-dir and arms/floor-co: arm.js returns an empty head (lookups 1 for DIR, 2 for CO) and refuses any other pad or any traversal, rank or search fields. configs.js holds the full list (file or symbol granularity x signature, snippet, paths or range form = 8 configurations), and configs/*.json holds the same 8 for run.js --config. Each folder has a NOTES.md.",
+        "Retired: arms/search/score.js, select.js, pack.js, run.js, run0/run1 logs, out_tq/, and the 675 MB arms/search/out folder (deleted after the new path worked). tune_labels.js and tune_labels.jsonl were moved unread to sealed/search_tune_labels/. The proxy-label score tables and selection (results/*) were moved unread to sealed/search_tune_labels/void_results/. The earlier self-selection is recorded as void in NOTES, and its numbers were removed from NOTES.",
+        "Smoke tooling in tmp/search-fix: smoke.sh, floor_check.js, summarize.js, smoke.log, and the smoke/ results (1.1 MB)."
+      ],
+      "key_numbers": [
+        "Search stage-1 list: 40 configurations giving 33 distinct ranked lists (the 7 shared-factor entries reuse the base ranking). List hash ef02c4a27f96928a; base configuration hash 5d3325db5fc2c204.",
+        "Smoke sweep in graphtest:1 (Node v24.22.3): 40 configurations x 20 TUNE tasks (16 T1, 4 T2, the harness lane's task set) = 800 answers in 14 s wall. Seed match: 13 by id, 6 file only, 1 none.",
+        "Base configuration, medians over the 20 tasks: 80 ranked nodes, 24 head units at file granularity, 27 lookups (95th percentile 64), 15.8 ms wall per query, 5,177 tokens used of the 8,000-token budget unpadded. With pad=DIR or pad=CO the budget fills to 7,999 tokens, of which the padding tail is 2,815 tokens (median).",
+        "rounds=1: 5 lookups and 8 head units per answer (median), 2.7 ms. bm25only: 2 lookups, 0.5 ms. rounds=3: 45 lookups, 24 ms.",
+        "Floors: 320 comparisons (20 tasks x 8 configurations x 2 floors) against the built-in arm none with the same pad; 0 differences.",
+        "Determinism: 800 of 800 (task, configuration) ranked lists and lookup counts were identical across two separate opens of the arm. 0 cases where configurations sharing a rankKey gave different lists. 20 of 20 answer records identical across two run.js runs of the base (wall and engine time ignored).",
+        "Held-out lock: 4 of 4 attempts refused (search with no flags, search with a wrong frozen hash, floor-dir with a wrong frozen hash, held-out TQ without a frozen implementation). A floor-dir configuration with pad CO was refused.",
+        "TQ (tune, frozen commit, through run.js tq --arm search): 20 questions, 0 errors, lookups median 3 and at most 3, tokens median 2,839 and at most 8,606. Answers are identical to the previous revision's TUNE answers.",
+        "Disk: arms/search went from about 676 MB to 96 KB. The named volume gt-search holds a 12 MB source store."
+      ],
+      "deviations_from_protocol": [
+        "The floors' 8-configuration lists are in configs.js and configs/*.json, not sweep.js, because the harness refuses any stage-1 list that is not exactly 40 entries. Floors therefore run through run.js --config one configuration at a time, not through sweep.js.",
+        "followImports (follow an import hit to the definitions that use the imported names) is now its own search field. Before, it was switched on by symbol granularity, which would make the ranked list depend on granularity, and the harness forbids that. The old 'gran=symbol' corresponds to the new 'gran=symbol followImports'.",
+        "Later rounds now merge their hits after every file of the round has been opened; before, round two merged after each opened file. On T1-0003 this gives 15 lookups instead of 17 and swaps the first two files; on T1-0004 the head is identical to the old unpadded output. A third round is now possible.",
+        "The search base uses pad none (the old base filled with the directory order), to match the relational arm's base. pad DIR and pad CO are list entries.",
+        "The tree is still read by parsing git archive output in memory rather than extracting it into tmp/. This is a read-only object read; nothing is written, so there is nothing to delete.",
+        "The search arm's BM25 is its own (identifier and sub-word terms over whole code files) and is not the shared text rank of SPEC section 8.4. It is not cross-checked.",
+        "Ranked entries have path = null; the arm has no explanation path. via carries the lookup index and the tokens read up to that lookup instead of edge kinds.",
+        "TQ tokens = everything the greps and reads returned to the reader (the ledger total), not the default of answer-only tokens."
+      ],
+      "problems": [
+        "The harness's H.answer drops rank().meta, so the search arm's total tokens read and its full lookup ledger do not reach the answer records. Only the per-item via (lookup index and cumulative tokens read) and the lookup count are recorded.",
+        "Lookup accounting for padding is not uniform. The floors report 1 lookup (DIR) and 2 lookups (CO), but padded answers of other arms count no lookups for the tail.",
+        "run.js has no --tasks filter, so one-configuration runs (the floors) can only take the first N tasks, not a named task set.",
+        "arms/common/padding.js comments still point at arms/search/arm.js dirOrder and coFloor, which no longer exist."
+      ],
+      "how_to_run": [
+        "Inside graphtest:1: MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v \"C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build:/build\" -v \"C:/Users/User/Documents/projects/EMS_workshop1:/repo:ro\" -v gt-search:/store graphtest:1 bash -lc \"git config --global --add safe.directory /repo; export GT_BUILD=/build GT_REPO=/repo GT_STORE=/store GT_SRCSTORE=/store/srcstore GT_TMP=/tmp/gt; <command>\"",
+        "Search TUNE sweep (for the next agent): node /build/arms/common/sweep.js --arms search --sets T1,T2 [--out <results root>]",
+        "One search configuration: node /build/arms/common/run.js run --arm search --config base --sets T1 --split tune",
+        "Floors: node /build/arms/common/run.js run --arm floor-dir --config /build/arms/floor-dir/configs/gran_file_form_signature.json --sets T1,T2 --split tune (and the same for floor-co; 8 JSON configurations each)",
+        "TQ: node /build/arms/common/run.js tq --arm search --split tune",
+        "Smoke test: bash /build/tmp/search-fix/smoke.sh inside the image (log at C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/search-fix/smoke.log)",
+        "GT_SRCSTORE must point to the container filesystem or a named volume; by default the shared source store sits on the /build bind mount (arms/common/srcstore).",
+        "Notes: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/arms/search/NOTES.md, .../arms/floor-dir/NOTES.md, .../arms/floor-co/NOTES.md"
+      ],
+      "needs_from_other_lanes": [
+        "Harness (arms/common/harness.js answer()): carry rank().meta into the answer record, at least meta.tokens_read, so the search arm's tokens-read cost reaches the results files.",
+        "Harness: one rule for the lookups a padding tail costs (for example +1 for DIR and +2 for CO on every padded answer of every arm, or none for anyone). The floors currently report 1 and 2.",
+        "Harness: a way to run a fixed floor list through sweep.js (accept arms/<floor>/configs.js CONFIGS of any size for floor arms), or a --tasks option in run.js, so the floors run on exactly the same task set as the swept arms.",
+        "Harness: update the stale comments in arms/common/padding.js that name arms/search/arm.js dirOrder and coFloor.",
+        "Grader: the search arm's per-item via is [\"L<k>\", \"read<t>\"] (lookup index and cumulative tokens read). Use it for lookups and tokens read to 80 % recall."
+      ]
+    },
+    "rerun": {
+      "status": "Done. Every requested stage-1 run finished inside graphtest:1 on the rebuilt facts (extractor 59da7b753a4d908e, loader L5), on TUNE tasks only. The relational and reference arms agree exactly: 30,880 ranked lists were compared with 0 mismatches. The answer-file check found 0 problems. Nothing was scored, sealed/ and audit/ were never opened, and no harness or arm code was changed.",
+      "what_was_built": [
+        "Old results that belonged to the previous facts were moved to results/_phaseA_old/: bench_run.log, crosscheck_extra_run.log, sweep_run.log, engine/, reference/, relational/, sweep/, tokenizer/ and tq/. The empty folders results/ladybug and results/duckpgq belong to other lanes and were left in place.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/rerun/run_relref.sh runs the self-test, the held-out lock attempts, and the relational stage-1 list (40 configurations) through both the relational and reference arms with the strict cross-check. It starts one process per set (T1, T1x, T2), each with its own store on the named volume gt-relational.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/rerun/run_search.sh runs the search stage-1 list (40 configurations) per set, floor-dir and floor-co (8 configurations each, on T1, T1x and T2), and the TQ answers for relational and search on the 20 TUNE questions.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/rerun/verify.js checks the answer files: every configuration present for every task, no answer over budget, used tokens recomputed from the items, logged list hashes, relational and reference answers identical, and the TQ file format. timing.js combines the per-set timings.",
+        "Answer files are in results/<arm>/tune/<config hash>.<set>.jsonl.gz: 120 files each for relational, reference and search, and 24 files each for floor-dir and floor-co. The sweep summaries, configuration lists and mismatch files are in results/sweep/stage1/, together with verify.json, timing_relref.json and timing_search.json. Every list load is logged in results/sweep/lists.jsonl.",
+        "TQ answers are in results/tq/relational.tune.jsonl and results/tq/search.tune.jsonl, each identical to the <arm>.tune.answers.jsonl file beside it.",
+        "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/tmp/rerun/NOTES.md says what exists, how to run it, the results and every deviation. The raw per-process outputs and logs are kept beside it."
+      ],
+      "key_numbers": [
+        "TUNE tasks with a seed path: 388 in T1, 144 in T1x and 240 in T2, 772 in all. Seed match over the 772 tasks: 569 by id, 168 by file only, 29 by definitions inside the symbol's range, and 6 with no match.",
+        "Relational against reference, using the relational list (hash 5efda93e9c470eb9): 30,880 (task, configuration) pairs were compared, 15,520 on T1, 5,760 on T1x and 9,600 on T2. The result was 0 equivalence failures, 0 ranked-list differences and 0 packed-answer differences. verify.js re-read both arms' answer files independently and found 0 differing list hashes and 0 differing answers among the 30,880 pairs.",
+        "Relational and reference wall time, with the three set processes running at once: 1,088 s for T1, 456 s for T1x and 723 s for T2, about 18 minutes end to end.",
+        "Each arm makes 33 distinct rankings per task; the other 7 configurations differ only in output form or padding and reuse a ranking. That is 25,476 rank calls per arm. Summed ranking wall time was 1,760 s for relational and 335 s for reference.",
+        "Median time per ranking for the base configuration (personalised PageRank): 87 ms for relational and 15 ms for reference. The slowest configuration's median: 334 ms for relational and 70 ms for reference. These ran with three processes sharing the CPUs, so they are not engine measures.",
+        "Relational SQLite stores on the volume: 142 MB for T1, 57 MB for T1x and 114 MB for T2.",
+        "Search (its own list, hash ef02c4a27f96928a): 30,880 answers and 0 failures. Wall time was 184 s for T1, 79 s for T1x and 125 s for T2. Summed ranking time was 312 s over 25,476 rank calls. For the base configuration, the median time per ranking was 13 ms and the 95th percentile 32 ms.",
+        "Floors: 6,176 answers each for floor-dir and floor-co (8 configurations times 772 tasks), with 0 failures. All 16 runs together took 93 s.",
+        "TQ on the 20 TUNE questions: the relational arm gave 20 answers with 0 errors, a median of 36 tokens and 1 lookup each. The search arm gave 20 answers with 0 errors, a median of 2,839 tokens and at most 3 lookups. Search counts as tokens everything its searches returned, by its own design.",
+        "verify.js found 0 problems in 104,992 answers: 0 missing files, 0 missing, extra or duplicate task ids, and 0 answers over budget at 2,000, 4,000, 8,000 or 16,000 tokens. Used tokens and the head and tail split recompute exactly from the items in every answer at every budget. Every logged list hash equals the hash recomputed from its list.",
+        "Held-out lock: all 5 attempts were refused. Self-test: 49 of 49 checks pass."
+      ],
+      "deviations_from_protocol": [
+        "Each arm group ran its three sets as three parallel processes, each with its own store, source store and output folder, and the outputs were then copied into results/. As a result there is one sweep summary per set, not one per arm group.",
+        "The cross-check ran the relational and reference arms with --list relational. The reference arm's own sweep.js re-exports the same list, with the same hash.",
+        "TQ file naming: the task asks for results/tq/<arm>.tune.jsonl, but run.js writes <arm>.tune.answers.jsonl, as SPEC section 12 says. Both files exist with identical content. The relational arm's old diagnostic file is not produced when TQ runs through arm.tq().",
+        "The run times were taken with three processes sharing 6 CPUs. They are not the quiet-machine engine measures that addendum 2 section E.22 requires.",
+        "The floors were run through run.js one configuration at a time, because no 40-entry list exists for them, as their own notes say."
+      ],
+      "problems": [
+        "No run failed and no mismatch or check failure was found.",
+        "For the search arm, the TQ token count is the total its searches returned, so it is not the token count of the answer itself. This is the search arm's own definition, not a defect."
+      ],
+      "how_to_run": [
+        "MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v \"<build>:/build\" -v \"C:/Users/User/Documents/projects/EMS_workshop1:/repo:ro\" -v gt-relational:/store graphtest:1 bash -lc \"bash /build/tmp/rerun/run_relref.sh\"",
+        "Same docker command with \"bash /build/tmp/rerun/run_search.sh\"",
+        "Copy tmp/rerun/out_*/<arm>/tune/* into results/<arm>/tune/ and out_tq/tq/<arm>.tune.answers.jsonl to results/tq/<arm>.tune.jsonl, as described in tmp/rerun/NOTES.md.",
+        "MSYS_NO_PATHCONV=1 docker run --rm --cpus 6 --memory 4g -v \"<build>:/build\" graphtest:1 bash -lc \"GT_BUILD=/build node /build/tmp/rerun/verify.js /build/results\""
+      ],
+      "needs_from_other_lanes": [
+        "Harness lane: decide on one TQ answer file name. run.js writes <arm>.tune.answers.jsonl, while this task asked for <arm>.tune.jsonl, so both are provided for now."
+      ]
+    },
+    "ladybug": {
+      "status": "Complete. The LadybugDB graph arm is built. Across 47,244 comparisons with the reference arm there were 0 mismatches. The stage-1 sweep (40 configurations on 772 TUNE tasks), the 20 TUNE TQ questions (0 errors, all 20 identical to the relational arm's SQL answers) and one bench run are done, and NOTES.md is written. HELD-OUT was never run. build/sealed and build/audit were never touched. The repository was not written to.",
+      "what_was_built": [
+        "Build root B = C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build (/build in the container). All files are under B/arms/ladybug/.",
+        "store.js builds one store per (parent, removed documents) from exportCanon, after checking our own sha256 of the files against the canonical hash. The store holds: the node table N; typed tables f_<type> and r_<type>; a single arc table A; the evidence table EV; the term graph T/HAS. All derived properties (dl, pi_<class>, transport) and the native priors (page_rank, k-core, Louvain) are computed by Cypher during the build. Stores are cached on the volume gt-ladybug at /store/ladybug.",
+        "lb.js (LbGraph) implements every SPEC algorithm. Native: k-hop and unbounded reach via recursive SHORTEST over A, with class, weight, direction and hub predicates; hub cuts as node predicates. Engine query plus application code: the reach DAG, budgets and the spec metapath (one Cypher query per BFS level, the automaton in application code), degnorm, PageRank (transitions by Cypher, 40 iterations in application code by default, or every iteration as Cypher writes), co-change, and BM25 over the term graph. Application code: hybrid RRF.",
+        "pattern.js runs the ordered metapath as native typed path patterns (traversal.variant 'pattern'). It is cross-checked as spec-equivalent.",
+        "Native modes: ppr variant 'gds' (GDS_PPR); rank x_wsp (WSHORTEST over a per-class cost divided by confidence); x_comm (stored Louvain community); x_prank (stored page_rank); traversal x_core (khop with a cut at core number > k). NOTES.md gives the definition of each.",
+        "arm.js implements the registry contract. By default it runs one child process per open store (child.js), with an IPC round trip per ranking. LB_INPROC=1 runs in process. Other switches: LB_PPR=app|engine, LB_THREADS (default 1), LB_PREPARE.",
+        "sweep.js holds the stage-1 list: exactly 40 configurations including base, list hash 62916d71ad487af9, written before any score. BASE equals the relational BASE. The list has 7 native entries, and complexity() is included.",
+        "crosscheck.js runs these groups against the reference: random (10 seeded configurations), extra (13 combinations), pattern, engine_ppr, own. Options: --groups, --tasks, --limit, --engine-ppr-tasks.",
+        "tq.js has one Cypher function per TQ kind and reuses the relational target() parser.",
+        "priors.js: core-number distribution and Louvain spread. bench.js: engine measures, with every store-opening step in a child process. dk.sh: the Docker wrapper.",
+        "NOTES.md covers the native / engine-query / application table, the definitions of the native modes, the results, the deviations, the engine limits and the harness handicaps.",
+        "Results (all under B/results/ladybug/):",
+        "  xcheck/: sweep/summary.json and crosscheck/crosscheck_ladybug.json.",
+        "  stage1/: ladybug/tune/*.jsonl.gz, 120 files, 30 MB, plus sweep/summary.json.",
+        "  engine.json, query_plans.txt, priors.json, priors_threads6.json, logs/.",
+        "TQ outputs: B/results/tq/ladybug.tune.answers.jsonl and B/results/tq/ladybug.tune.jsonl."
+      ],
+      "key_numbers": [
+        "Cross-check against the reference arm, all 628 TUNE T1 and T2 tasks (53 parents), equivalence failures by group:",
+        "  Relational stage-1 list: 0 of 25,120. Rankings and packed answers are also byte-identical. Run time 616 s.",
+        "  10 seeded random configurations: 0 of 6,280.",
+        "  13 crosscheck_extra combinations: 0 of 8,164.",
+        "  Pattern-variant metapaths: 0 of 5,652 (4,174 byte-identical; the rest differ only in a valid explanation path).",
+        "  In-engine PageRank: 0 of 1,400 (35 configurations x 40 tasks).",
+        "  Own pattern entry: 0 of 628.",
+        "  Total: 47,244 comparisons, 0 mismatches. The extra groups took 5,391 s.",
+        "Stage-1 sweep: 40 configurations x 772 TUNE tasks (T1 388, T1x 144, T2 240; 53 parents) = 30,880 answers. Wall time 1,524 s; total ranking time 1,348 s.",
+        "Stage-1 p50 / p95 wall times:",
+        "  Base 4.2 / 36.9 ms; hops=null 37.6 / 55.1 ms; budget B1 47.0 / 106.5 ms.",
+        "  x_wsp 16.2 / 77.2 ms; GDS PPR 663.9 / 1,428 ms; pattern metapath 662.8 / 1,271.8 ms.",
+        "TUNE stores: 53 built, 866 to 2,778 ms each (p50 1,661 ms), 7.4 to 15.4 MB each (p50 13.4 MB), 716 MB in total.",
+        "Frozen commit: 5,464 nodes, 16,462 edges, 37 edge types. Three builds took 2,224, 2,252 and 2,251 ms; each store is 19.1 MB.",
+        "Indicative bench latencies on the frozen commit, 30 seeds, threads=1, warm p50 / cold p50:",
+        "  k-hop 1: 0.9 / 20.7 ms; k-hop 3: 8.3 / 28.2 ms; unbounded: 88.3 / 112.2 ms.",
+        "  Budget B1: 132 / 147 ms; base PPR: 7.1 / 60.8 ms.",
+        "  PPR with every iteration as Cypher: 1,318 / 1,376 ms; GDS_PPR: 1,306 / 1,381 ms.",
+        "  Native pattern metapath: 5,039 / 6,280 ms; BM25 text ranking: 3.6 / 28.0 ms; TQ: 1.6 / 28.4 ms.",
+        "Memory: RSS 86 MB after open, 640 MB after all query classes (with a 1 GB buffer pool).",
+        "One-file update (67 nodes, 668 edges): 1,112 ms, plus 312 ms for the global priors. Every table equals a fresh build except two native priors. page_rank is scaled by 0.98789 because deleted slots are counted. The Louvain partition moved (adjusted Rand index 0.92).",
+        "Louvain: 5 runs on the same store gave identical partitions (ARI 1.0) on 5 TUNE parents and on the frozen commit, at 1 and at 6 threads. Separate builds of the frozen graph gave 48, 50 and 55 communities.",
+        "Child-process IPC adds about 0.3 to 0.6 ms at p50 to the wall time of a ranking."
+      ],
+      "deviations_from_protocol": [
+        "The stage-1 list has 40 entries including base, not base plus 40. common/harness.js refuses any other size, and the relational list has the same shape.",
+        "To make room for 7 native entries, these relational-list entries were cut before any score was seen: hops 6, three class-ladder steps, +membership, hybrid bfs+cochange+text, and the two symbol-granularity form combinations.",
+        "PageRank iterations run in application code by default (40 exact iterations over a CSR from one Cypher query), timed inside engine_ms. The in-engine form gives identical output but costs 0.3 to 1.6 s per ranking.",
+        "In the default arm the harness's wall time includes a child-process IPC round trip. engine_ms is measured in the child.",
+        "The stage-1 sweep ran on a second copy of the stores (GT_STORE=/store/s1) beside the extra cross-check, to save time. The answers are unaffected; the timings are noisier. That copy was deleted afterwards.",
+        "The bench ran beside the extra cross-check, and other lanes' containers shared the host. Latencies are indicative only.",
+        "Native modes left untried, with the reasons in NOTES.md: Leiden and label propagation, Katz, betweenness, eigenvector, closeness, node2vec, WCC/SCC, TRAIL/ACYCLIC path semantics, and FTS/vector indexes (not installed; installing is forbidden).",
+        "TQ screen_tables stage 1 runs as one Cypher query per BFS level, because a recursive filter cannot mix the relationship and the node.",
+        "query_plans.txt was trimmed after the run to 4,000 characters per plan; the inlined id lists had made it 31 MB."
+      ],
+      "problems": [
+        "The pattern-variant metapath with hub cuts originally reached blocked nodes at segment ends: 7 equivalence failures in the first 25 tasks. In walk patterns the recursive node filter does not reliably exclude a segment's end node. Fixed by repeating the hub rule on every end node in the outer WHERE; afterwards 0 failures.",
+        "Every prepared statement pins about 2.3 MB of buffer pool until the process ends; there is no close and GC does not free it. Handled: constant texts only, capped at 48 per store; texts with per-task literals go through querySync.",
+        "A closed Database keeps its native memory inside a live process: about 25 MB per store with plain queries and about 95 MB with prepared statements. It also keeps its file lock. A 53-store sweep was OOM-killed at 4 GB. Fixed with one child process per store.",
+        "Each Database reserves 8 TiB of address space by default; mmap failed after a few stores. Fixed with maxDBSize = 4 GiB.",
+        "A stale .wal left by an interrupted build blocked the rebuild. build() now removes all sibling files first.",
+        "The native typed-path-pattern metapath is slow: about 5 s per ranking on the frozen graph and about 660 ms p50 on TUNE, against 5 to 30 ms for the per-level form.",
+        "GDS_PPR is about 0.66 to 1.3 s per ranking, and is undirected and unweighted.",
+        "Stored Louvain is one draw per store build: partitions differ across builds of the same graph and after updates.",
+        "page_rank counts deleted node slots after an update.",
+        "GDS_PPR with tolerance 0 hangs. Parameters are not allowed inside recursive filters. 'table' is a reserved parameter name. CSV loading needs explicit quote and escape options."
+      ],
+      "how_to_run": [
+        "Run every command from the build root B on the host. dk.sh adds --cpus 6 --memory 4g, the build mount, /repo:ro, -v gt-ladybug:/store and the git safe.directory setting.",
+        "Cross-check, relational list: bash arms/ladybug/dk.sh \"cd /build && node arms/common/sweep.js --arms reference,ladybug --list relational --stage 1 --sets T1,T2 --out /build/results/ladybug/xcheck\"",
+        "Cross-check, extra groups: bash arms/ladybug/dk.sh \"cd /build && node arms/ladybug/crosscheck.js --engine-ppr-tasks 40 --out /build/results/ladybug/xcheck\"",
+        "Stage-1 sweep: bash arms/ladybug/dk.sh \"cd /build && node arms/common/sweep.js --arms ladybug --stage 1 --sets T1,T1x,T2 --out /build/results/ladybug/stage1\"",
+        "TQ: bash arms/ladybug/dk.sh \"cd /build && node arms/common/run.js tq --arm ladybug --split tune && node arms/ladybug/tq.js --split tune\"",
+        "Bench: bash arms/ladybug/dk.sh \"cd /build && node arms/ladybug/bench.js\" (about 28 min; 'node bench.js update' runs only the update check)",
+        "Priors: bash arms/ladybug/dk.sh \"cd /build && node arms/ladybug/priors.js --parents 5 --threads 1\"",
+        "Run these one at a time: a store can be held by only one process."
+      ],
+      "needs_from_other_lanes": [
+        "Harness owner: wall time in common/sweep.js includes this arm's child-process IPC (about 0.3 to 0.6 ms per ranking). If cross-arm latency comparisons use wall_ms, use engine_ms for this arm or note the IPC.",
+        "Harness owner: no other change is needed. The arm works with common/sweep.js, run.js tq and openArm unchanged; rank and tq are async in the default child mode, and the harness already awaits them."
+      ]
+    },
+    "duckpgq": {
+      "status": "Complete. The DuckDB 2.0.0 + DuckPGQ graph arm is built and matches the reference arm on every check run on TUNE tasks: 0 equivalence failures. The stage-1 sweep (40 configurations on TUNE T1, T1x and T2), the TQ run (20 TUNE questions, 0 errors), the engine bench (run once) and NOTES.md are all done. Nothing was run on held-out tasks and nothing was written to the repository.",
+      "what_was_built": [
+        "build/arms/duckpgq/store.js builds one DuckDB file per (parent commit, removed document) from the shared loader's exportCanon CSV files, plus the evidence rows of the same loaded graph. It checks the loaded file against the graph: per edge kind the count and the sums of source id, destination id, weight and evidence count; node count, id sum, text and sid bytes, test count; and vertex rowid = id - 1. It creates one typed label table per edge kind. Stores live in the named volume gt-duckpgq (mounted at /store), never on /build.",
+        "build/arms/duckpgq/pgq.js implements every SPEC.md algorithm. Hops for k-hop come from DuckPGQ's iterativelength() over a CSR (the function that MATCH ->{1,H} compiles to). Reach DAG arcs come from a one-edge PGQ pattern. Metapaths run as fixed-length typed WALK patterns, one label per step, one pattern per automaton prefix, joined by UNION ALL. Budget mode is a SQL recursive CTE. PPR, degnorm, co-change, BM25 text and hybrid ranking are SQL. Explanations follow the SPEC 7 parent and state-parent rules.",
+        "Native options in pgq.js: a pagerank() variant (rank.variant 'duckpgq_global'); x_wsp, a weighted shortest path using cheapest_path_length() with a cost per edge class or per edge kind; x_wcc_prior, a weakly_connected_component() community prior; x_ppr_lift, PPR divided by pagerank() to a power; x_khop_prcut, a hub cut that stops expansion at the top-N pagerank() nodes; and the MATCH ANY SHORTEST form of k-hop, kept as khopImpl='match'.",
+        "build/arms/duckpgq/arm.js is the registry entry (open, rank, tq, close).",
+        "build/arms/duckpgq/tq.js answers TQ with one typed path-pattern query per question kind (GRAPH_TABLE MATCH over per-kind labels plus temporary union labels).",
+        "build/arms/duckpgq/sweep.js holds the stage-1 list: exactly 40 configurations, list hash 480f97f2c88b36f5. The base equals the relational BASE. There are 31 specified-algorithm entries and 9 native ones: the pagerank variant, PPR lifted by pagerank, weighted shortest path with class costs A, with kind costs B, and as a hybrid with PPR, the WCC prior, the PageRank top-50 cut, and two own metapaths.",
+        "build/arms/duckpgq/crosscheck_random.js checks 10 seeded random configurations (seed 2026) and the MATCH form of k-hop against the reference arm.",
+        "build/arms/duckpgq/bench.js mirrors the relational bench. build/arms/duckpgq/stores_report.js reports build time and size of every store.",
+        "Probes are in build/arms/duckpgq/probe/probe1-9.js; development checks are in build/arms/duckpgq/dev/ (try1, try2, wsp_check, answer_diff). Their logs are in build/tmp/duckpgq/.",
+        "build/arms/duckpgq/NOTES.md records which layer answers each algorithm, the departures, the engine limits, the harness handicaps and how to run everything.",
+        "Results in build/results/duckpgq/: crosscheck/ (relational-list cross-check and random.json), crosscheck_metapath_fix/, stage1/sweep/ (summary.json and configs.json), tune/ (120 answer files), engine/duckpgq.json, engine/query_plans.txt and stores.json. TQ files: build/results/tq/duckpgq.tune.answers.jsonl (written by run.js) and build/results/tq/duckpgq.tune.jsonl (diagnostic)."
+      ],
+      "key_numbers": [
+        "Cross-check on the relational stage-1 list (hash 5efda93e9c470eb9): 40 configurations on all 628 TUNE T1+T2 tasks (53 parents), DuckPGQ against the reference arm. 25,120 comparisons, 0 equivalence failures, 1,337 s wall.",
+        "Packed answers in that cross-check (byte comparison, which the equivalence rule does not require): 258 of 25,120 differed. 256 were in the metapath configuration (a different valid explanation, or only the ranked-list hash) and 4 were 1e-12 rounding differences in the 12th digit. After metapath explanations were changed to the SPEC 7 state-parent rule, the metapath configuration was re-run on all 628 tasks: 0 equivalence failures and 2 answer differences, both the 1e-12 rounding case.",
+        "Random cross-check: 10 seeded random specified configurations (seed 2026, covering khop, budget and metapath) on all 628 tasks. 6,280 comparisons, 0 equivalence failures, 0 packed-answer differences, 263 s.",
+        "MATCH ANY SHORTEST form of k-hop: 60 tasks x 4 configurations = 240 comparisons, 0 failures.",
+        "Weighted shortest path (cheapest_path_length) against a JavaScript Dijkstra: 5,290 node scores on 20 tasks, 0 differences.",
+        "Stage-1 sweep: 772 TUNE tasks (T1 388, T1x 144, T2 240) x 40 configurations = 30,880 answers in 120 files, 1,348 s wall. 35 distinct rankings per task. Median engine time per ranking ranges from 27 ms (bfs) to 81 ms (hybrid PPR + weighted shortest path); base is 45 ms and budget B1 is 73 ms.",
+        "Stores: 54 built (53 TUNE parents plus the frozen commit; no TUNE task removes a document). Build time per store: median 195.7 ms, 95th percentile 260.8 ms, maximum 338.1 ms, 10.7 s for all 54. Size per store: median 12.3 MB, maximum 15.2 MB, 673 MB in total.",
+        "Frozen-commit bench (run once, indicative only): store build 425, 395 and 391 ms over three builds; file 15.2 MB.",
+        "Frozen-commit memory (RSS of the Node process): 82 MB before open, 133 MB after open, 495 MB after all query classes. Opening a connection (new in-memory DuckDB plus attach) has a median of 44 ms.",
+        "Frozen-commit warm latency, median / 95th percentile over 30 bench seeds: k-hop 1 at 52/62 ms, k-hop 3 at 55/68 ms, unbounded at 82/106 ms, k-hop 2 MATCH form at 180/275 ms, budget B1 at 118/187 ms, metapath at 40/54 ms, PPR base at 91/107 ms, text at 58/70 ms, hybrid at 98/117 ms.",
+        "Native options and TQ, same bench, warm median / 95th percentile: pagerank variant 50/61 ms, weighted shortest path 178/477 ms, WCC prior 93/109 ms, TQ 12/82 ms. A cold first query on a fresh connection adds about 30 to 65 ms.",
+        "One-file update (backend/app/features/jobs/service.py: 67 nodes rewritten, 668 edges replaced): 401 ms. All 46 tables equal a fresh build, and 90 of 90 rankings equal those on the fresh build.",
+        "TQ: 20 TUNE questions, 0 errors, 2 to 143 ms each. All 20 answers are identical to the relational arm's diagnostic answers (a consistency check, not a score).",
+        "Algorithm layers. Native PGQ: k-hop hop computation (iterativelength over a CSR), k-hop reach DAG (one-edge MATCH), metapath reach (typed fixed-length MATCH patterns), and the native options (pagerank, cheapest_path_length, weakly_connected_component).",
+        "Algorithm layers. SQL fallback: budget traversal, all explanation chains, PPR (pagerank() is global only), degnorm, co-change, BM25 text, hybrid fusion and ordering, and hub cuts. Application code: metapath prefix enumeration, the degnorm per-level loop and the hybrid per-part loop."
+      ],
+      "deviations_from_protocol": [
+        "k-hop calls DuckPGQ's iterativelength() over a CSR built in the same statement instead of writing MATCH ...->{1,H}. The MATCH form with a path variable took 3.3 s per query on a 2,438-node parent and 37.9 s on the frozen graph when the seed filter was in the outer WHERE, and about 180 ms warm with the filter inside the vertex element. The direct call is the extension's own rewrite target; the MATCH form is kept as an option and gives identical results (240 comparisons, 0 failures).",
+        "Metapaths with repeat ranges are unrolled into fixed-length patterns, one per automaton prefix, because DuckPGQ allows only one quantified segment per MATCH and has no left-pointing quantifier.",
+        "The relational-list cross-check was run before the metapath explanation fix. Only the metapath configuration was re-run after the fix; the other 39 configurations do not use the changed code.",
+        "The parameters of the stage-1 WCC-prior entry were changed once, before any task run of that configuration. The new values were chosen from component sizes on the frozen graph (probe8); no scores were involved.",
+        "In the bench, the plan operator counts in engine/duckpgq.json were recounted from the saved query_plans.txt after the run, because the in-run regex did not match DuckDB's box format. bench.js is fixed for future runs. The cheapest_path_length statement is not EXPLAINed, because planning it frees its CSR.",
+        "The stage-1 answer files were written with --out results/duckpgq/stage1 and then moved to results/duckpgq/tune/, so that no shared results/sweep folder was touched."
+      ],
+      "problems": [
+        "Rule breach: one unscoped Grep over the graph2 folder (a search for the word 'random' in *.md files) returned three lines from build/audit/arms/NOTES.md. They describe another arm's random-configuration equivalence counts and contain no scores. I did not open, list or use that file afterwards.",
+        "Engine defect: iterativelength2() and iterativelengthbidirectional() crash the database ('dereference unique_ptr NULL'), after which the database is unusable. They are not used.",
+        "Engine quirks: a CSR is freed after one path call; iterativelength accepts only CSR id 0; cheapest_path_length cannot read a weighted CSR built in its own statement; and an EXPLAIN of a cheapest_path_length statement frees the CSR. These shaped the code: the weighted shortest path builds its CSR in a separate statement under a fresh id.",
+        "DuckPGQ has no personalised PageRank, no Louvain or Leiden and no k-core. The community prior therefore uses weakly connected components, which leave one giant component in every setting tried, so that prior separates little.",
+        "The fts extension is not in the image, so BM25 is SQL over term and document-frequency tables built at store load. With the DuckPGQ grammar active, 'ilike any([...])' does not parse.",
+        "Bench numbers come from one run on shared CPUs, with other agents' containers running at the same time, and are indicative only."
+      ],
+      "how_to_run": [
+        "Start the image: MSYS_NO_PATHCONV=1 docker run --rm --network none --cpus 6 --memory 4g -v \"<build>:/build\" -v \"C:/Users/User/Documents/projects/EMS_workshop1:/repo:ro\" -v gt-duckpgq:/store graphtest:1 bash -lc \"git config --global --add safe.directory /repo; export GT_BUILD=/build GT_REPO=/repo GT_STORE=/store GT_TMP=/build/tmp/duckpgq; cd /build; <command>\"",
+        "Cross-check on the relational list: node arms/common/sweep.js --arms reference,duckpgq --list relational --sets T1,T2 --out /build/results/duckpgq/crosscheck",
+        "Random cross-check: node arms/duckpgq/crosscheck_random.js --seed 2026 --match-limit 60",
+        "Stage-1 sweep: node arms/common/sweep.js --arms duckpgq --sets T1,T1x,T2 --out /build/results/duckpgq/stage1, then move results/duckpgq/stage1/duckpgq/tune/* to results/duckpgq/tune/",
+        "TQ: node arms/common/run.js tq --arm duckpgq --split tune (scored answers file); node arms/duckpgq/tq.js --split tune (diagnostic file)",
+        "Bench and store report: node arms/duckpgq/bench.js; node arms/duckpgq/stores_report.js"
+      ],
+      "needs_from_other_lanes": [
+        "The harness lane may want to note in common/NOTES.md that the stage-1 answers of duckpgq are in results/duckpgq/tune/ (moved there from a --out run) and the sweep summary is in results/duckpgq/stage1/sweep/summary.json.",
+        "The grader should know that 2 packed answers in the metapath configuration (tasks T1-0345 and T2-0210) differ from the reference by 1e-12 in the 12th digit of one score. The cause is DuckDB's summation order, and the difference is within the SPEC 11 tolerance."
+      ]
+    },
+    "auditFixes": {
+      "verdict": "The phase A defects are closed. Six of the seven checks pass outright when measured again independently. The harness is ready for stage-1 scoring. It is NOT yet ready for stage-2 selection of one narrow family of configurations: metapath traversal, direction other than \"both\", and a degnorm or hybrid-with-degnorm ranking. For those configurations the four arms compute different scores, because SPEC 8.1 leaves out-degree zero undefined. The relational versus reference cross-check fails 3 of 500 (configuration, task) pairs, all in that family. Before stage 2 may select such a configuration, fix the spec and align the arms, or exclude the family. Notes, scripts and outputs are in C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/audit/fixes (NOTES.md is the index). Container scripts and logs are in build/tmp/audit-fixes. Requests to other lanes:\n(1) Harness/spec owner: define degnorm when od(u) = 0 under metapath traversal and align reference, relational, ladybug and duckpgq.\n(2) Arms owners: delete the stale arms/common/frozen-facts and arms/relational/db.\n(3) Whoever filled the source store: explain the trees for parent 8dafcecc (held-out tasks only) and d683faa4 (no task).\n(4) Facts owner, optional: key the co-change sibling drop on real task commits instead of all children on main.",
+      "checks": [
+        {
+          "what": "1. Facts leak over every cache folder, and co-change recomputed from git",
+          "result": "pass",
+          "detail": "I scanned all 190 cache folders with 0 failures; they hold 22,495 commit rows and 577,980 commit references inside co_changed edges. Every listed commit is an ancestor of its parent and carries only the allowed fields. Its PR label equals the PR in the parent's own history (0 mismatches). The 'used' flag equals '2 to 30 files'. All 238 same-PR siblings of real task commits are absent. meta.json holds no PR number or task key. Every hex string of 7 to 40 characters in a folder that names a commit is an ancestor. All 128 distinct parents in tasks/parents.txt have a folder, built by one extractor version (59da7b753a4d908e). I recomputed co-change independently at 6 parents (a60a0a69, 01ac9e84, 6c2ef824, 19e80c01 with 3 task PRs, 8dafcecc, a31924a), which is more than the 5 asked for. The edge sets were identical (1,124, 1,440, 1,440, 1,712, 1,856 and 1,896 edges) and so were the listed-commit sets. Minor: at 32 parents that have no task, 140 ancestor commits are dropped although they are not siblings of a real task commit, because the drop is keyed on all children on main. No score is affected."
+        },
+        {
+          "what": "2. Extractor fixes, with precision samples",
+          "result": "pass",
+          "detail": "Edge differences at a31924a between the old extractor (e409baad8b0c794b) and the new one, as added/changed/removed: calls 14/0/0, calls_url 1/0/0, cites 3/8/7, constrains 5/0/0, contains 2/0/2, mentions 2/1/1, migration_touches 19/5/12, reads_setting 14/0/2, reads_table 9/2/14, test_calls_route 6/0/0, uses_constant 0/1/0, writes_column 10/0/0, writes_table 16/7/9. I read 118 added or changed edges by hand against the code: 118 of 118 correct, with at least the 20-edge sample covered for every kind that changed that much. Every SQL-derived edge lies inside a non-docstring string literal that names its table: 48 of 48 at a31924a, plus 28 of 28, 8 of 8 and 8 of 8 at three other parents. The SQL recall probe missed 0 file-table pairs out of 39 table mentions inside SQL calls. Recall probes found mobile config reads 10 of 10, environment reads 4 of 4, Protocol calls 13 of 13 and looped pytest URLs 6 of 6. Minor, already known: invariant 9 (captured_at) has 4 ambiguous constrains edges at confidence 0.25, and 3 of them are wrong. They sit below the default minConf of 0.5."
+        },
+        {
+          "what": "3. Scorer",
+          "result": "pass",
+          "detail": "I hand-scored 5 TUNE T1 answers and all 5 equal arms/common/score.js exactly. I re-derived the shown lines independently from the facts and from git, with 0 mismatches. The answers: relational T1-0063 0.8889; search T1-0155 0.4167; ladybug with DIR padding T1-0274 0.4444; duckpgq T1-0185 0.3333, including a cut item; floor-co T1-0150 0.7143. The paths and range forms get no definition credit and no primary: primary, recall at 8,000 tokens and definition recall at 8,000 tokens are all null. A bare list no longer scores high: under the old rule floor-dir in paths form scored 0.941 recall at 8,000 tokens; the same list relabelled as signature form now earns at most 0.459, from file credit only. There is one scorer: arms/search/score.js is gone, and only common/score.js, compare.js and selftest.js read the references. Minor, equal for every arm: 182 of 4,162 TUNE T1 reference definitions (4.4 %) have no node (Python or TSX variables, JS objects), so only the snippet form can credit them."
+        },
+        {
+          "what": "4. Padding tails and floors",
+          "result": "pass",
+          "detail": "Checked over 10 TUNE tasks with DIR and CO padding. The floor order equals my independently computed order in 20 of 20 cases. Each of 5 arms' tails equals the floor order minus that arm's own head in 100 of 100 cases. 9,981 tail items render byte-identically to the floor's. There are 0 token-count mismatches. All 128 arm pairs with identical heads also have identical tails."
+        },
+        {
+          "what": "5. Selection hygiene and held-out lock",
+          "result": "pass, with minor clean-up",
+          "detail": "There is no label or score file under arms/. No task commit SHA appears under arms/ except in the stale arms/common/frozen-facts: old extractor, parent a31924a, all 233 commits ancestors, 'dropped' null on every row. It is harmless but should be deleted. The source store holds 56 trees, 13,376 entries and 1,162 blobs, all verified equal to git (sha1 of the text after CRLF to LF). Trees also exist for 8dafcecc (a parent with held-out tasks only) and for d683faa4 (a parent with no task); this is source text, not labels. arms/relational/db holds stale stores for TUNE parents only. The held-out lock refused every attempt for all 8 arms (relational, reference, search, ladybug, duckpgq, none, floor-dir, floor-co). Attempts tried: no flags; allow without a hash; a wrong hash; a correct hash that was never frozen; tq with split heldout; tq with held_out and allow. Also refused: a direct loadTasks call, a forged Symbol token, and the diagnostic tq.js of relational, ladybug and duckpgq. results/frozen does not exist."
+        },
+        {
+          "what": "6. Leak re-run with access logging (relational, search, ladybug, duckpgq)",
+          "result": "pass",
+          "detail": "I ran each arm's own 40-entry stage-1 list on 30 TUNE tasks (20 T1, 10 T2; 6 parents) in graphtest:1 with --network none and /build/sealed hidden behind an empty tmpfs. The preload audit/fixes/accesslog2.js wraps audit/arms/accesslog.js and adds: fs callback and promise APIs, LadybugDB and DuckDB opens, and file paths quoted in engine SQL or Cypher. It is loaded through NODE_OPTIONS so forked children are logged too. Logged accesses per arm: relational 5,761, search 586, ladybug 6,976 across 7 processes, duckpgq 1,205. Every arm had 0 sealed paths, 0 audit paths and 0 commit SHAs other than the 6 parents. Only the 6 parents' facts folders were read. The only git calls are git archive of those parents. The engines opened only their own store files. Every arm exited 0. For each arm, 1,200 of 1,200 answers are byte-identical (timings stripped) to the stored stage-1 answers in results/*/tune, so those stored results did not depend on the sealed folder. The first ladybug attempt failed because of my preload, not the arm: ladybug's Connection checks constructor.name 'Database'. I fixed the preload and re-ran ladybug alone. Limit: native engine file opens are seen only when the path appears in the query text."
+        },
+        {
+          "what": "7. Relational versus reference strict cross-check, 500 random (configuration, task) pairs",
+          "result": "fail, 3 of 500 (0.6 %)",
+          "detail": "Seed 20261112, 12 parents, 0 errors, 12 s. The pairs covered khop, budget and metapath traversals, every rank mode including hybrid, pad none/DIR/CO, minConf 0 to 1, and both relational query paths. Agreement was complete for khop (248 of 248), budget (94 of 94), metapath with emit end (79 of 79), and every pad option. The 3 failures are all metapath traversals with emit all, direction 'dependencies', and a degnorm or hybrid-with-degnorm ranking: T1-0114, T1-0019 and T1-0109. Reach sets, hops and explanation paths are identical; only the scores differ. Cause: in metapath mode a DAG arc can follow a step whose dir runs against cfg.direction, so its source u can have od(u) = 0 under SPEC 8.1, and the spec does not define that case. reference (ref.js line 257) and ladybug (lb.js scoreFor) divide by zero and get NaN or Infinity, which gives null scores and an inconsistent sort. relational (queries.js degnorm_level: SQL a/0 is NULL, which SUM skips) and duckpgq (pgq.js: there is no q_od row, so the inner join drops the term) silently treat the term as 0. With degnorm alone, 4 of 99, 53 of 239 and 145 of 553 nodes differ on the three pairs."
+        }
+      ],
+      "defects": [
+        {
+          "severity": "biases a result",
+          "where": "arms/common/SPEC.md section 8.1 (degnorm), with section 6.3; arms/reference/ref.js about line 257; arms/ladybug/lb.js scoreFor/outDegrees; arms/relational/queries.js degnorm_level; arms/duckpgq/pgq.js degnorm branch",
+          "what": "Under metapath traversal a DAG arc can run against cfg.direction, so its source u can have od(u) = 0, and SPEC 8.1 does not define that case. reference and ladybug divide by zero (NaN or Infinity scores, which serialise as null and break the sort). relational and duckpgq silently drop the term. The arms therefore rank such configurations differently: 3 of 500 cross-check pairs fail, all metapath with direction 'dependencies' and degnorm or hybrid-with-degnorm. Stage 1 is unaffected. Stage 2 could select such a configuration, because the graph arms' lists contain metapaths and degnorm.",
+          "fix": "Request to the harness/spec lane: define od(u) for this case in SPEC 8.1. For example, count u's arcs under the orientations the metapath steps allow, or state that a term with od(u) = 0 contributes 0. Make all four arms follow the definition, then re-run the 500-pair cross-check (audit/fixes/c7_crosscheck.js). Until then, keep stage 2 from selecting metapath with direction other than 'both' together with degnorm or hybrid-with-degnorm."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/common/frozen-facts (a31924a, extractor version e409baad8b0c794b) and arms/relational/db",
+          "what": "Stale artefacts that the arms can read. frozen-facts is the only place under arms/ that names task commit SHAs, but every commit in it is an ancestor and 'dropped' is null on all 233 rows. arms/relational/db holds old stores for TUNE parents only.",
+          "fix": "Request to the arms lanes: delete both folders."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/common/srcstore trees for 8dafcecc (a parent with held-out tasks only, written 16:37:00) and d683faa4 (a parent with no task)",
+          "what": "Source text was fetched at a held-out-only parent. It holds no labels and verifies equal to git, but it shows that something ran with that parent outside the lock's reach.",
+          "fix": "Request to whichever lane filled the source store: say what created these trees. If it was not a facts-only process, check that no arm ran there."
+        },
+        {
+          "severity": "minor",
+          "where": "facts/git_extract.js co-change sibling drop",
+          "what": "At 32 parents with no task, 140 ancestor commits are dropped although they are not siblings of any real task commit, because the drop is keyed on all children of the parent on main. Every affected parent has no task, so no score changes.",
+          "fix": "Optional, for the facts lane: key the drop on real task commits."
+        },
+        {
+          "severity": "minor",
+          "where": "facts cache constrains edges for invariant 9 (captured_at)",
+          "what": "4 ambiguous constrains edges at confidence 0.25, of which 3 are wrong. They fall below the default minConf of 0.5 and matter only for configurations with minConf at or below 0.25.",
+          "fix": "Already known; optionally resolve the ambiguity in the extractor."
+        },
+        {
+          "severity": "minor",
+          "where": "arms/common/score.js signature form versus the references",
+          "what": "182 of 4,162 TUNE T1 reference definitions (4.4 %) have no node (Python or TSX variables, JS objects), so the signature form cannot credit them and only the snippet form can. The cap is the same for every arm.",
+          "fix": "None needed for fairness; state the ceiling in the scoring notes."
+        }
+      ]
+    },
+    "auditGraph": {
+      "verdict": "Stage-1 scoring can start for both graph arms (Ladybug 0.22.3 and DuckDB 2.0.0 with DuckPGQ) on their current 40-entry lists. Both arms load the same canonical graph as the relational arm. In 300 fresh random cross-check pairs, every Ladybug answer equals the reference. Every DuckPGQ answer does too, except 3 configuration shapes that appear in no stage-1 list. Hand checks on a toy graph agree with both engines. The stage-1 answer files and the TQ files hold only TUNE ids. Two things must be fixed before HELD-OUT. First, the Ladybug community prior (x_comm) is a new random Louvain draw for each store build, so a held-out build will not reproduce the tuned prior. Second, the latency numbers are not usable as engine measures until a quiet-machine run, and DuckPGQ k-hop is slowed by unbounded path lengths. Full notes: C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/build/audit/graph/NOTES.md",
+      "checks": [
+        {
+          "what": "1. Identical input at 5 parents",
+          "result": "pass",
+          "detail": "At parents 02b9557c (2,250 nodes, 6,450 edges), 47004d15 (1,091, 2,723), 9d896159 (2,077, 5,682), cd806c80 (1,293, 3,225) and f94ede29 (2,095, 5,811), the node and edge digests match the loader graph for three stores: the Ladybug store, the DuckPGQ store and a fresh relational build. Both graph stores' canon_hash equals exportCanon's hash. Ladybug's typed table counts and DuckPGQ's label tables sum to the edge count. DuckPGQ does not hash its own CSVs, but its content was verified here. Output: audit/graph/inputs.json."
+        },
+        {
+          "what": "2. Cross-check of 300 unseen random pairs against the reference",
+          "result": "pass for Ladybug; DuckPGQ 297 of 300, with 3 failures, none on a stage-1 configuration",
+          "detail": "Seed 917 drew 300 pairs over T1, T1x and T2 TUNE tasks, with 0 collisions with the builders' configuration hashes. The run took 149 s of wall time. Ladybug: 300 of 300 equivalent, with byte-identical ranked lists. DuckPGQ: 2 errors and 1 equivalence failure. Error example (pair 298, T2-0045): a metapath step whose only kinds are absent at that parent produces the SQL fragment 'AND ()', which fails with a TUPLE-to-BOOLEAN cast error. The reference returns an empty list. Failure example (pair 229, T2-0030): degnorm over a metapath whose step direction differs from cfg.direction. Node 206 is reached via the path 787 to 587 to 206, and the out-degree of node 587 is 0. The reference and Ladybug give Infinity, while DuckPGQ and relational give 0. This is a gap in SPEC, not only in DuckPGQ. T1x had never been cross-checked by the builders. Results: audit/graph/results/crosscheck300.json."
+        },
+        {
+          "what": "3. Native or not, and whether labels match",
+          "result": "Ladybug labels are accurate; DuckPGQ mislabels 2 entries",
+          "detail": "Ladybug runs k-hop with native SHORTEST, so the hop happens in the engine; blocked end nodes and parents are computed in JavaScript. Budget and metapath traversals use one Cypher query per BFS level, with the automaton in JavaScript. Default PPR is application code over a cached CSR. Variants: GDS_PPR, WSHORTEST, page_rank, k-core and Louvain are native. DuckPGQ uses the graph layer for four things only: k-hop (an iterativelength scalar on a hand-built CSR, not GRAPH_TABLE), the one-edge DAG MATCH, the fixed-length metapath MATCH patterns generated by JavaScript, and the x_* natives. Budget, PPR, degnorm, explanations, text, cochange and hybrid run as plain SQL. The list entries MP_HTTP and MP_HIST are labelled native but are ordinary spec metapaths."
+        },
+        {
+          "what": "4. Hand checks on a toy graph, and community reproducibility",
+          "result": "pass; the community prior is not reproducible across builds",
+          "detail": "Every comparison agrees: weighted shortest-path ranking, the ordered metapath (emit end gives t, emit all gives b, d and t), and 40-iteration PPR (f 0.204847610964, d 0.144841961146, b and c 0.103458416378) in both engines and the reference. GDS_PPR is undirected, unweighted PPR with dangling mass to the seed, and it ignores minConf, as the builder stated. Ladybug page_rank is directed, damping 0.85, with dangling mass dropped. DuckPGQ pagerank() is standard PageRank times a constant (sum 0.909 on a 3-cycle), with order preserved. Louvain on one store gives an adjusted Rand index of 1.0 at 1, 6 and 24 threads. Three fresh builds differ, with an index of 0.892 to 0.899 and 26 to 30 communities. k-core is identical across builds and page_rank differs by at most 1.3e-18. The builder's stored partition equals my build 0."
+        },
+        {
+          "what": "5. Strongest form",
+          "result": "mostly strong; one DuckPGQ performance weakness and several unused features",
+          "detail": "DuckPGQ k-hop computes unbounded path lengths from every seed to every node and then deletes rows with distance greater than H. It does not use bounded lengths or reachability. It also rebuilds the projection and property graph on every connection, attaches the store read-only so no stored property graph is possible, and uses 4 threads under 6 CPUs. Ladybug runs page_rank and Louvain with default parameters and leaves several features unused: Leiden, label propagation, Katz, GDS_BFS_DISTANCE, ALL SHORTEST, REL TABLE GROUP and recursive_pattern_semantic. GDS_PPR cannot take weights or direction in this version. The x_wsp cost tables differ between the engines. The schemas fit this repository: Ladybug has one arc table plus typed tables; DuckPGQ has per-kind label tables, which only TQ uses."
+        },
+        {
+          "what": "6. Fair tuning",
+          "result": "pass, with stated asymmetries",
+          "detail": "Each list has exactly 40 entries: relational 5efda93e9c470eb9, Ladybug 62916d71ad487af9, DuckPGQ 480f97f2c88b36f5, with one BASE shared by all three. Ladybug drops 8 relational entries and adds 8. The dropped entries are hops 6, 4 class-ladder steps, hybrid bfs+cochange+text, and symbol granularity with the paths and snippet forms. DuckPGQ drops the same 8 plus budget B2 and adds 9. Two of DuckPGQ's additions are extra spec metapaths that the relational arm could also have run. Every protocol section 6 factor is moved in each list. Hops 5, hub 15 and cochange weight 0.5 are absent from all three lists alike."
+        },
+        {
+          "what": "7. Handicaps in the harness, container or measurement",
+          "result": "latency is not yet clean; answers are unaffected",
+          "detail": "Every store is on a named volume and engine_ms means the whole rank call in every arm, so the measures are consistent. Ladybug pays one IPC round trip per ranking (about 0.3 to 0.6 ms) and caches PPR transitions in JavaScript, which flatters repeated calls. DuckPGQ sends 10 to 20 asynchronous statements per ranking, builds its projection inside engine_ms, and runs 4 threads. The builders ran on shared CPUs alongside other runs, so the protocol's quiet-machine condition (E.22) is not met. Cross-check p50 latency was 13 ms for Ladybug and 50 ms for DuckPGQ."
+        },
+        {
+          "what": "8. TQ queries are per kind and run on TUNE only",
+          "result": "pass",
+          "detail": "Both graph arms translate the relational SQL kind by kind, use the same target regexes, and refuse any split other than tune. All TQ result files hold 20 TUNE rows with 0 errors, and both graph arms' 20 answers equal the relational arm's. As designed, TQ therefore cannot show a graph advantage in answer quality. Stage-1 answer files: 120 files and 30,880 answers per graph arm, all on the tune split, over 40 configuration hashes with 772 answers each."
+        }
+      ],
+      "defects": [
+        {
+          "severity": "biases a result",
+          "where": "build/arms/ladybug/store.js (x_comm, Louvain prior)",
+          "what": "Louvain takes no seed, so each store build produces a different partition (adjusted Rand index 0.892 to 0.899 between builds). Any configuration tuned on x_comm, such as hybrid ppr+x_comm, will meet a different prior on a held-out store build.",
+          "fix": "Before HELD-OUT, either freeze the partition (build once and reuse it) or score several draws and report the spread."
+        },
+        {
+          "severity": "biases a result",
+          "where": "measurement, all arms",
+          "what": "The builders' latencies were taken on shared CPUs alongside other runs, so the quiet-machine condition E.22 is not met.",
+          "fix": "Rerun timing on a quiet machine with one arm at a time before making any engine-speed claim."
+        },
+        {
+          "severity": "biases a result",
+          "where": "build/arms/duckpgq/pgq.js (khop)",
+          "what": "DuckPGQ k-hop computes unbounded iterativelength path lengths from every seed to every node, then deletes rows with distance greater than H. This inflates DuckPGQ latency (cross-check p50 50 ms against 13 ms for Ladybug). Answers are unaffected.",
+          "fix": "Bound the path length or use reachability, so the engine never computes distances beyond H."
+        },
+        {
+          "severity": "minor",
+          "where": "build/arms/duckpgq/pgq.js (stepArcSql)",
+          "what": "When a metapath step's classes and kinds are all absent at a parent, the generated SQL contains 'AND ()' and fails with a cast error (pairs 298 and 299). No stage-1 list contains such a configuration.",
+          "fix": "Emit FALSE when a step has no conditions."
+        },
+        {
+          "severity": "minor",
+          "where": "build/arms/common/SPEC.md section 8.1 (degnorm)",
+          "what": "The spec does not define degnorm when a metapath step direction differs from cfg.direction and the out-degree is 0. The reference and Ladybug return Infinity, while DuckPGQ and relational return 0 (pair 229).",
+          "fix": "Define degnorm in that case, either computing the out-degree over the traversal's own arcs or fixing the score at 0."
+        },
+        {
+          "severity": "minor",
+          "where": "build/arms/duckpgq/sweep.js",
+          "what": "MP_HTTP and MP_HIST are labelled native, but they are ordinary spec metapaths.",
+          "fix": "Relabel them as spec metapaths."
+        },
+        {
+          "severity": "minor",
+          "where": "build/arms/ladybug/store.js (x_prank)",
+          "what": "On the code projection, a co_changed edge is counted once and directed from the smaller id to the larger. page_rank also drops dangling mass.",
+          "fix": "Add the edge in both directions, or document the asymmetry in the arm's notes."
+        },
+        {
+          "severity": "minor",
+          "where": "build/arms/ladybug and build/arms/duckpgq (x_wsp)",
+          "what": "The two engines use different weighted-shortest-path cost tables. Ladybug divides cost by confidence and ignores hubs; DuckPGQ does neither. Their native options are therefore not comparable with each other.",
+          "fix": "Align the cost tables if the two engines' native options are to be compared."
+        },
+        {
+          "severity": "minor",
+          "where": "build/arms/duckpgq (connection setup)",
+          "what": "The projection and property graph are rebuilt on every connection, and that time is counted in engine_ms. Because the store is attached read-only, a stored property graph is impossible. DuckDB is set to 4 threads under a 6-CPU limit.",
+          "fix": "Build the property graph once when the store is built, and set threads to 6."
+        },
+        {
+          "severity": "minor",
+          "where": "build/arms/ladybug/lb.js (PPR)",
+          "what": "PPR transitions are cached per store and configuration in JavaScript, which flatters repeated-call latency. Several engine features are left unused (Leiden, label propagation, Katz, ALL SHORTEST), and page_rank and Louvain run with default parameters.",
+          "fix": "Record the cache in the latency report, and try the unused features in stage 2 if time allows."
+        }
+      ]
+    }
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Build"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Audit"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "fix:facts",
+      "phaseIndex": 1,
+      "phaseTitle": "Fix",
+      "agentId": "a38c61cf20344bc8b",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794481703108,
+      "queuedAt": 1794481702643,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "complete. Every item in addendum 2 section D, (a) to (k), i…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794483646534,
+      "tokens": 93460,
+      "toolCalls": 122,
+      "durationMs": 1943425,
+      "resultPreview": "{\"status\":\"complete. Every item in addendum 2 section D, (a) to (k), is done. The new cache, built by extractor version 59da7b753a4d908e, has been swapped into build/facts/cache, and cache.old has been deleted. All four verification checks pass. build/facts/NOTES.md has been rewritten.\",\"what_was_built\":[\"The extractor at build/facts was fixed in five source files: build_facts.js, py_extract.py, t…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "fix:harness",
+      "phaseIndex": 1,
+      "phaseTitle": "Fix",
+      "agentId": "afdc11d84ac9e3ffc",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794481703108,
+      "queuedAt": 1794481702643,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Complete. Addendum 2 sections A, B, C, D.15 and E are imple…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794483842064,
+      "tokens": 115926,
+      "toolCalls": 98,
+      "durationMs": 2137137,
+      "resultPreview": "{\"status\":\"Complete. Addendum 2 sections A, B, C, D.15 and E are implemented in arms/common, arms/relational and arms/reference. Results:\\n- The self-test passes 49 of 49 checks.\\n- The 20-task TUNE smoke test inside graphtest:1 found 0 mismatches.\\n- The held-out lock refused all 3 attempts.\\n\\nThe full sweep was not run, as instructed. Nothing was committed, and nothing was written to the reposi…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "fix:search",
+      "phaseIndex": 1,
+      "phaseTitle": "Fix",
+      "agentId": "a0bfa82729fa26d7b",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794483842098,
+      "queuedAt": 1794483842094,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Done. The search arm and both floors now go through the com…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794484546550,
+      "tokens": 254622,
+      "toolCalls": 70,
+      "durationMs": 704451,
+      "resultPreview": "{\"status\":\"Done. The search arm and both floors now go through the common harness: shared packer, shared pad option, held-out lock, common answer format and TQ format. The smoke test inside graphtest:1 on 20 TUNE tasks passed every check. Nothing was scored, selected or frozen. sealed/ and audit/ were never read or listed; the only touch was moving files into sealed/. The full sweep was not run.\",…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "graph:ladybug",
+      "phaseIndex": 2,
+      "phaseTitle": "Build",
+      "agentId": "a6898e4caf2a62a7c",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794483842800,
+      "queuedAt": 1794483842795,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Complete. The LadybugDB graph arm is built. Across 47,244 c…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794496076575,
+      "tokens": 350633,
+      "toolCalls": 284,
+      "durationMs": 12233774,
+      "resultPreview": "{\"status\":\"Complete. The LadybugDB graph arm is built. Across 47,244 comparisons with the reference arm there were 0 mismatches. The stage-1 sweep (40 configurations on 772 TUNE tasks), the 20 TUNE TQ questions (0 errors, all 20 identical to the relational arm's SQL answers) and one bench run are done, and NOTES.md is written. HELD-OUT was never run. build/sealed and build/audit were never touched…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "graph:duckpgq",
+      "phaseIndex": 2,
+      "phaseTitle": "Build",
+      "agentId": "a0ac5bf9a7486c207",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794483842800,
+      "queuedAt": 1794483842795,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Complete. The DuckDB 2.0.0 + DuckPGQ graph arm is built and…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794491976613,
+      "tokens": 294593,
+      "toolCalls": 177,
+      "durationMs": 8133811,
+      "resultPreview": "{\"status\":\"Complete. The DuckDB 2.0.0 + DuckPGQ graph arm is built and matches the reference arm on every check run on TUNE tasks: 0 equivalence failures. The stage-1 sweep (40 configurations on TUNE T1, T1x and T2), the TQ run (20 TUNE questions, 0 errors), the engine bench (run once) and NOTES.md are all done. Nothing was run on held-out tasks and nothing was written to the repository.\",\"what_wa…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "rerun:relational+search",
+      "phaseIndex": 2,
+      "phaseTitle": "Build",
+      "agentId": "a26add4d4f72388db",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794484546556,
+      "queuedAt": 1794484546554,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Done. Every requested stage-1 run finished inside graphtest…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794486062571,
+      "tokens": 173305,
+      "toolCalls": 42,
+      "durationMs": 1516014,
+      "resultPreview": "{\"status\":\"Done. Every requested stage-1 run finished inside graphtest:1 on the rebuilt facts (extractor 59da7b753a4d908e, loader L5), on TUNE tasks only. The relational and reference arms agree exactly: 30,880 ranked lists were compared with 0 mismatches. The answer-file check found 0 problems. Nothing was scored, sealed/ and audit/ were never opened, and no harness or arm code was changed.\",\"wha…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "audit:fixes",
+      "phaseIndex": 3,
+      "phaseTitle": "Audit",
+      "agentId": "a1939cbd99c55a05c",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794496076595,
+      "queuedAt": 1794496076579,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "The phase A defects are closed. Six of the seven checks pas…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794497808314,
+      "tokens": 125411,
+      "toolCalls": 129,
+      "durationMs": 1731719,
+      "resultPreview": "{\"verdict\":\"The phase A defects are closed. Six of the seven checks pass outright when measured again independently. The harness is ready for stage-1 scoring. It is NOT yet ready for stage-2 selection of one narrow family of configurations: metapath traversal, direction other than \\\"both\\\", and a degnorm or hybrid-with-degnorm ranking. For those configurations the four arms compute different score…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "audit:graph-arms",
+      "phaseIndex": 3,
+      "phaseTitle": "Audit",
+      "agentId": "a6f2054d8f80ac173",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1794496076595,
+      "queuedAt": 1794496076579,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stage-1 scoring can start for both graph arms (Ladybug 0.22…",
+      "promptPreview": "You are one agent in a controlled experiment on one code repository. It compares ways of answering \"what is connected to this code?\": a search baseline, a relational store (SQLite), and two graph engines (LadybugDB, and DuckDB with the DuckPGQ extension). The owner rejected an earlier quick test as unfair to the graph, so fairness between arms and the strongest honest form of every arm matter more…",
+      "promptFramed": true,
+      "lastProgressAt": 1794497148218,
+      "tokens": 94374,
+      "toolCalls": 87,
+      "durationMs": 1069709,
+      "resultPreview": "{\"verdict\":\"Stage-1 scoring can start for both graph arms (Ladybug 0.22.3 and DuckDB 2.0.0 with DuckPGQ) on their current 40-entry lists. Both arms load the same canonical graph as the relational arm. In 300 fresh random cross-check pairs, every Ladybug answer equals the reference. Every DuckPGQ answer does too, except 3 configuration shapes that appear in no stage-1 list. Hand checks on a toy gra…"
+    }
+  ],
+  "totalTokens": 1502324,
+  "totalToolCalls": 1009
+}

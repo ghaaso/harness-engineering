@@ -1,0 +1,13 @@
+#!/bin/bash
+# Usage: web-text.sh <url> <outfile>  -> plain text of the page (tags stripped), with a header line
+set -u
+URL="$1"; OUT="$2"; TMP="$OUT.html"
+curl -sL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36" --max-time 60 "$URL" -o "$TMP"
+RC=$?
+node -e '
+const fs=require("fs"); let d=fs.readFileSync(process.argv[1],"utf8");
+d=d.replace(/<script[\s\S]*?<\/script>/gi,"").replace(/<style[\s\S]*?<\/style>/gi,"").replace(/<(br|\/p|\/div|\/h[1-6]|\/li|\/tr)[^>]*>/gi,"\n").replace(/<[^>]+>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,"\"").replace(/&#39;|&#x27;|&rsquo;|&lsquo;/g,"\x27").replace(/&[a-z]+;|&#\d+;/g," ").replace(/[ \t]+/g," ").replace(/\n\s*\n+/g,"\n\n");
+fs.writeFileSync(process.argv[2], "SOURCE: "+process.argv[3]+"\nFETCHED: "+process.argv[4]+"\n\n"+d);
+' "$TMP" "$OUT" "$URL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+rm -f "$TMP"
+W=$(wc -w < "$OUT"); echo "rc=$RC words=$W $URL"

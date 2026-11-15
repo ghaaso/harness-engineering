@@ -1,0 +1,55 @@
+// Builds the page-shell prototype: proto/shell/index.html.
+// Run from this folder:  node - < build-shell.js.txt
+// Reads the real data (docs/program/library-pathways/) and the live page's core helpers (page-src/core.js.txt),
+// and this folder's sources (src/shell.html.txt, src/shell.css.txt, src/shell.js.txt). Writes only index.html here.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const lp = path.resolve(here, '../../../../library-pathways');
+const ev = path.resolve(here, '../..');
+const read = p => fs.readFileSync(p, 'utf8');
+const json = p => JSON.parse(read(p));
+if (!fs.existsSync(path.join(here, 'src/shell.js.txt'))) { console.error('run from proto/shell'); process.exit(2); }
+
+const MAP = json(path.join(lp, 'map.json'));
+const TABLE = json(path.join(lp, 'params.json'));
+const LIMS = json(path.join(lp, 'limitations.json'));
+const CASES = json(path.join(lp, 'cases.json'));
+const TX = json(path.join(ev, 'page-src/text.json'));
+const engine = read(path.join(lp, 'engine.js'));
+const core = read(path.join(ev, 'page-src/core.js.txt'));
+
+// Prune only fields the live page never shows (the live build prunes the same ones).
+const lims = Object.assign({}, LIMS, {
+  items: LIMS.items.map(it => {
+    const o = Object.assign({}, it);
+    delete o.absorbed; delete o.merged_from; delete o.origin;
+    o.real = Object.assign({}, it.real, { examples: (it.real.examples || []).map(x => ({ case: x.case, family: x.family, evidence: x.evidence })) });
+    return o;
+  })
+});
+delete lims.summary; delete lims.how_to_read; delete lims.words;
+const data = { map: MAP, params: TABLE, lims, cases: CASES, text: TX, build: { date: new Date().toISOString().slice(0, 10) } };
+const dataText = JSON.stringify(data).replace(/<\//g, '<\\/');
+
+const html = read(path.join(here, 'src/shell.html.txt'))
+  .replace('/*__CSS__*/', () => read(path.join(here, 'src/shell.css.txt')))
+  .replace('/*__DATA__*/', () => dataText)
+  .replace('/*__ENGINE__*/', () => engine)
+  .replace('/*__CORE__*/', () => core)
+  .replace('/*__JS__*/', () => read(path.join(here, 'src/shell.js.txt')));
+fs.writeFileSync(path.join(here, 'index.html'), html);
+
+// Checks: every item the lists must keep is in the data, and the page is not too large.
+const fails = [];
+const check = (ok, msg) => { if (!ok) fails.push(msg); };
+check(CASES.cases.length === 59, 'cases: ' + CASES.cases.length);
+check(LIMS.items.length === 69, 'limitations: ' + LIMS.items.length);
+check(LIMS.works.length === 15, 'savings: ' + LIMS.works.length);
+check(TABLE.parameters.length === MAP.parameters.length, 'unknowns in params.json and map.json differ');
+check(TX.leaves_out.length === 23, 'left out: ' + TX.leaves_out.length);
+const bytes = Buffer.byteLength(html);
+console.log('wrote index.html, ' + bytes + ' bytes (data ' + Buffer.byteLength(dataText) + ', engine ' + engine.length + ', core ' + core.length + ')');
+console.log('cases ' + CASES.cases.length + ', limitations ' + LIMS.items.length + ', savings ' + LIMS.works.length + ', unknowns ' + TABLE.parameters.length + ', left out ' + TX.leaves_out.length + ', words ' + TX.words.length);
+if (fails.length) { console.log('CHECKS FAILED:\n  ' + fails.join('\n  ')); process.exitCode = 1; } else console.log('checks: ok');

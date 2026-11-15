@@ -1,0 +1,187 @@
+// baseline: index-only arms (no relation edges) on the DEVELOPMENT part only. Local only; read-only git (ls-tree, cat-file).
+// For each instance: given only the seed (what the agent had at the episode's first call), would an index have returned the
+// truth span among its first 10 results, and at what token cost?
+//   arm A "path+symbol": file paths and definition names (regex-extracted functions, classes, constants, types).
+//   arm B "outline+ID":  markdown headings (as sections) and item IDs (definition sites first, then citing lines).
+//   arm C "keyword":     BM25 over names, paths, headings and ID definitions (no body text).
+// Index content = the tracked files at the instance's inferred session commit (ver.commit) + untracked files at their
+// CURRENT content (flagged: may hold text written after the session). Truth = primary truth of version.js (confirmed spans
+// when the instance has a confirmed file, else the read spans), in-repository files only.
+// Tokens = characters / 2.42 (the ratio use-cases.md measured). Output: out/baseline-instances.jsonl, out/baseline-log.txt
+const fs = require('fs'), readline = require('readline'), cp = require('child_process'), crypto = require('crypto');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1';
+const CPT = 2.42, K = 10;
+const git = (args, input) => cp.execFileSync('git', ['-C', REPO, ...args], { input, maxBuffer: 1 << 30 });
+const log = (s) => fs.appendFileSync(W + '/out/baseline-log.txt', new Date().toISOString() + ' ' + s + '\n');
+const part = Object.fromEntries(fs.readFileSync(W + '/out/split-sessions.tsv', 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')));
+const TEXT = /\.(py|ts|tsx|js|jsx|mjs|cjs|md|json|ya?ml|toml|sh|txt|sql|html|css|kt|java|ini|cfg|env\.example|example)$/i;
+const SKIP = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$|(^|\/)node_modules\//;
+const MAXB = 1500000;
+const IDG = /\b(?:[A-Z]{1,3}\d{0,2}-[A-Z]{0,2}\d{1,4}|O\d{1,2}-F\d{1,3}|[BCDFGHLR]\d{2,4}|KS-[OP]\d{1,2}|LIM-\d{2})\b/g;
+const OUTSIDE = new Set(['outside-repository', 'unresolved']);
+const isRepoRel = (f) => f && !/^[A-Za-z]:\//.test(f) && !f.startsWith('/') && !f.startsWith('~') && !f.startsWith('$') && !f.startsWith('..');
+const STOP = new Set(['the', 'and', 'for', 'def', 'class', 'function', 'const', 'export', 'async', 'return', 'import', 'from', 'type', 'interface', 'enum', 'let', 'var', 'self', 'none', 'true', 'false', 'null', 'with', 'this', 'that', 'md', 'py', 'ts', 'tsx', 'js', 'jsx', 'json', 'txt']);
+function words(s) { return String(s || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2 && !STOP.has(w)); }
+// ---------- parse one file's text into index entries ----------
+function parse(path, text) {
+  const L = text.split('\n').map((s) => s.replace(/\r$/, '')); const n = L.length;
+  const cum = new Int32Array(n + 1); for (let i = 0; i < n; i++) cum[i + 1] = cum[i] + L[i].length + 1;
+  const syms = [], heads = [], idDefs = [], idCites = new Map();
+  const code = /\.(py|ts|tsx|js|jsx|mjs|cjs|kt|java)$/i.test(path), md = /\.md$/i.test(path);
+  const ind = (s) => s.match(/^\s*/)[0].length;
+  if (code) {
+    const py = /\.py$/i.test(path);
+    const RE = py ? [/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)/, /^\s*class\s+([A-Za-z_]\w*)/, /^([A-Z][A-Z0-9_]{2,})\s*(?::[^=]*)?=/]
+      : [/^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/, /^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/, /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*[:=]/, /^\s*(?:export\s+)?(?:interface|type|enum)\s+([A-Za-z_$][\w$]*)/, /^\s*(?:fun|val|object)\s+([A-Za-z_]\w*)/];
+    for (let i = 0; i < n; i++) {
+      let m = null; for (const r of RE) { m = L[i].match(r); if (m) break; } if (!m) continue;
+      const d = ind(L[i]); let e = i; let j = i + 1;
+      for (; j < n && j < i + 4000; j++) { const t = L[j]; if (!t.trim()) continue; const dj = ind(t); if (dj < d) break; if (dj === d) { if (/^[}\])]/.test(t.trim())) { e = j; } break; } e = j; }
+      syms.push({ name: m[1], a: i + 1, b: e + 1 });
+    }
+  }
+  if (md) {
+    const H = []; let fence = false;
+    for (let i = 0; i < n; i++) { if (/^\s*```/.test(L[i])) fence = !fence; if (fence) continue; const m = L[i].match(/^(#{1,6})\s+(.*)$/); if (m) H.push({ lvl: m[1].length, t: m[2].trim().slice(0, 160), a: i + 1 }); }
+    for (let k = 0; k < H.length; k++) { let b = n; for (let q = k + 1; q < H.length; q++) if (H[q].lvl <= H[k].lvl) { b = H[q].a - 1; break; } heads.push({ t: H[k].t, a: H[k].a, b }); }
+  }
+  for (let i = 0; i < n; i++) {
+    const ms = L[i].match(IDG); if (!ms) continue;
+    for (const id of new Set(ms)) {
+      const t = L[i].trim(); let def = false, a = i + 1, b = i + 1;
+      if (md && /^#{1,6}\s/.test(t)) { def = true; const h = heads.find((h) => h.a === i + 1); if (h) b = h.b; }
+      else if (md && /^\|/.test(t) && (t.split('|')[1] || '').includes(id)) def = true;
+      else if (md && new RegExp('^(?:[-*]\\s+|\\d+\\.\\s+)?\\**`?' + id.replace(/[-]/g, '\\-') + '\\b').test(t)) def = true;
+      if (def) idDefs.push({ id, a, b }); else { let c = idCites.get(id); if (!c) idCites.set(id, (c = [])); if (c.length < 200) c.push(i + 1); }
+    }
+  }
+  return { n, cum, syms, heads, idDefs, idCites };
+}
+const tokOf = (P, a, b) => { if (!P) return 0; a = Math.max(1, a); b = Math.min(P.n, b); if (b < a) return 0; return (P.cum[b] - P.cum[a - 1]) / CPT; };
+// ---------- untracked files (current content) ----------
+const UNTR = new Map();
+for (const f of fs.readFileSync(W + '/out/files-untracked.txt', 'utf8').split('\n').map((s) => s.trim()).filter(Boolean)) {
+  if (!TEXT.test(f) || SKIP.test(f)) continue; let st; try { st = fs.statSync(REPO + '/' + f); } catch { continue; } if (st.size > MAXB) continue;
+  UNTR.set(f, parse(f, fs.readFileSync(REPO + '/' + f, 'utf8')));
+}
+log('untracked parsed ' + UNTR.size + ' rss ' + Math.round(process.memoryUsage().rss / 1e6) + 'MB');
+// ---------- blob cache ----------
+const BLOB = new Map();
+function treeOf(commit) {
+  const out = git(['ls-tree', '-r', '-l', commit]).toString().split('\n'); const T = new Map(); const need = [];
+  for (const l of out) { const m = l.match(/^\d+ blob ([0-9a-f]{40})\s+(\d+|-)\t(.*)$/); if (!m) continue; const f = m[3]; if (!TEXT.test(f) || SKIP.test(f) || +m[2] > MAXB) continue; T.set(f, m[1]); if (!BLOB.has(m[1])) need.push([m[1], f, +m[2]]); }
+  let k = 0;
+  while (k < need.length) {
+    const chunk = []; let sz = 0; while (k < need.length && (sz < 30e6 || !chunk.length)) { chunk.push(need[k]); sz += need[k][2]; k++; }
+    const buf = git(['cat-file', '--batch'], chunk.map((c) => c[0]).join('\n') + '\n'); let p = 0;
+    for (const [sha, f] of chunk) { const nl = buf.indexOf(10, p); const size = +buf.slice(p, nl).toString().split(' ')[2]; BLOB.set(sha, parse(f, buf.slice(nl + 1, nl + 1 + size).toString('utf8'))); p = nl + 1 + size + 1; }
+  }
+  return T;
+}
+// ---------- per-commit index ----------
+function buildIndex(T) {
+  const E = []; // entries: {p, a, b, kind, name, P}
+  const files = new Map();
+  const add = (f, P, cur) => { files.set(f, { P, cur }); E.push({ p: f, a: 1, b: P.n, kind: 'file', name: f.split('/').pop(), P, cur }); for (const s of P.syms) E.push({ p: f, a: s.a, b: s.b, kind: 'sym', name: s.name, P, cur }); for (const h of P.heads) E.push({ p: f, a: h.a, b: h.b, kind: 'head', name: h.t, P, cur }); for (const d of P.idDefs) E.push({ p: f, a: d.a, b: d.b, kind: 'iddef', name: d.id, P, cur }); };
+  for (const [f, sha] of T) add(f, BLOB.get(sha), false);
+  for (const [f, P] of UNTR) if (!files.has(f)) add(f, P, true);
+  // BM25 (arm C) over entry text = name + path words (files: path words only)
+  const inv = new Map(); const len = new Float32Array(E.length); let tot = 0;
+  E.forEach((e, i) => { const ws = e.kind === 'file' ? words(e.p) : [...words(e.name), ...words(e.p.split('/').pop())]; len[i] = ws.length; tot += ws.length; const tf = new Map(); for (const w of ws) tf.set(w, (tf.get(w) || 0) + 1); for (const [w, c] of tf) { let l = inv.get(w); if (!l) inv.set(w, (l = [])); l.push(i, c); } });
+  const byName = new Map(), byLower = new Map(), byPath = new Map(), byBase = new Map(), byId = new Map();
+  E.forEach((e, i) => {
+    if (e.kind === 'sym') { (byName.get(e.name) || byName.set(e.name, []).get(e.name)).push(i); const lo = e.name.toLowerCase(); (byLower.get(lo) || byLower.set(lo, []).get(lo)).push(i); }
+    if (e.kind === 'file') { byPath.set(e.p, i); const b = e.name.toLowerCase(); (byBase.get(b) || byBase.set(b, []).get(b)).push(i); }
+    if (e.kind === 'iddef') (byId.get(e.name) || byId.set(e.name, []).get(e.name)).push(i);
+  });
+  const lowerNames = [...byLower.keys()];
+  const heads = []; E.forEach((e, i) => { if (e.kind === 'head') heads.push([e.name.toLowerCase(), i]); });
+  return { E, files, inv, len, avg: tot / Math.max(1, E.length), byName, byLower, byPath, byBase, byId, lowerNames, heads };
+}
+// ---------- query from seed ----------
+function queryOf(x) {
+  const s = x.seed || {}; const q = { paths: [], terms: [], ids: [], phrases: [], scope: [] };
+  if (s.kind === 'path') q.paths = [s.path, ...(s.paths || [])].filter(isRepoRel);
+  if (s.kind === 'history') q.paths = (s.paths || []).filter(isRepoRel);
+  if (s.kind === 'pattern' || s.kind === 'glob') { q.terms = s.terms || []; q.ids = s.ids || []; q.phrases = s.phrases || []; q.scope = [].concat(s.scope || []).filter((p) => isRepoRel(p) && p !== '.' && p !== ''); }
+  q.paths = [...new Set(q.paths.map((p) => p.replace(/^\.\//, '')))];
+  return q;
+}
+const inScope = (q, p) => !q.scope.length || q.scope.some((s) => p === s || p.startsWith(s.replace(/\/$/, '') + '/'));
+function rank(cands, xid) { // cands: Map entryIdx -> [score, order]; ties broken by a seeded hash (order is used only for outline order)
+  const seed = parseInt(String(xid).slice(0, 8), 16) | 0;
+  const arr = [...cands].map(([i, [sc, ord]]) => [i, sc, ord, Math.imul((i ^ seed) + 0x9e3779b9, 2654435761) >>> 0]);
+  arr.sort((a, b) => b[1] - a[1] || a[2] - b[2] || a[3] - b[3]);
+  const tieAtCut = arr.length > K && arr[K - 1][1] === arr[K][1] && arr[K - 1][2] === arr[K][2];
+  return { top: arr.slice(0, K).map((a) => a[0]), n: arr.length, tieAtCut };
+}
+function armA(ix, q, x) {
+  const c = new Map(); const put = (i, sc, ord = 0) => { const o = c.get(i); if (!o || o[0] < sc) c.set(i, [sc, ord]); else if (o[0] === sc) o[1] = Math.min(o[1], ord); };
+  for (const p of q.paths) { let i = ix.byPath.get(p); if (i == null) { const b = (ix.byBase.get(p.split('/').pop().toLowerCase()) || []).filter((j) => ix.E[j].p.endsWith('/' + p) || p.endsWith('/' + ix.E[j].p)); i = b[0]; } if (i == null) continue; put(i, 10); const f = ix.E[i].p; ix.E.forEach((e, j) => { if (e.p === f && e.kind === 'sym') put(j, 9, e.a); }); }
+  const lt = q.terms.map((t) => t.toLowerCase());
+  const acc = new Map(); const addS = (i, v) => { if (inScope(q, ix.E[i].p)) acc.set(i, (acc.get(i) || 0) + v); };
+  q.terms.forEach((t, k) => { for (const i of ix.byName.get(t) || []) addS(i, 3); for (const i of ix.byLower.get(lt[k]) || []) if (ix.E[i].name !== t) addS(i, 2); });
+  for (const lo of ix.lowerNames) for (const t of lt) if (t.length >= 4 && lo !== t && lo.includes(t)) for (const i of ix.byLower.get(lo)) addS(i, 1);
+  for (const [b, is] of ix.byBase) { const stem = b.replace(/\.[^.]+$/, ''); for (const t of lt) if (t.length >= 3 && (stem === t ? 2 : t.length >= 4 && b.includes(t) ? 1 : 0)) for (const i of is) addS(i, stem === t ? 2 : 1); }
+  for (const [i, v] of acc) put(i, v);
+  return c;
+}
+function armB(ix, q, x) {
+  const c = new Map(); const put = (i, sc, ord = 0) => { if (!inScope(q, ix.E[i].p) && !q.paths.length) return; const o = c.get(i); if (!o || o[0] < sc) c.set(i, [sc, ord]); };
+  for (const p of q.paths) { if (!/\.md$/i.test(p)) continue; ix.E.forEach((e, j) => { if (e.kind === 'head' && (e.p === p || e.p.endsWith('/' + p))) put(j, 10, e.a); }); }
+  for (const id of q.ids) { for (const i of ix.byId.get(id) || []) put(i, 6); for (const [f, { P, cur }] of ix.files) { const ls = P.idCites.get(id); if (!ls) continue; if (!inScope(q, f)) continue; for (const l of ls) { const j = ix.E.push({ p: f, a: l, b: l, kind: 'idcite', name: id, P, cur }) - 1; put(j, 2, 0); } } }
+  const ph = q.phrases.map((p) => p.toLowerCase()).filter((p) => p.length >= 6), lt = q.terms.map((t) => t.toLowerCase()).filter((t) => t.length >= 3);
+  if (ph.length || lt.length) for (const [h, i] of ix.heads) { let sc = 0; for (const p of ph) if (h.includes(p)) sc += 3; for (const t of lt) if (h.includes(t)) sc += 1; if (sc) put(i, sc); }
+  return c;
+}
+function armC(ix, q, x) {
+  const qw = [...new Set([...q.terms.flatMap(words), ...q.ids.flatMap(words), ...q.phrases.flatMap(words), ...q.paths.flatMap(words)])];
+  const N = ix.E.length; const sc = new Map();
+  for (const w of qw) { const l = ix.inv.get(w); if (!l) continue; const df = l.length / 2; const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5)); for (let k = 0; k < l.length; k += 2) { const i = l[k], tf = l[k + 1]; if (!inScope(q, ix.E[i].p)) continue; const v = idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * ix.len[i] / ix.avg)); sc.set(i, (sc.get(i) || 0) + v); } }
+  const c = new Map(); for (const [i, v] of sc) c.set(i, [Math.round(v * 1e6) / 1e6, 0]); return c;
+}
+// ---------- truth ----------
+function truthOf(x) {
+  const conf = x.truth.some((t) => t.level === 'confirmed'); const prim = conf ? x.truth.filter((t) => t.level === 'confirmed') : x.truth;
+  const m = new Map();
+  for (const t of prim) { if (OUTSIDE.has(t.replay) || !isRepoRel(t.f)) continue; const spans = conf ? t.conf.spans : t.spans; m.set(t.f, { spans: spans || [], open: (!spans || !spans.length), replay: t.replay }); }
+  return { conf, m };
+}
+function hitOf(e, T) { const t = T.m.get(e.p); if (!t) return 0; if (t.open || e.kind === 'file') return 2; return t.spans.some((s) => e.a <= s[1] && e.b >= s[0]) ? 2 : 1; } // 2 span hit, 1 file-only hit
+// ---------- main ----------
+(async () => {
+  fs.writeFileSync(W + '/out/baseline-log.txt', '');
+  const byCommit = new Map(); let nDev = 0;
+  const rl = readline.createInterface({ input: fs.createReadStream(W + '/out/instances-v.jsonl'), crlfDelay: Infinity });
+  for await (const l of rl) { if (!l.trim()) continue; const x = JSON.parse(l); if (part[x.sid] !== 'dev') continue; nDev++; const k = x.ver.commit || 'none'; if (!byCommit.has(k)) byCommit.set(k, []); byCommit.get(k).push({ id: x.id, sid: x.sid, cls: x.cls, form: x.form, date: x.date, seed: x.seed, truth: x.truth, fetched: x.fetched, carried: x.carried }); }
+  log('dev instances ' + nDev + ' commits ' + byCommit.size);
+  const wO = fs.createWriteStream(W + '/out/baseline-instances.jsonl'); let done = 0;
+  for (const [commit, xs] of byCommit) {
+    const T = commit === 'none' ? new Map() : treeOf(commit); const ix = buildIndex(T); const baseLen = ix.E.length;
+    for (const x of xs) {
+      const q = queryOf(x); const TR = truthOf(x); const r = { id: x.id, sid: x.sid, cls: x.cls, form: x.form, seedKind: x.seed.kind, fetched: x.fetched, carried: x.carried, conf: TR.conf, commit };
+      const truthFiles = [...TR.m.keys()]; const inIndex = truthFiles.filter((f) => ix.files.has(f));
+      r.truthFiles = truthFiles.length; r.truthInIndex = inIndex.length; r.truthCurrentOnly = inIndex.filter((f) => ix.files.get(f).cur).length;
+      r.truthTok = Math.round(inIndex.reduce((a, f) => { const t = TR.m.get(f); const P = ix.files.get(f).P; return a + (t.open ? tokOf(P, 1, P.n) : t.spans.reduce((s, sp) => s + tokOf(P, sp[0], sp[1]), 0)); }, 0));
+      const hasQ = q.paths.length + q.terms.length + q.ids.length + q.phrases.length > 0;
+      r.scorable = !truthFiles.length ? 'no-in-repo-truth' : !hasQ ? 'no-usable-seed' : !inIndex.length ? 'truth-not-in-index' : 'yes';
+      if (r.scorable === 'yes') {
+        r.arms = {};
+        for (const [name, fn] of [['A', armA], ['B', armB], ['C', armC]]) {
+          const c = fn(ix, q, x); const R = rank(c, x.id); const top = R.top.map((i) => ix.E[i]);
+          let fileRank = 0, spanRank = 0; top.forEach((e, k) => { const h = hitOf(e, TR); if (h && !fileRank) fileRank = k + 1; if (h === 2 && !spanRank) spanRank = k + 1; });
+          const listTok = top.reduce((a, e) => a + (e.p.length + String(e.a).length + String(e.b).length + e.kind.length + String(e.name).length + 5) / CPT, 0);
+          const he = spanRank ? top[spanRank - 1] : null; const readTok = he ? tokOf(he.P, he.a, he.b) : 0;
+          // oracle choice among the 10: the cheapest span-hitting result (what a reader who picks the right line would read)
+          let minRead = null; for (const e of top) if (hitOf(e, TR) === 2) { const t = tokOf(e.P, e.a, e.b); if (minRead == null || t < minRead) minRead = t; }
+          r.arms[name] = { n: R.n, tieAtCut: R.tieAtCut, fileRank, spanRank, listTok: Math.round(listTok), readTok: Math.round(readTok), minReadTok: minRead == null ? null : Math.round(minRead), hitCur: he ? he.cur : null, hitKind: he ? he.kind : null };
+        }
+      }
+      ix.E.length = baseLen; // drop per-query citation entries
+      wO.write(JSON.stringify(r) + '\n'); done++;
+    }
+    log('commit ' + commit.slice(0, 8) + ' instances ' + xs.length + ' entries ' + baseLen + ' blobs ' + BLOB.size + ' done ' + done + ' rss ' + Math.round(process.memoryUsage().rss / 1e6) + 'MB');
+  }
+  wO.end(); log('finished ' + done);
+})();

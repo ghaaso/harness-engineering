@@ -1,0 +1,200 @@
+// Re-appliable patch of data/data.json (owner page, section M: graphify itself, on our tasks; 2026-11-13).
+// Run from the graph-test folder, AFTER the two earlier patches (patch-engines-k rewrites d.k from scratch):
+//   node - < data/patch-engines-k.js.txt  &&  node - < data/patch-k0-l.js.txt  &&  node - < data/patch-m-graphify.js.txt
+// It sets d.m (section M) and changes three things in d.k: the owner-table row on graphify points to M and is
+// marked partly measured; arm G1 of the wider-test design carries "scripted screen done, see M; with an agent:
+// not run"; the graphify block gets a pointer line to M. Nothing else in data.json is touched.
+// Inputs (read-only):
+//   ../evidence/harness-bottlenecks/graph2/graphify/result.json      (the grader's aggregates; every G-1..G-6 number)
+//   ../evidence/harness-bottlenecks/graph2/graphify/AUDIT-CLAIMS.md  (claims refuter: transcribed below with section)
+//   ../evidence/harness-bottlenecks/graph2/graphify/AUDIT-RUN.md     (run audit: transcribed below)
+// The page shows aggregates only: no held-out question text, no reference content, no per-task score, no task id.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const HERE = process.cwd();
+const DATA = path.join(HERE, 'data', 'data.json');
+const GF = path.join(HERE, '..', 'evidence', 'harness-bottlenecks', 'graph2', 'graphify');
+const d = JSON.parse(fs.readFileSync(DATA, 'utf8'));
+if (!d.k || !d.k.rows || !d.l) throw new Error('run data/patch-engines-k.js.txt and data/patch-k0-l.js.txt first');
+const R = JSON.parse(fs.readFileSync(path.join(GF, 'result.json'), 'utf8'));
+if (!R.inventory || !R.inventory.ok || R.independent_rescore.differing !== 0) throw new Error('graphify result.json: inventory or rescore not clean');
+const ARMS = ['graphify', 'relational', 'search', 'floor-co', 'floor-dir'];
+const SETS = ['T1', 'T2', 'T3', 'T1x', 'T4'];
+const tri = (o) => [o.diff, o.ci95[0], o.ci95[1]];
+// the page's own number form (build.js.txt sg/ci): sign, three decimals, a true minus
+const r3 = x => (Math.round(Math.abs(x) * 1000 + 1e-7) / 1000).toFixed(3);
+const sg3 = x => (+r3(x) === 0 ? r3(x) : (x > 0 ? '+' : '−') + r3(x));
+const t3s = v => sg3(v[0]) + ' [' + sg3(v[1]) + ', ' + sg3(v[2]) + ']';
+
+/* ---------- (1) per arm and set ---------- */
+const table = R.table.map(r => ({ arm: r.arm, set: r.set, n: r.tasks, cl: r.clusters, p: r.primary, se: r.se, r2000: r.r2000, r4000: r.r4000, r16000: r.r16000, tok: r.median_tokens_8000, empty: r.empty_answers }));
+for (const a of ARMS) for (const s of SETS) if (!table.find(r => r.arm === a && r.set === s)) throw new Error('missing row ' + a + ' ' + s);
+
+/* ---------- (2) paired differences G-1..G-4 ---------- */
+const cmp = R.comparisons.map(c => {
+  const sets = {};
+  for (const s of SETS) { const x = c.sets[s]; sets[s] = { cl: x.primary.clusters, p: tri(x.primary), r2000: tri(x.r2000), r4000: tri(x.r4000), r16000: tri(x.r16000), gh: x.primary.graphify_higher, oh: x.primary.other_higher, tied: x.primary.tied }; }
+  return { id: c.id, b: c.b_arm, verdict: c.verdict, winner: c.winner || null, v2000: c.same_rule_at_2000.verdict, v4000: c.same_rule_at_4000.verdict, sets };
+});
+// claims refuter (AUDIT-CLAIMS.md section 2, headlines 1 and 2; its recheck.json): five commits dropped in BOTH directions,
+// and seeds matched by definition id only. RESULT.md reported the leader's direction only; for that direction the
+// grader's values (result.json sensitivity_five_most_favourable_commits_dropped) replace the refuter's below
+// (G-1..G-3: the other tool leads, so dropOther; G-4: graphify leads, so dropGraphify). Independent check of M, 2026-11-14.
+const sens = {
+  'G-1': { asScored: tri(R.comparisons[0].sets.T1.primary), dropGraphify: [-0.1608, -0.2122, -0.1138], dropOther: [-0.0995, -0.1407, -0.0595], idOnly: [-0.1176, -0.1648, -0.072], idTasks: 291, idCommits: 74 },
+  'G-2': { asScored: tri(R.comparisons[1].sets.T1.primary), dropGraphify: [-0.0994, -0.1662, -0.037], dropOther: [-0.0102, -0.0653, 0.0453], idOnly: [-0.0452, -0.1103, 0.018] },
+  'G-3': { asScored: tri(R.comparisons[2].sets.T1.primary), dropGraphify: [-0.1153, -0.1839, -0.0505], dropOther: [-0.0237, -0.0839, 0.0359], idOnly: [-0.0579, -0.127, 0.0108] },
+  'G-4': { asScored: tri(R.comparisons[3].sets.T1.primary), dropGraphify: [-0.0227, -0.0913, 0.041], dropOther: [0.0673, 0.0134, 0.1211], idOnly: [0.0396, -0.0307, 0.1069] },
+  commitsLeft: R.sensitivity_five_most_favourable_commits_dropped['G-1'].five_most_favourable_to_the_leader_dropped.commits
+};
+for (const G of ['G-1', 'G-2', 'G-3', 'G-4']) {
+  const x = R.sensitivity_five_most_favourable_commits_dropped[G].five_most_favourable_to_the_leader_dropped;
+  const leaderIsGraphify = R.comparisons.find(c => c.id === G).sets.T1.primary.diff > 0;
+  sens[G][leaderIsGraphify ? 'dropGraphify' : 'dropOther'] = [x.diff, x.ci95[0], x.ci95[1]];
+  sens[G].grader = leaderIsGraphify ? 'dropGraphify' : 'dropOther';
+}
+// ranking measures that do not charge for file size (AUDIT-CLAIMS.md headlines 1 and 2; recheck.json t1.all), T1 held-out
+const rank = {
+  'G-1': { r10: [-0.1024, -0.1453, -0.0597], nd: [-0.0629, -0.0946, -0.0316], mrr: [-0.015, -0.0551, 0.0269] },
+  'G-2': { r10: [-0.0403, -0.09, 0.005], nd: [-0.0243, -0.0669, 0.0118], mrr: [0.0145, -0.0354, 0.0599] },
+  'G-3': { r10: [-0.0844, -0.1468, -0.0217], nd: [-0.0712, -0.1262, -0.0155], mrr: [-0.0143, -0.075, 0.0473] },
+  'G-4': { r10: [0.0152, -0.0766, 0.1038], nd: [0.0932, 0.0238, 0.1606], mrr: [0.2424, 0.1645, 0.3201] }
+};
+// files shown inside an 8,000-token answer, T1 held-out (AUDIT-CLAIMS.md headline 1; recheck.json packer)
+const packer = { graphify: { files: 18, perFile: 422 }, relational: { files: 30.5, perFile: 247 }, search: { files: 26, perFile: 293 } };
+
+/* ---------- (3) where the seed lives, T1 ---------- */
+const BL = R.by_seed_location.T1;
+const LOCS = [['mobile', 'mobile app'], ['backend', 'backend'], ['web_without_root_task', 'web, without the root-level task'], ['web_with_root_task', 'web, with the root-level task'], ['outside_mobile', 'everything outside the mobile app'], ['all', 'all changes']];
+const loc = LOCS.map(([k, label]) => { const g = BL[k]; const o = { key: k, label, tasks: g.tasks, commits: g.arms.graphify.commits, means: {}, d: {} };
+  for (const a of ARMS) o.means[a] = g.arms[a].primary;
+  for (const G of ['G-1', 'G-2', 'G-3', 'G-4']) { const x = g.diffs && g.diffs[G]; if (x) o.d[G] = { p: tri(x.primary), r2000: tri(x.r2000), r4000: tri(x.r4000) }; else if (k === 'all') { const c = cmp.find(c => c.id === G).sets.T1; o.d[G] = { p: c.p, r2000: c.r2000, r4000: c.r4000 }; } }
+  return o; });
+// mobile fragility and backend ranking (AUDIT-CLAIMS.md headline 3; recheck.json t1.mobile / t1.backend)
+const mobile = {
+  dropGraphify: { 'G-1': [-0.0552, -0.1317, -0.0035], 'G-2': [0.0664, -0.0237, 0.1412], 'G-3': [0.066, -0.0304, 0.1434], 'G-4': [0.1043, 0.0458, 0.1677] },
+  rankVsSearch: { r10: [-0.028, -0.0968, 0.0302], nd: [-0.0404, -0.096, 0.0063], mrr: [-0.049, -0.1073, 0.0077] },
+  r10VsTyped: [-0.1077, -0.1876, -0.0375],
+  dropCommitsLeft: 26
+};
+const backend = { rankVsSearch: { r10: [-0.0351, -0.1026, 0.0243], nd: [-0.0012, -0.062, 0.0468], mrr: [0.0709, -0.003, 0.1345] }, vsTypedHigher: 3, vsTypedLower: 37 };
+// run audit (AUDIT-RUN.md): six interval ends on small groups differ from its own bootstrap, inside its 20-seed range
+const mc = { n: 6, lo: 0.0055, hi: 0.0123, clMin: 7, clMax: 31, seeds: 20,
+  // run audit (AUDIT-RUN.md, wording points): G-4 on the cross-runtime subset, upper interval end across bootstrap seeds
+  t1xG4Hi: { min: -0.005, max: 0.001, resamples: 400000, at: -0.0035 } };
+
+/* ---------- (4) native form, G-5 ---------- */
+const native = {};
+for (const s of SETS) { const x = R.native_form_G5.sets[s]; native[s] = { tasks: x.tasks_scored, commits: x.commits, recall: x.native_file_recall, pooled: x.native_file_recall_pooled, tok: x.native_tokens_median, tokMin: x.native_tokens_min, tokMax: x.native_tokens_max, files: x.native_distinct_files_named_median, arms: {} };
+  for (const a of Object.keys(x.arms)) native[s].arms[a] = { fr: x.arms[a].file_recall_2000, d: tri(x.arms[a].native_minus_arm) }; }
+// form of the printout (RESULT.md G-5; AUDIT-RUN.md; AUDIT-CLAIMS.md headline 5)
+const nativeForm = { truncated: 417, nodeLines: 64, wholeFiles2000: { graphify: 5, relational: 7, search: 6 }, longerPct: 9, charsPerToken: 3,
+  driftMedianPct: 11, driftAnswers: 39, recallWithoutDrift: 0.351, depth: 2 };
+
+/* ---------- (5) questions, G-6 ---------- */
+const Q = R.questions_G6;
+const qArm = (a, x) => ({ r: x.macro_recall, p: x.macro_precision, f1: x.macro_f1, tok: x.median_answer_tokens, read: x.median_tokens_read == null ? null : x.median_tokens_read });
+const qBlock = b => ({ n: b.questions, arms: { gd: qArm('gd', b.arms['graphify default']), g8: qArm('g8', b.arms['graphify --budget 8000']), typed: qArm('t', b.arms.typed), search: qArm('s', b.arms['scripted search']) },
+  d: { gdTyped: { f1: tri(b.diffs['graphify default - typed'].f1), r: tri(b.diffs['graphify default - typed'].recall) }, gdSearch: { f1: tri(b.diffs['graphify default - scripted search'].f1), r: tri(b.diffs['graphify default - scripted search'].recall) },
+    g8Typed: { f1: tri(b.diffs['graphify --budget 8000 - typed'].f1), r: tri(b.diffs['graphify --budget 8000 - typed'].recall) }, g8Search: { f1: tri(b.diffs['graphify --budget 8000 - scripted search'].f1), r: tri(b.diffs['graphify --budget 8000 - scripted search'].recall) } } });
+const KINDN = { screen_tables: 'tables written from a screen', tests_reach: 'tests reaching a function', invariants_on_file: 'rules (invariants) on a file', other_half: 'the other half of a rule', setting_readers: 'readers of a setting', migrations_touch_table: 'migrations of a table', route_clients: 'clients of a route', change_reach: 'what a change reaches' };
+const q = { all30: qBlock(Q.all30), untouched22: qBlock(Q.untouched22),
+  kinds: Object.keys(KINDN).map(k => { const b = Q.by_kind[k]; return { key: k, label: KINDN[k], n: b.questions, gd: b.arms['graphify default'].macro_f1, typed: b.arms.typed.macro_f1, search: b.arms['scripted search'].macro_f1 }; }),
+  items: Q.graphify_answer_items_median, lenient: Q.sensitivity_definition_counts_on_path_alone.all30,
+  needs: R.link_kind_groups_item20.questions.groups.NEEDS.questions, without: R.link_kind_groups_item20.questions.groups.WITHOUT.questions, docs: R.link_kind_groups_item20.questions.groups.DOCUMENT.questions,
+  needsF1: { gd: R.link_kind_groups_item20.questions.groups.NEEDS.arms['graphify default'].macro_f1, typed: R.link_kind_groups_item20.questions.groups.NEEDS.arms.typed.macro_f1, search: R.link_kind_groups_item20.questions.groups.NEEDS.arms['scripted search'].macro_f1 },
+  // run audit (AUDIT-RUN.md, claim on G-6 precision and F1): its own read-out of candidates from graphify's text
+  auditF1: { gd: 0.067, g8: 0.070 }, auditP: { gd: 0.066, g8: 0.060 } };
+
+/* ---------- (6) the group that needs links graphify does not build (item 20) ---------- */
+const LK = R.link_kind_groups_item20.tasks_T1;
+const lg = (G) => ({ tasks: G.tasks, commits: G.arms.graphify.commits, g: G.arms.graphify.primary, t: G.arms.relational.primary, s: G.arms.search.primary, d: tri(G.graphify_minus_typed) });
+const lf = (F) => ({ n: F.reference_files, shown: F.shown_within_8000, share: F.share_shown });
+const links = { tasks: LK.tasks, missingKinds: LK.missing_kinds.length,
+  unb: { NEEDS: lg(LK.unbounded.groups.NEEDS), WITHOUT: lg(LK.unbounded.groups.WITHOUT), files: { without: lf(LK.unbounded.reference_files_by_class.without_missing_kind), only: lf(LK.unbounded.reference_files_by_class.only_through_missing_kind) } },
+  hop3: { NEEDS: lg(LK.hop3_sensitivity.groups.NEEDS), WITHOUT: lg(LK.hop3_sensitivity.groups.WITHOUT), files: { without: lf(LK.hop3_sensitivity.reference_files_by_class.without_missing_kind), only: lf(LK.hop3_sensitivity.reference_files_by_class.only_through_missing_kind), far: lf(LK.hop3_sensitivity.reference_files_by_class.not_within_3_hops) } } };
+links.totalFiles = links.unb.files.without.n + links.unb.files.only.n;
+links.onlyShare = Math.round(links.unb.files.only.n / links.totalFiles * 10000) / 10000;
+// claims refuter, headline 4 (tuning data only): the typed store held to parser-type edge classes
+links.tuneIndication = { parserOnly2hop: 0.608, allClass2hop: 0.664, typedFrozen: 0.785, graphify: 0.682 };
+
+/* ---------- (7) build cost ---------- */
+const BC = R.build_cost;
+const build = { graphs: BC.graphify.graphs, noRemoval: BC.graphify.parents_without_removal, typedParents: BC.typed_facts.parents, paired: BC.paired_by_parent.parents,
+  g: { ext: BC.graphify.extract_seconds, cont: BC.graphify.container_seconds, mb: BC.graphify.graph_json_megabytes, nodes: BC.graphify.nodes, edges: BC.graphify.edges },
+  t: { sec: BC.typed_facts.build_seconds, mb: BC.typed_facts.stored_megabytes, nodes: BC.typed_facts.nodes, edges: BC.typed_facts.edges },
+  ratio: { nodes: BC.paired_by_parent.median_nodes_ratio_graphify_over_typed, edges: BC.paired_by_parent.median_edges_ratio, bytes: BC.paired_by_parent.median_bytes_ratio, time: BC.paired_by_parent.median_time_ratio } };
+['ext', 'cont', 'mb', 'nodes', 'edges'].forEach(k => { delete build.g[k].n; });
+['sec', 'mb', 'nodes', 'edges'].forEach(k => { delete build.t[k].n; });
+
+/* ---------- tuning and fair use ---------- */
+// RESULT.md item 21 and AUDIT-CLAIMS.md section 1 and "other statements"; AUDIT-RUN.md (fair use)
+// se: the chosen configuration's standard error; bestSe: the best one's, which the selection threshold 0.6576 uses (AUDIT-RUN.md)
+const tune = { configs: 10, typedConfigs: 60, chosen: 0.6816, best: 0.688, se: 0.0307, bestSe: 0.0304, threshold: 0.6576,
+  // [arm, tuning primary, held-out primary, held-out minus tuning]; comparators from d.frozen_configurations / d.heldout (same values as AUDIT-CLAIMS.md section 1)
+  drops: [['graphify', 0.6816, 0.5635], ['relational', 0.7853, 0.7001], ['search', 0.7593, 0.6245], ['floor-co', 0.7521, 0.6375], ['floor-dir', 0.7191, 0.5494]].map(x => [x[0], x[1], x[2], Math.round((x[2] - x[1]) * 10000) / 10000]),
+  defaultSingle: 0.390, fullTraversal: [0.671, 0.688], affected: 0.20,
+  variants: [['depth 6 instead of 3', 0.0052], ['the seed file alone, not its definition', 0.0001], ['the MCP server’s community tool (get_community)', -0.405]],
+  bestOfTen: 0.0065, shippedScored: 13 };
+
+/* ---------- the run, in plain words ---------- */
+const setup = { version: '0.9.108', config: 'query-seed-full-d3', frozenAt: '14:27:20', scoringAt: '14:54:30', graphs: BC.graphify.graphs,
+  values: R.independent_rescore.values_checked, files: R.inventory.files_checked, handChecked: 10, tasks: SETS.reduce((a, s) => a + table.find(r => r.arm === 'graphify' && r.set === s).n, 0),
+  questions: Q.all30.questions, untouched: Q.untouched22.questions, empty: SETS.reduce((a, s) => a + table.find(r => r.arm === 'graphify' && r.set === s).empty, 0),
+  emptyT1: R.graphify_empty_answers.T1.count, t3parents: R.t3_by_parent_commit['G-1'].parents,
+  t3byParent: { 'G-1': [R.t3_by_parent_commit['G-1'].graphify_higher, R.t3_by_parent_commit['G-1'].other_higher, R.t3_by_parent_commit['G-1'].tied] } };
+
+/* ---------- words that sit beside the numbers (both refuters' qualifications) ---------- */
+const words = {
+  answer: 'On this test’s own change tasks, graphify’s code layer did not find more of the changed files than the tools this test already had, and it showed no capability that test lacked. Its published numbers measure other things: the size of one capped answer against a whole corpus with no correctness check, conversational memory, and six agent questions on one other repository. So this run does not explain those numbers and does not confirm or refute them; it says nothing about tokens, its document layer, or an agent using it.',
+  g1: 'Part of the gap is graphify putting large, highly connected files first under a budget that charges by size. The first right file comes equally early in both.',
+  inconclusive: '“Inconclusive” means neither “better” nor “equivalent” is supported; it does not mean graphify matched these tools. Each of these three verdicts moves with five of the held-out commits, in one direction or the other.',
+  // corrected after the independent check of M (2026-11-14): at 8,000 tokens the scripted-search interval includes zero
+  t3sign: (() => { const c = id => R.comparisons.find(x => x.id === id); const t3 = c('G-2').sets.T3.primary;
+    return 'Against the changed-together floor the change-completion interval excludes zero (' + t3s(tri(c('G-3').sets.T1.primary)) + '); only the opposite sign on the documented chains (' + t3.clusters + ' tasks from ' + R.t3_by_parent_commit['G-1'].parents + ' parent commits) keeps it from “better” for the floor. Against scripted search the change-completion interval includes zero at 8,000 tokens (' + t3s(tri(c('G-2').sets.T1.primary)) + '); at 2,000 tokens it excludes zero (' + t3s(tri(c('G-2').sets.T1.r2000)) + '), and there the documented chains’ opposite sign keeps it from “better”.'; })(),
+  design: 'Graphify was partly judged on a task it was not designed for: the change tasks ask for a ranked list of files to edit inside a token budget, while its query command is meant for an agent that reads a traversal printout and asks again, and its affected command walks toward dependents only. The comparison asks the same of every tool, and the typed store and scripted search were not designed for these tasks either.',
+  rankFloor: 'On nDCG@10 (' + t3s(rank['G-4'].nd) + ') and the rank of the first right file (' + t3s(rank['G-4'].mrr) + ') graphify ranks above the same-folder floor; on top-10 file recall the interval includes zero (' + t3s(rank['G-4'].r10) + '). These are secondary measures with no declared verdict.',
+  location: 'Graphify’s shortfall is concentrated on backend seeds and grows with answer size. On mobile-app seeds it scored above scripted search and both floors at 8,000 tokens, but not at 2,000 or 4,000 tokens, not on top-10 ranking, and not after dropping five commits; the typed store shows the same mobile pattern, where the history-based tools are weak. Close to the typed store on mobile holds at 8,000 tokens only.',
+  links: 'These files are out of graphify’s reach by construction: it builds no route, table, setting or changed-together relation. Tasks without them still show a gap, and this run does not split that gap between link kinds, ranking and tuning.',
+  questions: 'Given the raw question text, with no agent and no vocabulary step, graphify’s code-layer printout contained a fifth of the reference items at its default budget and about a third at 8,000 tokens. The typed store’s and scripted search’s per-kind answers are counted differently: the typed side’s own costs (knowing the schema, a query program per kind of question) are not counted.',
+  questionsWhy: 'F1 is driven by precision, because graphify’s answer is a traversal printout that names many candidate items, so recall is the fair reading. The question went in verbatim, with its “[repo at commit …]” prefix, to a word matcher; graphify’s documented agent step that first picks words from the graph’s vocabulary was not run, because no model was allowed. The matching rule and the read-out of candidates are ours.',
+  nativeLimits: 'This is graphify’s keyword mode at its defaults (depth 2), not the seeded mode chosen on tuning, and only file paths are credited, although its text also names definitions with file and line.',
+  build: 'Not comparable as a speed or size race: the typed facts were built earlier under conditions not recorded, and the two graphs hold different things (graphify has no route, table, setting or history relation). These figures do not show that either builds faster or smaller.',
+  fair: 'The frozen configuration is a documented use of graphify (its seeded query, depth 3 as in its MCP default) and more generous than its default single call. graphify’s own change command (affected) scored far lower on tuning. Not tried: an agent loop, the model-read document layer, the MCP tools that need GitHub, other relation lists, context filters and padding.'
+};
+const shows = [
+  'On the held-out change tasks, the typed store put more of the real change in front of the reader than graphify’s code layer queried through our adapter, at 2,000, 4,000 and 8,000 tokens, by the declared rule. Part of that gap is file size: graphify puts large, highly connected files first.',
+  'Against scripted search and both floors the verdict is inconclusive, and each verdict moves with five commits. ' + words.rankFloor,
+  'Graphify’s code layer builds no route, table, setting or changed-together relation, so files linked to the seed only that way are out of its reach by construction.',
+  'Given the raw question text with no agent and no vocabulary step, its printout contained far fewer of the reference items than the typed store’s or scripted search’s answers.',
+  'On these tasks its code layer showed no capability this test lacked; graphify’s published numbers measure other things.'
+];
+const notShows = [
+  'Its model-read document layer was not run, nor its community labels and report. The one independent gain reported for graphify sits in that layer, with an agent.',
+  'No agent used it: whether an agent using graphify would do better or worse, call it at all, or read fewer files.',
+  'Anything about tokens in a session: every answer of every tool filled its budget, and no session ran.',
+  'Other repositories, other languages, orientation questions, or graphify versions other than 0.9.108.',
+  'That no graphify configuration or usage could do better: ' + tune.shippedScored + ' configurations built from graphify’s shipped commands and options (' + tune.configs + ' fitted on tuning, ' + tune.variants.length + ' more tried by the run audit) were scored on tuning, against ' + tune.typedConfigs + ' configurations per typed arm.',
+  'That graphify’s graph is right or wrong edge by edge: only rankings were scored.',
+  'Why graphify’s published numbers look good elsewhere, or whether they hold.'
+];
+const sources = { result: 'graph2/graphify/RESULT.md and result.json', claims: 'graph2/graphify/AUDIT-CLAIMS.md', run: 'graph2/graphify/AUDIT-RUN.md', protocol: 'protocol addendum 7' };
+
+d.m = { setup, table, cmp, sens, rank, packer, loc, mobile, backend, mc, native, nativeForm, q, links, build, tune, words, shows, notShows, sources,
+  status: R.what };
+
+/* ---------- K: the owner row on graphify, arm G1, and the graphify block ---------- */
+const row = d.k.rows.find(r => /^how the hell does graphify/.test(r.words));
+if (!row) throw new Error('owner row on graphify not found');
+row.status = 'partly';
+row.measured = 'Partly, since: graphify’s own code layer, run scripted on this test’s tasks with no model and no agent (section M). On the held-out change tasks it found less of the change than the typed store and was inconclusive against scripted search and both floors; it showed no capability this test lacked. Its published numbers measure other things.';
+row.go = ['m', 'k-graphify'];
+row.not = 'Its model-read document layer, community labels and report; an agent using it; tokens in a session; other repositories.';
+const g1 = d.k.wider.arms.find(a => a.id === 'G1');
+if (!g1) throw new Error('arm G1 not found');
+g1.done = 'scripted screen done, see M; with an agent: not run';
+d.k.graphify.measured_here = 'Measured here: its code layer, scripted, on this test’s own tasks (section M).';
+
+fs.writeFileSync(DATA, JSON.stringify(d, null, 1));
+console.log('patched data.json: m rows', table.length, '; comparisons', cmp.length, '; locations', loc.length, '; question kinds', q.kinds.length, '; bytes', fs.statSync(DATA).size);

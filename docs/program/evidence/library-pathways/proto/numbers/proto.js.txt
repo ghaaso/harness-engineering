@@ -1,0 +1,656 @@
+(function () {
+  'use strict';
+  // Every number below comes from the engine (PathwayEngine) and the data files, computed here in the page.
+  var D = JSON.parse(document.getElementById('lp-data').textContent);
+  var E = window.PathwayEngine, C = window.PathwayCore;
+  var MAP = D.map, TABLE = D.params, LIMS = D.lims, CASES = D.cases, TX = D.text;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var cap = function (s) { return String(s).replace(/^./, function (c) { return c.toUpperCase(); }); };
+  function fmt(v, kind) {
+    if (typeof v === 'string') return v;
+    if (v === null || v === undefined || !isFinite(v)) return 'none';
+    var a = Math.abs(v);
+    if (kind === 'pct') { var x = v * 100; return (x !== 0 && Math.abs(x) < 0.1 ? x.toFixed(2) : x.toFixed(1)) + '%'; }
+    if (kind === 'ratio') return a >= 10 ? v.toFixed(1) : v.toFixed(2);
+    if (kind === 'cost') return a >= 100 ? v.toFixed(0) : v.toFixed(1);
+    if (kind === 'rho') return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+    if (kind === 'funnel') return v === 0 ? '0' : a >= 1 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(1);
+    if (kind === 'weight') { var y = 100 * v; return (y < 0 ? '−' : '') + (y === 0 ? '0' : Math.abs(y) >= 0.1 ? Math.abs(y).toFixed(1) : Math.abs(y) >= 0.01 ? Math.abs(y).toFixed(2) : Math.abs(y).toPrecision(1)) + '%'; }
+    if (kind === 'share') { var z = 100 * v; return (z >= 10 || z === 0 ? z.toFixed(0) : z >= 1 ? z.toFixed(0) : z.toFixed(1)) + '%'; }
+    if (v === 0) return '0';
+    if (a >= 100) return v.toFixed(0);
+    if (a >= 10) return v.toFixed(1);
+    if (a >= 1) return v.toFixed(2);
+    return v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
+  }
+  var TAGTIP = { M: 'M: ' + TX.tags.M, S: 'S: ' + TX.tags.S, G: 'G: ' + TX.tags.G };
+  function tag(t) { return '<i class="tag ' + t + '" data-tip="' + esc(TAGTIP[t]) + '" aria-label="' + esc(TAGTIP[t]) + '">' + t + '</i>'; }
+  var ROWS = E.tableRows(TABLE);
+  var PMETA = {}; MAP.parameters.forEach(function (p) { PMETA[p.id] = p; });
+  var pname = function (id) { return (PMETA[id] && PMETA[id].name) || id; };
+  var drawn = TABLE.parameters.filter(function (r) { return r.low !== r.high && !r.run_setting; });
+  var CNT = { drawn: drawn.length, guess: drawn.filter(function (r) { return r.tag === 'G'; }).length };
+  function rich(t) {
+    return esc(t).replace(/\{\{n:([^|}]+)\|([MSG])\}\}/g, function (_, v, g) { return '<b>' + v + '</b>' + tag(g); })
+      .replace(/\{\{c:([a-z_]+)\}\}/g, function (_, k) { return '<b>' + CNT[k] + '</b>' + tag('M'); });
+  }
+  var LIBGI = {}; MAP.lib_groups.forEach(function (g) { LIBGI[g.id] = g; });
+  var CT = TX.sections.conditions, FT = TX.sections.funnel, LT = TX.sections.lims, RT = TX.sections.run, MT = TX.sections.many;
+  var PNAME = TX.policy_names, PSHORT = TX.policy_short;
+  var RATIOS4 = [['cost_vs_ladder', 'Cost', 'ladder'], ['wrong_vs_ladder', 'Wrong rate', 'ladder'], ['cost_vs_top', 'Cost', 'strong'], ['wrong_vs_top', 'Wrong rate', 'strong']];
+  var RNAME = { cost_vs_ladder: 'Cost, against the ladder', wrong_vs_ladder: 'Wrong rate, against the ladder', cost_vs_top: 'Cost, against the strong model', wrong_vs_top: 'Wrong rate, against the strong model' };
+  var BAND = CT.near_band;
+
+  // ------------------------------------------------------------ computed once (the live page recomputes on every slider move)
+  var BEST = E.paramsFromTable(TABLE, 'best');
+  var PATH = E.timePath(MAP, BEST), NPER = PATH.periods.length;
+  var REFS = E.references(MAP, TABLE);
+  var FCOUNT = C.funnelCounts(LIMS, CASES, TX.funnel_steps);
+  var SHT = E.sharedTable(MAP, TABLE);
+  var W8 = null, WLIM = {}, WSTEP = {}, WGROUP = {}, WLO = 0, WHI = 1;
+  var SQ = {};
+  var ENSR = null;
+  window.__ready = { base: false, weights: false, square: false, ens: false };
+  var ST = { fWhich: MAP.funnels[0].id, fPeriod: 'last', sqSheet: 'middle', sqRatio: 'cost_vs_ladder', sqCell: [5, 5], open: { 4: true }, ensWhen: 'last', ensTie: 0, ensN: 1000, ensSeed: 20261112 };
+
+  // ------------------------------------------------------------ shared marks
+  function sideCls(v, band) { var k = C.sideOfOne(v, band); return k === 'below' ? 'lo' : k === 'above' ? 'hi' : k === 'near' ? 'near' : ''; }
+  var SIDEWORD = { lo: 'below one: the library’s figure is lower', hi: 'above one: the library’s figure is higher', near: 'near one' };
+  function wayIcon(p, hollow) {
+    var s = '<svg class="way" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">';
+    if (p === 'library') s += '<circle cx="8" cy="8" r="6" fill="' + (hollow ? 'var(--surface)' : 'currentColor') + '" stroke="currentColor" stroke-width="2"/>';
+    else if (p === 'cheap_ladder') s += '<path d="M8 1.8L14.6 14H1.4z" fill="var(--surface)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>';
+    else s += '<path d="M8 1.2L14.8 8L8 14.8L1.2 8z" fill="var(--surface)" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>';
+    return s + '</svg>';
+  }
+  var WAYS = ['library', 'cheap_ladder', 'top_first'];
+  function pos(v, d) { return Math.max(0, Math.min(100, 100 * (v - d[0]) / (d[1] - d[0]))); }
+  function domainOf(vals, pad, incl) {
+    var a = vals.filter(isFinite).concat(incl || []);
+    var lo = Math.min.apply(null, a), hi = Math.max.apply(null, a), p = (hi - lo) * (pad || 0.08) || 0.05;
+    return [lo - p, hi + p];
+  }
+  function niceTicks(lo, hi, n) {
+    var span = hi - lo || 1, step = Math.pow(10, Math.floor(Math.log10(span / n))), err = span / n / step;
+    if (err >= 7.5) step *= 10; else if (err >= 3.5) step *= 5; else if (err >= 1.5) step *= 2;
+    var t = [], v = Math.ceil(lo / step) * step;
+    for (; v <= hi + step * 1e-9; v += step) t.push(+v.toFixed(10));
+    return t;
+  }
+  // One ratio on its own axis: the line at one, the near band, a stem from one to the value, the mark.
+  function gauge(v, d, band, extra) {
+    var k = sideCls(v, band || 0), o = pos(1, d), x = pos(v, d);
+    var s = '<div class="gauge" role="img" aria-label="' + esc(fmt(v, 'ratio') + ', ' + (SIDEWORD[k] || '')) + '" data-tip="' + esc('<b>' + fmt(v, 'ratio') + '</b> ' + (SIDEWORD[k] || '')) + '"><div class="ax"></div>';
+    if (band) s += '<div class="nb" style="left:' + pos(1 - band, d).toFixed(2) + '%;width:' + (pos(1 + band, d) - pos(1 - band, d)).toFixed(2) + '%"></div>';
+    s += '<div class="one" style="left:' + o.toFixed(2) + '%"></div>';
+    if (k === 'lo' || k === 'hi') s += '<div class="stem ' + k + '" style="left:' + Math.min(o, x).toFixed(2) + '%;width:' + Math.abs(x - o).toFixed(2) + '%"></div>';
+    (extra || []).forEach(function (e) { var ek = sideCls(e.v, band || 0); s += '<i class="mk ' + ek + ' first" style="left:' + pos(e.v, d).toFixed(2) + '%" title="' + esc(e.t) + '"></i>'; });
+    return s + '<i class="mk ' + k + '" style="left:' + x.toFixed(2) + '%"></i></div>';
+  }
+  function seg(name, items, cur, attr) {
+    return '<div class="seg" role="group" aria-label="' + esc(name) + '">' + items.map(function (it) {
+      return '<button type="button" ' + attr + '="' + esc(it[0]) + '" aria-pressed="' + (String(it[0]) === String(cur)) + '">' + esc(it[1]) + '</button>';
+    }).join('') + '</div>';
+  }
+  function ctl(label, what, inner) { return '<div class="ctl"><span class="cl">' + esc(label) + '</span>' + inner + '<span class="cw">' + esc(what) + '</span></div>'; }
+  function inner(el) { var cs = getComputedStyle(el); return el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); }
+
+  // ------------------------------------------------------------ the key of marks (one visual language)
+  function renderKey() {
+    $('#key').innerHTML = '<b>Marks used in every display:</b>' +
+      '<span class="ki"><i class="mk lo"></i>below one: the library’s figure is lower</span>' +
+      '<span class="ki"><i class="mk near"></i>within ' + BAND + ' of one</span>' +
+      '<span class="ki"><i class="mk hi"></i>above one: the library’s figure is higher</span>' +
+      '<span class="ki">' + wayIcon('library') + PNAME.library + '</span><span class="ki">' + wayIcon('cheap_ladder') + PNAME.cheap_ladder + '</span><span class="ki">' + wayIcon('top_first') + PNAME.top_first + '</span>' +
+      '<span class="ki"><svg width="30" height="10" aria-hidden="true"><line x1="0" y1="5" x2="30" y2="5" stroke="currentColor" stroke-width="2" stroke-dasharray="5 3"/></svg>dashed: the all-good setting</span>' +
+      '<span class="ki">' + tag('M') + tag('S') + tag('G') + ' measured, outside study, guess</span>';
+  }
+
+  // ------------------------------------------------------------ 1. the funnel
+  var FAIL = { held: 'No entry is held for it', looked_up: 'Not looked up', right_back: 'The right entry does not come back', good: 'A bad entry comes back', screened: 'Turned away at the screen', in_window: 'Not in the window when needed', right: 'The cheap attempt is still wrong' };
+  var REACH_END = { right: 'The cheap attempt comes out right', in_window: 'In the window when needed' };
+  var skey = function (id) { return id.replace(/^f[wa]_/, ''); };
+  function survWord(x) { var p = 100 * x; return (p >= 1 || p === 0 ? p.toFixed(0) : p.toFixed(1)) + '%'; }
+  function funnelStrip(bars, W) {
+    var held = bars[0].value, last = bars[bars.length - 1];
+    var H1 = 34, y1 = 26, y2 = 132, H2 = 34, L = 0, R = W;
+    var X1 = function (v) { return L + v / 100 * (R - L); };
+    var hx = X1(100 - held);
+    var s = '<svg width="' + W + '" height="0" role="img" aria-label="Where the hundred pieces stop">';
+    s += '<text x="0" y="16" style="font-size:14px;font-weight:600">All 100 pieces, by where they stop</text>';
+    s += '<rect x="' + L + '" y="' + y1 + '" width="' + (hx - L) + '" height="' + H1 + '" style="fill:var(--surface-2);stroke:var(--ink);stroke-width:1.5"/>';
+    s += '<rect x="' + hx + '" y="' + y1 + '" width="' + (R - hx) + '" height="' + H1 + '" style="fill:var(--ink)"/>';
+    s += '<text x="' + (L + 12) + '" y="' + (y1 + 23) + '" style="font-size:15px"><tspan style="font-weight:700">' + fmt(100 - held, 'funnel') + '</tspan> · ' + esc(FAIL[skey(bars[0].id)]) + '</text>';
+    var hl = fmt(held, 'funnel') + ' · ' + bars[0].label.toLowerCase();
+    if (R - hx > hl.length * 7.6 + 16) s += '<text x="' + (hx + 8) + '" y="' + (y1 + 23) + '" style="font-size:15px;fill:var(--surface);font-weight:600">' + esc(hl) + '</text>';
+    else s += '<text x="' + (hx - 8) + '" y="' + (y1 - 8) + '" text-anchor="end" style="font-size:14px;font-weight:600">' + esc(hl) + ' ↘</text>';
+    // focus plus context: the held part, drawn wider
+    var zoom = 100 / held;
+    s += '<path d="M' + hx + ' ' + (y1 + H1) + 'L' + L + ' ' + (y2 - 22) + 'M' + R + ' ' + (y1 + H1) + 'L' + R + ' ' + (y2 - 22) + '" style="stroke:var(--ink-3);stroke-width:1;stroke-dasharray:3 3;fill:none"/>';
+    s += '<text x="' + (L + 4) + '" y="' + (y2 - 8) + '" style="font-size:14px;font-weight:600">The ' + fmt(held, 'funnel') + ' with an entry held, drawn ' + zoom.toFixed(1) + ' times wider. Every number is still of the 100.</text>';
+    var segs = [];
+    for (var i = 1; i < bars.length; i++) segs.push({ v: bars[i - 1].value - bars[i].value, lab: FAIL[skey(bars[i].id)], end: false });
+    segs.push({ v: last.value, lab: REACH_END[skey(last.id)] || last.label, end: true });
+    var X2 = function (v) { return v / held * (R - L); }, x = L, rows = [], labs = '';
+    segs.forEach(function (g, k) {
+      var w = X2(g.v);
+      s += '<rect x="' + x.toFixed(1) + '" y="' + y2 + '" width="' + Math.max(w, 1.5).toFixed(1) + '" height="' + H2 + '" style="fill:' + (g.end ? 'var(--ink)' : 'var(--surface-2)') + ';stroke:var(--ink);stroke-width:1.2"><title>' + esc(fmt(g.v, 'funnel') + ' · ' + g.lab) + '</title></rect>';
+      var t = fmt(g.v, 'funnel') + ' · ' + g.lab, tw = t.length * 7.3 + 6, cx = x + w / 2;
+      if (w > tw + 12) s += '<text x="' + (cx) + '" y="' + (y2 + 23) + '" text-anchor="middle" style="font-size:14px;' + (g.end ? 'fill:var(--surface);font-weight:600' : '') + '">' + esc(t) + '</text>';
+      else {
+        // A label under the strip with a leader line. Labels stack downward from left to right and end at their
+        // own line, so no line crosses a label. Near the left edge a label starts at its line instead.
+        var r = rows.length; rows.push(1);
+        var ly = y2 + H2 + 22 + r * 22, left = cx - tw - 8 < L;
+        labs += '<path d="M' + cx.toFixed(1) + ' ' + (y2 + H2) + 'L' + cx.toFixed(1) + ' ' + (ly - 5) + 'L' + (left ? cx + 4 : cx - 4).toFixed(1) + ' ' + (ly - 5) + '" style="fill:none;stroke:var(--ink-2);stroke-width:1"/>' +
+          '<text x="' + (left ? cx + 8 : cx - 8).toFixed(1) + '" y="' + ly + '" text-anchor="' + (left ? 'start' : 'end') + '" style="font-size:14px;' + (g.end ? 'font-weight:700' : '') + '"><tspan style="font-weight:700">' + esc(fmt(g.v, 'funnel')) + '</tspan> · ' + esc(g.lab) + '</text>';
+      }
+      x += w;
+    });
+    var Ht = y2 + H2 + 14 + rows.length * 22;
+    return s.replace('height="0"', 'height="' + Ht + '"') + labs + '</svg>';
+  }
+  function renderFunnel() {
+    var el = $('#d-funnel');
+    var v = C.funnelView(E, MAP, TABLE, BEST, { period: ST.fPeriod, which: ST.fWhich, refs: REFS });
+    var bars = v.stages.filter(function (s) { return s.bar; }), extra = v.stages.filter(function (s) { return !s.bar; });
+    var h = '<div class="ptitle"><h3>' + esc(v.label) + '</h3><span class="tagline">every number on the picture ' + tag('G') + ' · counts under it ' + tag('M') + '</span></div>';
+    h += '<div class="controls">' + ctl('Which work', 'Changes which hundred pieces the picture starts from.', seg('Which work', [[MAP.funnels[0].id, FT.which_cheap], [MAP.funnels[1].id, FT.which_all]], ST.fWhich, 'data-fw')) +
+      ctl('Period', 'Period ' + (v.period + 1) + ' of ' + NPER + ', at the middle values. The library fills over the periods.', seg('Period', [['first', 'First'], ['last', 'Last']], ST.fPeriod, 'data-fp')) + '</div>';
+    h += '<div class="fz" id="fzStrip"></div>';
+    // the chain: one column per stage; on top, the share that goes on from the stage before
+    var n = bars.length;
+    h += '<h4 class="mt2">Step by step: the share that goes on</h4><p class="note">Each column starts with the share of the pieces from the column before that get through this step. Solid bar: at these settings. Dashed bar: the all-good setting.</p>';
+    h += '<div class="bypass"><div class="bl"></div><b>Checks promoted into the shared tests skip every step below.</b> ' + esc(FT.promo.split('. ')[1] || '') + ' ' + esc(FT.promo_at) + ' <b>' + fmt(v.promo, 'funnel') + '</b> at these settings, <b>' + fmt(v.mark_promo, 'funnel') + '</b> at the all-good setting ' + tag('G') + '.</div>';
+    h += '<div class="fchain" style="grid-template-columns:repeat(' + (n + 1) + ',minmax(0,1fr))">';
+    bars.forEach(function (st, i) {
+      var fi = v.stages.indexOf(st), fc = FCOUNT.stages[fi], sn = (FT.stage_notes || {})[String(fi)];
+      var pv = i ? bars[i - 1].value : 100, pm = i ? bars[i - 1].mark : 100;
+      var sv = pv > 0 ? st.value / pv : 0, sm = pm > 0 ? st.mark / pm : 0;
+      var opens = fc.steps.length ? fc.steps : (sn && sn.opens) || [];
+      var under = fc.steps.length ? '<b>' + (fc.steps.length === 1 ? 'Step ' : 'Steps ') + fc.steps.join(', ') + '</b><br><b>' + fc.lims.length + '</b> limitations placed here<br><b>' + fc.cases.length + '</b> real cases broke here' :
+        '<span data-tip="' + esc(sn ? sn.tip : '') + '">' + esc(cap(sn ? sn.under.replace(/\bbar\b/g, 'column') : '')) + '</span>';
+      if (opens.length) under += '<br><button type="button" class="linkbtn" data-open="' + opens.join(',') + '">Open ' + (fc.lims.length ? 'these limitations' : 'step ' + opens.join(', ')) + ' ↓</button>';
+      h += '<div class="fcol" data-stage="' + st.id + '" data-v="' + st.value + '" data-m="' + st.mark + '">' +
+        '<div class="sv"><b>' + survWord(sv) + '</b> ' + (i ? 'of the ' + fmt(pv, 'funnel') + ' go on' : 'of the 100') +
+        '<div class="sg" role="img" aria-label="' + survWord(sv) + ' go on"><i style="width:' + (100 * sv).toFixed(2) + '%"></i></div>' +
+        '<div class="sg ag" role="img" aria-label="all-good setting ' + survWord(sm) + '"><i style="width:' + (100 * Math.min(1, sm)).toFixed(2) + '%"></i></div><span class="muted">all-good: ' + survWord(sm) + '</span></div>' +
+        '<div class="fbox"><div class="fv">' + fmt(st.value, 'funnel') + '</div><div class="fu">of 100 left</div><div class="fl">' + esc(st.label) + '</div><div class="fm">all-good setting: <b>' + fmt(st.mark, 'funnel') + '</b></div></div>' +
+        '<div class="fund">' + under + '</div></div>';
+    });
+    var af = FCOUNT.after;
+    var ex = extra.map(function (st) { return '<div class="fbox" data-stage="' + st.id + '" data-v="' + st.value + '"><div class="fv">' + fmt(st.value, 'funnel') + '</div><div class="fu">' + esc(st.unit) + '</div><div class="fl">' + esc(st.label) + '</div><div class="fm">all-good setting: <b>' + fmt(st.mark, 'funnel') + '</b></div><p class="note mt">' + esc(FT.outside_bar) + '.</p></div>'; }).join('');
+    h += '<div class="fcol"><div class="sv">Past the funnel: the gate, the retry and the ladder</div>' + (ex || '<div class="fbox after"><div class="fl">' + esc(FT.after_label) + '</div><div class="fu">The gate catches promoted checks here.</div></div>') +
+      '<div class="fund"><b>Steps ' + af.steps.join(', ') + '</b><br><b>' + af.lims.length + '</b> limitations placed here<br><b>' + af.cases.length + '</b> real cases broke here<br><button type="button" class="linkbtn" data-open="' + af.steps.join(',') + '">Open these limitations ↓</button></div></div>';
+    h += '</div><p class="note mt">' + esc(FT.under.replace(/\bbar\b/g, 'column')) + '</p><details class="inline mt"><summary>How the columns match the design steps</summary><p class="note">' + esc(FT.match_note) + '</p></details>';
+    el.innerHTML = h;
+    var z = $('#fzStrip'); z.innerHTML = funnelStrip(bars, Math.max(300, inner(z)));
+  }
+  $('#d-funnel').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-fw],[data-fp],[data-open]'); if (!b) return;
+    if (b.dataset.fw) ST.fWhich = b.dataset.fw;
+    if (b.dataset.fp) ST.fPeriod = b.dataset.fp;
+    if (b.dataset.open) { ST.open = {}; b.dataset.open.split(',').forEach(function (k) { ST.open[k] = true; }); renderLimRows(); var t = document.getElementById('lr-' + b.dataset.open.split(',')[0]); if (t) t.scrollIntoView({ block: 'start' }); return; }
+    renderFunnel();
+  });
+
+  // ------------------------------------------------------------ 2. the eight corners
+  var DL = domainOf([].concat.apply([], Object.keys(REFS).map(function (k) { return [REFS[k].last.ratios.cost_vs_ladder, REFS[k].last.ratios.wrong_vs_ladder]; })), 0.06, [1]);
+  var DS = domainOf([].concat.apply([], Object.keys(REFS).map(function (k) { return [REFS[k].last.ratios.cost_vs_top, REFS[k].last.ratios.wrong_vs_top]; })), 0.06, [1]);
+  function rack(r, attrs) {
+    var row = function (q) { var d = q[2] === 'ladder' ? DL : DS, v = r[q[0]]; return '<span class="rl">' + q[1] + '</span>' + gauge(v, d, BAND) + '<span class="rv" data-r="' + q[0] + '" data-v="' + v + '">' + fmt(v, 'ratio') + '</span>'; };
+    return '<div class="rack"' + (attrs || '') + '><span class="rh">Over the ladder</span>' + row(RATIOS4[0]) + row(RATIOS4[1]) + '<span class="rh">Over the strong model</span>' + row(RATIOS4[2]) + row(RATIOS4[3]) + '</div>';
+  }
+  function pips(lv) { return '<span class="pips" aria-hidden="true">' + ['recurrence', 'reach', 'quality'].map(function (g) { return '<i class="' + (lv[g] === 'good' ? 'g' : '') + '"></i>'; }).join('') + '</span>'; }
+  function renderCorners() {
+    var RS = MAP.reference_settings;
+    var find = function (lv) { return RS.filter(function (r) { return r.levels.recurrence === lv[0] && r.levels.reach === lv[1] && r.levels.quality === lv[2] && r.levels.running_cost === undefined; })[0]; };
+    var cell = function (r) { return '<div class="ccell" data-ref="' + r.id + '"><div class="ch">' + pips(r.levels) + '<span>' + esc(cap(LIBGI.reach[r.levels.reach]) + ', ' + LIBGI.quality[r.levels.quality]) + '</span></div>' + rack(REFS[r.id].last.ratios) + '</div>'; };
+    var sq = function (rec) {
+      return '<div class="csq"><h4>' + esc(cap(LIBGI.recurrence[rec])) + '</h4><div class="csqg"><span class="yl">' + esc(cap(LIBGI.quality.short)) + ' →</span>' +
+        cell(find([rec, 'poor', 'good'])) + cell(find([rec, 'good', 'good'])) + cell(find([rec, 'poor', 'poor'])) + cell(find([rec, 'good', 'poor'])) +
+        '<span></span><span class="xl">' + esc(cap(LIBGI.reach.short)) + ' →</span></div></div>';
+    };
+    var mid = RS.filter(function (r) { return !Object.keys(r.levels).length; });
+    var more = RS.filter(function (r) { return r.levels.running_cost !== undefined; }).sort(function (a, b) { return (a.levels.quality === 'poor') - (b.levels.quality === 'poor') || (a.levels.running_cost === 'poor') - (b.levels.running_cost === 'poor'); });
+    var refCard = function (r, cls) { return '<div class="' + (cls || '') + '" data-ref="' + r.id + '"><div class="ch" style="font-weight:600;margin-bottom:4px">' + esc(r.label) + '</div>' + rack(REFS[r.id].last.ratios) + '</div>'; };
+    var h = '<div class="ptitle"><h3>' + esc(CT.table_title) + '</h3><span class="tagline">last period, every number ' + tag('G') + '</span></div>' +
+      '<p class="sub">' + esc(CT.table_note) + ' Each corner shows four ratios: the library’s figure over the other way’s. The line in each bar is one.</p>' +
+      '<div class="keyrow mt" style="padding:8px 14px"><span class="ki"><i class="mk lo"></i>below one</span><span class="ki"><i class="mk near"></i>within ' + BAND + ' of one (grey band)</span><span class="ki"><i class="mk hi"></i>above one</span>' +
+      '<span class="ki"><span class="pips"><i class="g"></i><i></i><i class="g"></i></span>pips: comes back, reach, entry quality; filled is the good end</span></div>' +
+      '<div class="cgrid mt">' + sq('poor') + sq('good') +
+      '<div class="refs"><div><h4>For reference</h4><div class="rlist one mt">' + mid.map(function (r) { return refCard(r, 'mid'); }).join('') + '</div></div><div><h4>' + esc(CT.more_title) + '</h4><div class="rlist mt">' + more.map(function (r) { return refCard(r); }).join('') + '</div></div></div></div>' +
+      '<p class="note mt">' + rich(CT.near_note) + ' ' + esc(CT.promo_note) + '</p><p class="note mt">' + esc(TX.todays_notes) + ' ' + rich(TX.opus_line) + '</p>';
+    $('#d-corners').innerHTML = h;
+  }
+
+  // ------------------------------------------------------------ 3. the square
+  function sheetOf(id) {
+    if (!SQ[id]) { var r = E.square(MAP, TABLE, { sheets: [id] }); SQ[id] = { levels: r.levels, x: r.x, y: r.y, sheet: r.sheets[0] }; }
+    return SQ[id];
+  }
+  function devOf(ratio) {
+    var dev = 1e-9;
+    Object.keys(SQ).forEach(function (k) { SQ[k].sheet.cells.forEach(function (row) { row.forEach(function (x) { var v = x.ratios[ratio]; if (isFinite(v)) dev = Math.max(dev, Math.abs(v - 1)); }); }); });
+    return dev;
+  }
+  function squareSvg(sheetId, ratio, c, opts) {
+    var o = opts || {}, q = SQ[sheetId], cells = q.sheet.cells, n = q.levels.length;
+    var L = o.axes ? 58 : 0, T = 4, B = o.axes ? 50 : 0, W = L + n * c + 4, H = T + n * c + B, dev = devOf(ratio);
+    var X = function (j) { return L + j * c; }, Y = function (i) { return T + (n - 1 - i) * c; };
+    var s = '<svg class="sqsvg" width="' + (o.fluid ? '100%' : W) + '" ' + (o.fluid ? '' : 'height="' + H + '" ') + 'viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(q.sheet.label + ', ' + RNAME[ratio]) + '">';
+    var corner = sheetId !== 'middle';
+    cells.forEach(function (row, i) {
+      row.forEach(function (x, j) {
+        var v = x.ratios[ratio], k = sideCls(v, 0), a = 0.1 + 0.7 * Math.min(1, Math.abs(v - 1) / dev);
+        var sel = o.axes && ST.sqCell && ST.sqCell[0] === i && ST.sqCell[1] === j;
+        s += '<g class="sqc"' + (o.axes ? ' role="button" tabindex="0" aria-label="' + esc(fmt(v, 'ratio')) + '" data-i="' + i + '" data-j="' + j + '"' : '') + ' data-v="' + v + '">' +
+          '<rect x="' + X(j) + '" y="' + Y(i) + '" width="' + c + '" height="' + c + '" style="fill:' + (k === 'hi' ? 'var(--hi)' : 'var(--lo)') + ';opacity:' + a.toFixed(3) + '"/>' +
+          (k === 'hi' ? '<rect x="' + X(j) + '" y="' + Y(i) + '" width="' + c + '" height="' + c + '" style="fill:url(#hatchHi);opacity:' + Math.min(1, a + 0.25).toFixed(3) + '"/>' : '') +
+          '<rect class="f" x="' + X(j) + '" y="' + Y(i) + '" width="' + c + '" height="' + c + '" style="fill:none;stroke:var(--surface);stroke-width:1"/>';
+        if (corner && o.axes && (i === 0 || i === n - 1) && (j === 0 || j === n - 1)) s += '<rect x="' + (X(j) + 3) + '" y="' + (Y(i) + 3) + '" width="' + (c - 6) + '" height="' + (c - 6) + '" rx="4" style="fill:none;stroke:var(--ink);stroke-width:2;stroke-dasharray:5 3"/>';
+        if (sel) s += '<rect x="' + (X(j) + 1.5) + '" y="' + (Y(i) + 1.5) + '" width="' + (c - 3) + '" height="' + (c - 3) + '" style="fill:none;stroke:var(--ink);stroke-width:3.5"/>';
+        if (o.nums) s += '<text x="' + (X(j) + c / 2) + '" y="' + (Y(i) + c / 2 + 5) + '" text-anchor="middle" style="font-size:' + (c >= 44 ? 14 : 13) + 'px;font-weight:600;fill:var(--ink);paint-order:stroke;stroke:var(--surface);stroke-width:3px">' + fmt(v, 'ratio') + '</text>';
+        s += '</g>';
+      });
+    });
+    var d = '';
+    for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+      var lo = cells[i][j].ratios[ratio] < 1;
+      if (j + 1 < n && lo !== (cells[i][j + 1].ratios[ratio] < 1)) d += 'M' + X(j + 1) + ' ' + Y(i) + 'v' + c;
+      if (i + 1 < n && lo !== (cells[i + 1][j].ratios[ratio] < 1)) d += 'M' + X(j) + ' ' + Y(i) + 'h' + c;
+    }
+    if (d) s += '<path d="' + d + '" style="fill:none;stroke:var(--ink);stroke-width:' + (o.axes ? 4 : 2.5) + ';stroke-linecap:round"/>';
+    if (o.axes) {
+      var gx = LIBGI[q.x], gy = LIBGI[q.y], by = T + n * c;
+      s += '<text x="' + L + '" y="' + (by + 18) + '" style="font-size:13px;fill:var(--ink-2)">' + esc(gx.poor) + '</text><text x="' + (L + n * c) + '" y="' + (by + 18) + '" text-anchor="end" style="font-size:13px;fill:var(--ink-2)">' + esc(gx.good) + '</text>' +
+        '<text x="' + (L + n * c / 2) + '" y="' + (by + 40) + '" text-anchor="middle" style="font-size:14px;font-weight:700">' + esc(gx.label) + ' →</text>' +
+        '<text transform="translate(' + (L - 8) + ' ' + by + ') rotate(-90)" style="font-size:13px;fill:var(--ink-2)">' + esc(gy.poor) + '</text><text transform="translate(' + (L - 8) + ' ' + T + ') rotate(-90)" text-anchor="end" style="font-size:13px;fill:var(--ink-2)">' + esc(gy.good) + '</text>' +
+        '<text transform="translate(' + (L - 34) + ' ' + (T + n * c / 2) + ') rotate(-90)" text-anchor="middle" style="font-size:14px;font-weight:700">' + esc(cap(gy.short)) + ' →</text>';
+    }
+    return s + '</svg>';
+  }
+  function renderSquare() {
+    var el = $('#d-square'), sq = MAP.square;
+    var head = '<div class="ptitle"><h3>' + esc(CT.square_title) + '</h3><span class="tagline">last period, every number ' + tag('G') + '</span></div><p class="sub">' + esc(CT.square_lede) + '</p>';
+    if (!SQ[ST.sqSheet]) { el.innerHTML = head + '<p class="note mt">Computing the square…</p>'; return; }
+    var all4 = [['cost_vs_ladder', 'Cost, ladder'], ['wrong_vs_ladder', 'Wrong rate, ladder'], ['cost_vs_top', 'Cost, strong'], ['wrong_vs_top', 'Wrong rate, strong']];
+    var h = head + '<div class="controls">' + ctl('How much comes back', 'Changes the third condition, held fixed across the square.', seg('How much comes back', sq.sheets.map(function (s) { return [s.id, s.label]; }), ST.sqSheet, 'data-sh')) +
+      ctl('Which ratio', 'The library’s figure over the other way’s. All four are in the grid on the right.', seg('Ratio', all4, ST.sqRatio, 'data-ra')) + '</div>';
+    var avail = inner(el), wide = avail >= 1060;
+    var mainW = wide ? Math.min(avail * 0.56, 720) : avail;
+    var c = Math.min(60, Math.floor((mainW - 66) / 11)), nums = c >= 30;
+    h += '<div class="sqwrap"><div id="sqMain">' + squareSvg(ST.sqSheet, ST.sqRatio, c, { axes: true, nums: nums }) + (nums ? '' : '<p class="note">On a narrow screen the cells are too small for their numbers. Tap a cell: its numbers and its whole row are listed below.</p>') + '</div><div>';
+    h += '<div class="keyrow" style="padding:8px 14px"><span class="ki"><i class="mk lo"></i>below one, darker is further</span><span class="ki"><i class="mk hi"></i>above one, darker is further</span><span class="ki"><svg width="30" height="10" aria-hidden="true"><line x1="0" y1="5" x2="30" y2="5" stroke="currentColor" stroke-width="4"/></svg>thick line: where it crosses one</span>' + (ST.sqSheet !== 'middle' ? '<span class="ki"><svg width="20" height="20" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="5 3"/></svg>dashed cell: one of the eight corners above</span>' : '') + '</div>';
+    h += '<h4 class="mt">All three sheets and all four ratios</h4><p class="note">The same square twelve times. Watch the thick line move. Pick one to draw it large.</p><div class="thumbs mt"><span></span>' + all4.map(function (r) { return '<span class="th">' + esc(r[1]) + '</span>'; }).join('');
+    sq.sheets.forEach(function (s) {
+      h += '<span class="th">' + esc(s.label) + '</span>';
+      all4.forEach(function (r) {
+        h += SQ[s.id] ? '<button type="button" data-th="' + s.id + '|' + r[0] + '" aria-pressed="' + (s.id === ST.sqSheet && r[0] === ST.sqRatio) + '" aria-label="' + esc(s.label + ', ' + RNAME[r[0]]) + '">' + squareSvg(s.id, r[0], 10, { fluid: true }) + '</button>' : '<span class="note">…</span>';
+      });
+    });
+    h += '</div>';
+    var q = SQ[ST.sqSheet], x = q.sheet.cells[ST.sqCell[0]][ST.sqCell[1]], nn = q.levels.length - 1;
+    h += '<h4 class="mt2">The cell you picked</h4><p class="note">' + esc(q.sheet.label) + '. ' + esc(cap(LIBGI[q.x].short)) + ' ' + ST.sqCell[1] + ' of ' + nn + ', ' + esc(LIBGI[q.y].short) + ' ' + ST.sqCell[0] + ' of ' + nn + ' steps from the poor end. ' + esc(CT.square_tap) + '</p><div class="mt" style="max-width:520px">' + rack(x.ratios) + '</div>';
+    if (!nums) h += '<p class="note mt"><b>Its row</b>, ' + esc(LIBGI[q.x].short) + ' from poor to good: ' + q.sheet.cells[ST.sqCell[0]].map(function (z) { return fmt(z.ratios[ST.sqRatio], 'ratio'); }).join(' · ') + '</p>';
+    h += '<p class="note mt">' + esc(CT.square_line) + ' ' + esc(CT.square_level) + '</p></div></div>';
+    el.innerHTML = h;
+  }
+  $('#d-square').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-sh],[data-ra],[data-th],.sqc[data-i]'); if (!b) return;
+    if (b.dataset.sh) ST.sqSheet = b.dataset.sh;
+    if (b.dataset.ra) ST.sqRatio = b.dataset.ra;
+    if (b.dataset.th) { var p = b.dataset.th.split('|'); ST.sqSheet = p[0]; ST.sqRatio = p[1]; }
+    if (b.dataset.i) ST.sqCell = [+b.dataset.i, +b.dataset.j];
+    if (!SQ[ST.sqSheet]) sheetOf(ST.sqSheet);
+    renderSquare();
+  });
+  $('#d-square').addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.sqc[data-i]')) { e.preventDefault(); e.target.closest('.sqc').dispatchEvent(new MouseEvent('click', { bubbles: true })); } });
+
+  // ------------------------------------------------------------ 4. two weights
+  function setWeights(w) {
+    W8 = w; WLIM = {}; WSTEP = {}; WGROUP = {};
+    w.limitations.forEach(function (r) { WLIM[r.id] = r; });
+    w.steps.forEach(function (r) { WSTEP[r.step] = r; });
+    w.groups.forEach(function (r) { WGROUP[r.id] = r; });
+    var all = [0, 1];
+    w.limitations.concat(w.steps, w.groups).forEach(function (r) { if (r.measured) all.push(r.alone, r.last); });
+    WLO = Math.min(-0.05, Math.min.apply(null, all)) - 0.02; WHI = Math.max.apply(null, all) + 0.03;
+  }
+  // The same bars with their numbers printed at the bar ends (the step and group charts).
+  function wplotLab(r) {
+    var d = WD(), z = pos(0, d), s = '';
+    WTICKS.forEach(function (t) { s += '<i class="gl' + (t === 0 ? ' z' : t === 1 ? ' full' : '') + '" style="left:' + pos(t, d).toFixed(2) + '%"></i>'; });
+    var bar = function (v, cls) { var x = pos(v, d); return '<i class="' + cls + '" style="left:' + Math.min(z, x).toFixed(2) + '%;width:' + Math.max(0.3, Math.abs(x - z)).toFixed(2) + '%"></i>'; };
+    var xl = pos(r.last, d), xa = pos(r.alone, d);
+    s += bar(r.last, 'bl') + bar(r.alone, 'ba') + '<i class="dt" style="left:' + xa.toFixed(2) + '%"></i>';
+    // last: after the bar's end, or inside it when the bar runs to the right edge
+    s += xl > 80 ? '<b class="vl in" style="right:calc(' + (100 - xl).toFixed(2) + '% + 8px)">' + fmt(r.last, 'weight') + ' <span>last</span></b>' : '<b class="vl" style="left:calc(' + Math.max(xl, z).toFixed(2) + '% + 8px)">' + fmt(r.last, 'weight') + ' <span>last</span></b>';
+    // alone: always to the right of zero and of its dot, so it never runs off the left edge
+    s += '<span class="va" style="left:calc(' + Math.max(xa, z).toFixed(2) + '% + 10px)">' + fmt(r.alone, 'weight') + ' alone</span>';
+    return '<div class="wplot lab" role="img" aria-label="last ' + fmt(r.last, 'weight') + ', alone ' + fmt(r.alone, 'weight') + '">' + s + '</div>';
+  }
+  function waxisLab() {
+    var d = WD();
+    return '<div class="waxis">' + WTICKS.map(function (t) { return '<span style="left:' + pos(t, d).toFixed(2) + '%">' + (t === 1 ? '100%: the full fall' : fmt(t, 'weight').replace('.0%', '%')) + '</span>'; }).join('') + '</div>';
+  }
+  var WD = function () { return [WLO - 0.06, WHI + 0.1]; };
+  var WTICKS = [-0.1, 0, 0.25, 0.5, 0.75, 1];
+  function wplot(r, mini) {
+    var d = WD(), z = pos(0, d), s = '';
+    WTICKS.forEach(function (t) { if (t >= d[0] && t <= d[1]) s += '<i class="gl' + (t === 0 ? ' z' : t === 1 ? ' full' : '') + '" style="left:' + pos(t, d).toFixed(2) + '%"></i>'; });
+    var bar = function (v, cls) { var x = pos(v, d); return '<i class="' + cls + '" style="left:' + Math.min(z, x).toFixed(2) + '%;width:' + Math.max(0.3, Math.abs(x - z)).toFixed(2) + '%"></i>'; };
+    s += bar(r.last, 'bl') + bar(r.alone, 'ba') + '<i class="dt" style="left:' + pos(r.alone, d).toFixed(2) + '%"></i>';
+    return '<div class="' + (mini ? 'mini' : 'wplot') + '" role="img" aria-label="last ' + fmt(r.last, 'weight') + ', alone ' + fmt(r.alone, 'weight') + '" data-tip="' + esc('Last <b>' + fmt(r.last, 'weight') + '</b> · alone <b>' + fmt(r.alone, 'weight') + '</b> of the full fall') + '">' + s + '</div>';
+  }
+  function waxis() {
+    var d = WD();
+    return '<div class="waxis">' + WTICKS.filter(function (t) { return t >= d[0] && t <= d[1]; }).map(function (t) { return '<span style="left:' + pos(t, d).toFixed(2) + '%">' + (t === 1 ? '100%: the full fall' : fmt(t, 'weight').replace('.0%', '%')) + '</span>'; }).join('') + '</div>';
+  }
+  function stepName(k) { return LIMS.steps[k].split(':')[0]; }
+  function stepMore(k) { var p = LIMS.steps[k].split(':'); return p.length > 1 ? p.slice(1).join(':').trim() : ''; }
+  function renderWeights() {
+    var el = $('#d-weights');
+    if (!W8) { el.innerHTML = '<h3>' + esc(LT.two_title) + '</h3><p class="note mt">Computing the weights…</p>'; return; }
+    var f = W8.full, fm = Math.max(f.cost_fall, f.wrong_fall) * 1.15;
+    var h = '<div class="ptitle"><h3>' + esc(LT.two_title) + '</h3><span class="tagline">every number ' + tag('G') + '</span></div>';
+    h += '<p class="sub">' + esc(LT.full_def) + ' It is the yardstick: on the charts below, 100% means this whole fall.</p>';
+    h += '<div class="ffall mt"><span>The library’s cost falls</span><span class="fb"><i style="width:' + (100 * f.cost_fall / fm).toFixed(2) + '%"></i></span><span class="fn">' + fmt(f.cost_fall, 'weight') + '</span>' +
+      '<span>Its wrong rate falls</span><span class="fb"><i style="width:' + (100 * f.wrong_fall / fm).toFixed(2) + '%"></i></span><span class="fn">' + fmt(f.wrong_fall, 'weight') + '</span>' +
+      '<span><b>The full fall, their mean</b></span><span class="fb"><i class="m" style="width:' + (100 * f.score / fm).toFixed(2) + '%"></i></span><span class="fn">' + fmt(f.score, 'weight') + '</span></div>';
+    var chart = function (rows, label) {
+      var s = '<div class="wchart mt"><span class="whp"></span>' + waxisLab();
+      rows.forEach(function (x) {
+        var r = x.r;
+        s += '<div class="wrow"' + (x.step ? ' data-wstep="' + x.step + '"' : ' data-wgroup="' + r.id + '"') + ' data-last="' + r.last + '" data-alone="' + r.alone + '"><span class="wl">' + label(x) + '</span>' + wplotLab(r) + '</div>';
+      });
+      return s + '</div>';
+    };
+    var groups = W8.ranking.groups.map(function (g) { return { r: WGROUP[g.id] }; });
+    var steps = W8.ranking.steps.map(function (q) { return { r: WSTEP[q.step], step: q.step }; });
+    h += '<div class="wgrid mt2"><div>' +
+      '<h4>' + esc(LT.rank_groups) + '</h4>' + chart(groups, function (x) { return esc(LIBGI[x.r.id].label); }) +
+      '<h4 class="mt2">' + esc(LT.rank_steps) + '</h4>' + chart(steps, function (x) { return '<button type="button" class="wbtn" data-open="' + x.step + '"><b>Step ' + x.step + ' · ' + esc(stepName(x.step)) + '</b><br><small>' + esc(stepMore(x.step)) + '</small></button>'; }) +
+      '</div><div class="wlegend"><b>How to read the bars</b>' +
+      '<div class="li"><span class="sw l"></span><span><b>Last</b> (solid). ' + esc(cap(LT.last_def.replace(/^Last: /, ''))) + '</span></div>' +
+      '<div class="li"><span class="sw a"></span><span><b>Alone</b> (outline, dot at its end). ' + esc(cap(LT.alone_def.replace(/^Alone: /, ''))) + '</span></div>' +
+      '<div class="li"><span class="sw f"></span><span>Dashed line: 100%, the full fall.</span></div>' +
+      '<p>' + esc(LT.add_def) + '</p><p>' + esc(LT.sign_def) + '</p><p>Tap a step to open its limitations below.</p></div></div>';
+    el.innerHTML = h;
+  }
+  function renderSequence() {
+    var el = $('#d-sequence');
+    if (!W8) { el.innerHTML = '<h3>' + esc(LT.seq_title) + '</h3><p class="note mt">Computing…</p>'; return; }
+    var seq = W8.sequence, e = W8.sequence_end, prev = 0, k = 0;
+    var h = '<div class="ptitle"><h3>' + esc(LT.seq_title) + '</h3><span class="tagline">every number ' + tag('G') + '</span></div><p class="sub">' + esc(LT.seq_note) + '</p>';
+    h += '<div class="stack100 mt" role="img" aria-label="The full fall, built up step by step">';
+    seq.forEach(function (q) { if (q.added > 0) { h += '<div class="s' + (k++ % 2) + '" style="width:' + (100 * q.added).toFixed(3) + '%" data-tip="' + esc('Step ' + q.step + ' adds ' + fmt(q.added, 'weight')) + '">' + (q.added > 0.025 ? q.step : '') + '</div>'; } });
+    h += '<div class="un" style="width:' + (100 * e.added).toFixed(3) + '%" data-tip="' + esc(LT.unnamed + ': ' + fmt(e.added, 'weight')) + '">' + (e.added > 0.12 ? '<span class="ulab">no limitation names these</span>' : '') + '</div></div>';
+    h += '<div class="seqchart"><span class="whp"></span>' + (function () { var d = [0, 1.02]; return '<div class="waxis">' + [0, 0.25, 0.5, 0.75, 1].map(function (t) { return '<span style="left:' + pos(t, d).toFixed(2) + '%">' + (t * 100) + '%</span>'; }).join('') + '</div>'; })() + '<span class="wh r">adds</span><span class="wh r">so far</span>';
+    var d = [0, 1.02], gl = [0, 0.25, 0.5, 0.75, 1].map(function (t) { return '<i class="gl" style="left:' + pos(t, d).toFixed(2) + '%"></i>'; }).join('');
+    prev = 0;
+    seq.forEach(function (q) {
+      var zero = q.added === 0;
+      h += '<span class="wl' + (zero ? ' zero' : '') + '" data-seq="' + q.step + '" data-cum="' + q.cumulative + '"><b>Step ' + q.step + '</b> · ' + esc(stepName(q.step)) + '</span><div class="splot">' + gl + '<i class="acc" style="left:0;width:' + pos(prev, d).toFixed(2) + '%"></i>' + (zero ? '' : '<i class="add" style="left:' + pos(prev, d).toFixed(2) + '%;width:' + (pos(q.cumulative, d) - pos(prev, d)).toFixed(2) + '%"></i>') + '</div>' +
+        '<span class="wn' + (zero ? ' zero' : '') + '">+' + fmt(q.added, 'weight') + '</span><span class="wn' + (zero ? ' zero' : '') + '"><b>' + fmt(q.cumulative, 'weight') + '</b></span>';
+      prev = q.cumulative;
+    });
+    h += '<span class="wl" data-seq="unnamed" data-cum="' + e.cumulative + '"><b>' + esc(LT.unnamed) + '</b></span><div class="splot">' + gl + '<i class="acc" style="left:0;width:' + pos(prev, d).toFixed(2) + '%"></i><i class="add un" style="left:' + pos(prev, d).toFixed(2) + '%;width:' + (pos(e.cumulative, d) - pos(prev, d)).toFixed(2) + '%"></i></div><span class="wn">+' + fmt(e.added, 'weight') + '</span><span class="wn"><b>' + fmt(e.cumulative, 'weight') + '</b></span>';
+    h += '<span class="unlist">They are: ' + e.ids.map(function (id) { return esc(pname(id)); }).join('; ') + '.</span></div>';
+    var zs = seq.filter(function (q) { return q.added === 0; }).map(function (q) { return q.step; });
+    if (zs.length) h += '<p class="note mt">' + (zs.length === 1 ? 'Step ' + zs[0] : 'Steps ' + zs.slice(0, -1).join(', ') + ' and ' + zs[zs.length - 1]) + ' ' + esc(LT.seq_zero) + ' Grey bar: the share reached before the step.</p>';
+    el.innerHTML = h;
+  }
+  function renderLimRows() {
+    var el = $('#d-limrows');
+    if (!W8) { el.innerHTML = '<h3>The limitations, by step</h3><p class="note mt">Computing…</p>'; return; }
+    var groups = {}; LIMS.items.forEach(function (it) { (groups[it.main_step] = groups[it.main_step] || []).push(it); });
+    var h = '<div class="ptitle"><h3>The limitations, by step: the two weight columns</h3><span class="tagline">counts ' + tag('M') + ' · weights ' + tag('G') + '</span></div>' +
+      '<p class="sub">The same bars as the step chart, on the same scale, in every row. ' + esc(LT.shares) + '</p>' +
+      '<div class="controls"><button type="button" class="btn" data-allopen="1">Open every step</button><button type="button" class="btn" data-allopen="0">Close every step</button></div>';
+    h += '<div class="lrows"><span class="h hl">Limitation</span><span class="h hc c">cases</span><span class="h hc c">families</span><span class="h hc c">other way</span><span class="h">' + (function () { var d = WD(); return '<div class="waxis">' + [0, 0.5, 1].map(function (t) { return '<span style="left:' + pos(t, d).toFixed(2) + '%">' + (100 * t) + '%</span>'; }).join('') + '</div>'; })() + '</span><span class="h" style="text-align:right">last</span><span class="h" style="text-align:right">alone</span>';
+    var wcols = function (w, mini) {
+      if (!w) return '<span class="nm">not computed</span>';
+      if (!w.measured) return '<span class="nm" data-nm="' + w.not_measured + '" data-tip="' + esc(LT['nm_why_' + w.not_measured]) + '">' + esc(cap(LT['nm_' + w.not_measured])) + (w.not_measured === 'gate_or_ladder' ? ': <a href="#d-gate">see the gate and ladder ↓</a>' : '') + '</span>';
+      return wplot(w, true) + '<span class="wn l">' + fmt(w.last, 'weight') + '</span><span class="wn">' + fmt(w.alone, 'weight') + '</span>';
+    };
+    Object.keys(LIMS.steps).forEach(function (k) {
+      var list = groups[k] || [], open = !!ST.open[k];
+      h += '<span class="sep" id="lr-' + k + '"></span><span class="t sh"><button type="button" class="wbtn" data-step="' + k + '" aria-expanded="' + open + '">' + (open ? '▾' : '▸') + ' Step ' + k + ' · ' + esc(stepName(k)) + ' <small class="muted">(' + list.length + ' limitations)</small></button></span><span class="c"></span><span class="c"></span><span class="c"></span>' + wcols(WSTEP[+k]);
+      if (open) list.forEach(function (it) {
+        var w = WLIM[it.id];
+        var ss = w && w.same_set && w.same_set.count ? ' <small data-tip="' + esc('Same library unknowns as ' + w.same_set.ids.join(', ') + ', so the same weights.') + '">↔' + w.same_set.count + '</small>' : '';
+        var cm = [it.real.cases ? it.real.cases + ' cases' : '', it.real.families ? it.real.families + ' families' : '', it.contradicted.length ? it.contradicted.length + ' went the other way' : ''].filter(Boolean).join(' · ');
+        h += '<span class="t" data-lim="' + it.id + '">' + esc(it.title) + (it.real.cases ? '' : ' <small>thought experiment</small>') + ss + (cm ? '<span class="cm">' + cm + '</span>' : '') + '</span>' +
+          '<span class="c">' + (it.real.cases || '') + '</span><span class="c">' + (it.real.families || '') + '</span><span class="c">' + (it.contradicted.length || '') + '</span>' + wcols(w);
+      });
+    });
+    el.innerHTML = h + '</div>';
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('#d-limrows [data-step],#d-limrows [data-allopen],#d-weights [data-open]'); if (!b) return;
+    if (b.dataset.step) ST.open[b.dataset.step] = !ST.open[b.dataset.step];
+    if (b.dataset.allopen) { ST.open = {}; if (b.dataset.allopen === '1') Object.keys(LIMS.steps).forEach(function (k) { ST.open[k] = true; }); }
+    if (b.dataset.open) { ST.open = {}; ST.open[b.dataset.open] = true; }
+    renderLimRows();
+    if (b.dataset.open) { var t = document.getElementById('lr-' + b.dataset.open); if (t) t.scrollIntoView({ block: 'start' }); }
+  });
+
+  // ------------------------------------------------------------ 5. the gate and the ladder; the three ways
+  var lastRow = PATH.periods[NPER - 1], firstRow = PATH.periods[0];
+  var DC = domainOf([].concat.apply([], SHT.rows.map(function (r) { return WAYS.map(function (p) { return r[p].cost; }); })).concat([PATH.top_first.cost, PATH.cheap_ladder.cost, lastRow.library.cost, firstRow.library.cost]), 0.06);
+  var DW = [0, Math.max.apply(null, [].concat.apply([], SHT.rows.map(function (r) { return WAYS.map(function (p) { return r[p].wrong; }); })).concat([PATH.top_first.wrong, PATH.cheap_ladder.wrong, lastRow.library.wrong])) * 1.08];
+  function saxis(d, kind) { return '<div class="saxis">' + niceTicks(d[0], d[1], 6).map(function (t) { return '<span style="left:' + pos(t, d).toFixed(2) + '%">' + (kind === 'pct' ? Math.round(t * 100) + '%' : t) + '</span>'; }).join('') + '</div>'; }
+  // One row: three lanes, one per way of working, always in the same order. ghost: where each way was before the move.
+  function lanes(vals, d, ghost, kind) {
+    var s = '<div class="lanes">' + niceTicks(d[0], d[1], 6).map(function (t) { return '<i class="gl" style="left:' + pos(t, d).toFixed(2) + '%"></i>'; }).join('');
+    WAYS.forEach(function (p, i) {
+      var y = 4 + i * 14, x = pos(vals[p], d);
+      if (ghost && ghost[p] !== undefined && Math.abs(ghost[p] - vals[p]) > 1e-9) { var gx = pos(ghost[p], d); s += '<i class="mv" style="top:' + (y + 7) + 'px;left:' + Math.min(gx, x).toFixed(2) + '%;width:' + Math.abs(x - gx).toFixed(2) + '%"></i><span class="ghost" style="top:' + (y + 1) + 'px;left:' + gx.toFixed(2) + '%">' + wayIcon(p, true) + '</span>'; }
+      s += '<span class="wm" style="top:' + y + 'px;left:' + x.toFixed(2) + '%" data-tip="' + esc(PNAME[p] + ': <b>' + fmt(vals[p], kind) + '</b>') + '">' + wayIcon(p) + '</span>';
+    });
+    return s + '</div>';
+  }
+  function nums(vals, kind, extra) { return '<div class="sn">' + WAYS.map(function (p) { return '<span>' + wayIcon(p) + '<b data-p="' + p + '" data-v="' + vals[p] + '">' + fmt(vals[p], kind) + '</b></span>'; }).join('') + (extra || '') + '</div>'; }
+  function wayKey() { return '<div class="wkey">' + WAYS.map(function (p) { return '<span class="ki">' + wayIcon(p) + esc(PNAME[p]) + '</span>'; }).join('') + '<span class="ki">' + wayIcon('library', true) + ' faint: where it sat before the move</span></div>'; }
+  function renderGate() {
+    var el = $('#d-gate');
+    var REFL = {}; MAP.reference_settings.forEach(function (r) { REFL[r.id] = r.label; });
+    var moveName = function (mv) { return !mv.length ? 'As it is' : mv.length === 2 ? 'Both moved' : (mv[0] === 'gate' ? 'Gate moved' : 'Ladder moved'); };
+    var h = '<div class="ptitle"><h3>' + esc(LT.gate_title) + '</h3><span class="tagline">last period, every number ' + tag('G') + '</span></div><p class="sub">' + esc(LT.gate_lede) + '</p>';
+    h += '<div class="note mt"><b>' + esc(LT.gate_moved) + '</b><ul class="moves">' + MAP.shared_groups.map(function (g) { return '<li><b>' + esc(g.label) + '</b>: ' + Object.keys(g.moves).map(function (id) { return esc(pname(id)) + ' to its ' + g.moves[id] + ' end'; }).join('; ') + '.</li>'; }).join('') + '</ul></div>';
+    h += '<div class="mt">' + wayKey() + '</div><div class="gpanels mt">';
+    SHT.shared_bases = SHT.shared_bases || null;
+    var bases = []; SHT.rows.forEach(function (r) { if (bases.indexOf(r.base) < 0) bases.push(r.base); });
+    bases.forEach(function (b) {
+      var rows = SHT.rows.filter(function (r) { return r.base === b; }), asis = rows[0];
+      h += '<div data-base="' + b + '"><h4>' + esc(REFL[b]) + '</h4>';
+      [['cost', 'Cost per piece of work, in cheap-call equivalents', DC, 'cost'], ['wrong', 'Wrong rate', DW, 'pct']].forEach(function (m) {
+        h += '<div class="shead">' + esc(m[1]) + '</div><div class="strip"><span></span>' + saxis(m[2], m[3]) + '<span></span>';
+        rows.forEach(function (r, i) {
+          var vals = {}, gh = {}; WAYS.forEach(function (p) { vals[p] = r[p][m[0]]; gh[p] = asis[p][m[0]]; });
+          h += (i ? '<span class="rowsep"></span>' : '') + '<span class="sl">' + moveName(r.moved) + '</span>' + lanes(vals, m[2], i ? gh : null, m[3]) + nums(vals, m[3]);
+        });
+        h += '</div>';
+      });
+      h += '</div>';
+    });
+    el.innerHTML = h + '</div>';
+  }
+  function renderWays() {
+    var el = $('#d-ways');
+    var vc = { top_first: PATH.top_first.cost, cheap_ladder: PATH.cheap_ladder.cost, library: lastRow.library.cost };
+    var vw = { top_first: PATH.top_first.wrong, cheap_ladder: PATH.cheap_ladder.wrong, library: lastRow.library.wrong };
+    var h = '<div class="ptitle"><h3>Three ways of working, at these settings</h3><span class="tagline">every number ' + tag('G') + '</span></div><p class="sub">' + esc(RT.outputs_note) + ' Faint circle: the library in the first period.</p><div class="mt">' + wayKey() + '</div>';
+    [['Cost per piece of work', vc, DC, 'cost', firstRow.library.cost], ['Wrong rate', vw, DW, 'pct', firstRow.library.wrong]].forEach(function (m) {
+      h += '<div class="shead">' + m[0] + '</div><div class="strip"><span></span>' + saxis(m[2], m[3]) + '<span></span><span class="sl">Last period</span>' + lanes(m[1], m[2], { library: m[4] }, m[3]) + nums(m[1], m[3]) + '<span></span><span></span><span class="note" style="text-align:right">library, first period: <b>' + fmt(m[4], m[3]) + '</b></span></div>';
+    });
+    h += '<p class="note mt">The same scales as the gate and ladder above, so the marks sit in the same places.</p>';
+    el.innerHTML = h;
+  }
+  // ------------------------------------------------------------ 6. the ratios and their time path
+  function lineChart(title, kc, kw, W) {
+    var H = 230, L = 48, Rm = 96, T = 30, B = 40;
+    var cs = PATH.periods.map(function (p) { return p.ratios[kc]; }), ws = PATH.periods.map(function (p) { return p.ratios[kw]; });
+    var all = cs.concat(ws).concat([1]), lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), pad = (hi - lo) * 0.12 || 0.05; lo -= pad; hi += pad;
+    var X = function (i) { return L + i / Math.max(1, NPER - 1) * (W - L - Rm); }, Y = function (v) { return T + (hi - v) / (hi - lo) * (H - T - B); };
+    var s = '<svg width="' + W + '" height="' + H + '" role="img" aria-label="' + esc(title) + '"><text x="0" y="16" style="font-size:15px;font-weight:600">' + esc(title) + '</text>';
+    niceTicks(lo, hi, 4).forEach(function (t) { s += '<line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + Y(t) + '" y2="' + Y(t) + '" style="stroke:var(--line)"/><text x="' + (L - 6) + '" y="' + (Y(t) + 4) + '" text-anchor="end" style="font-size:13px;fill:var(--ink-2)">' + fmt(t, 'ratio') + '</text>'; });
+    // the label of the line at one goes where both lines are furthest from it
+    var bi = 0, bd = -1; for (var i = 0; i < NPER; i++) { var dd = Math.min(Math.abs(Y(cs[i]) - Y(1)), Math.abs(Y(ws[i]) - Y(1))); if (dd > bd) { bd = dd; bi = i; } }
+    var lxp = Math.max(L + 4, Math.min(W - Rm - 80, X(bi) - 40)), above = Math.min(Y(cs[bi]), Y(ws[bi])) > Y(1) || Math.max(Y(cs[bi]), Y(ws[bi])) < Y(1) - 20 ? false : true;
+    s += '<line x1="' + L + '" x2="' + (W - Rm) + '" y1="' + Y(1) + '" y2="' + Y(1) + '" style="stroke:var(--ink);stroke-width:2;stroke-dasharray:2 3"/><text x="' + lxp + '" y="' + (above ? Y(1) - 6 : Y(1) + 16) + '" style="font-size:13px;fill:var(--ink-2);paint-order:stroke;stroke:var(--surface);stroke-width:4px">one: equal</text>';
+    [1, 3, 6, 9, 12].filter(function (p) { return p <= NPER; }).forEach(function (p) { s += '<text x="' + X(p - 1) + '" y="' + (H - B + 18) + '" text-anchor="middle" style="font-size:13px;fill:var(--ink-2)">' + p + '</text>'; });
+    s += '<text x="' + ((L + W - Rm) / 2) + '" y="' + (H - 4) + '" text-anchor="middle" style="font-size:13px;fill:var(--ink-2)">period (30 days each)</text>';
+    var line = function (v, dash) { return '<path d="' + v.map(function (y, i) { return (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(y).toFixed(1); }).join('') + '" style="fill:none;stroke:var(--ink);stroke-width:2.4' + (dash ? ';stroke-dasharray:7 4' : '') + '"/>'; };
+    var ly1 = Y(cs[NPER - 1]), ly2 = Y(ws[NPER - 1]); if (Math.abs(ly1 - ly2) < 18) { var mid = (ly1 + ly2) / 2; ly1 = mid + (ly1 >= ly2 ? 9 : -9); ly2 = mid + (ly1 >= ly2 ? -9 : 9); }
+    s += line(cs) + line(ws, true) + '<text x="' + (W - Rm + 8) + '" y="' + (ly1 + 5) + '" style="font-size:14px"><tspan style="font-weight:700">' + fmt(cs[NPER - 1], 'ratio') + '</tspan> cost</text><text x="' + (W - Rm + 8) + '" y="' + (ly2 + 5) + '" style="font-size:14px"><tspan style="font-weight:700">' + fmt(ws[NPER - 1], 'ratio') + '</tspan> wrong rate</text>';
+    return s + '</svg>';
+  }
+  function renderRatios() {
+    var el = $('#d-ratios'), R = lastRow.ratios, F = firstRow.ratios, R1 = E.variant(MAP, BEST, 'opus_one').last.ratios;
+    var dl = domainOf([R.cost_vs_ladder, R.wrong_vs_ladder, F.cost_vs_ladder, F.wrong_vs_ladder], 0.3, [1, 0.9, 1.1]);
+    var ds = domainOf([R.cost_vs_top, R.wrong_vs_top, F.cost_vs_top, F.wrong_vs_top, R1.cost_vs_top], 0.08, [1]);
+    var row = function (lab, k, d) { return '<span>' + lab + '</span>' + gauge(R[k], d, 0, [{ v: F[k], t: 'first period ' + fmt(F[k], 'ratio') }]) + '<span class="rv" data-r="' + k + '"><b>' + fmt(R[k], 'ratio') + '</b> last<br><span class="muted">' + fmt(F[k], 'ratio') + ' first</span></span>'; };
+    var h = '<div class="ptitle"><h3>The library over each, last period</h3><span class="tagline">every number ' + tag('G') + '</span></div><p class="sub">Filled mark: last period. Hollow mark: first period. The line in each bar is one.</p>';
+    h += '<div class="rgrid mt"><span class="gh">Against ' + esc(PNAME.cheap_ladder.toLowerCase()) + ' <span class="note">· ' + esc(RT.ladder_sub) + '</span></span>' + row('Cost ratio', 'cost_vs_ladder', dl) + row('Wrong-rate ratio', 'wrong_vs_ladder', dl) +
+      '<span class="gh">Against ' + esc(PNAME.top_first.toLowerCase()) + ' <span class="note">· ' + esc(RT.top_sub) + '</span></span>' + row('Cost ratio', 'cost_vs_top', ds) + row('Wrong-rate ratio', 'wrong_vs_top', ds) +
+      '<span>Cost, Opus price ratio one</span>' + gauge(R1.cost_vs_top, ds, 0) + '<span class="rv"><b>' + fmt(R1.cost_vs_top, 'ratio') + '</b> last</span></div>';
+    h += '<h4 class="mt2">Period by period</h4><div class="tlines mt" id="tl"></div>';
+    el.innerHTML = h;
+    var tl = $('#tl'), w = Math.max(260, (inner(tl) - (inner(tl) > 560 ? 18 : 0)) / (inner(tl) > 560 ? 2 : 1));
+    tl.innerHTML = '<div class="tline">' + lineChart('Against the ladder', 'cost_vs_ladder', 'wrong_vs_ladder', w) + '</div><div class="tline">' + lineChart('Against the strong model', 'cost_vs_top', 'wrong_vs_top', w) + '</div>';
+  }
+  function renderUsage() {
+    var el = $('#d-usage'), u = C.usage(MAP, lastRow), cost = lastRow.library.cost;
+    var of100 = u.filter(function (x) { return /^of 100/.test(x.unit || ''); }), calls = u.filter(function (x) { return /cheap-call/.test(x.unit || ''); }), other = u.filter(function (x) { return of100.indexOf(x) < 0 && calls.indexOf(x) < 0; });
+    var waffle = function (v) { var s = '<div class="waff" aria-hidden="true">'; for (var i = 0; i < 100; i++) { var f = Math.max(0, Math.min(1, v - i)); s += '<i>' + (f > 0 ? '<b style="width:' + (100 * f).toFixed(1) + '%"></b>' : '') + '</i>'; } return s + '</div>'; };
+    var h = '<div class="ptitle"><h3>' + esc(RT.usage_title) + '</h3><span class="tagline">every number ' + tag('G') + '</span></div>';
+    h += '<p class="sub">Of a hundred pieces of work of every kind. Each square is one piece of work; a part-filled square is part of one.</p><div class="ugrid mt">' +
+      of100.map(function (x) { return '<div class="ucell" data-u="' + x.id + '" data-v="' + x.value + '">' + waffle(x.value) + '<div class="uv">' + fmt(x.value, 'funnel') + '</div><div class="ul">' + esc(x.label) + '</div></div>'; }).join('') + '</div>';
+    var at = 0;
+    h += '<h4 class="mt2">What it costs to run, inside the library’s cost per piece (' + fmt(cost, 'cost') + ' cheap-call equivalents)</h4><div class="cbar mt" role="img" aria-label="Running cost parts inside the cost per piece">' +
+      calls.map(function (x, i) { var s = '<i class="' + (i ? 'b' : 'a') + '" style="left:' + (100 * at / cost).toFixed(3) + '%;width:' + (100 * x.value / cost).toFixed(3) + '%"></i>'; at += x.value; return s; }).join('') + '</div>' +
+      '<p class="note mt">' + calls.map(function (x, i) { return '<span class="ki"><span class="mk" style="background:' + (i ? 'repeating-linear-gradient(45deg,var(--ink) 0 2px,transparent 2px 5px);border:1.5px solid var(--ink)' : 'var(--ink)') + '"></span> <b data-u="' + x.id + '">' + fmt(x.value, 'auto') + '</b> ' + esc(x.label.toLowerCase()) + ', ' + esc(x.unit) + '</span>'; }).join(' · ') + '</p>';
+    h += other.map(function (x) { return '<p class="note mt" data-u="' + x.id + '"><b>' + fmt(x.value, 'auto') + '</b> ' + esc(x.label.toLowerCase()) + ', in ' + esc(x.unit) + '.</p>'; }).join('');
+    el.innerHTML = h;
+  }
+
+  // ------------------------------------------------------------ 7. many runs
+  var TIES = (MAP.ensemble_ties && MAP.ensemble_ties.levels) || [0, 0.5, 1];
+  var CM = E.compile(MAP), RUNS = null;
+  function renderTies() {
+    var el = $('#d-ties');
+    var h = '<div class="ptitle"><h3>The spread at three ties</h3><span class="tagline">every number ' + tag('G') + '</span></div>' +
+      '<div class="controls">' + ctl('Runs at each tie', 'More runs: a steadier spread, a longer wait.', '<select id="ensN">' + [300, 1000, 2000].map(function (k) { return '<option' + (k === ST.ensN ? ' selected' : '') + '>' + k + '</option>'; }).join('') + '</select>') +
+      ctl('Seed', 'A whole number that fixes the random draws.', '<input type="number" id="ensSeed" value="' + ST.ensSeed + '" style="width:9rem">') +
+      '<button class="btn primary" type="button" id="ensRun">Run at all three ties</button><div class="ctl"><span class="cl">Progress</span><div class="progress"><i id="ensBar"' + (ENSR ? ' style="width:100%"' : '') + '></i></div><span class="cw" id="ensTxt">' + (ENSR ? 'done: ' + (ENSR[TIES[0]].n * TIES.length) + ' runs' : 'not run yet') + '</span></div></div>' +
+      '<p class="note">' + rich('{{c:guess}} of the {{c:drawn}} drawn unknowns are guesses.') + ' ' + esc(MT.tie) + ' ' + esc(MT.follows) + '</p>';
+    if (ENSR) {
+      var w = ST.ensWhen;
+      h += '<div class="controls">' + ctl('Show the', 'First or last of the ' + NPER + ' periods.', seg('Period', [['first', 'first period'], ['last', 'last period']], w, 'data-ew')) + '<span class="note">' + ENSR[TIES[0]].n + ' runs at each tie, seed ' + ENSR[TIES[0]].seed + '</span></div>';
+      h += '<p class="note">Box: the middle half of the runs. Thick tick: the middle run. Whiskers: 5 and 95 in every hundred. Dotted line: one. The numbers on the right: the middle run, then 5 to 95 in 100.</p>';
+      var rows = [['cost_vs_ladder', 'Cost against the ladder', 'ratio'], ['wrong_vs_ladder', 'Wrong rate against the ladder', 'ratio'], ['cost_vs_top', 'Cost against the strong model', 'ratio'], ['wrong_vs_top', 'Wrong rate against the strong model', 'ratio']];
+      if (CM.funnelEnd) rows.push(['funnel_end', 'Funnel’s last number, of a hundred', 'funnel']);
+      if (CM.promoMeasure) rows.push(['promo', 'More caught at the first gate by promoted checks, of the same hundred', 'funnel']);
+      h += '<div class="tgrid mt">';
+      rows.forEach(function (r, ri) {
+        var Ss = TIES.map(function (t) { return ENSR[t].spread[w][r[0]]; });
+        var ratio = r[2] === 'ratio', vals = []; Ss.forEach(function (q) { vals.push(q.p5, q.p95); });
+        var d = domainOf(vals, 0.05, ratio ? [1] : [0]);
+        if (ri) h += '<span class="sep"></span>';
+        h += '<span class="tl" style="grid-row:span 4">' + esc(r[1]) + '</span><span class="tt"></span><div class="saxis">' + niceTicks(d[0], d[1], 4).map(function (t) { return '<span style="left:' + pos(t, d).toFixed(2) + '%">' + fmt(t, ratio ? 'ratio' : 'funnel') + '</span>'; }).join('') + '</div><span></span>';
+        Ss.forEach(function (q, i) {
+          var bx = '<div class="bx" data-tip="' + esc('tie ' + TIES[i] + ': middle <b>' + fmt(q.p50, r[2]) + '</b>, middle half ' + fmt(q.p25, r[2]) + ' to ' + fmt(q.p75, r[2]) + ', 5 to 95 in 100: ' + fmt(q.p5, r[2]) + ' to ' + fmt(q.p95, r[2])) + '">' + (ratio ? '<i class="one" style="left:' + pos(1, d).toFixed(2) + '%"></i>' : '') +
+            '<i class="w" style="left:' + pos(q.p5, d).toFixed(2) + '%;width:' + (pos(q.p95, d) - pos(q.p5, d)).toFixed(2) + '%"></i><i class="wc" style="left:' + pos(q.p5, d).toFixed(2) + '%"></i><i class="wc" style="left:' + pos(q.p95, d).toFixed(2) + '%"></i>' +
+            '<i class="b" style="left:' + pos(q.p25, d).toFixed(2) + '%;width:' + Math.max(0.4, pos(q.p75, d) - pos(q.p25, d)).toFixed(2) + '%"></i><i class="md" style="left:' + pos(q.p50, d).toFixed(2) + '%"></i></div>';
+          h += '<span class="tt">tie ' + TIES[i] + '</span>' + bx + '<span class="tv" data-tie="' + TIES[i] + '"><b>' + fmt(q.p50, r[2]) + '</b> · ' + fmt(q.p5, r[2]) + ' to ' + fmt(q.p95, r[2]) + '</span>';
+        });
+      });
+      [['cheap_ladder', 'Runs cheaper with a wrong rate no higher, against the ladder'], ['top_first', 'The same, against the strong model']].forEach(function (r) {
+        h += '<span class="sep"></span><span class="tl">' + esc(r[1]) + '</span>';
+        TIES.forEach(function (t) { var v = ENSR[t].shareBetterVs[r[0]][w]; h += '<span class="tt">tie ' + t + '</span><div class="sbar" role="img" aria-label="' + fmt(v, 'pct') + '"><i style="width:' + (100 * v).toFixed(2) + '%"></i></div><span class="tv"><b>' + fmt(v, 'pct') + '</b> of runs</span>'; });
+      });
+      h += '</div>';
+    } else h += '<p class="note mt">Press the button. The page stays usable while it runs.</p>';
+    el.innerHTML = h;
+    renderRanks();
+  }
+  function rankList(title, r, w, ENS) {
+    var list = ENS.spearman[w][r];
+    if (ENS.tie === 1) {
+      var seen = {};
+      list = list.filter(function (e) { var row = ROWS[e.id]; if (row.side !== 'library') return true; if (seen[row.lib_group]) return false; seen[row.lib_group] = true; return true; })
+        .map(function (e) { var row = ROWS[e.id]; return row.side === 'library' ? { id: e.id, group: row.lib_group, rho: row.good_end === 'high' ? e.rho : -e.rho } : e; });
+    }
+    list = list.slice(0, 8);
+    var noise = 2 / Math.sqrt(ENS.n), d = [-1, 1];
+    return '<div><h4>' + esc(title) + '</h4><div class="rk mt">' + list.map(function (e) {
+      var name = e.group ? 'Group: ' + LIBGI[e.group].short : pname(e.id), tg = e.group ? '' : tag(ROWS[e.id].tag), x = pos(e.rho, d), z = pos(0, d);
+      return '<span class="rn">' + esc(name) + tg + '</span><div class="dv" role="img" aria-label="' + fmt(e.rho, 'rho') + '"><i class="nz" style="left:' + pos(-noise, d).toFixed(2) + '%;width:' + (pos(noise, d) - pos(-noise, d)).toFixed(2) + '%"></i><i class="z" style="left:' + z + '%"></i><i class="' + (e.rho >= 0 ? 'p' : 'n') + '" style="left:' + Math.min(x, z).toFixed(2) + '%;width:' + Math.abs(x - z).toFixed(2) + '%"></i></div><span class="rv">' + fmt(e.rho, 'rho') + '</span>';
+    }).join('') + '</div></div>';
+  }
+  function renderRanks() {
+    var el = $('#d-ranks');
+    if (!ENSR) { el.innerHTML = '<h3>Which unknowns move each ratio most</h3><p class="note mt">Appears after the runs.</p>'; return; }
+    var ENS = ENSR[ST.ensTie], w = ST.ensWhen, noise = 2 / Math.sqrt(ENS.n);
+    var h = '<div class="ptitle"><h3>Which unknowns move each ratio most</h3><span class="tagline">every number ' + tag('G') + '</span></div>' +
+      '<div class="controls">' + ctl('Details for', 'Which tie the rankings come from.', seg('Tie', TIES.map(function (t) { return [String(t), 'tie ' + t]; }), String(ST.ensTie), 'data-et')) + '</div>';
+    if (ST.ensTie === 1) h += '<p class="note">' + esc(MT.rank_tied) + '</p>'; else if (ST.ensTie > 0) h += '<p class="note">' + esc(MT.rank_half) + '</p>';
+    h += '<p class="note">' + esc(MT.rank_read) + ' Bars to the right of the centre line: rises with it (solid). To the left: falls (hatched). Grey band: within about <b>' + fmt(noise, 'ratio') + '</b> of zero, where values are not well separated.</p>';
+    h += '<div class="rkgrid mt">' + RATIOS4.map(function (r) { return rankList(RNAME[r[0]], r[0], w, ENS); }).join('') + '</div>';
+    el.innerHTML = h;
+  }
+  document.addEventListener('click', function (e) {
+    if (e.target.id === 'ensRun') runEnsemble();
+    var a = e.target.closest('[data-ew]'); if (a) { ST.ensWhen = a.dataset.ew; renderTies(); }
+    var b = e.target.closest('[data-et]'); if (b) { ST.ensTie = +b.dataset.et; renderRanks(); }
+  });
+  function runEnsemble() {
+    if (RUNS) return;
+    var n = +$('#ensN').value, seed = Math.round(+$('#ensSeed').value) || 0;
+    ST.ensN = n; ST.ensSeed = seed;
+    RUNS = TIES.map(function (tie) { return C.ensembleRunner(E, MAP, TABLE, { n: n, seed: seed, tie: tie }); });
+    var total = n * TIES.length;
+    (function tick() {
+      var t0 = performance.now(), r = RUNS.filter(function (x) { return !x.done(); })[0];
+      while (r && performance.now() - t0 < 40) { r.step(1); if (r.done()) r = RUNS.filter(function (x) { return !x.done(); })[0]; }
+      var k = RUNS.reduce(function (s, x) { return s + x.count(); }, 0);
+      var bar = $('#ensBar'), tx = $('#ensTxt'); if (bar) bar.style.width = (100 * k / total) + '%'; if (tx) tx.textContent = k + ' of ' + total + ' runs';
+      if (r) { setTimeout(tick, 0); return; }
+      ENSR = {}; RUNS.forEach(function (x) { var res = x.result(); ENSR[x.tie] = res; }); RUNS = null;
+      window.__ready.ens = true; renderTies();
+    })();
+  }
+
+  // ------------------------------------------------------------ tooltip
+  var pop = $('#pop');
+  function showPop(t, ev) {
+    pop.innerHTML = t.getAttribute('data-tip'); pop.hidden = false;
+    var r = t.getBoundingClientRect(), x = ev && ev.pageX ? ev.pageX + 12 : r.left + scrollX, y = ev && ev.pageY ? ev.pageY + 14 : r.bottom + scrollY + 6;
+    pop.style.left = Math.min(x, scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8) + 'px'; pop.style.top = y + 'px';
+  }
+  document.addEventListener('pointermove', function (e) { var t = e.target.closest && e.target.closest('[data-tip]'); if (t) showPop(t, e); else pop.hidden = true; });
+  document.addEventListener('focusin', function (e) { var t = e.target.closest && e.target.closest('[data-tip]'); if (t) showPop(t); });
+
+  // ------------------------------------------------------------ start
+  $('#funnelLede').textContent = FT.lede + ' ' + FT.marks;
+  $('#condLede').textContent = CT.lede;
+  $('#condList').innerHTML = CT.items.map(function (it) { return '<li><b>' + esc(cap(LIBGI[it[0]].short)) + '.</b> ' + esc(it[1]) + '</li>'; }).join('') + '<li class="muted"><b>' + esc(cap(LIBGI.running_cost.short)) + '.</b> ' + esc(CT.running_cost) + '</li>';
+  $('#manyLede').textContent = MT.lede;
+  document.body.insertAdjacentHTML('beforeend', '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><pattern id="hatchHi" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" style="stroke:var(--hi);stroke-width:2.4"/></pattern></defs></svg>');
+  function renderAll() { renderKey(); renderFunnel(); renderCorners(); renderSquare(); renderWeights(); renderSequence(); renderLimRows(); renderGate(); renderWays(); renderRatios(); renderUsage(); renderTies(); }
+  renderAll();
+  window.__ready.base = true;
+  var queue = [
+    function () { setWeights(E.weights(MAP, TABLE, LIMS.items, { stepLabels: LIMS.steps })); renderWeights(); renderSequence(); renderLimRows(); window.__ready.weights = true; },
+    function () { sheetOf(ST.sqSheet); renderSquare(); },
+    function () { sheetOf('little'); },
+    function () { sheetOf('much'); renderSquare(); window.__ready.square = true; }
+  ];
+  (function next() { var f = queue.shift(); if (f) { f(); setTimeout(next, 20); } })();
+  var rt = null;
+  window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
+  window.__proto = { E: E, C: C, refs: REFS, shared: SHT, path: PATH, weights: function () { return W8; }, square: function () { return SQ; }, ens: function () { return ENSR; }, funnel: function () { return C.funnelView(E, MAP, TABLE, BEST, { period: ST.fPeriod, which: ST.fWhich, refs: REFS }); } };
+})();

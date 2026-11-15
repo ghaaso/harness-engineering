@@ -1,0 +1,26 @@
+// Writes jobg-<size>.json: the screenshots retaken after the check fixes (fix3), into final2/<size>/.
+// Run from this folder:  node - < make-jobg.js.txt
+'use strict';
+const fs = require('fs');
+const base = JSON.parse(fs.readFileSync('jobf-1870-light.json', 'utf8'));
+const check = base.shots.find(s => s.name === '00-check');
+const navDump = { dump: { expr: "JSON.stringify((()=>{const w=document.querySelector('nav.toc .wrap');const a=[...w.querySelectorAll('a')].pop();const wr=w.getBoundingClientRect(), ar=a.getBoundingClientRect();return {scrollWidth:w.scrollWidth, clientWidth:w.clientWidth, lastLabel:a.textContent, lastRight:Math.round(ar.right), wrapRight:Math.round(wr.right), lastFullyVisible: ar.right<=wr.right+0.5};})())", file: 'nav-check.txt' } };
+const sizes = [['1870-light', 1870, 1280, 'light'], ['1870-dark', 1870, 1280, 'dark'], ['644-light', 644, 1000, 'light'], ['390-light', 390, 844, 'light']];
+for (const [name, w, h, scheme] of sizes) {
+  const job = { page: base.page, out: 'final2/' + name, width: w, height: h, scheme, shots: [
+    check,
+    { name: '00-nav', steps: [navDump], clip: 'none' },
+    { name: 'first-screen', reload: true, steps: [{ wait: 400 }], clip: 'viewport' },
+    { name: 'nav', clip: 'nav.toc' },
+    { name: 'h-warm', clip: '#h .grid2' },
+    { name: 'h-audit', clip: '#h .card.panel:has(> ul.note)' },
+    { name: 'h-labels', steps: [{ eval: "[...document.querySelectorAll('#h details')].forEach(d=>{ if(/Labels on where/.test(d.querySelector('summary').textContent)) d.open=true; })" }, { wait: 300 }], clip: '#h details[open]' },
+    { name: 'j', clip: '#j' },
+    { name: 'k-table', clip: '#k .ktab' },
+    { name: 'k-graphify', clip: '#k .grid2' },
+    { name: 'k-bench', clip: '#k .card.panel:has(#k-bench)' },
+    { name: 'k', clip: '#k' }
+  ] };
+  fs.writeFileSync('jobg-' + name + '.json', JSON.stringify(job, null, 1));
+}
+console.log('wrote', sizes.length, 'jobs');

@@ -1,0 +1,133 @@
+export const meta = {
+  name: 'pathway-map-engine',
+  description: 'Build the pathway map engine from the model brief (one agent at a time): declarative graph and engine with tests, then the parameter table from the evidence, then an independent check',
+  phases: [
+    { title: 'Engine', detail: 'Opus writes map.json, engine.js and tests from the brief', model: 'opus' },
+    { title: 'Parameters', detail: 'Sonnet fills the parameter table from the record, with a tag and a source for each', model: 'sonnet' },
+    { title: 'Verify', detail: 'a fresh Opus re-derives results by hand, checks conservation and that the picture is the model', model: 'opus' },
+  ],
+}
+
+const REPO = 'C:/Users/User/Documents/projects/EMS_workshop1'
+const BRIEF = REPO + '/docs/program/evidence/library-pathways/model-brief.md'
+const OUTDIR = REPO + '/docs/program/library-pathways'
+const EVDIR = REPO + '/docs/program/evidence/library-pathways'
+const OLD = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/0bf1c4f3-76dc-4144-995c-2af5a213db41/scratchpad/lib'
+
+const COMMON = `CONTEXT. The owner of this repository designed a "library": a separate memory of model reasoning conclusions that a cheaper model fetches from, with an escalation ladder to stronger models whose solutions are stored. He proposed mapping and measuring the pathways through this design with trees, ensemble models and graphs. The orchestrating session wrote the model for that map as a brief: ${BRIEF}. Read it first and treat it as the specification.
+
+RULES. Write only under ${OUTDIR}/ and ${EVDIR}/. node is available; python is not on PATH. No installs, no dependencies, no web. Scripts kept as evidence are saved as .js.txt and run from their own folder with: node - < name.js.txt (inside such a script use process.cwd(), never __dirname). Plain English in every label and note, short sentences, no jargon a general reader would not know. The map must contain no proposed fixes for the design's limitations: it maps and measures only.`
+
+const ENGINE_SCHEMA = {
+  type: 'object',
+  properties: {
+    files: { type: 'array', items: { type: 'string' } },
+    api: { type: 'string' },
+    states: { type: 'number' },
+    branches: { type: 'number' },
+    tests_run: { type: 'number' },
+    tests_passed: { type: 'number' },
+    hand_checks: { type: 'array', items: { type: 'string' } },
+    deviations_from_brief: { type: 'array', items: { type: 'string' } },
+    notes: { type: 'string' },
+  },
+  required: ['files', 'api', 'states', 'branches', 'tests_run', 'tests_passed', 'hand_checks', 'deviations_from_brief'],
+}
+
+const PARAM_SCHEMA = {
+  type: 'object',
+  properties: {
+    file: { type: 'string' },
+    count: { type: 'number' },
+    measured: { type: 'array', items: { type: 'string' } },
+    from_studies: { type: 'array', items: { type: 'string' } },
+    guesses: { type: 'array', items: { type: 'string' } },
+    doubts: { type: 'array', items: { type: 'string' } },
+    notes: { type: 'string' },
+  },
+  required: ['file', 'count', 'measured', 'from_studies', 'guesses', 'doubts'],
+}
+
+const VERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['sound', 'sound_after_fixes', 'not_sound'] },
+    defects: { type: 'array', items: { type: 'object', properties: { where: { type: 'string' }, what: { type: 'string' }, fixed: { type: 'boolean' } }, required: ['where', 'what', 'fixed'] } },
+    hand_checks: { type: 'array', items: { type: 'object', properties: { case: { type: 'string' }, by_hand: { type: 'string' }, engine: { type: 'string' }, agree: { type: 'boolean' } }, required: ['case', 'by_hand', 'engine', 'agree'] } },
+    conservation: { type: 'string' },
+    picture_is_model: { type: 'string' },
+    brief_problems: { type: 'array', items: { type: 'string' } },
+    param_table_problems: { type: 'array', items: { type: 'string' } },
+    first_ensemble: { type: 'string' },
+    top_drivers: { type: 'array', items: { type: 'string' } },
+    notes: { type: 'string' },
+  },
+  required: ['verdict', 'defects', 'hand_checks', 'conservation', 'picture_is_model', 'brief_problems', 'param_table_problems', 'first_ensemble', 'top_drivers'],
+}
+
+phase('Engine')
+const engine = await agent(`${COMMON}
+
+YOUR JOB: BUILD THE GRAPH DESCRIPTION, THE ENGINE AND ITS TESTS.
+
+1. ${OUTDIR}/map.json. One declarative description of the model in the brief, which both the engine and (later) a page will read. It holds: the parameter ids, each with a plain-language meaning under 25 words and its group; the four episode attributes and how a class's chance is formed; the three policies; the states (id, a label of at most six words, the step it belongs to, whether it is an outcome); the branches (from, to, a chance expression, a cost expression, the tier the cost is paid at, the number of calls, a label of at most eight words, and an empty list for limitation ids to be filled in later); the outcomes; and the stock equations of the brief's section 8. Expressions are strings over parameter ids, class attributes and named derived values (for example the gate's catch chance g). Carry the kind of entry in hand (none, good exact, good similar, composite full, composite part, wrong accepted) in the states, so that every branch chance is a plain expression.
+
+2. ${OUTDIR}/engine.js. Pure functions, no dependencies, usable from node (module.exports) and from a browser page when inlined (a global named PathwayEngine). It must compute everything in the brief's section 9: outcomes and cost per class and overall for a policy; cost by tier and call counts; every route with its chance and cost (bounded loops), sortable; the time path of section 8; the headline ratios; the ensemble with a seeded random generator, percentiles, the share of draws where the library policy is cheaper than top_first with a wrong rate no higher, the Spearman ranking and the one-at-a-time swings; and a conservation check. Evaluate expressions against a whitelisted scope only.
+
+3. ${EVDIR}/params-placeholder.json. A middle value, a low and a high for every parameter so the engine can run. Mark the file clearly as placeholders that carry no evidence. A later agent writes the real table.
+
+4. ${EVDIR}/engine-test.js.txt. Tests, runnable with: cd ${EVDIR} && node - < engine-test.js.txt. At least: branch chances out of every state sum to 1 and outcome chances sum to 1 for every class under 500 random parameter draws; three cases worked by hand in comments, with the engine matching to six decimal places; with both trigger rates at zero the library policy matches cheap_ladder in outcomes; with every catch and success rate at 1 nothing escapes; raising a pure cost parameter never changes an outcome chance; the time path starts from an empty stock.
+
+Run the tests and fix until they pass. Where the brief is ambiguous, take the reading closest to its text and list it under deviations_from_brief. Do not change the model.
+
+Return the list of files, a description of the engine's functions and their inputs and outputs (under 250 words), the counts, the hand checks, and any deviation.`, { label: 'engine', phase: 'Engine', schema: ENGINE_SCHEMA, model: 'opus', effort: 'high', agentType: 'general-purpose' })
+
+if (!engine) {
+  log('engine agent returned nothing; stopping')
+  return { engine: null }
+}
+log(`engine: ${engine.states} states, ${engine.branches} branches, tests ${engine.tests_passed}/${engine.tests_run}`)
+
+phase('Parameters')
+const params = await agent(`${COMMON}
+
+YOUR JOB: FILL THE PARAMETER TABLE. FACTS ONLY.
+
+The parameter ids and their meanings are in ${OUTDIR}/map.json (and the brief's section 7). Write ${OUTDIR}/params.json: for every parameter a low, a high, a best value, a tag, a source and a note.
+
+Tags. M: measured on this PC, in this owner's repositories or session records. S: taken from an outside study. G: a guess. Be strict. A number in the record that only loosely relates to a parameter is a hint, not a measurement: tag the parameter G, cite the number in the note as a hint, and say how it differs from what the parameter means. Never invent a source. A guess gets a wide range. The note (under 35 words) says what the cited number actually measured.
+
+Where to look (all read-only):
+- Fact sheets: ${OLD}/facts/F1-ks-mechanics.md, F2-ks-research-and-refutes.md, F3-v2-numbers.md, F4-lit-positive.md, F5-lit-negative.md, F6-lit-tiers-baselines.md.
+- First-round reports: ${OLD}/dives/*.md. Refuter reports with corrected numbers: ${OLD}/refute/R1-ceiling.md to R9-trust-cost.md and R10-critic.md. Where a refuter corrected a first-round number, use the corrected one.
+- ${REPO}/docs/program/TOKEN-BOTTLENECK-2026-11.md and ${REPO}/docs/program/HARNESS-BOTTLENECKS-2026-11.md.
+- Price ratios per token today, from the vendor's price list: new input and output, Fable : Opus : Sonnet : Haiku = 80 : 40 : 20 : 1; re-read (cached) tokens, Fable = Opus = 2 x Sonnet. So m_opus is 2 and m_fable lies between 2 and 4.
+Examples of numbers in the record and what they are: an Opus reviewer found a serious defect in 9 of 14 Opus-built pieces of work in the clinic build; 64 % of reviews sent work back, 2.8 rounds per piece; one retrieved item beat several in three outside studies; a static similarity threshold gave 2.5 % wrong hits at 37 % hits and 5.2 % at 67 %; a weaker model with validated notes from a stronger one went from 45.3 to 51.6 on one benchmark; pushed warnings keyed on identifiers were right 4 to 12.5 % of the time on a replay; a strict entry cost 0.4 to 3.8 million tokens to write; agents that succeed 22 % of the time predict 77 %. Check each at its source before using it, and decide honestly whether it measures the parameter or is only a hint.
+
+Also write ${EVDIR}/params-notes.md: one line per parameter saying why the range is what it is.
+
+Return the file path, the count, the ids tagged M, the ids tagged S, the ids tagged G, and any parameter whose meaning you found unclear.`, { label: 'parameters', phase: 'Parameters', schema: PARAM_SCHEMA, model: 'sonnet', effort: 'medium', agentType: 'general-purpose' })
+
+log(params ? `parameters: ${params.count} filled; measured ${params.measured.length}, studies ${params.from_studies.length}, guesses ${params.guesses.length}` : 'parameter agent returned nothing')
+
+phase('Verify')
+const verify = await agent(`${COMMON}
+
+YOUR JOB: CHECK THE ENGINE AGAINST THE BRIEF, INDEPENDENTLY. You did not write it. Assume it has mistakes until you have shown otherwise.
+
+Files: ${OUTDIR}/map.json, ${OUTDIR}/engine.js, ${OUTDIR}/params.json (if present; else ${EVDIR}/params-placeholder.json), ${EVDIR}/engine-test.js.txt.
+
+1. Hand checks. Pick four episode classes that exercise different parts (for example: visible, cheap_wrong, exact held, no distractor; latent, cheap_ok, nothing held, distractor; visible, cheap_wrong, composite, distractor; and one for top_first). For each, work out the outcome chances and the expected cost yourself from the brief's text, with your own short script written from the brief and not from engine.js, and compare with the engine to six decimal places.
+2. Conservation under 1,000 random parameter draws inside the table's ranges: every state's branch chances sum to 1, every class's outcome chances sum to 1, class chances sum to 1 at every period.
+3. The picture is the model. Every state and branch in map.json is used by the computation; nothing is computed that map.json does not describe; no saving or cost is counted twice. Check the stock equations and the time path against section 8.
+4. The ensemble. Check the random generator is seeded, the Spearman ranking is computed correctly on a small example you can verify by hand, and the one-at-a-time swings hold the other parameters at their best values.
+5. The brief itself. List anything in it that is ambiguous, inconsistent or missing for the model to be well defined. Do not redesign it.
+6. The parameter table. Sample ten parameters and open the cited source for each. Report any tag that is too generous (a hint tagged as a measurement) and any range that excludes its own best value or lies outside 0 to 1 for a chance.
+
+Fix defects in engine.js or map.json where the brief's meaning is clear, re-run the tests, and say what you changed. Where the brief is unclear, do not choose silently: report it.
+
+Then run a first ensemble (2,000 draws, fixed seed) with the parameter table and report, for the orchestrator only: the 10th, 50th and 90th percentile of the cost ratio and of the wrong-rate ratio (library over top_first) at the first period and at the last, the share of draws where the library policy is cheaper with a wrong rate no higher, and the eight parameters that move each ratio most. State plainly that these follow from the assumed ranges and are not findings.
+
+Write your working to ${EVDIR}/verify-engine.md.`, { label: 'verify', phase: 'Verify', schema: VERIFY_SCHEMA, model: 'opus', effort: 'xhigh', agentType: 'general-purpose' })
+
+return { engine, params, verify }

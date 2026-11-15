@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>After a compaction</title>
+<style>
+:root{color-scheme:light;--page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--s1:#2a78d6;--s1-wash:#cde2fb;--neutral:#898781;--neutral-wash:#e6e4de;--warm:#fff7e0;--warm-b:#e9d8a2}
+*{box-sizing:border-box}
+html{background:var(--page)}
+body{margin:0;background:var(--page);color:var(--ink);font:17px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1800px;margin:0 auto;padding:28px 36px 90px}
+h1{font-size:36px;line-height:1.15;margin:0 0 10px;font-weight:650;letter-spacing:-.01em;max-width:1500px}
+h2{font-size:27px;line-height:1.2;margin:0 0 6px;font-weight:650}
+h3{font-size:18px;margin:0 0 8px;font-weight:650}
+p{margin:0 0 10px}
+.lead{font-size:19.5px;max-width:1380px}
+section{margin-top:54px}
+.how{color:var(--ink2);font-size:16px;max-width:1380px;margin-bottom:16px}
+.how b,.says b{color:var(--ink)}
+.says{font-size:17px;max-width:1380px;margin-top:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px 22px;min-width:0}
+.tag{display:inline-block;font-size:11px;font-weight:700;line-height:1;padding:3px 5px;border-radius:4px;border:1px solid var(--axis);color:var(--ink2);vertical-align:1px;margin-left:4px;white-space:nowrap}
+.tag.tM{background:#eef3ea}.tag.tE{background:#f4efe2}.tag.tG{background:#f6e9e6}.tag.tH{background:#e8eef7}
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.grid2.w{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}
+.tile .kick{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650;margin-bottom:8px}
+.tile .big{font-size:52px;line-height:1.04;font-weight:650;letter-spacing:-.02em}
+.tile .big i{font-style:normal;color:var(--muted);font-weight:500;padding:0 4px}
+.tile .what{font-size:18.5px;font-weight:650;margin:10px 0 6px}
+.tile .note{color:var(--ink2);font-size:15.5px}
+.banner{background:var(--warm);border:1px solid var(--warm-b);border-radius:10px;padding:14px 18px;margin:20px 0 0;font-size:17.5px;max-width:1380px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:14px;font-size:14.5px;color:var(--ink2)}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th{font-weight:650;text-align:right;color:var(--ink2);font-size:13.5px;padding:6px 9px;border-bottom:1px solid var(--axis);vertical-align:bottom}
+td{padding:6px 9px;border-bottom:1px solid var(--grid);text-align:right;font-variant-numeric:tabular-nums;vertical-align:middle}
+th.l,td.l{text-align:left}
+td.l{font-variant-numeric:normal}
+td.sm,span.sm{color:var(--ink2);font-size:13.5px}
+tr.grp td{font-weight:650;background:#f3f2ee;border-bottom:1px solid var(--axis);text-align:left;font-size:14px;color:var(--ink2);text-transform:uppercase;letter-spacing:.05em}
+tr.leadrow td{font-weight:650}
+.chip{display:inline-block;font-size:13px;font-weight:650;border-radius:999px;padding:2px 10px;border:1px solid var(--axis);background:#fff;white-space:nowrap;color:var(--ink2)}
+.chip.yes{border-color:var(--ink);color:var(--ink);background:#fff}
+.chip.few,.chip.drop{border-style:dashed;font-weight:500}
+svg{display:block}
+svg text{font-family:inherit;fill:var(--ink)}
+svg text.m{fill:var(--muted);font-size:13px}
+svg text.v{font-size:14.5px;font-weight:650;font-variant-numeric:tabular-nums}
+svg text.s{fill:var(--ink2);font-size:13.5px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 24px;font-size:14.5px;color:var(--ink2);margin:4px 0 12px;align-items:center}
+.legend i{display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:7px;vertical-align:-1.5px}
+.legend i.ring{background:var(--surface);border:2.5px solid var(--neutral)}
+.legend i.dot{background:var(--s1)}
+.legend i.bar{border-radius:2px;width:22px;height:8px;vertical-align:1px}
+.legend i.rng{width:26px;height:2px;border-radius:1px;background:var(--ink2);vertical-align:4px}
+/* rows with two panels */
+.prow{display:grid;grid-template-columns:330px minmax(0,1fr) minmax(0,1fr) 300px;gap:0 18px;align-items:center;border-top:1px solid var(--grid);padding:9px 0}
+.prow.hd{border-top:none;padding:0 0 4px;align-items:end}
+.prow .nm{font-size:16.5px;font-weight:650;line-height:1.3}
+.prow .nm small{display:block;font-weight:400;color:var(--ink2);font-size:14px;margin-top:2px}
+.prow .ph{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650}
+.prow .df{font-size:15.5px;line-height:1.35}
+.prow .df b{font-size:17px;font-variant-numeric:tabular-nums}
+.prow .df .p2{color:var(--ink2);font-size:14px;display:block;margin-top:2px}
+.pane{min-width:0}
+.pane.pl{background:#f5f4f0;border-radius:6px}
+.cnt{color:var(--ink2);font-size:13.5px;padding:0 8px 2px}
+/* the strip that explains the windows */
+.strip{display:flex;align-items:stretch;gap:2px;margin:10px 0 6px;font-size:14px;min-height:76px}
+.strip div{padding:9px 10px;line-height:1.3;border-radius:4px;min-width:0}
+.strip b{display:block;font-size:14.5px}
+.strip .cut{flex:0 0 12px;padding:0;background:var(--ink);border-radius:2px}
+.strip .aft{flex:3;background:var(--s1-wash)}
+.strip .mid{flex:2.2;background:transparent;border:1px dashed var(--axis)}
+.strip .plb{flex:3;background:#f0efea;border:1px solid var(--axis)}
+.strip .pla{flex:3;background:#f0efea;border:1px solid var(--axis)}
+.strip .bef{flex:3;background:var(--neutral-wash)}
+.strip .tail{flex:0 0 96px;background:#fff;border:1px dashed var(--axis);font-size:13px;color:var(--ink2)}
+.strip span{color:var(--ink2);font-size:13.5px}
+/* horizontal bars */
+.brow{display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr) minmax(0,1fr);gap:0 22px;align-items:center;padding:5px 0;border-top:1px solid var(--grid);font-size:15px}
+.brow.fam{border-top:1px solid var(--axis);padding-top:12px;margin-top:6px;font-weight:650;font-size:16px}
+.brow.hd{border-top:none;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650;padding-bottom:2px}
+.brow .lb{padding-left:18px;color:var(--ink)}
+.brow.fam .lb{padding-left:0}
+.seg{display:inline-flex;border:1px solid var(--axis);border-radius:8px;overflow:hidden;margin:0 0 12px}
+.seg button{font:inherit;font-size:15px;border:0;background:#fff;padding:6px 14px;cursor:pointer;color:var(--ink2);border-right:1px solid var(--axis)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--ink);color:#fff}
+.frow{display:grid;grid-template-columns:400px minmax(0,1fr) 250px 150px;gap:0 16px;align-items:center;padding:4px 0;border-top:1px solid var(--grid);font-size:15px}
+.frow.grp{border-top:1px solid var(--axis);margin-top:8px;padding-top:9px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650}
+.frow .lb small{color:var(--ink2);font-size:13.5px;margin-left:6px}
+.frow .num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.frow .num span{color:var(--ink2);font-size:14px}
+.meter{display:grid;grid-template-columns:400px 74px 60px minmax(0,1fr) 190px 250px;gap:0 14px;align-items:center;padding:5px 0;border-top:1px solid var(--grid);font-size:15px}
+.meter.hd{border-top:none;font-size:13px;color:var(--ink2);font-weight:650;align-items:end}
+.meter .r{text-align:right;font-variant-numeric:tabular-nums}
+.meter .rest{color:var(--ink2);font-size:13.5px}
+ul.tight{margin:4px 0 0;padding-left:22px;font-size:16px;max-width:1380px}
+ul.tight li{margin:5px 0}
+.slider{display:flex;align-items:center;gap:14px;margin:6px 0 4px;font-size:16px;flex-wrap:wrap}
+.slider input{width:420px;max-width:100%}
+details{margin-top:8px}
+summary{cursor:pointer;font-weight:650;font-size:16px;padding:6px 0}
+.foot{margin-top:60px;color:var(--ink2);font-size:14.5px;border-top:1px solid var(--axis);padding-top:14px}
+code{font:14px ui-monospace,Consolas,monospace;background:#f1f0ec;padding:1px 5px;border-radius:4px}
+@media (max-width:1100px){
+ .grid4{grid-template-columns:repeat(2,minmax(0,1fr))}.grid2,.grid2.w{grid-template-columns:minmax(0,1fr)}
+ .prow{grid-template-columns:minmax(0,1fr)}.prow.hd{display:none}.prow .pane::before{content:attr(data-h);display:block;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650;padding:4px 8px 0}
+ .brow{grid-template-columns:minmax(0,1fr)}.brow.hd{display:none}
+ .frow{grid-template-columns:minmax(0,1fr)}.meter{grid-template-columns:minmax(0,1fr)}.meter.hd{display:none}
+ .wrap{padding:18px 16px 60px}.strip{flex-wrap:wrap}.tile .big{font-size:42px}
+ .tblw{overflow-x:auto}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Do sessions make more mistakes after a compaction than before one?</h1>
+<p class="lead" id="lead"></p>
+<div class="meta" id="meta"></div>
+
+<div class="grid4" style="margin-top:22px" id="tiles"></div>
+<div class="banner" id="banner"></div>
+
+<section>
+<h2>What was compared</h2>
+<p class="how">One stretch of a session, from one compaction to the next. <b>After</b> is the 30 tool calls that follow a compaction. <b>Before</b> is the 30 calls that end where the next summary's input ended. The few calls the harness keeps word for word are in neither. The <b>placebo</b> is the same pair of windows around a point in the middle of a stretch, where nothing happened. No call sits in two windows.</p>
+<div class="card">
+ <div class="strip" aria-hidden="true">
+  <div class="cut" title="a compaction"></div>
+  <div class="aft"><b>after</b><span>30 calls</span></div>
+  <div class="mid"></div>
+  <div class="plb"><b>placebo: before</b><span>30 calls</span></div>
+  <div class="pla"><b>placebo: after</b><span>30 calls</span></div>
+  <div class="mid"></div>
+  <div class="bef"><b>before</b><span>30 calls</span></div>
+  <div class="tail">kept tail: 1 to 3 calls, in neither</div>
+  <div class="cut" title="the next compaction"></div>
+ </div>
+ <div class="legend" style="margin:8px 0 0"><span>▌ a compaction</span><span id="stripnote"></span></div>
+</div>
+</section>
+
+<section>
+<h2>Do the calls after a compaction go wrong more often?</h2>
+<p class="how"><b>How to read it.</b> Each row is one count, for each 100 calls. The ring is the 30 calls before, the filled dot the 30 calls after. The line through each is its range: where the figure falls 95 times in 100 when whole sessions are drawn again. Left, around the 116 compactions. Right, around 103 points where nothing happened. A difference is called shown when its range does not hold zero.</p>
+<div class="card">
+ <div class="legend"><span><i class="ring"></i>before</span><span><i class="dot"></i>after</span><span><i class="rng"></i>range</span></div>
+ <div id="main"></div>
+</div>
+<p class="says" id="mainSays"></p>
+</section>
+
+<section>
+<h2>Is it only that the session is 30 calls further on?</h2>
+<p class="how"><b>How to read it.</b> Every call of the 45 sessions, sorted by how many calls it comes after the last compaction. Each column is the mistakes for each 100 calls in that part of a stretch, with its range. The grey column is counted from the other end: the last 30 calls before the next compaction, where the window is at its fullest. On the right, the same for a session that has not compacted yet, counted from its start.</p>
+<div class="seg" id="stretchSel" role="group" aria-label="what to show"><button data-k="M" aria-pressed="true">Mistakes</button><button data-k="E" aria-pressed="false">All error results</button></div>
+<div class="grid2 w">
+ <div class="card"><h3>After a compaction</h3><div id="stretchA"></div></div>
+ <div class="card"><h3>A session before its first compaction</h3><div id="stretchB"></div></div>
+</div>
+<p class="says" id="stretchSays"></p>
+</section>
+
+<section>
+<h2>What goes wrong?</h2>
+<p class="how"><b>How to read it.</b> The mistakes of the lead measure, by what the call got wrong: 20 in the calls before a compaction, 46 after. Grey bar, before. Blue bar, after. The same split at the placebo points on the right. Grouped in three by this session; the grouping is a reading, the counts are measured.</p>
+<div class="card">
+ <div class="legend"><span><i class="bar" style="background:var(--neutral)"></i>before</span><span><i class="bar" style="background:var(--s1)"></i>after</span></div>
+ <div id="what"></div>
+</div>
+<p class="says" id="whatSays"></p>
+</section>
+
+<section>
+<h2>Does it differ by kind of compaction, by size or by model?</h2>
+<p class="how"><b>How to read it.</b> Each row is one group of hand-overs. The dot is how much the count rises from before to after, the line its range, the vertical line is no change. A hollow dot is a group with fewer than 20 events: too few to say. Model and size are one contrast here, not two: Opus was only ever compacted near 367k, the other models near 970k.</p>
+<div class="seg" id="splitSel" role="group" aria-label="which count"><button data-k="M" aria-pressed="true">Mistakes</button><button data-k="E" aria-pressed="false">All error results</button><button data-k="A3" aria-pressed="false">A file read again</button></div>
+<div class="card"><div id="splits"></div></div>
+<div class="card" style="margin-top:20px"><h3>Between two groups: the difference of their differences</h3><div class="tblw"><table id="contrasts"></table></div></div>
+<p class="says" id="splitSays"></p>
+</section>
+
+<section>
+<h2>Does the answer depend on the window, or on one session?</h2>
+<p class="how"><b>How to read it.</b> The lead measure again, counted five ways. The dot is the rise from before to after, the line its range.</p>
+<div class="card"><div id="windows"></div></div>
+<p class="says" id="windowSays"></p>
+</section>
+
+<section>
+<h2>What else changes after a compaction?</h2>
+<p class="how"><b>How to read it.</b> The share of calls of each class, before (ring) and after (dot). Left, around compactions. Right, around the placebo points. Not a mistake signal: it shows what a session spends its calls on.</p>
+<div class="card">
+ <div class="legend"><span><i class="ring"></i>before</span><span><i class="dot"></i>after</span></div>
+ <div id="mix"></div>
+</div>
+<p class="says" id="mixSays"></p>
+</section>
+
+<section>
+<h2>Every signal, before and after, with the placebo beside it</h2>
+<p class="how"><b>How to read it.</b> One row for each count the script makes. Events and the rate for each 100 calls, then the difference with its range and a small picture of it (the tick is no change). "Too few to say" is a signal with fewer than 20 events at the boundaries. "Dropped" is a signal the hand read found not to be what it says.</p>
+<div class="card"><div class="tblw"><table id="allSignals"></table></div></div>
+<div class="card" style="margin-top:20px"><h3>Counts of calls of a kind, not mistakes</h3><div class="tblw"><table id="mixSignals"></table></div></div>
+</section>
+
+<section>
+<h2>Can the script's flags be trusted?</h2>
+<p class="how"><b>How to read it.</b> The summary check's script marked 84 claims wrong and all 84 were its own mistakes. So every kind of flag here was read by hand: up to 15 events of each, picked by a hash, without knowing which window an event was in. The bar is the share that were the session's own mistakes. The ticks are the two lines fixed beforehand: 80 % to count as a mistake kind, 50 % to be kept at all.</p>
+<div class="card"><div id="hand"></div></div>
+<p class="says" id="handSays"></p>
+</section>
+
+<section>
+<h2>What does it mean for the live trial?</h2>
+<p class="how"><b>How to read it.</b> One hand-over is one unit, scored on the lead measure in the 30 calls after it. The table says how many hand-overs each arm needs to show a difference of a given size. The slider turns it round: with this many hand-overs, how large a difference would show.</p>
+<div class="grid2 w">
+ <div class="card"><div class="tblw"><table id="trial"></table></div><p class="says" id="trialNote" style="font-size:15.5px;color:var(--ink2)"></p></div>
+ <div class="card">
+  <h3>How large a difference would show</h3>
+  <div class="slider"><label for="nArm">hand-overs for each arm: <b id="nArmV"></b></label><input id="nArm" type="range" min="5" max="400" step="1" value="38"></div>
+  <div id="trialViz"></div>
+  <p class="says" id="trialSays" style="font-size:15.5px"></p>
+ </div>
+</div>
+<ul class="tight" id="trialList"></ul>
+</section>
+
+<section>
+<h2>What this count cannot see</h2>
+<ul class="tight" id="cannot"></ul>
+</section>
+
+<section>
+<h2>Every hand-over</h2>
+<details><summary id="rowsSum"></summary><div class="card"><div class="tblw"><table id="rows"></table></div></div></details>
+</section>
+
+<div class="foot" id="foot"></div>
+</div>
+
+<script>
+const D = /*DATA*/null;
+const $ = (s) => document.querySelector(s);
+const f2 = (v) => (v === null || v === undefined || Number.isNaN(v)) ? 'n/a' : v.toFixed(2);
+const f1 = (v) => (v === null || v === undefined) ? 'n/a' : v.toFixed(1);
+const sg = (v) => (v === null || v === undefined) ? 'n/a' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+const n0 = (v) => Number(v).toLocaleString('en-US');
+const S = (id) => D.signals.find(s => s.id === id);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const tag = (t) => `<span class="tag t${t[0] === 'M' && t.length > 1 ? 'H' : t[0]}">${t}</span>`;
+const rng = (lo, hi) => `${sg(lo)} to ${sg(hi)}`;
+const chip = (c, dropped) => dropped ? '<span class="chip drop">dropped</span>' : c.few ? '<span class="chip few">too few to say</span>' : c.shown ? '<span class="chip yes">shown</span>' : '<span class="chip">not shown</span>';
+const DROPPED = new Set(['A2', 'R2', 'A3s']);
+const M = S('M'), E = S('E'), ST = S('ST'), RD = S('RD'), A = D.A, T = D.trial[0];
+
+// ---------- top ----------
+$('#lead').innerHTML = `<b>Yes, a little, and not in the way the split rule is aimed at.</b> In the 30 calls after a compaction a session makes ${f2(M.boundary.ra)} mistakes for each 100 calls, against ${f2(M.boundary.rb)} in the 30 calls before. What comes back is mostly what it had already learned about this PC and its tools. A new session makes as many, and the window at its fullest is where the fewest are made.`;
+$('#meta').innerHTML = [`14 November 2026`, `${A.pairs} hand-overs in ${A.sessions} sessions of FixFlow and the clinic testbed`, `${n0(A.callsBefore)} calls before, ${n0(A.callsAfter)} after`, `${A.placebo} placebo points`, `no agent runs`, `record: <code>docs/program/AFTER-COMPACTION-2026-11.md</code>`, `numbers: <code>docs/program/evidence/after-compaction/after-table.txt</code>`, `${tag('M')} measured ${tag('M, hand')} by this session's read ${tag('E')} estimated ${tag('G')} guess`].map(x => `<span>${x}</span>`).join('');
+{ const w = D.what.rows, g = (re, k) => w.filter(r => re.test(r.label)).reduce((a, r) => a + r[k], 0), py = /python/, cut = /a command cut short/;
+  const tiles = [
+    ['the lead measure', `${f2(M.boundary.rb)}<i>→</i>${f2(M.boundary.ra)}`, 'mistakes for each 100 calls, before and after a compaction', `${sg(M.boundary.d)}, range ${rng(M.boundary.dLo, M.boundary.dHi)}. ${M.boundary.more} hand-overs had more after, ${M.boundary.fewer} fewer, ${M.boundary.same} the same. ${tag('M, hand')}`],
+    ['the placebo', `${f2(M.placebo.rb)}<i>→</i>${f2(M.placebo.ra)}`, 'the same count around points with no compaction', `${sg(M.placebo.d)}, range ${rng(M.placebo.dLo, M.placebo.dHi)}. It does not rise. It falls: mistakes fade as a stretch goes on. ${tag('M, hand')}`],
+    ['what comes back', `${g(py, 'bb')}<i>→</i>${g(py, 'ba')}`, 'calls to python, which is not on this PC\'s PATH', `Never in the 30 calls before a compaction, ${g(py, 'ba')} times in the 30 after. Commands cut for being too long: ${g(cut, 'bb')} before, ${g(cut, 'ba')} after. ${tag('M')}`],
+    ['the larger cost', `${f1(D.mixPerWindow.stateBefore)}<i>→</i>${f1(D.mixPerWindow.stateAfter)}`, 'of 30 calls, how many change something', `Calls that write, commit or send fall from ${f1(ST.boundary.rb)} % to ${f1(ST.boundary.ra)} %. At the placebo points: ${f1(ST.placebo.rb)} % and ${f1(ST.placebo.ra)} %. ${tag('M')}`],
+  ];
+  $('#tiles').innerHTML = tiles.map(t => `<div class="card tile"><div class="kick">${t[0]}</div><div class="big">${t[1]}</div><div class="what">${t[2]}</div><div class="note">${t[3]}</div></div>`).join('');
+  $('#banner').innerHTML = `<b>For the trial:</b> this measure cannot lead it. To show a hand-over that costs nothing, each arm needs ${T.rows[0].perArm} hand-overs ${tag('E')}. With ${T.detect.map(d => d.perArm).join(', ').replace(/, (\d+)$/, ' or $1')} the smallest difference that would show (${T.detect.map(d => f2(d.diff)).join(', ')}) is larger than the whole rate after a compaction (${f2(T.mean)}).`;
+  $('#stripnote').textContent = `A placebo point sits a median of ${D.placeboDist.median} calls after the last compaction or the session's start. One hand-over of the ${A.counted} was left out: its session's record ends ${A.pairsLeftOut[0] ? A.pairsLeftOut[0].after : 0} calls after it.`;
+}
+
+// ---------- drawing helpers ----------
+const widthOf = (el) => Math.max(240, Math.floor(el.getBoundingClientRect().width));
+// two marks on one scale: before (ring) and after (dot), each with its range
+function pairSVG(w, c, max, unit) {
+  const h = 58, L = 18, Rr = 58, x = (v) => L + (w - L - Rr) * Math.max(0, Math.min(v, max)) / max, yB = 19, yA = 41;
+  let s = `<svg width="${w}" height="${h}" role="img" aria-label="before ${f2(c.rb)}, after ${f2(c.ra)}">`;
+  const step = max > 20 ? 10 : max > 8 ? 2 : 1;
+  for (let t = 0; t <= max + 1e-9; t += step) s += `<line x1="${x(t)}" x2="${x(t)}" y1="3" y2="${h - 3}" stroke="var(--grid)"/>`;
+  const mark = (v, lo, hi, y, after, ev, nn) => {
+    let o = `<line x1="${x(lo)}" x2="${x(hi)}" y1="${y}" y2="${y}" stroke="${after ? 'var(--s1)' : 'var(--neutral)'}" stroke-width="2" stroke-linecap="round"/>`;
+    o += after ? `<circle cx="${x(v)}" cy="${y}" r="6.5" fill="var(--s1)" stroke="var(--surface)" stroke-width="2"/>` : `<circle cx="${x(v)}" cy="${y}" r="5.5" fill="var(--surface)" stroke="var(--neutral)" stroke-width="2.5"/>`;
+    o += `<text x="${x(hi) + 9}" y="${y + 5}" class="v">${unit === '%' ? f1(v) + ' %' : f2(v)}</text>`;
+    return `<g><title>${after ? 'after' : 'before'}: ${ev} of ${n0(nn)} calls, ${f2(v)} for each 100 (range ${f2(lo)} to ${f2(hi)})</title>${o}</g>`;
+  };
+  s += mark(c.rb, c.rbLo, c.rbHi, yB, false, c.xb, c.nb) + mark(c.ra, c.raLo, c.raHi, yA, true, c.xa, c.na);
+  return s + '</svg>';
+}
+function axisSVG(w, max, unit) {
+  const L = 18, Rr = 58, x = (v) => L + (w - L - Rr) * v / max, step = max > 20 ? 10 : max > 8 ? 2 : 1; let s = `<svg width="${w}" height="20">`;
+  for (let t = 0; t <= max + 1e-9; t += step) s += `<text x="${x(t)}" y="15" class="m" text-anchor="middle">${t}${unit === '%' ? ' %' : ''}</text>`;
+  return s + '</svg>';
+}
+// a difference with its range, on a line with zero marked
+function forestSVG(w, d, lo, hi, min, max, hollow, h) {
+  h = h || 30; const L = 8, Rr = 8, x = (v) => L + (w - L - Rr) * (Math.max(min, Math.min(max, v)) - min) / (max - min), y = h / 2;
+  let s = `<svg width="${w}" height="${h}" role="img" aria-label="${sg(d)}, range ${rng(lo, hi)}">`;
+  s += `<line x1="${x(0)}" x2="${x(0)}" y1="2" y2="${h - 2}" stroke="var(--axis)"/>`;
+  if (d === null) return s + '</svg>';
+  s += `<line x1="${x(lo)}" x2="${x(hi)}" y1="${y}" y2="${y}" stroke="${hollow ? 'var(--neutral)' : 'var(--s1)'}" stroke-width="2" stroke-linecap="round"/>`;
+  if (hi > max) s += `<path d="M${x(max) - 1} ${y - 5} l7 5 l-7 5 z" fill="${hollow ? 'var(--neutral)' : 'var(--s1)'}"/>`;
+  if (lo < min) s += `<path d="M${x(min) + 1} ${y - 5} l-7 5 l7 5 z" fill="${hollow ? 'var(--neutral)' : 'var(--s1)'}"/>`;
+  s += hollow ? `<circle cx="${x(d)}" cy="${y}" r="5" fill="var(--surface)" stroke="var(--neutral)" stroke-width="2.5"/>` : `<circle cx="${x(d)}" cy="${y}" r="6" fill="var(--s1)" stroke="var(--surface)" stroke-width="2"/>`;
+  return s + '</svg>';
+}
+function forestAxis(w, min, max, step) {
+  const L = 8, Rr = 8, x = (v) => L + (w - L - Rr) * (v - min) / (max - min); let s = `<svg width="${w}" height="20">`;
+  for (let t = Math.ceil(min / step) * step; t <= max + 1e-9; t += step) s += `<text x="${x(t)}" y="15" class="m" text-anchor="middle">${t > 0 ? '+' : t < 0 ? '−' : ''}${Math.abs(t)}</text>`;
+  return s + '</svg>';
+}
+
+// ---------- the main chart ----------
+function drawMain() {
+  const rows = [['M', 'Mistakes, the lead measure', 'errors of the kinds a blind hand read found to be the session\'s own, and the same error met again'], ['E', 'All error results', 'needs no judgement: the harness flags the result as an error'], ['EinM', '… of them, the mistake kinds', 'what the hand read called the session\'s own mistakes'], ['EnM', '… and the rest', 'probes, findings of a check, and the PC itself'], ['B', 'Aimed at something that is not there', 'a path, a program or a reference that does not exist; only partly mistakes']];
+  const el = $('#main'); el.innerHTML = `<div class="prow hd"><div></div><div class="ph">around the ${A.pairs} compactions<div class="ax" data-ax="1"></div></div><div class="ph">around ${A.placebo} points with no compaction (placebo)<div class="ax" data-ax="1"></div></div><div class="ph">after less before</div></div>` +
+    rows.map(([id, nm, sub]) => { const s = S(id), b = s.boundary, p = s.placebo;
+      return `<div class="prow"><div class="nm">${nm}<small>${sub}</small></div><div class="pane" data-h="around compactions" data-id="${id}" data-side="boundary"></div><div class="pane pl" data-h="placebo" data-id="${id}" data-side="placebo"></div><div class="df"><b>${sg(b.d)}</b> (${rng(b.dLo, b.dHi)}) ${chip(b)}<div class="p2">placebo: ${sg(p.d)} (${rng(p.dLo, p.dHi)})</div></div></div>`; }).join('');
+  const max = 3.5;
+  el.querySelectorAll('.pane').forEach(pn => { const c = S(pn.dataset.id)[pn.dataset.side], w = widthOf(pn); pn.innerHTML = pairSVG(w, c, max) + `<div class="cnt">${c.xb} of ${n0(c.nb)} calls, then ${c.xa} of ${n0(c.na)}</div>`; });
+  el.querySelectorAll('.ax').forEach(a => { a.innerHTML = axisSVG(widthOf(a.parentElement), max); });
+  const en = S('EnM').boundary, ei = S('EinM').boundary;
+  $('#mainSays').innerHTML = `<b>What it shows.</b> Mistakes go from ${f2(M.boundary.rb)} to ${f2(M.boundary.ra)} for each 100 calls: ${M.boundary.xb} in the calls before, ${M.boundary.xa} after. All error results together rise by ${f2(E.boundary.d)}, and the range of that holds zero. The read split them in two: the mistake kinds go from ${ei.xb} to ${ei.xa}, the rest stay at ${en.xb} and ${en.xa}. So the answer rests on which errors are mistakes, and one reader drew that line, without seeing which side an error was on. At the placebo points every count falls instead.`;
+}
+
+// ---------- the stretch profile ----------
+let stretchKey = 'M';
+function columnsSVG(w, h, cols, max) {
+  const L = 44, Rr = 10, Tp = 30, Bt = 78, pw = w - L - Rr, ph = h - Tp - Bt, band = pw / cols.length, bw = Math.min(24, band * 0.5), y = (v) => Tp + ph * (1 - Math.min(v, max) / max);
+  let s = `<svg width="${w}" height="${h}" role="img"><text x="4" y="14" class="m">for each 100 calls</text>`;
+  for (let t = 0; t <= max + 1e-9; t += 0.5) s += `<line x1="${L}" x2="${w - Rr}" y1="${y(t)}" y2="${y(t)}" stroke="${t === 0 ? 'var(--axis)' : 'var(--grid)'}"/><text x="${L - 8}" y="${y(t) + 4}" class="m" text-anchor="end">${t.toFixed(1)}</text>`;
+  cols.forEach((c, i) => { const cx = L + band * (i + 0.5), top = y(c.v), col = c.grey ? 'var(--neutral)' : 'var(--s1)';
+    s += `<g><title>${c.tip}</title><path d="M${cx - bw / 2} ${y(0)} V${top + 4} q0 -4 4 -4 H${cx + bw / 2 - 4} q4 0 4 4 V${y(0)} z" fill="${col}"/>`;
+    s += `<line x1="${cx}" x2="${cx}" y1="${y(c.lo)}" y2="${y(c.hi)}" stroke="var(--ink)" stroke-width="1.5"/><line x1="${cx - 5}" x2="${cx + 5}" y1="${y(c.hi)}" y2="${y(c.hi)}" stroke="var(--ink)" stroke-width="1.5"/><line x1="${cx - 5}" x2="${cx + 5}" y1="${y(c.lo)}" y2="${y(c.lo)}" stroke="var(--ink)" stroke-width="1.5"/>`;
+    s += `<text x="${cx + bw / 2 + 5}" y="${top - 5}" class="v">${f2(c.v)}</text></g>`;
+    c.label.forEach((ln, k) => { s += `<text x="${cx}" y="${h - Bt + 20 + k * 17}" class="${k === c.label.length - 1 ? 'm' : 's'}" text-anchor="middle">${ln}</text>`; }); });
+  return s + '</svg>';
+}
+function drawStretch() {
+  const k = stretchKey, rate = k === 'M' ? 'mRate' : 'eRate', lo = k === 'M' ? 'mLo' : 'eLo', hi = k === 'M' ? 'mHi' : 'eHi', ev = k, sgn = S(k), max = k === 'M' ? 3 : 4.5;
+  const mk = (b) => ({ v: b[rate], lo: b[lo], hi: b[hi], label: [b.to === null ? `${b.from} on` : `${b.from} to ${b.to}`, `${b[ev]} of ${n0(b.n)}`], tip: `calls ${b.from}${b.to === null ? ' and on' : ' to ' + b.to}: ${b[ev]} events in ${n0(b.n)} calls, ${f2(b[rate])} for each 100 (range ${f2(b[lo])} to ${f2(b[hi])})` });
+  const a = D.where.comp.map(mk), bf = sgn.boundary;
+  a.push({ v: bf.rb, lo: bf.rbLo, hi: bf.rbHi, grey: true, label: ['the last 30', 'before the next', `${bf.xb} of ${n0(bf.nb)}`], tip: `the 30 calls before the next compaction: ${bf.xb} events in ${n0(bf.nb)} calls, ${f2(bf.rb)} for each 100` });
+  const elA = $('#stretchA'), elB = $('#stretchB');
+  elA.innerHTML = columnsSVG(widthOf(elA), 360, a, max) + `<div class="cnt" style="padding:4px 0 0">calls after the last compaction; under each, events of calls</div>`;
+  elB.innerHTML = columnsSVG(widthOf(elB), 360, D.where.start.map(mk), max) + `<div class="cnt" style="padding:4px 0 0">calls after the session's start; under each, events of calls</div>`;
+  const cs = D.where.compSplit[k], ss = D.where.startSplit[k], fr = D.fresh.find(x => x.id === k), ex = D.where.excess;
+  $('#stretchSays').innerHTML = `<b>What it shows.</b> No. A compaction sets the count back up and it runs down again: ${D.where.comp.slice(0, 5).map(b => f2(b[rate])).join(', ')} through the five thirties after a compaction, and ${f2(bf.rb)} in the last 30 calls before the next one. Calls 1 to 60 against the rest of the stretch: ${f2(cs.early)} against ${f2(cs.late)}, ${sg(cs.d)} (range ${rng(cs.lo, cs.hi)}). That is why the placebo, which sits in the middle of a stretch, falls. A session that has not compacted yet shows no such fall: ${f2(ss.early)} in its first 60 calls, ${f2(ss.late)} after (${sg(ss.d)}, range ${rng(ss.lo, ss.hi)}); the first 30 calls of all ${A.fresh} fresh starts: ${f2(fr.rate)}. ${k === 'M' ? `Added up over the 150 calls after a compaction, the extra comes to about ${f2(ex.perCompaction)} of a failed call for each compaction ${tag('E')}. ` : ''}<b>The fullest part of a window has the fewest of these.</b> Fill and time since the last compaction rise together here, so the count cannot say a full window is harmless; it can say that whatever a full window does is outweighed by what the session has learned by then. This profile was added after the first count, to read the placebo.`;
+}
+
+// ---------- what goes wrong ----------
+function barsSVG(w, a, b, max) {
+  const L = 4, Rr = 36, x = (v) => (w - L - Rr) * v / max, bar = (v, y, col) => `<path d="M${L} ${y} H${L + Math.max(0, x(v) - 4)} q4 0 4 4 v2 q0 4 -4 4 H${L} z" fill="${col}" opacity="${v ? 1 : 0}"/><text x="${L + x(v) + 6}" y="${y + 9.5}" class="${v ? 'v' : 'm'}" style="font-size:13.5px">${v}</text>`;
+  return `<svg width="${w}" height="26">${bar(a, 1, 'var(--neutral)')}${bar(b, 14, 'var(--s1)')}</svg>`;
+}
+function drawWhat() {
+  const el = $('#what'), W = D.what, max = Math.max(...W.rows.map(r => Math.max(r.bb, r.ba, r.pb, r.pa)), 1) * 1.08;
+  const order = ['a fact about this PC or the harness', 'a command or a script written wrong', 'what is in the project: a file, its content, a reference'];
+  const plain = { 'harness refused: wait guard': 'tripped the guard on waiting with sleep', 'harness refused: session rule': 'tripped the rule on starting sessions', 'harness refused: safety check': 'stopped by a safety check', 'harness refused: protected path': 'stopped by a protected-path block', 'shell syntax: a command cut short or a quote left open': 'a command cut short, or a quote left open', 'shell syntax: another parse error': 'another command the shell could not parse', 'missing command: python, which is not on this PC\'s PATH': 'called python, which is not on this PC\'s PATH', 'the same error met again: python, not on this PC\'s PATH, in a result not flagged': 'called python again, in a result the harness did not flag', 'the same error met again: another program not on this PC, in a result not flagged': 'called another missing program again, in a result not flagged', 'missing command: another program or tool': 'called another program or tool that is not there', 'file tool refused: too large': 'asked for a whole file too large to read', 'file tool refused: text not found': 'an edit whose text was not in the file', 'file tool refused: changed since read': 'a write to a file changed since it was read', 'script crashed: the text it was to replace was not in the file': 'a script whose text to replace was not in the file', 'script crashed: the script itself did not parse': 'a script that did not parse', 'script crashed: another crash': 'a script that crashed another way', 'script crashed: a module it could not load': 'a script that could not load a module', 'bad arguments: the plan tool': 'wrong arguments to the plan tool', 'bad arguments: the Monitor tool': 'wrong arguments to the Monitor tool', 'bad arguments: another tool': 'wrong arguments to another tool' };
+  const nice = (l) => plain[l] || l.replace(/^the same error met again: /, 'the same again: ').replace(/^(missing command|shell syntax|script crashed|file tool refused|harness refused|bad arguments): /, (m, g) => ({ 'missing command': 'called ', 'shell syntax': '', 'script crashed': 'a script: ', 'file tool refused': 'a file tool refused: ', 'harness refused': 'a guard: ', 'bad arguments': 'wrong arguments: ' }[g]));
+  let h = `<div class="brow hd"><div></div><div>around the ${A.pairs} compactions</div><div>around the placebo points</div></div>`;
+  for (const fm of order) { const F = W.families.find(f => f.family === fm); if (!F) continue;
+    h += `<div class="brow fam"><div class="lb">${esc(fm)}</div><div data-b="${F.bb},${F.ba}"></div><div data-b="${F.pb},${F.pa}"></div></div>`;
+    for (const r of W.rows.filter(r => r.family === fm)) h += `<div class="brow"><div class="lb">${esc(nice(r.label))}</div><div data-b="${r.bb},${r.ba}"></div><div data-b="${r.pb},${r.pa}"></div></div>`; }
+  el.innerHTML = h;
+  const fmax = Math.max(...W.families.map(f => Math.max(f.bb, f.ba, f.pb, f.pa))) * 1.08;
+  el.querySelectorAll('[data-b]').forEach(c => { const [a, b] = c.dataset.b.split(',').map(Number); c.innerHTML = barsSVG(widthOf(c), a, b, c.parentElement.classList.contains('fam') ? fmax : fmax); });
+  const g = (re, k) => W.rows.filter(r => re.test(r.label)).reduce((a, r) => a + r[k], 0), f = (name) => W.families.find(x => x.family === name);
+  const pc = f(order[0]), wr = f(order[1]), pj = f(order[2]);
+  $('#whatSays').innerHTML = `<b>What it shows.</b> Of the ${M.boundary.xa - M.boundary.xb} more mistakes after a compaction, ${pc.more} are facts about this PC or the harness, ${wr.more} are commands or scripts written wrong, and ${pj.more} are about the project itself. <b>python</b> is not on this PC's PATH: a session finds that out and stops calling it. It is called ${g(/python/, 'bb')} times in the 30 calls before a compaction and ${g(/python/, 'ba')} times in the 30 after. A command too long for the shell tool is cut: ${g(/a command cut short/, 'bb')} before, ${g(/a command cut short/, 'ba')} after. One thing goes the other way: the guard on waiting with sleep, ${g(/wait guard/, 'bb')} before and ${g(/wait guard/, 'ba')} after, because long checks are waited on late in a stretch. Mistakes about the project, the kind a wrong or thin summary would cause, are ${pj.bb} and ${pj.ba}: too few to say.`;
+}
+
+// ---------- splits ----------
+let splitKey = 'M';
+function drawSplits() {
+  const el = $('#splits'), k = splitKey, range = k === 'A3' ? [-5, 9] : k === 'E' ? [-2.5, 8] : [-1.5, 7], step = k === 'A3' ? 2 : 1;
+  let h = `<div class="frow" style="border-top:none"><div></div><div class="fx"></div><div class="num" style="color:var(--muted);font-size:13px">after less before (range)</div><div></div></div>`, last = '';
+  for (const g of D.splits) { if (g.group !== last) { h += `<div class="frow grp"><div>${esc(g.group)}</div><div></div><div></div><div></div></div>`; last = g.group; }
+    const c = g.sig[k];
+    h += `<div class="frow"><div class="lb">${esc(g.name)}<small>${g.pairs} hand-overs, ${g.sessions} sessions${g.pairs ? `, ${Math.round(g.sizeMin / 1000)}k to ${Math.round(g.sizeMax / 1000)}k` : ''}</small></div><div class="fp" data-d="${c.d}" data-lo="${c.dLo}" data-hi="${c.dHi}" data-few="${c.few ? 1 : 0}" title="before ${c.xb} of ${n0(c.nb)}, after ${c.xa} of ${n0(c.na)}"></div><div class="num">${f2(c.rb)} → ${f2(c.ra)}: <b>${sg(c.d)}</b> <span>(${rng(c.dLo, c.dHi)})</span></div><div>${chip(c)}</div></div>`; }
+  el.innerHTML = h;
+  el.querySelectorAll('.fp').forEach(p => { const d = p.dataset.d === 'null' ? null : +p.dataset.d; p.innerHTML = forestSVG(widthOf(p), d, +p.dataset.lo, +p.dataset.hi, range[0], range[1], p.dataset.few === '1'); });
+  const fx = el.querySelector('.fx'); fx.innerHTML = forestAxis(widthOf(fx), range[0], range[1], step);
+  $('#contrasts').innerHTML = `<tr><th class="l">contrast</th><th>mistakes</th><th></th><th>all error results</th><th></th><th>a file read again</th><th></th></tr>` +
+    [...new Set(D.contrasts.map(c => c.group + '|' + c.a + '|' + c.b))].map(key => { const [grp, a, b] = key.split('|'), cell = (id) => { const c = D.contrasts.find(x => x.group === grp && x.a === a && x.id === id); return `<td>${sg(c.d)} <span class="sm">(${rng(c.lo, c.hi)})</span></td><td class="l">${chip(c)}</td>`; };
+      return `<tr><td class="l">${esc(a)} <span class="sm">less</span> ${esc(b)}</td>${cell('M')}${cell('E')}${cell('A3')}</tr>`; }).join('');
+  const gp = (n) => D.splits.find(s => s.name === n).sig.M, at = gp('written when the boundary fell'), pr = gp('prepared ahead of the boundary'), op = gp('Opus at the owner\'s setting'), ot = gp('other models at the default trigger'), bh = gp('summary behind its kept tail'), nb = gp('summary not behind');
+  const ct = (a) => D.contrasts.find(c => c.a === a && c.id === 'M');
+  $('#splitSays').innerHTML = `<b>What it shows.</b> Every group points the same way and no two groups are shown to differ. Summaries written when the boundary fell: ${sg(at.d)}. Prepared ahead while the session sat idle: ${sg(pr.d)}, on ${pr.xb + pr.xa} events; the difference between the two is ${sg(ct('prepared ahead of the boundary').d)} with a range of ${rng(ct('prepared ahead of the boundary').lo, ct('prepared ahead of the boundary').hi)}. Opus near 367k: ${sg(op.d)}. The other models near 970k: ${sg(ot.d)}, on ${ot.xb + ot.xa} events. That last pair is model and size at once and cannot be split. After the 73 summaries the summary check found behind their kept tail the rise is ${sg(bh.d)}, after the other 43 it is ${sg(nb.d)}; the difference, ${sg(ct('summary behind its kept tail').d)}, is not shown.`;
+}
+
+// ---------- window checks ----------
+function drawWindows() {
+  const el = $('#windows'), fm = D.full.find(x => x.id === 'M').c, s15 = D.sizes.find(x => x.size === 15 && x.id === 'M'), s60 = D.sizes.find(x => x.size === 60 && x.id === 'M'), lo = D.leaveOne.find(x => x.id === 'M');
+  const rows = [[`30 calls a side, all ${A.pairs} hand-overs`, 'the count as fixed beforehand', M.boundary.rb, M.boundary.ra, M.boundary.d, M.boundary.dLo, M.boundary.dHi], [`30 a side, only the ${A.full} with both windows full`, '', fm.rb, fm.ra, fm.d, fm.dLo, fm.dHi], ['15 calls a side', '', s15.c.rb, s15.c.ra, s15.c.d, s15.c.dLo, s15.c.dHi], ['60 calls a side', 'a short stretch is cut in the middle', s60.c.rb, s60.c.ra, s60.c.d, s60.c.dLo, s60.c.dHi], [`without the session that pulls it most`, `${lo.lowest.pairs} hand-overs, ${lo.lowest.xb} mistake before and ${lo.lowest.xa} after`, null, null, lo.lowest.d, lo.withoutLo, lo.withoutHi]];
+  el.innerHTML = `<div class="frow" style="border-top:none"><div></div><div class="fx"></div><div class="num" style="color:var(--muted);font-size:13px">after less before (range)</div><div></div></div>` + rows.map(r => `<div class="frow"><div class="lb">${r[0]}${r[1] ? `<small>${r[1]}</small>` : ''}</div><div class="fp" data-d="${r[4]}" data-lo="${r[5]}" data-hi="${r[6]}"></div><div class="num">${r[2] === null ? '' : `${f2(r[2])} → ${f2(r[3])}: `}<b>${sg(r[4])}</b> <span>(${rng(r[5], r[6])})</span></div><div>${chip({ shown: r[5] > 0 || r[6] < 0 })}</div></div>`).join('');
+  el.querySelectorAll('.fp').forEach(p => { p.innerHTML = forestSVG(widthOf(p), +p.dataset.d, +p.dataset.lo, +p.dataset.hi, -0.5, 2, false); });
+  const fx = el.querySelector('.fx'); fx.innerHTML = forestAxis(widthOf(fx), -0.5, 2, 0.5);
+  $('#windowSays').innerHTML = `<b>What it shows.</b> The rise is there at every window size and shrinks as the window widens, as a thing that fades would. Dropping any one session leaves it between ${sg(lo.lowest.d)} and ${sg(lo.highest.d)}. All error results, the count without judgement, is not shown at any size.`;
+}
+
+// ---------- the mix ----------
+function drawMix() {
+  const el = $('#mix'), X = D.mix, tot = (o) => Object.values(o).reduce((a, b) => a + b, 0), tb = tot(X.boundaryBefore), ta = tot(X.boundaryAfter), pb = tot(X.placeboBefore), pa = tot(X.placeboAfter), max = 56;
+  const name = { 'shell': 'shell commands', 'test or check run': 'test or check runs', 'git or gh status': 'git or GitHub status', 'changes state': 'calls that change something', 'read': 'reads (Read, Grep, Glob)', 'plan update': 'plan updates', 'other tool': 'other tools' };
+  const order = ['changes state', 'read', 'shell', 'test or check run', 'git or gh status', 'plan update', 'other tool'];
+  el.innerHTML = `<div class="prow hd"><div></div><div class="ph">around the ${A.pairs} compactions<div class="ax"></div></div><div class="ph">around the placebo points<div class="ax"></div></div><div class="ph">after less before, in points</div></div>` + order.map(k => { const b = 100 * (X.boundaryBefore[k] || 0) / tb, a = 100 * (X.boundaryAfter[k] || 0) / ta, p1 = 100 * (X.placeboBefore[k] || 0) / pb, p2 = 100 * (X.placeboAfter[k] || 0) / pa, sgRow = k === 'changes state' ? ST : k === 'read' ? RD : null;
+    return `<div class="prow"><div class="nm" style="${sgRow ? '' : 'font-weight:500'}">${name[k]}</div><div class="pane" data-v="${b},${a},${X.boundaryBefore[k] || 0},${tb},${X.boundaryAfter[k] || 0},${ta}"></div><div class="pane pl" data-v="${p1},${p2},${X.placeboBefore[k] || 0},${pb},${X.placeboAfter[k] || 0},${pa}"></div><div class="df"><b>${(a - b > 0 ? '+' : '−') + Math.abs(a - b).toFixed(1)}</b>${sgRow ? ` (${rng(sgRow.boundary.dLo, sgRow.boundary.dHi)}) ${chip(sgRow.boundary)}` : ''}<div class="p2">placebo: ${(p2 - p1 > 0 ? '+' : '−') + Math.abs(p2 - p1).toFixed(1)}</div></div></div>`; }).join('');
+  el.querySelectorAll('.pane').forEach(pn => { const [b, a, xb, nb, xa, na] = pn.dataset.v.split(',').map(Number); pn.innerHTML = pairSVG(widthOf(pn), { rb: b, rbLo: b, rbHi: b, ra: a, raLo: a, raHi: a, xb, nb, xa, na }, max, '%'); });
+  el.querySelectorAll('.ax').forEach(a => { a.innerHTML = axisSVG(widthOf(a.parentElement), max, '%'); });
+  const pw = D.mixPerWindow, a3 = S('A3'), a3s = S('A3s');
+  $('#mixSays').innerHTML = `<b>What it shows.</b> For about 30 calls after a compaction the session reads and looks around instead of changing things. Of 30 calls, ${f1(pw.stateBefore)} changed something before and ${f1(pw.stateAfter)} after; ${f1(pw.readBefore)} were reads before and ${f1(pw.readAfter)} after. At the placebo points nothing moves. Against that, the mistakes are ${f2(D.where.excess.pairFirst30)} more failed calls in the same 30. <b>What a session reads again could not be counted cleanly.</b> Reads of a file read in the last 30 calls go from ${f2(a3.boundary.rb)} to ${f2(a3.boundary.ra)} for each 100 calls, but by the hand read 9 of 15 such reads were of another part of the file and 4 followed the session's own change. A stricter count of the same lines was right 6 times in 15 and is dropped. So the re-learning the split replay had to guess is still a guess.`;
+}
+
+// ---------- every signal ----------
+function drawTables() {
+  const head = `<tr><th class="l" rowspan="2">signal</th><th colspan="5" style="text-align:center;border-bottom:none">around the ${A.pairs} compactions</th><th colspan="4" style="text-align:center;border-bottom:none">around the ${A.placebo} placebo points</th><th rowspan="2">hand-overs with<br>more / same / fewer</th></tr><tr><th>before</th><th>after</th><th>after less before (range)</th><th style="width:170px"></th><th class="l">reading</th><th>before</th><th>after</th><th>after less before (range)</th><th style="width:170px"></th></tr>`;
+  const cellsB = (c, min, max, dropped) => `<td>${c.xb} <span class="sm">· ${f2(c.rb)}</span></td><td>${c.xa} <span class="sm">· ${f2(c.ra)}</span></td><td>${sg(c.d)} <span class="sm">(${rng(c.dLo, c.dHi)})</span></td><td class="fpt" data-d="${c.d}" data-lo="${c.dLo}" data-hi="${c.dHi}" data-min="${min}" data-max="${max}" data-few="${c.few || dropped ? 1 : 0}"></td>`;
+  const row = (id, label, min, max, cls) => { const s = S(id), dropped = DROPPED.has(id); return `<tr class="${cls || ''}"><td class="l">${label || esc(s.name)}</td>${cellsB(s.boundary, min, max, dropped)}<td class="l">${chip(s.boundary, dropped)}</td>${cellsB(s.placebo, min, max, dropped)}<td>${s.boundary.more} / ${s.boundary.same} / ${s.boundary.fewer}</td></tr>`; };
+  const grp = (t) => `<tr class="grp"><td colspan="11">${t}</td></tr>`, mn = -1.6, mx = 2.6;
+  const EK = D.signals.filter(s => s.id.startsWith('E:')), NF = D.signals.filter(s => s.id.startsWith('NF:'));
+  $('#allSignals').innerHTML = head + grp('the lead measure and the count without judgement') + row('M', 'M · mistakes, the lead measure', mn, mx, 'leadrow') + row('E', 'E · an error result', mn, mx) + row('EinM', '… that is one of the mistake kinds', mn, mx) + row('EnM', '… that is not', mn, mx) + row('Msh', 'M among shell calls, for each 100 shell calls', mn, mx) + row('Esh', 'E among shell calls, for each 100 shell calls', mn, mx)
+    + grp('the other signals of the scoring') + row('B', 'B · aimed at something that is not there', mn, mx) + row('MP', '… a missing path, flagged or not', mn, mx) + row('A1', 'A1 · the same error met again', mn, mx) + row('N', 'N · a state-changing command with nothing to do', mn, mx) + row('A2', 'A2 · a state-changing call run twice', mn, mx) + row('R1', 'R1 · an edit that undoes an earlier one', mn, mx) + row('R2', 'R2 · work thrown away by git', mn, mx) + row('R3', 'R3 · a check that fails after it last passed', mn, mx) + row('O', 'O · the owner stopped or refused a step', mn, mx)
+    + grp('error results by kind (the first that fits)') + EK.map(s => row(s.id, esc(s.id.slice(2)) + (D.mKinds.includes(s.id) ? ' <span class="sm">· in M</span>' : ''), mn, mx)).join('')
+    + grp('the same diagnostics in a result the harness did not flag') + NF.map(s => row(s.id, esc(s.id.slice(3)), mn, mx)).join('');
+  $('#mixSignals').innerHTML = head + row('ST', 'calls that change something, % of calls', -13, 8) + row('RD', 'calls of the read class, % of calls', -13, 8) + row('A3', 'A3 · a file read again', -13, 8) + row('A3s', 'A3s · the same lines read again', -13, 8) + row('CKF', 'failing check or test runs, % of runs', -13, 8) + row('NR', 'calls with no result because the session ended', -13, 8);
+  document.querySelectorAll('.fpt').forEach(p => { const d = p.dataset.d === 'null' ? null : +p.dataset.d; p.innerHTML = forestSVG(170, d, +p.dataset.lo, +p.dataset.hi, +p.dataset.min, +p.dataset.max, p.dataset.few === '1', 24); });
+}
+
+// ---------- the hand read ----------
+function drawHand() {
+  const el = $('#hand'), codeName = { M: 'mistakes', D: 'a check\'s finding', P: 'probes', V: 'the PC', O: 'the owner', X: 'not what it says', Y: 'the same content', S: 'another part', W: 'after a change' }, word = (k, v) => k === 'P' && v === 1 ? 'probe' : k === 'M' && v === 1 ? 'mistake' : codeName[k];
+  const use = (h) => h.kind === 'A3' ? 'stands, as going back to a file' : h.kind === 'A3s' ? 'dropped as a measure' : h.read === 0 ? 'no event in any window' : h.decision.replace('a mistake kind, in M', 'a mistake kind: counts in the lead measure').replace('events only, outside M', 'reported as events, not in the lead measure').replace('dropped as a signal', /^E:/.test(h.kind) ? 'never in the lead measure' : 'dropped').replace('counts only', 'counts only');
+  let h = `<div class="meter hd"><div>kind of flagged event</div><div class="r">in the windows</div><div class="r">read</div><div>share that were the session's own mistakes<div class="mtax"></div></div><div></div><div>used as</div></div>`;
+  for (const x of D.B) { const isRead = x.kind === 'A3' || x.kind === 'A3s', good = isRead ? (x.codes.Y || 0) : x.kind === 'R3' ? (x.codes.M || 0) + (x.codes.D || 0) : (x.codes.M || 0), share = x.read ? good / x.read : null;
+    const rest = Object.entries(x.codes).filter(([k]) => isRead ? k !== 'Y' : x.kind === 'R3' ? k !== 'M' && k !== 'D' : k !== 'M').map(([k, v]) => `${v} ${word(k, v)}`).join(', ');
+    h += `<div class="meter"><div>${esc(x.name.replace(/^error result: /, 'error: '))}</div><div class="r">${x.inWindows}</div><div class="r">${x.read}</div><div class="mt" data-s="${share === null ? '' : share}"></div><div>${x.read ? `<b>${good} of ${x.read}</b>${isRead ? ' the same content again' : x.kind === 'R3' ? ' a mistake, or a defect the check caught' : ''}` : ''}<div class="rest">${rest}</div></div><div>${use(x)}</div></div>`; }
+  el.innerHTML = h;
+  el.querySelectorAll('.mt').forEach(m => { const w = widthOf(m), s = m.dataset.s === '' ? null : +m.dataset.s, L = 2, R = 8, x = (v) => L + (w - L - R) * v;
+    m.innerHTML = `<svg width="${w}" height="24"><rect x="${L}" y="8" width="${w - L - R}" height="8" rx="4" fill="var(--neutral-wash)"/>${s === null ? '' : `<rect x="${L}" y="8" width="${Math.max(0, (w - L - R) * s)}" height="8" rx="4" fill="var(--s1)"/>`}<line x1="${x(0.5)}" x2="${x(0.5)}" y1="3" y2="21" stroke="var(--ink2)"/><line x1="${x(0.8)}" x2="${x(0.8)}" y1="3" y2="21" stroke="var(--ink)" stroke-width="1.5"/></svg>`; });
+  el.querySelectorAll('.mtax').forEach(m => { const w = widthOf(m), L = 2, R = 8, x = (v) => L + (w - L - R) * v; m.innerHTML = `<svg width="${w}" height="16"><text x="${x(0.5)}" y="12" class="m" text-anchor="middle">50 %</text><text x="${x(0.8)}" y="12" class="m" text-anchor="middle">80 %</text></svg>`; });
+  const tot = D.B.reduce((a, x) => a + x.read, 0);
+  $('#handSays').innerHTML = `<b>What it shows.</b> ${tot} events read, by one reader. Seven kinds were the session's own mistakes at least 80 % of the time and make up the lead measure: a guard tripped, a program that is not on the PC, a command the shell could not parse, wrong arguments, a file tool that refused, a script that crashed, and the same error met again. Missing paths are mistakes only about half to two thirds of the time (the rest are probes), so they are reported as events. Plain error results that fit no kind are mostly probes and the PC. "Work thrown away by git" is nearly always deliberate here: a change tested against a broken or an older copy and then restored. Nothing counts as a mistake on the script's word alone.`;
+}
+
+// ---------- the trial ----------
+function drawTrial() {
+  const Te = D.trial.find(t => t.id === 'E');
+  $('#trial').innerHTML = `<tr><th class="l">if, after a brief, the rate is</th><th>mistakes: rate</th><th>hand-overs for each arm</th><th>all error results: rate</th><th>hand-overs for each arm</th></tr>` + T.rows.map((r, i) => { const e = Te.rows[i]; return `<tr><td class="l">${esc(r.name)} ${tag(r.tag)}</td><td>${f2(r.rate)}</td><td><b>${r.perArm === null ? 'nothing to remove' : n0(r.perArm)}</b></td><td>${f2(e.rate)}</td><td>${e.perArm === null ? 'nothing to remove' : n0(e.perArm)}</td></tr>`; }).join('');
+  $('#trialNote').innerHTML = `Over the ${T.handovers} hand-overs written when the boundary fell: mean ${f2(T.mean)} mistakes for each 100 calls in the 30 calls after, standard deviation ${f2(T.sd)}, ${Math.round(100 * T.zeroShare)} % of hand-overs with none. 5 % two-sided, 80 % power, the same spread in both arms. ${tag('E')}`;
+  const inp = $('#nArm'), bef = T.rows[0].rate, upd = () => { const n = +inp.value, d = Math.sqrt(7.85 * 2 * T.variance / n), el = $('#trialViz'), w = widthOf(el), max = 3, L = 18, R = 60, x = (v) => L + (w - L - R) * Math.min(v, max) / max;
+    $('#nArmV').textContent = n;
+    const bar = (y, v, col, label) => `<path d="M${L} ${y} H${Math.max(L, x(v) - 4)} q4 0 4 4 v8 q0 4 -4 4 H${L} z" fill="${col}"/><text x="${x(v) + 8}" y="${y + 13}" class="v">${f2(v)}</text><text x="${L}" y="${y - 6}" class="s">${label}</text>`;
+    let s = `<svg width="${w}" height="196">`; for (let t = 0; t <= max; t += 0.5) s += `<line x1="${x(t)}" x2="${x(t)}" y1="6" y2="170" stroke="var(--grid)"/><text x="${x(t)}" y="188" class="m" text-anchor="middle">${t.toFixed(1)}</text>`;
+    s += bar(26, d, 'var(--s1)', `the smallest difference that would show with ${n} for each arm`) + bar(82, T.mean, 'var(--neutral)', 'the whole rate after a compaction') + bar(138, T.mean - bef, 'var(--neutral)', 'what a hand-over costs: after less before');
+    el.innerHTML = s + '</svg>';
+    $('#trialSays').innerHTML = d > T.mean ? `With ${n} hand-overs for each arm, even a brief that removed every one of these mistakes would not show.` : d > T.mean - bef ? `With ${n} for each arm, removing every mistake would show, but removing what a compaction adds (${f2(T.mean - bef)}) would not.` : `With ${n} for each arm, a brief that brought the rate down to the level before a compaction would show.`; };
+  inp.oninput = upd; upd();
+  const cs = D.where.compSplit.M, ss = D.where.startSplit.M;
+  $('#trialList').innerHTML = [
+    `<b>There is something after a compaction, and it is not what the trial was booked for.</b> The trial compares a brief with a summary on whether the hand-over states the latest state rightly. This count finds another loss: working knowledge of the PC and the tools, which no hand-over on record carries across.`,
+    `<b>A new session loses it too.</b> Before its first compaction a session runs at ${f2(ss.early)} mistakes for each 100 calls and stays there (${f2(ss.late)} later on). A compacted session starts at about the same level and comes down to ${f2(cs.late)}. Under the split rule every hand-over is a fresh start.`,
+    `<b>The window being full is not where these mistakes are.</b> The rule splits at a line so that work does not run in a full window. For these mistakes the full end of a window is the best part of it.`,
+    `<b>This measure cannot lead the trial</b>, at any size one wave gives. It can ride along for nothing: the script reads any transcript, and a trial's hand-overs can be added to the ${A.pairs} on record. The trial's main measure stays the reader's check of the latest state and of open loops.`,
+    `<b>The nearer step is not a trial.</b> If what is lost is the PC's facts, they can be put where every window reads them, compaction or not: the project's instruction file. Python is not on the PATH here; a shell command that is too long is cut, so a long script goes in a file first; waiting is done with the wait tool, not with sleep. The same count on later transcripts would say whether the gap closes, with no agent runs.`,
+  ].map(x => `<li>${x}</li>`).join('');
+}
+
+// ---------- the rest ----------
+function drawRest() {
+  $('#cannot').innerHTML = [
+    `<b>Mistakes that raise no error.</b> A wrong statement to the owner, a wrong decision, work on the wrong thing, something left undone. The split rule's case on hallucinations lives there, and this count does not reach it.`,
+    `<b>What the owner typed.</b> Corrections in words are not read. The owner stopped or refused a step once before a compaction and once after: nothing to count.`,
+    `<b>Review send-backs.</b> They are verdicts about a slice of work, not about a call.`,
+    `<b>Sub-agents' calls.</b> Only the main session's calls are read.`,
+    `<b>Why.</b> The count shows the mistakes come back. It does not show whether the summary left the fact out or the next window had it and did not use it. No summary was read for this.`,
+    `<b>One reader</b> made every hand verdict. The lead measure is the errors that reader called mistakes. The three pictures that read the first count (what goes wrong, where in a stretch, one session left out) were added after it, with it in view.`,
+  ].map(x => `<li>${x}</li>`).join('');
+  $('#rowsSum').textContent = `Show all ${D.rows.length} hand-overs: model, size, and the counts before and after each`;
+  $('#rows').innerHTML = `<tr><th class="l">hand-over</th><th class="l">model</th><th>window at compaction</th><th class="l">prepared ahead</th><th class="l">summary behind its kept tail</th><th>calls before / after</th><th>mistakes before / after</th><th>error results before / after</th></tr>` + D.rows.map(r => `<tr><td class="l">${esc(r.id)}</td><td class="l">${esc(r.model)}</td><td>${Math.round(r.pre / 1000)}k</td><td class="l">${r.prepared ? 'yes' : ''}</td><td class="l">${r.overtaken ? 'yes' : ''}</td><td>${r.nb} / ${r.na}</td><td>${r.mb} / ${r.ma}</td><td>${r.eb} / ${r.ea}</td></tr>`).join('');
+  $('#foot').innerHTML = `Generated from <code>after.json</code>, the same run as <code>after-table.txt</code> (${esc(D.generated.slice(0, 16).replace('T', ' '))} UTC). Boundaries are the summary check's ${A.counted}, at its cut; calls are read up to ${esc(D.callCut.slice(0, 16).replace('T', ' '))} UTC. The scoring was saved before any count; a copy with its time and hash is in the evidence folder. This page holds counts, session ids and labels written for it; no sentence from a message, a summary or a tool result.`;
+}
+
+function drawAll() { drawMain(); drawStretch(); drawWhat(); drawSplits(); drawWindows(); drawMix(); drawTables(); drawHand(); drawTrial(); drawRest(); }
+const bindSeg = (sel, set, redraw) => document.querySelectorAll(sel + ' button').forEach(b => b.addEventListener('click', () => { set(b.dataset.k); document.querySelectorAll(sel + ' button').forEach(o => o.setAttribute('aria-pressed', o === b ? 'true' : 'false')); redraw(); }));
+bindSeg('#stretchSel', (k) => { stretchKey = k; }, drawStretch);
+bindSeg('#splitSel', (k) => { splitKey = k; }, drawSplits);
+drawAll();
+let rt = null; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { drawMain(); drawStretch(); drawWhat(); drawSplits(); drawWindows(); drawMix(); drawHand(); drawTrial(); }, 120); });
+</script>
+</body>
+</html>

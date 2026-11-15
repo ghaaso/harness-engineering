@@ -1,0 +1,335 @@
+SUMMARY CHECK: hand-over fidelity of the compaction summaries on record
+generated 2026-11-14T11:05:28.533Z by check.js.txt (stage table); cut 2026-11-14T08:49:53.273Z; tags: [M] measured by the script, [M, hand] measured by this session's hand read, [E] estimated, [G] guess
+
+A. WHAT WAS READ  [M]
+A1  project folders in scope 41 (FixFlow and the clinic testbed), left out and not opened 21; main transcripts read 83 (3 more were started after the cut and are not read); folders made after the cut and not counted: 1
+A2  compaction summaries 117 in 45 sessions: FixFlow 69, clinic 48. Up to the split replay's cut (2026-11-14T05:12 UTC): 109 (FixFlow 61, clinic 48); after it: 8. Copied markers left out: 9. Markers without a summary: 0.
+    the owner's other projects: 8 summaries at the split replay's cut (replay-table.txt, A3 and A6: 117 in session windows, of them 61 FixFlow and 48 clinic), dropped; their folders were not opened, so later ones there are not counted
+A3  summaries by window size at compaction and by model (the model of the session's last call before the boundary)
+    band                 Opus 5.5  Fable 5.1  Fable 5.2 Sonnet 5.5      all   sessions   prepared ahead   sizes
+    under 300k                  1          0          3          0        4          2                4   205k to 272k
+    300k to 400k               86          0          2          0       88         35                2   303k to 393k
+    400k to 900k                0          3          5          5       13         10               12   429k to 894k
+    900k and over               0          4          7          1       12          7                0   966k to 975k
+    all                        87          7         17          6      117         45               18
+A4  summary length: median 22,852 characters (smallest 9,686, largest 37,870)
+A5  prepared ahead of the boundary (the marker's own flag): 18 of 117; written a median 65 min before the boundary (5 to 396 min). The other 99 were written when the boundary fell.
+    by size: prepared-ahead summaries run from 205k to 894k; summaries written at the boundary: Opus 86 between 364k and 380k, other models 13 between 758k and 975k
+    of the 18 prepared ahead, 18 were written after their first kept message (a median 56 min after it): the kept messages are left out of the summary because the marker keeps them, not because the summary came first
+    prepared ahead, by model: Opus 5.5 1 of 87; Fable 5.1 3 of 7; Fable 5.2 10 of 17; Sonnet 5.5 4 of 6
+A6  summaries that end with the harness's line saying they were written without seeing the kept messages: 117 of 117
+A7  claims found per summary (second count, after the hand read): median 24, smallest 1, largest 65
+
+B. THE KEPT TAIL: what lies between the summary's input end and the boundary  [M]
+B1  tails with at least one call 89 of 117; with a model message and no call 28; with neither 0. Calls per tail: median 1, largest 3; 117 calls in all.
+B2  tails with a call the script classes as changing state 39 of 117. A floor: a shell or node command that edits a file can be classed as a test run, a status call or plain shell (review T-1). Calls by class: shell 37; file write 28; test or check run 13; read 12; plan update 7; git or gh status 6; agent or session started 4; git commit 3; message sent 3; git commit + git push 2; git commit + git merge 1; git push 1
+B3  messages that came in during the tail (the owner, another session, a task notice): in 35 of 117 tails
+B4  does the summary see its kept tail? Tails holding at least one tool result: 89. In 39 of them a result holds an id or long number found nowhere earlier in the transcript; 2 summaries repeat one. 3 summaries repeat a run of four words from a tail result that is found nowhere earlier. Either: 5 of 89 (fixflow-49260710-01, fixflow-3e608523-02, fixflow-971d2045-02, fixflow-764cefe6-01, fixflow-d563b0e9-03).
+    so at least 5 summaries were written with the kept tail in view. For the rest the test is silent: it can show that a summary saw its tail, not that it did not. The evidence that a summary is written without its tail is the marker's preserved-segment field, which names the kept messages and is how the tail is found here, and the harness's own line (A6).
+
+C. CLAIMS A SCRIPT CAN RECHECK
+C1  first count, as scored in 1.1 to 1.8, before any repair  [M]   (script kept as check-first-count.js.txt; 117 summaries)
+    kind                  found    held   wrong   not checkable
+    commit id               714     712       2               0
+    file path              1987    1852      53              82
+    head                     72      49      11              12
+    pull request state       38      31       7               0
+    test result             113     109       0               4
+    count                    55      32       0              23
+    all                    2979    2785      73             121     script's own rate: 73 of 2858 checked = 2.6 %
+C2  hand read of every claim the first count marked wrong  [M, hand]: 73 read; confirmed wrong 0; not a claim of the kind 42; the record agrees with the claim 31
+    by reason: shorthand 17; composed 14; onDisk 13; quote 12; plan 7; misbound 5; seen 2; spelling 2; digest 1
+    test 1 of 1.6 (at least 80 % of the script's wrong verdicts survive): 0 of 73 survive = 0.0 %. FAILED. The script's own rate of 2.6 % is not a rate of wrong claims.
+    test 2 of 1.6 (held sample, at most 10 % not claims of the kind): commit id 0 of 10 passed; file path 0 of 10 passed; head 5 of 10 FAILED; pull request state 2 of 10 FAILED; test result 4 of 10 FAILED; count 4 of 10 FAILED
+C3  what the hand read changed in the script  (repairs R1 to R6. R1, R3, R5 and R6 make the script do what 1.4 says. R2 and R4 narrow 1.4: a path known only by its file name becomes not checkable, and a state word must sit beside the number. Neither can hide a wrong claim, since all 73 first-count flags were read by hand before them.)
+    R1 an id that starts a longer hexadecimal string, or is in upper case, counts as seen. R2 one spelling per path (drive letter, home folder); a path counts as on disk when a file under the project ends with it; when only the file name is on record the claim is not checkable. R3 a token standing for several files (a/b/c, a range, a placeholder) is not a path.
+    R4 a pull request state counts only when the word sits beside the number. R5 quoted user messages (section 6) and merge instructions are not head or state claims. R6 a test result needs a test word on its line and is not taken from an instruction; a count is not taken from a label.
+    added, to find more: a bare head read as the session's own branch; "merged as" checked against GitHub's merge commit (1.9)
+C4  second count, after the repairs  [M]   (117 summaries)
+    kind                  found    held   wrong   not checkable   after the hand read: wrong   held   not a claim
+    commit id               714     713       0               1                            0    713             0
+    file path              1966    1904       5              57                            0   1904             5
+    head                     73      47       4              22                            0     49             2
+    pull request state       22      20       2               0                            0     20             2
+    merged as                 9       9       0               0                            0      9             0
+    test result              92      90       0               2                            0     90             0
+    count                    37      22       0              15                            0     22             0
+    all                    2913    2805      11              97                            0   2807             9     script's own rate: 11 of 2816 = 0.4 %
+C5  hand read of every claim the second count marked wrong  [M, hand]: 11 read; confirmed wrong 0; by reason: quote 4; shorthand 3; plan 2; seen 1; bothGiven 1
+    test 1 of 1.6: 0 of 11 survive. FAILED again. Nothing the script marks wrong is wrong; the count of wrong claims below is the hand-confirmed one.
+    test 2 of 1.6 on the second count: commit id 0 of 10 passed; file path 0 of 10 passed; head 3 of 10 FAILED; pull request state 1 of 10 passed; merged as 1 of 9 FAILED; test result 1 of 10 passed; count 2 of 10 FAILED
+    kinds that keep a rate (held sample passed): commit id, file path, pull request state, test result. No rate for: head, merged as, count.
+C6  THE CLAIM RATE  [M, hand]: 0 wrong of 2,727 claims checked in the kinds that keep a rate = 0.0 %   (all seven kinds: 0 of 2,807)
+    range. With no wrong claim the resampling of 1.7 has nothing to spread, so two one-sided 95 % upper bounds are given instead, printed rounded up: if claims stand or fall one by one, under 0.2 %; if every claim in a summary stands or falls together, under 2.6 % (117 summaries); if every claim in a session does, under 6.5 % (45 sessions)  [E]
+    this departs from 1.6, which bars a rate when the script's flags fail the hand read. The failure shows that the script over-flags, not that held claims are wrong, so an upper bound is given beside the count (review M-F4).
+    what held means. 2,617 of the 2,727 are commit ids and paths, held when the identifier is on record: that tests whether the summary copied it right, not whether what it says about it is true. 110 (20 pull request states, 90 test results) check a value against a state; with none wrong among them the one-sided 95 % bound is under 2.7 %  [E]  (review M-F5)
+    THE SUMMARY RATE  [M, hand]: 0 of 117 summaries with a checked claim hold a wrong one
+    not checkable and left out of the rate: 97. Dropped as not claims after the hand read: 9.
+C7  where the held claims were confirmed  [M]:
+        705  commit | seen, and in the repository
+          8  commit | seen
+         22  count | seen with its word
+         19  head | the head by commit dates at that time
+         28  head | the last head seen
+          9  merge | the merge commit GitHub records
+         36  path | in the repository history
+         98  path | on disk
+        136  path | opened by a file tool
+       1634  path | seen
+         10  pr | GitHub at that time
+         10  pr | the last state seen
+         90  test | seen with its word
+    in groups: commit ids and paths in the session's own transcript 2483; paths in the repository history or on disk 134; heads 47; pull request states and merge commits 29 (19 of them against GitHub); test results and counts seen with their word 112
+    why claims were not checkable  [M]:
+          1  commit | said only
+         15  count | the number is seen, not as a result
+          9  head | no record of that head
+         13  head | the record does not settle it
+         43  path | said only
+         14  path | the file name is on record, the folder as written is not
+          2  test | the number is seen, not as a result
+C8  by band and by model: claims checked in the kinds that keep a rate, all with 0 wrong  [M, hand]
+      band under 300k                      4 summaries   2 sessions     52 checked  0 wrong   under 5.6 % by claim, under 52.8 % by summary   (fewer than five sessions)
+      band 300k to 400k                   88 summaries  35 sessions   2037 checked  0 wrong   under 0.2 % by claim, under 3.4 % by summary
+      band 400k to 900k                   13 summaries  10 sessions    252 checked  0 wrong   under 1.2 % by claim, under 20.6 % by summary
+      band 900k and over                  12 summaries   7 sessions    386 checked  0 wrong   under 0.8 % by claim, under 22.1 % by summary
+      model Opus 5.5                      87 summaries  34 sessions   2013 checked  0 wrong   under 0.2 % by claim, under 3.4 % by summary
+      model Fable 5.1                      7 summaries   3 sessions    179 checked  0 wrong   under 1.7 % by claim, under 34.9 % by summary   (fewer than five sessions)
+      model Fable 5.2                     17 summaries   7 sessions    384 checked  0 wrong   under 0.8 % by claim, under 16.2 % by summary
+      model Sonnet 5.5                     6 summaries   5 sessions    151 checked  0 wrong   under 2.0 % by claim, under 39.4 % by summary
+      Fable only, under 400k               5 summaries   2 sessions     76 checked  0 wrong   under 3.9 % by claim, under 45.1 % by summary   (fewer than five sessions)
+      Fable only, 400k to 900k             8 summaries   5 sessions    131 checked  0 wrong   under 2.3 % by claim, under 31.3 % by summary
+      Fable only, 900k and over           11 summaries   6 sessions    356 checked  0 wrong   under 0.9 % by claim, under 23.9 % by summary
+      FixFlow                             69 summaries  22 sessions   1309 checked  0 wrong   under 0.3 % by claim, under 4.3 % by summary
+      clinic testbed                      48 summaries  23 sessions   1418 checked  0 wrong   under 0.3 % by claim, under 6.1 % by summary
+      the 109 at the split replay's cut  109 summaries  44 sessions   2608 checked  0 wrong   under 0.2 % by claim, under 2.8 % by summary
+C9  claims in the three sections that state where things stand (pending tasks, current work, next step): 262 of 2,904 found after the hand read (2,913 less 9 that were not claims), 237 of them in the kinds that keep a rate; none wrong
+
+D. LATEST STATE: the kept tail read beside each summary's last three sections  [M, hand]   (scoring 1.9)
+D1  summaries whose last sections were already overtaken in the kept tail: 74 of 117 = 63.2 %; not overtaken 39; unclear 4 (counted as not overtaken)
+    range: 95 %, Wilson on an effective number of summaries. Design effect 1.883, from 4,000 resamples of whole sessions (seed 20261114)  [E]
+      all                                          74 of 117 = 63.2 %   range 50.8 % to 74.1 %
+D2  what was overtaken:
+       30  a file the summary says is still to be written or changed
+       28  a message or report the summary says is still to be written or sent, or is awaited
+        7  a commit or push the summary says is still to be made
+        5  another step the summary names as next (an agent, a workflow, a session, a stop)
+        4  a check, test or background result the summary says is awaited
+D3  by how the summary was written
+      prepared ahead of the boundary               18 of  18 = 100.0 %   range 71.3 % to 100.0 %   11 sessions
+      written when the boundary fell               56 of  99 =  56.6 %   range 43.2 % to 69.1 %   39 sessions
+    by window size at compaction
+      band under 300k                               4 of   4 = 100.0 %   range 35.6 % to 100.0 %   2 sessions (fewer than five: the range means little)
+      band 300k to 400k                            50 of  88 =  56.8 %   range 42.6 % to 70.0 %   35 sessions
+      band 400k to 900k                            13 of  13 = 100.0 %   range 64.2 % to 100.0 %   10 sessions
+      band 900k and over                            7 of  12 =  58.3 %   range 24.8 % to 85.6 %   7 sessions
+    by model
+      Opus 5.5                                     49 of  87 =  56.3 %   range 42.1 % to 69.6 %   34 sessions
+      Fable 5.1                                     6 of   7 =  85.7 %   range 36.7 % to 98.4 %   3 sessions (fewer than five: the range means little)
+      Fable 5.2                                    13 of  17 =  76.5 %   range 44.1 % to 93.1 %   7 sessions
+      Sonnet 5.5                                    6 of   6 = 100.0 %   range 45.3 % to 100.0 %   5 sessions
+    like with like: only summaries written when the boundary fell
+      Opus at its setting, 300k to 400k            48 of  86 =  55.8 %   range 41.5 % to 69.2 %   33 sessions
+      other models at the default trigger, 900k+    7 of  12 =  58.3 %   range 24.8 % to 85.6 %   7 sessions
+      difference (900k and over minus 300k to 400k): 2.5 points, range -31.9 to 32.3 points from the same resampling: NOT SHOWN (the range holds zero)  [E]
+    inside Fable alone, the only model that spans the bands
+      Fable, under 400k                             5 of   5 = 100.0 %   range 40.9 % to 100.0 %   2 sessions (fewer than five: the range means little)
+      Fable, 400k to 900k                           8 of   8 = 100.0 %   range 52.5 % to 100.0 %   5 sessions
+      Fable, 900k and over                          6 of  11 =  54.5 %   range 21.3 % to 84.2 %   6 sessions
+      prepared ahead among them: 5 of 5; 8 of 8; 0 of 11. Fable summaries under 900k written when the boundary fell: 0, so fill cannot be compared like with like inside one model
+    by project
+      FixFlow                                      36 of  69 =  52.2 %   range 36.6 % to 67.4 %   22 sessions
+      clinic testbed                               38 of  48 =  79.2 %   range 60.2 % to 90.5 %   23 sessions
+    the 109 at the split replay's cut
+      up to the split replay's cut                 70 of 109 =  64.2 %   range 51.3 % to 75.3 %   44 sessions
+D4  against the script's own listing (a floor, see B2): tails with a call it classes as changing state 39, of them overtaken 32; tails without one 78, of them overtaken 42 (a closing message written, a result or a message that came in, a file changed by a shell command)
+D5  summaries that describe their own kept tail, by the hand read: 9; overtaken among them: 0. The script's test (B4) finds 5 of these 9.
+D6  one session supplies 11 of the 117 summaries (fixflow-423aac92): overtaken 2 of 11, against 72 of 106 (67.9 %) for the rest
+
+E. DID THE NEXT WINDOW REPEAT WHAT ITS KEPT TAIL HAD DONE  [M]   (scoring 1.10; no hand judgement)
+E1  hand-overs with six steps on record after the boundary: 117 of 117
+E2  the next window repeated a call that changes state: 0; said a tail message again: 0; either: 0 of 117 = 0.0 %; among the 74 overtaken: 0. With none found, the one-sided 95 % bound (printed rounded up) is under 2.6 % if hand-overs are taken one by one, under 4.0 % among the overtaken  [E]
+    counted more widely (review T-1): any shell or node command run again with the same text, whatever class the script gave it: 0 of 117 hand-overs
+    compared in E2: file writes by path and text; commands the script classes as changing state, by text; messages sent, by recipient and text; agents, workflows and sessions started, by description and prompt; model messages, by shared wording. Not compared: plan updates, reads, searches, status calls and test runs (other than by the wider count above), anything reworded, and anything after the sixth step.
+E3  what the check could see: tails holding a file write 28; next windows whose first six steps hold a file write 14; the same file written again with other text 2 (more work on it, not a repeat); the most any next message shares with a tail message 9 % of its three-word runs (a repeat needs more than 50 %); unclassed shell commands run again 0
+E4  the next window's first step, by class: plan update 80; shell 12; read 11; model text 7; test or check run 3; git or gh status 3; file write 1
+
+F. THE EXTRACTOR'S OWN ERROR  (the four tests fixed in 1.6)
+F1  wrong verdicts: first count 0 of 73, second count 0 of 11 survive the hand read. FAILED both times: by 1.6 only the hand-confirmed count is reported.
+F2  held verdicts (fixed sample, ten of each kind in hash order): see C2 and C5. After the repairs four kinds pass and three do not. Read by hand in all: 84 claims the script marked wrong (73 and 11), 129 sampled held claims (60 and 69), 117 kept tails.
+    the 84 are flags, not different claims: 8 of the 11 second-count flags are claims the first count had marked wrong as well, so 76 different claims were read
+F3  missed claims: eight summaries read by hand (two from each of three groups in hash order, and the two hand-checked on 1 November)  [M, hand]
+      summary               group                          read                    script found: paths, other   missed by the script   wrong among the missed
+      fixflow-423aac92-02   Opus, 300k to 400k             in full                       25       2          none                                        0
+      fixflow-d563b0e9-02   Opus, 300k to 400k             in full                       16       5          test result 6, head 1                       0
+      clinic-efb9a0b8-01    400k to 900k                   every candidate line          17       9          commit id 2, head 1                         0
+      clinic-b70a43e8-01    400k to 900k                   every candidate line          20       1          test result 1                               0
+      fixflow-49260710-03   900k and over                  every candidate line          13      28          merged as 5, head 2, commit id 1            0
+      fixflow-49260710-02   900k and over                  every candidate line          16      32          merged as 12, head 1                        0
+      fixflow-e24f17dc-01   hand-checked on 1 November     in full                        8       6          commit id 1                                 0
+      fixflow-e24f17dc-02   hand-checked on 1 November     every candidate line           5       5          commit id 1                                 0
+    missed 34 against 88 found outside paths = 27.9 % of those claims; against 208 found with paths = 14.0 %. Under a third: PASSED, on a narrower read than 1.6 fixed (3 of 8 in full, paths not listed by hand). Missed by kind: test result 7, head 5, commit id 5, merged as 17.
+    Paths were not listed by hand; the script's path list was taken as read. Three summaries were read in full; for the other five every line holding a commit id, a pull request number, a test word, a head word, a files or rows count or a state word was read, with the script's own extraction marked. That is less than 1.6 fixed, and is said here.
+F4  missed wrong claims: every missed claim was checked by hand against the transcript, the repository or GitHub: 0 wrong of 34. The script flagged no claim that was wrong, and the full reads found none it missed: PASSED, on the same narrower read.
+
+G. THE TWO SUMMARIES CHECKED BY HAND ON 1 NOVEMBER  (register row PR-SUMMARY; docs/program/HARNESS-REVIEW-2026-11-01.md section 6)
+      fixflow-e24f17dc-01: 971k, Fable 5.1, written when the boundary fell. Claims checked 14, wrong 0. Kept tail: 3 calls (2 change state), 0 model messages. Tail read: overtaken (a commit or push the summary says is still to be made). Next window repeated: 0.
+      fixflow-e24f17dc-02: 580k, Fable 5.1, prepared 396 min ahead. Claims checked 10, wrong 0. Kept tail: 0 calls (0 change state), 1 model messages. Tail read: overtaken (a message or report the summary says is still to be written or sent, or is awaited). Next window repeated: 0.
+    both hand-checked failures are the tail read's "overtaken": a commit the summary says is still to be made, and a closing message it says is still to be written. Neither is a claim of the seven kinds, and the dropped open loop of the second is in no measure here.
+
+H. HOW MANY HAND-OVERS PER ARM THE LIVE TRIAL WOULD NEED  [E]   (5 % two-sided, 80 % power; 1.7). The overtaken rate is the summary scored alone, without its kept tail, which favours a brief by construction (review M-F1).
+H1  on the claim rate: the summaries' rate is 0.0 %, so there is no difference for a brief to show. No number of hand-overs would show one on claims that name a path, a commit, a pull request or a test result.
+H2  on the overtaken rate (63.2 % for the summaries; one hand-over is one unit; the design effect of 1.883 multiplies each figure when several hand-overs come from one session):
+      a brief as good as the lowest band with five sessions (band 300k to 400k)       56.8 % [E]     910 per arm,  1714 with the design effect
+      a brief overtaken half as often as a summary                                    31.6 % [G]      38 per arm,    72 with the design effect
+      a brief written as the session's last act, so that almost nothing can overtake it   5.0 % [G]      10 per arm,    19 with the design effect
+    the ten per arm that part 2.5 of the split-rule record names [G] is enough only for the last row
+
+I. EVERY SUMMARY  [M], hand columns marked
+    summary                 model       size   ahead   claims: found checked wrong   tail: calls state texts in   saw tail   tail read [hand]   what          repeats
+    fixflow-76a82af8-01     Opus 5.5     205k  190 min            23      17     0             0     0     1   1          -   overtaken        result        0
+    fixflow-e24f17dc-06     Fable 5.2    272k  107 min            11       9     0             0     0     1   1          -   overtaken        message       0
+    fixflow-e24f17dc-08     Fable 5.2    271k  138 min            13      13     0             0     0     1   1          -   overtaken        message       0
+    fixflow-e24f17dc-10     Fable 5.2    224k  156 min            24      18     0             0     0     1   1          -   overtaken        message       0
+    clinic-16a65b98-01      Opus 5.5     367k        -            43      43     0             1     0     0   0          -   overtaken        file          0
+    clinic-16a65b98-02      Opus 5.5     368k        -            29      26     0             1     0     0   0          -   overtaken        file          0
+    clinic-16a65b98-03      Opus 5.5     368k        -            28      28     0             1     1     0   0          -   overtaken        commit        0
+    clinic-1c7937a3-01      Opus 5.5     367k        -            34      33     0             1     1     0   0          -   overtaken        file          0
+    clinic-1c7937a3-02      Opus 5.5     368k        -            42      40     0             1     0     0   0          -   not                            0
+    clinic-1c7937a3-03      Opus 5.5     369k        -            26      24     0             1     1     1   0          -   overtaken        file          0
+    clinic-3aa7e53a-01      Opus 5.5     375k        -            44      44     0             1     1     1   0          -   overtaken        file          0
+    clinic-3aa7e53a-02      Opus 5.5     367k        -            34      34     0             2     1     1   0          -   overtaken        file          0
+    clinic-3aa7e53a-03      Opus 5.5     366k        -            22      22     0             2     1     1   0          -   overtaken        file          0
+    clinic-65fe4cc2-01      Opus 5.5     367k        -            23      23     0             1     0     0   0          -   overtaken        file          0
+    clinic-65fe4cc2-02      Opus 5.5     368k        -            28      28     0             1     0     1   0          -   overtaken        file          0
+    clinic-65fe4cc2-03      Opus 5.5     367k        -            23      22     0             1     0     0   0          -   not                            0
+    clinic-65fe4cc2-04      Opus 5.5     368k        -            27      27     0             2     1     1   0          -   overtaken        file          0
+    clinic-733bc52b-01      Opus 5.5     367k        -            38      38     0             1     1     0   1          -   overtaken        file          0
+    clinic-733bc52b-02      Opus 5.5     369k        -            23      22     0             1     0     0   0          -   not                            0
+    clinic-733bc52b-03      Opus 5.5     369k        -            21      19     0             0     0     1   1          -   overtaken        message       0
+    clinic-903f5856-01      Opus 5.5     371k        -            24      23     0             1     1     0   0          -   overtaken        file          0
+    clinic-903f5856-02      Opus 5.5     380k        -            24      23     0             1     1     1   0          -   not                            0
+    clinic-903f5856-03      Opus 5.5     367k        -            27      27     0             1     0     0   0          -   overtaken        message       0
+    clinic-903f5856-04      Opus 5.5     372k        -            15      14     0             2     1     0   0          -   not                            0
+    clinic-96abd742-01      Opus 5.5     368k        -            27      26     0             1     1     1   0          -   overtaken        commit        0
+    clinic-97380a1e-01      Opus 5.5     368k        -            30      30     0             2     1     0   0          -   overtaken        file          0
+    clinic-97380a1e-02      Opus 5.5     370k        -            24      24     0             0     0     1   1          -   overtaken        message       0
+    clinic-97380a1e-03      Opus 5.5     367k        -            21      21     0             2     1     1   0          -   overtaken        other         0
+    clinic-9fb55349-01      Opus 5.5     370k        -            22      21     0             1     1     1   0          -   overtaken        file          0
+    clinic-a9b52f2e-01      Opus 5.5     371k        -            35      35     0             1     0     0   0          -   not                            0
+    clinic-a9b52f2e-02      Opus 5.5     374k        -            27      26     0             2     0     1   0          -   not                            0
+    clinic-a9b52f2e-03      Opus 5.5     367k        -            22      21     0             1     1     1   0          -   overtaken        commit        0
+    clinic-b70a43e8-02      Opus 5.5     367k        -            24      24     0             1     0     1   0          -   not                            0
+    clinic-b8d2558a-01      Opus 5.5     369k        -            28      28     0             1     0     1   0          -   not                            0
+    clinic-b9ceba2b-01      Opus 5.5     368k        -            47      47     0             1     0     1   0          -   overtaken        result        0
+    clinic-bf76944e-01      Opus 5.5     368k        -            25      24     0             2     1     1   0          -   overtaken        other         0
+    clinic-dfe1ea6e-01      Opus 5.5     370k        -            28      28     0             1     1     1   0          -   overtaken        file          0
+    clinic-eb18b462-01      Opus 5.5     369k        -            37      37     0             1     1     0   0          -   overtaken        file          0
+    clinic-eb18b462-02      Opus 5.5     370k        -            22      21     0             1     0     0   0          -   not                            0
+    clinic-eb18b462-03      Opus 5.5     370k        -            29      29     0             2     1     0   0          -   overtaken        file          0
+    clinic-f59bdcd4-01      Opus 5.5     367k        -            44      44     0             1     0     1   0          -   overtaken        file          0
+    clinic-feb61c53-01      Opus 5.5     367k        -            42      41     0             1     0     0   0          -   overtaken        file          0
+    fixflow-0c9fab21-01     Opus 5.5     367k        -            15      15     0             1     0     1   0          -   not                            0
+    fixflow-11023416-01     Opus 5.5     369k        -            32      31     0             1     0     1   0          -   overtaken        file          0
+    fixflow-3a549127-01     Opus 5.5     370k        -            20      20     0             1     0     0   0          -   overtaken        file          0
+    fixflow-3e608523-01     Opus 5.5     367k        -             9       7     0             1     0     0   0       hand   not                            0
+    fixflow-3e608523-02     Opus 5.5     368k        -            12      12     0             1     0     0   1     script   not                            0
+    fixflow-3e608523-03     Opus 5.5     367k        -            22      21     0             1     0     0   1          -   overtaken        other         0
+    fixflow-423aac92-01     Opus 5.5     372k        -             7       6     0             1     1     0   0          -   unclear                        0
+    fixflow-423aac92-02     Opus 5.5     366k        -            27      25     0             1     1     0   0          -   overtaken        other         0
+    fixflow-423aac92-03     Opus 5.5     368k        -            26      25     0             1     0     0   0          -   not                            0
+    fixflow-423aac92-04     Opus 5.5     369k        -            22      20     0             2     0     0   0          -   not                            0
+    fixflow-423aac92-05     Opus 5.5     366k        -            13      12     0             1     0     0   0          -   not                            0
+    fixflow-423aac92-06     Opus 5.5     369k        -            27      26     0             1     0     0   0          -   not                            0
+    fixflow-423aac92-07     Opus 5.5     368k        -            15      13     0             1     0     0   0          -   not                            0
+    fixflow-423aac92-08     Opus 5.5     368k        -            11       9     0             2     1     0   0          -   unclear                        0
+    fixflow-423aac92-09     Opus 5.5     369k        -            16      13     0             2     0     0   0          -   not                            0
+    fixflow-49260710-04     Fable 5.2    303k    5 min            37      37     0             0     0     1   1          -   overtaken        message       0
+    fixflow-526a5cef-01     Opus 5.5     376k        -            28      28     0             2     0     0   0       hand   not                            0
+    fixflow-764cefe6-01     Opus 5.5     368k        -            32      29     0             2     0     1   1     script   not                            0
+    fixflow-7eeed02a-01     Opus 5.5     364k        -            14      14     0             1     1     1   1          -   overtaken        file          0
+    fixflow-7eeed02a-02     Opus 5.5     367k        -            18      16     0             2     1     0   0          -   overtaken        file          0
+    fixflow-7eeed02a-03     Opus 5.5     367k        -            17      17     0             1     0     0   0          -   overtaken        file          0
+    fixflow-7eeed02a-04     Opus 5.5     367k        -            27      27     0             1     0     1   0          -   overtaken        file          0
+    fixflow-7eeed02a-05     Opus 5.5     370k        -            18      18     0             2     1     0   0          -   unclear                        0
+    fixflow-7eeed02a-06     Opus 5.5     372k        -            28      25     0             2     0     0   0          -   not                            0
+    fixflow-7eeed02a-07     Opus 5.5     367k        -            20      19     0             0     0     1   1          -   not                            0
+    fixflow-7eeed02a-08     Opus 5.5     367k        -            14      14     0             1     1     1   0          -   not                            0
+    fixflow-971d2045-01     Opus 5.5     367k        -            38      36     0             1     0     0   1          -   not                            0
+    fixflow-971d2045-02     Opus 5.5     369k        -            21      20     0             2     0     1   0     script   not                            0
+    fixflow-971d2045-03     Opus 5.5     368k        -            27      27     0             0     0     1   1          -   overtaken        message       0
+    fixflow-971d2045-04     Opus 5.5     367k        -            20      19     0             0     0     1   1          -   overtaken        message       0
+    fixflow-971d2045-05     Opus 5.5     367k        -             9       8     0             1     0     0   0          -   not                            0
+    fixflow-971d2045-06     Opus 5.5     371k        -             7       7     0             2     1     1   0          -   overtaken        result        0
+    fixflow-a91fa5ae-01     Opus 5.5     369k        -            23      22     0             1     1     1   0          -   overtaken        file          0
+    fixflow-a91fa5ae-02     Opus 5.5     368k        -            21      21     0             1     0     0   0          -   not                            0
+    fixflow-a91fa5ae-03     Opus 5.5     367k        -            31      29     0             0     0     1   1          -   overtaken        result        0
+    fixflow-a91fa5ae-04     Opus 5.5     367k        -            27      23     0             1     0     0   0          -   not                            0
+    fixflow-a91fa5ae-05     Opus 5.5     367k        -            25      25     0             1     0     1   0          -   unclear                        0
+    fixflow-a91fa5ae-06     Opus 5.5     369k        -            21      21     0             1     1     0   0          -   overtaken        message       0
+    fixflow-a91fa5ae-07     Opus 5.5     368k        -            27      27     0             1     0     1   0          -   not                            0
+    fixflow-a91fa5ae-08     Opus 5.5     368k        -            31      31     0             1     0     0   0          -   not                            0
+    fixflow-b629d593-01     Opus 5.5     368k        -            35      35     0             1     0     0   0          -   overtaken        file          0
+    fixflow-cc7472b6-01     Opus 5.5     367k        -             1       1     0             0     0     1   1          -   overtaken        message       0
+    fixflow-d563b0e9-01     Opus 5.5     368k        -            16      14     0             1     1     1   0          -   overtaken        commit        0
+    fixflow-d563b0e9-02     Opus 5.5     367k        -            21      20     0             1     0     0   0          -   not                            0
+    fixflow-d563b0e9-03     Opus 5.5     367k        -            22      22     0             1     0     0   0     script   not                            0
+    fixflow-d563b0e9-04     Opus 5.5     368k        -            26      26     0             1     1     1   0          -   overtaken        commit        0
+    fixflow-e24f17dc-05     Fable 5.2    393k   68 min            11       9     0             0     0     1   2          -   overtaken        message       0
+    fixflow-f3705ad7-01     Opus 5.5     370k        -            26      23     0             0     0     1   1          -   overtaken        message       0
+    fixflow-f765569e-01     Opus 5.5     369k        -            29      28     0             1     0     0   0          -   overtaken        file          0
+    fixflow-f765569e-02     Opus 5.5     377k        -            11      11     0             2     0     0   0       hand   not                            0
+    clinic-2d86c828-02      Sonnet 5.5   804k   62 min            27      25     0             0     0     1   1          -   overtaken        message       0
+    clinic-7b3031d3-01      Sonnet 5.5   535k   74 min            24      24     0             0     0     1   1          -   overtaken        message       0
+    clinic-7f348b2c-01      Fable 5.1    574k   21 min            48      47     0             0     0     1   2          -   overtaken        message       0
+    clinic-b70a43e8-01      Sonnet 5.5   758k        -            21      21     0             1     1     0   0          -   overtaken        file          0
+    clinic-df1db0b9-01      Sonnet 5.5   894k   61 min            27      27     0             0     0     1   1          -   overtaken        message       0
+    clinic-efb9a0b8-01      Sonnet 5.5   747k   21 min            26      26     0             0     0     1   1          -   overtaken        message       0
+    fixflow-423aac92-11     Fable 5.2    546k   59 min            14      14     0             0     0     1   2          -   overtaken        message       0
+    fixflow-acf0bded-01     Fable 5.2    857k   62 min            15      14     0             0     0     1   2          -   overtaken        message       0
+    fixflow-c43afbf6-01     Fable 5.2    754k   56 min            13      11     0             0     0     1   2          -   overtaken        message       0
+    fixflow-e24f17dc-02     Fable 5.1    580k  396 min            10      10     0             0     0     1   1          -   overtaken        message       0
+    fixflow-e24f17dc-03     Fable 5.1    642k   34 min            16      16     0             0     0     1   1          -   overtaken        message       0
+    fixflow-e24f17dc-04     Fable 5.2    815k  256 min            18      18     0             0     0     1   1          -   overtaken        message       0
+    fixflow-e24f17dc-07     Fable 5.2    429k   71 min             9       9     0             0     0     1   2          -   overtaken        message       0
+    clinic-2d86c828-01      Sonnet 5.5   966k        -            30      30     0             0     0     1   1          -   overtaken        message       0
+    clinic-7f348b2c-02      Fable 5.1    974k        -            38      37     0             1     1     1   0          -   overtaken        other         0
+    clinic-7f348b2c-03      Fable 5.1    967k        -            47      47     0             0     0     1   2          -   overtaken        message       0
+    clinic-7f348b2c-04      Fable 5.2    970k        -            65      65     0             2     2     0   0          -   overtaken        commit        0
+    fixflow-423aac92-10     Fable 5.2    967k        -            31      30     0             1     0     0   0          -   not                            0
+    fixflow-49260710-01     Fable 5.2    969k        -            32      32     0             1     0     0   0     script   not                            0
+    fixflow-49260710-02     Fable 5.2    975k        -            48      48     0             2     2     1   1       hand   not                            0
+    fixflow-49260710-03     Fable 5.2    969k        -            41      41     0             2     1     0   0          -   overtaken        message       0
+    fixflow-701c2346-01     Fable 5.2    969k        -            17      17     0             2     1     0   0          -   overtaken        file          0
+    fixflow-e24f17dc-01     Fable 5.1    971k        -            14      14     0             3     2     0   0          -   overtaken        commit        0
+    fixflow-e24f17dc-09     Fable 5.2    971k        -            26      22     0             2     0     0   0          -   not                            0
+    fixflow-f3bbe503-01     Fable 5.1    975k        -            14      14     0             2     0     0   0          -   not                            0
+
+J. WORKED EXAMPLES  (what a claim names and whether it held; no sentence from a summary)
+      [claim] fixflow-971d2045-04: commit 90ea88d -> held. It is in the transcript before the hand-over and is a commit in the repository.
+      [claim] fixflow-971d2045-04: #205 merged as 66e891b -> held. It is the merge commit GitHub records for pull request 205.
+      [claim] fixflow-423aac92-02: data/catalogue.json -> held after the hand read. The path is relative to the build folder. The file is on disk at docs/program/evidence/harness-compile/data/catalogue.json.
+      [claim] clinic-16a65b98-02: operations/0005_review_guards.py -> held after the hand read. The summary leaves out the migrations folder. The transcript shows the file written at src/clinic/operations/migrations/0005_review_guards.py.
+      [claim] fixflow-49260710-02: #182 merged -> not a claim. The word belongs to #185 in the same row of the summary. #182 was open, which is what the summary says of it.
+      [claim] fixflow-a91fa5ae-06: own branch at a27b2a1 -> held after the hand read. A newer commit, 5fafe85, existed. The summary names it too, as a local commit not yet pushed.
+      [tail] fixflow-e24f17dc-01: the gate record, commit 2366611 -> overtaken. The last sections say the record is not committed and that committing it is the next step. The kept tail holds the commit and the push. This is the first summary hand-checked on 1 November.
+      [tail] fixflow-e24f17dc-02: the turn's closing message -> overtaken. The summary was prepared 396 minutes before the boundary and says the closing message is still to be written. The kept tail holds it. This is the second summary hand-checked on 1 November.
+      [tail] clinic-1c7937a3-02: one read of operations/reversal.py -> not overtaken. The kept tail holds a single read of a file the summary says was being read. Nothing the summary calls pending was done.
+      [tail] fixflow-764cefe6-01: background task bu34goz67 -> not overtaken. The summary names a task id that only the kept tail's result shows, so it was written with the tail in view and describes it correctly.
+      [repeat] fixflow-423aac92-02: the condense-and-verify workflow -> not repeated. The summary lists launching it as the next step; the kept tail had already launched it. The next window's first six steps did not launch it again.
+
+K. THE CHECK OF THIS DELIVERABLE  (figures quoted from review-2026-11-14.md in this folder; not this script's own)
+K1  kept tails read a second time, blind, in hash order: 30; the two readers agree on 28; each reader found 20 overtaken, the adjudicator 21; both disagreements were overtaken cases missed by one reader
+K2  flagged claims read a second time: 35 (all 11 of the second count, 24 of the first count's); wrong 0
+K3  a hunt by hand through 3 summaries not read in full before: 47 claims of the non-path kinds, 46 held, 1 not checkable, 0 wrong
+K4  code for what was overtaken, where the kept tail did more than one such thing: the first of these that applies, where a thing applies when the summary calls it still to come and the kept tail holds it: a commit or push, a file, a message, a result, another step
+    the rule was set after the check. Applying it changed 3 codes and no verdict: clinic-a9b52f2e-03 file to commit; clinic-733bc52b-01 result to file; clinic-65fe4cc2-02 result to file
+K5  the tail verdicts in this table are the first reader's, as first given. In the sample of 30 one of them is a miss by the adjudication: clinic-903f5856-04, read as not overtaken, adjudicated overtaken (a file). With it the count would be 75 of 117.
+K6  the 11 hand-overs of fixflow-423aac92 read a second time, blind (sent by the checking session after its file was written): the two readers agree on 9 of 11, on the same 2 overtaken and the same 7 not, whose kept tails hold only reads. The 2 the first reader left unclear (fixflow-423aac92-01, fixflow-423aac92-08) the second reader calls overtaken, both as close calls.
+    that session: overtaken in 2 of 11 by the first reader, 4 of 11 by the second, against 72 of 106 for the rest. Kept as reported: 74 of 117. With those 2 read as overtaken: 76 of 117; with the miss of K5 as well: 77 of 117.
+    hand-overs with a second reading in all: 40 of 117 (30 in hash order and these 11, 1 of them in both); with one reader only: 77
+
+L. WHAT THIS DOES NOT SEE
+    Prose that names nothing: decisions, reasons, what the owner asked, open loops. Whether a described change was made. Anything a summary left out. Whether the next window acted on a stale statement in some way other than redoing a call.
+    The transcript does not hold the model's thinking in every session, so "nowhere in the transcript" is weaker than it reads: a name can come from a plan the transcript does not show.
+    One reader made every hand verdict in sections C to F. The check of this deliverable read a part a second time, blind (K): 30 of the 117 kept tails in hash order, the 11 of one session, and 35 of the flags. The tail read is a judgement on prose.

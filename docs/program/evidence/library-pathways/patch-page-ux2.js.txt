@@ -1,0 +1,47 @@
+// Readability pass 2 (2026-11-13), after looking at pass 1 at 1870 px: room for the count under three-line labels,
+// funnel labels inside tall bars, and wording that fits the all-work view. Nothing is removed.
+// Run from this folder: node - < patch-page-ux2.js.txt   (a rerun makes 0 edits)
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const SRC = path.join(process.cwd(), 'page-src');
+let edits = 0;
+function patch(file, pairs) {
+  const p = path.join(SRC, file);
+  let s = fs.readFileSync(p, 'utf8');
+  pairs.forEach(([from, to, name]) => {
+    if (s.includes(to)) return;
+    if (!s.includes(from)) throw new Error(file + ': anchor not found for "' + name + '"');
+    s = s.replace(from, () => to); edits++;
+  });
+  fs.writeFileSync(p, s);
+}
+patch('page.js.txt', [
+  // labels sit higher and closer together when a count shares the box
+  ["        var y0 = p.y - (lines.length - 1) * 6.5 + 4 - (sf !== null ? 7 : 0);\n        lines.forEach(function (ln, j) { s += '<text class=\"' + (st.outcome ? 'g-out' : 'g-lab') + '\" text-anchor=\"middle\" x=\"' + p.x + '\" y=\"' + (y0 + j * 13).toFixed(1) + '\">' + esc(ln) + '</text>'; });\n        if (sf !== null) s += '<text class=\"g-cnt\" data-tagged=\"G\" text-anchor=\"middle\" x=\"' + p.x + '\" y=\"' + (p.y + g.nh / 2 - 6).toFixed(1) + '\">'",
+   "        var lsp = sf !== null ? 12 : 13;\n        var y0 = p.y - (lines.length - 1) * lsp / 2 + 4 - (sf !== null ? 8 : 0);\n        lines.forEach(function (ln, j) { s += '<text class=\"' + (st.outcome ? 'g-out' : 'g-lab') + '\" text-anchor=\"middle\" x=\"' + p.x + '\" y=\"' + (y0 + j * lsp).toFixed(1) + '\">' + esc(ln) + '</text>'; });\n        if (sf !== null) s += '<text class=\"g-cnt\" data-tagged=\"G\" text-anchor=\"middle\" x=\"' + p.x + '\" y=\"' + (p.y + g.nh / 2 - 5).toFixed(1) + '\">'",
+   'label spacing'],
+  // funnel: labels go inside a tall bar; the share is a whole per cent
+  ["      var ty = Math.min(Y(keep), base - 1);\n      s += '<text class=\"fval\" x=\"' + cx + '\" y=\"' + (ty - 17).toFixed(1) + '\" text-anchor=\"middle\">' + esc(fmt(st.value, 'funnel')) + ' left</text>';\n      s += '<text class=\"fkeep\" data-keep=\"' + keep + '\" x=\"' + cx + '\" y=\"' + (ty - 5).toFixed(1) + '\" text-anchor=\"middle\">keeps ' + esc(fmt(keep / 100, 'pct')) + '</text>';",
+   "      var ty = Math.min(Y(keep), base - 1), inside = keep > 70, y1 = inside ? ty + 16 : ty - 17, y2 = inside ? ty + 28 : ty - 5;\n      s += '<text class=\"fval' + (inside ? ' inv' : '') + '\" x=\"' + cx + '\" y=\"' + y1.toFixed(1) + '\" text-anchor=\"middle\">' + esc(fmt(st.value, 'funnel')) + ' left</text>';\n      s += '<text class=\"fkeep' + (inside ? ' inv' : '') + '\" data-keep=\"' + keep + '\" x=\"' + cx + '\" y=\"' + y2.toFixed(1) + '\" text-anchor=\"middle\">keeps ' + Math.round(keep) + '%</text>';",
+   'funnel labels'],
+  // wording for the all-work view
+  ["</b> routes for this piece. Shares are of this piece; costs in cheap-call equivalents. ' + tagEl('G') + '</span>",
+   "</b> routes for ' + (ST.scope === 'all' ? 'one kind of work. Tap a route to switch the map to that kind' : 'this piece') + '. Shares are of this piece; costs in cheap-call equivalents. ' + tagEl('G') + '</span>",
+   'routes head'],
+  ["'all of this piece ' + tagEl('G')", "'all the work shown ' + tagEl('G')", 'legend'],
+]);
+patch('page.css.txt', [
+  [".fkeep{font:500 11px var(--font-body); fill:var(--ink-2)}", ".fkeep{font:500 10.5px var(--font-body); fill:var(--ink-2)}\n.fval.inv,.fkeep.inv{fill:var(--surface)}", 'funnel inverse'],
+]);
+(function () {
+  const p = path.join(SRC, 'text.json');
+  const raw = fs.readFileSync(p, 'utf8');
+  const j = JSON.parse(raw);
+  const set = (o, k, v) => { if (o[k] !== v) { o[k] = v; edits++; } };
+  set(j.layout, 'row_h', 70);
+  set(j.layout, 'node_h', 60);
+  const out = JSON.stringify(j, null, 2) + (raw.endsWith('\n') ? '\n' : '');
+  if (out !== raw) fs.writeFileSync(p, out);
+})();
+console.log('edits made: ' + edits);

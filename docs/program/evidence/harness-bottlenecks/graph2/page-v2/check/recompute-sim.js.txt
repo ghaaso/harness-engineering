@@ -1,0 +1,30 @@
+// Check (6): recompute section I's token model for several control settings with this check's own arithmetic,
+// then compare with what the page printed for the same settings (sim-out/*.txt, made by job-sim.json).
+// Inputs: per-form carried, step, calls and episodes (data.json usecases rows; their totals were traced to
+// use-cases.md), the form marks shown in section B, and the pointer ratio = FixFlow API calls / context tokens
+// from TOKEN-BOTTLENECK-2026-11.md (14,647 calls, 2.13 B tokens).
+// Run: cd EVID/page-v2/check && node - < recompute-sim.js.txt
+const fs = require('fs'), path = require('path');
+const d = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), '../../../../../graph-v2/data/data.json'), 'utf8'));
+const tb = fs.readFileSync(path.resolve(process.cwd(), '../../../../../TOKEN-BOTTLENECK-2026-11.md'), 'utf8');
+const calls = +tb.match(/\| API calls \| ([\d,]+) \|/)[1].replace(/,/g, ''); const ctxB = +tb.match(/context tokens processed[^|]*\| ([\d.]+) B \|/)[1];
+const perTok = calls / (ctxB * 1e9);
+const set = { graph: ['graph'], partly: ['graph', 'partly'], index: ['graph', 'partly', 'index'] };
+function model(side, s, u, r, n, ptr) {
+  const U = d.usecases[side]; const rows = U.rows.filter(x => set[s].includes(x.mark));
+  const ctx = U.totals.ctx; // context tokens of the class (use-cases.md: product 1,040M, program 4,018M)
+  const exposed = rows.reduce((a, x) => a + x.carried, 0) / ctx;                 // share of context carried by the forms answered
+  const moved = exposed * (u / 100) * (1 - r / 100);
+  const pcost = ptr * perTok;                                                    // pointer tokens x calls / context
+  let step = 0; for (const x of rows) { const cpe = x.calls / x.episodes; step += (x.step / ctx) * (u / 100) * Math.max(0, Math.min(n, cpe) - 1) / Math.max(cpe, 1); }
+  return { exposed, moved, pcost, net: Math.max(0, moved - pcost), step };
+}
+const pct = v => (100 * v).toFixed(1) + ' %';
+const cases = [['s1-default', 'product', 'partly', 50, 20, 2, 500], ['s2-program-graph-max', 'program', 'graph', 100, 5, 6, 0], ['s3-product-index', 'product', 'index', 30, 50, 1, 2000], ['s4-product-graph-max', 'product', 'graph', 100, 5, 4, 0]];
+const out = ['pointer ratio ' + perTok.toExponential(4) + ' (1,000 pointer tokens = ' + pct(1000 * perTok) + ' of context)'];
+for (const [f, ...a] of cases) {
+  const m = model(...a); const pg = fs.readFileSync(path.join('sim-out', f + '.txt'), 'utf8').match(/\d+\.\d %/g);
+  const mine = [m.net, m.exposed, m.moved, m.pcost, m.net, m.step].map(pct);
+  out.push(f + ' ' + JSON.stringify(a) + '\n  mine: net ' + mine[0] + ', exposed ' + mine[1] + ', moves ' + mine[2] + ', pointer ' + mine[3] + ', step view ' + mine[5] + '\n  page: ' + pg.join(', ') + '\n  ' + (JSON.stringify(mine) === JSON.stringify(pg) ? 'MATCH' : 'DIFFER'));
+}
+console.log(out.join('\n')); fs.writeFileSync('recompute-sim.out.txt', out.join('\n') + '\n');

@@ -1,0 +1,515 @@
+// Independent check of the pathway engine against the model brief.
+// Run from this folder:  node - < verify-engine.js.txt
+// Uses process.cwd(), never __dirname, because the script arrives on stdin.
+//
+// The model below ("brief model") is written from model-brief.md sections 4 to 8 only.
+// It does not read map.json or call engine.js; the engine is only called to compare.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const tableRaw = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const engineSrc = fs.readFileSync(path.join(dir, 'engine.js'), 'utf8');
+
+// my own reading of the table: a list of rows with id, low, best, high
+const rows = {};
+tableRaw.parameters.forEach(r => { rows[r.id] = r; });
+const ids = Object.keys(rows);
+const best = {};
+ids.forEach(id => { best[id] = rows[id].best; });
+const report = { checks: [], failures: [] };
+function check(name, ok, detail) {
+  report.checks.push({ name, ok, detail });
+  if (!ok) report.failures.push(name + (detail ? ': ' + detail : ''));
+  console.log((ok ? 'ok   ' : 'FAIL ') + name + (detail ? '  [' + detail + ']' : ''));
+}
+const TOL6 = 5e-7; // agree to six decimal places
+
+// ================================================================ the brief model
+
+function catchChance(p, visible) {
+  const gt = visible ? p.g_tests_visible : p.g_tests_latent;
+  return 1 - (1 - gt) * (1 - p.s_review * p.g_review);           // L6
+}
+function newTally() {
+  return { EQUAL: 0, ESCAPED_FOUND: 0, ESCAPED_SILENT: 0, UNRESOLVED: 0,
+    cost: { cheap: 0, opus: 0, fable: 0 }, calls: { cheap: 0, opus: 0, fable: 0 },
+    strongRight: 0, escaped: 0, escapedStrong: 0, events: {} };
+}
+function charge(T, ev, tier, w, cost, calls) {
+  T.cost[tier] += w * cost; T.calls[tier] += w * calls;
+  T.events[ev] = (T.events[ev] || 0) + w * cost;
+}
+// L6 to L11 for one class; ok = the cheap model alone would be right.
+function ladder(p, visible, ok, capture, T, opts) {
+  opts = opts || {};
+  const g = catchChance(p, visible);
+  const reviewCost = p.s_review * p.c_review * p.m_opus;          // section 6, per gate pass
+  const reviewCalls = p.s_review * p.c_review;
+  const gatePass = w => charge(T, 'review', 'opus', w, reviewCost, reviewCalls);
+  function escape(w, tier) {                                       // L11
+    T.escaped += w; if (tier !== 'cheap') T.escapedStrong += w;
+    if (capture && opts.chargeStoredEscapes) charge(T, 'storeEscape', tier, w * p.z_wrongstore, p.c_write * (tier === 'cheap' ? 1 : tier === 'opus' ? p.m_opus : p.m_fable), p.c_write);
+    T.ESCAPED_FOUND += w * p.l_found; T.ESCAPED_SILENT += w * (1 - p.l_found);
+    charge(T, 'rework', 'opus', w * p.l_found, p.R_rework * p.m_opus, p.R_rework);
+  }
+  function write(w, tier, m) {                                     // L10
+    if (capture) charge(T, 'write', tier, w * p.w_write, p.c_write * m, p.c_write);
+  }
+  function fable(w) {                                              // L9
+    charge(T, 'fable', 'fable', w, p.n_fable * p.m_fable, p.n_fable);
+    const right = w * p.o_fable, wrong = w * (1 - p.o_fable);
+    gatePass(right); T.EQUAL += right; T.strongRight += right; write(right, 'fable', p.m_fable);
+    gatePass(wrong); T.UNRESOLVED += wrong * g; escape(wrong * (1 - g), 'fable');
+  }
+  function opus(w, handoff) {                                      // L8
+    if (handoff) charge(T, 'handoff', 'cheap', w, p.c_handoff, 0);
+    charge(T, 'opus', 'opus', w, p.n_opus * p.m_opus, p.n_opus);
+    const pr = ok ? (handoff && opts.okOpusUsesO ? p.o_opus : 1) : p.o_opus; // 1 for cheap_ok (stated for top_first)
+    const right = w * pr, wrong = w * (1 - pr);
+    gatePass(right); T.EQUAL += right; T.strongRight += right; write(right, 'opus', p.m_opus);
+    gatePass(wrong); fable(wrong * g); escape(wrong * (1 - g), 'opus');
+  }
+  function cheap(w, pRight) {                                      // L5 output, then L6, L7
+    charge(T, 'cheap', 'cheap', w, p.n_cheap, p.n_cheap);
+    const right = w * pRight, wrong = w * (1 - pRight);
+    gatePass(right); T.EQUAL += right;
+    gatePass(wrong);
+    const caught = wrong * g; escape(wrong * (1 - g), 'cheap');
+    charge(T, 'retry', 'cheap', caught, p.n_cheap, p.n_cheap);
+    const rr = caught * p.rho_retry, rw = caught * (1 - p.rho_retry);
+    gatePass(rr); T.EQUAL += rr;                                   // a right retry passes
+    gatePass(rw); opus(rw, true);                                  // a wrong retry is caught again
+  }
+  return { cheap, opus };
+}
+function briefClass(p, policy, cls, stocks, opts) {
+  const visible = cls.kind === 'visible', ok = cls.need === 'cheap_ok';
+  const T = newTally();
+  if (policy === 'top_first') { ladder(p, visible, ok, false, T).opus(1, false); return T; }
+  if (policy === 'cheap_ladder') { ladder(p, visible, ok, false, T).cheap(1, ok ? 1 : 0); return T; }
+  const L = ladder(p, visible, ok, true, T, opts);
+  const Eg = stocks.E_good, Eb = stocks.E_bad;
+  const ws = Eg + Eb > 0 ? Eb / (Eg + Eb) : 0;                    // section 8
+  const t = visible ? p.t_visible : p.t_latent;                    // L1
+  charge(T, 'lookup', 'cheap', t, p.c_lookup, 0);
+  let none = 1 - t;
+  const ff = cls.distractor === 'yes' ? p.f_false : 0;            // L2
+  let wrong = t * ff;
+  const rest = t * (1 - ff);
+  const good = { exact: 0, similar: 0, full: 0, part: 0 };
+  const hit = (k, r) => { good[k] += rest * r * (1 - ws); wrong += rest * r * ws; };
+  if (cls.held === 'exact') { hit('exact', p.r_exact); none += rest * (1 - p.r_exact); }
+  else if (cls.held === 'similar') { hit('similar', p.r_similar); none += rest * (1 - p.r_similar); }
+  else if (cls.held === 'composite') {
+    hit('full', p.r_comp_full); hit('part', p.r_comp_part); none += rest * (1 - p.r_comp_full - p.r_comp_part);
+  } else none += rest;
+  const cs = p.c_check_share;                                      // L3
+  const accepted = {};
+  Object.keys(good).forEach(k => {
+    charge(T, 'screen', 'cheap', good[k] * cs, p.c_screen, 0);
+    accepted[k] = good[k] * (cs + (1 - cs) * p.a_right);
+    none += good[k] * (1 - cs) * (1 - p.a_right);
+  });
+  charge(T, 'screen', 'cheap', wrong * cs, p.c_screen, 0);
+  accepted.wrong = wrong * (1 - cs) * p.a_wrong;
+  none += wrong * cs + wrong * (1 - cs) * (1 - p.a_wrong);
+  const atL5 = { none };                                           // L4
+  Object.keys(accepted).forEach(k => {
+    const d = accepted[k] * p.d_deliver;
+    charge(T, 'carry', 'cheap', d, p.c_carry, 0);
+    atL5[k] = d; atL5.none += accepted[k] * (1 - p.d_deliver);
+  });
+  const q = { none: 0, exact: p.q_exact, similar: p.q_similar, full: p.q_comp, part: p.q_part };
+  Object.keys(atL5).forEach(k => {                                 // L5 table
+    const pr = k === 'wrong' ? (ok ? 1 - p.h_harm : 0) : (ok ? 1 : q[k]);
+    L.cheap(atL5[k], pr);
+  });
+  return T;
+}
+function briefClassChance(p, policy, cls, stocks) {                // section 4 and 8
+  const visible = cls.kind === 'visible';
+  const pk = visible ? p.p_visible : 1 - p.p_visible;
+  const nw = visible ? p.need_visible : p.need_latent;
+  const pn = cls.need === 'cheap_wrong' ? nw : 1 - nw;
+  if (policy !== 'library') return pk * pn;
+  const fill = 1 - Math.exp(-stocks.E_good / p.k_fill);
+  const cov = visible ? 1 : p.latent_coverage_factor;
+  const ph = { exact: p.u_exact * fill * cov, similar: p.u_similar * fill * cov, composite: p.u_composite * fill * cov };
+  ph.nothing = 1 - ph.exact - ph.similar - ph.composite;
+  const dy = p.v_max * (1 - Math.exp(-(stocks.E_good + stocks.E_bad) / p.k_distract));
+  return pk * pn * ph[cls.held] * (cls.distractor === 'yes' ? dy : 1 - dy);
+}
+function classList(policy) {
+  const out = [];
+  ['visible', 'latent'].forEach(kind => ['cheap_ok', 'cheap_wrong'].forEach(need => {
+    if (policy !== 'library') { out.push({ kind, need }); return; }
+    ['exact', 'similar', 'composite', 'nothing'].forEach(held => ['yes', 'no'].forEach(distractor => out.push({ kind, need, held, distractor })));
+  }));
+  return out;
+}
+function total(T) { return T.cost.cheap + T.cost.opus + T.cost.fable; }
+function briefOverall(p, policy, stocks, opts) {
+  const A = newTally(); let chance = 0;
+  classList(policy).forEach(cls => {
+    const w = briefClassChance(p, policy, cls, stocks); chance += w;
+    const T = briefClass(p, policy, cls, stocks, opts);
+    ['EQUAL', 'ESCAPED_FOUND', 'ESCAPED_SILENT', 'UNRESOLVED', 'strongRight', 'escaped', 'escapedStrong'].forEach(k => { A[k] += w * T[k]; });
+    ['cheap', 'opus', 'fable'].forEach(k => { A.cost[k] += w * T.cost[k]; A.calls[k] += w * T.calls[k]; });
+  });
+  A.classChance = chance; A.total = total(A); A.wrong = 1 - A.EQUAL;
+  return A;
+}
+// section 8; staleOrder 'start' = staleness on the start-of-period good stock (the map's reading)
+function briefPath(p, staleOrder, opts) {
+  opts = opts || {};
+  let Eg = 0, Eb = 0; const out = [];
+  const z = { E_good: 0, E_bad: 0 };
+  const top = briefOverall(p, 'top_first', z), lad = briefOverall(p, 'cheap_ladder', z);
+  for (let t = 0; t < p.periods; t++) {
+    const lib = briefOverall(p, 'library', { E_good: Eg, E_bad: Eb }, opts);
+    out.push({ Eg, Eb, inflow: null, cost: lib.total, wrong: lib.wrong,
+      cost_vs_top: lib.total / top.total, wrong_vs_top: lib.wrong / top.wrong,
+      cost_vs_ladder: lib.total / lad.total, wrong_vs_ladder: lib.wrong / lad.wrong });
+    const n = p.episodes_per_period;
+    const inGood = n * lib.strongRight * p.w_write * p.e_right;
+    const badWrites = n * lib.strongRight * p.w_write * (1 - p.e_right);
+    const stored = n * (opts.storeOnlyStrongEscapes ? lib.escapedStrong : lib.escaped) * p.z_wrongstore;
+    const storedCheap = n * (lib.escaped - lib.escapedStrong) * p.z_wrongstore;
+    const inBad = badWrites + stored;
+    out[out.length - 1].inflow = { good: inGood, badWrites, stored, storedCheap, stale: p.delta_stale * Eg };
+    if (staleOrder === 'after') { const g2 = Eg + inGood; const s = p.delta_stale * g2; Eg = g2 - s; Eb = Eb + inBad + s; }
+    else { const s = p.delta_stale * Eg; Eg = Eg - s + inGood; Eb = Eb + s + inBad; }
+  }
+  return { rows: out, top, lad };
+}
+
+// my own random numbers (xorshift32), independent of the engine's generator
+function myRandom(seed) {
+  let s = (seed >>> 0) || 0x9e3779b9;
+  return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+function myDraw(rand) {
+  const p = {};
+  ids.forEach(id => { const r = rows[id]; const u = rand(); p[id] = r.run_setting ? r.best : r.low + u * (r.high - r.low); });
+  p.periods = Math.round(p.periods);
+  return p;
+}
+function fmt(x) { return (Math.round(x * 1e6) / 1e6).toFixed(6); }
+
+// ================================================================ 1. hand checks
+console.log('\n== 1. Hand checks (params.json best values; stocks E_good 50, E_bad 20) ==');
+const handStocks = { E_good: 50, E_bad: 20 };
+const handCases = [
+  { name: 'A library: visible, cheap_wrong, exact held, no look-alike', policy: 'library', cls: { kind: 'visible', need: 'cheap_wrong', held: 'exact', distractor: 'no' } },
+  { name: 'B library: latent, cheap_ok, nothing held, look-alike', policy: 'library', cls: { kind: 'latent', need: 'cheap_ok', held: 'nothing', distractor: 'yes' } },
+  { name: 'C library: visible, cheap_wrong, composite held, look-alike', policy: 'library', cls: { kind: 'visible', need: 'cheap_wrong', held: 'composite', distractor: 'yes' } },
+  { name: 'D top_first: latent, cheap_wrong', policy: 'top_first', cls: { kind: 'latent', need: 'cheap_wrong' } },
+  { name: 'E cheap_ladder: visible, cheap_ok', policy: 'cheap_ladder', cls: { kind: 'visible', need: 'cheap_ok' } }
+];
+const handOut = [];
+handCases.forEach(hc => {
+  const mine = briefClass(best, hc.policy, hc.cls, handStocks);
+  const mineChance = briefClassChance(best, hc.policy, hc.cls, handStocks);
+  const eng = E.evaluateClass(map, best, hc.policy, hc.cls, handStocks);
+  const pairs = [
+    ['EQUAL', mine.EQUAL, eng.outcomes.EQUAL], ['ESCAPED_FOUND', mine.ESCAPED_FOUND, eng.outcomes.ESCAPED_FOUND],
+    ['ESCAPED_SILENT', mine.ESCAPED_SILENT, eng.outcomes.ESCAPED_SILENT], ['UNRESOLVED', mine.UNRESOLVED, eng.outcomes.UNRESOLVED],
+    ['cost', total(mine), eng.cost], ['cost cheap', mine.cost.cheap, eng.costByTier.cheap],
+    ['cost opus', mine.cost.opus, eng.costByTier.opus], ['cost fable', mine.cost.fable, eng.costByTier.fable],
+    ['calls', mine.calls.cheap + mine.calls.opus + mine.calls.fable, eng.calls],
+    ['right strong solve', mine.strongRight, eng.measures.P_strong_right], ['escaped', mine.escaped, eng.measures.P_escaped],
+    ['class chance', mineChance, eng.chance]
+  ];
+  let worst = 0;
+  pairs.forEach(([, a, b]) => { worst = Math.max(worst, Math.abs(a - b)); });
+  handOut.push({ name: hc.name, pairs: pairs.map(([k, a, b]) => ({ k, mine: fmt(a), engine: fmt(b) })), worst, events: mine.events });
+  check('hand ' + hc.name, worst < TOL6, 'largest gap ' + worst.toExponential(2));
+  pairs.forEach(([k, a, b]) => console.log('       ' + k.padEnd(20) + fmt(a).padStart(14) + fmt(b).padStart(14)));
+});
+
+// the same comparison for every class of every policy, over random draws and random stocks
+{
+  const rand = myRandom(777);
+  let worst = 0, n = 0;
+  for (let i = 0; i < 300; i++) {
+    const p = myDraw(rand);
+    const st = { E_good: rand() * 400, E_bad: rand() * 200 };
+    ['top_first', 'cheap_ladder', 'library'].forEach(pol => classList(pol).forEach(cls => {
+      const a = briefClass(p, pol, cls, st), b = E.evaluateClass(map, p, pol, cls, st);
+      [[a.EQUAL, b.outcomes.EQUAL], [a.ESCAPED_FOUND, b.outcomes.ESCAPED_FOUND], [a.ESCAPED_SILENT, b.outcomes.ESCAPED_SILENT],
+        [a.UNRESOLVED, b.outcomes.UNRESOLVED], [a.cost.cheap, b.costByTier.cheap], [a.cost.opus, b.costByTier.opus],
+        [a.cost.fable, b.costByTier.fable], [a.strongRight, b.measures.P_strong_right], [a.escaped, b.measures.P_escaped],
+        [briefClassChance(p, pol, cls, st), b.chance]].forEach(([x, y]) => { worst = Math.max(worst, Math.abs(x - y) / Math.max(1, Math.abs(y))); n++; });
+    }));
+  }
+  check('every class of every policy, 300 random draws and stocks: brief model equals engine', worst < 1e-9, n + ' numbers, largest relative gap ' + worst.toExponential(2));
+}
+
+// ================================================================ 2. conservation, 1,000 draws
+console.log('\n== 2. Conservation under 1,000 draws inside the table ranges ==');
+{
+  const rand = myRandom(20261112);
+  let worstEng = 0, worstMine = 0, worstClass = 0, nCons = 0, problems = [], periodsChecked = 0, adjusted = 0;
+  for (let i = 0; i < 1000; i++) {
+    const p = myDraw(rand);
+    if (E.prepareParams(map, p).adjusted.length) adjusted++;
+    const tp = E.timePath(map, p);
+    tp.periods.forEach(row => {
+      periodsChecked++;
+      const r = E.conservation(map, p, { stocks: row.stocks });
+      nCons += r.checks; worstEng = Math.max(worstEng, r.maxError);
+      if (!r.ok && problems.length < 5) problems.push('draw ' + i + ': ' + r.problems[0]);
+      ['library'].concat(row.period === 0 ? ['top_first', 'cheap_ladder'] : []).forEach(pol => {
+        let cs = 0;
+        classList(pol).forEach(cls => {
+          cs += briefClassChance(p, pol, cls, row.stocks);
+          const T = briefClass(p, pol, cls, row.stocks);
+          worstMine = Math.max(worstMine, Math.abs(T.EQUAL + T.ESCAPED_FOUND + T.ESCAPED_SILENT + T.UNRESOLVED - 1));
+        });
+        worstClass = Math.max(worstClass, Math.abs(cs - 1));
+      });
+      // the engine's own class shares at this period
+      Object.keys(row.shares).forEach(a => { const s = Object.values(row.shares[a]).reduce((x, y) => x + y, 0); worstClass = Math.max(worstClass, Math.abs(s - 1)); });
+    });
+  }
+  check('engine conservation (branch chances per state in 0..1 and sum to 1; outcomes per class sum to 1; classes sum to 1), every period of 1,000 draws',
+    problems.length === 0 && worstEng < 1e-12, nCons + ' sums over ' + periodsChecked + ' draw-periods, largest error ' + worstEng.toExponential(2) + (problems.length ? '; ' + problems.join('; ') : ''));
+  check('brief model: outcome chances of every class sum to 1', worstMine < 1e-12, 'largest error ' + worstMine.toExponential(2));
+  check('class chances sum to 1 at every period (brief formula and engine shares)', worstClass < 1e-12, 'largest error ' + worstClass.toExponential(2));
+  check('no draw needed the constraint scaling (r_comp_full + r_comp_part and the three ceilings stay at or under 1)', adjusted === 0, adjusted + ' draws scaled');
+}
+
+// ================================================================ 3. the picture is the model
+console.log('\n== 3. The picture is the model ==');
+{
+  // (a) every state and branch carries flow somewhere
+  const rand = myRandom(31);
+  const bmax = {}, smax = {};
+  map.branches.forEach(b => { bmax[b.id] = 0; }); map.states.forEach(s => { smax[s.id] = 0; });
+  for (let i = 0; i < 30; i++) {
+    const p = i === 0 ? Object.assign({}, best) : myDraw(rand);
+    const tp = E.timePath(map, p);
+    const flows = tp.periods.map(r => ({ b: r.branchFlow, s: r.stateFlow }));
+    ['top_first', 'cheap_ladder'].forEach(pol => { const ev = E.evaluatePolicy(map, p, pol, {}); flows.push({ b: ev.branchFlow, s: ev.stateFlow }); });
+    flows.forEach(f => {
+      Object.keys(f.b).forEach(k => { bmax[k] = Math.max(bmax[k], f.b[k]); });
+      Object.keys(f.s).forEach(k => { smax[k] = Math.max(smax[k], f.s[k]); });
+    });
+  }
+  const deadB = Object.keys(bmax).filter(k => !(bmax[k] > 0));
+  const deadS = Object.keys(smax).filter(k => !(smax[k] > 0));
+  check('every branch in map.json carries flow under some policy and period', deadB.length === 0, map.branches.length + ' branches; without flow: ' + (deadB.join(', ') || 'none'));
+  check('every state in map.json is reached', deadS.length === 0, map.states.length + ' states; never reached: ' + (deadS.join(', ') || 'none'));
+
+  // (b) the engine names no parameter, state or branch of its own: all come from map.json
+  const named = [];
+  // the run setting (periods) is the horizon of the time path and is read by name on purpose
+  map.parameters.forEach(p => { if (!p.run_setting && new RegExp('\\b' + p.id + '\\b').test(engineSrc)) named.push(p.id); });
+  map.states.forEach(s => { if (new RegExp("['\"]" + s.id + "['\"]").test(engineSrc)) named.push(s.id); });
+  map.branches.forEach(b => { if (new RegExp("['\"]" + b.id + "['\"]").test(engineSrc)) named.push(b.id); });
+  check('engine.js hard-codes no parameter, state or branch (only the three policy ids and the horizon periods)',named.length === 0, 'named in engine: ' + (named.join(', ') || 'none'));
+
+  // (c) every parameter moves some output; pure cost parameters never move a chance
+  const base = E.timePath(map, best);
+  const sig = tp => [tp.top_first.cost, tp.top_first.wrong, tp.cheap_ladder.cost, tp.cheap_ladder.wrong]
+    .concat(...tp.periods.map(r => [r.library.cost, r.library.wrong, r.stocks.E_good, r.stocks.E_bad]));
+  const s0 = sig(base);
+  const idle = [];
+  map.parameters.forEach(mp => {
+    if (mp.run_setting) return;
+    const p = Object.assign({}, best);
+    p[mp.id] = mp.kind === 'chance' ? (p[mp.id] <= 0.9 ? p[mp.id] + 0.05 : p[mp.id] - 0.05) : p[mp.id] * 1.1 + 0.01;
+    const s1 = sig(E.timePath(map, p));
+    if (!s1.some((v, i) => Math.abs(v - s0[i]) > 1e-12)) idle.push(mp.id);
+  });
+  check('every parameter (except the run setting) moves some output', idle.length === 0, 'idle: ' + (idle.join(', ') || 'none'));
+
+  // (d) the brief's stock equations and time path, computed independently, equal the engine's
+  const mine = briefPath(best, 'start');
+  let worst = 0;
+  base.periods.forEach((r, t) => {
+    const m = mine.rows[t];
+    [[m.Eg, r.stocks.E_good], [m.Eb, r.stocks.E_bad], [m.cost, r.library.cost], [m.wrong, r.library.wrong],
+      [m.cost_vs_top, r.ratios.cost_vs_top], [m.wrong_vs_top, r.ratios.wrong_vs_top],
+      [m.cost_vs_ladder, r.ratios.cost_vs_ladder], [m.wrong_vs_ladder, r.ratios.wrong_vs_ladder]]
+      .forEach(([a, b]) => { worst = Math.max(worst, Math.abs(a - b) / Math.max(1, Math.abs(b))); });
+  });
+  check('time path at best values: stocks, library cost and wrong rate, four ratios, every period', worst < 1e-9, 'largest relative gap ' + worst.toExponential(2));
+  const rand2 = myRandom(99); let worst2 = 0;
+  for (let i = 0; i < 100; i++) {
+    const p = myDraw(rand2); const tp = E.timePath(map, p); const mp = briefPath(p, 'start');
+    tp.periods.forEach((r, t) => {
+      const m = mp.rows[t];
+      [[m.Eg, r.stocks.E_good], [m.Eb, r.stocks.E_bad], [m.cost_vs_top, r.ratios.cost_vs_top], [m.wrong_vs_top, r.ratios.wrong_vs_top]]
+        .forEach(([a, b]) => { worst2 = Math.max(worst2, Math.abs(a - b) / Math.max(1, Math.abs(b))); });
+    });
+  }
+  check('time path over 100 random draws', worst2 < 1e-9, 'largest relative gap ' + worst2.toExponential(2));
+  report.timePathBest = mine.rows.map(r => ({ Eg: +r.Eg.toFixed(3), Eb: +r.Eb.toFixed(3), cost_vs_top: +r.cost_vs_top.toFixed(4), wrong_vs_top: +r.wrong_vs_top.toFixed(4) }));
+  // size of the one reading the brief leaves open: staleness before or after the period's new entries
+  const alt = briefPath(best, 'after');
+  const L = mine.rows.length - 1;
+  report.staleOrder = { start: { cost: mine.rows[L].cost_vs_top, wrong: mine.rows[L].wrong_vs_top }, after: { cost: alt.rows[L].cost_vs_top, wrong: alt.rows[L].wrong_vs_top } };
+  console.log('       staleness order at best, last period cost_vs_top: start ' + mine.rows[L].cost_vs_top.toFixed(5) + ', after ' + alt.rows[L].cost_vs_top.toFixed(5));
+
+  // (e) no cost counted twice: the routes' carried cost and the flows' cost both equal the overall cost
+  const st = base.periods[base.periods.length - 1].stocks;
+  ['top_first', 'cheap_ladder', 'library'].forEach(pol => {
+    const ev = E.evaluatePolicy(map, best, pol, st);
+    const tr = E.routes(map, best, pol, { stocks: st });
+    const carried = tr.routes.reduce((a, r) => a + r.carried, 0);
+    const mineO = briefOverall(best, pol, st);
+    check('costs counted once, ' + pol + ': route view, graph and brief model agree',
+      Math.abs(carried - ev.overall.cost) < 1e-9 && Math.abs(mineO.total - ev.overall.cost) < 1e-9 && Math.abs(tr.totalChance - 1) < 1e-12,
+      'graph ' + ev.overall.cost.toFixed(6) + ', routes ' + carried.toFixed(6) + ', brief ' + mineO.total.toFixed(6) + ', ' + tr.count + ' routes');
+  });
+}
+
+// ================================================================ 4. the ensemble machinery
+console.log('\n== 4. Ensemble machinery ==');
+{
+  // (a) the generator: mulberry32 as published, written here from scratch
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const er = E.rng(12345), mr = mulberry32(12345);
+  let same = true; for (let i = 0; i < 1000; i++) if (er() !== mr()) same = false;
+  check('engine generator is mulberry32 and is seeded (1,000 numbers equal the reference)', same);
+  check('seeds 0 and 1 give different streams', E.rng(0)() !== E.rng(1)());
+  const e1 = E.ensemble(map, tableRaw, { n: 60, seed: 5 }), e2 = E.ensemble(map, tableRaw, { n: 60, seed: 5 }), e3 = E.ensemble(map, tableRaw, { n: 60, seed: 6 });
+  check('same seed gives the same ensemble; another seed differs', JSON.stringify(e1) === JSON.stringify(e2) && JSON.stringify(e1.spread) !== JSON.stringify(e3.spread));
+
+  // (b) Spearman on small examples worked by hand
+  // x 1..5, y 2 1 4 3 5: rank gaps -1 1 -1 1 0, sum of squares 4, rho = 1 - 6*4/(5*24) = 0.8
+  // x 1 2 2 3, y 1 3 2 4: x ranks 1 2.5 2.5 4; Pearson on ranks = 4.5 / sqrt(4.5 * 5) = 0.948683
+  // x 1..6, y 6 5 4 3 1 2: gaps -5 -3 -1 1 4 4, sum 68, rho = 1 - 6*68/(6*35) = -0.942857
+  const sp = [[[1, 2, 3, 4, 5], [2, 1, 4, 3, 5], 0.8], [[1, 2, 2, 3], [1, 3, 2, 4], 4.5 / Math.sqrt(22.5)], [[1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 1, 2], 1 - 6 * 68 / 210]];
+  sp.forEach(([x, y, want]) => check('Spearman by hand: ' + JSON.stringify(x) + ' vs ' + JSON.stringify(y), Math.abs(E.spearman(x, y) - want) < 1e-12, 'engine ' + E.spearman(x, y).toFixed(6) + ', by hand ' + want.toFixed(6)));
+
+  // (c) the ensemble's ranking equals Spearman recomputed here from its kept draws
+  function myRanks(xs) {
+    const s = xs.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]); const r = new Array(xs.length);
+    for (let i = 0; i < s.length;) { let j = i; while (j + 1 < s.length && s[j + 1][0] === s[i][0]) j++; for (let k = i; k <= j; k++) r[s[k][1]] = (i + j) / 2 + 1; i = j + 1; }
+    return r;
+  }
+  function mySpearman(x, y) {
+    const a = myRanks(x), b = myRanks(y), n = x.length, ma = a.reduce((s, v) => s + v, 0) / n, mb = b.reduce((s, v) => s + v, 0) / n;
+    let sab = 0, saa = 0, sbb = 0; for (let i = 0; i < n; i++) { sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) ** 2; sbb += (b[i] - mb) ** 2; }
+    return sab / Math.sqrt(saa * sbb);
+  }
+  const ek = E.ensemble(map, tableRaw, { n: 300, seed: 8, keepDraws: true });
+  let worstR = 0;
+  ['first', 'last'].forEach(w => ['cost_vs_top', 'wrong_vs_top'].forEach(r => ek.spearman[w][r].forEach(e => {
+    const x = ek.draws.map(d => d.params[e.id]), y = ek.draws.map(d => d[w][r]);
+    worstR = Math.max(worstR, Math.abs(mySpearman(x, y) - e.rho));
+  })));
+  check('ensemble Spearman ranking equals a fresh computation from its own draws', worstR < 1e-12, 'largest gap ' + worstR.toExponential(2));
+  let inRange = true, periodsFixed = true;
+  ek.draws.forEach(d => ids.forEach(id => {
+    const v = d.params[id], r = rows[id];
+    if (r.run_setting) { if (v !== r.best) periodsFixed = false; } else if (v < r.low - 1e-12 || v > r.high + 1e-12) inRange = false;
+  }));
+  check('every drawn value lies in its range; the run setting (periods) is held at its best value', inRange && periodsFixed);
+  check('the ranking leaves out parameters that do not vary (m_opus, periods)', !ek.spearman.last.cost_vs_top.some(e => e.id === 'm_opus' || e.id === 'periods'));
+
+  // (d) swings hold the other parameters at best
+  const sw = E.swings(map, tableRaw);
+  const varying = ids.filter(id => rows[id].low !== rows[id].high && !rows[id].run_setting);
+  check('swings: one row per varying parameter, none for the run setting', sw.rows.length === varying.length && !sw.rows.some(r => r.id === 'periods'), sw.rows.length + ' rows');
+  const bp = briefPath(best, 'start');
+  let worstS = Math.abs(sw.base.last.cost_vs_top - bp.rows[bp.rows.length - 1].cost_vs_top);
+  ['h_harm', 'w_write', 'o_opus', 'need_latent', 'k_fill', 'c_lookup'].forEach(id => {
+    const row = sw.rows.find(r => r.id === id);
+    ['low', 'high'].forEach(side => {
+      const p = Object.assign({}, best); p[id] = rows[id][side];
+      const m = briefPath(p, 'start');
+      worstS = Math.max(worstS, Math.abs(row[side].last.cost_vs_top - m.rows[m.rows.length - 1].cost_vs_top),
+        Math.abs(row[side].first.wrong_vs_top - m.rows[0].wrong_vs_top));
+    });
+  });
+  check('swings at low and high, others at best, equal the brief model for six sampled parameters', worstS < 1e-9, 'largest gap ' + worstS.toExponential(2));
+}
+
+// ================================================================ 5. size of the readings the brief leaves open
+// Not a choice between them: each reading is run at the best values and its effect on the
+// last-period ratios is shown, so the orchestrator can judge whether the gap matters.
+console.log('\n== 5. Readings the brief leaves open (best values, last period) ==');
+{
+  const last = r => r.rows[r.rows.length - 1];
+  const base = briefPath(best, 'start');
+  const variants = {
+    'as the map reads it': base,
+    'staleness after the period\'s new entries': briefPath(best, 'after'),
+    'Opus right with o_opus for a cheap_ok episode after a handoff': briefPath(best, 'start', { okOpusUsesO: true }),
+    'only escapes from Opus or Fable are stored as bad entries': briefPath(best, 'start', { storeOnlyStrongEscapes: true }),
+    'a stored escape costs a write at its tier': briefPath(best, 'start', { chargeStoredEscapes: true })
+  };
+  report.readings = {};
+  Object.keys(variants).forEach(k => {
+    const r = last(variants[k]);
+    report.readings[k] = { cost_vs_top: +r.cost_vs_top.toFixed(5), wrong_vs_top: +r.wrong_vs_top.toFixed(5), E_good: +r.Eg.toFixed(2), E_bad: +r.Eb.toFixed(2) };
+    console.log('       ' + k.padEnd(64) + ' cost ' + r.cost_vs_top.toFixed(5) + '  wrong ' + r.wrong_vs_top.toFixed(5) + '  good ' + r.Eg.toFixed(1) + '  bad ' + r.Eb.toFixed(1));
+  });
+  // where the bad stock comes from, summed over the year at best values
+  const inflow = { good: 0, badWrites: 0, stored: 0, storedCheap: 0, stale: 0 };
+  base.rows.forEach(r => Object.keys(inflow).forEach(k => { inflow[k] += r.inflow[k]; }));
+  report.badInflow = inflow;
+  console.log('       into the stocks over ' + base.rows.length + ' periods: good writes ' + inflow.good.toFixed(1) + ', bad writes ' + inflow.badWrites.toFixed(1) +
+    ', stored escapes ' + inflow.stored.toFixed(1) + ' (from the cheap tier ' + inflow.storedCheap.toFixed(1) + '), good gone stale ' + inflow.stale.toFixed(1));
+}
+
+// ================================================================ 6. the parameter table, mechanical part
+console.log('\n== 6. Parameter table: ranges ==');
+{
+  const bad = [];
+  map.parameters.forEach(mp => {
+    const r = rows[mp.id];
+    if (!r) { bad.push(mp.id + ' missing'); return; }
+    if (!(r.low <= r.best && r.best <= r.high)) bad.push(mp.id + ' best outside its range');
+    if (mp.kind === 'chance' && (r.low < 0 || r.high > 1)) bad.push(mp.id + ' chance range outside 0 to 1');
+    if (!['M', 'S', 'G'].includes(r.tag)) bad.push(mp.id + ' bad tag');
+    if (!r.source) bad.push(mp.id + ' no source');
+  });
+  ids.forEach(id => { if (!map.parameters.some(mp => mp.id === id)) bad.push(id + ' not in map'); });
+  check('every parameter has a row; best inside its range; chances inside 0 to 1; tag and source present', bad.length === 0, bad.join('; ') || (ids.length + ' rows'));
+  const tags = { M: [], S: [], G: [] }; ids.forEach(id => tags[rows[id].tag].push(id));
+  report.tags = tags;
+  console.log('       M: ' + tags.M.join(', ') + '\n       S: ' + tags.S.join(', ') + '\n       G: ' + tags.G.length + ' parameters');
+}
+
+// ================================================================ 7. first ensemble
+console.log('\n== 7. First ensemble: 2,000 draws, seed 20261112 ==');
+{
+  const seed = 20261112;
+  const ens = E.ensemble(map, tableRaw, { n: 2000, seed, percentiles: [10, 50, 90] });
+  const sw = E.swings(map, tableRaw);
+  const out = { n: ens.n, seed, adjustedDraws: ens.adjustedDraws, spread: {}, shareBetter: ens.shareBetter, spearmanTop8: {}, swingTop8: {} };
+  ['first', 'last'].forEach(w => {
+    out.spread[w] = {}; out.spearmanTop8[w] = {}; out.swingTop8[w] = {};
+    E.RATIO_IDS.concat(['library_cost', 'library_wrong', 'top_cost', 'top_wrong']).forEach(r => {
+      const s = ens.spread[w][r]; out.spread[w][r] = { p10: +s.p10.toFixed(4), p50: +s.p50.toFixed(4), p90: +s.p90.toFixed(4) };
+    });
+    E.RATIO_IDS.forEach(r => {
+      out.spearmanTop8[w][r] = ens.spearman[w][r].slice(0, 8).map(e => ({ id: e.id, rho: +e.rho.toFixed(3) }));
+      out.swingTop8[w][r] = sw.ranking[w][r].slice(0, 8).map(e => ({ id: e.id, low: +e.low.toFixed(3), high: +e.high.toFixed(3) }));
+    });
+  });
+  out.swingBase = { first: sw.base.first, last: sw.base.last };
+  report.ensemble = out;
+  console.log(JSON.stringify(out, null, 1));
+}
+
+report.hand = handOut;
+fs.writeFileSync(path.join(here, 'verify-engine-out.json'), JSON.stringify(report, null, 1));
+console.log('\n' + (report.checks.length - report.failures.length) + ' of ' + report.checks.length + ' checks passed' + (report.failures.length ? '; failed: ' + report.failures.join(' | ') : ''));
+process.exitCode = report.failures.length ? 1 : 0;

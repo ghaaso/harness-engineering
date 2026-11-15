@@ -1,0 +1,59 @@
+// Verify every downloaded wheel against the sha256 its index publishes, then write
+// requirements.lock (pip --require-hashes format) and wheels.tsv.
+// For each wheel: PyPI JSON API digest for that exact file name (if PyPI hosts it) and the
+// "#sha256=" fragment in the PyTorch CPU index page for that project (if listed there).
+// Every published value that exists must equal the local sha256, and at least one must exist.
+// Wheels with a local version (+cpu) are NOT on PyPI and are checked against the CPU index only.
+// Usage: node verify-wheels.js.txt <image dir>
+const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const dir = process.argv[2];
+const wdir = path.join(dir, 'wheels');
+const files = fs.readdirSync(wdir).filter(f => f.endsWith('.whl')).sort();
+const cpuCache = {};
+async function cpuIndex(name) {
+  if (cpuCache[name]) return cpuCache[name];
+  const m = {};
+  const r = await fetch(`https://download.pytorch.org/whl/cpu/${name}/`);
+  if (r.ok) {
+    const t = await r.text();
+    for (const x of t.matchAll(/href="([^"]+)"/g)) {
+      const h = x[1]; const i = h.indexOf('#sha256=');
+      if (i < 0) continue;
+      const fn = decodeURIComponent(h.slice(0, i).split('/').pop());
+      m[fn] = h.slice(i + 8);
+    }
+  }
+  return (cpuCache[name] = m);
+}
+(async () => {
+  const rows = [], lock = [], bad = [];
+  let total = 0;
+  for (const f of files) {
+    const buf = fs.readFileSync(path.join(wdir, f));
+    const sha = crypto.createHash('sha256').update(buf).digest('hex');
+    const parts = f.split('-');
+    const dist = parts[0], verRaw = parts[1];
+    const name = dist.replace(/_/g, '-').toLowerCase();
+    const ver = verRaw.replace(/\+.*/, '');
+    let pypiSha = null, cpuSha = null, up = '-';
+    const r = await fetch(`https://pypi.org/pypi/${name}/${verRaw}/json`);
+    if (r.ok) {
+      const j = await r.json();
+      const u = (j.urls || []).find(x => x.filename === f);
+      if (u) { pypiSha = u.digests.sha256; up = u.upload_time_iso_8601; }
+    }
+    const ci = await cpuIndex(name);
+    if (ci[f]) cpuSha = ci[f];
+    const vals = [pypiSha, cpuSha].filter(Boolean);
+    const ok = vals.length > 0 && vals.every(v => v === sha);
+    if (!ok) bad.push(f);
+    total += buf.length;
+    const src = [pypiSha ? 'pypi' : null, cpuSha ? 'pytorch-cpu' : null].filter(Boolean).join('+') || 'none';
+    rows.push([name, verRaw, f, buf.length, sha, ok ? 'match' : 'MISMATCH', src, up].join('\t'));
+    lock.push(`${name}==${verRaw} --hash=sha256:${sha}`);
+  }
+  fs.writeFileSync(path.join(dir, 'wheels.tsv'), 'name\tversion\tfile\tbytes\tsha256\tmatch\tpublished_by\tpypi_upload_time\n' + rows.join('\n') + '\n');
+  fs.writeFileSync(path.join(dir, 'requirements.lock'), '# pykeen 1.11.1 + torch (CPU build) and all dependencies; every hash checked against the index that publishes it\n' + lock.join('\n') + '\n');
+  console.log(rows.join('\n'));
+  console.log(`files=${files.length} total_bytes=${total} mismatches=${bad.length} ${bad.join(' ')}`);
+})();

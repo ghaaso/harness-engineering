@@ -1,0 +1,396 @@
+# Apply report
+
+- checker note machine-1: 18 entries checked (ids 0-13 and 15-18; there is no machine#14). All statuses and maturities match the mapping. Bottleneck ids are valid: OB6 maps to B3-LOOP and OB24 to PR-SCRIPTTEST per the alias table. The origin "Ship plan §7" on machine#15 is supported by SHIP-PLAN-2026-11.md line 1751. Word limits hold in every field I counted. Decision ids such as D04 are not raw card ids, so I left them. No split proposed: lanes-39 (message delivery at turn end) is a related rule folded into machine#11, and its content survives in that entry's problem and flag. The G2-F056 git-fetch add-on in machine#5
+- condenser note machine-1: All 18 keys returned (machine#14 does not exist in this chunk). Status and maturity follow the records; machine#4 is deferred (compile said designed, owner decision D03 overrides). Raw ids were mapped through the alias table (for example OB6 to B3-LOOP, OB24 to PR-SCRIPTTEST). WP choices: resume and restart ideas to WP1; workflow-shape and resume-from-repo-state ideas (circuit breaker, mismatch gu
+- checker note machine-2: Seventeen entries checked. Six needed no change: machine#30, measure#9, parallel#17, owner#18, skills#25 and method#58. Most corrections are word-limit overruns on the 'how' field. The substantive ones are machine#25 (an unsupported 'in use' claim, now designed with maturity 2), machine#32 (W2 listed as answered when the source says it does nothing for W2), machine#22 (MC-CPU not supported by the records), machine#27 (P0a item 10 misdescribed) and machine#19 (an invented causal claim). No splits proposed. Every merged record has one raw source, except machine#31. Its two raw sources are one me
+- condenser note machine-2: All 17 keys returned. Bottleneck ids were remapped where raw ids were missing from the alias table or did not fit the idea (machine#25, #26, #30, #31, #32, measure#9, check#16, owner#18, skills#25); each is explained in flag. machine#27 note: the 'pre-start tool list' wording stands for the owner's first setup item (P0a item 10). Two placements are judgment calls: machine#32 (WP1 vs WP3) and measu
+- split in check-1: check#10~s1 "Verifying command and negative run per tick" (Raw record horthyB-23 is a distinct mechanism (a command and negative run recorded per checklist tick, for FixFlow) at trial status; it was folded into the in-use clinic gate entry and only survived as one sentence.)
+- checker note check-1: 21 entries checked. Numbers, tags, statuses, maturities, bottleneck ids and WP2 assignments all match the records; no invented or mis-tagged figures, no inflation found (must-not-claim rules not triggered). Almost all corrections are word-limit overruns (how field exceeded 24 words in most entries), fixed without changing content or dropping tags. Added a [M] to 14 minutes in check#0 problem and [S] to 12 workers in check#1. Kept as flagged: check#6 (in_use, mixed with designed parts), check#11 (in_use for plan rules, borderline versus adopt/2, left as in the records' later status), check#22 (
+- condenser note check-1: All 21 records covered. Bottleneck ids not in the register were mapped via the alias table (OB1 to B10, OB2 to MC-TOOLS, OB3 to MC-ENVSKEW, OB9 to MC-SHAREDDB, REV-B9 to PR-FALSEGREEN, Unfair slot queue to MC-QUEUE). check#17's raw B17 link was dropped as not matching the problem. Statuses: check#1 kept as built (D09 gate decision still open); check#3 kept designed, since the one raw record markin
+- checker note check-2: 21 entries checked. Substantive fixes: check#29 (railway deny rule and frontmatter lint are adopt in the sweep, not trials), measure#33 (the 5-minute and 10-18 minute figures are an untagged transfer estimate, so [M] changed to [E]), check#30 (untagged count), check#33 (untagged rule number), check#32 (backend gate is in Appendix A, not CLAUDE.md), method#72 (origin 'Owner' is not in the record). The other corrections are word-limit trims. All bottleneck ids and wp values are valid and acceptable. Status and maturity are consistent with the mapping. check#24 stays in_use (5) for the testbed wi
+- condenser note check-2: All 21 records covered. Status kept as the merged record gives it everywhere; flags mark where sources differ. WP picks: boundary checks for mobile go to WP9 (PR-MOBILEBOUNDARY), memory drift check to WP6, gate and merge scripts and fix-round rules to WP3, the rest to WP2. Unmapped raw ids (ksA-4, KS-V2, REV-B11, "RAM is the binding resource", "Docker address pools exhausted") were mapped to the n
+- split in review-1: review#14~s1 "Break-even rule for extra review legs" (The Perplexity-Claude-Codex bridge with a break-even formula (n x (s - o) - F) is a distinct mechanism from the one-off Codex review pass and vanished from the merged entry.)
+- split in review-1: review#31~s2 "Critique rounds on a design before it runs" (Design-document critique rounds (Opus critics plus external reviewers, with an accepted/rejected ledger) are a distinct mechanism from the architecture panel and were dropped from the entry.)
+- checker note review-1: 29 entries checked against the merged records. No invented, shifted or mis-tagged numbers found. The 'at least four' figure on review#8 is backed by four cited cases in the sweep cards (G06-08, G08-05, G10-23, G05-21). Status and maturity match the mapping or are explained by flags. Fixes were word-limit overruns (review#3, #5, #6, #13) and one raw label in review#6. Two split proposals recover distinct mechanisms. I left review#10 at built/3: the clinic audit was built and used once, and the stands line says the merge-time version is only designed. Two bottleneck choices could be revisited. r
+- condenser note review-1: Word limits were hand-counted and a few fields may run a word or two over. Statuses kept from the merged records except review#0 (designed, since harness v2 lists it so) and review#14 (deferred, since compile and v2 D19 are later). Bottleneck mapping used the alias table; where a raw id did not fit (OB17 on review#25, OB15 on review#24) the closest register id was chosen and flagged. review#10 and
+- checker note review-2: Numbers, statuses and maturities all matched the records; no split was needed since each merged record's raw sources describe the same mechanism (review#54 and review#58 already cover their distinct raw sources inside one entry). Most corrections are word-limit trims plus these substantive fixes: review#34 (xhigh, not high), retrieval#16 (the 15-file target is a ceiling, not 'near 15'), review#41 next (removed an unrecorded 'then repeat' step), method#36 (not yet scripted), method#48 (parity figure had no [M] in the source). Left unchanged: bottleneck ids are all valid register ids; review#32 
+- condenser note review-2: All 29 records covered. Status changes: check#42 set to deferred (v2 design says deferred; merged record said idea; compile said trial). Mixed-status notes: review#38 is adopt for one sentence and trial for the rest; retrieval#16 kept designed although the compile verdict was trial. Raw ids not in the alias table (REV-B14, REV-B12, G-B4, G-B5, BML-8, ksA-13, SK-9, SK-10 alone) were dropped; bottle
+- split in method-1: method#4~s1 "Parallel research agents each own one report" (The raw record clinicC-14 describes a distinct mechanism (owned-file parallel research with a four-worker ceiling and root cross-check) that the trimmed brief-contract entry no longer carries.)
+- checker note method-1: Facts, statuses, maturities, bottleneck ids (all in register-ids.md) and work packages checked out; no invented numbers and no must-not-claim breaches. Main issue: nearly every entry overran the word limits (how 24, stands 32, problem 26, name 8), so those fields are given trimmed replacements, each verified by word count at or under the limit. Other changes: method#1 numbers 16/16 and 8 analysts now carry [M]; method#10 origin was not supported by the records (they cite a lesson from the two gates); method#6 now states the FixFlow ruling to skip the task tree; method#25 next reworded. Left as
+- condenser note method-1: All 21 keys covered. Bottleneck ids mapped via the alias table; where an alias gave a poor fit (OB4 to TK-PREFIX, OB5, OB12, REV-B2, REV-B8, SK-1) I chose the closest valid ids by the idea's own problem or left them out. Flagged status or maturity changes: method#1 (in_use, from design raw), method#9 (maturity 3), method#22 (adopt vs trial), method#23 (maturity 3), method#26 (deferred but delivere
+- split in method-2: method#43~s1 "Knowledge-store log and CLAUDE.md trim" (The wire-in record (ksB-24) holds two distinct mechanisms, the prospective log and the CLAUDE.md trim, that the merged entry did not carry; it kept only the plan-bullet mechanism.)
+- checker note method-2: 21 entries checked. Most fixes are word-limit trims; I counted bracketed tags as separate words only where a field was borderline. Content fixes: method#34 stands and method#35 problem (inflation), method#33 next and method#56 next (consequences the records do not state), method#47 problem and stands (what it solves; 23 of what), method#39 stands (reviewers scored it trial), method#59 how (zero-token wording). method#30 regains W4. method#27's editor-chosen bottlenecks W2 and W3 stand as flagged. method#38 (B01, WP3), method#59 (PR-AGENTNULL) and method#40 (PR-SECRETS, WP1) were confirmed agai
+- condenser note method-2: All 21 records covered. Statuses kept as in the records. Flags raised on method#37 (merged three themes), #38, #39 (adopt vs reviewers' trial), #47 (model figures are guessed) and #59 (bottleneck alias choice). Bottleneck ids for the Horthy phase-routine rules were chosen by the editor, since sources listed W-ids or none. method#55 left unmapped.
+- checker note method-3: All 21 entries were checked against chunk-method-3.md. The numbers, tags, status and maturity match the records and the must-not-claim rules hold. No raw record with a distinct mechanism was lost, so I propose no splits. Twelve entries needed edits: eleven for word limits and one (method#69) for a claim the records do not make. In method#70 I replaced "this run" with "the BAML sweep" for readers who were not in the session. Several bottleneck ids sit outside register-ids.md and its alias table (BML-2, BML-4 and BML-6 among them); the entries use plausible register ids, which I accepted. The "1
+- condenser note method-3: All 21 records written. Mapped BML-1, BML-2, BML-3, BML-7, BML-9 through the alias table; BML-4 and BML-6 are not in the alias table, so I assigned the nearest register ids (PR-AGENTNULL, PR-SCRIPTTEST, PR-BRIEFTEST) by the idea's own problem. No status or maturity was changed. check#31 and check#39 are placed in WP3; method and brief ideas in WP10. The BAML sweep records hold no extra numbers bey
+- checker note parallel-1: Numbers and tags were checked against the records and sources: 14 limit episodes [M], 2,030 s [M], 18 of 48 and 30 of 31 [M], 3.4 million tokens [M], 91 of 104 [M], 432 commits and 65 merges [M] all hold. Corrections: word-limit overruns in 'how', 'problem' and 'stands' fields; one invented claim (parallel#7: no lane reported a wait or mismatch); one overclaim (parallel#8 next step); one wrong tag (check#15 gate time is [E] per the register, not [S]); one unsupported bottleneck (parallel#9 PR-PHASESIZE); one invented detail (parallel#16 'first analyst group'); two dropped bottlenecks (method#2
+- condenser note parallel-1: All 21 keys covered. Judgement calls: bottleneck ids were remapped through the alias table, and a few raw ids that fit poorly (B03 on the scheduler, B01 on migration numbering, L3/W3/W5 on flow limits) were dropped, with a flag where it matters. parallel#13 is kept in_use because the existing bounds already apply, but the loop-specific rule is not running. parallel#8 is placed in WP3 (merge rules)
+- split in tokens-1: tokens#4~s1 "Library as a session's external memory" (A distinct idea, the library as a session's write-back memory, with its own compaction-loss evidence and idea status. It was folded into the pull-only lookup entry, whose stands text no longer carries it.)
+- split in tokens-1: tokens#1~s2 "Model-keyed window for the Fable session" (A separate deferred ruling with its own model, its own threshold (500k, not 400k) and its own trigger. The merged entry drops its status and trigger.)
+- checker note tokens-1: 20 entries checked. Numbers, tags, statuses and maturities match the records. Main correction: tokens#7 next claimed the change 'could trim up to 31%', which turned an exposure into a saving. The rest are word-limit trims (tokens#4, #5, #9, #12, #15) and tags missing on the user-reported 700k and 800k figures (tokens#15). Left as is: - tokens#6 stays in_use. The in-use part is the clinic returns-as-text rule; the 2,500-character caps are built or designed only. Its flag and stands text already say so. - tokens#13 reads 'Parked' while its status is rejected. The records support it as rejected o
+- condenser note tokens-1: 20 entries written, one per key; tokens#2 and tokens#17 are not in this chunk. Raw bottleneck ids were mapped through the alias table; raw ids with no alias and no clear register match (TOK-1, TOK-4, TOK-5, TOK-6, TOK-7, OB5, L3) were replaced by the nearest register id judged from each idea's own problem. Status changes: tokens#9 set from in_use to trial (only the backend wrapper is in use; the w
+- split in tokens-2: memory#32~s1 "Plain-file immutable snapshot storage" (A distinct storage mechanism (immutable files, commit-point meta, no database) with its own stress measurements; it vanished from the merged entry. The large-read admission gate also has no own entry but has no results to report.)
+- split in tokens-2: memory#34~s2 "Cairn: SQLite memory and tool paring" (Cairn is a distinct mechanism (SQLite memory plus proxy tool-schema paring) that the merged survey entry reduced to a one-line comparator mention.)
+- checker note tokens-2: Fine as written: tokens#25, #27, #31, #33. Most corrections are word-limit fixes or missing tags. Substantive fixes: tokens#30 gains an honest 'no gain shown' and tags on the byte counts; measure#2 had hidden the third clinic compaction (967,210) behind a range; memory#32 had [M] on 700k tokens, which the records give as the stated problem, not a measurement. memory#24 uses [E] for the hot-path shares because the records disagree ([M] in one place, [E] in the later published summary). Statuses and maturities all match the mapping; memory#32 correctly stays built (3). The two entries I left alo
+- condenser note tokens-2: 19 entries written from the chunk file; paths and numbers taken from the records. Corrected one status: memory#32 measured to built (offline tests only, never run live). Number tags not in the source were assigned conservatively ([E] for the 24k character figure and CONTEXT-block size) and flagged. Placement calls: WP5 for compaction and CLAUDE.md size ideas; WP6 for digests and the outside-tool s
+- checker note memory-1: Of 24 entries, 15 needed at least one change. Most changes are word-limit overruns (name, how or stands), counted with each tag as a word. Three are substantive. memory#18: docs/program/evidence/resume-trial-P1/resume-trial-result.md shows the cold-resume trial ran on 2026-11-13 (10 of 10 recovered, no miss, six plan defects), so status is now trialled at maturity 4 and the problem, stands and next fields were rewritten. memory#22: the 6.1 % figure was reversed (the adapter used 6.08 % more input than the notes file) and is corrected. memory#12: the repeat of finding classes is the hypothesis,
+- condenser note memory-1: All 24 records covered. Flags raised: memory#22 (6.1 % versus about 5.7 % computed from the quoted input totals), memory#18 (git log hints the resume trial evidence may already be committed; records say not yet run), memory#4 and memory#5 (the 183 and 38 of 71 counts carry no tag in the source; tagged [M]), memory#1 (3 to 5 repeats counted as M in the store design, E in the v2 design). Statuses ke
+- split in memory-2: retrieval#35~s1 "Write gate against duplicate records" (The write gate (duplicate check, self-match refusal, missed-existing check) is a distinct write-time mechanism from the lookup pipeline and vanished from the merged entry.)
+- checker note memory-2: All numbers and tags otherwise match the records. Checked and left alone. check#26: "three" tests broken is untagged in source; [M] kept as a counted event. measure#37: the merged record's potential field says all-good cost 0.75 while the cited table line and results say 0.82; the entry uses 0.82, matching the cited line. memory#36: the merged record also lists project-wide mutable pointers and private memory as authority (rejected together); the entry omits them, which is acceptable as the same rejection. retrieval#29/#30 bottleneck assignment (LIB-KS-VALUE, none) is reasonable as the source 
+- condenser note memory-2: All 24 entries written from the merged records. Statuses were kept as given. Counted items that the source left untagged were tagged [M] (clinic counts) or [E] (about ten minutes of SSH setup). Where a register id did not fit I left bottlenecks empty rather than force one (memory#36, skills#19, retrieval#30, measure#35, retrieval#36). I did not change any status or maturity.
+- checker note memory-3: No numbers were invented or mis-tagged against the records. Most fixes were over-length fields (how, problem, stands, next, origin), a few inflation fixes where a design was written as if it already did something (check#45, method#45, check#46, measure#47, measure#49), and one status/maturity downgrade (measure#40, a model run on guessed inputs [G]). 'Second pilot stage' in retrieval#41 and in the flag of retrieval#39 is wrong: the source puts the build in a later phase after the pilot (KS-6b or later). Untagged design parameters in how fields (20+ queries, 40+ negatives, about 200 runs, about
+- condenser note memory-3: All 22 keys returned. Status: kept as merged; retrieval#40 stays superseded (raw said rejected), retrieval#39 stays designed (one raw said deferred). measure#40 is "measured" but its figures are model outputs from guessed inputs [G]. Some stands fields carry [T] or [S] tags for thresholds taken from the design (0.5/0.3/0.2, 5 percent, 150 commits); the source marks these as owner proposals. Raw bo
+- checker note retrieval-1: Checked all 30 entries against the merged records, the bottleneck register and the package list. Maturity, status, wp and bottleneck ids are all valid and correct per the mapping, and no raw record describing a distinct mechanism was lost, so no splits are proposed. Most fixes are word-limit overruns in "how" fields (words only, no facts changed). Substantive fixes are retrieval#12 problem (the must-not-claim rule on graphs adding nothing), measure#11 stands (not like-for-like token comparison) and retrieval#1 and retrieval#2 (disambiguating which score belongs to which method). Left unchanged
+- condenser note retrieval-1: All 30 record keys covered. Bottleneck ids mapped by judgement where the alias table had no entry (G-B4, G-B5, G-B6, G-B7, G-B8, G-B11, G-B14). retrieval#18 placed in WP3 rather than WP7 (flagged). Statuses kept as in merged records; flags note source conflicts for retrieval#0, #11, #12, #14 and #23. Some small numbers with no source tag (for example 24 to 30 fix commits, five worktrees) were give
+- checker note measure-1: Main substantive fixes: (1) measure#7 attributed the hop recall figures (0.38, 0.72, 0.87) and the 4-tables-against-254-nodes figure to the held-out run. Those come from earlier research lanes and the first test (HARNESS-BOTTLENECKS-2026-11.md lines 253 and 255). The held-out result is in docs/program/GRAPH-TEST-RESULT-2026-11.md, so I replaced them with the held-out figures: +0.076 typed minus scripted search, and engines identical on 770 of 770 tasks. The search arm was a scripted search and no agent was run. The raised status "tested" (maturity 4) for measure#7 is supported, since that file
+- condenser note measure-1: All 24 records covered. Ids not in the register (TOK-5, TOK-6, TOK-7, TOK-12, G-B6, G-B7, G-B9, Loop B3 and similar) were mapped to the nearest register id by meaning or the alias table. measure#7 raised from designed to tested because sibling records show the held-out run completed; measure#27 set to deferred. measure#0 has a conflicting slice-share figure (66.4 % against 42 % for three slice ses
+- checker note measure-2: All numbers and tags confirmed against the records. The 72 fix commits in measure#45 come from the knowledge-store design, which cites 72 fix-prefixed commits across all refs. The 48 on main and the 3 to 5 repeats also match. Statuses and maturities fit the mapping, and no must-not-claim rule is broken. review#62: the stub-run raw record is not lost, because it stands as its own entry (check#38 in chunk-check-2), so no split is needed. Bottleneck and wp choices that differ from the raw tags (measure#58 B01, measure#52 W1, tokens#26 R2 and TK-BLIND) are defensible by each idea's problem. Word l
+- condenser note measure-2: All 24 entries written. Mapping choices: ids absent from the register (KS-C10, KS-K18, BML-4, BML-6) were replaced by the nearest register id; a few alias-table mappings (W2 for the store-recall record, R2 for L2, B04/B13 for the lean-workflow record) were overridden by each idea's own problem, noted in flags. Tags: the 10% retry threshold is tagged [G] because the record calls it arbitrary; count
+- checker note skills-1: Checked all 28 entries against chunk-skills-1.md, register-ids.md and packages.md; no cited source line was opened because every number and claim was confirmable from the records. Most corrections are word-limit trims (how, problem, stands, next). Substantive corrections are as follows. skills#9 status and maturity were lowered from in_use/5 to built/3, since the records show only that the agent file exists, with no usage figures and 'not yet tested'. skills#18 bottleneck W1 was dropped in favour of LIB-S5, because W1 does not fit the access-path problem. memory#27 'known to fall' was softened
+- condenser note skills-1: 28 entries returned. Status changes: skills#8 raised from idea to built (another record shows the orchestration skill authored on PR #185). Bottleneck mappings: SK-1 and OB18 are not in the alias table; I mapped them to TK-TIER (and TK-LOOKUP for the explorer). SK-3 maps to B12 by alias but fits poorly, so I used PR-SECRETS, PR-DOCDRIFT or W4 where they fit the problem. SK-8 has no register id; PR
+- dropped skills#22 BAML for the FixFlow product's LLM features
+- checker note release-1: All numbers and tags in the 15 entries trace to the records. Statuses and maturities match the mapping. The one clear stale item was machine#23's next step, since the ship plan (line 1814) records the emulator boot as measured on 13 November. No split proposed: in release#0 the 'every seeded record kind has a production creation path' test is a sub-part of the same designed idea, but it was dropped from the entry text. release#2 omits the 105-tables-identical detail, which is minor. release#11 still lists the JavaScript-fix queue in its problem although the built skill rules out expo-updates; 
+- condenser note release-1: All 15 keys covered. Status changes: none. machine#23 is placed in WP1 (machine tooling) and review#60 in WP3 (PR-DRAIN) rather than WP9. Version numbers in stands (JDK, adb, etc.) are measured install facts [M] tagged once per group, not per number. Release#6 flagged: record says designed but a recent commit shows the emulator booting; kept designed because no protocol has run.
+- checker note owner-1: No numbers or tags were wrong, and no status or maturity needed changing. I checked every figure against the records: 10,698 and 6,709 bytes, 131 KB, 219,111 bytes with 19 worktrees, 111 P3, 2520 tests in 726 s, the 10-row lane board with 8 running lanes and 2 done phases, and D01 to D06 answered. Statuses and maturities match the mapping. owner#2 stays at in_use and maturity 5 because the form was issued at G1; the stands text already says the answers are pending. The word-limit fixes are the main changes. Three judgement calls I left alone: (1) owner#0 drops the 'worker handback: result, evi
+- condenser note owner-1: All 20 records written. Status changes: none. Judgement calls flagged: owner#2 kept as in use (form issued at G1, answers pending) although one source said designed; owner#13 mapped to B02 instead of the record's W4; owner#6 mapped to PR-P0A as the nearest fit. Record owner#7 is in use in the clinic testbed only; FixFlow has no merge under the rule yet. Some stands lines run a few words over the 3
+- machine#0: stands is 42 words (limit 32)
+- flag machine#0 (Shutdown diagnosis and always-on sensor logger): Counts differ between sources: the compile says 24 events since 7 October (23 with no crash code); the phase 1 join says 25 since 1 October. If mains power is the cause, the fix is hardware (decision D08, later).
+- flag machine#1 (Never let the PC sleep on mains power): Needs the owner to apply the setting himself. The compile also lists stop-sleep inside the shutdown-diagnosis remedy.
+- machine#2: problem is 33 words (limit 26)
+- flag machine#2 (Off-machine copy of the work): I chose an encrypted external drive on 11 November (D02); waiting on the drive and encryption.
+- flag machine#3 (Resume list at sign-in, two sessions released at a time): The compile also asked me to approve restart settings; the Docker part is a separate, parked idea.
+- flag machine#4 (Restart chain for Docker and databases after reboot): The compile listed it as designed; I chose not now (D03), so it is deferred. The clinic card for the same idea was abandoned with no automation built.
+- flag machine#5 (Stop on resume when record and branch disagree): It protects resume after stops but does not shorten them. For the testbed it may stay dormant if the replay finds no mismatch.
+- flag machine#8 (Checkpoint and resume by dependency hash): For FixFlow the Python tool was skipped on 1 November (harness review) and the git-based Plan @ sha adopted instead. It does not resume a halted session.
+- flag machine#9 (Resume-safe long runs and sleep prevention): Single-PC observations.
+- flag machine#11 (Parked starts released later by message): It does nothing against usage limits. Merged from a machine record and a method record; the message-delivery rule was learned on 13 November and is not a measured effect.
+- flag machine#12 (Concurrency cap and load rules after two shutdowns): The cooperative lock was retired on 6 November in favour of two slots; the root saw only 0.4 of 24 processors busy while a check waited.
+- flag machine#13 (Memory headroom guard on the second check slot): The 8 GiB threshold is a guess [G]; memory is read only at admission.
+- flag machine#16 (Memory table of who holds RAM when short): Depends on the logger from the shutdown-diagnosis idea.
+- flag machine#17 (Archive policy and reaper for worktrees and containers): I approve each batch the reaper lists.
+- flag machine#19 (Docker engine up first; agents never start it): Raw record cited OB1; mapped to B10 through the alias table.
+- flag machine#21 (Dead locks after a boot; commit and push at every green checkpoint): Raw bottleneck labels were free text; mapped to B05 (power), B10 (nothing restarts) and B11 (work only on this PC).
+- flag machine#22 (Shared-machine etiquette and session ceiling): Raw status was adopt, 'in force'; shown as in_use because the rule is applied today.
+- flag machine#25 (Never run expo prebuild in place): Raw record cited OB23, which is not in the alias table; mapped to MC-PREBUILD by meaning.
+- flag machine#26 (Windows-host traps recorded as lessons): Raw ids B05, B07, B10, B12, B13 did not fit the problem; remapped to MC-FS and PR-FALSEGREEN. Records say no check enforces these, so maturity 5 is for the notes.
+- flag machine#27 (Doctor script for tool checks): Raw record cited REV-B13, mapped to MC-TOOLS.
+- flag machine#30 (Secret-safe scans: fingerprint, never value): Raw record cited OB10, which is not in the alias table; mapped to PR-SECRETS.
+- flag machine#31 (Secrets and private data kept out of agents' reach): Raw id L3 does not match this problem; used MC-INJECT and PR-SECRETS.
+- flag machine#32 (Deny railway up and run in permissions): Raw ids W2, L3; L3 dropped as a poor fit. Could also sit in WP3 (compliance enforced, not self-reported); placed in WP1 as it guards production.
+- flag machine#33 (Keep-work-safe bundle applied to CureFound training): Restates the off-machine copy, resume list and restart chain for a second project.
+- flag measure#9 (One Linux image for every engine arm): Raw id G-B11 not in the alias table; mapped to MC-ENGINE. Placed in WP8 for its fair-test purpose; WP7 also holds MC-ENGINE.
+- flag check#16 (Separate Postgres 17 restore stack for evidence): Raw id OB1 maps to B10, which does not fit; remapped by meaning.
+- flag owner#18 (Proposed: expiry list and progress file): Raw B08 dropped as a poor fit.
+- flag skills#25 (Codex session folders and skill sourcing review): Source status was in_use but this is a finding, not a mechanism; raw id B16 did not fit, so no bottleneck is given.
+- flag method#58 (Write scripts with the file tool; give Workflows paths): Raw id B-HEREDOC mapped to MC-HEREDOC.
+- flag check#1 (Linux container check, proposed as the gate): Raw records disagree on built versus in_use; kept built because the clinic native run remained the gate. Gate decision D09 is still open.
+- flag check#3 (Check slots sized from one measured memory number): One raw record labelled this measured; that was the underlying baseline (855 s to 284 s [M]), not this design.
+- flag check#6 (Stall watchdog, heartbeat and queue position): Mixed record: the watchdog is in use, the heartbeat states and stack dump are designed only.
+- check#7: maturity 5 above its status measured
+- check#9: how is 30 words (limit 24)
+- flag check#10 (Exactly-once proof and planted-fault demos): The negative-run line from the Dex Horthy sweep is only a trial; the clinic gate parts are in use.
+- flag check#11 (Checks must be able to fail (red-team lessons)): Rules, not a built mechanism; in_use means followed in the plan.
+- check#17: how is 29 words (limit 24)
+- check#21: how is 32 words (limit 24)
+- flag check#22 (Native Windows stays the gate, Linux optional): Superseded as a proposal by check#1 (container as gate, D09); status left in_use because the decision is still in force in the testbed.
+- flag check#10~s1 (Verifying command and negative run per tick): split: Raw record horthyB-23 is a distinct mechanism (a command and negative run recorded per checklist tick, for FixFlow) at trial status; it was folded into the in-use clinic gate entry and only survived as one sentence.
+- flag check#24 (Pre-commit hook running the workflow verify command): Status in_use applies to the testbed only. The harness review ruled it skip for FixFlow (defects RT-04/05; CI gates the PRs).
+- flag check#25 (Stop hook that re-runs the CI checks): First-pass record said deferred; the addendum ruling (skip) is the later one and is used here.
+- flag check#29 (CI checks for known prose traps): Merged record spans adopt (three checks) and trial (railway deny, frontmatter lint); adopt kept. Owner still to accept or refuse them.
+- flag check#32 (Named exit-coded gates per runtime): First pass said deferred (reviewers split); the addendum found the per-runtime form already done. In_use refers to the per-runtime gates only.
+- flag check#33 (Stop after three identical CI failures): Owner still to accept the line.
+- flag check#36 (CI-driven fix agents per failure stage): The 3-minute CI figure has no tag in the record; tagged [E] here.
+- flag check#38 (Stub run of gate scripts with no model): BAML record said trial; the harness v2 design record says designed. Designed used, as no stub exists yet beyond one feasibility run.
+- flag check#47 (Caller-pin test in repository CI): One raw record said idea, the other designed with the D17 decision; designed used.
+- flag measure#33 (Queue-wait measurement for the test lock): The owner's 34-minute figure appears in no file read; only 726 s is recorded. Owner decision pending: gate per slice or once per merge.
+- flag review#56 (Red-team of the workflow gates and repair plan): Source marks the repair plan abandoned; the findings themselves are valuable evidence.
+- flag review#0 (Fix-round contract: two rounds, revert, test per finding): Sources disagree: the compile and Horthy sweep rate it trial, harness v2 lists it as designed. Taken as designed; the non-blocking-note clause is a separate trial over the first 5 code-phase PRs.
+- review#2: stands is 40 words (limit 32)
+- flag review#3 (Record who read the final commit): Owner decision open: whether a high-risk branch may merge on 'none' or 'own'.
+- flag review#4 (Binding PR review: fresh, refute-by-default, head-bound): Records label it adopt, designed and built; built is taken because the agent and skill exist on PR #185.
+- flag review#5 (Review as a gate workflow with typed verdict): Owner decision D14 open: may the script's verdict replace the root's own reading?
+- flag review#6 (Merge queue that refuses a wrong head): Owner decision D15: may a script merge and refuse? Some unread heads of 10 November followed the owner's own instruction to merge on session reports.
+- flag review#7 (Claims file and verdict script per gate round): Owner decision D14 open: does the typed verdict replace the root's own diff read? Flaky tests can fail a base rerun wrongly.
+- flag review#8 (Close findings only on tests with positive controls): In use in the testbed only; for FixFlow the compile proposes it as a trial.
+- flag review#10 (Transcript audit at each merge): Built refers to the clinic audit of the Codex cohort; the merge-time version is only designed. Transcript retention is unverified.
+- flag review#12 (One finding table and counting parser): Owner decision D12 open: P0 to P3 meaning and the expiry and re-triage rule.
+- review#13: maturity 2 above its status trial
+- flag review#13 (I read marked hunks on high-risk merges): Owner decision D16: give that time and let those merges wait?
+- flag review#14 (Second model-family review pass): Records disagree: the Horthy list says trial, the compile and harness v2 (D19) say deferred. Deferred taken as the later decision.
+- review#17: stands is 42 words (limit 32)
+- review#19: maturity 5 above its status adopt
+- flag review#19 (Skeptic budget capped at twelve, allocated by priority): The cap itself is in use; the priority allocation is an adopted rule not yet applied in a run.
+- flag review#21 (Verified register, open-risks list and refuted list): The register was realised by hand at G2; the script derivation is designed only.
+- flag review#23 (Honest-empty web research and re-fetch check): The honest-empty part is recorded only as designed; the re-check was run at G2.
+- flag review#24 (Demote, never delete): Source cites OB15 (reports overstate); mapped to silent loss of findings as the closest register id.
+- flag review#25 (Diff-restricted register check with one-hop rule): Source cites OB17, which the alias table maps to field evidence and does not fit; mapped to verification budget.
+- flag review#14~s1 (Break-even rule for extra review legs): split: The Perplexity-Claude-Codex bridge with a break-even formula (n x (s - o) - F) is a distinct mechanism from the one-off Codex review pass and vanished from the merged entry.
+- flag review#31~s2 (Critique rounds on a design before it runs): split: Design-document critique rounds (Opus critics plus external reviewers, with an accepted/rejected ledger) are a distinct mechanism from the architecture panel and were dropped from the entry.
+- review#32: next is 25 words (limit 20)
+- flag review#32 (Two refuters per claim: repository and operations): Seven refuter runs on the cash and books claims never happened (usage limit); the older record also cited a lost-runs id that I mapped to the limit-stop item without listing it.
+- flag review#33 (Delta check of a plan revision by fresh critics): Open owner ruling: whether managers may pay or void on a closed job.
+- flag review#38 (Verdict lists suppressions and gate-config changes): Mixed status: one sentence adopt, the other parts trial; the record's status is adopt.
+- flag review#40 (Reviewer-brief additions with no testbed counterpart): Overlaps review#37, #38, #39 and #41, which carry the same items individually.
+- flag review#45 (Review bots, unmeasured-as-failure, hand-back labelling): Record says already done or platform behaviour, so no separate evidence of benefit.
+- flag review#54 (Dated audits by parallel automated reviewers): Automated review, not human; findings are static observations, not reproduced defects.
+- flag retrieval#16 (Blast-radius touch list for a fix): The compile's verdict was trial; the v2 design records it as designed. I kept designed.
+- retrieval#17: maturity 3 above its status trial
+- flag retrieval#17 (Cross-runtime contract map): One raw record says idea, one trial; I kept trial. Script is partly built but its value is unproven, so maturity stays 1.
+- flag check#42 (Pick among candidate fixes by executed test): Merged record said idea; the v2 design says deferred and the compile said trial. I used deferred.
+- flag method#46 (Design adjudicated by sweep, judges, refuters, my critique): Judges were lost once to a usage limit and re-run from cached proposals.
+- parallel#1: stands is 38 words (limit 32)
+- flag parallel#1 (Plan check with footprints and collision graphs): Owner decision pending: whether to add the section to the orchestration document (it belongs to the ship plan's pull request).
+- flag parallel#2 (Scheduler that releases two sessions at a time): The source also lists B03; it is the owner-away id in the register and fits poorly, so it was left out.
+- flag parallel#5 (Waves of parallel slices from the plan): Merged from a clinic testbed record and a FixFlow ship plan record; no wave shortens my own chain of phases.
+- flag parallel#7 (Cross-lane contracts fixed in advance): The source names no register bottleneck; lanes waiting on each other fits none exactly.
+- flag parallel#8 (Merge-hold list for built-ahead PRs): Placed with merge rules in WP3; WP4 is the alternative.
+- flag parallel#12 (Migration-numbering rule across parallel slices): The source lists B01 and B04, which fit poorly; the register id PR-CONFLICTS was used instead.
+- flag parallel#13 (Flow limits for loops and work in progress): One listing was deferred with no refuter verdict; the later assessment says the bounds already exist, so in_use was kept. The loop-specific rule is not running.
+- method#14: "owner" in how: A lane never edits the program folder or the OWNER-VIEW page. Its closing message carries its deploy-train row and any plan defect; the coordinator records both.
+- flag method#14 (Lanes report; the coordinator writes program files): Marked adopt in the record although the rule is in force for all lanes; kept as given.
+- flag tokens#17 (Governor that slows lanes to last the window): Owner decision D07, the token budget per window, is open.
+- flag method#20 (Bounded session tree: depth three, fan-out three): The three-children limit is asserted, not measured; one shared session limit incident occurred.
+- flag tokens#0 (One phase per new session, state in repo): Status in_use rests on the ruling and state-in-repo; the 150-200k window cap and smaller pre-read are not yet applied.
+- tokens#1: stands is 54 words (limit 32)
+- flag tokens#1 (Earlier auto-compact window of 400,000 tokens): The earlier claim 'never switched on' is withdrawn; it is in effect for Opus only. The calls past 400k were all Sonnet and Fable, which are not set. Whether a project setting reaches the desktop app was not traced.
+- flag tokens#4 (Pull-only lookups with a 2,000-character cap): Merged with the library-as-external-memory use case, which is an idea, not measured.
+- flag tokens#6 (Short, capped agent hand-backs): In use only for the clinic returns-as-text rule; the hygiene file is built, not enforced, and the FixFlow W1 caps are designed.
+- flag tokens#8 (Run small tasks inline before spawning agents): The pre-flight commands are designed and wait on Docker Desktop being started.
+- flag tokens#9 (Quiet gate wrapper for web and mobile): Merged record says in_use because the backend wrapper is in use; the idea itself (the web and mobile extension) is a trial, so set to trial.
+- flag tokens#13 (Outside tools that cap tool output): Rejected as complete remedies, not as ideas; usable parts feed tokens#12 and the output-capping hook.
+- tokens#16: how is 30 words (limit 24)
+- flag tokens#16 (One token budget: two lanes at a time): In use as clinic practice; for harness v2 it applies from phase 1 and phase 5 measures it. It promises no fewer limit stops.
+- flag tokens#19 (No waiting inside a session): Assigned to WP2 because it is built with the phase 2 heartbeat and background checks; the token saving is the reason for it.
+- tokens#20: how is 29 words (limit 24)
+- flag tokens#20 (Route by model tier, window and price): Routing by window is a comparison across models doing different work, not a trial; Opus-where-thin is a design rationale.
+- flag tokens#4~s1 (Library as a session's external memory): split: A distinct idea, the library as a session's write-back memory, with its own compaction-loss evidence and idea status. It was folded into the pull-only lookup entry, whose stands text no longer carries it.
+- flag tokens#1~s2 (Model-keyed window for the Fable session): split: A separate deferred ruling with its own model, its own threshold (500k, not 400k) and its own trigger. The merged entry drops its status and trigger.
+- flag tokens#27 (Context-size limit, split prompts, trimmed MCP tools): Record says skip or already-done after refutation; both ideas folded into the 400k window setting and the fixed-prefix work.
+- flag tokens#30 (Compact context packet for fresh agents): The records tag only B03, B04 and B12; mapped here to the token ids by the idea's own problem. The 20% figure is from small synthetic cases and is not evidence for FixFlow.
+- tokens#33: maturity 5 above its status adopt
+- tokens#33: stands is 40 words (limit 32)
+- flag tokens#33 (No PreCompact hook; keep idle compaction on): Status adopt gives maturity 2 although the setting is simply the default in use; kept as the records state it.
+- flag tokens#34 (Trim skill and agent descriptions to 400 characters): The 24k character figure is untagged in the source; tagged [E] here.
+- flag tokens#35 (Net-zero CLAUDE.md edit, then trim): Spans WP5 (file size) and WP6 (knowledge store); placed with the size problem.
+- flag tokens#36 (Test CONTEXT-block variants against each other): WP10 also owns briefs and context blocks; placed with the token problem.
+- flag measure#2 (Compaction audit and count): The clinic count read only timing, not what each summary lost; the 400k setting was not in force there. Idle compaction dropped one open loop (see no-PreCompact ruling).
+- flag skills#16 (Shape CLAUDE.md and skill descriptions): The record names no bottlenecks; W1 assigned by the idea's problem. 24k characters untagged in source; tagged [E].
+- flag skills#17 (Strip fixed prefix with a short tool list): Sources disagree on status (idea, trial, designed) and prefix size (about 60k [E] in the token report vs 70,000 [M] in v2); settled on designed. Token report: 27% of all tokens [E], 47% of FixFlow's [E], mostly cache reads. A list without Write once caused refused writes.
+- flag measure#20 (Cost envelope by stage): Agent counts in the source carry no tag; omitted from the stands text.
+- flag memory#24 (Cross-session digests of hot, often-read files): Sources tag the path counts [M] in one place and [E] in another; fetched share is 26% in one and about 27% elsewhere. Exposures, not a saving. Placed with the knowledge store.
+- flag retrieval#31 (Cached Expo package sources instead of npm install): Could also sit under WP9 (native Android); placed with research-source access.
+- flag memory#32 (Compaction snapshot, restore and recall hooks): The merged record says measured; the records show offline tests only and no live run, so corrected to built. Defect counts: sources say 6+15+22+10 and 53 over four rounds. Owner decided 2026-11-01 to keep it out of FixFlow.
+- flag memory#33 (Codex adapter for snapshot and restore): A separate pilot showed +10.31% vs native [M]; a delivery gate failed at 4,962 B vs 4 KiB [M].
+- flag memory#34 (Survey of outside memory and context tools): Rejected here means not adopted, not shown to fail; nothing was installed or trialled.
+- measure#53: problem is 35 words (limit 26)
+- flag measure#53 (Log context use at phase close): Could sit with WP8 (measurement); placed with the context budget it feeds.
+- flag memory#32~s1 (Plain-file immutable snapshot storage): split: A distinct storage mechanism (immutable files, commit-point meta, no database) with its own stress measurements; it vanished from the merged entry. The large-read admission gate also has no own entry but has no results to report.
+- flag memory#34~s2 (Cairn: SQLite memory and tool paring): split: Cairn is a distinct mechanism (SQLite memory plus proxy tool-schema paring) that the merged survey entry reduced to a one-line comparator mention.
+- flag memory#0 (Reasoning-cache library for cheaper models): The owner expects a very large cost cut; the design itself claims far less.
+- flag memory#1 (Knowledge store of solved problems (PR #183)): The store design counts the 3 to 5 repeats as measured; the harness v2 design states the same figure as an estimate.
+- memory#2: how is 37 words (limit 24)
+- memory#2: origin is 19 words (limit 10)
+- flag memory#4 (Stale by code change, never by age): The 183 minor findings count carries no tag in the source; tagged [M] as a board count.
+- flag memory#5 (Lessons become checks): The 38 of 71 count carries no tag in the source; tagged [M]. The model leaves out that a bad entry's check can pin a defect.
+- memory#8: stands is 47 words (limit 32)
+- flag memory#9 (Pull-only lookup, nothing pushed or hooked): The clinic evidence is about always-loaded files and a rejected error-injection hook, not a lookup hook.
+- flag memory#11 (Cross-session and cross-project recall): The earlier knowledge-store design has no path between projects.
+- memory#14: how is 32 words (limit 24)
+- flag memory#14 (Scrub secrets and customer data from the store): Names and addresses cannot be detected, so raw production output is never stored.
+- flag memory#18 (Fresh-agent cold-resume trial): Recent git history mentions resume-trial evidence committed with P1, while these records say not yet run; the editor should check whether it has run.
+- memory#20: maturity 5 above its status adopt
+- flag memory#20 (Commit raw workflow outputs as evidence with sha256 manifest): The records say done, so this could count as in use; kept at adopt.
+- memory#21: maturity 5 above its status adopt
+- memory#22: maturity 4 above its status adopt
+- memory#22: stands is 37 words (limit 32)
+- flag memory#22 (Short disciplined notes file as context memory): Status kept at adopt although tested in a small study. The input totals quoted (794,310 against 842,620 [M]) give about 5.7 % fewer, not 6.1 %; the source does not reconcile them.
+- flag memory#23 (Root orchestrator's lesson memory): Nothing promotes lessons into checks yet.
+- flag memory#29 (Documentation spine and where-state-belongs table): FixFlow already has the equivalent in CLAUDE.md and the code map.
+- flag memory#36 (Push memory, age expiry and self-rewriting rules): The source says no measurable gain was established but gives no figure, so I left that claim out.
+- flag memory#37 (Fix withholding and optional journal deny rule): Could sit in WP6 (knowledge store); placed in WP3 to follow its register bottleneck.
+- owner#11: problem is 38 words (limit 26)
+- owner#11: next is 27 words (limit 20)
+- flag measure#23 (Planted-fact A/B harness for memory mechanisms): The forecast constants are all assumptions, so it stays [E].
+- flag check#26 (Tests that assert documents match the code): The count of three broken tests is untagged in the source; tagged [M] as a counted event.
+- flag machine#28 (Knowledge store copied off the machine to my VPS): Owner decisions D13 (remote), D14 (earlier off-box copy, default none) and D19 (Node on the VPS, default no) are open.
+- flag machine#29 (Store home at profile root, with doctor check): Owner decision D3 covers the folder location.
+- flag retrieval#29 (SQLite graph library for a self-evolving repository): The remembered library was not found as a build; the record is a search result, not a tool.
+- flag measure#34 (Pathway map: graph of states, trees as views): Per the record, I accepted the content, rejected the readability, and fixed it by hand the same day.
+- flag retrieval#35 (Abstaining retrieval: miss, candidate or lead): Thresholds are my parameters; D7 (egress scope and account type) is open.
+- flag retrieval#36 (SQLite via node:sqlite as the store engine): No register id fits the engine choice; left empty.
+- flag retrieval#38 (Diff lookup warnings quoted by the reviewer): Merged with a review record; decisions D8 (false-alarm ceiling one in ten) and D10 (ship plan sentences) are mine.
+- measure#37: stands is 53 words (limit 32)
+- flag retrieval#35~s1 (Write gate against duplicate records): split: The write gate (duplicate check, self-match refusal, missed-existing check) is a distinct write-time mechanism from the lookup pipeline and vanished from the merged entry.
+- flag retrieval#39 (ast-grep syntax-tree reader for code probes): One raw record said deferred, the other designed; kept designed. Both agree it is built only at the second pilot stage.
+- flag measure#39 (Real-case walkthroughs through ten design steps): Five bottleneck ids were listed in the record; trimmed to four (LIB-S2 left out).
+- flag retrieval#40 (Hand-written code lexer for span anchoring): Merged record says superseded, one raw record says rejected; kept superseded as the source says it was replaced by D5b.
+- flag measure#40 (Break-even sweep: how much work must repeat): Status is measured but figures are model outputs from guessed inputs [G], not field measurements; treat as illustrative.
+- check#43: stands is 42 words (limit 32)
+- flag check#43 (Declarative gate runner with control pairs): Could sit in WP6 (memory) or WP7; chosen by its problem, wrong matches acted on as leads. Enabling scripted checks needs my approval.
+- flag measure#46 (Blind pilot against two incumbents, with a stop point): Thresholds are my proposals; the pilot cannot tune thresholds it is graded on.
+- flag measure#48 (Retrieval thresholds frozen before the pilot): Raw record cited a raw id that collides with the documents-drift id; not mapped.
+- flag measure#49 (Diff-handle selectivity gate and false-fire ceiling): The ceiling is my parameter (D8).
+- review#51: how is 34 words (limit 24)
+- flag retrieval#0 (Typed symbol-level graph of the repo): The research-results doc still says held-out not yet run; the held-out run has happened, so the newer record sets the status.
+- retrieval#1: how is 42 words (limit 24)
+- retrieval#3: stands is 38 words (limit 32)
+- flag retrieval#3 (PageRank and community priors for ranking): Word as no gain of 0.05 or more, never as graphs add nothing.
+- flag retrieval#11 (Model-built knowledge graph and graph database): One source says rejected, another deferred; the owner challenged the do-not-build rule as too narrow, so deferred.
+- flag retrieval#12 (Graphify outside code-graph tool): The 2026-11-01 review said skip for FixFlow; I asked again on 2026-11-13. Install and model-API use need my decision.
+- retrieval#13: stands is 42 words (limit 32)
+- flag retrieval#14 (Traversal cache for what-depends-on-this): Sources differ on tag (M vs E) and one marks it rejected; the evidence comes from the first test, whose verdict was withdrawn.
+- flag retrieval#18 (Slice fragments generate board and true-now view): Could sit in WP7 as a what-is-true-now view; placed in WP3 because its problem is the board's single writer (B13). Decision D15 covers board editing by script.
+- flag retrieval#23 (Corpus map of typed edges for planning documents): One source says abandoned at P9-4 with trials not started; adoption is my pending decision.
+- flag measure#11 (Code-reading question set (50 questions)): Token figures compare answer size with what search read, not like for like.
+- flag measure#12 (Agent-in-the-loop pilot): No agent was run in the held-out graph test.
+- flag method#0 (Orchestrator decides; subagents only gather and verify): The gate and review records show the main session judging, but the source reports this as a design rule awaiting the owner's W0 pre-flight, so I kept designed.
+- flag method#1 (Staged workflows with judging gates between them): The design raw record said designed; the review record shows both gates actually run, so I used in_use. The phase plan itself was designed after the second gate.
+- method#2: stands is 39 words (limit 32)
+- flag method#2 (Model tiers by role, raise effort before tier): Tier was chosen by slice type and not validated against defect rates. Open owner decision: whether FixFlow slices adopt the rule that invariant-sensitive work goes to Opus.
+- flag method#4 (Brief contract and CONTEXT block for every agent): Delegation cost was not measured.
+- flag method#5 (Typed output schemas, forced and validated): The design's schemas were only designed; the forced-output route is in use. Merged record says in_use, so I kept it.
+- flag method#6 (State in the repository, parents judge by diff): For FixFlow the harness review ruled to skip the task tree, because plan, PR body, results file and git already own each kind of state. In use in the clinic only.
+- flag method#9 (Hypothesis table and challengeable settled facts): Table in use, but the challenge channel is only specified, so I set maturity 3 rather than 5.
+- flag method#12 (Plan on a branch, tagged before lanes read): Open owner decision: whether to merge the docs-only plan and skills PRs to main.
+- flag method#16 (Root as the only writer of shared documents): Open owner decision: whether slices may edit their own CLAUDE.md section, since FixFlow's policy differs.
+- flag method#22 (One fact, one command): The bottleneck compile calls it trial; the harness v2 design adopts it, so I used adopt. Five facts in the original bottleneck list turned out wrong.
+- flag method#23 (Five-phase harness build order with dependencies): The records mark it in_use, but only phase 1 read-only work has run, so I set maturity 3. Owner decision D01 is attached.
+- method#26: maturity 5 above its status deferred
+- flag method#26 (Defer phase plan and recipes to Stage 3): Deferral was carried out: Stage 3 became the ship plan. The editor may want to show this as delivered rather than deferred.
+- flag method#4~s1 (Parallel research agents each own one report): split: The raw record clinicC-14 describes a distinct mechanism (owned-file parallel research with a four-worker ceiling and root cross-check) that the trimmed brief-contract entry no longer carries.
+- flag method#27 (Phase opening, precedence and journal rules bundle): Umbrella record; several of its rules appear as separate entries. Bottleneck ids chosen by the editor, the source lists none.
+- flag method#37 (Save-rule, run provenance and skill retirement): Merged from three overlapping records, including skills and memory themes; calendar-based pruning was not adopted.
+- flag method#38 (Shape block: signatures and call stack in PR): Source lists W3 and W4; the editor chose B01 (design mistakes found late feed fix rounds).
+- flag method#39 (Explicit effort on every reviewer and implementer launch): Listed under adopt, but both reviewers scored it trial.
+- flag method#43 (Knowledge-store steps in the phase routine): The store never blocks a ship phase; the plan change is my decision.
+- flag method#47 (Escalation ladder: Sonnet, then Opus, then Fable): Model figures are outputs of guessed inputs, not measurements. Real sessions skip rungs; two-thirds of recorded tokens ran on Opus or Fable [M].
+- flag method#51 (Thought structures (tree, forest, graph) rejected): Merged from tokens and review themes. Outside result: 4% to 74% on a number puzzle [S] at several times the compute.
+- flag method#54 (Map store with bounded chunk readers): Only synthetic tests so far.
+- flag method#55 (Scale process weight to task size): Source ties it to L1 (verifier effort); left unmapped as the fit is weak.
+- flag method#59 (Rename VERDICT.reasoning to explanation): Source alias maps its bottleneck to the usage-limit id; the editor chose PR-AGENTNULL as the better fit.
+- method#43~s1: "owner" in how: A prospective log with a checkpoint date in the OWNER-VIEW page, and a CLAUDE.md PR that swaps verified narratives for one-line rules.
+- flag method#43~s1 (Knowledge-store log and CLAUDE.md trim): split: The wire-in record (ksB-24) holds two distinct mechanisms, the prospective log and the CLAUDE.md trim, that the merged entry did not carry; it kept only the plan-bullet mechanism.
+- method#63: how is 29 words (limit 24)
+- flag check#39 (Gate-script hygiene: tagged results and clean inputs): Open precondition: what the agent call returns on schema exhaustion is unknown. Owner decides whether these borrows earn an Opus refuter.
+- flag measure#67 (Compare structures on the problem case, not pieces): No Opus refuter ran, so its borrows are unrefuted; the ten-dimension result is a judgement, not a measurement.
+- skills#1: stands is 37 words (limit 32)
+- flag skills#5 (Skills never contradict CLAUDE.md): Record states no next step; next-step text is an editorial default.
+- flag skills#6 (No secrets in skills: key names and fingerprints): Record maps to SK-3 (B12 by alias); PR-SECRETS fits the problem better.
+- flag skills#8 (Orchestration skill and repo-conventions skill): Record says idea, but another record shows the orchestration half authored on PR #185; status raised to built. Overlaps method#42.
+- flag skills#9 (fixflow-explorer Haiku-pinned locator agent): Sources show the file exists but no usage figures; kept as in use.
+- flag skills#20 (Hooks: stop hook and tool-event heartbeat): Could also sit in WP2 (heartbeat); placed in WP3 for the claim check.
+- flag skills#21 (Install BAML language and CLI in the harness): Record cites BML-1, which the alias table maps to B3-LOOP; that does not fit the typed-output problem, so left empty.
+- memory#26: how is 31 words (limit 24)
+- memory#26: next is 26 words (limit 20)
+- flag machine#35 (Recovery runbook skill and recovery operator agent): Concerns the FixFlow product recovery rather than the PC; WP1 chosen as closest (work kept safe).
+- flag machine#36 (Self-hosting skill and architect agent): Could sit in WP1 (backups, power loss); placed in WP9 as a real-host rehearsal.
+- flag memory#38 (A ks guide command printed from command definitions): Return condition is an inference from the refutation, not stated in the record.
+- flag method#42 (Orchestration contract skill for the main session): Overlaps skills#8; record states no next step.
+- flag measure#0 (Token tally from session transcripts): Sources differ on the slice share: 66.4 % in the compile, but three slice sessions 42 % [M] with roots and subagents 24.4 % [M] in the phase 1 file. Check which grouping the PDF quotes.
+- flag measure#1 (Window-fill analysis: what fills the context): The re-measurement put fetched content at 22.3 % [E] against 26-28.5 % [E]; quote the range, not one figure.
+- flag measure#3 (Fixed context overhead measurement): October snapshot from one subagent breakdown; docs grew in November.
+- flag measure#6 (Pre-registered, sealed held-out test protocol): At this size inconclusive is likely and reads as no evidence either way; do not word it as graphs adding nothing.
+- measure#7: stands is 51 words (limit 32)
+- flag measure#7 (Replacement graph test with a real engine): Merged record says designed, build under way; sibling records say the held-out run completed, so status raised to tested. Confirm which hop figures belong to the held-out run.
+- flag measure#10 (Scripted search baseline arm): Must always be called a scripted search, never an agent search.
+- flag measure#14 (Frozen validation contract for any map or store): Owner decision pending: run the 30-run comparison or retire the map.
+- flag measure#17 (Zero-token import-and-caller index replay): Merged from two records; the 27 to 28.5 % [E] and 43.6 % [E] figures are exposures, not savings.
+- flag measure#19 (System-dynamics model of the harness): Outputs rest on guessed inputs; label them illustrative. It leaves out power-offs, owner away time and memory.
+- flag measure#21 (Fit-screen the idea sweeps against bottlenecks): One Sonnet pass screened the dropped Horthy families, so a missed idea stays missed.
+- flag measure#22 (Pre-registered evaluation plan with gates and staged budgets): Stage 1 and the final study actually ran (984,984 [M] input in stage 1; 4,350,448 [M] in the final study), so tested is arguable; kept as designed per the record.
+- flag measure#26 (Evaluation protocol with Amdahl bound): The 1.25x figure is illustrative arithmetic, not a measurement.
+- flag measure#27 (Measurement ledger and pipeline M00-M06): Sibling records disagree (designed, deferred, rejected); set to deferred as the owner ruled low priority. Owner may raise the priority.
+- flag measure#29 (Effectiveness review F01-F10): Also overlaps WP9 (first use); placed in WP8 for its measurement framing.
+- flag measure#31 (Slow-path diagnosis: Windows to Docker port): The cause is inferred; the container run is the closest A/B.
+- measure#32: stands is 41 words (limit 32)
+- flag measure#32 (Worker sweep and load sampler): Not yet used on the developer PC for crash diagnosis.
+- flag measure#45 (Recurrence audit before any knowledge-store build): Records name two ids (KS-C10, KS-K18) that are not in the register; mapped to the knowledge-store value id.
+- measure#50: how is 29 words (limit 24)
+- flag measure#50 (Missed-existing detector with blind re-rule): One raw record maps the store-recall id to W2 (compliance) through the alias table; I chose the recall and value ids by the idea's own problem.
+- flag measure#58 (Per-PR rework rate as health metric): Records tag it W2 and L3; I added B01 (fix rounds) as the nearest register id for review convergence.
+- flag measure#61 (Medium-vs-xhigh effort trial, pass bar first): Merged from four records; the standing re-run on every model was refuted, only the one-off trial remains.
+- flag measure#66 (Standing regression re-runs for briefs and models): Merged from a BAML-sweep record and a Dex Horthy-sweep record.
+- flag measure#68 (Schema-retry count as a brief-quality signal): Record names an id (BML-4) that is not in the register; mapped to the brief-test id.
+- flag tokens#23 (Medium-effort verifiers via blind paired shadow runs): Needs my yes to trial the effort test and accept the extra agents.
+- flag tokens#24 (Record weekly-window usage per phase): Records tag the second id L2, which the alias table maps to context growth; I used the usage-accounting id by the idea's own problem.
+- flag review#47 (Transcript-derived read audit of analysts): Needs my yes to commission the one-analyst measurement.
+- flag method#49 (Limitations first, no fixes until agreed): A working rule rather than a tool; no register bottleneck fits.
+- method#52: how is 29 words (limit 24)
+- flag method#52 (Lean-workflow reassessment): Records tag B04 and B13; I mapped it to the instruction-file-size id by the idea's own problem.
+- flag method#53 (Adoption audits of reference repositories): The four-repo reassessment of the same material is recorded as researched and rejected.
+- flag review#62 (Sealed replay with read log): Merged with a stub-run idea; the Dex Horthy sweep rated parts adopt and trial, while the design files it as designed.
+- flag release#0 (Zero-seed first-use walk in every gate): Sources differ (designed vs idea); I took designed because harness v2 phase 4 specifies it. Target [T]: the walk fails on the commit before the 11 November merge and passes after.
+- flag release#1 (Rented-host rehearsal): Cannot run while I am away; some items are unbuilt.
+- flag release#2 (Local staging VM rig with fifteen drills): The Hyper-V rig does not transfer to FixFlow; the drill structure does. Each VM start needs an administrator prompt. Drills also found their own harness faults.
+- flag release#3 (Volume load and page-speed drill): The 12-clerk drill failed before the fix: 11,000-110,000 ms over 809 requests [M]. Real limits are provable only on a rented host. The query-count method applies to FastAPI N+1 loops.
+- flag release#4 (List of what never ran on real hosts): Records also tie it to B03 (second maintainer); I kept to the two closest ids. Off-site and second-host restore are the items most likely to be missed again.
+- flag release#6 (L3 device lab on a native emulator): Record says designed, but a recent commit shows the emulator booting and the lab app installed; no protocol has run, so I kept designed. The lab supports no reliability claim about the fleet.
+- flag release#7 (L4 deploy-train and restore rehearsal): The record's own bottleneck is 'deploy train never rehearsed'; B19 is the closest register id.
+- flag release#10 (Maestro on-device smoke tests with runner agent): Started as an idea in the orchestration design; now built. I run the first Maestro run on a phone.
+- flag release#11 (EAS release skill and release operator agent): Design question (should expo-updates ship?) and built skill (no expo-updates) disagree; the skill follows the plan rulings, so the over-the-air queue-skipping benefit is not pursued.
+- flag release#12 (Early performance and recovery proof): Concerns the product being built rather than the harness, and was written by two AI reviewers.
+- flag release#13 (Real-data switch and money-setup command): The record also lists B17, which I dropped as unrelated to this idea.
+- machine#23: stands is 41 words (limit 32)
+- flag machine#23 (User-folder Android toolchain, verified on disk): The installer's first run printed INSTALL OK with nothing installed, which is why it now checks disk. A recent commit says the emulator boots, so the boot proof may already be done. Antivirus allowance for the folder is my decision; nothing needs it today.
+- flag review#60 (Drain branch cut at the pre-merge commit): Theme is release, but the problem is review and merge hygiene, so I put it in WP3 (PR-DRAIN).
+- flag owner#0 (One-page view for me beside agent packets): Adopted for FixFlow over the overhead-skeptic's dissent that a standing page is another projection that can drift. The in-use evidence is from the clinic testbed only.
+- flag owner#2 (Numbered decision form for me, issued at a gate): Records split between designed and in use; kept in use because the form was issued at G1. Answers pending.
+- flag owner#4 (My W0 pre-flight before agents spend tokens): The Docker-started item maps to B10; the rest of the checklist answers PR-OWNERWAIT.
+- flag owner#6 (Fleet hold notice to technicians): No register bottleneck fits exactly (unsynced data on phones could be lost); mapped to PR-P0A because the notice is part of P0a.
+- flag owner#7 (I delegate merges and phase starts to the coordinator): In use in the clinic testbed only; it does not survive my absence. Archiving still needs my word.
+- flag owner#12 (My one-off watch of P1): Needs my decision on whether to spend my time watching P1.
+- flag owner#13 (Rough HTML mockup before new-screen phases): Record tags W4; mapped to B02 (gaps found late) as the better fit for the problem.
+- flag owner#16 (Hold design docs to a stricter reading standard): The return condition is inferred from the rejection reason, not stated in the record.
+- flag owner#17 (Archiving and progress-visibility rules): The expiry list and progress file are a separate idea.
+- flag review#52 (Wrap-up called by me, carried P3 tables, pilot backlog): The written stop rule is a proposal only. I still need to approve it and the P1 classes that can never be deferred.
+- PAR-22: how is 29 words (limit 24)
+- PAR-22: stands is 103 words (limit 32)
+- added idea PAR-22 "Orchestration as a distributed B+ tree: split, merge on context" (chat of 14 November (session 423aac92, line 6893))
+- TOK-44: how is 30 words (limit 24)
+- added idea TOK-44 "Take finished material out of a live window" (chat of 26 October (session 4647c1c0, line 130))
+- added idea MTH-66 "Fast mode for a fleet of subagents" (chat of 3 November (session 4f9060c4, lines 1076 and 1301))
+- added idea MTH-67 "Borrow from distributed systems, databases and parallel computing" (chats of 1, 2 and 11 November (session e24f17dc, lines 3628 and 3672; session 2a8ce058, lines 3 and 730))
+- added idea MSR-49 "Seven-metric lens for every bottleneck and idea" (chat of 14 November (session 423aac92, line 6893))
+- MSR-50: stands is 38 words (limit 32)
+- added idea MSR-50 "Where the time goes: model step against disk" (chat of 11 November (session e24f17dc, line 6950))
+
+Ideas: 484 in 12 themes; checked 469, corrected 268. Per theme: MAC 35, CHK 43, REV 60, PAR 22, TOK 44, MEM 71, RET 30, MTH 67, SKL 27, MSR 50, REL 15, OWN 20
+Maturity 0..5: 41 / 90 / 147 / 53 / 38 / 115
+Ideas per package: WP1 25, WP2a 26, WP2b 19, WP3 45, WP4 22, WP5 45, WP6a 20, WP6b 39, WP6c 9, WP7 42, WP8 45, WP9 22, WP10a 83, WP10b 17, WP11 23, WP12 2
+- register note 0: I checked all 37 records against the sources they cite, in the repository, in the extracted branch documents and in the memory notes. Corrections: - B06: the speed-up is 1.6x, not 1.5x (compile §2.1: 367.2 s vs 230.1 s). The clinic task record's own "about 1.5x" compares against 350 s. - B20: the page timings were p50 109-468 ms with no page above 524 ms at p95. The figure "drill e 11,000-110,000 ms" is in no source, so I replaced it with the last 12-clerk run, which predates the fix: posting p50 3.4-7.5 s, p95 up to 16 s. - B09: the 754 s run was a planted dying-worker demo, not a second hang
+- register note 1: I checked all 40 records against their cited lines. The main corrections: - W3: the P1 cold-resume trial did run, on 2026-11-13, and scored 10/10 (docs/program/evidence/resume-trial-P1/resume-trial-result.md; W0-results P1 row). The state moves to partly closed. - B12: I removed '4 of 579 quotes'. Those came from one source that could not be fetched, so they are not overstatements. - B17: I removed '21 attacks, none closed by a human'. It came from a corpus-map review where a model closed no counterexample. - B13: I removed the 4,053 dangling endpoints, which belong to a corpus map. - B01: I d
+- register note 2: 51 records in register-c.md order. Corrections: TK-LOOKUP (151 of 200 were sampled search calls, not sessions); TK-SUMMARIES (48 compactions are clinic only, FixFlow 9); TK-BUDGET and LIB-KS-VALUE (knowledge store is about six sessions to go/stop plus five after a go, not ten); LIB-S10 (2 limitations not in the model, not 3); LIB-GRAPH-BASELINE (13-point loss is an outside study [S]; held-out typed vs co-change +0.063 added, fragile); LIB-EVAL (held-out graph test graded 2026-11-13 with scripted arms; no agent run; '0 of 30 map runs' not found in source); MC-ACCESS (five unread groups, not six
+- added register TK-FILL "Judgement against window fill is unmeasured"
+- added register PR-HALLU "No hallucination rate is measured"
+- register B02 verified=partly: Compile §1 confirms the 11 Nov merge and synthetic drill; machine-facts saw it staged earlier that day. Dropped the five-flag figure: it belongs to the corpus map.
+- register PR-FALSEGREEN verified=partly: Lab gates and installer fix checked in ship plan §7.4, §7.8, P0a-prep. P1 merged 13 Nov (87bbe88); whether its CI items shipped or moved to P1-ci not checked.
+- register B04 verified=partly: Compactions, 15.3 % and 499k confirmed in compile and tally; three-versus-four conflict kept. Dropped October session peaks; 300-400k is an aim, not a result.
+- register B12 verified=partly: 20-plus, S11 round 2 and three owner corrections confirmed. Removed '4 of 579 quotes': those were an unfetchable source, not overstatements.
+- register B17 verified=partly: Counts confirmed in compile 1 and v2 table (different merge sets). Dropped '21 attacks, none closed by a human': that came from a corpus-map review.
+- register W4 verified=partly: Corrected '13 wanted' to the 11 rows in design section 9. 13 skills, 11 agents, ~24k confirmed in Horthy; 150 KB cap [S] confirmed.
+- register L3 verified=partly: Counts confirmed in Horthy. Removed 'per-PR reviewer never run': P1 passed a binding review on 13 Nov.
+- register MC-HEREDOC verified=partly: Quirks confirmed in the memory note; 1.38M and 15 min in Horthy, which says 'mangled regex' without naming the heredoc cause.
+- register PR-OWNERWAIT verified=partly: Owner-only rule, design-agent gating and the admin prompt confirmed at cited lines; the '2 forms' figure was not re-located.
+- register PR-BRIEFFACTS verified=partly: G2 note, BAML 8 of 24 and ship-plan finding 18 (minor) confirmed; the register's extra 'blocker' was not found.
+- register PR-SUMMARY verified=partly: Compaction audit table confirms; the register's 'no mistake or rework resulted' was not found, only that the tail corrected them.
+- register TK-LOOKUP verified=partly: Corrected: 151 of 200 were sampled search calls, not sessions. Harness v2 tags 43.6 % as [E]. Pooled 58 % is the token report's own figure.
+- register TK-SUMMARIES verified=partly: Corrected: 48 compactions are clinic only; FixFlow had 9. Adapter figure taken from harness v2 R3 and sweep-cards line 581.
+- register TK-BUDGET verified=partly: Corrected 'about ten sessions' to six to go/stop plus five after a go (KS design line 43). Refuter warning confirmed at bottlenecks 3.6.
+- register TK-HAIKUCLIFF verified=partly: Design line 95 confirms the rule; the price threshold itself was not re-checked against a price list.
+- register LIB-S10 verified=partly: Corrected '3 not in the model' to 2 (LIM-62, LIM-68) per LIBRARY-PATHWAYS lines 149-160; other figures match.
+- register LIB-Q verified=partly: Weights at LIBRARY-PATHWAYS line 79; 1.029/1.038 found in the third-build check, not the cited record.
+- register LIB-REACHPAY verified=partly: Only source is the library review memory note: agent-measured by one critic, not independently re-derived.
+- register LIB-KS-VALUE verified=partly: KS design lines 209, 495, 544, 547, 690 checked; 'about ten sessions' refined to six plus five (line 43).
+- register LIB-GRAPH-BASELINE verified=partly: Added held-out result from grader notes and result.json. '10,000 commits lost 13 points' is an outside study [S], not ours.
+- register LIB-EVAL verified=partly: Addendum 6 line 63, sweep-cards 541/597/704 checked. State updated: held-out graded 2026-11-13. '0 of 30 map runs' not found.
+- register MC-ACCESS verified=partly: Horthy sweep lines 499, 609, 845-851, 887-899 checked. Five unread groups listed, not six.
+
+Register: 130 records; states {"open":82,"partly closed":35,"closed":13}
+- glossary note 1: All 103 records kept; no empty placeholders and no exact duplicates in this part. Related pairs (Refuter n=36 and Refute-by-default n=37; Context window and Context tokens processed) differ in meaning. I tagged numbers kept in definitions, and dropped counts I could not tag from the record (the 16 and 8 agent counts, 390-line CLAUDE.md size, 183 P3 ids, 12 skeptics, 29 fitting ideas). The record's
+- glossary drop g2-149 Hypotheses H1-H18: Dropped: the record itself calls these FixFlow product questions, not harness ideas.
+- glossary note 2: Checked against the Horthy and BAML documents. Confirmed: backpressure blog date (2025-12-09), Ralph/Geoff Huntley, software-factory talk dates, fxtwitter and distil-large-v3, reasoning_extraction (Anthropic docs, so category changed from claude-code to models), GEPA from the DSPy authors, TypeChat from Microsoft, Collector added in BAML 0.79.0, card and family counts. Only 149 (Hypotheses H1-H18)
+- glossary drop g3-278 Reaffirm / owner-critique terms: notes (see KS): Empty placeholder; no definition to keep.
+- glossary note 3: Checked outside-origin claims against KNOWLEDGE-STORE-DESIGN, HARNESS-BOTTLENECKS and the graph2 research notes. Confirmed: Build Systems a la Carte (ICFP 2018), Machalica et al. ICSE-SEIP 2019, Aamodt and Plaza 1994, Kleppmann and Lamport, elastic-recheck, ReasoningBank, Gloaguen et al. Main correction: co-change 0.26 is precision in a list of ten (tune commits), not recall (n=209). Added [G]/[M]
+- glossary: 48 terms added; merge pairs: 136 + 137: P0a is one of the phase ids, so the P0a entry duplicates the phase-id entry | 132 + 133 + 134: PR #183, #184, #186 and #185 each get one entry; one 'PR #182 to #186' table would serve | 232 + 271: Monte-Carlo runs and ensemble / many runs both describe repeating a run many times to see the spread | 138 + 160: Plan @ sha and plan tags both name a plan version by sha or tag | 163 + 259: check slot / check lock and Docker-gate slot describe the same gate slot | 146 + 185: Finding id scheme and Finding ids list the same id families | 246 + 247: KS-0..KS-9 and the KS-R/A/C/F/K/O/P/V id series are one knowledge-store id scheme | 36 + 37: Refuter and refute-by-default / refute-reviewer are the same role | 39 + 40: Verdicts (CONFIRMED etc.) and Typed verdict are one verdict vocabulary | 170 + 169: Merge queue is one of Planner / Scheduler / Governor's parts and is also separately listed | 49 + 48: Frontmatter / skills preload belongs inside the Skill (SKILL.md) entry | 262 + 261: Cheap-call equivalent is the measuring unit of the escalation ladder and can sit inside it | 137 + 136: see first pair; P0a also repeats in 135 Ship plan phase ids | 1 + 2: Maturity label entry added here duplicates Maturity scale; keep only one
+
+Glossary: 399 terms

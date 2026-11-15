@@ -1,0 +1,42 @@
+# refute:KS-C8:ops
+
+```json
+{
+ "claim_id": "KS-C8",
+ "lens": "ops",
+ "verdict": "REFUTED",
+ "counter_evidence": "Worked example ex8 (the Sentry Expo config plugin breaking the EAS Gradle build) breaks the claim. The gate can act on a false positive here because of a dependency the footprint did not record, and running the check on the caller's tree does not stop it.\n\n(1) The root cause depends on something outside the repository. Commit 6928828 says the plugin \"wires a Sentry gradle step needing org/project/auth we haven't configured\" and \"re-add the plugin only once a Sentry project + auth token exist\". a6f9048 says the same. a31924a (PR #176) shows the Sentry project now exists (project 4511846063013968). Sentry's primary docs (docs.sentry.io/platforms/react-native/manual-setup/expo/, fetched 2026-11-02) say: \"For EAS builds, add SENTRY_AUTH_TOKEN as an EAS secret\". So the deciding condition lives in EAS server-side secrets. It is not a git blob, a symbol span, a config key in the repo, a lockfile entry or a local env probe. Architect-A's own invalidation section concedes \"a silent server-side change has no local trace\".\n\n(2) The probe is allowed to return applies. Architect-A's gate_runner classifies ex8 as \"a discriminating probe [that] matches a state that is itself the root cause\". It is a presence-polarity json_predicate, so the polarity rule permits applies. It does not declare the eas_cloud capability, so it is never capped at inconclusive(capability_missing).\n\n(3) Re-running the controls cannot see the change. I ran the probe over git blobs: 60c026d PRESENT, 6928828 ABSENT, a31924a ABSENT, HEAD ABSENT. These verdicts do not depend on whether the EAS token exists. B's grafted inject-control (a mutant that adds the plugin) also fires PRESENT on current HEAD whatever the token state. So early cutoff re-stamps the trace. After that re-stamp at a tree that has the plugin, later lookups find a clean trace, and no re-demonstration is triggered at all.\n\n(4) The concrete acted false positive. The owner adds SENTRY_AUTH_TOKEN as an EAS secret and re-adds the plugin, as 6928828 instructs. Later an EAS build fails with EAS_BUILD_UNKNOWN_GRADLE_ERROR in Run gradlew for a different reason. Build 15 shows this happens: 6928828 records a second, independent cause, Dependabot bumping three native modules. The handle eas|Run gradlew|EAS_BUILD_UNKNOWN_GRADLE_ERROR exact-matches ex8, the probe reads PRESENT, the gate says applies, and the fix text is released. A cheap agent then removes the plugin. That undoes deliberate configuration (source-map upload stops) and the build still fails.\n\n(5) ex7 (the empty eas.json env value) has the same shape. eas-cli is in neither technician-app/package.json nor package-lock.json, `eas` is not on PATH on the dev box, and eas.json cli.version is \">= 13.0.0\", which floats [X-03.F20]. So the eas-cli schema behaviour cannot be probed or locked. Architect-A's risks list names \"a remote-resolver trap whose remote behaviour has changed (e.g. EAS starts accepting empty strings)\" as a false applies, and mitigates it only with labels.\n\n(6) judge-2's what_every_proposal_got_wrong[0]: \"The gate proves the root-cause condition is present in the tree, not that it caused the caller's symptom.\"",
+ "trace": "",
+ "narrowed_claim": "Not applicable (REFUTED). The most that survives: when a check's ability to discriminate depends only on what is in the tree, and its fail-side control is a mutant that must fire on the caller's current tree, running the check on that tree limits the harm of an under-captured footprint to staleness labelling. Examples are pure-function Jest or Vitest tests whose present_when template is cause-specific, as in ex3 and ex5. This does not hold for traps whose root cause depends on state outside git: ex7's eas-cli schema, ex8's EAS-side Sentry auth token, ex2's Railway rollback behaviour, and ex4's production cursor row.",
+ "what_would_settle_it": "",
+ "design_consequence": "The footprint feeds the verdict; it is not just a label. The design must change in these ways:\n\n(a) Every entry whose root cause depends on state outside git must declare that condition as a typed precondition item. Examples: EAS secrets, the eas-cli version, Railpack selection, the Meta API, production DB rows. For ex8 the condition is \"no SENTRY_AUTH_TOKEN in the target EAS profile's environment\", which commit 6928828 itself states. If the runner cannot probe the condition on the caller's machine, the verdict is capped at inconclusive(precondition_unprobed) and the fix text stays withheld. It must not be applies with an \"as of version X\" label.\n\n(b) Reclassify the ex7 and ex8 probes from \"discriminating\" to \"necessary_condition\". A lead then also needs the caller's raw symptom to match a template specific to that cause, for example the Sentry upload or sentry-cli error line in the Gradle log, read from the tool's own output [X-03.F29]. A generic tool|phase|error-code signature such as EAS_BUILD_UNKNOWN_GRADLE_ERROR may not count as the exact discriminating handle for a lead.\n\n(c) Stop claiming that early cutoff or control re-demonstration covers changes on remote resolvers or in the environment. Controls at historical commits, and mutants that only reapply the in-tree state, cannot change verdict when that state changes. Document this in what_cannot_be_detected as something that blocks acting, not just a limitation.\n\n(d) Keep judge-2's mechanical outcome step: after the fix, re-run the original failing command and record resolved or not_resolved. That catches the false positive afterwards, but it does not prevent it. The kill criterion \"any acted false positive\" therefore needs this step for every remote-resolver entry.\n\n(e) Seed ex8 with its not-when discriminator (\"auth token configured in EAS\"). The matching CLAUDE.md invariant should be corrected to state its condition.",
+ "commands_run": [
+  "cat .../scratchpad/sections/register.md (via Read of persisted output)",
+  "cat .../scratchpad/sections/examples.txt",
+  "node -e (extract T-01.F02,F03; X-02.F29; X-03.F08,F10,F12,F17,F20,F29 from docs/program/evidence/knowledge-store/sweep/lane-*.json)",
+  "git show --stat --format=%B 6928828; git show --stat --format=%B a6f9048",
+  "git show --stat --format=%B a31924a; git show HEAD:technician-app/eas.json; git show HEAD:technician-app/app.json",
+  "grep -n -i (sentry|caus|blind spot|remote resolver) docs/program/evidence/knowledge-store/panel/*.md",
+  "sed -n 330,345p panel/judge-2.md",
+  "node -e (print architect-A.json invalidation and gate_runner)",
+  "git show HEAD:backend/tests/test_identity_integration.py | sed -n 70,135p; git show HEAD:backend/app/features/identity/router.py | sed -n 50,100p; git grep IpRateLimiter HEAD -- backend/tests",
+  "git show HEAD:technician-app/package.json | grep eas|sentry; git show HEAD:technician-app/package-lock.json | grep node_modules/eas-cli; git grep SENTRY_AUTH_TOKEN HEAD",
+  "command -v eas; ls %APPDATA%/npm | grep eas",
+  "for r in 60c026d 6928828 a31924a HEAD: git show $r:technician-app/app.json | node -e (plugins /sentry/i probe) -> PRESENT, ABSENT, ABSENT, ABSENT",
+  "git log --format='%h %ad %s' -- technician-app/app.json",
+  "WebFetch https://docs.sentry.io/platforms/react-native/manual-setup/expo/"
+ ],
+ "sources": [
+  "git commit 6928828 message (two independent root causes of EAS build 15; 're-add the plugin only once a Sentry project + auth token exist')",
+  "git commit a6f9048 message (plugin needs auth token/org/project not configured)",
+  "git commit a31924a / PR #176 (Sentry project 4511846063013968 now exists; plugin kept out)",
+  "technician-app/eas.json at HEAD (cli.version '>= 13.0.0', no SENTRY_AUTH_TOKEN), technician-app/app.json at HEAD",
+  "technician-app/package.json and package-lock.json at HEAD (no eas-cli entry)",
+  "https://docs.sentry.io/platforms/react-native/manual-setup/expo/ ('For EAS builds, add SENTRY_AUTH_TOKEN as an EAS secret')",
+  "docs/program/evidence/knowledge-store/panel/architect-A.json gate_runner (ex8 classed as discriminating probe), invalidation.what_cannot_be_detected, risks (false applies from remote-resolver change)",
+  "docs/program/evidence/knowledge-store/panel/judge-2.md what_every_proposal_got_wrong[0] (gate proves presence, not causation)",
+  "register.md: X-03 (over/under capture), X-03.F20, X-03.F29, T-01.F02, T-01.F03, X-02.F29, R-02 ex7/ex8",
+  "scratchpad/sections/examples.txt ex7, ex8"
+ ]
+}
+```

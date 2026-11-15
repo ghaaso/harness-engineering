@@ -1,0 +1,42 @@
+// Harness v2, phase 1: which model each November call ran on, and what model was running at each compaction.
+// Read-only. Run from this folder:  node - < compaction-by-model.js.txt
+'use strict';
+const fs = require('fs'), path = require('path'), readline = require('readline');
+const P = 'C:/Users/User/.claude/projects';
+const PREFIX = 'C--Bilal-Migration-User-Downloads-20-PROJECTS-24-Clinic-Workshop';
+const dirs = fs.readdirSync(P).filter(d => d.startsWith(PREFIX));
+(async () => {
+  const byModel = {}; const comps = [];
+  for (const d of dirs) {
+    const name = d === PREFIX ? 'root' : d.slice(PREFIX.length).replace(/^--claude-worktrees-/, '');
+    for (const e of fs.readdirSync(path.join(P, d), { withFileTypes: true })) {
+      if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;           // main session transcripts only
+      const seen = new Set(); let lastModel = null, lastCtx = 0;
+      const rl = readline.createInterface({ input: fs.createReadStream(path.join(P, d, e.name)), crlfDelay: Infinity });
+      for await (const line of rl) {
+        if (line.indexOf('"timestamp":"2026-11') < 0) continue;
+        const isC = line.indexOf('compact_boundary') >= 0, isU = line.indexOf('"usage"') >= 0;
+        if (!isC && !isU) continue;
+        let o; try { o = JSON.parse(line); } catch { continue; }
+        if (isC && o.subtype === 'compact_boundary') { comps.push({ name, at: (o.timestamp || '').slice(0, 16), pre: (o.compactMetadata && o.compactMetadata.preTokens) || 0, trigger: (o.compactMetadata && o.compactMetadata.trigger) || '?', model: lastModel, lastCtx }); continue; }
+        const m = o.message; if (!m || !m.usage || !m.id || seen.has(m.id)) continue; seen.add(m.id);
+        const u = m.usage, ctx = (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.input_tokens || 0);
+        lastModel = m.model || '?'; lastCtx = ctx;
+        const k = (name === 'root' ? 'root' : 'slice') + ' | ' + lastModel;
+        const G = byModel[k] = byModel[k] || { calls: 0, cr: 0, max: 0 };
+        G.calls++; G.cr += u.cache_read_input_tokens || 0; if (ctx > G.max) G.max = ctx;
+      }
+    }
+  }
+  const L = ['Harness v2 phase 1: November main-session calls by model, and the model running at each compaction', 'Run ' + new Date().toISOString() + '. Read-only.', ''];
+  L.push('group | model'.padEnd(46) + 'calls'.padStart(7) + 'read M'.padStart(9) + 'largest ctx'.padStart(13));
+  Object.keys(byModel).sort().forEach(k => { const G = byModel[k]; L.push(k.padEnd(46) + String(G.calls).padStart(7) + (G.cr / 1e6).toFixed(1).padStart(9) + (Math.round(G.max / 1000) + 'k').padStart(13)); });
+  const band = c => c.pre < 420000 ? 'near 367k' : c.pre > 900000 ? 'near 970k' : 'between';
+  const tally = {}; comps.forEach(c => { const k = band(c) + ' | ' + c.trigger + ' | ' + c.model; tally[k] = (tally[k] || 0) + 1; });
+  L.push('', 'compactions: ' + comps.length, 'band | trigger | model running'.padEnd(60) + 'count');
+  Object.keys(tally).sort().forEach(k => L.push(k.padEnd(60) + String(tally[k]).padStart(5)));
+  L.push('', 'each compaction: session, time (UTC), tokens before, trigger, model');
+  comps.sort((a, b) => a.at < b.at ? -1 : 1).forEach(c => L.push('  ' + c.name.padEnd(30) + c.at + '  ' + (Math.round(c.pre / 1000) + 'k').padStart(5) + '  ' + c.trigger.padEnd(7) + (c.model || '?')));
+  fs.writeFileSync('compaction-by-model-2026-11.txt', L.join('\n') + '\n');
+  console.log(L.slice(0, 26).join('\n'));
+})();

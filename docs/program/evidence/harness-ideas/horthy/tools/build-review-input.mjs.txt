@@ -1,0 +1,47 @@
+// Writes the review workflow's inputs from the pre-review list: one card file per weakness group, a groups index, and the reader reports.
+// Usage: node build-review-input.mjs <prereview-dir> <review-input-dir>
+import fs from 'node:fs';
+import path from 'node:path';
+const [dir, out] = process.argv.slice(2);
+fs.mkdirSync(out, { recursive: true });
+const merged = JSON.parse(fs.readFileSync(path.join(dir, 'cards-merged.json'), 'utf8'));
+const GROUPS = [
+  { id: 'G1', name: 'W1 + L2 — CLAUDE.md length, context budget, compaction', keys: ['W1', 'L2'] },
+  { id: 'G2', name: 'W2 + W3 — routine compliance, hooks, cold resume', keys: ['W2', 'W3'] },
+  { id: 'G3', name: 'W4 + W5 — agents, skills, workflow library', keys: ['W4', 'W5'] },
+  { id: 'G4', name: 'L1 + L3 — effort routing, verifiers, backpressure, benchmarks', keys: ['L1', 'L3'] },
+  { id: 'G5', name: 'none / cross-cutting — software-factory method, product, loops, process', keys: ['none'] },
+];
+function groupOf(c) {
+  const b = (c.bears_on || []).filter(x => x !== 'none');
+  if (!b.length) return 'G5';
+  for (const g of GROUPS) if (g.keys.includes(b[0])) return g.id;
+  return 'G5';
+}
+const by = {}; for (const g of GROUPS) by[g.id] = [];
+for (const c of merged) by[groupOf(c)].push(c);
+const esc = s => String(s ?? '').replace(/\r?\n/g, ' ');
+const index = [];
+for (const g of GROUPS) {
+  const list = by[g.id];
+  const lines = [`# ${g.id} — ${g.name} (${list.length} cards)`, ''];
+  for (const c of list) {
+    lines.push(`## ${c.card}`);
+    lines.push(`- date ${c.source_date} · ${c.source_type} · author ${c.author} · ${c.read_mode} · evidence ${c.evidence_type}`);
+    lines.push(`- source: ${esc(c.source_title)} — ${c.source_url}`);
+    lines.push(`- claim: ${esc(c.claim)}`);
+    lines.push(`- quote: "${esc(c.quote)}"`);
+    lines.push(`- evidence: ${esc(c.evidence_detail)}`);
+    lines.push(`- bears on: ${(c.bears_on || []).join(', ') || 'none'} · landing guess: ${esc(c.landing)} · reader ${c.reader} (${c.id})`);
+    if (c.also && c.also.length) lines.push(`- also in: ${c.also.map(a => `${esc(a.source_title)} (${a.source_date}, ${a.id})`).join('; ')}`);
+    lines.push('');
+  }
+  const file = path.join(out, `${g.id}-cards.md`);
+  fs.writeFileSync(file, lines.join('\n'));
+  index.push({ id: g.id, name: g.name, file: file.replace(/\\/g, '/'), ids: list.map(c => c.card) });
+}
+fs.writeFileSync(path.join(out, 'groups.json'), JSON.stringify(index, null, 1));
+const readers = fs.readdirSync(path.join(dir, 'readers')).map(f => JSON.parse(fs.readFileSync(path.join(dir, 'readers', f), 'utf8')));
+const reports = readers.map(r => ({ reader_id: r.reader_id, cards: r.cards.length, sources: r.sources.map(s => ({ title: s.title, url: s.url, date: s.date, status: s.status, words_read: s.words_read, note: s.note })), gaps: r.gaps, new_sources: r.new_sources }));
+fs.writeFileSync(path.join(out, 'reader-reports.json'), JSON.stringify(reports, null, 1));
+console.error(GROUPS.map(g => `${g.id}=${by[g.id].length}`).join(' '), 'readers', readers.length);

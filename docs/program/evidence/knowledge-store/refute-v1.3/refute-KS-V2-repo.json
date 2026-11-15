@@ -1,0 +1,185 @@
+{
+ "claim_id": "KS-V2",
+ "lens": "repo",
+ "verdict": "NARROWED",
+ "one_line": "Narrowed. `proposed_change` stops a forbidden change only when the change edits a protective test file, and only after the change has been written. The one half that runs without Docker (KS-3) is a whole-file blob compare, and K12 in the same §3.4 paragraph turns that very result into `inconclusive`, which §7.2 does not treat as a stop. Several forbidden changes get past it entirely: a second door in a new file, a new conftest that skips or xfails the test, an added pytest.ini, Docker down, and every case before KS-6b.",
+ "attacks": [
+  {
+   "attack": "1. The critique's own example: a new file adds a known-device login path that mints a JWT and never calls the lock check. Which mechanism catches it, and when?",
+   "result": "fell",
+   "evidence": "Both protective tests drive only `IdentityService.login` and `POST /api/auth/login`: test_service.py:102-132 (test_failed_logins_bump_counter_then_lock) and test_identity_integration.py:86-104. A new file changes neither file's blob, and both tests still pass, so KS-O12 returns not_applies. Identifier coverage, measured with grep: `create_access_token` appears 0 times in the changed lines of 1c546a3, 0 times in both protective files, and 2 times only in backend/tests/conftest.py. `is_locked` appears 0 times in any of those inputs. `verify_pin` can be derived only from the import at test_service.py:12 and from one comment line in the fix diff. The only non-test callers today are service.py:97 and service.py:110, so D17's caller pin holds on HEAD. Which mechanism catches it: (a) D17's caller-pin pytest, deterministically, in CI and in the Appendix A backend gate when the PR is pushed. But D17 exists only 'when ex6 is verified' (§11 D17), which means after KS-6b, which needs a KS-5 go. (b) KS-O10's `--diff` identifier match, at first commit, PR-ready, review and close, but only if the KS-4 author hand-adds `create_access_token` or `is_locked` to ex6's ident handles. Mechanical derivation from the fix diff and the check inputs does not produce them. (c) KS-O12 never catches it, except by coincidence when the same PR also edits one of the two protective test files. §5.5 and §9 already admit that the store cannot see this case. §7.2 (L445, 'stops the change') and §12.7's KS-O12 entry say nothing to qualify the claim.",
+   "consequence": "§7.2 and §12.7 must state that `proposed_change` never fires on a second door. D17 is the only deterministic catch and needs no store, so it should be decoupled from KS-6b and offered before P7b-1. P7b-1 then updates the caller pin under review."
+  },
+  {
+   "attack": "2. Deleting, renaming, skipping, xfailing or rewriting the protective test. Which disjunct catches each, and what is returned when the test is gone?",
+   "result": "fell",
+   "evidence": "Every edit inside the file changes the whole-file blob, so 'blob differs' catches deleting the function, renaming it, adding @pytest.mark.skip, adding xfail, and inverting 429 to 200. 'The test fails against the proposed change' catches none of these, because each one makes the test not fail. pytest's junitxml writes a skipped test as `<skipped type=\"pytest.skip\">` and an xfailed test as `<skipped type=\"pytest.xfail\">`. A deselected test gets no testcase element at all (pytest source, src/_pytest/junitxml.py append_skipped). §3.4's present_when needs a `<failure>` in the call phase, so skip and xfail read as not PRESENT, and the KS-6b fault list gives no rule for them. A missing or renamed node id makes pytest exit with code 4 (docs: 'command was invalid'), which KS-6b's fault list sends to `inconclusive`. A deleted or moved file is undefined: `git rev-parse <tree>:<path>` errors (measured), while the blob OID of a moved file is unchanged. Above all, the blob disjunct is contradicted in its own paragraph. §3.4 L275 and KS-6b L636 say 'blob must equal the approved one or the verdict is inconclusive' (K12). §3.4 L275 and §12.7 L889 say blob differs means PRESENT (KS-O12).",
+   "consequence": "Resolve K12 against KS-O12 in favour of PRESENT/stop for do_not_apply entries. Define how a missing or moved protective file is treated. Make skipped, xfailed, xpassed and deselected targets `inconclusive(target_not_run)`, never ABSENT. State how the two halves of one check combine."
+  },
+  {
+   "attack": "3. A conftest.py change or a pytest report hook on the proposed tree. Does inconclusive mean 'no stop'?",
+   "result": "fell",
+   "evidence": "§4.1 step 5 (L304) says 'inconclusive behaves as a miss and escalates'. §7.2 (L445) fires only when the entry 'verifies'. Read literally, a conftest or hook neutraliser therefore produces no stop. Worse, some neutralisers do not even produce inconclusive. On HEAD, test_service.py has no conftest anywhere on its directory chain: I measured six absent chain paths, from backend/conftest.py down to identity/tests/conftest.py. A new backend/conftest.py whose `pytest_collection_modifyitems` marks both protective tests xfail leaves the test blobs and the existing conftest blob unchanged. That hook is not on §3.4's list (`pytest_runtest_makereport` and junit hooks only), and the result is `<skipped type=pytest.xfail>`, which reads ABSENT. CI stays green. HEAD's own backend/tests/conftest.py:65 already uses `pytest_collection_modifyitems` to skip every integration test when FIXFLOW_TEST_DATABASE_URL is unset, so the hook cannot simply be banned. The pytest docs also say pytest.ini (and pytest.toml) 'take precedence ... even when empty' and that config files are never merged. An added backend/pytest.ini therefore silently replaces pyproject's [tool.pytest.ini_options] (asyncio_mode=auto, pythonpath, --strict-markers), and the precondition set never names it. Git history: backend/tests/conftest.py changed in 11 of 368 main commits, 8 of them in non-identity features.",
+   "consequence": "In `proposed_change` mode, an inconclusive verdict caused by the proposed change should stop the change (fail closed, consistent with KS-O9's recall-first rule). Examples: any added or changed conftest on the protective tests' chain, any pytest config file, a hook, a missing test, exit 4 or 5, skip or xfail. The precondition becomes the chain's conftest set plus the pytest config set compared with the merge-base, absences included. The runner sets FIXFLOW_TEST_DATABASE_URL, so HEAD's skip gate cannot turn a run into a pass."
+  },
+  {
+   "attack": "4. Docker not running: what does `verify --target proposed` return before KS-6b and when Docker is down?",
+   "result": "fell",
+   "evidence": "Before KS-6b the executable half does not exist (§10 KS-3 vs KS-6b). After KS-6b, KS-6a says 'Docker stopped yields sandbox_unavailable', and KS-A4 (L754) adopts 'host_busy while fixflow-w1-* containers run'. Those are the ship plan's Appendix A gate containers, which run pytest during backend phases, P7b-1 included (ORCHESTRATION-DESIGN Appendix A on docs/orchestration-design-2026-10). All of these are inconclusive, and inconclusive is not 'verifies', so there is no stop. Under a KS-5 go-minimal verdict KS-6b never runs (§10 KS-5), and ex6 is not a declarative entry, so it is not even wired in.",
+   "consequence": "State that before KS-6b, and whenever the sandbox is unavailable, `proposed_change` is blob equality only. An infrastructure inconclusive should print 'do-not-apply check not run' and go into the PR journal for the reviewer to run during the backend gate."
+  },
+  {
+   "attack": "5. The KS-3 declarative half: what declarative check can a do_not_apply entry have?",
+   "result": "fell",
+   "evidence": "ex6's only check is a pytest id. Architect A also gave it an optional ordered_in_span probe, but that is a code-text probe, which KS-O1 forbids before KS-6b and F7 forbids from ever returning applies. KS-O1 says no span anchoring exists before KS-6b, so the 'protected spans' named in KS-3's scope are whole-file blobs. Counting them would make every edit to service.py PRESENT. That contradicts F7 and the hunk-level rule §12.7 adopted for shared files, and §3.4's PRESENT definition names only the protective test's blob anyway. So before the pilot, the KS-3 half is nothing more than 'the protective test file's blob changed'. KS-5's diff arm replays `ks lookup --diff` and `--prescription` but never calls `verify --target proposed`. The only exercise is KS-3's inverted-test fixture, and KS-3's done-when says 'every fault injection returns inconclusive' while the same list says that fixture 'must return applies'.",
+   "consequence": "Say plainly that before KS-6b the pilot can exercise `proposed_change` only as blob equality. Fix KS-3's done-when to give the ex6 fixture its own expected verdicts, and add the neutraliser fixtures. Add `verify --target proposed` runs to the KS-5 diff arm."
+  },
+  {
+   "attack": "6. The 'fix withheld until applies' rule against a do-not-apply entry whose value is its reason text.",
+   "result": "fell",
+   "evidence": "§7.1's `show` row prints summary, diagnosis and negatives on a candidate, with 'dead ends shown under an UNVERIFIED banner even on a candidate'. ex6's cause, and the HANDOFF A2 prescription stored as a worse_side_effect negative (architect A), were therefore never withheld. The critic's premise, adopted in §12.7 ('the reason ... withheld exactly when an agent was about to break it'), overstates the gap. What is withheld is only the `fix` field: the prohibition itself and the safe recovery route (set_pin, unlock_account.py). Withholding a prohibition protects nothing, because it authorises no action. PRESENT releases the fix to whoever holds the lookup id. Gate runs are host-local (§3.1, critic K3) and §7.6's Routing sentence names only `--diff` warnings, so a PRESENT never reaches the reviewer unless someone copies it. An UNVERIFIED banner on a prohibition's negatives also invites an agent to proceed.",
+   "consequence": "Never withhold the fix field of a do_not_apply entry. Relabel the banner on its negatives. Copy every `proposed` verdict into the PR journal, and have the reviewer re-run it."
+  },
+  {
+   "attack": "7. Approver is never the author, against the approved protective-test blob; a later legitimate test edit.",
+   "result": "fell",
+   "evidence": "The comparison is against 'the approved one', not the merge-base. The protective files hold 28 tests (19 + 9), of which 2 are protective. Commit 2f48529, an unrelated 0032 integrity migration, edited test_identity_integration.py:144-149 and backend/tests/conftest.py. Under KS-O12 that PR returns PRESENT, a stop. After it merges, every tree-mode verify returns applies (§3.4 tree mode: 'its blob differs from the approved one'), so `ks close` labels it 'regression' at every phase close. Under K12 the entry is instead inconclusive indefinitely. Re-approval exists only as the generic revise and different-Opus approve (§5.3, §7.4). No trigger, actor or phase is assigned, and cheap agents may only reaffirm. The entry author may also write the test, which is the normal case and is reviewed in the same PR; that part is fine. P7b-1's scope ('lock keyed per (account, source)', a spray test) will very likely edit these files (inferred).",
+   "consequence": "Compare the proposed tree with the merge-base. When the approved blob differs from the merge-base blob, return `inconclusive(approval_stale)` and report it at `ks close` as 're-approval needed', never as 'regression'. A PR that edits a protective file carries the entry's revise, approved by that PR's reviewer."
+  },
+  {
+   "attack": "8. Is `proposed_change` well defined for the three targets (diff against a merge-base, HEAD, working tree)? Can the forbidden change hide in an untracked file or a submodule?",
+   "result": "fell",
+   "evidence": "Scratch-repo demo (untracked-demo.mjs): `git stash create` leaves out a new untracked backend/conftest.py, and `git diff --name-only` does not list it. The protective blob compares equal. KS-F19 refuses only when an untracked path matches a probe or footprint path, and a new path never does. After commit, `git diff mb...HEAD` lists the conftest, but the protective blob is still equal. The same change therefore gets different verdicts by target. In the worktree snapshot the neutraliser is invisible, so the test fails and reads PRESENT if run. At the branch head the neutraliser is visible, so the test xfails and reads ABSENT. §7.1 and §3.4 do not say whether 'proposed' with `--diff` means HEAD or the working tree. Submodules: 0 gitlinks and no .gitmodules, so this holds today.",
+   "consequence": "Define 'proposed' as the working tree when it is dirty, else HEAD. Extend KS-F19's refusal to untracked files under the slice root and to any conftest or pytest config name. Refuse gitlinks."
+  },
+  {
+   "attack": "9 (added). The 'before applying' moment of §7.2.",
+   "result": "fell",
+   "evidence": "§7.2 (L445) runs `--prescription` 'before applying a fix'. At that moment no proposed tree exists, so `verify --target proposed` runs against the unchanged tree, gets not_applies, and the fix stays withheld. That is the critic's original hole, still open at the moment §7.2 names. The doc_ref exact match (§3.3) already yields ex6 as a candidate, and that match is the real signal.",
+   "consequence": "On the prescription route, the doc_ref match of a do_not_apply entry is itself the stop. `verify --target proposed` runs after the edit and before the commit."
+  },
+  {
+   "attack": "10 (added). Does the executable disjunct add anything over the repository's own gates?",
+   "result": "held",
+   "evidence": "ci.yml:86-138 runs pytest against a postgres:16 service with FIXFLOW_TEST_DATABASE_URL set. ORCHESTRATION-DESIGN Appendix A runs `pytest -p no:cacheprovider -q` with Postgres in every backend phase. §9 already says the test-id gate 'largely duplicates CI' for ex6. The distinct value lies in the blob disjunct, and that overlaps the ship plan's Routing rule that the reviewer 'lists every changed expected value, removed assertion and new skip or xfail' (SHIP-PLAN §0 Routing).",
+   "consequence": "Present KS-O12's value as a mechanical second layer for the 'forbidden change plus test edit' shape, not as the stop for the A2 change itself, which CI already catches."
+  },
+  {
+   "attack": "11 (added). F7 consistency: a declarative applies on a code-behaviour entry.",
+   "result": "fell",
+   "evidence": "F7 (§3.4, L267) says 'for a code-behaviour entry no text probe of either polarity may return applies'; only a data or config value that is itself the root cause may. ex6 is a code-behaviour entry, yet KS-O12's blob disjunct returns PRESENT/applies from a declarative compare. For do_not_apply the risk runs the other way (a false PRESENT costs a review, not an acted-on wrong fix), but the text states no carve-out.",
+   "consequence": "State the carve-out: in `proposed_change` mode for do_not_apply, a declarative PRESENT is a stop signal only and never authorises any action."
+  },
+  {
+   "attack": "12 (added). Cost of the declarative half, measured on the real repository (read-only).",
+   "result": "held",
+   "evidence": "blob-cost.mjs compared 8 paths (the 2 protective files plus 6 chain conftest paths) at three targets (1c546a3, HEAD, worktree): 24 argv-only git spawns took 1,077 ms on this box. On HEAD, every chain conftest except backend/tests/conftest.py is absent.",
+   "consequence": "none"
+  }
+ ],
+ "counter_evidence": "1. The rule contradicts itself. §3.4 L275 and §10 KS-6b L636 say 'for a do_not_apply entry the protective test's blob must equal the approved one or the verdict is inconclusive' (K12). The same paragraph at L275, and §12.7 L889, say a differing blob is PRESENT/applies (KS-O12). §4.1 L304 makes inconclusive behave as a miss, and §7.2 L445 stops only on 'verifies'. So the one Docker-free disjunct can legally produce no stop.\n2. Forbidden changes that leave both disjuncts false:\n   - A second door in a new file. The protective tests drive only `service.login` and `/api/auth/login` (test_service.py:102-132, test_identity_integration.py:86-104).\n   - A new conftest.py on the chain. test_service.py has none on HEAD (six absent paths, measured), and its xfail is reported as `<skipped type=pytest.xfail>` (pytest junitxml source), not `<failure>`.\n   - An added pytest.ini or pytest.toml, which per pytest's docs takes 'precedence ... even when empty'.\n3. Infrastructure makes the executable half inconclusive: it does not exist before KS-6b, sandbox_unavailable when Docker is down, and host_busy during the Appendix A backend gates.\n4. The executable disjunct duplicates CI (ci.yml:86-138) and the backend gate.\n5. The comparison is against 'the approved' blob. Unrelated commit 2f48529 edited test_identity_integration.py and conftest, which would make ex6 PRESENT or 'regression' on every later tree until a re-approval that no text assigns.\n6. §7.2's 'before applying' moment has no proposed tree, so it reads not_applies.",
+ "trace": "Not CONFIRMED. What survives: once KS-3 lands, a Docker-free comparison of the two protective files' blobs (test_service.py 43bafb9…, test_identity_integration.py 9a3a66a… at 1c546a3 and HEAD, measured) flags every in-file inversion, deletion, skip, xfail or assertion rewrite. That is the 'forbidden change plus test edit' shape CI cannot see. After KS-6b, with Docker up and not host_busy, running the protective tests on the proposed tree flags a forbidden change that makes them fail.",
+ "narrowed_claim": "For a do_not_apply entry, `ks verify --target proposed` returns PRESENT in two cases:\n(a) A protective test file's blob on the proposed tree differs from the approved blob. This is Docker-free (KS-3), file-level, and it holds only if the text resolves the K12 contradiction in favour of PRESENT.\n(b) After KS-6b, with Docker up and not host_busy, a protective test fails in the call phase against the proposed tree. CI and the backend gate already catch this case.\n\nThe stop of §7.2 then fires after the change has been written and before it merges, and only when someone runs `verify --target proposed` after a prescription lookup or a `--diff` warning.\n\nIt does not fire for:\n- a forbidden change outside the code the protective tests drive (a second door in a new file: D17 is the catch);\n- a neutraliser outside the protective test files (a new conftest on the chain, a pytest config file, the env-gated skip), which reads ABSENT or inconclusive;\n- any inconclusive verdict;\n- the moment before the change is written.",
+ "what_would_settle_it": "Residual points, settleable once the tools exist:\n- Run KS-3's runner on fixture diffs: the A2 reorder with the tests inverted; a new backend/conftest.py marking the two protective tests xfail; an added backend/pytest.ini; deleting or moving test_identity_integration.py; replaying 2f48529. Record the verdict and whether §7.2 stops each one.\n- After KS-6b, run the same set under pytest with Postgres and record junit outcomes. Expected: xfail gives `<skipped>`; a missing id gives exit 4.\n- Run them with Docker stopped and while fixflow-w1-* containers run.\n- Owner or author answers: whether ex6's ident handles will hand-name `create_access_token` and `is_locked`; whether P7b-1 adds its tests to the two protective files; and whether D17 may land before KS-6b.",
+ "amendments": [
+  {
+   "section": "§3.4 (test_id rules and the KS-O12 sentence, L275)",
+   "change": "Replace K12's do_not_apply clause and the tree-mode disjunct with the following. 'For a do_not_apply entry, in target_mode proposed_change, a protective test file whose blob on the proposed tree differs from its blob at the merge-base is PRESENT (a stop signal), never inconclusive. If the approved blob differs from the merge-base blob, the verdict is inconclusive(approval_stale). In target_mode tree a differing blob is inconclusive(approval_stale), reported by ks close as \"re-approval needed\", never as \"regression\"; only a failing protective test is applies.' Add: 'This declarative PRESENT is a carve-out from F7. For do_not_apply it only stops a change and never authorises an action.'",
+   "why": "L275 and L636 currently give the same condition two verdicts. Under inconclusive = miss, the K12 reading erases the only Docker-free stop. An approval-anchored compare also turns any legitimate edit (2f48529) into a permanent PRESENT or 'regression'."
+  },
+  {
+   "section": "§3.4 test_id rules; §9 'Test artifacts are produced by the code under test'; §10 KS-6b fault list",
+   "change": "'A skipped, xfailed, xpassed or deselected target test, a missing node id (pytest exit 4) or exit 5 is inconclusive(target_not_run), never ABSENT. The precondition is the set of conftest.py blobs on every directory from the pytest rootdir to each protective test, including absences, plus pytest.toml, .pytest.toml, pytest.ini, .pytest.ini, tox.ini, setup.cfg and the [tool.pytest*] table of pyproject.toml, all compared with the merge-base. The runner sets FIXFLOW_TEST_DATABASE_URL so the env-gated skip at backend/tests/conftest.py:65 cannot fire.' Add fault fixtures for a new chain conftest that xfails the target and for an added empty pytest.ini.",
+   "why": "junitxml writes skip and xfail as <skipped>. A new conftest or pytest.ini neutralises the test without touching any blob the text names. pytest_collection_modifyitems already exists on HEAD, so the hook cannot simply be listed."
+  },
+  {
+   "section": "§4.1 step 5; §7.2 (prescription bullet)",
+   "change": "'In proposed_change mode, inconclusive stops the change when its reason comes from the proposed change (protective file missing or moved, target_not_run, a changed precondition, a defined hook, a collection error). When its reason is infrastructure (no executable half before KS-6b, sandbox_unavailable, host_busy) it prints \"do-not-apply check not run\" and goes into the PR decisions journal for the reviewer. On the prescription route, a doc_ref exact match of a do_not_apply entry is itself the stop: the agent does not write the prescribed change. verify --target proposed runs after any edit and before the commit, and its verdict is copied into the PR journal.'",
+   "why": "Read literally, §7.2 stops only on 'verifies' and runs before any proposed tree exists. That fails open on exactly the class KS-O9 calls recall-first."
+  },
+  {
+   "section": "§7.2 and §9 ('The do-not-apply class is only as good as its diff arm')",
+   "change": "Qualify 'stops the change' as follows: 'proposed_change stops only forbidden changes that edit the protective test files (KS-3, Docker-free) or make the protective tests fail (KS-6b, which CI and the backend gate already catch); a forbidden change outside the code the protective tests drive, such as a second door in a new file, is never PRESENT.'",
+   "why": "For the critique's own example, KS-O12 returns not_applies. Only D17, or a hand-named ident handle, catches it."
+  },
+  {
+   "section": "§11 D17; §12.7 KS-O6",
+   "change": "Drop 'when ex6 is verified'. The caller-pin pytest needs no store, so offer it as its own small repository PR whenever the owner wishes, before P7b-1. P7b-1 updates the pin list under its Opus review.",
+   "why": "D17 is the only deterministic catch for the second door, and it currently waits on KS-6b behind a KS-5 go. P7b-1 builds that door."
+  },
+  {
+   "section": "§4.1 step 4; §7.1 (show row); §9 (fix withholding)",
+   "change": "'For do_not_apply entries the fix field (the prohibition and the safe alternative) is never withheld; their negatives are bannered \"prohibition: the phase's Opus reviewer rules\", not UNVERIFIED.'",
+   "why": "Withholding guards against acting on a wrong fix, and a prohibition authorises no action. ex6's reason already prints on a candidate through diagnosis and negatives, so the withholding protects nothing."
+  },
+  {
+   "section": "§7.6 Routing sentence (KS-O11); §7.8",
+   "change": "Append: 'and for each do-not-apply warning runs ks verify <entry> --target proposed --diff <merge-base> at the PR head SHA during the backend gate and names the verdict.'",
+   "why": "Gate runs are host-local (critic K3), so an author's PRESENT never reaches the reviewer. The reviewer is the only actor that runs during the Docker gate."
+  },
+  {
+   "section": "§3.4 (target definition); §4.1 step 5 (KS-F19)",
+   "change": "'proposed = the working tree when it has uncommitted or untracked files, else HEAD. The runner refuses when an untracked file lies under the slice root or matches **/conftest.py or a pytest config name; for do_not_apply that refusal is a stop. Gitlinks are refused.'",
+   "why": "Scratch demo: `git stash create` leaves out a new untracked conftest, so the same change reads PRESENT from the worktree and ABSENT from the branch head."
+  },
+  {
+   "section": "§5.3; §7.3; §7.4",
+   "change": "'A PR that edits a do_not_apply entry's protective test file carries a ks revise of that entry's approved blob, approved by that PR's Opus reviewer; ks close reports stale approvals as their own count.'",
+   "why": "There is no trigger or actor for re-approval. An unrelated edit (2f48529) would otherwise leave ex6 stopped, or 'regression', at every close."
+  },
+  {
+   "section": "§10 KS-3 (fault list and Done-when); §10 KS-5 (diff arm)",
+   "change": "KS-3: list the ex6 fixture's expected verdicts separately from 'every fault injection returns inconclusive' (proposed PRESENT, HEAD not_applies). Add fixtures: protective file deleted; protective file moved with identical bytes; a new chain conftest marking xfail; an added pytest.ini; an edit to a non-protective test in the same file; a 2f48529 replay. KS-5: run verify --target proposed on each synthetic forbidden diff, and state that before KS-6b proposed_change is file-blob equality only.",
+   "why": "KS-3's done-when contradicts its own ex6 fixture, and the pilot never exercises proposed_change."
+  }
+ ],
+ "changes_a_127_ruling": "Two rulings in §12.7 change.\n\nKS-O12 is narrowed:\n- K12's 'blob must equal the approved one, else inconclusive' must be reworded so it does not cancel KS-O12's PRESENT. The fix belongs in §3.4 and in KS-6b.\n- The comparison is against the merge-base. A stale approval is its own inconclusive state.\n- An inconclusive verdict caused by the proposed change stops the change.\n- On the prescription route, the doc_ref match is the stop.\n- §7.2's 'stops the change' is qualified to edits of the protective test files. It does not cover second doors or neutralisers outside those files.\n\nThe premise of the 'Missed by the critique' high item (that the reason is withheld until applies) is corrected: §7.1 already prints diagnosis and negatives on a candidate. What remains true is that the fix field of a do_not_apply entry is withheld, and it should never be.\n\nKS-O6/D17 changes too: the caller-pin pytest should not wait for 'ex6 verified' (KS-6b). It is the only catch for the second door, and P7b-1 builds that door.",
+ "could_not_run": [
+  "pytest against a proposed tree. No pytest exists on this box (the bundled Python 3.12.14 has neither pytest nor pytest-asyncio), installing is forbidden, and Docker Desktop was not started. The junit outcomes for skip, xfail and deselect, and exit code 4, are taken from pytest's own docs and source, not executed.",
+  "Any `ks verify --target proposed` measurement. tools/ks, the runner, the store and ex6's entry do not exist.",
+  "Whether the KS-4 author will hand-name `create_access_token` or `is_locked` as ex6 ident handles. Mechanical derivation does not produce them.",
+  "Whether P7b-1 will put its tests in the two protective files. It is a future ship phase, and the claim is inferred from its Scope.",
+  "Whether host_busy actually coincides with ks verify runs during a backend phase. Relative timing is unknowable before both exist.",
+  "pytest-asyncio's behaviour when an added pytest.ini drops asyncio_mode=auto. Not executable here."
+ ],
+ "commands_run": [
+  "sed -n over docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md §0, §3.1-§3.7, §4, §5, §7, §9, §10, §11, §12.5-§12.7",
+  "grep -n over docs/program/evidence/knowledge-store/critique-2026-11-03/verdicts.txt (proposed_change, K12, second door) and sed -n 95-130, 420-430",
+  "node -e extracting target_mode/proposed_change context from evidence/knowledge-store/panel/architect-A.md",
+  "cat -n backend/app/features/identity/service.py backend/app/features/identity/security.py; sed -n on test_service.py, backend/tests/test_identity_integration.py, backend/tests/conftest.py",
+  "git grep -n -w 'create_access_token|verify_pin|is_locked' -- backend (non-test callers)",
+  "git show --stat 1c546a3; git show 1c546a3 -- service.py test_identity_integration.py; grep -o identifiers in +/- lines of the fix diff",
+  "per-identifier grep -c over the two protective files, conftest and the fix diff",
+  "git log --oneline origin/main -- <protective files, conftest, pyproject> (counts; 368 main commits; conftest 11; protective files 4)",
+  "git for-each-ref --sort=-committerdate (ref freshness)",
+  "git show --stat 2f48529 and its diff of test_identity_integration.py",
+  "git ls-files | grep conftest/pytest.ini/setup.cfg/tox.ini; git ls-files -s | grep ^160000 (0 gitlinks)",
+  "git show docs/orchestration-design-2026-10:docs/program/SHIP-PLAN-2026-11.md (to scratch), P7b-1, P1, Routing, sessions lines",
+  "git show docs/orchestration-design-2026-10:docs/program/w2/O-05-design.md (item 4)",
+  "git show docs/orchestration-design-2026-10:docs/ORCHESTRATION-DESIGN-2026-10.md Appendix A (fixflow-w1-* gate, pytest with Postgres)",
+  "grep host_busy in design and panel/architect-B.md; grep pytest/postgres in .github/workflows/ci.yml; sed backend/pyproject.toml",
+  "C:/Users/User/.cache/codex-runtimes/.../python.exe -I -B -c 'import pytest' (absent)",
+  "node scratch-repo-2/untracked-demo.mjs (throwaway git repo in scratch: stash create omits a new untracked conftest; protective blob equal on worktree and branch)",
+  "node scratch-repo-2/blob-cost.mjs <repo> (read-only rev-parse/hash-object over 8 paths × 3 targets: 1,077 ms; chain conftests absent)",
+  "WebFetch docs.pytest.org customize (config precedence), exit-codes, raw pytest junitxml.py (skip/xfail representation)"
+ ],
+ "sources": [
+  "docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md L267 (F7), L275 (§3.4 K12 and KS-O12), L304 (§4.1 step 5), L445 (§7.2), §7.1 show row, L636 (KS-6b K12), L754 (KS-A4 host_busy), L889 (§12.7 KS-O12), §5.5, §9, §10 KS-3/KS-5/KS-6b, §11 D17",
+  "docs/program/evidence/knowledge-store/critique-2026-11-03/verdicts.txt (point 2 verdict L95-118; missed-by-critique item L424)",
+  "docs/program/evidence/knowledge-store/panel/architect-A.md (check_spec target_mode; ex6 'Check (target_mode proposed_change)')",
+  "backend/app/features/identity/service.py:91-116; security.py:33-62",
+  "backend/app/features/identity/tests/test_service.py:12, 40-54, 102-132 (19 tests)",
+  "backend/tests/test_identity_integration.py:86-104 (9 tests)",
+  "backend/tests/conftest.py:65-72 (pytest_collection_modifyitems env-gated skip)",
+  "backend/pyproject.toml [tool.pytest.ini_options]; .github/workflows/ci.yml:86-138",
+  "git commits 1c546a3 (ex6 fix), 2f48529 (unrelated edit of a protective file and conftest)",
+  "docs/orchestration-design-2026-10:docs/program/SHIP-PLAN-2026-11.md (§0 Routing; P7b-1)",
+  "docs/orchestration-design-2026-10:docs/program/w2/O-05-design.md item 4 (known-device bypass)",
+  "docs/orchestration-design-2026-10:docs/ORCHESTRATION-DESIGN-2026-10.md Appendix A (fixflow-w1-* backend gate running pytest)",
+  "https://docs.pytest.org/en/stable/reference/customize.html (pytest.ini precedence 'even when empty'; never merged)",
+  "https://docs.pytest.org/en/stable/reference/exit-codes.html (4 usage/conftest load error; 5 no tests)",
+  "https://raw.githubusercontent.com/pytest-dev/pytest/main/src/_pytest/junitxml.py (append_skipped: <skipped type=pytest.skip|pytest.xfail>; no element for deselected)",
+  "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-knowledge-store-research-9c609c\\f3bbe503-2a20-4258-976b-7d457d3bf63a\\scratchpad\\refute-v13\\scratch-repo-2\\untracked-demo.mjs",
+  "C:\\Users\\User\\AppData\\Local\\Temp\\claude\\C--Users-User-Documents-projects-EMS-workshop1--claude-worktrees-knowledge-store-research-9c609c\\f3bbe503-2a20-4258-976b-7d457d3bf63a\\scratchpad\\refute-v13\\scratch-repo-2\\blob-cost.mjs"
+ ]
+}

@@ -1,0 +1,235 @@
+=== scoring | scoring: how to score the graph and relational answers, and the value they carry, fairly. Covers the test protocol and the ground truth this repo can supply.
+findings 12 favours {"neither":11,"depends":1}
+BUILD RECS:
+  - Use one shared extractor that writes a single typed node/edge set loaded into both stores, so the comparison tests storage and queries, not extraction quality.
+- Nodes: file, symbol, route, table, doc section.
+- Edges: contain, import, call, HTTP route linking client to backend, tested-by, migration-to-model, doc-cites, and co-change from ancestor commits with time decay.
+  - Store spans at symbol granularity (file, start line, end line), so either arm can return only the changed definition instead of whole files. Granularity is how 'the data structure changes the answer' gets measured under a token budget.
+  - Make co-change an available edge type in both stores. On its own it reaches recall@10 of about 0.54 here. A graph without it competes against a stronger relational table, which is an unfair comparison.
+  - Invest in typed cross-runtime edges (client URL literal to route decorator). Cross-runtime tasks are where the baselines are weakest (COxPR@10 0.335), so that is where a graph's typed traversal could show value.
+  - Build the graph arm as a hybrid of text search and graph traversal, not traversal alone. In LocAgent's ablation, removing text search cost about 18 points and removing traversal about 5.
+  - Every answer should carry a frontier or unresolved list, so an empty result is never read as 'no dependency' (A6-06).
+  - Implement the same retrieval designs (k-hop typed BFS, PPR, hybrid BM25-then-graph) in both engines as arm (d). Their ranked outputs must be identical; if they are not, that is a bug to fix before scoring.
+TEST RECS:
+  - Run these steps as scripts at zero model tokens:
+1. Freeze main at a31924a and the split date at 2026-07-01, and hash the config.
+2. Build T1, T1x and T2 from task_pool_commits.py. Get symbol references from git diff -U0 hunks mapped to their enclosing definitions at the parent (Python ast; the TypeScript compiler from technician-app/node_modules). Build T3 and T6 from doc_chains.json and doc_symbols.json, and T4 from the register-to-fix map.
+3. Seal tasks.jsonl and references.jsonl with SHA-256; the build scripts get no read access to them.
+4. For each parent: git archive it, extract the facts, cache them by SHA, and log every path read.
+5. Load the facts into the relational and graph arms; implement arm (a) and the (d) designs.
+6. Run the sweep on the tune split under an equal configuration budget per arm. Pick by M1 with the parsimony rule (simplest configuration within 1 standard error of the best), then freeze the configuration hash.
+7. Check (d) equivalence on the tune split.
+8. Run the held-out split once.
+9. Unseal the references, score by script, and mechanically check that returned spans exist.
+10. Compute statistics.
+11. Audit the read logs.
+  - Primary metric: symbol-evidence recall at an 8k-token budget on T1 held-out, averaged per seed and then per commit. Pack results ARB-style: path header plus content, last item cut at the budget, headers counted, one deterministic tokenizer for every arm.
+  - Secondary metrics:
+- recall at 2k, 4k and 16k tokens, plus file-hit recall;
+- token precision;
+- tokens to reach 80 % and 100 % recall;
+- scripted lookups to 80 % recall (convertible to model steps at 6.6 s each);
+- MRR and nDCG@10;
+- value per token: area under the recall-vs-tokens curve from 0 to 16k;
+- prerequisite loss on T3 and T4;
+- build time, incremental update time, p50/p95 latency cold and warm, bytes on disk, RAM.
+  - Sweep on the tune split only:
+- hops 1-5 and PPR alpha 0.5, 0.7, 0.85;
+- edge-type sets added cumulatively;
+- ranking: BFS, degree-normalised, PPR, co-change weight, BM25, hybrid;
+- granularity: file, symbol, chunk.
+Report the full hop curve, not just the best point.
+  - 'Tuned on both sides' means:
+- the same facts for both arms;
+- the same number of configurations tried on the tune split;
+- each engine's idiomatic indexes and settings (SQLite: indexes, ANALYZE, WAL, FTS5 with recursive CTEs; graph engine: id indexes and its library algorithms);
+- the same packaging and tokenizer;
+- no per-task rules.
+  - Leakage controls:
+- build every store at the parent commit, with history from ancestors only;
+- drop same-PR sibling commits from co-change (primary), and report with siblings kept as secondary;
+- exclude files added in the test commit, and commits with more than 30 files;
+- never put the commit message in the query;
+- for T3 and T4, build before the doc's commit and remove the doc;
+- run a read-log audit.
+  - Statistics:
+- the unit is the commit, paired across arms, with PR clusters;
+- 10k-resample cluster-bootstrap 95 % CIs and sign-flip permutation p-values; no CLT intervals;
+- TOST with a smallest effect of interest of ±0.05;
+- Holm correction for secondary metrics;
+- report the realised paired SD.
+  - Decision rules:
+- The graph wins only if: the CI of the difference is above 0; median tokens per answer are no higher; prerequisite loss is no worse; and the sign is the same in at least 3 of the 4 sets T1, T2, T3, T4.
+- Relational wins under the mirror conditions.
+- 'No difference' if the 90 % CI lies within ±0.05.
+- Otherwise inconclusive: report 'no evidence either way at this size'. With about 75 held-out commits this outcome is likely.
+  - Treat DIR and COxPR as floors that every arm must beat. Do not count them as wins for either store.
+  - Steps that need a model in the loop:
+- annotate needed-but-unchanged context on 30-50 held-out commits (ContextBench style, with a human audit);
+- blind real-task replays under the A6-10 budget (16k tool-result tokens, 30 calls, 2 or more runs per arm), each arm as the only retrieval tool, scored against sealed keys;
+- any rewriting of commit subjects into task statements written as if before the fix.
+OPEN:
+  - Which graph engine is arm (c), and is the owner willing to install it? The decision is the owner's.
+  - Should PostgreSQL in Docker be the established relational engine instead of SQLite (node:sqlite)? Pulling the image is an install, so the owner decides.
+  - Should commits that exist only on other branches (459 commits on all refs versus 368 on main) be added to raise n? Their quality and their overlap with main are not checked.
+  - Is a 0.05 recall difference at an 8k budget the effect worth acting on? The owner should confirm the smallest effect of interest before sealing.
+  - The register-to-fix mapping for #168 rests on the PR title, not on item ids in the commit body. It needs confirming before T4 is sealed.
+  - Tokenizer: calibrate chars/4 against transcript usage fields, or adopt an ARB-style regex tokenizer?
+NOT COVERED:
+  - I could not write report.md to the lane folder: the harness blocked report files from subagents. The full report is in this output. The scripts and their JSON outputs are in C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/research/scoring/: history_stats.py, task_pool.py, task_pool_commits.py, doc_chains.py, doc_symbols.py, session_lookups.py, baseline_probe.py and the *.json files.
+  - Symbol-level references (changed hunk mapped to its enclosing definition) are designed but not computed.
+  - The full Zimmermann ICSE 2004 paper could not be read (the PDF did not parse); snippet only.
+  - SpIDER (arXiv 2512.16956) and the paired-noise paper (arXiv 2512.21326) were seen in search snippets only.
+  - Graph engine choice, graph construction and algorithm design belong to other lanes and are not covered here.
+  - Sessions from the Django project were not counted; this lane covers the EMS-workshop1 folders only.
+  - The paired SD is measured between two cheap rankers, not between the real arms; the realised SD may be lower.
+TABLE History ground truth on main (non-merge commits = 233 | PR units = 155)
+  | files per unit, median/mean/p90/max: 4/7.4/16/80 | 6/10.2/22/80
+  | at least 2 production code files: 147 (63.1 %) | 106 (68.4 %)
+  | cross-runtime (backend with web or mobile): 27 (11.6 %) | 22 (14.2 %)
+  | code with tests: 126 (54.1 %) | 94 (60.6 %)
+  | migration with code: 43 (18.5 %) | 39 (25.2 %)
+  | fix subject: 48 (20.6 %) | 27 (17.4 %)
+  | fix with at least 2 code files: 29 (12.4 %) | 20 (12.9 %)
+  | no code, test or migration: 46 (19.7 %) | 33 (21.3 %)
+  | usable tasks (2-30 existing ctm files): 140 (65 June / 75 July-Aug) | 96 (58 / 38)
+TABLE Probe at the parent commit: mean recall per commit
+  | split | n | DIR@10 | COxPR@10 | CO@10 | COxPR@20 | paired SD (COxPR-DIR)
+  | all | 140 | 0.401 | 0.537 | 0.544 | 0.642 | 0.263
+  | tune (June) | 65 | 0.417 | 0.548 | 0.548 | 0.653 | 0.225
+  | held-out (July-Aug) | 75 | 0.387 | 0.527 | 0.540 | 0.632 | 0.293
+  | fixes | 30 | 0.487 | 0.588 | 0.605 | 0.671 | 0.404
+  | cross-runtime | 26 | 0.279 | 0.335 | - | - | -
+TABLE Task sets, sealed before build (size tune/held-out)
+  | T1 co-change completion (PRIMARY): seed file and symbol -> other existing changed ctm files and changed definitions | 140 commits, 806 pairs (65/75)
+  | T1x cross-runtime subset | 26 (17/9), descriptive only
+  | T2 code -> existing tests changed in the same commit | 96 (47/49)
+  | T3 documented chains: first named file or symbol -> the other named ones; built at the commit before the doc, doc excluded | 36
+  | T4 defect register item -> files of its fix commit | about 10-12
+  | T5 session doc lookup: search pattern -> file opened next | 139 distinct, descriptive
+  | T6 analogue: defect class -> in-repo correct pattern | about 10
+TABLE Commits needed (paired SD 0.29, 80 % power, alpha 0.05 two-sided)
+  | difference 0.05 -> about 264 commits
+  | difference 0.10 -> about 66
+  | difference 0.15 -> about 29
+  | 75 held-out commits -> minimum detectable difference about 0.094 (about 0.05 if the paired SD falls to 0.15)
+FINDINGS:
+  * [neither/high] main has 368 commits: 233 non-merge commits and 135 merges, which make 155 first-parent PR units. Product history on main runs 2026-05-31 to 2026-08-03; later commits on other refs are document work. :: Non-merge commits: median 4 files (mean 7.4, p90 16, max 80).
+- 63.1 % change 2 or more production code files.
+- 11.6 % cross runtimes (backend code together with web or mobile code).
+- 54.1 % change code and tests together.
+- 18.5 % change a migration together with code.
+- 20.6 % are fixes (48). 12.4 % are fixes touching 2 or more code files.
+- 19.7 % touch no code, test or migration file.
+
+PR units: median 6 files.
+- 68.4 % change 2 or more code files.
+- 14.2 % cross runtimes.
+- 60.6 % change code with tests.
+- 17.4 % are fixes. (history_stats.py / history_stats.json (git log main, zero tokens))
+  * [neither/high] 36 % of the code, test and migration files touched in a PR were created in that same PR, so no store built at the parent can return them. The usable task pool is 140 commits (806 seed-target pairs). :: At PR level, 447 of 1,231 code, test and migration (ctm) files were added in the same unit.
+
+Usable commit-level tasks have 2 to 30 ctm files that already existed at the parent: 140 commits.
+- By date: 65 before 2026-07-01, 75 on or after.
+- 30 are fixes (10 tune, 20 held-out).
+- 26 cross runtimes (17 / 9).
+- 96 change code together with an existing test (47 / 49).
+- 45 have sibling commits from the same PR in the parent's history.
+
+The PR-level pool is 96 units (58 / 38). (task_pool_commits.py, task_pool.py)
+  * [neither/high] A plain co-change table, which either store can hold, already reaches recall@10 of about 0.54. Directory proximity alone reaches about 0.40. Any graph or relational arm must beat these two floors. :: Both rankers were built strictly at each task's parent. Results by split:
+- All tasks: DIR@10 0.401, COxPR@10 0.537, CO@10 0.544, DIR@20 0.526, COxPR@20 0.642.
+- Held-out (July and August): DIR@10 0.387, COxPR@10 0.527.
+- Cross-runtime tasks (26): COxPR@10 0.335, DIR@10 0.279. These are the weakest tasks, so typed HTTP edges could add the most value here.
+
+Same-PR sibling leakage is small: CO minus COxPR on held-out is +0.013, CI [-0.004, 0.030]. (baseline_probe.py / baseline_probe.json)
+  * [neither/medium] The measured paired-difference SD per commit is 0.23 to 0.29. With 75 held-out commits the minimum detectable difference is about 0.094 recall at 80 % power, alpha 0.05. :: Measured paired difference, COxPR@10 minus DIR@10:
+- All tasks: mean +0.136, SD 0.263, 95 % CI [0.093, 0.180].
+- Held-out: SD 0.293.
+- Fix commits: SD 0.404.
+
+Commits needed at SD 0.29: about 264 to detect 0.05, about 66 for 0.10, about 29 for 0.15. Main does not have 264 usable commits.
+
+If the two arms are strongly correlated (same facts, similar design), the SD falls. At SD 0.15, 75 commits detect about 0.05. (baseline_probe.json; formula from Miller 2024 eq. 9-10)
+  * [neither/medium] The defect docs and CLAUDE.md supply 73 documented items, of which 36 connect 2 or more files (named directly or through a named symbol). Only about 10-12 of them map to a fix commit on main. :: lifecycle-audit:
+- 11 items, all naming at least 1 code file.
+- 9 connect 2 or more files.
+- 3 cross runtimes.
+- 29 symbols resolve to a definition.
+
+HANDOFF section 4:
+- 42 items, 14 naming at least 1 code file.
+- 18 connect 2 or more files.
+- 1 crosses runtimes.
+- 45 symbols resolve.
+
+CLAUDE.md invariants:
+- 20 items, 11 naming at least 1 code file.
+- 9 connect 2 or more files.
+- 33 symbols resolve.
+
+Many items name a symbol and a slice rather than a file, so symbol-level resolution is needed.
+
+Register items with a fix commit on main:
+- #168 2fe77f5: A1, A6 and the non-ASCII rows. This is inferred from the PR title; the commit body lists no item ids.
+- #169 1c546a3: A2.
+- #170 da988e2: C1 (doc_chains.py, doc_symbols.py; docs/lifecycle-audit-followups-2026-07.md; docs/HANDOFF-2026-07-28-open-work.md section 4)
+  * [neither/medium] This repo's recorded sessions can supply about 139 search-then-read lookup pairs. Most are document lookups; only about 26 are code lookups. :: 1,050 transcript files in 5 folders, 23,046 tool calls.
+
+Reads by target:
+- product code 169, in 28 transcripts;
+- repo docs 25;
+- docs/program 600;
+- other in repo 132;
+- outside the repo 1,541.
+
+Grep calls on code: 102. Bash searches: 6,792.
+
+Search-then-read pairs (a search whose result names a file read within the next 6 calls): 181, of which 139 are distinct.
+- The opened file is in docs/program 106 times, other in repo 48, code 26, repo docs 2.
+
+Opened is not the same as needed. docs/program is untracked, so the corpus cannot be rebuilt as it stood at session time. These tasks are descriptive only. (session_lookups.py / session_lookups.json)
+  * [depends/high] In LocAgent's ablation, multi-hop graph traversal added about 5 points over 1 hop, but removing text search cost about 18 points. A fair graph arm is a hybrid of text search and graph traversal, and the hop sweep matters. :: LocAgent builds a graph with 4 node types (directory, file, class, function) and 4 edge types (contain, import, invoke, inherit). Its TraverseGraph tool takes start entities, direction, hops, entity types and relation types, and returns a tree.
+
+Function Acc@10 (fine-tuned Qwen-2.5-7B):
+- full system 71.53;
+- hops fixed at 1: 66.79;
+- without TraverseGraph: 66.06;
+- contain edges only: 66.42;
+- without SearchEntity: 53.28;
+- without BM25: 60.22.
+
+Acc@k requires all ground-truth locations to appear in the top k. Loc-Bench was built to avoid contamination. (Chen et al., LocAgent, arXiv 2503.09089 v2 (ACL 2025))
+  * [neither/high] Agent Retrieval Bench gives a ready token-budgeted metric (BCY@B) and change-evidence gold labels that match this repo's task types. :: BCY@B packing: ranked files are packed greedily, each as a path header plus content; the last file is cut at the budget, and headers count against the budget.
+- A gold file counts as exposed if at least 1 content token is visible.
+- Tokens are counted with a deterministic regex code tokenizer.
+- Budgets are 4k to 32k, with 8k as the main point.
+
+Gold labels come from change evidence (code2test, edit2ripple, trace2code). The corpus is frozen at the pre-fix base commit, and queries exclude patches and gold paths.
+
+Result: no retrieval family dominates; RepoMap is best at 8k. (Qin, Xie, Agent Retrieval Bench, arXiv 2607.24882)
+  * [neither/high] ContextBench shows that retrieval recall does not prove a model uses what it retrieved, and that elaborate agent scaffolds do not consistently beat a simple baseline. :: Gold context is annotated by experts at file, block and line level, and checked for sufficiency with GPT-5: 1,136 tasks.
+- Block-level F1 stays below 0.45; line-level F1 below 0.35.
+- Higher recall correlates with higher Pass@1.
+- Agents often retrieve gold context but do not use it. (Li et al., ContextBench, arXiv 2602.05892 v3)
+  * [neither/high] Paired per-question differences and clustered errors are required, and CLT intervals are unreliable below a few hundred items. This test has at most 140 tasks, so it needs bootstrap or permutation intervals. :: Miller recommends paired-difference standard errors (eq. 7), clustered standard errors (eq. 4) and power analysis (eq. 9-10).
+
+Bowyer et al. (ICML 2025 position paper) find that CLT intervals dramatically underestimate uncertainty below a few hundred datapoints. (Miller arXiv 2411.00640 (fetched HTML); Bowyer, Aitchison, Ivanova arXiv 2503.01747 (abstract page only))
+  * [neither/high] The A6-10 validation contract (frozen, never run) supplies the trial rules to reuse. All of them carry over. :: A6-10 rules:
+- sealed references, SHA-verified (97 quotes);
+- 3 arms, 2 runs per arm per case, 30 runs in all, fresh workers;
+- an equal budget of 16,000 tokens of tool-result material (chars/4) and 30 calls per run;
+- a blinded evaluator scoring weighted obligations;
+- a mechanical citation check;
+- 'better' needs a 0.10 mean difference in the same direction in at least 4 of 5 cases;
+- fewer tokens with a missing prerequisite is not a win;
+- development cases are not holdouts.
+
+The runs/ folder is empty.
+
+The fit review later added:
+- a no-history clone cut at the frozen commit;
+- a key held back until after judging;
+- a read log proving nothing past the freeze was opened;
+- a 'not comparab (docs/program/evidence/harness-bottlenecks/sweep-cards.txt:700-706; fit/review.txt:319)
+  * [neither/low/snippet] Mining version history predicts co-changes: ROSE predicted about 26 % of further files, with a 64 % top-3 hit. :: Read from search snippets only; the PDF's compressed text could not be read here. Supports co-change as a baseline and as an edge type. (Zimmermann, Weissgerber, Diehl, Zeller, ICSE 2004)

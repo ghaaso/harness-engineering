@@ -1,0 +1,505 @@
+Do We Need Specialized Graph Databases? Benchmarking
+          Real-Time Social Networking Applications
+
+Anil Pacaci, Alice Zhou, Jimmy Lin, and M. Tamer Özsu
+
+            David R. Cheriton School of Computer Science
+                           University of Waterloo
+
+                        Waterloo, Ontario, Canada
+        {apacaci,r32zhou,jimmylin,tamer.ozsu}@uwaterloo.ca
+
+ABSTRACT                                                                                    in robust RDBMS technology, and (ii) its dominance in data ana-
+                                                                                            lytic ecosystems in enterprise settings. Studies show that special-
+With the advent of online social networks, there is an increasing                           purpose graph analytics engines do not necessarily provide the
+demand for storage and processing of graph-structured data. Social                          best performance across all scenarios. Indeed, relational models can
+networking applications pose new challenges to data management                              provide competitive performance for various graph analytic tasks,
+systems due to demand for real-time querying and manipulation of                            especially on single node, out-of-memory settings [5, 8].
+the graph structure. Recently, several systems specialized systems
+for graph-structured data have been introduced. However, whether                               Similar arguments can be made for OLTP-like graph workloads;
+we should abandon mature RDBMS technology for graph databases                               however, there are no comprehensive studies of existing systems
+remains an ongoing discussion. In this paper we present an graph                            for real-world, dynamic graph workloads such as online social net-
+database benchmarking architecture built on the existing LDBC                               works. Many studies focus on comparisons between di erent graph
+Social Network Benchmark. Our proposed architecture stresses the                            database engines and graph analytics systems [7, 10]. Although
+systems with an interactive transactional workload to better simu-                          there are some studies comparing graph databases with relational
+late the real-time nature of social networking applications. Using                          models [2, 3, 6, 11], the real-time aspect of graph applications is
+this improved architecture, we evaluated a selection of specialized                         mostly ignored and more complex graph traversals are not tested.
+graph databases, RDF stores, and RDBMSes adapted for graphs. We
+do not nd that specialized graph databases provide de nitively                                 Our objective in this paper is twofold: (i) to propose and imple-
+better performance.                                                                         ment an improved graph database benchmarking architecture for
+                                                                                            real-time transaction processing and (ii) to present an experimental
+1 INTRODUCTION                                                                              comparison of various graph data management solutions in online
+                                                                                            social networking scenarios. We decided to adopt the LDBC Social
+Graphs provide an intuitive abstraction to model objects and re-                            Network Benchmark Interactive Workload [4] due to the realistic
+lationships. The highly-connected structure of many natural phe-                            characteristics of its generated data and queries. By integrating
+nomena, such as road, biological, and social networks make graphs                           Kafka into the existing workload driver and ingesting updates from
+an obvious choice in modelling. Recently, storage and processing                            a Kafka queue, data ingestion and update streams can be processed
+of such graph-structured data have attracted signi cant interest                            in real-time to better re ect the streaming nature of updates. Using
+from both industry and academia and have led to the development                             the proposed architecture, we study the performance of various
+of many graph analytics systems and graph databases. Graph ana-                             data management solutions for online social networking workloads.
+lytics systems such as Pregel, Giraph, and PowerGraph specialize                            Our study is most similar to [2] in terms of objectives; however, we
+in OLAP-like batch-processing of graph-structured data on large                             believe that adopting a more realistic social graph and a stream-
+computing clusters. Graph databases, on the other hand, focus on                            ing transactional workload better represents the characteristics of
+real-time querying and manipulation of entities, relationships, and                         present-day social networking applications.
+the graph structure. Unlike RDBMSes, graph databases treat rela-
+tionships as rst class citizens and enable e cient traversals by                               Our experiments show that, just as in the case of graph analyt-
+native graph storage and index-free adjacency list access.                                  ics [5], specialized graph databases do not necessarily provide the
+                                                                                            best performance across all scenarios. RDBMSes exhibits competi-
+   Despite recent interest in specialized graph analytics systems,                          tive performance under an interactive transactional workload in
+some studies favour the use of RDBMSes for graph analytics for                              single node deployments.
+two main reasons: (i) over thirty years of research and experience
+                                                                                               The contributions of this paper can be summarized as follows:
+
+Permission to make digital or hard copies of all or part of this work for personal or       · We implement a Kafka-based update mechanism on top of the
+classroom use is granted without fee provided that copies are not made or distributed          LDBC SNB Interactive Workload to better re ect the real-time,
+for pro t or commercial advantage and that copies bear this notice and the full citation       streaming aspect of social networking applications.
+on the rst page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,     · We introduce a reference implementation for the LDBC SNB
+to post on servers or to redistribute to lists, requires prior speci c permission and/or a     Interactive Workload in the Gremlin query language that can be
+fee. Request permissions from permissions@acm.org.                                             executed against any TinkerPop3-compliant graph database.
+
+GRADES'17, Chicago, IL, USA                                                                 · We conduct an extensive performance analysis of various data
+                                                                                               modelling approaches (RDBMS, graph API over RDBMS, RDF
+© 2017 ACM. 978-1-4503-5038-9/17/05. . . $15.00
+DOI: http://dx.doi.org/10.1145/3078447.3078459
+GRADES'17, May 19, 2017, Chicago, IL, USA                             Anil Pacaci, Alice Zhou, Jimmy Lin, and M. Tamer Özsu
+
+   store, and specialized graph database) using our proposed bench-       LDBC     LDBC Workload Driver
+   mark architecture to investigate their performance for social          Social
+   networking applications.                                             Network    Query parameter generator
+                                                                       Generator
+2 BACKGROUND                                                                       reads        updates
+                                                                      Data Loader         Kafka
+2.1 Graph Databases
+                                                                                   Operation executor
+Although traditional relational databases are su cient to repre-
+sent and process graph-structured data, they fail to provide intu-                                                      SUT
+itive interfaces and e cient operations for graph queries such as
+path queries, neighbourhood traversal, etc. Representing highly-      Figure 1: Our benchmarking architecture, integrating Kafka
+connected data in the relational model results in a large amount of   into the LDBC Workload Driver. Our contributions are high-
+many-to-many relations, which can produce complex, join-heavy         lighted.
+SQL statements for graph queries. By focusing not on the entities
+but rather the relationships among the entities, graph databases and  synthetic data generator simulates the user activity of a social net-
+RDF stores can o er e cient processing of graph operations like       work for a given period of time and generates a social network
+reachability queries and pattern matching. RDF stores represent       graph with realistic distributions and correlations. The generated
+graphs as collections of triples, whereas graph databases mostly      dataset contains two parts: (i) a static part which is loaded into the
+adopt the adjacency list format and store adjacency information       system as an intermediate state of the social network, (ii) updates
+next to each entity. This enables graph databases to provide e -      which are played out on this intermediate state.
+cient graph-centric operations such as retrieving the neighbours of
+a vertex. Unlike in the relational model, the performance of such        The LDBC SNB Interactive Workload speci es a set of read-only
+operations is not a ected by the data size, i.e., number of vertices  traversals that touch a small portion of the graph and concurrent
+in the graph.                                                         update transactions that modify the social network's structure. The
+                                                                      majority of the read-only traversals are simple, common social
+   Most existing graph databases such as Neo4j, TitanDB, OrientDB     networking operations that involve transitive closure, one-hop
+employ the property graph model, which is a directed, edge-labeled    neighbourhood, etc. The rest of the read-only traversals are complex
+multi-graph with an arbitrary number of key-value pairs attached to   operations that are usually beyond the functionality of real-world
+vertices and edges. Unlike RDF databases which have a structured,     social network systems due to their online nature [4].
+standardized query language called SPARQL, graph databases lack
+a standardized interface. Although most vendors have proprietary         The LDBC SNB Interactive Workload uses a dependency tracking
+APIs and languages such as Neo4j's Cypher, there exist open-source    strategy to parallelize its highly-connected workload. In a nutshell,
+e orts to unify the graph processing space; the most-prominent        each update transaction is scheduled to be executed some time
+example being the TinkerPop project.1                                 after its dependent transactions are guaranteed to be executed,
+                                                                      e.g., a post cannot be created before the dependent user and forum
+   The Apache TinkerPop3 stack provides a collection of tools and     are created. Such schedule-based execution enables the driver to
+libraries for storage, querying, and analysis of graph-structured     maintain a pre-set transaction rate and test whether the system
+data. The Gremlin Structure API and the Gremlin query language lie    under test (SUT) can maintain operation at a steady rate. On the
+at the core of TinkerPop3 stack. The former provides a common set     other hand, this execution strategy does not completely simulate a
+of interfaces for the property graph model, and the latter de nes a   real-time workload of an online social network. Rather, the primary
+procedural query language structured around the Gremlin Structure     principle of the LDBC SNB Interactive Workload is to evaluate
+API. They can be considered analogues to JDBC and SQL for graph       technical choke points of the SUT, that is, queries that will exhibit
+databases, providing a standardized, uni ed way of querying and       the behaviour of the SUT under di cult aspects of query execution
+processing data modelled as a property graph.                         and optimization [4].
+
+2.2 LDBC Social Network Benchmark                                     3 SYSTEM ARCHITECTURE
+
+The Linked Data Benchmark Council (LDBC) [1] is a joint e ort         3.1 Benchmarking Architecture
+from academia and industry to establish benchmarking practices
+for evaluating RDF and graph data management systems, similar to      Figure 1 shows our overall benchmarking architecture, where our
+the Transaction Processing Performance Council (TPC).2 The main       contributions are highlighted. First, the static portion of the syn-
+objective of the LDBC is to specify benchmark speci cations, proce-   thetic social network is generated by the LDBC Data Generator,
+dures, and publish benchmarking results for di erent technological    then loaded into the system under test (SUT) using vendor-speci c
+solutions. The LDBC Social Network Benchmark (LDBC SNB) [4]           loading mechanisms. The LDBC Workload Driver generates query
+models a social network graph and introduces three di erent work-     parameters, which are consumed by operation executors. For read-
+loads on this common graph. The LDBC SNB Interactive Workload         only queries, operation executors can directly interact with the
+can be considered an OLTP-like workload and is designed to simu-      SUT, whereas updates are processed through a dedicated Kafka
+late real-world interactions in social networking applications. The
+
+1 http://tinkerpop.apache.org/
+2 http://www.tpc.org/
+Benchmarking Real-Time Social Networking Applications                                                      GRADES'17, May 19, 2017, Chicago, IL, USA
+
+       SNB Interactive Gremlin                                                      The SQL implementation is formulated on a schema where ver-
+             Gremlin server                                                      tices and edges are represented as separate tables. The reference im-
+                                                                                 plementation contains helper utilities to import the social network
+TinkerPop3-enabled graph stores                                                  generated by the LDBC data generator into a Postgres database.
+            Gremlin Structure API
+                                                                                    In Figure 2, we show the execution of Gremlin queries over
+Titan  Neo4j  Postgres                                                           TinkerPop3-compliant databases. Gremlin queries are submitted to
+                                                                                 the Gremlin Server, then executed over the underlying TinkerPop3
+Figure 2: Execution of Gremlin queries on TinkerPop3-                            graph database.
+compliant databases via the Gremlin Server.
+                                                                                 4 EXPERIMENTAL EVALUATION
+queue. In brief, the LDBC Workload Driver populates the Kafka
+queue using the generated parameters; then, update handlers read                 In this section, we provide experimental performance analysis of
+from the Kafka queue and execute updates on the SUT. We designed                 various graph data management solutions under a real-time trans-
+the Kafka integration with two considerations in mind: (i) to more               actional workload.
+accurately simulate the streaming nature of updates in online social
+networks and (ii) to achieve better stress testing of the SUT.                   4.1 Experimental Setup
+
+   Real-world social network interactions often follow the stream-               The database systems used in this study are listed below. Selected
+ing nature of updates, as seen in Twitter's GraphJet [9]. Graph-                 systems cover relational, graph, and RDF databases with di erent
+Jet supports concurrent read queries, while updates are handled                  data models, interfaces, and query languages.
+through a single writer reading from a Kafka queue. The Kafka
+integration into the LDBC Workload Driver enables us to simulate                 · TitanDB v1.1 with Cassandra (Titan-C) and BerkeleyDB (Titan-
+a continuous stream of updates and better represent the dynamic                     B) storage backends. TitanDB is an open-source, real-time graph
+nature of online social networks. Kafka has become the de facto                     processing layer built on various third-party storage solutions.
+architecture for streaming applications, used by LinkedIn,3 Twit-                   Cassandra is run as a separate process, while BerkeleyDB is used
+ter,4 and Pinterest,5 just to name a few organizations. Thus, our                   in embedded mode. Both systems were tested using the queries
+benchmarking architecture better mirrors industry deployments.                      implemented in the Gremlin query language.
+
+   Furthermore, Kafka integration achieves better stress testing                 · Neo4j v2.3.6 (Neo4j) is a single-node, specialized graph database.
+of the SUT. Although the LDBC Workload Driver provides a time                       Being a TinkerPop-compatible graph database, Neo4j supports
+compression ratio parameter to achieve certain throughputs, this                    Gremlin in addition to its native query language Cypher. It was
+is accomplished by coarsening the granularity of scheduled and                      tested with queries implemented in both query languages.
+dependency times. This puts an upper bound on the throughput
+that can be achieved while maintaining correct ordering for updates.             · Virtuoso Opensource v7.2.4 (Virtuoso) is an RDBMS with column
+Replacing the scheduled execution with a single Kafka queue for                     store support for RDF processing. It was used both as an RDBMS
+updates guarantees correct ordering of the updates at maximum                       and as an RDF store, tested with native SQL and SPARQL queries,
+throughput.                                                                         respectively.
+
+   We have open-sourced our modi ed driver with this Kafka in-                   · Postgres v9.5 (Postgres) is a popular RDBMS implemented as a
+tegration so that the community can replicate and build on our                      row store. It was tested with native SQL queries.
+work.6
+                                                                                 · Sqlg v1.3.3 (Sqlg) is an implementation of the TinkerPop3 API on
+3.2 Reference Implementations                                                       Postgres. Initially, we developed a simple implementation for the
+                                                                                    TinkerPop3 API on an RDBMS but we switched to Sqlg due to
+We created a reference implementation of the LDBC SNB Interactive                   its better performance. It was tested with queries implemented
+Workload in the Gremlin language as well as SQL.7 The Gremlin                       in the Gremlin query language.
+implementation contains all the queries of the original benchmark
+speci cation implemented as Gremlin traversals and helper utilities                 The graph databases (Neo4j and TitanDB) implement their own
+for graph loading. It is used by the LDBC Workload Driver to exe-                adjacency-list based custom data model on the underlying stor-
+cute the LDBC SNB Interactive Workload on TinkerPop3-compliant                   age engine, over which user does not have control. Virtuoso-RDF
+graph databases.                                                                 employs the single table with extensive indexing approach, where
+                                                                                 the entire graph is stored in a single relational table with multi-
+3 https://engineering.linkedin.com/blog/2016/04/kaf ka-ecosystem-at-linkedin     ple indexes. SPARQL queries on the RDF graph are translated into
+4https://blog.twitter.com/2015/handling- ve-billion-sessions-a-day-in-real-time  SQL queries over these indexes and the base table. For relational
+5 https://medium.com/@Pinterest_Engineering/introducing-pinterest-secor-         databases (Virtuoso-RDBMS and Postgres), each vertex and edge
+e868d9400bec                                                                     type is represented by a separate table. For all systems, we created
+6 https://github.com/anilpacaci/ldbc_driver/                                     indexes on vertex IDs to prevent expensive linear scans on initial
+7 https://github.com/anilpacaci/graph-benchmarking/                              vertex look-ups. Although more advanced indexing schemes can
+                                                                                 be considered on an individual basis, we restricted indexes only on
+                                                                                 vertex IDs for fairness.
+
+                                                                                    We used TinkerPop v3.2.3 for Gremlin Server-based experiments,
+                                                                                 the latest version available at the time of this study. The LDBC
+                                                                                 SNB Gremlin implementation (see Section 3.2) was used for all
+                                                                                 TinkerPop3-compliant systems. Similarly, we developed and used
+GRADES'17, May 19, 2017, Chicago, IL, USA                                         Anil Pacaci, Alice Zhou, Jimmy Lin, and M. Tamer Özsu
+
+                     Table 1: Dataset statistics and database sizes after data loading in GB.
+
+Dataset              # of vertices  # of edges  Raw les  Neo4j           Titan-C  Titan-B  Postgres  Virtuoso-RDBMS  Virtuoso-RDF
+
+SNB scale factor 3       10M           64M          3      20               6.3      29       11             2.4           8.5
+SNB scale factor 10      34M          217M          10     65               18      107       36               7            25
+
+the SQL implementation for Postgres (SQL) (see Section 3.2). For Vir-    the case for adjacency-list based native graph storage. It enables
+tuoso and Neo4j (Cypher), we modi ed and used the reference im-          index-free adjacency access where relationships of a given ver-
+plementations provided by the LDBC8 and an open-source Cypher            tex can be accessed directly through pointers. On the other hand,
+implementation (Cypher).9                                                the relational databases Virtuoso and Postgres (SQL) provide the
+                                                                         lowest query latency across all query types. While Postgres (SQL)
+   All systems were initially loaded with the synthetic social net-      performs better in point-lookups and one-hop traversals, Virtuoso
+works generated using the LDBC data generator to bring the social        (SQL) outperforms Postgres (SQL) in more complex two-hop traver-
+network into an intermediate state where the daily operations of a       sals and single-pair shortest path queries. Virtuoso's graph-aware
+social networking application can be simulated. Two di erent scale       engine and optimized transitivity support enable it to execute such
+factors were used to generate datasets for this study. The corre-        complex graph queries e ciently. Virtuoso (SPARQL) has slightly
+sponding statistics for the generated datasets and database sizes of     lower performance due to query translation costs, even though the
+the selected systems are listed in the Table 1. Further information      benchmark queries are graph queries.
+about the loading phase and the data ingestion performance of the
+systems are presented in Appendix A.                                     4.3 Real-Time Interactive Workload
+
+   We conducted our experiments on two machines in a local cluster       In this section, we used the modi ed the LDBC Interactive Workload
+connected with 10 Gbit/s Ethernet (one for running the SUT, the          described in Section 3.1 to simulate the real-time aspects of online
+other for running the benchmarking code). Each machine has 32            social networking applications. A single writer was responsible for
+2.6 GHz cores and 256 GB RAM. All systems were con gured to              continuously consuming the Kafka queue and executing update
+load the entire dataset into main memory before the benchmark            transactions on the SUT. By changing the number of concurrent
+execution in order to eliminate the overhead of disk I/O.                readers, we tested the throughput of the SUT under a stream of
+                                                                         updates. Initially, we used the query mix de ned by the LDBC SNB
+4.2 Read-Only Graph Queries                                              speci cation. However, TinkerPop3-compliant systems could not
+                                                                         e ciently process large numbers of concurrent complex queries
+In this section, we evaluate the read-only performance of selected       (i.e., 64 concurrent clients). Therefore, experiments reported in
+systems on four main types of graph queries: (i) point lookups,          this section were performed using a query mix consisting of a
+(ii) one-hop traversals, (iii) two-hop traversals, and (iv) single-pair  two-hop neighbourhood based complex query and a set of short
+shortest path queries. To obtain consistent results and to minimize      read-only queries (see Section 4.4). Figure 3 reports the read and
+noise, queries are executed on the static portion of the social net-     write throughput on the scale factor 3 dataset using 32 concurrent
+work with no other concurrent query execution. Each query type           readers.
+is executed 100 times on the selected systems and execution times
+are recorded. Tables 2 and 3 show the average latency obtained              We discovered that Titan-B su ers signi cant performance degra-
+from di erent systems on both scale factor 3 and 10 (the symbol `-'      dation under highly-concurrent reads and writes, which makes it
+indicates that the system was unable to complete in a reasonable         unsuitable for this experiment. For the remainder of this section,
+amount of time).                                                         we focus on those remaining systems with reasonable performance.
+
+   Tables 2 and 3 clearly show that TinkerPop3 compliance comes             In general, RDBMSes with a native SQL interface provide the
+with an overhead. For Neo4j, the Gremlin interface introduces up         best performance under the real-time interactive workload. While
+to two orders of magnitude of performance degradation compared           read performance of selected systems are comparable and within
+to the native Cypher interface. Similarly, Postgres (SQL) signi -        a factor of four, Postgres (SQL) and Virtuoso (SQL) exhibit signi -
+cantly outperforms Sqlg (Gremlin) even though both systems have          cantly better update performance and maintain up to an order of
+the same underlying data model and storage engine. In general,           magnitude faster write throughput compared to their competitors.
+TinkerPop3-compliant systems have the slowest read performance           On the other hand, Gremlin-based systems have the lowest read
+among all systems. These systems translate a complex graph opera-        and write throughput, which demonstrates the signi cant overhead
+tion into multiple small requests to the underlying system, whereas      incurred by the Gremlin Server. Considering that the majority of
+native, declarative query interfaces (Cypher, SQL, or SPARQL) en-        the query mix consists of lookups and neighbourhood retrievals,
+able the underlying system to generate an optimized query exe-           these results are inline with our ndings in Tables 2 and 3.
+cution plan. Furthermore, performance di erences become more
+signi cant with increasing query complexity.                                The two specialized graph databases covered in this study, Titan-
+                                                                         C (Gremlin) and Neo4j (Cypher), demonstrate comparable read per-
+   Neo4j (Cypher) is the only system where there is no strict cor-       formance, whereas Neo4j (Cypher) outperforms Titan-C (Gremlin)
+relation between query latency and dataset size, which supports          in number of writes per second. However, Neo4j's (Cypher) up-
+                                                                         date performance su ers from sudden drops due to checkpointing
+8 https://github.com/ldbc/ldbc_snb_implementations
+9 https://github.com/PlatformLab/ldbc-snb-impls
+Benchmarking Real-Time Social Networking Applications                                   GRADES'17, May 19, 2017, Chicago, IL, USA
+
+                    Table 2: Query Latencies in ms -- Scale Factor 3
+
+System                 Neo4j                           Titan-C        Titan-B    Sqlg   Postgres      Virtuoso
+                Cypher Gremlin                                                                    SQL SPARQL
+Query Language                                         Gremlin        Gremlin  Gremlin    SQL
+                9.08   122                                                                        0.35     3
+Point lookup                                              39             65      16.1     0.25    2.15   1.23
+1-hop           12.82  101                               240            223       34       1.4    11.55  16.62
+2-hop                                                    439            1271     2526      29     4.81    26
+Shortest Path   368    275                              10732          13948    10243     2242
+
+                21     4813
+
+                Table 3: Query Latencies in ms -- Scale Factor 10
+
+System                 Neo4j                           Titan-C        Titan-B    Sqlg   Postgres      Virtuoso
+                Cypher Gremlin                                                                    SQL SPARQL
+Query Language                                         Gremlin        Gremlin  Gremlin    SQL
+                11.16  177                                                                        0.41   3
+Point lookup                                              42            236      16.9     0.32
+1-hop           14.1   377                               129            2117      43      1.62    2.22 1.71
+2-hop                                                    1570          12978     4408      46
+Shortest Path   579    683                              17379                    7003     3648    15.92 52
+                                                                          -
+                16     4053                                                                       7.09   32
+
+whereas Titan-C (Gremlin) can achieve a steady write through-         We provided xes to the issues we encountered in the existing
+put. The poor update performance of Titan-C can be attributed to      reference implementations.10,11
+storage and indexing abstractions introduced by TitanDB itself. Ad-
+ditionally, Titan-C must implement locking mechanisms to ensure          A more concerning problem we encountered relates to the per-
+uniqueness, since the underlying storage backend, Cassandra, does     formance of the Gremlin Server. As described in Section 3.1, the
+not provide transactional isolation. This further hinders Titan-C's   Gremlin Server is a layer on top of a TinkerPop3 implementation
+update performance.                                                   and enables multiple clients to communicate with the same data-
+                                                                      base in a platform-agnostic manner. However, the Gremlin Server
+   For Neo4j, native Cypher queries lead to better performance than   was unable to handle complex queries under a large number of
+traversals implemented in the Gremlin query language. Similar         concurrent clients. Concurrent complex queries of the LDBC SNB
+behaviour is observed in the Postgres case where Postgres (SQL)       Interactive Workload caused the Gremlin Server to hang and even-
+provides signi cantly better performance than Sqlg (Gremlin). In      tually crash. Consequently, we modi ed the read query mix for
+both Neo4j and Sqlg, Gremlin traversals are translated into multiple  Section 4.3 and omitted long running complex queries. Overall, our
+small requests to the underlying storage engine, thereby eliminating  experience reveals the generally poor state of implementations and
+optimization opportunities.                                           suggests that TinkerPop3 and speci cally the Gremlin Server are
+                                                                      not production ready.
+   Virtuoso SQL and SPARQL interfaces have similar read perfor-
+mance, but Virtuoso (SQL) has up to 3× better write throughput           Based on our ndings, we draw the following conclusions:
+than Virtuoso (SPARQL). The di erence can be attributed to higher
+index maintenance costs for Virtuoso (SPARQL), where multiple         · The lower performance of SPARQL compared to SQL for Virtu-
+indexes over one big table must be maintained.                           oso suggests that storing RDF data in a single relational table
+                                                                         with extensive indexing is not favourable for transactional graph
+   Despite similar read performance, Postgres (SQL) outperforms          workloads due to index maintenance and query translation costs.
+its closest competitor Virtuoso (SQL) by 1.6× in write performance.
+Considering that both systems use SQL queries over the same data-     · The superior performance of Postgres (SQL) over Sqlg (Grem-
+base schema, performance di erences can be attributed to storage         lin) indicates that translating graph queries into multiple small
+formats. Unlike Postgres row storage, Virtuoso employs columnar          requests eliminates optimization opportunities and reduces e -
+storage, which is known to su er under transactional workloads           ciency compared to native SQL execution.
+with frequent updates.
+                                                                      · Although TinkerPop3 presents an important vision to unify the
+4.4 Discussion                                                           graph processing space, the signi cantly lower performance of
+                                                                         TinkerPop3-compliant systems suggests that it incurs a high
+We encountered several roadblocks during our experimental study.         overhead. Performance di erences between Neo4j with Cypher
+First, the reference LDBC implementations contained several bugs.        and Gremlin further support the case against Gremlin.
+For Virtuoso's reference implementations, the provided SPARQL
+queries did not match the schema of the RDF data generated by            Although results from previous work on graph database bench-
+the LDBC SNB graph generator. In addition, the SQL reference          marking favour graph databases for complex graph operations [2,
+implementation did not correctly handle bi-directional edges, so      11], our ndings show that RDBMSes can provide competitive per-
+a majority of queries returned either empty or incorrect results.     formance under a concurrent transactional workload. We found
+
+                                                                      10 https://github.com/anilpacaci/ldbc_snb_implementations
+                                                                      11 https://github.com/anilpacaci/ldbc-snb-impls
+GRADES'17, May 19, 2017, Chicago, IL, USA                                                       Anil Pacaci, Alice Zhou, Jimmy Lin, and M. Tamer Özsu
+
+                                                 Neo4j (Cypher)                     5 CONCLUSIONS
+
+Operations per second  500      Read                                                In this paper, we proposed a benchmarking architecture to simu-
+                       450                                                          late real-time transactional workloads in social networking appli-
+                       400 Write                                                    cations and designed an extension of the LDBC Social Network
+                       350                                                          Benchmark's Interactive Workload. In addition, we developed a
+                       300                                                          reference Gremlin implementation of the LDBC SNB Interactive
+                       250                                                          Workload for TinkerPop3-compliant systems. Using the proposed
+                       200                                                          architecture, we conducted an experimental comparison of various
+                       150                                                          data modelling approaches: RDBMSes, graph API over RDBMSes,
+                       100                                                          RDF stores, and specialized graph databases.
+                       50
+                       0                                                               Problems we encountered during this study led us to conclude
+                            00     01    02  03  04  05      06     07  08  09  10  that TinkerPop3 and speci cally the Gremlin Server are not ready
+                                                                                    for real-world deployments. In addition, signi cant performance
+                                                     Minute                         di erences of query languages in Neo4j (Cypher vs. Gremlin) and
+                                                                                    Postgres (SQL vs. Gremlin) clearly show that TinkerPop3 compat-
+                                                 Neo4j (Gremlin)                    ibility and the Gremlin Server integration incur signi cant over-
+                                                                                    head and negatively e ect end-to-end system performance. Neo4j
+Operations per second  500      Read                                                (Cypher), as a commercial system with native graph storage and op-
+                       450                                                          timized query execution engine, achieved higher throughput than
+                       400 Write                                                    TitanDB. Postgres provided the best overall performance, followed
+                       350                                                          by Virtuoso (SQL), which led us to conclude that RDBMSes should
+                       300                                                          not be ignored for interactive transactional graph workloads.
+                       250
+                       200                                                             Directions for future work include considering larger datasets
+                       150                                                          with di erent characteristics, testing the scale-out of character-
+                       100                                                          istics of the systems in distributed settings, and improving our
+                       50                                                           benchmarking architecture to support more realistic workloads.
+                       0
+                            00     01    02  03  04  05      06     07  08  09  10  ACKNOWLEDGMENTS
+
+                                                     Minute                         This research was supported by multiple Discovery Grants from
+                                                                                    the Natural Sciences and Engineering Research Council (NSERC)
+                                                 Titan-C (Gremlin)                  of Canada.
+
+Operations per second  500      Read                                                REFERENCES
+                       450
+                       400 Write                                                     [1] Renzo Angles, Peter Boncz, Josep Larriba-Pey, Irini Fundulaki, Thomas Neumann,
+                       350                                                                 Orri Erling, Peter Neubauer, Norbert Martinez-Bazan, Venelin Kotsev, and Ioan
+                       300                                                                 Toma. 2014. The Linked Data Benchmark Council: a graph and RDF industry
+                       250                                                                 benchmarking e ort. ACM SIGMOD Record 43, 1 (2014), 27-31.
+                       200
+                       150                                                           [2] Renzo Angles, Arnau Prat-Pérez, David Dominguez-Sal, and Josep-Lluis Larriba-
+                       100                                                                 Pey. 2013. Benchmarking database systems for social network applications. In
+                       50                                                                  GRADES. ACM, 15.
+                       0
+                            00     01    02  03  04  05      06     07  08  09  10   [3] Shalini Batra and Charu Tyagi. 2012. Comparative analysis of relational and
+                                                                                           graph databases. IJSCE 2, 2 (2012), 509-512.
+                                                     Minute
+                                                                                     [4] Orri Erling, Alex Averbuch, Josep Larriba-Pey, Hassan Cha , Andrey Gubichev,
+                                                 Sqlg (Gremlin)                            Arnau Prat, Minh-Duc Pham, and Peter Boncz. 2015. The LDBC Social Network
+                                                                                           Benchmark: Interactive Workload. In SIGMOD. ACM, 619-630.
+Operations per second  500      Read
+                       450                                                           [5] Jing Fan, Adalbert Gerald Soosai Raj, and Jignesh M Patel. 2015. The case against
+                       400 Write                                                           specialized graph analytics engines. In CIDR.
+                       350
+                       300                                                           [6] Vojtch Kolomicenko, Martin Svoboda, and Irena Holubová Mly`nková. 2013.
+                       250                                                                 Experimental comparison of graph databases. In IIWAS. ACM, 115.
+                       200
+                       150                                                           [7] Robert Campbell McColl, David Ediger, Jason Poovey, Dan Campbell, and David A
+                       100                                                                 Bader. 2014. A performance evaluation of open source graph databases. In
+                       50                                                                  Workshop on Parallel Programming for Analytics Applications. ACM, 11-18.
+                       0
+                            00     01    02  03  04  05      06     07  08  09  10   [8] Marc Najork, Dennis Fetterly, Alan Halverson, Krishnaram Kenthapadi, and
+                                                                                           Sreenivas Gollapudi. 2012. Of hammers and nails: an empirical comparison of
+                                                     Minute                                three paradigms for processing large graphs. In WSDM. ACM, 103-112.
+
+                                                 Postgres (SQL)                      [9] Aneesh Sharma, Jerry Jiang, Praveen Bommannavar, Brian Larson, and Jimmy
+                                                                                           Lin. 2016. GraphJet: real-time content recommendations at Twitter. PVLDB 9, 13
+Operations per second  2000        Read                                                    (2016), 1281-1292.
+                       1800
+                       1600 Write                                                   [10] Aparna Vaikuntam and Vinodh Kumar Perumal. 2014. Evaluation of contempo-
+                       1400                                                                rary graph databases. In ACMICC. ACM, 6.
+                       1200
+                       1000                                                         [11] Chad Vicknair, Michael Macias, Zhendong Zhao, Xiaofei Nan, Yixin Chen, and
+                       800                                                                 Dawn Wilkins. 2010. A comparison of a graph database and a relational database:
+                       600                                                                 a data provenance perspective. In ACMSE. ACM, 42.
+                       400
+                       200
+                            0
+                               00  01    02  03  04  05      06     07  08  09  10
+
+                                                     Minute
+
+                                                 Virtuoso (SQL)
+
+Operations per second  2000        Read
+                       1800
+                       1600 Write
+                       1400
+                       1200
+                       1000
+                       800
+                       600
+                       400
+                       200
+                            0
+                               00  01    02  03  04  05      06     07  08  09  10
+
+                                                     Minute
+
+                                                 Virtuoso (SPARQL)
+
+Operations per second  2000        Read
+                       1800
+                       1600 Write
+                       1400
+                       1200
+                       1000
+                       800
+                       600
+                       400
+                       200
+                            0
+                               00  01    02  03  04  05      06     07  08  09  10
+
+                                                     Minute
+
+Figure 3: Aggregate read and write throughput for the real-
+time interactive workload.
+
+that the relational databases Virtuoso and Postgres have low query
+latencies as in [4] and provides the best overall performance among
+all systems. Similar to [5], we believe that robust RDBMS tech-
+nology can deliver competitive performance for OLTP-like online
+social networking applications, especially in single node settings.
+Benchmarking Real-Time Social Networking Applications                                                      GRADES'17, May 19, 2017, Chicago, IL, USA
+
+Table 4: Data loading performance for SNB scale factor 3                 Vertex per second  40000
+graph with a single loader                                                                  35000 Titan-C     Titan-B     Sqlg-P
+                                                                                            30000
+                                                                                            25000
+                                                                                            20000
+Dataset  Neo4j Titan-C Titan-B Sqlg                                                         15000
+
+Total time (min) 123 767   231 894                                                          10000
+Vertex / second 8503 4566  4032 4660                                                        5000
+Edge / second 10256 1465   5652 1092                                                        0
+                                                                                                   1       4           8                              16
+
+                                                                                                              # of concurrent loaders
+
+A DATA INGESTION PERFORMANCE                                             Edge per second    40000             Titan-B     Sqlg-P
+                                                                                            35000 Titan-C
+Data loading was performed to bring the social network into an                              30000
+intermediate state on which social network interactions can be                              25000
+simulated. Initial data loading was performed using system-speci c                          20000
+bulk loading tools for Postgres and Virtuoso, and graph-loading                             15000
+utilities from the LDBC Gremlin implementation for the remaining                            10000
+systems (see Section 3.2). System-speci c bulk loading utilities                            5000
+enabled the loading phase to be an order of magnitude faster than                           0
+that of the other systems. Table 4 reports the graph loading statistics                            1       4           8                              16
+for the SNB scale factor 3 graph for TinkerPop3-compliant systems.
+Sqlg, as a naive graph wrapper over a relational database, has the                                            # of concurrent loaders
+worst edge-insertion performance, while its vertex insertion rate
+is comparable to other systems. On the other hand, Neo4j's native        Figure 4: Aggregate data ingestion rate for varying number
+graph storage provides the best ingestion performance in the single-     of concurrent loaders
+loader scenario.
+
+   In addition, we evaluated the e ect of concurrency on data in-
+gestion performance. We measured the aggregate vertex and edge
+ingestion rates for TitanDB and Sqlg with 1 to 16 concurrent loaders.
+Neo4j (Gremlin) was omitted because it does not support concurrent
+data loading. Although TitanDB with BerkeleyDB storage provided
+better performance when there is a single loader, its performance
+degrades with increasing concurrency. In fact, TitanDB with Cas-
+sandra storage is the only system that scales with an increasing
+number of concurrent loaders. This can be attributed to the trans-
+actional nature of Postgres and BerkeleyDB backends. Locking
+introduced by transactional semantics increases latency in such
+write-heavy scenarios.
+

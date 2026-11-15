@@ -1,0 +1,657 @@
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('lp-data').textContent);
+  var E = window.PathwayEngine, C = window.PathwayCore;
+  var MAP = D.map, TABLE = D.params, LIMS = D.lims, CASES = D.cases, TX = D.text;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var ROWS = E.tableRows(TABLE);
+  var PMETA = {}; MAP.parameters.forEach(function (p) { PMETA[p.id] = p; });
+  var REACH = C.paramReach(E, MAP);
+  var CNT = C.counts(MAP, TABLE, LIMS, CASES);
+  var FACTS = C.bestFacts(E, MAP, TABLE);
+  var BEST = E.paramsFromTable(TABLE, 'best');
+  var cur = Object.assign({}, BEST);
+  var pname = function (id) { return (PMETA[id] && PMETA[id].name) || id; };
+  var STATE = {}; MAP.states.forEach(function (s) { STATE[s.id] = s; });
+  var BR = {}; MAP.branches.forEach(function (b) { BR[b.id] = b; });
+  var STEP = {}; MAP.steps.forEach(function (s) { STEP[s.id] = s; });
+  var LIBGI = {}; MAP.lib_groups.forEach(function (g) { LIBGI[g.id] = g; });
+  var CASE = {}; CASES.cases.forEach(function (c) { CASE[c.id] = c; });
+  var FAM = {}; CASES.families.forEach(function (f) { FAM[f.id] = f; });
+  var LIM_FAM_NAME = {}; Object.keys(LIMS.families).forEach(function (k, i) { LIM_FAM_NAME[k] = CASES.families[i] ? CASES.families[i].name : LIMS.families[k]; });
+  var LIM = {}; LIMS.items.forEach(function (it) { LIM[it.id] = it; });
+  var STEPK = Object.keys(LIMS.steps);
+  var SHORT = function (k) { return LIMS.steps[k].split(':')[0]; };
+  var DSTEP_OF_STAGE = {};
+  Object.keys(TX.design_steps).forEach(function (k) { TX.design_steps[k].forEach(function (st) { (DSTEP_OF_STAGE[st] = DSTEP_OF_STAGE[st] || []).push(+k); }); });
+  var STATUS_WORD = { works: 'works', strains: 'strains', breaks: 'breaks', not_specified: 'not specified', not_reached: 'not reached' };
+  var TAGW = TX.tags;
+  var S = TX.sections;
+  var RATIOS4 = [['cost_vs_ladder', 'Cost', 'ladder'], ['wrong_vs_ladder', 'Wrong rate', 'ladder'], ['cost_vs_top', 'Cost', 'strong'], ['wrong_vs_top', 'Wrong rate', 'strong']];
+  var W8 = null, WLIM = {}, WSTEP = {};
+  var PATH = null, PATH0 = E.timePath(MAP, BEST);
+  var mqDock = window.matchMedia('(min-width: 1600px)'), mqWide = window.matchMedia('(min-width: 1200px)'), mqS = window.matchMedia('(max-width: 639px)');
+
+  // ------------------------------------------------------------ numbers and tags
+  function fmt(v, kind) {
+    if (typeof v === 'string') return v;
+    if (v === null || v === undefined || !isFinite(v)) return 'none';
+    var a = Math.abs(v);
+    if (kind === 'pct') { var x = v * 100; return (x !== 0 && Math.abs(x) < 0.1 ? x.toFixed(2) : x.toFixed(1)) + '%'; }
+    if (kind === 'ratio') return a >= 10 ? v.toFixed(1) : v.toFixed(2);
+    if (kind === 'cost') return a >= 100 ? v.toFixed(0) : v.toFixed(1);
+    if (kind === 'int') return Math.round(v).toLocaleString('en');
+    if (kind === 'funnel') return v === 0 ? '0' : a >= 1 ? v.toFixed(1) : a >= 0.01 ? v.toFixed(2) : v.toPrecision(1);
+    if (kind === 'weight') { var y = 100 * v; return (y < 0 ? '−' : '') + (y === 0 ? '0' : Math.abs(y) >= 0.1 ? Math.abs(y).toFixed(1) : Math.abs(y) >= 0.01 ? Math.abs(y).toFixed(2) : Math.abs(y).toPrecision(1)) + '%'; }
+    if (v === 0) return '0';
+    if (a >= 100) return v.toFixed(0);
+    if (a >= 10) return v.toFixed(1);
+    if (a >= 1) return v.toFixed(2);
+    return v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
+  }
+  // A number shows its tag only when it differs from the stamp of the box it sits in.
+  function N(v, tag, kind, stamp) {
+    return '<span class="n">' + esc(fmt(v, kind)) + '</span>' + (tag && tag !== stamp ? '<sup class="tl" data-tip="' + esc(tag + ': ' + TAGW[tag]) + '">' + tag + '</sup>' : '');
+  }
+  function T(tag) { return '<i class="t t-' + tag + '" data-tip="' + esc(tag + ': ' + TAGW[tag] + '. ' + TX.computed_tag) + '">' + tag + '</i>'; }
+  function stamp(tag, words) { return '<span class="stamp">' + T(tag) + ' ' + esc(words) + '</span>'; }
+  function rich(text, st) {
+    return C.fillTokens(esc(text), CNT, function (v, tg) { return N(v, tg, 'int', st); }, function (s) { return esc(s); }, FACTS);
+  }
+  function firstSentence(t) { var m = String(t).match(/^.*?[.!?](\s|$)/); return m ? m[0].trim() : t; }
+  function G(st, label) { return label === '' ? '<span class="g g-' + st + '" aria-hidden="true"></span>' : '<span class="g g-' + st + '" role="img" aria-label="' + esc(label || STATUS_WORD[st] || st) + '"></span>'; }
+  function stageWords(stage) { var ds = DSTEP_OF_STAGE[stage] || []; return !ds.length ? '' : ds.length === 1 ? 'design step ' + ds[0] : 'design steps ' + ds.join(', '); }
+
+  // ------------------------------------------------------------ words: a dotted term shows its meaning
+  var WORD = {};
+  TX.words.forEach(function (w) { w[0].split(/,\s*| and /).forEach(function (k) { k = k.trim(); if (k.length > 3 && !/[_.]/.test(k)) WORD[k.toLowerCase()] = w; }); });
+  function terms(html) {
+    var used = {};
+    var keys = Object.keys(WORD).sort(function (a, b) { return b.length - a.length; });
+    var re = new RegExp('\\b(' + keys.map(function (k) { return k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')(s?)\\b', 'gi');
+    return html.replace(re, function (m, k, s2) {
+      var w = WORD[k.toLowerCase()]; if (!w || used[w[0]]) return m; used[w[0]] = 1;
+      return '<span class="dfn" tabindex="0" data-tip="' + esc('<b>' + esc(w[0]) + '.</b> ' + esc(w[1])) + '">' + m + '</span>';
+    });
+  }
+
+  // ------------------------------------------------------------ tooltip (hover and keyboard focus)
+  var pop = document.createElement('div'); pop.className = 'pop'; pop.hidden = true; pop.setAttribute('role', 'status'); document.body.appendChild(pop);
+  function showPop(el) {
+    pop.innerHTML = el.getAttribute('data-tip'); pop.hidden = false;
+    var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    var x = Math.max(8, Math.min(r.left, document.documentElement.clientWidth - pw - 8)) + scrollX;
+    var y = r.bottom + 8 + scrollY; if (r.bottom + ph + 16 > innerHeight) y = r.top - ph - 8 + scrollY;
+    pop.style.left = x + 'px'; pop.style.top = y + 'px';
+  }
+  function tipOf(t) { return t && t.closest ? t.closest('[data-tip]') : null; }
+  document.addEventListener('pointerover', function (e) { var t = tipOf(e.target); if (t) showPop(t); else pop.hidden = true; });
+  document.addEventListener('focusin', function (e) { var t = tipOf(e.target); if (t) showPop(t); else pop.hidden = true; });
+  document.addEventListener('scroll', function () { pop.hidden = true; }, { passive: true });
+
+  // ------------------------------------------------------------ the sections, in reading order
+  var SECS = [
+    { id: 'map', short: 'Map', title: S.map.title, purpose: 'See every path a piece of work can take, how much work goes down each, and where it ends.', owner: 'the map designers' },
+    { id: 'funnel', short: 'Funnel', title: S.funnel.title, purpose: 'See how many of a hundred pieces of work are still helped after each step of the library.', owner: 'the pictures designer' },
+    { id: 'cases', short: 'Cases', title: S.cases.title, purpose: 'See the step where each real problem case broke the design.' },
+    { id: 'lims', short: 'Limitations', title: S.lims.title, purpose: 'See each limitation at the step where it sits, and how much it holds the result down.' },
+    { id: 'conditions', short: 'Conditions', title: S.conditions.title, purpose: 'See at which ends of three conditions the library comes out below the other two ways of working.', owner: 'the pictures designer' },
+    { id: 'run', short: 'Run it', title: S.run.title, purpose: S.run.lede },
+    { id: 'many', short: 'Many runs', title: S.many.title, purpose: S.many.lede, owner: 'the pictures designer' },
+    { id: 'leaves', short: 'Left out', title: S.leaves.title, purpose: 'The model’s own limits: what it does not show, and why.' },
+    { id: 'words', short: 'Words', title: 'Words used on this page', purpose: 'Every term on the page, in plain words. A dotted word anywhere shows its meaning.' }
+  ];
+  var DOTHIS = {
+    map: 'Start with all work. Then pick one kind of work, or one way of working.',
+    funnel: 'Read the bars from left to right. Tap a bar to open its limitations.',
+    cases: 'Scan a column for solid squares. Tap a step to light up its column. Tap a case to read it.',
+    lims: 'Pick a step in the rail. Tap a limitation to read it. Its unknowns open their sliders.',
+    conditions: 'Pick how much comes back. Tap a cell for its four ratios.',
+    run: 'Open the unknowns. Drag a slider. What moved is listed at the top of the panel.',
+    many: 'Press the run button. The page stays usable while it runs.',
+    leaves: 'Read the first line of each. Open one for the rest.',
+    words: 'Type in the box to find a word.'
+  };
+
+  function secHead(s, i, aside) {
+    return '<div class="sec-head"><div class="sec-intro"><p class="sec-n">Section ' + (i + 1) + ' of ' + SECS.length + '</p><h2 id="' + s.id + '-h">' + esc(s.title) + '</h2>' +
+      '<p class="purpose">' + terms(esc(s.purpose)) + '</p><p class="dothis"><b>Do this</b><span>' + esc(DOTHIS[s.id]) + '</span></p></div>' +
+      '<div class="sec-aside">' + (aside || '') + '</div></div>';
+  }
+  function placeholder(title, lines, h) {
+    return '<div class="ph" style="min-height:' + (h || 360) + 'px"><b>' + esc(title) + '</b>' + lines.map(function (l) { return '<span>' + l + '</span>'; }).join('') + '</div>';
+  }
+  var OUTKEY = '<div class="key" aria-label="Outcome marks">' +
+    '<span>' + G('right', 'right') + ' right · works</span><span>' + G('caught', 'caught') + ' caught · strains</span><span>' + G('wrong', 'wrong') + ' wrong · breaks</span></div>';
+
+  function buildSections() {
+    var h = '';
+    SECS.forEach(function (s, i) {
+      h += '<section class="sec" id="' + s.id + '" aria-labelledby="' + s.id + '-h"><div class="wrap">';
+      if (s.id === 'map') {
+        h += secHead(s, i, OUTKEY + stamp('G', 'Every number here is computed, so a guess')) +
+          placeholder('The map, drawn by ' + s.owner, ['Overview first: where a hundred pieces of all work go, under the three ways of working side by side.',
+            'This frame gives it the full content width: ' + '<b id="mapW"></b>' + ', and a sticky legend slot on the right of the head.',
+            'Its pickers sit in the frame’s head row. Each says what it changes.'], 560);
+      } else if (s.id === 'funnel') {
+        h += secHead(s, i, OUTKEY + stamp('G', 'Bars are computed: guesses')) + '<p class="prose note" style="margin-bottom:16px">' + rich(S.funnel.lede, 'G') + ' ' + esc(S.funnel.marks) + '</p>' +
+          placeholder('The funnel, drawn by ' + s.owner, ['Each bar shows how many of the step before get through, so no bar is a sliver.', 'Under each bar: its limitations and broken cases, which open in sections 3 and 4.'], 380);
+      } else if (s.id === 'cases') {
+        h += secHead(s, i, cellKey() + stamp('M', 'Every count here is measured on this PC')) +
+          '<p class="prose" style="margin-bottom:12px">' + rich(S.cases.lede, 'M') + '</p><p class="callout" style="margin-bottom:20px">' + rich(S.cases.warning, 'M') + '</p>' +
+          '<div class="cg-tools"><button class="btn" id="cgFold" type="button">Fold to the ten families</button><span class="meta" id="cgColNote"></span></div>' +
+          '<div class="md"><div><div class="cg" id="cg"></div></div><aside class="detail" id="caseDetail" aria-live="polite"></aside></div>';
+      } else if (s.id === 'lims') {
+        h += secHead(s, i, '<div class="key"><span><i class="qbar o" style="width:26px"></i> alone</span><span><i class="qbar" style="width:26px"></i> last</span></div>' +
+          '<div class="row">' + stamp('M', 'case counts') + stamp('G', 'weights') + '</div>') +
+          '<div class="sub-h"><h3>' + esc(S.lims.two_title) + ' and their rankings</h3></div>' +
+          placeholder('The two weights, drawn by the pictures designer', ['The definitions of alone and last, the full fall, the four groups and the ten steps ranked, and the steps moved one after another.', 'The same definitions also open from the Alone and Last column heads below.'], 300) +
+          '<div class="sub-h"><h3>Every limitation, at its step</h3><span class="meta">' + N(CNT.lims, 'M', 'int', 'M') + ' limitations in ten steps. ' + N(CNT.lims_real, 'M', 'int', 'M') + ' come from real cases; ' + N(CNT.lims_thought, 'M', 'int', 'M') + ' are thought experiments.</span></div>' +
+          '<div class="ltools" id="ltools"><nav class="rail" id="rail" aria-label="Steps"></nav><div class="lfilters" id="lfilters"></div></div>' +
+          '<div class="md"><div class="ll" id="ll"></div><aside class="detail" id="limDetail" aria-live="polite"></aside></div>' +
+          '<div class="sub-h"><h3>' + esc(S.lims.works_title) + '</h3><span class="meta prose">' + rich(S.lims.works_lede, 'M') + '</span></div><div class="saves" id="works"></div>' +
+          '<div class="sub-h"><h3>' + esc(S.lims.gate_title) + '</h3></div>' + placeholder('The gate and the ladder, drawn by the pictures designer', [esc(S.lims.gate_lede)], 220);
+      } else if (s.id === 'conditions') {
+        h += secHead(s, i, stamp('G', 'Ratios are computed: guesses')) + '<p class="prose note" style="margin-bottom:8px">' + esc(S.conditions.lede) + '</p>' +
+          '<ul class="prose note" style="margin:0 0 16px">' + S.conditions.items.map(function (x) { return '<li><b>' + esc(LIBGI[x[0]] ? LIBGI[x[0]].short.replace(/^./, function (c) { return c.toUpperCase(); }) : x[0]) + '.</b> ' + esc(x[1]) + '</li>'; }).join('') + '<li>' + esc(S.conditions.running_cost) + '</li></ul>' +
+          placeholder('The eight corners and the square, drawn by ' + s.owner, ['Ratio direction uses arrows (lower, near, higher), never the outcome marks.'], 420);
+      } else if (s.id === 'run') {
+        h += secHead(s, i, stamp('G', 'A moved value is your guess')) +
+          '<div class="runbar"><div class="stack"><button class="btn primary" id="runOpen" type="button">Open the unknowns</button><button class="btn" id="runReset" type="button">Back to middle values</button><span class="meta" id="runMoved"></span></div><div class="live" id="runLive" aria-live="polite"></div></div>' +
+          '<div style="margin-top:20px">' + placeholder('Three ways of working, the library over each, the stock of entries: drawn by the pictures designer', ['They follow the unknowns live, like the readout above.'], 300) + '</div>';
+      } else if (s.id === 'many') {
+        h += secHead(s, i, stamp('G', 'A spread of guesses')) + placeholder('Many runs, drawn by ' + s.owner, [esc(S.many.tie), esc(S.many.follows)], 240);
+      } else if (s.id === 'leaves') {
+        h += secHead(s, i, '<button class="btn" id="leavesAll" type="button">Open all</button>') + '<div class="leaves" id="leavesList"></div>';
+      } else if (s.id === 'words') {
+        h += secHead(s, i, '<input class="search" id="wordQ" type="search" placeholder="Find a word" aria-label="Find a word">') + '<dl class="wordsl" id="wordsList"></dl>';
+      }
+      h += '</div></section>';
+    });
+    $('#sections').innerHTML = h;
+    var mw = $('#mapW'); if (mw) mw.textContent = Math.round($('#map .wrap').clientWidth - 2 * parseFloat(getComputedStyle($('#map .wrap')).paddingLeft)) + ' px';
+  }
+
+  // ------------------------------------------------------------ hero
+  function renderHero() {
+    var path = [['map', 'Where a hundred pieces of work go, and what each way of working costs.'], ['funnel', 'How many get through each step.'], ['cases', 'Which of the ten steps each real problem case broke.'], ['lims', 'The limitations behind the breaks, and what each one holds back.'], ['run', 'Move the unknowns and watch the page follow.']];
+    $('#hero').innerHTML = '<div class="hero-grid"><div><h1>' + esc(TX.title) + '</h1><p class="lede">' + TX.hero.map(function (t) { return terms(rich(t)); }).join(' ') + '</p>' +
+      '<div class="keys"><div class="key"><span class="kh">Every number has a tag:</span>' + ['M', 'S', 'G'].map(function (t) { return '<span>' + T(t) + ' ' + esc(TAGW[t]) + '</span>'; }).join('') + '</div>' +
+      '<p class="note">' + esc(TX.computed_tag) + ' A tag shows once, at the head of a picture or column, unless a number differs.</p>' +
+      '<div class="key"><span class="kh">Marks for outcomes:</span>' + OUTKEY.replace(/^<div class="key"[^>]*>|<\/div>$/g, '') + '</div>' +
+      '<p class="note">' + esc('The same mark means the same thing in the map, the funnel, the cases and the tables.') + '</p></div></div>' +
+      '<div><p class="path-h">Where to start</p><ol class="path">' + path.map(function (p) { var s = SECS.filter(function (x) { return x.id === p[0]; })[0]; return '<li><a href="#' + p[0] + '">' + esc(s.title) + '</a><p>' + esc(p[1]) + '</p></li>'; }).join('') + '</ol>' +
+      '<p class="note">For reference: <a href="#conditions">' + esc(S.conditions.title) + '</a>, <a href="#many">' + esc(S.many.title) + '</a>, <a href="#leaves">' + esc(S.leaves.title) + '</a>, <a href="#words">Words</a>.</p></div></div>';
+  }
+
+  // ------------------------------------------------------------ navigation: where am I
+  function renderNav() {
+    $('#nav').innerHTML = SECS.map(function (s, i) { return '<a href="#' + s.id + '" data-sec="' + s.id + '"><span class="nn">' + (i + 1) + '</span>' + esc(s.short) + '</a>'; }).join('');
+    $('#secMenu').innerHTML = SECS.map(function (s, i) { return '<a href="#' + s.id + '" data-sec="' + s.id + '"><span class="nn">' + (i + 1) + '</span><b>' + esc(s.title) + '</b><span class="p">' + esc(s.purpose) + '</span></a>'; }).join('');
+  }
+  var curSec = null;
+  function spy() {
+    var y = scrollY + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bar-h')) || 56) + 90, id = null;
+    SECS.forEach(function (s) { var el = document.getElementById(s.id); if (el && el.offsetTop <= y) id = s.id; });
+    var max = document.documentElement.scrollHeight - innerHeight;
+    $('#prog').style.width = (max > 0 ? 100 * scrollY / max : 0).toFixed(1) + '%';
+    if (id !== curSec) {
+      curSec = id;
+      $$('#nav a, #secMenu a').forEach(function (a) { if (a.dataset.sec === id) a.setAttribute('aria-current', 'location'); else a.removeAttribute('aria-current'); });
+      var i = SECS.map(function (s) { return s.id; }).indexOf(id);
+      $('#whereN').textContent = i < 0 ? 'Start' : (i + 1) + ' of ' + SECS.length;
+      $('#whereT').textContent = i < 0 ? TX.title : SECS[i].title;
+    }
+    railSpy();
+  }
+  var spyRaf = 0;
+  addEventListener('scroll', function () { if (!spyRaf) spyRaf = requestAnimationFrame(function () { spyRaf = 0; spy(); }); }, { passive: true });
+  $('#secBtn').addEventListener('click', function () { var m = $('#secMenu'); m.hidden = !m.hidden; this.setAttribute('aria-expanded', String(!m.hidden)); if (!m.hidden) { var a = $('#secMenu a[aria-current]') || $('#secMenu a'); a.focus(); } });
+  $('#secMenu').addEventListener('click', function (e) { if (e.target.closest('a')) { this.hidden = true; $('#secBtn').setAttribute('aria-expanded', 'false'); } });
+  var themes = ['auto', 'light', 'dark'], ti = 0;
+  $('#themeBtn').addEventListener('click', function () { ti = (ti + 1) % 3; if (themes[ti] === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', themes[ti]); this.textContent = 'Theme: ' + themes[ti]; });
+
+  // ------------------------------------------------------------ cases grid
+  var ST = { caseId: null, col: null, famOpen: {}, lim: null, lfilter: 'all', lsort: 'file', lq: '' };
+  CASES.families.forEach(function (f) { ST.famOpen[f.id] = true; });
+  var LIMS_BY_CASE = {};
+  LIMS.items.forEach(function (it) { it.real.case_ids.forEach(function (cid) { var k = C.caseId(cid); (LIMS_BY_CASE[k] = LIMS_BY_CASE[k] || []).push(it.id); }); });
+  var TOT = C.statusTotals(CASES.cases);
+  function statusOf(c) { var s = {}; c.steps.forEach(function (x) { s[x.step] = x; }); return s; }
+  function cellKey() {
+    return '<div class="key">' + C.STATUSES.map(function (s) { return '<span>' + G(s) + ' ' + STATUS_WORD[s] + '</span>'; }).join('') + '</div>' +
+      '<p class="note" style="max-width:52ch"><span style="display:inline-block;width:0;height:0;border-top:9px solid var(--ink-3);border-right:9px solid transparent;margin-right:6px"></span>' + rich(S.cases.ks_note, 'M') + '</p>';
+  }
+  function cc(st, extra, label) { return '<span class="cc s-' + st.status + (st.ks ? ' ks' : '') + (extra || '') + '" role="img" aria-label="' + esc(label || ('Step ' + st.step + ': ' + STATUS_WORD[st.status] + (st.ks ? ', judged with the earlier design' : ''))) + '">' + G(st.status, '') + '</span>'; }
+  function renderGrid() {
+    var n = CASES.cases.length;
+    var h = '<div class="cg-r cg-head" role="row"><span class="hl">Case, by family</span>' + STEPK.map(function (k) {
+      return '<button type="button" class="stepbtn" data-col="' + k + '" aria-pressed="' + (ST.col === k) + '" data-tip="' + esc('<b>Step ' + k + '.</b> ' + esc(LIMS.steps[k])) + '"><span class="sn">' + k + '</span><span class="st">' + esc(SHORT(k)) + '</span></button>';
+    }).join('') + '<span class="bk" data-tip="Breaks per case">breaks</span></div>';
+    // overview: one stacked column per step, the 59 cases sorted by status
+    h += '<div class="cg-r cg-over"><span class="ol"><b>All ' + n + ' cases, per step</b>Each column is the ' + n + ' cases at that step. The red number counts breaks.</span>' + STEPK.map(function (k) {
+      var i = +k - 1, segs = ['breaks', 'strains', 'not_specified', 'not_reached', 'works'];
+      return '<span><span class="stk" role="img" aria-label="' + esc('Step ' + k + ': ' + segs.map(function (s) { return TOT[s][i] + ' ' + STATUS_WORD[s]; }).join(', ')) + '">' + segs.map(function (s) { return TOT[s][i] ? '<i class="' + s + '" style="height:' + (100 * TOT[s][i] / n).toFixed(2) + '%"></i>' : ''; }).join('') + '</span><span class="on" style="display:block">' + TOT.breaks[i] + '</span></span>';
+    }).join('') + '<span></span></div>';
+    h += '<div class="cg-counts" id="gridTotals">' + C.STATUSES.map(function (s) { return '<div class="cg-r cg-cnt-r cnt-' + s + '"><span class="cg-cnt-l">' + G(s) + ' ' + STATUS_WORD[s] + '</span>' + TOT[s].map(function (v) { return '<span class="cg-cnt">' + v + '</span>'; }).join('') + '<span></span></div>'; }).join('') + '</div>';
+    if (ST.col) {
+      var i = +ST.col - 1;
+      h += '<div class="colnote">Step ' + ST.col + ', ' + esc(SHORT(ST.col)) + ': ' + TOT.breaks[i] + ' cases break here and ' + TOT.strains[i] + ' strain. The rest are dimmed, not removed. <button type="button" class="linkbtn" data-col="' + ST.col + '">Clear</button></div>';
+    }
+    CASES.families.forEach(function (f) {
+      var list = CASES.cases.filter(function (c) { return c.family === f.id; }), open = ST.famOpen[f.id];
+      var fb = STEPK.map(function (k) { return list.filter(function (c) { return statusOf(c)[k] && statusOf(c)[k].status === 'breaks'; }).length; });
+      h += '<div class="cg-fam" role="rowgroup"><div class="cg-r"><button type="button" class="fb" data-fam="' + f.id + '" aria-expanded="' + open + '"><span class="chev" aria-hidden="true">▾</span><span class="fname">' + esc(f.name) + '</span><span class="fcnt">' + list.length + ' cases</span></button>' +
+        fb.map(function (v) { return '<span class="fx' + (v ? '' : ' z') + '" data-tip="Cases in this family that break at this step">' + v + '</span>'; }).join('') + '<span></span></div><div class="fcov">' + esc(f.covers) + '</div></div>';
+      if (!open) return;
+      list.forEach(function (c, j) {
+        var s = statusOf(c), hit = ST.col && s[ST.col] && s[ST.col].status === 'breaks', bk = c.steps.filter(function (x) { return x.status === 'breaks'; }).length;
+        h += '<div class="cg-r case' + (hit ? ' hit' : '') + '" role="button" tabindex="0" data-case="' + c.id + '" aria-selected="' + (ST.caseId === c.id) + '" aria-label="' + esc(f.name + ', case ' + (j + 1) + ': ' + c.title + '. ' + bk + ' steps break.') + '">' +
+          '<span class="cid">' + esc(c.id) + '</span><span class="ctl" title="' + esc(c.title) + '">' + esc(c.title) + '</span>' +
+          STEPK.map(function (k) { return cc(s[k], ST.col === k ? ' on' : ''); }).join('') + '<span class="cbk' + (bk ? '' : ' z') + '">' + bk + '</span></div>';
+        if (ST.caseId === c.id && !mqWide.matches) h += '<div class="inline-detail case-detail" id="caseInline">' + caseDetail(c) + '</div>';
+      });
+    });
+    var g = $('#cg'); g.innerHTML = h;
+    if (ST.col) g.setAttribute('data-col', ST.col); else g.removeAttribute('data-col');
+    var allOpen = CASES.families.every(function (f) { return ST.famOpen[f.id]; });
+    $('#cgFold').textContent = allOpen ? 'Fold to the ten families' : 'Unfold all ' + n + ' cases';
+    $('#cgColNote').textContent = ST.col ? '' : 'Tip: tap a step number to light up its column.';
+    renderCaseDetail();
+  }
+  function caseDetail(c) {
+    var f = FAM[c.family], s = statusOf(c), list = CASES.cases, i = list.indexOf(c);
+    var h = '<div class="dnav"><span class="where">Case ' + (i + 1) + ' of ' + list.length + '</span><span class="row"><button type="button" class="btn" data-casenav="-1"' + (i ? '' : ' disabled') + '>◀ Previous</button><button type="button" class="btn" data-casenav="1"' + (i < list.length - 1 ? '' : ' disabled') + '>Next ▶</button><button type="button" class="xbtn" data-caseclose="1" aria-label="Close the case">×</button></span></div>';
+    h += '<p class="meta"><b>' + esc(f.name) + '</b> · <code>' + esc(c.id) + '</code></p><h3>' + esc(c.title) + '</h3>';
+    h += '<div class="strip" aria-hidden="true">' + STEPK.map(function (k) { return cc(s[k]); }).join('') + '</div>';
+    h += '<p class="story">' + esc(c.story) + '</p><p class="meta" style="margin-top:8px">When: ' + esc(c.when) + '. Source: <code>' + esc(c.source) + '</code></p>';
+    h += '<div class="dsec"><h4>The entry, as it would have been written</h4><blockquote>' + esc(c.entry) + '</blockquote></div>';
+    h += '<div class="dsec"><h4>Step by step</h4><ul class="steps">' + c.steps.map(function (st) {
+      return '<li>' + cc(st) + '<div><div class="sl1">Step ' + st.step + ' · <span class="sname">' + esc(SHORT(st.step)) + '</span> · <span class="sw ' + st.status + '">' + esc(STATUS_WORD[st.status]) + '</span>' + (st.ks ? '<span class="kmark" data-tip="' + esc('The walk note for this step names the owner’s earlier knowledge-store design. That design is not the library mapped here.') + '">judged with the earlier design</span>' : '') + '</div>' +
+        '<p class="snote"><b>' + esc(LIMS.steps[st.step]) + '.</b> ' + esc(st.note) + '</p></div></li>';
+    }).join('') + '</ul></div>';
+    if (c.worked) h += '<div class="dsec"><h4>Saving the walk saw or estimated</h4><p>' + esc(c.worked) + '</p></div>';
+    var lims = LIMS_BY_CASE[c.id] || [];
+    if (lims.length) h += '<div class="dsec"><h4>Limitations this case showed</h4><div class="chips">' + lims.map(function (id) { return '<button type="button" class="chip" data-golim="' + id + '"><span class="c">Step ' + LIM[id].main_step + '</span>' + esc(LIM[id].title) + '</button>'; }).join('') + '</div></div>';
+    h += '<p class="meta" style="margin-top:16px">' + esc(S.cases.numbers_tag) + ' ' + T('M') + ' ' + T('G') + '</p>';
+    return h;
+  }
+  function renderCaseDetail() {
+    var el = $('#caseDetail');
+    if (!ST.caseId) { el.innerHTML = '<div class="empty"><h3>No case open</h3><p>' + esc(S.cases.pick) + ' Its story, the entry and every step open here, beside the grid.</p><p class="meta">Keys: arrow up and down move between cases; Enter opens one; Escape closes it.</p></div>'; return; }
+    el.innerHTML = '<div class="case-detail">' + caseDetail(CASE[ST.caseId]) + '</div>'; el.scrollTop = 0;
+  }
+  function selectCase(id, opts) {
+    opts = opts || {};
+    ST.caseId = id;
+    if (id) { var c = CASE[id]; ST.famOpen[c.family] = true; }
+    renderGrid();
+    var row = id && document.querySelector('.case[data-case="' + id + '"]');
+    if (row && opts.focus) row.focus({ preventScroll: true });
+    if (row && opts.scroll) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (!mqWide.matches && id && opts.reveal) { var d = $('#caseInline'); if (d) d.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+  }
+  function wireGrid() {
+    var sec = $('#cases');
+    sec.addEventListener('click', function (e) {
+      var t;
+      if ((t = e.target.closest('[data-col]'))) { ST.col = ST.col === t.dataset.col ? null : t.dataset.col; renderGrid(); return; }
+      if ((t = e.target.closest('[data-fam]'))) { ST.famOpen[t.dataset.fam] = !ST.famOpen[t.dataset.fam]; renderGrid(); return; }
+      if ((t = e.target.closest('[data-casenav]'))) { var L = CASES.cases, i = L.indexOf(CASE[ST.caseId]) + (+t.dataset.casenav); if (L[i]) selectCase(L[i].id, { scroll: true }); return; }
+      if (e.target.closest('[data-caseclose]')) { var was = ST.caseId; selectCase(null); var r = document.querySelector('.case[data-case="' + was + '"]'); if (r) r.focus(); return; }
+      if (e.target.closest('#cgFold')) { var allOpen = CASES.families.every(function (f) { return ST.famOpen[f.id]; }); CASES.families.forEach(function (f) { ST.famOpen[f.id] = !allOpen; }); renderGrid(); return; }
+      if (e.target.closest('.inline-detail')) return;
+      if ((t = e.target.closest('[data-case]'))) selectCase(ST.caseId === t.dataset.case && !mqWide.matches ? null : t.dataset.case, { focus: true, reveal: true });
+    });
+    sec.addEventListener('keydown', function (e) {
+      var row = e.target.closest && e.target.closest('.case'); if (!row) return;
+      var rows = $$('#cg .case'), i = rows.indexOf(row);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); var nx = rows[i + (e.key === 'ArrowDown' ? 1 : -1)]; if (nx) { nx.focus(); if (ST.caseId && mqWide.matches) selectCase(nx.dataset.case, { focus: true }); } }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectCase(row.dataset.case, { focus: true, reveal: true }); }
+      else if (e.key === 'Escape') { selectCase(null); var r = document.querySelector('.case[data-case="' + row.dataset.case + '"]'); if (r) r.focus(); }
+      else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); rows[e.key === 'Home' ? 0 : rows.length - 1].focus(); }
+    });
+  }
+
+  // ------------------------------------------------------------ limitations
+  var AX = { alone: [0, 1], last: [0, 1] };
+  function setWeights(w) {
+    W8 = w; WLIM = {}; WSTEP = {};
+    w.limitations.forEach(function (r) { WLIM[r.id] = r; });
+    w.steps.forEach(function (r) { WSTEP[r.step] = r; });
+    ['alone', 'last'].forEach(function (k) {
+      var vals = [0]; w.limitations.concat(w.steps).forEach(function (r) { if (r.measured) vals.push(r[k]); });
+      AX[k] = [Math.min.apply(null, vals), Math.max.apply(null, vals)];
+    });
+  }
+  function wcell(r, k) {
+    var ax = AX[k], span = (ax[1] - ax[0]) || 1, z = 100 * (0 - ax[0]) / span, x = 100 * (r[k] - ax[0]) / span;
+    return '<span class="wcell" data-l="' + k + '"><span class="wt" aria-hidden="true"><i class="' + (k === 'alone' ? 'a' : 'l') + '" style="left:' + Math.min(z, x).toFixed(2) + '%;width:' + Math.max(0.6, Math.abs(x - z)).toFixed(2) + '%"></i><b style="left:' + z.toFixed(2) + '%"></b></span><span class="wv' + (r[k] < 0 ? ' neg' : '') + '">' + esc(fmt(r[k], 'weight')) + '</span></span>';
+  }
+  function wcells(r) {
+    if (!W8) return '<span class="wnm">computing the weights…</span>';
+    if (!r) return '<span class="wnm"></span>';
+    if (!r.measured) return '<span class="wnm" data-tip="' + esc(S.lims['nm_why_' + r.not_measured]) + '">not weighed: ' + esc(S.lims['nm_' + r.not_measured]) + (r.not_measured === 'gate_or_ladder' ? ' ↓' : '') + '</span>';
+    return wcell(r, 'alone') + wcell(r, 'last');
+  }
+  function limVisible(it) {
+    var f = ST.lfilter, w = WLIM[it.id];
+    if (f === 'real' && !it.real.cases) return false;
+    if (f === 'thought' && it.real.cases) return false;
+    if (f === 'nw' && !(w && !w.measured)) return false;
+    if (ST.lq) { var q = ST.lq.toLowerCase(); if ((it.title + ' ' + it.what + ' ' + it.id).toLowerCase().indexOf(q) < 0) return false; }
+    return true;
+  }
+  function renderLimTools() {
+    var count = function (f) { var keep = ST.lfilter; ST.lfilter = f; var q = ST.lq; ST.lq = ''; var n = LIMS.items.filter(limVisible).length; ST.lfilter = keep; ST.lq = q; return n; };
+    var fl = [['all', 'All'], ['real', 'From real cases'], ['thought', 'Thought experiments'], ['nw', 'Not weighed']];
+    $('#lfilters').innerHTML = '<span class="fl">Show</span>' + fl.map(function (f) { return '<button type="button" class="chip" data-lf="' + f[0] + '" aria-pressed="' + (ST.lfilter === f[0]) + '">' + f[1] + ' <span class="c">' + (f[0] === 'nw' && !W8 ? '…' : count(f[0])) + '</span></button>'; }).join('') +
+      '<span class="fl">Order in a step</span>' + [['file', 'As listed'], ['last', 'By last weight'], ['cases', 'By real cases']].map(function (o) { return '<button type="button" class="chip" data-ls="' + o[0] + '" aria-pressed="' + (ST.lsort === o[0]) + '">' + o[1] + '</button>'; }).join('') +
+      '<input class="search" id="limQ" type="search" placeholder="Find a limitation" aria-label="Find a limitation" value="' + esc(ST.lq) + '">';
+  }
+  function renderRail() {
+    $('#rail').innerHTML = STEPK.map(function (k) { var n = LIMS.items.filter(function (it) { return String(it.main_step) === k && limVisible(it); }).length; return '<a href="#lstep-' + k + '" data-rail="' + k + '"><span class="rn">' + k + '</span>' + esc(SHORT(k)) + ' <span class="rc">' + n + '</span></a>'; }).join('');
+  }
+  function railSpy() {
+    var steps = $$('.lstep'); if (!steps.length) return;
+    var top = (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bar-h')) || 56) + ($('#ltools') ? $('#ltools').offsetHeight : 0) + 60, k = null;
+    steps.forEach(function (s) { if (s.getBoundingClientRect().top <= top) k = s.dataset.step; });
+    $$('#rail a').forEach(function (a) { a.setAttribute('aria-current', String(a.dataset.rail === k)); });
+  }
+  function renderLims() {
+    var axNote = W8 ? ' data-tip="' + esc('Each bar column has its own scale, from ' + fmt(AX.alone[0], 'weight') + ' to ' + fmt(AX.alone[1], 'weight') + ' for alone and from 0 to ' + fmt(AX.last[1], 'weight') + ' for last. A thin line marks zero.') + '"' : '';
+    var h = '<div class="lh" aria-hidden="true"><span>Limitation</span><span>Real cases</span><span>Families</span><span>Other way</span>' +
+      '<span><button type="button" class="hb" data-tip="' + esc('<b>Alone.</b> ' + esc(S.lims.alone_def) + ' ' + esc(S.lims.sign_def)) + '">Alone</button></span><span><button type="button" class="hb" data-tip="' + esc('<b>Last.</b> ' + esc(S.lims.last_def) + ' ' + esc(S.lims.add_def)) + '">Last</button></span></div>';
+    STEPK.forEach(function (k) {
+      var list = LIMS.items.filter(function (it) { return String(it.main_step) === k; });
+      var vis = list.filter(limVisible);
+      if (ST.lsort === 'last' && W8) vis.sort(function (a, b) { var x = WLIM[a.id], y = WLIM[b.id]; return (y && y.measured ? y.last : -9) - (x && x.measured ? x.last : -9); });
+      if (ST.lsort === 'cases') vis.sort(function (a, b) { return b.real.cases - a.real.cases; });
+      var ws = WSTEP[+k];
+      h += '<div class="lstep" id="lstep-' + k + '" data-step="' + k + '"><div class="lstep-h"><span class="sl"><span class="sbadge">' + k + '</span><span class="stx"><span class="stn">' + esc(SHORT(k)) + '</span> <span class="stc">' + vis.length + (vis.length !== list.length ? ' of ' + list.length : '') + ' limitations</span><br><span class="std">' + esc(LIMS.steps[k].split(':').slice(1).join(':').trim()) + '</span></span></span>' +
+        '<span class="lnum z"></span><span class="lnum z"></span><span class="lnum z"' + axNote + '></span>' + (W8 ? wcells(ws) : wcells(null)) + '</div>';
+      if (!vis.length) h += '<p class="meta" style="padding:10px 16px">None shown under this filter.</p>';
+      vis.forEach(function (it) {
+        var w = WLIM[it.id], open = ST.lim === it.id;
+        var meta = [];
+        if (!it.real.cases) meta.push('<span class="te">thought experiment: no real case showed it</span>');
+        if (w && w.same_set && w.same_set.count) meta.push('same weights as ' + w.same_set.count + ' other' + (w.same_set.count > 1 ? 's' : ''));
+        if (it.shown && it.shown !== 'yes') meta.push(it.shown === 'no' ? 'the model cannot show this' : 'the model shows this only in part');
+        h += '<button type="button" class="lrow" data-lim="' + it.id + '" aria-expanded="' + open + '"><span class="lt">' + esc(it.title) + (meta.length ? '<span class="lm">' + meta.join(' · ') + '</span>' : '') + '</span>' +
+          '<span class="lnum' + (it.real.cases ? '' : ' z') + '">' + (it.real.cases || '–') + '<span class="ul"> cases</span></span><span class="lnum' + (it.real.families ? '' : ' z') + '">' + (it.real.families || '–') + '<span class="ul"> families</span></span><span class="lnum' + (it.contradicted.length ? '' : ' z') + '">' + (it.contradicted.length || '–') + '<span class="ul"> other way</span></span>' + wcells(w) + '</button>';
+        if (open && !mqWide.matches) h += '<div class="inline-detail lim-detail" id="limInline">' + limDetail(it) + '</div>';
+      });
+      h += '</div>';
+    });
+    $('#ll').innerHTML = h;
+    renderRail(); renderLimTools(); renderLimDetail();
+    var lt = $('#ltools'); if (lt) document.documentElement.style.setProperty('--ltools-h', lt.offsetHeight + 'px');
+  }
+  function limBranches(it) { var set = {}; (it.params || []).forEach(function (p) { REACH[p].branches.forEach(function (b) { set[b] = 1; }); }); return Object.keys(set); }
+  function classNote(it) {
+    var cls = (it.params || []).filter(function (p) { return REACH[p].classes; }).map(pname);
+    var stk = (it.params || []).filter(function (p) { return REACH[p].stocks && !REACH[p].branches.length; }).map(pname);
+    var s = '';
+    if (cls.length) s += ' ' + esc(cls.join(', ')) + ' also ' + (cls.length === 1 ? 'shapes' : 'shape') + ' which work arrives and what the library holds.';
+    if (stk.length) s += ' ' + esc(stk.join(', ')) + ' ' + (stk.length === 1 ? 'acts' : 'act') + ' on the stock of entries over time.';
+    return s;
+  }
+  function pchip(id) {
+    var row = ROWS[id], m = PMETA[id];
+    var sd = row.side === 'library' ? 'Library unknown; group: ' + LIBGI[row.lib_group].short + '; good end ' + row.good_end + '.' : 'Shared by all three ways of working; the weights keep it at its middle value.';
+    return '<button type="button" class="pchip' + (row.side === 'library' ? ' lib' : '') + '" data-unk="' + id + '" data-tip="' + esc('<b>' + esc(pname(id)) + '</b><br>' + esc(m.meaning) + '<br>Range ' + fmt(row.low) + ' to ' + fmt(row.high) + ' (' + row.tag + ')<br>' + esc(sd) + '<br>Opens its slider.') + '">' + esc(pname(id)) + T(row.tag) + '</button>';
+  }
+  function limDetail(it) {
+    var w = WLIM[it.id], br = limBranches(it), all = LIMS.items, i = all.indexOf(it);
+    var h = '<div class="dnav"><span class="where">Limitation ' + (i + 1) + ' of ' + all.length + '</span><span class="row"><button type="button" class="btn" data-limnav="-1"' + (i ? '' : ' disabled') + '>◀ Previous</button><button type="button" class="btn" data-limnav="1"' + (i < all.length - 1 ? '' : ' disabled') + '>Next ▶</button><button type="button" class="xbtn" data-limclose="1" aria-label="Close the limitation">×</button></span></div>';
+    h += '<p class="meta"><b>Step ' + it.main_step + ' · ' + esc(SHORT(it.main_step)) + '</b> · <code>' + esc(it.id) + '</code></p><h3 style="margin:4px 0 12px">' + esc(it.title) + '</h3>';
+    h += '<p class="what">' + esc(it.what) + '</p>' + (it.note ? '<p class="note" style="margin-top:8px">' + esc(it.note) + ' ' + T('M') + '</p>' : '');
+    h += '<div class="dsec"><h4>Where it sits</h4><div class="dsteps" aria-label="Steps it touches">' + STEPK.map(function (k) { var on = it.steps.indexOf(+k) >= 0, main = +k === +it.main_step; return '<span class="' + (main ? 'main' : on ? 'on' : '') + '" data-tip="' + esc('Step ' + k + ': ' + LIMS.steps[k] + (main ? ' (its main step)' : on ? ' (it touches this step)' : '')) + '">' + k + '</span>'; }).join('') + '</div>' +
+      '<p class="small" style="margin-top:8px"><b>Steps it touches:</b> ' + it.steps.join(', ') + '. <b>On the map:</b> ' + (br.length ? br.length + (br.length === 1 ? ' branch uses' : ' branches use') + ' its unknowns.' : 'no branch uses its unknowns.') + classNote(it) + '</p>' +
+      (br.length ? '<div class="minimap" style="margin-top:8px">The small map of ' + (br.length === 1 ? 'this branch' : 'these ' + br.length + ' branches') + ' is drawn here by the map designers. ' + esc(S.lims.map_note) + '</div>' : '') + '</div>';
+    h += '<div class="dsec"><h4>Real cases ' + T('M') + '</h4>';
+    if (it.real.case_ids.length) h += '<p class="small">' + it.real.cases + ' cases in ' + it.real.families + ' famil' + (it.real.families === 1 ? 'y' : 'ies') + '.</p><div class="chips" style="margin:6px 0 10px">' + it.real.case_ids.map(function (cid) { var k2 = C.caseId(cid); return '<button type="button" class="chip" data-gocase="' + k2 + '" data-tip="' + esc(CASE[k2] ? CASE[k2].title : k2) + '">' + esc(k2) + '</button>'; }).join('') + '</div>';
+    else h += '<p class="small">None. A thought experiment: it was reasoned out, not seen.</p>';
+    if (it.real.examples && it.real.examples.length) h += '<p class="small"><b>Examples</b></p><ul class="ex">' + it.real.examples.map(function (x) { var k2 = C.caseId(x.case); return '<li><button type="button" class="linkbtn" data-gocase="' + k2 + '">' + esc(CASE[k2] ? CASE[k2].title : k2) + '</button>: <span class="mono">' + esc(x.evidence) + '</span></li>'; }).join('') + '</ul>';
+    if (it.contradicted.length) h += '<p class="small" style="margin-top:10px"><b>Where real cases went the other way</b></p><ul class="ex">' + it.contradicted.map(function (cn) { return '<li><b>' + esc(LIM_FAM_NAME[cn.family] || cn.family_name) + ':</b> ' + esc(cn.reason) + '</li>'; }).join('') + '</ul>';
+    h += '</div>';
+    if (it.shown && it.shown !== 'yes') h += '<div class="dsec"><p><b>' + esc(it.shown === 'no' ? S.lims.shown_no : S.lims.shown_partly) + '</b> ' + esc(it.not_shown || '') + '</p></div>';
+    h += '<div class="dsec"><h4>Unknowns</h4>' + (it.params.length ? '<p class="meta" style="margin-bottom:6px">Tap one to open its slider.</p><div class="chips">' + it.params.map(pchip).join('') + '</div>' : '<p class="small">None in the model.</p>') + '</div>';
+    h += '<div class="dsec"><h4>Weights ' + T('G') + '</h4>';
+    if (!W8) h += '<p class="small">Computing the weights…</p>';
+    else if (w && !w.measured) h += '<p class="small"><b>' + esc(S.lims['nm_why_' + w.not_measured]) + '</b>' + (w.not_measured === 'gate_or_ladder' ? ' <a href="#lims" class="linkbtn">' + esc(S.lims.gate_title) + '</a>' : '') + '</p>';
+    else if (w) {
+      h += '<p class="small">Alone <span class="n" style="font-size:20px">' + esc(fmt(w.alone, 'weight')) + '</span> · last <span class="n" style="font-size:20px">' + esc(fmt(w.last, 'weight')) + '</span></p>';
+      if (w.same_set && w.same_set.count) h += '<p class="small" style="margin-top:6px">Same library unknowns, so the same weights: ' + w.same_set.ids.map(function (id) { return '<button type="button" class="linkbtn" data-golim="' + id + '">' + esc(LIM[id].title) + '</button>'; }).join('; ') + '.</p>';
+      h += '<p class="small" style="margin-top:6px"><b>' + esc(S.lims.parts_title) + ':</b> ' + w.parts.map(function (q) { return esc(pname(q.id)) + ' ' + esc(fmt(q.alone, 'weight')) + ' and ' + esc(fmt(q.last, 'weight')); }).join('; ') + '.</p>';
+      var col = [['Middle values', W8.base], ['Only this at its good end', w.alone_values], ['All-good setting', W8.full.values], ['All good but this', w.last_values]];
+      h += '<div class="tscroll" style="margin-top:8px"><table class="wtab"><tr><th>Library over</th>' + col.map(function (c) { return '<th>' + esc(c[0]) + '</th>'; }).join('') + '</tr>' +
+        RATIOS4.map(function (r) { return '<tr><td>' + esc(r[1]) + ', ' + (r[2] === 'ladder' ? 'ladder' : 'strong model') + '</td>' + col.map(function (c) { return '<td>' + esc(fmt(c[1].ratios[r[0]], 'ratio')) + '</td>'; }).join('') + '</tr>'; }).join('') +
+        '<tr><td>Funnel’s last number</td>' + col.map(function (c) { return '<td>' + esc(fmt(c[1].funnel_end, 'funnel')) + '</td>'; }).join('') + '</tr></table></div>';
+    }
+    h += '</div><p class="meta" style="margin-top:16px">Name in the files: <code>' + esc(it.id) + '</code></p>';
+    return h;
+  }
+  function renderLimDetail() {
+    var el = $('#limDetail');
+    if (!ST.lim) { el.innerHTML = '<div class="empty"><h3>No limitation open</h3><p>Tap a limitation in the list. Its description, real cases, unknowns and weights open here.</p><p class="meta">Keys: arrow up and down move through the list; Enter opens; Escape closes.</p></div>'; return; }
+    el.innerHTML = '<div class="lim-detail">' + limDetail(LIM[ST.lim]) + '</div>'; el.scrollTop = 0;
+  }
+  function selectLim(id, opts) {
+    opts = opts || {};
+    ST.lim = id;
+    if (id && !limVisible(LIM[id])) { ST.lfilter = 'all'; ST.lq = ''; }
+    renderLims();
+    var row = id && document.querySelector('.lrow[data-lim="' + id + '"]');
+    if (row && opts.focus) row.focus({ preventScroll: true });
+    if (row && opts.scroll) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (!mqWide.matches && id && opts.reveal) { var d = $('#limInline'); if (d) d.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+  }
+  function renderWorks() {
+    $('#works').innerHTML = LIMS.works.map(function (w) {
+      var k = C.caseId(w.case), c = CASE[k];
+      return '<article class="work"><div class="wh"><b>' + esc(c.title) + '</b><span class="basis">' + (w.basis === 'seen' ? 'seen' : 'estimate') + ' ' + T(w.tag) + (w.channel ? ' · ' + esc(S.lims.channel) : '') + '</span></div>' +
+        '<p class="wtx">' + esc(w.text) + '</p>' + (w.channel ? '<p class="wch">Carried by ' + esc(w.channel) + ', a channel that exists today.</p>' : '') + (w.caveat ? '<p class="wcav">' + esc(w.caveat) + '</p>' : '') +
+        '<p class="wf">' + esc(FAM[c.family].name) + ' · <button type="button" class="linkbtn" data-gocase="' + k + '">' + esc(k) + '</button></p></article>';
+    }).join('');
+  }
+  function wireLims() {
+    var sec = $('#lims');
+    sec.addEventListener('click', function (e) {
+      var t;
+      if ((t = e.target.closest('[data-lf]'))) { ST.lfilter = t.dataset.lf; renderLims(); return; }
+      if ((t = e.target.closest('[data-ls]'))) { ST.lsort = t.dataset.ls; renderLims(); return; }
+      if ((t = e.target.closest('[data-limnav]'))) { var L = LIMS.items, i = L.indexOf(LIM[ST.lim]) + (+t.dataset.limnav); if (L[i]) selectLim(L[i].id, { scroll: true }); return; }
+      if (e.target.closest('[data-limclose]')) { var was = ST.lim; selectLim(null); var r = document.querySelector('.lrow[data-lim="' + was + '"]'); if (r) r.focus(); return; }
+      if (e.target.closest('.inline-detail')) return;
+      if ((t = e.target.closest('.lrow[data-lim]'))) selectLim(ST.lim === t.dataset.lim ? null : t.dataset.lim, { focus: true, reveal: true });
+    });
+    sec.addEventListener('input', function (e) { if (e.target.id === 'limQ') { ST.lq = e.target.value; var pos = e.target.selectionStart; renderLims(); var q = $('#limQ'); q.focus(); q.setSelectionRange(pos, pos); } });
+    sec.addEventListener('keydown', function (e) {
+      var row = e.target.closest && e.target.closest('.lrow'); if (!row) return;
+      var rows = $$('#ll .lrow'), i = rows.indexOf(row);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); var nx = rows[i + (e.key === 'ArrowDown' ? 1 : -1)]; if (nx) nx.focus(); }
+      else if (e.key === 'Escape') { selectLim(null); var r = document.querySelector('.lrow[data-lim="' + row.dataset.lim + '"]'); if (r) r.focus(); }
+    });
+  }
+  // links between the two lists and into the sliders
+  document.addEventListener('click', function (e) {
+    var t;
+    if ((t = e.target.closest('[data-golim]'))) { selectLim(t.dataset.golim, { scroll: true }); return; }
+    if ((t = e.target.closest('[data-gocase]'))) { selectCase(t.dataset.gocase, { scroll: true, reveal: true }); return; }
+    if ((t = e.target.closest('[data-unk]'))) { openDrawer(t.dataset.unk, t); }
+  });
+
+  // ------------------------------------------------------------ unknowns: the slider panel
+  var GROUPS = ['before'].concat(MAP.steps.filter(function (s) { return s.id !== 'outcome'; }).map(function (s) { return s.id; })).concat(['time']);
+  var GROUP_TITLE = function (g) {
+    if (g === 'before') return 'Before the steps: the work that arrives and what the library can hold';
+    if (g === 'time') return 'Over time: the stock of entries and the horizon';
+    return STEP[g].label + (stageWords(g) ? ' (' + stageWords(g) + ')' : '');
+  };
+  var PSTAGE = {}; MAP.parameters.forEach(function (p) { PSTAGE[p.id] = C.paramStage(MAP, REACH, p.id); });
+  var DF = { q: '', tag: {}, side: '', moved: false };
+  function stepOf(row) { return row.run_setting || PMETA[row.id].integer ? 1 : (row.high - row.low) / 200; }
+  function isMoved(id) { return Math.abs(cur[id] - ROWS[id].best) > 1e-12; }
+  function renderSliders() {
+    var h = '';
+    GROUPS.forEach(function (g) {
+      var ids = MAP.parameters.filter(function (p) { return PSTAGE[p.id] === g; }).map(function (p) { return p.id; });
+      if (!ids.length) return;
+      h += '<details class="sgroup" data-g="' + g + '"' + (g === 'before' ? ' open' : '') + '><summary><span class="gt">' + esc(GROUP_TITLE(g)) + '</span><span class="gc" data-gc="' + g + '">' + ids.length + '</span></summary>';
+      ids.forEach(function (id) {
+        var row = ROWS[id], m = PMETA[id], fixed = row.low === row.high, lib = row.side === 'library';
+        var goodHi = lib && row.good_end === 'high', goodLo = lib && row.good_end === 'low';
+        var notch = fixed ? '' : '<span class="nl" aria-hidden="true"><i class="notch" style="left:' + (100 * (row.best - row.low) / (row.high - row.low)).toFixed(2) + '%"></i></span>';
+        h += '<div class="slr" id="sl-' + id + '" data-id="' + id + '"><div class="st1"><label for="in-' + id + '">' + esc(pname(id)) + '</label><output id="sv-' + id + '" for="in-' + id + '"></output></div>' +
+          '<p class="mean">' + esc(m.meaning) + '</p>' +
+          (fixed ? '<p class="fixed">Fixed: its range is one value, so it has no slider and the runs never vary it.' + (id === 'm_opus' ? ' ' + esc(S.run.top_sub) + ' The ratio box in Run it shows the cost ratio at one as well.' : '') + '</p>' :
+            '<div class="trk"><span class="end' + (goodLo ? ' good' : '') + '">' + esc(fmt(row.low)) + '</span><span class="mid">' + notch + '<input type="range" id="in-' + id + '" min="' + row.low + '" max="' + row.high + '" step="' + stepOf(row) + '" value="' + cur[id] + '"></span><span class="end' + (goodHi ? ' good' : '') + '">' + esc(fmt(row.high)) + '</span></div>') +
+          '<div class="sm">' + T(row.tag) + '<span>' + (fixed ? '' : '▲ middle ' + esc(fmt(row.best))) + (row.run_setting || m.run_setting ? ' · a chosen horizon, never drawn' : '') + '</span><span>' + (lib ? 'library unknown · ' + esc(LIBGI[row.lib_group].short) : 'shared by all three ways') + '</span><code>' + esc(id) + '</code>' +
+          '<button type="button" class="btn" data-src="' + id + '" aria-expanded="false">Source</button><button type="button" class="btn" data-reset1="' + id + '" hidden>Back to middle</button></div>' +
+          '<div class="src" id="src-' + id + '" hidden><b>Tag ' + row.tag + '.</b> ' + esc(row.source) + (row.note ? '<br>' + esc(row.note) : '') + '</div></div>';
+      });
+      h += '</details>';
+    });
+    $('#sliders').innerHTML = h;
+    renderDFilters(); updateValues(); applyDFilter();
+  }
+  function renderDFilters() {
+    var tags = ['M', 'S', 'G'].map(function (t) { var n = TABLE.parameters.filter(function (r) { return r.tag === t; }).length; return '<button type="button" class="chip" data-dtag="' + t + '" aria-pressed="' + !!DF.tag[t] + '" aria-label="' + esc(TAGW[t] + ', ' + n) + '" data-tip="' + esc(t + ': ' + TAGW[t]) + '">' + T(t) + ' <span class="c">' + n + '</span></button>'; }).join('');
+    $('#dFilters').innerHTML = '<input class="search" id="dQ" type="search" placeholder="Find an unknown by name, meaning or file name" aria-label="Find an unknown" value="' + esc(DF.q) + '">' +
+      '<span class="fl">Tag</span>' + tags + '<span class="fl">Side</span>' +
+      [['library', 'Library'], ['other', 'Shared']].map(function (s) { return '<button type="button" class="chip" data-dside="' + s[0] + '" aria-pressed="' + (DF.side === s[0]) + '">' + s[1] + '</button>'; }).join('') +
+      '<button type="button" class="chip" data-dmoved="1" aria-pressed="' + DF.moved + '">Moved only</button>';
+  }
+  function hl(text, q) { if (!q) return esc(text); var i = text.toLowerCase().indexOf(q.toLowerCase()); return i < 0 ? esc(text) : esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length)); }
+  function applyDFilter() {
+    var q = DF.q.trim().toLowerCase(), anyTag = Object.keys(DF.tag).some(function (k) { return DF.tag[k]; }), active = q || anyTag || DF.side || DF.moved, shown = 0;
+    $$('#sliders .sgroup').forEach(function (gEl) {
+      var n = 0, mv = 0;
+      $$('.slr', gEl).forEach(function (r) {
+        var id = r.dataset.id, row = ROWS[id], m = PMETA[id];
+        var ok = (!q || (pname(id) + ' ' + m.meaning + ' ' + id).toLowerCase().indexOf(q) >= 0) && (!anyTag || DF.tag[row.tag]) && (!DF.side || row.side === DF.side) && (!DF.moved || isMoved(id));
+        r.hidden = !ok; if (ok) n++; if (isMoved(id)) mv++;
+        $('label', r).innerHTML = hl(pname(id), q); $('.mean', r).innerHTML = hl(m.meaning, q);
+      });
+      shown += n; gEl.hidden = !n;
+      if (active && n) gEl.open = true;
+      var total = $$('.slr', gEl).length;
+      $('[data-gc]', gEl).innerHTML = (n !== total ? n + ' of ' : '') + total + ' unknowns' + (mv ? ' · <b>' + mv + ' moved</b>' : '');
+    });
+    $('#dCount').textContent = active ? shown + ' of ' + TABLE.parameters.length + ' unknowns match.' : 'All ' + TABLE.parameters.length + ' unknowns, in the order the work meets them. Tap a group to open it.';
+  }
+  function liveHtml(where) {
+    var R = PATH.periods[PATH.periods.length - 1].ratios, R0 = PATH0.periods[PATH0.periods.length - 1].ratios, moved = MAP.parameters.some(function (p) { return isMoved(p.id); });
+    var cellv = function (k) { var d = R[k] - R0[k], dd = Math.abs(d) < 0.005 ? '' : '<span class="d">' + (d > 0 ? '▲ +' : '▼ −') + Math.abs(d).toFixed(2) + '</span>'; return '<span class="rv"><b class="n">' + esc(fmt(R[k], 'ratio')) + '</b>' + (moved ? dd : '') + '</span>'; };
+    return '<span class="lh2"><span>Library over each, last period ' + T('G') + '</span><span>' + (moved ? 'change from middle values' : 'at middle values') + '</span></span>' +
+      '<span></span><span class="rl">cost</span><span class="rl">wrong rate</span>' +
+      '<span class="rl">over the ladder</span>' + cellv('cost_vs_ladder') + cellv('wrong_vs_ladder') +
+      '<span class="rl">over strong directly</span>' + cellv('cost_vs_top') + cellv('wrong_vs_top');
+  }
+  function updateValues() {
+    var moved = [];
+    MAP.parameters.forEach(function (p) {
+      var row = ROWS[p.id], ch = isMoved(p.id), el = document.getElementById('sv-' + p.id); if (ch) moved.push(p.id);
+      if (!el) return;
+      el.innerHTML = (ch ? '<span class="was">' + esc(fmt(row.best, p.integer ? 'int' : 'auto')) + '</span>' : '') + esc(fmt(cur[p.id], p.integer ? 'int' : 'auto')) + (ch && row.tag !== 'G' ? '<sup class="tl" data-tip="A moved value is your guess">G</sup>' : '');
+      var r = el.closest('.slr'); r.classList.toggle('moved-r', ch);
+      var b = $('[data-reset1]', r); if (b) b.hidden = !ch;
+    });
+    $('#movedBox').innerHTML = '<div class="mh"><span>' + (moved.length ? moved.length + ' moved from the middle values' : 'Nothing moved. Every unknown is at its middle value.') + '</span>' + (moved.length ? '<button type="button" class="btn" data-resetall="1">Back to middle values</button>' : '') + '</div>' +
+      (moved.length ? '<ul>' + moved.map(function (id) { return '<li><button type="button" class="linkbtn" data-jump="' + id + '">' + esc(pname(id)) + '</button><span class="n">' + esc(fmt(ROWS[id].best)) + ' → ' + esc(fmt(cur[id])) + '</span><button type="button" class="btn" data-reset1="' + id + '" aria-label="' + esc('Put ' + pname(id) + ' back to its middle value') + '">↺</button></li>'; }).join('') + '</ul>' : '');
+    $('#unkBadge').textContent = moved.length + ' moved';
+    $('#unkBtn').classList.toggle('has-moved', moved.length > 0);
+    var rm = $('#runMoved'); if (rm) rm.innerHTML = moved.length ? '<b>' + moved.length + '</b> moved from middle values. A moved value is your guess, so it shows G.' : 'All settings at their middle values.';
+  }
+  var raf = 0;
+  function recompute() {
+    PATH = E.timePath(MAP, cur);
+    $('#drawerLive').innerHTML = liveHtml('drawer');
+    var rl = $('#runLive'); if (rl) rl.innerHTML = liveHtml('run');
+  }
+  $('#sliders').addEventListener('input', function (e) {
+    var r = e.target.closest('.slr'); if (!r) return;
+    cur[r.dataset.id] = +e.target.value; updateValues();
+    if (DF.moved) applyDFilter();
+    if (!raf) raf = requestAnimationFrame(function () { raf = 0; recompute(); });
+  });
+  function resetOne(id) { cur[id] = ROWS[id].best; var inp = document.getElementById('in-' + id); if (inp) inp.value = cur[id]; updateValues(); applyDFilter(); recompute(); }
+  function resetAll() { cur = Object.assign({}, BEST); MAP.parameters.forEach(function (p) { var inp = document.getElementById('in-' + p.id); if (inp) inp.value = cur[p.id]; }); updateValues(); applyDFilter(); recompute(); }
+  $('#drawer').addEventListener('click', function (e) {
+    var t;
+    if ((t = e.target.closest('[data-src]'))) { var s = document.getElementById('src-' + t.dataset.src); s.hidden = !s.hidden; t.setAttribute('aria-expanded', String(!s.hidden)); return; }
+    if ((t = e.target.closest('[data-reset1]'))) { resetOne(t.dataset.reset1); return; }
+    if (e.target.closest('[data-resetall]')) { resetAll(); return; }
+    if ((t = e.target.closest('[data-jump]'))) { jumpTo(t.dataset.jump); return; }
+    if ((t = e.target.closest('[data-dtag]'))) { DF.tag[t.dataset.dtag] = !DF.tag[t.dataset.dtag]; t.setAttribute('aria-pressed', String(!!DF.tag[t.dataset.dtag])); applyDFilter(); return; }
+    if ((t = e.target.closest('[data-dside]'))) { DF.side = DF.side === t.dataset.dside ? '' : t.dataset.dside; renderDFilters(); applyDFilter(); return; }
+    if ((t = e.target.closest('[data-dmoved]'))) { DF.moved = !DF.moved; renderDFilters(); applyDFilter(); return; }
+  });
+  $('#drawer').addEventListener('input', function (e) { if (e.target.id === 'dQ') { DF.q = e.target.value; applyDFilter(); } });
+  function jumpTo(id) {
+    var r = document.getElementById('sl-' + id); if (!r) return;
+    if (r.hidden) { DF.q = ''; DF.tag = {}; DF.side = ''; DF.moved = false; renderDFilters(); applyDFilter(); }
+    r.closest('details').open = true;
+    r.scrollIntoView({ block: 'center' });
+    r.classList.remove('flash'); void r.offsetWidth; r.classList.add('flash');
+    var inp = document.getElementById('in-' + id); if (inp) inp.focus({ preventScroll: true });
+  }
+  var opener = null;
+  function openDrawer(id, from) {
+    opener = from || document.activeElement;
+    var d = $('#drawer'); d.classList.add('open');
+    var dock = mqDock.matches;
+    document.body.classList.toggle('docked', dock);
+    $('#scrim').hidden = mqWide.matches;
+    d.setAttribute('role', mqWide.matches ? 'complementary' : 'dialog'); if (!mqWide.matches) d.setAttribute('aria-modal', 'true'); else d.removeAttribute('aria-modal');
+    $('#unkBtn').setAttribute('aria-expanded', 'true');
+    if (id) jumpTo(id); else d.focus();
+  }
+  function closeDrawer() {
+    $('#drawer').classList.remove('open'); document.body.classList.remove('docked'); $('#scrim').hidden = true;
+    $('#unkBtn').setAttribute('aria-expanded', 'false');
+    if (opener && opener.focus) opener.focus();
+  }
+  $('#unkBtn').addEventListener('click', function () { if ($('#drawer').classList.contains('open')) closeDrawer(); else openDrawer(null, this); });
+  $('#drawerClose').addEventListener('click', closeDrawer);
+  $('#scrim').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      pop.hidden = true;
+      if (!$('#secMenu').hidden) { $('#secMenu').hidden = true; $('#secBtn').setAttribute('aria-expanded', 'false'); $('#secBtn').focus(); return; }
+      if ($('#drawer').classList.contains('open') && $('#drawer').contains(document.activeElement)) closeDrawer();
+    }
+  });
+
+  // ------------------------------------------------------------ left out, words, footer
+  function renderLeaves() {
+    $('#leavesList').innerHTML = TX.leaves_out.map(function (l, i) {
+      var full = rich(l.x, 'M'), first = firstSentence(l.x), rest = String(l.x).slice(first.length).trim();
+      return '<article class="leaf"><span class="ln">' + (i + 1) + '</span><span class="lt2">' + esc(l.t) + '</span><p class="lf">' + rich(first, 'M') + '</p>' + (rest ? '<details><summary>Read the rest</summary><p>' + rich(rest, 'M') + '</p></details>' : '') + '</article>';
+    }).join('');
+  }
+  function renderWords() {
+    var q = ($('#wordQ') && $('#wordQ').value || '').trim().toLowerCase();
+    $('#wordsList').innerHTML = TX.words.map(function (w) { var ok = !q || (w[0] + ' ' + w[1]).toLowerCase().indexOf(q) >= 0; return '<div' + (ok ? '' : ' hidden') + '><dt>' + hl(w[0], q) + '</dt><dd>' + hl(w[1], q) + '</dd></div>'; }).join('');
+  }
+
+  // ------------------------------------------------------------ start
+  renderNav(); renderHero(); buildSections();
+  $('#foot').innerHTML = '<p>Prototype of the page shell, built ' + esc(D.build.date) + ' from <code>docs/program/library-pathways/</code> (map version ' + esc(MAP.version) + '). The live page is unchanged.</p>';
+  renderGrid(); wireGrid();
+  renderLims(); wireLims(); renderWorks();
+  renderSliders(); recompute();
+  renderLeaves(); renderWords();
+  $('#wordQ').addEventListener('input', renderWords);
+  $('#leavesAll').addEventListener('click', function () { var ds = $$('#leavesList details'), open = !ds.every(function (d) { return d.open; }); ds.forEach(function (d) { d.open = open; }); this.textContent = open ? 'Close all' : 'Open all'; });
+  $('#runOpen').addEventListener('click', function () { openDrawer(null, this); });
+  $('#runReset').addEventListener('click', resetAll);
+  [mqWide, mqDock].forEach(function (mq) { mq.addEventListener('change', function () { renderGrid(); renderLims(); if ($('#drawer').classList.contains('open')) openDrawer(null, opener); }); });
+  addEventListener('resize', function () { var lt = $('#ltools'); if (lt) document.documentElement.style.setProperty('--ltools-h', lt.offsetHeight + 'px'); });
+  spy();
+  setTimeout(function () { setWeights(E.weights(MAP, TABLE, LIMS.items, { stepLabels: LIMS.steps })); renderLims(); document.documentElement.setAttribute('data-ready', '1'); }, 30);
+  window.__shell = { ST: ST, selectCase: selectCase, selectLim: selectLim, openDrawer: openDrawer, closeDrawer: closeDrawer, cur: function () { return cur; }, setCur: function (id, v) { cur[id] = v; var i = document.getElementById('in-' + id); if (i) i.value = v; updateValues(); applyDFilter(); recompute(); } };
+})();

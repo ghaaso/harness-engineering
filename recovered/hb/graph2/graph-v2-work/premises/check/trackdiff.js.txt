@@ -1,0 +1,11 @@
+// Aggregate-only look at rows where own git test disagrees with the row's tracked label.
+const fs=require('fs'),rl=require('readline');const ROOT='c:/users/user/documents/projects/ems_workshop1/';
+const added=new Map();let t=null;for(const line of fs.readFileSync('my-git-added.txt','utf8').split('\n')){const s=line.trim();if(!s)continue;if(s.startsWith('@@')){t=Date.parse(s.split(' ')[1]);continue;}const k=s.toLowerCase();if(!added.has(k)||added.get(k)>t)added.set(k,t);}
+(async()=>{const agg={};const add=(k)=>agg[k]=(agg[k]||0)+1;let w=0,car=0;
+const r=rl.createInterface({input:fs.createReadStream('../rows.jsonl')});
+for await(const l of r){const o=JSON.parse(l);const pl=o.p.toLowerCase();if(!pl.startsWith(ROOT))continue;const g=o.cls[0];if(g!=='1'&&g!=='2')continue;
+ const rel=pl.slice(ROOT.length).replace(/\/+$/,'');const ta=added.get(rel);
+ if(ta!=null&&ta<=o.ts)continue;
+ add('vc:'+o.vc);add('kind:'+o.kind);if(ta==null)add('neverAddedInMyLog');else{const h=(ta-o.ts)/3.6e6;add(h<1?'addedWithin1hAfter':h<24?'added1-24hAfter':'added>24hAfter');}
+ add('top:'+rel.split('/').slice(0,2).join('/'));car+=o.car;}
+console.log(JSON.stringify(agg),'carried',Math.round(car));})();

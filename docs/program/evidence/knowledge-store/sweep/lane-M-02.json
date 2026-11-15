@@ -1,0 +1,1075 @@
+{
+ "lane": "M-02",
+ "tool_status": "ok",
+ "summary": "The harness already supplies four things the store must not rebuild: always-loaded instructions (CLAUDE.md, fully loaded, adherence falls past about 200 lines; this repo's file is 390 lines), a machine-local per-repo auto-memory index (first 200 lines or 25KB of MEMORY.md, topic files read on demand, shared across worktrees, not given to subagents), skills (description always in context, body on demand), and hooks that can inject context. No harness feature offers symptom-keyed multi-handle lookup, canonicalised error templates, dependency-event invalidation, a verification gate, an outcome history, safe parallel writes, or analytics. The nearest design is GitHub Copilot Memory: facts carry code citations that are checked against the current branch before use, with expiry and upvote reinforcement. The research supports storing negative results only in distilled form. ReasoningBank gains from failure lessons (46.5 to 49.7) where AWM loses (44.4 to 42.2); SWE-Exp annotates the cause of each failure. Raw or add-all memory hurts (Xiong et al.). Similarity scores and LLM judges rank harmful memories no better than chance (Ghosh et al.), and agents comply with task-wrong memory (Compliance Trap). Dynamic Cheatsheet found smaller models can fall below baseline when consuming memory. Together these support the owner's framing: precision-tuned retrieval (k=1 is common), an external discriminating gate, itemised records with helpful/harmful counters merged by non-LLM logic, and no always-loaded or per-entry-skill storage. No source measures escalation cost saved.",
+ "facts": [
+  {
+   "id": "M02-01",
+   "statement": "Claude Code auto memory: per-project directory ~/.claude/projects/<project>/memory/ holding a MEMORY.md index (one line per memory) plus one topic file per memory. The first 200 lines or 25KB of MEMORY.md, whichever comes first, load every session; topic files are NOT loaded at startup and are read on demand with standard file tools. It is machine-local, shared by all worktrees/subdirectories of one git repo, and not loaded into subagents (a fork inherits). Memory files are excluded from the transcript retention sweep. Over-limit MEMORY.md writes succeed but return an error telling Claude to rewrite the index, since content past the limit is dropped on next load.",
+   "source": "https://code.claude.com/docs/en/memory (sections 'Storage location', 'How it works'; fetched 2026-11-02)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "limits",
+    "concurrency",
+    "data_model",
+    "egress"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-02",
+   "statement": "CLAUDE.md is loaded in full every session (skipped only above 4 MiB), delivered as a user message after the system prompt, with 'no guarantee of strict compliance'. Docs target under 200 lines per file: 'Longer files consume more context and reduce adherence'; @imports do not reduce cost; path-scoped .claude/rules and subdirectory CLAUDE.md load on demand. For must-run behaviour the docs point to hooks, not instructions.",
+   "source": "https://code.claude.com/docs/en/memory (lines 'Size', 'Claude isn't following my CLAUDE.md', 'My CLAUDE.md is too large')",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-03",
+   "statement": "Local: this repo's CLAUDE.md is 390 lines / 29,605 bytes (about double the documented 200-line guidance) and already carries negative-knowledge ('Build & deploy traps', 'Do NOT assume', 'KNOWN DEFECT'). docs/HANDOFF-2026-07-28-open-work.md is 615 lines / 41,477 bytes; its section 2 (operational traps, e.g. 2.2 reverted-migration duplicate revision id) and section 6 (seven recurring 'what previous passes missed' defect shapes) are existing prose negative results. docs/lifecycle-audit-followups-2026-07.md is 175 lines. These are the seed corpus and currently live in always-loaded or hand-read prose.",
+   "source": "CLAUDE.md (wc: 390 lines, 29605 bytes); docs/HANDOFF-2026-07-28-open-work.md:52-110,558-582; docs/lifecycle-audit-followups-2026-07.md",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "seed_corpus",
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-04",
+   "statement": "Claude Code skills (progressive disclosure): descriptions of all auto-invocable skills are in context every turn ('adds to your context on every turn'); body loads only when invoked; combined description+when_to_use truncated at 1,536 characters in the listing; keep SKILL.md under 500 lines; frontmatter 'paths' globs limit automatic activation; disable-model-invocation hides a skill from context; skills can bundle scripts Claude runs as tools. After compaction only the first 5,000 tokens of each invoked skill are re-attached (25,000 shared). Total listing budget across skills was not read (page truncated).",
+   "source": "https://code.claude.com/docs/en/skills ; https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills (2025-10-16)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "limits",
+    "retrieval",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-05",
+   "statement": "Skill triggering is by semantic match of the model against the description; community write-ups report skills not firing when prompt vocabulary does not overlap the description and a silent character cap dropping skills (15,000 chars claimed). No activation-rate figures were verifiable.",
+   "source": "https://dev.to/dev_encyclopedia/claude-code-skill-not-triggering-here-are-the-5-actual-causes-laj ; DataCamp 'Introduction to Agent Skills' exercise (via search results)",
+   "source_kind": "blog",
+   "confidence": "reported",
+   "bears_on": [
+    "retrieval",
+    "access"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-06",
+   "statement": "Claude Developer Platform memory tool (memory_20250818): client-side; Claude emits view/create/str_replace/insert/delete/rename on a /memories path prefix and the application executes them against storage it controls; API auto-adds a protocol prompt ('ALWAYS VIEW YOUR MEMORY DIRECTORY BEFORE DOING ANYTHING ELSE... ASSUME INTERRUPTION'). Docs tell implementers to cap file sizes, strip sensitive data, validate paths against traversal, and 'periodically delete memory files that haven't been accessed in a long time' (time-based expiry). ZDR-eligible because storage is yours. The recommended multisession pattern is a progress log + feature checklist.",
+   "source": "https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "limits",
+    "egress",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-07",
+   "statement": "Subagents can have persistent memory via a 'memory' frontmatter field with scopes user (~/.claude/agent-memory/<name>/), project (.claude/agent-memory/<name>/, shareable via VCS) or local (.claude/agent-memory-local/<name>/); the subagent system prompt then includes the first 200 lines/25KB of that MEMORY.md and Read/Write/Edit are auto-enabled. It depends on auto memory being on.",
+   "source": "https://code.claude.com/docs/en/sub-agents (section 'Enable persistent memory')",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "workflow",
+    "concurrency"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-08",
+   "statement": "Claude Code hooks can inject context deterministically: SessionStart and UserPromptSubmit stdout goes into Claude's context; UserPromptSubmit supports hookSpecificOutput.additionalContext (top-level placement is silently ignored); events include PostToolUseFailure, PreCompact, InstructionsLoaded; SessionStart with 'compact' matcher can re-inject context after compaction. The hooks guide recommends CLAUDE.md rather than hooks for static session-start context.",
+   "source": "https://code.claude.com/docs/en/hooks-guide",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "workflow",
+    "retrieval"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-09",
+   "statement": "OpenAI Codex: AGENTS.md files are concatenated root-to-cwd (nearest later/overriding), AGENTS.override.md replaces per directory, combined size capped by project_doc_max_bytes = 32 KiB by default (Codex stops adding files at the cap), chain built once per session. Codex memories are OFF by default, generated in the background from idle eligible prior chats into local files under ~/.codex/memories/ (summaries, durable entries, recent inputs, evidence), with secrets redacted; the docs say to keep required guidance in AGENTS.md rather than rely on memories; no size/count limit or egress statement is documented.",
+   "source": "https://learn.chatgpt.com/docs/agent-configuration/agents-md ; https://learn.chatgpt.com/docs/customization/memories (redirected from developers.openai.com/codex/*)",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "limits",
+    "egress",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-10",
+   "statement": "Cursor project rules live in .cursor/rules as .mdc with four types: Always, Auto Attached (globs), Agent Requested (description), Manual (@-mention); guidance 'keep rules under 500 lines'; AGENTS.md supported with nested combination. Cursor's Memories feature: forum posts from staff conflict on whether it was removed in 2.1.x or only its management UI; status unresolved.",
+   "source": "https://cursor.com/docs/context/rules ; https://forum.cursor.com/t/are-my-memories-gone/144057 (via search summary)",
+   "source_kind": "primary_docs",
+   "confidence": "reported",
+   "bears_on": [
+    "access",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-11",
+   "statement": "GitHub Copilot Memory (docs): repository facts are stored with citations 'pointing to the code that supports the fact'; when a relevant fact is found Copilot 'checks the fact's citations against the current branch to judge whether the information is still accurate' (a judgment, 'not a system-enforced guarantee'; do not rely on it as a rule). Memories expire after a period without reinforcement, default 90 days (org owners 7-180 days); upvoting resets the period, retrieval alone does not; downvoted past a threshold are not used and later deleted. Memories with detected secrets or model-control tokens are rejected (prompt-injection defence). Repo-scoped; hosted by GitHub.",
+   "source": "https://docs.github.com/en/copilot/concepts/agents/copilot-memory",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance",
+    "data_model",
+    "egress",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-12",
+   "statement": "GitHub engineering blog (Tiferet Gazit, 2026-01-15): memories stored with code-location citations and verified just-in-time against current code by 'a small number of simple read operations'; offline curation (dedupe, conflict resolution, expiry) was rejected for engineering complexity and LLM cost at GitHub scale; adversarial seeded memories (contradicting code, citing nonexistent locations) were consistently caught and corrected by agents; reported merge-rate 83% to 90% for the coding agent, review precision +3% / recall +4%. If citations check out the agent re-stores the memory to refresh its timestamp; if not, it stores a corrected version. Results are vendor-reported.",
+   "source": "https://github.blog/ai-and-ml/github-copilot/building-an-agentic-memory-system-for-github-copilot/",
+   "source_kind": "blog",
+   "confidence": "verified",
+   "bears_on": [
+    "invalidation",
+    "provenance",
+    "retrieval",
+    "workflow"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-13",
+   "statement": "Windsurf Cascade Memories (docs now at docs.devin.ai): auto-generated or on request, workspace-scoped ('Memories generated in one workspace will not be available in another'), retrieved when Cascade 'believes they are relevant', creating/using them costs no credits; Rules are the separate user-authored mechanism (AGENTS.md, .devin/rules with always_on/glob/model_decision/manual triggers). Official page gives no storage path; third-party guides claim ~/.codeium/windsurf/memories/ (unverified).",
+   "source": "https://docs.devin.ai/windsurf/plugins/cascade/memories ; https://docs.devin.ai/desktop/cascade/memories",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "data_model",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-14",
+   "statement": "Cline Memory Bank: six markdown files in memory-bank/ (projectbrief, productContext, activeContext, systemPatterns, techContext, progress); custom instructions mandate 'I MUST read ALL memory bank files at the start of EVERY task'; update on discovered patterns, major changes, or 'update memory bank' (review ALL files). The doc concedes effectiveness depends on accuracy. Critiques (staleness of the most-read file, bloat from full-review updates, context cost) come only from secondary vendor blogs and one anecdotal thread.",
+   "source": "https://docs.cline.bot/prompting/cline-memory-bank ; https://www.promptlayer.com/glossary/cline-memory-bank ; https://www.memorylake.ai/blogs/set-up-cline-memory-bank",
+   "source_kind": "primary_docs",
+   "confidence": "reported",
+   "bears_on": [
+    "data_model",
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-15",
+   "statement": "Kiro steering files: .kiro/steering/ (workspace) and ~/.kiro/steering/ (global); default product.md/tech.md/structure.md; front-matter inclusion modes always (default), fileMatch, manual (#name), auto (description match); workspace overrides global; AGENTS.md supported (always included). GitHub Copilot custom instructions: .github/copilot-instructions.md (repo-wide) and .github/instructions/*.instructions.md with applyTo globs (conditional); nearest AGENTS.md wins.",
+   "source": "https://kiro.dev/docs/steering/ ; https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-16",
+   "statement": "Beads (steveyegge/beads): 'distributed graph issue tracker for AI agents, powered by Dolt'; embedded mode default = single writer, server mode (bd init --server, external dolt sql-server) = multiple concurrent writers; hash-based IDs (bd-a1b2) to prevent merge collisions across agents/branches; link types relates-to, duplicates, supersedes, replies-to plus blocks/parent-child; 'memory decay' compaction summarises old closed tasks; bd remember / bd prime store and print project memories; MIT; macOS/Linux/Windows; sync via Dolt remotes (bd dolt push/pull against refs/dolt/data on a git remote), git optional; HTTP backend marked experimental; README shows 28.4k stars, no version number.",
+   "source": "https://github.com/steveyegge/beads (README, fetched 2026-11-02)",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "concurrency",
+    "engine",
+    "provenance",
+    "ops_cost"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-17",
+   "statement": "claude-mem (thedotmack/claude-mem, README badge v15.8.2, Apache-2.0 per README and LICENSE on main): lifecycle hooks capture tool use, a local Bun-managed worker (HTTP API + web viewer) stores sessions/observations/summaries in SQLite with FTS5, optional Chroma for hybrid semantic+keyword search; progressive-disclosure MCP tools search (~50-100 tokens/result) -> timeline -> get_observations (~500-1,000 tokens/result), claimed ~10x token saving; compression is done by an LLM via the Claude Agent SDK with provider choices (claude-mem observer with a 30-day trial, user's OpenRouter or Gemini key, or Anthropic plan); optional Cloud Sync to cmem.ai; <private> tag exclusion. Needs Node 20+, Bun, uv. README lists a Windows hook error ('Executable not found in $PATH').",
+   "source": "https://github.com/thedotmack/claude-mem ; https://docs.claude-mem.ai/introduction ; https://raw.githubusercontent.com/thedotmack/claude-mem/main/LICENSE",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "egress",
+    "engine",
+    "retrieval",
+    "ops_cost",
+    "data_model"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-18",
+   "statement": "mem0 OSS (Apache-2.0): new algorithm is 'single-pass ADD-only extraction -- one LLM call, no UPDATE/DELETE'; default LLM gpt-5-mini and embedder text-embedding-3-small are OpenAI, so extraction/embedding calls go to OpenAI unless reconfigured; deployment as library, Docker self-hosted server, or cloud platform; benchmark claims (LoCoMo 92.5, LongMemEval 94.4) are vendor-reported on conversational-memory benchmarks and from the managed platform. Mem0 paper: 26% relative gain over OpenAI memory on LOCOMO, 91% lower p95 latency. OpenMemory MCP architecture could not be verified from a primary source.",
+   "source": "https://github.com/mem0ai/mem0 ; https://arxiv.org/abs/2504.19413",
+   "source_kind": "source_repo",
+   "confidence": "verified",
+   "bears_on": [
+    "egress",
+    "data_model",
+    "engine"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-19",
+   "statement": "Anthropic harness pattern (2025-11-26): initializer session creates init.sh, a progress log and an initial commit; later sessions read them. Feature list is JSON with a 'passes' field that agents may edit but not remove, because 'JSON worked better than Markdown' - the model is less likely to inappropriately overwrite structured records. Observed failure modes: declaring victory early, marking features done without end-to-end testing, one-shotting. Anthropic context engineering (2025-09-29): Claude Code is a hybrid - CLAUDE.md up front, grep/glob just-in-time; just-in-time retrieval via lightweight identifiers is slower and needs guidance; context rot degrades recall as tokens grow.",
+   "source": "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents ; https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+   "source_kind": "primary_docs",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "workflow",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-20",
+   "statement": "Reflexion (Shinn et al., arXiv 2303.11366 v4 Oct 2023): agents store verbal self-reflections in an episodic buffer bounded to about 1-3 entries (ALFWorld: last 3), a sliding window the authors suggest replacing with vector/SQL stores; HumanEval pass@1 91% vs 80% prior GPT-4; ALFWorld 130/134 after 12 trials; on WebShop it did not significantly beat ReAct because the agent 'did not generate helpful self-reflections'; depends on self-evaluation/test signals (Rust without tests: 60% to 52%); no formal success guarantee; can settle in local minima.",
+   "source": "https://arxiv.org/abs/2303.11366 ; https://arxiv.org/html/2303.11366",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "limits",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-21",
+   "statement": "Voyager (arXiv 2305.16291): skill library of executable code; a skill is added only after a self-verification module confirms task success; indexed by embedding of an LLM-written program description, retrieved top-5 using a query built from a generated plan plus environment feedback; 3.3x unique items, 15.3x faster tech-tree milestones; without the library the agent plateaus; failure modes: self-verification occasionally fails to recognise success, agent sometimes stuck, hallucinated APIs.",
+   "source": "https://arxiv.org/abs/2305.16291 ; https://arxiv.org/html/2305.16291",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "retrieval",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-22",
+   "statement": "ExpeL (arXiv 2308.10144): experience pool from Reflexion-style retries; insights extracted by ADD/EDIT/UPVOTE/DOWNVOTE operations (new insight starts at count 2, dropped at 0) over success/failure pairs of the same task; successful trajectories retrieved by Faiss kNN (all-mpnet-base-v2) as few-shot. HotpotQA 28.0 to 39.0, ALFWorld 40.0 to 59.0 (insights-only 50, retrieval-only 55). Retrieval ablation on ALFWorld: reasoning-similarity 48.5, random 42.5, task-similarity (ExpeL) 59.0. Authors note insights fit context now but lifelong use needs retrieval over insights.",
+   "source": "https://ar5iv.labs.arxiv.org/html/2308.10144 (read via fetch summariser) ; https://arxiv.org/abs/2308.10144",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance",
+    "retrieval",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-23",
+   "statement": "Agent Workflow Memory (arXiv 2409.07429): LM induces reusable workflows (description + steps with example-specific values abstracted to variables) from successful trajectories; online mode uses an LM evaluator and stores ONLY predicted-successful trajectories; all workflows are injected (no retrieval); relative success +24.6% Mind2Web, +51.1% WebArena (35.5% vs 23.5% BrowserGym). Failure modes stated: wrong online induction degrades performance, workflow actions fail when the UI changes, offline+online not additive, only web benchmarks with GPT-3.5/4.",
+   "source": "https://arxiv.org/abs/2409.07429 ; https://arxiv.org/html/2409.07429",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "limits",
+    "invalidation"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-24",
+   "statement": "Dynamic Cheatsheet (arXiv 2504.07952): black-box LM carries an evolving memory of strategies/heuristics/code snippets, curated by the LM with no ground-truth labels; variants DC-Cu (cumulative, no retrieval) and DC-RS (retrieves top-3 similar past pairs). Gains: GPT-4o Game of 24 10% to 99%; Claude 3.5 Sonnet AIME 2024 23.3% to 50.0%. Harms: 'faulty heuristics that slip into memory can be equally amplified'; retrieval 'can... introduce confusion'; GPT-4o-mini fell below baseline (AIME 2024 16.7% to 13.3%; GPQA 32.3%) because small models 'struggle to fully leverage DC' and generate sparse low-quality memory; appending full history dropped GPT-4o AIME 2024 from 20.0% to 13.3%; reasoning models showed minimal gain; works when test items share structure.",
+   "source": "https://arxiv.org/html/2504.07952 ; https://arxiv.org/abs/2504.07952",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "limits",
+    "retrieval",
+    "data_model"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-25",
+   "statement": "Learn-by-interact (arXiv 2501.10893): synthesises agent-environment trajectories from documentation and writes instructions by 'backward construction'; used for training and for training-free in-context learning with agent-specific retrieval; reports up to 12.2% ICL gain (Claude-3.5) and 19.5% training gain (Codestral-22B) across SWE-bench, WebArena, OSWorld, Spider2-V; its retrieval pipeline outperforms conventional RAG.",
+   "source": "https://arxiv.org/abs/2501.10893",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "seed_corpus"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-26",
+   "statement": "ReasoningBank (arXiv 2509.25140, ICLR 2026): memory item = title + one-sentence description + content (distilled reasoning steps), at most 3 per trajectory; an LLM-as-judge labels success/failure without ground truth; failures contribute 'counterfactual signals and preventative lessons'; retrieval = embedding cosine, default k=1; consolidation is plain append. WebArena gain over no-memory +8.3/+7.2/+4.6 (Gemini-flash/pro, Claude-3.7-sonnet); SWE-Bench-Verified 34.2 to 38.8 and 54.0 to 57.4. Failure ablation (Shopping, Gemini-flash): adding failures helps ReasoningBank 46.5 to 49.7 but HURTS AWM 44.4 to 42.2 and barely moves Synapse - so failures help only when distilled into lessons, not stored as raw routines.",
+   "source": "https://arxiv.org/html/2509.25140 ; https://arxiv.org/abs/2509.25140",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "retrieval",
+    "provenance"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-27",
+   "statement": "SWE-Exp (arXiv 2507.23361 v2 Feb 2026): experience bank of both successful and failed repair attempts; failed trajectories yield reflections annotated with cause (incorrect localization, flawed modification strategy, insufficient comprehension); retrieval is two-stage - top-10 by cosine on error type/description (Multilingual-E5-Large) then LLM rerank to k=1; one experience is optimal; experiences from the same repository or created after the target issue are excluded to prevent leakage; 73.0% Pass@1 SWE-Bench Verified with Claude 4 Sonnet (v1 reported 41.6% with open models). Removing experience extraction costs 6.0 points; failed vs successful were not ablated separately; authors admit the agent lacks a robust way to judge applicability; Python-only; contamination unverifiable.",
+   "source": "https://arxiv.org/abs/2507.23361 ; https://arxiv.org/html/2507.23361v2",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "retrieval",
+    "provenance",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-28",
+   "statement": "Xiong et al., 'How Memory Management Impacts LLM Agents' (arXiv 2505.16067 v2): agents show an 'experience-following property' (similar input to a retrieved record produces similar output), so flawed records propagate errors and 'misaligned experience replay' - correct-looking runs can mislead. Add-all memory underperformed a small fixed set (RegAgent SR 55.48 vs 67.53 fixed; EHRAgent 13.05 vs 16.75), while strict (oracle) admission raised it to 70.95 / 38.50. History-based deletion (utility from later outcomes) was best with a reliable evaluator; with weak evaluators effects were inconsistent. Conclusion: regulate quality, 'future task outcomes can serve as free quality labels'.",
+   "source": "https://arxiv.org/html/2505.16067 ; https://arxiv.org/abs/2505.16067",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance",
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-29",
+   "statement": "Agentic Context Engineering (ACE, arXiv 2510.04618 v3 Mar 2026, ICLR 2026): context kept as itemised bullets each with an ID and helpful/harmful counters; Generator/Reflector/Curator roles; the Curator emits small delta entries merged by non-LLM logic (parallel-mergeable); duplicates pruned by embedding similarity, lazily or per delta. Failure modes: 'brevity bias' and 'context collapse' - a whole-context LLM rewrite shrank AppWorld context from 18,282 to 122 tokens, accuracy 66.7 to 57.1, below the 63.7 unadapted baseline. Without reliable feedback (labels or execution outcomes) the context is polluted (FiNER -3.4 online without labels); needs a strong Reflector. +10.6% on agent benchmarks.",
+   "source": "https://arxiv.org/html/2510.04618 ; https://arxiv.org/abs/2510.04618",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "provenance",
+    "concurrency",
+    "limits"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-30",
+   "statement": "Ghosh et al., 'When Does Agent Memory Transfer? Coverage-Calibrated Evaluation of Memory Interventions' (NeurIPS 2026 workshop): a retrieved memory can help or hurt and its apparent relevance does not reveal which; transfer follows tool-call structure, and a lexically closer memory that names the wrong action harms yet agents follow it; on a controlled benchmark 'a similarity score and an LLM judge ranked harmful cases no better than chance'; gating on measured with/without gain matched an oracle with zero observed harm; harm grew with executor size. Authors bound the claim: other settings showed no harmful class. Abstract-level read only; no numbers.",
+   "source": "https://neurips.cc/virtual/2026/165606",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits",
+    "invalidation"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-31",
+   "statement": "Chen, Bai, Yuille, 'The Compliance Trap' (arXiv 2607.10608, 2026-07-12): across models, conflicting memory yields similar compliance rates; failure often starts at entry - agents adopt conflicting memory at the first exposed decision point even when it is task-wrong; once complied, success falls to a low floor, stronger agents lose more in absolute terms, repeated exposure amplifies the error, and recovery is weak. Abstract gives no figures.",
+   "source": "https://arxiv.org/abs/2607.10608",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "retrieval",
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-32",
+   "statement": "Gloaguen et al., 'Evaluating AGENTS.md' (arXiv 2602.11988, Feb 2026, v3 Sep 2026): providing repository context files 'does not generally improve task success rates' and raises inference cost by over 20% on average, for both LLM-generated and developer-written files; agents follow the instructions (more exploration/testing) but repository overviews are 'not helpful'; context files are useful only for non-standard practices and should be rigorously evaluated. Python-only benchmark per secondary coverage.",
+   "source": "https://arxiv.org/abs/2602.11988",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "limits",
+    "ops_cost"
+   ],
+   "load_bearing": true
+  },
+  {
+   "id": "M02-33",
+   "statement": "Huang et al., 'LLMs Cannot Self-Correct Reasoning Yet' (arXiv 2310.01798): without external feedback LLMs struggle to self-correct and accuracy can drop after revision. Implication for memory: a gate or curator that is only the same model's self-judgment is unreliable; Voyager, Reflexion, ACE and Xiong et al. all lean on executable/external outcome signals.",
+   "source": "https://arxiv.org/abs/2310.01798",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "provenance",
+    "invalidation",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-34",
+   "statement": "Surveys: 'Memory in the Age of AI Agents' (arXiv 2512.13564, v2 Jan 2026) organises memory by forms (token-level, parametric, latent), functions (factual, experiential, working) and dynamics (formation, evolution, retrieval); 'Memory for Autonomous LLM Agents' (arXiv 2603.07670, Mar 2026) frames a write-manage-read loop with five mechanism families and lists contradiction handling, write-path filtering, trustworthy reflection and learned forgetting as open frontiers; 'A Survey of Self-Evolving Agents' (arXiv 2507.21046, TMLR Jan 2026, per search) organises by what/when/how/where to evolve. Only abstracts/summaries read; none quantifies cost savings.",
+   "source": "https://arxiv.org/abs/2512.13564 ; https://arxiv.org/abs/2603.07670 ; https://arxiv.org/pdf/2507.21046 (search result)",
+   "source_kind": "paper",
+   "confidence": "verified",
+   "bears_on": [
+    "data_model",
+    "limits"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-35",
+   "statement": "Memory poisoning is demonstrated: MINJA injects malicious memory records through ordinary queries only (paper-reported 98.2% injection success, 76.8% attack success) and AgentPoison backdoors RAG memory with under 0.1% poison and over 80% attack success. Figures come from search-result summaries, not read from the papers. For a single-owner store the threat is writes derived from untrusted content (web pages, logs, issue text).",
+   "source": "https://arxiv.org/pdf/2503.03704v1 ; https://huggingface.co/papers/2407.12784 (search results)",
+   "source_kind": "paper",
+   "confidence": "reported",
+   "bears_on": [
+    "provenance",
+    "limits",
+    "workflow"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-36",
+   "statement": "Inference: no surveyed harness feature (CLAUDE.md, auto memory, skills, memory tool, Codex/Cursor/Windsurf/Kiro/Cline mechanisms, claude-mem, mem0) provides all of: symptom-keyed lookup with several handle types, canonicalised error templates, invalidation on dependency events, a discriminating verification gate, per-entry outcome history, safe concurrent writes from parallel worktrees, and outcome analytics. The nearest is Copilot Memory (citation re-check + expiry + vote reinforcement) but it is hosted, not queryable by symptom, and its check is model judgment. Auto memory shares one directory across worktrees and documents no locking.",
+   "source": "Synthesis of M02-01..M02-18; no documented locking found in https://code.claude.com/docs/en/memory",
+   "source_kind": "inferred",
+   "confidence": "inferred",
+   "bears_on": [
+    "data_model",
+    "retrieval",
+    "canonicalisation",
+    "invalidation",
+    "concurrency",
+    "provenance"
+   ],
+   "load_bearing": false
+  },
+  {
+   "id": "M02-37",
+   "statement": "Local: the owner's auto-memory index for this project (MEMORY.md, 542 bytes, 3 entries) points to files on routing feedback, ship-plan program state and git identity - it already serves as program/preference memory, not as a defect-diagnosis store.",
+   "source": "C:/Users/User/.claude/projects/C--Users-User-Documents-projects-EMS-workshop1/memory/MEMORY.md",
+   "source_kind": "local_file",
+   "confidence": "verified",
+   "bears_on": [
+    "access",
+    "workflow"
+   ],
+   "load_bearing": false
+  }
+ ],
+ "candidates": [
+  {
+   "name": "Claude Code auto memory (MEMORY.md index + topic files)",
+   "kind": "system",
+   "verdict": "viable",
+   "why": "Already present and zero-cost; right for preferences/program state and for one pointer line telling every session how to call the store. Wrong as the store: 200-line/25KB index, plain markdown, no symptom keys, no invalidation, one shared directory across worktrees with no documented locking, not loaded into subagents.",
+   "egress_posture": "Machine-local files; not shared across machines; no extra egress beyond Claude Code itself.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M02-01",
+    "M02-07",
+    "M02-36",
+    "M02-37"
+   ],
+   "windows_dev_fit": "Works on the Windows dev box today (user already has it).",
+   "linux_prod_fit": "Machine-local, so a VPS/home box needs its own copy; not a shared store.",
+   "footprint": "Markdown files only.",
+   "maturity": "Documented, shipping product feature.",
+   "agent_access": "Automatic load of MEMORY.md; topic files by file tools."
+  },
+  {
+   "name": "Claude Code skill as the access wrapper (one skill + script calling the store CLI)",
+   "kind": "pattern",
+   "verdict": "strong",
+   "why": "Progressive disclosure matches the need: one small always-listed description, body and scripts load only when invoked, and the skill can run a deterministic CLI. One skill avoids per-entry listing cost; description-match recall is the weak point so the description must name symptom vocabulary, and a hook or explicit instruction should back it up.",
+   "egress_posture": "None; local files and local CLI.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-04",
+    "M02-05",
+    "M02-08"
+   ],
+   "windows_dev_fit": "Skills are plain folders; bundled scripts need Node (present) rather than Python.",
+   "linux_prod_fit": "Same.",
+   "footprint": "A SKILL.md plus a script.",
+   "maturity": "Documented feature; trigger reliability anecdotal.",
+   "agent_access": "Model-invoked by description, or explicit /name."
+  },
+  {
+   "name": "Claude Code hooks (PostToolUseFailure / UserPromptSubmit additionalContext) as automatic lookup trigger",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Deterministic injection point: a hook could canonicalise a failing command's output and query the store without relying on the model remembering. Risk is injecting a wrong hit at the first decision point, which the Compliance Trap paper shows agents tend to follow, so any injected hit must be advisory and carry the gate. Hook payload shape for PostToolUseFailure was not read.",
+   "egress_posture": "None; runs a local command.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-08",
+    "M02-31",
+    "M02-30"
+   ],
+   "windows_dev_fit": "Hooks are shell commands; Git Bash available.",
+   "linux_prod_fit": "Same.",
+   "footprint": "A settings.json hooks block.",
+   "maturity": "Documented.",
+   "agent_access": "Automatic."
+  },
+  {
+   "name": "CLAUDE.md / AGENTS.md as the knowledge store",
+   "kind": "pattern",
+   "verdict": "rejected",
+   "why": "Always loaded, cost on every turn, adherence falls past about 200 lines (this repo is already 390), and the AGENTS.md study found context files raise cost over 20% without general success gains. Keep only a pointer plus true invariants there; move defect entries out.",
+   "egress_posture": "Local.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M02-02",
+    "M02-03",
+    "M02-32",
+    "M02-09"
+   ],
+   "windows_dev_fit": "Trivial.",
+   "linux_prod_fit": "Trivial.",
+   "maturity": "Universal convention (60k+ projects per agents.md)."
+  },
+  {
+   "name": "Anthropic API memory tool (memory_20250818)",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "It is an API tool for applications you build, not a feature of the Claude Code CLI sessions this program runs; the storage is yours and the interface is file-like. Useful only as a design reference (client-side handler, path validation, size caps, expiry advice).",
+   "egress_posture": "Storage is client-side; model calls go to Anthropic as usual.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M02-06"
+   ],
+   "maturity": "Stable, ZDR-eligible."
+  },
+  {
+   "name": "GitHub Copilot Memory (citation-checked facts, expiry, votes)",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Closest existing realisation of the owner's framing: facts carry code citations re-verified against the current branch before use, expire without reinforcement, and are corrected on contradiction; vendor reports 83% to 90% merge rate and adversarial-memory robustness. Hosted by GitHub and repo-scoped, so disqualified for production here; its verification is model judgment, not a deterministic gate.",
+   "egress_posture": "Hosted by GitHub; repository data stays on a third party.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M02-11",
+    "M02-12"
+   ],
+   "maturity": "Documented product; blog describes public preview era.",
+   "agent_access": "Automatic inside Copilot only."
+  },
+  {
+   "name": "Codex memories / ChatGPT memory",
+   "kind": "system",
+   "verdict": "cite_design_only",
+   "why": "Auto-generated opaque summaries from idle chats, off by default, with docs telling users to keep required guidance in AGENTS.md; not queryable by symptom, no invalidation story. ChatGPT memory pages returned 403 and were not read.",
+   "egress_posture": "Codex local files; egress not described; ChatGPT memory is hosted.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M02-09"
+   ]
+  },
+  {
+   "name": "Cursor rules, Windsurf rules/memories, Kiro steering (inclusion-mode vocabulary)",
+   "kind": "pattern",
+   "verdict": "cite_design_only",
+   "why": "All converge on four load modes - always, glob-matched, description-matched, manual - which is a useful vocabulary for deciding what the store may auto-surface versus require an explicit lookup. Auto-generated workspace memories (Windsurf) and Cursor Memories are opaque and tool-bound.",
+   "egress_posture": "Local files in the IDE; vendor model calls.",
+   "one_dev_ops_cost": "none",
+   "fact_ids": [
+    "M02-10",
+    "M02-13",
+    "M02-15"
+   ]
+  },
+  {
+   "name": "Cline/Roo Memory Bank pattern",
+   "kind": "pattern",
+   "verdict": "weak",
+   "why": "Mandatory read-all-files-every-task protocol and whole-bank reviews cost context and drift; no per-item validity, symptom lookup or provenance. Its one transferable idea is a small structured progress/active-context file.",
+   "egress_posture": "Local markdown.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-14",
+    "M02-19"
+   ]
+  },
+  {
+   "name": "claude-mem",
+   "kind": "tool",
+   "verdict": "weak",
+   "why": "Auto-captures everything via hooks and has a good three-layer progressive-disclosure search (search -> timeline -> get_observations), but it stores observations rather than verified diagnoses, has no invalidation or verification gate, and compresses via an LLM provider (Anthropic plan, OpenRouter, Gemini or its hosted observer) with optional cmem.ai sync. Adds Bun, uv, Chroma and a per-user HTTP worker; README lists a Windows hook error. Cite for the progressive-disclosure token budget.",
+   "egress_posture": "Local SQLite/Chroma, but observation text goes to the chosen compression LLM provider; optional cloud sync.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M02-17"
+   ],
+   "windows_dev_fit": "Reported Windows hook problem.",
+   "linux_prod_fit": "Node/Bun; plausible.",
+   "footprint": "Bun worker, SQLite, optional Chroma, uv.",
+   "maturity": "Large community (badge v15.8.2); promotional README.",
+   "agent_access": "Hooks plus MCP tools plus mem-search skill."
+  },
+  {
+   "name": "Beads (bd) with Dolt",
+   "kind": "tool",
+   "verdict": "cite_design_only",
+   "why": "Local agent-oriented issue graph with hash IDs, supersedes/duplicates links, compaction and a bd remember note store; its multi-agent collision handling and link vocabulary are directly reusable ideas. It models work items, not symptom-keyed fixes, and Dolt embedded mode is single-writer. Engine suitability belongs to the engine lanes.",
+   "egress_posture": "Local unless Dolt remotes are configured; stealth mode does not stop Dolt network sync.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M02-16"
+   ],
+   "windows_dev_fit": "Windows listed as supported.",
+   "linux_prod_fit": "Supported.",
+   "footprint": "Go binary, Dolt.",
+   "maturity": "28.4k stars, MIT, HTTP backend experimental.",
+   "agent_access": "CLI plus agent integrations installed by bd init."
+  },
+  {
+   "name": "mem0 / OpenMemory MCP",
+   "kind": "tool",
+   "verdict": "weak",
+   "why": "Built for conversational personal-fact memory; new algorithm is ADD-only with no UPDATE/DELETE (the opposite of what invalidation needs); defaults send extraction and embeddings to OpenAI. Self-hostable with local models, but the benchmarks are conversational and vendor-reported.",
+   "egress_posture": "Default LLM and embedder are OpenAI; local only if reconfigured.",
+   "one_dev_ops_cost": "high",
+   "fact_ids": [
+    "M02-18"
+   ],
+   "maturity": "Widely used; Apache-2.0."
+  },
+  {
+   "name": "ReasoningBank-style item (title, description, content; failures as preventative lessons; k=1)",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Directly evidences that failure lessons distilled into small structured items improve results (46.5 to 49.7) while raw failure storage in a workflow memory hurts (44.4 to 42.2). Supplies a compact entry shape and k=1 default.",
+   "egress_posture": "Technique only; distillation runs inside the existing agent session.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-26",
+    "M02-27"
+   ]
+  },
+  {
+   "name": "ACE itemised bullets with helpful/harmful counters and non-LLM delta merge",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Matches relevance feedback, parallel writers and anti-collapse: itemised records, counters updated in place, deltas merged by deterministic code, dedup by similarity. Warns that LLM whole-document rewrites destroy knowledge and that unreliable feedback pollutes.",
+   "egress_posture": "Technique only.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-29",
+    "M02-22",
+    "M02-28"
+   ]
+  },
+  {
+   "name": "Verify-before-store plus executable skills (Voyager)",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "Entries enter only after an external check confirms the outcome, and the reusable unit is executable; maps to storing a runnable discriminating check with each entry. Its verifier occasionally misjudges, so the check must be deterministic where possible.",
+   "egress_posture": "Technique only.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-21",
+    "M02-33"
+   ]
+  },
+  {
+   "name": "Just-in-time citation re-verification (Copilot) generalised to dependency-event invalidation",
+   "kind": "technique",
+   "verdict": "strong",
+   "why": "The only documented production use of re-checking an entry's evidence against current code at use time, with correction on contradiction and vendor-reported adversarial-memory robustness. Supports verify-on-read in addition to event-driven invalidation.",
+   "egress_posture": "Technique only.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-11",
+    "M02-12"
+   ]
+  },
+  {
+   "name": "ExpeL vote operators (ADD/EDIT/UPVOTE/DOWNVOTE, drop at zero)",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Simple relevance-feedback mechanism with small integer counters; maps to confirmed/refuted outcomes. Original use is insight extraction in benchmark environments, and task-similarity retrieval beat reasoning-similarity retrieval.",
+   "egress_posture": "Technique only.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-22",
+    "M02-28"
+   ]
+  },
+  {
+   "name": "SWE-Exp two-stage retrieval with failure-cause annotation and leakage exclusion",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "Coding-agent evidence: top-10 by error type, rerank to one, annotate failed attempts with a cause class, exclude same-repo/later experiences in evaluation. The same-repo exclusion is evaluation hygiene and does not apply to a single-repo store. Authors admit applicability judgement is unsolved.",
+   "egress_posture": "Technique only; the paper's embedder is local-capable (Multilingual-E5-Large).",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M02-27"
+   ]
+  },
+  {
+   "name": "Gating on measured with/without gain (Ghosh et al.)",
+   "kind": "technique",
+   "verdict": "viable",
+   "why": "The only result showing a gate that detects harmful memories where similarity and LLM judges are at chance; for this store the analogue is the entry's own discriminating check rather than an A/B run, with with/without gain reserved for periodic audit sampling. Abstract-level evidence from a workshop paper.",
+   "egress_posture": "Technique only.",
+   "one_dev_ops_cost": "medium",
+   "fact_ids": [
+    "M02-30",
+    "M02-31"
+   ]
+  },
+  {
+   "name": "Dynamic Cheatsheet / AWM / Reflexion / Learn-by-interact (self-curated memory)",
+   "kind": "technique",
+   "verdict": "cite_design_only",
+   "why": "Show large gains on benchmark tasks with repeated structure, but rely on unlabeled self-curation, inject whole memories or small buffers, and DC shows smaller consumer models can fall below baseline. Not a design for cross-session defect lookup by cheap agents.",
+   "egress_posture": "Technique only.",
+   "one_dev_ops_cost": "low",
+   "fact_ids": [
+    "M02-24",
+    "M02-23",
+    "M02-20",
+    "M02-25"
+   ]
+  }
+ ],
+ "design_implications": [
+  {
+   "claim": "Do not duplicate the harness: CLAUDE.md (always loaded, 200-line guidance, already 390 lines here), auto memory (200 lines/25KB index, per-repo, machine-local), skills (description always listed, body on demand) and hooks (deterministic injection) already exist. The store should be reached through one thin skill and CLI, optionally a hook, with at most a one-line pointer in CLAUDE.md or MEMORY.md, and defect entries moved out of always-loaded prose.",
+   "fact_ids": [
+    "M02-01",
+    "M02-02",
+    "M02-03",
+    "M02-04",
+    "M02-08",
+    "M02-32"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "The store's added value is exactly what no surveyed harness or product provides together: symptom-keyed multi-handle lookup, canonicalised error templates, dependency-event invalidation, a per-entry verification gate, outcome history, safe parallel writes from worktrees, and outcome analytics. Copilot Memory is the nearest design (citations re-checked against the current branch, expiry, vote reinforcement) but is hosted and uses model judgment.",
+   "fact_ids": [
+    "M02-36",
+    "M02-11",
+    "M02-12"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Entries should be small itemised records (title, short description, content, plus counters and provenance), never raw trajectories, transcripts or LLM-rewritten blobs. Add-all memory underperformed a fixed small set, full-history appending cut accuracy, and whole-context rewrites collapsed 18,282 tokens to 122.",
+   "fact_ids": [
+    "M02-26",
+    "M02-28",
+    "M02-29",
+    "M02-24"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Store negative results, but as distilled, condition-scoped lessons with a failure-cause class (approach tried, why it failed, under which conditions), not as raw failed routines. Evidence: ReasoningBank gains from failure lessons (46.5 to 49.7) while AWM with failures loses (44.4 to 42.2); SWE-Exp annotates failure causes. No source ablates failed vs successful experience on coding tasks in isolation, so the benefit for this corpus is plausible, not proven.",
+   "fact_ids": [
+    "M02-26",
+    "M02-27",
+    "M02-23"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Tune retrieval for precision: return one best-ranked entry (maybe up to three) rather than a list. ReasoningBank defaults to k=1, SWE-Exp found one experience optimal, Dynamic Cheatsheet saw retrieval confusion from suboptimal recalls, and agents follow retrieved conflicting memory at the first decision point.",
+   "fact_ids": [
+    "M02-26",
+    "M02-27",
+    "M02-24",
+    "M02-31"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "A similarity score or LLM judge is not a safe hit filter: harmful memories ranked no better than chance, and a lexically closer memory naming the wrong action is followed anyway. The verification gate must be an external, discriminating, preferably executable check that reproduces the root cause on current code; models cannot reliably self-correct without external feedback. Voyager stores skills only after external verification.",
+   "fact_ids": [
+    "M02-30",
+    "M02-33",
+    "M02-21",
+    "M02-31"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Cheap consuming agents are a measured risk, not a given: Dynamic Cheatsheet shows smaller models can fall below baseline with memory, and stronger agents lose more when they comply with wrong memory. Hits should be advisory, carry the gate, and be evaluated on this corpus with with/without runs before cheap tiers are trusted to act on them.",
+   "fact_ids": [
+    "M02-24",
+    "M02-31",
+    "M02-30"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Outcome feedback should be per-entry counters plus an append-only outcome log: ExpeL upvote/downvote with drop at zero, ACE helpful/harmful counters, Copilot upvote resets expiry while retrieval does not, and Xiong et al. treat later task outcomes as free quality labels with history-based deletion best under a reliable evaluator. A refuted hit should downvote and trigger revision, an approach consistent with the owner's feedback framing.",
+   "fact_ids": [
+    "M02-22",
+    "M02-29",
+    "M02-11",
+    "M02-28"
+   ],
+   "strength": "strong"
+  },
+  {
+   "claim": "Write path: deterministic, itemised delta merges (ACE) with schema-constrained records agents cannot casually clobber (Anthropic found JSON resisted inappropriate overwriting better than Markdown); LLM distillation happens inside the existing agent session, not in a separate service that would add egress. Auto memory shares one directory across worktrees with no documented locking, so parallel writes need a real engine or hash-ID style collision avoidance (Beads).",
+   "fact_ids": [
+    "M02-29",
+    "M02-19",
+    "M02-16",
+    "M02-36",
+    "M02-01"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Invalidation: every harness mechanism found is time-based (memory-tool docs advise deleting long-unaccessed files; Copilot expires after 90 days without reinforcement), with Copilot adding a citation re-check at read time. This supports event-driven invalidation plus verify-on-read as primary, with a time-based staleness flag only as a backstop for unreinforced entries.",
+   "fact_ids": [
+    "M02-06",
+    "M02-11",
+    "M02-12"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Egress: auto memory, skills, hooks and rules stay local. Third-party memory tools add model-provider egress by default (mem0 to OpenAI; claude-mem to its chosen compression provider, optional cmem.ai sync) and Copilot Memory is hosted. For production on owner-controlled machines, any distillation or embedding must use the in-session model or a local model.",
+   "fact_ids": [
+    "M02-01",
+    "M02-17",
+    "M02-18",
+    "M02-11"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Treat store writes derived from untrusted text (web pages, logs, issue bodies) as an injection path: Copilot rejects memories containing secrets or model-control tokens, and published attacks poison agent memory with query-only access. Record provenance and require the gate before a new entry can influence an agent.",
+   "fact_ids": [
+    "M02-11",
+    "M02-35"
+   ],
+   "strength": "weak"
+  },
+  {
+   "claim": "Seed corpus already exists as negative-result prose: CLAUDE.md build traps, HANDOFF sections 2 and 6, and the lifecycle-audit follow-ups. Migrating these out of always-loaded or hand-read files into verified entries reduces what the owner must track and what every session pays for.",
+   "fact_ids": [
+    "M02-03",
+    "M02-02"
+   ],
+   "strength": "moderate"
+  },
+  {
+   "claim": "Cost-saved analytics must be measured by the store itself. Papers report accuracy, merge-rate or success gains (83% to 90%, +8.3 points, 73.0% Pass@1), none quantifies expensive-tier escalations avoided, and the AGENTS.md study shows context can raise cost over 20% without gains.",
+   "fact_ids": [
+    "M02-12",
+    "M02-26",
+    "M02-27",
+    "M02-32"
+   ],
+   "strength": "weak"
+  }
+ ],
+ "rejected_paths": [
+  {
+   "what": "Putting defect/trap knowledge into CLAUDE.md or AGENTS.md (or per-entry skills)",
+   "why": "Always-loaded text costs every turn and lowers adherence past about 200 lines (CLAUDE.md here is 390); the AGENTS.md study found no general success gain and over 20% added cost; per-entry skills would add one listing line each to every turn (truncated at 1,536 characters) and depend on description-match recall (inferred for the per-entry case).",
+   "fact_ids": [
+    "M02-02",
+    "M02-03",
+    "M02-04",
+    "M02-05",
+    "M02-32"
+   ]
+  },
+  {
+   "what": "Storing raw trajectories, transcripts or full session history as the memory (claude-mem style auto-capture, add-all)",
+   "why": "Add-all underperformed a small fixed set; full-history appending dropped accuracy; auto-capture has no verification or invalidation and routes observations to an LLM provider.",
+   "fact_ids": [
+    "M02-28",
+    "M02-24",
+    "M02-17"
+   ]
+  },
+  {
+   "what": "Gating hits by embedding similarity or an LLM relevance judge alone",
+   "why": "On the controlled benchmark both ranked harmful memories no better than chance, and agents follow a lexically close but wrong memory.",
+   "fact_ids": [
+    "M02-30",
+    "M02-31"
+   ]
+  },
+  {
+   "what": "LLM-rewritten monolithic memory documents (periodic whole-cheatsheet or playbook rewrite)",
+   "why": "ACE measured context collapse (18,282 to 122 tokens, accuracy below the unadapted baseline) and brevity bias; itemised deltas merged by non-LLM code avoid it.",
+   "fact_ids": [
+    "M02-29"
+   ]
+  },
+  {
+   "what": "Time-only expiry as the invalidation mechanism",
+   "why": "Matches memory-tool and Copilot practice but contradicts the agreed event-driven framing; a code-changing event can invalidate an entry in days while an unchanged entry stays valid for years. Copilot itself adds a read-time citation check.",
+   "fact_ids": [
+    "M02-06",
+    "M02-11",
+    "M02-12"
+   ]
+  },
+  {
+   "what": "Adopting mem0 or claude-mem as the store",
+   "why": "mem0 is ADD-only conversational memory with OpenAI defaults; claude-mem captures observations rather than verified diagnoses, adds a Bun/uv/Chroma stack and a reported Windows hook error, and sends text to a compression provider. Neither offers a verification gate or event invalidation.",
+   "fact_ids": [
+    "M02-17",
+    "M02-18"
+   ]
+  },
+  {
+   "what": "Relying on hosted vendor memories (Copilot Memory, ChatGPT/Codex memory, Cursor/Windsurf memories) as the system",
+   "why": "Hosted or opaque, tied to one product, not queryable by symptom, and disqualified for production by the data-control constraint; cited for design only.",
+   "fact_ids": [
+    "M02-11",
+    "M02-09",
+    "M02-10",
+    "M02-13"
+   ]
+  },
+  {
+   "what": "Cline-style read-everything-every-task memory bank",
+   "why": "Context cost scales with bank size and the most-read file is the most likely stale; no per-item validity.",
+   "fact_ids": [
+    "M02-14"
+   ]
+  }
+ ],
+ "open_questions": [
+  "Does the Claude Code PostToolUseFailure hook payload include the full stderr/stdout and exit code needed to canonicalise an error before lookup? The hooks reference (full event schemas) was not read, only the hooks guide.",
+  "Do Haiku/Sonnet-class consumers benefit from gated, k=1 hits on this repo's defects? Dynamic Cheatsheet shows a small model falling below baseline, and no study tests verification-gated lookup by cheap coding agents; a with/without pilot on the seed corpus is needed.",
+  "Does a task-specific discriminating check outperform Copilot-style citation re-checking? Copilot's check is documented as a model judgment, not a deterministic guarantee, and its adversarial-memory result is vendor-reported.",
+  "Total skill-listing character budget across all skills and what is dropped when exceeded: the skills page was only read to 100,000 of 118,821 characters; the 15,000-character cap is a blog claim.",
+  "Cursor Memories current status (removed vs UI-only removal) is unresolved from conflicting staff replies; Windsurf storage path unconfirmed from official docs.",
+  "ChatGPT memory pages (openai.com, help.openai.com) returned 403 and were not read; OpenMemory MCP architecture was not verified from a primary source (docs page and raw README 404).",
+  "Whether Claude Code auto memory has any write-conflict handling when parallel sessions in sibling worktrees write the same memory directory: none documented.",
+  "No source quantifies escalation cost avoided by experience reuse; how to define cost saved for analytics is open.",
+  "Whether failure entries help coding agents specifically: SWE-Exp stores both but did not ablate them; the evidence for negative results comes mostly from ReasoningBank (web and SWE tasks) and non-coding benchmarks."
+ ],
+ "urls_attempted": [
+  "https://code.claude.com/docs/en/memory",
+  "https://code.claude.com/docs/en/skills",
+  "https://code.claude.com/docs/en/sub-agents",
+  "https://code.claude.com/docs/en/hooks-guide",
+  "https://docs.claude.com/en/docs/agents-and-tools/tool-use/memory-tool (redirected)",
+  "https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool",
+  "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents",
+  "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+  "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills",
+  "https://developers.openai.com/codex/memories (redirected to learn.chatgpt.com)",
+  "https://learn.chatgpt.com/docs/customization/memories?surface=app",
+  "https://learn.chatgpt.com/docs/agent-configuration/agents-md",
+  "https://openai.com/index/memory-and-new-controls-for-chatgpt/ (403)",
+  "https://help.openai.com/en/articles/8590148-memory-faq (403)",
+  "https://docs.cursor.com/context/rules (redirected)",
+  "https://cursor.com/docs/context/rules",
+  "https://docs.github.com/en/copilot/concepts/agents/copilot-memory",
+  "https://github.blog/ai-and-ml/github-copilot/building-an-agentic-memory-system-for-github-copilot/",
+  "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
+  "https://docs.windsurf.com/windsurf/cascade/memories (redirected)",
+  "https://docs.devin.ai/desktop/cascade/memories",
+  "https://docs.devin.ai/windsurf/plugins/cascade/memories",
+  "https://docs.cline.bot/prompting/cline-memory-bank",
+  "https://kiro.dev/docs/steering/",
+  "https://agents.md/",
+  "https://github.com/thedotmack/claude-mem",
+  "https://docs.claude-mem.ai/introduction",
+  "https://raw.githubusercontent.com/thedotmack/claude-mem/main/LICENSE",
+  "https://github.com/steveyegge/beads",
+  "https://github.com/mem0ai/mem0",
+  "https://docs.mem0.ai/openmemory/overview",
+  "https://raw.githubusercontent.com/mem0ai/mem0/main/openmemory/README.md (404)",
+  "https://arxiv.org/abs/2303.11366",
+  "https://arxiv.org/html/2303.11366",
+  "https://arxiv.org/abs/2305.16291",
+  "https://arxiv.org/html/2305.16291",
+  "https://arxiv.org/abs/2308.10144",
+  "https://arxiv.org/pdf/2308.10144 (binary, unreadable)",
+  "https://ar5iv.labs.arxiv.org/html/2308.10144",
+  "https://arxiv.org/abs/2409.07429",
+  "https://arxiv.org/html/2409.07429",
+  "https://arxiv.org/abs/2504.07952",
+  "https://arxiv.org/html/2504.07952",
+  "https://arxiv.org/abs/2501.10893",
+  "https://arxiv.org/abs/2509.25140",
+  "https://arxiv.org/html/2509.25140",
+  "https://arxiv.org/abs/2505.16067",
+  "https://arxiv.org/html/2505.16067",
+  "https://arxiv.org/abs/2510.04618",
+  "https://arxiv.org/html/2510.04618",
+  "https://arxiv.org/abs/2507.23361",
+  "https://arxiv.org/html/2507.23361v2",
+  "https://arxiv.org/abs/2607.10608",
+  "https://arxiv.org/abs/2608.27924",
+  "https://neurips.cc/virtual/2026/165606",
+  "https://arxiv.org/abs/2602.11988",
+  "https://arxiv.org/abs/2310.01798",
+  "https://arxiv.org/abs/2504.19413",
+  "https://arxiv.org/abs/2512.13564",
+  "https://arxiv.org/abs/2603.07670",
+  "https://arxiv.org/abs/2504.01990",
+  "web searches (generic topic queries only, no repository content): GitHub Copilot agentic memory; Windsurf Cascade memories; claude-mem; Beads; mem0 OpenMemory; self-evolving agents survey; MINJA/AgentPoison; SWE-Exp; Evo-Memory; negative results agent memory; Cursor memories; Claude Code skills triggering; Cline memory bank problems; AGENTS.md evaluation; Reflexion limitations"
+ ],
+ "anomalies": [
+  "A web-search summary attributed a 'successful vs failed trajectories, descriptive vs rule-based memory' finding to arXiv 2608.27924; fetching the paper showed it is about unanswerable-question handling and does not compare success vs failure trajectories. Discarded.",
+  "Copilot Memory expiry: the fetch summariser first said 28 days, then corrected to the page's 'default expiry period is 90 days'; a secondary blog also says 28 days. The GitHub engineering blog states no expiry period. Used 90 days from the docs page.",
+  "claude-mem licence: a search summary said AGPL-3.0; the repository README and raw LICENSE on main both say Apache-2.0. Used Apache-2.0 (earlier versions may have differed; unchecked).",
+  "Cursor staff statements conflict on whether Memories were removed in 2.1.x or only the management UI; recorded as reported and unresolved.",
+  "Windsurf documentation now lives under docs.devin.ai (editor described as Devin Desktop); docs.windsurf.com and developers.openai.com Codex pages redirect to other hosts (learn.chatgpt.com), so older guides may cite stale URLs.",
+  "SWE-Exp reports 41.6% Pass@1 in v1 (open-source models) and 73.0% in v2 (Claude 4 Sonnet), and gives two different no-experience baselines (37.8% and 37.2%) in different sections.",
+  "Dynamic Cheatsheet text and Table 2 disagree on one full-history figure (6.7% vs 13.3%); the table value 13.3% was used.",
+  "Page content was condensed by WebFetch's small summarising model; numbers are as that model reported from the page and were not re-read verbatim from raw HTML except where stated. The ExpeL numbers came via ar5iv because the arXiv PDF returned binary.",
+  "MINJA and AgentPoison figures come from a search-result summary, not from the papers; marked reported.",
+  "Several 2026-dated arXiv items (2607.10608, 2608.27924, 2609.19128, NeurIPS 2026 workshop) post-date my training knowledge; read only from abstracts or listing pages. 2609.19128 ('Cognitive Extensions for Dual-Process Language Agents') appeared in a search and was not read."
+ ]
+}

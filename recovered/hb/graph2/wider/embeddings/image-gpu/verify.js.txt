@@ -1,0 +1,26 @@
+// Host-side: sha256 + byte count of every file in wheels/ against wheels.tsv (published values),
+// then copies the CPU lock's non-torch wheels from ../image/wheels (hash-checked already) and writes requirements.lock.
+const fs=require('fs'),path=require('path'),crypto=require('crypto');
+const dir=process.argv[2];
+const sha=f=>crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+const rows=fs.readFileSync(path.join(dir,'wheels.tsv'),'utf8').trim().split('\n').slice(1).map(l=>l.split('\t'));
+const cpu=fs.readFileSync(path.join(dir,'../image/requirements.lock'),'utf8').split('\n').filter(l=>l&&!l.startsWith('#'));
+const bad=[];let total=0,newTotal=0,newN=0;const lock=[];const seen=new Set();
+for(const [name,ver,fn,bytes,pub] of rows){
+  const p=path.join(dir,'wheels',fn);
+  if(!fs.existsSync(p)){ // shared wheel: take from the CPU image's folder
+    const q=path.join(dir,'../image/wheels',fn); fs.copyFileSync(q,p);
+  } else newN++;
+  const st=fs.statSync(p).size,h=sha(p);
+  const ok=h===pub&&String(st)===bytes; if(!ok)bad.push(fn);
+  total+=st; lock.push(`${name}==${ver} --hash=sha256:${h}`); seen.add(name);
+}
+// every other CPU-lock package at its CPU-lock version
+for(const l of cpu){const n=l.split('==')[0]; if(n==='torch'||seen.has(n))continue;
+  const [nv,hh]=l.split(' --hash=sha256:'); const ver=nv.split('==')[1];
+  const f=fs.readdirSync(path.join(dir,'../image/wheels')).find(x=>x.toLowerCase().replace(/_/g,'-').startsWith(n+'-'+ver+'-'));
+  const dst=path.join(dir,'wheels',f); if(!fs.existsSync(dst))fs.copyFileSync(path.join(dir,'../image/wheels',f),dst);
+  const h=sha(dst); if(h!==hh)bad.push(f); lock.push(l); total+=fs.statSync(dst).size;}
+lock.sort();
+fs.writeFileSync(path.join(dir,'requirements.lock'),'# pykeen 1.11.1 + torch 2.15.0+cu132 and all dependencies; hashes checked against the index that publishes them\n'+lock.join('\n')+'\n');
+console.log(`lock_entries=${lock.length} wheels_in_resolved=${rows.length} downloaded_new=${newN} total_bytes=${total} mismatches=${bad.length} ${bad.join(' ')}`);

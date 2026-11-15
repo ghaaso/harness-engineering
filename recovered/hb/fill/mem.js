@@ -1,0 +1,11 @@
+const fs = require('fs');
+let t = fs.readFileSync('project-harness-bottlenecks.md', 'utf8');
+const anchor = '- A background subagent **can** write files';
+const add = "- **What fills the windows** (measured 2026-11-11 after the owner questioned the recall verdict; compile §6, `evidence/harness-bottlenecks/fill/`): of November's 4.33 billion context tokens, 26.9 % is content fetched by reading and searching (slices 26.0, root 14.8, subagents 40.1), 32.5 % is the model's own output carried forward, 28.6 % is the window start re-read on every call. Fetched splits into 18.7 points first open of a file in a window, 7.0 the same file opened again (upper bound on repeats), 1.2 searches and pathless reads. Reads spread over 2,179 files; top 30 hold 7.7 %. So any index, graph or cache has a ceiling near 27 %; the unnecessary part is unmeasured. The compile's first wording (recall cannot help slice windows) was too strong and is corrected.\n";
+if (!t.includes('What fills the windows')) t = t.replace(anchor, add + anchor);
+fs.writeFileSync('project-harness-bottlenecks.md', t);
+let m = fs.readFileSync('MEMORY.md', 'utf8');
+const a = '400k compaction window built in the testbed and never switched on';
+if (m.includes(a) && !m.includes('recall ceiling')) m = m.replace(a, a + '; fetched content is 27 % of tokens (the recall ceiling)');
+fs.writeFileSync('MEMORY.md', m);
+console.log(t.includes('What fills the windows'), m.includes('recall ceiling'));

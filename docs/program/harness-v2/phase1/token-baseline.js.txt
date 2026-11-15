@@ -1,0 +1,66 @@
+// Harness v2, phase 1: the November token baseline per slice. Read-only over the clinic transcripts.
+// Run from this folder:  node - < token-baseline.js.txt
+// Counting is the same as evidence/harness-bottlenecks/tally.js.txt: one row per assistant message id,
+// November timestamps only, context = cache_read + cache_creation + input. It adds a row per transcript
+// folder (one folder per worktree, so one per slice session), limit records, compactions and file dates.
+'use strict';
+const fs = require('fs'), path = require('path'), readline = require('readline');
+const P = 'C:/Users/User/.claude/projects';
+const PREFIX = 'C--Bilal-Migration-User-Downloads-20-PROJECTS-24-Clinic-Workshop';
+const dirs = fs.readdirSync(P).filter(d => d.startsWith(PREFIX));
+const walk = (d, out) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p, out); else if (e.name.endsWith('.jsonl')) out.push(p); } return out; };
+const blank = () => ({ calls: 0, cr: 0, cc: 0, inp: 0, out: 0, over400: 0, max: 0, ids: new Set() });
+(async () => {
+  const rows = []; const byDay = {}; let files = 0, bytes = 0, oldest = Infinity, newest = 0;
+  for (const d of dirs) {
+    const name = d === PREFIX ? 'root' : d.slice(PREFIX.length).replace(/^--claude-worktrees-/, '');
+    const R = { name, main: blank(), sub: blank(), files: 0, limits: 0, compactions: [], first: null, last: null };
+    const limitIds = new Set();
+    for (const f of walk(path.join(P, d), [])) {
+      const st = fs.statSync(f); files++; R.files++; bytes += st.size; oldest = Math.min(oldest, st.mtimeMs); newest = Math.max(newest, st.mtimeMs);
+      const isSub = path.relative(path.join(P, d), f).split(path.sep).length > 1;
+      const G = isSub ? R.sub : R.main;
+      const rl = readline.createInterface({ input: fs.createReadStream(f), crlfDelay: Infinity });
+      for await (const line of rl) {
+        if (line.indexOf('"timestamp":"2026-11') < 0) continue;
+        const hasUsage = line.indexOf('"usage"') >= 0, hasLimit = line.indexOf('rate_limit') >= 0, hasCompact = line.indexOf('compact_boundary') >= 0;
+        if (!hasUsage && !hasLimit && !hasCompact) continue;
+        let o; try { o = JSON.parse(line); } catch { continue; }
+        const ts = o.timestamp || '';
+        if (hasCompact && o.subtype === 'compact_boundary') { R.compactions.push({ at: ts, preTokens: (o.compactMetadata && o.compactMetadata.preTokens) || null }); continue; }
+        if (hasLimit && o.error === 'rate_limit') { const k = o.uuid || ts; if (!limitIds.has(k)) { limitIds.add(k); R.limits++; } }
+        const m = o.message; if (!hasUsage || !m || !m.usage || !m.id) continue;
+        if (G.ids.has(m.id)) continue; G.ids.add(m.id);
+        const u = m.usage, cr = u.cache_read_input_tokens || 0, ctx = cr + (u.cache_creation_input_tokens || 0) + (u.input_tokens || 0);
+        G.calls++; G.cr += cr; G.cc += u.cache_creation_input_tokens || 0; G.inp += u.input_tokens || 0; G.out += u.output_tokens || 0;
+        if (ctx > 400000) G.over400 += cr; if (ctx > G.max) G.max = ctx;
+        if (!R.first || ts < R.first) R.first = ts; if (!R.last || ts > R.last) R.last = ts;
+        const day = ts.slice(0, 10); byDay[day] = byDay[day] || { calls: 0, cr: 0 }; byDay[day].calls++; byDay[day].cr += cr;
+      }
+    }
+    delete R.main.ids; delete R.sub.ids; rows.push(R);
+  }
+  const tot = rows.reduce((a, r) => a + r.main.cr + r.sub.cr, 0);
+  const M = n => (n / 1e6).toFixed(1), k = n => Math.round(n / 1000) + 'k';
+  const L = [];
+  L.push('Harness v2 phase 1: November token baseline per slice session', 'Run ' + new Date().toISOString() + '. Read-only. Source: ' + P + '/' + PREFIX + '*', '');
+  L.push('transcript folders ' + dirs.length + ', files ' + files + ', ' + (bytes / 1e6).toFixed(0) + ' MB');
+  L.push('oldest transcript file last written ' + new Date(oldest).toISOString().slice(0, 10) + ', newest ' + new Date(newest).toISOString().slice(0, 10));
+  L.push('total cache-read ' + M(tot) + 'M tokens (November timestamps only)', '');
+  L.push(['session'.padEnd(34), 'calls'.padStart(6), 'read M'.padStart(8), 'share'.padStart(6), 'ctx/call'.padStart(8), 'largest'.padStart(8), '>400k'.padStart(6), 'sub calls'.padStart(9), 'sub M'.padStart(7), 'limits'.padStart(6), 'compact'.padStart(7), ' first..last (UTC)'].join(' '));
+  rows.sort((a, b) => (b.main.cr + b.sub.cr) - (a.main.cr + a.sub.cr));
+  for (const r of rows) {
+    const g = r.main;
+    L.push([r.name.padEnd(34), String(g.calls).padStart(6), M(g.cr).padStart(8), ((100 * (g.cr + r.sub.cr) / tot).toFixed(1) + '%').padStart(6), k((g.cr + g.cc + g.inp) / Math.max(1, g.calls)).padStart(8), k(g.max).padStart(8),
+      ((g.cr ? 100 * g.over400 / g.cr : 0).toFixed(0) + '%').padStart(6), String(r.sub.calls).padStart(9), M(r.sub.cr).padStart(7), String(r.limits).padStart(6), String(r.compactions.length).padStart(7), ' ' + (r.first || '').slice(5, 16) + '..' + (r.last || '').slice(5, 16)].join(' '));
+  }
+  L.push('', 'columns: read M = cache-read tokens of the session itself, in millions; share = session plus its subagents, of all tokens; ctx/call = mean context per call;');
+  L.push('         >400k = share of the session\'s own tokens in calls whose context had passed 400k; limits = rate-limit error records; compact = automatic compactions.', '');
+  L.push('by day (UTC): calls, cache-read M');
+  for (const d of Object.keys(byDay).sort()) L.push('  ' + d + '  ' + String(byDay[d].calls).padStart(6) + '  ' + M(byDay[d].cr).padStart(8));
+  const comps = rows.flatMap(r => r.compactions.map(c => r.name + ' ' + c.at.slice(0, 16) + ' at ' + (c.preTokens ? k(c.preTokens) : '?')));
+  L.push('', 'compactions: ' + (comps.length ? '' : 'none'), ...comps.map(c => '  ' + c));
+  fs.writeFileSync('token-baseline-2026-11.txt', L.join('\n') + '\n');
+  fs.writeFileSync('token-baseline-2026-11.json', JSON.stringify({ run: new Date().toISOString(), folders: dirs.length, files, bytes, oldest: new Date(oldest).toISOString(), newest: new Date(newest).toISOString(), totalCacheRead: tot, rows, byDay }, null, 1));
+  console.log(L.slice(0, 30).join('\n'));
+})();

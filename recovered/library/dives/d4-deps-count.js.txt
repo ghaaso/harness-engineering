@@ -1,0 +1,23 @@
+// D4: how many FixFlow direct npm dependencies sit on a different major than today's latest.
+// Input: d4-deps-latest.txt (group name pinned latest), from `npm view <pkg> dist-tags.latest` on 2026-11-12.
+// Run from the dives folder: node - < d4-deps-count.js.txt
+const fs = require('fs');
+const lines = fs.readFileSync('d4-deps-latest.txt', 'utf8').trim().split(/\r?\n/);
+const major = v => { const m = v.replace(/^[~^]/, '').split('.'); return m[0] === '0' ? '0.' + m[1] : m[0]; };
+const g = {};
+for (const l of lines) {
+  const [grp, name, pinned, latest] = l.split(' ');
+  const k = grp === 'm' ? 'mobile' : 'web';
+  g[k] = g[k] || { n: 0, differ: 0, names: [] };
+  g[k].n++;
+  if (major(pinned) !== major(latest)) { g[k].differ++; g[k].names.push(name); }
+}
+let tn = 0, td = 0;
+for (const [k, v] of Object.entries(g)) { console.log(k, v.differ, 'of', v.n, 'differ in major'); tn += v.n; td += v.differ; }
+console.log('all', td, 'of', tn);
+const t = JSON.parse(fs.readFileSync('expo-time.json', 'utf8'));
+const d52 = new Date(t['52.0.0']), d58 = new Date(t['58.0.0']);
+const months = (d58 - d52) / (1000 * 3600 * 24 * 30.44);
+console.log('Expo SDK 52 -> 58:', months.toFixed(1), 'months, one major per', (months / 6).toFixed(1), 'months');
+const d55 = new Date(t['55.0.0']);
+console.log('Expo SDK 55 -> 58:', ((d58 - d55) / (1000 * 3600 * 24 * 30.44)).toFixed(1), 'months for 3 majors');

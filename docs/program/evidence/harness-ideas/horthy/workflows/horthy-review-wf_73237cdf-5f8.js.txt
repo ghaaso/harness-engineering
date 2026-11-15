@@ -1,0 +1,150 @@
+export const meta = {
+  name: 'horthy-review',
+  description: 'Sonnet clusters the pre-review cards into idea families per weakness group (reading the card files); two Opus/high reviewers per group score every family; fresh-context Opus/xhigh refuters attack every adopt/trial family; one Opus critic asks what was not read',
+  phases: [
+    { title: 'Cluster', detail: 'one Sonnet clusterer per weakness group (organising, not judging)' },
+    { title: 'Review', detail: 'two Opus/high reviewers per group, distinct lenses' },
+    { title: 'Refute', detail: 'one fresh-context Opus/xhigh refuter per adopt or trial family' },
+    { title: 'Completeness', detail: 'one Opus critic over the reader reports' },
+  ],
+}
+
+const GROUPS = args.groups, PR = args.PR182, REPO = args.REPO, INV = args.INV, REPORTS = args.reportsFile
+
+const HARNESS = `THE HARNESS BEING REVIEWED (FixFlow, one developer, Windows 11, Git Bash + PowerShell, Claude Code desktop app; a 40-phase ship plan run one phase per fresh chat):
+- CLAUDE.md: 390 lines, always loaded (${REPO}/CLAUDE.md).
+- Phase routine: ship plan §0 (${PR}/docs/program/SHIP-PLAN-2026-11.md lines 24-116): one phase per session; a draft PR at first commit whose body starts "Plan @ <sha>" and keeps a "Decisions / ruled out / owner corrections" journal; resume = first unticked box; an Opus reviewer per PR with a refute-by-default brief naming register ids, verdict bound to the head SHA, fail-before/pass-after per id; six-question closing message; OWNER-VIEW.md refreshed at close; Opus owns invariant-sensitive code, Sonnet implements well-specified work, Haiku extracts; Fable (the main session) briefs, gates and judges and never implements.
+- Orchestration: ${PR}/docs/ORCHESTRATION-DESIGN-2026-10.md — Workflow-tool scripts per task (not saved), judge panels, fresh-context refuters (default verdict refuted; CONFIRMED needs a traced path, REFUTED needs positive counter-evidence, else UNVERIFIABLE), completeness critics, citation checks, evidence folders with sha256 manifests under docs/program/evidence/, hard caps on skeptics, a tier guide (§3: Haiku extracts into typed schemas, Sonnet maps/collects/implements, Opus analyses/refutes/reviews, Fable judges), a CONTEXT block prepended to every brief (§5.1), JSON output schemas (§5.2).
+- CI: three jobs (frontend, mobile, backend); import-linter + ESLint slice boundaries; dependency-cruiser planned for mobile (P5b-2); a P1 CI check that CLAUDE.md's Alembic head matches the migration chain; skip-aware gates (pytest -rs, no --passWithNoTests).
+- Agents/skills: one custom agent (.claude/agents/fixflow-explorer.md, Haiku locator); 13 skill packages being added under .claude/skills/ by another session; a knowledge-store design for verified diagnoses (${PR}/docs/program/KNOWLEDGE-STORE-DESIGN-2026-11.md, PR #183, not built; W1's CLAUDE.md trim is gated behind its pilot).
+- Memory: the user's auto-memory files are pointers, not state. Evidence outputs are committed with sha256 manifests.
+- The harness review (${PR}/docs/program/HARNESS-REVIEW-2026-11-01.md §4 and §6) DELIBERATELY SKIPPED, each for a named reason: a pre-commit verification hook ("RT-04/05 defects; CI gates the PRs"); the owner's context system — PreCompact snapshot, SessionStart restore, recall, large-read admission ("never run live; Python; undocumented PreCompact behaviour; owner decision 2026-11-01 keeps it in its repo"); a SessionStart(compact) hook ("skip for now; one phase per session makes compaction rare"; exact JSON held in reserve as HR-C5); a measurement pipeline M00–M06 ("a month of research established no gain; owner priority low"); call-graph tooling / graphify ("skip": discovery finished, hot paths small enough for grep, the hook nudges every Grep/Read, the graph goes stale, the package too new); a "Compact Instructions" section ("native support unverified"); a doctor script. Compaction audit rulings: HR-C1 one phase per session, HR-C3 no PreCompact hook and no context-system install, HR-C4 a Fable-keyed autoCompactWindow only if a phase session passes 500k.
+THE FIVE WEAKNESSES AND THREE LEVERS:
+W1 CLAUDE.md is 390 lines, nearly twice the length at which adherence is known to fall; a trim is gated behind the knowledge-store pilot.
+W2 Compliance with the phase routine is self-reported; with no hooks, "the store was never consulted" and "the routine was skipped" look the same from outside.
+W3 The phase routine has never run; P1's cold-resume trial (a fresh Sonnet agent given only the repository must recover ten frozen facts) is its first test.
+W4 One custom agent exists; skills are being added now; no reusable workflow library.
+W5 Workflows are authored per task and not saved.
+L1 Effort routing: most verifiers run at xhigh (his Oct-2026 SlopCodeBench report says medium often matched or beat xhigh at lower cost).
+L2 Context budget and compaction: the defence is one phase per new session; his material covers the "dumb zone" (wrap up ~40% of the window), context forking, long-context limits.
+L3 Output backpressure and verifiers: outputs are capped and refuters run first; his material covers backpressure scripts, "no software factory without better verifiers", the software-factory essays.
+OWNER RULES: critiques and ideas are not taken blindly; evidence over appeal; marketing material scores as a claim, not evidence; "we did this at HumanLayer" without numbers is anecdotal; nothing is installed without an owner decision (this review produces dispositions, not changes).`
+
+const FAMILY = { type: 'object', additionalProperties: false, required: ['label', 'members', 'bears_on', 'strongest_evidence', 'sources', 'sample_quote', 'landing_guesses'], properties: {
+  label: { type: 'string', description: 'the family\'s canonical claim, one sentence, in the strongest form the members support' },
+  members: { type: 'array', items: { type: 'string' }, description: 'card ids (Cnnnn); every card of the group appears in exactly one family' },
+  bears_on: { type: 'array', items: { type: 'string', enum: ['W1', 'W2', 'W3', 'W4', 'W5', 'L1', 'L2', 'L3', 'none'] } },
+  strongest_evidence: { type: 'string', description: 'the best evidence any member offers: type (measured/anecdotal/asserted/marketing) + the detail + which card' },
+  sources: { type: 'array', items: { type: 'string' }, description: 'distinct sources among members as "title (date, url)"; at most 6' },
+  sample_quote: { type: 'string', description: 'one member\'s verbatim quote with its card id' },
+  landing_guesses: { type: 'string', description: 'the readers\' landing guesses, distinct, joined by " | "; at most 3' },
+} }
+const CLUSTER_SCHEMA = { type: 'object', additionalProperties: false, required: ['group', 'families'], properties: { group: { type: 'string' }, families: { type: 'array', items: FAMILY } } }
+const REVIEW_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['reviewer_id', 'lens', 'reviews'],
+  properties: {
+    reviewer_id: { type: 'string' }, lens: { type: 'string' },
+    reviews: { type: 'array', items: { type: 'object', additionalProperties: false,
+      required: ['family', 'evidence', 'transferability', 'novelty', 'benefit', 'cost_risk', 'existing_mechanism', 'reopens_skipped', 'disposition', 'measurement', 'reason'],
+      properties: {
+        family: { type: 'string', description: 'the family id, e.g. G2-F007' },
+        evidence: { type: 'integer', minimum: 0, maximum: 3, description: '0 marketing/asserted with nothing behind it … 3 measured with numbers and method' },
+        transferability: { type: 'integer', minimum: 0, maximum: 3, description: 'to a one-developer Windows repository running this plan\'s routine: 0 does not apply … 3 applies as-is' },
+        novelty: { type: 'integer', minimum: 0, maximum: 3, description: 'against what the harness already does: 0 restatement of an existing mechanism (name it) … 3 nothing like it exists here' },
+        benefit: { type: 'integer', minimum: 0, maximum: 3, description: 'expected effect on the weakness it bears on: 0 none … 3 would plausibly close it' },
+        cost_risk: { type: 'integer', minimum: 0, maximum: 3, description: '3 = trivial cost and no risk; 0 = large cost or a serious risk (incl. re-adopting a deliberate skip without a new reason)' },
+        existing_mechanism: { type: 'string', description: 'if this is (partly) already done here, the mechanism by name (file, §, ruling); else ""' },
+        reopens_skipped: { type: 'string', description: 'if it re-adopts something the harness review skipped: which skip, and whether its stated reason still holds and why; else ""' },
+        disposition: { type: 'string', enum: ['adopt', 'trial', 'skip', 'already-done'] },
+        measurement: { type: 'string', description: 'for trial: the one measurement that would decide it (what is counted, over how many phases, pass threshold); for adopt: how we would know it worked; else ""' },
+        reason: { type: 'string', description: 'one line' },
+      } } },
+  },
+}
+const REFUTE_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['family', 'verdict', 'final_disposition', 'counter_evidence', 'what_would_settle_it', 'reason'],
+  properties: {
+    family: { type: 'string' },
+    verdict: { type: 'string', enum: ['refuted', 'survives', 'narrowed'] },
+    final_disposition: { type: 'string', enum: ['adopt', 'trial', 'skip', 'already-done'] },
+    counter_evidence: { type: 'string', description: 'the positive evidence against the family or the reviewers (a file, a §, a number, a contradiction in the source); "" if none found' },
+    what_would_settle_it: { type: 'string', description: 'the cheapest measurement or check that would settle this; "" if settled' },
+    reason: { type: 'string', description: 'one line' },
+  },
+}
+const CRITIC_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['not_read', 'modalities_missing', 'recent_items_missing', 'quality_concerns', 'recommended_next'],
+  properties: {
+    not_read: { type: 'array', items: { type: 'string' }, description: 'sources named in the inventory or by readers that no reader actually read (with why)' },
+    modalities_missing: { type: 'array', items: { type: 'string' } },
+    recent_items_missing: { type: 'array', items: { type: 'string' }, description: 'items from Sep–Nov 2026 that may exist and were not covered' },
+    quality_concerns: { type: 'array', items: { type: 'string' }, description: 'readers that returned suspiciously few cards for their material, summarised-only reads presented as read, misattributions' },
+    recommended_next: { type: 'array', items: { type: 'string' } },
+  },
+}
+
+function famText(f) {
+  return `[${f.id}] ${f.label}\n  bears on: ${(f.bears_on || []).join(',') || 'none'} · ${f.members.length} card(s): ${f.members.slice(0, 12).join(', ')}${f.members.length > 12 ? ' …' : ''}\n  strongest evidence: ${f.strongest_evidence}\n  sources: ${(f.sources || []).join('; ')}\n  sample quote: ${f.sample_quote}\n  readers' landing guesses: ${f.landing_guesses}`
+}
+const LENSES = [
+  { id: 'A', name: 'benefit-seeker', brief: 'Your lens: BENEFIT. For each family, argue the best honest case for what it would buy this harness on the weakness it bears on, then score. You still score evidence strictly (marketing = 0, anecdote = 1) and you still name the existing mechanism when it is a restatement. Do not inflate: a "trial" needs a real measurement you can write down.' },
+  { id: 'B', name: 'cost-and-novelty skeptic', brief: 'Your lens: COST, RISK AND NOVELTY. For each family, first ask what the harness already does (open the files; name the mechanism), whether the idea re-adopts a deliberate skip and whether that skip\'s reason still holds, what it would cost a single developer on Windows to build, run and keep honest, and what could go wrong. Then score. Give "adopt" only when the cost is near zero and the evidence is at least anecdotal with a mechanism we lack.' },
+]
+const RULES = `SCORING RULES: five integers 0–3 (higher is better on every dimension; cost_risk 3 = cheap and safe). Disposition: adopt (do it; near-zero cost, clear benefit), trial (worth one bounded experiment; you MUST write the measurement that decides it), skip (not worth it here, or evidence too weak), already-done (the harness has this; name the mechanism). Marketing material scores as a claim, not evidence; "we did this at HumanLayer" with no numbers is anecdotal (evidence 1). A measured SlopCodeBench number is evidence 2–3 but transferability depends on whether the measured condition matches ours. Reason: one line a reader can act on. Review EVERY family listed; do not drop any. You may open the harness files named above with Read to check what exists, and the group's card file to read a member card in full (budget: at most 12 reads).`
+
+phase('Cluster')
+const groupResults = await pipeline(GROUPS,
+  async (g) => {
+    const total = g.parts.reduce((n, p) => n + p.count, 0)
+    if (!total) return { g, families: [] }
+    const partResults = await parallel(g.parts.map((part, k) => () => agent(
+      `You are organising idea cards for a review. This is NOT judging: do not score, rank, drop or rewrite ideas. Read the card file ${part.file} in full (use Read with offset/limit until the end; it holds ${part.count} cards, one "## Cnnnn" block each, all bearing on group ${g.id}: ${g.name}${g.parts.length > 1 ? ', part ' + (k + 1) + ' of ' + g.parts.length : ''}). Cluster the cards into IDEA FAMILIES: cards that make the same claim or describe the same mechanism/practice (even from different sources, even phrased differently) go in one family; a card making a distinct claim is its own family. Rules: every card id appears in exactly one family; do not invent ids; a family label is one sentence stating the claim in the strongest form its members support (not a topic heading); keep distinct mechanisms separate even when related (e.g. "wrap CLAUDE.md sections in <important if>" and "delete anything a linter can enforce" are two families); set bears_on from the members; fill strongest_evidence, sources (≤ 6), sample_quote and landing_guesses from the cards so a reviewer can judge the family without the file. Aim for the natural number of families, typically 25–45% of the card count.\n\nReturn the structured object (group = "${g.id}").`,
+      { label: `cluster ${g.id}${g.parts.length > 1 ? ' p' + (k + 1) : ''} (${part.count} cards)`, phase: 'Cluster', model: 'sonnet', effort: 'medium', schema: CLUSTER_SCHEMA }
+    )))
+    const res = { families: partResults.filter(Boolean).flatMap(r => r.families || []) }
+    const seen = new Set(); const fams = []
+    for (const f of (res && res.families) || []) {
+      const mem = []
+      for (const id of f.members) { if (/^C\d{4}$/.test(id) && !seen.has(id)) { seen.add(id); mem.push(id) } }
+      if (mem.length) fams.push({ ...f, members: mem })
+    }
+    fams.forEach((f, i) => { f.id = `${g.id}-F${String(i + 1).padStart(3, '0')}` })
+    log(`${g.id}: ${total} cards → ${fams.length} families covering ${seen.size} ids (membership is validated after the run)`)
+    return { g, families: fams, assigned: seen.size, total }
+  },
+  async (r) => {
+    const { g, families } = r
+    if (!families.length) return { g: g.id, families: [], reviews: [], refutations: [], targets: [], assigned: 0, total: r.total }
+    const MAXF = args.maxFamilies || 100
+    const parts = []
+    for (let i = 0; i < families.length; i += MAXF) parts.push(families.slice(i, i + MAXF))
+    const reviews = []
+    for (let p = 0; p < parts.length; p++) {
+      const list = parts[p].map(famText).join('\n\n')
+      const prompt = (lens) => `${HARNESS}\n\nYou are reviewer ${g.id}-${lens.id} (${lens.name}) for group ${g.id}: ${g.name}${parts.length > 1 ? ' (part ' + (p + 1) + ' of ' + parts.length + ')' : ''}. Each FAMILY below groups idea cards that make the same claim; score the family (its members inherit the scores). The full cards are in ${g.file} (one "## Cnnnn" block each) if you need a member's detail.\n${lens.brief}\n${RULES}\n\nFAMILIES (${parts[p].length}):\n\n${list}\n\nReturn the structured object with reviewer_id "${g.id}-${lens.id}" and one review per family.`
+      const two = await parallel(LENSES.map(lens => () => agent(prompt(lens), { label: `review ${g.id}-${lens.id}${parts.length > 1 ? ' p' + (p + 1) : ''} (${parts[p].length} families)`, phase: 'Review', model: 'opus', effort: 'high', schema: REVIEW_SCHEMA })))
+      reviews.push(...two.filter(Boolean))
+    }
+    const byFam = {}
+    for (const rv of reviews) for (const x of rv.reviews) { (byFam[x.family] = byFam[x.family] || []).push({ reviewer: rv.reviewer_id, lens: rv.lens, ...x }) }
+    const score = f => { const rv = byFam[f.id] || []; const n = rv.filter(x => x.disposition === 'adopt' || x.disposition === 'trial').length; const adopt = rv.filter(x => x.disposition === 'adopt').length; const sum = rv.reduce((a, x) => a + x.evidence + x.transferability + x.novelty + x.benefit + x.cost_risk, 0); return n * 100 + adopt * 10 + sum }
+    const candidates = families.filter(f => (byFam[f.id] || []).some(x => x.disposition === 'adopt' || x.disposition === 'trial')).sort((a, b) => score(b) - score(a))
+    const CAP = args.refuterCap || 60
+    const targets = candidates.slice(0, CAP)
+    const overflow = candidates.slice(CAP).map(f => f.id)
+    log(`${g.id}: ${candidates.length}/${families.length} families marked adopt/trial; ${targets.length} go to refuters${overflow.length ? ', ' + overflow.length + ' over the cap carried as unrefuted' : ''}`)
+    const refutations = await parallel(targets.map(f => () => agent(
+      `${HARNESS}\n\nYou are a FRESH-CONTEXT REFUTER (Opus, xhigh). Default verdict: REFUTED. One idea family was marked adopt or trial by at least one of two reviewers. Your job is to break it: show that the evidence does not support the claim, that the harness already has the mechanism (name the file/§), that it does not transfer to a one-developer Windows repository running this routine, that it re-adopts a deliberate skip whose reason still holds, or that its benefit on the named weakness is illusory. "survives" requires that you looked for counter-evidence (open the harness files; the member cards are in ${g.file}, one "## Cnnnn" block each — read at least the members' claims and evidence; at most 8 reads in all) and found none that defeats it; "narrowed" means a smaller version survives — state it in the reason and set final_disposition accordingly. If the two reviewers disagree, you decide. For a surviving trial, write what_would_settle_it as a concrete measurement (what is counted, over how many phases or sessions, the pass threshold). For a surviving adopt, say what would show it worked.\n\nTHE FAMILY:\n${famText(f)}\n\nTHE TWO REVIEWS:\n${(byFam[f.id] || []).map(x => `- ${x.reviewer} (${x.lens}): evidence ${x.evidence}, transfer ${x.transferability}, novelty ${x.novelty}, benefit ${x.benefit}, cost_risk ${x.cost_risk}; disposition ${x.disposition}; existing: ${x.existing_mechanism || '-'}; reopens: ${x.reopens_skipped || '-'}; measurement: ${x.measurement || '-'}; reason: ${x.reason}`).join('\n')}\n\nReturn the structured object (family = "${f.id}").`,
+      { label: `refute ${f.id}`, phase: 'Refute', model: 'opus', effort: 'xhigh', schema: REFUTE_SCHEMA }
+    )))
+    return { g: g.id, families, assigned: r.assigned, total: r.total, reviews, refutations: refutations.filter(Boolean), targets: targets.map(f => f.id), overflow }
+  }
+)
+
+phase('Completeness')
+const critic = await agent(
+  `${HARNESS}\n\nYou are the COMPLETENESS CRITIC for a research sweep of Dex Horthy's published work since 2025-06-01. Forty-six Sonnet readers each read one bundle of sources and reported what they read (status per source), gaps, and new sources found. The inventory the sweep started from is at ${INV} (read it). The readers' reports are in ${REPORTS} (JSON: reader_id, cards, sources with status, gaps, new_sources) — read it in full with offset/limit. Ask: what source, modality or recent item (Sep–Nov 2026 especially: the AGNTCon NA 2026-10-22 "better verifiers" talk, the AGNTCon Europe 2026-09-17 keynote inside YouTube livestream -w6RDNBAI0E, the Tessl AI Native Dev episode 124 of 2026-09-22 (only its opening was readable), AI That Works #78–#80, humanlayer/skills commits of Oct–Nov 2026, the 0.19x–0.201 release notes, X threads since September, LinkedIn, any new podcast, the code.talks Hamburg keynote of 2026-11-04) was NOT read or only summarised? Which readers' outputs look thin or misattributed? What should the next round read first? Be concrete: name the item and the reason.\n\nReturn the structured object.`,
+  { label: 'completeness critic', phase: 'Completeness', model: 'opus', effort: 'high', schema: CRITIC_SCHEMA }
+)
+
+return { groups: GROUPS.map(g => ({ id: g.id, name: g.name, count: g.parts.reduce((n, p) => n + p.count, 0) })), results: groupResults.filter(Boolean), critic }

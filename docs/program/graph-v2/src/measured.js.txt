@@ -1,0 +1,121 @@
+// Renderers for the two finished measurements (lookup test set, premise measure). Loaded by build.js.txt with
+// require(); every number comes from data/extras.json pending.<k>.structured, printed as given (no re-rounding),
+// except axis ticks and positions, which carry class "cmp". Each renderer returns '' when its part is absent, so a
+// missing field drops one block, never the slot.
+'use strict';
+module.exports = function (H) {
+  const { esc, e, tag, fold, num, CQS } = H;
+  const has = v => v !== undefined && v !== null && v !== '';
+  const arr = v => Array.isArray(v) ? v : [];
+  const pc = v => has(v) ? `${v} %` : 'n/a';
+  const fmt = v => typeof v === 'number' ? num(v) : esc(v);
+  const formName = r => esc(r.form_name || (r.form && CQS[r.form]) || r.form || '');
+  const clsName = c => ({ product: 'product', program: 'program', all: 'all' }[c] || esc(c));
+  const list = (xs, cls) => `<ul class="${cls || 'gfl'}">${arr(xs).map(t => `<li>${e(typeof t === 'string' ? t : JSON.stringify(t))}</li>`).join('')}</ul>`;
+  // one 0-100 % bar with its value printed as given
+  const pbar = (lab, v, cls, lw, extra) => !has(v) ? '' : `<div class="hbar" style="--lw:${lw || 200}px"><div class="lab">${lab}</div><div class="track"><div class="fill ${cls || 'g-docs'}" style="width:${Math.max(0.3, +v).toFixed(2)}%"></div>${extra || ''}<div class="val" style="left:${Math.min(+v, 74).toFixed(2)}%">${pc(v)}</div></div></div>`;
+  const kv = o => Object.entries(o || {}).filter(([, v]) => typeof v !== 'object');
+  const seeOf = p => `${tag('meas', esc(p.path))}`;
+  const flat = p => String(p.text || '').replace(/\s+/g, ' ');
+  const grab = (p, re) => { const x = flat(p).match(re); return x || null; };
+
+  /* ---------- lookup test set: section B ---------- */
+  function ltB(p) {
+    const S = p.structured; if (!S) return '';
+    const I = S.instances || {}, C = S.confirmed || {}, RP = S.replayable || {}, R1 = S.r1_falsifier || {};
+    const LAB = { all: 'lookups in the test set', transcripts: 'transcripts they come from (session logs, subagents included)', product: 'lookups in product work', program: 'lookups in program and document work', product_carried_M: 'million carried tokens, product', program_carried_M: 'million carried tokens, program',
+      all_pct: 'all lookups', edit_or_cite_pct: 'all lookups, by an edit or citation only (no quote)', product_pct: 'product lookups', program_pct: 'program lookups', product_carried_weighted_pct: 'product, weighted by carried tokens', program_carried_weighted_pct: 'program, weighted by carried tokens',
+      product_carried_pct: 'product, by carried tokens', program_carried_pct: 'program, by carried tokens' };
+    const lab = k => esc(LAB[k] || k.replace(/_pct$/, '').replace(/_/g, ' '));
+    const cnt = kv(I).map(([k, v]) => `<div class="kfig"><b>${fmt(v)}</b><span>${lab(k)}</span></div>`).join('');
+    const confBars = kv(C).filter(([k]) => /pct/.test(k)).map(([k, v]) => pbar(lab(k), v, 'g-docs', 330)).join('');
+    const repBars = kv(RP).filter(([k]) => /pct/.test(k)).map(([k, v]) => pbar(lab(k), v, 'g-index', 330)).join('');
+    const repN = has(RP.all_n) ? `${fmt(RP.all_n)} lookups in all replay with no leak (the count behind the first bar).` : '';
+    const r1rows = arr(R1.rows).map(r => `<div class="r1row"><div class="lab"><b>${formName(r)}</b><small>${clsName(r.cls)} · ${fmt(r.instances)} lookups</small></div><div class="track"><i class="half cmp" style="left:50%"></i><div class="fill ${r.at_least_half ? 't-ok' : 't-warn'}" style="width:${Math.max(0.3, +r.confirmed_any_pct).toFixed(2)}%"></div><div class="val" style="left:${Math.min(+r.confirmed_any_pct, 74).toFixed(2)}%">${pc(r.confirmed_any_pct)} confirmed</div></div><div class="r1v">${r.at_least_half ? 'at least half: index or graph replay can score it' : 'under half: must be scored by an agent run'}</div></div>`).join('');
+    return `<div class="slot filled meas-block"><div class="slh">${seeOf(p)} <b>Measured.</b> The test set of real lookups, taken from recorded sessions.</div>
+${p.head ? `<p>${esc(p.head)}</p>` : ''}
+${cnt ? `<h4>Size of the test set (lookup instances)</h4><div class="kfigs">${cnt}</div>` : ''}
+${confBars ? `<h4>Confirmed truth: lookups whose read span a later edit, citation or quote used (0 to 100 %)</h4>${confBars}` : ''}
+${repBars ? `<h4>Replayable with no leak: the needed files unchanged at the frozen commit (0 to 100 %)</h4>${repBars}${repN ? `<p class="small">${repN}</p>` : ''}` : ''}
+${r1rows ? `<h4>The falsifier of recommendation 1, per question form</h4><p class="small">${e(String(R1.rule || '').replace(/([^.])$/, '$1.'))} The dashed line marks half; green bars reach it, amber bars do not.</p><div class="r1">${r1rows}</div>` : ''}
+${S.design_change && !p.skipDesign ? `<p class="note"><b>What this changes in the design.</b> ${e(S.design_change)}</p>` : ''}
+${fold('What this measurement could not measure (' + arr(S.could_not_measure).length + ')', list(S.could_not_measure))}</div>`;
+  }
+
+  /* ---------- lookup test set: section I (the arm to beat) ---------- */
+  function ltI(p) {
+    const S = p.structured; if (!S) return '';
+    const arms = Object.fromEntries(arr(S.arms).map(a => [a.key, a.name]));
+    const armN = k => esc(arms[k] ? `${k}, ${arms[k]}` : k);
+    const armS = k => esc(arms[k] ? `${k} (${arms[k].replace(/ over .*/, '').split(/[,(]/)[0].trim()})` : k);
+    const armLegend = arr(S.arms).length ? `<p class="small">Arms: ${arr(S.arms).map(a => `<b>${esc(a.key)}</b> ${esc(a.name)}`).join(' · ')}. Token figures are medians over the lookups an arm hit: the ten result lines plus the text of the first hit.</p>` : '';
+    const BL = arr(S.baselines);
+    const blMax = 100;
+    const grp = []; for (const b of BL) { const k = b.cls + '|' + b.seeds; let g = grp.find(x => x.k === k); if (!g) grp.push(g = { k, cls: b.cls, seeds: b.seeds, rows: [] }); g.rows.push(b); }
+    const blRows = grp.map(g => { const b0 = g.rows[0]; return `<div class="blg"><h5>${clsName(g.cls)} lookups, ${g.seeds === 'all' ? 'every seed' : 'seeds that a search found'}: ${fmt(b0.n_scorable)} scorable of ${fmt(b0.n_dev)} development lookups${has(b0.any_arm_pct) ? ` · any arm hits ${pc(b0.any_arm_pct)}` : ''}</h5>` + g.rows.map(b => `<div class="hbar" style="--lw:330px"><div class="lab"><b>${armN(b.arm)}</b><br><small>${has(b.tokens_first) ? fmt(b.tokens_first) + ' tokens to first hit' : ''}${has(b.tokens_cheapest) ? ' · ' + fmt(b.tokens_cheapest) + ' cheapest' : ''}${has(b.share_of_all_dev) ? ' · ' + pc(b.share_of_all_dev) + ' of all development lookups' : ''}</small></div><div class="track"><div class="fill ${b.arm === 'C' ? 'hl' : 'g-index'}" style="width:${Math.max(0.3, +b.hit10_pct).toFixed(2)}%"></div><div class="val" style="left:${Math.min(+b.hit10_pct, 62).toFixed(2)}%">${pc(b.hit10_pct)} in top 10${has(b.carried_weighted_pct) ? ' · ' + pc(b.carried_weighted_pct) + ' by carried tokens' : ''}</div></div></div>`).join('') + '</div>'; }).join('');
+    const rn = grab(p, /Reading notes: (.*?\(`tie_at_cut_pct`\)\.)/), ep = grab(p, /(These shares differ from use-cases\.md table 3\.1 .*?"what a test instance asks"\.)/);
+    const readNotes = (rn || ep) ? `<p class="note"><b>Reading notes (from the NOTES file).</b> ${rn ? e(rn[1].replace(/\s*\(`?tie_at_cut_pct`?\)/, '').replace(/^path/, 'Path')) : ''} A hit is an overlap with the span the agent read, not the whole needed span.${ep ? ' <b>Why the shares per form differ from section B:</b> ' + e(ep[1]) : ''}</p>` : '';
+    const TB = arr(S.to_beat);
+    const toks = TB.flatMap(r => [r.tokens_first, r.tokens_cheapest, r.truth_tokens, r.agent_fetched]).filter(v => has(v) && +v > 0).map(Number);
+    let tbChart = '';
+    if (TB.length) {
+      const lo = toks.length ? Math.floor(Math.log10(Math.min(...toks))) : 1, hi = toks.length ? Math.ceil(Math.log10(Math.max(...toks))) : 6;
+      const lx = v => (100 * (Math.log10(v) - lo) / Math.max(1, hi - lo)).toFixed(2);
+      const ax = [...Array(hi - lo + 1)].map((_, i) => `<span class="cmp" style="left:${(100 * i / Math.max(1, hi - lo)).toFixed(2)}%">${num(Math.pow(10, lo + i))}</span>`).join('');
+      const MK = [['tokens_first', 'tk-first', 'best arm: tokens to its first hit'], ['tokens_cheapest', 'tk-cheap', 'best arm: tokens to its cheapest hit'], ['truth_tokens', 'tk-truth', 'the span the agent read (the used span where confirmed)'], ['agent_fetched', 'tk-agent', 'what the agent itself fetched']];
+      const mark = (r, [k, c]) => has(r[k]) && +r[k] > 0 ? `<i class="tk ${c}" style="left:${lx(+r[k])}%" title="${esc(k)}"></i>` : '';
+      const row = r => `<div class="tbrow"><div class="lab"><b>${formName(r)}</b><small>${pc(r.share_pct)} of ${clsName(r.cls)} carried tokens · ${fmt(r.n)} scorable · best arm ${armS(r.best_arm)}</small></div>
+<div class="track"><div class="fill ${r.best_arm === 'C' ? 'hl' : 'g-index'}" style="width:${Math.max(0.3, +r.hit_pct || 0).toFixed(2)}%"></div><div class="val" style="left:${Math.min(+r.hit_pct || 0, 66).toFixed(2)}%">${pc(r.hit_pct)}</div></div>
+<div class="tktrack">${MK.map(mm => mark(r, mm)).join('')}</div>
+<div class="tkv">${MK.map(([k, c]) => has(r[k]) ? `<span><i class="tk ${c}"></i>${fmt(r[k])}</span>` : '').join('')}</div></div>`;
+      const legend = `<div class="tklegend">${MK.map(([, c, l]) => `<span><i class="tk ${c}"></i>${l}</span>`).join('')} <span class="small">(token axis logarithmic; medians)</span></div>`;
+      const classes = [...new Set(TB.map(r => r.cls))];
+      tbChart = classes.map(cl => `<div class="tb tbcls"><h5 class="tbsub">${clsName(cl)} lookups (${TB.filter(r => r.cls === cl).length} question forms)</h5>${legend}<div class="tbrow head"><div class="lab">Question form</div><div>Hit rate of the best index-only arm (0 to 100 %)</div><div class="tkaxis">${ax}</div><div>median tokens, as marked</div></div>${TB.filter(r => r.cls === cl).map(row).join('')}</div>`).join('');
+    }
+    return `<div class="card meas-block" style="margin-top:14px"><h3>The arm to beat: an index with no graph</h3><div class="tagline">${seeOf(p)} Step 1 of ruling R-7 already run for its baselines, on the development part of the test set.</div>
+${blRows ? `<h4>Index-only arms, top-10 hit rate on scorable lookups</h4>${armLegend}${blRows}` : ''}${readNotes}
+${tbChart ? `<h4>Per question form: the hit rate a graph must beat, and the tokens it must beat it in</h4>${tbChart}` : ''}
+${S.to_beat_caveat ? `<p class="note"><b>Caveat.</b> ${e(S.to_beat_caveat)}</p>` : ''}
+${fold('What this measurement could not measure (' + arr(S.could_not_measure).length + ')', list(S.could_not_measure))}</div>`;
+  }
+
+  /* ---------- premise measure: section E ---------- */
+  function pmE(p) {
+    const S = p.structured; if (!S) return '';
+    const fx = grab(p, /Rounding only: transcripts ([\d.]+) % \(not ([\d.]+) %\), other outside sources ([\d.]+) % \(not ([\d.]+) %\)/);
+    const RL = arr(S.reads_by_location).map(r => { const o = Object.assign({}, r);
+      if (fx && /^transcripts/.test(r.where) && String(r.calls_pct) === fx[2]) { o.calls_pct = fx[1]; o.fixed = fx[2]; }
+      if (fx && /^other outside/.test(r.where) && String(r.calls_pct) === fx[4]) { o.calls_pct = fx[3]; o.fixed = fx[4]; }
+      return o; });
+    const LC = ['pm0', 'pm1', 'pm2', 'pm3', 'pm4', 'pm5', 'pm6'];
+    const stack = RL.length ? `<div class="stack pmstack">${RL.map((r, i) => `<div class="${LC[i % LC.length]}" style="width:${Math.max(0, +r.carried_pct).toFixed(2)}%" title="${esc(r.where)}: ${pc(r.carried_pct)}">${+r.carried_pct >= 8 ? pc(r.carried_pct) : ''}</div>`).join('')}</div>
+<div class="glegend pmlist">${RL.map((r, i) => `<span><i class="sw ${LC[i % LC.length]}"></i>${e(r.where)}: <b>${pc(r.carried_pct)}</b> carried · ${pc(r.fetched_pct)} fetched · ${pc(r.calls_pct)} of calls${r.fixed ? ` (corrected in the NOTES recomputation, not ${r.fixed} %)` : ''}</span>`).join('')}</div>` : '';
+    const ST = S.same_task || {};
+    const stRows = Object.entries(ST).map(([k, v]) => { const o = typeof v === 'object' && v ? v : { carried_pct: v };
+      const val = o.carried_pct ?? o.pct ?? o.share_pct; const SLAB = { strict_same_transcript: 'the same agent transcript wrote the file', same_session_24h: 'the same session (orchestrator and its subagents) wrote it under 24 hours before', loose_any_age: 'the same session wrote it, at any age (upper bound)' };
+      return pbar(esc(o.label || SLAB[k] || k.replace(/_/g, ' ')) + (has(o.calls_pct) ? `<br><small>${pc(o.calls_pct)} of calls</small>` : ''), val, 'g-docs', 420); }).join('');
+    const u1 = grab(p, /counting recorded writes alone, the share is (\d+) % of calls and (\d+) % of carried tokens/), u2 = grab(p, /One session that ran (\d+) hours holds (\d+) % of the calls/);
+    const upNote = (u1 || u2) ? `<p class="note"><b>Read the middle bar as an upper figure.</b>${u1 ? ` Counting recorded writes alone, it is ${u1[1]} % of calls and ${u1[2]} % of carried tokens.` : ''}${u2 ? ` One session that ran ${u2[1]} hours holds ${u2[2]} % of the calls, so the session-level figures lean on it.` : ''}</p>` : '';
+    const FR = arr(S.findings_rows);
+    const xp = v => Math.max(0, Math.min(100, +v)).toFixed(2);
+    const dots = FR.length ? `<div class="dotc pmdots"><div class="dotaxis">${[0, 20, 40, 60, 80, 100].map(t => `<span class="cmp" style="left:${t}%">${t} %</span>`).join('')}</div>${FR.map(r => { const w = arr(r.wilson), b = arr(r.bootstrap);
+      return `<div class="drow"><div class="dlab">${e(r.label)}<small><b>${fmt(r.k)} of ${fmt(r.n)} = ${pc(r.pct)}</b>${w.length ? ` · Wilson [${w[0]}, ${w[1]}]` : ''}${b.length ? ` · bootstrap by file [${b[0]}, ${b[1]}]` : ' · no bootstrap'}</small></div><div class="dtrack">${w.length ? `<i class="ci" style="left:${xp(w[0])}%;width:${(xp(w[1]) - xp(w[0])).toFixed(2)}%"></i>` : ''}${b.length ? `<i class="ci2" style="left:${xp(b[0])}%;width:${(xp(b[1]) - xp(b[0])).toFixed(2)}%"></i>` : ''}<i class="pt" style="left:${xp(r.pct)}%"></i></div></div>`; }).join('')}<div class="dfoot"><span>0 %</span><span>share of the sampled findings; thick bar Wilson 95 %, thin line bootstrap over files 95 %</span><span>100 %</span></div></div>` : '';
+    const PF = S.premises_per_finding;
+    const pf = !PF ? '' : typeof PF === 'object' ? `<p class="small"><b>Premises per finding:</b> ${kv(PF).map(([k, v]) => `${esc({ q1: 'lower quartile', q3: 'upper quartile' }[k] || k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ')}</p>` : `<p class="small"><b>Premises per finding:</b> ${fmt(PF)}</p>`;
+    const RU = S.reuse || {}, SL = S.stale || {};
+    const known = (o, ks) => ks.every(k => has(o[k]));
+    const ruTxt = known(RU, ['found', 'sampled']) ? `${fmt(RU.found)} of ${fmt(RU.sampled)} sampled findings that appear in the transcripts were shown again in another session${has(RU.two_or_more) ? `, ${fmt(RU.two_or_more)} in two or more` : ''}${has(RU.median_gap_h) ? `; median gap ${fmt(RU.median_gap_h)} hours` : ''}.${known(RU, ['files_two_plus', 'files_total']) ? ` ${fmt(RU.files_two_plus)} of ${fmt(RU.files_total)} files were read in two or more sessions${has(RU.files_carried_pct) ? `, carrying ${pc(RU.files_carried_pct)} of the carried tokens` : ''}.` : ''} An exposure shows the text was shown, not that it was used.` : kv(RU).map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ');
+    const slTxt = known(SL, ['stale', 'traced']) ? `Of ${fmt(SL.traced)} findings traced through the git history, ${fmt(SL.stale)} had gone stale${has(SL.drifted) ? ` and ${fmt(SL.drifted)} drifted` : ''}.${has(SL.exposures) ? ` The stale ones were shown again ${fmt(SL.exposures)} times after the change${has(SL.pairs) ? `, in ${fmt(SL.pairs)} session-finding pairs` : ''}.` : ''}${has(SL.wrote_after) ? ` Times the stale sentence was written into a file afterwards: ${fmt(SL.wrote_after)}. Whether a decision rested on it was not established.` : ''}` : kv(SL).map(([k, v]) => `${esc(k.replace(/_/g, ' '))} ${fmt(v)}`).join(' · ');
+    const loopM = (ruTxt || slTxt) ? `<div class="loopm"><div class="lmc"><b>On the loop, step 1 → reuse: are recorded findings read again?</b><span>${ruTxt}</span></div><div class="lmc"><b>On the loop, steps 2 to 4 → stale: did a changed premise matter?</b><span>${slTxt}</span></div></div>` : '';
+    return `<div class="slot filled meas-block"><div class="slh">${seeOf(p)} <b>Measured.</b> ${e(S.what_it_measures || 'Share of earlier conclusions whose premises are inside the repository.')}</div>
+${p.head ? `<p>${esc(p.head)}</p>` : ''}
+${stack ? `<h4>Where the reads of earlier conclusions come from, by carried tokens</h4>${stack}` : ''}
+${stRows ? `<h4>How much of that is the same task re-reading its own notes (by carried tokens, 0 to 100 %)</h4>${stRows}${upNote}` : ''}
+${dots ? `<h4>What the sampled findings rest on</h4>${dots}` : ''}${pf}
+${loopM}
+${arr(S.step4).length ? `<h4>What this changes in the design</h4>${list(S.step4)}` : ''}
+${S.not_claimed ? `<p class="note"><b>Not claimed.</b> ${e(Array.isArray(S.not_claimed) ? S.not_claimed.join(' ') : S.not_claimed)}</p>` : ''}
+${fold('What this measurement could not measure (' + arr(S.could_not_measure).length + ')', list(S.could_not_measure))}</div>`;
+  }
+  return { ltB, ltI, pmE };
+};

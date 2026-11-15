@@ -1,0 +1,6 @@
+// Compare the file universe in perfile.json with distinct paths in rows.jsonl (aggregates only).
+const fs=require('fs'),rl=require('readline');
+(async()=>{const pf=JSON.parse(fs.readFileSync('../perfile.json','utf8')).filter(f=>!f.isDir);
+const S=new Set();const r=rl.createInterface({input:fs.createReadStream('../rows.jsonl')});for await(const l of r){const o=JSON.parse(l);S.add(o.p.toLowerCase().replace(/\/+$/,''));}
+let inRows=0,notInRows=0,multiNot=0,sumReads=0;const clsNot={};for(const f of pf){const k=f.path.toLowerCase().replace(/\/+$/,'');if(S.has(k))inRows++;else{notInRows++;clsNot[f.cls]=(clsNot[f.cls]||0)+1;if(f.sessions>=2)multiNot++;}}
+const m=pf.filter(f=>f.sessions>=2);console.log(JSON.stringify({pfFiles:pf.length,pf2plus:m.length,pfCar2plus:+(100*m.reduce((a,f)=>a+f.carried,0)/522160773).toFixed(1),inRows,notInRows,multiNot,clsNot,rowsDistinct:S.size}));})();

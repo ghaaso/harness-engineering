@@ -1,0 +1,272 @@
+Dividing the work
+This part turns the record into work. Sixteen packages between them carry every bottleneck in the register and every idea in Part 3. Each card says what the package is for, where it works, its first deliverable, how we will know it is done and what it waits on. Six can start today, one has begun (WP12), six start the day I give my word, and three follow another package. Before you take one, read the box under the map: it holds the few rules that keep two people, two projects and one PC from getting in each other’s way.
+How the packages fit together
+Columns are when a package can start. Solid arrows mean the later package needs a deliverable of the earlier one first (its card names which); dashed ones mean it helps to have it first.
+Needs the other first (hard)Easier after the other (soft) [chart: ] Start today | WP8 | Measurement | Rate sheet, frozen contract, fair-test | rules | WP1 | Machine and recovery | Copy off the PC, resume list, always-on | logger | WP3 | Gate and merge scripts | Sealed replay, transcript audit, merge | queue | WP5 | Token budget | Written budget per window; the four | levers | WP10a | Briefs and workflows | Brief contract, skeptics, saved | workflows | WP11 | Decisions and pages | One decision board; pages I can read | WP12 | Orchestration B+ tree | Sessions that split before a window | fills | Starts on my word | WP6a | The library | Limitations first, then a held-out pilot | WP6b | Knowledge store | Recurrence audit, then my second yes | WP7 | Retrieval and graphs | Index replay at zero tokens, then an | agent | WP2b | FixFlow gates and CI | Per-lane gates, fair slots, CI that can | fail | WP6c | Docs true to code | CI checks on stated facts; one | corrections PR | WP10b | Skills and agents | 13 skill packages and 11 pinned agents | After another package | WP4 | Planner and lanes | Lane count below the knee, no file | collisions | WP2a | The clinic check | Container gate, slots from one number, | heartbeat | WP9 | First use, real hosts | Zero-seed walk in the gate; real-host | rehearsal 
+The left column needs no decision from me, no agents and no Docker gate for its first deliverable, though any later step that launches agents waits on D07; WP12’s first deliverable is already done. The middle column waits on a word from me, and the right column on a deliverable of another package. WP2a’s side-by-side runs need only a quiet machine, so they can start sooner.
+Dependencies follow the harness v2 plan (docs/program/HARNESS-V2-DESIGN-2026-11.md §2) and the other plans each card names (the ship plan, PR #183 and PR #185).
+Before you start
+Two projects, one PC. Each card says whether it works in FixFlow (this repository) or in the clinic testbed. Work on a branch, never on main. The ship plan and this compile live on the plan branch (PR #182), the knowledge-store design on PR #183’s branch and the skills on PR #185’s branch.
+The ship plan comes first. Before you use the Docker gate or start an agent, look at the lane board in docs/program/W0-results.md on the plan branch. If a FixFlow phase is running or waiting on its reviewer, harness work that needs the gate or agents waits.
+One budget for the whole team. The two-lane cap and the written token budget (D07) are shared by all of us, not per person. Any Claude session that draws on my plan counts as one of the two lanes, your own working session included. Book agent runs in the shared queue and launch nothing on your own; WP11 sets the queue up first, and until it exists a run waits for my yes. The cap is for harness work; FixFlow’s lanes follow the ship plan’s own rule.
+One limit on heavy checks. Both projects share this PC’s 31 GB M of memory, so a heavy check from either project takes a slot from FixFlow’s machine-wide lock, ff-slot.sh, like any FixFlow job. That lock is the one shared limit. Leave its pools and slot counts as they are; WP2b may propose how waiters are ordered, not how many run.
+The coordinator writes FixFlow’s program files. A package that would change the ship plan, the lane board or FixFlow’s gate scripts sends a proposal to the coordinator. The coordinator brings it to me, and once I say go, the coordinator writes it.
+Machine traps that already cost us time. Never prune Docker networks or restart Docker: other sessions run containers. Anything that needs its own Docker network gets an explicit subnet inside 10.77.0.0/16. With MSYS_NO_PATHCONV set (the Git Bash setting that stops it rewriting paths), write paths as C:/…. Clone into scratch folders with git’s core.longpaths setting on (git -c core.longpaths=true), because Windows otherwise refuses long file paths. There is no python on PATH; our scripts run with Node. Never touch the antivirus.
+The work packages
+Each card says what the package is for, which bottlenecks and ideas it carries, the first thing to deliver, how we will know it is done, and the kind of person it suits. Each size carries its tag: E where a design estimated it, G where it is my guess until the first step reports; a package not yet sized says so. Write your name on the line when you take one.
+WP1Machine and recovery
+Owner
+No power-off costs us work or a day. The work is copied off the PC every night, sessions come back from a resume list, and an always-on sensor logger records power, temperature and memory, so the next power-off can be diagnosed. This is harness v2 phase 1.
+Moves most: throughput and quality
+Works in: This PC and the clinic testbed repository; scripts and settings only, on a branch.
+Bottlenecks it answers13 in the register: B05, B10, B11, MC-FS, MC-DOCKERCACHE, MC-AV, MC-TOOLS, MC-PREBUILD, MC-INJECT, MC-CPU, MC-HOOKCOST, PR-SECRETS, B03.
+Ideas it carries25 ideas: 8 in use, 1 tested, 1 built, 11 designed, 2 at the idea stage, 2 parked. Part 3 tags each one WP1.
+First deliverableToday: the bundle-and-verify script and the nightly copy script. They must also capture the six M folders in the clinic repository that are in no commit (register row B11) and the untracked harness documents. After I plug in and encrypt the drive, which comes after FixFlow’s P0a: the first verified copy.
+Done whenA clone from the copy shows the same heads, and the copy is never more than 24 hours old T. After one real reboot, done in a quiet window with my go, the resume list appears at sign-in with “start Docker” as its first line, and once Docker is up the databases in use are healthy within 3 minutes T with no further command. The next unexpected shutdown leaves a logger trace that ends at it.
+Good fit forWindows administration, PowerShell or bash scripting, git.
+Size and dependenciesOne to two days of one session E, scripts and settings only, no agents. Needs nothing from another package. Mechanisms 7 and 8 (one fact, one command; a session parks itself when its record and branch disagree) come in here, because they cost one line in a brief.
+Waiting on me: Switch off sleep on mains power (D04); plug in the drive and switch on its encryption (D02); install the sensor logger and debugger (D05); write down the days the house lost power; say yes to the nightly copy as a scheduled task and to permission rules that deny agents the Railway commands railway up (deploys to the live host) and railway run (runs a command with the live settings); later, D08 (a battery backup) once the diagnosis is in. My steps come after FixFlow’s P0a.
+WP2aThe clinic check
+Owner
+One fast, fair and visible check for the clinic testbed: the Linux container run as the gate, check slots sized from one measured memory number, a queue that prints each check’s place, a heartbeat while it runs, and a reaper that lists what can be cleaned up. This is harness v2 phase 2.
+Moves most: time taken and quality
+Works in: The clinic testbed repository.
+Bottlenecks it answers7 in the register: B08, B15, B06, B07, B09, B18, B14.
+Ideas it carries26 ideas: 15 in use, 4 tested, 1 built, 3 designed, 3 at the idea stage. Part 3 tags each one WP2a.
+First deliverableThe container run and the Windows run side by side on recorded commits, with one check’s peak memory written down M. These runs need only a quiet machine, so they can start before WP1 is done. I decide D09 on that evidence.
+Done whenMedian gate near 230 s T, zero Linux-only failures on main, no gap between heartbeats longer than 60 s T, the next stall names its test, and after each merge the worktree and container counts return to the active slices plus one.
+Good fit forDocker and Linux, test runners (pytest, Vitest, Jest), queues.
+Size and dependenciesThree to four days of one session E, including one observed build day for the memory table. No agents. The side-by-side runs and the one peak-memory figure need only a quiet machine. The memory table and any second slot need WP1’s logger and diagnosis first. The reaper only lists until I decide D10, and never touches a container, network or worktree that the clinic testbed’s own check and lane scripts did not create.
+Waiting on me: D09 (the container run as the gate), D10 (what may be cleaned up), and later D11 (who gives up memory).
+WP2bFixFlow’s gate harness and CI checks
+Owner
+Keep FixFlow’s own gates fast, fair and honest: the per-lane gate harness and slot lock the ship lanes use, a gate that mirrors CI, and CI checks that fail when they should and never pass a run that tested nothing.
+Moves most: quality and throughput
+Works in: FixFlow (this repository). Ship lanes use these scripts every day, so each change goes to the coordinator as a proposal and lands by atomic rename: the new script is written beside the old one and renamed over it in one step, so a running lane never reads a half-written script.
+Bottlenecks it answers7 in the register: MC-NETPOOL, MC-QUEUE, MC-GATETIME, MC-SHAREDDB, MC-ENVSKEW, MC-TIMEOUT, PR-FALSEGREEN.
+Ideas it carries19 ideas: 10 in use, 1 tested, 1 built, 2 designed, 2 at the idea stage, 3 parked. Part 3 tags each one WP2b.
+First deliverableGate waits measured per lane under the new ticket queue, and a negative run proving the CI checks fail when they should: skipped integration tests fail the job, and Jest never runs with --passWithNoTests.
+Done whenEvery gate kind takes the per-lane lock first, Node failures are re-run under Node 22 before they are called defects, and a planted skip or an empty test run turns CI red once the new checks have run record-only over recent merges.
+Good fit forBash, Docker, GitHub Actions, pytest and Jest.
+Size and dependenciesA day or two per item G. The changes are small; the care is in not disturbing running lanes. Needs nothing from another package. It starts on my word because the coordinator owns these scripts while ship lanes run.
+Waiting on me: My go, through the coordinator, before any change to ff-gates.sh or ff-slot.sh.
+WP3Gate, review and merge scripts
+Owner
+Move the mechanical part of review and merging out of the orchestrating session into scripts that spend no tokens: a sealed replay, a verdict script, a transcript audit at merge, one finding table, a dry run with stand-in agents and a merge queue that checks who read the final commit. Then the gate workflow, where the reviewers run outside the orchestrating session, and the fix-round contract. This is harness v2 phase 3.
+Moves most: quality and hallucinations
+Works in: The clinic testbed’s recorded history, read only, and a scripts folder on a branch of the clinic testbed repository. Changes to FixFlow’s review practice are proposals to the coordinator.
+Bottlenecks it answers21 in the register: PR-SCRIPTTEST, PR-EVFORMAT, B01, B12, B17, B21, W2, L3, LIB-KS-DIFF, LIB-KS-BLIND, LIB-KS-POLICY, PR-VERIFYBUDGET, PR-SEVERITY, PR-CAPS, PR-PLANLOSS, PR-PLANDEFECTS, PR-AUTHORBRIEF, PR-DRAIN, B04, B13, B16.
+Ideas it carries45 ideas: 7 in use, 2 built, 18 designed, 16 at the idea stage, 2 parked. Part 3 tags each one WP3.
+First deliverableThe replay seal (mechanism 1: a script that builds a sealed clone at a recorded commit, with no agent) and the transcript audit (mechanism 3). Building both costs no tokens and no check time, so they can start today on the recorded data; the seal’s own two-run test books its agents under D07.
+Done whenEach of the six scripts (sealed replay, verdict script, transcript audit, finding table, dry run with stand-in agents, merge queue) passes the test the harness v2 design sets for it (§4), and the merge queue has run record-only over the 65 M recorded merges and flagged the unread final heads of 10 and 11 November by itself. A script refuses a merge only after I say so (D15).
+Good fit forScripting, git internals, test tooling, careful diff reading.
+Size and dependenciesAbout a week of one session for the scripts E. The verdict script re-runs the cited tests, which takes check time, so it is easier after WP2a and runs only in a quiet window. The fix-round contract comes after the seal and the verdict script.
+Waiting on me: D12 to D20, each as its mechanism reaches me. D13 (one reports folder) and D17 (hooks) are permission changes.
+WP4Planner and lanes
+Owner
+Know before a wave starts which slices can run side by side, how many lanes are worth it and where they would collide: the planner, the scheduler and the plan check of harness v2, measured against how FixFlow already runs its lanes.
+Moves most: throughput and quality
+Works in: Reads FixFlow’s ship plan §7 and its lane board and never edits them. Its output is a recommendation the coordinator may adopt.
+Bottlenecks it answers5 in the register: R4, LIB-KS-DUP, PR-PHASESIZE, PR-CONFLICTS, PR-DELIVERY.
+Ideas it carries22 ideas: 12 in use, 8 designed, 1 at the idea stage, 1 parked. Part 3 tags each one WP4.
+First deliverableThe plan check replayed on FixFlow’s first lane wave, whose lanes declared the files they own (ship plan §7.3): the collision graph and the lane count it would have chosen.
+Done whenIt runs record-only on the next wave first, and sets the lane count only after the coordinator and I accept it.
+Good fit forGraphs and scheduling, scripting, a feel for queues.
+Size and dependenciesSet from the first replay. Needs WP8’s first deliverable, the rate sheet: the planner reads its rates from there. Easier after WP2a, because check capacity is one of the limits it plans against.
+Waiting on me: Accepting its recommendation, together with the coordinator.
+WP5Token budget
+Owner
+Give every wave a written token budget, build the governor that slows lanes so the five-hour window lasts, and put the four levers from the token report to work: (1) cap long windows, (2) shrink the fixed start every agent re-reads, (3) batch lookups, and (4) stop the model’s own output piling up in its window.
+Moves most: token count and quality
+Works in: Transcripts on this PC, read only, and Claude Code settings, for both projects.
+Bottlenecks it answers14 in the register: B3-LOOP, R2, TK-REREAD, TK-PREFIX, TK-LOOKUP, TK-OWNOUTPUT, TK-SUMMARIES, TK-FETCHED, TK-BUDGET, TK-HAIKUCLIFF, TK-CACHEBREAK, L1, W1, LIB-KS-COST.
+Ideas it carries45 ideas: 6 in use, 7 tested, 3 built, 9 designed, 14 at the idea stage, 6 parked. Part 3 tags each one WP5.
+First deliverableA proposal for D07, the token budget per five-hour window, built at zero tokens from the November tally saved in docs/program/evidence/token-spend/. Lever 2 is measured once D07 is set and no FixFlow phase is running or waiting on its reviewer.
+Done whenEvery wave launches with a written budget and books its agents in the shared queue, each lever has a before-and-after number, and the compaction-window trial, if I approve it (D22), is reported as an anecdote. No lever claims fewer stops, because how re-reads count against the limit is still unknown to us.
+Good fit forData analysis on transcripts (JSON), Claude Code settings.
+Size and dependenciesAbout an hour for the proposal E; a day or two per lever G. Needs nothing to start. Levers 2 and 3 are measured after WP3’s gate workflow and after D18 settles the short tool list, because both change what a session costs.
+Waiting on me: D07 (the budget per window), D13 and D18 (a reports folder and the short tool list), D22 (the compaction-window trial), and my yes before connectors or tool descriptions are removed from agent sessions, which is a settings change.
+WP6aThe library and lesson memory
+Owner
+Give the harness a memory a cheaper model can use: the reasoning-cache library of harness v2, written when something becomes true and asked for, never pushed. We agree what can go wrong before we choose any fix.
+Moves most: quality and efficiency
+Works in: Design documents in docs/program/ and the clinic testbed’s recorded runs. Nothing is built until the limitation list is agreed.
+Bottlenecks it answers19 in the register: LIB-FUNNEL, LIB-S1, LIB-S2, LIB-S3, LIB-S4, LIB-S5, LIB-S6, LIB-S7, LIB-S8, LIB-S9, LIB-S10, LIB-Q, LIB-COMES, LIB-REACH, LIB-RUN, LIB-GATE, LIB-UNNAMED, LIB-REACHPAY, LIB-PRICE.
+Ideas it carries20 ideas: 2 in use, 3 tested, 1 built, 3 designed, 9 at the idea stage, 2 parked. Part 3 tags each one WP6a.
+First deliverableThe library’s limitation list agreed with me, with the pathway map’s two weights for each limitation (alone, and as the last one left).
+Done whenA pilot on held-out work measures whether a session that asks the library first reads less and gets more right, under the frozen validation contract.
+Good fit forInformation retrieval, evaluation design, a feel for how models use context.
+Size and dependenciesNot sized yet; the list itself is a conversation and a document. The pilot needs WP8’s frozen validation contract and pre-registered protocol first, spends agents only under D07 and books its place in the shared queue.
+Waiting on me: Agreeing the limitation list.
+WP6bThe knowledge store (PR #183)
+Owner
+Build, if the audit says it would pay, the knowledge store designed in PR #183: a store of hard solved problems, traps and do-not-apply facts, looked up by pull only, and stale when its code changes, never by age.
+Moves most: quality and efficiency
+Works in: FixFlow’s history, read only, for the audit; the design on PR #183’s branch. Its phases always yield to ship phases.
+Bottlenecks it answers5 in the register: LIB-KS-RUNCHECKS, LIB-KS-RESOLVE, LIB-KS-VALUE, LIB-KS-STALE, LIB-KS-PRIVACY.
+Ideas it carries39 ideas: 30 designed, 6 at the idea stage, 3 parked. Part 3 tags each one WP6b.
+First deliverableThe recurrence audit (KS-0), which writes no code: one Sonnet session and an Opus refuter count the repeats a store could have served. It runs under D07, books its place in the shared queue and waits while a FixFlow phase is running or waiting on its reviewer.
+Done whenThe audit has reported. If I then say yes to a build (KS-D1b), the pilot (KS-5) meets the design’s go marks: recall at shown of 60 % or more T, zero acted-on false positives T, and every planted forbidden diff caught T.
+Good fit forSQLite, information retrieval, careful evaluation.
+Size and dependenciesThe audit: one session E. A build is sized only after the audit. Never displaces a ship phase. Any pilot needs WP8’s frozen validation contract first.
+Waiting on me: KS-D1 (run the audit), KS-D1b (build after the audit), D17 (whether hooks stay off, which also covers the store’s optional edit-time hook) and my yes before any copy of the store leaves this PC.
+WP6cDocs that stay true to the code
+Owner
+Make our documents fail a check when they drift from the code: a CI check that the facts CLAUDE.md states still match the code, prose contradictions turned into one corrections PR, and memory files that point to the truth instead of restating it.
+Moves most: quality and hallucinations
+Works in: FixFlow (this repository), through the coordinator.
+Bottlenecks it answers1 in the register: PR-DOCDRIFT.
+Ideas it carries9 ideas: 4 in use, 3 designed, 2 at the idea stage. Part 3 tags each one WP6c.
+First deliverableA CI check for the Alembic head number that CLAUDE.md states, and one corrections PR that settles, against git, each contradiction the knowledge-store design lists (PR #183, §8 rule 5).
+Done whenA planted wrong fact in CLAUDE.md turns CI red once the check has run record-only over recent merges, and the corrections PR has merged.
+Good fit forCI (GitHub Actions), careful reading, technical writing.
+Size and dependenciesOne to two days G. Needs nothing from another package. It lands through the coordinator, after the ship phase in flight.
+Waiting on me: My go through the coordinator, and the merge.
+WP7Retrieval and graphs
+Owner
+Give sessions a fast, trustworthy answer to “what does this change touch?”: the typed code store, the touch list and indexes, and the wider test of knowledge graphs, time and caching that I asked for.
+Moves most: token count and quality
+Works in: FixFlow’s history and the graph-test evidence. Engines run in one Linux image.
+Bottlenecks it answers11 in the register: MC-ENGINE, LIB-KS-FALSELEAD, LIB-KS-OUTSIDE, LIB-KS-RECALL, LIB-GRAPH-CONTRACTS, LIB-GRAPH-HUBS, LIB-GRAPH-MOBILE, LIB-GRAPH-BASELINE, LIB-EVAL, MC-ACCESS, PR-PRIMARYSOURCES.
+Ideas it carries42 ideas: 3 in use, 13 tested, 9 built, 7 designed, 8 at the idea stage, 2 parked. Part 3 tags each one WP7.
+First deliverableThe index replay at zero tokens on the recorded windows, once D23 sets what it must show.
+Done whenThe index replay has reported against D23’s marks, and, if I approve the agent arm (GT-1), we have a tested answer to whether an agent with the typed store finds what a change touches faster and with fewer tokens than the same agent with search alone.
+Good fit forStatic analysis, graph databases, evaluation statistics.
+Size and dependenciesThe replay: a few days of one session G. The agent arm is sized from the replay. The agent arm needs WP8’s pre-registered protocol, the index replay’s result, D07 and a quiet window, and books its agents in the shared queue.
+Waiting on me: D23 (what the index replay must show), the agent pilot, and each install when its arm is scheduled: a graph database server, Graphify, an embedding model.
+WP8Measurement and fair tests
+Owner
+Keep the numbers every package depends on, and the rules that keep our tests fair: token tallies, check and review rates, the system-dynamics model, the frozen validation contract and the pre-registered protocols.
+Moves most: quality and token cost
+Works in: The record on this PC, read only. Results go into docs/program/evidence/ and are committed only after I decide that the clinic and PC details in them may enter the repository’s history.
+Bottlenecks it answers6 in the register: PR-OUTSIDEEVIDENCE, PR-HALLU, TK-LIMITACCT, TK-BLIND, LIB-GRAPH-POWER, LIB-GRAPH-TRUTH.
+Ideas it carries45 ideas: 6 in use, 7 tested, 8 built, 11 designed, 8 at the idea stage, 5 parked. Part 3 tags each one WP8.
+First deliverableA rate sheet from the record: check run time, review rounds, the share of reviews that sent work back and limit episodes (each time the five-hour usage limit stopped agent work), each with its tag. What the record cannot supply yet, peak memory per check and lane collisions, is written as unknown, never as zero. Then a first count of the claims a script could recheck in recorded reports, and how many fail (PR-HALLU).
+Done whenThe rate sheet is updated after each wave and every rate carries its tag, the frozen validation contract and the protocols are written down before any pilot runs, and the planner (WP4) and the governor (WP5) read their rates from the sheet once they exist.
+Good fit forStatistics, simulation (Monte Carlo), JavaScript on Node.
+Size and dependenciesAbout a day for the rate sheet G; no wait on me, zero tokens. Needs nothing. WP4, WP6a, WP6b and WP7 need its contract and protocols.
+Waiting on me: Nothing to start.
+WP9First use and real hosts
+Owner
+Find the last-day gaps on day one: a zero-seed walk in every gate, a rehearsal on a real host, and a load rerun. This is harness v2 phase 4.
+Moves most: quality and hallucinations
+Works in: The clinic testbed repository. FixFlow’s device lab and Android builds belong to the ship plan’s lab (§7); this package only reads them, and for MC-NATIVE and MC-NOEMU it tracks lab lane L2’s results rather than changing anything.
+Bottlenecks it answers8 in the register: B20, MC-NATIVE, MC-NOEMU, PR-MOBILEBOUNDARY, PR-SCREENTEST, B02, B19, PR-FIELDEVIDENCE.
+Ideas it carries22 ideas: 2 in use, 1 tested, 8 built, 11 designed. Part 3 tags each one WP9.
+First deliverableThe zero-seed walk as a step of the container gate: install, first user, tills and accounts, a real-shaped import, one transaction and the close of day, on a fresh database.
+Done whenThe walk fails on the commit before the 11 November real-data merge (fb55599) and passes after it, and the first-deploy checklist has run once on a real host.
+Good fit forDevOps and deployment, load testing.
+Size and dependenciesTwo to three days of one session E. Needs WP2a’s container gate first: the walk runs inside it.
+Waiting on me: D21 (rehearse on a real host), and D09 through WP2a. The free steps need me present for one administrator prompt, and a rented host costs a domain fee and a few hours of rental and takes made-up data off this PC, so it waits for my yes.
+WP10aBriefs, workflows and review method
+Owner
+Brief and run agents well: the brief contract and return schemas, discovery without judgement and with citations, fresh-context skeptics and refuters, saved workflows, and the rules that keep a session’s state on disk.
+Moves most: quality and hallucinations
+Works in: How every session in both projects is briefed. Changes to FixFlow’s ship plan or lane board are proposals to the coordinator.
+Bottlenecks it answers8 in the register: PR-BRIEFTEST, W3, W5, MC-HEREDOC, PR-AGENTNULL, PR-BRIEFFACTS, PR-SUMMARY, PR-TEMPOUT.
+Ideas it carries83 ideas: 31 in use, 1 tested, 2 built, 21 designed, 14 at the idea stage, 14 parked. Part 3 tags each one WP10a.
+First deliverableA written save-as-run rule (every workflow is saved as a script before it runs, so it can be re-run), sent to the coordinator to adopt, and one saved workflow script for the review stage, now that FixFlow’s P1 has merged.
+Done whenEvery workflow we run is saved and can be re-run, raw workflow outputs are kept as evidence with a hash manifest, and a brief edit that flips a recorded verdict is caught by WP3’s sealed replay.
+Good fit forPrompt writing, workflow scripting, Claude Code.
+Size and dependenciesOngoing; each rule takes hours G. Needs nothing to start. The replay check needs WP3’s seal, and anything that launches agents waits for D07.
+Waiting on me: Nothing to start.
+WP10bSkills and agents (PR #185)
+Owner
+Give agents tested domain skills: the 13 skill packages and 11 FixFlow agents of PR #185, each with a pinned model, a short tool list and a small fixed start.
+Moves most: quality and efficiency
+Works in: FixFlow’s .claude/ folder, on main since PR #185 merged on 13 November.
+Bottlenecks it answers2 in the register: W4, TK-TIER.
+Ideas it carries17 ideas: 14 built, 1 designed, 2 at the idea stage. Part 3 tags each one WP10b.
+First deliverableA CI check for skill and agent frontmatter (the settings block at the top of each file), proposed to the coordinator like any FixFlow CI change and run record-only first.
+Done whenA trigger tally over six phases shows which skills fire, and lookups run on the pinned cheaper agents, with their token use compared against the built-in agent’s.
+Good fit forPrompt writing, Claude Code configuration, domain knowledge (Android, Odoo, accounting).
+Size and dependenciesTwo to three days G for the review and the CI check. The trigger tally spends agent runs, so it runs under D07 when no FixFlow phase is running or waiting on its reviewer. Each agent’s fixed start is measured once, by WP5’s lever 2.
+Waiting on me: My go on the CI check, through the coordinator. Separately, deleting a stale first-draft page from this track (an offline-sync review) from my private claude.ai pages.
+WP11Decisions and the pages I read
+Owner
+Keep me deciding quickly and seeing clearly: one board for every open decision, visual pages I can read on my own screen, and this compile kept current.
+Moves most: quality and time taken
+Works in: My visual pages and the harness program documents on the plan branch. Anything in FixFlow’s program files goes to the coordinator as a proposal; ship-plan items are linked, never owned.
+Bottlenecks it answers2 in the register: PR-P0A, PR-OWNERWAIT.
+Ideas it carries23 ideas: 9 in use, 3 built, 7 designed, 3 at the idea stage, 1 parked. Part 3 tags each one WP11.
+First deliverableOne decision board that joins harness D01 to D23, the knowledge store’s KS-D decisions, the graph-test decisions and links to the FixFlow items of mine that the harness touches (kept in docs/program/W0-results.md, not copied), each with a distinct prefix and what it unblocks; beside it, the shared queue where agent runs are booked.
+Done whenNo package waits more than a day T on a decision of mine, with each wait logged.
+Good fit forFront-end and data visualisation, clear writing.
+Size and dependenciesAbout a day for the board G. Needs nothing; every package feeds it.
+Waiting on me: Answering the board. “Accept all defaults” covers only decisions that stay on this PC and spend no money; installs, hooks, permissions, scheduled tasks, deletes, a rented host and anything that leaves this PC each keep their own yes.
+WP12Orchestration B+ tree: split and merge on context
+Owner
+Stop any session, the orchestrator first, from growing until it must compact or clear: run orchestration as a B+ tree in the manner of a distributed system, where a session that passes a set share of its window splits by scope and small siblings merge.
+Moves most: token count and hallucinations
+Works in: Transcripts on this PC, read only, for the replay; later one trial lane wave in a FixFlow or testbed worktree.
+Bottlenecks it answers1 in the register: TK-FILL.
+Ideas it carries2 ideas: 2 designed. Part 3 tags each one WP12.
+First deliverableDone on 14 November: the split rule and a replay over 97 M recorded session windows at no token cost, both checked twice (docs/program/SPLIT-RULE-2026-11.md); then a fill gauge, a trial measure and a scripted hand-over check. That script found 16 of 1,265 M paths, commits and pull requests in the 61 M FixFlow summaries on record not borne out, 1.3 % M, no more than in two maintained documents, so the trial is scored by a reader’s check of the latest state. Next: that check on a sample of those summaries, the baseline.
+Done whenOne trial lane wave runs under the rule with no compaction, and its hallucination catches (wrong hand-over claims first), rework and tokens per result are set beside a matched wave that compacts earlier at the same token count.
+Good fit forData structures and distributed systems (B+ trees, range splitting), transcript analysis (JSON), Claude Code sessions.
+Size and dependenciesThe rule and the replay took a day. The trial needs ten or more hand-overs per arm G; the baseline says whether that is enough. The baseline and the trial start agents, so both wait on D07; the trial acts on the same tokens as lever 1 in WP5.
+Waiting on me: I said yes on 14 November to one trial wave at 300k, the only one of the three lines replayed that comes before our Opus compactions. Still mine: D07 before any agent run; which lane wave is which arm; the Opus compaction setting of 400,000 S raised to 433k E or above if an Opus session holds a node under the rule; and opening each new root.
+The assignment board
+One line per package, to fill in together. Two people can share a package; one person should not hold two packages from the same start column (today, on my word, after another package).
+PackageFirst deliverableSizeCan startOwner
+ | WP1 Machine and recovery | Bundle-and-verify and nightly copy scripts; first verified copy after my drive step | 1–2 days E | today | 
+ | WP2a The clinic check | Container and Windows runs side by side, with one check’s peak memory (can start sooner) | 3–4 days E | after WP1; side-by-side runs sooner | 
+ | WP2b FixFlow gates and CI | Gate waits per lane measured; a negative run proving CI fails when it should | days per item G | on my word | 
+ | WP3 Gate and merge scripts | Replay seal and transcript audit, on the record | about a week E | today | 
+ | WP4 Planner and lanes | Plan check replayed on FixFlow’s first lane wave | set by the replay | after WP8 | 
+ | WP5 Token budget | D07 budget proposal from the saved baseline | 1 hour E, then days G | today | 
+ | WP6a The library | Limitation list agreed with me | not sized yet | on my word | 
+ | WP6b Knowledge store | Recurrence audit (KS-0), no code | 1 session, then sized E | on my word | 
+ | WP6c Docs true to code | Alembic-head CI check; one corrections PR | 1–2 days G | on my word | 
+ | WP7 Retrieval and graphs | Zero-token index replay, after D23 | days, then sized G | on my word | 
+ | WP8 Measurement | Rate sheet from the record, unknowns marked | about a day G | today | 
+ | WP9 First use, real hosts | Zero-seed walk as a gate step | 2–3 days E | after WP2a | 
+ | WP10a Briefs and workflows | Save-as-run rule; one saved review workflow | hours per rule G | today | 
+ | WP10b Skills and agents | Frontmatter CI check | 2–3 days G | on my word | 
+ | WP11 Decisions and pages | One decision board and the shared run queue | about a day G | today | 
+ | WP12 Orchestration B+ tree | Done: rule, replay and trial instruments. Next: reader’s check on recorded summaries | two trial waves G | first done; next after D07 | 
+Decisions waiting on me
+Every open decision with an id, in one place; go-aheads and permission yeses that have no id are on each card, under “Waiting on me”. Bold marks the option the source design recommends; where nothing is bold, there is no recommendation yet. I answered D01 to D06 on 11 November: yes to phase 1, an encrypted external drive for the copy, Docker’s start at sign-in stays off for now, no sleep on mains power, a sensor logger and a debugger are allowed, and sessions come back from a resume list two at a time. Only D05’s power-cut notes are still to come. PR #185 merged on 13 November, so its decision has left this list.
+IdDecisionOptions (the recommended one in bold)Unblocks
+ | P0a | FixFlow’s P0a, my own steps in the ship plannext, before my harness steps | Do P0a first; my harness steps follow it, except the notes and decisions marked now | every step of mine below that is not marked now
+ | D05 | The power-cut notesnow (the rest of D05 is answered) | Write down the days the house lost power | WP1
+ | D07 | What is the token budget per five-hour window?before the first run that launches agents | Start from the one measured window (about 3.4 million subagent tokens M) and adjust once the per-slice tally is rerun on November’s transcripts / Set my own figure | every package that starts agents
+ | D08 | If the mains is the cause: a battery backup?after the diagnosis | Decide when the diagnosis is in / Buy one now | WP1
+ | D09 | Make the Linux container run the gate?phase 2 | Yes; Windows runs only when the Windows-side tools change / Run both on every gate / Keep Windows as the gate | WP2a, WP9
+ | D10 | What may be cleaned up, and by whom?phase 2 | The reaper lists; I approve each batch / Automatic for merged and clean worktrees after 24 quiet hours / Leave as it is | WP2a
+ | D11 | Who gives up memory?after the memory table | One shared test database / A cap on the WSL2 machine / Close other applications during builds | WP2a
+ | D12 | Which findings get a second look, and when does a finding go stale?phase 3 | Second look only at money, stock, access, import and restore; a finding goes stale when the code it points at changes, never by age / Second look at all of them | WP3
+ | D13 | May agents write reports to one folder without asking?phase 3 | Allow one reports folder, after a write probe of twenty short runs passes / Keep asking each time | WP3, WP5
+ | D14 | May the script’s verdict replace the root’s own reading?after its replay | Side by side for one wave, then decide / Replace now / Never; the root reads every diff | WP3
+ | D15 | May a script merge, edit the board and refuse?after its replay | Record-only over the recorded merges first, then refuse on high-risk branches / Refuse on every branch / Flag only, never refuse | WP3
+ | D16 | Will I read the marked lines of high-risk merges?phase 3, late | Try it on three merges and log the wait / Skip | WP3
+ | D17 | Do hooks stay off?phase 3 | Stay off / Re-open them for two uses: a stop hook that blocks a session on a failed claim check, and a heartbeat fed by tool events | WP3, WP6b
+ | D18 | A short tool list for gate agents?after its test | Adopt only on a measured drop / Skip | WP3, WP5
+ | D19 | A second vendor’s model in the review replay?not now | Not now; run the same-model arm only / Approve, after the sealed replay exists | WP3
+ | D20 | Replay three candidate fixes per recorded chain?after the contract’s replay | Not yet; decide after the contract’s replay / Run it once the seal exists | WP3
+ | D21 | Rehearse on a real host?phase 4 | Free steps with me present (restore, deploy checklist, off-site push and a planted alert), then rent a host for a day / Free steps only, for now / Wait | WP9
+ | D22 | Try the earlier compaction window?phase 5 | Try it on one wave, and call the result an anecdote / Skip; work on one phase per session and a smaller pre-read first | WP5
+ | D23 | What must the index replay show?before the index replay | The marks a refuter suggested: 3 % of tokens and a recall of 0.8 T / Set my own marks / Skip the replay | WP7
+ | KS-D1 | Run the knowledge store’s recurrence audit (KS-0)?now, never ahead of a ship phase | Yes / Not now | WP6b
+ | KS-D1b | Build the knowledge store?after the audit | Not until the audit is in; then ask me again / Build now | WP6b
+ | LIB | The library’s limitation listnow | Agree the list before any fix is chosen | WP6a
+ | GT-1 | Put an agent in the loop of the graph test?after the index replay | After the zero-token index replay, under a written budget / Now / Not at all | WP7
+ | GT-2 | Installs for the wider graph test: a graph database server, Graphify, an embedding modelwhen each arm is scheduled | Each one when its arm is scheduled / None for now | WP7
+How we work
+These are the rules we follow or are adopting now, collected so a new person can work the same way from day one. Each says where it comes from.
+RuleWhat it means in practiceFrom
+ | Seven metrics first, and chats count | Every bottleneck and idea names the metric it moves (throughput, efficiency, token count, token cost, time taken, quality of output, hallucinations) and the number we have for it; where there is no number yet, we say so. An idea said only in chat is recorded with its session and line. | My correction of 14 November
+ | The ship plan comes first | FixFlow’s next phase is never delayed or edited for harness work. Harness work takes neither the Docker gate nor agent lanes while a FixFlow phase is running or waiting on its reviewer: the gate shares this PC’s memory and slots, and the agents share the same usage limit. | Harness v2, standing rules
+ | One budget | Lanes two at a time. A token budget written down before any launch. One change that adds agents per five-hour window. Stop starting agents after the first empty result, which can signal a usage limit. | Harness v2, §6
+ | Script before agent | Models find things; scripts decide whether a finding is closed. A check a script can make is never left to a model. | Harness v2, standing rules
+ | Replay before live | A gate or review mechanism is accepted by a replay on our own record wherever one is possible, and runs record-only before it may refuse anything. | Harness v2, standing rules
+ | One fact, one command | A fact about this PC or the tools becomes a rule only after one command has checked it. Our first list carried five facts that turned out wrong. | Harness v2, mechanism 7
+ | My yes for anything that reaches outside | No hooks, installs, scheduled tasks, permission changes, deletes, rented hosts or anything leaving this PC without my decision. | Harness v2, standing rules
+ | Discover without judging, and cite everything | Discovery agents extract what the sources say, each claim with a citation in the form path:line — quote. Ranking and verdicts come later, from someone else. | Orchestration design
+ | A fresh pair of eyes before a decision | Anything that becomes a decision is checked by a fresh-context skeptic told to refute it, booked like any other agent run; D07 itself, a zero-token proposal that comes before any agent budget, gets my own review. Verdicts are confirmed, partly confirmed, refuted or unverifiable, and an unverifiable one names what would settle it. | Orchestration design, verification policy
+ | The right model for the step | The orchestrating session plans and judges; Sonnet discovers and maps; Opus deep-dives and verifies; Haiku looks things up. A step gets the cheapest model that passes. | Orchestration design, tier guide
+ | Tag every number | Measured, estimated, guess, setting, target or illustrative. A computed number takes the weakest tag of its inputs. | Bottleneck compile and library pathways
+ | Test the best form of an idea | Research and build the strongest version, compare like with like, define the scoring before the run, and fix anything that would handicap one arm instead of noting it as a limitation. | My feedback to the sessions
+ | Answer the question that was asked | Test the architecture as I described it, with the popular tool itself as one arm. A clean answer to a narrower question is not the answer. | My feedback to the sessions
+ | State lives on disk, in the repo | Plans, results and decisions are files, so a stopped session can resume and anyone can pick up a package. | Orchestration design; harness v2
+Glossary

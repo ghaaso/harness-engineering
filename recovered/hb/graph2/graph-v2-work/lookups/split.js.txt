@@ -1,0 +1,34 @@
+// split: development / confirmation split by SESSION (a main transcript plus all its subagent transcripts share one
+// session id), never by instance. Rule (fixed before any baseline was computed):
+//   1. Each session gets a home class: the work class (product or program) holding most of its carried tokens.
+//   2. Within each home class, sessions are ordered by their first lookup's timestamp (ties by session id).
+//   3. Walk that order adding each session's total carried tokens; the development part is the shortest prefix whose
+//      cumulative share is closest to 60 % of the class total (the crossing session goes in if that lands nearer 60 %).
+//   4. Every instance of a session goes to its session's part, whatever its own class.
+// Output: out/split.json (rule, per-session part, hash, realised shares). The hash is sha256 over the lines
+// "<session id>\t<part>\n" sorted by session id; out/split-sessions.tsv holds exactly those lines.
+const fs = require('fs'), crypto = require('crypto');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+const rows = JSON.parse(fs.readFileSync(W + '/out/sessions.json', 'utf8'));
+const TARGET = 0.6;
+const part = {};
+const perHome = {};
+for (const r of rows) { const p = r.byClass.product ? r.byClass.product.carried : 0; const g = r.byClass.program ? r.byClass.program.carried : 0; r.home = p > g ? 'product' : 'program'; (perHome[r.home] = perHome[r.home] || []).push(r); }
+const cut = {};
+for (const [home, list] of Object.entries(perHome)) {
+  list.sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : a.sid < b.sid ? -1 : 1));
+  const tot = list.reduce((a, r) => a + r.carried, 0); let cum = 0; let k = 0;
+  for (; k < list.length; k++) { const next = cum + list[k].carried; if (Math.abs(next / tot - TARGET) <= Math.abs(cum / tot - TARGET)) cum = next; else break; }
+  list.forEach((r, i) => { part[r.sid] = i < k ? 'dev' : 'confirm'; });
+  cut[home] = { sessions: list.length, devSessions: k, devShareOfHomeCarried: +(cum / tot).toFixed(4), lastDevStart: k ? list[k - 1].first : null, firstConfirmStart: list[k] ? list[k].first : null, devLatestActivity: list.slice(0, k).reduce((a, r) => (r.last > a ? r.last : a), '') };
+}
+const lines = Object.keys(part).sort().map((s) => s + '\t' + part[s] + '\n').join('');
+fs.writeFileSync(W + '/out/split-sessions.tsv', lines);
+const hash = crypto.createHash('sha256').update(lines).digest('hex');
+// realised shares per instance class
+const real = {};
+for (const r of rows) for (const [c, v] of Object.entries(r.byClass)) { const x = (real[c] = real[c] || { devN: 0, confN: 0, devCarried: 0, confCarried: 0 }); if (part[r.sid] === 'dev') { x.devN += v.n; x.devCarried += v.carried; } else { x.confN += v.n; x.confCarried += v.carried; } }
+for (const x of Object.values(real)) { x.devShareCarried = +(x.devCarried / (x.devCarried + x.confCarried)).toFixed(4); x.devCarriedM = +(x.devCarried / 1e6).toFixed(1); x.confCarriedM = +(x.confCarried / 1e6).toFixed(1); delete x.devCarried; delete x.confCarried; }
+const out = { rule: 'by session id; home class = class with most carried tokens; per home class ordered by first lookup time; dev = prefix closest to 60 % of the home class carried tokens; all instances follow their session', target: TARGET, hash_sha256: hash, hash_input: 'out/split-sessions.tsv (lines "<sid>\\t<part>" sorted by sid)', cut, realisedByInstanceClass: real, sessions: rows.map((r) => ({ sid: r.sid, home: r.home, part: part[r.sid], first: r.first, last: r.last, n: r.n, carriedM: +(r.carried / 1e6).toFixed(2), folders: Object.keys(r.folders) })) };
+fs.writeFileSync(W + '/out/split.json', JSON.stringify(out, null, 1));
+console.log(JSON.stringify({ hash, cut, real }, null, 1));

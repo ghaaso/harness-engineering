@@ -1,0 +1,126 @@
+// Revision 3 run (model-brief.md section 13): the three reference settings, the funnel at best
+// values, the ensemble at tie 0, 0.5 and 1, and the weights of the limitations and the steps.
+// Run from this folder:  node - < run-v3.js.txt
+// Writes run-v3-out.json and run-v3-console.txt here. Every number follows from assumed values and
+// ranges (tag G unless the console says otherwise); none is a finding about the library.
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const here = process.cwd();
+const dir = path.join(here, '..', '..', 'library-pathways');
+const E = require(path.join(dir, 'engine.js'));
+const map = JSON.parse(fs.readFileSync(path.join(dir, 'map.json'), 'utf8'));
+const table = JSON.parse(fs.readFileSync(path.join(dir, 'params.json'), 'utf8'));
+const lims = JSON.parse(fs.readFileSync(path.join(dir, 'limitations.json'), 'utf8'));
+const SEED = 20261112, N = 2000;
+const lines = [];
+const say = s => { lines.push(s); console.log(s); };
+const f2 = x => (Math.round(x * 100) / 100).toFixed(2);
+const f3 = x => (Math.round(x * 1000) / 1000).toFixed(3);
+const pct = x => (Math.round(x * 1000) / 10).toFixed(1) + '%';
+const out = {};
+
+// ---- counts
+const rows = E.tableRows(table);
+const lib = table.parameters.filter(r => r.side === 'library');
+out.counts = {
+  parameters: map.parameters.length, library_side: lib.length, other_side: table.parameters.length - lib.length,
+  tags: ['M', 'S', 'G'].reduce((o, t) => { o[t] = table.parameters.filter(r => r.tag === t).length; return o; }, {}),
+  library_side_tags: ['M', 'S', 'G'].reduce((o, t) => { o[t] = lib.filter(r => r.tag === t).length; return o; }, {}),
+  measures: map.measures.length
+};
+say('Counts [M]: ' + JSON.stringify(out.counts));
+
+// ---- reference settings
+const ref = E.references(map, table);
+out.references = {};
+say('\nReference settings (12 periods). Cost and wrong rate of the library over the other way. [G]');
+say('setting       | period | cost/ladder | wrong/ladder | cost/strong | wrong/strong | funnel end | library cost | library wrong');
+['unfavourable', 'best', 'favourable'].forEach(w => {
+  const r = ref[w];
+  out.references[w] = { top_first: r.top_first, cheap_ladder: r.cheap_ladder, first: r.first, last: r.last, finalStocks: r.finalStocks, adjusted: r.adjusted };
+  ['first', 'last'].forEach(at => {
+    const x = r[at];
+    say(w.padEnd(13) + ' | ' + at.padEnd(6) + ' | ' + f3(x.ratios.cost_vs_ladder).padStart(11) + ' | ' + f3(x.ratios.wrong_vs_ladder).padStart(12) + ' | ' +
+      f3(x.ratios.cost_vs_top).padStart(11) + ' | ' + f3(x.ratios.wrong_vs_top).padStart(12) + ' | ' + f2(x.funnel_end).padStart(10) + ' | ' +
+      f2(x.library.cost).padStart(12) + ' | ' + pct(x.library.wrong).padStart(12));
+  });
+  say('              stocks after the last period: good ' + f2(r.finalStocks.E_good) + ', bad ' + f2(r.finalStocks.E_bad));
+});
+say('Strong model directly: cost ' + f2(ref.best.top_first.cost) + ', wrong ' + pct(ref.best.top_first.wrong) +
+  '. Ladder: cost ' + f2(ref.best.cheap_ladder.cost) + ', wrong ' + pct(ref.best.cheap_ladder.wrong) + '. Same in all three settings.');
+
+// ---- the funnel at best values, by stage
+say('\nFunnel at best values, last period (per 100) [G]');
+out.funnel_best = {};
+['first', 'last'].forEach(at => {
+  out.funnel_best[at] = ref.best[at].funnels;
+});
+map.funnels.forEach(fn => {
+  say(fn.label + ':');
+  fn.stages.forEach((id, k) => {
+    const a = ref.unfavourable.last.funnels[fn.id][k].value, b = ref.best.last.funnels[fn.id][k].value, c = ref.favourable.last.funnels[fn.id][k].value;
+    say('  ' + String.fromCharCode(97 + k) + ') ' + ref.best.last.funnels[fn.id][k].label.padEnd(40) + ' best ' + f2(b).padStart(7) + '   unfavourable ' + f2(a).padStart(7) + '   favourable ' + f2(c).padStart(7));
+  });
+});
+
+// ---- ensembles at three ties
+out.ensemble = { n: N, seed: SEED, ties: {} };
+say('\nEnsemble: ' + N + ' runs, seed ' + SEED + ', last period. 10th / 50th / 90th percentile. [G]');
+[0, 0.5, 1].forEach(tie => {
+  const en = E.ensemble(map, table, { n: N, seed: SEED, tie, percentiles: [10, 50, 90] });
+  const o = { spread: {}, shareBetterVs: en.shareBetterVs, adjustedDraws: en.adjustedDraws, drivers: {} };
+  ['first', 'last'].forEach(w => {
+    o.spread[w] = {};
+    E.RATIO_IDS.concat(['funnel_end']).forEach(r => { o.spread[w][r] = en.spread[w][r]; });
+    o.drivers[w] = {};
+    E.RATIO_IDS.forEach(r => { o.drivers[w][r] = en.spearman[w][r].slice(0, 6).map(e => ({ id: e.id, rho: +e.rho.toFixed(3) })); });
+  });
+  out.ensemble.ties[tie] = o;
+  say('tie ' + tie + ':');
+  E.RATIO_IDS.concat(['funnel_end']).forEach(r => {
+    const s = en.spread.last[r];
+    say('  ' + r.padEnd(16) + f3(s.p10) + ' / ' + f3(s.p50) + ' / ' + f3(s.p90));
+  });
+  say('  share cheaper with a wrong rate no higher: vs ladder ' + pct(en.shareBetterVs.cheap_ladder.last) + ' (first ' + pct(en.shareBetterVs.cheap_ladder.first) + '); vs strong ' +
+    pct(en.shareBetterVs.top_first.last) + ' (first ' + pct(en.shareBetterVs.top_first.first) + '); constraint-scaled runs ' + en.adjustedDraws);
+  say('  moves cost vs ladder most: ' + o.drivers.last.cost_vs_ladder.map(e => e.id + ' ' + e.rho).join(', '));
+});
+
+// ---- weights
+const W = E.weights(map, table, lims, { stepLabels: lims.steps });
+out.weights = W;
+const title = id => (lims.items.find(l => l.id === id) || {}).title;
+say('\nWeights at best values, last period. holds = how far each ratio falls (or the funnel end rises) when the library-side unknowns move to their favourable end. score = mean fall of the four ratios as a share. [G]');
+say('Base: ' + JSON.stringify(Object.fromEntries(Object.entries(W.base.ratios).map(([k, v]) => [k, +v.toFixed(4)]))) + ', funnel end ' + f3(W.base.funnel_end));
+say('Ten limitations with the largest score:');
+W.ranking.slice(0, 10).forEach((r, i) => {
+  const x = W.limitations.find(l => l.id === r.id);
+  say('  ' + (i + 1) + '. ' + r.id + ' ' + title(r.id) + ' | score ' + f3(x.holds.score) + ' | cost/ladder ' + f3(x.holds.cost_vs_ladder) + ', wrong/ladder ' + f3(x.holds.wrong_vs_ladder) +
+    ', cost/strong ' + f3(x.holds.cost_vs_top) + ', wrong/strong ' + f3(x.holds.wrong_vs_top) + ', funnel end +' + f2(x.holds.funnel_end) + ' | moved ' + x.moved.join(',') + (x.left_at_best.length ? ' | left at best ' + x.left_at_best.join(',') : ''));
+});
+const byFunnel = W.limitations.slice().sort((a, b) => b.holds.funnel_end - a.holds.funnel_end).slice(0, 10);
+say('Ten limitations with the largest rise in the funnel end: ' + byFunnel.map(r => r.id + ' +' + f2(r.holds.funnel_end)).join(', '));
+const zero = W.limitations.filter(r => r.moved.length === 0);
+say('Weight zero (no library-side unknown): ' + zero.map(r => r.id + (r.unknowns.length ? ' (other side: ' + r.left_at_best.join(',') + ')' : ' (no unknowns)')).join('; '));
+const neg = W.limitations.filter(r => r.holds.score < -1e-12);
+say('Negative score (moving to the favourable end raises the ratios on average at these settings): ' + neg.map(r => r.id + ' ' + f3(r.holds.score)).join(', '));
+say('Steps, all their limitations together, ranked by score:');
+W.stepRanking.forEach(s => {
+  const x = W.steps.find(y => y.step === s.step);
+  say('  step ' + s.step + ' ' + lims.steps[s.step] + ' | score ' + f3(x.holds.score) + ' | cost/ladder ' + f3(x.holds.cost_vs_ladder) + ', wrong/ladder ' + f3(x.holds.wrong_vs_ladder) +
+    ', cost/strong ' + f3(x.holds.cost_vs_top) + ', wrong/strong ' + f3(x.holds.wrong_vs_top) + ', funnel end +' + f2(x.holds.funnel_end) + ' | ' + x.limitations.length + ' limitations, ' + x.moved.length + ' unknowns moved');
+});
+say('Steps added one after another (largest change each time):');
+W.sequence.forEach((s, i) => {
+  say('  ' + (i + 1) + '. step ' + s.step + ' | added score ' + f3(s.added.score) + ' | then: cost/ladder ' + f3(s.values.ratios.cost_vs_ladder) + ', wrong/ladder ' + f3(s.values.ratios.wrong_vs_ladder) +
+    ', cost/strong ' + f3(s.values.ratios.cost_vs_top) + ', wrong/strong ' + f3(s.values.ratios.wrong_vs_top) + ', funnel end ' + f2(s.values.funnel_end));
+});
+const named = new Set();
+lims.items.forEach(l => l.params.forEach(id => named.add(id)));
+const unnamed = lib.map(r => r.id).filter(id => !named.has(id));
+out.library_side_not_named_by_any_limitation = unnamed;
+say('Library-side unknowns no limitation names (moved only in the favourable reference setting): ' + unnamed.join(', '));
+
+fs.writeFileSync(path.join(here, 'run-v3-out.json'), JSON.stringify(out, null, 1) + '\n');
+fs.writeFileSync(path.join(here, 'run-v3-console.txt'), lines.join('\n') + '\n');

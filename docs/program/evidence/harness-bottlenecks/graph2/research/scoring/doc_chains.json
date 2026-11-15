@@ -1,0 +1,807 @@
+{
+ "lifecycle_audit": {
+  "items": 11,
+  "items_naming_ge1_code_file": 11,
+  "items_naming_ge2_code_files": 6,
+  "items_cross_runtime": 3,
+  "distinct_code_files_named": 22,
+  "unresolved_names": 2,
+  "rows": [
+   {
+    "item": "### 1. The travel tracker and its own screen disagree about whether the tech is ",
+    "named": 3,
+    "resolved_code": [
+     "technician-app/src/features/jobs/travelTracker.ts",
+     "technician-app/src/features/jobs/TravelScreen.tsx",
+     "technician-app/src/features/attendance/useAttendance.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "### 1. The travel tracker and its own screen disagree about whether the tech is driving\n\n`technician-app/src/features/jobs/travelTracker.ts:229` reconciles the local\nsession key against the **OS task only**, while `TravelScreen.tsx:117` derives\n`inTransit` from **server** `job.locations` counts. Two answers to one question,\nnever compared.\n\nAn offline depart punch arms the sampler but leaves `inTransit === false`, so\nthe screen re-offers START TRAVEL and a second `depart_workshop` is queued. The\n`departs > arrives` pairing that `derive_route` depends on is then wrong, and so\nis the fuel line billed from it.\n\n*Correct pattern in-repo:* `useAttendance` (`useAttendance.ts:107-196`) \u2014\nserver-authoritative, locally optimistic, merged on a client-minted id.\n"
+   },
+   {
+    "item": "### 2. The WhatsApp send-log can be lost after the message has gone",
+    "named": 3,
+    "resolved_code": [
+     "technician-app/src/features/jobs/arrival-job/ArrivalJobBillScreen.tsx",
+     "technician-app/src/features/jobs/JobDetailScreen.tsx",
+     "backend/app/features/customer_messaging/router.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend",
+     "mobile"
+    ],
+    "body": "### 2. The WhatsApp send-log can be lost after the message has gone\n\n`ArrivalJobBillScreen.tsx` and `JobDetailScreen.tsx:404` both call\n`messagingApi.logSend(...)` immediately after `Linking.openURL(wa_me_url)`,\noutside the outbox. If that call fails the message **has already gone to the\ncustomer** and the timeline witness is gone for good \u2014 and on the JobDetail path\nthe catch reports \"Couldn't open WhatsApp\", which is false.\n\nNeeds an outbox kind (`message_log`) plus `client_id` on the server's\n`send-log` (`customer_messaging/router.py:76`), which has no dedupe today \u2014\n`log_customer_message` appends unconditionally.\n"
+   },
+   {
+    "item": "### 3. The manager's board never sees anything the phone did",
+    "named": 1,
+    "resolved_code": [
+     "src/app/providers/AppContext.jsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "web"
+    ],
+    "body": "### 3. The manager's board never sees anything the phone did\n\n`src/app/providers/AppContext.jsx:90` fetches the jobs list **once**, on\n`isAuthenticated`. No polling, no refetch on focus, no invalidation. Individual\nmutators correctly merge their authoritative detail via `replaceFromDetail`, but\na create, claim, completion, payment or close originating on a technician's\nphone is invisible until a full page reload.\n\nThe fix already exists in the same file: `refreshBoard` (`:156`) implements\nfreshness-windowed, in-flight-coalesced refetching \u2014 for attendance only.\n"
+   },
+   {
+    "item": "### 4. Consent has no ordering guard",
+    "named": 2,
+    "resolved_code": [
+     "backend/app/features/customers/service.py",
+     "backend/app/features/jobs/service.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "### 4. Consent has no ordering guard\n\n`backend/app/features/customers/service.py:96` \u2014 `record_consent` appends\nunconditionally and overwrites `whatsapp_opt_in_at` last-write-wins, with no\n`client_id` and no timestamp comparison. An out-of-order replay of an old\n`given` after a `withdrawn` silently re-grants messaging consent.\n\nNo path outboxes consent today (job-create replay dedupes on `client_id`\n*before* the consent write \u2014 verified at `jobs/service.py:690`), so this is\nlatent rather than live. It stops being latent the moment consent is queued.\n\n---\n\n## Medium \u2014 wrong behaviour, bounded blast radius\n"
+   },
+   {
+    "item": "### 5. Idempotency tracks money, not durability",
+    "named": 5,
+    "resolved_code": [
+     "backend/app/features/attendance/router.py",
+     "backend/app/features/media/router.py",
+     "technician-app/src/lib/outboxSync.ts"
+    ],
+    "unresolved": [
+     "router.py:ambiguous(12)",
+     "service.py:ambiguous(11)"
+    ],
+    "runtimes": [
+     "backend",
+     "mobile"
+    ],
+    "body": "### 5. Idempotency tracks money, not durability\n\nEvery endpoint that moves cash or GPS has `client_id`. These, which move\n**state or evidence**, do not \u2014 and four of them are already replayed by the\noffline outbox:\n\n| Endpoint | Consequence of a replay |\n|---|---|\n| `POST /jobs/{id}/notes` (`router.py:154`) | duplicate timeline note |\n| `POST /jobs/{id}/followups` (`:172`) | duplicate follow-up |\n| `POST /jobs/{id}/bill/negotiate` (`:294`) | value-idempotent by luck, but a **second `bill` event** corrupts the negotiation provenance the comment at `service.py:1078` claims to protect |\n| `POST /jobs/{id}/payments/{pid}/void` (`:351`) | fixed in PR #162 via a guard; still has no `client_id` |\n| `POST /jobs/{id}/assign` (`:221`) | duplicate event **and** a duplicate push |\n| `POST /attendance/adjustments` (`attendance/router.py:357`) | two corrective punch events in a payroll-bearing log |\n| `POST /media/{job_id}` (`media/router.py:57`) | orphan `pending` row that still satisfies the closing-video gate |\n\nThe outbox's own docstring (`outboxSync.ts:19-21`) asserts replays \"can at worst\nduplicate a timeline entry.\" That premise is false for negotiate and consent.\n"
+   },
+   {
+    "item": "### 6. `log_payment` accepts cash against a closed job",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/features/jobs/service.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "### 6. `log_payment` accepts cash against a closed job\n\n`jobs/service.py` \u2014 `submit_completion` and `negotiate_bill` both refuse when\n`status == \"closed\"`; `log_payment` does not. Possibly deliberate (cash\ncollected after handover), but undocumented and asymmetric with its two\nsiblings. Consequence today: a manager close strands a queued `negotiate` as a\ndefinitive-4xx failure while a queued **payment** still lands \u2014 so the bill and\nthe ledger can disagree.\n"
+   },
+   {
+    "item": "### 7. `sendPunch` collapses three states into a boolean",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/features/jobs/TravelScreen.tsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "### 7. `sendPunch` collapses three states into a boolean\n\n`TravelScreen.tsx:159-189` returns `true` for both landed and queued, and\n`startTravel`/`arrive` treat that as \"the punch landed\" \u2014 arming background GPS\nand entering the arrival wizard on a merely-queued punch. Arming on queued is\narguably right (breadcrumbs are deliberately droppable), but the messaging and\nthe `inTransit` divergence in \u00a71 are not.\n"
+   },
+   {
+    "item": "### 8. The wizard's upload-state map loses entries",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "### 8. The wizard's upload-state map loses entries\n\n`ArrivalJobWizard.tsx:104-108` \u2014 `setSlot` spreads `draftRef.current.uploads`,\nwhich is assigned in the render body. Two interleaved uploads for different\nslots both spread the same stale map and the second wins, so a `queued` upload\nsilently stops being counted. It doesn't gate anything (the capture gate reads\nthe URIs), but it hides the one honest signal the tech has that bytes are still\npending.\n"
+   },
+   {
+    "item": "### 9. Duplicated rules that will drift again",
+    "named": 9,
+    "resolved_code": [
+     "technician-app/src/features/jobs/jobType.ts",
+     "technician-app/src/features/jobs/JobDetailScreen.tsx",
+     "technician-app/src/features/jobs/arrival-job/ArrivalJobBillScreen.tsx",
+     "technician-app/src/features/jobs/create-job/createJobPayload.ts",
+     "technician-app/src/features/jobs/travelPrompt.ts",
+     "backend/app/features/jobs/service.py",
+     "backend/app/features/jobs/repository.py",
+     "technician-app/src/features/jobs/arrivalGate.ts",
+     "src/features/jobs/data/mapJob.js"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend",
+     "mobile",
+     "web"
+    ],
+    "body": "### 9. Duplicated rules that will drift again\n\n- `isVisitType()` exists in `jobType.ts:26` with **one** importer against four\n  inline `job_type !== \"carry-in\"` re-derivations (`JobDetailScreen.tsx:441`,\n  `ArrivalJobBillScreen.tsx:144`, `createJobPayload.ts:52`, `travelPrompt.ts:52`)\n  plus three more server-side (`jobs/service.py:724`, `:1282`,\n  `jobs/repository.py:355`).\n- `\"closed\"` as a bare string literal: 8 mobile sites, 9 web sites, no shared\n  constant despite `JobStatus` being a typed union in both.\n- `arrivalGate.ts:24-27` mirrors `settings.jobs_arrival_radius_m` /\n  `jobs_punch_accuracy_ceiling_m`, kept in sync by comment only.\n- `mapJob.js:68-75` `PUNCH_LABELS` mirrors the backend's\n  `_LOCATION_EVENT_LABELS`; the comment even says so.\n"
+   },
+   {
+    "item": "### 10. A failed offline job-create is unreachable in the UI",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/features/jobs/create-job/CreateJobWizard.tsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "### 10. A failed offline job-create is unreachable in the UI\n\n`CreateJobWizard.tsx:152` sets `jobId: clientId`; `itemsForJob` keys on `jobId`;\nno screen is ever mounted with a client UUID as its route `id`. A create that\ndefinitively fails contributes to the global banner count and appears nowhere\nelse, forever. There is no \"failed intake\" recovery surface.\n\n---\n"
+   },
+   {
+    "item": "## Test-layer gaps this exposed",
+    "named": 2,
+    "resolved_code": [
+     "technician-app/src/lib/jobsMemo.test.ts",
+     "technician-app/src/features/jobs/arrival-job/completionFromWizard.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "## Test-layer gaps this exposed\n\nThe mobile suite is 37 files and **every one is a pure-module test**. Before\nPR #162 there were no tests crossing the wizard \u2192 outbox \u2192 cache seams, none for\n`closeJobWithVideo` (the only write that finishes a job), and none asserting\nanyone *calls* `invalidateJobsList` \u2014 `jobsMemo.test.ts:81-87` proves the\nfunction works, which is why its zero production callers went unnoticed.\n\nPR #162 added the reconciler, outbox-landing, evidence-gate, clock-anchor and\narchitecture-guard tests. Still missing: anything that exercises the two drains\n(`flushOutbox` and `drainPendingMedia`) **together** \u2014 they share no ordering\nprimitive, so a completion routinely flushes before its voice note uploads and\n`remarks_audio_media_id` is never back-filled (`completionFromWizard.ts:25-30`\nwrites a placeholder string instead).\n\n---\n"
+   }
+  ]
+ },
+ "handoff_s4": {
+  "items": 42,
+  "items_naming_ge1_code_file": 14,
+  "items_naming_ge2_code_files": 6,
+  "items_cross_runtime": 1,
+  "distinct_code_files_named": 26,
+  "unresolved_names": 1,
+  "rows": [
+   {
+    "item": "A1 Ops console dies on one unauthenticated POST.**\n`curl -X POS",
+    "named": 1,
+    "resolved_code": [
+     "ops-server.mjs"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "web"
+    ],
+    "body": "**A1. Ops console dies on one unauthenticated POST.**\n`curl -X POST <ops>/api/ops/login -d 'null'` \u2014 `JSON.parse(\"null\")` returns null without\nthrowing, so `typeof body.password` at `ops-server.mjs:474` throws a `TypeError` *outside* the\nhandler's try (which starts at `:484`), and Node's default `--unhandled-rejections=throw`\nkills the process. Railway's restart turns repeats into a restart loop. A multibyte password\n(`'\u00e9'.repeat(L)`) is a second kill with no credential knowledge.\n*Fix:* harden `readBody` (`:433`) to return `{}` for any non-object; move `:470-479` inside the\ntry; add `process.on(\"unhandledRejection\", \u2026)`; swap the length-guard `timingSafeEqual` for a\nsha256-digest compare. **Note: `ops-server.mjs` was explicitly excluded from the earlier\nbackend sweep, which is how a trivially-triggered process kill survived.**\n"
+   },
+   {
+    "item": "A2 An unauthenticated attacker can hold every account locked in",
+    "named": 6,
+    "resolved_code": [
+     "backend/app/features/identity/router.py",
+     "backend/app/features/identity/service.py",
+     "backend/app/core/config.py",
+     "backend/scripts/unlock_account.py",
+     "backend/tests/test_identity_integration.py",
+     "backend/app/features/identity/tests/test_service.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "**A2. An unauthenticated attacker can hold every account locked indefinitely.**\n`GET /api/technicians` is unauthenticated (`identity/router.py:67-69`) and returns all six ids.\n`service.py:75-77` evaluates the lock **before** `verify_pin` at `:79`, so a correct PIN during\na lock is a 429 \u2014 and the counter is **not** incremented while locked, so one wrong-PIN request\nper expired 900 s window re-arms a full lock. ~96 requests/day/account, under the 20-per-60 s IP\nlimiter. Once no live token exists (30-day expiry, `config.py:154`) there is no recovery path.\nNot manager-specific \u2014 all six accounts can be held down for ~576 requests/day.\n*Fix:* gate the lock on the **failure** path only, so a correct PIN clears it; add\n`backend/scripts/unlock_account.py` (dry-run default) as an out-of-band escape hatch.\n**Two existing tests pin the broken behaviour** (`tests/test_identity_integration.py:80`,\n`identity/tests/test_service.py:113`) and must be inverted.\n"
+   },
+   {
+    "item": "A3 Dashboard \"Revenue This Week\" is a structural Rs 0.**\n`Dashb",
+    "named": 2,
+    "resolved_code": [
+     "src/features/dashboard/pages/Dashboard.jsx",
+     "src/app/providers/AppContext.jsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "web"
+    ],
+    "body": "**A3. Dashboard \"Revenue This Week\" is a structural Rs 0.**\n`Dashboard.jsx:86-89` reads `j.timeline` and `amountPaid(j)`, but `GET /api/jobs` returns\n`list[Job]` and `events`/`payments` exist only on `JobDetail`, so FastAPI strips them. It\n*accretes* during a session and resets on reload \u2014 worse than a stable zero, because it looks\nalive. Same root cause empties Recent Activity (`AppContext.jsx:442-448`).\n*Fix:* use `GET /api/jobs/reports/tech-metrics?start=&end=` (manager-gated); render an em-dash\nwhen null. Secondary bug: even with data the arithmetic is wrong \u2014 `find` returns the\n*earliest* payment while `amountPaid` sums lifetime.\n"
+   },
+   {
+    "item": "A4 Payment idempotency key is minted per HTTP attempt \u2192 double-",
+    "named": 3,
+    "resolved_code": [
+     "src/app/providers/AppContext.jsx",
+     "src/features/jobs/pages/JobDetail.jsx",
+     "src/features/jobs/components/NewJobForm.jsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "web"
+    ],
+    "body": "**A4. Payment idempotency key is minted per HTTP attempt \u2192 double-charge.**\n`crypto.randomUUID()` is evaluated inside the callback body at `AppContext.jsx:319`, so the\nretry after the \"please retry\" toast sends a fresh `client_id` and the server's\n`uq_job_payment_client` dedupe never fires. A second real row in an append-only money ledger,\non the one endpoint documented as idempotent.\n*Fix:* hold the id in `PaymentModal` state, rotate **on success only** (`logPayment` must start\nreturning a boolean \u2014 it currently swallows and returns `undefined`). **Caution: the naive\n`useState(() => randomUUID())` is worse** \u2014 `PaymentModal` is mounted unconditionally\n(`JobDetail.jsx:675`), so the id would survive close/reopen and silently swallow a legitimate\nsecond partial payment. The correct pattern, with a comment naming this exact bug, is 290 lines\naway at `NewJobForm.jsx:20-25`.\n"
+   },
+   {
+    "item": "A5 Manager corrections can only lengthen a day, never shorten i",
+    "named": 2,
+    "resolved_code": [
+     "backend/app/features/attendance/derive.py",
+     "src/features/attendance/pages/AttendanceTechDetail.jsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend",
+     "web"
+    ],
+    "body": "**A5. Manager corrections can only lengthen a day, never shorten it.**\nThe common \"forgot to clock out, phone punched 23:50, manager corrects to 18:00\" case.\n`derive.py:123-125` takes `min(clock_ins)` / `max(clock_outs)`, and `original_event_id` is\nwritten but read **nowhere** outside `create_adjustment` / `list_adjustments`. Reproduced: 890\nworked minutes \u2192 **14.8 h** in the payroll CSV, 5.8 phantom hours with no signal (`_day_flags`\nfilters to `source == \"mobile\"`, so a manual correction trips no flag). Worse: the shipped web\nform (`AttendanceTechDetail.jsx:225-231`) doesn't even send `original_event_id`, so the FK link\nis never created in production.\n*Fix:* needs a migration (`superseded_by_event_id`), a `_window` filter, a `flag_adjusted` CSV\ncolumn, **and** a web change. Appending a *missing* punch works fine; only correcting an\nexisting wrong one is broken. **This one deserves its own PR with the owner in the loop** \u2014 it\nchanges the meaning of historical attendance.\n"
+   },
+   {
+    "item": "A6 `core/metrics.py` route table grows without bound from unaut",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/core/metrics.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "**A6. `core/metrics.py` route table grows without bound from unauthenticated traffic.**\nA percent-encoded `#` or `?` in a path segment defeats the label-collapsing, so junk labels\naccumulate. Availability fails before OOM: `snapshot()` does a `sorted()` per route in a sync\nloop inside an async handler, so at ~10 k junk labels every ops metrics poll stalls the single\nreplica's event loop. Also leaks job tokens into the metrics table.\n*Fix:* build the label from `scope['route'].path`, not `request.url.path`.\n"
+   },
+   {
+    "item": "A7 The nightly media-orphan sweep re-alarms every orphan, every",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/features/telemetry/service.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "**A7. The nightly media-orphan sweep re-alarms every orphan, every night, forever.**\n`enable_scheduler` defaults True; `record_media_orphan` mints `client_id=uuid4()` per emission\n(`telemetry/service.py:74-89`), so `uq_app_event_client` can never collapse repeats. Bounded\ndamage (365 rows/orphan/year, nothing reads them) but it **falsifies CLAUDE.md's \"Each is\nidempotent so a duplicate run is harmless.\"**\n*Fix:* `uuid5` on `(completion_id, media_id)` through the existing `on_conflict_do_nothing` path.\n"
+   },
+   {
+    "item": "B1 Enabling the dispatcher replays the entire `job_event` histo",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "**B1. Enabling the dispatcher replays the entire `job_event` history as live customer WhatsApp\nmessages.** One Railway variables edit (`FIXFLOW_ENABLE_DISPATCHER=true` + the two WhatsApp\nCloud vars; the gates are independent with no ordering constraint). `dispatch_cursor` is never\nseeded, and `run_dispatch_once` mints it at `last_seq=0`. The `payload.get(\"auto\")` guard does\nnot help \u2014 every pre-0043 `ready` event has an empty payload and passes. **The part that\nsurvives even if zero messages go out:** `uq_customer_message_job_kind` plus the\n`existing is not None \u2192 return` short-circuit makes a `suppressed` row a **permanent**\ndecision, so a legitimate future bill send for every historical job becomes impossible without\nmanual prod DELETEs.\n*Fix:* seed the cursor at head (migration), plus an event-age skip in `handle`.\n"
+   },
+   {
+    "item": "B2 The automated Cloud API bill send never stamps `bill_sent_at",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/features/jobs/service.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "**B2. The automated Cloud API bill send never stamps `bill_sent_at`, so the completion freeze\ndoes not engage for it.** `build_dispatch_handler.handle` ends at `send_cloud_message` and never\ncalls back into jobs; only the manual endpoint calls `log_customer_message`, which is the sole\nwriter of `bill_sent_at` (`jobs/service.py:1342-1343`). **This reopens the exact carry-in loop\n#162/#163 closed, through the automated path.** Also drops the timeline event, so the manager\nboard holds no witness for any automated message.\n*Fix:* mirror the router's `if sent_now: log_customer_message(...)`; hoist the pair into one\nshared helper.\n"
+   },
+   {
+    "item": "B3 The dispatcher's documented \"claim-before-send\" guarantee is",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "**B3. The dispatcher's documented \"claim-before-send\" guarantee is not durable.** The claim row\nis `flush`-only and the whole 100-event batch commits once, after the loop, with a 10 s httpx\ncall inside the open transaction. A commit failure (Supabase pooler disconnect,\n`idle_in_transaction_session_timeout`) or an uncaught `dead_letter` exception discards every\n`customer_message` row **after** the messages reached Meta, leaving the cursor unmoved \u2014 the\nnext tick re-sends all of them.\n*Fix:* commit per event inside the loop; commit the claim before `_post_cloud_api`.\n"
+   },
+   {
+    "item": "B4 One typo in the web Settings timezone field 500s the whole a",
+    "named": 1,
+    "resolved_code": [],
+    "unresolved": [
+     "schemas.py:ambiguous(11)"
+    ],
+    "runtimes": [],
+    "body": "**B4. One typo in the web Settings timezone field 500s the whole attendance module.**\n`schemas.py:450` is a bare `str` with no validator; `_tz_from_shifts` is a bare\n`return ZoneInfo(name)`. `Karachi` or `PKT` saves cleanly, then `ZoneInfoNotFoundError` escapes\nsix read endpoints and silently kills the Sunday payroll job. Writes are unaffected and it is\nself-recoverable from the same form.\n*Fix:* `field_validator` calling `ZoneInfo`, a fallback in `_tz_from_shifts`, and a `<select>`.\n"
+   },
+   {
+    "item": "B5 `verify_chain` never detects an \"un-void\" flip.** The whole ",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/features/attendance/chain.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "**B5. `verify_chain` never detects an \"un-void\" flip.** The whole void reconciliation is gated\nbehind `if row.voided:` (`chain.py:288`) and the orphan sweep iterates `creates` only (`:327`),\nso nothing asserts that a `void` event implies a voided row. Someone with DB access sets\n`voided=false` and the money re-enters `ledger_balances` while `/ledger/verify` still returns\n`ok:true`. **One-directional, in the direction that adds money** \u2014 the mirror case is caught.\nSecondary: re-voiding afterwards hits `uq_staff_ledger_chain_ledger_event` and 500s.\n*Fix:* add the symmetric sweep over `voids` (row missing \u2192 orphan; row not voided \u2192 un-void\nflip). Latent today: `staff_ledger` is near-empty and there is no manager write-UI yet.\n"
+   },
+   {
+    "item": "C1 \"Correct the completion\" silently replaces a queued completi",
+    "named": 4,
+    "resolved_code": [
+     "technician-app/src/features/jobs/arrival-job/ArrivalAlreadyDoneScreen.tsx",
+     "technician-app/src/lib/outbox.ts",
+     "technician-app/src/lib/outboxSync.ts",
+     "technician-app/src/features/jobs/JobDetailScreen.tsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "**C1. \"Correct the completion\" silently replaces a queued completion with a blank one.**\n`ArrivalAlreadyDoneScreen.tsx:57-59` renders the correction CTA **outside** the `!pending`\nguard that wraps \"Open the bill\", routing to `CompleteJobScreen`, whose prefill bails offline\n(`:70-75`, `catch { return; }`, no `jobsCache` import). Both queue under the identical key\n`completion:${id}`; `outbox.ts:155-162` replaces by id, and online `sendOrQueue` live-sends the\nblank body then deletes the queued original (`outboxSync.ts:280`). **No server guard can catch\nit** \u2014 no completion exists server-side yet, so neither the freeze nor the closed guard is\narmed. The guard already exists in-repo and was simply not applied here\n(`JobDetailScreen.tsx:201/:265`).\n"
+   },
+   {
+    "item": "C2 A definitively-rejected completion leaves the wizard saying ",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "**C2. A definitively-rejected completion leaves the wizard saying \"still syncing\", forever.**\n`submittedPending` is only cleared on the success path; the `markFailed` branches notify nobody.\n*Fix:* add `onOutboxItemFailed` symmetric with `onOutboxItemLanded`, or read `itemsForJob(id)`.\n"
+   },
+   {
+    "item": "C3 The arrival anchor has no staleness bound** \u2014 a multi-day ca",
+    "named": 2,
+    "resolved_code": [
+     "technician-app/src/features/jobs/arrival-job/arrivalDraft.ts",
+     "technician-app/src/features/jobs/arrival-job/ArrivalJobWizard.tsx"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "**C3. The arrival anchor has no staleness bound** \u2014 a multi-day carry-in bills days of labour by\ndefault. `arrivalDraft.ts` writes a bare epoch with no expiry; `ArrivalJobWizard.tsx:90-97`\ndiscards the fresh nav param; `.find(l => l.kind === \"arrive_customer\")` takes the **first**\npunch, so a second visit anchors to the first. The server `le=1440` cap shipped in #163 is the\nonly thing bounding this for the current fleet.\n"
+   },
+   {
+    "item": "C4 The after-video / voice gate has no server-evidence fallback",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "**C4. The after-video / voice gate has no server-evidence fallback** \u2014 `evidenceSatisfiesCaptures`\nignores `after` and `remark`, so steps 2 and 5 re-demand evidence the server already holds.\nThis reproduces the original complaint two steps past where #162 fixed it.\n"
+   },
+   {
+    "item": "C5 `CompleteJobScreen` reports the new bill-freeze 409s as \"che",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/lib/syncClassification.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "**C5. `CompleteJobScreen` reports the new bill-freeze 409s as \"check your connection\"** \u2014 a bare\n`catch` with no binding. The most common one is actually \"job is closed\". Four sibling call\nsites already extract `detail` with the same regex; export `failureReason(e)` from\n`syncClassification.ts` and remove the fourth copy.\n"
+   },
+   {
+    "item": "4.4 | identity | Lockout counter is a read-modify-write with no row lock \u2192",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| identity | Lockout counter is a read-modify-write with no row lock \u2192 ~15\u00d7 brute-force budget | 1-file (`with_for_update`) |"
+   },
+   {
+    "item": "4.4 | identity | `Principal` carries no `shop_id` while 32 routes take it ",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| identity | `Principal` carries no `shop_id` while 32 routes take it from the query string | 1-line + call sites |"
+   },
+   {
+    "item": "4.4 | media | 413 path deletes the R2 object but rolls back the row delete",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| media | 413 path deletes the R2 object but rolls back the row delete \u2192 permanently-pending row, bytes gone | 2-line \u00d72 |"
+   },
+   {
+    "item": "4.4 | media | Orphan sweep covers 1 of 4 orphan classes; stale-pending row",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| media | Orphan sweep covers 1 of 4 orphan classes; stale-pending rows never reaped | 1-file |"
+   },
+   {
+    "item": "4.4 | media | `complete_upload` has no job-status or ownership guard | 1-f",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| media | `complete_upload` has no job-status or ownership guard | 1-file |"
+   },
+   {
+    "item": "4.4 | messaging | `job_event.seq` assigned at flush, visible at commit \u2192 a",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| messaging | `job_event.seq` assigned at flush, visible at commit \u2192 a lower-seq event can commit later and be **skipped forever** | needs migration |"
+   },
+   {
+    "item": "4.4 | messaging | Lost-race path rolls back the caller's whole session | 1",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| messaging | Lost-race path rolls back the caller's whole session | 1-file (savepoint) |"
+   },
+   {
+    "item": "4.4 | messaging | Non-ASCII verify token / signature header \u2192 unauthentica",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| messaging | Non-ASCII verify token / signature header \u2192 unauthenticated 500 | 2-line |"
+   },
+   {
+    "item": "4.4 | messaging | Preview hands out a wa.me link post-consent-withdrawal |",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| messaging | Preview hands out a wa.me link post-consent-withdrawal | 1-file |"
+   },
+   {
+    "item": "4.4 | ops | Non-ASCII `X-Ops-Proxy-Token` \u2192 500 instead of 401 | 1-line (c",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| ops | Non-ASCII `X-Ops-Proxy-Token` \u2192 500 instead of 401 | 1-line (compare bytes) |"
+   },
+   {
+    "item": "4.4 | attendance | Payroll CSV frozen forever on (shop, window), no regene",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| attendance | Payroll CSV frozen forever on (shop, window), no regenerate | 1-file |"
+   },
+   {
+    "item": "4.4 | attendance | Overnight shift accepted but unrepresentable in `classi",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| attendance | Overnight shift accepted but unrepresentable in `classify_day`; `start == end` \u2192 1440 min | 1-line validator |"
+   },
+   {
+    "item": "4.4 | attendance | Ping backdate ceiling 48 h vs a phone queue spanning ~6",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| attendance | Ping backdate ceiling 48 h vs a phone queue spanning ~6 days | **env-only** |"
+   },
+   {
+    "item": "4.4 | web | 9 of 13 mutators swallow `serverReason`; Haul offered on a `re",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| web | 9 of 13 mutators swallow `serverReason`; Haul offered on a `ready` visit \u2192 permanent 409 shown as \"please retry\" | 1-file |"
+   },
+   {
+    "item": "4.4 | web | Completion voice note recorded, played back, silently discarde",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| web | Completion voice note recorded, played back, silently discarded | 1-file (delete it) |"
+   },
+   {
+    "item": "4.4 | web | Bill preview hardcoded Rs 1,200/hr instead of `shop_setting` |",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| web | Bill preview hardcoded Rs 1,200/hr instead of `shop_setting` | 1-file |"
+   },
+   {
+    "item": "4.4 | web | Troubleshooting \"Add Part\" toasts success before the request r",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| web | Troubleshooting \"Add Part\" toasts success before the request runs | 1-file |"
+   },
+   {
+    "item": "4.4 | jobs | Manager correction of a frozen bill leaves no record of the f",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| jobs | Manager correction of a frozen bill leaves no record of the figure it replaced | 1-file (event payload) |"
+   },
+   {
+    "item": "4.4 | mobile | Architecture guard only scans `src/features`, only matches ",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| mobile | Architecture guard only scans `src/features`, only matches a single-line `jobsApi.<method>(` | 1-file |"
+   },
+   {
+    "item": "4.4 | mobile | Jobs list ignores reconciliation when painted from cache; r",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "| mobile | Jobs list ignores reconciliation when painted from cache; reconcile writes full `JobDetail` into the list cache | 2\u00d7 1-line |"
+   },
+   {
+    "item": "4.5.1 **\"Each scheduler job is idempotent so a duplicate run is ha",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n1. **\"Each scheduler job is idempotent so a duplicate run is harmless\"** \u2014 false for the\n   media-orphan sweep (A7)."
+   },
+   {
+    "item": "4.5.2 **\"A replay is an idempotent success, never a duplicate even",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n2. **\"A replay is an idempotent success, never a duplicate event\"** \u2014 the web payment path\n   breaks it client-side (A4)."
+   },
+   {
+    "item": "4.5.3 **`jobs/models.py:229` \"gap-free global ordering key consume",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/features/jobs/models.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n3. **`jobs/models.py:229` \"gap-free global ordering key consumers drain in order\"** \u2014 false on\n   both properties: `nextval` is non-transactional (gaps), and seq is assigned at flush while\n   the row is visible at commit (skips). **This docstring is what makes the cursor design look\n   safe on review.**"
+   },
+   {
+    "item": "4.5.4 **\"The outbox never deletes a write / anything ambiguous is ",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n4. **\"The outbox never deletes a write / anything ambiguous is retried\"** \u2014 the server-side\n   outbox violates its own analogue via the lost-race `rollback` (B3)."
+   },
+   {
+    "item": "4.5.5 **`customer_messaging/service.py:20-23` \"the row is claimed ",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/features/customer_messaging/service.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n5. **`customer_messaging/service.py:20-23` \"the row is claimed BEFORE the API call \u2026 can never\n   double-send\"** \u2014 the claim is flush-only, so it is not durable (B3). The module makes this\n   promise about itself twice.\n\n---\n\n"
+   }
+  ]
+ },
+ "claude_md_invariants": {
+  "items": 20,
+  "items_naming_ge1_code_file": 11,
+  "items_naming_ge2_code_files": 2,
+  "items_cross_runtime": 0,
+  "distinct_code_files_named": 12,
+  "unresolved_names": 4,
+  "rows": [
+   {
+    "item": "**Money is integer minor units** (1 Rs = 100 paisa), never floats. Con",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **Money is integer minor units** (1 Rs = 100 paisa), never floats. Convert at the UI edge.\n  Existing columns keep their `*_paisa` names (no churn on a live ledger); **new** money columns\n  are named `*_minor` (the unit is `shop.currency`; seed `PKR` \u21d2 paisa)."
+   },
+   {
+    "item": "**Any `models.py` change needs a matching Alembic migration.** CI runs",
+    "named": 2,
+    "resolved_code": [
+     "backend/start.sh"
+    ],
+    "unresolved": [
+     "models.py:ambiguous(10)"
+    ],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n- **Any `models.py` change needs a matching Alembic migration.** CI runs `alembic check` (drift)\n  and `alembic upgrade head` against real Postgres. Head is **0046**; the next free slot is\n  **0047**. **FKs on populated tables** ship as `NOT VALID` then `VALIDATE CONSTRAINT` \u2014 same\n  migration when the column is provably clean (seed precedes it / all-NULL new column), a\n  **separate PR/deploy** when months of human data could hold orphans (`start.sh` runs all\n  pending migrations at boot, so a same-deploy VALIDATE leaves no window to audit orphans).\n  Seeds go in migrations; fuzzy backfills are idempotent dry-run-default scripts in\n  `backend/scripts/` (run deliberately via `railway run`)."
+   },
+   {
+    "item": "**Respect slice boundaries.** Cross-slice access goes through `service",
+    "named": 4,
+    "resolved_code": [
+     "backend/pyproject.toml"
+    ],
+    "unresolved": [
+     "service.py:ambiguous(11)",
+     "deps.py:ambiguous(8)",
+     "index.js:ambiguous(9)"
+    ],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n- **Respect slice boundaries.** Cross-slice access goes through `service.py`/`deps.py` (backend)\n  or a feature's `index.js` barrel (web). CI enforces this \u2014 contracts live in\n  `backend/pyproject.toml` under `[tool.importlinter]`, plus ESLint `no-restricted-imports`. A\n  new edge must be added to the allow-list consciously.\n"
+   },
+   {
+    "item": "**Compare shared secrets with `compare_secret` (`backend/app/core/secu",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/core/security.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n- **Compare shared secrets with `compare_secret` (`backend/app/core/security.py`), never\n  `hmac.compare_digest` on a `str`.** `compare_digest` raises `TypeError` on non-ASCII strings,\n  so a single non-ASCII byte in an attacker-controlled header turns an auth check into an\n  unhandled 500. Three sites had exactly that hole: the ops proxy-token gate, the WhatsApp\n  webhook verify token, and the webhook signature header. `compare_secret` hashes both sides\n  first, so it is total over all inputs, and an unconfigured secret is always `False`."
+   },
+   {
+    "item": "**The login lock deliberately blocks a correct PIN too \u2014 do not \"fix\" ",
+    "named": 2,
+    "resolved_code": [
+     "backend/app/features/identity/throttle.py",
+     "backend/scripts/unlock_account.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n- **The login lock deliberately blocks a correct PIN too \u2014 do not \"fix\" this.** To let a correct\n  PIN through you must verify every PIN, which stops the lock throttling guessing at all; a\n  4-digit tech PIN then falls in under an hour. The **per-account** lockout\n  (`features/identity/throttle.py`) is the real defense \u2014 the per-IP limiter only blunts\n  roster-wide spraying. The lock always decays (`MAX_LOCK_SECONDS` = 15 min) and escalation\n  forgets itself after a quiet hour (`DECAY_AFTER_SECONDS` \u2014 ergonomic, **not** a security\n  control). Recovery is out-of-band by design: a manager clears a tech's lock via `set_pin`,\n  and `backend/scripts/unlock_account.py` covers the manager's own locked account.\n"
+   },
+   {
+    "item": "**Mobile mutations go through the outbox** (`sendOrQueue`) and carry a",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **Mobile mutations go through the outbox** (`sendOrQueue`) and carry an idempotency\n  `client_id`. Never `fetch` a write directly from a screen \u2014 that loses data offline and risks\n  double-charging on retry."
+   },
+   {
+    "item": "**The outbox never deletes a write.** Success removes; definitive 4xx ",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/lib/syncClassification.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "\n- **The outbox never deletes a write.** Success removes; definitive 4xx \u2192 visible \"failed\" list;\n  anything ambiguous (offline/5xx/timeout) is kept and retried. Don't \"simplify\" this away. The\n  attendance **punch and presence** queues and the **pending-media** queue carry the _same_\n  contract (`lib/syncClassification.ts`, shared with the jobs outbox). On-duty **pings and\n  job-travel breadcrumbs are the exceptions \u2014 deliberately droppable**: a definitive-4xx batch is\n  dropped (coverage degrades to an honest `no_data` gap / the fuel estimate stands in), never\n  parked."
+   },
+   {
+    "item": "**KNOWN DEFECT, UNFIXED: the outbox has no mutual exclusion on a stabl",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/features/jobs/completionPrefill.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "\n- **KNOWN DEFECT, UNFIXED: the outbox has no mutual exclusion on a stable id.** A live\n  `sendOrQueue` racing a concurrent `flushOutbox` for the same id resolves to whichever request\n  the **server** finishes last, not whichever the technician sent last \u2014 so \"last write wins by\n  id\" is a false assumption; do not build on it. The completion path avoids the race by\n  **refusing** to open a second completion while one is queued\n  (`features/jobs/completionPrefill.ts`). Don't remove that refusal believing the outbox\n  serialises for you.\n"
+   },
+   {
+    "item": "**Location tracking is time-bounded, not just event-bounded.** On-duty",
+    "named": 2,
+    "resolved_code": [
+     "technician-app/src/features/attendance/pingTracker.ts",
+     "technician-app/src/features/jobs/travelTracker.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "\n- **Location tracking is time-bounded, not just event-bounded.** On-duty sampling stops at\n  `config.attendance.maxDutyHours` (14h) even if the tech never clocked out, and job-travel\n  breadcrumb sampling stops at `MAX_TRAVEL_MS` (4h) even if the arrival punch never came. All\n  privacy layers route through `dutyStatus` (`pingTracker.ts`) / the travel state\n  (`travelTracker.ts`); don't add a path that samples without them. Ping `captured_at` is likewise\n  trust-windowed server-side (rejected outside ~48h back / 2min forward) so it can't be back-dated\n  to rewrite an attendance day.\n"
+   },
+   {
+    "item": "**The job lifecycle is a guarded state machine, not a setter** (0043).",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/features/jobs/service.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n- **The job lifecycle is a guarded state machine, not a setter** (0043). Statuses are\n  `open \u2192 waiting \u2192 ready \u2192 closed`; only `closed` is terminal. Every action's legal\n  from-states live in `_TRANSITION_FROM` / `_TRANSITION_SETTLED` (`jobs/service.py`) and are\n  applied by an **atomic conditional UPDATE** (`repository.try_transition`, the `try_claim`\n  pattern) \u2014 never load-mutate-flush. A replay is an **idempotent success, never a duplicate\n  event**: by `client_id` when the client sends one (`job_event.client_id`, partial unique\n  index), by the settled-state check when it doesn't (deployed APKs send none). Reaching a\n  state the contract forbids is a 409 whose `detail` ends `(current status: X)` \u2014 three\n  clients regex that string, so keep it plain text. Before this, `transition()` never read\n  the current status and a queued `ready` could silently **reopen a settled, billed job**."
+   },
+   {
+    "item": "**`ready` means \"work done, awaiting handover\"** \u2014 `submit_completion`",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **`ready` means \"work done, awaiting handover\"** \u2014 `submit_completion` moves a carry-in or\n  pickup-delivery job there automatically (home-visit closes on the spot instead). Completion\n  is a _bill document_, not a lifecycle event; the close still needs its `closing` handover\n  clip. Don't reintroduce a client-queued `ready`: server-side is what makes `ready`\n  impossible without a completion, and what fixed the deployed fleet without an app update.\n"
+   },
+   {
+    "item": "**A bill the customer has seen, agreed, or paid against is frozen.** A",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **A bill the customer has seen, agreed, or paid against is frozen.** A completion _resubmit_\n  (not the first submission \u2014 cash can precede paperwork) is refused once `job.bill_sent_at` is\n  set, `bill_negotiated_paisa` is set, or a non-voided payment exists; a manager may still\n  correct it **until the job closes** (the closed guard outranks the override). The upsert clears\n  materials and re-prices labour from the payload, so an unguarded resubmit silently rewrote real\n  bills to zero. A resubmit of the _byte-identical_ form is an idempotent success, not a 409 \u2014\n  deployed phones send no `client_id`, so payload equality is the only way to tell a replayed\n  write from a real edit, and a 409 would park a landed completion in the tech's failed list."
+   },
+   {
+    "item": "**A completion form must never open blank against a real bill**\n  (`fe",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/features/jobs/completionPrefill.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "\n- **A completion form must never open blank against a real bill**\n  (`features/jobs/completionPrefill.ts`). Because the server upsert re-prices from the payload,\n  a blank form _is_ a delete. \"Could not establish whether a completion exists\" is\n  `blocked/\"unknown\"` \u2014 **not** `new`. A bare `catch { return; }` made \"offline\" and \"this job\n  has no completion\" the same answer, which is how a blank form got to replace a real bill."
+   },
+   {
+    "item": "**Arrival-wizard state is monotonic** (`features/jobs/arrival-job/wiza",
+    "named": 1,
+    "resolved_code": [
+     "technician-app/src/features/jobs/arrival-job/wizardState.ts"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "mobile"
+    ],
+    "body": "\n- **Arrival-wizard state is monotonic** (`features/jobs/arrival-job/wizardState.ts`). Once it\n  has said `pending`/`failed`/`done` it may be upgraded, never walked back to `run`. Deriving it\n  live from the outbox reopens the loop #162 closed: `flushOutbox` calls `removeItem` **before**\n  notifying landed-listeners, so for one render there is neither a queued item nor a known\n  completion, and a live derivation restarts the capture flow on a finished job while\n  `clearArrivalDraft` wipes the evidence behind it."
+   },
+   {
+    "item": "Both client guards are **pure functions living outside their component",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- Both client guards are **pure functions living outside their components on purpose** \u2014 this app\n  has no screen-test harness (no `@testing-library/react-native`, no `react-test-renderer`), so\n  logic inside a component is logic nothing asserts.\n"
+   },
+   {
+    "item": "**A client must be able to resume a workflow from server truth.** `Job",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **A client must be able to resume a workflow from server truth.** `JobDetail.evidence` carries\n  per-phase media counts (pending rows included, matching the close gate) precisely so a client\n  whose local draft is gone doesn't re-demand evidence the server already holds. `None` means\n  \"unknown\" (service built without the media surface), not \"no evidence\" \u2014 never treat it as zero.\n"
+   },
+   {
+    "item": "**Never message a customer about an old event.** `run_dispatch_once` m",
+    "named": 1,
+    "resolved_code": [
+     "backend/app/main.py"
+    ],
+    "unresolved": [],
+    "runtimes": [
+     "backend"
+    ],
+    "body": "\n- **Never message a customer about an old event.** `run_dispatch_once` mints a missing cursor at\n  `last_seq=0`, so an unseeded cursor drains **the entire history** of `job_event` and treats\n  every row as a live customer message \u2014 measured at 36 real messages about months-old jobs.\n  Two independent locks: **migration 0046 seeds `dispatch_cursor` at the current head** (enabling\n  the dispatcher is forward-only), and `_MAX_DISPATCH_EVENT_AGE` (2 days, `main.py`) skips stale\n  events for the cases a seed can't cover \u2014 a cursor reset by hand, or restored from an older\n  snapshot. The damage is permanent, not transient: `uq_customer_message_job_kind` makes the\n  first decision per (job, kind) terminal, including a `suppressed` one."
+   },
+   {
+    "item": "**`run_dispatch_once` commits per event, not per batch**, and commits ",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **`run_dispatch_once` commits per event, not per batch**, and commits a newly-created cursor\n  _before_ the loop. A rollback inside the loop expunges a still-pending cursor, after which\n  `cursor.last_seq = \u2026` mutates a detached instance, the final commit persists nothing, and the\n  consumer replays the same batch forever."
+   },
+   {
+    "item": "**The messaging claim row is written in a savepoint** (`CustomerMessag",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **The messaging claim row is written in a savepoint** (`CustomerMessageRepository.savepoint`).\n  `Session.rollback()` unwinds the _outermost_ transaction, so recovering from an ordinary\n  duplicate-key race that way costs the caller everything else it had pending."
+   },
+   {
+    "item": "**The automated send must call `log_customer_message`**, exactly as th",
+    "named": 0,
+    "resolved_code": [],
+    "unresolved": [],
+    "runtimes": [],
+    "body": "\n- **The automated send must call `log_customer_message`**, exactly as the manual endpoint does.\n  Without it the automated path sends a bill the customer can see while leaving `bill_sent_at`\n  NULL \u2014 the freeze never engages and a queued `completion` can still rewrite a billed job. That\n  is the carry-in loop #162/#163 closed, reopened through the automated door.\n\n---\n"
+   }
+  ]
+ }
+}

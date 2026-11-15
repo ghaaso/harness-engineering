@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Harness v2 Architecture</title>
+<!-- GENERATED FILE. Source of truth: docs/program/harness-v2/architecture.json. Build: docs/program/evidence/harness-v2-design/build.js.txt -->
+<style>
+/* Layout: one column of panels under a sticky nav; details open in a side drawer.
+   Orange always means "yours to decide". Tags (M T E I) are ink-only, so they never clash with class colours. */
+:root{
+  --bg:#f3f5f7; --surface:#ffffff; --surface-2:#e9edf1; --ink:#14202b; --ink-2:#3f4c59; --ink-3:#66737f;
+  --line:#d3dae1; --line-2:#aab5bf;
+  --owner:#b23c0a; --owner-fill:#eb6834; --owner-tint:#fdeee6;
+  --c-decide:#eb6834; --c-build:#2a78d6; --c-diagnose:#1baf7a; --c-trial:#eda100;
+  --t-decide:#fdeee6; --t-build:#e6f0fb; --t-diagnose:#e3f6ee; --t-trial:#fdf3d9;
+  --seq-1:#86b6ef; --seq-2:#2a78d6; --seq-3:#104281; --seq-ink-3:#ffffff; --seq-ink-1:#0b0b0b;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b; --quiet:#98a4af; --cat-5:#e87ba4; --cat4-ink:#0b0b0b;
+  --shadow:0 1px 2px rgba(20,32,43,.06),0 8px 24px rgba(20,32,43,.08);
+  --font-head:"Bahnschrift","DIN Alternate","Roboto Condensed","Segoe UI",system-ui,sans-serif;
+  --font-body:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --font-mono:"Cascadia Mono","Cascadia Code",Consolas,ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1418; --surface:#182028; --surface-2:#222d38; --ink:#eef2f5; --ink-2:#c5ced6; --ink-3:#94a1ad;
+    --line:#2d3945; --line-2:#4a5968;
+    --owner:#ff9a6b; --owner-fill:#d95926; --owner-tint:#3a2217;
+    --c-decide:#d95926; --c-build:#3987e5; --c-diagnose:#199e70; --c-trial:#c98500;
+    --t-decide:#3a2217; --t-build:#17283c; --t-diagnose:#13302a; --t-trial:#33290f;
+    --seq-1:#184f95; --seq-2:#3987e5; --seq-3:#9ec5f4; --seq-ink-3:#0b0b0b; --seq-ink-1:#ffffff;
+    --quiet:#5d6b78; --cat-5:#d55181; --cat4-ink:#ffffff;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1418; --surface:#182028; --surface-2:#222d38; --ink:#eef2f5; --ink-2:#c5ced6; --ink-3:#94a1ad;
+  --line:#2d3945; --line-2:#4a5968;
+  --owner:#ff9a6b; --owner-fill:#d95926; --owner-tint:#3a2217;
+  --c-decide:#d95926; --c-build:#3987e5; --c-diagnose:#199e70; --c-trial:#c98500;
+  --t-decide:#3a2217; --t-build:#17283c; --t-diagnose:#13302a; --t-trial:#33290f;
+  --seq-1:#184f95; --seq-2:#3987e5; --seq-3:#9ec5f4; --seq-ink-3:#0b0b0b; --seq-ink-1:#ffffff;
+  --quiet:#5d6b78; --cat-5:#d55181; --cat4-ink:#ffffff;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:72px}
+body{margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 var(--font-body); -webkit-text-size-adjust:100%}
+[hidden]{display:none!important}
+.wrap{max-width:1120px; margin-inline:auto; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3,h4{font-family:var(--font-head); font-weight:600; line-height:1.15; margin:0; text-wrap:balance; letter-spacing:.005em}
+h1{font-size:clamp(2.2rem,6vw,3.4rem)}
+h2{font-size:clamp(1.5rem,3.6vw,2.1rem)}
+h3{font-size:1.2rem}
+h4{font-size:1rem; font-family:var(--font-body); font-weight:650}
+p{margin:0}
+a{color:inherit}
+button{font:inherit; color:inherit}
+:focus-visible{outline:3px solid var(--ink); outline-offset:2px; border-radius:6px}
+.eyebrow{font:600 .78rem/1.2 var(--font-body); letter-spacing:.09em; text-transform:uppercase; color:var(--ink-3)}
+.lede{font-size:1.08rem; color:var(--ink-2); max-width:66ch}
+.muted{color:var(--ink-3)}
+.small{font-size:.875rem}
+.stack{display:flex; flex-direction:column; gap:12px}
+.row{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+
+/* sticky nav */
+.top{position:sticky; top:0; z-index:20; background:var(--bg); border-bottom:1px solid var(--line)}
+.top .wrap{display:flex; align-items:center; gap:10px; padding-block:8px; flex-wrap:wrap}
+.brand{font:600 1.05rem/1 var(--font-head); margin-right:6px; white-space:nowrap}
+.nav{display:flex; gap:2px; flex-wrap:wrap; flex:1 1 auto; min-width:0}
+.nav a{padding:6px 10px; border-radius:8px; text-decoration:none; font-weight:600; font-size:.9rem; color:var(--ink-2); white-space:nowrap}
+.nav a:hover{background:var(--surface-2); color:var(--ink)}
+.nav a.yours{color:var(--owner)}
+.mini-legend{display:flex; gap:6px; align-items:center; font-size:.72rem; color:var(--ink-3); flex-wrap:wrap}
+.mini-legend span{display:inline-flex; gap:4px; align-items:center; white-space:nowrap}
+.iconbtn{border:1px solid var(--line-2); background:var(--surface); border-radius:8px; padding:5px 10px; font-size:.82rem; font-weight:600; cursor:pointer}
+.iconbtn:hover{border-color:var(--ink)}
+
+/* hero */
+.hero{padding-block:36px 8px}
+.hero .stack{gap:16px}
+.status{display:inline-flex; gap:8px; align-items:center; border:1px solid var(--line-2); border-radius:999px; padding:5px 12px; font-size:.86rem; font-weight:600; background:var(--surface); width:fit-content; max-width:100%}
+.status i{width:9px; height:9px; border-radius:50%; background:var(--quiet); flex:none}
+.jump{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:6px}
+.jump a{display:flex; flex-direction:column; gap:4px; padding:14px 16px; background:var(--surface); border:1px solid var(--line); border-radius:12px; text-decoration:none; min-width:0}
+.jump a:hover{border-color:var(--ink)}
+.jump a b{font:600 1.05rem/1.2 var(--font-head)}
+.jump a span{font-size:.9rem; color:var(--ink-2)}
+.jump a.yours{border-color:var(--owner-fill); background:var(--owner-tint)}
+.legend{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px}
+.legend div{font-size:.88rem; color:var(--ink-2); min-width:0}
+.legend b{display:flex; gap:6px; align-items:center; color:var(--ink); margin-bottom:2px}
+
+/* sections */
+section.band{padding-block:44px 8px}
+.band>.wrap{display:flex; flex-direction:column; gap:20px}
+.band-head{display:flex; flex-direction:column; gap:8px}
+.sub{display:flex; flex-direction:column; gap:12px; margin-top:8px}
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:18px; min-width:0}
+
+/* numbers, tags, terms, ids */
+.num{white-space:nowrap; cursor:help; border-radius:4px}
+.num.long{white-space:normal}
+.num b{font-weight:650}
+.tag{display:inline-block; font:700 .62rem/1 var(--font-body); min-width:1.5em; text-align:center; padding:2px 3px 2px; margin-left:0; border-radius:4px; vertical-align:.18em; font-style:normal; letter-spacing:.02em}
+.tag.m{background:var(--ink); color:var(--surface); border:1.5px solid var(--ink)}
+.tag.s{background:var(--ink-3); color:var(--surface); border:1.5px solid var(--ink-3)}
+.tag.t{border:1.5px solid var(--ink); color:var(--ink)}
+.tag.e{border:1.5px dashed var(--ink-2); color:var(--ink-2)}
+.tag.i{border:1.5px dotted var(--ink-2); color:var(--ink-2); font-style:italic}
+.term{border-bottom:1.5px dotted var(--ink-3); cursor:help}
+.idchip{font:600 .72rem/1 var(--font-mono); color:var(--ink-3); border:1px solid var(--line-2); border-radius:5px; padding:2px 5px; white-space:nowrap; vertical-align:.1em}
+.chip{text-decoration:none; display:inline-flex; align-items:center; gap:5px; font-size:.78rem; font-weight:600; padding:3px 9px; border-radius:999px; border:1px solid var(--line-2); color:var(--ink-2); background:var(--surface); white-space:nowrap}
+.chip.yours{border-color:var(--owner-fill); color:var(--owner); background:var(--owner-tint)}
+.chip .dot{width:8px; height:8px; border-radius:50%; flex:none}
+.words{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:8px 18px; margin:10px 0 0}
+.words dt{font-weight:650}
+.words dd{margin:0; color:var(--ink-2)}
+.segbar{display:flex; gap:2px; height:28px}
+.segbar span{display:flex; align-items:center; padding-left:8px; font:650 .82rem var(--font-body); border-radius:4px; min-width:0; cursor:default}
+.prog{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px}
+.prog li{display:grid; grid-template-columns:7.6rem minmax(0,1fr); gap:10px; align-items:start; font-size:.95rem}
+.prog .chip{justify-content:center}
+.pop{position:absolute; z-index:60; max-width:min(320px,calc(100vw - 24px)); background:var(--ink); color:var(--surface); padding:10px 12px; border-radius:10px; font-size:.84rem; line-height:1.4; box-shadow:var(--shadow)}
+.pop b{display:block; font-size:.74rem; letter-spacing:.07em; text-transform:uppercase; opacity:.8; margin-bottom:2px}
+
+/* corrections */
+.fix-grid{display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px}
+.fix-grid .corr{grid-column:span 2}
+.fix-grid .corr:nth-child(n+4){grid-column:span 3}
+.corr{display:flex; flex-direction:column; gap:8px; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px; min-width:0}
+.corr .said{color:var(--ink-3); font-size:.9rem; text-decoration:line-through; text-decoration-color:var(--line-2)}
+.corr .shows{font-size:.95rem}
+.corr .lab{font:600 .7rem/1 var(--font-body); letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+
+/* shutdown strip */
+.strip-scroll{overflow-x:auto}
+.strip{min-width:640px}
+.strip svg{display:block; width:100%; height:auto}
+.legend-row{display:flex; flex-wrap:wrap; gap:14px; font-size:.82rem; color:var(--ink-2)}
+.legend-row span{display:inline-flex; gap:6px; align-items:center}
+.sw{width:12px; height:12px; border-radius:3px; flex:none; display:inline-block}
+
+/* map */
+.filters{display:flex; flex-wrap:wrap; gap:6px}
+.fbtn{border:1px solid var(--line-2); background:var(--surface); border-radius:999px; padding:6px 12px; font-size:.86rem; font-weight:600; cursor:pointer; color:var(--ink-2)}
+.fbtn[aria-pressed="true"]{background:var(--ink); color:var(--surface); border-color:var(--ink)}
+.map{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; align-items:start}
+.col{display:flex; flex-direction:column; gap:8px; min-width:0}
+.col-head{border-top:4px solid var(--cc); padding-top:8px}
+.col-head b{font:600 1.1rem/1.2 var(--font-head); display:flex; gap:8px; align-items:baseline}
+.col-head b span{font:600 .8rem var(--font-body); color:var(--ink-3)}
+.col-head p{font-size:.82rem; color:var(--ink-2)}
+.tile{display:flex; flex-direction:column; gap:6px; text-align:left; background:var(--tc); border:1px solid transparent; border-left:4px solid var(--cc); border-radius:10px; padding:10px 10px 10px 12px; cursor:pointer; min-width:0; transition:opacity .15s}
+.tile:hover{border-color:var(--cc)}
+.tile b{font-weight:650; font-size:.95rem; line-height:1.25}
+.tile .meta{display:flex; flex-wrap:wrap; gap:5px; align-items:center; font-size:.72rem; color:var(--ink-2)}
+.tile .meta em{font-style:normal; font-weight:600}
+.tile.dim{opacity:.28}
+.tile[aria-current="true"]{border-color:var(--ink); box-shadow:0 0 0 2px var(--ink)}
+.c-decide{--cc:var(--c-decide); --tc:var(--t-decide)}
+.c-build{--cc:var(--c-build); --tc:var(--t-build)}
+.c-diagnose{--cc:var(--c-diagnose); --tc:var(--t-diagnose)}
+.c-trial{--cc:var(--c-trial); --tc:var(--t-trial)}
+
+/* drawer */
+.scrim{position:fixed; inset:0; background:rgba(10,16,22,.45); z-index:40}
+.drawer{position:fixed; z-index:50; top:0; right:0; bottom:0; width:min(480px,100vw); background:var(--surface); border-left:1px solid var(--line); box-shadow:var(--shadow); display:flex; flex-direction:column; padding-top:env(safe-area-inset-top,0px)}
+.drawer-head{display:flex; gap:10px; align-items:flex-start; padding:16px 18px 12px; border-bottom:1px solid var(--line)}
+.drawer-head h3{flex:1; font-size:1.35rem}
+.drawer-body{overflow:auto; padding:16px 18px 24px; display:flex; flex-direction:column; gap:16px}
+.drawer-foot{display:flex; justify-content:space-between; gap:8px; padding:10px 18px calc(10px + env(safe-area-inset-bottom,0px)); border-top:1px solid var(--line)}
+.kv{display:flex; flex-direction:column; gap:4px}
+.kv .lab{font:600 .7rem/1.2 var(--font-body); letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3)}
+.kv.quote p{color:var(--ink-3); font-style:italic}
+.kv.answer{background:var(--surface-2); border-radius:10px; padding:12px}
+.btn{border:1px solid var(--line-2); background:var(--surface); border-radius:9px; padding:8px 14px; font-weight:600; font-size:.9rem; cursor:pointer}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{background:var(--ink); color:var(--surface); border-color:var(--ink)}
+.btn:disabled{opacity:.4; cursor:default}
+
+/* roadmap */
+.track{display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px}
+.pcard{position:relative; display:flex; flex-direction:column; gap:8px; text-align:left; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px; cursor:pointer; min-width:0}
+.pcard:hover{border-color:var(--ink)}
+.pcard[aria-selected="true"]{border-color:var(--ink); box-shadow:0 0 0 2px var(--ink)}
+.pcard .pn{font:600 2rem/1 var(--font-head); color:var(--ink-3)}
+.pcard[aria-selected="true"] .pn{color:var(--ink)}
+.pcard b{font:600 1.02rem/1.2 var(--font-head)}
+.pcard p{font-size:.84rem; color:var(--ink-2)}
+.pcard .row{gap:5px}
+.deps{overflow-x:auto}
+.deps svg{display:block; min-width:560px; width:100%; height:auto; color:var(--ink)}
+.deplist{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:8px 18px; font-size:.9rem; color:var(--ink-2); padding:0; margin:0; list-style:none}
+.deplist li{display:flex; gap:8px; align-items:baseline}
+.deplist .arrow{font:600 .82rem var(--font-mono); color:var(--ink); white-space:nowrap}
+.phase{display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:20px}
+.phase h3{font-size:1.5rem}
+.phase .col2{display:flex; flex-direction:column; gap:16px; min-width:0}
+.blist{list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px}
+.blist li{display:flex; flex-direction:column; gap:4px; padding-left:12px; border-left:3px solid var(--line-2)}
+.blist li b{font-weight:650}
+.plist{margin:0; padding-left:18px; display:flex; flex-direction:column; gap:6px}
+.cost{display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 12px; font-size:.92rem}
+.cost dt{font-weight:650; color:var(--ink-2)}
+.cost dd{margin:0}
+.declink{display:flex; gap:8px; align-items:baseline; text-decoration:none; padding:7px 10px; border:1px solid var(--owner-fill); background:var(--owner-tint); border-radius:9px; font-size:.9rem; font-weight:600}
+.declink:hover{border-color:var(--owner)}
+.rules{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px}
+.rule{border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--surface); font-size:.9rem; color:var(--ink-2); min-width:0}
+.rule>b{display:block; color:var(--ink); font:600 1rem/1.2 var(--font-head); margin-bottom:4px}
+
+/* ladder */
+.ladder{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; counter-reset:none}
+.rung{display:grid; grid-template-columns:2.2rem minmax(0,1fr) auto; gap:10px; align-items:center; width:100%; text-align:left; background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:9px 12px; cursor:pointer}
+.rung:hover{border-color:var(--ink)}
+.rung .n{font:600 1.3rem/1 var(--font-head); color:var(--ink-3); text-align:center}
+.rung b{display:block; font-weight:650}
+.rung span.pl{font-size:.86rem; color:var(--ink-2)}
+.cost-script{--kc:var(--c-build)} .cost-brief{--kc:var(--c-diagnose)} .cost-agents{--kc:var(--c-trial)} .cost-owner{--kc:var(--c-decide)} .cost-config{--kc:var(--quiet)}
+.kchip{display:inline-flex; gap:6px; align-items:center; font-size:.76rem; font-weight:600; color:var(--ink-2); white-space:nowrap}
+.kchip i{width:10px; height:10px; border-radius:2px; background:var(--kc); flex:none}
+
+/* budget and tensions */
+.ledger{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) auto; gap:0; border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface)}
+.ledger>div{padding:10px 12px; border-top:1px solid var(--line); font-size:.9rem; min-width:0}
+.ledger>div.h{border-top:0; font:600 .72rem/1.2 var(--font-body); letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); background:var(--surface-2)}
+.ledger b{font-weight:650}
+.tens{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:10px}
+.ten{border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--surface); display:flex; flex-direction:column; gap:6px; font-size:.9rem; min-width:0}
+.ten .vs{color:var(--ink-2)}
+.ten .vs b{color:var(--ink)}
+.ten .res{border-top:1px dashed var(--line-2); padding-top:6px}
+.callout{border-left:4px solid var(--ink); background:var(--surface-2); padding:12px 14px; border-radius:0 10px 10px 0; font-size:.95rem}
+.callout.warn{border-left-color:var(--owner-fill)}
+
+/* demos */
+.tabs{display:flex; flex-wrap:wrap; gap:6px}
+.tab{border:1px solid var(--line-2); background:var(--surface); border-radius:10px; padding:8px 12px; font-weight:600; font-size:.9rem; cursor:pointer; color:var(--ink-2); display:flex; gap:8px; align-items:center}
+.tab .k{font:600 .78rem var(--font-mono); color:var(--ink-3)}
+.tab[aria-selected="true"]{background:var(--ink); color:var(--surface); border-color:var(--ink)}
+.tab[aria-selected="true"] .k{color:var(--surface); opacity:.7}
+.demo{display:flex; flex-direction:column; gap:16px}
+.demo h3{font-size:1.5rem}
+.controls{display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center}
+.seg{display:inline-flex; border:1px solid var(--line-2); border-radius:9px; overflow:hidden; background:var(--surface); max-width:100%; flex-wrap:wrap}
+.seg button{border:0; background:transparent; padding:7px 12px; font-weight:600; font-size:.86rem; cursor:pointer; color:var(--ink-2)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--ink); color:var(--surface)}
+.ctl{display:flex; flex-direction:column; gap:4px; min-width:0}
+.ctl>span{font:600 .72rem/1.2 var(--font-body); letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3)}
+.stepper{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.stepper .count{font:600 .9rem var(--font-mono); color:var(--ink-2); min-width:5.5em; text-align:center}
+.two{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px}
+.side{border:1px solid var(--line); border-radius:12px; background:var(--surface); padding:14px; display:flex; flex-direction:column; gap:10px; min-width:0}
+.side.v2{border-color:var(--ink)}
+.side>h4{display:flex; justify-content:space-between; gap:8px; align-items:baseline; font-family:var(--font-head); font-size:1.1rem; font-weight:600}
+.side>h4 span{font:600 .72rem var(--font-body); letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3)}
+.steps{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px}
+.steps li{display:grid; grid-template-columns:minmax(0,1fr); gap:3px; padding:8px 10px; border-radius:9px; border:1px solid transparent; color:var(--ink-3); transition:background .2s,color .2s}
+.steps li.done{color:var(--ink-2)}
+.steps li.now{background:var(--surface-2); border-color:var(--line-2); color:var(--ink)}
+.steps .when{font:600 .78rem var(--font-mono); display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.state{display:inline-flex; gap:5px; align-items:center; font:600 .72rem var(--font-body); padding:2px 8px; border-radius:999px; border:1px solid var(--line-2); background:var(--surface); color:var(--ink-2); white-space:nowrap}
+.state i{width:8px; height:8px; border-radius:50%; background:var(--sc,var(--quiet)); flex:none}
+.s-off{--sc:var(--crit)} .s-idle{--sc:var(--quiet)} .s-wait{--sc:var(--warn)} .s-manual{--sc:var(--serious)}
+.s-work,.s-auto,.s-safe,.s-resume,.s-list{--sc:var(--good)}
+.result{font-weight:600; padding-top:8px; border-top:1px dashed var(--line-2)}
+.assume{border:1px dashed var(--line-2); border-radius:12px; padding:12px 14px; font-size:.9rem; color:var(--ink-2)}
+.assume>b{display:block; font:600 .72rem/1.2 var(--font-body); letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); margin-bottom:6px}
+.assume ul{margin:0; padding-left:18px; display:flex; flex-direction:column; gap:3px}
+.statrow{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px}
+.stat{border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:var(--surface); min-width:0}
+.stat span{display:block; font-size:.78rem; color:var(--ink-3); font-weight:600}
+.stat b{font:600 1.5rem/1.2 var(--font-body)}
+.stat small{display:block; font-size:.78rem; color:var(--ink-2)}
+.chartbox{border:1px solid var(--line); border-radius:12px; background:var(--surface); padding:14px; min-width:0}
+.chartbox svg{display:block; width:100%; height:auto}
+.chart-scroll{overflow-x:auto}
+.chart-scroll>svg{min-width:560px}
+.axis text,.lbl{font:500 11px var(--font-body); fill:var(--ink-3)}
+.lbl-strong{font:650 12px var(--font-body); fill:var(--ink)}
+.grid line{stroke:var(--line); stroke-width:1}
+table.tv{border-collapse:collapse; width:100%; font-size:.86rem; font-variant-numeric:tabular-nums}
+table.tv th,table.tv td{border-bottom:1px solid var(--line); padding:5px 8px; text-align:right}
+table.tv th:first-child,table.tv td:first-child{text-align:left}
+.hbars{display:flex; flex-direction:column; gap:12px}
+.hbar{display:grid; grid-template-columns:9.5rem minmax(0,1fr) 3.8rem; gap:10px; align-items:center}
+.hbar .nm{font-weight:650; font-size:.92rem}
+.hbar .nm small{display:block; font-weight:400; color:var(--ink-3); font-size:.74rem}
+.hbar .trk{display:flex; gap:2px; height:22px}
+.hbar .seg-b{height:100%; min-width:2px; display:flex; align-items:center; padding-left:6px; font:650 .74rem var(--font-body); overflow:visible; white-space:nowrap; transition:opacity .2s,background .2s; cursor:default}
+.hbar .seg-b:last-child{border-radius:0 4px 4px 0}
+.hbar .val{font:650 .92rem var(--font-body); font-variant-numeric:tabular-nums; text-align:right}
+.flow{display:flex; flex-wrap:wrap; gap:6px; align-items:stretch}
+.flow .box{border:1.5px solid var(--line-2); border-radius:9px; padding:6px 8px; font-size:.8rem; font-weight:600; background:var(--surface); display:flex; align-items:center; min-width:0}
+.flow .box.root{border-color:var(--ink); background:var(--surface-2)}
+.flow .arr{align-self:center; color:var(--ink-3); font-weight:700}
+.hist{display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; align-items:end; height:120px; position:relative; border-bottom:1px solid var(--line-2); margin-top:18px}
+.hist::before{content:""; position:absolute; left:0; right:0; bottom:97%; border-top:2px solid var(--crit)}
+.hist .hc{position:relative; height:100%; display:flex; align-items:flex-end; justify-content:center}
+.hist .hb{width:min(24px,70%); background:var(--seq-2); border-radius:4px 4px 0 0; transition:height .3s}
+.hist .hb.comp{background:var(--crit)}
+.hist .hc span{position:absolute; top:-16px; left:0; right:0; text-align:center; font-size:.68rem; font-weight:650; color:var(--ink)}
+.histcap{display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; font-size:.72rem; color:var(--ink-3); text-align:center}
+.meter{display:flex; flex-direction:column; gap:4px}
+.meter .trk{position:relative; height:18px; background:var(--surface-2); border-radius:5px; overflow:hidden}
+.meter .fill{height:100%; background:var(--seq-2); border-radius:5px 4px 4px 5px; transition:width .35s}
+.meter .mark{position:absolute; top:0; bottom:0; width:2px; background:var(--crit)}
+.meter .cap{display:flex; justify-content:space-between; font-size:.76rem; color:var(--ink-3)}
+.commit-strip{display:flex; align-items:center; gap:0; flex-wrap:wrap; row-gap:10px}
+.cmt{display:flex; flex-direction:column; align-items:center; gap:4px; font-size:.78rem; color:var(--ink-2); min-width:84px; text-align:center}
+.cmt i{width:18px; height:18px; border-radius:50%; border:3px solid var(--ink-2); background:var(--surface)}
+.cmt.read i{background:var(--good); border-color:var(--good)}
+.cmt.unread i{background:var(--crit); border-color:var(--crit)}
+.cmt.ownread i{background:var(--warn); border-color:var(--warn)}
+.cline{flex:0 0 28px; height:3px; background:var(--ink-3); margin-bottom:22px}
+.outcome{border-radius:12px; padding:14px; border:2px solid var(--line-2); display:flex; flex-direction:column; gap:6px}
+.outcome b{font:600 1.25rem/1.2 var(--font-head)}
+.outcome.ok{border-color:var(--good)} .outcome.flag{border-color:var(--warn)} .outcome.no{border-color:var(--crit)} .outcome.bad{border-color:var(--serious)}
+.olist{margin:0; padding-left:20px; font-size:.9rem; color:var(--ink-2)}
+
+/* decisions */
+.dec-tools{display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between}
+.decs{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; align-items:start}
+.dec{background:var(--surface); border:1px solid var(--line); border-top:4px solid var(--owner-fill); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:10px; min-width:0}
+.dec.later{border-top-color:var(--line-2)}
+.dec h3{font-size:1.15rem}
+.dec .why{font-size:.9rem; color:var(--ink-2)}
+.opts{display:flex; flex-direction:column; gap:6px}
+.opt{display:grid; grid-template-columns:20px minmax(0,1fr); gap:8px; text-align:left; border:1px solid var(--line-2); border-radius:10px; padding:9px 10px; background:var(--surface); cursor:pointer}
+.opt:hover{border-color:var(--ink)}
+.opt[aria-checked="true"]{border-color:var(--owner-fill); background:var(--owner-tint); box-shadow:0 0 0 1px var(--owner-fill)}
+.opt .radio{width:16px; height:16px; border-radius:50%; border:2px solid var(--ink-3); margin-top:3px}
+.opt[aria-checked="true"] .radio{border-color:var(--owner-fill); background:radial-gradient(var(--owner-fill) 45%,transparent 50%)}
+.opt b{font-weight:650; font-size:.94rem}
+.opt .cu{font-size:.84rem; color:var(--ink-2)}
+.opt .cu em{font-style:normal; font-weight:650; color:var(--ink-3)}
+.lean{font:700 .66rem/1 var(--font-body); letter-spacing:.06em; text-transform:uppercase; border:1px solid var(--ink-3); border-radius:4px; padding:2px 5px; margin-left:6px; color:var(--ink-2); white-space:nowrap; vertical-align:.12em}
+.outg{display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:6px}
+.outd{border:1px solid var(--line); border-radius:8px; padding:6px 8px; font-size:.8rem; display:flex; flex-direction:column; gap:4px}
+.outd b{font-family:var(--font-mono); font-size:.78rem}
+.outd .seg button{padding:3px 7px; font-size:.74rem}
+.answers{display:flex; flex-direction:column; gap:8px}
+.answers textarea{width:100%; min-height:150px; font:13px/1.45 var(--font-mono); padding:10px; border-radius:10px; border:1px solid var(--line-2); background:var(--surface); color:var(--ink)}
+
+/* not built */
+.nb{display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; align-items:start}
+.nbg{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:8px; min-width:0}
+.nbg ul{margin:0; padding-left:18px; font-size:.9rem; display:flex; flex-direction:column; gap:4px}
+.nbg li::marker{content:"✕  "; color:var(--ink-3)}
+.nbg .why{font-size:.88rem; color:var(--ink-2)}
+.nbg .kept{font-size:.88rem; border-top:1px dashed var(--line-2); padding-top:8px}
+
+footer{padding-block:40px 60px; color:var(--ink-2); font-size:.86rem}
+footer .wrap{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:20px}
+footer ul{margin:6px 0 0; padding-left:18px; display:flex; flex-direction:column; gap:4px}
+
+@media (max-width:1340px){ .mini-legend{display:none} }
+@media (max-width:900px){
+  .fix-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fix-grid .corr,.fix-grid .corr:nth-child(n+4){grid-column:span 1}
+  .fix-grid .corr:last-child{grid-column:1/-1}
+  .map{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .track{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .phase{grid-template-columns:minmax(0,1fr)}
+  .mini-legend{display:none}
+}
+@media (max-width:640px){
+  .prog li{grid-template-columns:minmax(0,1fr); gap:4px}
+  .prog .chip{justify-self:start}
+  .fix-grid{grid-template-columns:minmax(0,1fr)}
+  .fix-grid .corr:last-child{grid-column:auto}
+  body{font-size:15.5px}
+  .jump{grid-template-columns:minmax(0,1fr)}
+  .map{grid-template-columns:minmax(0,1fr)}
+  .track{grid-template-columns:minmax(0,1fr)}
+  .two{grid-template-columns:minmax(0,1fr)}
+  .ledger{grid-template-columns:minmax(0,1fr)}
+  .ledger>div.h{display:none}
+  .ledger>div.w{font-weight:650; border-top:1px solid var(--line); padding-bottom:2px}
+  .ledger>div.p,.ledger>div.n{border-top:0; padding-top:2px}
+  .hbar{grid-template-columns:minmax(0,1fr) 3.6rem; row-gap:4px}
+  .hbar .nm{grid-column:1/-1}
+  .rung{grid-template-columns:1.8rem minmax(0,1fr)}
+  .rung .kchip{grid-column:2}
+  .top .wrap{flex-wrap:nowrap; gap:6px}
+  .brand{display:none}
+  .nav{flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{padding:6px 8px; font-size:.84rem}
+  .iconbtn{white-space:nowrap; padding:5px 8px; font-size:.76rem}
+  html{scroll-padding-top:56px}
+  .decs{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto} *{transition:none!important; animation:none!important} }
+
+/* Additions for the architecture page. Diagrams are drawn in ink only; colour is kept for the two runs (testbed grey, v2 blue). */
+.law{font:600 clamp(1.15rem,2.6vw,1.55rem)/1.3 var(--font-head); border-left:5px solid var(--ink); padding:6px 0 6px 14px; max-width:62ch}
+.mname{font:650 13px var(--font-body); fill:var(--ink)}
+.sval{font:700 15px var(--font-body); fill:var(--ink); font-variant-numeric:tabular-nums}
+.sgn{font:700 15px var(--font-body); fill:var(--ink)}
+.lpid{font:700 10.5px var(--font-body); fill:var(--ink)}
+.lblm{font:500 10px var(--font-mono); fill:var(--ink-3)}
+.mpart{cursor:pointer}
+.mpart:focus{outline:none}
+.mpart:focus-visible rect{stroke-width:3.6}
+#machine .chart-scroll>svg{min-width:780px; color:var(--ink)}
+.legend-row svg,.chartbox .legend-row svg{display:inline-block; width:auto; min-width:0; height:auto; flex:none}
+.sdwrap svg{min-width:920px; color:var(--ink)}
+#planStage svg,#libStage svg,#deps svg{color:var(--ink)}
+#planStage .chart-scroll>svg{min-width:640px}
+#libStage .chart-scroll>svg{min-width:760px}
+.partbox{border-top:1px solid var(--line); padding-top:14px; display:flex; flex-direction:column; gap:10px}
+.cols2{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px}
+.cols3{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px}
+.cols4{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px}
+.behave-grid{display:grid; grid-template-columns:minmax(220px,270px) minmax(0,1fr); gap:14px; align-items:start}
+.swt{display:grid; grid-template-columns:20px minmax(0,1fr); gap:8px; align-items:start; cursor:pointer; font-size:.9rem}
+.swt input{margin:3px 0 0; width:16px; height:16px}
+.swt small{display:block; color:var(--ink-3); font-size:.78rem}
+.charts3{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px}
+.charts3 .chartbox{padding:10px}
+.loops{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:10px}
+.loopc{border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--surface); display:flex; flex-direction:column; gap:6px; font-size:.92rem; min-width:0}
+.lpbadge{display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:50%; border:1.5px solid var(--ink); font:700 .72rem var(--font-body); flex:none}
+.ansgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; align-items:start}
+.ansc{border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--surface); min-width:0; font-size:.92rem}
+.ansc h4{margin-bottom:6px}
+.mono{font-family:var(--font-mono); font-size:.82rem}
+.sw2{display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-1px}
+table.wide{min-width:780px}
+table.tv td,table.tv th{vertical-align:top}
+#tokMethods,#equations{overflow-x:auto}
+.hbar .segbar{height:24px}
+details>summary{cursor:pointer}
+.lede.stack{gap:8px}
+@media (max-width:900px){
+  .cols2,.cols3,.cols4{grid-template-columns:minmax(0,1fr)}
+  .behave-grid{grid-template-columns:minmax(0,1fr)}
+  .charts3{grid-template-columns:minmax(0,1fr)}
+}
+
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <span class="brand">Harness v2</span>
+  <nav class="nav" aria-label="Sections">
+    <a href="#machine-s">The machine</a>
+    <a href="#behave">How it behaves</a>
+    <a href="#parallel">Planning parallel work</a>
+    <a href="#library">The library</a>
+    <a href="#tokens">Tokens</a>
+    <a href="#answers-s">What it answers</a>
+    <a href="plan.html" class="yours">Plan and decisions</a>
+  </nav>
+  <button class="iconbtn" id="themeBtn" type="button">Theme: auto</button>
+</div></header>
+
+<main>
+<section class="hero"><div class="wrap"><div class="stack" id="hero"></div></div></section>
+
+<section class="band" id="machine-s"><div class="wrap">
+  <div class="band-head"><span class="eyebrow">Part 1</span><h2>The machine</h2>
+    <p class="lede">Eight parts. Tap one to see what it does, what it takes in and gives out, and which loops it controls.</p></div>
+  <div class="panel stack" id="machine"></div>
+</div></section>
+
+<section class="band" id="behave"><div class="wrap">
+  <div class="band-head"><span class="eyebrow">Part 2</span><h2>How it behaves</h2><div class="lede stack" id="behaveIntro"></div></div>
+  <div class="behave-grid">
+    <div class="panel stack"><h4>Controllers</h4><div id="switches" class="stack"></div></div>
+    <div class="panel stack" id="sdStage"></div>
+  </div>
+  <div class="assume" id="behaveNotes"></div>
+  <div class="sub"><h3>The loops</h3>
+    <p class="muted small">Each loop is marked on the diagram above. A reinforcing loop makes a problem grow by itself. A balancing loop is a limit. The harness is the set of controllers that break the first kind and manage the second.</p>
+    <div class="loops" id="loops"></div></div>
+  <details class="panel"><summary><b>The equations, and every number the model uses</b></summary><div id="equations" class="stack" style="margin-top:12px"></div></details>
+</div></section>
+
+<section class="band" id="parallel"><div class="wrap">
+  <div class="band-head"><span class="eyebrow">Part 3</span><h2>Planning for parallel work</h2>
+    <p class="lede">The parallel layout is worked out when the plan is made, not discovered at the merge. A plan does not run until it passes this check.</p></div>
+  <div class="panel" id="planRules"></div>
+  <div class="sub"><h3>The check on a plan</h3><div class="panel stack" id="planStage"></div></div>
+  <div class="sub"><h3>How many lanes are worth running</h3>
+    <div class="behave-grid">
+      <div class="panel stack"><h4>Controllers</h4><div id="switches2" class="stack"></div></div>
+      <div id="capStage"></div>
+    </div></div>
+  <div class="sub"><h3>And the orchestration document?</h3><div class="panel stack" id="orch"></div></div>
+</div></section>
+
+<section class="band" id="library"><div class="wrap">
+  <div class="band-head"><span class="eyebrow">Part 4</span><h2>The library that updates itself</h2>
+    <p class="lede">One SQLite file, rebuilt at any time from a journal in git. The tools write to it when something becomes true. Sessions and the planner ask it. Nothing is pushed into a session.</p></div>
+  <div class="panel stack" id="libStage"></div>
+</div></section>
+
+<section class="band" id="tokens"><div class="wrap">
+  <div class="band-head"><span class="eyebrow">Part 5</span><h2>Token efficiency</h2><div class="lede stack" id="tokIntro"></div></div>
+  <div class="panel stack" id="tokFill"></div>
+  <div class="panel stack" id="tokCarry"></div>
+  <div class="sub"><h3>What one piece of context costs</h3><div class="panel stack" id="resStage"></div></div>
+  <div class="sub"><h3>The methods</h3><div class="panel" id="tokMethods"></div></div>
+</div></section>
+
+<section class="band" id="answers-s"><div class="wrap">
+  <div class="band-head"><span class="eyebrow">Part 6</span><h2>What each part answers</h2>
+    <p class="lede">The 21 unsolved problems of the testbed, by the part of the machine that answers each.</p></div>
+  <div class="ansgrid" id="answers"></div>
+  <div class="sub"><h3>Build order</h3><div class="panel" id="order"></div></div>
+</div></section>
+</main>
+
+<footer><div class="wrap" id="foot"></div></footer>
+
+<script type="application/json" id="arch-data">{"meta":{"title":"Harness v2: the architecture","date":"2026-11-11","status":"A design. Nothing is built.","planLink":"plan.html","law":"Speed = lanes × what one lane delivers, until the lowest limit is reached. There are four: the check, the review, the merge, the token window.","thesis":["The harness is one machine with four scarce things: time on the check, review, the one-at-a-time merge, and tokens per five-hour window. Each gets a controller. A planner sets how many sessions run at once, a little below the point where one more adds nothing. A library that updates itself feeds the planner its numbers and feeds sessions answers, so they read less.","Which limit comes first depends on rates that are only partly measured today. That is the point of the design: the harness measures them, and the planner works the answer out again for every plan.","Below: the parts, how the machine behaves over time as stocks and flows, the plan check that lays out parallel work before it starts, the library, and the token methods."]},"tags":{"m":{"word":"Measured","means":"Observed in the record."},"s":{"word":"Setting","means":"A value someone chose. Read, not observed."},"t":{"word":"Target","means":"A pass mark. Not true yet."},"e":{"word":"Estimate","means":"Worked out or guessed. Not observed directly."},"i":{"word":"Illustrative","means":"Made up to show how the mechanism behaves."}},"numbers":{"total_tokens":["4.25 billion","m","cache-read tokens in 184 November transcripts. evidence/harness-bottlenecks/tally-output.txt"],"over400":["39.8 %","m","tokens in calls whose context had passed 400k. fit/tally-buckets-output.txt"],"opus_max":["367k","m","largest context of any slice call on Opus 5.5, over 5,879 calls. harness-v2/phase1/compaction-by-model-2026-11.txt"],"sonnet_max":["963k","m","largest context of any slice call on Sonnet 5.5. harness-v2/phase1/compaction-by-model-2026-11.txt"],"sonnet_read":["1,452 million","m","cache-read tokens of slice calls on Sonnet 5.5, in 3,297 calls. harness-v2/phase1/compaction-by-model-2026-11.txt"],"opus_read":["1,306 million","m","cache-read tokens of slice calls on Opus 5.5, in 5,879 calls. harness-v2/phase1/compaction-by-model-2026-11.txt"],"comp_367":["38 of 48","m","automatic compactions that came near 367k, every one on Opus. harness-v2/phase1/compaction-by-model-2026-11.txt"],"calls_per":["about 519","m","calls per slice session: 9,342 calls over 18 slice sessions. harness-v2/phase1/token-baseline-2026-11.txt"],"board_kb":["221 KB","m","the shared board on 11 November. map-full.txt:128"],"fixed_cost":["about 70,000 tokens","m","what every agent in the testbed paid before any work. compile §2.3 (CR-11)"],"fixed_cost_n":["70000","m","the same figure as a plain number, for the calculator"],"tools_cost":["34k","m","tool definitions inside the 70k. compile §2.3 (CR-11)"],"answer_cap":["about 860 tokens","s","the knowledge-store design caps a lookup's whole output at 2,000 characters. KNOWLEDGE-STORE-DESIGN-2026-11.md §4"],"ctx_plus":["6 to 17 % more","m","tokens used for the same recall by a Codex adapter that snapshots before compaction and restores after, tried on another project. It tested no index and no graph. compile §0, §2.4"],"rounds":["2.8","m","review rounds per slice gate: nine gates took three and two took two. sweep-cards.txt:132"],"container":["230 s","m","the check in the Linux container. compile §2.1"],"native":["367 s","m","the check on Windows, on the same code. compile §2.1"],"wait_max":["2,030 s","m","the longest recorded wait for the check, after every session was released at once. refute.txt:34"],"wait_median":["409 s","m","median of the 19 recorded waits. computed in harness-v2/design.json"],"ten_lanes":["about 15 minutes","m","how long a run of ten parallel lanes lasted before the limit stopped it. sweep-cards.txt:1229"],"oct_limits":["14","m","usage-limit episodes, 6 to 20 October. compile §2.3"],"merge_breaks":["the first two","m","slices whose first check on merged main failed, on the root's own hand edits to shared documents; fixed before the gate commit. sweep-cards.txt:178-181"],"peak_sessions":["nine","m","sessions with a call in the same ten minutes, 4 November. harness-v2/phase1/shutdown-join-2026-11.txt"],"root_ctx":["about 499k","m","mean context per root call. tally-output.txt"],"failed38":["38 of 71","m","ideas the testbed had already practised that failed anyway, mostly as lines in a brief. compile §9.1"],"fill_fetched":["about 27 to 28.5 %","e","content the sessions fetched by reading and searching, as a share of context tokens: 26.9 % as first run, 28.5 % with a stricter classifier; an independent method gave 22.3 % (range 20.6 to 32.2). compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"fill_own":["about 32 %","e","the model's own earlier output carried forward: thinking, commands, the code it wrote. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"fill_start":["about 29 %","e","the start of each window, re-read on every call: system prompt, tool definitions, instructions, and after a compaction the summary. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"ks_prior":["3 to 5","e","same-cause repeats the knowledge-store design expects among 48 fix commits, before its audit. KNOWLEDGE-STORE-DESIGN-2026-11.md §11"],"oct_window":["about 2.5 lane-hours","e","October, Pro plan, workflow subagents: ten lanes lasted about 15 minutes and two lanes about 75. Worked out here from sweep-cards.txt:1229 and compile §2.3"],"gain":["64 %","m","share of reviews that sent a slice back for another round: 1 − 1 ÷ 2.8. From sweep-cards.txt:132"],"ks_kill":["fewer than 3 verified hits in 20 encounters or 8 weeks","s","the knowledge-store design's own stop rule at its checkpoint KS-9"],"merges65":["65","m","merge commits in November. sweep-cards.txt:1062"],"step_calls":["54.7 %","m","8,701 of 15,921 calls issued nothing but read or search tools. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"step_tokens":["43.6 %","e","share of all context tokens re-read by calls that only read or search: slice main sessions 42.4 %, subagents 70.9 %. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"ctx_total":["4.33 billion","m","context tokens in November's 184 transcripts. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"fill_repeat":["0.5 to 1.5 %","e","content genuinely seen earlier in the same window. Identical repeat commands: zero. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"carry_in":["about 19 million","e","tokens of fetched content as they entered the windows, once. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"carry_proc":["about 950 million","e","times those tokens were then processed. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"passes":["some 50","e","passes per fetched token: 950 million over 19 million. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"hot_half":["72 paths","e","3.3 % of the paths read hold half the fetched tokens. The path key is the last two path segments. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"hot_73":["73 %","e","share of the fetched tokens held by the 294 paths that were read in five or more windows. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"fill_indep":["22.3 %","e","fetched content by an independent method, range 20.6 to 32.2. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"unedited":["74 %","e","share of fetched tokens that went to files the window did not edit. Not proof of waste: reading a file to change another is normal. compile §6, checked by two refuters and an independent re-measurement (evidence/harness-bottlenecks/fill/, fill/verify/check.txt)"],"replay_bars":["3 % of tokens and a recall of 0.8","t","pass marks suggested by a refuter of the window-fill measurement. Not settled: yours to set, decision D23 on the plan page"],"commits":["432 commits","m","commits in the clinic repository. Outside studies found that history helps large repositories and hurt those under 10,000 commits. compile §6"]},"glossary":{"lane":["lane","One session working on one slice. Lanes run side by side."],"slice":["slice","One piece of the product, built by its own session on its own branch."],"check":["the check","The full test run. Every review round needs one."],"gate":["gate","What a branch must pass before it merges: the check plus review."],"slot":["slot","How many checks may run at once on this PC."],"wave":["wave","Slices that can run at the same time: everything they need is merged, and none writes a file another one writes."],"footprint":["footprint","The files a slice will write."],"knee":["knee","The number of lanes past which one more adds nothing, because a limit has been reached."],"window":["token window","The plan's usage limit. It resets every five hours."],"context":["context","Everything the model re-reads on every call."],"compaction":["compaction","The tool swaps a full context for a summary and carries on."],"stock":["stock","Something that accumulates: slices waiting, tokens used, entries in the library."],"loop":["loop","A chain of cause and effect that comes back to where it started. Reinforcing loops feed themselves. Balancing loops hold a limit."],"root":["the root","The one orchestrator session of the testbed."]},"parts":[{"key":"planner","name":"Planner","x":20,"y":20,"w":210,"h":100,"lines":["checks the plan for parallel","work; sets waves and lanes"],"job":"Works out, before any work starts, which slices can run side by side and how many lanes are worth running.","does":["Reads each slice's declared {{t:footprint|footprint}}, what it reads, and what it needs first.","Lays the slices out in {{t:wave|waves}} so that nothing in a wave collides, aiming at the shortest finish, not the widest wave.","Works out the {{t:knee|knee}} from the four limits and memory, and runs a little below it, because a queue forms before a limit is fully used.","Names what limits the plan and the one change that would lift it.","Refuses a plan with a missing footprint, two writers of one file, or more lanes than it worked out."],"reads":["The plan: slices, footprints, needs, shared things.","From the library: files that changed together before, and the measured rates."],"writes":["Waves and a lane count, to the scheduler.","The predicted speed-up and the binding limit, to you."],"proof":"No collision is first found at a merge. After every plan, its predicted finish is set against the real one, and the difference corrects the rates."},{"key":"scheduler","name":"Scheduler","x":300,"y":20,"w":180,"h":100,"lines":["starts, parks and","releases sessions"],"job":"Turns the wave plan into running sessions, and brings them back after a stop.","does":["Starts a session per slice in its own worktree, with its own branch, port and database.","Releases a slice as soon as what it needs is merged and nothing running collides with it. It does not wait for a whole wave.","Releases two at a time, never all at once, and keeps waiting outside the session: a slice that waits is parked.","If a lane fails, its slice goes back to the backlog and the plan is laid out again.","After a restart, shows the resume list and checks each session's record against its branch."],"reads":["Waves and lanes, from the planner.","The lanes allowed right now, from the governor."],"writes":["Sessions, to the lanes.","The resume list, to you."],"proof":"After a restart, the next commit comes within three hours of the PC being up. The median wait for the check is under a minute."},{"key":"governor","name":"Governor","x":760,"y":20,"w":200,"h":100,"lines":["token window, lanes,","context ceiling"],"job":"Keeps the token window from stopping everything.","does":["Holds one token budget per window, for lanes, reviewers and replays together.","Slows the lanes when the burn rate would use up the window, instead of letting the limit stop them all.","Learns the window's size from every limit message: what had been used, by kind of token, when it came. Nobody knows that size today.","Sets a context ceiling per model, so no call re-reads more than about 367k.","The lanes actually running are the lower of the planner's count and the governor's."],"reads":["Burn per lane, by model, from the library.","Free memory and the check's peak, from the logger."],"writes":["Lanes allowed now, to the scheduler.","Ceilings and tool lists, to sessions."],"proof":"No limit stop inside a wave. It falls back to a fixed two lanes if its estimate of the window is wrong twice."},{"key":"lanes","name":"Lanes","x":300,"y":180,"w":180,"h":96,"lines":["one slice, one session,","one worktree each"],"job":"Where the work is written. Each lane is a session that asks before it explores and leaves its results on disk.","does":["One phase per session, so a new phase starts with a small context.","Asks the library by one command before reading its way through the code.","Writes reports and a small state file to disk and hands back a path and a summary.","Commits a claims file: what it claims, and the test that proves each claim.","Works only in its own worktree and may write reports only to one allowed folder."],"reads":["A brief, a branch, and answers from the library."],"writes":["A branch and its claims, to the gate.","A solved problem, to the library, when it had to work one out."],"proof":"Refused writes: zero over 20 runs. Hand edits to shared documents at merge: zero."},{"key":"gate","name":"Gate","x":530,"y":180,"w":180,"h":96,"lines":["check, review,","fix rounds"],"job":"Decides whether a slice is good, by tests it runs itself.","does":["Runs the check in the Linux container, in a fair queue with a printed place.","A script reads the claims and writes a small fixed-format verdict that names the commit.","A finding closes only on a test that fails before the fix and passes after.","Two rounds at most; a red gate means revert, not a patch on a patch.","Refuses a branch whose changes leave its declared footprint, until the plan is amended.","Walks a clean install inside every gate."],"reads":["A branch and its claims.","From the library: what the fix touches, and the open findings."],"writes":["A verdict, to the merge queue.","Findings, to the lane and to the library."],"proof":"On the record: the verdict script flags the recorded overstatements with under one false flag in ten. Live: defects made by fixes, against the testbed’s rate."},{"key":"merge","name":"Merge queue","x":760,"y":180,"w":160,"h":96,"lines":["one script, one lock,","checks the commit"],"job":"The one place where work is serial. It is a script, so the serial part is short.","does":["Merges under a lock, only when the verdict names the exact commit.","Runs one check on the merged result.","Applies the generated board; nobody edits it by hand.","Records what the slice really touched and how long everything took."],"reads":["A verdict that names a commit."],"writes":["Merged work.","Actual footprints and timings, to the library."],"proof":"Run record-only over the {{n:merges65}} recorded merges, it flags the unread final commits of 10 and 11 November."},{"key":"library","name":"The library","x":130,"y":336,"w":740,"h":62,"hub":true,"lines":["what is true now   ·   what a change touches   ·   solved problems   ·   measured rates"],"job":"The harness's memory. It is written by the tools at the moment something becomes true, and it is asked, never pushed.","does":["Holds four things: what is true now, what a change touches, solved problems, measured rates.","Answers a lookup in at most {{n:answer_cap}}, with a check that proves the answer applies.","Marks an entry stale when its files change, and never by age.","Proposes a lesson seen three times as a lint, a test or a gate clause.","Counts every lookup, hit and miss, so it can be judged on its own numbers."],"reads":["From the gate and the merge queue: verdicts, findings, footprints, timings.","From a lane: a problem it had to solve."],"writes":["To the planner: footprints and rates.","To the governor: burn by model.","To a lane: a short, proved answer."],"proof":"First the index replay on the recorded windows, at zero tokens. Then the knowledge store's own audit and pilot. Stopped on {{n:ks_kill}}, or as soon as lookups cost more tokens than they save."},{"key":"substrate","name":"The machine","x":20,"y":420,"w":940,"h":40,"lines":[],"job":"Power, restart, the off-machine copy and one always-on logger. Everything above stands on it.","does":["A copy off the PC every night.","A restart that needs no commands.","One logger of temperature, power and memory, so a power-off leaves a trace.","A rehearsal on a real host."],"reads":["The Windows log, the sensors."],"writes":["The check's peak memory and free memory, to the governor."],"proof":"A clone from the copy shows the same heads. After a reboot the databases are healthy within three minutes. The next power-off leaves a trace."}],"links":[{"from":"planner","to":"scheduler","side":"h","kind":"control","label":"waves, lanes","ly":-8},{"from":"governor","to":"scheduler","side":"h","kind":"control","label":"lanes allowed now","ly":-8},{"from":"scheduler","to":"lanes","kind":"control","label":"two at a time","lx":44,"ly":4,"anchor":"start"},{"from":"lanes","to":"gate","side":"h","kind":"data","label":"branch","off":-18,"ly":-6},{"from":"gate","to":"lanes","side":"h","kind":"data","label":"findings","off":20,"ly":14},{"from":"gate","to":"merge","side":"h","kind":"data","label":"verdict","ly":-6},{"from":"lanes","to":"library","kind":"learn","off2":-110,"label":"asks first; writes what it solved","lx":6,"ly":4,"anchor":"start"},{"from":"gate","to":"library","kind":"learn","off2":120,"label":"findings","lx":6,"ly":4,"anchor":"start"},{"from":"merge","to":"library","kind":"learn","off2":340,"label":"what it touched, timings","lx":-6,"ly":4,"anchor":"end"},{"from":"library","to":"planner","kind":"learn","label":"footprints, rates","off":-345,"off2":30,"lx":6,"ly":0,"anchor":"start"},{"from":"library","to":"governor","kind":"learn","label":"burn by model","off":440,"off2":80,"lx":-6,"ly":-76,"anchor":"end"}],"loops":[{"id":"R1","kind":"R","part":"gate","name":"The fix spiral","story":"A fix adds stored state. The state has an ending nobody tested. That is a new defect, which needs another fix, and another check. In the model this is the share of reviews that send a slice back: {{n:gain}} in the testbed.","today":"{{n:rounds}} rounds per slice, and the last diff read by the root alone.","v2":"Two rounds at most, revert instead of patching, and a test for every way new state ends."},{"id":"B1","kind":"B","part":"gate","name":"Check capacity","story":"Every round needs the check. The check serves its slots divided by its run time and no more. Past that, lanes queue.","today":"One slot and {{n:native}} on Windows. The longest wait on record is {{n:wait_max}}.","v2":"The container run takes {{n:container}}. A second slot opens once the check's peak memory is measured."},{"id":"B2","kind":"B","part":"merge","name":"The serial gate","story":"Review and merging pass through something that takes one at a time. However many lanes run, nothing leaves faster than that.","today":"The root did both. It briefed the reviewers, read the last diff itself, ran the check on the branch and again on merged main, and edited the board by hand.","v2":"Reviews run in a gate workflow, one gate at a time, outside the root. Merging is a script under a lock with one check. Raising the review limit takes a shorter review, or a second gate workflow when the token window allows."},{"id":"B3","kind":"B","part":"governor","name":"The limit stop","story":"Tokens used rise with the lanes working and the context each one carries. At the window's limit every lane stops at once.","today":"Unmanaged. {{n:oct_limits}} limit episodes in October; a run of ten lanes lasted {{n:ten_lanes}}.","v2":"The governor slows the lanes so the window lasts, instead of the limit stopping all of them."},{"id":"R2","kind":"R","part":"governor","name":"Context growth","story":"Every call re-reads the whole context and adds to it. So each call costs more than the one before. In the model it appears as its average: about 306k per call without a ceiling, about 220k with one. That gap is a comparison across models, not a trial.","today":"Sessions on Sonnet ran to {{n:sonnet_max}}. Sessions on Opus stopped at {{n:opus_max}}, because of that model's own window.","v2":"A ceiling near 367k on every model, and one phase per session."},{"id":"R4","kind":"R","part":"scheduler","name":"The pile-up","story":"A lane that waits still holds its context. Waiting costs tokens, tokens bring the stop sooner, and after a stop everything is released at once and waits again.","today":"Every session was released together on 9 November. One check then waited {{n:wait_max}}.","v2":"Two at a time, and waiting happens parked, outside any session."},{"id":"R3","kind":"R","part":"library","name":"The library compounds","story":"Each merged slice writes what it learned. The next session asks before it explores, so it reads less. Less reading means more slices per window, which write more.","today":"No library, and no index or graph was ever tried. The one context trial on record, a compaction adapter on another project, used {{n:ctx_plus}} tokens for the same recall.","v2":"Pull-only lookups, counted one by one. Unproven until measured."},{"id":"B4","kind":"B","part":"library","name":"Staleness","story":"Code changes. An entry whose files changed is not trusted until its check runs again. This is what stops the library filling with things that are no longer true.","today":"The board carried 183 minor findings with no status at all.","v2":"Entries are tied to the files they depend on. Stale by code change, never by age."},{"id":"B5","kind":"B","part":"planner","name":"Lanes at the knee","story":"More lanes help only until the lowest limit. Past it they add queues, tokens and collisions, and no speed.","today":"Lanes were chosen by feel and nothing checked for collisions. For {{n:merge_breaks}} slices the first check on merged main failed, on hand edits to shared documents.","v2":"The plan check runs a little below the knee and keeps colliding slices apart."}],"sd":{"stocks":{"B":"Backlog","W":"In work","Q":"Waiting for check","C":"In check","V":"In review","G":"Waiting to merge","M":"Merged","T":"Tokens used, this window","X":"Context per call","K":"Valid library entries"},"flowNames":["start","work done","check starts","check done","passes","merge"],"again":"another round","more":"more work, another check","burn":"burn","reset":"window resets","write":"written at merge","stale":"entries leave as their files change","limit":"at the limit: all stop","hits":"hits: less reading","ctxCapped":"ceiling 367k","ctxOpen":"up to 963k","equations":["lanes = your setting; with the planner, the lower of that and about 0.8 × the knee. When tokens are the first limit it takes the knee itself, and the governor trims the rest","start = min(backlog, lanes − slices in flight); with the scheduler, at most one new slice every five minutes","work done = in work ÷ work time × governor share","check starts = min(waiting, slots − in check);  check done = in check ÷ check time","after a check: back to work, except one time in every (checks per round), which goes to review","review done = min(in review, one gate at a time) ÷ review time;  another round = review done × (1 − 1 ÷ rounds)","merge = one at a time; each takes merge time + merge checks × check time and holds a check slot. In the testbed the root does both, so it reviews only when it is not merging","burn = (working × governor share + waiting × waiting share) × context factor × library factor","library factor = 1 − lookup-step share × hit rate + cost of looking up;  hit rate = top hit rate × entries ÷ (entries + half point)","entries: + per merged slice, − a share of them with every merge, as their files change","without the governor: every flow stops while tokens used ≥ window. With it: governor share = what the window can still carry ÷ what the lanes would burn","tokens used returns to zero every 300 minutes","one lane delivers 1 ÷ (rounds × (checks per round × (work + check) + review) + merge);  knee = lowest limit ÷ that"]},"model":{"hours":40,"intro":["The same machine as stocks and flows. Boxes hold things that pile up. Thick arrows are flows, each with a valve. Thin arrows say what speeds a flow up (+) or slows it down (−). The circled marks are the loops listed underneath.","Switch the controllers on and off and move the lanes. The boxes show the stocks at the chosen hour; the three charts show the whole run."],"params":{"lanes":{"name":"Lanes","v":6,"unit":"","tag":"m","src":"'up to about six sessions working' (map-full.txt:255); nine at the peak"},"slices":{"name":"Slices to merge","v":11,"unit":"","tag":"m","src":"the testbed's eleven slice gates"},"width":{"name":"Widest wave the plan allows","v":12,"unit":"","tag":"i","src":"set high so the plan is not the limit in this run"},"tcWin":{"name":"Check time, Windows","v":6.1,"unit":"min","tag":"m","src":"367 s. compile §2.1"},"tcCon":{"name":"Check time, container","v":3.8,"unit":"min","tag":"m","src":"230 s. compile §2.1"},"tw":{"name":"Work between two checks","v":20,"unit":"min","tag":"i","src":"a guess; with it the testbed's one check slot is fully used at about five lanes"},"checksPerRound":{"name":"Checks in one round of work","v":3,"unit":"","tag":"i","src":"a guess; sessions ran the check several times per round"},"tv":{"name":"Review time per round","v":20,"unit":"min","tag":"i","src":"a guess"},"r0":{"name":"Rounds per slice, testbed","v":2.8,"unit":"","tag":"m","src":"nine gates took three rounds, two took two. sweep-cards.txt:132"},"rCap":{"name":"Rounds per slice, with the contract","v":2,"unit":"","tag":"t","src":"the contract's cap. compile §3.3"},"mergeChecks0":{"name":"Checks at a merge, testbed","v":2,"unit":"","tag":"m","src":"on the branch and again on merged main. sweep-cards.txt:130"},"tmRoot":{"name":"Serial merge work, by the root","v":30,"unit":"min","tag":"i","src":"a guess: reading the diff and editing the board"},"tmQueue":{"name":"Serial merge work, by the script","v":3,"unit":"min","tag":"i","src":"a guess"},"wq0":{"name":"Token burn of a waiting lane, as a share of a working one","v":0.3,"unit":"","tag":"i","src":"a guess; waiting sessions 'sit idle holding context' (sweep-cards.txt:368)"},"ctxCap":{"name":"Context factor under a ceiling","v":0.72,"unit":"","tag":"e","src":"sessions that never passed 367k averaged about 220k per call, against 306k over all slice sessions. A comparison across models, not a trial. phase1/token-baseline-2026-11.txt"},"budget":{"name":"Token window, start value of the slider","v":30,"unit":"lane-hours","tag":"i","src":"a guess; how re-read tokens count against the limit is unknown"},"explore":{"name":"Share of tokens re-read by calls that only read or search: what a library is exposed to","v":0.436,"unit":"","tag":"e","src":"8,701 of 15,921 calls only read or searched, and re-read 43.6 % of context tokens. An exposure, not a saving. compile §6"},"hitMax":{"name":"Share of those lookup steps a full library spares","v":0.25,"unit":"","tag":"i","src":"a guess; nobody has measured it"},"khalf":{"name":"Entries at which the hit rate is half its top","v":20,"unit":"","tag":"i","src":"a guess"},"entriesPerSlice":{"name":"Entries written per merged slice","v":4,"unit":"","tag":"i","src":"a guess"},"callsPerSession":{"name":"Calls per slice session","v":519,"unit":"","tag":"m","src":"9,342 calls over 18 slice sessions. phase1/token-baseline-2026-11.txt"},"answerTokens":{"name":"Size of a library answer","v":860,"unit":"tokens","tag":"s","src":"the knowledge-store design's 2,000-character cap"},"tcCon2":{"name":"Check time, container, two at once","v":4.4,"unit":"min","tag":"m","src":"266 to 267 s each. sweep-cards.txt:418"},"tcWin2":{"name":"Check time, Windows, two at once","v":7.3,"unit":"min","tag":"m","src":"435 s each. sweep-cards.txt:287"},"lookupCost":{"name":"Cost of looking things up, as a share of burn","v":0.02,"unit":"","tag":"i","src":"a guess: every lookup is a turn, and its answer stays in the context"},"staleShare":{"name":"Share of entries that go stale with each merged slice","v":0.03,"unit":"","tag":"i","src":"a guess"},"margin":{"name":"How far below the knee the planner runs","v":0.8,"unit":"","tag":"s","src":"a design choice: a real queue forms before a limit is fully used"}},"switches":[{"key":"container","name":"Container run as the gate","effect":"the check takes 3.8 minutes, not 6.1","onByDefault":true},{"key":"slot2","name":"A second check slot","effect":"two checks at once, each a little slower; waits on the memory measurement","onByDefault":false},{"key":"contract","name":"Fix-round contract","effect":"two rounds at most, not 2.8","onByDefault":true},{"key":"queue","name":"Gate workflow and merge queue","effect":"review leaves the root; a script merges with one check","onByDefault":true},{"key":"ceiling","name":"Context ceiling","effect":"every session compacts near 367k","onByDefault":true},{"key":"nowait","name":"Scheduler: two at a time, waits parked","effect":"no mass release; a waiting lane burns nothing","onByDefault":true},{"key":"planner","name":"Planner sets the lanes","effect":"runs a little below the knee, whatever the slider says: nearly the same finish on fewer lane-hours","onByDefault":true},{"key":"governor","name":"Governor","effect":"slows the lanes so the token window lasts","onByDefault":true},{"key":"library","name":"The library (unproven)","effect":"sessions ask before they explore; each lookup costs a little. Watch the tokens figure","onByDefault":false}],"notes":["This is a model of how the machine behaves, not a forecast. Its output is illustrative.","Measured inputs: check times, rounds per slice, checks per merge, the slice count. Estimated from the record: the context factor and the fetched share. Guessed: work, review and merge minutes, checks per round, the size of the token window, the library's costs. The full list is under 'The equations'.","Which limit comes first depends on those guesses. Move the token window to see it change: at the size October's runs fitted ({{n:oct_window}}), tokens are the first limit at any lane count.","Stocks are continuous: 2.4 slices in review is an average, not a count. A smooth model shows no queue until a limit is fully used. A real queue forms earlier, which is why the planner runs below the knee. A plan counts as merged when less than half a slice is left.","In this model a lane past the knee only waits; it does not slow the others. So the planner does not make a run faster. It gets nearly the same finish with fewer sessions open, which is fewer tokens and less memory. A lane-hour of tokens is what one working testbed session burns in an hour.","In the model a stop and a slow-down cost the same time. In the record a stop cost more: a restart by hand, and every session released at once.","Review is one gate at a time in both runs. In the testbed the root also merges, so it cannot review while it merges.","Not in the model: the PC powering off, you being away, memory, the cost of a revert, a lane that fails. Those stop or slow every flow at once. The machine part and the scheduler are their answer.","The library lowers token burn only: the share of tokens that lookup-only calls re-read, times a guessed share of those steps it spares, less a small cost on every lookup. With few entries it costs more than it saves. Fewer lookup steps would also save time; that is not modelled."]},"plancheck":{"declares":["The files it will write: its {{t:footprint|footprint}}.","What it reads from other slices: the interfaces it depends on.","The slices it needs merged first.","Any shared thing it takes: a migration number, a shared document, a port, a database.","Its risk (money, stock, access, import, restore) and its model.","Its size, in work rounds."],"rules":["Refuse a slice that declares no footprint.","Build two graphs: who needs whom, and who collides with whom. Two slices collide if they write the same file, take the same shared thing, or one writes what the other reads without saying it needs it. The library adds files that have changed together before.","Lay the slices out for the shortest finish. The longest chain of needs, weighted by size, is the floor. A re-split is worth it only if it shortens that chain or fills an idle lane.","Work out the lanes worth running from the four limits and memory, and run a little below the knee.","Name what limits the plan, and the one change that would lift it.","Refuse a plan with two writers of one file, or more lanes than that.","While it runs: a slice starts as soon as what it needs is merged and nothing running collides with it. The lanes running are the lower of the planner's count and the governor's.","At the gate: a branch that changed files outside its footprint is refused until the plan is amended. After the merge, what it really touched goes to the library, so the next plan starts from better footprints."],"plans":{"base":[{"id":"cat","name":"Catalogue","writes":["catalogue/","migration 0010"],"needs":[]},{"id":"acc","name":"Access","writes":["access/","settings.py"],"needs":[]},{"id":"rst","name":"Restore","writes":["ops/restore/","settings.py"],"needs":[]},{"id":"stk","name":"Stock","writes":["stock/","migration 0011"],"needs":["cat"]},{"id":"bil","name":"Billing","writes":["billing/","money.py"],"needs":["cat"]},{"id":"til","name":"Tills","writes":["tills/","money.py"],"needs":["cat"]},{"id":"imp","name":"Import","writes":["import/","migration 0012"],"needs":["stk"]},{"id":"rep","name":"Reports","writes":["reports/"],"needs":["stk","bil","til"]}],"split":[{"id":"base","name":"Shared base","writes":["settings.py","money.py"],"needs":[]},{"id":"cat","name":"Catalogue","writes":["catalogue/","migration 0010"],"needs":[]},{"id":"acc","name":"Access","writes":["access/"],"needs":["base"]},{"id":"rst","name":"Restore","writes":["ops/restore/"],"needs":["base"]},{"id":"stk","name":"Stock","writes":["stock/","migration 0011"],"needs":["cat"]},{"id":"bil","name":"Billing","writes":["billing/"],"needs":["cat","base"]},{"id":"til","name":"Tills","writes":["tills/"],"needs":["cat","base"]},{"id":"imp","name":"Import","writes":["import/","migration 0012"],"needs":["stk"]},{"id":"rep","name":"Reports","writes":["reports/"],"needs":["stk","bil","til"]}]},"variants":[{"key":"naive","label":"As first written","plan":"base","check":false,"text":"Slices are grouped only by what they need. Two pairs write the same file, shown in red. Nobody sees it until the merge. The testbed had no such check: for {{n:merge_breaks}} slices the first check on merged main failed, on hand edits to shared documents."},{"key":"checked","label":"After the plan check","plan":"base","check":true,"text":"The check reads the declared files. Slices that write the same file never run together. Nothing is left to collide, but the plan is now one wave longer."},{"key":"split","label":"Re-split to widen it","plan":"split","check":true,"text":"The check names why: two shared files. Pulling them into one small slice first removes the collisions and the extra wave. The re-split is worth it because it shortens the plan, not because a wave is wider."}],"sampleNote":"A made-up plan in the shape of the clinic app, to show what the check does. The check is a script over the plan file and spends no tokens.","capacityText":"One lane delivers a slice every cycle. More lanes multiply that until the lowest limit. With these numbers the testbed's first limit is the root, which reviewed and merged everything one at a time: about three lanes were worth running, and the build ran six to {{n:peak_sessions}}. In v2 the first limit is the review, then the check. A small token window puts tokens first at any lane count. Several of the times behind this chart are guesses, so read which limits exist and how the controllers move them, not the figures. The harness measures these rates, and the planner works this chart out again for every plan."},"library":{"flow":{"inflow":"written by the agent that solved it, when it solved it","s1":"Candidate","s1b":"waits for the reviewer","verify":"reviewer proves it","s2":"Valid","s2b":"answers lookups","drift":"its files change","s3":"Stale","s3b":"not trusted","reverify":"its check passes again","retire":"never passes again","s4":"A check","s4b":"lint, test or gate clause","promote":"seen three times: proposed as a check","lookup":"A lookup reads Valid entries only. A hit is used once its check says it applies. A miss is written down."},"kinds":[{"name":"What is true now","what":"Slices, verdicts, findings and decisions, each with the commit it became true at and the commit that replaced it. The board is a view of this."},{"name":"What a change touches","what":"Files that import each other, tests that cover them, files that changed together, and what each slice declared against what it really touched."},{"name":"Solved problems","what":"The knowledge-store design as it stands: symptom, cause, what failed, the fix, and a check with a control pair that proves the entry applies."},{"name":"Measured rates","what":"Check time, waits, tokens per lane-hour by model, rounds per slice. The planner and the governor run on these."}],"evolves":[{"name":"Written at the moment of truth","what":"By the gate, the merge queue and the agent that solved the problem. Never by a model reading old text afterwards.","who":"The gate and merge scripts; the agent that solved a problem.","when":"At a verdict, at a merge, and at a solve that took an escalation or two failed tries."},{"name":"Stale by code change","what":"An entry is tied to the files it depends on. When they change, it is not trusted until its check runs again. Never by age.","who":"The lookup command and the merge script.","when":"When a file an entry depends on no longer has the content it was proved against."},{"name":"Lessons become checks","what":"An entry seen three times is proposed as a lint, a test or a gate clause. Once that lands, the entry retires and the defect stops arriving.","who":"The store's rule-of-three view proposes; you decide; a script lands the check.","when":"Three sightings of the same cause."},{"name":"Misses are written down","what":"When a session solves what the library already held, the miss and its cause are recorded and the lookup keys are fixed.","who":"The solving agent's record step; the reviewer rules on it without seeing the first ruling.","when":"When a solve matches an entry that an earlier lookup did not return."},{"name":"Rates replace guesses","what":"Every wave updates the measured rates and footprints, so each plan is laid out on better numbers than the last.","who":"The check, the merge queue and the transcript tally.","when":"After every check, every merge and every wave."}],"readers":[{"name":"The planner","what":"Footprints and rates, for waves and lanes."},{"name":"A session, before it explores","what":"One command; an answer of at most {{n:answer_cap}}; a check that the entry applies."},{"name":"The gate","what":"What a fix touches; the open findings."},{"name":"The governor","what":"Token burn per lane, by model."},{"name":"You","what":"The board, generated."}],"tables":[{"name":"journal","holds":"The truth: one unchangeable file per event, in git. The SQLite file is rebuilt from it at any time.","by":"every writer"},{"name":"entry, handle, footprint_item","holds":"Solved problems, the keys that find them, and the files each one depends on.","by":"the solving agent; approved by the reviewer (knowledge-store design)"},{"name":"state","holds":"Slice, verdict, finding, decision; valid from one commit until another.","by":"the gate and merge scripts"},{"name":"edge","holds":"imports, covers, changed-together, declared, touched. One recursive query gives what a change touches.","by":"scripts over git and the check"},{"name":"rate","holds":"A measured number, its scope and how many samples it rests on.","by":"the check, the merge queue, the transcript tally"},{"name":"lookup","holds":"Who asked what, what came back, tokens returned, hit or miss.","by":"the lookup command"}],"honest":["Standing: unproven. Nothing like it has been tried: the testbed never tested an index or a graph. Its one context trial, a compaction adapter on another project, used {{n:ctx_plus}} tokens for the same recall. This library is asked, never pushed, and every lookup is counted.","What it could touch is estimated as two exposures, which overlap. {{n:fill_fetched}} of context is content fetched by reading. And {{n:step_calls}} of calls did nothing but read or search, re-reading {{n:step_tokens}} of all tokens. Neither is a saving and neither is a ceiling.","Where it could pay is across sessions, not inside one. Re-reading inside a window is only {{n:fill_repeat}}, so a cache of files already read saves almost nothing. Across windows the reading is concentrated: {{n:hot_half}} hold half the fetched tokens, and the paths read in five or more windows hold {{n:hot_73}}. So the form that could pay lasts across sessions and returns something shorter than the lines. Nothing has shown that a shorter digest can stand in for the lines. Whether the reading was needed at all is unmeasured: {{n:unedited}} went to files the window did not edit, which is not proof of waste.","Its first test spends no tokens: replay the recorded windows. Build an import-and-caller index at each window's start commit, count the lookup-only calls it would have answered, and check whether its list holds the files the window went on to edit. An index earns a live trial only if that replay says so. A refuter suggested pass marks of {{n:replay_bars}}; setting them is your decision. Files that changed together are the weak half, with only {{n:commits}} to learn from. The replay reads the clinic repository and the transcripts and writes nothing there.","Its larger worth may be elsewhere. The generated board replaces a {{n:board_kb}} document that sessions carry. And the measured rates are what let the planner and the governor work at all.","It builds on the knowledge-store design (PR #183), which already has the journal, the SQLite index, the lookup command and the proof step, and which stops for your yes after a free audit and again after a pilot. That design expects only {{n:ks_prior}} repeats in the record it would audit.","v2 departs from that design in three ways. Work state sits in sibling tables, not in the store, which that design says is not a defect register. Code edges are added, which it chose to skip; they stay only if the index replay passes. And a lookup before exploring is a new trigger; that design looks up on an error, an escalation or a diff.","That design's stop rule is carried over: {{n:ks_kill}}. Lookups stay on this PC, as in that design; only their totals go to the journal.","Its worth, in that design’s own terms: hit rate × (cost of solving again − cost of a hit) − miss rate × cost of a miss − cost of writing. None of those is measured yet."]},"tokens":{"intro":["Nearly every token the build used was a re-read: {{n:total_tokens}} cache-read tokens in November. Whatever enters a session’s {{t:context|context}} is read again on every later call. So a piece of context costs its size times the calls still to come.","What fills that context is estimated from the transcripts. The start of every window is {{n:fill_start}}. The model's own earlier output, carried forward, is {{n:fill_own}}. What the session fetched by reading and searching is {{n:fill_fetched}}. Each method below attacks one of those three, or cuts the number of calls: {{n:step_calls}} of calls only read or searched."],"fill":[{"key":"start","name":"The start of every window","pct":29,"label":"about 29 %","what":"System prompt, tool definitions, instructions; after a compaction, the summary."},{"key":"own","name":"The model's own earlier output","pct":32,"label":"about 32 %","what":"Thinking, commands and code it wrote, carried forward."},{"key":"fetched","name":"What the session fetched","pct":27.5,"label":"27 to 28.5 %","what":"Files read and search hits. The share an index or a library is exposed to."},{"key":"other","name":"Everything else","pct":11.5,"label":"the rest","what":"Messages, test output and small items."}],"fillNote":"Shares of November's {{n:ctx_total}} context tokens, not of a bill: output tokens are left out. Estimates from the transcripts, checked by two refuters and an independent re-measurement, which put fetched content at {{n:fill_indep}}.","residencyNote":"A slice session made {{n:calls_per}} calls on record. Each route also costs one call, the same for all three, so that is left out. A compaction ends the re-reading early. A subagent in the testbed paid {{n:fixed_cost}} before any work.","methods":[{"name":"A context ceiling on every model","bucket":"own","how":"No call re-reads more than about 367k.","basis":"{{n:over400}} of tokens were in calls past 400k, all on Sonnet and Fable. Opus never passed {{n:opus_max}}: {{n:comp_367}} compactions came there.","status":"Trial. What a compaction loses is unmeasured."},{"name":"Route by window as well as price","bucket":"own","how":"A cheaper model with a bigger window can cost more.","basis":"Slice calls on Sonnet read {{n:sonnet_read}} tokens; on Opus, {{n:opus_read}} in nearly twice the calls.","status":"A comparison across models, not a trial."},{"name":"One phase per session","bucket":"own","how":"Each phase starts with a small context.","basis":"Late calls in a long session carry everything before them: {{n:calls_per}} calls per session.","status":"Design."},{"name":"A small standing context","bucket":"start","how":"A generated board, a short brief, a short tool list.","basis":"The board is {{n:board_kb}}. Tool definitions are {{n:tools_cost}} of the {{n:fixed_cost}} each agent pays.","status":"Build, with a with-and-without test."},{"name":"Ask, do not read","bucket":"fetched","how":"A library answer of at most {{n:answer_cap}} instead of files read into the session.","basis":"Two exposures, which overlap: {{n:fill_fetched}} of context is fetched content, and calls that only read or search re-read {{n:step_tokens}}. Inside one window re-reading is only {{n:fill_repeat}}, so the gain, if any, is across sessions.","status":"Unproven. A zero-token index replay first."},{"name":"Results on disk","bucket":"own","how":"A report is a path and a summary; a verdict is a few fixed fields.","basis":"The root averaged {{n:root_ctx}} of context per call.","status":"Build."},{"name":"No waiting inside a session","bucket":"calls","how":"A waiting slice is parked; the check runs in the background.","basis":"Median recorded wait {{n:wait_median}}; the longest {{n:wait_max}}.","status":"Build."},{"name":"Fewer rounds","bucket":"calls","how":"Each round re-reads the session's context again.","basis":"{{n:rounds}} rounds per slice.","status":"Trial: the fix-round contract."},{"name":"Scripts before agents","bucket":"calls","how":"The gate, the audit, the planner and the parser spend no tokens.","basis":"{{n:failed38}} practised ideas failed as prose.","status":"Build."},{"name":"Lanes at the knee","bucket":"calls","how":"No lane runs that only waits.","basis":"Ten lanes at once lasted {{n:ten_lanes}}.","status":"Design: the plan check."}],"carry":{"title":"A read costs by staying","inLabel":"Entered the windows, once","inText":"19M","in":19,"procLabel":"Processed, call after call","procText":"950M","proc":950,"text":"Fetched content entered the windows once as {{n:carry_in}} tokens. It was then processed {{n:carry_proc}} times, {{n:passes}} passes per token, because every later call reads it again. That is why keeping something out of a long session matters more than how big it is."}},"answers":[{"id":"B05","name":"The PC powers off","part":"substrate","how":"The join of power-offs to activity, a logger, and no sleep on mains."},{"id":"B10","name":"Nothing restarts after a reboot","part":"substrate","how":"A restart that needs no commands."},{"id":"B11","name":"The work exists only on this PC","part":"substrate","how":"A nightly copy off the machine."},{"id":"B19","name":"Nothing has run on a real host","part":"substrate","how":"A rehearsal on a rented host."},{"id":"B03","name":"Everything stops when you are away","part":"scheduler","how":"A resume list; sessions released two at a time."},{"id":"B15","name":"Worktrees and containers pile up","part":"scheduler","how":"A reaper that lists what is merged and clean."},{"id":"B08","name":"Memory is short","part":"governor","how":"Lanes and slots set from measured memory."},{"id":"B16","name":"Reports flow through the orchestrator","part":"governor","how":"Results on disk; a path and a summary come back."},{"id":"B01","name":"Fixes that create new defects","part":"gate","how":"The fix-round contract breaks the fix spiral."},{"id":"B02","name":"Gaps found only on the last day","part":"gate","how":"A clean-install walk inside every gate."},{"id":"B06","name":"The check is slow on Windows","part":"gate","how":"The container run is the gate."},{"id":"B07","name":"Checks queue behind each other","part":"gate","how":"Slots from one measured number; a fair queue; lanes at the knee."},{"id":"B09","name":"One check hung","part":"gate","how":"A heartbeat that names the running test."},{"id":"B12","name":"Session reports overstate","part":"gate","how":"A claims file, checked by a script."},{"id":"B14","name":"You cannot see progress","part":"gate","how":"The check's heartbeat: waiting, running or stalled."},{"id":"B18","name":"Tests ran only on Windows","part":"gate","how":"The container run is the gate."},{"id":"B20","name":"The load test was not rerun","part":"gate","how":"A rerun on current main, then on the host."},{"id":"B04","name":"One orchestrator is the only gate","part":"merge","how":"A gate workflow and a merge queue take the serial work from the root."},{"id":"B13","name":"Shared documents have one writer","part":"merge","how":"A generated board, applied by the merge script."},{"id":"B17","name":"Nobody reads the final commit","part":"merge","how":"No merge unless the verdict names the exact commit."},{"id":"B21","name":"Minor findings pile up uncounted","part":"library","how":"Findings are records with a status, in 'what is true now'."}],"orchestration":{"question":"Would the orchestration document then carry the parallel planning too?","answer":["Yes. The orchestration document is where the method lives, and today it has none of this. Its only parallel work is read-only discovery, five readers at a time. It puts off phase design, and it has no dependency graph, no footprint check, no lane arithmetic and no predicted speed-up.","The plan check belongs there as a new section after its second gate, with the lane arithmetic in its cost section and the machine's limits in its constraints section. Its read-only discovery fan-out stays as it is. The mechanism is defined once, here. The orchestration document carries the rule: no plan runs before it passes the check.","Three of its rules are really capacity facts that the planner should compute instead of state: fixed container names with one test database (that is one check slot), no two installs at once, and the top model alone on the risky areas. Migration numbers are a collision point it never names.","Nothing in that document was changed. It belongs to the ship plan's pull request, which this track does not edit. The section can be written when you say so."]},"order":[{"name":"The machine","builds":"The copy, the restart, the logger, the resume list. Phase 1, under way."},{"name":"The check","builds":"The container run as the gate, slots from one measured number, the heartbeat. Its timings are the first measured rates."},{"name":"The gate, the merge queue and the plan check","builds":"All scripts, no tokens. The same scripts write 'what is true now' and the rates, which is the first half of the library. The index replay runs here too, on the record."},{"name":"First use and a real host","builds":"The clean-install walk and the rehearsal."},{"name":"The governor and the rest of the library","builds":"The budget from measured rates and the context ceiling. Solved problems come last, through the knowledge store's own audit and pilot."}],"limits":["Which limit comes first depends on guessed times and on the size of the token window, which nobody knows. The charts show how the machine behaves, not how fast it will be.","The model leaves out the PC powering off, the owner being away, memory, the cost of a revert and a failing lane.","The library is unproven. The figures for what it could touch are exposures, not savings and not ceilings. No index or graph has been tried in the testbed.","The window-fill shares are estimates. They rest on context growth between calls; the path key is the last two path segments; the first run counted some heredoc writes as reads; output tokens are left out. How cache reads count against the plan’s limits is unknown.","The sample plan is made up. The testbed’s slices were never laid out with footprints, so there is no real plan to replay yet.","The library departs from the knowledge-store design in three places, listed in its section.","The orchestration document was read, not edited.","A refuter ran the model and checked the claims; what it found and what changed is in evidence/harness-v2-design/refute-architecture.md."],"sources":["docs/program/HARNESS-BOTTLENECKS-2026-11.md and its evidence folder","docs/program/harness-v2/phase1/ (token baseline, compactions by model, power-off join)","docs/ORCHESTRATION-DESIGN-2026-10.md (read; summary in evidence/harness-v2-design/read/orchestration-doc.md)","KNOWLEDGE-STORE-DESIGN-2026-11.md on pull request #183 (read; summary in evidence/harness-v2-design/read/knowledge-store-design.md)","docs/program/harness-v2/plan.html: the 21 problems, the five phases and your decisions"]}</script>
+<script>
+(function () {
+  'use strict';
+  var D = JSON.parse(document.getElementById('arch-data').textContent);
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var TAGL = { m: 'M', s: 'S', t: 'T', e: 'E', i: 'I' };
+  function numHtml(k) { var n = D.numbers[k]; if (!n) return '[?' + esc(k) + ']'; return '<span class="num' + (String(n[0]).length > 26 ? ' long' : '') + '" tabindex="0" data-n="' + k + '"><b>' + esc(n[0]) + '</b> <i class="tag ' + n[1] + '">' + TAGL[n[1]] + '</i></span>'; }
+  function rich(t) {
+    return esc(t).replace(/\{\{n:([a-z0-9_]+)\}\}/g, function (_, k) { return numHtml(k); })
+      .replace(/\{\{t:([a-z0-9_]+)\|([^}]+)\}\}/g, function (_, k, x) { return '<span class="term" tabindex="0" data-t="' + k + '">' + x + '</span>'; });
+  }
+  function tagPill(t) { return '<i class="tag ' + t + '">' + TAGL[t] + '</i>'; }
+  function store(key, val) { try { if (val === undefined) { var v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } localStorage.setItem(key, JSON.stringify(val)); } catch (e) { } return null; }
+
+  /* ---------- notes on numbers and words ---------- */
+  var pop = document.createElement('div'); pop.className = 'pop'; pop.hidden = true; document.body.appendChild(pop);
+  var popFor = null;
+  function tipT(el) { return el && el.closest ? el.closest('[data-n],[data-t],[data-tip]') : null; }
+  function showPop(el) {
+    var h = '';
+    if (el.dataset.n) { var n = D.numbers[el.dataset.n]; h = '<b>' + esc(D.tags[n[1]].word) + '</b>' + esc(n[2]); }
+    else if (el.dataset.t) { var g = D.glossary[el.dataset.t]; h = '<b>' + esc(g[0]) + '</b>' + esc(g[1]); }
+    else h = (el.dataset.tiph ? '<b>' + esc(el.dataset.tiph) + '</b>' : '') + esc(el.dataset.tip);
+    pop.innerHTML = h; pop.hidden = false; popFor = el;
+    var r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight, vw = document.documentElement.clientWidth;
+    var x = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, vw - pw - 8)), y = r.top - ph - 8; if (y < 4) y = r.bottom + 8;
+    pop.style.left = (x + window.scrollX) + 'px'; pop.style.top = (y + window.scrollY) + 'px';
+  }
+  function hidePop() { pop.hidden = true; popFor = null; }
+  document.addEventListener('pointerover', function (e) { if (e.pointerType === 'mouse') { var t = tipT(e.target); if (t) showPop(t); } });
+  document.addEventListener('pointerout', function (e) { if (e.pointerType === 'mouse' && popFor && tipT(e.target) === popFor) hidePop(); });
+  document.addEventListener('focusin', function (e) { var t = tipT(e.target); if (t) showPop(t); });
+  document.addEventListener('focusout', function (e) { if (tipT(e.target)) hidePop(); });
+  document.addEventListener('click', function (e) { var t = tipT(e.target); if (t) showPop(t); else if (!pop.hidden) hidePop(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hidePop(); });
+  window.addEventListener('scroll', function () { if (!pop.hidden) hidePop(); }, { passive: true });
+
+  /* =====================================================================
+     THE MODEL. One set of equations drives the stock-and-flow run and the
+     lanes chart. Units: slices, minutes, lane-minutes of token burn.
+     ===================================================================== */
+  var P = D.model.params, pv = function (k) { return P[k].v; };
+  var ST = { lanes: pv('lanes'), window: pv('budget'), on: {}, t: 0, scn: 'v2', plan: 'naive', part: 'planner', res: { size: 5000, calls: pv('callsPerSession') } };
+  D.model.switches.forEach(function (s) { ST.on[s.key] = !!s.onByDefault; });
+
+  function paramsFor(on, lanes) {
+    var two = !!on.slot2;
+    return {
+      N: lanes, S: pv('slices'), width: pv('width'),
+      slots: two ? 2 : 1,
+      tc: on.container ? (two ? pv('tcCon2') : pv('tcCon')) : (two ? pv('tcWin2') : pv('tcWin')),
+      tw: pv('tw'), tv: pv('tv'), k: pv('checksPerRound'),
+      r: on.contract ? pv('rCap') : pv('r0'),
+      mc: on.queue ? 1 : pv('mergeChecks0'),
+      tm: on.queue ? pv('tmQueue') : pv('tmRoot'),
+      shared: !on.queue,            /* testbed: one root both reviews and merges */
+      wq: on.nowait ? 0 : pv('wq0'), stagger: !!on.nowait,
+      mult: on.ceiling ? pv('ctxCap') : 1,
+      lib: !!on.library, e: pv('explore'), hitMax: pv('hitMax'), khalf: pv('khalf'), perSlice: pv('entriesPerSlice'), staleShare: pv('staleShare'), look: pv('lookupCost'),
+      planner: !!on.planner, governor: !!on.governor, margin: pv('margin'),
+      budget: ST.window * 60, win: 300
+    };
+  }
+  var TODAY = {}; D.model.switches.forEach(function (s) { TODAY[s.key] = false; });
+  function libFactor(p, K) { return p.lib ? 1 - p.e * p.hitMax * K / (K + p.khalf) + p.look : 1; }
+
+  /* steady state: what each limit allows in slices per hour, and the knee */
+  function capacity(p) {
+    var f = libFactor(p, p.S * p.perSlice / 2);
+    var cycle = p.r * (p.k * (p.tw + p.tc) + p.tv) + p.tm + p.mc * p.tc;
+    var perSliceBurn = p.r * (p.k * p.tw + p.tv) * p.mult * f;
+    var lim = [{ key: 'check', v: p.slots * 60 / (p.tc * (p.r * p.k + p.mc)) }];
+    if (p.shared) lim.push({ key: 'root', v: 60 / (p.r * p.tv + p.tm + p.mc * p.tc) });
+    else { lim.push({ key: 'review', v: 60 / (p.r * p.tv) }); lim.push({ key: 'merge', v: 60 / (p.tm + p.mc * p.tc) }); }
+    lim.push({ key: 'tokens', v: (p.budget / p.win) / perSliceBurn * 60 });
+    var low = lim.slice().sort(function (a, b) { return a.v - b.v; })[0], perLane = 60 / cycle;
+    return { lim: lim, cap: low.v, which: low.key, perLane: perLane, knee: low.v / perLane, planned: Math.max(1, low.key === "tokens" ? Math.ceil(low.v / perLane) : Math.round(p.margin * low.v / perLane)), at: function (n) { return Math.min(n * perLane, low.v); } };
+  }
+
+  /* stock-and-flow run, one-minute steps */
+  function simulate(p, H) {
+    var Nrun = p.planner ? Math.min(p.N, capacity(p).planned) : p.N;
+    var s = { B: p.S, W: 0, Q: 0, C: 0, V: 0, G: 0, Mg: 0, M: 0, T: 0, K: 0, stopped: false };
+    var out = { t: [], B: [], W: [], Q: [], C: [], V: [], G: [], M: [], T: [], K: [], stop: [] };
+    var acc = { work: 0, check: 0, gate: 0, held: 0, stop: 0 }, done = null, stops = 0, burnt = 0;
+    for (var t = 0; t <= H; t++) {
+      if (t % p.win === 0) { s.T = 0; s.stopped = false; }
+      var f = libFactor(p, s.K), active = s.W + s.Q + s.C + s.V + s.G + s.Mg;
+      if (t % 5 === 0) { out.t.push(t / 60); ['B', 'W', 'Q', 'C', 'V', 'M', 'K'].forEach(function (k) { out[k].push(s[k]); }); out.G.push(s.G + s.Mg); out.T.push(Math.min(100, 100 * s.T / p.budget)); out.stop.push(s.stopped ? 1 : 0); }
+      if (s.M >= p.S - 0.5 && done === null) done = t;
+      if (s.stopped) { acc.stop += active; continue; }
+      var rvCap = p.shared ? Math.max(0, 1 - s.Mg) : 1, reviewing = Math.min(s.V, rvCap), waitRev = s.V - reviewing;
+      /* the governor: slow the lanes so that the window lasts */
+      var left = p.win - (t % p.win), would = ((s.W + reviewing) + (s.Q + s.G + waitRev) * p.wq) * p.mult * f * left, room = 0.98 * p.budget - s.T;
+      var g = p.governor && would > room ? Math.max(0, room / would) : 1;
+      var st = Math.max(0, Math.min(s.B, Math.min(Nrun, p.width) - active)); if (p.stagger) st = Math.min(st, 0.2); if (g < 1) st = 0;
+      s.B -= st; s.W += st;
+      var wOut = g * s.W / p.tw; s.W -= wOut; s.Q += wOut;
+      var mergeShare = p.mc * p.tc / (p.tm + p.mc * p.tc), slotsEff = Math.max(0, p.slots - Math.min(1, s.Mg) * mergeShare);
+      var cIn = Math.max(0, Math.min(s.Q, slotsEff - s.C)); s.Q -= cIn; s.C += cIn;
+      var cOut = s.C / p.tc, more = cOut * (1 - 1 / p.k); s.C -= cOut; s.W += more; s.V += cOut - more;
+      var vOut = g * reviewing / p.tv, back = vOut * (1 - 1 / p.r); s.V -= vOut; s.W += back; s.G += vOut - back;
+      var gIn = Math.max(0, Math.min(s.G, 1 - s.Mg)); s.G -= gIn; s.Mg += gIn;
+      var mOut = s.Mg / (p.tm + p.mc * p.tc); s.Mg -= mOut; s.M += mOut;
+      if (p.lib) { s.K += mOut * p.perSlice; s.K -= s.K * p.staleShare * mOut; }
+      var bn = (g * (s.W + reviewing) + (s.Q + s.G + waitRev) * p.wq) * p.mult * f; s.T += bn; burnt += bn;
+      acc.work += g * (s.W + reviewing); acc.held += (1 - g) * (s.W + reviewing); acc.check += s.Q + s.C; acc.gate += waitRev + s.G + s.Mg;
+      if (s.T >= p.budget) { s.stopped = true; stops++; }
+    }
+    out.done = done; out.acc = acc; out.Nrun = Nrun; out.stops = stops; out.burnt = burnt / 60; return out;
+  }
+
+  /* ---------- drawing helpers ---------- */
+  function linePath(xs, ys, X, Y) { var d = ''; for (var i = 0; i < xs.length; i++) d += (i ? 'L' : 'M') + X(xs[i]).toFixed(1) + ' ' + Y(ys[i]).toFixed(1); return d; }
+  function chart(o) {
+    var W = 520, H = 190, L = 40, R = 86, T = 14, Bm = 28, xmax = o.xmax, ymax = o.ymax;
+    var X = function (v) { return L + v / xmax * (W - L - R); }, Y = function (v) { return H - Bm - Math.min(v, ymax) / ymax * (H - T - Bm); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(o.label) + '"><g class="grid">';
+    for (var k = 0; k <= 4; k++) { var yv = ymax * k / 4; s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(yv) + '" y2="' + Y(yv) + '"/><text class="lbl" text-anchor="end" x="' + (L - 5) + '" y="' + (Y(yv) + 4) + '">' + (ymax >= 20 ? Math.round(yv) : yv.toFixed(1).replace(/\.0$/, '')) + '</text>'; }
+    for (var h = 0; h <= xmax; h += o.xstep) s += '<text class="lbl" text-anchor="middle" x="' + X(h) + '" y="' + (H - 9) + '">' + h + (h === 0 ? ' h' : '') + '</text>';
+    s += '</g>';
+    (o.bands || []).forEach(function (b) { s += '<rect x="' + X(b[0]) + '" y="' + T + '" width="' + Math.max(1, X(b[1]) - X(b[0])) + '" height="' + (H - T - Bm) + '" fill="' + o.bandFill + '" opacity=".16"/>'; });
+    o.series.forEach(function (se) {
+      s += '<path d="' + linePath(se.x, se.y, X, Y) + '" fill="none" stroke="' + se.color + '" stroke-width="' + (se.w || 2) + '" stroke-linejoin="round"' + (se.dash ? ' stroke-dasharray="' + se.dash + '"' : '') + '/>';
+      var n = se.y.length - 1; s += '<text class="lbl-strong" x="' + (W - R + 5) + '" y="' + (Y(se.y[n]) + 4 + (se.dy || 0)) + '">' + esc(se.name) + '</text>';
+    });
+    if (o.cursor !== undefined) s += '<line x1="' + X(o.cursor) + '" x2="' + X(o.cursor) + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="var(--ink)" stroke-width="1"/>';
+    return s + '</svg>';
+  }
+  var INK = 'var(--ink)', MUT = 'var(--quiet)', V2C = 'var(--seq-2)';
+
+  /* =====================================================================
+     1. THE MACHINE: block diagram of the parts and what flows between them
+     ===================================================================== */
+  function renderMachine() {
+    var W = 980, H = 470, s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The parts of the harness and what flows between them"><defs><marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    var by = {}; D.parts.forEach(function (p) { by[p.key] = p; });
+    D.links.forEach(function (l) {
+      var a = by[l.from], b = by[l.to], x1, y1, x2, y2;
+      if (l.side === 'h') { x1 = a.x + a.w; y1 = a.y + a.h / 2 + (l.off || 0); x2 = b.x; y2 = b.y + b.h / 2 + (l.off2 === undefined ? (l.off || 0) : l.off2); if (a.x > b.x) { x1 = a.x; x2 = b.x + b.w; } }
+      else { x1 = a.x + a.w / 2 + (l.off || 0); y1 = a.y + a.h; x2 = b.x + b.w / 2 + (l.off2 === undefined ? (l.off || 0) : l.off2); y2 = b.y; if (a.y > b.y) { y1 = a.y; y2 = b.y + b.h; } }
+      s += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="currentColor" stroke-width="' + (l.kind === 'control' ? 2 : 1.3) + '"' + (l.kind === 'learn' ? ' stroke-dasharray="5 4"' : '') + ' marker-end="url(#am)"/>';
+      var lx = (x1 + x2) / 2 + (l.lx || 0), ly = (y1 + y2) / 2 + (l.ly || 0);
+      s += '<text class="lbl" text-anchor="' + (l.anchor || 'middle') + '" x="' + lx + '" y="' + ly + '" style="fill:var(--ink-2)">' + esc(l.label) + '</text>';
+    });
+    D.parts.forEach(function (p) {
+      var sel = p.key === ST.part;
+      s += '<g class="mpart" data-part="' + p.key + '" tabindex="0" role="button" aria-label="' + esc(p.name) + '"><rect x="' + p.x + '" y="' + p.y + '" width="' + p.w + '" height="' + p.h + '" rx="8" fill="' + (sel ? 'var(--ink)' : 'var(--surface)') + '" stroke="currentColor" stroke-width="' + (p.hub ? 2.4 : 1.6) + '"/>' +
+        '<text class="mname" text-anchor="middle" x="' + (p.x + p.w / 2) + '" y="' + (p.y + 22) + '" style="fill:' + (sel ? 'var(--surface)' : 'var(--ink)') + '">' + esc(p.name) + '</text>' +
+        p.lines.map(function (ln, i) { return '<text class="lbl" text-anchor="middle" x="' + (p.x + p.w / 2) + '" y="' + (p.y + 40 + i * 14) + '" style="fill:' + (sel ? 'var(--surface)' : 'var(--ink-2)') + '">' + esc(ln) + '</text>'; }).join('') + '</g>';
+    });
+    s += '</svg>';
+    var p = by[ST.part];
+    $('#machine').innerHTML = '<div class="chart-scroll">' + s + '</div><div class="legend-row"><span><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="var(--ink)" stroke-width="2.2"/></svg> control</span><span><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="var(--ink)" stroke-width="1.3"/></svg> work and results</span><span><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" stroke="var(--ink)" stroke-width="1.3" stroke-dasharray="5 4"/></svg> what the library learns from and gives back</span></div>' +
+      '<div class="partbox"><h3>' + esc(p.name) + '</h3><p class="lede">' + rich(p.job) + '</p><div class="cols3">' +
+      '<div><h4>What it does</h4><ul class="plist">' + p.does.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>Takes in</h4><ul class="plist">' + p.reads.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul><h4 style="margin-top:10px">Gives out</h4><ul class="plist">' + p.writes.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>Loops it controls</h4><ul class="plist">' + D.loops.filter(function (l) { return l.part === p.key; }).map(function (l) { return '<li><b>' + l.id + ' ' + esc(l.name) + '.</b> ' + rich(l.v2) + '</li>'; }).join('') + '</ul></div></div>' + (p.proof ? '<p class="callout"><b>How we will know it works.</b> ' + rich(p.proof) + '</p>' : '') + '</div>';
+  }
+
+  /* =====================================================================
+     2. HOW IT BEHAVES: stock-and-flow diagram with live values, and runs
+     ===================================================================== */
+  var HRS = D.model.hours, runs = null;
+  function rerun() { runs = { today: simulate(paramsFor(TODAY, ST.lanes), HRS * 60), v2: simulate(paramsFor(ST.on, ST.lanes), HRS * 60) }; }
+  function at(run, key) { var i = Math.min(run.t.length - 1, Math.round(ST.t * 12)); return run[key][i]; }
+  function sdDiagram(run) {
+    var W = 1010, H = 440, bw = 100, bh = 58, y = 104, gap = 46;
+    var names = D.sd.stocks, order = ['B', 'W', 'Q', 'C', 'V', 'G', 'M'], xs = {}, i;
+    order.forEach(function (k, n) { xs[k] = 12 + n * (bw + gap); });
+    var p = paramsFor(ST.scn === 'today' ? TODAY : ST.on, ST.lanes), scale = { B: p.S, W: p.N, Q: p.N, C: p.slots, V: p.N, G: p.N, M: p.S };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Stock and flow diagram of the harness"><defs><marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    function stock(k, x, yy, w, val, sc, unit) {
+      var f = Math.max(0, Math.min(1, val / sc));
+      return '<rect x="' + x + '" y="' + yy + '" width="' + w + '" height="' + bh + '" fill="var(--surface)" stroke="currentColor" stroke-width="2"/>' +
+        '<rect x="' + (x + 2) + '" y="' + (yy + bh - 8) + '" width="' + ((w - 4) * f) + '" height="6" fill="' + (ST.scn === 'today' ? MUT : V2C) + '"/>' +
+        '<text class="lbl" text-anchor="middle" x="' + (x + w / 2) + '" y="' + (yy + 17) + '" style="fill:var(--ink-2)">' + esc(names[k]) + '</text>' +
+        '<text class="sval" text-anchor="middle" x="' + (x + w / 2) + '" y="' + (yy + 39) + '">' + (unit === '%' ? Math.round(val) + ' %' : val.toFixed(1)) + '</text>';
+    }
+    function valve(x, yy) { return '<path d="M' + (x - 6) + ' ' + (yy - 7) + 'L' + (x + 6) + ' ' + (yy + 7) + 'L' + (x + 6) + ' ' + (yy - 7) + 'L' + (x - 6) + ' ' + (yy + 7) + 'z" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>'; }
+    function flow(x1, x2, yy, label) { return '<line x1="' + x1 + '" y1="' + yy + '" x2="' + (x2 - 2) + '" y2="' + yy + '" stroke="currentColor" stroke-width="4" marker-end="url(#as)"/>' + valve((x1 + x2) / 2 - 2, yy) + (label ? '<text class="lbl" text-anchor="middle" x="' + ((x1 + x2) / 2) + '" y="' + (yy + 24) + '">' + esc(label) + '</text>' : ''); }
+    function cloud(x, yy) { return '<path d="M' + (x - 12) + ' ' + (yy + 6) + 'a7 7 0 0 1 2 -12a8 8 0 0 1 14 -2a7 7 0 0 1 6 12a6 6 0 0 1 -4 6h-16a6 6 0 0 1 -2 -4z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>'; }
+    function link(d, sign, sx, sy) { return '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1.1" marker-end="url(#as)" opacity=".8"/><text class="sgn" x="' + sx + '" y="' + sy + '">' + sign + '</text>'; }
+    function loop(id, x, yy) { return '<g><circle cx="' + x + '" cy="' + yy + '" r="12" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/><text class="lpid" text-anchor="middle" x="' + x + '" y="' + (yy + 4) + '">' + id + '</text></g>'; }
+    /* main chain */
+    var fl = D.sd.flowNames;
+    for (i = 0; i < order.length - 1; i++) s += flow(xs[order[i]] + bw, xs[order[i + 1]], y + bh / 2 - 4, null) + '<text class="lbl" text-anchor="middle" x="' + (xs[order[i]] + bw + gap / 2) + '" y="' + (y + bh + 15) + '" style="fill:var(--ink)">' + esc(fl[i]) + '</text>';
+    order.forEach(function (k) { s += stock(k, xs[k], y, bw, at(run, k), scale[k]); });
+    /* another round: review back to work */
+    var ax = xs.V + bw / 2, bx = xs.W + bw / 2;
+    s += '<path d="M' + ax + ' ' + y + 'C' + ax + ' 14,' + bx + ' 14,' + bx + ' ' + (y - 3) + '" fill="none" stroke="currentColor" stroke-width="4" marker-end="url(#as)"/>' + valve((ax + bx) / 2, 37) + '<text class="lbl" text-anchor="middle" x="' + ((ax + bx) / 2) + '" y="24" style="fill:var(--ink)">' + esc(D.sd.again) + '</text>';
+    var ix = xs.C + bw / 2 - 16, jx = xs.W + bw / 2 + 18;
+    s += '<path d="M' + ix + ' ' + y + 'C' + ix + ' 66,' + jx + ' 66,' + jx + ' ' + (y - 3) + '" fill="none" stroke="currentColor" stroke-width="3" marker-end="url(#as)"/><text class="lbl" text-anchor="middle" x="' + ((ix + jx) / 2) + '" y="97" style="fill:var(--ink)">' + esc(D.sd.more) + '</text>';
+    /* second row: tokens, context, library */
+    var y2 = 300, tx = 150, tw2 = 150, cx = 470, cw = 150, kx = 800, kw = 160;
+    s += cloud(54, y2 + bh / 2 - 4) + flow(70, tx, y2 + bh / 2 - 4, D.sd.burn) + stock('T', tx, y2, tw2, at(run, 'T'), 100, '%') + flow(tx + tw2, tx + tw2 + 86, y2 + bh / 2 - 4, D.sd.reset) + cloud(tx + tw2 + 104, y2 + bh / 2 - 4);
+    s += '<rect x="' + cx + '" y="' + y2 + '" width="' + cw + '" height="' + bh + '" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><text class="lbl" text-anchor="middle" x="' + (cx + cw / 2) + '" y="' + (y2 + 17) + '" style="fill:var(--ink-2)">' + esc(names.X) + '</text><text class="sval" text-anchor="middle" x="' + (cx + cw / 2) + '" y="' + (y2 + 39) + '">' + (p.mult < 1 ? D.sd.ctxCapped : D.sd.ctxOpen) + '</text>';
+    s += cloud(kx - 96, y2 + bh / 2 - 4) + flow(kx - 80, kx, y2 + bh / 2 - 4, D.sd.write) + stock('K', kx, y2, kw, at(run, 'K'), 60) + '<text class="lbl" text-anchor="middle" x="' + (kx + kw / 2) + '" y="' + (y2 + bh + 16) + '">' + esc(D.sd.stale) + '</text>';
+    /* thin causal links with their signs */
+    s += link('M' + (xs.W + 30) + ' ' + (y + bh) + 'C' + (xs.W + 10) + ' 230,110 240,104 ' + (y2 + 12), '+', xs.W - 2, 236);
+    s += link('M' + cx + ' ' + (y2 + 40) + 'C400 ' + (y2 + 70) + ',160 ' + (y2 + 92) + ',112 ' + (y2 + 40), '+', 300, y2 + 92);
+    s += link('M' + (tx + 60) + ' ' + y2 + 'C' + (tx + 60) + ' 240,' + (xs.B + 110) + ' 250,' + (xs.B + bw + 14) + ' ' + (y + bh / 2 + 6), '−', tx + 70, 248);
+    s += link('M' + (kx + 60) + ' ' + y2 + 'C' + (kx + 40) + ' 230,' + (xs.Q - 10) + ' 236,' + (xs.W + bw + 16) + ' ' + (y + bh / 2 + 6), '−', kx + 10, 240);
+    s += link('M' + (xs.M + 30) + ' ' + (y + bh) + 'C' + (xs.M + 30) + ' 240,' + (kx - 20) + ' 250,' + (kx - 42) + ' ' + (y2 + 12), '+', xs.M + 38, 220);
+    s += '<text class="lbl" x="' + (tx + 78) + '" y="232" style="fill:var(--ink)">' + esc(D.sd.limit) + '</text><text class="lbl" x="' + (kx - 60) + '" y="222" style="fill:var(--ink)">' + esc(D.sd.hits) + '</text>';
+    /* loop marks */
+    s += loop('R1', (ax + bx) / 2 + 76, 40) + loop('B1', xs.Q + bw + gap / 2, y + bh + 36) + loop('B2', xs.G + bw + gap / 2, y + bh + 36) + loop('B3', tx + 20, 226) + loop('R2', cx + cw / 2, y2 - 22) + loop('R3', kx + kw - 14, 232) + loop('B4', kx + kw / 2, y2 + bh + 38) + loop('R4', xs.Q + bw / 2, y + bh + 36) + loop('B5', xs.B + bw + gap / 2, y - 24);
+    return s + '</svg>';
+  }
+  function renderSwitches(id) {
+    $(id).innerHTML = D.model.switches.map(function (sw) {
+      return '<label class="swt"><input type="checkbox" data-sw="' + sw.key + '"' + (ST.on[sw.key] ? ' checked' : '') + '><span><b>' + esc(sw.name) + '</b><small>' + esc(sw.effect) + '</small></span></label>';
+    }).join('') + '<label class="ctl" style="margin-top:6px"><span>Lanes: sessions working at once: <b>' + ST.lanes + '</b></span><input type="range" min="1" max="12" value="' + ST.lanes + '" data-lanes="1"></label>' +
+      '<label class="ctl"><span>Token window: <b>' + ST.window + '</b> lane-hours per five hours ' + tagPill('i') + '</span><input type="range" min="2" max="60" step="1" value="' + ST.window + '" data-window="1"></label><p class="small muted">Nobody knows its size. October\u2019s runs fitted ' + numHtml('oct_window') + '.</p>';
+  }
+  function hrs(m) { return m === null ? 'not finished in ' + HRS + ' h' : (m / 60).toFixed(1) + ' h'; }
+  function renderBehave() {
+    var a = runs.today, b = runs.v2, run = runs[ST.scn], S = pv('slices');
+    var bands = function (r) { var o = [], st = null; r.stop.forEach(function (v, i) { if (v && st === null) st = r.t[i]; if (!v && st !== null) { o.push([st, r.t[i]]); st = null; } }); if (st !== null) o.push([st, r.t[r.t.length - 1]]); return o; };
+    var lanesNote = function (r) { return r.Nrun < ST.lanes ? r.Nrun + ' lanes (the planner\u2019s count)' : ST.lanes + ' lanes'; };
+    var PARTS = [['working', 'work', 'var(--seq-2)', '#fff'], ['queue and check', 'check', 'var(--warn)', '#0b0b0b'], ['waiting for review or merge', 'gate', 'var(--serious)', '#0b0b0b'], ['held back by the governor', 'held', 'var(--quiet)', '#0b0b0b'], ['stopped by the limit', 'stop', 'var(--crit)', '#fff']];
+    $('#sdStage').innerHTML =
+      '<div class="controls"><label class="ctl"><span>Show the stocks for</span><span class="seg" role="group"><button type="button" data-scn="today" aria-pressed="' + (ST.scn === 'today') + '">The testbed in November</button><button type="button" data-scn="v2" aria-pressed="' + (ST.scn === 'v2') + '">Harness v2</button></span></label>' +
+      '<label class="ctl" style="flex:1 1 260px"><span>Time: hour <b>' + ST.t.toFixed(1) + '</b> of ' + HRS + '</span><input type="range" min="0" max="' + HRS + '" step="0.25" value="' + ST.t + '" data-time="1"></label>' +
+      '<button class="btn primary" type="button" data-play="1">' + (playing ? 'Pause' : 'Play') + '</button></div>' +
+      '<div class="chart-scroll sdwrap">' + sdDiagram(run) + '</div>' +
+      '<p class="small">' + tagPill('i') + ' Model output. Testbed: <b>' + hrs(a.done) + '</b> to merge all ' + S + ', at ' + lanesNote(a) + ', with ' + a.stops + ' limit stop' + (a.stops === 1 ? '' : 's') + ' and <b>' + a.burnt.toFixed(0) + '</b> lane-hours of tokens. Harness v2: <b>' + hrs(b.done) + '</b>, at ' + lanesNote(b) + ', with ' + b.stops + ' and <b>' + b.burnt.toFixed(0) + '</b>.</p>' +
+      '<div class="charts3">' +
+      '<div class="chartbox"><h4>Slices merged</h4>' + chart({ label: 'Slices merged over time', xmax: HRS, xstep: 10, ymax: S, cursor: ST.t, series: [{ name: 'testbed', x: a.t, y: a.M, color: MUT, dy: 12 }, { name: 'v2', x: b.t, y: b.M, color: V2C, dy: -2 }] }) + '</div>' +
+      '<div class="chartbox"><h4>Waiting for the check</h4>' + chart({ label: 'Slices waiting for the check', xmax: HRS, xstep: 10, ymax: Math.max(2, ST.lanes), cursor: ST.t, series: [{ name: 'testbed', x: a.t, y: a.Q, color: MUT, dy: -2 }, { name: 'v2', x: b.t, y: b.Q, color: V2C, dy: 12 }] }) + '</div>' +
+      '<div class="chartbox"><h4>Tokens used in the window, %</h4>' + chart({ label: 'Share of the token window used', xmax: HRS, xstep: 10, ymax: 100, cursor: ST.t, bands: bands(a), bandFill: 'var(--crit)', series: [{ name: 'testbed', x: a.t, y: a.T, color: MUT, dy: -2 }, { name: 'v2', x: b.t, y: b.T, color: V2C, dy: 12 }] }) + '<p class="small">Shaded: the testbed run stopped by the limit.</p></div></div>' +
+      '<div class="chartbox stack"><h4>Where the lane-hours went</h4>' + [['The testbed in November', a], ['Harness v2', b]].map(function (r) {
+        var x = r[1].acc, tot = PARTS.reduce(function (q, pt) { return q + x[pt[1]]; }, 0) || 1;
+        return '<div class="hbar"><span class="nm">' + r[0] + '<small>' + (tot / 60).toFixed(0) + ' lane-hours</small></span><span class="segbar">' + PARTS.map(function (q) { var pc = 100 * x[q[1]] / tot; return pc < 0.5 ? '' : '<span style="flex:' + pc + ';background:' + q[2] + ';color:' + q[3] + '" tabindex="0" data-tiph="Illustrative" data-tip="' + q[0] + ': ' + pc.toFixed(0) + ' % of lane time.">' + (pc >= 7 ? pc.toFixed(0) + '%' : '') + '</span>'; }).join('') + '</span><span class="val"></span></div>';
+      }).join('') + '<div class="legend-row">' + PARTS.map(function (q) { return '<span><i class="sw2" style="background:' + q[2] + '"></i>' + q[0] + '</span>'; }).join('') + '</div></div>';
+  }
+  var playing = null;
+  function play() {
+    if (playing) { clearInterval(playing); playing = null; renderBehave(); return; }
+    if (ST.t >= HRS) ST.t = 0;
+    playing = setInterval(function () { ST.t = Math.min(HRS, ST.t + 0.5); if (ST.t >= HRS) { clearInterval(playing); playing = null; } renderBehave(); }, 120);
+    renderBehave();
+  }
+  function renderLoops() {
+    $('#loops').innerHTML = D.loops.map(function (l) {
+      return '<div class="loopc"><div class="row"><span class="lpbadge">' + l.id + '</span><b>' + esc(l.name) + '</b><span class="chip">' + (l.kind === 'R' ? 'reinforcing: feeds itself' : 'balancing: holds a limit') + '</span></div><p>' + rich(l.story) + '</p><p class="small"><b>In the testbed.</b> ' + rich(l.today) + '</p><p class="small"><b>In v2.</b> ' + rich(l.v2) + '</p></div>';
+    }).join('');
+    $('#equations').innerHTML = '<ul class="plist mono">' + D.sd.equations.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul><table class="tv"><tr><th>Value used</th><th>Number</th><th>Where it comes from</th></tr>' +
+      Object.keys(P).map(function (k) { var q = P[k]; return '<tr><td>' + esc(q.name) + '</td><td>' + q.v + ' ' + esc(q.unit) + ' ' + tagPill(q.tag) + '</td><td style="text-align:left">' + esc(q.src) + '</td></tr>'; }).join('') + '</table>';
+  }
+
+  /* =====================================================================
+     3. PLANNING FOR PARALLEL WORK
+     ===================================================================== */
+  function wavesOf(slices, check) {
+    var left = slices.slice(), done = {}, waves = [], guard = 0;
+    var clash = function (a, b) { return a.writes.some(function (f) { return b.writes.indexOf(f) >= 0; }); };
+    while (left.length && guard++ < 20) {
+      var ready = left.filter(function (s) { return s.needs.every(function (d) { return done[d]; }); }), wave = [];
+      ready.forEach(function (s) { if (!check || wave.every(function (w) { return !clash(w, s); })) wave.push(s); });
+      if (!wave.length) break;
+      waves.push(wave); wave.forEach(function (s) { done[s.id] = 1; left.splice(left.indexOf(s), 1); });
+    }
+    var hidden = []; waves.forEach(function (w) { for (var i = 0; i < w.length; i++) for (var j = i + 1; j < w.length; j++) if (clash(w[i], w[j])) hidden.push([w[i], w[j]]); });
+    return { waves: waves, hidden: hidden };
+  }
+  function renderPlan() {
+    var PL = D.plancheck, v = PL.variants.filter(function (x) { return x.key === ST.plan; })[0], slices = PL.plans[v.plan], r = wavesOf(slices, v.check);
+    var colW = 190, bw = 164, bh = 62, W = Math.max(4, r.waves.length) * colW + 20, rows = Math.max.apply(null, r.waves.map(function (w) { return w.length; })), H = 44 + rows * (bh + 18) + 10, pos = {};
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The plan laid out in waves"><defs><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    r.waves.forEach(function (w, i) {
+      s += '<text class="lbl-strong" x="' + (14 + i * colW) + '" y="20">Wave ' + (i + 1) + '</text><text class="lbl" x="' + (14 + i * colW + 54) + '" y="20">' + w.length + ' at once</text>';
+      w.forEach(function (sl, j) { pos[sl.id] = { x: 14 + i * colW, y: 34 + j * (bh + 18) }; });
+    });
+    slices.forEach(function (sl) { sl.needs.forEach(function (d) { var a = pos[d], b = pos[sl.id]; if (a && b) s += '<path d="M' + (a.x + bw) + ' ' + (a.y + bh / 2) + 'C' + (a.x + bw + 14) + ' ' + (a.y + bh / 2) + ',' + (b.x - 14) + ' ' + (b.y + bh / 2) + ',' + (b.x - 2) + ' ' + (b.y + bh / 2) + '" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#ap)" opacity=".7"/>'; }); });
+    r.hidden.forEach(function (h) { var a = pos[h[0].id], b = pos[h[1].id]; s += '<path d="M' + (a.x + bw - 8) + ' ' + (a.y + bh) + 'C' + (a.x + bw + 20) + ' ' + ((a.y + b.y + bh) / 2 + 20) + ',' + (b.x + bw + 20) + ' ' + ((a.y + b.y + bh) / 2 + 10) + ',' + (b.x + bw - 8) + ' ' + b.y + '" fill="none" stroke="var(--crit)" stroke-width="2.2" stroke-dasharray="5 3"/>'; });
+    slices.forEach(function (sl) {
+      var p = pos[sl.id]; if (!p) return; var bad = r.hidden.some(function (h) { return h[0] === sl || h[1] === sl; });
+      s += '<rect x="' + p.x + '" y="' + p.y + '" width="' + bw + '" height="' + bh + '" rx="6" fill="var(--surface)" stroke="' + (bad ? 'var(--crit)' : 'currentColor') + '" stroke-width="' + (bad ? 2.4 : 1.5) + '"/><text class="mname" x="' + (p.x + 9) + '" y="' + (p.y + 19) + '">' + esc(sl.name) + '</text>' +
+        sl.writes.slice(0, 3).map(function (f, k) { return '<text class="lblm" x="' + (p.x + 9) + '" y="' + (p.y + 34 + k * 12) + '">' + esc(f) + '</text>'; }).join('');
+    });
+    s += '</svg>';
+    var widest = Math.max.apply(null, r.waves.map(function (w) { return w.length; }));
+    $('#planStage').innerHTML = '<div class="controls"><span class="seg" role="group">' + PL.variants.map(function (x) { return '<button type="button" data-plan="' + x.key + '" aria-pressed="' + (x.key === ST.plan) + '">' + esc(x.label) + '</button>'; }).join('') + '</span></div>' +
+      '<p>' + rich(v.text) + '</p><div class="chart-scroll">' + s + '</div>' +
+      '<div class="statrow"><div class="stat"><span>Waves</span><b>' + r.waves.length + '</b></div><div class="stat"><span>Widest wave</span><b>' + widest + '</b><small>lanes it can use</small></div><div class="stat"><span>Collisions left for the merge</span><b>' + r.hidden.length + '</b><small>' + (r.hidden.length ? r.hidden.map(function (h) { return h[0].name + ' and ' + h[1].name; }).join('; ') : 'none') + '</small></div></div>' +
+      '<p class="small muted">' + esc(PL.sampleNote) + '</p>';
+  }
+  function renderCapacity() {
+    var a = capacity(paramsFor(TODAY, ST.lanes)), b = capacity(paramsFor(ST.on, ST.lanes));
+    var LB = { check: 'the check', root: 'the root: review and merge', review: 'the review', merge: 'the merge', tokens: 'the token window' };
+    var W = 640, H = 300, L = 46, R = 168, T = 16, Bm = 34, xmax = 12, ymax = Math.max(1, Math.min(Math.max(a.cap, b.cap) * 1.7, Math.max(a.cap, b.cap) + 3));
+    var X = function (v) { return L + v / xmax * (W - L - R); }, Y = function (v) { return H - Bm - Math.min(v, ymax) / ymax * (H - T - Bm); };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Slices merged per hour against lanes, with the limit that binds"><g class="grid">';
+    for (var k = 0; k <= 4; k++) { var yv = ymax * k / 4; s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(yv) + '" y2="' + Y(yv) + '"/><text class="lbl" text-anchor="end" x="' + (L - 5) + '" y="' + (Y(yv) + 4) + '">' + yv.toFixed(1) + '</text>'; }
+    for (var n = 0; n <= 12; n += 2) s += '<text class="lbl" text-anchor="middle" x="' + X(n) + '" y="' + (H - 14) + '">' + n + '</text>';
+    s += '</g><text class="lbl" text-anchor="middle" x="' + ((L + W - R) / 2) + '" y="' + (H - 1) + '">lanes: sessions working at once</text>';
+    function curve(c, color, w) { var xs = [], ys = []; for (var q = 0; q <= 12; q += 0.25) { xs.push(q); ys.push(c.at(q)); } return '<path d="' + linePath(xs, ys, X, Y) + '" fill="none" stroke="' + color + '" stroke-width="' + w + '" stroke-linejoin="round"/>'; }
+    var lastY = -99; b.lim.slice().sort(function (p, q) { return p.v - q.v; }).forEach(function (l) { if (l.v > ymax) return; var yy = Y(l.v); if (Math.abs(yy - lastY) < 11) yy = lastY - 11; lastY = yy; s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(l.v) + '" y2="' + Y(l.v) + '" stroke="' + V2C + '" stroke-width="1" stroke-dasharray="2 4"/><text class="lbl" x="' + (W - R + 6) + '" y="' + (yy + 4) + '">v2 limit: ' + LB[l.key] + '</text>'; });
+    s += curve(a, MUT, 2) + curve(b, V2C, 2.6);
+    [[a, MUT], [b, V2C]].forEach(function (c) { var kx = Math.min(12, c[0].knee); s += '<circle cx="' + X(kx) + '" cy="' + Y(c[0].at(kx)) + '" r="5" fill="' + c[1] + '" stroke="var(--surface)" stroke-width="2"/>'; });
+    s += '<line x1="' + X(ST.lanes) + '" x2="' + X(ST.lanes) + '" y1="' + T + '" y2="' + (H - Bm) + '" stroke="var(--ink)" stroke-width="1"/><text class="lbl" text-anchor="middle" x="' + X(ST.lanes) + '" y="' + (T - 4) + '" style="fill:var(--ink)">' + ST.lanes + ' lanes</text></svg>';
+    var keys = ['check', 'root', 'review', 'merge', 'tokens'], val = function (c, key) { var l = c.lim.filter(function (x) { return x.key === key; })[0]; return l ? (l.key === c.which ? '<b>' + l.v.toFixed(2) + ' \u2190 first</b>' : l.v.toFixed(2)) : '\u2013'; };
+    var rows = keys.map(function (key) { return '<tr><td>Limit of ' + LB[key] + '</td><td>' + val(a, key) + '</td><td>' + val(b, key) + '</td></tr>'; }).join('') +
+      '<tr><td>One lane delivers</td><td>' + a.perLane.toFixed(2) + '</td><td>' + b.perLane.toFixed(2) + '</td></tr>' +
+      '<tr><td>Knee: lanes at which the first limit is reached</td><td>' + a.knee.toFixed(1) + '</td><td>' + b.knee.toFixed(1) + '</td></tr>' +
+      '<tr><td>Lanes the planner would run (about 0.8 of the knee)</td><td>' + a.planned + '</td><td>' + b.planned + '</td></tr>' +
+      '<tr><td>Delivered at ' + ST.lanes + ' lanes</td><td>' + a.at(ST.lanes).toFixed(2) + '</td><td>' + b.at(ST.lanes).toFixed(2) + '</td></tr>';
+    $('#capStage').innerHTML = '<div class="chartbox stack"><h4>Slices merged per hour, against lanes ' + tagPill('i') + '</h4><div class="legend-row"><span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="var(--quiet)" stroke-width="2"/></svg> the testbed in November</span><span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="var(--seq-2)" stroke-width="2.6"/></svg> harness v2, with the switches as set</span><span><svg width="12" height="12"><circle cx="6" cy="6" r="4.5" fill="var(--ink-3)"/></svg> the knee: more lanes add nothing past it</span></div><div class="chart-scroll">' + s + '</div>' +
+      '<table class="tv"><tr><th style="text-align:left">Slices per hour</th><th>The testbed in November</th><th>Harness v2</th></tr>' + rows + '</table>' +
+      '<p class="small">' + rich(D.plancheck.capacityText) + '</p></div>';
+  }
+
+  /* =====================================================================
+     4. THE LIBRARY and 5. TOKENS
+     ===================================================================== */
+  function renderLibrary() {
+    var Lb = D.library;
+    var W = 900, H = 234, s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The life of a library entry"><defs><marker id="al" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>';
+    var X = { cand: 16, valid: 286, stale: 556, check: 716 }, bw = 150, bh = 56, y = 40;
+    function st(k, x, yy, name, sub) { return '<rect x="' + x + '" y="' + yy + '" width="' + bw + '" height="' + bh + '" fill="var(--surface)" stroke="currentColor" stroke-width="2"/><text class="mname" text-anchor="middle" x="' + (x + bw / 2) + '" y="' + (yy + 24) + '">' + esc(name) + '</text><text class="lbl" text-anchor="middle" x="' + (x + bw / 2) + '" y="' + (yy + 42) + '">' + esc(sub) + '</text>'; }
+    function fl(x1, y1, x2, y2, label, ly) { return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="currentColor" stroke-width="3.2" marker-end="url(#al)"/><text class="lbl" text-anchor="middle" x="' + ((x1 + x2) / 2) + '" y="' + ly + '" style="fill:var(--ink)">' + esc(label) + '</text>'; }
+    var F = Lb.flow;
+    s += fl(X.cand + bw, y + 28, X.valid - 3, y + 28, F.verify, y + 18) + fl(X.valid + bw, y + 20, X.stale - 3, y + 20, F.drift, y + 10) + fl(X.stale - 3, y + 44, X.valid + bw + 3, y + 44, F.reverify, y + 72) + fl(X.stale + bw, y + 28, X.stale + bw + 78, y + 28, '', 0) + '<path d="M' + (X.stale + bw + 84) + ' ' + (y + 36) + 'a7 7 0 0 1 2 -12a8 8 0 0 1 14 -2a7 7 0 0 1 6 12a6 6 0 0 1 -4 6h-16a6 6 0 0 1 -2 -4z" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>';
+    s += '<path d="M' + (X.valid + bw / 2) + ' ' + (y + bh) + 'C' + (X.valid + bw / 2) + ' 178,' + (X.check - 80) + ' 178,' + (X.check - 4) + ' 178" fill="none" stroke="currentColor" stroke-width="3.2" marker-end="url(#al)"/><text class="lbl" x="' + (X.valid + bw / 2 + 64) + '" y="198" style="fill:var(--ink)">' + esc(F.promote) + '</text>';
+    s += '<text class="lbl" x="' + (X.stale + bw + 6) + '" y="' + (y + 14) + '" style="fill:var(--ink)">' + esc(F.retire) + '</text>';
+    s += st('cand', X.cand, y, F.s1, F.s1b) + st('valid', X.valid, y, F.s2, F.s2b) + st('stale', X.stale, y, F.s3, F.s3b) + st('check', X.check, 150, F.s4, F.s4b);
+    s += '<text class="lbl" x="' + X.cand + '" y="' + (y - 12) + '" style="fill:var(--ink)">' + esc(F.inflow) + '</text><text class="lbl" x="' + X.cand + '" y="226">' + esc(F.lookup) + '</text></svg>';
+    $('#libStage').innerHTML = '<div class="chart-scroll">' + s + '</div>' +
+      '<div class="cols3"><div><h4>What it holds</h4><ul class="plist">' + Lb.kinds.map(function (k) { return '<li><b>' + esc(k.name) + '.</b> ' + rich(k.what) + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>How it changes by itself</h4><ul class="plist">' + Lb.evolves.map(function (k) { return '<li><b>' + esc(k.name) + '.</b> ' + rich(k.what) + (k.who ? '<span class="small muted" style="display:block">Written by: ' + esc(k.who) + ' When: ' + esc(k.when) + '</span>' : '') + '</li>'; }).join('') + '</ul></div>' +
+      '<div><h4>Who reads it, and what for</h4><ul class="plist">' + Lb.readers.map(function (k) { return '<li><b>' + esc(k.name) + '.</b> ' + rich(k.what) + '</li>'; }).join('') + '</ul></div></div>' +
+      '<details class="small"><summary>The tables</summary><table class="tv"><tr><th>Table</th><th style="text-align:left">Holds</th><th style="text-align:left">Written by</th></tr>' + Lb.tables.map(function (t) { return '<tr><td class="mono">' + esc(t.name) + '</td><td style="text-align:left">' + esc(t.holds) + '</td><td style="text-align:left">' + esc(t.by) + '</td></tr>'; }).join('') + '</table></details>' +
+      '<div class="callout">' + Lb.honest.map(function (h) { return '<p>' + rich(h) + '</p>'; }).join('') + '</div>';
+  }
+  function renderResidency() {
+    var r = ST.res, fixed = D.numbers.fixed_cost_n[0] * 1, ans = pv('answerTokens');
+    var rows = [['Read it into the session', r.size * r.calls, 'It stays in the context and is read again on every later call.'], ['Ask the library from the command line', ans * r.calls, 'Only the short answer stays. The lookup itself is a database query: no model tokens.'], ['Send a subagent to find it', fixed + r.size + ans * r.calls, 'The subagent pays its fixed cost once, reads the material once, and hands back the short answer.']];
+    var max = Math.max.apply(null, rows.map(function (x) { return x[1]; }));
+    $('#resStage').innerHTML = '<div class="controls"><label class="ctl" style="flex:1 1 240px"><span>Size of what has to be known: <b>' + r.size.toLocaleString('en-US') + '</b> tokens ' + tagPill('i') + '</span><input type="range" min="500" max="40000" step="500" value="' + r.size + '" data-res="size"></label>' +
+      '<label class="ctl" style="flex:1 1 240px"><span>Calls left in that session: <b>' + r.calls + '</b></span><input type="range" min="10" max="1200" step="10" value="' + r.calls + '" data-res="calls"></label></div>' +
+      '<div class="hbars">' + rows.map(function (x) { return '<div class="hbar"><span class="nm">' + x[0] + '<small>' + x[2] + '</small></span><span class="trk"><span class="seg-b" style="width:' + Math.max(0.5, 100 * x[1] / max) + '%;background:var(--seq-2);border-radius:0 4px 4px 0"></span></span><span class="val">' + (x[1] >= 1e6 ? (x[1] / 1e6).toFixed(1) + 'M' : Math.round(x[1] / 1000) + 'k') + '</span></div>'; }).join('') + '</div>' +
+      '<p class="small">' + rich(D.tokens.residencyNote) + '</p>';
+  }
+  function renderTokens() {
+    var F = D.tokens.fill, fc = { start: 'var(--seq-1)', own: 'var(--seq-2)', fetched: 'var(--seq-3)', other: 'var(--line-2)' }, fi = { start: 'var(--seq-ink-1)', own: '#fff', fetched: 'var(--seq-ink-3)', other: 'var(--ink)' };
+    var BN = { start: 'the start of every window', own: 'the model\u2019s own earlier output', fetched: 'what the session fetched', calls: 'the number of calls' };
+    $('#tokFill').innerHTML = '<h4>What fills a session\u2019s context ' + tagPill('e') + '</h4><div class="segbar">' + F.map(function (x) { return '<span style="flex:' + x.pct + ';background:' + fc[x.key] + ';color:' + fi[x.key] + '" tabindex="0" data-tiph="Estimate" data-tip="' + esc(x.name) + ': ' + esc(x.label) + ' of context. ' + esc(x.what) + '">' + esc(x.label) + '</span>'; }).join('') + '</div>' +
+      '<div class="cols4">' + F.map(function (x) { var ms = D.tokens.methods.filter(function (m) { return m.bucket === x.key; }); return '<div><p><i class="sw2" style="background:' + fc[x.key] + '"></i> <b>' + esc(x.name) + '</b></p><p class="small">' + esc(x.what) + '</p>' + (ms.length ? '<p class="small"><b>Attacked by:</b> ' + ms.map(function (m) { return esc(m.name.toLowerCase()); }).join('; ') + '.</p>' : '') + '</div>'; }).join('') + '</div><p class="small muted">' + rich(D.tokens.fillNote) + '</p>';
+    var C = D.tokens.carry;
+    $('#tokCarry').innerHTML = '<h4>' + esc(C.title) + ' ' + tagPill('e') + '</h4><div class="hbars">' +
+      '<div class="hbar"><span class="nm">' + esc(C.inLabel) + '</span><span class="trk"><span class="seg-b" style="width:' + Math.max(0.8, 100 * C['in'] / C.proc) + '%;background:var(--seq-3);border-radius:0 4px 4px 0" tabindex="0" data-tiph="Estimate" data-tip="About 19 million tokens of fetched content entered the windows."></span></span><span class="val">' + esc(C.inText) + '</span></div>' +
+      '<div class="hbar"><span class="nm">' + esc(C.procLabel) + '</span><span class="trk"><span class="seg-b" style="width:100%;background:var(--seq-2);border-radius:0 4px 4px 0" tabindex="0" data-tiph="Estimate" data-tip="Those tokens were then processed about 950 million times."></span></span><span class="val">' + esc(C.procText) + '</span></div></div><p class="small">' + rich(C.text) + '</p>';
+    $('#tokMethods').innerHTML = '<table class="tv wide"><tr><th style="text-align:left">Method</th><th style="text-align:left">Cuts</th><th style="text-align:left">How</th><th style="text-align:left">What the record says</th><th style="text-align:left">Standing</th></tr>' +
+      D.tokens.methods.map(function (m) { return '<tr><td style="text-align:left"><b>' + esc(m.name) + '</b></td><td style="text-align:left">' + BN[m.bucket] + '</td><td style="text-align:left">' + rich(m.how) + '</td><td style="text-align:left">' + rich(m.basis) + '</td><td style="text-align:left">' + esc(m.status) + '</td></tr>'; }).join('') + '</table>';
+  }
+
+  /* ---------- the rest: text sections ---------- */
+  function renderText() {
+    $('#hero').innerHTML = '<span class="status"><i></i>' + esc(D.meta.status) + '</span><h1>' + esc(D.meta.title) + '</h1><p class="law">' + rich(D.meta.law) + '</p>' + D.meta.thesis.map(function (t) { return '<p class="lede">' + rich(t) + '</p>'; }).join('') +
+      '<p class="small muted">' + ['m', 's', 't', 'e', 'i'].map(function (k) { return tagPill(k) + ' ' + esc(D.tags[k].word.toLowerCase()); }).join(' &nbsp; ') + '. Tap a number for its source. The plan, the 21 problems and your decisions are on the <a href="' + esc(D.meta.planLink) + '">plan page</a>.</p>';
+    $('#behaveIntro').innerHTML = D.model.intro.map(function (t) { return '<p>' + rich(t) + '</p>'; }).join('');
+    $('#behaveNotes').innerHTML = '<b>What this model assumes</b><ul>' + D.model.notes.map(function (n) { return '<li>' + rich(n) + '</li>'; }).join('') + '</ul>';
+    $('#planRules').innerHTML = '<div class="cols2"><div><h4>What every slice in a plan must declare</h4><ul class="plist">' + D.plancheck.declares.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ul></div><div><h4>What the check does with it, at no token cost</h4><ol class="plist">' + D.plancheck.rules.map(function (x) { return '<li>' + rich(x) + '</li>'; }).join('') + '</ol></div></div>';
+    $('#tokIntro').innerHTML = D.tokens.intro.map(function (t) { return '<p>' + rich(t) + '</p>'; }).join('');
+    $('#answers').innerHTML = D.parts.map(function (p) { var list = D.answers.filter(function (a) { return a.part === p.key; }); return list.length ? '<div class="ansc"><h4>' + esc(p.name) + '</h4><ul class="plist">' + list.map(function (a) { return '<li><span class="idchip">' + a.id + '</span> <b>' + esc(a.name) + '.</b> ' + rich(a.how) + '</li>'; }).join('') + '</ul></div>' : ''; }).join('');
+    $('#orch').innerHTML = '<p class="lede">' + esc(D.orchestration.question) + '</p>' + D.orchestration.answer.map(function (t) { return '<p>' + rich(t) + '</p>'; }).join('');
+    $('#order').innerHTML = '<ol class="plist">' + D.order.map(function (o) { return '<li><b>' + esc(o.name) + '.</b> ' + rich(o.builds) + '</li>'; }).join('') + '</ol>';
+    $('#foot').innerHTML = '<div><b>Limits</b><ul>' + D.limits.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div><div><b>Sources</b><ul>' + D.sources.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+  }
+  function setTheme(t) { var r = document.documentElement; if (t === 'auto') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', t); $('#themeBtn').textContent = 'Theme: ' + t; store('harness-v2-theme', t); }
+
+  function bothSwitches() { renderSwitches('#switches'); renderSwitches('#switches2'); }
+  function all() { rerun(); renderMachine(); bothSwitches(); renderBehave(); renderPlan(); renderCapacity(); }
+  renderText(); renderLoops(); renderLibrary(); renderResidency(); renderTokens(); all();
+  setTheme(store('harness-v2-theme') || 'auto');
+  $('#themeBtn').addEventListener('click', function () { var c = document.documentElement.getAttribute('data-theme') || 'auto'; setTheme(c === 'auto' ? 'light' : c === 'light' ? 'dark' : 'auto'); });
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('[data-part],[data-scn],[data-play],[data-plan]') : null; if (!t) return;
+    if (t.dataset.part) { ST.part = t.dataset.part; renderMachine(); }
+    else if (t.dataset.scn) { ST.scn = t.dataset.scn; renderBehave(); }
+    else if (t.dataset.play) play();
+    else if (t.dataset.plan) { ST.plan = t.dataset.plan; renderPlan(); }
+  });
+  document.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && e.target.dataset.part) { e.preventDefault(); ST.part = e.target.dataset.part; renderMachine(); } });
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.dataset.sw) { ST.on[t.dataset.sw] = t.checked; rerun(); bothSwitches(); renderBehave(); renderCapacity(); }
+    else if (t.dataset.lanes) { var box = t.closest('#switches2') ? '#switches2' : '#switches'; ST.lanes = +t.value; rerun(); bothSwitches(); renderBehave(); renderCapacity(); var f = $(box + ' [data-lanes]'); if (f) f.focus(); }
+    else if (t.dataset.window) { var bx = t.closest('#switches2') ? '#switches2' : '#switches'; ST.window = +t.value; rerun(); bothSwitches(); renderBehave(); renderCapacity(); var w = $(bx + ' [data-window]'); if (w) w.focus(); }
+    else if (t.dataset.time) { ST.t = +t.value; renderBehave(); var g = $('[data-time]'); if (g) g.focus(); }
+    else if (t.dataset.res) { ST.res[t.dataset.res] = +t.value; renderResidency(); var h = $('[data-res="' + t.dataset.res + '"]'); if (h) h.focus(); }
+  });
+})();
+
+</script>
+</body>
+</html>

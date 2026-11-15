@@ -1,0 +1,302 @@
+  // ============================================================ mod: map (section 1)
+  // A short version of the hundred pieces above the detailed graph, three ways of working in aligned rows,
+  // plus counts on the graph's lines, coloured endings and larger text. Redeclares the section-1 functions.
+  var map_ORDER = ['top_first', 'cheap_ladder', 'library'];
+  var map_EV = {};      // per way of working: { sf, bf, outs } at the current settings and scope
+  var map_GOOD = ['L5_exact', 'L5_similar', 'L5_full', 'L5_part'];
+
+  function geom(mini) {
+    return mini ? { cw: LY.col_w, rh: 34, x0: LY.x0, y0: 96, nw: LY.node_w - 20, nh: 20, head: [16, 30, 44], lh: 13 }
+      : { cw: 108, rh: 86, x0: 50, y0: 172, nw: 86, nh: 76, head: [20, 36, 52], lh: 16 };
+  }
+
+  function map_evalAll(stocks) {
+    var all = ST.scope === 'all';
+    map_ORDER.forEach(function (p) {
+      var st = p === 'library' ? stocks : {};
+      if (all) { var ev = E.evaluatePolicy(MAP, cur, p, st); map_EV[p] = { sf: ev.stateFlow, bf: ev.branchFlow, outs: ev.overall.outcomes, wrong: ev.overall.wrong }; }
+      else { var ec = E.evaluateClass(MAP, cur, p, classFor(p), st); map_EV[p] = { sf: ec.stateFlow, bf: ec.branchFlow, outs: ec.outcomes, wrong: ec.wrong }; }
+    });
+  }
+  function map_sum(o, ids) { return ids.reduce(function (a, k) { return a + (o[k] || 0); }, 0); }
+
+  // The moments of the short version. Each returns its parts: [share of a hundred, words, tone].
+  var map_MOMENTS = [
+    { q: 'Is the library looked up?', parts: function (p, e) {
+      if (p !== 'library') return [[1, 'no library here', 'none']];
+      var l = e.sf.L2_lookup || 0; return [[l, 'looked up', 'mid'], [Math.max(0, 1 - l), 'not looked up', 'light']];
+    } },
+    { q: 'What does the cheap model get?', parts: function (p, e) {
+      return [[map_sum(e.sf, map_GOOD), 'a good entry', 'good'], [e.sf.L5_wrong || 0, 'a wrong entry', 'bad'], [e.sf.L5_none || 0, 'no entry', 'light']];
+    } },
+    { q: 'Is the cheap first try right?', parts: function (p, e) {
+      return [[e.sf.L6_right || 0, 'right', 'good'], [e.sf.L6_wrong || 0, 'wrong', 'bad']];
+    } },
+    { q: 'Does the gate catch a wrong first try?', parts: function (p, e) {
+      return [[e.bf.l6_caught || 0, 'caught, retried', 'good'], [e.bf.l6_escaped || 0, 'slips past', 'bad']];
+    } },
+    { q: 'Is the cheap retry right?', parts: function (p, e) {
+      return [[e.sf.L7_right || 0, 'right', 'good'], [e.sf.L7_wrong || 0, 'wrong', 'bad']];
+    } },
+    { q: 'Is Opus right?', parts: function (p, e) {
+      return [[e.sf.L8_right || 0, 'right', 'good'], [e.sf.L8_wrong || 0, 'wrong', 'bad']];
+    } },
+    { q: 'Is Fable right?', parts: function (p, e) {
+      return [[e.sf.L9_right || 0, 'right', 'good'], [e.sf.L9_wrong || 0, 'wrong', 'bad']];
+    } },
+    { q: 'How does it end?', parts: function (p, e) {
+      return [[e.outs.EQUAL || 0, 'accepted and right', 'good'], [e.outs.ESCAPED_FOUND || 0, 'wrong, found later', 'bad'], [e.outs.ESCAPED_SILENT || 0, 'wrong, never found', 'bad'], [e.outs.UNRESOLVED || 0, 'caught, never solved', 'bad']];
+    } }
+  ];
+  function map_c(v) { return fmt(100 * v, 'count'); }
+
+  function map_shortSvg() {
+    var W = 1700, LBL = 232, NC = map_MOMENTS.length, CW = (W - LBL) / NC, BW = CW - 22, HEAD = 70, RH = 126, BH = 26;
+    var H = HEAD + RH * map_ORDER.length + 6;
+    var s = '<svg class="ux-map-short" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Where a hundred pieces of work go, three ways of working">';
+    // the reference: every track is a hundred pieces
+    s += '<text class="ux-map-t14b" x="4" y="22">Each bar is 100 pieces.</text>';
+    s += '<text class="ux-map-t13m" x="4" y="40">Filled length: how many</text><text class="ux-map-t13m" x="4" y="56">reach that moment.</text>';
+    map_MOMENTS.forEach(function (m, i) {
+      var x = LBL + i * CW;
+      wrapWords(m.q, 21).forEach(function (ln, j) { s += '<text class="ux-map-t14b" x="' + (x + 2) + '" y="' + (22 + j * 18) + '">' + esc(ln) + '</text>'; });
+      if (i > 0) s += '<text class="ux-map-arrow" x="' + (x - 17) + '" y="24">→</text>';
+    });
+    map_ORDER.forEach(function (p, r) {
+      var y = HEAD + r * RH, chosen = p === ST.policy, e = map_EV[p];
+      s += '<g class="ux-map-row' + (chosen ? ' chosen' : '') + '" data-ux-pol="' + p + '" role="button" tabindex="0" data-tip="' + esc((chosen ? 'Shown in the map below. ' : 'Tap to show this way of working in the map. ') + TX.policy_says[p]) + '">';
+      s += '<rect class="ux-map-rowbg" x="0" y="' + (y + 2) + '" width="' + W + '" height="' + (RH - 6) + '" rx="8"/>';
+      if (chosen) s += '<rect class="ux-map-rowmark" x="0" y="' + (y + 2) + '" width="6" height="' + (RH - 6) + '" rx="2"/>';
+      wrapWords(PNAME[p], 20).forEach(function (ln, j) { s += '<text class="ux-map-t15b" x="16" y="' + (y + 30 + j * 19) + '">' + esc(ln) + '</text>'; });
+      s += '<text class="ux-map-t13m" x="16" y="' + (y + 78) + '">' + (chosen ? 'chosen: the map below' : 'tap to show it below') + '</text>';
+      s += '<text class="ux-map-t13m" x="16" y="' + (y + 96) + '">' + esc(fmt(100 * e.wrong, 'count')) + ' of 100 end wrong</text>';
+      map_MOMENTS.forEach(function (m, i) {
+        var x = LBL + i * CW, parts = m.parts(p, e), tot = parts.reduce(function (a, q) { return a + (q[2] === 'none' ? 0 : q[0]); }, 0);
+        var by = y + 14;
+        s += '<rect class="ux-map-track' + (tot < 1e-9 ? ' empty' : '') + '" x="' + x + '" y="' + by + '" width="' + BW + '" height="' + BH + '" rx="3"/>';
+        if (tot < 1e-9) {
+          s += '<text class="ux-map-t13m" x="' + (x + 8) + '" y="' + (by + 18) + '">' + (parts[0][2] === 'none' ? esc(parts[0][1]) : 'none reach here') + '</text>';
+          return;
+        }
+        var cx = x;
+        parts.forEach(function (q) {
+          var w = q[0] * BW; if (w <= 0) return;
+          s += '<rect class="ux-map-seg ' + q[2] + '" x="' + cx.toFixed(1) + '" y="' + by + '" width="' + Math.max(w, 1.5).toFixed(1) + '" height="' + BH + '"/>';
+          if (w >= 30) s += '<text class="ux-map-t14b ux-map-in" text-anchor="middle" x="' + (cx + w / 2).toFixed(1) + '" y="' + (by + 18) + '">' + esc(map_c(q[0])) + '</text>';
+          cx += w;
+        });
+        parts.forEach(function (q, j) {
+          var ly = by + BH + 20 + j * 19;
+          s += '<rect class="ux-map-seg ' + q[2] + '" x="' + x + '" y="' + (ly - 11) + '" width="11" height="11" rx="2"/>';
+          s += '<text class="ux-map-t14" x="' + (x + 17) + '" y="' + ly + '"><tspan class="ux-map-b">' + esc(map_c(q[0])) + '</tspan> ' + esc(q[1]) + '</text>';
+        });
+      });
+      s += '</g>';
+    });
+    return s + '</svg>';
+  }
+  function map_shortNow() {
+    var p = ST.policy, e = map_EV[p], kind = ST.scope === 'all' ? '' : ' of this kind';
+    var b = function (v) { return '<b>' + esc(map_c(v)) + '</b>'; };
+    var out = ['Of 100 pieces' + kind + ' under ' + esc(PNAME[p].toLowerCase()) + ':'];
+    if (p === 'library') out.push(b(e.sf.L2_lookup || 0) + ' are looked up, and ' + b(map_sum(e.sf, map_GOOD)) + ' reach the cheap model with a good entry.');
+    var cheap = map_sum(e.sf, ['L6_right', 'L6_wrong']);
+    if (cheap > 1e-9) {
+      out.push('The cheap model gets ' + b(e.sf.L6_right || 0) + ' right first time and ' + b(e.sf.L6_wrong || 0) + ' wrong.');
+      out.push('The gate catches ' + b(e.bf.l6_caught || 0) + ' of those wrong ones.');
+    } else out.push('No piece goes to the cheap model.');
+    out.push(b(e.sf.L8_opus || 0) + ' reach Opus and ' + b(e.sf.L9_fable || 0) + ' reach Fable.');
+    out.push(b(e.outs.EQUAL || 0) + ' end accepted and right; ' + b(e.wrong) + ' end wrong.');
+    return out.join(' ');
+  }
+  function map_graphNow() {
+    var all = ST.scope === 'all', sf = all ? EVP.stateFlow : EVC.stateFlow, bf = all ? EVP.branchFlow : EVC.branchFlow;
+    var nS = MAP.states.filter(function (s) { return (sf[s.id] || 0) >= 1e-12; }).length;
+    var nB = MAP.branches.filter(function (b) { return (bf[b.id] || 0) >= 1e-12; }).length;
+    var nL = MAP.branches.filter(function (b) { return (bf[b.id] || 0) >= 0.01; }).length;
+    var top = MAP.branches.slice().sort(function (a, c) { return (bf[c.id] || 0) - (bf[a.id] || 0); })[0];
+    return '<b>' + nS + '</b> of the ' + MAP.states.length + ' boxes and <b>' + nB + '</b> of the ' + MAP.branches.length + ' lines carry work under ' + esc(PNAME[ST.policy].toLowerCase()) + '. ' +
+      '<b>' + nL + '</b> lines carry at least one piece and show their count. ' +
+      'The busiest line: ' + esc(top.label.toLowerCase()) + ', <b>' + esc(map_c(bf[top.id] || 0)) + '</b> pieces.';
+  }
+
+  function renderPickers() {
+    var lib = ST.policy === 'library';
+    var cls = classFor(ST.policy);
+    var all = ST.scope === 'all';
+    var what = function (t) { return '<small class="ux-map-what">' + esc(t) + '</small>'; };
+    // the short version comes first: this is where the reader starts
+    var h = '<div class="ux-map-block">';
+    h += '<h3 class="ux-map-h">Where do 100 pieces of work go, under each way of working?</h3>';
+    h += '<p class="ux-map-read"><b>How to read it:</b> each row is one way of working, read left to right. Each bar is 100 pieces; its filled part is how many reach that moment.</p>';
+    h += '<p class="ux-map-now" data-tagged="G"><b>What it shows now:</b> ' + map_shortNow() + ' ' + tagEl('G') + '</p>';
+    h += '<div class="chart-scroll ux-map-shortwrap" data-tagged="G">' + map_shortSvg() + '</div>';
+    h += '</div>';
+    // the controls, each with one line on what it changes
+    h += '<div class="controls ux-map-ctls">';
+    h += '<div class="ctl"><span>Way of working</span>' + seg('Way of working', MAP.policies.map(function (p) { return [p.id, PNAME[p.id], TX.policy_says[p.id]]; }), ST.policy) + what('Picks the way the map below shows. Tapping a row above does the same.') + '</div>';
+    h += '<div class="ctl" data-scope="1"><span>Which work</span>' + seg('Which work', [['all', 'All work', 'Every kind of work together, each by its share.'], ['kind', 'One kind of work', 'Pick the kind with the four choices beside this.']], ST.scope) + what('All work together, or one kind set by the four choices.') + '</div>';
+    h += '<div class="kindset' + (all ? ' quiet' : '') + '">';
+    var whatAttr = { kind: 'Whether a wrong answer shows itself.', need: 'What the cheap model would do with no help.', held: 'What the library has for this piece.', distractor: 'Whether a wrong look-alike entry can come back.' };
+    ['kind', 'need', 'held', 'distractor'].forEach(function (aid) {
+      var a = ATTR[aid];
+      var label = aid === 'need' ? 'The cheap model alone would be' : aid === 'held' ? 'What the library holds' : aid === 'distractor' ? 'A look-alike can be retrieved' : 'Kind of problem';
+      h += '<div class="ctl" data-attr="' + aid + '"><span>' + esc(label) + '</span>' + seg(label, a.values.map(function (v) { return [v.id, SHORT_VAL[v.id] || v.label, v.label]; }), all ? null : cls[aid], !lib && (aid === 'held' || aid === 'distractor')) + what(whatAttr[aid]) + '</div>';
+    });
+    h += '</div>';
+    if (all) h += '<p class="note" style="flex-basis:100%">The map shows all work, each kind by its share. Pick any choice in the faded group to see one kind.</p>';
+    h += '<div class="ctl" style="min-width:220px"><span>Library as it stands at period</span><div class="row"><input type="range" id="perPick" min="1" max="' + NPER + '" step="1" value="' + ST.period + '"' + (lib ? '' : ' disabled') + ' aria-label="Period"><b data-label="1" id="perPickV">' + ST.period + ' of ' + NPER + '</b></div>' + what('Which period of the library the pictures use.') + '</div>';
+    if (!lib) h += '<p class="note" style="flex-basis:100%">' + esc(PNAME[ST.policy]) + ' has no library, so for it the library holds nothing and no look-alike exists.</p>';
+    h += '</div>';
+    // the detailed graph's own heading
+    h += '<div class="ux-map-block ux-map-gh">';
+    h += '<h3 class="ux-map-h">Which way does each piece go, box by box?</h3>';
+    h += '<p class="ux-map-read"><b>How to read it:</b> boxes are moments, lines are the ways on. The number in a box or on a line counts pieces of 100.</p>';
+    h += '<p class="ux-map-now" data-tagged="G"><b>What it shows now:</b> ' + map_graphNow() + ' ' + tagEl('G') + '</p>';
+    h += '</div>';
+    $('#pickers').innerHTML = h;
+  }
+  $('#pickers').addEventListener('click', function (e) {
+    var g = e.target && e.target.closest ? e.target.closest('[data-ux-pol]') : null; if (!g) return;
+    if (ST.policy === g.getAttribute('data-ux-pol')) return;
+    ST.policy = g.getAttribute('data-ux-pol'); ST.selAuto = true; ST.open = {};
+    renderMap();
+  });
+  $('#pickers').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var g = e.target && e.target.closest ? e.target.closest('[data-ux-pol]') : null; if (!g) return;
+    e.preventDefault(); ST.policy = g.getAttribute('data-ux-pol'); ST.selAuto = true; ST.open = {}; renderMap();
+  });
+
+  function renderMap() {
+    var cls = classFor(ST.policy);
+    var stocks = ST.policy === 'library' ? stocksAt(ST.period) : {};
+    var libStocks = stocksAt(ST.period);
+    EVC = E.evaluateClass(MAP, cur, ST.policy, cls, stocks);
+    EVP = E.evaluatePolicy(MAP, cur, ST.policy, stocks);
+    BV = C.branchValues(E, MAP, cur, ST.policy, cls, stocks);
+    ROUTES = E.routes(MAP, cur, ST.policy, { classValues: cls, stocks: stocks, sortBy: ST.sortBy });
+    map_evalAll(libStocks);
+    if (ST.selAuto || !ROUTES.routes.some(function (r) { return r.id === ST.sel || r.id.indexOf(ST.sel + '>') === 0; })) {
+      var top = ROUTES.routes.slice().sort(function (a, b) { return b.chance - a.chance; })[0];
+      ST.sel = top ? top.id : null; ST.stepIdx = null; ST.selAuto = false; ST.userSel = false;
+    }
+    var lede = $('#mapLede');
+    if (lede) lede.innerHTML = 'Start with the short version: 100 pieces of work, three ways of working, one row each. Below it, the full map shows every box and line. Tap a route in the tree to light it up.';
+    renderPickers();
+    paintGraph();
+    renderPiece(cls, stocks);
+    renderTree();
+    renderStepper();
+  }
+
+  function drawGraph(el, opts) {
+    var mini = !!opts.mini, g = geom(mini), uid = 'g' + (++graphUid);
+    var W = g.x0 + 15 * g.cw + g.nw / 2 + 14, H = g.y0 + 10.6 * g.rh + 12, k = LY.px_scale || 1;
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + (W * k) + '" height="' + (H * k) + '" data-scale="' + k + '"' + (mini ? '' : ' style="width:100%;min-width:' + (W * k) + 'px;height:auto"') + ' role="img" aria-label="The map: states and branches of the library design">';
+    s += '<defs><marker id="' + uid + 'a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="' + (mini ? 6 : 8) + '" markerHeight="' + (mini ? 6 : 8) + '" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>' +
+      '<pattern id="' + uid + 'h1" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="currentColor" stroke-width="1" opacity=".22"/></pattern>' +
+      '<pattern id="' + uid + 'h2" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="4" stroke="currentColor" stroke-width="1.2" opacity=".32"/></pattern></defs>';
+    var stageCols = {};
+    MAP.states.forEach(function (st) { var c = LY.states[st.id][0]; var r = stageCols[st.step] = stageCols[st.step] || [99, -1]; r[0] = Math.min(r[0], c); r[1] = Math.max(r[1], c); });
+    MAP.steps.forEach(function (stp, i) {
+      var r = stageCols[stp.id]; if (!r) return;
+      var xa = g.x0 + r[0] * g.cw - g.cw / 2 + 1, xb = g.x0 + r[1] * g.cw + g.cw / 2 - 1;
+      var band = opts.bands && opts.bands[stp.id];
+      if (band) s += '<rect x="' + xa + '" y="2" width="' + (xb - xa) + '" height="' + (H - 4) + '" fill="url(#' + uid + (band === 2 ? 'h2' : 'h1') + ')"/>';
+      if (i > 0) s += '<line class="g-sep" x1="' + xa + '" y1="4" x2="' + xa + '" y2="' + (H - 4) + '"/>';
+      var lines = wrapWords(stp.label, Math.max(10, Math.floor((xb - xa) / (mini ? 6.6 : 8.2))));
+      if (mini) lines = lines.slice(0, 2);
+      lines.forEach(function (ln, j) { s += '<text class="g-step" text-anchor="middle" x="' + ((xa + xb) / 2) + '" y="' + (g.head[0] + j * g.lh) + '"' + (mini ? '' : ' style="font-size:14px"') + '>' + esc(ln) + '</text>'; });
+      var dw = stageWords(stp.id);
+      if (dw) s += '<text class="g-dstep" data-label="1" text-anchor="middle" x="' + ((xa + xb) / 2) + '" y="' + (g.head[0] + lines.length * g.lh + 1) + '"' + (mini ? '' : ' style="font-size:13px"') + '>' + esc(dw) + '</text>';
+    });
+    (MAP.links || []).forEach(function (ln) {
+      if (mini || !opts.policy || ln.policy !== opts.policy) return;
+      var pb = LY.promo_box, bx = g.x0 + pb[0] * g.cw, by = g.y0 + pb[1] * g.rh, bw = pb[2] * g.cw, bh = 56;
+      var tgt = pos(g, 'L6_wrong'), tx = tgt.x - 10, ty = tgt.y + g.nh / 2 + 2;
+      var stockName = MAP.stocks.labels[ln.from_stock];
+      var tip = '<b>' + esc(ln.label) + '</b><br>' + esc(TX.sections.map.promo_legend) + (opts.promo ? '<br>' + esc(opts.promo.label) + ': ' + num(opts.promo.value, 'G') + ' ' + esc(opts.promo.unit) : '') + '<br>Unknowns: ' + esc(ln.unknowns.map(pname).join(', '));
+      s += '<g class="g-promo" data-link="' + ln.id + '" data-tip="' + esc(tip) + '">';
+      s += '<rect x="' + bx + '" y="' + by + '" width="' + bw + '" height="' + bh + '" rx="3" class="g-stockbox"/>';
+      s += '<text class="g-stock" x="' + (bx + 10) + '" y="' + (by + 22) + '" style="font-size:14px">' + esc(stockName) + '</text>';
+      if (opts.stock !== undefined) s += '<text class="g-stockv" data-tagged="G" x="' + (bx + 10) + '" y="' + (by + 43) + '" style="font-size:13px">' + esc(fmt(opts.stock, 'cost')) + ' at the start of the period</text>';
+      var x1 = bx + bw, y1 = by + bh / 2;
+      s += '<path class="g-plink" d="M' + x1 + ' ' + y1 + 'C' + (tx - 10) + ' ' + y1 + ',' + tx + ' ' + (y1 - 30) + ',' + tx + ' ' + ty + '" marker-end="url(#' + uid + 'a)"/>';
+      s += '<text class="g-plab" x="' + (x1 + 8) + '" y="' + (y1 - 8) + '" style="font-size:13px">' + esc(TX.sections.map.promo_label) + '</text>';
+      s += '</g>';
+    });
+    var focus = !!(opts.on && opts.on.size);
+    var edges = '', hits = '', labs = '', placed = [];
+    function map_free(x, y, w) { return placed.every(function (b) { return Math.abs(b[0] - x) > (b[2] + w) / 2 + 2 || Math.abs(b[1] - y) > 15; }); }
+    MAP.branches.forEach(function (b) {
+      var d = edgePath(g, b, mini);
+      var f = opts.flow ? (opts.flow[b.id] || 0) : null;
+      var zero = f !== null && f < 1e-12;
+      var w = mini ? 1.1 : (f === null ? 1.3 : zero ? 1 : 1 + 6 * f);
+      var on = focus && opts.on.has(b.id);
+      if (on && mini) w = 3.2;
+      if (on && !mini) w = Math.max(w, 2.4);
+      var cls = 'g-edge' + (zero && !on ? ' zero' : '') + (on ? ' on' : '');
+      if (opts.cur === b.id) edges += '<path class="g-halo" d="' + d + '" stroke-width="' + (w + 7) + '"/>';
+      edges += '<path class="' + cls + '" d="' + d + '" stroke-width="' + w.toFixed(2) + '"' + (zero && !on ? '' : ' marker-end="url(#' + uid + 'a)"') + (opts.cur === b.id ? ' style="stroke-width:' + (w + 1.5).toFixed(2) + '"' : '') + '/>';
+      var tip = '<b>' + esc(b.label) + '</b><br>Stage: ' + esc(STEP[STATE[b.from].step].label);
+      if (opts.bv) {
+        var v = opts.bv[b.id];
+        tip += '<br>Chance at this branch: ' + num(v.chance, 'G', 'pct');
+        if (f !== null) tip += '<br>Share of this piece taking it: ' + num(f, 'G', 'pct');
+        if (b.tier) tip += '<br>Cost when taken: ' + num(v.cost, 'G', 'cost') + ' cheap-call equivalents, paid at ' + esc(TIER[b.tier].label);
+      } else if (f !== null) tip += '<br>Share of all work taking it: ' + num(f, 'G', 'pct');
+      if (opts.limTip && opts.limTip[b.id]) tip += '<br>Uses: ' + esc(opts.limTip[b.id].join(', '));
+      hits += '<path class="g-hit" d="' + d + '" data-tip="' + esc(tip) + '"/>';
+      // the count on every line that carries at least one piece in a hundred
+      if (!mini && f !== null && f >= 0.01) {
+        var a = pos(g, b.from), z = pos(g, b.to), o = PAIR[b.id] * 3.6, lx, ly, adj = z.c - a.c === 1;
+        if (adj) { lx = (a.x + g.nw / 2 + z.x - g.nw / 2) / 2; ly = (a.y + z.y) / 2 + o; }
+        else { var lane = LY.lanes[b.id] !== undefined ? LY.lanes[b.id] : z.r; var x1 = a.x + g.nw / 2, x2 = z.x - g.nw / 2; lx = (x1 + x2) / 2; ly = g.y0 + lane * g.rh + o; }
+        var t = fmt(100 * f, 'count'), tw = 8 * t.length + 6, tries = adj ? [0, 16, -16, 32, -32] : [0, 40, -40, 80, -80], ok = false;
+        for (var i = 0; i < tries.length && !ok; i++) { var X = adj ? lx : lx + tries[i], Y = adj ? ly + tries[i] : ly; if (map_free(X, Y, tw)) { lx = X; ly = Y; ok = true; } }
+        placed.push([lx, ly, tw]);
+        labs += '<text class="ux-map-elab' + (on ? ' on' : '') + '" text-anchor="middle" x="' + lx.toFixed(1) + '" y="' + (ly + 4.5).toFixed(1) + '" style="font-size:13px">' + esc(t) + '</text>';
+      }
+    });
+    s += '<g>' + edges + '</g><g>' + hits + '</g>';
+    MAP.states.forEach(function (st) {
+      var p = pos(g, st.id), x = p.x - g.nw / 2, y = p.y - g.nh / 2;
+      var sf = opts.stateFlow ? (opts.stateFlow[st.id] || 0) : null;
+      var right = st.outcome && OUT[st.id].right;
+      var cls = 'g-node' + (st.outcome ? ' outcome' : '') + (st.outcome && !OUT[st.id].right ? ' wrongout' : '') + (right ? ' ux-map-rightout' : '') + (opts.start === st.id ? ' start' : '') + (opts.onStates && opts.onStates.has(st.id) ? ' on' : '') + (sf !== null && sf < 1e-12 && !mini ? ' idle' : '');
+      var tip = '<b>' + esc(st.label) + '</b><br>Stage: ' + esc(STEP[st.step].label) + (stageWords(st.step) ? ' (' + stageWords(st.step) + ')' : '');
+      if (opts.stateFlow) tip += '<br>Share of ' + (opts.all ? 'all work' : 'this piece') + ' passing here: ' + num(sf, 'G', 'pct') + (sf < 1e-12 ? '<br>No work reaches this box under this choice.' : '');
+      if (opts.start === st.id) tip += '<br>This way of working starts here.';
+      s += '<g class="' + cls + '" data-tip="' + esc(tip) + '">';
+      if (!mini && st.outcome) s += '<text class="ux-map-endw ' + (right ? 'good' : 'bad') + '" text-anchor="middle" x="' + p.x + '" y="' + (y - 7) + '" style="font-size:13px">' + (right ? 'RIGHT ENDING' : 'WRONG ENDING') + '</text>';
+      s += '<rect x="' + x + '" y="' + y + '" width="' + g.nw + '" height="' + g.nh + '" rx="' + (mini ? 4 : 6) + '"/>';
+      if (!mini) {
+        var lines = wrapWords(st.label, st.outcome ? 11 : 12).slice(0, 4);
+        var lsp = 14.5, blockH = lines.length * lsp + (sf !== null ? 17 : 0);
+        var y0 = p.y - blockH / 2 + 11;
+        lines.forEach(function (ln, j) { s += '<text class="' + (st.outcome ? 'g-out' : 'g-lab') + '" text-anchor="middle" x="' + p.x + '" y="' + (y0 + j * lsp).toFixed(1) + '" style="font-size:13px">' + esc(ln) + '</text>'; });
+        if (sf !== null) s += '<text class="g-cnt" data-tagged="G" text-anchor="middle" x="' + p.x + '" y="' + (y0 + lines.length * lsp + 3).toFixed(1) + '" style="font-size:14px">' + esc(fmt(100 * sf, 'count')) + (st.outcome ? ' of 100' : '') + '</text>';
+      }
+      s += '</g>';
+    });
+    if (!mini) s += '<g class="ux-map-labs" data-tagged="G">' + labs + '</g>';
+    s += '</svg>';
+    el.innerHTML = s;
+    el.classList.toggle('focus', focus);
+  }
+
+  function renderGraphLegend() {
+    function ln(w, dash) { return '<svg width="34" height="12" aria-hidden="true"><line x1="1" y1="6" x2="33" y2="6" stroke="currentColor" stroke-width="' + w + '"' + (dash ? ' stroke-dasharray="2 4" opacity=".6"' : '') + '/></svg>'; }
+    function box(sw, dash, tone) { return '<svg width="26" height="16" aria-hidden="true"><rect x="2" y="2" width="22" height="12" rx="3" fill="' + (tone ? 'var(--' + tone + '-soft)' : 'none') + '" stroke="' + (tone ? 'var(--' + tone + ')' : 'currentColor') + '" stroke-width="' + sw + '"' + (dash ? ' stroke-dasharray="4 2.5"' : '') + '/></svg>'; }
+    function pl() { return '<svg width="34" height="12" aria-hidden="true"><line x1="1" y1="6" x2="33" y2="6" stroke="currentColor" stroke-width="1.6" stroke-dasharray="6 3"/></svg>'; }
+    $('#graphLegend').innerHTML = '<span class="muted">' + esc(TX.sections.map.graph_note) + ' The number on a line counts the pieces of a hundred on it, when at least one. ' + esc(TX.sections.map.scroll_note) + '</span><span>' + ln(7) + 'all the work shown ' + tagEl('G') + '</span><span>' + ln(1, true) + 'none of it</span><span>' + box(2.4) + 'start</span><span>' + box(2.6, false, 'good') + 'right ending: accepted and right</span><span>' + box(2.6, true, 'bad') + 'wrong ending</span><span>' + pl() + 'promoted checks</span>' +
+      '<details class="inline"><summary>How the stages match the ten steps</summary><span data-label="1">' + esc(TX.design_steps_note) + '</span></details>';
+  }
+
+  function outcomeBar(outs) {
+    var parts = [['EQUAL', 'p-light ux-map-okbar'], ['ESCAPED_FOUND', 'p-hatch ux-map-badbar'], ['ESCAPED_SILENT', 'p-solid ux-map-badbar'], ['UNRESOLVED', 'p-dots ux-map-badbar']];
+    return '<div class="trk">' + parts.map(function (p) { var v = outs[p[0]] || 0; return v > 0 ? '<span class="' + p[1] + '" style="width:' + (100 * v).toFixed(3) + '%" data-tip="' + esc(OUT[p[0]].label + ': ' + num(v, 'G', 'pct')) + '"></span>' : ''; }).join('') + '</div>';
+  }
+  OUT_LEGEND = '<div class="legend-row"><span><i class="sw p-light ux-map-okbar"></i>Accepted and right</span><span><i class="sw p-hatch ux-map-badbar"></i>Escaped, found later</span><span><i class="sw p-solid ux-map-badbar"></i>Escaped, never found</span><span><i class="sw p-dots ux-map-badbar"></i>Caught, never solved</span></div>';

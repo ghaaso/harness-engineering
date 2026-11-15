@@ -1,0 +1,74 @@
+export const meta = {
+  name: 'horthy-sweep-2',
+  description: 'Round-2 Sonnet readers for the sources the gap sweeps surfaced (X posts from the All Resources index, HN CLAUDE.md thread, HumanLayer docs source and context shards, Dex dotfiles agents, Dev Interrupted panel)',
+  phases: [{ title: 'Sweep-2', detail: '5 Sonnet readers' }],
+}
+const S = args.S, INV = args.INV
+const X = S + '/sources/x', W = S + '/sources/web', R = S + '/sources/repos', HN = S + '/sources/hn', HL = R + '/humanlayer', DF = R + '/dotfiles/dotfiles/.claude', CL = R + '/claudelayer/.claude'
+
+const CARD = {
+  type: 'object', additionalProperties: false,
+  required: ['id','source_title','source_url','source_date','source_type','author','read_mode','quote','claim','evidence_type','evidence_detail','bears_on','landing','in_inventory','inventory_ref'],
+  properties: {
+    id: { type: 'string' }, source_title: { type: 'string' }, source_url: { type: 'string' },
+    source_date: { type: 'string', description: 'YYYY-MM-DD; YYYY-MM if the day is unknown; add ~ if estimated' },
+    source_type: { type: 'string', enum: ['repo','blog','docs','release-notes','talk','podcast','x-article','x-thread','aitw-episode','hn','follow-on','other'] },
+    author: { type: 'string', enum: ['Dex','Kyle','Dex+others','other'] },
+    read_mode: { type: 'string', enum: ['read','summarised'] },
+    quote: { type: 'string', description: 'verbatim, at most 15 words' },
+    claim: { type: 'string' },
+    evidence_type: { type: 'string', enum: ['measured','anecdotal','asserted','marketing'] },
+    evidence_detail: { type: 'string' },
+    bears_on: { type: 'array', items: { type: 'string', enum: ['W1','W2','W3','W4','W5','L1','L2','L3','none'] } },
+    landing: { type: 'string' }, in_inventory: { type: 'boolean' }, inventory_ref: { type: 'string' },
+  },
+}
+const OUT = {
+  type: 'object', additionalProperties: false, required: ['reader_id','sources','cards','gaps','new_sources'],
+  properties: {
+    reader_id: { type: 'string' },
+    sources: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['title','url','date','status','words_read','note'], properties: { title: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' }, status: { type: 'string', enum: ['read','partial','summarised','unreadable','not-by-dex'] }, words_read: { type: 'integer' }, note: { type: 'string' } } } },
+    cards: { type: 'array', items: CARD },
+    gaps: { type: 'array', items: { type: 'string' } },
+    new_sources: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['title','url','date','why'], properties: { title: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' }, why: { type: 'string' } } } },
+  },
+}
+const CONTEXT = `You are one of the blind readers in a research sweep of Dex Horthy's (HumanLayer) published work since 2025-06-01. Nothing you write changes any harness; the output is IDEA CARDS for a later review. Do not judge or rank; record.
+
+WHY: FixFlow (this repository) runs a 40-phase ship plan under an agent harness. The review will score every card against five known weaknesses and three levers:
+W1 CLAUDE.md is 390 lines (~2x the length at which adherence is known to fall); a trim is gated behind a knowledge-store pilot.
+W2 Compliance with the phase routine is self-reported; with no hooks, "the store was never consulted" and "the routine was skipped" look the same from outside.
+W3 The phase routine has never run; P1's cold-resume trial (a fresh agent must recover ten frozen facts from the repository alone) is its first test.
+W4 One custom agent exists (a Haiku file locator); skills are being added now; no reusable workflow library.
+W5 Workflows (multi-agent scripts) are authored per task and not saved.
+L1 Effort routing: most verifiers run at xhigh effort (his Oct-2026 SlopCodeBench report says medium often matched or beat xhigh at lower cost).
+L2 Context budget and compaction: the defence is one phase per new session; his material covers the "dumb zone", context forking, long-context limits.
+L3 Output backpressure and verifiers: outputs are capped and refuters run first; his material covers backpressure scripts, "no software factory without better verifiers", software-factory essays.
+What the harness already has (so your "landing" guess can name it): CLAUDE.md (always loaded); a phase routine in the ship plan §0 (one phase per new chat; a draft PR whose body starts "Plan @ <sha>" and keeps a decisions journal; an Opus reviewer per PR, refute-by-default, naming the head SHA and fail-before/pass-after per register id; a six-question closing message; a one-page owner view); Workflow-tool orchestration with judge panels, fresh-context refuters (default verdict refuted), completeness critics, evidence folders with sha256 manifests; CI with three jobs and import-boundary contracts; one custom agent (.claude/agents/fixflow-explorer.md, Haiku); skills under .claude/skills/ being added; a knowledge-store design for verified diagnoses (not built). A harness review deliberately SKIPPED hooks, a context system, call-graph tooling, a pre-commit gate and a measurement pipeline (each for a named reason) — ideas that re-open those are still wanted, just mark them.
+
+RULES
+1. Read the files you are given with the Read tool (absolute Windows paths below). Big files: read in chunks with offset/limit until done. If a file is missing, record it in gaps and move on.
+2. One card per distinct idea. Be generous and literal: any practice, rule, mechanism, heuristic, number, warning or design principle that COULD change how this harness is configured or run gets a card — even if the harness already does it (the reviewers decide novelty). Also card claims he makes AGAINST things, and any measured number.
+3. Only Dex's own ideas. HumanLayer material by Kyle Mistele: author "Kyle". Teammates/unsigned product docs: "Dex+others". Other people (HN commenters, third-party studies): NOT sources of ideas — only cards whose claim is a critique of, or a measurement against, one of his ideas (author "other", source_type "hn" or "follow-on").
+4. quote = at most 15 words, verbatim. claim = one sentence. evidence_type: measured (numbers from an experiment or benchmark), anecdotal (no numbers), asserted, marketing.
+5. in_inventory: open the inventory file and check whether this exact source is listed; inventory_ref = its section or "". List in new_sources anything by Dex you notice that the inventory lacks.
+6. Card ids: your reader id + dash + running number. Return ONLY the structured object.
+Inventory file: ${INV}
+Today: ${args.today}.`
+
+const xids = ['2048438755271561322','2060842200137871599','2058965385261756792','2015223339221229973','2015909192293646796','1978535608055390607','1980782442828165607','1983021450803196395','1981857496584323305','1982256884951515502','1955410024680845639','1998968236617199803','1946586571865800724','1950288431122436597','2064747631885398231','1913246092462104671','1925757778716447040','1969116666903871868','1971975588350177387','1972765717914374156','1979947088768368902','1962319895070458241']
+const READERS = [
+  { id: 'R41', effort: 'medium', title: 'X posts linked from HumanLayer\'s All Resources page as "ideas" (2025-05 → 2026-06) plus four found by readers: human leverage / models cannot architect; AI for code is a craft; agents as code rotators; learning tests; Bash considered harmful; designing backpressure systems; the context-engineering continuum; self-forking agents; RPI vs spec-driven; problems with default compaction; intentional understeering; component-tree view; Agents as Spec Compilers; How not to use SubAgents; the Fable write-up; and others', files: xids.map(i => X + '/' + i + '.txt').concat([W + '/blog-all-resources-links.txt']), note: 'Each file is a head tweet rendered from the fxtwitter API (replies not captured; say so). The links file maps status ids to the titles the All Resources page gives them — use those titles as source_title. One of the ids (1962319895070458241) is Aaron Levie, not Dex: status not-by-dex. Card every idea; most are asserted.' },
+  { id: 'R42', effort: 'low', title: 'critique-only: HN thread on "Writing a good CLAUDE.md" (2025-11-30, 748 points, 290 comments) and orcabot labs "Do skills improve coding agent accuracy?" (2026-07, a SlopCodeBench-based study)', files: [HN + '/46098838.txt', W + '/followon-2026-07-orcabot-skills-study.txt'], note: 'NOT sources of his ideas. Cards only where a commenter or the study critiques, contradicts or measures against one of his claims about CLAUDE.md, instruction budgets, progressive disclosure, skills or SlopCodeBench (author other). For orcabot, record the method and numbers exactly (which models, how many tasks, the pass-rate change with skills). Also note in sources what the HN top comments say the post claims, for cross-checking.' },
+  { id: 'R43', effort: 'medium', title: 'HumanLayer docs SOURCE (raw markdown in humanlayer/humanlayer apps/docs/, 2026-06 → 2026-11), the context-shard example, CONTRIBUTING.md, and package.json (how the hooks and silent runner are wired)', files: [HL + '/.agents/context-shards/auto-advance.md', HL + '/apps/docs/explanation/workflow-phases.md', HL + '/apps/docs/explanation/tasks.md', HL + '/apps/docs/explanation/workspace-model.md', HL + '/apps/docs/guide/skills-workflows.md', HL + '/apps/docs/guide/automation-sessions.md', HL + '/apps/docs/guide/workspaces.md', HL + '/apps/docs/guide/codex.md', HL + '/apps/docs/reference/skills-workflows.md', HL + '/apps/docs/reference/subagent-models.md', HL + '/apps/docs/reference/system-prompt-additions.md', HL + '/apps/docs/reference/workspace-config.md', HL + '/apps/docs/tutorials/first-session.md', HL + '/apps/docs/index.md', HL + '/CONTRIBUTING.md', HL + '/package.json', HL + '/apps/docs/release-notes.md'], note: 'An earlier reader only had WebFetch summaries of these pages; you have the raw markdown, so quotes can be verbatim. Card every mechanism: workflow phases, sub-agent model/effort routing table (exact models and efforts per sub-agent — bears on L1), the system-prompt additions (verbatim rules injected into sessions and sub-agents), context shards (what a shard is, how it is loaded), automation sessions, workspace config, Codex handoff. In package.json find how "hook:quality", "quality", "check" and the silent runner are defined and card that. The release notes (13k words) were already carded by another reader: skim only for Context Shards, orchestrate, verifiers, compaction, forking, effort, and card only those with the exact version and date.' },
+  { id: 'R44', effort: 'medium', title: 'Dex\'s personal Claude Code setup (dexhorthy/dotfiles, 2025-12-22/27): ~/.claude/CLAUDE.md, seven agent definitions, two commands, settings, the claude-headless/haiku/cblock scripts; and humanlayer/claudelayer\'s .claude (2026-01-12): agents incl. the recursive analyzer and commands (research_codebase, create_plan, implement_plan, iterate_plan, create_handoff, describe_pr, exhaustive-research, create_worktree)', files: [DF + '/CLAUDE.md', DF + '/settings.json', DF + '/agents/codebase-analyzer.md', DF + '/agents/codebase-locator.md', DF + '/agents/codebase-pattern-finder.md', DF + '/agents/implementer-agent.md', DF + '/agents/thoughts-analyzer.md', DF + '/agents/thoughts-locator.md', DF + '/agents/web-search-researcher.md', DF + '/commands/g_continue.md', DF + '/commands/g_read_codelayer_sessions.md', R + '/dotfiles/dotfiles/.bin/claude-headless', R + '/dotfiles/dotfiles/.bin/haiku', R + '/dotfiles/dotfiles/.bin/cblock', CL + '/agents/codebase-analyzer-recursive.md', CL + '/agents/counter.md', CL + '/commands/create_handoff.md', CL + '/commands/exhaustive-research.md', CL + '/commands/research_codebase.md', CL + '/commands/create_plan.md', CL + '/commands/implement_plan.md', CL + '/commands/iterate_plan.md', CL + '/commands/describe_pr.md', CL + '/commands/create_worktree.md', CL + '/commands/commit.md', CL + '/settings.json', R + '/multiclaude/README.md'], note: 'First-hand harness artefacts: Dex\'s own global CLAUDE.md (card each rule), each agent\'s role, tools, model and prompt rules (bears on W4), the commands (the original RPI commands and the handoff command — bears on W3/W5), the recursive sub-agent pattern, multiclaude. Card the mechanisms; quote the files.' },
+  { id: 'R45', effort: 'low', title: 'Dev Interrupted panel "Why software factories fail without humans" (HumanLayer, Warp, LinearB; 2026-09-01; transcript on page), JetBrains "What We Heard at AGNTCon Europe" (2026-10-13; recap of Dex\'s Amsterdam keynote "State of the Software Factory", 2026-09-17), and the code.talks Hamburg 2026-11-04 keynote abstract', files: [W + '/pod-2026-09-01-dev-interrupted-panel.txt', W + '/art-2026-10-13-jetbrains-agntcon-europe.txt', W + '/evt-2026-11-04-codetalks-hamburg.txt'], note: 'The panel has three speakers (Dex, Aloke Desai of Warp, Dan Lines of LinearB) plus host Andrew Zigler: card only Dex\'s statements (practical numbers like PR rework rates, auto-merge gates, measurement ranking, human owner per item). The JetBrains recap is a third party summarising his keynote: read_mode summarised, author Dex where it quotes him. The code.talks page is an abstract (summarised).' },
+]
+phase('Sweep-2')
+const results = await parallel(READERS.map(r => () => agent(
+  CONTEXT + '\n\nYOUR READER ID: ' + r.id + '\nYOUR BUNDLE: ' + r.title + '\nNOTES FOR THIS BUNDLE: ' + r.note + '\nFILES TO READ (absolute paths; read every one, in chunks if large):\n' + r.files.map(f => '- ' + f).join('\n') + '\nReturn the structured object (reader_id = ' + r.id + ').',
+  { label: r.id + ' ' + r.title.slice(0, 60), phase: 'Sweep-2', model: 'sonnet', effort: r.effort, schema: OUT }
+)))
+const readers = results.filter(Boolean)
+log(`round-2 readers done: ${readers.length}/${READERS.length}; cards: ${readers.reduce((n, r) => n + r.cards.length, 0)}`)
+return { stats: { readers_total: READERS.length, readers_done: readers.length, cards_raw: readers.reduce((n, r) => n + r.cards.length, 0) }, reader_order: READERS.map(r => ({ id: r.id, title: r.title, effort: r.effort, files: r.files.length })), readers }

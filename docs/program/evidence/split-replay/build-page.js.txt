@@ -1,0 +1,32 @@
+// build-page.js.txt — put replay.json into page-template.html and write the self-contained page.
+// Run from this folder, after the replay stage:   node - < build-page.js.txt
+// The page shows only what replay.js.txt printed; it computes nothing of its own beyond formatting.
+'use strict';
+const fs = require('fs'), path = require('path');
+const here = process.cwd();
+const data = JSON.parse(fs.readFileSync(path.join(here, 'replay.json'), 'utf8'));
+// The trial's preparation (part 6 of the record): the scripted hand-over check on the record and on two
+// maintained documents, as the pointers stage printed them. Absent files leave the page as it was.
+try {
+  const pr = JSON.parse(fs.readFileSync(path.join(here, 'pointers-record.json'), 'utf8')).tot;
+  const ctl = [...fs.readFileSync(path.join(here, 'pointers-controls.txt'), 'utf8').matchAll(/not borne out by the repository: (\d+) of (\d+) checked/g)].map(m => ({ wrong: +m[1], checked: +m[2] }));
+  const size = (fs.readFileSync(path.join(here, 'pointers-record.txt'), 'utf8').match(/is (\d+) documents an arm/) || [])[1];
+  // The summary check's two headline counts, read from its record at build time (docs/program/SUMMARY-CHECK-2026-11.md).
+  let sc = null;
+  try {
+    const s = fs.readFileSync(path.resolve(here, '..', '..', 'SUMMARY-CHECK-2026-11.md'), 'utf8');
+    const a = /(\d+) wrong of ([\d,]+)/.exec(s), b = /(\d+) of (\d+) summaries \(([\d.]+) %/.exec(s);
+    if (a && b) sc = { wrong: +a[1], claims: a[2], overtaken: +b[1], docs: +b[2], pct: b[3] };
+  } catch (e) {}
+  // cleared: the two contradicted pull request states (documents 9 and 11 of pointers-record.json) were read by
+  // hand in the summary check and are not wrong; see 6.3 of the record.
+  data.trial = { docs: pr.docs, checked: pr.checked, wrong: pr.wrong, withWrong: pr.withWrong, controls: [ctl[0], ctl[2]], size, cleared: 2, sc };
+} catch (e) { data.trial = null; }
+const tpl = fs.readFileSync(path.join(here, 'page-template.html'), 'utf8');
+if (!tpl.includes('/*DATA*/null')) throw new Error('template has no data slot');
+const json = JSON.stringify(data).replace(/</g, '\\u003c');
+const out = tpl.replace('/*DATA*/null', () => json);
+const dir = path.resolve(here, '..', '..', 'split-replay');
+fs.mkdirSync(dir, { recursive: true });
+fs.writeFileSync(path.join(dir, 'index.html'), out);
+console.log(`wrote ${path.join(dir, 'index.html')}  ${out.length.toLocaleString('en-US')} bytes`);

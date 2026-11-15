@@ -1,0 +1,16 @@
+// probe: aggregates over the development part to size the baseline build (no transcript text printed).
+const fs = require('fs'), readline = require('readline');
+const W = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/graph-v2-work/lookups';
+const part = Object.fromEntries(fs.readFileSync(W + '/out/split-sessions.tsv', 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t')));
+(async () => {
+  const commits = {}; const seedK = {}; const zones = {}; const rep = {}; let n = 0, inRepo = 0; const exts = {};
+  const rl = readline.createInterface({ input: fs.createReadStream(W + '/out/instances-v.jsonl'), crlfDelay: Infinity });
+  for await (const l of rl) {
+    if (!l.trim()) continue; const x = JSON.parse(l); if (part[x.sid] !== 'dev') continue; n++;
+    commits[x.ver.commit] = (commits[x.ver.commit] || 0) + 1; seedK[x.cls + ':' + x.seed.kind] = (seedK[x.cls + ':' + x.seed.kind] || 0) + 1;
+    const prim = x.truth.filter((t) => t.level === 'confirmed').length ? x.truth.filter((t) => t.level === 'confirmed') : x.truth;
+    if (prim.some((t) => t.replay !== 'outside-repository' && t.replay !== 'unresolved')) inRepo++;
+    for (const t of prim) { zones[t.zone] = (zones[t.zone] || 0) + 1; rep[t.replay] = (rep[t.replay] || 0) + 1; const e = (t.f.match(/\.[A-Za-z0-9]+$/) || ['none'])[0]; exts[e] = (exts[e] || 0) + 1; }
+  }
+  console.log(JSON.stringify({ n, inRepo, distinctCommits: Object.keys(commits).length, seedK, zones, rep, exts: Object.entries(exts).sort((a, b) => b[1] - a[1]).slice(0, 25) }, null, 0));
+})();

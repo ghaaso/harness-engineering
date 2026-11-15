@@ -1,0 +1,22 @@
+// Applies the final check's corrections to section 9 and the linked edits. Every anchor must match exactly once.
+const fs = require('fs');
+const [doc, p4a] = process.argv.slice(2);
+const NL = String.fromCharCode(10);
+let s = fs.readFileSync(doc, 'utf8');
+const rep = (anchor, to) => { const n = s.split(anchor).length - 1; if (n !== 1) throw new Error('anchor count ' + n + ': ' + anchor.slice(0, 70)); s = s.replace(anchor, () => to); };
+const a = s.indexOf('### 9.4 The token lever'); const b = s.indexOf('### 9.5 Where the ideas pull');
+if (a < 0 || b < 0) throw new Error('9.4 block not found');
+s = s.slice(0, a) + fs.readFileSync(p4a, 'utf8') + s.slice(b);
+rep('One number came out of it: four in ten of November\'s tokens were read above Horthy\'s current 400k compaction line.', 'One measurement came out of it: about four in ten of November\'s tokens were in calls whose context had passed 400k. The testbed had already chosen a 400k compaction window and never switched it on (§9.4).');
+rep('Lever (1) now has a number: 39.8 % of November\'s tokens were read in calls above 400k of context, 26.8 % of them in slice sessions (§9.4).', 'Lever (1) now has an exposure figure: 39.8 % of November\'s tokens were in calls whose context had passed 400k (26.8 points in slice sessions, 12.4 in the root). The testbed\'s own 400k compaction window was never in force. What switching it on would save is unmeasured (§9.4).');
+rep('Eleven bottlenecks get nothing: the first-use gap, power, the check queue, memory,', 'Eleven bottlenecks get nothing: the first-use gap, power, the slow check path, the check queue, memory,');
+rep('Thirty ideas collapse into eleven artefacts.', 'Twenty-nine of the 30 fitting ideas collapse into eleven artefacts. The thirtieth, G4-F084, is not taken now (§9.6).');
+rep('6. A number for the compaction lever in §3.6, measured in §9.4.', '6. A measurement of the compaction lever in §3.6, and the finding that the testbed had built that lever and never switched it on (§9.4).');
+rep('**What the re-screen of "already done" showed.** Of the 142 flagged ideas, the testbed had practised the mechanism in 71.', '**What the re-screen of the dropped ideas showed.** Of the 142 flagged (84 that PR #186 called already done, 40 it skipped, 18 BAML cards), the testbed had practised the mechanism in 71.');
+rep('That is the strongest support in the record for the script-first rule in §7: the same idea as a brief line failed, and as a script it has not been tried.', 'That is the strongest support in the record for the script-first rule in §7: these ideas failed mostly as brief lines and model re-checks. A few had a script form and failed too, such as the verify tool\'s provenance check.');
+rep('| A brief line; the fresh agent is §3\'s fresh reviewer, not an extra one |', '| One agent per finding that fails twice, taken as §3\'s fresh reviewer, not an extra one |');
+rep('and a line naming the authoritative source of any new stored state |', 'and a line naming the authoritative source of any new stored state, which is the weaker half of §3.3\'s state-ending table |');
+rep('G4-F154 and G4-F156 stay dropped, as §8 said.', 'G4-F154 (already done in PR #186) and G4-F156 (skipped there) stay dropped after adjudication.');
+rep('- §9.4 is the main session\'s own measurement and reading.', '- §9.4 is the main session\'s own measurement. A refuter narrowed its first wording: the 400k figure was the testbed\'s, and the percentages are exposure, not savings (`fit/check.txt`).');
+fs.writeFileSync(doc, s);
+console.log('fixes applied; lines', s.split(NL).length);

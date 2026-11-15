@@ -1,0 +1,65 @@
+// Writes the addendum review's input files: which existing families are re-adjudicated (and why), the first-pass
+// over-cap families that now get a refuter, and the NEW cards (no family) for a small grouping pass.
+// Usage: node build-delta-briefs.mjs <families.json> <addendum-dir> <out-dir> [batchSize=12]
+import fs from 'node:fs';
+import path from 'node:path';
+const [famPath, addDir, outDir, bsArg] = process.argv.slice(2);
+const BS = Number(bsArg || 12);
+const fams = JSON.parse(fs.readFileSync(famPath, 'utf8'));
+const famById = {}; for (const f of fams) famById[f.id] = f;
+const cards = JSON.parse(fs.readFileSync(path.join(addDir, 'cards.json'), 'utf8'));
+const affected = JSON.parse(fs.readFileSync(path.join(addDir, 'affected-families.json'), 'utf8'));
+fs.mkdirSync(outDir, { recursive: true });
+const cardById = {}; for (const c of cards) cardById[c.card] = c;
+const esc = s => String(s ?? '').replace(/\r?\n+/g, ' ').trim();
+
+// Selection rule (stated in the document): a family is re-adjudicated when a new card (a) updates or contradicts it,
+// (b) it was adopt, trial or over-cap in the first pass and received any new card, or (c) any new card attached to it is measured evidence.
+const reasonFor = a => {
+  const r = [];
+  if (a.relations.includes('updates') || a.relations.includes('contradicts')) r.push('update-or-contradiction');
+  if (['adopt', 'trial', 'unrefuted (over cap)'].includes(a.final_disposition)) r.push('live-disposition');
+  if (a.cards.some(c => c.evidence === 'measured')) r.push('measured-evidence');
+  return r;
+};
+const selected = affected.map(a => ({ ...a, why: reasonFor(a) })).filter(a => a.why.length);
+const attachedOnly = affected.filter(a => !reasonFor(a).length).map(a => ({ family: a.family, final_disposition: a.final_disposition, cards: a.cards.map(c => c.card + ':' + c.relation) }));
+const overcap = fams.filter(f => f.final_disposition === 'unrefuted (over cap)');
+
+function famBlock(f, a) {
+  const L = [];
+  L.push('## ' + f.id + ' — first-pass disposition: ' + f.final_disposition + ' (' + f.decided_by + ')');
+  L.push('- claim: ' + esc(f.label));
+  L.push('- bears on: ' + ((f.bears_on || []).join(', ') || 'none') + ' · first-pass cards: ' + f.members.length + ' (' + f.members.slice(0, 8).join(', ') + (f.members.length > 8 ? ' …' : '') + ')');
+  L.push('- first-pass strongest evidence: ' + esc(f.strongest_evidence));
+  for (const r of f.reviews || []) L.push('- reviewer ' + r.reviewer + ' (' + r.lens + '): e/t/n/b/c ' + [r.evidence, r.transferability, r.novelty, r.benefit, r.cost_risk].join('/') + ' → ' + r.disposition + '; existing: ' + (esc(r.existing_mechanism) || '-') + '; reopens: ' + (esc(r.reopens_skipped) || '-') + '; measurement: ' + (esc(r.measurement) || '-') + '; reason: ' + esc(r.reason));
+  if (f.refutation) L.push('- first-pass refuter: ' + f.refutation.verdict + ' → ' + f.refutation.final_disposition + '; reason: ' + esc(f.refutation.reason) + '; counter-evidence: ' + esc(f.refutation.counter_evidence) + '; measurement: ' + esc(f.refutation.what_would_settle_it));
+  if (a) {
+    L.push('- WHY RE-ADJUDICATED: ' + a.why.join(', '));
+    L.push('- NEW CARDS ATTACHED (' + a.cards.length + '):');
+    for (const x of a.cards) { const c = cardById[x.card]; L.push('  - ' + x.card + ' [' + x.relation + '; ' + c.source_date + '; ' + c.source_type + '; ' + c.author + '; ' + c.read_mode + '; evidence ' + c.evidence_type + '] ' + esc(c.claim) + ' — quote: "' + esc(c.quote) + '" — evidence: ' + esc(c.evidence_detail) + ' — source: ' + esc(c.source_title) + ' <' + c.source_url + '>' + (x.note ? ' — mapper: ' + esc(x.note) : '')); }
+  }
+  L.push('');
+  return L.join('\n');
+}
+const batches = [];
+const order = { adopt: 0, trial: 1, 'unrefuted (over cap)': 2, skip: 3, 'already-done': 4 };
+selected.sort((x, y) => (order[x.final_disposition] ?? 9) - (order[y.final_disposition] ?? 9) || x.family.localeCompare(y.family));
+for (let i = 0; i < selected.length; i += BS) {
+  const part = selected.slice(i, i + BS);
+  const id = 'D' + String(batches.length + 1).padStart(2, '0');
+  const file = path.join(outDir, id + '-families.md').replace(/\\/g, '/');
+  fs.writeFileSync(file, '# Addendum re-adjudication batch ' + id + ' — ' + part.length + ' first-pass families that received new cards\n\n' + part.map(a => famBlock(famById[a.family], a)).join('\n'));
+  batches.push({ id, kind: 'existing', file, families: part.map(a => a.family) });
+}
+const ocFile = path.join(outDir, 'OC-overcap-families.md').replace(/\\/g, '/');
+const affById = {}; for (const a of selected) affById[a.family] = a;
+fs.writeFileSync(ocFile, '# First-pass families left unrefuted by the per-group cap (' + overcap.length + ')\n\n' + overcap.map(f => famBlock(f, affById[f.id] || null)).join('\n'));
+const newCards = cards.filter(c => c.family === 'NEW' || c.family === 'UNMAPPED');
+const newFile = path.join(outDir, 'NEW-cards.md').replace(/\\/g, '/');
+fs.writeFileSync(newFile, '# New cards that no first-pass family covers (' + newCards.length + ')\n\n' + newCards.map(c => '## ' + c.card + '\n- date ' + c.source_date + ' · ' + c.source_type + ' · author ' + c.author + ' · ' + c.read_mode + ' · evidence ' + c.evidence_type + '\n- source: ' + esc(c.source_title) + ' — ' + c.source_url + '\n- claim: ' + esc(c.claim) + '\n- quote: "' + esc(c.quote) + '"\n- evidence: ' + esc(c.evidence_detail) + '\n- bears on: ' + ((c.bears_on || []).join(', ') || 'none') + ' · landing guess: ' + esc(c.landing) + '\n').join('\n'));
+const args = { batches, overcap: { file: ocFile, families: overcap.map(f => f.id) }, newCards: { file: newFile, ids: newCards.map(c => c.card) } };
+fs.writeFileSync(path.join(outDir, 'review-args.json'), JSON.stringify(args, null, 1));
+fs.writeFileSync(path.join(outDir, 'selection.json'), JSON.stringify({ selected: selected.map(a => ({ family: a.family, prior: a.final_disposition, why: a.why, cards: a.cards.map(c => c.card + ':' + c.relation) })), attached_only: attachedOnly, overcap: overcap.map(f => f.id), new_cards: newCards.map(c => c.card) }, null, 1));
+console.log('selected for re-adjudication', selected.length, '| attached only', attachedOnly.length, '| over-cap', overcap.length, '| new cards', newCards.length, '| batches', batches.length);
+console.log('why:', JSON.stringify(selected.reduce((m, a) => { for (const w of a.why) m[w] = (m[w] || 0) + 1; return m; }, {})));

@@ -1,0 +1,315 @@
+{
+ "note": "Records added on 14 November 2026, after the owner pointed out that ideas and observations said only in chat were missing and that the lens must be seven metrics (throughput, efficiency, token count, token cost, time taken, quality of output, hallucinations). Each record cites the session and transcript line it comes from. apply.cjs appends them with these fixed ids, so no earlier id shifts. primary, metrics, mechanism and general are the seven-metric classification, set by hand here.",
+ "ideas": [
+  {
+   "theme": "PAR",
+   "id": "PAR-22",
+   "k": "chat#1",
+   "name": "Orchestration as a distributed B+ tree: split, merge on context",
+   "how": "Sessions form a distributed B+ tree: inner ones hold routing keys, leaves hold the work. A session passing about 40 % [S] of its window splits; small siblings merge.",
+   "problem": "The orchestrator’s window grows until it must compact or clear, and the summary loses state: hallucination, re-read tokens and one overloaded root.",
+   "stands": "Rule written and replayed over 97 [M] recorded session windows on 14 November; not tested live. 72, 32 and 26 [M] of them passed lines of 300k, 400k and 500k, holding 65.1, 44.6 and 36.8 % [M] of what sessions re-read. On tokens the record does not settle it against compacting earlier: 1.05–1.06 times on the middle of three sets of assumed costs with the work split evenly, 0.53–1.24 across all nine cases (each set with the work split evenly, unevenly or not at all) [E]. It writes 1.3–1.6 briefs for each summary an earlier compaction would write [E]. Hand-over quality is untested.",
+   "next": "I said yes to one trial wave at 300k. First D07, then a reader’s check of the latest state on our recorded summaries.",
+   "origin": "My idea, from database and distributed-systems study",
+   "status": "designed",
+   "maturity": 2,
+   "bottlenecks": [
+    "B04",
+    "R2",
+    "PR-SUMMARY",
+    "TK-SUMMARIES",
+    "TK-FILL"
+   ],
+   "wp": "WP12",
+   "added": "chat of 14 November (session 423aac92, line 6893)",
+   "primary": "hallucination",
+   "metrics": [
+    "hallucination",
+    "quality",
+    "token_count",
+    "efficiency"
+   ],
+   "mechanism": "context_growth",
+   "general": true
+  },
+  {
+   "theme": "TOK",
+   "id": "TOK-44",
+   "k": "chat#2",
+   "name": "Take finished material out of a live window",
+   "how": "A live window cannot give material up. Under the split rule (PAR-22) a new session starts from a one-page brief that points at the repository; finished material never enters it.",
+   "problem": "Material a session no longer needs stays in its window and is re-read on every call; I asked for it to be pulled out.",
+   "stands": "Settled inside the split rule on 14 November: finished material is whatever a new session’s brief does not name. No mechanism of its own; untested. A new session’s first call reads a median 79k [M].",
+   "next": "In the trial, count what a new session re-reads and what it guesses.",
+   "origin": "My request in a chat of 26 October",
+   "status": "designed",
+   "maturity": 2,
+   "bottlenecks": [
+    "TK-REREAD",
+    "TK-FETCHED"
+   ],
+   "wp": "WP12",
+   "added": "chat of 26 October (session 4647c1c0, line 130)",
+   "primary": "token_count",
+   "metrics": [
+    "token_count",
+    "efficiency",
+    "quality"
+   ],
+   "mechanism": "context_growth",
+   "general": true
+  },
+  {
+   "theme": "MTH",
+   "id": "MTH-66",
+   "k": "chat#3",
+   "name": "Fast mode for a fleet of subagents",
+   "how": "Switch the faster output mode on for the subagents of a large fan-out, so the run takes less time on the clock.",
+   "problem": "A large fan-out takes long on the clock even when its token cost is accepted.",
+   "stands": "Asked for on a run of 132 [M] agents on 3 November; fast mode was on for that session, and its effect on time and tokens was not measured.",
+   "next": "Time one fan-out with it on and off, and note what it does to usage.",
+   "origin": "My request in a chat of 3 November",
+   "status": "trial",
+   "maturity": 1,
+   "bottlenecks": [],
+   "wp": "WP10a",
+   "added": "chat of 3 November (session 4f9060c4, lines 1076 and 1301)",
+   "primary": "time",
+   "metrics": [
+    "time",
+    "throughput",
+    "token_cost"
+   ],
+   "mechanism": "model_tier",
+   "general": true
+  },
+  {
+   "theme": "MTH",
+   "id": "MTH-67",
+   "k": "chat#4",
+   "name": "Borrow from distributed systems, databases and parallel computing",
+   "how": "Treat agent problems as known systems problems first: caching, consistency, indexes, scheduling, trees. A lecture list maps each harness problem to its lectures.",
+   "problem": "Agent engineering is too new to have its own textbooks, and vendor guidance did not stop me needing a harness.",
+   "stands": "Built on 11 November: 52 [M] research agents checked 44 [M] course series; a list and transcript library cover six core courses. PAR-22 applies one such structure.",
+   "next": "Use the list when a package starts; record which lecture an idea came from.",
+   "origin": "My brief in chats of 1, 2 and 11 November",
+   "status": "built",
+   "maturity": 3,
+   "bottlenecks": [
+    "PR-OUTSIDEEVIDENCE"
+   ],
+   "wp": "WP10a",
+   "added": "chats of 1, 2 and 11 November (session e24f17dc, lines 3628 and 3672; session 2a8ce058, lines 3 and 730)",
+   "primary": "efficiency",
+   "metrics": [
+    "efficiency",
+    "quality"
+   ],
+   "mechanism": "method",
+   "general": true
+  },
+  {
+   "theme": "MSR",
+   "id": "MSR-49",
+   "k": "chat#5",
+   "name": "Seven-metric lens for every bottleneck and idea",
+   "how": "Sort each record by the metric it moves most: throughput, efficiency, token count, token cost, time taken, quality of output, hallucinations.",
+   "problem": "The first compile sorted bottlenecks by where they showed up in our build, so the PC outranked what limits agentic work itself.",
+   "stands": "In use from this edition: agents sorted all 606 [M] earlier records on 14 November; a blind second reading agreed on the main metric for 80 of 101 [M].",
+   "next": "Give hallucinations and quality a measured rate (WP8).",
+   "origin": "My correction of 14 November",
+   "status": "in_use",
+   "maturity": 5,
+   "bottlenecks": [
+    "PR-HALLU"
+   ],
+   "wp": "WP8",
+   "added": "chat of 14 November (session 423aac92, line 6893)",
+   "primary": "quality",
+   "metrics": [
+    "quality",
+    "hallucination",
+    "efficiency",
+    "throughput"
+   ],
+   "mechanism": "measurement",
+   "general": true
+  },
+  {
+   "theme": "MSR",
+   "id": "MSR-50",
+   "k": "chat#6",
+   "name": "Where the time goes: model step against disk",
+   "how": "Time one file read, one repeat read, one search of the repository and one model step on this PC, and compare them.",
+   "problem": "I expected fetching from disk to be the slow part, as in database design, and a cache to be the fix.",
+   "stands": "Measured on 11 November: one model step took 6,600 ms (median of 10,658 steps) [M]; a 93 KB file read 0.5 ms (possibly a warm read), a repeat 0.05 ms, a search of 618 files 124 ms [M].",
+   "next": "Count steps saved, not milliseconds, when judging an index or cache.",
+   "origin": "Measured in a chat of 11 November",
+   "status": "measured",
+   "maturity": 4,
+   "bottlenecks": [
+    "TK-LOOKUP"
+   ],
+   "wp": "WP8",
+   "added": "chat of 11 November (session e24f17dc, line 6950)",
+   "primary": "time",
+   "metrics": [
+    "time",
+    "efficiency"
+   ],
+   "mechanism": "orientation",
+   "general": true
+  }
+ ],
+ "register": [
+  {
+   "id": "TK-FILL",
+   "family": "tokens",
+   "name": "Judgement against window fill is unmeasured",
+   "what": "We do not know at what fill a session’s judgement starts to fall, for any model. The advice to stay under about 40 % [S] of the window is an outside rule of thumb; on our 1,000,000-token windows [E] it is 400k, above where 130 of 159 [M] recorded compactions already happen.",
+   "evidence": "The root compacted at 574k, 974k, 967k and 970k tokens [M], and 2 of 2 compaction summaries were wrong on the latest state [M]. By 14 November the record holds 159 [M] compactions: Opus 126 at a median 368k, Fable 5.2 16 at a median 967k, Fable 5.1 11 at a median 690k, Sonnet 6 at a median 804k [M]. 42.6, 22.9 and 17.2 % [M] of session calls ran in a window above 300k, 400k and 500k. No record links an error to how full the window was.",
+   "potential": "A split or compaction line set per model from our own record, in place of a borrowed figure.",
+   "first_step": "Log context use at each phase close (TOK-34) and record peak context where a session reversed itself (MSR-43); WP12’s trial logs the fill at every correction.",
+   "state_key": "open",
+   "state_note": "named on 14 November; where windows compact is counted, the link to errors is not",
+   "cls": "diagnose",
+   "wp": "WP12",
+   "verified": "yes",
+   "added": "seven-metric lens, 14 November; from the records B04, PR-SUMMARY and TOK-34",
+   "primary": "hallucination",
+   "metrics": [
+    "hallucination",
+    "quality",
+    "token_count"
+   ],
+   "mechanism": "context_growth",
+   "general": true
+  },
+  {
+   "id": "PR-HALLU",
+   "family": "review",
+   "name": "No hallucination rate is measured",
+   "what": "We learn of a false statement only when a reviewer, a script or I happen to catch it. No count exists per session, per model or per window fill.",
+   "evidence": "What we have are catches: 20-plus recorded overstatements, with no denominator [M], and 2 of 2 compaction summaries wrong on the latest state [M]. On 14 November a script rechecked 1,265 [M] pointers (paths, commits, pull requests) in the 61 [M] FixFlow compaction summaries on record: 16 were not borne out, 1.3 % [M], against 2 of 55 and 2 of 112 [M] in two maintained documents.",
+   "potential": "A rate we can watch fall as claims move to scripts and windows stay small.",
+   "first_step": "Count the claims a script could recheck in recorded reports, and how many fail (WP8, with WP3’s verdict script). Done for compaction summaries (WP12); the latest state needs a reader’s check.",
+   "state_key": "open",
+   "state_note": "named on 14 November; first scripted count the same day, for compaction summaries",
+   "cls": "diagnose",
+   "wp": "WP8",
+   "verified": "yes",
+   "added": "seven-metric lens, 14 November; from the records B12 and PR-SUMMARY",
+   "primary": "hallucination",
+   "metrics": [
+    "hallucination",
+    "quality"
+   ],
+   "mechanism": "measurement",
+   "general": true
+  }
+ ],
+ "terms": [
+  {
+   "key": "ad-1",
+   "term": "B+ tree",
+   "category": "general-cs",
+   "definition": "A balanced search tree used by databases. Inner nodes hold only keys that route a search and all data sits in the leaves; a node that outgrows its size splits in two, and small neighbours merge.",
+   "origin": "Database systems, 1970s; in the database lectures on our list (MTH-67)."
+  },
+  {
+   "key": "ad-2",
+   "term": "Split and merge (of sessions) / split line",
+   "category": "our-harness",
+   "definition": "In my B+ tree proposal (PAR-22), sessions are nodes of a distributed system: leaves do the work, inner ones route and gate. One whose window passes the split line hands its work, by scope, to two fresh sessions (a hand-over), and two small siblings join into one. The line is a share of the window, set per model; about 40 % [S] is the outside rule of thumb, 400k [E] on our windows.",
+   "origin": "My proposal of 14 November 2026; the 40 % figure came with the Dex Horthy sweep and is untested here."
+  },
+  {
+   "key": "ad-3",
+   "term": "Hallucination",
+   "category": "models",
+   "definition": "A model stating something that is not so: a report that overstates what was done, an invented fact, path or API, or a wrong summary after compaction.",
+   "origin": "General language-model field; one of my seven metrics."
+  },
+  {
+   "key": "ad-4",
+   "term": "Seven metrics",
+   "category": "our-harness",
+   "definition": "Throughput, efficiency, token count, token cost, time taken, quality of output and hallucinations: what I judge every bottleneck and idea by. Part 2 defines each.",
+   "origin": "My correction of 14 November 2026."
+  },
+  {
+   "key": "ad-5",
+   "term": "Fast mode",
+   "category": "claude-code",
+   "definition": "A Claude Code setting that returns output faster on the models that support it.",
+   "origin": "Claude Code feature."
+  },
+  {
+   "key": "ad-6",
+   "term": "Model step",
+   "category": "our-harness",
+   "definition": "One call to the model inside a session: it re-reads the whole window, then acts once. The median step in November’s clinic sessions took 6,600 ms [M].",
+   "origin": "Our token measurement and the timing of 11 November (MSR-50)."
+  },
+  {
+   "key": "ad-7",
+   "term": "Key table",
+   "category": "our-harness",
+   "definition": "In the split rule, a repository file with one row per piece of work: owner, state and where its result is. A fresh inner session can take over from it.",
+   "origin": "The split rule (WP12)."
+  },
+  {
+   "key": "ad-8",
+   "term": "Reader’s check",
+   "category": "our-harness",
+   "definition": "An agent on a fixed prompt reads a brief or a compaction summary twice and marks each statement of the latest state right or wrong, and each open loop carried or dropped.",
+   "origin": "The split rule (WP12), part 6.4."
+  }
+ ],
+ "fixRe": [
+  [
+   "on draft PR #185, not merged and not yet tested",
+   "in PR #185, merged on 13 Nov; not yet tested"
+  ],
+  [
+   "on draft PR #185, not merged",
+   "in PR #185, merged on 13 Nov"
+  ],
+  [
+   "\\(draft PR #185\\)",
+   "(PR #185, merged on 13 Nov)"
+  ],
+  [
+   "on draft PR #185",
+   "in PR #185, merged on 13 Nov"
+  ],
+  [
+   "Decide on merging PR #185, call the agents",
+   "Call the agents"
+  ],
+  [
+   "; merge decision on PR #185\\.",
+   "."
+  ],
+  [
+   "The draft pull request holding 13 \\[M\\] skill packages",
+   "The pull request, merged on 13 November, that added 13 [M] skill packages"
+  ],
+  [
+   "FixFlow: recorded, no PR merged under it yet\\.",
+   "In FixFlow the coordinator has merged under it since 13 November."
+  ],
+  [
+   "every arm lost 0\\.06 to 0\\.17 \\[M\\] tune to held-out",
+   "every arm lost 0.05 to 0.17 [M] tune to held-out"
+  ],
+  [
+   "38 of 48 \\[M\\] compactions came at 366-387k, all on Opus\\.",
+   "38 of 48 [M] compactions came at 366-387k, all on Opus; by 14 November 84 of the 117 [M] in session windows were Opus, 81 [M] of them at 366-385k."
+  ],
+  [
+   "Main sessions compacted 48 \\[M\\] times in the clinic and 9 \\[M\\] in FixFlow\\.",
+   "Main sessions compacted 48 [M] times in the clinic and 9 [M] in FixFlow up to 12 November; by 14 November the record holds 117 [M] compactions in session windows and 42 [M] in agent windows."
+  ]
+ ]
+}
