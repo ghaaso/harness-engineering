@@ -14,4 +14,6 @@ Checks were performed on the extracted files or an isolated temporary validation
 
 Final validation passed for **7,862 directly preserved files**, all **eight archives**, and **44,357 unique release objects** covering **96,420 data paths**. The final text credential scan reported no high-confidence matches in 7,096 current text files and 5,460 historical text objects. See `validation/final-checks.json` for the recorded totals. Report checks do not establish the scientific correctness of the underlying findings. Full training, held-out evaluation, live infrastructure, Android builds, and application suites were not rerun for a byte-preserving extraction.
 
+All 96,420 data paths were then restored into the new local repository. A final `--include-restored-data` check verified **104,282 files with zero failures**. These data files are intentionally ignored by ordinary Git operations; the private release is their portable storage.
+
 To repeat the offline report and model checks, copy the relevant directories to a temporary directory first: some historical check scripts write their output next to preserved evidence. The commands used were `node docs/program/evidence/harness-compile/build/build.cjs`, the same command with `--short`, and Node reading `engine-test.js.txt` / `rev4-regression.js.txt` from stdin in `docs/program/evidence/library-pathways`.
