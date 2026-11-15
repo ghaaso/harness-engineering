@@ -14,6 +14,7 @@
 #     the fake docker's call log); fail-before r58c/B/pre-r104/ktest.sh takes it after the container ended.
 #   C21/C48 (ruling 103(d)): with ktest-r1's writable source missing, KT_AS creates nothing and leaves the row out;
 #     fail-before r58c/B/pre-r104/ktest.sh with r58c/B/pre-r103/mounts.js creates train/selectB (how it was made at 08:13Z).
+#   C55 (round 9): that left-out row is named in the launch log too; fail-before r58c/B/pre-r106/ktest.sh (terminal only).
 # usage: sh r58c/B/tests/test_kt_as.sh   (log: r58c/B/logs/test_kt_as.log)
 WB=/c/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings
 WW=C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings
@@ -71,6 +72,13 @@ mk f $WB/r58c/B/ktest.sh; rm -rf $RT/f/train/selectB; DF=$(cd $RT/f && pwd -W); 
 [ -e $RT/f/train/selectB ] && v=created || v=absent
 check "C21 after: KT_AS with ktest-r1's writable source missing creates nothing and leaves the row out (exit 0)" "$rc $v $(vs f $DF)" "0 absent train:/w/train:ro eval:/w/eval:ro "
 grep -q 'left out (source missing, nothing created).*train/selectB -> /w/train/selectB (rw)' $RT/f/out.txt && v=yes || v=no; check "C21 after: the row left out is named" $v yes
+# C55 (round 9): the row left out is named in the launch log (r58c/B/out/logs/ktest-launch.log), not only on the terminal;
+# fail-before r58c/B/pre-r106/ktest.sh on the same case writes it to the terminal only
+LL55='ktest-b99: KT_AS=ktest-r1: .*left out (source missing, nothing created).*train/selectB -> /w/train/selectB (rw)'
+grep -q "$LL55" $RT/f/r58c/B/out/logs/ktest-launch.log 2>/dev/null && v=yes || v=no; check "C55 after: the row left out is in the launch log" $v yes
+mk w $WB/r58c/B/pre-r106/ktest.sh; rm -rf $RT/w/train/selectB; rc=$(go w ktest-r1 /w/r58c/B/tests/dry_guard.py)
+grep -q 'left out (source missing' $RT/w/out.txt && t=yes || t=no; grep -q 'left out (source missing' $RT/w/r58c/B/out/logs/ktest-launch.log 2>/dev/null && v=yes || v=no
+check "C55 before (fail-before): pre-r106 names the row on the terminal only, not in the launch log" "$rc $t $v" "0 yes no"
 mk x $WB/r58c/B/pre-r104/ktest.sh; cp $WB/r58c/B/pre-r103/mounts.js $RT/x/r58c/B/mounts.js; rm -rf $RT/x/train/selectB; rc=$(go x ktest-r1 /w/r58c/B/tests/dry_guard.py)
 [ -d $RT/x/train/selectB ] && v=created || v=absent
 check "C21 before (fail-before): pre-r104 ktest.sh with pre-r103 mounts.js creates train/selectB for a test container" "$rc $v" "0 created"

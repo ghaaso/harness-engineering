@@ -20,7 +20,8 @@ Ruling 80 (one held-out run, enforced by code):
   * the real run takes NO option (`python heldout.py run`); every path override and every unknown flag is refused
     (exit 2) before anything is read;
   * the record's sha256 must equal the value the coordinator wrote into the lane's progress.jsonl (ANCHOR, the
-    LAST line with "step": "coordinator" and "unit": "item27_freeze"; format in HANDOFF-FORMAT.md), else exit 5;
+    ONLY line with "step": "coordinator" and "unit": "item27_freeze": exactly one such line must exist, naming file
+    train/heldout/item27.json (MF-9 / HD-2, below); format in HANDOFF-FORMAT.md), else exit 5;
   * the record's tables_digest must equal selectB.tables_digest of the tables it names (exit 5); a CODE path the
     record lists as null is refused in the real run (exit 5);
   * a second run is refused once a hand-off exists (HANDOFF.json or a 'handoff' done line; exit 8), and an out

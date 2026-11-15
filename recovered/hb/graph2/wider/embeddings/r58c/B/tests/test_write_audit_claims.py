@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(ROOT, 'r58c'))
 import write_result as wr
 import write_audit_claims as wac
 show_hashes('r58c/write_audit_claims.py', 'r58c/B/pre/write_audit_claims.py', 'train/write_result.py', 'train/leak_audit.py', 'r58c/B/tests/test_write_audit_claims.py', 'r58c/B/pre-r96/write_audit_claims.py', 'r58c/B/pre-r97/write_audit_claims.py', 'r58c/B/pre-r98/write_audit_claims.py',
-            'r58c/B/pre-r101/write_audit_claims.py')
+            'r58c/B/pre-r101/write_audit_claims.py', 'r58c/B/pre-r106/write_audit_claims.py')
 W = os.path.join(os.path.dirname(OUTR), 'test_write_result', 'wr')
 check('wr_fake_lane_present', os.path.exists(os.path.join(W, 'fakeB', 'report', 'tune.json')), W)
 D = fresh(os.path.join(OUTR, 'wac')); I = os.path.join(D, 'in'); shutil.copytree(W, I, ignore=shutil.ignore_patterns('out_*', 'x', 'fakeB_pre', 'deliv'))
@@ -290,5 +290,32 @@ PW49A.TEST_OUT = os.path.join(D, 'wac-out49-c49a'); rc49a = exits(PW49A.main, wa
 cl49a = open(os.path.join(PW49A.TEST_OUT, 'r58c-test', 'CLAIMS.md')).read() if os.path.exists(os.path.join(PW49A.TEST_OUT, 'r58c-test', 'CLAIMS.md')) else ''
 r49a = [l for l in cl49a.splitlines() if 'the coordinator counted 3 score row(s) or loss(es)' in l or 'ruling 105(c) seeds and parents' in l]
 check('c49_fail_before_c49a_rows_have_no_file', rc49a == 0 and len(r49a) == 2 and all('(no file: anchor)' in l for l in r49a), 'c49a exit', rc49a, r49a[:1])
+# C51 (delta check, round 9): one E5 specialist item22 wrote only as a note (SR-8); RESULT.md prints 'not compared (no
+# co_changed)' and the claim map finds that line (exit 0, row ok); fail before: the pre-r106 claim map builds
+# '-/- identical' for it and exits 24 (CLAIM_NOT_IN_RESULT)
+I22P = os.path.join(I, 'item22', 'item22.json'); I51 = json.load(open(I22P))
+I51['check_predict_target']['E5'] = dict(config_id=I51['check_predict_target']['E5'].get('config_id'), injected_reps_equal_kept=True, specialists_compared=1,
+    specialists=dict(code=dict(injected_reps_equal_kept=True, full_order_identical=7, queries=7), other=dict(note='no co_changed relation in this area')))
+I51P = os.path.join(I, 'item22', 'item22_note.json'); json.dump(I51, open(I51P, 'w'))
+args51 = [x if x != I22P else I51P for x in args]; RD51 = os.path.join(D, 'result51')
+rc51w = exits(wr.main, args51 + ['--outdir', RD51])
+md51 = open(os.path.join(RD51, 'RESULT.md'), encoding='utf-8').read() if os.path.exists(os.path.join(RD51, 'RESULT.md')) else ''
+wa51 = ['--test', '--name', 'r58c-test'] + args51[1:] + ['--result-dir', RD51, '--tasks', TASKS]
+wac.TEST_OUT = os.path.join(D, 'wac-out51'); rc51 = exits(wac.main, wa51)
+cl51 = open(os.path.join(wac.TEST_OUT, 'r58c-test', 'CLAIMS.md')).read() if os.path.exists(os.path.join(wac.TEST_OUT, 'r58c-test', 'CLAIMS.md')) else ''
+r51 = [l for l in cl51.splitlines() if 'other not compared (no co_changed)' in l]
+check('c51_note_only_specialist_claim_found', rc51w == 0 and rc51 == 0 and 'code 7/7 identical, other not compared (no co_changed)' in md51
+      and len(r51) == 1 and r51[0].endswith('| ok |') and 'NOT FOUND' not in cl51, 'exits', rc51w, rc51, r51[:1])
+PW106 = load_module('wac_pre_r106', os.path.join(ROOT, 'r58c', 'B', 'pre-r106', 'write_audit_claims.py')); PW106.WRITE_RESULT_PIN = wac.WRITE_RESULT_PIN
+PW106.TEST_OUT = os.path.join(D, 'wac-out51-pre-r106'); rc51p = exits(PW106.main, wa51)
+check('c51_fail_before_pre_r106_exit_24', wac.EXITS['CLAIM_NOT_IN_RESULT'] == 24 and rc51p == 24, 'pre-r106 exit', rc51p)
+# C56 (delta check, round 9): heldout.sh's save_record names a second kept record of the same second <name>.<UTC>-1.json
+# (and -2); section 9 lists it with the plain <name>.<UTC>.json ones, and the writer's own earlier records stay out;
+# fail before: the pre-r106 pattern leaves the -1 record out
+put('r58c/mounts/ktest-r1.20261115T000000Z-1.json', '[1]'); put('r58c/mounts/ktest-r7.20261115T000000Z-2.json', '[2]')
+ex56 = [str(x) for x in wac.rehearsal_evidence(EV)['extra']]; ex56p = [str(x) for x in PW106.rehearsal_evidence(EV)['extra']]
+check('c56_kept_record_with_suffix_listed', any('ktest-r1.20261115T000000Z-1.json' in x for x in ex56) and any('ktest-r1.20261115T000000Z.json' in x for x in ex56)
+      and not any('ktest-r7.' in x for x in ex56), ex56)
+check('c56_fail_before_pre_r106_leaves_it_out', not any('ktest-r1.20261115T000000Z-1.json' in x for x in ex56p) and any('ktest-r1.20261115T000000Z.json' in x for x in ex56p), ex56p)
 ok = finish('write-audit-claims')
 sys.exit(0 if ok else 1)

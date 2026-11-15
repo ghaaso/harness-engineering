@@ -141,4 +141,4 @@ Checked: the aggregates carry sha256(item27.json) and HANDOFF.json's hash; arm E
 
 ## Sources
 
-anchor `progress.jsonl` 69b9b083f758; answer `answer_level.json` 733eb9c2467b; answer_graded `tune-item24.json` dc9bc94c6623; handoff `HANDOFF.json` 3c1d47c5b551; heldout `heldout.json` 67aa54c82731; item22 `item22.json` fcc6f07dac02; item27 `item27.json` 049ba85be1d2; leak `leak_audit.json` 3c495bbbef3b; plan `plan.json` cbc238fe9cb6; protocol `protocol-addendum-8.md` 5ccc042c4fba; tune `tune.json` 5f6fdcea4a3b; tune_rank `tune-rank.json` bc2d56da57c1; write_result.py cd2bd6f95e1c
+anchor `progress.jsonl` cd206ec7e7ef; answer `answer_level.json` 42d823cabc8b; answer_graded `tune-item24.json` d903cc301134; handoff `HANDOFF.json` eb179ca21c87; heldout `heldout.json` 328fb7854eb5; item22 `item22.json` fcc6f07dac02; item27 `item27.json` 9e6be7a73f01; leak `leak_audit.json` 3c495bbbef3b; plan `plan.json` cbc238fe9cb6; protocol `protocol-addendum-8.md` a92eef5e9ea6; tune `tune.json` 5f6fdcea4a3b; tune_rank `tune-rank.json` 11c29eefde0c; write_result.py cd2bd6f95e1c

@@ -398,6 +398,29 @@ def runlog_ac_log(root):
     return out
 
 
+NONFINITE_UNIT = 'nonfinite_heldout'  # ruling 105(c), C49: the coordinator's progress.jsonl line (optional; absent by default)
+
+
+def nonfinite_heldout(path):
+    """Ruling 105(c) (C49): the coordinator's count of held-out score rows and losses that are not a finite number, an
+    OPTIONAL input: the LAST progress.jsonl line {"step": "coordinator", "unit": "nonfinite_heldout", "count": N,
+    "seeds": [..], "parents": [..]}. Returns (sentence or None, the line or None, problem or None). No line, or a count
+    of 0, prints nothing; a count above 0 gives ONE sentence appended to the last limits bullet (no new line, so the
+    worst case of RESULT.md stays at 149 lines); a line of any other shape is a problem (exit 10)."""
+    o = anchor_line(path, NONFINITE_UNIT)
+    if o is None: return None, None, None
+    c, sd, pa = o.get('count'), o.get('seeds'), o.get('parents')
+    okc = isinstance(c, int) and not isinstance(c, bool) and c >= 0
+    oks = isinstance(sd, list) and all(isinstance(x, int) and not isinstance(x, bool) for x in sd)
+    okp = isinstance(pa, list) and all(isinstance(x, str) and re.match(r'^[0-9a-f]{7,40}$', x) for x in pa)
+    if not (okc and oks and okp):
+        return None, o, 'the %s line of progress.jsonl is not {count: int >= 0, seeds: [int], parents: [hex sha]} (ruling 105(c))' % NONFINITE_UNIT
+    if c == 0: return None, o, None
+    return ('Ruling 105 (c): the coordinator counted %d score row(s) or loss(es) in the held-out run that are not a finite number'
+            ' (seed(s) %s; parent(s) %s); the run was not changed: the ranking stands as the frozen code made it, and the grader'
+            ' graded the hand-off as it is.' % (c, ', '.join(str(x) for x in sd) or 'none named', ', '.join(x[:12] for x in pa) or 'none named')), o, None
+
+
 def real_input_problems(a, T, I22, AL, LK, R27, plan, prog):
     """The real run's refusals (exit 10): presence, test flags, plan hashes, stamps, pins, anchor, final_all65 (MF-5,
     MF-6, MF-12, MF-13; audit-result-3, -10)."""
@@ -709,6 +732,9 @@ def build(a):
     t96 = r96_limit(a.get('protocol')); J['limits']['96c'] = t96
     L.append('- %s' % (t96 if t96 else 'Ruling 96 (c): TEXT NOT FOUND in %s' % a.get('protocol')))
     RT = load(a.get('route')); P97 = r97_lines(a.get('protocol'), RT); L.append('- ' + ' '.join(P97)); J['limits']['97'] = P97
+    nf_s, nf_o, nf_p = nonfinite_heldout(a.get('anchor'))  # ruling 105(c), C49: optional; one sentence on the last bullet
+    if nf_s: L[-1] += ' ' + nf_s
+    J['nonfinite_heldout'] = None if nf_o is None else dict(line=nf_o, sentence=nf_s)
     J['route'] = None if RT is None else dict(applies=RT.get('applies'), arm=RT.get('arm'), route=RT.get('route'), pool=RT.get('pool'))
     L += ['', '## Sources', '', '; '.join('%s `%s` %s' % (k, v['file'], v['sha256'][:12]) for k, v in sorted(J['inputs'].items()))
           + '; write_result.py %s' % J['write_result_sha256'][:12]]
@@ -776,6 +802,8 @@ def main(argv):
         if a['final']:
             miss = [k for k in ('tune_rank', 'answer_graded', 'heldout') if not os.path.exists(a[k])]
             if miss: print('write_result: refusing --final (exit 11): grader return(s) missing: %s' % [a[k] for k in miss], flush=True); raise SystemExit(11)
+    nfp = nonfinite_heldout(a.get('anchor'))[2]  # ruling 105(c), C49: a line of the wrong shape refuses in both modes
+    if nfp: print('write_result: refusing (exit 10): ' + nfp, flush=True); raise SystemExit(10)
     TR = load(a.get('tune_rank')); AG = load(a.get('answer_graded')); HO = load(a.get('heldout'))
     scorers = []
     if TR is not None:

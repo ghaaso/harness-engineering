@@ -1,6 +1,6 @@
 # AUDIT (embeddings lane, addendum 8) -- TEST OUTPUT
 
-Written 2026-11-15T11:10:07Z by r58c/write_audit_claims.py (sha256 0c21809bdf319a671e3852881ed46982f1480c6f0769695c683c2aba9407ac02), a draft writer; it computes no result: every row below is read from the files listed under Inputs.
+Written 2026-11-15T13:51:04Z by r58c/write_audit_claims.py (sha256 64bd79e20d50f858eb0dc01aed3f505dd284fb936dd6a5c9f82f72d2c7d66854), a draft writer; it computes no result: every row below is read from the files listed under Inputs.
 
 Test markers found (test mode lists them; the real run refuses): tune: /plan_hash is the r58 test plan hash; tune: /stamp/plan_hash is the r58 test plan hash; item22: /test is true; item22: /plan_hash is the r58 test plan hash; answer: /test is true; answer: /plan_hash is the r58 test plan hash; answer_graded: /test is true; tune_rank: /test is true; leak: /test is true; leak: /plan_hash is the r58 test plan hash; item27: /plan_hash is the r58 test plan hash; item27: /test is true; item27: contains 'fakeB'; heldout: /test is true; handoff: /test is true; plan: /plan_hash is the r58 test plan hash; route: /test is true; result_json: /item27/test is true; result_json: /test is true; RESULT.md: says TEST OUTPUT
 
@@ -8,30 +8,30 @@ Test markers found (test mode lists them; the real run refuses): tune: /plan_has
 
 | input | file | bytes | sha256 |
 |---|---|---|---|
-| anchor | r58c/B/out/test_write_audit_claims/wac/in/progress.jsonl | 311 | 6a8ce0afe451204a85198c292b28e7e82eac70b3f7535ffdfee0051d7d5994a3 |
+| anchor | r58c/B/out/test_write_audit_claims/wac/in/progress.jsonl | 311 | c940107684889399c84a70c21c2ef427a3dc56e921a51c050360330edd71272c |
 | answer | r58c/B/out/test_write_audit_claims/wac/in/answer/answer_level.json | 3410 | 420f1878c308130d229e525b489dd5772d5b3e74ec6498bde42250d3d01fcbac |
 | answer_graded | r58c/B/out/test_write_audit_claims/wac/in/grader-returns/tune-item24.json | 2904 | 1a16593d3044e666f2e8a4ef7ca7c82ea980e4ddf2974e31515838b09867c883 |
 | code:eval/evalcore.py | eval/evalcore.py | 16450 | 4054976ce935e081082cbeb6ef1ccc64d102a50a00ce61123ea0fd093d7da0ff |
 | code:export/checkpoints.py | export/checkpoints.py | 9613 | 508c245f179345780a31e68fb4b2ce43b30540f2b66fe8046e689be83f602b4e |
-| code:train/RUNLOG.md | train/RUNLOG.md | 78853 | 69ce40f9c4e473923e41ccdcee5bb3a26853aa3510aaa1e01f9a79fca539e5f7 |
+| code:train/RUNLOG.md | train/RUNLOG.md | 79735 | 731199c9fe4e2579da2f9eca5a379e3efa051bad466899b0a61706558833794a |
 | code:train/heldout.py | train/heldout.py | 63827 | f541b3ffac7ccdde3d361c546dba3530f29de12483692c8c13ed4b31323eabc3 |
 | code:train/kge.py | train/kge.py | 37577 | 4b01984f085ec29c9c59e628c6016c326d526b0cb5407df5e6edc03155fb9e0f |
 | code:train/proj.py | train/proj.py | 6661 | dcad14d5bb851e6bd44be69ee571cae0e465b6528718ebbabf67e007220400c9 |
 | code:train/stageB.py | train/stageB.py | 26334 | 32c8c070938bd51400dcf233604d7ff51ea50a80a02184fdb04480009602ed23 |
-| handoff | r58c/B/out/test_write_audit_claims/wac/in/heldout/HANDOFF.json | 603 | db7323cbd47e5adcda0f6c8daedeb63ad7902a22c4552dfde7f96c4a1a996130 |
-| heldout | r58c/B/out/test_write_audit_claims/wac/in/grader-returns/heldout.json | 3156 | 2fa0b8f43d2b6a31fd8b21a613a2129b4e2e459cf1d6819087d7014abe334a5e |
+| handoff | r58c/B/out/test_write_audit_claims/wac/in/heldout/HANDOFF.json | 603 | a3ccbcc41f9f9c34feb7628801f324ce9b087245cd6e7de56484ce354ee09177 |
+| heldout | r58c/B/out/test_write_audit_claims/wac/in/grader-returns/heldout.json | 3156 | f2c7c2364abfc937ef30ac78caa2aa7a6ba620c0910d8f6913ff69cf133d60d0 |
 | item22 | r58c/B/out/test_write_audit_claims/wac/in/item22/item22.json | 8351 | 7f12156e2a4671b1c15369610ea991b5441614e3eca9f4eae97dffd84607f1f2 |
-| item27 | r58c/B/out/test_write_audit_claims/wac/in/fakeB/heldout/item27.json | 16610 | 3dcd3bdda09ae6d2d319880f2d0eaf7ccbcd588db462d441b73a6dd3b7548ec1 |
+| item27 | r58c/B/out/test_write_audit_claims/wac/in/fakeB/heldout/item27.json | 16610 | 3eed8a692154bcc428db9ed9ac8791428f2fb28dbbf15f7ceef2272c0e760b94 |
 | leak | r58c/B/out/test_write_audit_claims/wac/in/leak_audit.json | 1028 | 3f44baf9e35a671ff2f2b9497964065aefa48b0dae6504f4f5d8c4ca90d38801 |
-| leak_audit_py | train/leak_audit.py | 94382 | 8c53e487675d740ae3ff05a0e3fd6f5bcd4c0990b92a1843f2cfaae6cd6c6e76 |
+| leak_audit_py | train/leak_audit.py | 94752 | 1702acb35150c7eec67317996ab6e21800b8588a8325b63faec649c32eeb09f9 |
 | plan | r58c/B/out/test_write_audit_claims/wac/in/fakeB/stageB/plan.json | 38526 | cbc238fe9cb676ae5f97109d2574184109300d21d7f739a02924e8bc5d55ac7a |
-| protocol | <repo>/docs/program/evidence/harness-bottlenecks/graph2/protocol-addendum-8.md | 82226 | 5ccc042c4fbab7beac1486490ee387058f7e081e2788f43f9f02d734b7fc8420 |
-| result_json | r58c/B/out/test_write_audit_claims/wac/result/result.json | 137003 | de1d9eea9186d94b47c572eeae14df5fe08e5b4f484f22ce994e7972149835fc |
-| result_md | r58c/B/out/test_write_audit_claims/wac/result/RESULT.md | 26293 | 7af8b2c97c3d62bed505600601d21c598e97122c4873f67adab6732032a27109 |
-| route | r58c/B/out/test_write_audit_claims/wac/in/e5_route.json | 644 | 4f674992ef9b5219fd670de0a26a98af902717f84681ad33b970849c0b7b2bda |
-| tune | r58c/B/out/test_write_audit_claims/wac/in/fakeB/report/tune.json | 257503 | 79774be5a0bc3d01eba6e3a0a595f78e5a6536bd831bf7c18e63b148597fd1dc |
+| protocol | <repo>/docs/program/evidence/harness-bottlenecks/graph2/protocol-addendum-8.md | 91376 | f30edd01599cd1efb3909f4f176a63a4544061aa8cc62d9ee88eb386a60a109f |
+| result_json | r58c/B/out/test_write_audit_claims/wac/result/result.json | 137003 | e08786f81ee9ff8ae2290a32fc77c70788f83b0fa8684559054958d0c300c280 |
+| result_md | r58c/B/out/test_write_audit_claims/wac/result/RESULT.md | 26293 | 387a7f6fe6dd2263ee4300ee06bbb4a07528ae8c41f41dca13c7442555cec8d1 |
+| route | r58c/B/out/test_write_audit_claims/wac/in/e5_route.json | 644 | 13f83ca5890f78471942e9beae8514266e6f35cafcdf9e19280db3ba5a4bf0cd |
+| tune | r58c/B/out/test_write_audit_claims/wac/in/fakeB/report/tune.json | 257503 | 38bc037b07212a50ccd50f8e13995bd08b7988f7bae7ddc111ac4410a079e9fb |
 | write_result | train/write_result.py | 60688 | cd2bd6f95e1c1afdb67e161af7fdc27b101a86867864c9e17907d98dc49a0f1b |
-| writer | r58c/write_audit_claims.py | 85026 | 0c21809bdf319a671e3852881ed46982f1480c6f0769695c683c2aba9407ac02 |
+| writer | r58c/write_audit_claims.py | 85306 | 64bd79e20d50f858eb0dc01aed3f505dd284fb936dd6a5c9f82f72d2c7d66854 |
 
 ## 1. Leak audit (item 18; ruling 60)
 
@@ -207,15 +207,19 @@ Comparison with PyKEEN's predict_target (tail prediction of (h, co_changed, ?)):
 
 > 27. Selected arm: the highest seed-averaged fused pool P@10 over all 65 tuning commits (ties: the simplest). Its configuration and w are chosen on all 65 by the item 20 rule and frozen with a hash before any held-out task runs. Exactly one run, 3 seeds, of that arm alone and fused, plus RRF, PPR, CO and DIR, on the 75 held-out commits; rank metrics and the answer-level measure, scored by the grader. No word of section G is applied to held-out.
 
-- item27.json sha256 3dcd3bdda09ae6d2d319880f2d0eaf7ccbcd588db462d441b73a6dd3b7548ec1; item27.json.sha256 says 3dcd3bdda09ae6d2d319880f2d0eaf7ccbcd588db462d441b73a6dd3b7548ec1 (match).
+- item27.json sha256 3eed8a692154bcc428db9ed9ac8791428f2fb28dbbf15f7ceef2272c0e760b94; item27.json.sha256 says 3eed8a692154bcc428db9ed9ac8791428f2fb28dbbf15f7ceef2272c0e760b94 (match).
 - chosen E2 c07, w 1.0, epochs 20, s 1, device cpu, image sha256:wr-test; plan_hash 7e577e577e577e577e577e577e577e577e577e577e577e577e577e577e577e57; test True.
-- tables r58c/B/out/test_write_result/wr/fakeB/stageB/tables, tables_digest 9121ff642643e61dd4ab29ce19d5dab0d3b17942213c0632dd565328c3a0bc11; choices.json sha256 per arm {"E1": "e733b7c927efc6d891035818034aa8b13d82fb0b0cdff5214c47dd94f1f40025", "E2": "791d08e73f8be1700ab1eb6f7b87a2d8ee14a2187b119eee9a38875f5f15ce44", "E3": "a19f20924687f976a204283bb097076bb6a8ce2f0e199a5712349454df6c8620", "E4": "6f409bb6000c2c10c17b9b3f9bf4fb4e6e405af2010164ae846d0a4d68819bca", "E5": "536ec4d8fd5098fe4c33a156cc01388650841e1755d6802a22b9f7f31e685f28"}.
-- HANDOFF.json: sha256 db7323cbd47e5adcda0f6c8daedeb63ad7902a22c4552dfde7f96c4a1a996130; its freeze_sha256 3dcd3bdda09ae6d2d319880f2d0eaf7ccbcd588db462d441b73a6dd3b7548ec1 (equals the record).
+- tables r58c/B/out/test_write_result/wr/fakeB/stageB/tables, tables_digest 9121ff642643e61dd4ab29ce19d5dab0d3b17942213c0632dd565328c3a0bc11; choices.json sha256 per arm {"E1": "df0872b439a334dcfb4014ac518e473c7c4f9c422abbcf0de628289db6eb55e4", "E2": "960fb0bbce6c540828720a2aabec716d97255d40aabd725c9a74e006e2d12a04", "E3": "6e6f7cf0e61ee2c75778150be1aeb3e5ea36fe4cbd3db0908a12a7c14f17fc11", "E4": "bca7f27a55497b0784359dc658a7858828b5cc0b4aadda433befc1fd5eacb4ce", "E5": "220ef499ef95f9357769ca2144ac9a6fadaba7b6fb5560a9fdf4e9578720ac6e"}.
+- HANDOFF.json: sha256 a3ccbcc41f9f9c34feb7628801f324ce9b087245cd6e7de56484ce354ee09177; its freeze_sha256 3eed8a692154bcc428db9ed9ac8791428f2fb28dbbf15f7ceef2272c0e760b94 (equals the record).
 - The grader's literal check of ruling 73: not available to the lane (open question 5).
 
 ## 7. Assembled tables (assemble_checks, rulings 66, 67)
 
-No `PASS assemble-checks` line in train/RUNLOG.md (or its log is missing).
+- RUNLOG line 923 names orchestrator/end-of-run/assemble_checks-20261115T123811Z.log (sha256 7b259bd1bad9590f6935dc12dd7357904acb4942dbb480f3f504c4088a3bae83).
+- `assemble_checks PASS` in it: True; REFUSED line: False; sha256 of the current orchestrator/assemble_checks.py (ba0ca39de0ec3ba9edf90fe3428ef035957fd6557145d0f74e2fccad59343568) in it: True.
+- tables_digest in the log ['f8cb1f8bc905bc74e4b50a9348f767e1f78a102516cf9567ee7df14a7593ffe0']; on the RUNLOG PASS line f8cb1f8bc905bc74e4b50a9348f767e1f78a102516cf9567ee7df14a7593ffe0 (equal to the log); of the current tables not computed in test mode.
+- Runner lines in the log (first 20):
+  - `assemble_checks PASS: 2385 parts (477 E4), arms ['E1', 'E2', 'E3', 'E4', 'E5'], runners per arm {'E1': 1, 'E2': 1, 'E3': 1, 'E4': 1, 'E5': 1}`
 
 ## 7b. Stage-B memory caps (ruling 98)
 

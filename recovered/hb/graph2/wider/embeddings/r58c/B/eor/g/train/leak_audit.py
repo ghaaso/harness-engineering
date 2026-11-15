@@ -447,7 +447,8 @@ def host_norm(s):
 # of (host folder, destination, mode) in its launcher's mount file, r58c/A/mounts-A.json or r58c/B/mounts-B.json, shape
 # {"<container>": {"step": "<END-ORDER step id>", "allow": [{"src": "<host path>", "dst": "<path>", "mode": "ro|rw"}]}}
 # ("{ARM}" in a src or dst stands for one arm name, kge-H1R only). Every launch saves its docker inspect record to
-# r58c/mounts/<container>[.<UTC>].json. The audit fails when a container of step 1 (ktest-eor, ruling 103(c): every kept
+# r58c/mounts/<container>.json, the newest (C36: an older one is moved to <container>.<UTC>[-k].json). The audit
+# fails when a container of step 1 (ktest-eor, ruling 103(c): every kept
 # record if step 1 ran more than once), of the card window (steps 2a-2c) or of steps
 # 4 to 8 has a mount outside its step's list, when a container of those steps named in a mount file has no record
 # (ruling 95: the containers of later steps, 9.1-9.4, run after the audit and are not required; --self is exempt), and when an end-sequence container has a record but no list. Test containers
@@ -468,10 +469,12 @@ def r94_in_scope(step):
 
 # C24 (end-order-changes-3): the three card checks (heldout.sh card_ok: a throwaway container <NAME>c, detached so its
 # record can be saved) mount nothing; their lists in mounts-A.json are empty. Their records are saved by heldout.sh
-# save_record to r58c/mounts/<name>.json (a later launch of the same name: r58c/mounts/<name>.<UTC>.json): kge-H1Pc
+# save_record to r58c/mounts/<name>.json, the newest (C36, C53: an older record of the same name is moved to
+# r58c/mounts/<name>.<UTC>.json, or <name>.<UTC>-<k>.json when that name is taken): kge-H1Pc
 # (step 2a), kge-H1Rc (2b), kge-H1c (7). Any mount in such a record fails the audit.
 R94_CARD = ('kge-H1c', 'kge-H1Pc', 'kge-H1Rc')
-R94_CARD_SAVED = 'r58c/mounts/<name>.json, a later launch r58c/mounts/<name>.<UTC>.json (train/heldout.sh save_record, called by card_ok)'
+R94_CARD_SAVED = ('r58c/mounts/<name>.json (the newest; an older record of the same name is moved to r58c/mounts/<name>.<UTC>.json, '
+                  'or <name>.<UTC>-<k>.json when that name is taken, C36; train/heldout.sh save_record, called by card_ok)')
 
 
 def is_allow_file(j):
@@ -533,11 +536,12 @@ def split_mounts(entries):
 
 
 def record_name(j, path):
-    """The container name of a docker inspect record (its Name), else read from the file name (<name>[.<stamp>].json)."""
+    """The container name of a docker inspect record (its Name), else read from the file name (<name>[.<stamp>[-<k>]].json;
+    C53: save_record's <name>.<UTC>-<k>.json for a stamped name already taken)."""
     xs = j if isinstance(j, list) else [j]
     for x in xs:
         if isinstance(x, dict) and x.get('Name'): return x['Name'].lstrip('/')
-    return re.sub(r'(-inspect)?(\.[0-9TZ]+)?\.json$', '', os.path.basename(path))
+    return re.sub(r'(-inspect)?(\.[0-9TZ]+(-[0-9]+)?)?\.json$', '', os.path.basename(path))
 
 
 def _r94_pat(s, folded):

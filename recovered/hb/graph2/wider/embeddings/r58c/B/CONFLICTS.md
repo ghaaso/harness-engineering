@@ -326,7 +326,9 @@ grader-interface-v2.md (sha256 e707a878...) won wherever it and MF-12 differed. 
 35. 2026-11-15, C23, tests on disk that 2d does not name. The host listing (RUNLOG-B "C23 listing") finds these
     test files outside 2d's list. Left out as earlier rounds left them, for the reason given; the first group is
     for a ruling, nothing is coded around:
-    (a) For a ruling: `fixes/tests/test_r53_58_unit.py` and `fixes/tests/test_r64.py` (rulings 53, 58, 64 in
+    (a) Ruled (the coordinator's T2, 2026-11-15; ruling 106(a)): 2d runs these once more on the final bytes (END-ORDER
+    2d, TEST-QUEUE q32; kt_inner.sh routes, T2-0); amended by ruling 107(a) (note 40): 2d runs test_r64 and
+    test_e5_equiv only, not test_r53_58_unit; the text of the question as it stood: `fixes/tests/test_r53_58_unit.py` and `fixes/tests/test_r64.py` (rulings 53, 58, 64 in
     `train/selectB.py`, which step 4 runs; 2d runs `r58c/tests/test_r64.py` and `fixes/tests/test_select_report.py`,
     which cover rulings 53, 54, 56, 58 and 64 through the real entry points, but not test_r53_58_unit's unit cases),
     and `fixes/tests/test_e5_equiv.py` (kge.score against stage A's routed scores; `train/kge.py` is frozen and is
@@ -353,7 +355,8 @@ grader-interface-v2.md (sha256 e707a878...) won wherever it and MF-12 differed. 
     the AUDIT.md change only, or (iii) neither: the coordinator's report states the count. Nothing is coded.
     **Superseded the same day** by the coordinator's C49 order (if it fits, add it as an optional input, absent by
     default, with a test that the worst case stays at or under 149): it fits, and (i) is built. The line format the
-    coordinator writes (the lane chose it; the coordinator is asked to confirm it): `{"step":"coordinator","unit":
+    coordinator writes (the lane chose it; the coordinator confirmed it, T3, and records it for a count of 0 too, with
+    empty lists, C63): `{"step":"coordinator","unit":
     "nonfinite_heldout","count":N,"seeds":[int,..],"parents":[hex sha,..],"t":"<UTC>"}` in `progress.jsonl`, the last
     such line counting. Absent or count 0: nothing printed; count above 0: one sentence on the ruling-97 bullet; any
     other shape: exit 10. write_result.py before bytes `r58c/B/pre-r105/write_result.py`, write_audit_claims.py
@@ -373,3 +376,59 @@ grader-interface-v2.md (sha256 e707a878...) won wherever it and MF-12 differed. 
     `r58c/A/out/ho_rec/item27.json`; the 2d command now passes it as `--freeze-sha256 $(sha256sum ... | cut -c1-64)`
     taken on the host, so the ktest-r9 TEST list mounts nothing more. A text fix of my command, no code change; named
     in the report.
+
+## Round 9, ruling 106 and C51-C67, agent B, 2026-11-15 about 12:00Z
+
+39. RULED (ruling 107(b), 2026-11-15 about 12:31Z): no change; the launcher waits for three memory samples 30 s apart
+    before every start, so two records of one container cannot carry the same second. As raised: 2026-11-15, an
+    observation, no ruling asked (not ordered; nothing coded). `r58c/B/lane_step.sh` (a real run) moves an
+    older record to `r58c/mounts/<name>.<mtime UTC>.json` with `mv` and no collision suffix (line 143): a second real
+    run of the same step whose earlier record has the same mtime second as a kept one would replace that kept record.
+    It needs two records of one name within the same second; no real step has run yet. `heldout.sh` `save_record`
+    adds `-1`, `-2` (C36, C56). Named here so the coordinator can decide whether the same rule should apply.
+
+40. RULED (ruling 107(a), 2026-11-15 about 12:31Z; C68): 2d does not run `fixes/tests/test_r53_58_unit.py`; its three
+    ruling-53 cases in ktest-b112 (log `r58c/B/out/logs/test_r53_58_unit.log` sha256 a3392c75...9d15, selectB.py
+    d54cb864...b885) are the record; 2d keeps test_r64_fixes and test_e5_equiv; if train/selectB.py changes before the
+    freeze the lane reports before 2d; kt_inner.sh and freeze_list.sh unchanged. As raised: 2026-11-15, FOR A RULING
+    (q32, ktest-b112, 12:07:50-12:07:57Z): `fixes/tests/test_r53_58_unit.py` (62d6dae7, last
+    written 2026-11-14T18:28Z) prints `RESULT FAIL test_r53_58_unit` on the final `train/selectB.py` (d54cb864): its
+    three ruling-53 checks pass (r53-se, r53-w, r53-size), and its r58-guard case fails. The case writes one sha256
+    line per role of `R58_ROLES` naming fake files `r58c/B/out/test_r53_58_unit/r53_58/f<i>.py` and no PASS lines, and
+    expects `good` to pass; the current guard refuses it, exit 3, because since ruling 83 each sha256 line must name
+    the role's own file (`ROLE_FILES`, `train/selectB.py` lines 69 and 111) and a PASS line must follow it. The other
+    three cases (wrong hash, missing file, role missing) exit 3 as the test expects. So the case encodes the guard
+    contract from before ruling 83; it is not a defect of selectB.py. Ruling 83's contract is tested in 2d by
+    `train/r58/tests/test_gate.py`, `r58c/tests/{test_r64, test_selection_freeze8}.py` and `r58c/B/tests/test_sr6_guard.py`.
+    My note 35(a) said these tests "test bytes that have not changed since they passed at the release gate"; for
+    selectB.py that was wrong. Nothing is changed or coded around: `fixes/tests` is not agent B's to edit. For a
+    ruling: (i) the r58-guard case counts as superseded by ruling 83 and q32 passes on the three r53 checks, (ii) the
+    case is updated to ruling 83's contract (by whom), or (iii) another reading. The other two q32 tests passed:
+    `test_r64_fixes` (`RESULT PASS test_r64 post`) and `test_e5_equiv` (`RESULT PASS`, max |diff| 2.98e-08).
+
+## Step 2d, the lead, 2026-11-15 about 15:05Z
+
+41. RULED (ruling 109, 2026-11-15 about 14:37Z): a 2d test that fails on the machine's refusal of its own scratch
+    file ("Device or resource busy") is run again unchanged, up to two more times. Applied to
+    `r58c/B/tests/test_pass_paths.sh` (run 1 FAIL, terminal 18599acb...7dee, log c45413e1...; run 2 PASS, log
+    062af81c...) and `r58c/A/test_heldout_r101.sh` (run 1 FAIL, log e8d98f94...; run 2 PASS, log a085594b...).
+42. RULED (ruling 110, 2026-11-15 about 15:00Z; record, no fix): `r58c/A/rehearse.sh` lines 46 and 63 let the success
+    of a note (`note()` at line 19, `echo | tee -a "$SUM"`) decide a branch. A refused append marks an arm failed
+    (line 46) or prints a stray FAIL line after PASS (line 63); it can never turn a failure into a pass, and the
+    exit code follows `$fail`. Seen in `r58c/A/test_rehearse_stop.sh` run 2 (14:56:14-14:57:50Z, nothing else
+    running, PASS, log 4e52f87f...37af, terminal 86c32cc7...06b9): its l1 case printed RESULT PASS and then RESULT
+    FAIL with rc 0. Run 1 (13:36:49-13:38:38Z, FAIL, log 0ed8a2a2...b8b8, kept as scratchpad 2d-A/
+    test_rehearse_stop.run1.log; terminal 9be2e921...) is unexplained; the line-46 form fits it, unproved, since the
+    test deletes its scratch folder. The real 2b (REHEARSAL.txt d13ead7a...) has one RESULT line, PASS. The
+    coordinator read every other launcher of the order: no log call decides a branch there. AUDIT.md does not carry
+    this (its writer reads no text for it); the record is ruling 110, RUNLOG-A, this note and the coordinator's
+    report.
+43. RULED (ruling 111, 2026-11-15 about 15:17Z): `r58c/B/eor/test_end_of_run.sh` cannot pass as it is once step 1 has
+    run. Its fixture `r58c/B/eor/make_copy.js:16` copies the real `train/RUNLOG.md` into each trial lane, and since
+    step 1 that holds step 1's own `PASS assemble-checks` line (line 923): the test's PASS-line counts (`passn()`, line
+    40) read one too many, and case C's log checks (line 76) read two log names. 2d run 1 (14:59-15:14Z) failed 15 of
+    43 that way; every exit-code and behaviour check passed. Neither the test nor make_copy.js changes. A diagnostic
+    copy outside the lane's test files, whose make_copy drops that line from the trial lanes' RUNLOG, passed 43 of 43
+    once (15:19-15:34Z, terminal 5efd45a2...); it stands as the 2d evidence with the 10:44Z run (097be17c...) and step
+    1's real run. The test runs again only if step 1 is repeated before the freeze; the coordinator's report names
+    the limit (111(c)).

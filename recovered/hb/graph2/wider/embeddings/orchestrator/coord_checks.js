@@ -5,9 +5,12 @@
 // usage:
 //   node coord_checks.js returns tune|heldout [--root R]     steps 5 and 8: the grader's returns against grader_frozen
 //   node coord_checks.js item27 [--append] [--root R]        step 6: the five checks of the record, then the anchor
-//   node coord_checks.js heldout-start <launch log> [--root R]   step 8: the launch log, the start lines, rc 0
+//   node coord_checks.js heldout-start <launch log> [--cap 4g|5g|6g] [--root R]   step 8: the launch log, the start
+//                                                             lines (image, memory cap), rc 0
 //   node coord_checks.js nonfinite <folder> [...] [--root R]  ruling 105: counts of score rows and losses that are
 //                                                             not finite numbers (counts and file names only)
+//   node coord_checks.js test-records [folder] [--root R]     ruling 106(b), before the freeze is recorded: the saved
+//                                                             records of the step launcher's TEST runs
 // exit: 0 every check passed; 1 a check failed; 2 usage or an input missing.
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const argv = process.argv.slice(2);
@@ -187,7 +190,8 @@ function heldoutStart(log) {
   // the start line reads "start kge-H1 image <ID> cap <CAP> (-m <CAP> --memory-swap <CAP>): <command>" since C50
   check('every start line of the launch log names the frozen card image', st.length >= 1 && !!img && st.every((s) => s.includes(' image ' + img + ' ') || s.includes(' image ' + img + ':')), String(img));
   const caps = [...new Set(st.map((s) => { const m = / cap (\S+) \(-m (\S+) --memory-swap (\S+)\):/.exec(s); return m ? (m[1] === m[2] && m[2] === m[3] ? m[1] : 'MIXED ' + m.slice(1).join('/')) : 'no cap in the line'; }))];
-  out.push('info  memory cap in the start lines: ' + caps.join(', ') + ' (4g unless a recorded ruling names another)');
+  const wantCap = opt('--cap') || '4g';  // 4g unless a coordinator ruling recorded before the freeze names another (C50)
+  check('every start line shows the memory cap ' + wantCap + ' (--cap names a ruled cap; default 4g)', st.length >= 1 && caps.length === 1 && caps[0] === wantCap, 'found: ' + caps.join(', '));
   const hof = P('train', 'heldout', 'HANDOFF.json');
   if (exists(hof)) {
     const H = J(hof); const hh = sha(hof); let al = H.anchor_line; if (typeof al === 'string') { try { al = JSON.parse(al); } catch (e) { al = null; } }
@@ -195,7 +199,20 @@ function heldoutStart(log) {
     check('the last finished line names this HANDOFF.json', lastFin.includes(hh), hh);
     out.push('info  train/heldout/HANDOFF.json sha256 ' + hh);
   } else check('train/heldout/HANDOFF.json exists', false);
-  check('the mount record r58c/mounts/kge-H1.json exists', exists(P('r58c', 'mounts', 'kge-H1.json')));
+  // The saved mount records are file evidence for what a start line says (a log line can be lost, ruling 106(c)):
+  // every record of kge-H1 (the newest and every kept one) shows the frozen card image, the cap and no network.
+  const md = P('r58c', 'mounts'); const capBytes = { '4g': 4 * 2 ** 30, '5g': 5 * 2 ** 30, '6g': 6 * 2 ** 30 }[wantCap];
+  const recs = exists(md) ? fs.readdirSync(md).filter((f) => /^kge-H1(\.[0-9]{8}T[0-9]{6}Z(-[0-9]+)?)?\.json$/.test(f)).sort() : [];
+  const rbad = [];
+  for (const f of recs) {
+    let x; try { x = J(path.join(md, f)); x = Array.isArray(x) ? x[0] : x; } catch (e) { rbad.push(f + ': does not read'); continue; }
+    const hc = (x && x.HostConfig) || {};
+    if (!x || x.Image !== img) rbad.push(f + ': image ' + String(x && x.Image).slice(0, 19));
+    if (hc.Memory !== capBytes || hc.MemorySwap !== capBytes) rbad.push(f + ': memory ' + hc.Memory + ' / swap ' + hc.MemorySwap + ', wanted ' + capBytes);
+    if (hc.NetworkMode !== 'none') rbad.push(f + ': network ' + hc.NetworkMode);
+  }
+  check('every saved record of kge-H1 shows the frozen card image, the cap ' + wantCap + ' and no network', recs.includes('kge-H1.json') && !!capBytes && !rbad.length,
+    recs.length + ' record(s): ' + recs.join(', ') + (rbad.length ? '; ' + rbad.join('; ') : ''));
   finish();
 }
 function fz_image() { try { return freezeMap().images['graphtest-kge-gpu:1']; } catch (e) { return null; } }
@@ -247,7 +264,36 @@ function nonfinite(dirs) {
   finish();
 }
 
+// Ruling 106(b): before the coordinator records the code freeze, every saved record of a TEST run of the step
+// launcher (r58c/B/out/mounts-test/*.json) is checked: no mount of a held-out parent's graph folder (nor of export/,
+// export/graphs or export/graphs0 whole, which hold them), and no writable mount outside r58c/B/out (so none at,
+// under or above a real output folder). The held-out parents come from the plan.
+function testRecords(dir) {
+  const d = P(dir || path.join('r58c', 'B', 'out', 'mounts-test'));
+  const plan = J(P('train', 'stageB', 'plan.json')); const held = new Set(Object.keys((plan.heldout || {}).assignment || {}).map((s) => s.toLowerCase()));
+  check('the plan names the held-out parents', held.size > 0, held.size + ' parents');
+  const lane = norm(ROOT); const okRw = lane + '/r58c/b/out/';
+  if (!exists(d)) { check(dir || 'r58c/B/out/mounts-test' + ' exists', false, 'no such folder (no TEST run of the step launcher was recorded)'); return finish(); }
+  const files = fs.readdirSync(d).filter((f) => f.endsWith('.json')).sort(); let mounts = 0; const bad = [];
+  for (const f of files) {
+    let j; try { j = J(path.join(d, f)); } catch (e) { bad.push(f + ': does not read as JSON'); continue; }
+    for (const x of (Array.isArray(j) ? j : [j])) for (const m of ((x && x.Mounts) || [])) {
+      mounts++;
+      const s = String(m.Source || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+      const rel = s.startsWith(lane + '/') ? s.slice(lane.length + 1) : null;
+      if (rel !== null && /^export(\/graphs0?)?$/.test(rel)) bad.push(f + ': mounts ' + rel + ' whole (it holds the held-out parents\' folders)');
+      const g = rel !== null ? /^export\/graphs0?\/([^/]+)/.exec(rel) : null;
+      if (g && held.has(g[1])) bad.push(f + ': mounts the folder of held-out parent ' + g[1].slice(0, 12));
+      if (m.RW && !(s + '/').startsWith(okRw)) bad.push(f + ': a writable mount outside r58c/B/out: ' + (rel !== null ? rel : s) + ' -> ' + m.Destination);
+    }
+  }
+  check('no TEST record of the step launcher shows a held-out parent\'s folder or a writable mount outside r58c/B/out', files.length > 0 && !bad.length,
+    files.length + ' records, ' + mounts + ' mounts' + (bad.length ? '; ' + bad.slice(0, 10).join('; ') : ''));
+  finish();
+}
+
 if (cmd === 'returns') returns(argv[1]);
+else if (cmd === 'test-records') testRecords(argv[1] && !argv[1].startsWith('--') ? argv[1] : null);
 else if (cmd === 'nonfinite') nonfinite(argv.slice(1).filter((x, i, a) => !x.startsWith('--') && a[i - 1] !== '--root'));
 else if (cmd === 'item27') item27();
 else if (cmd === 'heldout-start') heldoutStart(argv[1] && !argv[1].startsWith('--') ? argv[1] : null);

@@ -105,7 +105,8 @@ for f in train/a.py train/HANDOFF-FORMAT.md train/stageA_configs.json train/stag
          fixes/tests/test_select_report.py parallel/tests/test_assemble_checks.sh r58c/B/mounts.js r58c/B/mounts-B.json r58c/A/mounts-A.json \
          r58c/A/a.py train/stageB/tables/t.tsv train/r58/tests/t.py r58c/tests/t.py r58c/B/tests/t.sh m1.sha256 m2.sha256 m3.sha256 \
          r58c/A/mounts.js export/graphs/C1/f.tsv export/graphs0/C1/g.tsv gb/facts/cache/P1/f.json gb/facts/cache/P1/d/g.json \
-         gb/results/frozen/relational/95e990307da3b42b.json gb/tasks/tasks.jsonl gb/arms/common/a.js proto.md; do mkf $f; done
+         gb/results/frozen/relational/95e990307da3b42b.json gb/tasks/tasks.jsonl gb/arms/common/a.js proto.md \
+         r58c/A/sums.js r58c/B/c_table.js fixes/tests/test_r53_58_unit.py fixes/tests/test_r64.py fixes/tests/test_e5_equiv.py; do mkf $f; done  # C52's five
 for f in assemble_checks.py end_of_run.sh guard-prelaunch.js guard-stageB.sh guard-stageB-r92.sh memgate.sh END-ORDER.md grader-interface-v2.md \
          rerun_unit.py rerun_compare.py start-guard-r98.sh kge-B1-inspect-20261114T190928Z.json kge-B1-inspect-20261115T073116Z.json; do mkf orchestrator/$f; done
 # round 8: the fake lane's plan names one held-out parent P1 (its facts in gb/facts/cache/P1); the tuning graphs' plan file names
@@ -155,6 +156,14 @@ sed -e "s#^W=.*#W=$FZW#" -e "s#^GB=.*#GB=$FZW/gb#" -e "s#^PROTO=.*#PROTO=$FZW/pr
 (cd $FZ && sh r58c/B/freeze_list_pre104.sh m1.sha256 m2.sha256 m3.sha256 m4.sha256 > $O/fz-list-pre104.txt 2>/dev/null); rc104=$?
 awk '{print $2}' $O/fz-list-pre104.txt | grep -qx 'eval/tune_commits.jsonl' && r=no || r=yes; [ $rc104 -eq 0 ] || r=no
 ok "35-fail-before r58c/B/pre-r104/freeze_list.sh (exit 0 on the same lane) does not list it" $r "rc $rc104"
+# C52 (round 9): block 1 lists agent A's and agent B's .js scripts and the three note-35(a) tests; fail-before pre-r106
+want52='r58c/A/sums.js r58c/B/c_table.js fixes/tests/test_r53_58_unit.py fixes/tests/test_r64.py fixes/tests/test_e5_equiv.py'
+b52=$(awk '/^# test output$/{exit} {print $2}' $O/fz-list.txt); miss52=''; for f in $want52; do echo "$b52" | grep -qx "$f" || miss52="$miss52 $f"; done
+[ $rcl -eq 0 ] && [ -z "$miss52" ] && r=yes || r=no; ok "52 freeze_list block 1 lists r58c/A/*.js, r58c/B/*.js and the three fixes/tests files (C52)" $r "rc $rcl missing [$miss52]"
+sed -e "s#^W=.*#W=$FZW#" -e "s#^GB=.*#GB=$FZW/gb#" -e "s#^PROTO=.*#PROTO=$FZW/proto.md#" $B/pre-r106/freeze_list.sh > $FZ/r58c/B/freeze_list_pre106.sh
+(cd $FZ && sh r58c/B/freeze_list_pre106.sh m1.sha256 m2.sha256 m3.sha256 m4.sha256 > $O/fz-list-pre106.txt 2>/dev/null); rc106=$?
+p52=$(awk '/^# test output$/{exit} {print $2}' $O/fz-list-pre106.txt); hit52=''; for f in $want52; do echo "$p52" | grep -qx "$f" && hit52="$hit52 $f"; done
+[ $rc106 -eq 0 ] && [ -z "$hit52" ] && r=yes || r=no; ok "52-fail-before r58c/B/pre-r106/freeze_list.sh (exit 0 on the same lane) lists none of the five" $r "rc $rc106 hit [$hit52]"
 lim() { ( NAME=$2; eval "$(grep -E '^(LIMIT_R[0-9]+|MEM|MEM_R4|COMMIT_KB|COMMIT_R4)=' $1)"; eval "$(sed -n '/^case "\$NAME" in/,/^esac/p' $1 | grep -v 'exit 2')"; echo $LIMIT ) }
 l11=$(lim $B/lane_step.sh ktest-r11); l11p=$(lim $B/pre-r97/lane_step.sh ktest-r11); l10=$(lim $B/lane_step.sh ktest-r10)
 [ "$l11" = 1800 ] && [ "$l10" = 3600 ] && r=yes || r=no; ok "14 lane_step: ktest-r11 runs under LIMIT_R11 = 1800 s (ktest-r10 keeps 3600)" $r "r11 $l11 r10 $l10"

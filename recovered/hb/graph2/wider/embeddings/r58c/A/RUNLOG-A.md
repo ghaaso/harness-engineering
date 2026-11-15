@@ -1115,3 +1115,123 @@ and its recorded result), not memory.
   returns nothing (read on 2026-11-15, the daemon no longer holds them). Python's error text implies a non-zero exit;
   that is inferred, not observed.
 From here on every container goes through a launcher, tests included.
+
+## ROUND11 (C53 and C54 of end-order-changes-5 10a0e2e3; ruling 106(d), 7de7c8a8; agent A)
+
+Before bytes: r58c/A/pre-r106/ (heldout.sh 7627c3e1, leak_audit.py 8c53e487, test_save_record_r104.sh).
+
+C53 (finding A1): train/leak_audit.py R94_CARD_SAVED (printed into the ruling-94 text and from there into AUDIT.md), the
+comment above it and the comment of the ruling-94 block now say the NEWEST record is r58c/mounts/<name>.json and an
+older one is moved to <name>.<UTC>.json, or <name>.<UTC>-<k>.json when that name is taken (save_record, C36). The code
+does not read the records by age: every *.json is judged and named by its Name, so a mount in the older record fails as
+in the newest (c53_order, on both bytes). One code change, the reading of save_record's names: record_name()'s fallback
+for a record with no Name did not strip the "-<k>" of <name>.<UTC>-<k>.json, so such a record was read as a container
+"kge-H1c.<UTC>-1" that no list names and R94_REAL does not match, and passed unjudged. Fixed (the fallback strips
+(-[0-9]+)?), with a planted case.
+Test r58c/A/test_r106_leak.py (ktest-a65, rc 0, RESULT PASS; log r58c/A/logs/test_r106_leak.log): c53_text (fail
+before: the pre-r106 text says "a later launch" gets the stamped name), c53_order_current / _before, c53_name_k
+(planted: a Name-less record saved as kge-H1c.<UTC>-1.json with a mount fails by C24; fail before: named
+"kge-H1c.20261115T102851Z-1", no problem, ok true), c53_name_ctl_current / _before.
+
+C54 (ruling 106(d)): train/heldout.sh.
+- save_record tries docker inspect three times, 2 s apart; a try counts only once the record is in place as
+  <name>.json (the move of .part into place is checked too); after three failures "NO mount record", return 1.
+- card_ok: a card check whose record cannot be saved is removed, says "its mount record could not be saved (ruling
+  106(d)); it is removed and nothing is launched", and fails; the launcher then refuses with exit 7 as for any failed
+  card check. Before: the return was ignored and the main container started.
+- the main container (kge-H1, and the same line for the probe kge-H1P and the rehearsal kge-H1R): when its record
+  cannot be saved and it still runs, it is stopped at once, "stopping <NAME>: its mount record could not be saved
+  (ruling 106(d)); rerun to resume", exit 3. A container that ended by itself before its record (a fast refusal) is
+  reported as before ("finished ... rc=X", then "no mount record ... the leak audit will fail on it", exit 3).
+- H1_CAP and everything else unchanged: the run lines are untouched, and test_h1cap_r105 passes on the new bytes.
+Test r58c/A/test_record_fail_r106.sh (host, a stub docker whose inspect fails; no container; log
+r58c/A/logs/test_record_fail_r106.log): RESULT PASS, 11 checks.
+- card, for kge-H1, kge-H1P and kge-H1R: current exit 7, three tries, only the card check started, it is removed.
+  Fail before: exit 0 and the main container started.
+- main, the same three: current exit 3 after three tries, the container stopped, "rerun to resume", no "finished"
+  line, no rc file. Fail before: no stop, it ran to its end ("finished ... rc=0"), then exit 3 "the leak audit will
+  fail on it".
+- fast (a container that ended before its record): exit 3, no stop, reported as now, on both bytes.
+- retry (two failed tries, then a record): current exit 0 with the record; before exit 3, one try, no record.
+- ok (no failure): exit 0 with both records, on both bytes.
+test_save_record_r104.sh: its cut of save_record ended at a line "fi; }", which the new function does not have, and
+its stamped-record order depended on timing (<UTC>-1 sorts before <UTC> when two moves fall in one second); it now cuts
+to the first line ending "; }" and compares the stamped records as a set. PASS twice on the new bytes (fail before
+unchanged). Before copy in pre-r106/.
+Runs (every container through r58c/A/ktest.sh, one at a time):
+- ktest-a65: test_r106_leak, rc 0, PASS.
+- ktest-a66: test_r101_real_lists on leak_audit 1702acb3, rc 0, PASS, every check true. Its leak-audit time is 104.9 s
+  wall (618 rows, 532 judged), against 94.1 s at a63; at >= 3x the limit stays >= 322 s.
+- ktest-a67: test_leak_audit, rc 0, PASS.
+Host stub tests on heldout.sh 9a5a546e, no container, all PASS (logs *.r106.log): test_record_fail_r106,
+test_save_record_r104, test_h1cap_r105, test_heldout_mounts, test_heldout_r101, test_heldout_rehearsal_check,
+test_rehearse_inj, test_rehearse_stop.
+For agent B: leak_audit.py changed (now 1702acb3), so test_mounts_vs_leak_audit and test_gate need a rerun on it.
+
+## 2d (END-ORDER 1c849061, formal run on the final bytes; agent A), HELD at 14:44:25Z
+
+Driver: scratchpad/2d-A/run2d.sh (sha256 6da51d0d), outside the lane; one terminal copy per launcher in scratchpad/2d-A/,
+item exits in 2d-A/exits.txt. Each test once; the queue's repeats were run once (h10 = h3; c10 = c1 + c4's
+test_answer_level; c12's test_probe = c2). Added from END-ORDER: test_h1cap_r105 (x1), test_sums_filter.js (x2),
+test_record_fail_r106 (x3), test_r106_leak (x4, not reached). c13 not to be rerun (a64 measured the current
+r101_seq_measure.py bc9a5a96, heldout.py f541b3ff, kge.py 4b01984f); c9 to be rerun (heldout.py e95506ee -> f541b3ff
+since a60, and inject_standin.py since round 6).
+Ran, exit 0, RESULT PASS: h1, h2, h4, h5, h6, h7, h8, h11, x1, x2, x3 (host); ktest-a68 c1 test_leak_audit, a69 c2
+test_probe, a70 c4 test_answer_level / test_heldout / test_heldout_e4, a71 c5 time_tune@pick8, a72 c6 time_tune@late50,
+a73 c7 test_inject_kinds / test_rehearsal_inj / test_probe_r97, a74 c8 test_rehearsal_negative / precheck_three /
+test_precheck_seed / precheck_r96_check.
+h3 test_rehearse_stop: exit 1, RESULT FAIL rehearse-stop (log 0ed8a2a27dad40c012e87016f8c01f0cd286f3663115fe6a6635621a8a5b38b8,
+term 9be2e9211c30506eea647301813127fae56aedc3c0882fab0c43c8e628457813); no "Device or resource busy" text, so ruling
+109(b) stops 2d. Not rerun; the coordinator was told.
+h9 test_heldout_r101 (ruling 109(a)): run 1 exit 1, RESULT FAIL heldout-r101, r4's damage step failed with rm "Device or
+resource busy" on the test's own staged blob (log saved aside as r58c/A/logs/test_heldout_r101.2d-run1-fail.log
+e8d98f94623b678276c666276fff435a2b7588ef708bd2a5c980f34a46df551f, term 7003ca956232fa55570bff55ae4c74be04cb8da156cfb59b56bfbbaeee717b7a);
+its scratch r58c/A/out/h101 was already removed by the test; run 2 unchanged: exit 0, RESULT PASS heldout-r101 (log
+a085594bda26bc3401b89561fc5ba6faf394aa2baea256981c5260a963bb5028, term 5c2088913571cb02b4dd163d5a1e236b068af501413cb7ae40c7b8805bed70bd).
+Held on the coordinator's word (14:44Z): ktest-a74 had already ended; run2d.sh and the ktest-a75 launcher were stopped
+during its memgate sample 1, before any container started (2d-A/ktest-a75.out 42882833285dc0061f9ce48bb13706368b52fabc73bceca7c37b670d95e32887,
+no start or end line: it was stopped). Not started: c9 (ten inject_standin containers), c11 test_r101_real_lists, c12
+test_probe_seq_r101, x4 test_r106_leak, the rebuild (c3 build_handoffs + precheck_handoff, then tune_late50.py).
+
+### 2d, h3 test_rehearse_stop, both runs (resumed on the coordinator's word)
+- Run 1 (agent A, 13:36:49-13:38:38Z): exit 1, RESULT FAIL rehearse-stop. Log kept as scratchpad/2d-A/test_rehearse_stop.run1.log
+  0ed8a2a27dad40c012e87016f8c01f0cd286f3663115fe6a6635621a8a5b38b8, terminal copy 2d-A/h3-test_rehearse_stop.term
+  9be2e9211c30506eea647301813127fae56aedc3c0882fab0c43c8e628457813. No "Device or resource busy" text.
+- Run 2 (the lead, unchanged, nothing else running, 14:56:14-14:57:50Z): exit 0, RESULT PASS rehearse-stop. Log
+  r58c/A/logs/test_rehearse_stop.log 4e52f87ffae35ccb55b70f77db4c7f07e9e97934f586df31e5dd9bfe32eaaf37, terminal copy
+  2d-A/h3-test_rehearse_stop.run2.term 86c32cc75a17bdf53f54157531247b5f36089e42b53704961d29a5a8ee7906b9 (hashes read by agent A).
+- Run 1's failure is UNEXPLAINED. The lead's hypothesis, recorded as a hypothesis only (not tested):
+  - rehearse.sh's `note` (line 19) is `echo ... | tee -a "$SUM"`;
+  - at lines 46 and 63 the form `... && note ... || { note ...; fail=1; }` sets fail=1, or prints a second RESULT FAIL
+    line, when tee's append is refused;
+  - run 2's l1 printed both "RESULT PASS rehearsal" and "RESULT FAIL rehearsal" with rc 0 (seen in its log).
+- rehearse.sh is unchanged (62cc5598).
+
+### 2d, the remaining runs and the formal rebuild (2026-11-15, agent A; terminal copies in scratchpad/2d-A, outside the lane)
+- Second hold: run2d-b.sh was stopped while ktest-a77 was in memgate sample 1, before any container started
+  (2d-A/ktest-a77.out 47df304c437049dfbdfa72b9caeda7495130c9720e78a12f142fbd2ddb61bd38; it has no start or finished line).
+- c9, inject_standin.py 8a0d1bac at KT_MEM 4096m, every run exit 0, RESULT PASS inject-case (3 settings, 0 failed). Log, then terminal copy:
+  - a76 big-E4 9e6e50778c1b214e9ebbeb08c081c6fb065eed4c7ef857ce9b025cc3c68179d5, d5208491e1d66d43ef6d10ce9a113cfc9066c3b10b10ea193b737324afdfad5c
+  - a78 big-E1 24807d13db501957fec8db764430684e0cc9db9d37bc5393c73be7ff1100145e, 50579fbd74c32778ae0d3ecc524cae9820f264ace9043b6a4cbbddea8bb0e62b
+  - a79 big-E2 c1277fdfa3c6e1330f7fa033140e98b022be8424ab41df84a4b59e497c1f1178, fc388e0f19248dc4d85f5e274ee087e2865b581b6f756900c0a3aa1eb1982ee3
+  - a80 big-E3 2d42ec4d6487f1f5fd0cac97debde0e8cf36961fd2ade12fc3891959a9bbeeee, b25d02a5ef7dcddb616c012d095e29976f307b7c98b51314c92f22d34c0f5130
+  - a81 big-E5 77c9b749900b127df1cf607329650ad7aca58f12095e7d1307831961b5be928d, c51464555428fef3b4cebbb4c15a65556177039a75f773020e2234035e8084a1
+  - a82 noco-E1 6a0b9ddf67ad0b0786a8e97bd3bf84ed8df5fc01c01c1447d35c15b7a5381ad7, de9bac37aadf32dc465f0f754e306d419faef08e80f1a3781db30815fcfe619e
+  - a83 noco-E2 530cef74f0d5342bd92a08319617c7d4a9a20d37ba64764c2d581b22aaecabc7, 966eb2988ccffab7e7b4ab80233624dace44f8fbc29cbaa96d0d478a849167fd
+  - a84 noco-E3 d9f7fa2383c94634e6ceff44a5aeee07c68c76d34c9588e82663c7ec724d1dcd, 8f86306b4abd7fe340eabf36da4ce14f732bd8601cb4cdf76dda8d60151f3972
+  - a85 noco-E4 0d227e22a3689ef17966de7d58af4b3a6db01ac3dbf74ec0a700d06512eeb355, 258c31f7689d4c6889f4bab3ff4b890c6f6c78c4a9bc957d3123d936bc3e199b
+  - a86 noco-E5 e2cd0347c2e06ea9606f17c063327f98627cfc08678d20f83231cb61f5b06fba, 95ba168266da3a23f9a7006b4271cd282354be0cebb6b8d8b3fd0f484051237e
+- c12 a87 test_probe_seq_r101 (72e88e37): exit 0, PASS probe-seq-r101; log e2b75ff8a8c95d9324f8fd73e22c22a4c459528813a0af0ccc42583d7f4d20a6, term 04d5234ad405f8e97828303eea6a204970a15fe1c69fe056d588fc198073ccf0
+- x4 a88 test_r106_leak (6186dd77; leak_audit 1702acb3): exit 0, PASS r106-leak; log 1235f182dd55b83870cafa5d8f3e8a2db8f642034cc467d8a77869a360d887d1, term ae55c665ac68b4e36391086424c44c063f0c1841df9a9194b7f78d6838b649ba
+- c11 a89 test_r101_real_lists (e30ffb40; KT_MEM 2g; run as it is, on the coordinator's word): exit 0, PASS r101-real-lists; log 73a0db14097a51a2a30b24ed7cdf5970e977f5a28e609b8040b900c4a8a94d5b, term 8059ba8f5afed0856496599b1664697b15ed2b1eaa3e9b85b9227e02ff195377
+- Rebuild c3 a90 (term 2325b4a4e718b483bee00ea1b77fd695b877f176e6bcbfd32c6564e60af98803):
+  - build_handoffs (8050a376): PASS; log 006e27908cbc8d86b159ae15175dc22823a7af4f7a576e76e9beab965341c3cf
+  - precheck_handoff (23ae66b3): PASS; log 1a7cb28bd978dff358d515afa59011a92f05cf1ebc08236a3e75180da7626e31
+- Rebuild rb a91 tune_late50 (e49622fa; KT_MEM 4206m): PASS, precheck rc 0; log a691d8ae0229e373c8070d09271264d055cb9727a6a2da1eb3a5d477410fd472, term 2124b3bc1d4a42ea40f077afb401c187838c390eaff60b3a05ebb55c7732b62a
+- Every launcher copy above has its start ("starting"), finished ("ended by itself (rc 0)") and last ("done rc=0") lines.
+- New bytes (nothing is rebuilt after this):
+  - r58c/handoff-test/tune/HANDOFF.json 7bca40b08659fb407e60001dcb0c31ab4ecad64a5fd71f17e94b63dd646225ca
+  - r58c/handoff-test/heldout/HANDOFF.json eb179ca21c878cd0789573807817991ae0c5678408b67d86d87c08a668d1c206
+  - r58c/handoff-test/tune-late50/HANDOFF.json 4241265506a3b83dd858c4439e513ba05dcc762333e415bc88397e1da0b825ae
+  - r58c/A/out/ho_rec/item27.json 9e6be7a73f014ab8ae79c626602fa9fe5ed1e2e4b758aed0296c06b5f42ec762
+- 2d-A/exits.txt f5a7fd8cafdef73f978a2113c4f1e24b9f2d7d7b7ffe265bcef28f2c5a982560; run2d-d.sh 518946e65bed164673ec5a89faf27e50730cffc317c8ace30b606b9d56bbbc35

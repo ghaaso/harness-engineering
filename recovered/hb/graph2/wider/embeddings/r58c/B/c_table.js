@@ -1,4 +1,4 @@
-// RUNLOG-B table: every item C1-C50 -> file:line (first line holding a fixed anchor string) and its test log.
+// RUNLOG-B table: every item C1-C67 (and T2-0) -> file:line (first line holding a fixed anchor string) and its test log.
 // usage: node c_table.js LANE   (prints markdown rows; an anchor not found prints NOT FOUND and exits 1)
 const fs = require('fs'), path = require('path');
 const L = process.argv[2]; const cache = {};
@@ -57,6 +57,24 @@ const T = [
   ['C48', 'B', [['r58c/B/lane_step.sh', '--create'], ['r58c/B/rerun_check.sh', '--create'], ['orchestrator/end_of_run.sh', '--create']], 'r58c/B/logs/test_kt_as.log; r58c/B/logs/test_end_of_run.run.out (43 checks)'],
   ['C49', 'B', [[EO, '**Coordinator, the non-finite count** (ruling 105(b), C49)'], [EO, '**Coordinator, the non-finite count** (ruling 105(c), C49)'], [EO, '**Ruling 105(c)** (C49)'], ['train/write_result.py', "NONFINITE_UNIT = 'nonfinite_heldout'"], ['r58c/write_audit_claims.py', 'ruling 105(c), C49'], ['r58c/B/CONFLICTS.md', '36. 2026-11-15, C49']], 'r58c/B/out/logs/test_write_result.log; r58c/B/out/logs/test_write_audit_claims.log (role_report p2, ktest-b109); r58c/B/out/logs/wr_rehearsal.log (ktest-b110)'],
   ['C50', 'A+B', [['train/heldout.sh', 'C50 (end-order-changes-4)'], [EO, '**The memory cap** (C50'], [EO, "**The three-units-in-a-row figure is the card's** (C50)"], [EO, '**The lock through step 7** (C50'], [EO, '**The formal 2d and 2e** (C50']], 'r58c/A/logs/test_h1cap_r105.log (agent A, RUNLOG-A ROUND10); END-ORDER text'],
+  ['C51', 'B', [['r58c/write_audit_claims.py', 'C51 (round 9)']], 'r58c/B/out/logs/test_write_audit_claims.log (c51_*; role_report p2 ktest-b115 and role_join)'],
+  ['C52', 'B', [['r58c/B/freeze_list.sh', 'C52 (round 9): the three tests'], ['r58c/B/freeze_list.sh', 'C52 (round 9): every script'], [EO, 'round 9, C52: with agent A']], 'r58c/B/logs/test_freeze_check.r106.log (case 52)'],
+  ['C53', 'A', [['train/leak_audit.py', 'R94_CARD_SAVED ='], [EO, 'C36, C53), and the leak audit fails']], 'r58c/A/logs/test_r106_leak.log; r58c/B/out/logs/test_mounts_vs_leak_audit.log (ktest-b116)'],
+  ['C54', 'A', [['train/heldout.sh', 'C54 / ruling 106(d): three tries'], [EO, '**A record that']], 'r58c/A/logs/test_record_fail_r106.log; r58c/A/logs/test_save_record_r104.r106.log'],
+  ['C55', 'B', [['r58c/B/ktest.sh', 'C55 (round 9)']], 'r58c/B/logs/test_kt_as.log (C55)'],
+  ['C56', 'B', [['r58c/write_audit_claims.py', 'C56: heldout.sh']], 'r58c/B/out/logs/test_write_audit_claims.log (c56_*; role_report p2 ktest-b115 and role_join)'],
+  ['C57', 'B', [[EO, 'the lane session removed it'], ['r58c/B/RUNLOG-B.md', 'The lane session removed the folder']], 'text only (train/RUNLOG.md part: the coordinator)'],
+  ['C58', 'B', [[EO, 'C58; the form the r8 and r9']], 'text only'],
+  ['C59', 'B', [[EO, 'TEST-QUEUE q31; C59']], 'text only'],
+  ['C60', 'B', [[EO, '**Last revision** (round 9'], [EO, 'Rulings 103 to']], 'text only'],
+  ['C61', 'B', [[EO, 'the form `heldout.sh` uses at lines'], [EO, 'its checks 1 to 10'], [EO, 'stubs, 42 checks']], 'text only'],
+  ['C62', 'B', [[EO, "ROUND6's bytes"], [EO, "ROUND7's bytes 1ef02a8c"], [EO, 'was 6a2bf7f4']], 'text only'],
+  ['C63', 'B', [[EO, 'required lists, empty when the count is 0'], [EO, 'confirmed by the coordinator (T3, C63)'], ['r58c/B/CONFLICTS.md', 'the coordinator confirmed it, T3']], 'r58c/B/out/logs/test_write_result.log (c49_count_0_prints_nothing)'],
+  ['C64', 'B', [[EO, '(ruling 106(f), C64)']], 'text only'],
+  ['C65', 'B', [[EO, '**Under a ruled cap** (C65)']], 'text only'],
+  ['C66', 'B', [[EO, '(ruling 106(e), C66)']], 'text only'],
+  ['C67', 'B', [[EO, '(ruling 106(b), C67)'], [EO, '(ruling 106(c), C67)'], [EO, '(ruling 106(d), C67)'], [EO, 'Note 35(a), ruled (T2'], ['r58c/B/CONFLICTS.md', '(a) Ruled (the coordinator'], ['r58c/B/TEST-QUEUE.md', '| q32 |']], 'text only'],
+  ['T2-0', 'B', [['r58c/B/tests/kt_inner.sh', 'test_r64_fixes)'], ['r58c/B/timing/mem.sh', 'e5_equiv)']], 'r58c/B/out/logs/test_{r53_58_unit,r64_fixes,e5_equiv}.log (q32, ktest-b112); r58c/B/out/logs/pre-r106-kt_inner/ (ktest-b111); r58c/B/out/logs/mem-e5_equiv.log (q33, ktest-b114)'],
 ];
 const out = ['| item | owner | file:line | test log |', '|---|---|---|---|'];
 for (const [id, own, anchors, log] of T) out.push('| ' + id + ' | ' + own + ' | ' + anchors.map(([f, a]) => at(f, a)).join('; ') + ' | ' + log + ' |');

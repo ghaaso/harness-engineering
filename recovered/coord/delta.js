@@ -5,7 +5,7 @@
 // usage: node delta.js   -> writes coord/delta-<UTC>/ : SUMMARY.txt, CHANGED.tsv, NEW.tsv, REMOVED.txt, diff/*.diff, new/<copies>
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), cp = require('child_process');
 const COORD = __dirname;
-const SNAP = path.join(COORD, 'snap-20261115T092435Z');
+const SNAP = path.resolve(process.argv[2] || path.join(COORD, 'snap-20261115T092435Z'));  // the base copy; argument: another copy folder
 const LANE = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings';
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
 const OUT = path.join(COORD, 'delta-' + stamp);
@@ -18,11 +18,12 @@ const ls = (dir, re, deep) => { const d = path.join(LANE, dir); if (!fs.existsSy
 const live = new Set([
   ...ls('orchestrator', /\.(sh|js|py|md)$/), ...ls('train', /\.(py|js|sh|md)$/),
   ...ls('r58c/A', /(\.(py|sh|js|json|md)$|^READY-)/), ...ls('r58c/B', /(\.(py|sh|js|json|md)$|^READY-)/),
-  ...['r58c/B/tests', 'r58c/B/eor', 'r58c/B/rerun', 'r58c/B/rehearsal', 'r58c/B/frozen', 'r58c/B/timing', 'r58c/tests', 'train/r58/tests'].flatMap((d) => ls(d, /./)),
+  ...['r58c/B/tests', 'r58c/B/eor', 'r58c/B/rerun', 'r58c/B/rehearsal', 'r58c/B/frozen', 'r58c/B/timing', 'r58c/tests', 'train/r58/tests', 'fixes/tests'].flatMap((d) => ls(d, /./)),
   ...ls('r58c', /\.(py|txt|md)$/),
 ]);
 const snap = new Set(fs.readFileSync(path.join(SNAP, 'FILES.txt'), 'utf8').split('\n').map((s) => s.trim()).filter(Boolean));
 const changed = [], same = [], removed = [], added = [];
+fs.mkdirSync(path.join(OUT, 'diff'), { recursive: true }); fs.mkdirSync(path.join(OUT, 'new'), { recursive: true });  // also when nothing changed
 for (const f of [...snap].sort()) {
   if (!live.has(f)) { removed.push(f); continue; }
   const a = read(path.join(SNAP, f)), b = read(path.join(LANE, f));

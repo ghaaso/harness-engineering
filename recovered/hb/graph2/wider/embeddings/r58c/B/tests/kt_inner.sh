@@ -13,6 +13,10 @@ for t in "$@"; do
       f=/w/parallel/tests/test_assemble_checks.sh ;;
     test_select_report)
       f=/w/fixes/tests/test_select_report.py ;;
+    test_r53_58_unit|test_e5_equiv)
+      f=/w/fixes/tests/$t.py ;;
+    test_r64_fixes)
+      f=/w/fixes/tests/test_r64.py ;;
     test_selection_freeze8|test_r64)
       f=/w/r58c/tests/$t.py ;;
     *)
@@ -20,8 +24,14 @@ for t in "$@"; do
   esac
   (echo "sha256 $(sha256sum $f | cut -d' ' -f1) ${f#/w/}"
    case $t in
+     test_r53_58_unit|test_r64_fixes) echo "sha256 $(sha256sum /w/train/selectB.py | cut -d' ' -f1) train/selectB.py (under test)" ;;
+     test_e5_equiv) echo "sha256 $(sha256sum /w/train/kge.py | cut -d' ' -f1) train/kge.py (under test)" ;;
+   esac
+   case $t in
      test_assemble_checks) PY=python ACT=$BOUT/ac timeout 300 sh $f /w ;;
      test_select_report) OUT=$BOUT/selrep CODE=r58 timeout 560 python $f ;;
+     test_r53_58_unit|test_e5_equiv) OUT=$BOUT/$t CODE=r58 timeout 560 python $f ;;
+     test_r64_fixes) timeout 560 python $f post ;;
      *) EOR_PASS_ROOT=/w/r58c/B/eor/c R58_OUT=$BOUT/$t R58_LOGS=$LOGS timeout 560 python $f ;;
    esac) > $LOGS/$t.log 2>&1
   rc=$?

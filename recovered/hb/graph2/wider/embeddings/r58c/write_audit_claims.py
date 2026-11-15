@@ -372,7 +372,9 @@ def build_claims(R, D, a, files):
             ck = I22.get('check_predict_target', {}).get(arm)
             if ck and arm == 'E5':
                 sp = ck.get('specialists') or {}
-                cks = 'per specialist: ' + ', '.join('%s %s' % (X, ('injection FAILED' if v.get('injected_reps_equal_kept') is False else
+                # C51 (round 9): write_result.py's SR-8 branch mirrored: a specialist item22.json holds only as a note
+                cks = 'per specialist: ' + ', '.join('%s %s' % (X, ('not compared (no co_changed)' if 'note' in v else
+                                                                    'injection FAILED' if v.get('injected_reps_equal_kept') is False else
                                                                     '%s/%s identical' % (v.get('full_order_identical', '-'), v.get('queries', '-'))))
                                                      for X, v in sorted(sp.items()))
                 if not ck.get('injected_reps_equal_kept') or not ck.get('specialists_compared'):
@@ -617,7 +619,7 @@ def rehearsal_evidence(root):
         if any(m.get('dst') in ('/w', '/w/export') or str(m.get('dst', '')).startswith('/w/export/') for m in allow):
             exp.append((export_kind(allow), '%s (%s; %s)' % (k, step, export_dsts(allow))))
     extra_rec = [row(os.path.relpath(os.path.join(root, 'r58c', 'mounts', f), root)) for f in sorted(os.listdir(os.path.join(root, 'r58c', 'mounts')))
-                 if re.match(r'^.+\.[0-9]{8}T[0-9]{6}Z\.json$', f) and f.split('.')[0] not in own] if os.path.isdir(os.path.join(root, 'r58c', 'mounts')) else []
+                 if re.match(r'^.+\.[0-9]{8}T[0-9]{6}Z(-[0-9]+)?\.json$', f) and f.split('.')[0] not in own] if os.path.isdir(os.path.join(root, 'r58c', 'mounts')) else []  # C56: heldout.sh -1, -2 names
     kb1 = sorted(f for f in os.listdir(os.path.join(root, 'orchestrator')) if f.startswith('kge-B1-inspect') and f.endswith('.json')) \
         if os.path.isdir(os.path.join(root, 'orchestrator')) else []
     return dict(r2b=r2b, r2e=r2e, mounts=mounts, extra=extra_rec, kb1=[row(os.path.join('orchestrator', f)) for f in kb1],

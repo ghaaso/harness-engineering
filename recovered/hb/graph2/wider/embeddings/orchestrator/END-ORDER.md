@@ -4,12 +4,15 @@ Ruling 85 and must-fix MF-2 (`orchestrator/scoring-delta-review.json`), written 
 r58c fix round, before stage B ended. Binding inputs: rulings 81-88 (`orchestrator/coordinator-rulings-81-88.md`)
 and `orchestrator/grader-interface-v2.md` (sha256 e707a878...); where a step name of the grader interface applies
 it is used here. The coordinator accepts this file (its sha256 is in `r58c/READY-endorder`) before step 1 (C25).
-**Last revision** (round 8, agent B, 2026-11-15): the changes C1-C17 of `orchestrator/final-reread.json` with
-rulings 99-102, C18-C28 of `orchestrator/end-order-changes-3.md` with ruling 103, and C29-C48 of
-`orchestrator/end-order-changes-4.md` (from `orchestrator/precheck-result.json`) with ruling 104
-(`orchestrator/coordinator-rulings-99.md` .. `-104.md`, all at the end of the protocol's section M before the freeze);
-the before bytes are `r58c/B/pre-r101/`, `r58c/B/pre-r103/` and `r58c/B/pre-r104/END-ORDER.md`; the table item ->
-file:line -> test log is in `r58c/B/RUNLOG-B.md` (round 8).
+**Last revision** (round 10, agent B, 2026-11-15): the changes C1-C17 of `orchestrator/final-reread.json` with
+rulings 99-102 (`orchestrator/coordinator-rulings-99.md` .. `-102.md`, already in the protocol's section M), and
+C18-C70 with rulings 103 to 107: C18-C28 of `orchestrator/end-order-changes-3.md` (ruling 103), C29-C50 of
+`orchestrator/end-order-changes-4.md` (from `orchestrator/precheck-result.json`; rulings 104 and 105) and C51-C70 of
+`orchestrator/end-order-changes-5.md` (C51-C67 from `orchestrator/delta-check-result.json`, ruling 106; C68-C70,
+ruling 107) (`orchestrator/coordinator-rulings-103.md` .. `-107.md`, all appended at the end of the protocol's section M before
+the freeze, step 3); the before bytes are `r58c/B/pre-r101/`, `r58c/B/pre-r103/`, `r58c/B/pre-r104/`,
+`r58c/B/pre-r105/` and `r58c/B/pre-r106/` (this file's: `pre-r104/END-ORDER.md` and `pre-r106/END-ORDER.md`); the
+table item -> file:line -> test log (C1-C70) is in `r58c/B/RUNLOG-B.md` (rounds 9 and 10).
 
 Conventions used in every step:
 
@@ -41,7 +44,8 @@ Conventions used in every step:
   holds it): every container of the end order has a fixed list in ONE file per agent, `r58c/B/mounts-B.json`
   (`ktest-r1` to `ktest-r11`, `kge-R1`, `ktest-eor`) and `r58c/A/mounts-A.json` (agent A's `kge-H1P`, `kge-H1R`, `kge-H1`
   and their three card checks `kge-H1Pc`, `kge-H1Rc`, `kge-H1c`, whose lists are EMPTY (C24): each is saved by
-  `train/heldout.sh` `save_record` to `r58c/mounts/<name>.json` like the others (an older record first moved to `<name>.<UTC>.json`, C36), and the leak audit fails when one shows
+  `train/heldout.sh` `save_record` to `r58c/mounts/<name>.json` like the others (an older record first moved to `<name>.<UTC>.json`, or to `<name>.<UTC>-<k>.json` when that name
+  is taken, C36, C53), and the leak audit fails when one shows
   any mount, `leak_audit.py` `R94_CARD`),
   shape `{"<name>": {"step": "<id>", "allow": [{"src", "dst", "mode": "ro|rw"}]}}`. `lane_step.sh` and
   `rerun_check.sh` build their `-v` flags only from that file (`r58c/B/mounts.js flags`; `lane_step.sh`: a name without an entry is
@@ -52,7 +56,7 @@ Conventions used in every step:
   nothing is created, and a row whose source is missing is left out and named (`mounts.js: left out (source missing,
   nothing created): ...`, in the step's log). The empty `train/selectB` of 2026-11-15 08:13:00.744Z came from the
   lane's own host look-up `node r58c/B/mounts.js flags .../mounts-B.json ktest-r1` (agent B, while building KT_AS; no
-  container), through the old line 64 that created every writable source on every call; the coordinator removed it
+  container), through the old line 64 that created every writable source on every call; the lane session removed it
   with `rmdir` at 09:37:10Z (`train/RUNLOG.md`). Tests: `test_freeze_check.sh` case 9b, `test_kt_as.sh`,
   `test_r10_verdict.sh` (C21 cases), each with a fail-before on `r58c/B/pre-r103/mounts.js`. **No step before the leak audit
   mounts the repository or the whole facts cache** (ruling 94(a)): r1 selectB, r2 report, r3 item27, r8 and r9
@@ -143,7 +147,7 @@ Conventions used in every step:
   | write_result, write_audit_claims (step 9) | ktest-r6, ktest-r7 | not in change 5's list (JSON only, seconds) | 900 | - |
   | pre-check, tuning hand-off (step 5) | ktest-r8 | TEST run under its TEST list (C45, ruling 103(b); `r58c/B/lane-steps/ktest-r8-20261115T101652Z.log`): the TEST late-50 hand-off `r58c/handoff-test/tune-late50` (313 tasks, 40 variants), PRECHECK PASS; **4 s** from release to rc 0 (10:29:30Z-10:29:34Z). **Memory: container peak 107,368,448 bytes (102 MiB) of the 1,536 MB cap**. The real hand-off has the same 313 tasks | 3600 (`LIMIT_R8`) | about 900x |
   | pre-check, held-out hand-off (step 8) | ktest-r9 | TEST run under its TEST list (C45; `r58c/B/lane-steps/ktest-r9-20261115T104953Z.log`; the first run, `ktest-r9-20261115T102934Z.log`, exited 1 for want of a freeze sha256, CONFLICTS.md note 38): the TEST held-out hand-off `r58c/handoff-test/heldout` (pick8, 37 tasks), PRECHECK PASS; **3 s** from release to rc 0 (11:02:03Z-11:02:06Z). **Memory: container peak 35,123,200 bytes (33.5 MiB) of the 1,536 MB cap**. The real hand-off has 418 tasks over 70 parents, about 11x the tasks: a projection, not a measurement | 3600 (`LIMIT_R9`) | about 1,200x (about 100x at 11x the tasks) |
-  | leak audit (step 9.1) | ktest-r10 | agent A's figure (round 8, ktest-a52, `r58c/A/RUNLOG-A.md` ROUND8, sha256 9ecbb50b...): 204.5 s wall on a full-size stand-in (18,714 rows: B's `asm` tune parts plus 210 stand-in held-out parts; all 17 not-yet-existing sources pointed at stand-ins, `r58c/A/r10_repoint.js`; the stand-in's verdict FAIL, as expected, not the real one). **Memory: peak RSS 37.5 MB; container peak 48.1 MB of the 1,536 MB cap** | 3600 (`LIMIT_R10`, 1536m: both unchanged) | 17x |
+  | leak audit (step 9.1) | ktest-r10 | agent A's figure (round 8, ktest-a52, `r58c/A/RUNLOG-A.md` ROUND8, sha256 9ecbb50b...): 204.5 s wall on a full-size stand-in (18,714 rows: B's `asm` tune parts plus 210 stand-in held-out parts; all 17 not-yet-existing sources pointed at stand-ins, `r58c/A/r10_repoint.js`; the stand-in's verdict FAIL, as expected, not the real one). **Memory: peak RSS 37.5 MB; container peak 48.1 MB of the 1,536 MB cap**. On leak_audit.py 1702acb3 (agent A's ROUND11, C53) the leak-audit time of ktest-a66 is 104.9 s wall (618 rows, 532 judged), against 94.1 s at ktest-a63 | 3600 (`LIMIT_R10`, 1536m: both unchanged) | 17x |
   | E5 route audit (step 9.2a, ruling 97) | ktest-r11 | full-size stand-in of its graph work (r58c/B/timing/time_r11.py, ktest-b83): all 123 graph folders of export/graphs0 (both splits, a superset of what it reads), each read as a parent and as a checkpoint, 39,941 kge.route calls: 7.0 s (1.6 s import). **Memory (ktest-b83): peak RSS 353 MB; container peak 255 MB of the 1,536 MB cap**. The held-out counts files are not read in the stand-in (no test reads a real table) | 1800 | about 250x |
   | end_of_run assemble + assemble_checks (step 2) | ktest-eor | 86.2 s + 31.3 s = 117.5 s (ktest-b45); again 90.7 s + 32.7 s = 123.4 s (ktest-b69, every planned `_meta.json` of the copy dropped first, as `end_of_run.sh` does). **Memory (ktest-b69): peak RSS 357 MB; container peak 274 MB of the 1,536 MB cap** | 3000 (`LIMIT_ASSEMBLE`) | 25x |
   | kge-R1 rerun (step 2c) | kge-R1 | not measured (it trains fifteen picked units on the card) | 5400 s (`RR_LIMIT`); **memory cap `-m 4g --memory-swap 4g`** (ruling 100; ruling 79's start rule, commit < 38 GB) | - |
@@ -227,6 +231,30 @@ Conventions used in every step:
   `LANE/orchestrator/grader-running.txt` does not exist (the coordinator holds the same lock for its grader runs and
   writes that file meanwhile; a lock taken by the coordinator is never stale to the lane), it removes a stale
   `r58c/ktest.lock` (`rmdir`); otherwise it waits and asks the coordinator.
+- **What the test containers mount** (ruling 106(b), C67): ruling 103(b)'s "no test mounts a held-out parent's
+  folder" is about the step launcher's test runs (`ktest-r4`, `ktest-r8` and `ktest-r9` as TEST runs of
+  `lane_step.sh`). The ordinary test containers of both agents (`r58c/B/ktest.sh`, `r58c/A/ktest.sh`) mount what they
+  have mounted in every round: the export folder whole, the facts cache and, for agent B's, the repository, all
+  read-only, and never anything under `build/sealed`. Ruling 89's per-use rule covers them: no test reads a held-out
+  parent's graph or facts (ruling 96(b)), and the coordinator's audit (step 10) reads the test code for such a read.
+  The gate of the step launcher's test runs (`r58c/B/graph_rows.js test-check`) refuses exact spellings only, so
+  **before it records the code freeze (step 3), the coordinator checks every saved record of a test run of the step
+  launcher** (`r58c/B/out/mounts-test/<name>-<stamp>.json`): none may show a held-out parent's folder, or a writable
+  mount at, under or above a real output folder.
+- **A lost log line** (ruling 106(c), C67): on this machine an append from a shell loop can fail without an error
+  (7 in 233 on 2026-11-15, "Device or resource busy"), and the lane's launchers append their log lines that way.
+  Where this order names a line of such a log as evidence and the line is missing while the files it stands for
+  exist, the lane reports it to the coordinator and changes nothing: it does not interpret the log, does not run a
+  finished real step again and never writes the line by hand. The coordinator decides on the files and records the
+  decision. **Step 1 is the exception**: if its PASS line is missing from the run log, step 1 runs again.
+- **No container runs on without its saved record** (ruling 106(d), C67): no container of this order runs on
+  without its saved mount record. A record that cannot be saved is tried again; if it still cannot be saved, a card
+  check fails and nothing is launched, and a run that has started is stopped at once and resumed by the same command
+  (`train/heldout.sh` `save_record`, C54: three tries, 2 s apart; a card check whose record cannot be saved is removed
+  and the launcher exits 7; a `kge-H1P`, `kge-H1R` or `kge-H1` that still runs is stopped at once, exit 3, "rerun to
+  resume"; a container that ended by itself before its record is reported, exit 3. `lane_step.sh`, `rerun_check.sh` and `orchestrator/end_of_run.sh` save the record before
+  the release and remove the container unreleased (it has run nothing) when `docker inspect` fails. The leak audit
+  fails on a missing record, and after the held-out run that could not be repaired.
 
 ## 1. The end-of-run procedure (lane)
 
@@ -323,8 +351,8 @@ Conventions used in every step:
   synthetic graph takes the relation counts of the largest held-out graph's `sizes.json`; a relation that no tuning
   checkpoint has is renamed `zz_heldout_only_relation_<n>` (no held-out-only name reaches `probe.json`, which
   records counts only) and drawn as edges from non-code `other` entities to code entities, `NEW_REL_FILE_SHARE`
-  0.8 of them to code files and the rest to code-area symbols, never as random pairs (`train/heldout.py`, sha256
-  9775077c...; before bytes 2e520639 = `r58c/A/pre/heldout_r96.py`; agent A's tests ktest-a28 test_probe_r97 and
+  0.8 of them to code files and the rest to code-area symbols, never as random pairs (`train/heldout.py`, ROUND6's bytes
+  9775077c..., not the current ones, which the freeze list gives (step 3); before bytes 2e520639 = `r58c/A/pre/heldout_r96.py`; agent A's tests ktest-a28 test_probe_r97 and
   ktest-a40 test_probe PASS). The TEST record 049ba85b still pins heldout.py 2e520639 (agent A: not rebuilt; the formal 2d rebuilds it on the
   final bytes, C50).
 - **Three units in a row in one process** (ruling 101(c), C13, C22; agent A's round 9): no extra command or option.
@@ -345,8 +373,11 @@ Conventions used in every step:
   (`-m 4g --memory-swap 4g`) unless a coordinator ruling recorded before the freeze names another. In that case the
   lane sets `H1_CAP` as that ruling says, for the probe as for the real run, in the same shell line
   (`H1_CAP=<cap> PROBE=1 sh train/heldout.sh`); `H1_CAP` takes **4g, 5g or 6g only**, and `heldout.sh` refuses anything else with
-  exit 8 before any container starts (`train/heldout.sh` lines 54-58; its `start` line prints `cap <cap>`).
-  Without such a ruling `H1_CAP` is left unset (4g).
+  exit 8 before any container starts (`train/heldout.sh` lines 56-60; its `start` line prints `cap <cap>`).
+  Without such a ruling `H1_CAP` is left unset (4g). **Under a ruled cap** (C65) the probe's own figures do not follow
+  `H1_CAP`: its report line still flags a peak above 3.5 GB (`PROBE_FLAG_MB`, `train/heldout.py` line 103) and
+  `probe.json` still says the cap is 4 GB (line 845). The cap in force is read from the launch log's `start` line
+  (`cap <cap>`), and a repeat that exits 4 again is judged by the coordinator on its report (stop rule below).
 - **The three-units-in-a-row figure is the card's** (C50): it comes from the real probe on the card,
   `train/probe/probe.json` `units_in_a_row` (its `cgroup_peak_mb_after`, `peak_rss_mb` and
   `peak_cuda_reserved_mb`). Agent A's 3,661 MB from one E4 c13 unit (`r58c/A/r101_seq_measure.py`, `KT_MEM=4g`) is
@@ -355,7 +386,7 @@ Conventions used in every step:
   rows, and the coordinator rules within minutes (on the cap of the real run, C50 above) before 2b.
 - **A repeat of 2a or 2b** (C32): `heldout_inputs.js build` refuses an output folder that exists (line 164), so a
   repeat does not start from the staging command. A staging folder that exists **together with its manifest** is
-  kept and only verified (`node train/heldout_inputs.js check --plan train/stageB/plan.json --dir <folder> --manifest <folder>.sha256 ...`, the form `heldout.sh` uses at lines 113 and 117); a folder without
+  kept and only verified (`node train/heldout_inputs.js check --plan train/stageB/plan.json --dir <folder> --manifest <folder>.sha256 ...`, the form `heldout.sh` uses at lines 119-120, 128-129 and 132-133); a folder without
   its manifest, or a manifest without its folder, is moved aside under section 0 (c) and built again with the
   command above. 2a and 2b then rely on `heldout.sh`'s own staging check, which runs before each launch (exit 8 on a
   failure, no container started).
@@ -374,7 +405,7 @@ Conventions used in every step:
   (`-m 4g --memory-swap 4g`) unless a coordinator ruling recorded before the freeze names another. In that case the
   lane sets `H1_CAP` as that ruling says, for the probe as for the real run, in the same shell line
   (`H1_CAP=<cap> sh r58c/A/rehearse.sh`); `H1_CAP` takes **4g, 5g or 6g only**, and `heldout.sh` refuses anything else with
-  exit 8 before any container starts (`train/heldout.sh` lines 54-58; its `start` line prints `cap <cap>`).
+  exit 8 before any container starts (`train/heldout.sh` lines 56-60; its `start` line prints `cap <cap>`).
   Without such a ruling `H1_CAP` is left unset (4g).
   The "4 GB cap" of this step and of `kge-H1R` below reads as that cap.
 - **Ruling 96(a), the injected-kinds case** (agent A's ROUND6, `r58c/A/RUNLOG-A.md`; marker `r58c/A/ROUND6-DONE`):
@@ -396,7 +427,7 @@ Conventions used in every step:
   test_rehearse_stop (host), test_rehearsal_inj (ktest-a28), test_rehearsal_negative (ktest-a29), precheck_three
   (ktest-a41), all PASS.
 - **The rehearsal's staging check** (agent A's ROUND7, `r58c/A/RUNLOG-A.md`; marker `r58c/A/ROUND7-DONE`):
-  `train/heldout.sh` (sha256 1ef02a8c...; before bytes 22485d80 = `r58c/A/pre/heldout_r97.sh`) checks
+  `train/heldout.sh` (ROUND7's bytes 1ef02a8c..., not the current ones, which the freeze list gives; before bytes 22485d80 = `r58c/A/pre/heldout_r97.sh`) checks
   `r58c/rehearsal/inputs` under `REHEARSAL` the way the real launch checks its staging (`heldout_inputs.js check`,
   the sources, the three rehearsal parents) and **stops with exit 8** when it fails; no rehearsal container starts
   then. Agent A's host test_heldout_rehearsal_check PASS (intact: past the check; a root-level blob or a tree
@@ -412,7 +443,8 @@ Conventions used in every step:
   why the staging check above exists), and its `ranked/` is byte-identical to the intact run's (20 files); its
   `answers/` (10 files) differ only in each row's pack time `ms`, as a second intact run's do; with `ms` dropped every
   row equals the intact run's; the path `.editorconfig` appears 0 times in the answers.
-- **The leak audit's bytes**: `train/leak_audit.py` is 6a2bf7f4... (before bytes `r58c/A/pre/leak_audit_r97.py`),
+- **The leak audit's bytes**: `train/leak_audit.py` was 6a2bf7f4... at agent A's ROUND7 (not the current bytes, which the
+  freeze list gives; before bytes `r58c/A/pre/leak_audit_r97.py`),
   with three new ruling-89 GRAPH_RULES for round 6's heldout.py `tuning_relations` lines 662, 665 and 773
   (definition, caller key, plan checkpoint: the tuning checkpoints' `sizes.json` only). Agent B's tests that import it
   ran again on these bytes (test_mounts_vs_leak_audit; test_write_audit_claims through role_report p2).
@@ -515,18 +547,32 @@ Conventions used in every step:
   test_heldout_rehearsal_check, test_rehearse_inj, test_kt_inner, precheck_three, test_precheck_seed and
   precheck_r96_check (commands in `r58c/A/TEST-QUEUE.md`); and round 8's own: `r58c/B/tests/{test_item27_trc,
   test_sr6_guard}.py` (kt_inner), `r58c/B/tests/{test_rerun_r101, test_pass_paths, test_kt_as}.sh` (host).
-  **Rulings 101 to 104 add (C23)**: agent A's `r58c/A/{test_heldout_r101, test_save_record_r104}.sh`, ruling 105's `r58c/A/test_h1cap_r105.sh` (C50, host, `DRY=1`) and
+  **Ruling 106 adds** (C53, C54; agent A's ROUND11): `r58c/A/test_r106_leak.py` (container, `r58c/A/ktest.sh`) and
+  `r58c/A/test_record_fail_r106.sh` (host, a stub docker whose inspect fails), with `r58c/A/test_save_record_r104.sh`
+  grown in place. **Note 35(a), ruled (T2; ruling 106(a), C67; amended by ruling 107(a), C68)**: `fixes/tests/{test_r64,
+  test_e5_equiv}.py` once more on the final bytes (kt_inner, as `test_r64_fixes` and `test_e5_equiv`; TEST-QUEUE q32):
+  they test code a later step runs, the selection script at step 4 and the scoring of the model code at step 7.
+  **Not run in 2d** (ruling 107(a), C68; CONFLICTS.md note 40): the release-gate test `test_r53_58_unit.py` (in
+  `fixes/tests`): its r58-guard case states the selection script's guard as it was before ruling 83 (lines naming
+  made-up files, no PASS line, expected to pass), so the guard refuses it, as it should. Its three ruling-53 cases
+  passed on `train/selectB.py` sha256 d54cb864e38f...b885 in ktest-b112 (12:07:50-12:07:57Z); that log,
+  `r58c/B/out/logs/test_r53_58_unit.log` (sha256 a3392c75a594...9d15), is the record. The guard itself is tested on
+  the final bytes by the tests of 2d written for it. The route in `r58c/B/tests/kt_inner.sh` and the file's line in
+  `r58c/B/freeze_list.sh` stay as they are. **If `train/selectB.py` changes before the freeze, the lane reports to
+  the coordinator before 2d.**
+  **Rulings 101 to 104 add (C23)**: agent A's `r58c/A/{test_heldout_r101, test_save_record_r104}.sh`, `r58c/A/test_h1cap_r105.sh` (C50, host, `DRY=1`) and
   `r58c/A/test_sums_filter.js` (host), `r58c/A/{test_r101_real_lists, test_probe_seq_r101}.py` (containers, `KT_MEM`
   as `r58c/A/TEST-QUEUE.md` rows c11 and c12 give it), and its two measurements, not pass/fail tests, run again
   only when the bytes they measure changed (`r58c/A/inject_standin.py` c9, `r58c/A/r101_seq_measure.py` c13);
   agent B's `r58c/B/tests/{test_rerun_r103, test_memgate_cleanup}.sh` (host), with `test_freeze_check.sh` (cases 9b,
   19, 20, 35), `test_kt_as.sh` (C21, C26), `test_r10_verdict.sh` (C19, C21, C29, C45) and
-  `test_e5_route_audit.py` (C31), `test_write_audit_claims.py` (C43, C49), `test_write_result.py` (C49), `test_mounts_vs_leak_audit.py` (103(c))
+  `test_e5_route_audit.py` (C31), `test_write_audit_claims.py` (C43, C49, C51, C56), `test_freeze_check.sh` case 52 (C52),
+  `test_kt_as.sh` (C55), `test_write_result.py` (C49), `test_mounts_vs_leak_audit.py` (103(c))
   grown in place. **The list equals the test files on disk** (C23, C48): a host listing of `fixes/`, `parallel/`,
   `r58b/`, `r58c/`, `orchestrator/` and `train/r58/tests` (every `test_*` file outside `pre*/`, `out/` and
-  `logs/`) is in `r58c/B/RUNLOG-B.md` ("C23 listing"), with every file left out named and why (CONFLICTS.md note 35
-  asks the coordinator about the stage-B release-gate tests in `fixes/tests` that read code a later step runs). The
-  exact order: `r58c/B/TEST-QUEUE.md` (its round-8 section, q9-q20, and the ruling-103/104/105 rows q21-q31) and
+  `logs/`) is in `r58c/B/RUNLOG-B.md` ("C23 listing"), with every file left out named and why (CONFLICTS.md note 35 (a), ruled by ruling 106(a) and amended by ruling 107(a): of the stage-B release-gate tests in
+  `fixes/tests`, the two named above run in 2d, `test_r53_58_unit.py` does not (above, C68), the others stay out for the reasons the listing gives). The
+  exact order: `r58c/B/TEST-QUEUE.md` (its round-8 section, q9-q20, the ruling-103/104/105 rows q21-q31, and ruling 106(a)'s q32 as ruling 107(a) amends it) and
   `r58c/A/TEST-QUEUE.md`.
 - **Agent A's role logs, copied** (C8, SR-2): the ruling-58/83 guard opens the PASS logs inside ktest-r1, r2 and r3,
   and none of them mounts `r58c/A/logs`. After agent A's last 2d runs the lane copies
@@ -554,12 +600,14 @@ Conventions used in every step:
   heldout --test --freeze-sha256 $(sha256sum r58c/A/out/ho_rec/item27.json | cut -c1-64)` (`ktest-r9`; the TEST
   hand-off's anchor names the TEST record, and the pre-check refuses a held-out hand-off without a freeze sha256, its
   check 2: the first r9 TEST run of 2026-11-15 without it exited 1, `ktest-r9-20261115T102934Z.log`; the hash is
-  taken on the host, so the list mounts nothing more), each followed in the same shell line by the cgroup's `memory.peak` read (the form of
-  `r58c/B/RUNLOG-B.md`, "C45"). The log prints the TEST entry against the real entry row by row (ruling 103(b)); the
+  taken on the host, so the list mounts nothing more), each followed in the same shell line by the cgroup's `memory.peak` read in exactly this form, which keeps the
+  command's exit code (C58; the form the r8 and r9 TEST runs used): `<command> ; rc=$?; echo cgroup_peak_bytes $(cat
+  /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes 2>/dev/null); exit $rc`. The log prints the TEST entry against the real entry row by row (ruling 103(b)); the
   r9 TEST line has at least the real line's row count and length (104(b)). **The r4 TEST run needs the tuning
   staging** (ruling 104(a), C30): 2f items 4 and 5 (`tune_inputs/` and its check) run after the card window and
-  before it; it is the only use of the tuning staging before step 5. The r8 and r9 TEST runs need no staging and ran
-  before the card window (their figures in the limits table of section 0, C45).
+  before it; it is the only use of the tuning staging before step 5. The r8 and r9 TEST runs need no staging. They ran
+  once before the card window (interim figures in the limits table of section 0, C45), and they run again in the
+  formal 2d after the TEST record and the hand-offs are rebuilt (the bullet below; TEST-QUEUE q31; C59).
 - **The test hand-offs**: if `train/answer_level.py`, `train/heldout.py`, `train/heldout_inputs.js` or
   `train/HANDOFF-FORMAT.md` changed after `r58c/handoff-test/` was built, agent A's `r58c/A/build_handoffs.py`
   rebuilds them before 2e (and the new `HANDOFF.json` sha256 values go to the coordinator).
@@ -730,7 +778,11 @@ of what ran; nothing in it is still to run.
   `answer_level.py` and the leak audit read it after the freeze), `eval/comparators/*`, `export/*.py`, `export/*.jsonl`,
   `orchestrator/{assemble_checks.py, end_of_run.sh, guard-prelaunch.js, guard-stageB.sh, guard-stageB-r92.sh, memgate.sh, END-ORDER.md,
   grader-interface-v2.md}`, every assembled table file `train/stageB/tables/*`, `r58c/write_audit_claims.py`,
-  every test file of 2d, the `r58c/B/*.sh` launchers, `r58c/B/rerun/rerun_check.py`,
+  every test file of 2d (round 9, C52: with agent A's `r58c/A/*.js`, `test_sums_filter.js` among them, and the three
+  `fixes/tests` files of ruling 106(a), `test_r53_58_unit.py`, `test_r64.py` and `test_e5_equiv.py`; the first stays
+  listed though 2d no longer runs it, ruling 107(a)), the `r58c/B/*.sh`
+  launchers, every `r58c/B/*.js` script (C52: `graph_rows.js`, the gate of the step launcher's test runs, among them),
+  `r58c/B/rerun/rerun_check.py`,
   `orchestrator/{rerun_unit.py, rerun_compare.py}`, agent A's `r58c/A/*.py` and `r58c/A/*.sh` (`precheck_handoff.py`
   runs after the freeze, steps 5 and 8), every file of `r58c/B/eor/` (the end_of_run test), both mount lists
   `r58c/B/mounts-B.json` and `r58c/A/mounts-A.json` with their reader `r58c/B/mounts.js` (ruling 94(d)), **every
@@ -762,8 +814,8 @@ of what ran; nothing in it is still to run.
   r58c/B/freeze_check.sh` once on the real list and reports its wall time with the list's sha256 (and the RUNLOG
   records both); a step's limit does not include it (section 0, the limit clock).
 - **The protocol file is frozen too** (C27): `protocol-addendum-8.md` is in the `# outside` block (`freeze_list.sh`,
-  the `# outside` loop), so appending to its section M after step 3 would fail every later freeze check. Rulings 103,
-  104 and 105 are appended to section M before the freeze (the freeze list is written after that). A ruling made
+  the `# outside` loop), so appending to its section M after step 3 would fail every later freeze check. Rulings 103 to
+  107 are appended to section M before the freeze (the freeze list is written after that). A ruling made
   after the freeze lives in its own file under `orchestrator/` and in `progress.jsonl` only, and the coordinator
   appends it to the protocol after step 9.4 has finished; AUDIT.md cannot name such a ruling, the coordinator's
   report does.
@@ -868,7 +920,7 @@ of what ran; nothing in it is still to run.
   mean) equals `tune.json` `choices[<arm>].final_all65` (config_id, w, mean), and `chosen` is the arm that ruling
   57's rule gives on those five means (4-decimal tie group, then the size order), with that arm's config, w and
   epochs (C40); `test` is false. The coordinator's script `orchestrator/coord_checks.js item27` makes these checks
-  (its checks 1 to 8; the lane does not run it). **If one check differs, the coordinator does not anchor and the
+  (its checks 1 to 10; the lane does not run it). **If one check differs, the coordinator does not anchor and the
   line stops.**
 - **Coordinator**: then appends `{"step": "coordinator", "unit": "item27_freeze", "file": "train/heldout/item27.json",
   "sha256": "<64 hex>", "t": "<UTC>"}` to `progress.jsonl`. It is the ONLY such line: `heldout.py` requires exactly
@@ -892,11 +944,11 @@ of what ran; nothing in it is still to run.
   (`-m 4g --memory-swap 4g`) unless a coordinator ruling recorded before the freeze names another. In that case the
   lane sets `H1_CAP` as that ruling says, for the probe as for the real run, in the same shell line
   (`H1_CAP=<cap> sh train/heldout.sh`); `H1_CAP` takes **4g, 5g or 6g only**, and `heldout.sh` refuses anything else with
-  exit 8 before any container starts (`train/heldout.sh` lines 54-58; its `start` line prints `cap <cap>`).
+  exit 8 before any container starts (`train/heldout.sh` lines 56-60; its `start` line prints `cap <cap>`).
   Without such a ruling `H1_CAP` is left unset (4g).
   It is the same cap as the probe's of 2a (a ruling that names another cap names it for both).
 - **The lock through step 7** (C50, accepted by the coordinator): `heldout.sh` takes `r58c/ktest.lock` once no
-  `kge-*` container runs and holds it until the launcher ends (`train/heldout.sh` lines 128-137, C16), so it is
+  `kge-*` container runs and holds it until the launcher ends (`train/heldout.sh` lines 136-145, C16), so it is
   held through the whole held-out run; nothing else runs during step 7.
 - **Preconditions**: freeze check; the anchor line of step 6; no `kge-*` container; C: >= 15 GB; ruling 79's
   memgate (free >= 6 GB, commit < 38 GB). **If `train/heldout/HANDOFF.json` exists, `heldout.sh` is not run
@@ -907,8 +959,15 @@ of what ran; nothing in it is still to run.
   the append-only launch log `heldout-launch/kge-H1-launch.log` outside `train/heldout`. **One record convention**
   (C36, agent A's `train/heldout.sh` `save_record`, test `r58c/A/test_save_record_r104.sh`, before bytes
   `r58c/A/pre-r104/heldout.sh`): as in `lane_step.sh` and section 0, the NEWEST record is `<name>.json` and an older
-  one is first moved to `<name>.<its mtime, UTC>.json`; after a relaunch `kge-H1.json` is the last launch's record
-  and every earlier one is kept beside it (the leak audit judges every kept record).
+  one is first moved to `<name>.<its mtime, UTC>.json`, or `<name>.<UTC>-<k>.json` when that name is taken (C53:
+  the leak audit strips the `-<k>` when it reads a name from a file name); after a relaunch `kge-H1.json` is the last
+  launch's record and every earlier one is kept beside it (the leak audit judges every kept record). **A record that
+  cannot be saved** (ruling 106(d), C54; test `r58c/A/test_record_fail_r106.sh`, before bytes
+  `r58c/A/pre-r106/heldout.sh`): `save_record` tries three times, 2 s apart; when the card check's record still cannot
+  be saved, the card check is removed and the launcher exits 7, nothing launched; when the record of a running
+  `kge-H1` (or `kge-H1P`, `kge-H1R`) cannot be saved, the container is stopped at once and the launcher exits 3,
+  "rerun to resume": the same command resumes it (finished units kept). A container that ended by itself before its
+  record could be taken is reported, exit 3, as before.
 - **Nothing under `train/heldout` is moved or renamed** (C33; section 0 (c)'s exception): `heldout.py` replaces its
   own half-written outputs on a relaunch.
 - **Stops the line**: any non-zero rc. **Ruling 85**: "If the held-out run stops on a code defect after the
@@ -949,8 +1008,8 @@ of what ran; nothing in it is still to run.
 - **Coordinator, the non-finite count** (ruling 105(c), C49): before the hashes go to the grader, the coordinator takes the same count over train/heldout (ruling 105(c)); a count that is not zero changes nothing in the run and is stated in the result.
   **Where it is stated** (the lane's answer to C49: it fits, and it is built): the coordinator records the count as
   one line in `progress.jsonl`, `{"step":"coordinator","unit":"nonfinite_heldout","count":<N>,"seeds":[<int>,..],
-  "parents":[<hex sha>,..],"t":"<UTC>"}` (the last such line counts; `count` an integer >= 0, `seeds` integers,
-  `parents` 7-40 hex characters). `train/write_result.py` reads it as an OPTIONAL input (`nonfinite_heldout`,
+  "parents":[<hex sha>,..],"t":"<UTC>"}` (the last such line counts; `count` an integer >= 0; `seeds` and `parents` are
+  required lists, empty when the count is 0; `seeds` integers, `parents` lowercase hex of 7-40 characters; C63). `train/write_result.py` reads it as an OPTIONAL input (`nonfinite_heldout`,
   absent by default): no line, or a count of 0, prints nothing; a count above 0 appends ONE sentence to the last
   limits bullet ("- Ruling 97 (b) ..."), "Ruling 105 (c): the coordinator counted N score row(s) or loss(es) in the
   held-out run that are not a finite number (seed(s) ..; parent(s) ..); the run was not changed: ...", so it adds no
@@ -961,8 +1020,13 @@ of what ran; nothing in it is still to run.
   worst case keeps its line count, at or under 149; count 0 prints nothing; five wrong shapes exit 10; the
   pre-r105 bytes print nothing) and `r58c/B/tests/test_write_audit_claims.py` (`c49_*`: both claim rows ok and citing the anchor file, no NOT
   FOUND; the pre-r105 claim map has no row, the first C49 bytes `pre-r105/write_audit_claims.c49a.py` cite "(no file: anchor)"). The coordinator writes the line here in step 8, before the hashes go to the grader (so before 9.3, ruling 104(f)),
-  when the count is not zero; a zero count may be recorded or left out (both print nothing). CONFLICTS.md note 36.
-- **Coordinator**: checks the launch log first: **one or more start lines, all for the same record**, and rc 0.
+  always: when the count is 0 it records the line with `"count":0` and empty lists (`"seeds":[]`, `"parents":[]`),
+  which prints nothing (test_write_result `c49_count_0_prints_nothing` runs exactly that line). The format is
+  confirmed by the coordinator (T3, C63). CONFLICTS.md note 36.
+- **Coordinator**: checks the launch log first: **one or more start lines, all for the same record**, and rc 0;
+  and (ruling 106(e), C66) every start line shows the 4 GB cap, or the cap a ruling recorded before the freeze names
+  (`node orchestrator/coord_checks.js heldout-start <launch log> --cap <cap>`, the coordinator's script; `--cap` is
+  left out, 4g, when no ruling named another; the lane does not run it).
   The record's sha256 is read from the `start` progress lines in `train/heldout` (their `freeze_sha256`), and
   every one must equal the item27 record's sha256. Only then the grader gets anything.
 - **Coordinator**: passes both hashes to the grader (ruling 88e: the grader takes them from the coordinator, never
@@ -996,8 +1060,8 @@ of what ran; nothing in it is still to run.
    `ktest-r7` run after it, so their records cannot exist yet and are not its inputs (their steps 9.2-9.4 are outside
    its scope; the coordinator's step-10 audit checks them, ruling 104(g)). **The card checks** (C24): `kge-H1Pc`,
    `kge-H1Rc` and `kge-H1c` have EMPTY lists in `r58c/A/mounts-A.json`; `heldout.sh`'s `card_ok` saves each one's
-   record to `r58c/mounts/<name>.json` (a later launch's older record kept as `<name>.<UTC>.json`), and the audit
-   fails when one shows any mount (`leak_audit.py` line 568). For r4,
+   record to `r58c/mounts/<name>.json` (an older record kept as `<name>.<UTC>.json`, or `<name>.<UTC>-<k>.json` when that
+   name is taken, C53), and the audit fails when one shows any mount (`leak_audit.py` line 572). For r4,
    r8 and r9 it compares each record's graph-folder rows with the plan's parent sets (ruling 102). **Evidence**: `train/leak_audit/leak_audit.json` `ok: true`, `test: false`, this
    plan's `plan_hash`; its `disclosure81.text`, `ruling89.text`, the ruling-90 listing `ruling89.ruling90_sites`,
    `ruling92.text` and `ruling94` (`ok`, `text`, one row per record). Whose exit code: the last-line rule.
@@ -1006,7 +1070,7 @@ of what ran; nothing in it is still to run.
    started, parse, and say `ok: true` and `test: false`; otherwise `lane_step.sh` exits 10 (its own code; last line
    `lane_step: exit 10 (step 9.1 verdict not a pass: <reason>; the audit exited 0)`, after the command's rc line). A
    pass logs `step 9.1 verdict: train/leak_audit/leak_audit.json sha256 <64 hex>: ok true, test false` before the
-   rc line. `leak_audit.py` is not edited. Test: `r58c/B/tests/test_r10_verdict.sh` (host, stubs, 27 checks since round 8; a FAIL
+   rc line. `leak_audit.py` is not edited. Test: `r58c/B/tests/test_r10_verdict.sh` (host, stubs, 42 checks; a FAIL
    verdict with exit 0 is refused by the after bytes and passed as 0 by the before bytes `r58c/B/pre-r98/lane_step.sh`).
    **Three checks of the verdict, each on its own** (round 8): (i) `lane_step.sh` exit 10 here, as above; (ii)
    `write_result.py --final` (step 9.3) refuses, exit 10, unless `leak_audit.json` says `ok: true` and its `test`
@@ -1103,7 +1167,13 @@ of what ran; nothing in it is still to run.
    carries a truth-like key; 35 = the section-9 evidence is incomplete: no `r58c/rehearsal/REHEARSAL.txt` ending in
    `RESULT PASS rehearsal`, no 2e `result.json` with `test: true`, no `r58c/B/mounts-B.json`, or a container of it
    without its `r58c/mounts/<name>.json`, its own `ktest-r7` excepted, ruling 95). **Evidence**: exit 0;
-   CLAIMS.md maps every RESULT.md claim (RESULT.md reproduced by write_result.build()); AUDIT.md section 2b counts
+   CLAIMS.md maps every RESULT.md line (RESULT.md reproduced by write_result.build()): a claim taken from a lane
+   file or a tuning return (tune.json, item22.json, answer_level.json, leak_audit.json, the item27 record, the plan,
+   the hand-off, the anchor, the route audit, the grader's tuning returns) to its pointer in that file, every other
+   line as write_result.py's literal text. **Carried as text without a pointer into the grader's held-out return**
+   (ruling 106(f), C64): the held-out differences to RRF with their intervals, the literal check and the grader's
+   totals; the coordinator's audit (step 10) compares those lines with `grader-returns/heldout.json` itself, and no
+   claim row is added for them; AUDIT.md section 2b counts
    the mounted task rows (remove_paths rows counted as tune variants). AUDIT.md section 1
    states, beside ruling 81's disclosure, **ruling 89's per-use rule as a limit of the isolation, not a clean
    pass**: the stage-B container mounted `export/`, which holds the 70 held-out parents' graphs (mount evidence

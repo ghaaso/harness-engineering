@@ -22,6 +22,8 @@
 # a freeze check, and the item-27 record's pins and tuning inputs re-hashed on the host (ruling 84). Any failure: exit 8.
 # Round 9: exit 8 at once when the run's HANDOFF.json exists (C12); r58c/ktest.lock taken before the memgate (C16).
 # C36: save_record keeps the NEWEST record as r58c/mounts/<name>.json (an older one moved to <name>.<UTC>.json).
+# C54 / ruling 106(d): save_record tries three times; a card check without its record fails (exit 7, nothing launched);
+# a main, probe or rehearsal container still running without its record is stopped at once (exit 3, rerun to resume).
 # Ruling 81's mounts (exact; leak_audit.py HELDOUT_ALLOW): train/ ro, train/heldout rw, progress.jsonl ro,
 # eval/evalcore.py ro, export/ ro, heldout_inputs/facts -> /build/facts/cache, heldout_inputs/common ->
 # /build/arms/common, the frozen primary's options record and build/tasks/tasks.jsonl at their /build paths; no GT_*
@@ -83,13 +85,19 @@ save_record() {  # ruling 94 (e): the container's whole docker inspect record, n
   mkdir -p "$WB/r58c/mounts"; f="$WB/r58c/mounts/$1.json"
   if [ -e "$f" ]; then o="$WB/r58c/mounts/$1.$(date -u -r "$f" +%Y%m%dT%H%M%SZ)"; k=; while [ -e "$o$k.json" ]; do k=$((${k#-}+1)); k=-$k; done
     mv "$f" "$o$k.json" || { say "save_record: could not move the older record of $1 aside: NO mount record"; return 1; }; say "older mount record of $1 moved to $o$k.json"; fi
-  if docker inspect "$1" > "$f.part" 2>>"$LOG"; then mv "$f.part" "$f"; say "mount record of $1: $f sha256 $(sha256sum "$f" | cut -d' ' -f1)"
-  else rm -f "$f.part"; say "docker inspect of $1 failed: NO mount record"; return 1; fi; }
+  # C54 / ruling 106(d): three tries, 2 s apart; the record counts as saved only once it is in place as <name>.json
+  n=0; while [ $n -lt 3 ]; do n=$((n+1))
+    if docker inspect "$1" > "$f.part" 2>>"$LOG" && mv "$f.part" "$f"; then say "mount record of $1: $f sha256 $(sha256sum "$f" | cut -d' ' -f1)"; return 0; fi
+    rm -f "$f.part"; say "docker inspect of $1 failed (try $n of 3)"; [ $n -lt 3 ] && sleep 2
+  done; say "docker inspect of $1 failed 3 times: NO mount record"; return 1; }
 card_ok() {  # the card check runs detached (no --rm) so its record can be saved, then it is removed
   docker rm -f ${NAME}c >/dev/null 2>&1
   MSYS_NO_PATHCONV=1 docker run -d --pull never --name ${NAME}c --gpus all --network none --cpus 1 -m 1g $CFLAGS "$IMG" \
     python -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 3)" >/dev/null 2>>"$LOG" || return 1
-  save_record ${NAME}c; crc=$(docker wait ${NAME}c 2>>"$LOG" | tr -d '\r'); docker rm -f ${NAME}c >/dev/null 2>&1
+  # C54 / ruling 106(d): a card check whose record cannot be saved fails, and nothing is launched
+  if ! save_record ${NAME}c; then say "card check ${NAME}c: its mount record could not be saved (ruling 106(d)); it is removed and nothing is launched"
+    docker rm -f ${NAME}c >/dev/null 2>&1; return 1; fi
+  crc=$(docker wait ${NAME}c 2>>"$LOG" | tr -d '\r'); docker rm -f ${NAME}c >/dev/null 2>&1
   [ "$crc" = "0" ]; }
 say "launch requested: $NAME (image $IMG)"
 # C12 / HD-3 (round 9): a finished run is never launched again over its evidence. Before the freeze check and before
@@ -149,6 +157,8 @@ rm -f "$RC"; [ -e "$RC" ] && { say "refusing: $RC could not be deleted"; exit 3;
 say "start $NAME image $IMG cap $H1_CAP (-m $H1_CAP --memory-swap $H1_CAP): $CMD"
 if ! eval "$CMD" >> "$LOG" 2>&1; then say "docker run failed for $NAME"; exit 3; fi
 norec=; save_record $NAME || norec=1  # a container that already ended (a fast refusal) leaves no record: reported below
+# C54 / ruling 106(d): a container still running without its saved record is stopped at once (the same command resumes)
+if [ -n "$norec" ] && running; then say "stopping $NAME: its mount record could not be saved (ruling 106(d)); rerun to resume"; docker stop $NAME >/dev/null; exit 3; fi
 low=0
 while running; do
   sleep 30

@@ -910,3 +910,35 @@ Other changed files (not read by the guard), with the log that tested them:
 - Checked at 2026-11-15T09:37:10Z before removal: `find train/selectB` listed the folder alone (0 files, 0 subfolders). No score was in
   it and none was read. Removed with `rmdir` at 2026-11-15T09:37:10Z. train/heldout did not exist and does not.
 - From the last revision on, only a real launch creates a writable source; a test creates nothing (C21).
+
+## Correction to "Stray empty folder train/selectB removed" (C57, end-order-changes-5)
+
+- WITHDRAWN: the sentence above that train/selectB was created "when the second ktest-b98 started". That was a
+  same-second coincidence, not the cause.
+- The cause, identified by agent B (r58c/B/RUNLOG-B.md, C21 entry): agent B's own host look-up at
+  2026-11-15T08:13:00.744Z, `node r58c/B/mounts.js flags .../mounts-B.json ktest-r1`, run while building KT_AS. No
+  container. The old mounts.js line 64 created every writable source on every call. Since C21 only
+  `flags ... --create` (a real launch) creates one.
+- The folder was removed by the lane session (this lead), not by the coordinator, at 09:37:10Z, as recorded above.
+PASS assemble-checks orchestrator/end-of-run/assemble_checks-20261115T123811Z.log tables_digest f8cb1f8bc905bc74e4b50a9348f767e1f78a102516cf9567ee7df14a7593ffe0
+
+## 2d, agents A and B of round r58c, on the final bytes (lane section; rulings 58/83, C8)
+
+sha256 5406fd622fff079ac3585be4830c18f70cd9182cfa91649a57d427a2fd566357 item27 train/item27.py
+sha256 f541b3ffac7ccdde3d361c546dba3530f29de12483692c8c13ed4b31323eabc3 heldout-driver train/heldout.py
+sha256 734ae3685f1391cf0488e8c23ddf360385e6a20009e97f4e921af42ce6d2b85a item24-adapter train/answer_level.py
+sha256 1702acb35150c7eec67317996ab6e21800b8588a8325b63faec649c32eeb09f9 leak-audit train/leak_audit.py
+sha256 d54cb864e38f9ed35a0fb03150cec5a4f8ab08d6ae6a45634578e3d0f815b885 selectB train/selectB.py
+sha256 74d8ef99f280e8a84f57d0bf6f499a076b8a7a99a9de95217dcf88177cf20a70 report train/report.py
+PASS item27 r58c/B/out/logs/test_item27.log
+PASS heldout-driver r58c/B/out/logs/A/test_heldout.log
+PASS item24-adapter r58c/B/out/logs/A/test_answer_level.log
+PASS leak-audit r58c/B/out/logs/A/test_leak_audit.log
+PASS selectB r58c/B/out/logs/role_selectB.log
+PASS report r58c/B/out/logs/role_report.log
+
+## Step 3, the code freeze (the lead, 2026-11-15)
+
+- 16:44:29Z `node train/heldout_inputs.js export-manifest --plan r58c/B/frozen/tune-graphs-plan.json --export export --out tune_graphs.sha256`: exit 0, 477 files, 53 checkpoints; tune_graphs.sha256 706ea67044592fd714ea23fee4ecab0835c6a61b6d92556e2847367a68464517.
+- 16:44:29Z-16:45:50Z `sh r58c/B/freeze_list.sh heldout_inputs.sha256 heldout_export.sha256 tune_inputs.sha256 tune_graphs.sha256 > orchestrator/freeze-list.txt.part && mv ...`: exit 0. orchestrator/freeze-list.txt sha256 61be36bcc7fa07476a638a229692d3f74c8409e7a894c9cc95b2ab6382f51972 (10,940 lines; blocks `# test output` at line 10446, `# outside` at 10491, `# images` at 10938). Manifests: heldout_inputs.sha256 00c95863..., heldout_export.sha256 bef91962..., tune_inputs.sha256 588e5059..., tune_graphs.sha256 706ea670.... protocol-addendum-8.md is in `# outside` at a92eef5e... (rulings 98-111 in section M).
+- The first freeze check (C25): 16:45:59Z-16:46:05Z, `sh r58c/B/freeze_check.sh`, exit 0, no output, wall time about 6 s (the shell had no `bc`, so the fraction was not taken). A second run under `time`, 16:46:14Z-16:46:20Z: real 5.938 s, exit 0, no output. Terminal copies (lead's scratchpad): step3.terminal.txt dc07c07d..., step3-freezecheck.terminal.txt b32c6e9d..., step3-freezecheck2.terminal.txt e39e85a7....

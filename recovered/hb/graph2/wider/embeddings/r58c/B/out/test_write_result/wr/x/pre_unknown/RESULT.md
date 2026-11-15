@@ -89,7 +89,7 @@ Not available (/w/r58c/B/pre/report/item22.json missing).
 
 ## Held-out (item 27; spent, descriptive only, no section-G word)
 
-Frozen before any held-out unit (2026-11-15T11:09:28): E2 c07, w 1, 20 epochs, s 1, device cpu; all-65 figure 0.2915; tie group E2.
+Frozen before any held-out unit (2026-11-15T13:49:15): E2 c07, w 1, 20 epochs, s 1, device cpu; all-65 figure 0.2915; tie group E2.
 Stored arms of item 7, shown as they are (8,000-token answer recall, 75 commits; nothing of theirs is rerun): typed graph 0.700, scripted search 0.625, changed-together floor 0.638, same-folder floor 0.549.
 Not graded yet: the held-out ranked lists and packs go to the grader (truth stays there).
 
@@ -124,4 +124,4 @@ Not graded yet: the held-out ranked lists and packs go to the grader (truth stay
 
 ## Sources
 
-answer `answer_level.json` 420f1878c308; handoff `HANDOFF.json` db7323cbd47e; item27 `item27.json` 3dcd3bdda09a; leak `leak_audit.json` 0b6086c1a678; plan `plan.json` cbc238fe9cb6; protocol `protocol-addendum-8.md` 5ccc042c4fba; tune `tune.json` 79774be5a0bc
+answer `answer_level.json` 420f1878c308; handoff `HANDOFF.json` a3ccbcc41f9f; item27 `item27.json` 3eed8a692154; leak `leak_audit.json` 0b6086c1a678; plan `plan.json` cbc238fe9cb6; protocol `protocol-addendum-8.md` f30edd01599c; tune `tune.json` 38bc037b0721

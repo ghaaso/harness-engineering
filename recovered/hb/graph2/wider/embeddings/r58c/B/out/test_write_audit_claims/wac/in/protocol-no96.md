@@ -987,3 +987,111 @@ any step failing. It goes to the end of section M word for word, before the code
      count that is not zero changes nothing in the run: the ranking stands as the frozen code made it,
      the grader gets the hand-off as it is, and the result states the count with the seeds and parents
      it touches. This is fixed now so that it is not decided after a result is known.
+
+Ruling 106 (copied word for word from `orchestrator/coordinator-rulings-106.md`, sha256 7de7c8a8029f97ec18698cee0a167fd5ab74d549295c767b21df419aeaf24fc5):
+
+Ruled by the coordinator on 2026-11-15 at about 11:39Z (file hash and exact time are in `progress.jsonl`,
+line `rulings_106`), after stage B ended and before the end-of-run procedure, any selection, any report
+and any held-out score. Source: `orchestrator/delta-check-result.json` (four lenses over the bytes changed
+between 09:24:35Z and the lane's revision of 11:14Z, END-ORDER ad45731a; a refuter for each, a critic;
+advice "accept after changes"), the lane's notes 35 to 38, and what the coordinator found itself. END-ORDER
+ad45731a is not accepted. It goes to the end of section M word for word, before the code freeze.
+
+106. Six decisions.
+     (a) Three more tests before the freeze (the lane's note 35(a)). Step 2d also runs
+     `fixes/tests/test_r53_58_unit.py`, `fixes/tests/test_r64.py` and `fixes/tests/test_e5_equiv.py`
+     once more on the final bytes. They test code that a later step runs: the selection script, edited
+     on 2026-11-15, at step 4, and the scoring of the model code at step 7. The other test files that
+     the lane's listing leaves out stay out for the reasons it gives.
+     (b) What ruling 103(b) covers. Its sentence "no test mounts a held-out parent's folder" is about
+     the test runs of the step launcher (`ktest-r4`, `ktest-r8` and `ktest-r9` run as tests). The
+     ordinary test containers of both agents mount what they have mounted in every round: the export
+     folder whole, the facts cache and, for agent B's, the repository, all read-only, and never
+     anything under `build/sealed`. Ruling 89's per-use rule covers them: no test reads a held-out
+     parent's graph or facts (ruling 96(b)), and the coordinator's audit (step 10) reads the test code
+     for such a read. The gate of the step launcher's test runs refuses exact spellings only.
+     Therefore, before recording the code freeze, the coordinator checks every saved record of a test
+     run of the step launcher: none may show a held-out parent's folder, or a writable mount at, under
+     or above a real output folder.
+     (c) A log line can be lost. On this machine an append to a file from a shell loop failed 7 times
+     in 233 on 2026-11-15 ("Device or resource busy"), and the lines were lost without an error. The
+     lane's launchers append their log lines in the same way. Where the order names a line of such a
+     log as evidence and the line is missing while the files it stands for exist, the lane reports to
+     the coordinator and changes nothing: it does not interpret the log, does not run a finished real
+     step again and does not write the line by hand. The coordinator decides on the files and records
+     the decision. Step 1 is the exception: if its PASS line is missing from the run log, step 1 runs
+     again.
+     (d) No container of the order runs on without its saved mount record. A record that cannot be
+     saved is tried again. If it still cannot be saved, a card check fails and nothing is launched,
+     and a run that has started is stopped at once and resumed by the same command. Reason: the leak
+     audit fails on a missing record, and after the held-out run that could not be repaired.
+     (e) The cap at step 8. The coordinator checks that every start line of the held-out launch log
+     shows the 4 GB cap, or the cap that a ruling recorded before the freeze names.
+     (f) What CLAIMS.md maps. The order's sentence that CLAIMS.md maps every claim of RESULT.md is too
+     wide. The lines with the held-out differences to RRF and their intervals, the literal check and
+     the grader's totals are carried as text, without a pointer into the grader's return. The order
+     says so, and the coordinator's audit compares those lines with the grader's return itself. No
+     claim row is added now: a new locator that has only seen the rehearsal's shapes is itself a risk
+     at step 9.4.
+
+Ruling 107 (copied word for word from `orchestrator/coordinator-rulings-107.md`, sha256 b81037b7cf4dd1ffcf6525ff9ce5385f24099f3889df74d1a3f0e90e6c8add32):
+
+Ruled by the coordinator on 2026-11-15 at about 12:31Z (file hash and exact time are in `progress.jsonl`,
+line `rulings_107`), after stage B ended and before the end-of-run procedure, any selection, any report
+and any held-out score. Raised by the lane (`r58c/B/CONFLICTS.md`, notes 39 and 40) with its revision of
+12:26Z (END-ORDER 9d779b5d); the coordinator read the test, its log and the guard. END-ORDER 9d779b5d is
+not accepted: its list of step 2d names a test that cannot pass. It goes to the end of section M word for
+word, before the code freeze.
+
+107. Two decisions.
+     (a) Note 40; ruling 106(a) is amended. One of the three tests that ruling 106(a) added,
+     `fixes/tests/test_r53_58_unit.py`, fails on the final bytes in one of its four cases. That case
+     writes run-log lines that name made-up files, with no PASS line, and expects the selection
+     script's guard to accept them. Since ruling 83 the guard requires each line to name the role's own
+     file and a later PASS line whose log shows the same hash, so it refuses that case, as it should.
+     The test states the guard as it was before ruling 83; the selection script is not at fault. Step
+     2d therefore does not run this test. Its three other cases, which test ruling 53's choice rule,
+     passed on the current bytes of the selection script (sha256 d54cb864e38f...b885) in the test
+     container ktest-b112, and that log (sha256 a3392c75a594...9d15) is the record; the guard itself is
+     tested on the final bytes by the tests of 2d that were written for it. If the selection script
+     changes before the freeze, the lane reports to the coordinator before 2d. The other two tests of
+     ruling 106(a) stay in 2d.
+     (b) Note 39. The step launcher keeps an older mount record under a name made from that record's
+     own time to the second, and adds no counter when the name is taken. No change: the launcher waits
+     for three memory samples thirty seconds apart before every start, so two records of one container
+     cannot carry the same second.
+
+Ruling 108 (copied word for word from `orchestrator/coordinator-rulings-108.md`, sha256 be540fb9147bd188406237826cb9b90118561a1fa54974bd7e7cdb9bc8ee40c1):
+
+Ruled by the coordinator on 2026-11-15 at about 12:53Z (file hash and exact time are in `progress.jsonl`,
+line `rulings_108`), after step 1 of the accepted end order (END-ORDER 1c849061) and the first probe of
+step 2a, and before the rehearsal, the code freeze, any selection, any report and any held-out score.
+Source: `train/probe/probe.json` of the first probe (sha256 0c59c50a...c616; container `kge-H1P`,
+12:46Z to 12:50Z under a 4 GB cap, exit 3), read by the coordinator. It goes to the end of section M word
+for word, before the code freeze.
+
+108. The cap of the held-out launcher's containers is 6 GB.
+     (a) What the probe showed. One E4 unit on a graph of the size of the largest held-out graph needs
+     3,509 MB in its own process (c13; c16 needs 3,382 MB; every other setting stays under 2.3 GB), and
+     the process still holds 2,092 MB after the unit. The second unit in the same process was killed at
+     the 4 GB cap. The card is not the limit: at most 2,638 MB of its 12,199 MB were reserved. Under
+     4 GB a held-out run of E4, which trains 210 units in one process, would be killed at every second
+     unit.
+     (b) The decision. The three containers the held-out launcher starts (the probe, the rehearsal and
+     the held-out run) run under a 6 GB cap, for every arm. This amends item 2's maximum and ruling
+     79's cap for these three containers only. The re-run check keeps the 4 GB of ruling 100, and every
+     other step keeps its own cap. Reason: a memory cap cannot change a result. Every unit is seeded,
+     E4 runs deterministically, and the re-run check compares a unit trained in a fresh process with
+     its part made in a long one. The cap is there to protect the host, which had 11.6 GB free and
+     34.2 GB committed when this was ruled.
+     (c) The host. Before each launch under this cap the lane takes one memory sample and starts only
+     with at least 10 GB free. The launcher's own start rule and stop rule stay as they are. Below
+     10 GB free the lane waits, and reports after ten minutes.
+     (d) The probe is repeated under the new cap. The first probe's folder is kept, moved aside under a
+     name that says what it is, and its two container records stay where the launcher keeps them. If
+     the three units in a row finish, the rehearsal may start once the coordinator has seen the rows;
+     if a unit is killed again, the coordinator rules again.
+     (e) Where the cap is stated. The start lines of the launch logs and the saved container records
+     show it, the coordinator checks it at step 8 (ruling 106(e)), and the coordinator's report states
+     it. RESULT.md's limits do not name it: the result writer reads no text for it, and no listed file
+     changes for this ruling.

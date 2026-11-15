@@ -149,6 +149,10 @@ test_precheck_seed, precheck_r96_check (agent A runs them).
 | q29 | `sh r58c/B/ktest.sh ktest-b<N> /w/r58c/B/tests/wr_rehearsal.sh` | 2e again on write_result cd2bd6f9 (C49; no nonfinite_heldout line: RESULT.md as before) |
 | q30 | `sh r58c/A/test_h1cap_r105.sh` (host, `DRY=1`; agent A's) | C50: heldout.sh 7627c3e1 H1_CAP |
 | q31 | the r8 and r9 TEST runs again after the formal rebuild of the TEST record and the three TEST hand-offs (C50; commands in END-ORDER 2d, r9 with `--freeze-sha256` of the TEST record) | C45 figures on the final bytes |
+| q32 | `sh r58c/B/ktest.sh ktest-b<N> /w/r58c/B/tests/kt_inner.sh test_r64_fixes test_e5_equiv` | note 35(a), ruled (T2; ruling 106(a), amended by ruling 107(a), C68): fixes/tests/test_r64.py (`post`) and test_e5_equiv.py on the final bytes; fail-before `pre-r106/kt_inner.sh` (rc 2 each, ktest-b111). Not run: test_r53_58_unit (its r58-guard case states the guard before ruling 83; its three ruling-53 cases passed in ktest-b112 on selectB.py d54cb864, log a3392c75, the record; CONFLICTS note 40). If train/selectB.py changes before the freeze, report to the coordinator before 2d |
+| q33 | `sh r58c/B/ktest.sh ktest-b<N> /w/r58c/B/timing/mem.sh e5_equiv` (once) | test_e5_equiv's wall time and peak memory, for RUNLOG-B only; no END-ORDER row; over a limit is reported, no limit raised; fail-before `pre-r106/mem.sh` (usage, exit 2); not part of 2d |
+| q34 | `sh r58c/B/tests/test_freeze_check.sh`, `sh r58c/B/tests/test_kt_as.sh` (host) | grown in place: case 52 (C52, fail-before `pre-r106/freeze_list.sh`); C55 (fail-before `pre-r106/ktest.sh`) |
+| q35 | `sh r58c/B/ktest.sh ktest-b<N> /w/r58c/B/tests/role_report.sh p2`, then `sh r58c/B/role_join.sh report train/report.py p1 p2` (host) | C51, C56 in test_write_audit_claims (fail-before `pre-r106/write_audit_claims.py`: exit 24; the -1 record left out) |
 
 ## Results (round 8)
 

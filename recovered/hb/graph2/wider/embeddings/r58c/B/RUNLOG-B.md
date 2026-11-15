@@ -256,7 +256,8 @@ bd1408a4500706dae320da3fc705350a909145a98f9fbf00f136b26f2564e4bc *r58c/write_aud
   r58c/B/out/r103/test-mounts.json 03c72c9a.
 - C21 (ruling 103(d)), the cause of the empty `train/selectB`: my own host look-up at 2026-11-15T08:13:00.744Z,
   `node r58c/B/mounts.js flags .../mounts-B.json ktest-r1`, while building KT_AS (no container); the old line 64 made
-  every writable source on every call. The coordinator removed the folder with `rmdir` at 09:37:10Z (train/RUNLOG.md).
+  every writable source on every call. The lane session removed the folder with `rmdir` at 09:37:10Z (train/RUNLOG.md;
+  C57, round 9: it was the lane session, not the coordinator).
   Now only `flags ... --create` (a real launch: lane_step.sh real run, rerun_check.sh, end_of_run.sh) creates.
 - C19 flags (ruling 103(b) with 104(b)), built on the host with `mounts.js flags` and no `--create`, no container:
   ktest-r4 real 45 rows / 10,752 characters, TEST 46 rows / 10,935 (3 rows left out of each, sources missing:
@@ -485,3 +486,394 @@ f8341f68ceb4e750ed3a5ffe08d4aa0cf2586e234ab8815e44d44256a3ad059b *r58c/B/timing/
 d54cb864e38f9ed35a0fb03150cec5a4f8ab08d6ae6a45634578e3d0f815b885 *train/selectB.py
 cd2bd6f95e1c1afdb67e161af7fdc27b101a86867864c9e17907d98dc49a0f1b *train/write_result.py
 ```
+
+## Round 9 (ruling 106; changes C51-C67 of end-order-changes-5 10a0e2e3, and T2-0), agent B, 2026-11-15 about 11:45-12:30Z
+
+Inputs read in full: `orchestrator/end-order-changes-5.md` (10a0e2e3), `orchestrator/delta-check-result.json` (e66c8612),
+`orchestrator/coordinator-rulings-106.md` (7de7c8a8). Before bytes of this round: `r58c/B/pre-r106/` (END-ORDER.md
+ad45731a, CONFLICTS.md, RUNLOG-B.md, TEST-QUEUE.md, write_audit_claims.py 0c21809b, test_write_audit_claims.py
+a2b91f46, freeze_list.sh bba4e3ae, test_freeze_check.sh 58f38985, ktest.sh 44274a69, test_kt_as.sh 581a13d9,
+kt_inner.sh eb61c76d, mem.sh adc4ea39, c_table.js). Agent A's C53 and C54: `r58c/A/ROUND11-DONE` (12:09:40Z;
+heldout.sh 9a5a546e, leak_audit.py 1702acb3).
+
+Code, each with a check that fails on the old bytes:
+- C51: `r58c/write_audit_claims.py` lines 375-377 mirror `write_result.py` line 612 (`not compared (no co_changed)`
+  for a specialist item22.json holds only as a note). Test `c51_note_only_specialist_claim_found` (exit 0, the claim
+  row ok) and `c51_fail_before_pre_r106_exit_24` (the pre-r106 claim map looks for `-/- identical`, exit 24).
+- C56: line 622, the kept-record pattern takes `(-[0-9]+)?` before `.json`. Tests `c56_kept_record_with_suffix_listed`
+  (a `ktest-r1.<UTC>-1.json` is listed; the writer's own `ktest-r7.<UTC>-2.json` stays out) and
+  `c56_fail_before_pre_r106_leaves_it_out`.
+- C52: `r58c/B/freeze_list.sh` block 1 adds `r58c/A/*.js`, `r58c/B/*.js` and `fixes/tests/{test_r53_58_unit, test_r64,
+  test_e5_equiv}.py`. `test_freeze_check.sh` case 52 and its fail-before on `pre-r106/freeze_list.sh` (exit 0, none of
+  the five listed).
+- C55: `r58c/B/ktest.sh` line 57: under KT_AS, mounts.js's stderr (the rows left out) goes into the launch log line by
+  line, as lane_step.sh does. `test_kt_as.sh` "C55 after" and "C55 before" (pre-r106 names the row on the terminal only).
+- T2-0: `r58c/B/tests/kt_inner.sh` = kt_inner.sh.proposed (685bbf48), `r58c/B/timing/mem.sh` = mem.sh.proposed
+  (bbf0c6ab), before bytes in pre-r106 (the draft said pre-r105).
+
+Runs (every container through `r58c/B/ktest.sh`, one at a time, under the lane lock; every launch log has its start,
+released and ended lines):
+- ktest-b111 (12:05:59-12:06:07Z), the kt_inner fail-before on `pre-r106/kt_inner.sh`: `test_r53_58_unit rc=2`,
+  `test_r64_fixes rc=2`, `test_e5_equiv rc=2` (no such file under train/r58/tests; no RESULT PASS, no under-test
+  line), ktest exit 1. Logs and summary kept in `r58c/B/out/logs/pre-r106-kt_inner/`.
+- ktest-b112 (12:07:50-12:07:57Z), q32 on kt_inner 685bbf48: `test_r64_fixes` RESULT PASS (`test_r64 post`),
+  `test_e5_equiv` RESULT PASS (645 checked, max |diff| 2.98e-08), **`test_r53_58_unit` RESULT FAIL** (r53-se, r53-w,
+  r53-size ok; r58-guard VIOLATED: the case's fake role files and missing PASS lines are refused by ruling 83's guard,
+  exit 3, where the case expects a pass). CONFLICTS.md note 40, for a ruling; nothing changed. Each log names the test
+  file's sha256 and the file under test (selectB.py d54cb864, kge.py 4b01984f). Nothing was written outside
+  `r58c/B/out/` (`find -newer` over the lane).
+- ktest-b113 (12:10:06-12:10:13Z), the mem.sh fail-before on `pre-r106/mem.sh e5_equiv`: `usage: mem.sh
+  assemble|selectB|report|item22`, exit 2, no mem log.
+- ktest-b114 (12:11:34Z-12:11:47Z, q33, mem.sh bbf0c6ab): `MEMORY e5_equiv rc 0 wall_s 4.9 peak_rss_mb 373.9 cgroup_peak_mb 742.1 cap_mb
+  1536.0 at_cap False`; RESULT PASS test_e5_equiv; `r58c/B/out/logs/mem-e5_equiv.log`,
+  `r58c/B/out/timing/mem-e5_equiv.json`. These figures are for this file only (no END-ORDER row).
+- ktest-b115 (12:13:09-12:20:34Z), q35, role_report p2 (write_audit_claims 64bd79e2, test 17353030, leak_audit
+  1702acb3, write_result cd2bd6f9): RESULT PASS write-audit-claims, all c51_* and c56_* ok; then `role_join.sh report
+  train/report.py p1 p2` (host) RESULT PASS report.
+- ktest-b116 (12:22:14-12:23:48Z), on leak_audit 1702acb3 (agent A's request): test_mounts_vs_leak_audit RESULT PASS
+  (8 checks), test_gate RESULT PASS.
+- Host: test_freeze_check.sh (freeze_list aa9d3646, test 8375491e) RESULT PASS, `r58c/B/logs/test_freeze_check.r106.log`;
+  test_kt_as.sh (ktest a875c8e8, test a1111758) RESULT PASS 17 checks; test_memgate_empty RESULT PASS (40) and
+  test_race_gate RESULT PASS (22) on the new ktest.sh (they copy it).
+
+Text (END-ORDER, CONFLICTS, TEST-QUEUE): C57 (T1: "the lane session removed it", END-ORDER and this file's line
+259), C58 (the exact `memory.peak` form), C59, C60 (header: C18-C67, rulings 103-106, before bytes to pre-r106; line
+518; step 3's protocol sentence), C61 (heldout.sh lines 119-120, 128-129 and 132-133 of 9a5a546e; coord_checks item27
+checks 1 to 10; test_r10_verdict 42 checks), C62 (ROUND6/ROUND7 values marked), C63 (T3 extended), C64, C65, C66,
+C67 (section 0's three rules; 2d names the three tests; CONFLICTS note 35(a) ruled, note 36 confirmed). After agent
+A's ROUND11, also: heldout.sh's H1_CAP lines 56-60 (three places) and lock lines 136-145, leak_audit.py line 572,
+C24/C36's `<name>.<UTC>-<k>.json`, C54's behaviour at step 7 and in section 0, agent A's two new tests in 2d, and the
+leak audit's 104.9 s (ktest-a66) beside the limits row (3600 s stands). TEST-QUEUE rows q32-q35. CONFLICTS notes 39
+(an observation on lane_step's kept-record names) and 40 (q32's test_r53_58_unit).
+
+C23 listing on the final END-ORDER (`node r58c/B/c23_listing.js LANE`): 85 files, 60 named in 2d, 25 left out (the
+coordinator's 58 / 25, plus agent A's two ROUND11 tests).
+
+### The C1-C67 table (`node r58c/B/c_table.js LANE`; file:line is the first line holding a fixed anchor string; on the final END-ORDER 9d779b5d)
+
+| item | owner | file:line | test log |
+|---|---|---|---|
+| C1 | B | r58c/B/graph_rows.js:6; orchestrator/END-ORDER.md:66 | r58c/A/logs/test_r101_real_lists.log; r4 TEST re-measure waits (note 37 b) |
+| C2 | B | r58c/B/mounts-B.json:900; orchestrator/END-ORDER.md:859 | r58c/B/lane-steps/ktest-r8-20261115T101652Z.log; ktest-r9-20261115T104953Z.log |
+| C3 | A | train/leak_audit.py:26; orchestrator/END-ORDER.md:1045 | r58c/A/logs/test_r101_real_lists.log |
+| C4 | B | r58c/B/freeze_list.sh:35; orchestrator/END-ORDER.md:756 | r58c/B/logs/test_freeze_check.c42.log (cases 17, 18) |
+| C5 | B | orchestrator/END-ORDER.md:304 | text only |
+| C6 | B | orchestrator/end_of_run.sh:157; orchestrator/END-ORDER.md:93 | r58c/B/logs/test_end_of_run.run.out (43 checks) |
+| C7 | B | r58c/B/freeze_list.sh:62; orchestrator/END-ORDER.md:1038 | r58c/B/logs/test_freeze_check.c42.log (case 16) |
+| C8 | B | r58c/B/pass_paths.js:4; r58c/B/ktest.sh:44; orchestrator/END-ORDER.md:569 | r58c/B/logs/test_pass_paths.log; r58c/B/logs/test_kt_as.log |
+| C9 | B | train/write_result.py:155; orchestrator/END-ORDER.md:1114 | r58c/B/out/logs/test_write_result.log |
+| C10 | B | r58c/B/freeze_list.sh:63; orchestrator/END-ORDER.md:785 | r58c/B/logs/test_freeze_check.c42.log (case 16) |
+| C11 | B | r58c/B/freeze_list.sh:49; orchestrator/END-ORDER.md:743 | r58c/B/logs/test_freeze_check.c42.log (cases 16, 18) |
+| C12 | A | train/heldout.sh:103 | r58c/A/logs/test_heldout_r101.r104.log |
+| C13 | A+B | train/heldout.py:811; orchestrator/END-ORDER.md:358; orchestrator/END-ORDER.md:972 | r58c/A/logs/test_probe_seq_r101.log |
+| C14 | B | orchestrator/END-ORDER.md:542; r58c/B/TEST-QUEUE.md:119 | r58c/B/TEST-QUEUE.md q9-q20 |
+| C15 | B+A | train/item27.py:36; train/answer_level.py:249 | r58c/B/out/logs/test_item27_trc.log; r58c/A/logs/test_answer_level.log |
+| C16 | B+A | r58c/B/rerun_check.sh:14; r58c/B/lane_step.sh:14; r58c/B/freeze_list.sh:89; train/heldout.sh:136 | r58c/B/logs/test_rerun_r101.log; r58c/B/logs/test_r10_verdict.log; r58c/A/logs/test_heldout_r101.r104.log |
+| C17 | B | train/selectB.py:101; train/write_result.py:612 | r58c/B/out/logs/test_sr6_guard.log; r58c/B/out/logs/test_write_result.log |
+| C18 | B | r58c/B/rerun_check.sh:25; orchestrator/END-ORDER.md:497 | r58c/B/logs/test_rerun_r103.log |
+| C19 | B | r58c/B/graph_rows.js:16; r58c/B/lane_step.sh:111; orchestrator/END-ORDER.md:82 | r58c/B/logs/test_r10_verdict.log |
+| C20 | A | train/leak_audit.py:463; orchestrator/END-ORDER.md:1047 | r58c/A/logs/test_r101_real_lists.log; r58c/B/out/logs/test_mounts_vs_leak_audit.log |
+| C21 | B | r58c/B/mounts.js:13; r58c/B/freeze_list.sh:38; orchestrator/END-ORDER.md:53 | r58c/B/logs/test_freeze_check.c42.log (9b, 19); r58c/B/logs/test_kt_as.log; r58c/B/logs/test_r10_verdict.log |
+| C22 | B | orchestrator/END-ORDER.md:358 | text only |
+| C23 | B | orchestrator/END-ORDER.md:555; r58c/B/RUNLOG-B.md:278 | r58c/B/c23_listing.js (host) |
+| C24 | B+A | orchestrator/END-ORDER.md:1052; train/leak_audit.py:572 | r58c/A/logs/test_r101_real_lists.log |
+| C25 | B | orchestrator/END-ORDER.md:166; orchestrator/END-ORDER.md:804 | text only (timed at step 3) |
+| C26 | B | r58c/B/ktest.sh:108 | r58c/B/logs/test_kt_as.log |
+| C27 | B | orchestrator/END-ORDER.md:807 | text only |
+| C28 | B | r58c/B/record_check.js:2; r58c/B/freeze_list.sh:23; orchestrator/END-ORDER.md:169 | r58c/B/logs/test_freeze_check.c42.log (case 20) |
+| C29 | B | r58c/B/lane_step.sh:83; r58c/B/graph_rows.js:27; orchestrator/END-ORDER.md:77 | r58c/B/logs/test_r10_verdict.log |
+| C30 | B | orchestrator/END-ORDER.md:670; orchestrator/END-ORDER.md:598 | text only |
+| C31 | B | r58c/B/e5_route_audit.py:58; orchestrator/END-ORDER.md:1093 | r58c/B/out/logs/test_e5_route_audit.log |
+| C32 | B | orchestrator/END-ORDER.md:387; orchestrator/END-ORDER.md:687; orchestrator/END-ORDER.md:748 | text only |
+| C33 | B | orchestrator/END-ORDER.md:217; orchestrator/END-ORDER.md:962 | text only |
+| C34 | B | orchestrator/END-ORDER.md:1148 | text only |
+| C35 | B | r58c/B/freeze_list.sh:60; orchestrator/END-ORDER.md:769 | r58c/B/logs/test_freeze_check.c42.log (case 35) |
+| C36 | A | train/heldout.sh:83; orchestrator/END-ORDER.md:950 | r58c/A/logs/test_save_record_r104.log |
+| C37 | B | orchestrator/END-ORDER.md:972 | text only |
+| C38 | B | orchestrator/END-ORDER.md:225 | text only |
+| C39 | B | r58c/B/lane_step.sh:23; orchestrator/END-ORDER.md:125 | r58c/B/logs/test_r10_verdict.log |
+| C40 | B | orchestrator/END-ORDER.md:904 | text only |
+| C41 | B | orchestrator/end_of_run.sh:27; orchestrator/END-ORDER.md:278 | r58c/B/logs/test_end_of_run.run.out (43 checks) |
+| C42 | A | r58c/A/mounts-A.json:124; orchestrator/END-ORDER.md:107 | r58c/A/logs/test_heldout_mounts.r104.log; r58c/B/logs/test_freeze_check.c42.log (case 15) |
+| C43 | B | r58c/write_audit_claims.py:559; orchestrator/END-ORDER.md:1193 | r58c/B/out/logs/test_write_audit_claims.log |
+| C44 | B | orchestrator/END-ORDER.md:1219 | text only |
+| C45 | B | r58c/B/lane_step.sh:57; orchestrator/END-ORDER.md:148 | r58c/B/lane-steps/ktest-r8-20261115T101652Z.log; r58c/B/lane-steps/ktest-r9-20261115T104953Z.log |
+| C46 | A | train/heldout.py:23; orchestrator/END-ORDER.md:917 | text only |
+| C47 | B | orchestrator/END-ORDER.md:302 | text only |
+| C48 | B | r58c/B/lane_step.sh:7; r58c/B/rerun_check.sh:59; orchestrator/end_of_run.sh:156 | r58c/B/logs/test_kt_as.log; r58c/B/logs/test_end_of_run.run.out (43 checks) |
+| C49 | B | orchestrator/END-ORDER.md:312; orchestrator/END-ORDER.md:999; orchestrator/END-ORDER.md:1134; train/write_result.py:401; r58c/write_audit_claims.py:481; r58c/B/CONFLICTS.md:346 | r58c/B/out/logs/test_write_result.log; r58c/B/out/logs/test_write_audit_claims.log (role_report p2, ktest-b109); r58c/B/out/logs/wr_rehearsal.log (ktest-b110) |
+| C50 | A+B | train/heldout.sh:56; orchestrator/END-ORDER.md:372; orchestrator/END-ORDER.md:381; orchestrator/END-ORDER.md:941; orchestrator/END-ORDER.md:606 | r58c/A/logs/test_h1cap_r105.log (agent A, RUNLOG-A ROUND10); END-ORDER text |
+| C51 | B | r58c/write_audit_claims.py:375 | r58c/B/out/logs/test_write_audit_claims.log (c51_*; role_report p2 ktest-b115 and role_join) |
+| C52 | B | r58c/B/freeze_list.sh:68; r58c/B/freeze_list.sh:72; orchestrator/END-ORDER.md:773 | r58c/B/logs/test_freeze_check.r106.log (case 52) |
+| C53 | A | train/leak_audit.py:476; orchestrator/END-ORDER.md:48 | r58c/A/logs/test_r106_leak.log; r58c/B/out/logs/test_mounts_vs_leak_audit.log (ktest-b116) |
+| C54 | A | train/heldout.sh:88; orchestrator/END-ORDER.md:955 | r58c/A/logs/test_record_fail_r106.log; r58c/A/logs/test_save_record_r104.r106.log |
+| C55 | B | r58c/B/ktest.sh:57 | r58c/B/logs/test_kt_as.log (C55) |
+| C56 | B | r58c/write_audit_claims.py:622 | r58c/B/out/logs/test_write_audit_claims.log (c56_*; role_report p2 ktest-b115 and role_join) |
+| C57 | B | orchestrator/END-ORDER.md:59; r58c/B/RUNLOG-B.md:259 | text only (train/RUNLOG.md part: the coordinator) |
+| C58 | B | orchestrator/END-ORDER.md:596 | text only |
+| C59 | B | orchestrator/END-ORDER.md:602 | text only |
+| C60 | B | orchestrator/END-ORDER.md:7; orchestrator/END-ORDER.md:808 | text only |
+| C61 | B | orchestrator/END-ORDER.md:389; orchestrator/END-ORDER.md:914; orchestrator/END-ORDER.md:1064 | text only |
+| C62 | B | orchestrator/END-ORDER.md:354; orchestrator/END-ORDER.md:430; orchestrator/END-ORDER.md:446 | text only |
+| C63 | B | orchestrator/END-ORDER.md:1003; orchestrator/END-ORDER.md:1016; r58c/B/CONFLICTS.md:357 | r58c/B/out/logs/test_write_result.log (c49_count_0_prints_nothing) |
+| C64 | B | orchestrator/END-ORDER.md:1165 | text only |
+| C65 | B | orchestrator/END-ORDER.md:377 | text only |
+| C66 | B | orchestrator/END-ORDER.md:1018 | text only |
+| C67 | B | orchestrator/END-ORDER.md:234; orchestrator/END-ORDER.md:244; orchestrator/END-ORDER.md:250; orchestrator/END-ORDER.md:552; r58c/B/CONFLICTS.md:329; r58c/B/TEST-QUEUE.md:152 | text only |
+| T2-0 | B | r58c/B/tests/kt_inner.sh:18; r58c/B/timing/mem.sh:10 | r58c/B/out/logs/test_{r53_58_unit,r64_fixes,e5_equiv}.log (q32, ktest-b112); r58c/B/out/logs/pre-r106-kt_inner/ (ktest-b111); r58c/B/out/logs/mem-e5_equiv.log (q33, ktest-b114) |
+
+### Round 9, final hashes of agent B's files changed this round (2026-11-15T12:25:31Z; sha256sum form)
+
+```
+9d779b5d2d714f06a96da14ca0f51603b9c52b47ee79f3e4047c699b30c8baf4 *orchestrator/END-ORDER.md
+64bd79e20d50f858eb0dc01aed3f505dd284fb936dd6a5c9f82f72d2c7d66854 *r58c/write_audit_claims.py
+aa9d364653483c1df73b4b9dd6e9d38555dde04ed0acc5ce85e5e044279e025d *r58c/B/freeze_list.sh
+a875c8e853bd8ee688ea5820e232553b7d318425b9fce86fba8489fb8ba70934 *r58c/B/ktest.sh
+685bbf4800a1a9342867a60eaa2902dfa584cf899ed490a1e72756b271ffc80f *r58c/B/tests/kt_inner.sh
+bbf0c6ab0b2e398674e6705afa754d646d3d80313358c4132bb05ef8e5b492a3 *r58c/B/timing/mem.sh
+173530309ac5e017edc8b5e9da47066389ed686f0f9375ce77e8b8ebd5f30fd5 *r58c/B/tests/test_write_audit_claims.py
+8375491e7851a80dd71c31a056b1ed30ad0f4b80a4f726dd3b738bf67fe9158c *r58c/B/tests/test_freeze_check.sh
+a11117584efe18cb16d7380995cf2a6f0734eaaae70775d29f37fcc3e6d10363 *r58c/B/tests/test_kt_as.sh
+33fa169987c5b18158e922444dcc3882a9c6212c3db881e3e5620ff8689c1003 *r58c/B/c_table.js
+```
+
+## Round 10 (ruling 107; C68-C70 of end-order-changes-5 e12b2b88), agent B, 2026-11-15 about 12:35Z, TEXT ONLY
+
+Read: `orchestrator/coordinator-rulings-107.md` (b81037b7, already in section M) and the 12:31Z addition at the end of
+`orchestrator/end-order-changes-5.md` (e12b2b88). No script, test, mount list or freeze list changed; no container
+ran. The 12:26Z bytes of the five changed records (END-ORDER 9d779b5d, TEST-QUEUE, RUNLOG-B, CONFLICTS, FINAL-CHANGED
+21853c11) are kept outside the lane, in agent B's scratch folder `pre-r107/` (a new folder in the lane would itself
+be a change).
+- C68 (ruling 107(a), note 40): 2d names `test_r64_fixes` and `test_e5_equiv` only, with the reason (the r58-guard
+  case of `test_r53_58_unit.py` states the guard before ruling 83) and the record of its three ruling-53 cases
+  (ktest-b112, log `r58c/B/out/logs/test_r53_58_unit.log` a3392c75a594...9d15, selectB.py d54cb864...b885); 2d says
+  the lane reports before 2d if `train/selectB.py` changes before the freeze. TEST-QUEUE q32 runs the two. The route
+  in kt_inner.sh and the line in freeze_list.sh are unchanged (step 3 says the file stays listed).
+- C69: section 0's sentence gets its opening bracket before "`train/heldout.sh` `save_record`, C54: ...".
+- C70: the header and step 3 name rulings 103 to 107 and C18 to C70; CONFLICTS notes 39 (ruling 107(b): no change)
+  and 40 marked ruled; note 35(a) notes the amendment.
+- C23 listing on this END-ORDER (`node r58c/B/c23_listing.js LANE`): 85 files, 59 named in 2d, 26 left out (the 25 of
+  round 9 plus `fixes/tests/test_r53_58_unit.py`, C68).
+- The C1-C70 table below comes from a scratch copy of `r58c/B/c_table.js` with three rows added (C68, C69, C70) and
+  the C60 anchor moved to "round 10"; the lane's `c_table.js` (33fa1699) is unchanged, as this revision is text only.
+
+### The C1-C70 table (on END-ORDER 1c849061)
+
+| item | owner | file:line | test log |
+|---|---|---|---|
+| C1 | B | r58c/B/graph_rows.js:6; orchestrator/END-ORDER.md:66 | r58c/A/logs/test_r101_real_lists.log; r4 TEST re-measure waits (note 37 b) |
+| C2 | B | r58c/B/mounts-B.json:900; orchestrator/END-ORDER.md:868 | r58c/B/lane-steps/ktest-r8-20261115T101652Z.log; ktest-r9-20261115T104953Z.log |
+| C3 | A | train/leak_audit.py:26; orchestrator/END-ORDER.md:1054 | r58c/A/logs/test_r101_real_lists.log |
+| C4 | B | r58c/B/freeze_list.sh:35; orchestrator/END-ORDER.md:764 | r58c/B/logs/test_freeze_check.c42.log (cases 17, 18) |
+| C5 | B | orchestrator/END-ORDER.md:304 | text only |
+| C6 | B | orchestrator/end_of_run.sh:157; orchestrator/END-ORDER.md:93 | r58c/B/logs/test_end_of_run.run.out (43 checks) |
+| C7 | B | r58c/B/freeze_list.sh:62; orchestrator/END-ORDER.md:1047 | r58c/B/logs/test_freeze_check.c42.log (case 16) |
+| C8 | B | r58c/B/pass_paths.js:4; r58c/B/ktest.sh:44; orchestrator/END-ORDER.md:577 | r58c/B/logs/test_pass_paths.log; r58c/B/logs/test_kt_as.log |
+| C9 | B | train/write_result.py:155; orchestrator/END-ORDER.md:1123 | r58c/B/out/logs/test_write_result.log |
+| C10 | B | r58c/B/freeze_list.sh:63; orchestrator/END-ORDER.md:794 | r58c/B/logs/test_freeze_check.c42.log (case 16) |
+| C11 | B | r58c/B/freeze_list.sh:49; orchestrator/END-ORDER.md:751 | r58c/B/logs/test_freeze_check.c42.log (cases 16, 18) |
+| C12 | A | train/heldout.sh:103 | r58c/A/logs/test_heldout_r101.r104.log |
+| C13 | A+B | train/heldout.py:811; orchestrator/END-ORDER.md:358; orchestrator/END-ORDER.md:981 | r58c/A/logs/test_probe_seq_r101.log |
+| C14 | B | orchestrator/END-ORDER.md:542; r58c/B/TEST-QUEUE.md:119 | r58c/B/TEST-QUEUE.md q9-q20 |
+| C15 | B+A | train/item27.py:36; train/answer_level.py:249 | r58c/B/out/logs/test_item27_trc.log; r58c/A/logs/test_answer_level.log |
+| C16 | B+A | r58c/B/rerun_check.sh:14; r58c/B/lane_step.sh:14; r58c/B/freeze_list.sh:89; train/heldout.sh:136 | r58c/B/logs/test_rerun_r101.log; r58c/B/logs/test_r10_verdict.log; r58c/A/logs/test_heldout_r101.r104.log |
+| C17 | B | train/selectB.py:101; train/write_result.py:612 | r58c/B/out/logs/test_sr6_guard.log; r58c/B/out/logs/test_write_result.log |
+| C18 | B | r58c/B/rerun_check.sh:25; orchestrator/END-ORDER.md:497 | r58c/B/logs/test_rerun_r103.log |
+| C19 | B | r58c/B/graph_rows.js:16; r58c/B/lane_step.sh:111; orchestrator/END-ORDER.md:82 | r58c/B/logs/test_r10_verdict.log |
+| C20 | A | train/leak_audit.py:463; orchestrator/END-ORDER.md:1056 | r58c/A/logs/test_r101_real_lists.log; r58c/B/out/logs/test_mounts_vs_leak_audit.log |
+| C21 | B | r58c/B/mounts.js:13; r58c/B/freeze_list.sh:38; orchestrator/END-ORDER.md:53 | r58c/B/logs/test_freeze_check.c42.log (9b, 19); r58c/B/logs/test_kt_as.log; r58c/B/logs/test_r10_verdict.log |
+| C22 | B | orchestrator/END-ORDER.md:358 | text only |
+| C23 | B | orchestrator/END-ORDER.md:563; r58c/B/RUNLOG-B.md:278 | r58c/B/c23_listing.js (host) |
+| C24 | B+A | orchestrator/END-ORDER.md:1061; train/leak_audit.py:572 | r58c/A/logs/test_r101_real_lists.log |
+| C25 | B | orchestrator/END-ORDER.md:166; orchestrator/END-ORDER.md:813 | text only (timed at step 3) |
+| C26 | B | r58c/B/ktest.sh:108 | r58c/B/logs/test_kt_as.log |
+| C27 | B | orchestrator/END-ORDER.md:816 | text only |
+| C28 | B | r58c/B/record_check.js:2; r58c/B/freeze_list.sh:23; orchestrator/END-ORDER.md:169 | r58c/B/logs/test_freeze_check.c42.log (case 20) |
+| C29 | B | r58c/B/lane_step.sh:83; r58c/B/graph_rows.js:27; orchestrator/END-ORDER.md:77 | r58c/B/logs/test_r10_verdict.log |
+| C30 | B | orchestrator/END-ORDER.md:678; orchestrator/END-ORDER.md:606 | text only |
+| C31 | B | r58c/B/e5_route_audit.py:58; orchestrator/END-ORDER.md:1102 | r58c/B/out/logs/test_e5_route_audit.log |
+| C32 | B | orchestrator/END-ORDER.md:387; orchestrator/END-ORDER.md:695; orchestrator/END-ORDER.md:756 | text only |
+| C33 | B | orchestrator/END-ORDER.md:217; orchestrator/END-ORDER.md:971 | text only |
+| C34 | B | orchestrator/END-ORDER.md:1157 | text only |
+| C35 | B | r58c/B/freeze_list.sh:60; orchestrator/END-ORDER.md:777 | r58c/B/logs/test_freeze_check.c42.log (case 35) |
+| C36 | A | train/heldout.sh:83; orchestrator/END-ORDER.md:959 | r58c/A/logs/test_save_record_r104.log |
+| C37 | B | orchestrator/END-ORDER.md:981 | text only |
+| C38 | B | orchestrator/END-ORDER.md:225 | text only |
+| C39 | B | r58c/B/lane_step.sh:23; orchestrator/END-ORDER.md:125 | r58c/B/logs/test_r10_verdict.log |
+| C40 | B | orchestrator/END-ORDER.md:913 | text only |
+| C41 | B | orchestrator/end_of_run.sh:27; orchestrator/END-ORDER.md:278 | r58c/B/logs/test_end_of_run.run.out (43 checks) |
+| C42 | A | r58c/A/mounts-A.json:124; orchestrator/END-ORDER.md:107 | r58c/A/logs/test_heldout_mounts.r104.log; r58c/B/logs/test_freeze_check.c42.log (case 15) |
+| C43 | B | r58c/write_audit_claims.py:559; orchestrator/END-ORDER.md:1202 | r58c/B/out/logs/test_write_audit_claims.log |
+| C44 | B | orchestrator/END-ORDER.md:1228 | text only |
+| C45 | B | r58c/B/lane_step.sh:57; orchestrator/END-ORDER.md:148 | r58c/B/lane-steps/ktest-r8-20261115T101652Z.log; r58c/B/lane-steps/ktest-r9-20261115T104953Z.log |
+| C46 | A | train/heldout.py:23; orchestrator/END-ORDER.md:926 | text only |
+| C47 | B | orchestrator/END-ORDER.md:302 | text only |
+| C48 | B | r58c/B/lane_step.sh:7; r58c/B/rerun_check.sh:59; orchestrator/end_of_run.sh:156 | r58c/B/logs/test_kt_as.log; r58c/B/logs/test_end_of_run.run.out (43 checks) |
+| C49 | B | orchestrator/END-ORDER.md:312; orchestrator/END-ORDER.md:1008; orchestrator/END-ORDER.md:1143; train/write_result.py:401; r58c/write_audit_claims.py:481; r58c/B/CONFLICTS.md:347 | r58c/B/out/logs/test_write_result.log; r58c/B/out/logs/test_write_audit_claims.log (role_report p2, ktest-b109); r58c/B/out/logs/wr_rehearsal.log (ktest-b110) |
+| C50 | A+B | train/heldout.sh:56; orchestrator/END-ORDER.md:372; orchestrator/END-ORDER.md:381; orchestrator/END-ORDER.md:950; orchestrator/END-ORDER.md:614 | r58c/A/logs/test_h1cap_r105.log (agent A, RUNLOG-A ROUND10); END-ORDER text |
+| C51 | B | r58c/write_audit_claims.py:375 | r58c/B/out/logs/test_write_audit_claims.log (c51_*; role_report p2 ktest-b115 and role_join) |
+| C52 | B | r58c/B/freeze_list.sh:68; r58c/B/freeze_list.sh:72; orchestrator/END-ORDER.md:781 | r58c/B/logs/test_freeze_check.r106.log (case 52) |
+| C53 | A | train/leak_audit.py:476; orchestrator/END-ORDER.md:48 | r58c/A/logs/test_r106_leak.log; r58c/B/out/logs/test_mounts_vs_leak_audit.log (ktest-b116) |
+| C54 | A | train/heldout.sh:88; orchestrator/END-ORDER.md:964 | r58c/A/logs/test_record_fail_r106.log; r58c/A/logs/test_save_record_r104.r106.log |
+| C55 | B | r58c/B/ktest.sh:57 | r58c/B/logs/test_kt_as.log (C55) |
+| C56 | B | r58c/write_audit_claims.py:622 | r58c/B/out/logs/test_write_audit_claims.log (c56_*; role_report p2 ktest-b115 and role_join) |
+| C57 | B | orchestrator/END-ORDER.md:59; r58c/B/RUNLOG-B.md:259 | text only (train/RUNLOG.md part: the coordinator) |
+| C58 | B | orchestrator/END-ORDER.md:604 | text only |
+| C59 | B | orchestrator/END-ORDER.md:610 | text only |
+| C60 | B | orchestrator/END-ORDER.md:7; orchestrator/END-ORDER.md:8; orchestrator/END-ORDER.md:817 | text only |
+| C61 | B | orchestrator/END-ORDER.md:389; orchestrator/END-ORDER.md:923; orchestrator/END-ORDER.md:1073 | text only |
+| C62 | B | orchestrator/END-ORDER.md:354; orchestrator/END-ORDER.md:430; orchestrator/END-ORDER.md:446 | text only |
+| C63 | B | orchestrator/END-ORDER.md:1012; orchestrator/END-ORDER.md:1025; r58c/B/CONFLICTS.md:358 | r58c/B/out/logs/test_write_result.log (c49_count_0_prints_nothing) |
+| C64 | B | orchestrator/END-ORDER.md:1174 | text only |
+| C65 | B | orchestrator/END-ORDER.md:377 | text only |
+| C66 | B | orchestrator/END-ORDER.md:1027 | text only |
+| C67 | B | orchestrator/END-ORDER.md:234; orchestrator/END-ORDER.md:244; orchestrator/END-ORDER.md:250; orchestrator/END-ORDER.md:552; r58c/B/CONFLICTS.md:329; r58c/B/TEST-QUEUE.md:152 | text only |
+| C68 | B | orchestrator/END-ORDER.md:555; r58c/B/TEST-QUEUE.md:152; r58c/B/CONFLICTS.md:390 | r58c/B/out/logs/test_r53_58_unit.log (ktest-b112, the record of the three ruling-53 cases) |
+| C69 | B | orchestrator/END-ORDER.md:253 | text only |
+| C70 | B | orchestrator/END-ORDER.md:9; orchestrator/END-ORDER.md:818; r58c/B/CONFLICTS.md:382 | text only |
+| T2-0 | B | r58c/B/tests/kt_inner.sh:18; r58c/B/timing/mem.sh:10 | r58c/B/out/logs/test_{r53_58_unit,r64_fixes,e5_equiv}.log (q32, ktest-b112); r58c/B/out/logs/pre-r106-kt_inner/ (ktest-b111); r58c/B/out/logs/mem-e5_equiv.log (q33, ktest-b114) |
+
+### Round 10, END-ORDER sha256
+
+```
+1c8490617150239dcfc46dd9e2e7bc00d96ec2c65f9ee11e6582704b47acef9b *orchestrator/END-ORDER.md
+```
+
+## 2d, formal run on the final bytes (agent B; END-ORDER 1c849061; ruling 109)
+
+Terminal copies: the scratch folder `2d-B/` outside the lane (one file per launcher, sha256 in
+`2d-B/SHA256SUMS-terminal.txt`). Rows are added below as the runs end.
+
+- test_pass_paths.sh run 1 (14:21:50-14:21:54Z): exit 1, RESULT FAIL pass-paths (6 checks), "Device or resource busy"
+  on its own scratch file `r58c/B/pptest/out.txt` at line 32; terminal copy `2d-B/test_pass_paths.out` sha256
+  18599acb829574caa33f2e938dce1ae5a756623f9a418797eeacd8ad73ec7dee; its log kept as `2d-B/test_pass_paths.run1.log`
+  sha256 c45413e102f25611c535cce229d70d63686db5477883d0c234e0537489e4437f (`cp -p`, `cmp` same).
+- eor/test_eor_lock.sh (14:20:12-14:20:52Z): exit 0, RESULT PASS eor-lock (8 checks); its terminal output ends with
+  "rm: cannot remove .../r58c/B/eor/lk/m/out.txt: Device or resource busy"; terminal copy sha256
+  d8e0faee5aeb468c033291be0d3fc3f7552b8681748a5940baa9809cbfdc1397; log `r58c/B/logs/test_eor_lock.log` sha256
+  b7b67a7c6e4b225f3d7c008d155cdcd86112c523591a7e5c97fe2ba3996ac92c.
+- Ruling 109(b) removal, 2026-11-15T14:38:04Z: `rm -rf r58c/B/pptest r58c/B/eor/lk` (the two tests' own scratch
+  folders), rc 0; neither exists afterwards.
+- test_pass_paths.sh run 2 (14:39:10-14:39:14Z, unchanged): exit 0, RESULT PASS pass-paths (6 checks), pass_paths.js
+  d0c95c57722de4b603ddcf40caa5d90fff7f8734fc95d93580e85b134c378ebf; terminal copy `2d-B/test_pass_paths.run2.out` and log
+  `r58c/B/logs/test_pass_paths.log` both sha256 062af81c51f5cca7ad3edabc7f2cb3fe43575d52aaf6bcdafba95f42d76a20f7.
+- test_kt_as.sh run 1 (14:39:14-14:40:45Z): exit 0, RESULT PASS kt-as (17 checks), ktest.sh a875c8e8; terminal copy and log
+  both sha256 9569924afcdc13d53b049bd81f62710cfb166bf0af508a19f948543bde8688cf.
+- test_rerun_r103.sh run 1 (14:40:45-14:42:28Z): exit 0, RESULT PASS rerun-r103 (8 checks), rerun_check.sh ee79fd29;
+  terminal copy and log both sha256 3cfe97edbfb94fff0af0a50cf0aca46d4bc69a911a405a555ac8b4f4c0386b39.
+- test_memgate_cleanup.sh run 1 (14:42:28Z, ended about 14:54:50Z): RESULT PASS memgate-cleanup (3 checks),
+  test_memgate_empty.sh d02b5ebf; exit code not captured (the driver was suspended at 14:45:26Z and ended at 14:54:57Z
+  after the test ended, on the coordinator's stop of 2d; the script ends `[ $fails -eq 0 ]` after its PASS line); its
+  final real `rm -rf` printed nine "Device or resource busy" lines (freeze-list.txt files) and left `r58c/B/memtest/`
+  and `r58c/B/memtest.20261115T144855Z/` in place; terminal copy sha256
+  fb1c0466c4f25778045511869630c753fc58ea5bccd08619295e2526439deeb5, log `r58c/B/logs/test_memgate_cleanup.log` sha256
+  133246966b1a95c6ccf56a4f37cf723932e32a938f44764bd7d882c156ca401f (kept as `2d-B/test_memgate_cleanup.run1.log`).
+- eor/test_end_of_run.sh: not started (2d stopped by the coordinator under ruling 109(b), agent A's test_rehearse_stop).
+- Ruling 109 removal, 2026-11-15T14:59:05Z: `rm -rf r58c/B/memtest r58c/B/memtest.20261115T144855Z` (test_memgate_cleanup's own scratch
+  folders, left by its busy final rm), rc 0; neither exists afterwards. test_memgate_cleanup's exit code was not
+  captured because the driver was killed for the coordinator's hold (its RESULT PASS line and log stand as above).
+- 2d resumed on the coordinator's word (agent A's test_rehearse_stop passed on run 2, 14:56-14:57Z).
+- eor/test_end_of_run.sh run 1 (14:59:13-15:14:15Z; under the lane lock, its own ktest-b5..b8, b20..b23): the shell
+  exit is 0 but the last line is RESULT FAIL end-of-run (43 checks, 15 FAIL lines); end_of_run.sh 8bee89df,
+  assemble_checks.py ba0ca39d; terminal copy `2d-B/test_end_of_run.run1.out` sha256
+  a0643fd02efba0011b78182bdfdc3955be667c58f3d58846940b11d6eead17b3 (the test writes no log of its own). The terminal
+  copy has no "Device or resource busy" line, so ruling 109(b) does not cover it: 2d stops, reported to the coordinator,
+  nothing changed or rerun. Every "no PASS line" check sees one PASS line before the run: the copies' RUNLOG.md is the
+  real train/RUNLOG.md (731199c9), whose line 923 is step 1's `PASS assemble-checks ...-20261115T123811Z.log`. The busy
+  lines are in the case outputs under r58c/B/eor/ (tee into the copies' end_of_run-*.txt logs), left in place.
+
+## Step 2d, eor/test_end_of_run.sh under ruling 111 (the lead, 2026-11-15 about 15:36Z)
+
+- Ruling 111 (orchestrator/coordinator-rulings-111.md, sha256 49325aa2422767fff5cd99e91bc5404670518b1ae0b3ab12f35458383a2f0366).
+- The failed run's scratch under r58c/B/eor/ (a b c e f g h k k3b p r nops, every *.out and *.pscnt) was removed at
+  2026-11-15T15:18:30Z, rc 0, after its case outputs were copied to the lead's scratchpad `eor-run1-outputs/`
+  (SHA256SUMS.txt ec5715cb80cd43ad5df5931945cbef009dcdcd7e7dd54df6ec3e467828a142f1). Its terminal copy is kept:
+  2d-B/test_end_of_run.run1.out a0643fd02efba0011b78182bdfdc3955be667c58f3d58846940b11d6eead17b3.
+- The diagnostic copy, kept outside the lane's test files (lead's scratchpad `eor-diag/`): test_end_of_run.sh
+  304dc1a8263bfa5f5715181bc1ec9e1ceca1d36f36daed1337c97e60906a588d and make_copy.js
+  9400b005ae64c20f06a577c90488da7bf707385b4a89aa9fee1ead57f0a48629. Against the lane's files (6c46497f, bd5c670a) it
+  differs only in (i) the `mk()` line, which calls the copy's make_copy.js, and (ii) one statement in make_copy.js after
+  the train/ copy loop that drops lines starting `PASS assemble-checks ` from the trial lane's RUNLOG.md. A dry build
+  of one trial lane gave 0 PASS lines and a RUNLOG that differs from the real one (731199c9) by line 923 alone.
+  Its own first line prints `sha256 304dc1a8... r58c/B/eor/test_end_of_run.sh`: that is the copy's hash under the
+  lane's name (the test hashes $0).
+- Run once, 15:19:20-15:34:06Z, the test holding r58c/ktest.lock throughout: exit 0, RESULT PASS end-of-run (43
+  checks), 43 ok, 0 FAIL, no "Device or resource busy" line; tested bytes end_of_run.sh 8bee89df, assemble_checks.py
+  ba0ca39d, pre/end_of_run.sh eefbd17b, pre-r101/end_of_run.sh 4504ac7f, mounts-B.json 46ec08ee, mounts.js a237cb3c;
+  "the real RUNLOG unchanged: 731199c9" (one PASS line, step 1's). Terminal copy `eor-diag/test_end_of_run.diag.out`
+  5efd45a2cc4dbca75de1b9540960982a3d14f2dbf1c902aa5419f5538cc073b4; its case outputs copied to `eor-diag/case-outputs/`
+  (SHA256SUMS.txt ff61c386099408ee60306bf6d3c995c6fb1fe1258a85f033f97a9c15b956612f); its trial lanes are left under
+  r58c/B/eor/ as the test leaves them.
+- Under ruling 111(b) this run stands as 2d's evidence for eor/test_end_of_run.sh, with the 10:44Z run on the same bytes
+  (r58c/B/logs/test_end_of_run.run.out 097be17cfdb6531b5313d5e82b141fe7c29e2231e9f891395557058dd3422e1a, PASS 43) and
+  step 1's real run of end_of_run.sh (tables_digest f8cb1f8b...). The fixture limit is CONFLICTS note 43.
+
+### 2d, the rest (the coordinator's order after 16:25:12Z)
+
+- ktest-r8 TEST (lane_step.sh, LS_PREFREEZE=test, test-mounts.json 03c72c9a): docker run 16:29:46Z, released 16:29:54Z,
+  rc 0 at 16:29:59Z; `PRECHECK PASS tune /w/r58c/handoff-test/tune-late50 (test) HANDOFF.json sha256
+  4241265506a3b83dd858c4439e513ba05dcc762333e415bc88397e1da0b825ae problems 0`; cgroup_peak_bytes 108453888; TEST 45
+  rows, real 44 (44 the same, 1 TEST only); step log `r58c/B/lane-steps/ktest-r8-20261115T162718Z.log` sha256
+  1687034a39fc0850b811b8ded67c3ea5fc425da0861fe5750d575a4eeff5e00e; mount record sha256 bc985268...f38e; terminal copy
+  `2d-B/ktest-r8.out` sha256 1f2205557f6c44969a76155d1e279e88e22aada493b2454dedfd0901a0ad6823.
+- ktest-r9 TEST (same, `--freeze-sha256 9e6be7a73f014ab8ae79c626602fa9fe5ed1e2e4b758aed0296c06b5f42ec762`): docker run
+  16:32:42Z, released 16:32:50Z, rc 0 at 16:32:53Z; `PRECHECK PASS heldout /w/r58c/handoff-test/heldout (test)
+  HANDOFF.json sha256 eb179ca21c878cd0789573807817991ae0c5678408b67d86d87c08a668d1c206 problems 0`; cgroup_peak_bytes
+  35069952; TEST 78 rows, real 77 (104(b): `mounts.js flags` on the host, real 77 rows / 18,749 characters, TEST 78 /
+  18,976; the run's docker line holds 78 `-v` flags); step log `r58c/B/lane-steps/ktest-r9-20261115T162959Z.log` sha256
+  fd312c2cf01f71b8d680c88110bb83fac92550afd7808488566705b71a7c84f8; mount record sha256 d224a381...0469; terminal copy
+  `2d-B/ktest-r9.out` sha256 e3e35990baac225a109d401e0432a1e1e6cb029f0721c98465c67578d2340b3d.
+- Log copy 16:33:46Z (`cp -p`, `cmp` same for each; the earlier copies kept in `2d-B/A-copies-before/`):
+  test_heldout.log f619b47265e96bee5b64a628499c0e139b8815eefd1595703667309546b9fe2c, test_answer_level.log
+  a177e27aaeb3870397a222f1895617eb8fa926c7317f083853eedb128bfa3f21, test_leak_audit.log
+  3ab1dd77c4f7926a99734226b30b6270ac7a84481673ef6f8a46d4e0c73c8e62, source and copy alike; terminal copy
+  `2d-B/logcopy.out` sha256 a15d31c5601ee2b25677302a7cbafb3ebaf70965f99121ef2c4b3d8491801634.
+- The six roles' lines for train/RUNLOG.md, drafted (not appended: the lane rule says agent B never touches
+  train/RUNLOG.md, and line 121 above says the lead appends them); `2d-B/runlog-2d-lines.txt` sha256
+  451d5de41cb840af2d7e450f3456aeade5297cd51aec8ae6d56f50fa1af4f352:
+
+```
+sha256 5406fd622fff079ac3585be4830c18f70cd9182cfa91649a57d427a2fd566357 item27 train/item27.py
+sha256 f541b3ffac7ccdde3d361c546dba3530f29de12483692c8c13ed4b31323eabc3 heldout-driver train/heldout.py
+sha256 734ae3685f1391cf0488e8c23ddf360385e6a20009e97f4e921af42ce6d2b85a item24-adapter train/answer_level.py
+sha256 1702acb35150c7eec67317996ab6e21800b8588a8325b63faec649c32eeb09f9 leak-audit train/leak_audit.py
+sha256 d54cb864e38f9ed35a0fb03150cec5a4f8ab08d6ae6a45634578e3d0f815b885 selectB train/selectB.py
+sha256 74d8ef99f280e8a84f57d0bf6f499a076b8a7a99a9de95217dcf88177cf20a70 report train/report.py
+PASS item27 r58c/B/out/logs/test_item27.log
+PASS heldout-driver r58c/B/out/logs/A/test_heldout.log
+PASS item24-adapter r58c/B/out/logs/A/test_answer_level.log
+PASS leak-audit r58c/B/out/logs/A/test_leak_audit.log
+PASS selectB r58c/B/out/logs/role_selectB.log
+PASS report r58c/B/out/logs/role_report.log
+```
+
+  A pre-check only (not item 4): `node r58c/B/pass_paths.js --runlog 2d-B/RUNLOG-candidate-2d.md` (train/RUNLOG.md
+  731199c9 with these lines after it) exits 0, RESULT PASS pass-paths (13 paths, 0 outside or missing); output
+  `2d-B/pass_paths-candidate.out`. Items 4-8 wait for the append.
+- The lead appended the lines to train/RUNLOG.md at 16:35:26Z (now 3f06ba7b34eb87e5be3a721b1c75453104a1455b125a4015ac89e36c5d18c69d).
+- Item 4, `node r58c/B/pass_paths.js` (host, 16:35Z): exit 0, RESULT PASS pass-paths (13 paths, 0 outside or missing);
+  terminal copy `2d-B/pass_paths.out` sha256 b434ed162d3b1ef82de492c6e17dae9918fdd8c9096420b4300b1523999f4306.
+- Item 5, dry guard `KT_AS=ktest-r1 sh r58c/B/ktest.sh ktest-b125 /w/r58c/B/tests/dry_guard.py` (16:37:28-16:37:37Z): exit 0,
+  RESULT PASS dry-guard (selectB d54cb864, runlog 3f06ba7b, ac_problems stubbed); ktest-r1's `train/selectB` rw row left
+  out (source missing, nothing created); mount record `r58c/B/out/logs/ktest-b125-as-ktest-r1.inspect.json` sha256
+  a7f8de88c49a725b6b0cd5bf58994a94bd81627e870ba5fe069c2e2f8ad7d459; terminal copy `2d-B/ktest-b125.out` sha256
+  718f5fa6f89740bb0d3149cd0b25b937ca349c7d6ea40158367eb7a3f71e96c5.
+
+### 2e, the lane half (terminal copies in the scratch folder `2e-B/`)
+
+- Item 6, harness_tune.sh (ktest-b126, 16:38:51-16:39:01Z): exit 0, RESULT PASS harness-tune; log
+  `r58c/B/out/logs/tune-harness-only.log` sha256 6c4ba8f8704a7fd97441a77a9ccb28dae9a5e9e37993551022f135533ff425bf;
+  terminal copy sha256 702bc4496d4518b6efc53fcdd8fd0412006230aad9740cdf142b459d96cca875. Its tune.json
+  (r58c/B/out/harness/tune.json) is 5f6fdcea4a3bc537b68c3fd97ed31b3437a1a8b83bf83caf9c5f2aef766a94d8, byte-equal (cmp) to
+  r58c/handoff-test/report/tune.json already there (07:56Z local copy from earlier bytes); not copied
+  (`2e-B/tune-copy.out` sha256 3af2028ba26dadabe0e7f58c44f5d2d70e3526c1fc11bf7bb94b2c92ee761ecc).
+- Item 7, wr_rehearsal.sh (ktest-b127, 16:40:15-16:40:24Z; the earlier output renamed
+  r58c/B/out/rehearsal.old-20261115T164022Z): exit 0, `write_result exit 0`, RESULT PASS 2e; result.json
+  bd7a847c7e6a848bf0746e93c6be5ad00a2094d6aeea921cd994359806d07943 has `test: true` and records tune-rank 11c29eef...40c9,
+  tune-item24 d903cc30...f3dc, heldout 328fb785...d268; RESULT.md d01894ec86c0673f4ff9bbd6f7f4c993fefee39a02094897f35070a4454605c5;
+  log `r58c/B/out/logs/wr_rehearsal.log` sha256 9cb060c39223dd111981c6a742e7b918aa0dc789cf002fafb876d328b1d2d598;
+  terminal copy sha256 dd25b20fe123187a65ee3f095b6759bb0775138d5ca044aa66eba65d615475cb.
+- Item 8, compare_only.sh (ktest-b128, 16:41:38-16:41:46Z): exit 0, RESULT PASS compare-rank, 52 rows, 416 cells compared,
+  largest difference 0, missing []; log `r58c/B/out/logs/compare-rank.log` sha256
+  5e4ffa2c82482747ee276df41cfcc91383d064507a7dfa33155df7bebad938d9; terminal copy sha256
+  4455dc701d5d2b737770eae60753c18a378970f960ff62a4b9132eb8ab36ea2f.

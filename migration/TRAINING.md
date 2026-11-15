@@ -12,6 +12,12 @@ The embeddings installation notes in EMS contained no actual model files. The co
 
 These are graph-embedding / graph-neural research representations and associated experiment machinery. They are not a newly trained foundation language model. Staged held-out test handoffs are not evidence of a completed real held-out evaluation.
 
+## Later update on 15 November
+
+The first capture (11:25–11:26 UTC) preceded real held-out scoring. When work resumed, tuning had completed and the real held-out H1 run was active. A read-only audit at about 18:31 UTC observed 75 of 210 units completed, with no final held-out handoff or grader return. That is progress evidence, not a final scientific result. The selected tuning candidate was RotatE E1/c04 with fusion weight 1.
+
+The later capture adds tuning reports and grader returns, selected configurations, frozen tuning/probe/held-out inputs, launch and mount records, rulings 106–111, and newer coordinator records. It enumerates new directories even when copied inputs retain old timestamps. `validation/update-capture.json` gives the actual capture interval and file changes. The initial snapshot remains in Git commit `5e503b0`; superseded data are retained under `recovered/snapshots/20261115T1125/` after restoration. Do not treat the captured partial held-out outputs as a completed run.
+
 ## Locations
 
 - `recovered/hb/graph2/wider/embeddings/train`: trainers, Stage A and B records.

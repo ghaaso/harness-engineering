@@ -910,4 +910,14 @@ Other changed files (not read by the guard), with the log that tested them:
 - Checked at 2026-11-15T09:37:10Z before removal: `find train/selectB` listed the folder alone (0 files, 0 subfolders). No score was in
   it and none was read. Removed with `rmdir` at 2026-11-15T09:37:10Z. train/heldout did not exist and does not.
 - From the last revision on, only a real launch creates a writable source; a test creates nothing (C21).
-PASS assemble-checks orchestrator/end-of-run/assemble_checks-20261115T103009Z.log tables_digest a5c5c528d2042b1d48ce68099a1c6695e29dab589ed223b1847194b9dcd1cff7
+
+## Correction to "Stray empty folder train/selectB removed" (C57, end-order-changes-5)
+
+- WITHDRAWN: the sentence above that train/selectB was created "when the second ktest-b98 started". That was a
+  same-second coincidence, not the cause.
+- The cause, identified by agent B (r58c/B/RUNLOG-B.md, C21 entry): agent B's own host look-up at
+  2026-11-15T08:13:00.744Z, `node r58c/B/mounts.js flags .../mounts-B.json ktest-r1`, run while building KT_AS. No
+  container. The old mounts.js line 64 created every writable source on every call. Since C21 only
+  `flags ... --create` (a real launch) creates one.
+- The folder was removed by the lane session (this lead), not by the coordinator, at 09:37:10Z, as recorded above.
+PASS assemble-checks orchestrator/end-of-run/assemble_checks-20261115T151936Z.log tables_digest a5c5c528d2042b1d48ce68099a1c6695e29dab589ed223b1847194b9dcd1cff7

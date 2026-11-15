@@ -91,7 +91,7 @@ The loss ratio is a reported number, not a pass mark (ruling 36 stops at the val
 
 ## Held-out (item 27; spent, descriptive only, no section-G word)
 
-Frozen before any held-out unit (2026-11-15T11:09:28): E2 c07, w 1, 20 epochs, s 1, device cpu; all-65 figure 0.2915; tie group E2.
+Frozen before any held-out unit (2026-11-15T13:49:15): E2 c07, w 1, 20 epochs, s 1, device cpu; all-65 figure 0.2915; tie group E2.
 Stored arms of item 7, shown as they are (8,000-token answer recall, 75 commits; nothing of theirs is rerun): typed graph 0.700, scripted search 0.625, changed-together floor 0.638, same-folder floor 0.549.
 The embedding lists rank code files only and were packed by an adapter, so item 7's figures are context and not a like-for-like comparison; the like-for-like comparison is with RRF, PPR, CO and DIR packed the same way (ruling 88g).
 Grader aggregates (heldout.json; 75 commits, 418 tasks; item 23 aggregation; descriptive only):
@@ -146,4 +146,4 @@ Checked: the aggregates carry sha256(item27.json) and HANDOFF.json's hash; arm E
 
 ## Sources
 
-ac_log `assemble_checks.log` 1f1174f81515; anchor `progress.jsonl` 6a8ce0afe451; answer `answer_level.json` 420f1878c308; answer_graded `tune-item24.json` 1a16593d3044; handoff `HANDOFF.json` db7323cbd47e; heldout `heldout.json` 2fa0b8f43d2b; item22 `item22.json` 7f12156e2a46; item27 `item27.json` 3dcd3bdda09a; leak `leak_audit.json` 0b6086c1a678; plan `plan.json` cbc238fe9cb6; protocol `protocol-addendum-8.md` 5ccc042c4fba; route `e5_route.json` 4f674992ef9b; tune `tune.json` 79774be5a0bc; tune_rank `tune-rank.json` 5aa2fd733359; write_result.py 47d6223c8a32
+ac_log `assemble_checks.log` 1f1174f81515; anchor `progress.jsonl` c94010768488; answer `answer_level.json` 420f1878c308; answer_graded `tune-item24.json` 1a16593d3044; handoff `HANDOFF.json` a3ccbcc41f9f; heldout `heldout.json` f2c7c2364abf; item22 `item22.json` 7f12156e2a46; item27 `item27.json` 3eed8a692154; leak `leak_audit.json` 0b6086c1a678; plan `plan.json` cbc238fe9cb6; protocol `protocol-addendum-8.md` f30edd01599c; route `e5_route.json` 13f83ca5890f; tune `tune.json` 38bc037b0721; tune_rank `tune-rank.json` 5aa2fd733359; write_result.py 47d6223c8a32

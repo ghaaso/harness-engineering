@@ -1,6 +1,6 @@
 #!/bin/sh
 # Agent A, round 9 (C36 / S1, end-order-changes-4): host check of train/heldout.sh's save_record. No container: the
-# function is cut out of the launcher (from "save_record() {" to its closing "fi; }") into a scratch script with a fake
+# function is cut out of the launcher (from "save_record() {" to its first line ending "; }") into a scratch script with a fake
 # `docker inspect` that prints record number n, and called three times for one name in a scratch r58c/mounts.
 # Current bytes: r58c/mounts/kge-H1.json holds the NEWEST record (3) and the two older ones (1, 2) are kept under
 # kge-H1.<UTC>[-k].json, the convention of lane_step.sh line 116. Before bytes (r58c/A/pre-r104/heldout.sh): kge-H1.json
@@ -17,11 +17,11 @@ EOF
 chmod +x $T/bin/docker
 one() {  # $1 launcher -> the record numbers: newest file first, then the stamped ones in name order
   L=$T/l; rm -rf $L; mkdir -p $L/r58c; rm -f $T/n
-  sed -n '/^save_record() {/,/fi; }$/p' "$1" > $T/fn.sh
+  sed -n '/^save_record() {/,/; }$/p' "$1" > $T/fn.sh  # C54 (round 11): the function's last line ends "; }"
   { echo 'say() { echo "$*" >> "$LOG"; }'; cat $T/fn.sh; echo 'save_record kge-H1; save_record kge-H1; save_record kge-H1'; } > $T/run.sh
   WB=$L LOG=$T/log TT=$T PATH="$T/bin:$PATH" sh $T/run.sh
   main=$(sed -n 's/.*"record": \([0-9]*\).*/\1/p' $L/r58c/mounts/kge-H1.json 2>/dev/null)
-  old=$(for f in $(ls $L/r58c/mounts | grep '^kge-H1[.][0-9]' | sort); do sed -n 's/.*"record": \([0-9]*\).*/\1/p' $L/r58c/mounts/$f; done | tr '\n' ' ')
+  old=$(for f in $(ls $L/r58c/mounts | grep '^kge-H1[.][0-9]' | sort); do sed -n 's/.*"record": \([0-9]*\).*/\1/p' $L/r58c/mounts/$f; done | sort -n | tr '\n' ' ')  # as a set: <UTC>-1 sorts before <UTC>
   echo "main=$main stamped=[$old] files=$(ls $L/r58c/mounts | tr '\n' ' ')"
 }
 ok=1

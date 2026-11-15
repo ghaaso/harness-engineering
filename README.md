@@ -25,7 +25,7 @@ Original custom data, weights, graphs, tables, intermediate experiments, and dia
 With Python 3.10+ and an authenticated GitHub CLI:
 
 ```sh
-gh release download recovery-2026-11-15 --repo Tempest-Zero/harness-engineering --pattern 'recovery-objects-*.zip' --dir artifacts
+gh release download recovery-2026-11-15 --repo Tempest-Zero/harness-engineering --pattern 'recovery-*.zip' --dir artifacts
 python tools/restore_artifacts.py --assets artifacts --verify-only
 python tools/restore_artifacts.py --assets artifacts
 python tools/verify_extraction.py --include-restored-data

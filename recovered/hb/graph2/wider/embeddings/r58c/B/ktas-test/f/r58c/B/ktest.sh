@@ -47,14 +47,17 @@ RW_=""; for d_ in ${KT_TRAIN_RW:-}; do case "$d_" in selectB-test|report) mkdir 
 # r58c/B/tests). Env DG_RUNLOG=${KT_DG_RUNLOG:-/w/train/RUNLOG.md}. KT_TRAIN_RW is refused with it (exit 2). The
 # container's docker inspect is saved before its release (C26) as r58c/B/out/logs/$NAME-as-$KT_AS.inspect.json, its log
 # after it ends as .log. The flags are built WITHOUT --create (ruling 103(d)): nothing is created, a row whose source is
-# missing is left out and named by mounts.js on stderr.
+# missing is left out and named by mounts.js on stderr; round 9 (C55): each such line goes into the launch log too.
 ASF_=""; CODE64_=""
 if [ -n "${KT_AS:-}" ]; then
   case "$KT_AS" in ktest-r[0-9]*) ;; *) echo "KT_AS takes ktest-r<N>, not $KT_AS"; exit 2 ;; esac
   case "$INNER" in /w/r58c/B/tests/*.py) ;; *) echo "KT_AS needs an inner /w/r58c/B/tests/*.py, not $INNER"; exit 2 ;; esac
   [ -n "${KT_TRAIN_RW:-}" ] && { echo "KT_AS and KT_TRAIN_RW do not go together"; exit 2; }
   f_=$WB/${INNER#/w/}; [ -f "$f_" ] || { echo "KT_AS: $INNER is not in the lane"; exit 2; }
-  fl_=$(node $WB/r58c/B/mounts.js flags $W/r58c/B/mounts-B.json "$KT_AS") || { echo "KT_AS: no mount list for $KT_AS (mounts.js flags failed)"; exit 2; }
+  # C55 (round 9): a row mounts.js leaves out is named in the launch log, not only on the terminal (as lane_step.sh does)
+  fl_=$(node $WB/r58c/B/mounts.js flags $W/r58c/B/mounts-B.json "$KT_AS" 2>"$LOG.$NAME.mounts-err"); frc_=$?
+  while IFS= read -r l_; do say "$NAME: KT_AS=$KT_AS: $l_"; done < "$LOG.$NAME.mounts-err"; rm -f "$LOG.$NAME.mounts-err"
+  [ $frc_ -eq 0 ] || { echo "KT_AS: no mount list for $KT_AS (mounts.js flags failed)"; exit 2; }
   fl_=$(echo "$fl_" | tr -d '\r'); [ -n "$fl_" ] || { echo "KT_AS: $KT_AS has an empty mount list"; exit 2; }
   ASF_=$(echo "$fl_" | tr ' ' '\n' | awk '$0=="-v"{printf " -v"; next} NF{ if ($0 !~ /:ro$/) $0=$0":ro"; printf " %s", $0 }')
   CODE64_=$(base64 -w0 "$f_")

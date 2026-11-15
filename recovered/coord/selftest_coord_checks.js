@@ -62,9 +62,13 @@ function make(name, m) {  // m: mutations
     const hh = w(P('train', 'heldout', 'HANDOFF.json'), JSON.stringify({ anchor_line: JSON.stringify(anchor), test: false }));
     w(P('train', 'heldout', 'progress.jsonl'), [1, 2].map((i) => JSON.stringify({ step: 'heldout', unit: 'start', status: 'begun', freeze_sha256: (m.badStart && i === 2) ? '33'.repeat(32) : recSha })).join('\n') + '\n');
     w(P('train', 'heldout', 'heldout.rc'), (m.rc || '0') + '\n');
-    w(P('heldout-launch', 'kge-H1-launch.log'), ['2026-11-15T10:00:00Z launch requested: kge-H1 (image ' + GPU + ')', '2026-11-15T10:00:05Z start kge-H1 image ' + GPU + ' cap 4g (-m 4g --memory-swap 4g): docker run ...',
+    const cap = m.cap || '4g';
+    w(P('heldout-launch', 'kge-H1-launch.log'), ['2026-11-15T10:00:00Z launch requested: kge-H1 (image ' + GPU + ')', '2026-11-15T10:00:05Z start kge-H1 image ' + GPU + ' cap ' + cap + ' (-m ' + cap + ' --memory-swap ' + cap + '): docker run ...',
       '2026-11-15T11:00:00Z finished kge-H1 rc=' + (m.rc || '0') + ' HANDOFF.json sha256 ' + hh].join('\n') + '\n');
-    w(P('r58c', 'mounts', 'kge-H1.json'), '[]');
+    const capB = { '4g': 4 * 2 ** 30, '5g': 5 * 2 ** 30, '6g': 6 * 2 ** 30 }[m.recCap || cap];
+    const recJ = (mem) => JSON.stringify([{ Name: '/kge-H1', Image: GPU, HostConfig: { Memory: mem, MemorySwap: mem, NetworkMode: m.recNet || 'none' }, Mounts: [] }]);
+    w(P('r58c', 'mounts', 'kge-H1.json'), recJ(capB));
+    if (m.kept) w(P('r58c', 'mounts', 'kge-H1.20261115T100000Z-1.json'), recJ(capB));
     w(P('grader-returns', 'heldout.json'), JSON.stringify({ split: 'heldout', test: false, tasks: 418, commits: 75, handoff_sha256: hh, freeze_sha256: recSha, arm: win,
       literal_check: { tasks: 418, task_commit_in_checkpoint_history: m.lit || 0, parent_mismatch: 0 }, vs_RRF: { a: 1 }, scorer: { files_sha256: gfiles } }));
   }
@@ -100,6 +104,12 @@ run('heldout-start, a start line for another record', make('ho2', { stage: 'held
 run('heldout-start, rc 3', make('ho3', { stage: 'heldout', rc: '3' }), ['heldout-start', 'heldout-launch/kge-H1-launch.log'], 1, 'FAIL  train/heldout/heldout.rc');
 run('returns heldout, literal check not zero', make('ho4', { stage: 'heldout', lit: 2 }), ['returns', 'heldout'], 1, 'FAIL  heldout.json: literal_check');
 run('item27 after a held-out run exists (folder not clean)', make('ho5', { stage: 'heldout' }), ['item27'], 1, 'FAIL  7 ');
+R = make('ho6', { stage: 'heldout', cap: '5g' });
+run('heldout-start, the log shows 5g and no ruled cap is named', R, ['heldout-start', 'heldout-launch/kge-H1-launch.log'], 1, 'FAIL  every start line shows the memory cap 4g');
+run('heldout-start, the log shows 5g and --cap 5g is named', R, ['heldout-start', 'heldout-launch/kge-H1-launch.log', '--cap', '5g'], 0, 'RESULT PASS heldout-start');
+run('heldout-start, a kept record with a counter in its name is read too', make('ho7', { stage: 'heldout', kept: true }), ['heldout-start', 'heldout-launch/kge-H1-launch.log'], 0, '2 record(s)');
+run('heldout-start, the record shows another memory limit than the log', make('ho8', { stage: 'heldout', recCap: '6g' }), ['heldout-start', 'heldout-launch/kge-H1-launch.log'], 1, 'FAIL  every saved record of kge-H1');
+run('heldout-start, the record shows a network', make('ho9', { stage: 'heldout', recNet: 'bridge' }), ['heldout-start', 'heldout-launch/kge-H1-launch.log'], 1, 'network bridge');
 // ruling 105: the non-finite count
 {
   const zlib = require('zlib');
@@ -117,6 +127,24 @@ run('item27 after a held-out run exists (folder not clean)', make('ho5', { stage
   run('nonfinite: a NaN loss', mk('nf3', 'T1\ta.ts\t0.1\n', '[1.5, NaN]'), ['nonfinite', 'train/x'], 1, '1 losses not finite');
   run('nonfinite: a missing folder', mk('nf4', 'T1\ta.ts\t0.1\n', '[1.5]'), ['nonfinite', 'train/none'], 1, 'FAIL  train/none exists');
   run('nonfinite: an untrained unit has an empty loss list and passes', mk('nf5', 'T1\ta.ts\t0.1\n', '[]'), ['nonfinite', 'train/x'], 0, '(1 empty)');
+}
+// ruling 106(b): the records of the step launcher's TEST runs
+{
+  const HP = 'ab'.repeat(20), TP = 'cd'.repeat(20);
+  const mk = (name, mounts) => {
+    const R3 = path.join(BASE, name, 'wider', 'lane'); fs.rmSync(path.join(BASE, name), { recursive: true, force: true });
+    w(path.join(R3, 'train', 'stageB', 'plan.json'), JSON.stringify({ heldout: { assignment: { [HP]: 'x' } }, assignment: { [TP]: TP } }));
+    const src = (p) => (R3 + '/' + p).replace(/\\/g, '/');
+    w(path.join(R3, 'r58c', 'B', 'out', 'mounts-test', 'ktest-r9-20261115T110000Z.json'), JSON.stringify([{ Name: '/ktest-r9', Mounts: mounts.map(([p, rw]) => ({ Type: 'bind', Source: p.startsWith('ABS:') ? p.slice(4) : src(p), Destination: '/w/' + p, RW: !!rw })) }]));
+    return R3;
+  };
+  run('test-records: tuning graph rows and a test folder', mk('tr0', [['export/graphs/' + TP], ['train'], ['r58c/B/out/r4test', 1]]), ['test-records'], 0, 'RESULT PASS test-records');
+  run('test-records: a held-out parent folder', mk('tr1', [['export/graphs/' + HP]]), ['test-records'], 1, 'held-out parent');
+  run('test-records: a held-out parent folder in upper case under graphs0', mk('tr2', [['export/graphs0/' + HP.toUpperCase()]]), ['test-records'], 1, 'held-out parent');
+  run('test-records: export whole', mk('tr3', [['export']]), ['test-records'], 1, 'whole');
+  run('test-records: a writable real output folder', mk('tr4', [['train/report/answer_level', 1]]), ['test-records'], 1, 'writable mount outside');
+  run('test-records: a writable mount above the output folders (train)', mk('tr5', [['train', 1]]), ['test-records'], 1, 'writable mount outside');
+  run('test-records: a writable mount outside the lane', mk('tr6', [['ABS:C:/somewhere/else', 1]]), ['test-records'], 1, 'writable mount outside');
 }
 console.log(bad ? 'SELFTEST FAILED: ' + bad : 'SELFTEST PASS (all cases)');
 process.exit(bad ? 1 : 0);

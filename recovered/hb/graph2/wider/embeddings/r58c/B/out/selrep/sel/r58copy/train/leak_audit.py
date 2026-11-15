@@ -54,7 +54,9 @@ Real mode (ruling 84): EMB_ROOT must resolve to the lane folder (this script rea
 Ruling 94: --mounts also takes the launchers' mount files (r58c/A/mounts-A.json, r58c/B/mounts-B.json; real mode needs
 both) and a records folder (r58c/mounts/, every *.json in it a docker inspect record); see R94_REAL. --self names the
 audit's own container, whose record its launcher saves while the audit runs. Ruling 95: only the containers that ran
-before the audit (the card window and steps 4 to 8) must have a record; those of later steps (9.x) are not required.
+before the audit (step 1's end-of-run container ktest-eor since ruling 103(c), the card window and steps 4 to 8) must
+have a record; those of later steps (9.x) are not required. C24: a card check's record (kge-H1Pc, kge-H1Rc, kge-H1c) that
+shows any mount fails.
 Output: a markdown table for AUDIT.md (per split and checkpoint) with rulings 35 and 81's disclosures, and a JSON file
 (default train/leak_audit/leak_audit.json, the path write_result.py reads).
 usage: python leak_audit.py --repo <repo> --facts <facts cache> --heldout-tasks <build tasks.jsonl>
@@ -445,11 +447,13 @@ def host_norm(s):
 # of (host folder, destination, mode) in its launcher's mount file, r58c/A/mounts-A.json or r58c/B/mounts-B.json, shape
 # {"<container>": {"step": "<END-ORDER step id>", "allow": [{"src": "<host path>", "dst": "<path>", "mode": "ro|rw"}]}}
 # ("{ARM}" in a src or dst stands for one arm name, kge-H1R only). Every launch saves its docker inspect record to
-# r58c/mounts/<container>[.<UTC>].json. The audit fails when a container of the card window (steps 2a-2c) or of steps
+# r58c/mounts/<container>.json, the newest (C36: an older one is moved to <container>.<UTC>[-k].json). The audit
+# fails when a container of step 1 (ktest-eor, ruling 103(c): every kept
+# record if step 1 ran more than once), of the card window (steps 2a-2c) or of steps
 # 4 to 8 has a mount outside its step's list, when a container of those steps named in a mount file has no record
 # (ruling 95: the containers of later steps, 9.1-9.4, run after the audit and are not required; --self is exempt), and when an end-sequence container has a record but no list. Test containers
 # (ktest-a*, ktest-b*, ktest-G*) are listed and excluded.
-R94_REAL = re.compile(r'^(kge-H1[PR]?c?|kge-R1c?|ktest-r\d+)$')
+R94_REAL = re.compile(r'^(kge-H1[PR]?c?|kge-R1c?|ktest-r\d+|ktest-eor)$')
 R94_TEST = re.compile(r'^ktest-[abG]')
 R94_LABEL = {'kge-H1': 'held-out', 'kge-H1P': 'probe', 'kge-H1R': 'rehearsal', 'kge-H1c': 'card check', 'kge-H1Pc': 'card check',
              'kge-H1Rc': 'card check'}
@@ -457,9 +461,20 @@ R94_FILES = ('mounts-A.json', 'mounts-B.json')
 
 
 def r94_in_scope(step):
-    """The card window (2a, 2b, 2c) and steps 4 to 8 (with sub-steps such as 6.1)."""
+    """Step 1 (the end-of-run container ktest-eor, ruling 103(c), C20: it writes the tables every later step reads), the
+    card window (2a, 2b, 2c) and steps 4 to 8 (with sub-steps such as 6.1)."""
     s = str(step or '')
-    return bool(re.match(r'^2[abc]$', s) or re.match(r'^[4-8](\.\d+)?$', s))
+    return bool(re.match(r'^1(\.\d+)?$', s) or re.match(r'^2[abc]$', s) or re.match(r'^[4-8](\.\d+)?$', s))
+
+
+# C24 (end-order-changes-3): the three card checks (heldout.sh card_ok: a throwaway container <NAME>c, detached so its
+# record can be saved) mount nothing; their lists in mounts-A.json are empty. Their records are saved by heldout.sh
+# save_record to r58c/mounts/<name>.json, the newest (C36, C53: an older record of the same name is moved to
+# r58c/mounts/<name>.<UTC>.json, or <name>.<UTC>-<k>.json when that name is taken): kge-H1Pc
+# (step 2a), kge-H1Rc (2b), kge-H1c (7). Any mount in such a record fails the audit.
+R94_CARD = ('kge-H1c', 'kge-H1Pc', 'kge-H1Rc')
+R94_CARD_SAVED = ('r58c/mounts/<name>.json (the newest; an older record of the same name is moved to r58c/mounts/<name>.<UTC>.json, '
+                  'or <name>.<UTC>-<k>.json when that name is taken, C36; train/heldout.sh save_record, called by card_ok)')
 
 
 def is_allow_file(j):
@@ -521,11 +536,12 @@ def split_mounts(entries):
 
 
 def record_name(j, path):
-    """The container name of a docker inspect record (its Name), else read from the file name (<name>[.<stamp>].json)."""
+    """The container name of a docker inspect record (its Name), else read from the file name (<name>[.<stamp>[-<k>]].json;
+    C53: save_record's <name>.<UTC>-<k>.json for a stamped name already taken)."""
     xs = j if isinstance(j, list) else [j]
     for x in xs:
         if isinstance(x, dict) and x.get('Name'): return x['Name'].lstrip('/')
-    return re.sub(r'(-inspect)?(\.[0-9TZ]+)?\.json$', '', os.path.basename(path))
+    return re.sub(r'(-inspect)?(\.[0-9TZ]+(-[0-9]+)?)?\.json$', '', os.path.basename(path))
 
 
 def _r94_pat(s, folded):
@@ -553,6 +569,9 @@ def ruling94(allows, inspects, test, self_name=None):
                 src, dst, mode = norm(host_norm(m['Source'])), m['Destination'].rstrip('/'), ('rw' if m.get('RW') else 'ro')
                 if not any(ps.match(src) and pd.match(dst) and mode == md for ps, pd, md in pats[name]):
                     r['outside'].append('%s -> %s (%s)' % (host_norm(m['Source']), m['Destination'], mode))
+            if name in R94_CARD and ms and not r['test']:  # C24: a card check mounts nothing
+                problems.append('ruling 94 (C24): %s (%s, the card check of step %s) shows %d mount(s); its list is empty: %s'
+                                % (name, r['file'], r['step'], len(ms), [('%s -> %s' % (m.get('Source'), m.get('Destination'))) if isinstance(m, dict) else '?' for m in ms][:3]))
             if r['outside'] and r['in_scope'] and not r['test']:
                 problems.append('ruling 94: %s (%s, step %s) has %d mount(s) outside its step\'s list: %s'
                                 % (name, r['file'], r['step'], len(r['outside']), r['outside']))
@@ -572,12 +591,13 @@ def ruling94(allows, inspects, test, self_name=None):
     if not test:
         given = sorted(os.path.basename(p) for p in allows)
         if given != sorted(R94_FILES): problems.append('ruling 94: --mounts must give both mount files %s (given %s)' % (list(R94_FILES), given))
-    text = ('Ruling 94: %d mount record(s) of %d listed container(s) read (%d of test containers, not audited); the card window and '
-            'steps 4 to 8: %s. Ruling 95: %d listed container(s) of steps after this audit have no record yet and are not required '
+    text = ('Ruling 94: %d mount record(s) of %d listed container(s) read (%d of test containers, not audited); step 1 (ktest-eor, '
+            'ruling 103(c), every kept record), the card window and steps 4 to 8: %s. C24: the card checks kge-H1Pc, kge-H1Rc and kge-H1c '
+            'mount nothing (empty lists); their records are saved to %s, and one that shows a mount fails. Ruling 95: %d listed container(s) of steps after this audit have no record yet and are not required '
             '(%s); their records are listed in AUDIT.md by the audit writer.'
             % (len(records), len(amap), sum(r['test'] for r in records),
                'every mount on its step\'s list and every listed container recorded' if not problems else 'NOT clean (%d problem(s))' % len(problems),
-               len(later), ', '.join('%s step %s' % (c, amap[c]['step']) for c in later) or 'none'))
+               R94_CARD_SAVED, len(later), ', '.join('%s step %s' % (c, amap[c]['step']) for c in later) or 'none'))
     return dict(ok=not problems, problems=problems, records=records, containers={c: dict(step=v['step'], file=v['file'], allowed=len(v['allow'])) for c, v in amap.items()},
                 self=self_name, not_required=later, text=text)
 

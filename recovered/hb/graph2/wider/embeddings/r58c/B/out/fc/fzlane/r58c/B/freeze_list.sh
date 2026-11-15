@@ -22,6 +22,7 @@
 #   train/report/e5_route, train/report/tune.json, train/report/item22.json, or a file directly under grader-returns/).
 #   C28 (ii): exit 8 when a saved mount record in r58c/mounts/ (every kept one too) differs from its container's current
 #   entry (r58c/B/record_check.js, listed in block 1); nothing is moved or deleted, the coordinator rules.
+#   Round 9 (C52) adds r58c/A/*.js, r58c/B/*.js and fixes/tests/{test_r53_58_unit,test_r64,test_e5_equiv}.py to block 1.
 #   The check is r58c/B/freeze_check.sh (prints nothing, exit 0).
 W=C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/r58c/B/out/fc/fzlane
 GB=C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/hb/graph2/wider/embeddings/r58c/B/out/fc/fzlane/gb
@@ -64,9 +65,11 @@ SEL=$(node -e "const t=require('./train/stageA/top3.json');for(const a of Object
   ls train/stageB/tables/*
   echo r58c/write_audit_claims.py r58c/B/rerun/rerun_check.py r58c/B/e5_route_audit.py | tr ' ' '\n'  # e5_route_audit.py: ruling 97, step 9.2a
   ls train/r58/tests/*.py r58c/tests/*.py fixes/tests/test_select_report.py parallel/tests/test_assemble_checks.sh r58c/B/tests/* r58c/B/*.sh
+  # C52 (round 9): the three tests of note 35(a) that 2d runs once more on the final bytes (kt_inner.sh, T2)
+  echo fixes/tests/test_r53_58_unit.py fixes/tests/test_r64.py fixes/tests/test_e5_equiv.py | tr ' ' '\n'
   # end-order-changes-2 changes 1 and 8 (commands:F5, F6, rulings:F8): agent A's scripts and tests (precheck_handoff.py runs
   # after the freeze), the end_of_run test, both mount lists and their reader, and every stage-B part file
-  ls r58c/A/*.py r58c/A/*.sh
+  ls r58c/A/*.py r58c/A/*.sh r58c/A/*.js r58c/B/*.js  # C52 (round 9): every script of both agents, the .js ones too
   find r58c/B/eor -maxdepth 1 -type f
   echo r58c/B/mounts.js r58c/B/mounts-B.json r58c/A/mounts-A.json r58c/B/record_check.js | tr ' ' '\n'
   find train/stageB/parts -type f ! -name '*.part'
