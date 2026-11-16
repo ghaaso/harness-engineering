@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "hazards",
+  "description": "Hazards object of the mapper task (CONTRACT 3.4, spec/gate.mjs.md). It carries no acceptance and no owner quote: acceptance is only a ledger owner line, so the mapper cannot grant it. Append-only along parent (checked by gate.mjs).",
+  "x-version": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "cut_sha", "parent", "hazards", "map"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "kind": { "const": "hazards" },
+    "cut_sha": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "parent": { "anyOf": [{ "type": "string", "pattern": "^d_[0-9a-f]{16}$" }, { "type": "null" }] },
+    "hazards": { "type": "array", "items": { "$ref": "#/$defs/hazard" } },
+    "map": { "type": "array", "items": { "$ref": "#/$defs/mapEntry" } }
+  },
+  "$defs": {
+    "hazardId": { "type": "string", "pattern": "^h[0-9]{1,4}$" },
+    "hazard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hazard_id", "supersedes", "classical_name", "statement", "severity", "p_ids", "covered_by", "status"],
+      "properties": {
+        "hazard_id": { "$ref": "#/$defs/hazardId" },
+        "supersedes": { "anyOf": [{ "$ref": "#/$defs/hazardId" }, { "type": "null" }] },
+        "classical_name": { "type": "string", "minLength": 1, "x-maxWords": 12 },
+        "statement": { "type": "string", "minLength": 1, "x-maxWords": 40 },
+        "severity": { "enum": ["high", "medium", "low"] },
+        "p_ids": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z]{1,2}[0-9]{1,2}$" } },
+        "covered_by": { "type": "array", "items": { "type": "string", "pattern": "^R[0-9]{1,2}$" } },
+        "status": { "enum": ["covered", "partial", "gap"] }
+      }
+    },
+    "mapEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "hazard_id", "borderline", "alt_hazard_id"],
+      "properties": {
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": { "enum": ["uca", "cell"] },
+            "id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,31}(/[a-z][a-z0-9_.-]{0,31})?$" }
+          }
+        },
+        "hazard_id": { "$ref": "#/$defs/hazardId" },
+        "borderline": { "type": "boolean" },
+        "alt_hazard_id": { "anyOf": [{ "$ref": "#/$defs/hazardId" }, { "type": "null" }] }
+      }
+    }
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "task-row",
+  "description": "One row of run/tasks.json (CONTRACT 3.6). Other schemas use task-row.schema.json#/$defs/row. Attempts are read through lib.attemptOf, never by position.",
+  "x-version": 1,
+  "$ref": "#/$defs/row",
+  "$defs": {
+    "task": { "type": "string", "pattern": "^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:$|[.-]))[a-z][a-z0-9-]{1,39}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "step_name": { "enum": ["pack", "review", "stpa", "fmea", "hazards"] },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epoch"],
+      "properties": {
+        "epoch": { "type": "integer", "minimum": 1 },
+        "folder": { "type": ["string", "null"] },
+        "session": { "type": ["string", "null"], "pattern": "^[0-9a-f-]{36}$" },
+        "bound_at": { "type": ["string", "null"] },
+        "boot": { "type": ["string", "null"] },
+        "manifest": { "type": ["string", "null"], "pattern": "^m_[0-9a-f]{16}$" },
+        "settings_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "cut": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["files"],
+          "properties": {
+            "files": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["len", "sha256"],
+                "properties": {
+                  "len": { "type": "integer", "minimum": 0 },
+                  "sha256": { "$ref": "#/$defs/sha" }
+                }
+              }
+            },
+            "ledger_seq": { "type": ["integer", "null"], "minimum": 0 },
+            "links": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "spend_at_fence": { "type": ["number", "null"], "minimum": 0 },
+        "stop": { "enum": ["none", "requested", "confirmed", "unconfirmed"] }
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "field", "stage", "role", "steps", "deps", "question_ids", "e_task", "tier", "state", "step", "epoch", "restarts", "handovers", "parks", "limit", "fails", "attempts", "commits"],
+      "properties": {
+        "task": { "$ref": "#/$defs/task" },
+        "field": { "type": ["string", "null"], "pattern": "^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z][a-z0-9]{0,11}$" },
+        "stage": { "enum": ["research", "review", "fresh-review", "control", "design-check"] },
+        "role": { "enum": ["child", "child-reviewing", "fresh-reviewer", "control", "stpa", "fmea", "mapper", "canary"] },
+        "steps": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/step_name" } },
+        "deps": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/task" } },
+        "question_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,11}-[a-z0-9]{1,12}-[0-9]{2,3}$" } },
+        "e_task": { "type": "integer", "minimum": 0 },
+        "tier": { "type": "string", "minLength": 1 },
+        "state": { "enum": ["planned", "active", "parked", "committed", "cut", "failed", "dropped"] },
+        "step": { "enum": ["none", "fenced", "stop-requested", "stopped", "admitted", "started", "bound"] },
+        "epoch": { "type": "integer", "minimum": 0 },
+        "reason": { "enum": ["first", "stall", "hang", "loop", "crash", "tainted", "memory", "handover", "cut", "drop", null] },
+        "session": { "type": ["string", "null"], "pattern": "^[0-9a-f-]{36}$" },
+        "restarts": { "type": "integer", "minimum": 0 },
+        "handovers": { "type": "integer", "minimum": 0 },
+        "parks": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "boolean" },
+        "fails": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["epoch", "class", "host", "tick"],
+            "properties": {
+              "epoch": { "type": "integer", "minimum": 0 },
+              "class": { "enum": ["stall", "hang", "loop", "crash", "tainted"] },
+              "host": { "type": "boolean" },
+              "tick": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/attempt" } },
+        "commits": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": { "^(pack|review|stpa|fmea|hazards)$": { "$ref": "#/$defs/sha" } }
+        },
+        "updated_rev": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

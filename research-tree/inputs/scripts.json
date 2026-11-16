@@ -1,0 +1,578 @@
+[
+ {
+  "layer": "L1",
+  "name": "put.mjs",
+  "purpose": "The child's only write path. It writes a file atomically (temp file then rename), or appends a validated JSONL line, and moves a torn last line to .corrupt.",
+  "inputs": "--root <attempt dir> --path <relative> (--replace | --append-jsonl) --schema <kind>; content on stdin. Run from the coordinator's pinned checkout, never from the child's worktree.",
+  "outputs": "The file or line written; one JSON line on stdout {ok, path, sha256}",
+  "exit_codes": "0 written; 2 schema failure; 3 path outside the attempt folder; 4 I/O error",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "admit.mjs",
+  "purpose": "Decides which tasks may start now: dependencies committed, a free slot, the memory check and the escrow check. It reserves the escrow in the task table.",
+  "inputs": "--ce <n> [--dry-run]; reads run/tasks.json, run/meter.jsonl, the estimates from the Shape layer, os.freemem()",
+  "outputs": "JSON {admitted:[task], refused:[{task, reason}]}; the reservation written to tasks.json",
+  "exit_codes": "0 admitted at least one; 1 none admissible (reasons in the output); 26 meter and transcript disagree by more than 20 %; 64 stale coordinator epoch; 70 table corrupt; 75 table lock busy",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "replace.mjs",
+  "purpose": "The one start and restart path: intent, fence (raise the epoch), restore-check, todo list, admission, worktree and brief. With --bind it records the new session id.",
+  "inputs": "--ce <n> --task <id> --reason <first|stall|loop|crash|memory|handover|fresh-review>; or --ce <n> --task <id> --bind <session_id>",
+  "outputs": "JSON {task, epoch, worktree, branch, brief_path}; the brief file; the updated task row",
+  "exit_codes": "0 ready for the coordinator to start the session; 1 restart limit reached, escalate to the owner; 2 not admitted; 3 restore-check failed (no valid checkpoint); 64 stale coordinator epoch; 75 table lock busy",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "stop.mjs",
+  "purpose": "Fences first, then, after the coordinator's stop call, checks that the session and its helpers have stopped and kills orphan processes that name the attempt's worktree.",
+  "inputs": "--ce <n> --task <id> --phase <fence|verify>",
+  "outputs": "JSON {fenced_epoch, stopped:boolean, growing_transcripts[], killed_pids[], zombie_tokens}",
+  "exit_codes": "0 stop confirmed; 5 stop unconfirmed (zombie spend counted); 64 stale coordinator epoch",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "commit.mjs",
+  "purpose": "The acceptor. It checks the epoch fence, the path allowlist and the schema, merges the branch, writes the manifest and creates COMMIT with wx. It is idempotent.",
+  "inputs": "--ce <n> --task <id> --epoch <e>; the child's branch; the schema checker from the Integrity layer",
+  "outputs": "fields/<f>/<stage>/COMMIT, attempt-<e>/MANIFEST.json, the escrow released in tasks.json",
+  "exit_codes": "0 committed, or already committed identically; 10 stale epoch (zombie write logged); 11 a path outside the attempt folder; 12 schema failure; 13 COMMIT exists with a different manifest; 64 stale coordinator epoch",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "watch.mjs",
+  "purpose": "The watchdog and event loop. Each tick it runs status, checks progress (the variant V), stall, loop, alive, spend, memory, pause and common cause, appends events, and exits to wake the coordinator.",
+  "inputs": "--ce <n> --dt 60 --deadline-min <T_watch> --coalesce-s <delta>; reads run/, the field folders and the transcripts",
+  "outputs": "run/events.jsonl (append), run/watcher.json (each tick), run/status.json (through status.mjs)",
+  "exit_codes": "10 ready; 11 repair request; 12 soft limit; 20 stall; 21 loop; 22 overspend at the hard limit; 23 memory; 24 common cause; 25 stop unconfirmed / zombie spend over Z; 26 meter disagreement; 30 the watcher's own deadline; 31 stale coordinator epoch; 40 internal error (treated as 'restart the watcher', never as a field failure)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "status.mjs",
+  "purpose": "Builds the derived snapshot status.json from the table, the intents, the events, the COMMIT files, the variant V per task and the transcript spend. It is the coordinator's only state and its hand-over.",
+  "inputs": "--out run/status.json",
+  "outputs": "run/status.json (temp file then rename)",
+  "exit_codes": "0 written; 70 an input is corrupt (the coordinator does not act from memory; it reports)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "spend.mjs",
+  "purpose": "Counts tokens from the transcript JSONL files per session, including its helpers' transcripts, by token class. It is used by status, admission and the limits.",
+  "inputs": "--session <id> | --task <id>; the transcript folder",
+  "outputs": "JSON {input, cache_read, cache_write, output, total, helpers:[{id,total}], peak_per_min}",
+  "exit_codes": "0 counted; 6 a helper transcript could not be linked to its parent (count marked partial)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "intent.mjs",
+  "purpose": "Intent records for effects that must happen once: create with wx, mark done, reconcile open intents against the session list at the coordinator's start.",
+  "inputs": "create|done --key <task-e<e>-step>; reconcile --sessions <file written by the coordinator from its session-list read>",
+  "outputs": "run/intents/<key>.json and .done; for reconcile, JSON {closed[], to_redo[]}",
+  "exit_codes": "0 ok; 17 the intent already exists (the caller must reconcile, not redo); 64 stale coordinator epoch",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "endturn.mjs",
+  "purpose": "The coordinator's last act in every turn: checks that a watcher of the current coordinator epoch is alive with a fresh tick.",
+  "inputs": "--ce <n>; run/watcher.json; the process list",
+  "outputs": "JSON {watcher_alive, pid, tick_age_s}",
+  "exit_codes": "0 a live watcher; 1 none: the coordinator must start watch.mjs as a background command now; 64 stale coordinator epoch",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "meter.mjs",
+  "purpose": "Records the plan's usage meter. It prefers the value taken from the coordinator's own transcript (the tool result), not a typed number, and compares it with the transcript token counts.",
+  "inputs": "record --ce <n> [--from-transcript <path> | --pct <n>]",
+  "outputs": "run/meter.jsonl line {at, pct, source, tokens_since_last}; the tokens-per-percent estimate",
+  "exit_codes": "0 recorded; 26 meter and transcript counts disagree by more than 20 %; 64 stale coordinator epoch",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "handover.mjs",
+  "purpose": "The coordinator's hand-over at a point where no child is running: raises ce in coord.json and leaves the old watcher to exit with code 31.",
+  "inputs": "--ce <n>",
+  "outputs": "run/coord.json with ce+1; a one-line brief for the fresh coordinator pointing at run/status.json",
+  "exit_codes": "0 handed over; 1 not quiescent (a child is running); 64 stale coordinator epoch",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L1",
+  "name": "salvage.mjs",
+  "purpose": "Pulls helper results (cards) out of a dead attempt's transcript into the restore input. The salvaged cards are untrusted until they pass the schema and the checks.",
+  "inputs": "--task <id> --epoch <e>; the dead session's transcript",
+  "outputs": "attempt-<e+1>/salvaged.jsonl; JSON {found, valid, dropped}",
+  "exit_codes": "0 salvaged; 7 transcript unreadable (restart from committed cards only, lost helper count logged)",
+  "stage": "later"
+ },
+ {
+  "layer": "L2",
+  "name": "canon.mjs",
+  "purpose": "Shared library: canonical JSON, sha256, id forming (c_/p_ + 16 hex), schema_version check",
+  "inputs": "A JSON value",
+  "outputs": "Canonical bytes, full hash, short id",
+  "exit_codes": "Library; throws on non-canonicalisable input",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "harvest.mjs",
+  "purpose": "Copy each reader's schema-checked result from the transcript (helper's own, or the tool result in the child's) into staging/, so no session retypes card fields (S3)",
+  "inputs": "Transcript paths of the child and its helpers; field folder",
+  "outputs": "staging/<tmp>.card.json; a count of results not found",
+  "exit_codes": "0 harvested; 1 some results not parseable (child fallback, tagged copied_by_session); 4 transcript format unknown",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "commit.mjs",
+  "purpose": "The only writer of objects/, journal.jsonl and refs/: validate, hash, temp+rename by exclusive create, journal line; check constraints S7 (a)-(e); call snap.mjs for cards (S2, S7, S15)",
+  "inputs": "staging/ of one field; control/epoch; the epoch the caller runs under; tcb schemas and vocabularies",
+  "outputs": "objects/<id>.json, journal lines, staging/rejected/ with reason codes, flags for the checker queue",
+  "exit_codes": "0 all committed; 1 some rejected or flagged (work continues); 2 store integrity failure (stop, wake coordinator); 3 fenced by epoch (exit quietly); 4 unknown schema_version or bad usage",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "snap.mjs",
+  "purpose": "Fetch a source's own bytes with Node fetch, extract text, store raw and text under sha256 in .snapshots/ by exclusive create; record drift on refetch (S14)",
+  "inputs": "URL; optional expected snapshot hash",
+  "outputs": ".snapshots/raw/<sha>, text/<sha>.txt, meta/<sha>.json; result {raw_sha, text_sha} or reason (blocked, paywall, pdf, http error)",
+  "exit_codes": "0 stored; 1 not fetchable or not extractable (card stays UNVERIFIED); 5 source_changed on refetch",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "tms.mjs",
+  "purpose": "Label every node (cards, sentences, verdicts, synthesis claims, dismissals, certificates) by propagation from card status and input hashes; write labels and the typed repair list; void certificates whose read set changed (S9); later: match dismissal out-lists against new cards (D7-03)",
+  "inputs": "objects/, status/ of all fields, refs/",
+  "outputs": "views/labels.json, views/repair.json per field",
+  "exit_codes": "0 no STALE or PENDING in targets due for a gate; 1 stale or pending nodes listed; 2 a dangling reference found (store damaged)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "render.mjs",
+  "purpose": "Build every human page by joining sentences to cards: pack.md, review.md, synthesis table, owner's page; conditions shown from the card, never from prose (S7, S10)",
+  "inputs": "objects/, views/labels.json",
+  "outputs": "views/*.md and the owner's page",
+  "exit_codes": "0 rendered; 1 refused on a dangling reference or a missing label",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "status.mjs",
+  "purpose": "Recompute the trace table (done, stale, missing, tainted) from journals, manifests and labels; decide reuse of a step by its key (S10, S12); the coordinator's state and hand-over",
+  "inputs": "All field journals, objects/ manifests, views/labels.json, control/epoch",
+  "outputs": "views/status.json; per step: reuse | repair(nodes) | run",
+  "exit_codes": "0 written; 2 inconsistent store (stop; coordinator does not act on memory); 3 fenced",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "audit.mjs",
+  "purpose": "Compare the reads in a step's transcripts (file reads, searches, fetches) with its manifest; record discovered fetch addresses; flag first-call context above the lean baseline (S11, S13)",
+  "inputs": "Manifest object, transcripts of the session and its helpers, the lean-baseline parameter",
+  "outputs": "A journal line op=taint with undeclared paths, or a clean record; discovered inputs",
+  "exit_codes": "0 clean; 1 tainted (output not accepted); 4 transcript format unknown",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "fsck.mjs",
+  "purpose": "Check a store: every object hash matches its name, journal hash chain intact, FK closure, every status line from the check script's runs, torn tails recovered to .corrupt (S2, S16)",
+  "inputs": "A field folder or the programme store",
+  "outputs": "A report of failing ids",
+  "exit_codes": "0 sound; 2 damaged (no restart, no merge)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "merge.mjs",
+  "purpose": "Fold a child's branch into the coordinator's tree: path allowlist per field, fsck, journal union ordered by (writer, seq) (S1, S15)",
+  "inputs": "Child branch, its field path, control/epoch",
+  "outputs": "A merge commit or a refusal listing the paths",
+  "exit_codes": "0 merged; 1 refused (paths outside the field); 2 fsck failed; 3 fenced",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L2",
+  "name": "index.mjs",
+  "purpose": "Between waves: read-only source index by canonical id, duplicate-card comparison, overlap rate and coupling between question groups (S17)",
+  "inputs": "All finished fields' objects/",
+  "outputs": "views/source-index.json, views/overlap.json",
+  "exit_codes": "0 built; 1 unkeyable cards listed (returned to their child)",
+  "stage": "later"
+ },
+ {
+  "layer": "L2",
+  "name": "migrate.mjs",
+  "purpose": "Convert objects of an old schema_version into new objects with migrated_from, never in place",
+  "inputs": "Objects of version n, the mapping to n+1",
+  "outputs": "New objects and journal lines",
+  "exit_codes": "0 migrated; 1 unmappable objects listed",
+  "stage": "later"
+ },
+ {
+  "layer": "L3",
+  "name": "tcb-verify.mjs",
+  "purpose": "Tripwire baseline: verify the hashes of every trusted-base file and of every worktree's .claude/ folder against tcb.lock.json (D5-08)",
+  "inputs": "--lock tcb/tcb.lock.json --worktrees <paths...>",
+  "outputs": "Ledger entry kind tcb_verified, or a list of changed paths",
+  "exit_codes": "0 all match; 3 a mismatch (tampering); 2 the lock or a path could not be read",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "make-profile.mjs",
+  "purpose": "Write a worktree's .claude/settings.json (allow and deny lists, pre-tool hook registration) from a role profile, so that permissions come from the trusted base",
+  "inputs": "--role <reader|checker|child|reviewer|coordinator> --worktree <path> --field <n>",
+  "outputs": ".claude/settings.json in the worktree; its hash recorded in the ledger",
+  "exit_codes": "0 written; 1 unknown role or profile fails its schema; 2 write failed",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "guard-hook.mjs",
+  "purpose": "Pre-tool hook: refuse reads and writes outside the role's paths, any write under .claude/, Bash outside the allowlist, a helper of the wrong type, and a child's WebFetch to a URL not in its witnessed must-read list",
+  "inputs": "The harness's tool-call JSON on stdin; the role profile named in the settings; status/<n>/mustread-urls.json",
+  "outputs": "An allow or deny decision to the harness; each denial appended to ledger/refusals.jsonl",
+  "exit_codes": "Per the harness hook contract (deny = blocking code); any internal error denies (fail-safe)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "perm-audit.mjs",
+  "purpose": "After every turn, compare each transcript's tool calls, paths, URLs and outgoing search text with the role profile and a project-term denylist; flag child notes that are not TURN-END lines; flag coordinator reads of UDI files (D5-02, D5-09, confinement)",
+  "inputs": "--transcripts <glob> --profiles tcb/profiles --denylist tcb/denylist.txt",
+  "outputs": "status/audit.jsonl violations; a ledger entry",
+  "exit_codes": "0 clean; 3 out-of-profile call or leak; 2 a transcript could not be parsed",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "snapshot.mjs",
+  "purpose": "Fetch a card's URL with Node's own fetch (no rendering), store the raw bytes by sha256 and extract HTML text (D5-04, D2-09). Needs the owner's word (F5)",
+  "inputs": "--url <u> --store store/snapshots",
+  "outputs": "store/snapshots/<sha256> and <sha256>.json metadata; the sha256 on stdout",
+  "exit_codes": "0 stored with text; 2 not run (fetch failed, blocked, PDF, empty text) with a reason",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "witness.mjs",
+  "purpose": "Normalise the snapshot text and the quote, find the exact quote, find the card's number within w characters, and bind the result to the card and snapshot hashes (D7-01, D1-05)",
+  "inputs": "--cards fields/<n>/cards.jsonl --store store/snapshots --w 300",
+  "outputs": "witness records (witnessed, rejected, unverifiable, stale, source-changed) passed to promote.mjs; quarantine list",
+  "exit_codes": "0 run complete; 1 one or more rejected; 2 one or more not run; 3 a card hash changed after witnessing",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "context-check.mjs",
+  "purpose": "Treat a citation as a call: compare each sentence's typed applies_to with the cited card's typed conditions, and its numbers with the card's number or baseline (D4-10, D8-06, D7-08, D1-06); flag only the residue for the checker",
+  "inputs": "--review fields/<n>/review/review.json (or the synthesis claims) --cards ... --status ...",
+  "outputs": "Per sentence: pass, flag (to the checker queue), fail (number mismatch, uncited fact), not-run",
+  "exit_codes": "0 all pass or flagged; 1 a fail; 2 inputs missing",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "check-queue.mjs",
+  "purpose": "Assemble one checker input file per item (typed card, snapshot window, sentence), mix in seeds from seed.mjs, draw the zero-acceptance sample of uncited cards per reader with a logged random seed (D4-09)",
+  "inputs": "--field <n> --mode <intake|freeze|post-review|sample> --p1 --beta --d",
+  "outputs": "queue/<batch>/item-*.json; the sample draw and its seed in the ledger",
+  "exit_codes": "0 queue written; 1 nothing to check; 2 inputs missing",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "promote.mjs",
+  "purpose": "The only writer of status. Read each checker verdict from the checker's own transcript, validate it against the enum, drop seeds by id, apply the qualification of each fault class, and append to card_status.jsonl (D5-01, D5-10)",
+  "inputs": "--batch <id> --transcripts <glob> --qualified status/qualification.json",
+  "outputs": "status/<n>/card_status.jsonl lines; ledger entries",
+  "exit_codes": "0 written; 1 a verdict off the enum or missing (item stays witnessed); 2 transcript not found; 3 a card hash changed since witnessing",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "seed.mjs",
+  "purpose": "Make seeded faults (S1-S4, J1-J4) and plants in copies of our work; score detection per class, false alarms, the chain's escape rate and the plants found (D4-01, D4-11, D8-04)",
+  "inputs": "make: --batch <id> --share 0.10 --classes ...; plant: --field <n> --k 3; score: --batch <id> or --field <n>",
+  "outputs": "Seeds into the queue, keys into sealed/; status/qualification.json with d_k, its Clopper-Pearson lower bound and the false-alarm rate; plant scores",
+  "exit_codes": "0 run; 1 a class below d0 (checker unqualified) or a J4 instruction followed; 2 too few seeds to score",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "certify.mjs",
+  "purpose": "Compute session labels from transcripts against manifests, fact-sentence labels, coverage of the approved question ids, the SPRT lot decision and the plant result, then write the certificate (D5-07, D6-03, D5-06)",
+  "inputs": "--field <n> --manifest review-in/<n>/manifest.json --questions tcb/questions/<n>.json --p0 --p1 --alpha --beta --t",
+  "outputs": "status/<n>/certificate.json; labelled claims for the synthesis",
+  "exit_codes": "0 certified; 1 not certified (reasons listed); 2 not run",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "merge.mjs",
+  "purpose": "The only route into the shared tree: run tcb-verify, commit the child's folder, refuse any diff outside fields/<n>-<name>/, and write the ledger head into the commit (D5-08, D5-11)",
+  "inputs": "--worktree <path> --field <n>",
+  "outputs": "A merge commit, or a quarantine record",
+  "exit_codes": "0 merged; 3 path outside the allowlist or trusted-base mismatch; 2 git error",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "ledger.mjs",
+  "purpose": "Append hash-chained entries, verify the chain, and print the head (D5-11)",
+  "inputs": "append --kind --subject --data; verify; head",
+  "outputs": "ledger/ledger.jsonl; the head hash",
+  "exit_codes": "0 ok; 3 chain broken; 2 file unreadable",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "selftest.mjs",
+  "purpose": "Run every trusted-base script on known-good and known-bad fixtures (one per fault class) and run the hook test (attempt each forbidden call from a throwaway helper and expect a refusal)",
+  "inputs": "--fixtures tcb/fixtures",
+  "outputs": "status/selftest.json",
+  "exit_codes": "0 all correct; 1 a script gave a wrong answer or a hook did not refuse; 2 could not run",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L3",
+  "name": "correct-rates.mjs",
+  "purpose": "Estimate the checker's sensitivity and specificity on a reference subsample (the owner, or a different model under F3) and correct the reported failure rates (Rogan-Gladen, D6-02)",
+  "inputs": "--verdicts --reference",
+  "outputs": "Se, Sp and corrected rates in status/",
+  "exit_codes": "0; 1 Se + Sp <= 1.2; 2 reference missing",
+  "stage": "later"
+ },
+ {
+  "layer": "L3",
+  "name": "beta.mjs",
+  "purpose": "Measure the joint miss rate and beta factor between two second-opinion variants on one seeded set, before any second opinion is bought (D4-02)",
+  "inputs": "--seedset --variant-a --variant-b",
+  "outputs": "r, beta and the detection added by B",
+  "exit_codes": "0; 1 beta at or above the owner's line; 2 too few seeds",
+  "stage": "later"
+ },
+ {
+  "layer": "L3",
+  "name": "challenge.mjs",
+  "purpose": "Pick k verdicts at random from a frozen review for expansion into explicit steps (D7-10)",
+  "inputs": "--review --k --seed",
+  "outputs": "challenge list; the result after checking",
+  "exit_codes": "0; 1 an expansion failed; 2 not run",
+  "stage": "later"
+ },
+ {
+  "layer": "L3",
+  "name": "cooke.mjs",
+  "purpose": "Score an expert's answers at 5/50/95 % on seed questions set by someone other than the expert (D6-09)",
+  "inputs": "--answers --keys sealed/<n>.seeds.json",
+  "outputs": "calibration score",
+  "exit_codes": "0; 1 score below 0.05; 2 not run",
+  "stage": "later"
+ },
+ {
+  "layer": "L4",
+  "name": "protocol-freeze.js",
+  "purpose": "Validate a field's protocol (or the pilot analysis plan) against its schema, check that the owner's approval record is present, write the frozen copy and its sha256 to the ledger; with --amend, record a deviation with its reason and the new hash (E1, E10)",
+  "inputs": "protocol.json or analysis-plan.json; approval record; ledger path; optional --amend <reason>",
+  "outputs": "<file>.frozen.json; ledger line {file, sha256, time, amend_of?}",
+  "exit_codes": "0 frozen; 2 schema invalid; 3 no owner approval; 4 already frozen with a different hash and no --amend",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L4",
+  "name": "search-log.js",
+  "purpose": "Build the documented search from reader transcripts (queries, tool, time, number of results, fetched URLs), reconcile it with the readers' schema-imposed screening results and with the cards, and write the flow table (E2)",
+  "inputs": "reader transcript JSONL paths; the readers' screening results; cards.jsonl; protocol.frozen.json",
+  "outputs": "search-log.jsonl; screening.jsonl; flow.json; reject list of cards with no screening record or no transcript trace",
+  "exit_codes": "0 reconciled; 1 one or more cards rejected (listed); 2 a transcript is unreadable or of an unknown format",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L4",
+  "name": "rescreen-sample.js",
+  "purpose": "Draw a seeded random sample of exclusions for re-screening; after the re-screen, compute the wrongly-excluded share and its Clopper-Pearson upper bound (E3)",
+  "inputs": "screening.jsonl; seed; sample share (protocol); re-screen verdicts",
+  "outputs": "rescreen-sample.json (draw, logged seed); rescreen.json {x, n, upper95, decision}",
+  "exit_codes": "0 pass; 1 upper bound over the threshold: redo screening before the pack freezes; 2 schema",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L4",
+  "name": "coverage.js",
+  "purpose": "split: divide the seed list at random into a brief half and a held-out half. score: per question, Chapman capture-recapture over route groups counted on primary ids, relative recall on the held-out half, coverage reported as min and labelled an upper bound; the yield curve per reader call; cross-field overlap counts (E4, E5 data, P7). A risk mode serves the Completeness layer's estimate of unfound risks",
+  "inputs": "split: seeds.json, random seed. score: cards.jsonl (route, canonical_id, primary_id, q, witness status) from all fields; seeds-heldout.json",
+  "outputs": "seeds-brief.json, seeds-heldout.json (outside the worktree); coverage.json; yield.json; overlap.json",
+  "exit_codes": "0 written; 3 a question not estimable (still written, marked); 2 schema",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L4",
+  "name": "stop-check.js",
+  "purpose": "Saturation stop per question: refuse a new reader for a question with no new relevant primary in the last k calls and coverage at or above the target, or with its budget spent (E5)",
+  "inputs": "question id from the helper brief; yield.json; coverage.json; budget per question",
+  "outputs": "decision line in the ledger (go, stop-saturated, stop-budget); refusal message to the hook",
+  "exit_codes": "0 go; 1 stop (the hook refuses the helper start); 2 input missing (go, logged as unchecked)",
+  "stage": "later"
+ },
+ {
+  "layer": "L4",
+  "name": "certainty.js",
+  "purpose": "Per conclusion and verdict: start level from distinct primaries, mechanical downgrades (inconsistency, typed-condition indirectness, imprecision including E4 coverage, sponsorship), the ceiling; validate the model's judgment downgrades and reasons; write the summary-of-findings table (E6)",
+  "inputs": "review.json and pack conclusions (claims table); cards.jsonl; coverage.json",
+  "outputs": "sof.json; rejection list",
+  "exit_codes": "0 accepted; 1 a rating above the ceiling or a downgrade without a reason: review returned; 2 schema",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L4",
+  "name": "dismissals.js",
+  "purpose": "Build and maintain the dismissal hazard log: apply the bound below the smallest effect of interest (else rewrite to untested), match out-list keys against newly confirmed cards in every field, reopen on a matching card or a stale support, record the refuter's verdicts and its seed detection (E8)",
+  "inputs": "review.json files; cards.jsonl with status changes; protocol sesoi; refuter results; seeded-dismissal ids (outside reach)",
+  "outputs": "dismissals.jsonl (append-only events); reopened.json",
+  "exit_codes": "0 no change; 10 entries reopened (status for the watcher); 2 schema",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L4",
+  "name": "compare.js",
+  "purpose": "anon: strip ids, normalise format, randomise order of the arms' outputs for the blinded scorer, key kept apart. score: compute the pre-registered outcomes of P18 and F1 (Y per question, McNemar conditional on the run, plants found, citation failures, use outside conditions, u, judgment share, tokens from transcripts, the scorer's arm-guess rate, the run-to-run spreads) with the labels the plan fixes (E10 to E12)",
+  "inputs": "analysis-plan.frozen.json and its ledger hash; each arm's claims tables, cards, CHECK results, transcripts; plant ledger; scores.json",
+  "outputs": "blind/ folder and blind-key.json; comparison.json",
+  "exit_codes": "0 written; 4 the analysis plan hash is missing or does not match: written but labelled exploratory; 2 schema",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L4",
+  "name": "second-opinion.js",
+  "purpose": "Disagreement rate, error correlation and n_eff between two opinions; beta factor and added detection from seeded miss indicators; variance components for the pack and reviewer facets (E7, E13)",
+  "inputs": "two or more claims tables keyed by approach and measure with their pack hashes; CHECK verdicts; seeded-fault miss indicators per opinion; tokens per run",
+  "outputs": "second-opinion.json {d, rho, n_eff, beta, added_detection, var_pack, var_reviewer, per_token}",
+  "exit_codes": "0 written; 3 not estimable (fewer than 20 shared checked claims or too few levels), written as such; 2 schema",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L5",
+  "name": "cost.js",
+  "purpose": "Computes the shape and cost quantities from named inputs: hand-over interval k* and threshold W* (count and weighted cost, with and without state growth), break-even length, reload-thrash bound n_max, F1 token price, token fan-out, illustrative bulk load, memory-based concurrency with Amdahl readings, admission factor, Smith order. Exists and was run.",
+  "inputs": "One JSON file (default inputs.json beside it); every input has a value, a tag (M, E, G or I) and a source",
+  "outputs": "Plain text on stdout (saved as computed.txt)",
+  "exit_codes": "0 ok; 2 unreadable or invalid input",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L5",
+  "name": "plan-tree.js",
+  "purpose": "Bulk-loads the approved question ids into leaves (R1, R2): checks key format and single ownership, packs mechanism groups in key order on two axes at fill factor f, writes separator keys, the lower bound on leaves, underflow and over-capacity lanes, and freezes the plan with its hash",
+  "inputs": "questions.json (id, field, group, owner, input_to), estimates.json (t_q, kappa_q; priors before the pilot, measured after), f, C_node, A_leaf from cost.js",
+  "outputs": "tree-plan.json with sha256; plan-report.txt for the owner",
+  "exit_codes": "0 plan written; 2 bad input; 3 a key without estimate, owner or group (no wave may start); 4 a lane over capacity needs an amendment",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L5",
+  "name": "capacity-check.js",
+  "purpose": "Check-before-insert (R4a): logs a group-start line that attributes later tokens to a question group, and allows the group or writes an overflow record. Run by the child before each group and by the watcher at each poll",
+  "inputs": "leaf id, group id, the session's and its helpers' transcript paths (spend U), tree-plan.json, escrow, r",
+  "outputs": "one ledger line {leaf, group, t, U}; on overflow, overflow/<leaf>-<group>.json",
+  "exit_codes": "0 allow; 10 overflow recorded (stop inserting, wake coordinator); 2 error, treated as overflow",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L5",
+  "name": "unit-costs.js",
+  "purpose": "Turns the pilot's transcripts and ledger into unit costs, per-key t_q and kappa_q, and the per-role P, g, S, sigma, h_c, o, q_f; also the serial fraction and peak memory",
+  "inputs": "all transcripts of the pilot (coordinator, child, helpers), merged ledger with group-start lines, pack and cards files, memory trace",
+  "outputs": "unit-costs.json, and a generated inputs file for cost.js",
+  "exit_codes": "0 ok; 7 more than 10 % of tokens could not be attributed to a unit or key (estimates not trusted); 2 bad input",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L5",
+  "name": "admit.js",
+  "purpose": "Admission per free slot from the prediction bound (R10), Smith order with aging (R9), escrow bookkeeping, meter reconciliation",
+  "inputs": "task table, unit-costs.json, tree-plan.json, remaining cap entered by the coordinator from the meter, owner's m_owner, z, reserve and weights",
+  "outputs": "admission-<n>.json",
+  "exit_codes": "0 at least one field admitted; 5 nothing admissible (report, do not start); 6 transcript count and meter disagree by more than 20 % (stop admitting); 2 bad input",
+  "stage": "later"
+ },
+ {
+  "layer": "L5",
+  "name": "coupling.js",
+  "purpose": "Source sharing between question groups and between fields (D8-08), to choose a plan-time split cut of low coupling",
+  "inputs": "all finished fields' cards.jsonl with canonical source ids and question ids",
+  "outputs": "coupling.json (Jaccard per pair of groups), overlap rate",
+  "exit_codes": "0 ok; 2 bad input",
+  "stage": "later"
+ },
+ {
+  "layer": "L6",
+  "name": "check-matrix.js",
+  "purpose": "Validate the STPA and FMEA records: every control action has four type entries, every matrix cell is filled or n/a with a reason, every P1-P21 id appears in some row, every high-severity hazard is covered or accepted",
+  "inputs": "completeness/control-structure.json, uca.jsonl, fmea.json, canon-map.json, hazards.jsonl, the protocol file",
+  "outputs": "stdout list of gaps; completeness/check-matrix.json",
+  "exit_codes": "0 pass; 1 gaps found (listed); 2 not-run (an input is missing, unparseable or of an unknown schema_version)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L6",
+  "name": "estimate.js",
+  "purpose": "Capture-recapture estimate of hazards not yet found: Chapman between the two blind methods, Chao2 over the lenses, log-normal intervals, a sensitivity range over borderline merges; shares its estimator code with layer 4's source-coverage script",
+  "inputs": "uca.jsonl, fmea.json, lenses/*.json, canon-map.json, threshold from params.json (set by the owner)",
+  "outputs": "completeness/estimate.json",
+  "exit_codes": "0 residual at or below the threshold; 1 above the threshold; 2 undefined (no overlap, Q2 = 0) or an input is missing",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L6",
+  "name": "protocol-model.js",
+  "purpose": "Breadth-first model check of the execution-layer protocol with fault actions (crash, sleep, allowance out, loop, owner absent); invariants and bounded liveness; prints the shortest violating trace",
+  "inputs": "completeness/model/properties.json (approved by the owner), the bound K",
+  "outputs": "completeness/model/result.json with the states explored and any traces",
+  "exit_codes": "0 no violation within the bound; 1 counterexample found; 2 the model failed to run or the state cap was hit",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L6",
+  "name": "gate.js",
+  "purpose": "Combine check-matrix, estimate and the model result into one gate record bound to the protocol's sha256; layer 1's admission script reads it",
+  "inputs": "the protocol file, check-matrix.json, estimate.json, model/result.json",
+  "outputs": "completeness/gate.json {protocol_sha256, input hashes, result, reasons}",
+  "exit_codes": "0 pass; 1 fail; 2 not-run (any input missing or stale against the protocol hash)",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L6",
+  "name": "canary-check.js",
+  "purpose": "Prove that the hook and permission refusal fires for a helper: reads the canary helper's transcript and confirms that its forbidden write was refused",
+  "inputs": "the canary helper's JSONL transcript path, the forbidden path",
+  "outputs": "an incident line in incidents/canary.jsonl",
+  "exit_codes": "0 refused as required; 1 the write went through; 2 the transcript was not found or could not be read",
+  "stage": "pilot"
+ },
+ {
+  "layer": "L6",
+  "name": "fracas.js",
+  "purpose": "Classify every incident to a hazard id; compute the escape rate; stop admission on a high-severity incident that has no hazard",
+  "inputs": "incidents/*.jsonl, hazards.jsonl, canon-map.json",
+  "outputs": "completeness/fracas.json (the escape rate and the unmapped incidents); a gate-blocking flag",
+  "exit_codes": "0 all mapped; 1 unmapped incidents (mapper needed); 3 an unmapped high-severity incident, so admission is blocked",
+  "stage": "later"
+ }
+]
