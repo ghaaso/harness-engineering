@@ -1,0 +1,43 @@
+{
+ "label": "build:U5b",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/cost.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/thresholds.json (rewritten: 60 params, every name of CONTRACT 3.20 plus the cost-model-only names, audit_coord_turn_factor removed)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/cost-inputs.json (checked, left unchanged: schema_version 1 and all tagged figures were already there)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/cost.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/cost/good-compute/case.json",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/cost/good-predict/case.json (+ root/plan/cost-inputs.json)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/cost/bad-compute-negative-g/case.json (+ root/bad-inputs.json)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/cost/bad-predict-no-inputs/case.json (+ root/run/.keep)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/cost/bad-predict-g-not-in-sweep/case.json (+ root/plan/cost-inputs.json)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/cost/bad-from-transcripts-stale-ce/case.json (+ root/run/coord.json)"
+  ],
+  "deviations_from_the_spec": [
+   "Layout: the build is flat, so cost.mjs imports ./lib.mjs and finds its default inputs at ../cost-inputs.json (the contract layout, tcb/scripts/..) and, when that does not exist, ./cost-inputs.json beside it. The first existing one is used.",
+   "P in from-transcripts: the spec says the median first-call context over the role's sessions. A successor attempt (epoch >= 2) starts with the reloaded state as well, and with three epochs the median would equal the second attempt's context and give S0 = 0. So P leaves attempt sessions of epoch >= 2 out whenever the role has an earlier session; helper and coordinator roles are unaffected. S0 and sigma are then measured from the successors, as the spec says. The change is one line (buildRoles). If the literal reading is wanted, drop the filter and change the assertions on P and S0 in T10.",
+   "g counts only positive steps between calls: a zero step is neither averaged nor counted as a fall.",
+   "compute and predict output is rounded to the precision cost.js prints (k to 1 decimal, tokens to 100, counts to 10,000, ratios to 2 decimals), so result.coordinator.k_star is 17.6 and W_star 133200. predict arms are integers; predict's check.ratio has 4 decimals.",
+   "Packing question ids in the shipped inputs are upper case (F7-A-01), which the contract's key pattern (lower case) would refuse. The input check uses the same shape case-insensitively; the bad-id test uses 'not a key'.",
+   "Extra output beyond the spec: compute leaves carry t, k, spend, pack, separator, underflow; the from-transcripts result spreads the unit-costs fields and adds path, written, sha256, ledger_appended. No-transcripts case: exit 2 with reason no-transcripts and no file (the spec says 'no row/transcript to read' without a slug).",
+   "A flag a mode does not take (--ce on compute or predict, --text on predict, --g outside predict) is a usage error 66; --root on compute is accepted and ignored.",
+   "Errors raised after the mode is known (input-invalid, stale-ce, lock-busy, usage of a bad --g) keep the mode in the JSON line; a usage error from parseArgs or a flag of the wrong mode has mode null.",
+   "thresholds.json: the previous file lacked fetch_max_redirects, hook_deadline_ms, selftest_case_ms, sleep_gap_ms, lock_retries, proc_exe, user_files, coord_over_factor, child_prefix_tokens, review_reserve_tokens and lean_tolerance_tokens, which scripts read (other scripts call get() on proc_exe, lock_retries, child_prefix_tokens, review_reserve_tokens and others). All are added with the contract's defaults and ids."
+  ],
+  "lib_change_requests": [
+   "None required. cost.mjs uses only: parseArgs, runMain, TcbError, edgeFacts, thresholds, readJson, checkCe, withRunLock, realProc, writeAtomic, readLedger, lastLine, appendLedger (kind unit-costs must be in LEDGER_KINDS), readTasks, attemptOf, sessionTranscripts, transcriptsForFolder, parseTranscript, spendOf, canonicalize, sha256hex, currentProtocol. It awaits the calls that other scripts await, so either sync or async implementations work. sessionTranscripts().main and helpers are read as path strings (objects with .path also work).",
+   "One expectation to confirm: parseTranscript's calls[].ts must be the record timestamp (ISO string); the meter window compares it with the ledger line ts."
+  ],
+  "not_testable_without_the_app": [
+   "That real transcripts have the 4.8 shape and that helpers have agent-<id>.meta.json with agentType (CONTRACT 7 item 7); that hc, qf and w can ever be read from transcripts (they are always null).",
+   "That tokens per meter percent means anything: the meter is read only by a session, in whole percent (CONTRACT 7 item 9). Skipped tests NA1 and NA2, reason 'needs the app'."
+  ],
+  "open_points": [
+   "The tests were NOT run against the real lib (lib.READY did not exist). I ran compute and predict (T1-T8, TH1, TH2) and the from-transcripts tests T9, T9b, T10-T14, T16 and T17 against a throwaway stub of the library (a copy outside tcb-build, deleted afterwards): all passed. Not exercised at all: T15's busy-lock part and T18 (they import ../lib.mjs for acquireLock, realProc, selfInfo and withRunLock). The first run on the real lib may show differences in how the stub parsed a transcript and how the real parser does; the test fixtures assume the 4.8 record shape (assistant records with message.id, model, usage, tool_use blocks, timestamp).",
+   "T18 needs the 50 MB parse to last more than about 300 ms; if the real parser is very fast the 'acquired during the parse' assertion could fail without a defect. It then needs a larger file, not a code change.",
+   "Tests T9-T18 create the commit records, cards and a frozen protocol directly under the temp root (store/commits, store/objects, plan/frozen plus a protocol-freeze ledger line). T11's no_estimate depends on lib.currentProtocol accepting that synthetic protocol; if it validates more than the contract lists, fix freezeProtocol in the test.",
+   "tcb/test/helpers.mjs does not exist yet; cost.test.mjs carries its own small helpers (like the certify and tms tests) and does not import it.",
+   "Cost-inputs.json was not changed; its weights block carries a 'tag' and '_src' key next to read/write/out, which the validator accepts (tag checked, counted for stand_in)."
+  ]
+ }
+}

@@ -1,0 +1,49 @@
+{
+ "label": "build:U4a",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/render.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/audit.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/render.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/audit.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/render/ (6 selftest cases: good-baseline-views, bad-missing-label, bad-dangling-cite, bad-object-mismatch, bad-labels-absent, bad-stale-ce; each a case.json plus root/)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/audit/ (7 selftest cases: good-clean-attempt, bad-tainted-read, bad-protected-write, bad-no-session, bad-stale-epoch, good-coordinator-within-window, bad-coordinator-over-window; each a case.json plus root/)"
+  ],
+  "deviations_from_the_spec": [
+   "Location: the brief names tcb/render.mjs and tcb/audit.mjs, while CONTRACT section 1 puts scripts in tcb/scripts/. I followed the brief (both import './lib.mjs', so they work from either folder). The tests look for tcb/scripts/<name>.mjs first and fall back to tcb/<name>.mjs. When the files are moved into scripts/, nothing in them changes.",
+   "Locking: both scripts take run.lock with lib.acquireLock plus checkCe and release it in a finally, instead of lib.withRunLock. Every lib call inside is awaited, so the scripts do not depend on whether helpers are sync or async. The effect is identical: the ce is checked inside the lock and no subprocess runs while it is held.",
+   "render built_from / page header: ledger_seq and head are those of the last ledger line that is not a render 'check' line. T22 needs byte-identical files on a rerun, and render itself appends a check line each run, so including those lines would change the header every time.",
+   "render refusals: exit 1/2/3 take the lock and append a 'check' line (fail, or not_run for exit 2) and an 'incident' line (tamper form for exit 3, first). A broken ledger chain gives exit 3 ledger-broken with no lines, and an absent ledger gives exit 2. The spec lists neither.",
+   "render 'not trusted' (R24): a card whose label is rejected or superseded, and a sentence citing one. They appear only under 'Excluded' on the page and in owner.md, with their labels. They are not hidden from synthesis: a STALE sentence still counts toward a row's worst label, but its excluded cards are left out of the row's cards, effects and conditions.",
+   "render coverage: approved = protocol question_ids plus cross_field question ids. A cross-field id counts as covered by a counted card of any field. Held-out recall and Chapman use only the cards of the field itself. 'Counted' cards are witnessed or confirmed when f5_given is true; when it is false they are all committed cards that are not rejected or superseded, and basis says 'committed'.",
+   "render measures: quiet_gaps are the gaps above sleep_gap_ms between consecutive ledger lines of the whole ledger, within the window from the task set's first bind/started line to its last line. The spec does not say which lines. by_field and by_arm use the union of their tasks' covered ids. By_task covers only the task's own question_ids.",
+   "render seeded_escape_rate copies the whole 'escape' object of qualification.json ({n, escaped, rate, upper}), not only its rate. 'totals' is an extra key in measures.json. Each field's 'cards' block also has a 'superseded' count.",
+   "render: a commit record naming an absent object file is exit 3 object-mismatch (reason detail object-missing), not exit 2.",
+   "render residual readings: the range compares two variants only, all borderline entries kept versus all moved to alt_hazard_id. A Chapman estimate that has no overlap gives state not_estimable. Chao2 is still computed there with the bias-corrected term Q1(Q1-1)/(2(Q2+1)).",
+   "audit read roots: the attempt folder itself (the default for Glob/Grep without a path) is allowed. F/in as a directory is not, only the manifest's inputs, brief.md and manifest.json. A read is reported as the path the session wrote, resolved but not followed through a link, and shown root-relative where possible. Relative paths resolve against the attempt folder (the coordinator form: against the transcript's cwd).",
+   "audit out_of_profile is computed from the main transcript only, because helpers have their own agent profiles. Reads and protected writes cover main and helpers. first_context_over is true/false when both lean values are gates, and null otherwise or for a control task. A thresholds file without lean_* names is read as no gates instead of failing.",
+   "audit coordinator form: when W_star_coord has no value (null) the window limit cannot be computed, so calls_over is empty. The spec's T14 sentence 'with the threshold value null: same calls_over as a reading' cannot hold for a null value. My test therefore uses gate false with the value kept.",
+   "audit: an unknown task exits 1 'no-task' and writes nothing. Exit 2 cases (no session, no manifest, missing profile or transcript, format-unknown) append a not_run check line and a not-run incident line when the ledger exists.",
+   "paths(root) is not used: the contract names only some of its keys, so both scripts build their paths with path.join. Both scripts also reject a relative --root and an unparseable --now with exit 66 (the same checks tms.mjs makes)."
+  ],
+  "lib_change_requests": [
+   "none. Everything used is in CONTRACT section 4 and matches tcb/lib.mjs as it stood when I read it: acquireLock, checkCe, appendLedger, recordIncident, readTasks, attemptOf, getObject, parseTranscript, sessionTranscripts, spendOf, isUnder, normPath, relPosix, segmentName, currentProtocol, currentDesign, clopperPearson, thresholds, edgeFacts, runMain (reads dry_run from the returned object)."
+  ],
+  "not_testable_without_the_app": [
+   "Real transcripts hold the assumed fields: tokens.complete on real transcripts, helper linking, tool-result text, turn-end text, StructuredOutput items (CONTRACT section 7 item 7). The tests use a synthetic writer in the harness's record shape.",
+   "Whether quiet_gaps separate real PC sleep from idle time (items 6 and 8): only the pilot's induced sleep decides.",
+   "Whether the owner page reads well on the owner's screen (the owner prefers a visual page; measures.json and coverage.json are the data a later HTML renderer would take).",
+   "The lean first-call baseline and its tolerance (item 11): both are measured on a real control session. The tests only check the arithmetic once both are set as gates.",
+   "That the harness runs guard-hook.mjs and honours its refusal (items 1 to 3). Audit is the detective layer behind it, and these tests cannot prove the preventive layer.",
+   "What the coordinator is actually shown of a child's turn end (the first 400 characters, design R30), and whether real helper transcripts are linked under <session>/subagents/ the way sessionTranscripts finds them.",
+   "Whether the harness names transcript folders the way projectDirName assumes, and that a junction made by a real session is what isUnder resolves (the junction test is skipped where junctions cannot be made)."
+  ],
+  "open_points": [
+   "The real test run has NOT happened: lib.READY did not exist, so I did not run the tests against tcb/lib.mjs. Nothing was run against the real library. To catch crashes in the meantime I ran both test files and all 13 fixture cases against a throwaway stand-in library that I wrote from the contract. All passed (render 29 tests, 3 skipped; audit 24 tests, 4 skipped; fixtures 13/13). I deleted the stand-in. The real run may still show differences in lib behaviour (for example the exact text of reasons or the schema checks of readTasks). I did check my task rows against tasks.schema.json with the real checkFormat, and read the lib's runMain, acquireLock, parseTranscript and currentDesign for the points above.",
+   "Tests are self-contained: they write their own roots, thresholds, ledgers, store objects and transcripts and do not import tcb/test/helpers.mjs. They copy tcb/schemas into each temp root because readTasks validates against <root>/tcb/schemas. They need no tcb/profiles (they write the profile files they use).",
+   "T23 and T15 hold run.lock with a node child the test spawns and kills itself, and read its start time through PowerShell (about 1 to 2 s each, as lock acquisition itself does). A full run takes about 90 s for render and 70 s for audit. Use --test-concurrency=4 or less.",
+   "The selftest fixtures put thresholds overrides in case.json for the names the scripts read (proc_exe, lock_retries, sleep_gap_ms, coord_over_factor, f5_given). The audit fixtures carry their own tcb/profiles/child.json and coordinator.json in the overlay root, and relative paths in their transcripts so the case root can be anywhere. selftest may not like an overlay root that contains a tcb/ folder. If it does, drop those profile files and rely on the live ones.",
+   "To decide at integration: seeded_escape_rate is the whole escape object; the 'Excluded' definition for sentences; the 'ledger head excludes render check lines' choice; and exit 3 for a broken ledger chain in render."
+  ]
+ }
+}

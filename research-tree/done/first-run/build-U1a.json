@@ -1,0 +1,55 @@
+{
+ "label": "build:U1a",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/replace.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/admit.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/stop.mjs"
+  ],
+  "deviations_from_the_spec": [
+   "Location: the brief puts the scripts at tcb/<name>.mjs, but CONTRACT §0 and the tests already written (tcb/test/*.test.mjs import '../scripts/<name>.mjs') expect tcb/scripts/. The scripts import './lib.mjs' and './admit.mjs' by relative path, so they work in either place as long as lib.mjs sits next to them. Someone still has to move them into tcb/scripts/.",
+   "Paths: lib.paths(root) is used only for attempt(task, e), as a fallback after the folder the fence recorded in the row. The other §2 paths (run/watcher.json, run/stop-sample/, store/commits/<task>.<step>.json, completeness/gate.json and cut-<sha12>.md, review-in/, sealed/plants/, .snapshots/text/, store/witness.jsonl, store/status/card_status.jsonl, plan/our-work/) are written out with path.join, because the contract does not fix the key names of paths().",
+   "The contract does not settle this one: replace start must call gatherFacts 'inside its lock', but §2.1 forbids parsing transcripts under the lock. So gatherFacts takes extra optional parameters {spentOf, table, cache}. replace works out every attempt's spend before it takes the lock and passes it in. Inside the lock, only lib.slotCount may look at whether transcript files exist.",
+   "admit.mjs exports more than decide and gatherFacts: also attemptTranscriptFiles, spendOfFiles, attemptSpend, spentOfRows and thresholdReader. replace.mjs imports them (same unit, decision 19). stop.mjs keeps its own copy of the transcript-collection helper, because it may not import admit.",
+   "gatherFacts also returns `unreadable` (fact files that are missing, unparseable or have the wrong schema_version: completeness/gate.json, run/coord.json). check exits 2 when these are present or when the only refusal is slots-unknown. Without --task, check exits 2 if no candidate can be admitted and at least one refusal is of that kind; otherwise 6.",
+   "decide accepts thresholds either as plain values or as {value, gate}. It takes the gate flags from thresholds.isGate, whether that is an object or a function with properties, and treats a non-null value as a gate by default. It adds `param-missing` when N_max, peak_mb or reserve_mb is absent. A null freeMb refuses with `memory` (fail-safe). slots-full compares against min(N_max, N_ceiling, 3).",
+   "stop-sample: the file is named <task>-e<k>.json after the target attempt k, not the row's epoch, which is what the tests expect. It is written as {schema_version:1, task, epoch:k, target:k, tick, sizes}; target is an integer.",
+   "READY check (replace fence): the briefs tell sessions to write READY without schema_version. So a READY with no schema_version is first validated directly with lib.validate(loadSchema('ready')), then once more with schema_version:1 added. Only a READY that does carry a schema_version goes through the strict checkFormat path.",
+   "Briefs: the roles child-reviewing and control fall back to tcb/briefs/child.md (spec/briefs.md says the child brief serves them). A role with no brief at all, such as canary, exits 2 missing. Placeholder values are: folder = the absolute attempt path with forward slashes; todo_json = the uncovered id list; checkpoint_json = {committed: [ids], prefix: [relpaths]}; must_read_json = the protocol's must_read list (or [] when there is no field).",
+   "Settings: {root} and {attempt} are filled in with forward slashes. Every value is JSON-string-escaped (so node's backslashes come out as \\\\), and the result must parse as JSON, or the script exits 2 settings-placeholder.",
+   "Incidents: replace writes an incident {class: refusal} on every exit 1, which includes the `limit` path where the fence is applied, and on exits 5 and 6. Exit 3 (except run-from-attempt and ledger-broken) gets the tamper form. stop writes refusal on exit 1 (including stop-unconfirmed) and not-run on exit 2, except `no-watcher`: step 3 of the spec says nothing is written there.",
+   "Both replace and stop also run lib.checkCe once, read-only, before any other refusal. A stale coordinator therefore gets 64 even on paths that write nothing (stop verify `waiting`, a fence refused for `no-tick`). The check inside withRunLock still guards every write.",
+   "replace fence --dry-run cannot call lib.fence, which writes. So a local predictFence works out the exit from the §3.6 rows: epoch 65, wrong-step 65, ready-wins 5, hmax 1, limit 1, the no-attempt cut/drop. This is a prediction only; the real run always goes through lib.fence.",
+   "In mapper inputs, lib.currentDesign returns no stpa or fmea ids. replace picks them itself with gate.mjs's rule: a committed design-check row of that role, its commit-record output of that kind, cut_sha equal to the current cut, and the highest `commit` ledger seq.",
+   "Checkpoint prefixes: when two earlier attempts both have the same relpath with different bytes, the later attempt's bytes win and the relpath is listed in result.checkpoint.conflicts. `mismatched` is the union, as a list of posix relpath strings. An `s_` id is looked for in committed outputs (id and canonical text), not in prefixes from untrusted staging.",
+   "The manifest carries schema_version:1, because §3 says every object carries one even though §3.5 does not list it. `inputs` leaves out in/manifest.json itself.",
+   "bind reads the first cwd of the session's transcript before taking the lock, using its own small chunked reader, not parseTranscript. The comparison with the attempt folder is case-folded."
+  ],
+  "lib_change_requests": [
+   "currentDesign(root) should also return stpa_id/stpa_sha and fmea_id/fmea_sha, picked by the same 'highest commit ledger seq' rule. replace and gate would then share that rule instead of each re-implementing it.",
+   "withRunLock(root, {script, ce, proc, now, retries}) should pass `retries` on to acquireLock. The scripts pass threshold lock_retries this way, and the exit-75 tests set it to 3.",
+   "Export TcbError with the constructor (code, exit, detail). The scripts fall back to a plain Error with code, exit and detail when it is missing, so runMain should recognise either form.",
+   "runMain should take mode and dry_run for the §1.3 line from the object fn returns ({exit, result, reasons, mode, dry_run}) or from ctx.mode / ctx.dryRun, which the scripts set before parseArgs. That way an early usage error still prints the right mode and dry_run.",
+   "Fix the key names of paths(root) in the contract, for example watcher, stopSample(task, e), commitRecord(task, step), gate, cutFile(sha), reviewIn(task), snapshotText(sha), plants(task), so scripts can stop spelling these paths themselves.",
+   "Add a small removeFile(path) helper with the Windows-sharing retries. stop.mjs currently removes its sample with fs.rmSync and only reports a failure on stderr.",
+   "The [ready] schema should not require schema_version, because the briefs have sessions write {kind, task, epoch, step} without one. Otherwise the briefs need to add it. As things stand, checkFormat would reject every real READY marker.",
+   "The [stop-sample] schema should give `target` as an integer (the target attempt's epoch) and `epoch` as that same k, which is what stop.mjs writes and the tests expect."
+  ],
+  "not_testable_without_the_app": [
+   "replace: whether the rendered .claude/settings.json (PreToolUse hook running guard-hook.mjs) and .claude/agents/<type>.md actually bind a session started in the attempt folder (CONTRACT §7 item 3).",
+   "replace bind: whether a real session's transcript `cwd` (first record) equals the attempt folder named in bind, and whether projectDirName matches the harness's folder naming, so the wrong-folder check sees real transcripts (§7 item 7).",
+   "admit, and replace start through it: whether lib.attemptProcesses finds a real session's processes (a claude.exe command line naming its folder or session id), so `live` and `pending` count real children (§7 item 4).",
+   "admit: whether peak_mb = 1200 matches the memory a real session takes. It is a guess until measured, so the memory refusal can only be calibrated in the app.",
+   "stop request/verify: whether the coordinator's own stop really ends a real session's turn and its helpers, and whether a real claude.exe command line names the folder or session id, so that real orphans show up in `survivors` (§7 item 4).",
+   "stop verify: real transcript flush timing within stop_verify_deltas watcher ticks, i.e. whether a still-running session always shows growth within 2 ticks.",
+   "fence host class: whether lib.realProc boot() (LastBootUpTime) changes across a real shutdown on this PC. With Fast Startup on it may not, and the failure would be charged."
+  ],
+  "open_points": [
+   "tcb/lib.mjs did not exist while I worked, so none of the three scripts has been run end to end. The only check was decide() against a stub reservation(), using literal facts copied from the admit tests: T1, T3/T4, T6, T7, T8 and T10 came out as expected. All three files pass node --check.",
+   "The shipped tcb/thresholds.json (owned by the briefs unit) does not yet match CONTRACT §3.20. It lacks lock_retries, proc_exe, user_files, child_prefix_tokens, review_reserve_tokens, sleep_gap_ms and others; it still has audit_coord_turn_factor; its tcb_paths_protected lacks '.git/'; and the B_tokens/r_tokens unit text says 'null = admission refused', which contradicts decision 39. The scripts default lock_retries to 300 and user_files to [], and they require proc_exe (param-missing 2 when absent).",
+   "replace and stop create lib.realProc({exe: proc_exe}) for the lock's selfInfo. In stop's T13, proc_exe points at a missing file, so the not-run incident can only be written if lib.acquireLock can still take the lock when selfInfo's PowerShell call fails (pid only, start_time null). This depends on how lib is built.",
+   "Spec ambiguity I settled one way: on the limit path (exit 1, fence applied), replace also writes an incident line. If the orchestrator wants incidents only for refusals that changed nothing, remove that one line in modeFence.",
+   "Spec ambiguity: stop exit 1 `stop-unconfirmed` also writes an incident {class: refusal}, following the literal 'incident on exits 1 and 2'. The tests do not count incidents in that case."
+  ]
+ }
+}

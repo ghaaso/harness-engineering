@@ -1,0 +1,58 @@
+{
+ "label": "build:U1b",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/watch.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/status.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/handover.mjs"
+  ],
+  "deviations_from_the_spec": [
+   "Design against contract, contract followed. In the design, handover kills the old watcher and alarm (R12, lines 177 and 630), and R6 (line 127) says each endturn kills and re-arms. The contract (decisions 5 and 29) forbids both. handover raise only lists live old wake sources in result.stale_wake_sources, and endturn starts and kills nothing.",
+   "File locations: the brief puts the scripts in tcb/<name>.mjs beside lib.mjs, while the contract and the tests use <root>/tcb/scripts/<name>.mjs. Every script imports './lib.mjs', which resolves in both layouts. The watcher spawns <root>/tcb/scripts/watch.mjs for intake, as the spec says, and falls back to its own running file when that path does not exist.",
+   "Paths: the contract publishes only the key names tasks, ledger, coord and attempt(task, e) for lib.paths(root). Each script therefore keeps a small local table of root-relative run files (run/coord.json, run/acked.json, run/alarm.json, run/watcher.json, run/watcher.lock, run/status.json, run/intents, run/stop-sample, store/commits, plan/notes). An attempt folder is taken from attempts[].folder first, then lib.paths(root).attempt when it is a function, then wt/<task>-e<e>.",
+   "status next for a row at stop-requested: a stop-sample file run/stop-sample/<task>-e<epoch>.json, or stop unconfirmed, gives stop-verify. Only otherwise does stop none or requested give stop-session. Read literally, the spec's first-match order would give stop-session for 'requested plus a sample'; status.test.mjs T3 expects stop-verify.",
+   "watch, first sight of a task or of a new epoch: the calls already in its transcripts are taken as the baseline, so new calls are 0. The hang counter still counts that tick when it is a counted tick, and the stall counter starts there. This matches watch.test.mjs T2-T4 and T22.",
+   "watch, classes 10 and 27 raised from ledger lines (a tms reopened check, a tamper incident): each line is its own condition, with the key '<class>|@<seq>|-|<onset_tick>'. Without the line seq in the key, a second line arriving before the coordinator acknowledges the first would never wake it. A failing verifyLedger is one condition, '27|-|-|<onset>'.",
+   "watch, common cause: of the non-host fails with ticks_total - tick < W_cc_ticks, it counts the largest group whose ticks also lie within W_cc_ticks of each other. This equals the spec's plain count unless a fail's tick is ahead of ticks_total. The halt line lists that group.",
+   "watch --intake: the steps run only for rows that are active at started or bound. A committed row at bound is skipped. A step exit outside {0, 1, 6, 10, 64, 3}, for example 65, 66, 67 or 75, gets the same not-run incident as 2 and 70, and intake continues.",
+   "watch: when the batched ledger append fails with exit 3 (broken ledger tail) while class 27 is present, the watcher still exits 27, without writing the event line.",
+   "handover: an incident line is written for the refusals of raise (no-drain, not-quiescent) and of bind (session-differs). None is written for init coord-exists, so that T2's 'unchanged' holds. The raise re-check inside the lock reports rows at admitted, started or bound whose current attempt is not confirmed stopped as not-quiescent, with an unknown count and the task names.",
+   "Whether a recorded process is alive (status watcher and alarm, endturn, handover stale wake sources) is decided from one process list taken before the lock: the same pid and the exact start_time string. This is the same rule as proc.alive without one PowerShell call per record. watch calls proc.alive for the intake record.",
+   "schema_version 1 is written in coord.json, alarm.json, acked.json, intent .json and .done files, watcher.json and status.json. Contract section 3 says every object carries it, even where sections 3.8-3.10 leave it out of the field list. status.json is checked with lib.checkFormat(root, 'status', ...) before it is written.",
+   "File and hash choices: an intent's done marker is run/intents/<key>.done. text_sha is the sha256 of the text file's raw bytes. An owner quote has a leading BOM removed. The 66 exits for a file path and a quote use the reason codes 'path-outside-root' and 'quote-length'.",
+   "Flags: --now, --free-mb and --boot are accepted, and ignored where unused, on every mode of all three scripts, because contract section 7 says tests pass them. status also accepts --dry-run on the intent, owner and meter modes. watch rejects --dry-run, which is not in its command line."
+  ],
+  "lib_change_requests": [
+   "Export TcbError as a named export with the constructor TcbError(code, exit, detail). The scripts import lib as a namespace and fall back to a plain Error carrying code, exit and detail if it is missing; runMain would then need to recognise that by its shape.",
+   "runMain: the contract does not say how mode and dry_run reach the stdout line. The scripts set ctx.mode and ctx.dryRun, and also return {mode, dry_run} in the object fn returns. runMain should read one of these, and print mode null when the script gives none.",
+   "paths(root): publish the key names for the run files the scripts need (coord, acked, alarm, watcher.json, watcher.lock, status, intents, stop-sample, commits, notes), so the scripts can drop their local path table.",
+   "writeTasks: say how an absent tasks.json is created. handover init passes the table {schema_version: 1, rev: 0, tasks: []} with expectRev null, retries with -1 on a 65, and handover T1 expects rev 0 stored.",
+   "Export selfInfo(proc). watch uses it for the pid and start_time it writes in watcher.json and alarm.json.",
+   "withRunLock and acquireLock must accept `retries` in their options. The scripts pass threshold lock_retries, as contract section 4.4 requires, but the withRunLock signature lists only script, ce, proc and now.",
+   "parseTranscript: endByte must be an absolute file offset, because the watcher stores it as the next fromByte. lastCall is passed as {id, usage} with usage in the {input, cache_read, cache_write, output} form, and a continued call must carry continued: true and the same id. The watcher subtracts the stored usage itself.",
+   "parseArgs: status strips its positional mode and the intent sub-mode (open|done) before calling parseArgs, and passes no `modes` for the default mode. handover passes modes with mode-scoped `required` lists. Please confirm that a flag spec without `modes` accepts an argv that has no positional.",
+   "spendOf(parsed[]): last_context must come from the main transcript. status calls spendOf([main]) separately for the window, so either convention works, but the contract should say which element is main.",
+   "proc.list, proc.alive, selfInfo, acquireLock, withRunLock, appendLedger, variant and intakeCandidates are all awaited. They may be sync or async."
+  ],
+  "not_testable_without_the_app": [
+   "The watcher's and the alarm's exits starting or reaching the coordinator's turn as background commands, also during sleep and after a ce change, so that an old watcher or alarm reaches its ce check and exits 64 (needs-app item 5).",
+   "Node timers and the PC across suspend: one sleep of delta_ms counts as one tick (item 6).",
+   "Real transcripts matching the parser (item 7): incremental parsing by end_byte, continued calls across a read boundary, helpers under <session>/subagents/, and projectDirName folder naming. The watcher's call counts, stall, hang and loop, status --reconcile finding a session by folder, the per-attempt spend in status, and the windows all depend on this.",
+   "A real session's context window (last_context) in its transcript: the child window class 15, and the coordinator's own session transcript for the drain (class 16, W_star_coord) and W_quality.",
+   "Real claude.exe command lines naming the attempt folder or session id (item 4). slotCount relies on them for handover raise quiescence and for status slots.",
+   "That a detached intake spawned by the watcher (detached, stdio ignore, windowsHide) keeps running after the watcher exits when the harness started the watcher as a background command.",
+   "That the owner starts the successor coordinator from handover's one-line brief, and that the old coordinator, woken late, is refused by every writing script (exit 64).",
+   "The usage meter reading behind status meter (item 9)."
+  ],
+  "open_points": [
+   "Not executed: lib.mjs did not exist under tcb/ or tcb/scripts/ while I worked. The scripts pass node --check only. I checked my reading of the spec against the existing tcb/test/watch.test.mjs and tcb/test/status.test.mjs and found it consistent: hang and stall baseline, coalesce_ticks 0, fail ticks, the split call, intake endings at 64 and 3, alarm previous and superseded, the next of every step, dry-run result keys, reason slugs. No handover test existed yet.",
+   "Cost: status re-parses every attempt's transcripts in full on each build. The watcher parses a fenced attempt in full on every tick until its stop is confirmed, to count zombie spend. Both grow with large transcripts; an incremental cache for old attempts would need a field in watcher.json that the contract does not define.",
+   "The watcher spawns intake only while some row is active at started or bound, as the spec says. Cards left to witness or promote after the last row commits get an intake only when a row runs again.",
+   "status does not synthesise a not_run entry for the canary (decision 18: 'shows it as not_run until run'), because the subject canary:<session> needs a session id. A rule for that entry is needed.",
+   "status raises the anomaly watcher-dead only when watcher.json exists and its process is gone. An absent watcher shows as alive false with no anomaly; endturn's watcher-missing covers it.",
+   "If the watcher cannot read the spawned intake's start_time from the process list (the child has already exited), it records start_time null and calls proc.alive(pid, null) on the next tick. How lib treats a null start_time needs a decision.",
+   "The contract's [watcher], [coord], [alarm] and [acked] field lists do not include schema_version, but section 3 requires it. If the schema writer leaves it out with additionalProperties false, those files would fail validation; only status.json is validated by these scripts.",
+   "When the scripts move into tcb/scripts/ (the contract layout, and the one the tests copy into each root), nothing in them needs to change."
+  ]
+ }
+}

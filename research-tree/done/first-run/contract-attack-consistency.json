@@ -1,0 +1,266 @@
+{
+ "label": "contract:attack-consistency",
+ "result": {
+  "findings": [
+   {
+    "id": "C01",
+    "file": "CONTRACT.md",
+    "lines": "271-283 (§3.6 table), 316-317 (§3.8 next); spec/status.mjs.md 45-50; spec/stop.mjs.md 14-16",
+    "severity": "high",
+    "kind": "state-machine",
+    "claim": "A committed row's attempt is never stopped, so its slot is never freed: after N_max (2) commits no task is ever admitted again, and handover raise never finds quiescence.",
+    "evidence": "lib slotCount (CONTRACT 591-594) counts every attempt with stop != confirmed: transcript and no process gives `unknown`. Decision 17 says a committed child counts until `stop verify` confirms. But §3.6 has no row for committed/bound to stop request, and status `next` for a committed or bound row falls to `none` (status 46-50: only 'bound with a READY ... without a commit record' gives `commit`). stop.mjs accepts committed rows only via the unresolved CR-stop-committed. admit T6/T15 and handover T5 show `unknown`/`unconfirmed` blocking.",
+    "fix": "CONTRACT §3.6: add the row `committed / bound | stop request --epoch e, then (coordinator closes the session) stop verify | step stop-requested -> stopped, state stays committed, attempts(e).stop = confirmed`. §3.8: add `stop-request` to the `next` enum. status.mjs.md line 49: insert `committed at step bound -> stop-request; committed at stop-requested -> stop-verify;` before `failed, limit true ...`. stop.mjs.md lines 14-16: replace `(see CR-stop-committed)` with `(CONTRACT §3.6 committed row)`."
+   },
+   {
+    "id": "C02",
+    "file": "spec/gate.mjs.md",
+    "lines": "28, 43 (step 7); CONTRACT.md 410-412",
+    "severity": "high",
+    "kind": "format-mismatch",
+    "claim": "gate.mjs treats every threshold whose name ends `_max|_min|_floor` as an action line. `N_max` (2, design R10) and `unattributed_share_max` (0.1) match, and `views/measures.json values` has no `N` or `unattributed_share`. So `check` is `measure-missing` (not_run) forever, admit refuses every research task with `gate-fail`, and nothing past the design checks is ever admitted.",
+    "evidence": "gate step 7: 'for each threshold param with suffix _max|_min|_floor ... value absent or null: measure-missing (not_run)'. CONTRACT §3.20 lists `N_max / N_ceiling | 2 / 3 | design R10` with a non-null value. render step 6 writes `values` with only `unverifiable_share` and `coverage`. admit condition 3 refuses unless gate result is pass.",
+    "fix": "CONTRACT §3.20: give a param an optional `line: {measure: string, op: max|min|floor}` and add it only to `unverifiable_share_max` ({measure: unverifiable_share, op: max}) and `coverage_floor` ({measure: coverage, op: floor}). gate.mjs.md line 43: replace 'for each threshold param with suffix `_max|_min|_floor`' with 'for each threshold param carrying `line`'. Also change line 28 to match. briefs.md T14 (line 45): 'exactly the keys value, unit, source, gate, and optionally line'."
+   },
+   {
+    "id": "C03",
+    "file": "CONTRACT.md",
+    "lines": "404-423 (§3.20 table); spec/briefs.md 29 and T15 (46)",
+    "severity": "high",
+    "kind": "format-mismatch",
+    "claim": "Eight threshold names that specs read through `thresholds(root).get` are in neither the §3.20 table nor the briefs owner's list. `get` of an absent name throws `param-missing` 2, so guard-hook denies every tool call (`internal`), and snap, audit, render, selftest, compare and cost exit 2.",
+    "evidence": "fetch_max_redirects (snap 25); hook_deadline_ms (guard-hook 23); selftest_case_ms (selftest 21); lean_tolerance_tokens and coord_over_factor (audit 29). briefs line 29 names the latter `audit_coord_turn_factor`, a second name. Also sleep_gap_ms (render 67), blind_fail_rate (compare 56; in briefs, not the contract), unattributed_share_max (cost 34; in briefs, not the contract). CONTRACT 448-449: `get` of an absent name -> param-missing 2.",
+    "fix": "CONTRACT §3.20 table: add `fetch_max_redirects 5 guess`, `hook_deadline_ms 5000 guess`, `selftest_case_ms 60000 guess`, `lean_tolerance_tokens null measured`, `coord_over_factor 1.5 mapping D3-01`, `sleep_gap_ms 600000 guess`, `blind_fail_rate <D6-05 value> mapping D6-05`, `unattributed_share_max 0.1 guess`. briefs.md line 29: rename `audit_coord_turn_factor` to `coord_over_factor`. briefs.md T15: extend the list of names to check with these eight."
+   },
+   {
+    "id": "C04",
+    "file": "spec/replace.mjs.md",
+    "lines": "34-38 (Writes), 72-76 (start steps 6-8); spec/briefs.md 25-26",
+    "severity": "high",
+    "kind": "missing-writer",
+    "claim": "The briefs read input files under `in/` that replace.mjs never builds. stpa and fmea sessions get no `in/cut.md`, and the mapper gets no `in/stpa.json`/`in/fmea.json`. So R54/R55's blind analyses cannot run, gate.mjs check never passes, and (pilot item 33) nothing is admitted. The same gap leaves the fresh reviewer without `in/pack.json` and `in/cards/`.",
+    "evidence": "briefs.md 26 lists `in/protocol.json, in/questions_sha.txt, in/reader-brief.md, in/pack.json, in/cards/<id>.json, in/files/<relpath>, in/snapshots/, in/cut.md, in/cut_sha.txt, in/stpa.json, in/fmea.json, in/problems.md, in/hazards.json` and `view/committed.json` by commit. replace start writes only brief, manifest, checkpoint, review-in copy (CR-reviewin, layout undefined), todo and settings. commit.mjs.md Writes (25-29) has no `view/committed.json`.",
+    "fix": "replace.mjs.md start: add step 7b. Every stage: `in/protocol.json` = the frozen protocol named by the field's last protocol-freeze/amend line, plus `in/questions_sha.txt`. Roles with reader in agent_types: `in/reader-brief.md`. Stage design-check: `in/cut.md` = `completeness/cut-<sha12>.md` of the last `cut` line and `in/cut_sha.txt`. Role mapper: also `in/stpa.json`/`in/fmea.json` from the committed stpa/fmea outputs of that cut, `in/problems.md` from `tcb/problems.md`, and `in/hazards.json` = the current hazards object if any. Stage fresh-review: the review-in layout `pack.json`, `cards/<id>.json`, `files/<relpath>`, `snapshots/<text_sha>`. Every file goes into manifest `inputs`. Add these paths to CONTRACT §2.1 `wt/<task>-e<e>/in/` row. Add `view/committed.json` to commit.mjs.md Writes and to §2.1 (writer commit), or delete it from briefs.md 26."
+   },
+   {
+    "id": "C05",
+    "file": "spec/fsck.mjs.md",
+    "lines": "54-57 (check 8); spec/replace.mjs.md 37; spec/guard-hook.mjs.md 94-97",
+    "severity": "high",
+    "kind": "two-writers-conflict",
+    "claim": "replace writes `.claude/agents/reader.md` into every child attempt. fsck check 8 calls any file under `.claude/` other than settings.json `claude-extra`, which exits 3 (tamper, all work stops) on the first fsck after the first child start.",
+    "evidence": "replace Writes: `.claude/agents/<type>.md` (CR-agents). guard-hook 96-97: 'replace copies reader.md into {attempt}/.claude/agents/'. fsck 55-57: 'any other file under .claude/ ... -> claude-extra' and exit 3 on any failing item. admit and commit record both require a passing fsck.",
+    "fix": "fsck.mjs.md check 8: replace 'any other file under `.claude/`' with 'any other file under `.claude/` except `.claude/agents/<t>.md` for each t in the role profile's `agent_types` whose bytes equal `tcb/agents/<t>.md` (else `agents-differs`)'. CONTRACT §3.5 manifest: add `agents: [{type, sha256}]`. §2.1 `wt/<task>-e<e>/` row: add `.claude/agents/` with writer replace. Drop CR-agents in replace.mjs.md line 37."
+   },
+   {
+    "id": "C06",
+    "file": "spec/check-queue.mjs.md",
+    "lines": "37-39 (step 1 intake candidates); spec/promote.mjs.md 56-58; spec/watch.mjs.md 62-63",
+    "severity": "high",
+    "kind": "state-never-left",
+    "claim": "Every card checked before all J classes qualify gets a `witnessed` line with reason `unqualified` and a `check`. That takes at least 14 batches (R42), up to about 168 cards. check-queue never queues a card that has any `check` line again, so these cards can never become `confirmed`, and certify (R43) fails every review citing them. watch class 14 still counts them as awaiting a checker, so it wakes the coordinator for a batch that check-queue refuses (`nothing-to-check`).",
+    "evidence": "promote 57-58: no qualification -> 'a line with status witnessed, reason unqualified'; the check is carried. check-queue 38: candidates are cards 'that no status line carries a check for'. watch h (62-63): 'count of cards whose status is witnessed (awaiting a checker)'. No mode re-promotes on qualification (revert only goes down).",
+    "fix": "check-queue.mjs.md step 1, intake: replace 'and that no status line carries a `check` for' with 'and whose last status line has no `check`, or has reason `unqualified` or `unqualified-revert` while qualification.json now marks every class J1, J2, J4 qualified'. watch.mjs.md h (line 62): define the count as 'the candidates check-queue's intake mode would take (shared function `checkCandidates(root)` exported from check-queue.mjs, allowed import added to decision 19)'."
+   },
+   {
+    "id": "C07",
+    "file": "spec/tms.mjs.md",
+    "lines": "47-48 (flag-open, CR-T1); spec/certify.mjs.md 38-39; spec/check-queue.mjs.md 59-61; spec/promote.mjs.md 64-65; CONTRACT.md 359-362, 372-373",
+    "severity": "high",
+    "kind": "state-never-left",
+    "claim": "Nothing ever clears an R18 flag. Any sentence flagged `scope-outside`, `scope-dropped` or `number-uncited` stays PENDING forever, every target holding it fails tms, and certify fails the review with `r18-flag` even after a checker confirms the citation.",
+    "evidence": "tms 48: '`flag-open`, clearing record CR-T1'. check-queue 59-60: 'The key keeps no (object, sid) for a sentence item, so a sentence-level verdict cannot be attached to its sentence later [CR-14]'. promote 64-65: sentence items write the current status, 'how this clears an R18 flag is CR-T1'. §3.15 `check: {batch, item, verdict}` has no sentence reference.",
+    "fix": "CONTRACT §3.17 seed key: the real-item form becomes `{seed:false, card_id, node?: \"<obj_id>#<sid>\"}`. §3.15: `check: {batch, item, verdict, node?}`. promote.mjs.md step 7: a sentence item writes a line with `check.node` from the key. tms.mjs.md line 48: `flag-open` holds until, for every card the flagged sentence cites, a status line exists with `check.node` = that node, `check.verdict` = `confirmed` and seq after the flagging `intake` line. certify.mjs.md 38-39: replace CR-T1 with 'the same rule as tms'."
+   },
+   {
+    "id": "C08",
+    "file": "spec/watch.mjs.md",
+    "lines": "67-70 (step 5); T14 at 122",
+    "severity": "high",
+    "kind": "contradiction",
+    "claim": "The event dedupe rule contradicts its own test, and either reading breaks wakes. Read literally, step 5 appends a new event every tick once the old one is acknowledged. Read as T14, a condition with no task, keyed (class, null, null): memory 24, common-cause 26, tamper 27, drain 16, checker-batch 14, never wakes the coordinator again in that ce after its first acknowledgement.",
+    "evidence": "Step 5: 'append an `event` line unless an `event` line with the same (class, task, epoch) has seq > acked_seq', so an acknowledged line does not block a new one. Same sentence: 'a class whose only line is acknowledged does not cause an exit again (CR-raised)'. T14: 'already acknowledged ... -> no new line and no exit'.",
+    "fix": "watch.mjs.md step 5: replace the sentence with 'Each class instance has a key (class, task, epoch, onset_tick), where onset_tick is the tick at which the condition became present after being absent, kept in watcher.json `pending`/a new `active: {<class>|<task>: onset_tick}`. Append one `event` line per key, and exit for a key only while its line has seq > acked_seq. A condition that clears and returns gets a new onset and raises again.' CONTRACT §3.10: add `active: {<key>: onset_tick}` to watcher.json. T14: add 'the condition clears for a tick and returns -> a new line and an exit'."
+   },
+   {
+    "id": "C09",
+    "file": "spec/watch.mjs.md",
+    "lines": "83-89 (intake steps), 61 (CR-tamper-signal, CR-reopen-signal); spec/tms.mjs.md 26-29, 71-76",
+    "severity": "high",
+    "kind": "unobservable",
+    "claim": "Class 10 (reopened dismissal) and class 27 from intake have no defined source. Intake is detached with stdio ignored, so its exit (3, 64) is read by no one. tms reports 'newly reopened' only by exit 10 and writes no ledger record of it, and the next tms run compares against the labels.json it just wrote. So the reopen is lost for good the first time intake runs tms.",
+    "evidence": "watch i: 'spawn ... detached (stdio ignored, unref) ... Never awaited'. watch g: 'Tamper (CR-tamper-signal) -> 27. Reopened dismissal (CR-reopen-signal) -> 10' (both undefined). tms Writes: a `check` line 'only when the labels' sha256 or the result differs', reasons unspecified. tms step 3: 'Newly reopened = reopened now and not reopened in the previous labels.json'.",
+    "fix": "tms.mjs.md Writes: the `check` line's `reasons` include `{code: \"reopened\", detail: [keys]}` for every newly reopened dismissal, and the line is always appended when that list is non-empty. CONTRACT §1.4 / §3.7: 'a script exiting 3 appends `incident {class: refusal, detail: {tamper: true, script, code}}` before exiting'. watch.mjs.md g: 'class 27 = verifyLedger fails, or an `incident` line with detail.tamper true and seq > acked_seq; class 10 = a `check` line of check tms with a `reopened` reason and seq > acked_seq'. Delete CR-tamper-signal and CR-reopen-signal."
+   },
+   {
+    "id": "C10",
+    "file": "spec/watch.mjs.md",
+    "lines": "86-89 (intake exit handling)",
+    "severity": "medium",
+    "kind": "exit-code-meaning",
+    "claim": "Intake logs every non-zero exit other than 64 and 3 as `incident {class: not-run}`. It runs every tick while any row is started or bound. A definite outcome (exit 1: harvest some-invalid, commit intake with rejected files, witness rejected cards, tms stale-or-pending, promote off-enum), deferred 6, or tms 10 is recorded as not-run, and some repeat every tick, flooding the ledger and the R58 incident counts.",
+    "evidence": "watch 87-88: 'any other non-zero exit is one incident line {class: not-run, detail: {script, exit}}'. §1.4: 1 = definite no, 2 = could not decide. harvest re-finds the same invalid candidates each run (exit 1 again), and commit intake exits 1 whenever rejected files exist.",
+    "fix": "watch.mjs.md intake: 'exit 2 or 70 -> incident {class: not-run}; exit 1, 6 or 10 -> no incident (the step's own ledger lines carry the outcome), recorded in result.steps; 64 or 3 ends intake with that code (and 3 is already logged by C09's tamper incident)'. Add a test: harvest stub exiting 1 on two ticks -> no incident line."
+   },
+   {
+    "id": "C11",
+    "file": "CONTRACT.md",
+    "lines": "390-392 (§3.18 analysis-plan); spec/compare.mjs.md 19-21; spec/render.mjs.md 26, T19 122",
+    "severity": "high",
+    "kind": "format-mismatch",
+    "claim": "compare.mjs and render.mjs take the arms from `arm_tasks` in the frozen analysis plan, but [analysis-plan] has no such field and `additionalProperties` defaults to false. So either protocol-freeze `plan` rejects the plan (`schema-invalid`), or compare `anon`/`score` exits 2 ('all arms absent') and render's `by_arm` is always null. The step reference is also spelled `<task>:<step>` here and `<task>.<step>` in tms.",
+    "evidence": "§3.18 analysis-plan fields: units, primary, secondary[], delta, decision_rules[], looks, arm_budget, predicted_total, labels[], approval. compare 20: 'The analysis plan carries arm_tasks: {<arm>: {pack?: \"<task>:<step>\", ...}}'. tms 16: `--target <task>.<step>`. protocol-freeze checks the plan against the schema (step 4).",
+    "fix": "CONTRACT §3.18 analysis-plan: add `arm_tasks: {<arm>: {pack?: \"<task>.<step>\", review?: \"<task>.<step>\"}}` (arms within arm_budget keys). protocol-freeze.mjs.md Analysis plan check: every arm_tasks key is in arm_budget and every reference names a planned task and one of its steps (`arm-tasks`). compare.mjs.md 20: change ':' to '.'."
+   },
+   {
+    "id": "C12",
+    "file": "CONTRACT.md",
+    "lines": "316-317 (§3.8 next enum); spec/status.mjs.md 46-48; spec/admit.mjs.md 41-42, 69-70",
+    "severity": "medium",
+    "kind": "state-machine",
+    "claim": "status `next` and admit's candidate states disagree with §3.6. A planned row shows `replace-start` and admit calls it admissible, but replace start on planned/none exits 65 (it needs step stopped, reached only by `fence --reason first`). A fenced row shows `stop-session`, but §3.6 requires `stop request` first, and the enum has no value for it.",
+    "evidence": "§3.6 273: planned/none -> `replace fence --reason first`; 275: active/fenced -> `stop request`. status 46-47: 'planned/none or active|parked/stopped -> replace-start ... fenced -> stop-session'. admit 41: wrong-state unless (planned, none) or (active|parked, stopped). replace start step 2: 'row must be state active|parked at step stopped'.",
+    "fix": "§3.8 enum: `none|replace-fence|replace-start|stop-request|stop-session|stop-verify|start-session|bind|commit|owner`. status.mjs.md 46-47: 'planned/none -> replace-fence; active|parked/stopped -> replace-start; fenced -> stop-request; stop-requested with stop none|requested -> stop-session, with unconfirmed or after the session is closed -> stop-verify'. admit.mjs.md 41 and 69: drop (planned, none) from the admissible states and from check's candidates."
+   },
+   {
+    "id": "C13",
+    "file": "CONTRACT.md",
+    "lines": "266-277 (§3.6 fence reasons and table); spec/lib.md T54-T60",
+    "severity": "medium",
+    "kind": "state-machine",
+    "claim": "Rows at planned/none and active/stopped cannot take a `cut`, `drop` or `memory` fence: fence is defined only from active at bound/started/admitted and from parked/stopped. A task the owner drops before it starts, or one whose admission is refused for ever (budget, gate), can never reach `dropped` or `cut`. Its ids then never get the `dropped-by-owner` or overflow record, and the run cannot finish.",
+    "evidence": "§3.6 274: 'active / bound, started, admitted; parked / stopped | replace fence --reason <r>'. 266: '`first` (planned task only)'. No row for planned/none or active/stopped with cut/drop.",
+    "fix": "§3.6 table: add 'planned / none or active / stopped | replace fence --reason cut|drop | step stopped, no new attempt, epoch unchanged, state cut (with the overflow line written by replace) or dropped'. Also allow `memory` from active/stopped -> parked. Then §2.1 field split gives replace the `overflow` kind for this case, and §3.7 `overflow` lists writer 'stop; replace (unstarted cut)'. lib.md: add T60b for these transitions."
+   },
+   {
+    "id": "C14",
+    "file": "spec/admit.mjs.md",
+    "lines": "25-26, 33 (CR-gate-current); spec/gate.mjs.md 41; spec/render.mjs.md 27; CONTRACT.md 396-399",
+    "severity": "medium",
+    "kind": "format-mismatch",
+    "claim": "Three specs pick 'the current hazards object' three different ways, so admit's `gate-stale` check can disagree with the hazards_sha that gate.json binds. gate takes the highest `updated_rev` row, render the highest `commit` ledger seq, and admit leaves it undefined (CR-gate-current).",
+    "evidence": "gate 41: 'several: the highest updated_rev'. render 27: 'the d_ object of kind hazards whose commit has the highest commit ledger seq'. admit 33: 'the current cut and hazards (CR-gate-current)'. §3.19: admission accepts only when 'both shas equal the current cut and hazards object'.",
+    "fix": "CONTRACT §4 (new lib function) `currentDesign(root) -> {cut_sha, hazards_id, hazards_sha}`. cut_sha is from the last `cut` line. The hazards object is the output of kind hazards of the commit record whose `commit` ledger line has the highest seq among committed mapper rows, and whose object cut_sha = cut_sha. gate.mjs.md 41, render.mjs.md 27 and admit.mjs.md 33 call it, and gate drops 'highest updated_rev'."
+   },
+   {
+    "id": "C15",
+    "file": "CONTRACT.md",
+    "lines": "587-590 (§4.10); spec/watch.mjs.md 45; spec/status.mjs.md 45; spec/replace.mjs.md 72; spec/stop.mjs.md 56",
+    "severity": "medium",
+    "kind": "undefined-shared",
+    "claim": "The variant V and the 'covered ids' (CR-variant) are used by four scripts but defined nowhere in the contract. Four builders will each define them: watch's stall detector, status V, replace's todo and stop's overflow ids, which can disagree on one row.",
+    "evidence": "All four cite CR-variant, and no CR text exists in CONTRACT.md. Design R5 defines V: research = approved ids not covered by a witnessed card (a committed card until F5); review = empty form slots plus unchecked cited cards.",
+    "fix": "CONTRACT §4.10: add `variant(root, row, {f5Given}) -> {V, covered: key[], uncovered: key[]}` per R5. Covered = row.question_ids carried by a card of this task with last status witnessed|confirmed, or by a committed card (named by a commit record or an intake line of the task) when f5_given is false. Review V = (sentences missing from verdicts and dismissals) + cited cards whose label is not confirmed. Replace 'CR-variant' in the four specs with 'lib.variant'."
+   },
+   {
+    "id": "C16",
+    "file": "spec/briefs.md",
+    "lines": "29 (last sentence); spec/admit.mjs.md 55-57, T8 99-101",
+    "severity": "medium",
+    "kind": "contradiction",
+    "claim": "briefs.md says a null `B_tokens`/`r_tokens` makes admission refuse. admit.mjs says null is a reading with no reason (T8: 'B null -> admitted'). The static test and admit's tests assert opposite outcomes.",
+    "evidence": "briefs 29: 'for B_tokens and r_tokens null means \"not set\": admission refuses (admit's rule, not a reading)'. admit 56-57: 'When B is null or gate:false the check is a reading: no reason'. CONTRACT §3.20 403: value null = a reading, never a gate (R45).",
+    "fix": "briefs.md line 29: delete 'for `B_tokens` and `r_tokens` null means \"not set\": admission refuses (admit's rule, not a reading)' (the contract's R45 rule wins)."
+   },
+   {
+    "id": "C17",
+    "file": "CONTRACT.md",
+    "lines": "302-307 (§3.7 rows check, witness/promote, protocol-freeze group)",
+    "severity": "medium",
+    "kind": "format-mismatch",
+    "claim": "The §3.7 ledger data table disagrees with what the writers write and the readers read. The protocol-freeze row puts four kinds against three data groups, so `protocol-amend` would carry only {old_sha, reason_code} and `plan-freeze` {field, n_brief, ...}. Yet guard-hook, tms, render, compare and admit read `data.name`/`data.path` from amend lines. witness writes first_seq/last_seq that §3.7 lacks, and `check.subject` is a string in some scripts and an object in others.",
+    "evidence": "§3.7 306: '`protocol-freeze`, `protocol-amend`, `plan-freeze`, `seed-split` | name, sha256, path; old_sha, reason_code; field, n_brief, n_heldout, rng_seed'. protocol-freeze 33-35 writes amend {name, sha256, path, old_sha, reason_code} and plan-freeze {name, sha256, path}. witness 30-32: `witness` {counts, first_seq, last_seq} and check subject `{cards, first_seq, last_seq}`. selftest canary subject `{session, tcb_sha}`. status not_run keys on (check, subject).",
+    "fix": "§3.7: split the row into protocol-freeze {name, sha256, path}; protocol-amend {name, sha256, path, old_sha, reason_code}; plan-freeze {name, sha256, path}; seed-split {field, n_brief, n_heldout, rng_seed}. Make the witness row {counts, first_seq, last_seq}, which fsck CR-F2 then uses. Make `check`.subject a string, and in witness.mjs.md 31 write subject \"witness\" with the seqs in reasons' detail and in selftest canary subject \"canary:<session>\"."
+   },
+   {
+    "id": "C18",
+    "file": "CONTRACT.md",
+    "lines": "348-351 (§3.13); spec/snap.mjs.md 37-40; spec/witness.mjs.md 24; spec/guard-hook.mjs.md 59",
+    "severity": "medium",
+    "kind": "format-mismatch",
+    "claim": "The by-url line format and key in the contract differ from the one snap writes and witness and guard-hook read. The contract key is sha256(url), the three scripts use sha256(new URL(u).href). The contract line has no `schema_version`, no `reason` and a non-null raw_sha, while snap writes `{raw_sha: null, reason}` on a failed fetch. Under a schema with additionalProperties false, those lines fail.",
+    "evidence": "§3.13: '`by-url/<sha256(url)>.jsonl` lines: {raw_sha, retrieved_at, source_changed: bool}'. snap 37-40: '{schema_version, raw_sha, retrieved_at, source_changed}' and '{raw_sha: null, reason}', url_sha = sha256hex(new URL(u).href) [CR-3]. witness 39 picks 'the latest by-url line with a non-null raw_sha'.",
+    "fix": "§3.13: `by-url/<sha256hex(new URL(url).href)>.jsonl` lines `{schema_version, raw_sha: 64 hex|null, retrieved_at, source_changed: bool, reason?: <the meta reason enum>}`, with reason required when raw_sha is null. Remove [CR-2]/[CR-3] in snap, witness and guard-hook."
+   },
+   {
+    "id": "C19",
+    "file": "CONTRACT.md",
+    "lines": "140 (§2.1 coordinator row), 9-11 (source tree); spec/guard-hook.mjs.md 75; spec/seed.mjs.md 43-44, 53-54; spec/status.mjs.md 16, 21; spec/replace.mjs.md 42",
+    "severity": "medium",
+    "kind": "missing-writer",
+    "claim": "Scripts read files that no script or role is allowed to write, and whose format the contract does not define. seed plant reads `plan/plant-candidates/<field>.json` and `plan/our-work/<relpath>` (no writer in §2.1; the coordinator's guard-hook write_prefixes cover only the six plan files). status owner/intent need a `--quote-file`/`--text-file` under the root, which the coordinator cannot write either. `plan/tasks-plan.json` has no format (CR-taskplan). Without these, plant always exits 2, so certify is `plants-missing`; no owner line can be written, so protocol-freeze is `approval-unrecorded`; and the tasks-plan cannot be checked.",
+    "evidence": "seed 43-44, 53-54: candidates file and our-work, [CR-10]. guard-hook 75: coordinator write_prefixes 'the six coordinator files of §2.1 under {root}/plan/, notes [CR-8]'. status 21: quote and text files must be under the root. replace 42: 'validate it (format: CR-taskplan)'.",
+    "fix": "§2.1 coordinator row: add `plan/plant-candidates/<field>.json`, `plan/our-work/**`, `plan/notes/**` (quote and text files). §3: add [tasks-plan] `{schema_version, tasks: [{task, field, stage, role, steps, deps, question_ids, e_task}]}` and [plant-candidates] as seed.mjs.md 54 states it. guard-hook.mjs.md 75: coordinator write_prefixes = those plan paths plus `{root}/plan/notes/`. protocol §3.18: `fixed_files` are relative to `plan/our-work/` (replace's review-in uses the same base)."
+   },
+   {
+    "id": "C20",
+    "file": "CONTRACT.md",
+    "lines": "423 (weights); spec/briefs.md 29, T17 (48); spec/render.mjs.md T14 (112-114)",
+    "severity": "medium",
+    "kind": "contradiction",
+    "claim": "The `weights.out` default is 1 in the contract and render's test but 5 in the briefs owner's thresholds file and its test. render T14 (token_cost 1950) and the static test T17 cannot both pass.",
+    "evidence": "CONTRACT 423: `weights | {read:0.05,write:1.25,out:1}`. briefs T17: 'weights is {read: 0.05, write: 1.25, out: 5}' (tagged M). render T14: '1000+200+250+500 = 1950'.",
+    "fix": "CONTRACT 423: `{read:0.05,write:1.25,out:5} | pricing ratios (cost inputs, tag M)`. render.mjs.md T14: 'token_cost 1000+200+250+2500 = 3950'. Delete the '(request)' note in briefs.md 29."
+   },
+   {
+    "id": "C21",
+    "file": "CONTRACT.md",
+    "lines": "262 (attempts); spec/replace.mjs.md 30-32, 55; spec/stop.mjs.md T1-T3 (74-80); spec/status.mjs.md 60; spec/audit.mjs.md 25, 40; spec/certify.mjs.md 21",
+    "severity": "medium",
+    "kind": "format-mismatch",
+    "claim": "`attempts` is an array of {epoch, ...}, but specs index it two ways: by epoch (`attempts[E]`, `attempts[e]`, `attempts[epoch]`) and by position (`attempts[0]` for epoch 1 in stop T1-T3). Builders will read the wrong attempt (off by one) for bound_at, the host class, session, manifest and stop.",
+    "evidence": "replace 55: `attempts[E].bound_at`; stop T1: 'attempt 1 ... attempts[0].stop'; audit 25: `attempts[epoch]`; certify 21: `attempts[e].manifest`.",
+    "fix": "CONTRACT §4.6: add `attemptOf(row, e) -> entry` (the entry whose `epoch` = e; missing -> `no-attempt` 2). Rewrite every `attempts[x]` in the specs as `attemptOf(row, x)`: replace 30-32 and 55, stop T1-T3, status 60, audit 25 and 40, certify 21."
+   },
+   {
+    "id": "C22",
+    "file": "spec/commit.mjs.md",
+    "lines": "64-76 (record steps 5-7)",
+    "severity": "medium",
+    "kind": "pilot-rule-uncovered",
+    "claim": "Pilot rule R22/R27 is not built. A tainted session's output must be 'not accepted, rerun once clean, then failed', but commit record never reads the `audit` line. No fence reason or step covers a tainted attempt, so a research pack from a tainted session is committed and becomes a checkpoint input.",
+    "evidence": "Design R22 (line 248-249): 'taints output whose transcripts read outside in/ ...: not accepted, rerun once clean, then failed'. commit record steps 1-11 check READY, step order, fsck, outputs and card status, not audit. §3.6 fence reasons have no taint.",
+    "fix": "commit.mjs.md record: add step 6b 'the last `audit` line for task+epoch must exist (else 6 `audit-missing`) with label clean (else 1 `tainted`, incident refusal)'. CONTRACT §3.6: add failure reason `tainted` (counts toward R like stall), so the rerun is `replace fence --reason tainted` and the limit path makes it failed. Add `audit-missing`/`tainted` to commit's exit list and tests."
+   },
+   {
+    "id": "C23",
+    "file": "spec/commit.mjs.md",
+    "lines": "73-76 (record step 7, pack step)",
+    "severity": "medium",
+    "kind": "pilot-rule-uncovered",
+    "claim": "Pilot rule R47 (with R17) asks for one capacity check at pack freeze, C_node = W_quality − P − R_rev, with no confirmed card cut. No spec implements it, and commit record accepts a pack of any size.",
+    "evidence": "Design R47 (447-449): 'In the pilot the leaves are the lanes, with one capacity check at pack freeze (C_node = W_quality − P − R_rev; no confirmed card is cut)'. commit record step 7 checks only pack-count, cards-pending and untrusted-cards. No threshold names P or R_rev.",
+    "fix": "commit.mjs.md record step 7 (pack step): 'pack_tokens = Σ round(canonical bytes / 4) of the pack and its cards; over `C_node` = W_quality − child_prefix_tokens − review_reserve_tokens without an `index` -> 1 `pack-over-capacity`; a confirmed card of the field missing from `cards` and from not_covered -> 1 `confirmed-card-cut`'. CONTRACT §3.20: add `child_prefix_tokens` and `review_reserve_tokens` (guess, gate true)."
+   },
+   {
+    "id": "C24",
+    "file": "CONTRACT.md",
+    "lines": "543-562 (§4.8 parseTranscript return); spec/audit.mjs.md 62-63",
+    "severity": "medium",
+    "kind": "format-mismatch",
+    "claim": "audit.mjs's notes check (R30) reads `parsed.turnEnds` [CR-5], but §4.8's parser returns no such field. The lib builder will not produce it, so `notes_bad` cannot be computed or tested.",
+    "evidence": "audit 62: 'from `parsed.turnEnds` of the main transcript [CR-5]'. §4.8: returns {sessionId, cwd, calls, toolUses, toolResults, structured, endByte, torn, badLines}.",
+    "fix": "CONTRACT §4.8: add `turnEnds: [{ts, text}]` = for each run of assistant records ending before the next `type:\"user\"` record that is not a tool result (or the end of file), the joined `text` blocks of the last assistant record of that run. lib.md: add T78b with a fakeTranscript of two turns."
+   },
+   {
+    "id": "C25",
+    "file": "CONTRACT.md",
+    "lines": "55-59 (§1.3 code), 624 (§5 snap row); spec/snap.mjs.md 79-84; spec/replace.mjs.md 75-76; spec/guard-hook.mjs.md 81-90",
+    "severity": "medium",
+    "kind": "exit-code-meaning",
+    "claim": "Three items here use one code or path for two meanings. (1) stdout `code` is the §1.4 slug in some specs (admit T13 `deferred`, lib T5 `stale-ce`) and a specific reason in others (commit `6 intake-new`, `6 fsck-stale`), and selftest matches it. (2) 'unverifiable' exits 1 in snap and 2 in witness. (3) settings are rendered from `tcb/profiles/<role>.json` per replace (CR-settings) but from `tcb/settings/<role>.json` per guard-hook, which is absent from the contract's source tree.",
+    "evidence": "admit T13: '`code` `deferred`'. commit 89-90: '6 `intake-new`, `fsck-stale`, `cards-pending`'. selftest step 5 judges `code`. snap 84: '1 unverifiable'. witness 79: '2 none rejected and one or more unverifiable'. replace 75: 'Settings from tcb/profiles/<role>.json (CR-settings)'. guard-hook 81-90: '`tcb/settings/` [CR-9] ... replace renders the task-role files ... by placeholder substitution only'.",
+    "fix": "(1) CONTRACT §1.3: '`code` is the §1.4 slug of `exit`; the specific cause is `reasons[0].code`'. Specs that write 'exit n `slug`' mean the reason. (2) CONTRACT 624 and snap.mjs.md 79 and 84: unverifiable is exit 2 (not-run, R40); keep exit 1 for none. (3) CONTRACT line 9-11: add `tcb/settings/<role>.json`, `tcb/settings/user-deny.json`, `tcb/cost-inputs.json`. replace.mjs.md line 75: 'Settings = `tcb/settings/<role>.json` with {root},{attempt},{task},{epoch} substituted (guard-hook spec)'."
+   }
+  ],
+  "mutations": [],
+  "tests": {
+   "command": "none: review of specs only, no code exists to run",
+   "passed": 0,
+   "failed": 0,
+   "skipped": 0,
+   "output_tail": "No tests run; brief says write nothing."
+  },
+  "verdict": "Refuted as it stands. The contract and its specs are not consistent enough to build two dozen scripts from. Five defects alone stop a pilot run: C01 (committed rows never free their slot, so admission and the hand-over deadlock after two commits), C02 (gate.mjs treats N_max as an action line, so the gate never passes), C03 (missing threshold names make guard-hook deny every call), C04 (replace builds none of the design-check inputs, so the gate can never pass legitimately) and C05 (fsck calls replace's own `.claude/agents` file tampering). Two states can never be left: calibration cards stay witnessed for ever (C06) and R18 flags never clear (C07). The watcher's event dedupe contradicts its own test, and its intake-signal rules either silence wakes or misclassify exits (C08-C10). Formats differ between writer and reader in C11, C14, C17, C18, C20, C21 and C24, and C15 is a shared function (the variant V) the contract never defines. Pilot rules R22/R27 (taint means not accepted) and R47 (pack capacity check) are covered by no spec (C22, C23). The contract and the design disagree in several places; the contract wins and those are not counted as findings. acked_seq and the alarm moved from coord.json (R6) to run/acked.json and run/alarm.json (decision 4). R46 key errors exit 1, not the design's 3 (decision 24). Model fix F2's Task Scheduler supervisor is replaced by `watch --alarm`. Model fixes F6/A7 'stay at admitted' became 'stay at stopped'. Every adopted fix from model-findings.json was checked: F1, F3-F14 and X1-X7 are present in some form. No file was written."
+ }
+}

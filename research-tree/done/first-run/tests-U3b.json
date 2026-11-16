@@ -1,0 +1,44 @@
+{
+ "label": "tests:U3b",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/guard-hook.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/selftest.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/guard-hook/must_read.json",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/selftest/canary-expect.json"
+  ],
+  "deviations_from_the_spec": [
+   "Tests were only syntax-checked and their harness exercised. lib.mjs, tcb/profiles/, tcb/settings/ and tcb/agents/*.md did not exist yet, so no behaviour has passed or failed against a finished script. A dry run of the hook returned `run-from-attempt` for every call although the script sat under <root>/tcb/scripts/, not under wt/. This may be a transient state of the unfinished build, but the 'control case' in T11 will catch a persistent false positive.",
+   "Both test files carry their own small helpers (root builder, hook runner, transcript writer, tree hash, ledger chain check). They do not import tcb/test/helpers.mjs (not written yet) or lib.mjs. Hashes (treeSha) and the ledger chain are recomputed from the contract text, so they are independent oracles.",
+   "T5 of selftest uses --case-timeout-ms 2000 instead of the spec's 300 so a loaded PC does not time out the 49 quick cases. The slow stub sleeps 20 s and the test asserts the run took under 18 s and that why contains 'timeout'. The grandchild expires by itself after 15 s, so a failed kill leaks nothing and the test never kills a process it did not spawn.",
+   "selftest tests run the real tcb/scripts/selftest.mjs against a root whose tcb/scripts/ holds 24 stubs (including a stub selftest.mjs), so the case for the 'selftest' script runs a stub, not a recursive selftest. The stub understands --stub-exit/code/result64/reasons64/lines/nostdout/stderr/sleep/grandchild/pidfile/marker/probe/out/append/break-ledger/write/write-text/fetch/expect-body.",
+   "Extra tests beyond the numbered behaviours, each derived from a spec sentence: guard-hook 'step 5' (tools_allow entries ending in *); selftest T15b ({root} and {cwd} rendering), 'step 5 judge' (stdout_empty, stderr_prefix, files, exit), '--keep-failed', and 'step 6 unwritable tmp'.",
+   "guard-hook T8 (checker reads) invokes the hook as `--role coordinator` with `agent_type: checker` in the stdin, because the spec gives checker no task and only the coordinator lists it in agent_types. `--role checker` and `--role reader` given directly were not tested.",
+   "bash-refused, fetch-none and fetch-any are unreachable with the shipped profiles, so T5 and T9 test them through a copy of the profile edited in the temp root (fmea with Bash allowed, control with WebFetch allowed, child-reviewing with fetch any).",
+   "Profile `schema_version`: the spec line for tools_deny says `schema_version: 1`, but CONTRACT §3.21 lists no such field. T14 accepts a profile with exactly the 8 contract fields and optionally schema_version equal to 1; the T11 extra-field case uses a clearly foreign key `bogus_extra`.",
+   "T14 of selftest (lock busy) writes run/run.lock itself with the test process's pid and its real CIM start time (read through PowerShell). That half is skipped, with a diagnostic, if the start time cannot be read; the stale-ce half always runs.",
+   "The 50 MB ledger test for the hook (T9) writes a 50 MB file of invalid ledger lines under the temp root and asserts the allowed call is still allowed within 10 s test-side; deadline set to 3000 ms.",
+   "stderr of every deny is asserted to be exactly one line (spec: 'one stderr line'), which includes the newline-command case of T5."
+  ],
+  "lib_change_requests": [
+   "None for lib. For the spec of guard-hook T12: state the shape of the `args` and `io` parameters of decide(input, args, io) and its return value. T12 passes args {root, role} and a Proxy io that throws on every access, and asserts only that decide returns (does not throw) a result containing the code 'internal' and no allow flag.",
+   "For the spec of guard-hook T14 / CONTRACT §3.21: say whether a profile file carries `schema_version`.",
+   "For the spec of selftest: say whether stdout reasons in canary mode use the probe name as code (T16, T17 accept the probe name anywhere in the stdout reasons, and require it as the reason code in the ledger line), and how the canary placeholder {root} is written (native separators or forward slashes; T15b assumes the --root text as given)."
+  ],
+  "not_testable_without_the_app": [
+   "guard-hook needs-app 1: the harness runs the hook before every tool call, helpers included, passes hook_event_name, tool_name, tool_input, cwd, session_id, transcript_path and agent_type, and honours exit 2; a hook timeout or a node that fails to start fails open (skipped test written).",
+   "guard-hook needs-app 2: user-level denies bind every session and the // absolute form works on Windows (skipped test written).",
+   "guard-hook needs-app 3: a session started in wt/<task>-e<e>/ obeys that folder's settings and agent files and no ancestor's (skipped test written).",
+   "selftest needs-app 11: a real canary session's refusals read by canary, through it needs-app 1-3 (skipped test written).",
+   "selftest needs-app 7: real transcripts carry the refusal as an error result with the hook's stderr text (skipped test written). The canary tests use transcripts in the shape of probes/transcript-format.md, which is a believed shape."
+  ],
+  "open_points": [
+   "Not turned into tests (selftest): the default --jobs formula and the default --case-timeout-ms from threshold selftest_case_ms; the `stdin` field of a fixture case; the `schema-load` static check (needs a broken schema in the live tcb); a spawn failure as the cause of not_run (only an unwritable tmp/ is tested); which exact files the case copy receives (only absence of fixtures/ and test/ and presence of scripts/ and thresholds.json are checked); the canary-denies role and its probe list (the spec says they are not yet defined); a ce raised during a run.",
+   "Not turned into tests (guard-hook): the default hook_deadline_ms of 5000 (only an override of 200 and one of 3000 are used); that the hook reads no clock; the exact depth of what it reads (only 'writes nothing' is asserted, T13); a Read or Write with an absent file_path (spec says empty or non-string; toolAccess gives empty values, so the outcome is not stated); the exact code for an unknown role and for a non-JSON profile (T11 accepts deny, or profile-invalid or profile-missing); the exact code for staging/harvested writes (accepts write-protected or write-outside-role); a root that itself lies under a folder named .claude.",
+   "Weakly asserted because the spec is silent: the result shape of decide(); the names of the reasons in selftest stdout in canary mode (see lib_change_requests); the `why` text for ledger-broken (T10 accepts the code in the case entry or in the stdout reasons); the content of selftest.json when the result is not_run (T8 asserts it exists with result not_run, following step 7).",
+   "Cases that assume details the contract implies but does not spell out: a task row with state/step combinations such as state planned with step bound must pass the [tasks] schema (T10); Grep/Glob without path resolves to '.' against cwd and a folder equal to its own prefix counts as under it (T1); the relative node form needs cwd = root, so the relative form from cwd = plan is expected bash-pattern (T5).",
+   "The tests need these files at run time and cannot run without them: tcb/scripts/lib.mjs, guard-hook.mjs, selftest.mjs, tcb/profiles/*.json (11 roles), tcb/settings/*.json (8 task roles, coordinator, user-deny), tcb/agents/reader.md and checker.md, tcb/schemas/, tcb/thresholds.json. When run, `node --test tcb/test/guard-hook.test.mjs` takes a few spawn-heavy tens of seconds (about 400 hook processes); selftest.test.mjs starts about 50 stub processes per run and runs about 25 runs.",
+   "tcb/fixtures/guard-hook/ and tcb/fixtures/selftest/ hold only plain files (must_read.json, canary-expect.json), never case folders, so they cannot be mistaken for selftest fixture cases."
+  ]
+ }
+}

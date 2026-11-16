@@ -1,0 +1,48 @@
+{
+ "label": "tests:U1a",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/replace.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/admit.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/stop.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/replace/ (5 selftest-format cases: good-plan, bad-plan-unknown-dep, good-fence-first, bad-fence-stale-ce, bad-bind-wrong-step; replace.test.mjs also reads good-plan/root/plan/tasks-plan.json)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/admit/ (4 cases: good-check-empty, bad-no-task, bad-task-id, bad-table-step)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/stop/ (5 cases: good-request-no-session, good-request-with-session, bad-request-wrong-step, bad-request-stale-ce, bad-verify-no-watcher)"
+  ],
+  "deviations_from_the_spec": [
+   "None of the three tests has been run. tcb/scripts/lib.mjs, replace.mjs, admit.mjs, stop.mjs and tcb/test/helpers.mjs did not exist when I finished. I only ran `node --check` on the three test files, which passed. Expect first-run failures from my guesses about helpers.mjs and lib.mjs (listed in open_points).",
+   "admit T8: the spec says a new e_task of 1500 with B 10000 and reservation 8000 gives `budget`. By the stated rule (admit iff B - reservation - r >= e_task) 10000 - 8000 - 0 = 2000 >= 1500, so it would be admitted. I used e_task 2500 for the refusal, which fits the rule. The e_task 2000 with B 10500 admitted case is unchanged. This looks like a spec typo and needs the contract author's decision.",
+   "Where the spec names a behaviour in more than one outcome, the test is one test with subtests, still named with the one id: T2, T5, T6, T9, T10, T11, T12, T13, T14, T15, T16, T18, T19, T20b, T22, T23, T24. The extras are the spec's own step-level slugs: plan missing (exit 2), schema-invalid (exit 1), a plan cycle (plan-invalid), a watcher.json tick fallback (T11 control), a bind control with the right cwd (T22), and admit T5 selftest/fsck missing and fail slugs plus T10 gate-a-unverifiable.",
+   "Tests run the scripts from the source tree path (tcb/scripts/<name>.mjs) with --root <temp root>. They overwrite the temp root's tcb/profiles, settings, agents and briefs for the roles they use with synthetic files that follow CONTRACT 3.21, so they do not depend on the real role files. They also patch <root>/tcb/thresholds.json, and recompute the selftest line's tcb_sha with lib.treeSha(<root>/tcb) after that.",
+   "The replace `start` command takes no --boot flag in the spec, so none is passed. Start therefore asks the real process list for the boot identifier, and the start tests run real PowerShell.",
+   "The fixture folders under tcb/fixtures/{replace,admit,stop}/ use the selftest case format (case.json plus root/). An admissible `admit check` case cannot be written statically because it needs the tcb_sha of the case's own tcb copy, so the admit good case is the empty-table check."
+  ],
+  "lib_change_requests": [
+   "No change needed to lib.mjs, but these assumptions in my tests are pinned to its documented shape, so a mismatch should be fixed on one side or the other: `readLedger(root) -> {lines}`, `verifyLedger(lines) -> {ok}`, `treeSha(dir)` (sync or async), `projectDirName(folderAbs)`, `reservation(rows, spentOf)` with `spentOf(task, epoch)` as a function, and `thresholds.json` params shaped `{value, unit, source, gate}`.",
+   "helpers.mjs (not yet written) must provide `makeRoot({ce}) -> {root, cleanup}` with a writable `<root>/tcb/` (schemas copied, thresholds.json present or absent: the tests fall back to the source tcb/thresholds.json), a `<root>/transcripts` folder, and `<root>/wt/`. `fakeTranscript(path, {sessionId, cwd, calls: [{usage, tools: []}]})` must write one distinct message.id per call and take `usage` objects holding both short names (input, cache_read, cache_write, output) and Anthropic names (input_tokens, ...), since my tests pass both. `spawnSleeper({args}) -> {pid, start_time, kill}` must report start_time in the exact string form `proc.list()` reports.",
+   "The tests expect the `plan` row shape of replace.mjs.md T1 to pass the [tasks] schema, including `reason: null`, `session: null` and `updated_rev`. Attempt entries I hand-build omit optional fields instead of writing null. If the [tasks] schema rejects either choice, the tests' `row()`/`att()` builders (one copy per test file) need adjusting."
+  ],
+  "not_testable_without_the_app": [
+   "replace NA1: the rendered settings and agent files actually bind a session started in the attempt folder (CONTRACT 7 item 3). Skipped as `needs the app`.",
+   "replace NA2: a real session's transcript `cwd` equals the folder named in `bind` (item 7). Skipped as `needs the app`.",
+   "admit NA1: whether `attemptProcesses` finds a real session's processes, so whether `live` counts real children (item 4). Skipped as `needs the app`.",
+   "admit NA2: real memory peaks per session, so whether `peak_mb` is right. Skipped as `needs the app`.",
+   "stop NA1: whether the coordinator's stop ends a real session's turn and its helpers. Skipped as `needs the app`.",
+   "stop NA2: whether a real `claude.exe` command line names its folder or session id for `survivors` (item 4). Skipped as `needs the app`.",
+   "stop NA3: real transcript flush timing within `stop_verify_deltas` ticks. Skipped as `needs the app`."
+  ],
+  "open_points": [
+   "Every numbered behaviour of the three specs has a test (replace T1-T24 incl. T10b and T20b; admit T1-T20 incl. T6b and T13b; stop T1-T15). Four pieces of them are weaker than the spec's wording:",
+   "stop T12, 'the row fenced again between the sampling and the comparing call -> 65 inside the lock': a black-box test cannot separate the in-lock re-check from the earlier pre-check. My test bumps the epoch in the table between the two calls and sees 65 and no `stop` line, which the pre-check alone would also produce.",
+   "replace T19, 'the sentinel was never read': a test can only show the sentinel still exists with its content. T19 is skipped when a junction cannot be created.",
+   "replace T20, 'a second task start reuses it': I read it as a restart (epoch 2) of the same fresh-review task, and I change the source file in plan/our-work between the two starts to prove nothing is rebuilt. The spec does not say whether 'a second task start' means a different task.",
+   "admit T10, 'with f5 false and the id covered by a committed card -> admitted': `decide` receives `gateA.uncovered`, already computed by `gatherFacts`. I tested `decide` with `uncovered: []`. I did not test the `gatherFacts` rule that a committed card covers while f5 is false (admit.mjs.md T10 gives no script-level fixture for it), so that rule is not tested.",
+   "The shape of `thresholds` in `decide` facts is the main unknown: the spec says only 'with isGate flags'. The tests build it in one place (`thr()` in admit.test.mjs) as plain values plus `isGate` (both as a function and as a map), `gates` and `gate`. If the builder chose `{value, gate}` per parameter, edit `thr()` alone. The shapes of `protocol: {needed, frozen}` (booleans) and of `gate`/`gateA` for rows that do not need them (`needed: false`, nulls) are guesses of the same kind.",
+   "stop T3 and replace T22 write the transcript's `cwd` as `path.join(root, 'wt', '<task>-e<k>')`, which has native backslashes on Windows. They assume the scripts compare cwd and folder after normalising separators and case.",
+   "replace T13 asserts that `attempt.settings_sha` equals the sha256 of the rendered settings.json bytes, and that manifest `inputs` lists every `in/` file except manifest.json itself. The spec says only 'hash -> settings_sha' and 'every file under in/'. If the builder hashes canonical JSON instead, adjust the assertion.",
+   "replace and stop tests assume the fence creates the `attempts[]` entry of the new epoch (`wt/<task>-e<e+1>`) at fence time (asserted in replace T4 and relied on by T14, T15 and stop). The spec implies it through T3 and `start`'s use of `attemptOf(row, E)`, but never says it in one sentence.",
+   "A script run with an unusable `proc_exe` (stop T13) must still manage to take the run lock and append the incident line; the spec requires the incident line, so the test asserts it.",
+   "Test time: each `start` call and each stop `verify` call runs real PowerShell (about 1-3 s), so replace.test.mjs and stop.test.mjs will take a few minutes sequentially. They are separate files, so `node --test --test-concurrency=4 tcb/test/` runs them in parallel."
+  ]
+ }
+}

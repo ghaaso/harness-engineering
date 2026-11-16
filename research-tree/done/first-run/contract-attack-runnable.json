@@ -1,0 +1,246 @@
+{
+ "label": "contract:attack-runnable",
+ "result": {
+  "findings": [
+   {
+    "id": "F01",
+    "file": "CONTRACT.md; spec/stop.mjs.md",
+    "lines": "CONTRACT 574-579, 643-645, 652-654; stop.mjs.md 44-47, 88-90",
+    "severity": "high",
+    "kind": "unsafe-kill / power a script lacks / contract-vs-facts conflict",
+    "claim": "stop verify kills any process whose command line contains the attempt folder or session id as a substring. That is not proof that the process belongs to the attempt, and killing the session's claude.exe is a script stopping a session, which §6 and harness fact 1 rule out.",
+    "evidence": "mustInclude is a case-folded substring test. The marker `wt/f1-e1` is also contained in `wt/f1-e10`..`wt/f1-e19`, so a later live attempt of the same task gets killed. Any owner program opened on a file in the folder also matches (an editor, notepad, an `rg`, a PowerShell window), and fact 11 forbids touching those. Fact 10 says it is unknown whether claude.exe's command line names the folder or id at all. So in practice the kill finds either nothing or the wrong process. §6 line 643 says no script stops a session, while line 652 allows exactly that.",
+    "fix": "For the pilot, make verify report-only. In stop.mjs.md step 5, replace the kill sentence with: `attemptProcesses(list,{folder,sessionId}) -> survivors[{pid,start_time,name}]; kill nothing; confirmed = grew empty and survivors empty`. Add `survivors` to the `stop` ledger data in CONTRACT §3.7 line 293. In §6 line 652, delete the stop.mjs clause. If the owner later enables a kill (threshold `stop_kill`, default false, source owner), require all of these: the marker is the folder followed by `\\`, `/`, `\"` or end of string, compared on normalised paths; name is claude.exe or node.exe; start_time >= attempts[k].bound_at; needs-app item 4 answered. Drop T8's kill assertion and replace it with `survivors` names the sleeper and it is still alive."
+   },
+   {
+    "id": "F02",
+    "file": "CONTRACT.md; spec/admit.mjs.md",
+    "lines": "CONTRACT 591-594; admit.mjs.md 51-54",
+    "severity": "high",
+    "kind": "check-then-act / memory safety",
+    "claim": "slotCount gives zero slots to an attempt that has been admitted (or started) but has no matched process and no transcript yet. Back-to-back `replace start` calls therefore all pass `slots-full`, and all pass `memory` too, because each reads the same pre-start free memory. N_max and the memory reserve do not bound sessions on a PC with a history of commit-charge freezes.",
+    "evidence": "§4.10: live means a matched process; unknown means a transcript exists; otherwise an attempt counts nothing. A freshly admitted attempt has neither until the coordinator starts its session and the first record lands, and fact 10 says process matching may never work. Memory check 7 is `freeMb − reserve_mb < peak_mb`, with no deduction for admitted attempts that are not yet running.",
+    "fix": "CONTRACT 591-594: add `the current attempt of a row at step admitted|started|bound, and a committed row's last attempt whose stop ≠ confirmed, always counts one slot: live if matched, else unknown — never zero`. admit.mjs.md item 7: `memory` when `freeMb − reserve_mb − peak_mb × pending < peak_mb`, where pending = current attempts at step admitted|started with no matched live process. Add admit T6b: two admitted rows with no process and no transcript, N_max 2 → `slots-full`."
+   },
+   {
+    "id": "F03",
+    "file": "CONTRACT.md; spec/lib.md",
+    "lines": "CONTRACT 465-467, 478-490; lib.md T21 49-51, T28-T36 65-83",
+    "severity": "high",
+    "kind": "Windows rename/unlink semantics",
+    "claim": "writeAtomic, lock release/break and the lock's wx create assume POSIX behaviour. On Windows, renaming over a file fails with EPERM/EACCES/EBUSY while any other process (Defender, the owner's 360 Total Security, the search indexer, git, a PowerShell Get-Content, an editor) has it open without FILE_SHARE_DELETE. An unlinked file another process holds open stays delete-pending, so the next `wx` create of `run.lock` gets EPERM, not EEXIST.",
+    "evidence": "Nothing in the contract retries. A builder will map EPERM to an uncaught 70 or to a broken lock path, and T21 (200 renames of 1 MB under a concurrent reader) will fail intermittently under real-time AV scanning of the fresh temp file.",
+    "fix": "CONTRACT 465-466 append: `rename, unlink, link and wx-create retry on EPERM/EACCES/EBUSY up to 40 times, 25-100 ms apart with jitter (about 3 s); a wx create of a lock that fails EPERM counts as busy; fsync the file only, never a directory handle (EPERM on win32)`. Line 468: `readJson/readJsonl retry EPERM/EACCES/ENOENT up to 5 times, 20 ms apart`. lib.md T21: `every read is one of the two full contents; a transient EPERM is retried, never surfaced`. Add T25b: a reader holds the target open through a child process without share-delete (`powershell [IO.File]::Open(..,'Read','Read')`); writeAtomic succeeds after the child closes within the retry window."
+   },
+   {
+    "id": "F04",
+    "file": "CONTRACT.md; spec/replace.mjs.md; spec/lib.md",
+    "lines": "CONTRACT 519-522; replace.mjs.md 65-71; lib.md T62-T64 130-134",
+    "severity": "high",
+    "kind": "unsafe action through a reparse point",
+    "claim": "stagingCut and readCutPrefix walk the untrusted staging folder, and replace start deletes a torn attempt folder recursively. Neither is specified to stop at junctions, symlinks or hard links. A junction in staging would make the next attempt hash and copy owner files into its `in/checkpoint/`, and a recursive delete that follows it would delete owner files.",
+    "evidence": "stagingCut says only `every regular file under staging/`. replace step 4 says `remove it`. commit intake and harvest do check junctions, but the cut and the delete, which are the two operations that copy out and destroy, do not.",
+    "fix": "CONTRACT 519: `walk with lstat; a symbolic link, junction or other reparse point, or a file with nlink > 1, is never followed or read: it is listed in cut.links and excluded`. replace.mjs.md step 4: `remove it only after an lstat walk finds no reparse point inside; else exit 3 untrusted-path and leave it`. Delete with fs.rmSync only after that proof. Add lib T62b: staging holds a junction to a temp folder containing a sentinel file; the sentinel is not listed, not read, and still exists after replace start removes the torn folder (skip if a junction cannot be made)."
+   },
+   {
+    "id": "F05",
+    "file": "CONTRACT.md; spec/commit.mjs.md; spec/cost.mjs.md",
+    "lines": "CONTRACT 478-480; commit.mjs.md 81-84; cost.mjs.md 35",
+    "severity": "high",
+    "kind": "lock budget vs work done under the lock",
+    "claim": "The lock retry budget is 20 × 100 ms = 2 s, but slow work is specified inside run.lock. Other scripts, including the watcher's own event appends and the detached intake chain, will then exit 75 routinely.",
+    "evidence": "Work inside the lock: `git add -A` and `git commit` over a growing store (commit record step 10); parsing every transcript (cost from-transcripts, step 1 `Lock + --ce` before step 2); and selfInfo, which needs PowerShell to stamp the lock record (1-3 s on this machine). A watcher append that gets 75 ends the watcher with an exit that is not a wake class.",
+    "fix": "CONTRACT 478: `retries=300, retryMs=100 ±50% jitter`. Add to §2.1: `no subprocess (git, PowerShell, taskkill) and no transcript parse runs while run.lock is held; take facts before, write after`. commit.mjs.md step 10: `after release`. cost.mjs.md step 1: `Parse first; lock + --ce only around the write`. lib: `selfInfo` is computed once per process before the retry loop and cached."
+   },
+   {
+    "id": "F06",
+    "file": "spec/commit.mjs.md; spec/fsck.mjs.md; CONTRACT.md",
+    "lines": "commit.mjs.md 81-84; fsck.mjs.md 51-53; CONTRACT 107-110, 650-651",
+    "severity": "high",
+    "kind": "command execution / hang / Windows git behaviour (cut candidate)",
+    "claim": "The git commit in `commit record` runs inside the lock and can run arbitrary code or hang the whole run. The pilot can drop it without unguarding anything, because the ledger hash chain plus fsck already give tamper evidence.",
+    "evidence": "git runs `.git/hooks/*` and `core.fsmonitor` (`.git/` is not in tcb_paths_protected). A global `commit.gpgsign=true` waits on pinentry while run.lock is held. Git for Windows' default `core.autocrlf=true` rewrites LF on checkout, so restored objects no longer hash to their names. Paths over 260 characters fail without `core.longpaths`. `add -A` sweeps `*.tmp`, `run.lock.*.stale`/`.orphan` and `run/watcher.json`; while git reads watcher.json, the watcher's rename over it gets EPERM (F03).",
+    "fix": "commit.mjs.md step 10: replace with `pilot: no git; git: null always` (decision 23 already allows null), and drop T20's git half. fsck check 7: run `git -c core.fsmonitor=false -c core.hooksPath=NUL -c core.longpaths=true -c core.autocrlf=false diff --quiet --no-ext-diff --no-textconv C -- tcb` with spawnSync timeout 60000. handover init: write `<root>/.gitattributes` `* -text` and add `*.tmp`, `run/*.stale`, `run/*.orphan`, `run/watcher.json` to .gitignore. Add `.git/` to tcb_paths_protected (CONTRACT 423)."
+   },
+   {
+    "id": "F07",
+    "file": "CONTRACT.md; spec/watch.mjs.md",
+    "lines": "CONTRACT 329-332, 543; watch.mjs.md 43-60",
+    "severity": "high",
+    "kind": "resource safety (memory/CPU on a freeze-prone PC)",
+    "claim": "Every tick (60 s), the watcher re-parses each active transcript and the coordinator's whole main transcript from byte 0. status, replace start and admit re-parse every attempt's transcripts on each call. A long coordinator transcript (hundreds of MB) costs seconds of CPU and close to a GB of heap per tick, and a file over about 512 MB cannot be read as a single string, so the watcher would exit 70 in a loop.",
+    "evidence": "watcher.json stores only `calls` per task and no byte offsets. parseTranscript has `fromByte`, but nothing keeps endByte between runs.",
+    "fix": "CONTRACT 331: tasks.<task> adds `files: {<relpath>: {end_byte, calls, input, cache_read, cache_write, output, last_context, peak_context, loop}}`, plus `coord_file` in the same shape. Each tick parses from end_byte; a file shorter than end_byte is re-parsed from 0. CONTRACT 543: `parseTranscript reads in 1 MiB chunks (fs.readSync), never the whole file`. Add watch T22: a 50 MB synthetic transcript ticks with peak RSS growth under 100 MB."
+   },
+   {
+    "id": "F08",
+    "file": "CONTRACT.md; spec/guard-hook.mjs.md; spec/watch.mjs.md; spec/selftest.mjs.md",
+    "lines": "CONTRACT 656-657; guard-hook.mjs.md 83-85, 145-147; watch.mjs.md 64-66; selftest.mjs.md 58",
+    "severity": "medium",
+    "kind": "spawn by bare name / fail-open / console windows",
+    "claim": "Spawning `node`, `powershell`, `git` or `taskkill` by bare name lets libuv on Windows search the current directory before PATH. The hook command `node ...` resolves to whatever `node` is first on PATH: an older or shim node that exits 1 makes the hook fail open (only exit 2 denies). And `detached:true` on Windows gives the intake process its own visible console window.",
+    "evidence": "§6 allows PATH lookup. The settings render `command: \"node \\\"{root}/...guard-hook.mjs\\\"\"`. watch step i spawns detached with `stdio ignored, unref` and no windowsHide. Node 24 also refuses `.cmd` shims without a shell, so a scoop or nvm git or node shim fails with EINVAL.",
+    "fix": "CONTRACT 656-657: `node is spawned as process.execPath; powershell as C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe and taskkill as C:/Windows/System32/taskkill.exe (lib constants; realProc exe seam kept); every spawn passes cwd: root (never under wt/), shell: false, windowsHide: true`. guard-hook.mjs.md 84: render `\"<process.execPath at replace time>\" \"{root}/tcb/scripts/guard-hook.mjs\" ...`, and selftest's static check asserts that the absolute node path exists."
+   },
+   {
+    "id": "F09",
+    "file": "spec/handover.mjs.md; spec/watch.mjs.md",
+    "lines": "handover.mjs.md 44-49, 79-85; watch.mjs.md 77-79, 133-135",
+    "severity": "medium",
+    "kind": "check-then-act race / unneeded kill machinery",
+    "claim": "`raise` kills the watcher and the alarm in step 2, before the step-3 re-check under the lock. If step 3 then refuses (not-quiescent), the coordinator is left at ce N with no watcher. The kill is not needed anyway: a raised ce makes the watcher exit 64 at its next tick (≤ Δ) and the alarm exit 64 on waking.",
+    "evidence": "Step 2 runs 'outside the lock' and 'the raise still proceeds'. Step 3 can still exit 6 with 'nothing written'. In alarm mode, the kill of the previous alarm duplicates the `superseded` exit that already exists.",
+    "fix": "handover.mjs.md: delete step 2 and the Kills sentence in Writes (lines 30-31). Result `killed` becomes `stale_wake_sources {watcher, alarm}` (read-only). Drop T6's kill assertions, T7 and T8. watch.mjs.md alarm step 2: replace with `record the previous alarm in result.previous; kill nothing` (step 5's superseded exit already handles it); T20: the first alarm exits 0 `superseded`. This removes every kill except the (now report-only) stop."
+   },
+   {
+    "id": "F10",
+    "file": "CONTRACT.md; spec/lib.md",
+    "lines": "CONTRACT 574-579; lib.md T88 188, T90 194-195",
+    "severity": "medium",
+    "kind": "Windows process tree semantics",
+    "claim": "`descendants(list,pid)` and `taskkill /T` follow ParentProcessId. Windows never clears that field when a parent exits and reuses pids quickly, so an unrelated process whose dead parent's pid was reused can be counted as a child, and killed by /T.",
+    "evidence": "Neither the contract nor T90 asks for a creation-time ordering check.",
+    "fix": "CONTRACT 578: `descendants includes a child only when child.start_time >= parent.start_time`. Line 575: `kill(pid,…) never uses /T; it kills verified descendants leaf-first, each by taskkill /PID <n> /F after re-listing and matching its start_time`. lib T90b: a process whose ppid equals a pid now held by a younger process is not a descendant."
+   },
+   {
+    "id": "F11",
+    "file": "CONTRACT.md",
+    "lines": "93, 96",
+    "severity": "medium",
+    "kind": "Windows reserved file names",
+    "claim": "The field and task patterns accept DOS device names (`con`, `prn`, `aux`, `nul`, `com1`-`com9`, `lpt1`-`lpt9`). These end up in file names such as `plan/questions/nul.json`, `sealed/heldout/con.json`, `store/commits/nul.pack.json` and `sealed/plants/aux.json`, where writes can vanish into the device or fail.",
+    "evidence": "field `^[a-z][a-z0-9]{0,11}$`, task `^[a-z][a-z0-9-]{1,39}$`.",
+    "fix": "field: `^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z][a-z0-9]{0,11}$`; task: `^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:$|\\.))[a-z][a-z0-9-]{1,39}$`. Add a lib T2 row: `--task nul` → 66."
+   },
+   {
+    "id": "F12",
+    "file": "spec/guard-hook.mjs.md; spec/fsck.mjs.md",
+    "lines": "guard-hook.mjs.md 51-53; fsck.mjs.md 54-57, 92-93",
+    "severity": "medium",
+    "kind": "Windows path normalisation",
+    "claim": "The `.claude` and CLAUDE.md checks compare raw segment names. Win32 strips trailing dots and spaces and ignores case, so a Write to `staging/.claude./x` or `staging/CLAUDE.md ` creates `.claude` or `CLAUDE.md`. The hook does not deny CLAUDE.md names at all, and fsck's check is not specified as case-insensitive (`claude.md` loads on NTFS too).",
+    "evidence": "Step 8 only checks for 'no `.claude` segment at any depth'. fsck T12 tests only the exact `CLAUDE.md`.",
+    "fix": "guard-hook step 8: `each segment is compared after removing trailing '.' and ' ' and case-folding; deny write-claude for a segment .claude and for a final name claude.md or claude.local.md`. fsck check 8: the same normalised, case-folded comparison. Add guard T2 cases `staging/.claude./x`, `staging/Claude.MD`, `staging/CLAUDE.md.` → 2, and fsck T12 `staging/claude.md` → 3."
+   },
+   {
+    "id": "F13",
+    "file": "CONTRACT.md; spec/replace.mjs.md",
+    "lines": "CONTRACT 268-269; replace.mjs.md 53-54",
+    "severity": "medium",
+    "kind": "wall clock deciding a counted quantity",
+    "claim": "Whether a failure is `host` decides whether a restart is charged (R=1, so this decides limit → failed) and whether it counts toward W_cc. The decision is wall-clock arithmetic (`now − uptime > bound_at`), contrary to §1.2. A clock correction after a hard reset flips it. Windows Fast Startup 'shutdowns' keep uptime running, so they are misclassified.",
+    "evidence": "§1.2 says nothing counted derives from wall time. Here, `host` changes `restarts` and the W_cc count.",
+    "fix": "Record a boot identifier instead of comparing clocks. CONTRACT 262 attempts[] adds `boot: string` set at bind from `(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')`, taken in the same PowerShell call as the process list. Line 268: `host = the current boot string ≠ attempts[E].boot` (equality, no arithmetic; boot unknown → false). README: Fast Startup must be off, or such failures are charged. Remove `--uptime-s`/`uptimeS` from edgeFacts."
+   },
+   {
+    "id": "F14",
+    "file": "spec/stop.mjs.md; CONTRACT.md",
+    "lines": "stop.mjs.md 12-16, 41-42; CONTRACT 49-50",
+    "severity": "medium",
+    "kind": "wall-clock wait / harness timeout",
+    "claim": "`stop verify` sleeps 2Δ = 120 s in-process. That equals the coordinator's Bash tool default timeout, so the harness kills it mid-run, possibly inside the lock. selftest run, snap --new and cost from-transcripts can also pass 120 s, and nothing tells the coordinator how to run them.",
+    "evidence": "stop.mjs.md line 15 sets the default `--interval-ms` to 2×delta_ms. The guard-hook only allows `node tcb/scripts/*`, with no mention of background mode or a timeout.",
+    "fix": "Make verify sleepless and tick-counted. `verify` takes sample A into `run/stop-sample/<task>-e<e>.json` (writeAtomic, under the lock, with watcher.json ticks_total) and exits 6 `deferred`. A later `verify` compares once ticks_total ≥ sample tick + `stop_verify_deltas` (already in thresholds.json line 13). Also add to CONTRACT §6: `scripts that may run longer than 60 s (selftest run, snap --new, cost from-transcripts, watch) are started as background commands`."
+   },
+   {
+    "id": "F15",
+    "file": "spec/stop.mjs.md; spec/watch.mjs.md; spec/lib.md",
+    "lines": "stop.mjs.md 84-86, 98-99; watch.mjs.md 133-135; lib.md 101-102",
+    "severity": "medium",
+    "kind": "flaky tests",
+    "claim": "Several tests race a timer in the test against a child process's startup. node start, PowerShell selfInfo and the lock together take 0.3-3 s, so the event lands before or after the window at random.",
+    "evidence": "stop T6 and T12 append or bump 'during the interval' of 200 ms. watch T20 starts a second alarm 'during the first's sleep' of 100 ms. lib T46 runs 8 processes × 50 locked appends with a 2 s retry budget.",
+    "fix": "stop T6/T12: the script writes the stderr line `[stop] sample-a` after sample A, and the test acts only after reading it (or, with F14, the test calls verify twice and moves ticks_total between calls). watch T20: the first alarm uses `--sleep-ms 60000`, and the second starts only after alarm.json names the first. lib T46: children pass `retries: 1000`. All PowerShell-touching tests run with `{concurrency: false}`."
+   },
+   {
+    "id": "F16",
+    "file": "CONTRACT.md; spec/briefs.md; spec/selftest.mjs.md",
+    "lines": "CONTRACT 597-602; briefs.md 46; selftest.mjs.md 56-57",
+    "severity": "medium",
+    "kind": "test isolation (reads outside tcb-build)",
+    "claim": "The shipped thresholds set `transcripts_root` to the real `C:/Users/User/.claude/projects`. makeRoot copies tcb/ thresholds and is not required to override it, and neither is selftest's per-case copy. Any test or selftest case that leaves it out scans the owner's real transcripts, which breaks the rule that tests read nothing outside tcb-build and makes results depend on the machine.",
+    "evidence": "T97 lists `thresholds?` as optional. selftest step 4 copies the live thresholds and applies only the case's own overrides.",
+    "fix": "CONTRACT 597: `makeRoot always sets transcripts_root = <root>/transcripts (created empty) unless the test passes one`. selftest step 4: `every case copy sets transcripts_root = <case root>/transcripts and allow_loopback per case`. lib T97 asserts that transcripts_root lies under the temp root."
+   },
+   {
+    "id": "F17",
+    "file": "spec/selftest.mjs.md",
+    "lines": "20, 56-60",
+    "severity": "medium",
+    "kind": "resource use / orphan processes",
+    "claim": "Each case copies the whole live tcb/, fixtures and tests included, so the I/O grows with the square of the case count and Defender scans every copy. On a case timeout only the direct child is killed, and on Windows child.kill() does not end its tree, so a watch case's detached intake or a sleeping alarm survives as an orphan. `--jobs` up to 8 ignores free memory.",
+    "evidence": "Step 4: 'copy `<root>/tcb/` into it … kill that child (own child only)'.",
+    "fix": "Step 4: `copy only scripts/, schemas/, profiles/, settings/, agents/, briefs/, thresholds.json, cost-inputs.json; case root <root>/tmp/st-<nonce8>/<n>/`; `on timeout end the own child's tree with taskkill /PID <child.pid> /T /F (pid and start time recorded at spawn)`. Static check: `every watch.mjs case carries --no-intake, --once or --alarm`. `--jobs` default: `max(1, min(8, availableParallelism()−2, floor((freeMb − reserve_mb)/300)))`."
+   },
+   {
+    "id": "F18",
+    "file": "CONTRACT.md",
+    "lines": "570-576",
+    "severity": "medium",
+    "kind": "Windows PowerShell 5.1 output format",
+    "claim": "The realProc command as written does not yield the promised `[{…start_time ISO}]`. PS 5.1 ConvertTo-Json writes DateTime as `\\/Date(ms)\\/` (millisecond precision, Kind lost), a single result as an object rather than an array, and non-ASCII command lines in the OEM code page.",
+    "evidence": "`Select-Object …CreationDate | ConvertTo-Json -Compress` with no encoding set and no array wrapping. start_time equality between lock records and later lists depends on the exact conversion.",
+    "fix": "CONTRACT 571-572: `[Console]::OutputEncoding=[Text.Encoding]::UTF8; @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine,@{n='start_time';e={$_.CreationDate.ToUniversalTime().ToString('o')}}) | ConvertTo-Json -Compress -Depth 2`. lib normalises an object to a one-element array, and start_time is compared as that exact string. Add lib T85b: the own entry's start_time matches `^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{7}Z$`."
+   },
+   {
+    "id": "F19",
+    "file": "CONTRACT.md; spec/lib.md",
+    "lines": "CONTRACT 478-479, 579; lib.md 185-193",
+    "severity": "medium",
+    "kind": "PowerShell/WMI load and flaky tests",
+    "claim": "Every lock acquisition needs the holder's own start_time, and the only source is a PowerShell CIM query (1-3 s, up to 15 s under load). `node --test` runs test files in parallel by default (about 23 here), and many script tests spawn real processes that each call realProc. Concurrent WMI queries then hit the 15 s timeout, giving `proc-unavailable` at random.",
+    "evidence": "selfInfo(proc) is listed as the source for the lock record. No test concurrency limit is stated.",
+    "fix": "CONTRACT 579: `selfInfo is computed once per process and cached`. README command: `node --test --test-concurrency=4 tcb/test/`. Tests T85-T89 and every test whose script calls realProc set `{concurrency: false}`. The realProc timeout default becomes 30000."
+   },
+   {
+    "id": "F20",
+    "file": "CONTRACT.md",
+    "lines": "537-542, 105-110",
+    "severity": "medium",
+    "kind": "Windows path length / believed harness naming",
+    "claim": "Attempt folders under a deep root push fake and real transcript paths past 260 characters. Node copes, but git, PowerShell and a spawn `cwd` do not. The harness is believed to truncate and hash project-folder names over about 200 characters, so `transcriptsForFolder` would find nothing: reconcile never fires and the `unknown` slot evidence disappears (compounding F02).",
+    "evidence": "The test temp root alone is about 130 characters. projectDirName of an attempt folder adds about 170, and `/<id>/subagents/workflows/<run>/agent-<id>.jsonl` adds about 100 more.",
+    "fix": "§2: `the run root path is at most 40 characters (e.g. C:/tcb/<run>)`. CONTRACT 541: `if <root>/<projectDirName(folder)>/ is absent, scan every <transcripts_root>/*/ whose name starts with the first 100 characters of projectDirName(folder), matching by first cwd`. Every git call gets `-c core.longpaths=true`. Test temp roots use a 6-character mkdtemp prefix."
+   },
+   {
+    "id": "F21",
+    "file": "CONTRACT.md; spec/audit.mjs.md",
+    "lines": "CONTRACT 186, 468; audit.mjs.md 36-37",
+    "severity": "medium",
+    "kind": "Windows encodings",
+    "claim": "Files the owner or coordinator edits on Windows (denylist.txt, plan drafts, quote files) often carry a UTF-8 BOM, or are UTF-16 when written by PowerShell 5.1 Out-File or Set-Content. With a BOM, JSON.parse fails (exit 2) and the denylist's first term silently never matches.",
+    "evidence": "The contract says 'All files are UTF-8 JSON' and does not mention a BOM. audit compares terms as substrings.",
+    "fix": "CONTRACT 468: `readJson and every text reader strip one leading U+FEFF; a file starting FF FE or FE FF is unparseable with detail utf16`. audit.mjs.md 36: the same rule for denylist.txt. Add lib T23b: a BOM-prefixed JSON file parses, and a UTF-16 file gives `unparseable`."
+   },
+   {
+    "id": "F22",
+    "file": "spec/guard-hook.mjs.md",
+    "lines": "56-60, 83-85, 145-147",
+    "severity": "medium",
+    "kind": "fail-open under load / cut candidate",
+    "claim": "For each child WebFetch, the hook reads the whole ledger, finds the last protocol-freeze line, re-hashes the frozen protocol and reads the by-url and meta files. As the ledger grows and the machine is loaded, the hook can pass the harness timeout of 30 s, and a timeout is a non-blocking error, so the fetch is allowed.",
+    "evidence": "Step 10. needs-app 1 states that a hook timeout fails open.",
+    "fix": "Replace step 10's ledger walk with one small file. At start, replace writes `{attempt}/in/must_read.json` = [{url_href, text_sha}] for the witnessed must-read URLs (hashed into the manifest inputs). The hook reads only that file plus `.snapshots/by-url/<sha>.jsonl` for the URL. guard-hook T9: `the same results with a 50 MB ledger in under 1 s`."
+   },
+   {
+    "id": "F23",
+    "file": "spec/snap.mjs.md",
+    "lines": "55-58, 116-117",
+    "severity": "medium",
+    "kind": "network safety (the one networked script)",
+    "claim": "The private-address list misses ranges that reach local or internal hosts: 0.0.0.0/8, 192.0.0.0/24, 198.18.0.0/15, 240.0.0.0/4 and 255.255.255.255, plus IPv6 forms that embed private IPv4 (NAT64 64:ff9b::/96, 6to4 2002::/16) and the deprecated site-local fec0::/10.",
+    "evidence": "Step 5b lists only loopback, RFC1918, link-local, CGNAT, ULA, multicast, unspecified and v4-mapped.",
+    "fix": "Step 5b: add `0/8, 192.0.0/24, 198.18/15, 240/4 (incl. broadcast), fec0::/10, 64:ff9b::/96 and 2002::/16 whose embedded IPv4 is in any refused range`. Use `net.BlockList` (node:net built-in) for the check, and pass `agent: new https.Agent({lookup})` explicitly so no global or env proxy agent applies. T14 adds `http://[64:ff9b::a00:1]/` → private-address."
+   }
+  ],
+  "mutations": [],
+  "tests": {
+   "command": "none: review only; tcb/scripts, tcb/test and tcb/fixtures are empty, so no code exists to run",
+   "passed": 0,
+   "failed": 0,
+   "skipped": 0,
+   "output_tail": "tcb/ holds only briefs/*.md, README.md, thresholds.json and cost-inputs.json; agents/, fixtures/, schemas/, settings/ and test/ are empty."
+  },
+  "verdict": "Refuted as written: the contract cannot yet be built and run safely on this machine. Six problems must be fixed before building.\n1. F01: stop verify can kill processes that are not proven to belong to the attempt. The marker check is a plain substring test (`wt/T-e1` also matches `-e10`..`-e19` and any owner program opened on the folder). Killing the session's claude.exe is also a script stopping a session, which harness fact 1 and contract §6 line 643 forbid, yet §6 line 652 allows it. Following the contract over the design, I recommend that the pilot only report surviving processes and kill nothing.\n2. F02: slotCount gives an admitted session with no process or transcript yet zero slots, so N_max and the memory reserve do not hold for back-to-back starts.\n3. F03: Windows rename and delete behave differently from POSIX (antivirus and delete-pending files), and nothing retries.\n4. F04: the staging cut and the torn-folder delete are not specified to stop at junctions.\n5. F05: slow work (git, transcript parsing, PowerShell) is specified inside the run lock, whose retry budget is 2 s.\n6. F06: the git commit in `commit record` can run hooks or hang on signing while holding the lock.\n\nMost of the rest are Windows behaviours the spec does not account for:\n- spawn by bare name searches the current folder first, and the hook can fail open (F08)\n- ParentProcessId is reused (F10)\n- DOS device names are accepted as ids (F11)\n- trailing-dot and case variants of `.claude` and CLAUDE.md slip through (F12)\n- PowerShell 5.1 JSON output is not in the promised form (F18)\n- paths pass 260 characters (F20)\n- BOM and UTF-16 files fail to parse (F21)\n\nOne wall-clock decision affects a counted quantity: the host-failure test (F13). Several timing races would make tests flaky (F14, F15, F19), and tests could read the owner's real transcripts (F16).\n\nMachinery the pilot can cut without unguarding a high-rated problem:\n- the git commit in `commit record`; the ledger chain and fsck remain\n- the kills in `handover raise` and the alarm, since both processes already exit 64 or `superseded` by themselves\n- the kill path in `stop verify`\n- the hook's ledger walk on each fetch, replaced by one file per attempt\n\nNone of the 23 findings needs a package or another runtime; PowerShell, git and taskkill are present per harness fact 9. Outside snap.mjs, the only network use is a loopback server that selftest itself starts. I wrote no files. No code exists yet under tcb/scripts or tcb/test, so I ran no tests."
+ }
+}

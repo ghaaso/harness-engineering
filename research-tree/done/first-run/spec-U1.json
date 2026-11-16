@@ -1,0 +1,66 @@
+{
+ "label": "spec:U1",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/replace.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/admit.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/stop.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/watch.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/status.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/handover.mjs.md"
+  ],
+  "decisions": [
+   "I followed the contract where it differs from the design. replace fence on the limit path exits 1 and does not run stop.mjs itself; the coordinator then calls stop request/verify, and stop verify sets failed (§8.13/14; design R8 says replace runs stop).",
+   "acked_seq goes to run/acked.json and the alarm to run/alarm.json, not to coord.json (§8.4; design R6). status --endturn only checks the alarm. Each new watch --alarm kills the previous alarm (§8.5; design R6 says endturn re-arms it).",
+   "Events are `event` ledger lines; there is no events.jsonl (§8.3; layer L1). Intents are kept only for owner messages (R3), not for L1's five effects.",
+   "`--epoch` is always the row's current epoch. For stop on a fenced row, the attempt being stopped is epoch-1. On a committed row it is the current attempt (decision 17).",
+   "replace start, status and handover raise take the process list (PowerShell, which can be slow) before taking the run lock, then re-check the table and the ce inside the lock. This keeps the lock short so other scripts do not hit 75.",
+   "replace start does the whole build under the one lock: folder, manifest, row to admitted, admit line. If the folder already exists while the row is still at `stopped`, it is left over from a start that broke off, so it is removed and rebuilt. Any failure removes the partial folder and leaves the row at stopped.",
+   "The checkpoint is copied from every earlier attempt's cut prefix (each identical file once), not only from attempt e-1. Otherwise an attempt that was admitted but never ran would lose the prefix of the attempt before it.",
+   "Refusals with exit 1, 5 or 6 append an `incident` line (class refusal, R58). Exits 64, 65, 66, 67 and 75 write nothing, because a stale caller must not write.",
+   "B_tokens null (or gate:false) makes the budget check a reading, never a refusal (R45). The reservation is still computed and reported. A failed process list makes admission refuse with `slots-unknown`, so it fails safe.",
+   "admit check mode: with --task it exits 0 to admit, 6 when refused, and 2 when the facts cannot be read. Without --task it exits 0 if any candidate can start (or there are none), and 6 if every candidate is refused.",
+   "Watcher ticks: the first check a new watcher makes when it starts does not count as a tick, so hang is not counted on it. Each sleep of Δ adds one tick, and --once is exactly one tick. In the loop, main() reads the edge facts (now, free memory) once per tick.",
+   "Event dedupe: the watcher appends an event for (class, task, epoch) only when no unacknowledged line with the same key exists (seq > acked_seq). A condition that is already acknowledged does not cause another exit (but see the contract request on a `raised` field).",
+   "Hard and soft limits use floor(hard_frac*e_task) and floor(soft_frac*e_task) from thresholds, not the design's e - (Δ + latency) * peak rate, because no wall-clock rate may be derived.",
+   "Watcher intake is spawned only when no intake process is alive and some row is at started or bound. snap --new is skipped while f5_given is false. A step exiting 64 or 3 ends the intake. Any other non-zero step becomes an incident line and the intake continues. --no-intake is a test seam.",
+   "status --endturn writes acked.json first. It exits 2 when process liveness is unknown and 1 when either wake source is missing. It never starts or kills anything.",
+   "handover raise needs a `drain` line of its ce and quiescence (live+unknown+unconfirmed = 0 over every epoch). It kills the watcher and the alarm before raising, and still raises if a kill did not take, because the survivor exits 64 at its next check.",
+   "stop uses a session it finds only from a folder transcript (it names it in the ledger line), but never writes it to attempts[].session, which status --reconcile owns.",
+   "status `next` mapping: planned or stopped → replace-start (none while halted or draining); fenced → stop-session; stop-requested → stop-verify; admitted → start-session; started → bind; bound with a READY of the epoch → commit; failed, limit, or zombie spend over Z → owner."
+  ],
+  "contract_requests": [
+   "[tasks-plan] format of plan/tasks-plan.json is not defined (§8.26 names the file only). replace plan needs per-entry {task, field, stage, role, steps, deps, question_ids, e_task}, possibly `tier`, and whether owner `approval` is required.",
+   "Who creates the first run/tasks.json: readTasks throws 67 on a missing file, and handover init is not a listed writer. Proposal: replace plan creates {schema_version:1, rev:0, tasks:[]} only when both tasks.json and tasks.json.prev are absent, so a deleted table is never silently recreated.",
+   "The variant V and the 'covered ids' (approved ids covered by a committed card, or a witnessed/confirmed card once F5 is given) are needed by replace (todo), stop (overflow ids), watch, status and admit (gate A). Cross-script imports are forbidden (§8.19), so please add lib.covered(root, row, {f5Given}) and lib.variant(root, row, ...). Please also define review-stage V concretely: which 'form slots' count (e.g. approaches without a verdict) and which cards are 'unchecked'.",
+   "[todo] format of wt/<task>-e<e>/view/todo.json is not defined. Suggested: {schema_version, task, epoch, todo: key[], covered: key[]}.",
+   "The layout of review-in/<task>/ is not defined. It needs the pack and its cards from the research dep's commit record (which step), the must-read snapshot texts, the protocol's fixed_files (relative to which base folder?), and the plants from sealed/plants/<task>/. Also: how the fresh reviewer's in/ copies it.",
+   "Rendering .claude/settings.json from a [profile] (permission rule syntax, the PreToolUse hook entry and its command line `node <root>/tcb/scripts/guard-hook.mjs --root --role --task --epoch`) must be fixed in the contract, because replace (U1a) writes it and guard-hook/audit (U3b/U4a) enforce the same file.",
+   "§2.1 lets replace write only in/, view/todo.json and .claude/settings.json in the attempt folder. A child needs .claude/agents/<type>.md copied from tcb/agents/ for its profile's agent_types (harness fact 3). Please add it to replace's paths.",
+   "Manifest [manifest] fields need sources. `tier`: profiles have no tier, so does it come from tasks-plan? `user_files`: which user-level files are hashed (a threshold list?). `outputs`: the step to kinds mapping. `schema_shas`: which schemas are listed.",
+   "Decision 17 needs stop request/verify on a committed row, but the §3.6 table allows stop only from active/fenced. Please add (committed, bound) → stop-requested → stopped with state kept committed. Please also confirm the --epoch meaning for stop: the row's epoch, with the target attempt = epoch-1 after a fence.",
+   "The [watcher] format needs a field to record conditions already raised and acknowledged, e.g. `raised: [{class, task?, epoch?, event_seq}]`. Without it, task-less classes (memory 24, common-cause 26, checker-batch 14, tamper 27) either re-wake the coordinator on every tick or can never be raised again once acknowledged.",
+   "Class 27 tamper-seen needs a machine-readable signal in the ledger. Which lines mean tamper: an fsck result value, an audit line with protected_writes, a check line with which reason codes? Proposal: every line written on an exit-3 path carries `data.exit: 3`.",
+   "Class 10 reopened: tms runs inside the detached intake, and its exit code 10 does not reach the watcher. Please define a ledger signal, e.g. a `check` line {check: 'dismissal-reopen', result: fail} written by tms, or a field in views/labels.json.",
+   "halted/draining are computed by admit, status and handover (drain check). Please add lib.runFlags(lines, ce) → {halted, draining} so the definition exists once: halted = a halt line not followed by owner act resume; draining = a drain line of the current ce.",
+   "An intent key pattern is not in §1.5 (status intent open --key). Suggested: ^[a-z0-9][a-z0-9-]{0,63}$.",
+   "R55 says admission compares gate.json's cut_sha and hazards_sha with 'the current cut and hazards object'. Please say where admit reads the current values: the last `cut` ledger line's sha, and which hazards object id?",
+   "Gate A before F5: with f5_given false no card can be witnessed, so gate A would block every review. Please confirm that a committed card counts as covering until F5 (as in R5) and that the unverifiable share is then only a reading.",
+   "A test seam is needed to make realProc fail inside a script that runs as a child process (stop verify not-run, status endturn exit 2). §6 forbids reading env vars other than PATH. Proposal: a threshold `proc_exe` passed to realProc({exe}) by scripts.",
+   "helpers.spawnSleeper() should take a marker (e.g. spawnSleeper({args:[marker]})) so its command line contains a folder path, `watch.mjs` or `--alarm`. lib.md T87 implies this, but the §4.11 signature does not show it.",
+   "No ledger kind records row creation by replace plan. Rows appear in tasks.json with no ledger trace. Optional: a `plan` kind {added[]}.",
+   "Watch takes its modes as flags (--once/--alarm/--intake), so §1.3 `mode` would be null. I specified mode null plus result.run; please confirm or make them positional modes.",
+   "Class 15 window-limit versus 16 drain needs a definition. I used: 16 when the coordinator's window ≥ W_star_coord (one drain line per ce); 15 when the coordinator's window ≥ W_quality, or a child's window ≥ W_star_child when that is a gate.",
+   "Please confirm the hard limit as floor(hard_frac*e_task). The design's formula is e - (Δ + wake latency) * peak rate.",
+   "§1.2 says main() reads the clock and free memory 'once'. A long-running watcher must read them on every tick, so please allow per-tick edge reads in watch.mjs's loop."
+  ],
+  "open_points": [
+   "R48(a) says that in the pilot the watcher logs predicted against realised t_q per group. No ledger kind or input (predicted t_q per group) exists for it, so watch.mjs's spec leaves it out. A ruling is needed on whether it is a pilot item.",
+   "Checker-batch class 14: I read 'the only thing blocking a task' as 'cards await a checker and no row is at started or bound'. That is an approximation and needs confirming.",
+   "The precise review-stage V is unspecified (see the contract request). watch and status tests for review rows wait on it.",
+   "replace start for a fresh-review task depends on the review-in layout and on how plants (seed.mjs plant) are named. That fixture cannot be written until the contract fixes both.",
+   "Several needs-app items stay untestable: whether real session settings and agent files bind a session; whether claude.exe command lines name the folder or session id (attemptProcesses, taskkill /T); background-exit wakes, also across sleep and ce changes; and whether real transcripts match the parser (cwd, helpers, windows).",
+   "Other units' specs exist in spec/ (written in parallel). I did not read or change them. Cross-unit consistency, such as the commit intake/record flags I call from watch --intake, should be checked when the specs are merged."
+  ]
+ }
+}

@@ -1,0 +1,70 @@
+{
+ "label": "probe:docs",
+ "result": {
+  "answers": [
+   {
+    "question": "1. Hooks: can a PreToolUse hook refuse a tool call, and how (exit code, JSON decision)?",
+    "answer": "Yes. Exit code 2 blocks the tool call, and the hook's stderr is the message shown. Alternatively, exit 0 with JSON on stdout: hookSpecificOutput {hookEventName: \"PreToolUse\", permissionDecision: \"deny\", permissionDecisionReason: \"...\"}. Exit 2 blocks even if the JSON says \"allow\". Silence with exit 0 is not an approval. continue:false does not block PreToolUse; you must also return permissionDecision \"deny\". A timed-out command hook does not block unless \"onFailure\": \"block\" is set. The top-level decision field is listed for other events (UserPromptSubmit, PostToolUse, Stop), not PreToolUse. The full allow/ask/defer semantics are not in the fetched excerpt.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/hooks.md",
+    "note": "Verified from the hooks reference page as fetched; the hooks guide (https://code.claude.com/docs/en/hooks-guide.md) was not read."
+   },
+   {
+    "question": "1. Hooks: which input fields does a hook receive (session id, transcript path, working directory, tool name, tool input)?",
+    "answer": "On stdin as JSON for command hooks: session_id, transcript_path (path to the conversation JSON; may lag the in-memory conversation), cwd, permission_mode, hook_event_name, prompt_id, effort, and scratchpad_dir (v2.1.257+, absent when unavailable). Tool events add tool_name, tool_input and tool_use_id. A model field is documented only for SessionStart, and not always sent.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/hooks.md",
+    "note": "The page's example PreToolUse input shows the same fields."
+   },
+   {
+    "question": "1. Hooks: do hooks fire for tool calls made by subagents, and which events exist for subagents starting and stopping?",
+    "answer": "Yes. Hooks from settings files, managed policy and plugins run inside subagents. PreToolUse and PostToolUse fire for a subagent's tool calls, and the input carries agent_id and agent_type. Subagent events: SubagentStart (when a subagent is spawned; exit 2 shows stderr to the user only) and SubagentStop (when it finishes; exit 2 prevents it from stopping). Both matchers take the agent type name. A Stop hook in a subagent's frontmatter is converted to SubagentStop. Frontmatter hooks are not inherited from the parent and apply only to the subagent that defines them. Plugin subagents ignore hooks, mcpServers and permissionMode.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/sub-agents.md",
+    "note": "The full input schemas for SubagentStart and SubagentStop are not shown in the fetched text (not documented in the part read); whether agent_id and agent_type appear on SubagentStart input is not confirmed. Hook reference: https://code.claude.com/docs/en/hooks.md"
+   },
+   {
+    "question": "2. Settings: which settings files apply to a session started in a folder, and in what precedence order (user, project, local, managed)?",
+    "answer": "Files: ~/.claude/settings.json (user, every project on the machine); .claude/settings.json in the folder (shared project); .claude/settings.local.json (project local); and managed settings (managed-settings.json, MDM, or server-managed). A --settings flag adds a per-session layer. Precedence, highest first: managed settings; command line (--settings); project local; shared project; user. A key set higher overrides the same key lower. Array keys such as permissions.allow merge across scopes rather than override. Caveats: the shared project file is read from the session's primary working directory; the local file lives at the git repository root when started in a subdirectory; a few keys are honored only from some scopes; permissions.allow in a project file applies only after the folder is trusted.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/settings.md",
+    "note": "Permission-rule precedence is separate: deny rules from any scope are evaluated before allow rules (https://code.claude.com/docs/en/permissions.md#settings-precedence)."
+   },
+   {
+    "question": "2. Settings: do permission deny rules in user-level settings apply to every session?",
+    "answer": "Yes, for ordinary rules. The permissions page says: \"To apply permission rules across all your projects, add them to your user settings instead: ~/.claude/settings.json.\" It also says deny rules from any scope are evaluated before allow rules, so a user-level deny blocks a project-level allow. Path-anchored patterns in user settings are relative to ~/.claude: a rule like Read(/secrets/**) there covers ~/.claude/secrets/**, not a secrets folder in a project. To cover every project, use a // absolute path or a ~/ home-relative path.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/permissions.md",
+    "note": "Managed settings sit above user settings, and the docs say that embedding hosts can add managed permission rules."
+   },
+   {
+    "question": "2. Settings: does a deny rule on the file-writing tools (Edit/Write) also stop a shell command from writing files? What does the documentation say about restricting what Bash may run?",
+    "answer": "Not documented that an Edit/Write deny stops Bash writes. The docs say Edit(path) and Read(path) rules govern the file tools. Write(path) is not matched by path; use Edit(path) for Write. For Bash, a Bash(pattern) allow, ask or deny rule matches the command text, with * wildcards. Deny and ask apply to every subcommand of a compound command, including subshells and command substitutions. Rules are not a security boundary: Bash(curl *) does not stop /usr/bin/curl or sh -c 'curl ...'. The docs direct you to sandboxing for filesystem and network enforcement that does not depend on command text, and to a PreToolUse hook to inspect the full command. Writes made by a Bash command are noted as subject to protected paths and symlink rules, not to Edit rules. The sandbox network allowlist pairs with deny rules for curl or wget.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/permissions.md",
+    "note": "The Bash-restriction part is documented (rule syntax, limits, sandboxing: https://code.claude.com/docs/en/sandboxing.md). Whether an Edit/Write deny also blocks Bash file writes is not stated; treat as not documented."
+   },
+   {
+    "question": "3. Subagent definition files: can a subagent's tools be restricted in its definition file (the tools field), and can its model be set there?",
+    "answer": "Yes to both. tools: a comma-separated string or YAML list of tools the subagent can use (e.g. Read, Grep, Bash); if omitted it inherits all tools available to subagents. disallowedTools removes tools from the inherited or listed set. model: sonnet, opus, haiku, fable, a full model ID, or inherit; if omitted, Claude Code picks by the subagent model order. Background subagents get a smaller built-in tool set. Built-in subagents inherit the parent's permission rules; if permissionMode is unset they inherit the parent's mode, and under bypassPermissions, acceptEdits or auto the parent's mode wins.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/sub-agents.md",
+    "note": "The page itself says permissions are \"independent\" in one place and inherited in another; the docs do not reconcile these. Whether a session-level grant reaches a subagent the same way as a settings rule is not documented."
+   },
+   {
+    "question": "4. Background commands: what happens in a session when a command it started in the background exits?",
+    "answer": "Documented: output is written to a file that Claude reads with the Read tool, and the command gets a background task ID that /tasks lists and stops. Background tasks are cleaned up when Claude Code exits. A command started by the main conversation or a background subagent keeps running after a final response until it exits, is stopped, or hits its time limit. A command started by a foreground subagent stops when that subagent's run ends. In -p mode the run stays open until the command exits or reaches its limit. Unattended runs (-p, Agent SDK, CI, cloud) have a limit of 30 minutes by default, up to 2 hours; local terminal, desktop and VS Code sessions have no limit. On resume, a background command that ended with the previous process appears as a note that it did not finish; Claude does not start a turn from that note.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/tools-reference.md",
+    "note": "Not documented: whether the session receives a notification or starts a new turn when a background command exits normally. The docs describe the output file and the stop conditions only. Related: https://code.claude.com/docs/en/interactive-mode.md (How backgrounding works) and https://code.claude.com/docs/en/sessions.md."
+   },
+   {
+    "question": "5. Sessions: how is a session identified on disk and resumed? Does the command line of a running session carry its id?",
+    "answer": "On disk: JSONL transcript at ~/.claude/projects/<project>/<session-id>.jsonl, where <project> is the working directory path with every non-alphanumeric character replaced by -. Paths over 200 characters are truncated and get a hash suffix. CLAUDE_CONFIG_DIR moves the root. Session IDs are UUIDs; --session-id sets one at launch and must be a valid UUID. Resume: claude --continue (most recent in the directory), claude --resume <session-id> (from any directory; searched in the current project first, then every other project), claude --resume <name>, claude --resume <transcript-path>, the /resume picker, and claude -p --resume for a scripted follow-up. Agent SDK: read session_id from the result message and pass it as the resume option, or use continue. Forking: --fork-session or /branch creates a new ID. Command line of a running session: the docs do not say that the process command line carries the session id. A background session is addressed by id through claude attach <id>, claude stop <id> and claude agents.",
+    "documented": true,
+    "source_url": "https://code.claude.com/docs/en/sessions.md",
+    "note": "Not documented: whether a running interactive session's process arguments include its id unless --session-id was passed. The default display name (for example my-app-3f) is not a resume handle. Sources: https://code.claude.com/docs/en/cli-reference.md and https://code.claude.com/docs/en/agent-sdk/sessions.md."
+   }
+  ]
+ }
+}

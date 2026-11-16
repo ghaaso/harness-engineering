@@ -12,7 +12,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+// child_process and fs are used through their default exports, looked up at call time, so a test
+// that patches a property of either module (spec/lib.md T21b, T25b, T33, T88) reaches the library.
+import cp from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // =============================================================================================
@@ -89,13 +91,15 @@ export const PREFIX = Object.freeze({
 });
 export const ZERO_HASH = '0'.repeat(64);
 
-// Section 1.5. The task pattern also refuses a DOS device name followed by `-` (spec/lib.md T2:
-// `--task con-research` exits 66), one character more than the contract's `(?:$|\.)`.
+// Section 1.5, exactly as the contract writes them. The task pattern refuses a DOS device name that
+// is the whole name or is followed by a dot (`nul`, `com1`, `con.x`); `con-research` is a legal name
+// (Win32 reserves only the bare device name, with or without an extension). spec/lib.md T2 lists
+// `con-research` as 66; the contract is the source of truth and wins (see the build notes).
 export const PATTERNS = Object.freeze({
   field: /^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z][a-z0-9]{0,11}$/,
   questionKey: /^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])-)[a-z][a-z0-9]{0,11}-[a-z0-9]{1,12}-\d{2,3}$/,
   slug: /^[a-z][a-z0-9_]{0,47}$/,
-  task: /^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:$|[.-]))[a-z][a-z0-9-]{1,39}$/,
+  task: /^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:$|\.))[a-z][a-z0-9-]{1,39}$/,
   intentKey: /^(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z0-9][a-z0-9-]{0,63}$/,
   plantId: /^pl_[0-9a-f]{16}$/,
   objectId: /^[cprmxds]_[0-9a-f]{16}$/,
@@ -476,6 +480,8 @@ export function paths(root) {
     object: (id) => j('store', 'objects', `${id}.json`),
     commits: j('store', 'commits'),
     commit: (task, step) => j('store', 'commits', `${task}.${step}.json`),
+    commitRecord: (task, step) => j('store', 'commits', `${task}.${step}.json`),
+    statusDir: j('store', 'status'),
     cardStatus: j('store', 'status', 'card_status.jsonl'),
     witness: j('store', 'witness.jsonl'),
     qualification: j('store', 'qualification.json'),
@@ -495,18 +501,33 @@ export function paths(root) {
     completeness: j('completeness'),
     gate: j('completeness', 'gate.json'),
     cut: (sha12) => j('completeness', `cut-${sha12}.md`),
+    cutFile: (sha) => j('completeness', `cut-${String(sha).slice(0, 12)}.md`),
     model: j('completeness', 'model'),
     sealed: j('sealed'),
     heldout: j('sealed', 'heldout'),
+    heldoutOf: (field) => j('sealed', 'heldout', `${field}.json`),
     seeds: j('sealed', 'seeds'),
     seedKey: (b) => j('sealed', 'seeds', `${b}.json`),
     plants: j('sealed', 'plants'),
+    plantKey: (task) => j('sealed', 'plants', `${task}.json`),
+    plantDir: (task) => j('sealed', 'plants', task),
     sealedBlind: j('sealed', 'blind'),
+    blindKey: (sha) => j('sealed', 'blind', `${String(sha).slice(0, 12)}.json`),
+    frozenFile: (name, sha) => j('plan', 'frozen', `${name}-${String(sha).slice(0, 12)}.json`),
+    protocolDraft: (field) => j('plan', 'protocols', `${field}.json`),
+    plantCandidatesOf: (field) => j('plan', 'plant-candidates', `${field}.json`),
+    auditFile: (task, e) => j('run', 'audit', `${task}-e${e}.json`),
+    auditSearch: (task, e) => j('run', 'audit', `search-${task}-e${e}.jsonl`),
+    auditCoordinator: (ce) => j('run', 'audit', `coordinator-ce${ce}.json`),
     snapshots: j('.snapshots'),
     snapRaw: j('.snapshots', 'raw'),
     snapText: j('.snapshots', 'text'),
     snapMeta: j('.snapshots', 'meta'),
     byUrl: j('.snapshots', 'by-url'),
+    snapshotRaw: (sha) => j('.snapshots', 'raw', sha),
+    snapshotText: (sha) => j('.snapshots', 'text', sha),
+    snapshotMeta: (sha) => j('.snapshots', 'meta', `${sha}.json`),
+    byUrlFile: (key) => j('.snapshots', 'by-url', `${key}.jsonl`),
     wt: j('wt'),
     attempt: (task, e) => j('wt', `${task}-e${e}`),
     attemptRel: (task, e) => `wt/${task}-e${e}`,
@@ -774,6 +795,21 @@ export function writeAtomic(target, data, opts) {
     throw e;
   }
   return sha256hex(buf);
+}
+
+/**
+ * Remove one file with the Windows-sharing retries of section 4.3 (a scanner or indexer may hold
+ * it). An absent file is not an error. Returns true when a file was removed.
+ */
+export function removeFile(p, opts) {
+  const F = fsOf(opts);
+  try {
+    fsRetry(() => F.unlinkSync(p));
+    return true;
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return false;
+    throw e;
+  }
 }
 
 /** Exclusive create: 'created' | 'identical'; different bytes at the path: exists-different 1. */
@@ -1841,11 +1877,23 @@ function schemaFileName(name) {
   return n.endsWith('.schema.json') ? n : `${n}.schema.json`;
 }
 
+// The schemas shipped beside this file (`<root>/tcb/schemas/` when lib.mjs is `<root>/tcb/lib.mjs`),
+// used when a call names no run root: the same files, since tcb/ is the run root's copy.
+const OWN_SCHEMAS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'schemas');
+
+function readSchemaFile(dir, file) {
+  const doc = readJson(path.join(dir, schemaFileName(file)));
+  checkKeywords(doc);
+  return doc;
+}
+
 /**
  * validate(schema, value, {resolve?, root?}) -> {ok, errors: [{path, keyword, message}]}. The JSON
  * Schema 2020-12 subset of section 4.7 plus x-maxWords; any other keyword: schema-keyword 70.
- * `resolve(fileName)` returns the schema document of `<name>.schema.json` (default: the run root's
- * `tcb/schemas/`, known from loadSchema or opts.root).
+ * A cross-file `$ref` (`<name>.schema.json#/$defs/x`) is resolved through `resolve`: a function
+ * `(fileName) -> schema document`, or a string naming a run root (its `tcb/schemas/`) or a schemas
+ * folder. Without one: the run root known from loadSchema or opts.root, else the schemas folder
+ * beside this file. A file or definition that cannot be found is an error entry, never a throw.
  */
 export function validate(schema, value, opts = {}) {
   checkKeywords(schema);
@@ -1856,8 +1904,13 @@ export function validate(schema, value, opts = {}) {
     if (docs.has(file)) return docs.get(file);
     let d = null;
     try {
-      if (opts && typeof opts.resolve === 'function') d = opts.resolve(file) || null;
-      else if (rootDir) d = loadSchema(rootDir, file);
+      const rs = opts ? opts.resolve : undefined;
+      if (typeof rs === 'function') d = rs(file) || null;
+      else if (typeof rs === 'string' && rs) {
+        const asRoot = path.join(path.resolve(rs), 'tcb', 'schemas');
+        d = fs.existsSync(asRoot) ? loadSchema(rs, file) : readSchemaFile(path.resolve(rs), file);
+      } else if (rootDir) d = loadSchema(rootDir, file);
+      else d = readSchemaFile(OWN_SCHEMAS, file);
     } catch (e) {
       if (e && e.exit === 70) throw e;
       d = null;
@@ -1941,7 +1994,8 @@ export function validate(schema, value, opts = {}) {
           for (let i = 0; i < v.length; i++) {
             const c = safeCanon(v[i]);
             if (seen.has(c)) {
-              errs.push({ path: `${p}/${i}`, keyword: 'uniqueItems', message: 'duplicate item' });
+              // The keyword's instance is the array (as for minItems/maxItems); the message names the item.
+              errs.push({ path: p, keyword: 'uniqueItems', message: `duplicate item at index ${i}` });
               break;
             }
             seen.add(c);
@@ -2288,6 +2342,12 @@ function resultText(content) {
   return s.length > 2000 ? s.slice(0, 2000) : s;
 }
 
+/** Attach a non-enumerable property: readable by callers, invisible to JSON and deep equality. */
+function hidden(obj, key, value) {
+  Object.defineProperty(obj, key, { value, enumerable: false, writable: true, configurable: true });
+  return obj;
+}
+
 /**
  * parseTranscript(path, {fromByte=0, lastCall=null}) -> {sessionId, cwd, calls, toolUses,
  * toolResults, structured, turnEnds, endByte, torn, badLines (a count), reset}. Reads 1 MiB chunks;
@@ -2295,6 +2355,10 @@ function resultText(content) {
  * A first call whose id equals lastCall.id is returned with continued: true. A parseable last line
  * without a newline is taken (endByte then includes it); an unparseable one is the torn tail.
  * `reset` is true when fromByte lay past the end of the file and the parse restarted at 0.
+ * Entries keep the contract's shapes; two extras are non-enumerable (absent from JSON and deep
+ * equality): `line` on every tool use, tool result and structured entry (the 1-based line of the
+ * parse, the file's line when fromByte is 0; harvest's `source.line`), and `open: true` on a turn end
+ * that the end of the file closed rather than a user record.
  */
 export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
   let start = Number.isInteger(fromByte) && fromByte > 0 ? fromByte : 0;
@@ -2314,19 +2378,20 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
     endByte: start, torn: false, badLines: 0, reset,
   };
   const callIdx = new Map();
-  const textsById = new Map(); // message.id -> text blocks of the current run's records
-  let run = null; // {lastId, ts}
+  // The current run of assistant records: only the text blocks of its last message id are kept
+  // (the harness writes one record per content block, all with the message's id), so memory does not
+  // grow with the length of a run.
+  let run = null; // {lastId, ts, texts}
   let firstCall = true;
+  let lineNo = 0; // 1-based line of the parse (the file's line number when fromByte is 0)
   const prevId = start > 0 && lastCall && typeof lastCall.id === 'string' ? lastCall.id : null;
 
   const closeRun = (open) => {
     if (!run) return;
-    const texts = textsById.get(run.lastId) || [];
-    const te = { ts: run.ts, text: texts.join('\n') };
-    if (open) te.open = true;
+    const te = { ts: run.ts, text: run.texts.join('\n') };
+    if (open) hidden(te, 'open', true);
     res.turnEnds.push(te);
     run = null;
-    textsById.clear();
   };
 
   const onRecord = (rec) => {
@@ -2348,7 +2413,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
         if (b.type === 'tool_use') {
           const name = typeof b.name === 'string' ? b.name : '';
           const input = b.input === undefined ? null : b.input;
-          res.toolUses.push({
+          res.toolUses.push(hidden({
             id: typeof b.id === 'string' ? b.id : null,
             name,
             input,
@@ -2356,9 +2421,9 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
             ts,
             sig: sigOf(name, input),
             access: toolAccess(name, input),
-          });
+          }, 'line', lineNo));
           toolNames.push(name);
-          if (name === 'StructuredOutput') res.structured.push({ toolUseId: typeof b.id === 'string' ? b.id : null, data: input });
+          if (name === 'StructuredOutput') res.structured.push(hidden({ toolUseId: typeof b.id === 'string' ? b.id : null, data: input }, 'line', lineNo));
         } else if (b.type === 'text' && typeof b.text === 'string') {
           texts.push(b.text);
         }
@@ -2392,12 +2457,14 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
         }
         firstCall = false;
       }
-      const key = id ?? `rec:${res.toolUses.length}:${ts}`;
-      if (!run) run = { lastId: key, ts };
-      run.lastId = key;
+      const key = id ?? `line:${lineNo}`;
+      if (!run) run = { lastId: key, ts, texts: [] };
+      if (run.lastId !== key) {
+        run.lastId = key;
+        run.texts = [];
+      }
       run.ts = ts;
-      if (!textsById.has(key)) textsById.set(key, []);
-      textsById.get(key).push(...texts);
+      run.texts.push(...texts);
       return;
     }
     if (rec.type === 'user') {
@@ -2416,7 +2483,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
             };
             const pd = rec.permissionDecision;
             if (pd && typeof pd === 'object') tr.permission = { decision: pd.decision ?? null, source: pd.source ?? null };
-            res.toolResults.push(tr);
+            res.toolResults.push(hidden(tr, 'line', lineNo));
           }
         }
       }
@@ -2429,13 +2496,14 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
         const item = { data: a.data === undefined ? null : a.data };
         const tid = a.toolUseID ?? a.toolUseId ?? a.tool_use_id;
         if (typeof tid === 'string') item.toolUseId = tid;
-        res.structured.push(item);
+        res.structured.push(hidden(item, 'line', lineNo));
       }
     }
     // every other record type is skipped
   };
 
   const handle = (lineBuf) => {
+    lineNo++;
     const s = decodeLine(lineBuf);
     if (s.trim() === '') return true;
     let rec;
@@ -2452,6 +2520,7 @@ export function parseTranscript(file, { fromByte = 0, lastCall = null } = {}) {
   const r = forEachLine(file, start, handle);
   res.endByte = r.endByte;
   if (r.tail && r.tail.length) {
+    lineNo++;
     const s = decodeLine(r.tail);
     if (s.trim() !== '') {
       let rec;
@@ -2547,7 +2616,7 @@ function stripBomStr(s) {
  */
 export function realProc({ timeoutMs = 30000, exe = PROC_EXE } = {}) {
   let bootCache;
-  const run = (script) => execFileSync(exe, ['-NoProfile', '-NonInteractive', '-Command', script], {
+  const run = (script) => cp.execFileSync(exe, ['-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8', timeout: timeoutMs, windowsHide: true, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const proc = {
@@ -2580,13 +2649,11 @@ export function realProc({ timeoutMs = 30000, exe = PROC_EXE } = {}) {
       if (me && me.start_time) REAL_SELF_START = me.start_time;
       return list;
     },
+    // Identity needs the start time, so the answer always comes from PowerShell: true, false, or
+    // null when PowerShell fails (section 4.9, spec/lib.md T89). No process.kill(pid, 0) shortcut:
+    // it would answer `false` while PowerShell is unavailable.
     alive(pid, startTime) {
       if (!Number.isInteger(pid) || pid <= 0) return false;
-      try {
-        process.kill(pid, 0);
-      } catch (e) {
-        if (e && e.code === 'ESRCH') return false;
-      }
       let out;
       try {
         out = stripBomStr(String(run(psOne(pid)))).trim();
@@ -2689,7 +2756,7 @@ export function attemptProcesses(list, { folder, sessionId } = {}) {
  * args)` is a test seam (default spawnSync).
  */
 export function killOwnTree(proc, child, opts = {}) {
-  const exec = typeof opts.exec === 'function' ? opts.exec : (file, args) => spawnSync(file, args, { windowsHide: true, stdio: 'ignore' });
+  const exec = typeof opts.exec === 'function' ? opts.exec : (file, args) => cp.spawnSync(file, args, { windowsHide: true, stdio: 'ignore' });
   const res = { killed: [], skipped: [], reason: null };
   if (!proc || !child || !Number.isInteger(child.pid)) {
     res.reason = 'no-child';
@@ -2850,9 +2917,14 @@ export function reservation(rows, spentOf) {
 }
 
 /**
- * {live, unknown, unconfirmed} over attempts not known ended (stop not confirmed, row not planned,
- * the attempt admitted at least once). `opts.root` resolves relative attempt folders; without it the
- * relative folder is matched in command lines and transcripts are found by session id only.
+ * {live, unknown, unconfirmed} (section 4.10) over every attempt not known ended (stop not
+ * confirmed, row not planned), each counted once, in this order: stop `unconfirmed` -> unconfirmed;
+ * procList null (PowerShell failed) -> unknown; matched processes alive -> live; the current attempt
+ * of a row active at step admitted, started or bound, or the last attempt of a committed row ->
+ * unknown (always one slot); a transcript of the attempt exists -> unknown; else nothing.
+ * `opts.root` (optional, not in the contract's signature) resolves a relative attempt folder; without
+ * it a relative folder is matched in command lines as written, and its transcripts are found by
+ * session id or by a project folder whose first `cwd` ends with that relative folder.
  */
 export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
   const out = { live: 0, unknown: 0, unconfirmed: 0 };
@@ -2861,22 +2933,25 @@ export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
     if (!row || row.state === 'planned') continue;
     const atts = Array.isArray(row.attempts) ? row.attempts : [];
     const maxEpoch = atts.reduce((m, a) => (a && Number.isInteger(a.epoch) && a.epoch > m ? a.epoch : m), 0);
+    const seen = new Set();
     for (const a of atts) {
       if (!a || a.stop === 'confirmed') continue;
+      if (Number.isInteger(a.epoch)) {
+        if (seen.has(a.epoch)) continue; // one attempt is never counted twice
+        seen.add(a.epoch);
+      }
       if (a.stop === 'unconfirmed') {
         out.unconfirmed++;
         continue;
       }
-      const currentOpen = a.epoch === row.epoch && row.state === 'active' && OPEN_STEPS.includes(row.step);
-      const lastCommitted = row.state === 'committed' && a.epoch === maxEpoch;
-      const ran = !!(a.manifest || a.session || a.bound_at || a.stop === 'requested') || currentOpen || lastCommitted;
-      if (!ran) continue; // never admitted: nothing can be running
-      const folderRel = typeof a.folder === 'string' && a.folder ? a.folder : `wt/${row.task}-e${a.epoch}`;
-      const folderAbs = path.isAbsolute(folderRel) ? folderRel : root ? path.resolve(root, folderRel) : null;
       if (procList === null || procList === undefined) {
         out.unknown++;
         continue;
       }
+      const currentOpen = a.epoch === row.epoch && row.state === 'active' && OPEN_STEPS.includes(row.step);
+      const lastCommitted = row.state === 'committed' && a.epoch === maxEpoch;
+      const folderRel = typeof a.folder === 'string' && a.folder ? a.folder : `wt/${row.task}-e${a.epoch}`;
+      const folderAbs = path.isAbsolute(folderRel) ? folderRel : root ? path.resolve(root, folderRel) : null;
       const m = attemptProcesses(procList, { folder: folderAbs ?? folderRel, sessionId: a.session ?? null });
       if (m.matched.length > 0) {
         out.live++;
@@ -2886,13 +2961,36 @@ export function slotCount(rows, procList, transcriptsRoot, opts = {}) {
         out.unknown++;
         continue;
       }
-      let hasTranscript = false;
-      if (typeof a.session === 'string' && a.session) hasTranscript = !!sessionTranscripts(transcriptsRoot, a.session).main;
-      if (!hasTranscript && folderAbs) hasTranscript = transcriptsForFolder(transcriptsRoot, folderAbs).length > 0;
-      if (hasTranscript) out.unknown++;
+      if (attemptHasTranscript(transcriptsRoot, a.session, folderAbs, folderAbs ? null : folderRel)) out.unknown++;
     }
   }
   return out;
+}
+
+/** A transcript of an attempt: by session id, by the absolute folder, or (no root) by a folder suffix. */
+function attemptHasTranscript(transcriptsRoot, session, folderAbs, folderRel) {
+  if (typeof transcriptsRoot !== 'string' || !transcriptsRoot) return false;
+  if (typeof session === 'string' && session && sessionTranscripts(transcriptsRoot, session).main) return true;
+  if (folderAbs) return transcriptsForFolder(transcriptsRoot, folderAbs).length > 0;
+  if (typeof folderRel !== 'string' || !folderRel) return false;
+  const rel = foldPath(folderRel.replace(/\\/g, '/')).replace(/^\/+|\/+$/g, '');
+  const suffix = '-' + projectDirName(rel);
+  const R = path.resolve(transcriptsRoot);
+  for (const d of listDirs(R)) {
+    if (!d.endsWith(suffix)) continue;
+    let ents;
+    try {
+      ents = fs.readdirSync(path.join(R, d), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of ents) {
+      if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;
+      const cwd = firstCwd(path.join(R, d, e.name));
+      if (cwd !== null && foldPath(String(cwd).replace(/\\/g, '/')).endsWith('/' + rel)) return true;
+    }
+  }
+  return false;
 }
 
 function lastStatusMap(root) {
@@ -2962,7 +3060,8 @@ function coverOver(questionIds, cards, statusMap, f5Given, extraCards) {
   };
   for (const q of questionIds) {
     let hit = cards.some(({ id, card }) => good(id) && Array.isArray(card.question_ids) && card.question_ids.includes(q));
-    if (!hit && !f5Given) hit = extraCards.some(({ card }) => Array.isArray(card.question_ids) && card.question_ids.includes(q));
+    // CONTRACT 4.10: without F5, "any such stored card" - such = last status witnessed or confirmed.
+    if (!hit && !f5Given) hit = extraCards.some(({ id, card }) => good(id) && Array.isArray(card.question_ids) && card.question_ids.includes(q));
     (hit ? covered : uncovered).push(q);
   }
   return { covered, uncovered };
@@ -2970,7 +3069,7 @@ function coverOver(questionIds, cards, statusMap, f5Given, extraCards) {
 
 /**
  * variant(root, row, {f5Given}) -> {V, covered, uncovered} (R5). research/control: question ids
- * covered by a witnessed/confirmed card of the task (or, without F5, any stored card); review /
+ * covered by a witnessed/confirmed card of the task (or, without F5, any witnessed/confirmed stored card); review /
  * fresh-review: open approaches plus cited cards still pending or witnessed; design-check: V null.
  */
 export function variant(root, row, { f5Given = false } = {}) {
@@ -3059,16 +3158,23 @@ function designOutput(root, rows, lines, role, step, cutSha) {
 }
 
 /**
- * {cut_sha, hazards_id, hazards_sha, stpa_id, fmea_id}: cut_sha from the last `cut` line; each
- * output from the commit with the highest `commit` ledger seq among rows of its role whose object
- * names that cut.
+ * {cut_sha, hazards_id, hazards_sha} (section 4.10): cut_sha from the last `cut` line; each output
+ * from the commit with the highest `commit` ledger seq among rows of its role whose object names
+ * that cut. The stpa and fmea outputs chosen by the same rule ride along as non-enumerable
+ * `stpa_id`, `stpa_sha`, `fmea_id`, `fmea_sha` (readable, absent from JSON and deep equality).
  */
 export function currentDesign(root) {
   const { lines } = readLedger(root);
   const cut = lastLine(lines, 'cut');
   const cutSha = cut && cut.data && typeof cut.data.sha === 'string' ? cut.data.sha : null;
-  const none = { cut_sha: cutSha, hazards_id: null, hazards_sha: null, stpa_id: null, fmea_id: null };
-  if (!cutSha) return { ...none, cut_sha: null };
+  const withExtras = (o, stpa, fmea) => {
+    hidden(o, 'stpa_id', stpa ? stpa.id : null);
+    hidden(o, 'stpa_sha', stpa ? stpa.sha : null);
+    hidden(o, 'fmea_id', fmea ? fmea.id : null);
+    hidden(o, 'fmea_sha', fmea ? fmea.sha : null);
+    return o;
+  };
+  if (!cutSha) return withExtras({ cut_sha: null, hazards_id: null, hazards_sha: null }, null, null);
   let rows = [];
   try {
     rows = readTasks(root).tasks || [];
@@ -3079,13 +3185,11 @@ export function currentDesign(root) {
   const hz = designOutput(root, rows, lines, 'mapper', 'hazards', cutSha);
   const stpa = designOutput(root, rows, lines, 'stpa', 'stpa', cutSha);
   const fmea = designOutput(root, rows, lines, 'fmea', 'fmea', cutSha);
-  return {
+  return withExtras({
     cut_sha: cutSha,
     hazards_id: hz ? hz.id : null,
     hazards_sha: hz ? hz.sha : null,
-    stpa_id: stpa ? stpa.id : null,
-    fmea_id: fmea ? fmea.id : null,
-  };
+  }, stpa, fmea);
 }
 
 /**
@@ -3155,10 +3259,30 @@ function qualifiedClasses(root) {
 }
 
 /**
+ * Whether batch `b` counts for the intake in-flight test (spec/check-queue.mjs.md step 2 and T14):
+ * a batch whose `queue/<b>/` folder exists without `batch.json` is a write cut off before its last
+ * file and is ignored; a `batch.json` of another mode (freeze, post-review) is ignored too (in
+ * flight means "of the same mode"). A sealed key with no queue folder at all still counts.
+ */
+function intakeBatchCounts(R, batch) {
+  const dir = path.join(R, 'queue', batch);
+  const st = lstatSafe(dir);
+  if (!st) return true;
+  let doc;
+  try {
+    doc = readJson(path.join(dir, 'batch.json'));
+  } catch (e) {
+    if (e && e.code === 'missing') return false;
+    return true; // unreadable batch.json: counted (the cautious answer)
+  }
+  return !(doc && typeof doc.mode === 'string' && doc.mode !== 'intake');
+}
+
+/**
  * [{card_id, in_flight}]: cards whose last status is witnessed (or rejected for
  * number-without-quote) and whose last line has no check, or (reason unqualified /
  * unqualified-revert) while J1, J2 and J4 are now qualified. in_flight: a real item of an earlier
- * batch with no status line carrying that batch.
+ * intake batch (see intakeBatchCounts) with no status line carrying that batch.
  */
 export function intakeCandidates(root) {
   const R = path.resolve(root);
@@ -3175,13 +3299,14 @@ export function intakeCandidates(root) {
     seedFiles = [];
   }
   for (const f of seedFiles) {
+    const batch = f.slice(0, -5);
+    if (!intakeBatchCounts(R, batch)) continue;
     let key;
     try {
       key = readJson(path.join(R, 'sealed', 'seeds', f));
     } catch {
       continue;
     }
-    const batch = f.slice(0, -5);
     for (const e of Object.values(key && key.items ? key.items : {})) {
       if (!e || e.seed !== false || typeof e.card_id !== 'string') continue;
       if (!answered.has(`${batch}|${e.card_id}`)) pendingItems.set(e.card_id, true);
@@ -3338,7 +3463,11 @@ export function checkerVerdicts(parsed, itemIds) {
       details[id] = { item: id, verdict: 'unclear' };
     }
   }
-  return { verdicts, reasons, details, duplicates, unknown_items: unknown.size, unknown_ids: [...unknown].sort() };
+  // The contract's four keys; `details` (the verdict objects) and `unknown_ids` ride along hidden.
+  const out = { verdicts, reasons, duplicates, unknown_items: unknown.size };
+  hidden(out, 'details', details);
+  hidden(out, 'unknown_ids', [...unknown].sort());
+  return out;
 }
 
 /** sha256hex(canonicalize(readSet)) (section 3.16). */

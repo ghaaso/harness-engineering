@@ -1,0 +1,62 @@
+{
+ "label": "lib:tests",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/lib.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/lib/append-worker.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/lib/fence-worker.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/lib/rw-reader.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/lib/parse-worker.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/lib/schema-examples.json"
+  ],
+  "deviations_from_the_spec": [
+   "Not run against the library. When I wrote this, tcb/scripts/lib.mjs and tcb/test/helpers.mjs did not exist yet, and I did not read the library source anyway. I checked syntax with node --check. I also ran the file once against throwaway stubs kept outside tcb-build; the stubs are deleted. That run showed no ReferenceError or load error, and the pure-function tests (T9-T13, T18-T20, T22-T24, T27c, T81, T84b) passed against a small stub. Every other test is unexecuted.",
+   "Layout follows the contract: the test imports ../scripts/lib.mjs and ./helpers.mjs, and the fixtures sit in tcb/fixtures/lib/ (the brief's path). Other units' scripts currently sit flat in tcb/*.mjs, but the contract places lib at tcb/scripts/lib.mjs, so the test will not load until lib.mjs is there.",
+   "T2: the spec lists '--task con-research' as a usage error. CONTRACT 1.5's task pattern only refuses a device name that is the whole name or is followed by a dot, so 'con-research' is valid under it. Following the contract, I test nul, com1, con, prn, aux and lpt9 as 66 and assert that con-research is accepted. If the spec was right, lib or the contract needs to change.",
+   "T21b, T25b, T25c, T33, T34, T21 (fsync part) and T88: the spec says an 'injected fs seam' but the contract never defines how it is injected. I patch the properties of the node:fs and node:child_process default export (and call module.syncBuiltinESMExports) for the duration of the test. This works only if lib reaches fs and child_process through the module at call time. If lib captures renameSync or similar at import time, these tests fail for that reason.",
+   "T33 and T34 (breaker races): I drive the race through a hook on fs.renameSync that fires when the breaker renames run.lock to *.stale, and swaps in or adds lock files at that moment. This assumes the break step uses fs.renameSync and, on restore, fs.linkSync.",
+   "T70: only the formats whose section 3 text names schema_version (or that rely on the 'every object carries schema_version' rule: card, pack, review, manifest) are covered. Covered: card, pack, review, manifest, tasks, commit-record, thresholds, gate, tasks-plan, must-read, todo, rejected, committed, plant-candidates, reader-result, checker-result, stop-sample. Pack and review fixtures use empty sentence lists to avoid guessing whether a nested sentence carries schema_version. The extra property tried is `status`.",
+   "T70 fixtures are in one file, fixtures/lib/schema-examples.json, rather than one file per format. The tasks and reader-result fixtures are built in code.",
+   "T98 checks only calls, usage mapping, tool uses, sessionId and cwd of helpers.fakeTranscript. The contract gives no shape for its `results` and `structured` arguments, so it does not test them. T76 and T77 cover results and structured through the test's own transcript writer. I pass `usage` in both raw and normalised key styles, as the other test files do."
+  ],
+  "lib_change_requests": [
+   "CONTRACT 4.1/4.3/4.4 should name the injection point of the 'fs seam' that spec T21b and T25b rely on (for example an exported setFs or an `fs` option), or say that tests may patch node:fs. As written, the library builder and this test file may disagree about it.",
+   "CONTRACT 4.3 does not say whether `relpath` keys of stagingCut, readCutPrefix and walkFiles are relative to the attempt folder or to staging/. The tests accept either form (a key equal to rel or to 'staging/'+rel), but the contract should pin it, because fsck and replace read these keys.",
+   "CONTRACT 4.1 does not say how runMain learns the root for its run-from-attempt check, or where the stdout `mode` comes from, given that runMain parses nothing. The tests pass --root on the command line and only assert that the `mode` key exists.",
+   "CONTRACT 4.10 gives the rng draw as 'first 4 bytes of sha256(seed:counter) / 2^32' without the byte order or the first counter. T93 accepts either byte order and a first counter of 0 or 1, and then requires the counter to advance by one per draw. Pin one form.",
+   "spec T2 vs CONTRACT 1.5 disagree about 'con-research' (see deviations); the contract was followed."
+  ],
+  "not_testable_without_the_app": [
+   "T82 (second test): that the real harness names project folders by projectDirName's rule. Written and skipped with 'needs the app'.",
+   "T92: that a real session's claude.exe command line names its folder or session id. Written and skipped with 'needs the app'."
+  ],
+  "open_points": [
+   "No numbered behaviour was left without a test. The following are weaker than the spec states or rest on a guess, and are listed so they are not read as full coverage.",
+   "Tests assume the signatures `parseArgs(argv, spec)`, `TcbError(code, exit, detail)`, `edgeFacts(flags{now,'free-mb',boot}, proc)`, `fence({task,expectEpoch,reason,host,tick,readyCheck,cut,spendAtFence,R,Hmax})`, `reservation(rows, spentOf)`, `slotCount(rows, procList, transcriptsRoot)`, `variant(root,row,{f5Given})` and `checkerVerdicts(parsed[], itemIds)` where parsed items carry `.structured[{data}]`. Every call is awaited, so a sync or async library both fit.",
+   "T7: `mode` and `dry_run` in the stdout line are only checked for presence, not for value, because runMain's source for them is unspecified.",
+   "T7: the --free-mb override is passed under both the 'free-mb' and 'freeMb' flag keys, since parseArgs' key naming for hyphenated flags is only shown by T1's 'dry-run'.",
+   "T24, T45: `badLines` (a 1-based line number or a 0-based index) and `brokenAt` (a seq or an index) are accepted as either; the tests pin the line only to within one.",
+   "T30: the lock-break line's `data` is read as `data.stale` or `data` itself, since the §3.7 table gives 'stale {...}' without saying which.",
+   "T29: `proc.list` is asserted at most once (a process-wide selfInfo cache means a later test may see zero). The alive count is asserted at least 3 for retries 3.",
+   "T34: the incident line left by an orphaned lock is asserted only as an `incident` kind line at the next acquisition; its class and detail are not specified.",
+   "T48/T65: error `path` for required and additionalProperties is accepted as the object's pointer or the property's pointer; allOf and $ref failures accept the nested or the wrapping keyword. The root pointer is expected to be the empty string.",
+   "T49-T64: task rows are written with `reason` and `session` as null; if the first write is refused as schema-invalid, the test helper retries with those keys left out and keeps that choice. Attempt entries carry only epoch, folder and stop plus the fields a test sets. A schema that requires other fields would fail every row-based test at once.",
+   "T52: the code of the wrong-epoch refusal is not pinned (only exit 65), because the contract names no slug for it besides `stale-epoch` in the exit table.",
+   "T55: the race is run with two real processes released by a go file; it asserts exactly one winner (epoch e+1) and one exit 65. It cannot prove the lock was the cause.",
+   "T57-T61: the `from`/`to` fields of fence's return, and the `epoch` inside a `fails` entry (failed epoch vs new epoch) are not asserted; the spec does not define them.",
+   "T62-T64: keys are compared in the form lib returns them (see change requests). Where a hard link cannot be made on the machine, the hard-link part is skipped quietly (T63 prints a diagnostic) and the junction/symlink parts skip with t.skip.",
+   "T27b: the symbolic-link case runs only where an unprivileged symlink can be created; otherwise only the junction and hard-link cases are asserted.",
+   "T79b: the 50 MB transcript is parsed in a child process under --max-old-space-size=64 instead of measuring heap growth, which cannot be sampled after the fact. It assumes chunk boundaries fall at multiples of the chunk size from byte 0; the multi-byte character is placed to straddle byte 48 MiB, which is also a multiple of 1 MiB and of 64 KiB.",
+   "T80: the main transcript is taken to be the first element, or the non-sidechain one; helper calls are written with isSidechain true and later timestamps. `partial` is asserted only as truthy or falsy.",
+   "T85, T85b, T86, T87, T88, T89 start real PowerShell (several seconds each) and need Windows; they run with concurrency false. T88 spies on spawn, spawnSync, exec, execSync, execFile and execFileSync, so it assumes taskkill is started through one of them.",
+   "T93: the exact first draw is not pinned (byte order and first counter are guessed from a small set; see change requests).",
+   "T96: `procList` null is asserted only for an attempt that would otherwise be live (it becomes unknown). The spec's 'every such attempt unknown' is not tested for old attempts with no process and no transcript. The attempt folder in a row is assumed to be an absolute path as it appears in a process command line.",
+   "T96e: the shape of `store/qualification.json` (classes.<C>.qualified) and of `sealed/seeds/<batch>.json` items is taken from §3.17, and the 'earlier batch' is read from the seed files. A queue ledger line per batch is not written, because the spec does not say lib needs one.",
+   "T96f flagCleared: the shape of the `flag` argument is not defined in §3.15 or §4.10. The test passes {id, object, o, sid, code, seq, intake_seq, intakeSeq} (the object id, sid, and the flagging intake line's seq under several names).",
+   "T96f currentProtocol: a frozen file whose bytes were changed is only asserted to throw a TcbError-style error with a numeric exit; the code and exit are not specified.",
+   "T97: asserts the folder list drawn from the §2 tree, tcb/{schemas,profiles,settings,agents,briefs}, coord.json, an empty task table and a transcripts_root of <root>/transcripts. It does not test makeRoot's `thresholds` or `tasks` options, because their format is not specified.",
+   "Formats not covered by T70 because §3 does not show whether they carry schema_version: ledger-line, status, watcher, coord, acked, alarm, intent, lock-record, ready, snapshot-meta, witness, card-status, certificate, protocol, analysis-plan, profile, seed-key, plant-key, sentence, task-row. The analysis-plan, seed-key and plant-key field types are also vague.",
+   "Spec T1-T98 are all present by id, plus T0 (constants) and T25c (a wx lock create that keeps failing with EPERM counts as busy, from CONTRACT 4.3), T52b (updateRow stamps updated_rev), T7b/T21(fsync) as separate tests, and T65 as one test per keyword."
+  ]
+ }
+}

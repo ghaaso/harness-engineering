@@ -1,0 +1,38 @@
+{
+ "label": "tests:U2b",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/tms.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/promote.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/test/certify.test.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/tms/ (5 cases: t1-confirmed-pack, t2-witnessed-pending, t4-support-fell, t10-reopened, t13-dangling; each a case.json plus root/ overlay)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/promote/ (6 cases: witness-two-cards, witness-card-changed, witness-seed-id, revert-two-cards, revert-class-qualified, revert-no-qualification)",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fixtures/certify/ (6 cases: certified-review, not-certified-witnessed-card, not-run-audit-missing, not-committed, step-key-mismatch, object-mismatch)"
+  ],
+  "deviations_from_the_spec": [
+   "Tests do not import tcb/test/helpers.mjs: it did not exist when I wrote them and I may write only the three test files. Each file carries an identical common-helper block between the markers '// ==== COMMON HELPERS BEGIN' and '// ==== COMMON HELPERS END'. It builds its own run root, writes the ledger hash chain, writes objects, runs scripts as child processes and checks the CONTRACT 1.3 line. When helpers.mjs exists the block can be replaced by an import.",
+   "The run root's thresholds.json is written by the test from the CONTRACT 3.20 defaults, not copied from the shipped tcb/thresholds.json, so a missing name in the shipped file cannot hide a script bug. The test also copies schemas, profiles, settings, agents and briefs from tcb/ when they exist.",
+   "Extra tests beyond the numbered behaviours, named with the nearest id plus a letter, cover exit codes the spec's Steps and Exit-codes sections state but no numbered behaviour does: tms T13b (status-unreadable, protocol-unreadable, no-target); promote T7b (verdict-conflict), T7c (unknown_items), T9b (no-batch, no-coordinator-session), T12b (no-qualification); certify T1b (seed_escape), T8b (dangling plant card), T14b (no-task, a commit of another epoch is 65).",
+   "The checker's verdicts in promote's transcripts are delivered as an 'attachment' record of type structured_output, not as a StructuredOutput tool use. The spec says every tool use must be a Read under queue/<b>/, and a StructuredOutput tool use would be an exception the spec does not state.",
+   "The lock-busy tests (T15 in tms, T14 in promote and certify) hold run.lock with a record naming a node sleeper the test spawns and kills itself, and read its start time with the PowerShell path from the contract. They set threshold lock_retries to 3.",
+   "Fixture cases follow the selftest [fixture-case] format. Fixtures use the case root's coord.json and tasks.json from the overlay. No promote batch-mode fixture exists because a batch needs a transcript with absolute paths, which a static overlay cannot hold.",
+   "The contract says tests run with helpers.makeRoot with a 6-character prefix. Mine uses the prefix 'tst-' followed by mkdtemp's 6 random characters."
+  ],
+  "lib_change_requests": [
+   "Scripts are not where the contract puts them. tcb/tms.mjs, tcb/promote.mjs and tcb/certify.mjs sit at the tcb/ root, there is no tcb/scripts/lib.mjs, and tcb/scripts/ holds only guard-hook.mjs and selftest.mjs. The tests run tcb/scripts/<name>.mjs, so they cannot pass until the scripts and lib.mjs sit in tcb/scripts/. I did not read the scripts' code.",
+   "tcb/test/helpers.mjs (CONTRACT 4.11) does not exist yet. Once it does, the duplicated helper block in the three test files can be swapped for an import."
+  ],
+  "not_testable_without_the_app": [
+   "promote needs-app 7: a real checker's verdict appears as a structured result in its own helper transcript, and checker helper transcripts lie under the coordinator's subagents folder. Skipped test with reason 'needs the app'.",
+   "promote needs-app 1: the checker could only Read its batch (promote detects an out-of-role tool use, it does not prevent one). Skipped test with reason 'needs the app'.",
+   "tms: nothing needs the app. certify: nothing directly; whether audit's clean label reflects a real session's reads belongs to audit's tests."
+  ],
+  "open_points": [
+   "No test has been run against a real script. The only run was against the absent tcb/scripts/*.mjs: all tests reach the script call and then fail at that call, and promote's two skipped tests are reported as skipped. The helpers were checked separately: temp root creation, ledger chain verification, object ids, holdLock with a live sleeper, and the fixture generator.",
+   "Behaviours I could not fully turn into tests: certify T11's 'and tms marks the old STALE' (it needs tms; the tms T11 test covers that half), and the part of promote T5/T6 about ledger and written fields beyond status, reason, check and classes.",
+   "Contract ambiguities I resolved by the literal text, to confirm: (a) task-row fields marked '?' (reason, session, and the optional attempt fields) are omitted in my tasks.json rows, not set to null; another builder's fixture uses session: null. (b) The R18 flag in certify T5 and tms T6 is cleared by a status line on the cited card, so a review sentence citing two cards needs a line for each. (c) tms labels_sha is only checked as 64 hex and equal across equal inputs, not as the sha of labels.json's bytes. (d) For exit-0 answers 'already' (promote T10) I only check that the word appears in reasons or result, because the contract does not say where it goes.",
+   "Over-specific assertions that may need loosening against the real scripts: tms asserts nodes[...].causes equals [card id] for support-unchecked and support-fell, repair causes[].card_id, labels.cards[].status_seq equal to the last status seq, and dismissals[...].matched including the outlist-matching card id. promote asserts the new status lines come in batch order and that the revert lines carry classes ['J2']. certify asserts result.reasons equal exactly ['cited-failing'], ['tainted'], ['plants-short'] or ['plant-contra-missed'] in the single-fault scenarios.",
+   "The contract's checks on exit-3 breaches expect at most an incident ledger line. The tests allow only incident lines to be added after a tamper exit and require the chain to verify."
+  ]
+ }
+}

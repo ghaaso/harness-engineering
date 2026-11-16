@@ -11,12 +11,141 @@ import cp from 'node:child_process';
 import { spawnSync, spawn } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import * as lib from '../scripts/lib.mjs';
-import * as helpers from './helpers.mjs';
+// Flat build layout: the library is tcb/lib.mjs, beside the scripts (not tcb/scripts/lib.mjs).
+import * as lib from '../lib.mjs';
 
 // ------------------------------------------------------------------ support
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const LIB_URL = new URL('../scripts/lib.mjs', import.meta.url).href;
+const LIB_URL = new URL('../lib.mjs', import.meta.url).href;
+
+// CONTRACT 4.11 test helpers. tcb/test/helpers.mjs is used when it exists; until it is written,
+// this stand-in (built from CONTRACT 4.11 and 4.8 only) takes its place so the library's tests run.
+// T97 and T98 then exercise the stand-in; they must be rerun against helpers.mjs once it exists.
+const HELPERS_FILE = path.join(HERE, 'helpers.mjs');
+const HELPERS_IS_STANDIN = !fs.existsSync(HELPERS_FILE);
+const helpers = HELPERS_IS_STANDIN ? standinHelpers() : await import(new URL('./helpers.mjs', import.meta.url).href);
+
+function standinHelpers() {
+  const TCB = path.resolve(HERE, '..');
+  const TMPROOT = path.resolve(HERE, '..', '..', 'tmp');
+  const PS_EXE = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
+  const DIRS = [
+    'tcb', 'plan', 'plan/frozen', 'run', 'run/intents', 'run/audit', 'run/stop-sample', 'store', 'store/objects', 'store/commits',
+    'store/status', 'views', 'queue', 'review-in', 'completeness', 'sealed', 'sealed/seeds', 'sealed/plants', 'sealed/heldout',
+    'sealed/blind', '.snapshots', '.snapshots/raw', '.snapshots/text', '.snapshots/meta', '.snapshots/by-url', 'wt', 'transcripts',
+  ];
+  const BASE_TS = Date.parse('2026-11-17T10:00:00.000Z');
+  const tsOf = (i) => new Date(BASE_TS + i * 1000).toISOString();
+
+  async function makeRoot({ thresholds: thr, tasks = [], ce = 1 } = {}) {
+    fs.mkdirSync(TMPROOT, { recursive: true });
+    const root = fs.mkdtempSync(path.join(TMPROOT, 'tcbrt-'));
+    for (const d of DIRS) fs.mkdirSync(path.join(root, ...d.split('/')), { recursive: true });
+    for (const d of ['schemas', 'profiles', 'settings', 'agents', 'briefs']) {
+      const src = path.join(TCB, d);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', d), { recursive: true });
+      else fs.mkdirSync(path.join(root, 'tcb', d), { recursive: true });
+    }
+    const doc = JSON.parse(fs.readFileSync(path.join(TCB, 'thresholds.json'), 'utf8'));
+    doc.params = doc.params || {};
+    const setParam = (name, v) => {
+      if (v && typeof v === 'object' && !Array.isArray(v) && 'value' in v) doc.params[name] = v;
+      else doc.params[name] = { ...(doc.params[name] || { unit: 'test', source: 'guess', gate: false }), value: v };
+    };
+    setParam('transcripts_root', path.join(root, 'transcripts'));
+    for (const [k, v] of Object.entries(thr || {})) setParam(k, v);
+    fs.writeFileSync(path.join(root, 'tcb', 'thresholds.json'), JSON.stringify(doc, null, 2));
+    fs.writeFileSync(path.join(root, 'run', 'coord.json'), JSON.stringify({ schema_version: 1, ce, started_at: '2026-11-17T09:00:00.000Z', tcb_commit: '0'.repeat(40) }));
+    fs.writeFileSync(path.join(root, 'run', 'tasks.json'), JSON.stringify({ schema_version: 1, rev: 0, tasks }));
+    return { root, cleanup: async () => fs.rmSync(root, { recursive: true, force: true }) };
+  }
+
+  function runScript(name, args = [], { root } = {}) {
+    const r = spawnSync(process.execPath, ['--max-old-space-size=1024', path.join(TCB, `${name}.mjs`), ...args, ...(root ? ['--root', root] : [])], {
+      encoding: 'utf8', windowsHide: true,
+    });
+    let json = null;
+    try { json = r.stdout && r.stdout.trim() ? JSON.parse(r.stdout) : null; } catch { json = null; }
+    return { exit: r.status, json, stderr: r.stderr };
+  }
+
+  async function fakeTranscript(file, { sessionId, cwd, calls = [], structured } = {}) {
+    const recs = [];
+    let t = 0;
+    let n = 0;
+    const base = { sessionId, cwd };
+    recs.push({ ...base, type: 'user', timestamp: tsOf(t++), uuid: `u-${n++}`, message: { role: 'user', content: 'synthetic start' } });
+    calls.forEach((c, i) => {
+      const id = `msg_fake_${i}`;
+      const u = c.usage || {};
+      const usage = {
+        input_tokens: u.input_tokens ?? u.input ?? 0,
+        cache_read_input_tokens: u.cache_read_input_tokens ?? u.cache_read ?? 0,
+        cache_creation_input_tokens: u.cache_creation_input_tokens ?? u.cache_write ?? 0,
+        output_tokens: u.output_tokens ?? u.output ?? 0,
+      };
+      const blocks = [];
+      if (typeof c.text === 'string') blocks.push({ type: 'text', text: c.text });
+      const tools = c.tools || [];
+      tools.forEach((tl, j) => blocks.push({ type: 'tool_use', id: `toolu_fake_${i}_${j}`, name: tl.name, input: tl.input ?? {} }));
+      if (!blocks.length) blocks.push({ type: 'text', text: '' });
+      const ts = tsOf(t++);
+      for (const b of blocks) {
+        recs.push({ ...base, type: 'assistant', timestamp: ts, uuid: `u-${n++}`, message: { id, model: 'claude-test', role: 'assistant', content: [b], usage } });
+      }
+      if (Array.isArray(c.results) && c.results.length) {
+        const content = c.results.map((r, j) => {
+          const o = typeof r === 'string' ? { text: r } : r || {};
+          return { type: 'tool_result', tool_use_id: o.toolUseId ?? `toolu_fake_${i}_${j}`, is_error: o.isError === true, content: o.text ?? '' };
+        });
+        recs.push({ ...base, type: 'user', timestamp: tsOf(t++), uuid: `u-${n++}`, message: { role: 'user', content } });
+      }
+    });
+    if (structured !== undefined) {
+      recs.push({ ...base, type: 'attachment', timestamp: tsOf(t++), uuid: `u-${n++}`, attachment: { type: 'structured_output', data: structured } });
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    return file;
+  }
+
+  async function spawnSleeper({ args = [] } = {}) {
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)', ...args], { stdio: 'ignore', windowsHide: true });
+    const exited = new Promise((res) => child.once('exit', res));
+    let start_time = null;
+    try {
+      const out = cp.execFileSync(PS_EXE, ['-NoProfile', '-NonInteractive', '-Command',
+        `[Console]::OutputEncoding=[Text.Encoding]::UTF8; $x=Get-CimInstance Win32_Process -Filter 'ProcessId=${child.pid}'; if($x -and $x.CreationDate){$x.CreationDate.ToUniversalTime().ToString('o')}`],
+      { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+      start_time = String(out).replace(/^\uFEFF/, '').trim() || null;
+    } catch {
+      start_time = null;
+    }
+    let killed = false;
+    return {
+      pid: child.pid,
+      start_time,
+      kill: async () => {
+        if (!killed) {
+          killed = true;
+          try { child.kill(); } catch { /* gone */ }
+        }
+        if (child.exitCode === null && child.signalCode === null) await exited;
+      },
+    };
+  }
+
+  function fakeProc(table = []) {
+    const rows = Array.isArray(table) ? table : [];
+    return {
+      list: () => rows.map((r) => ({ ...r })),
+      alive: (pid, st) => rows.some((r) => r.pid === pid && (st == null || r.start_time === st)),
+      boot: () => '2026-11-17T08:00:00.0000000Z',
+    };
+  }
+
+  return { makeRoot, runScript, fakeTranscript, spawnSleeper, fakeProc };
+}
 const FIX = path.join(HERE, '..', 'fixtures', 'lib');
 const TMP = path.resolve(HERE, '..', '..', 'tmp');
 const NOW = '2026-11-17T10:00:00.000Z';
@@ -364,6 +493,8 @@ test('T0 the exported constants carry the names the contract lists', () => {
   for (const [k, v] of Object.entries(want)) assert.equal(lib.PREFIX[k], v, `PREFIX.${k}`);
 });
 
+// CONTRACT 1.1: --root is an absolute path (a relative one is a malformed value, 66).
+const AROOT = path.resolve(TMP, 'R');
 const ASPEC = {
   modes: ['start', 'stop'],
   flags: {
@@ -375,7 +506,7 @@ const ASPEC = {
   },
 };
 test('T1 parseArgs returns the mode and typed flags', async () => {
-  const r = await lib.parseArgs(['start', '--root', 'R', '--task', 'f1-research', '--epoch', '2', '--dry-run'], ASPEC);
+  const r = await lib.parseArgs(['start', '--root', AROOT, '--task', 'f1-research', '--epoch', '2', '--dry-run'], ASPEC);
   assert.equal(r.mode, 'start');
   assert.equal(r.flags.task, 'f1-research');
   assert.strictEqual(r.flags.epoch, 2);
@@ -383,25 +514,26 @@ test('T1 parseArgs returns the mode and typed flags', async () => {
 });
 test('T2 parseArgs refuses unknown flags, missing required flags, unknown modes, bad ints and DOS device names with usage 66', async () => {
   const bad = async (argv) => throwsTcb(() => lib.parseArgs(argv, ASPEC), 'usage', 66);
-  await bad(['start', '--root', 'R', '--task', 'f1-research', '--bogus', 'x']);
+  await bad(['start', '--root', AROOT, '--task', 'f1-research', '--bogus', 'x']);
   await bad(['start', '--task', 'f1-research']); // --root missing
-  await bad(['start', '--root', 'R']); // --task required in start
-  await bad(['frobnicate', '--root', 'R']);
-  await bad(['start', '--root', 'R', '--task', 'f1-research', '--epoch', 'two']);
+  await bad(['start', '--root', AROOT]); // --task required in start
+  await bad(['frobnicate', '--root', AROOT]);
+  await bad(['stop', '--root', 'R']); // 1.1: --root must be absolute
+  await bad(['start', '--root', AROOT, '--task', 'f1-research', '--epoch', 'two']);
   // a flag required only in another mode is not required here
-  const ok = await lib.parseArgs(['stop', '--root', 'R'], ASPEC);
+  const ok = await lib.parseArgs(['stop', '--root', AROOT], ASPEC);
   assert.equal(ok.mode, 'stop');
   // 1.5: DOS device names are not tasks
-  for (const t of ['nul', 'com1', 'con', 'prn', 'aux', 'lpt9']) await bad(['start', '--root', 'R', '--task', t]);
+  for (const t of ['nul', 'com1', 'con', 'prn', 'aux', 'lpt9']) await bad(['start', '--root', AROOT, '--task', t]);
   // CONTRACT 1.5's task pattern only refuses a device name that is the whole name (or followed by a dot);
   // the spec's "con-research" example is accepted by that pattern, so the contract is followed here.
-  const ok2 = await lib.parseArgs(['start', '--root', 'R', '--task', 'con-research'], ASPEC);
+  const ok2 = await lib.parseArgs(['start', '--root', AROOT, '--task', 'con-research'], ASPEC);
   assert.equal(ok2.flags.task, 'con-research');
 });
 test('T3 a repeated list flag gives an array in order', async () => {
-  const r = await lib.parseArgs(['start', '--root', 'R', '--task', 'f1-research', '--card', 'a', '--card', 'b'], ASPEC);
+  const r = await lib.parseArgs(['start', '--root', AROOT, '--task', 'f1-research', '--card', 'a', '--card', 'b'], ASPEC);
   assert.deepEqual(r.flags.card, ['a', 'b']);
-  const one = await lib.parseArgs(['start', '--root', 'R', '--task', 'f1-research', '--card', 'a'], ASPEC);
+  const one = await lib.parseArgs(['start', '--root', AROOT, '--task', 'f1-research', '--card', 'a'], ASPEC);
   assert.deepEqual(one.flags.card, ['a']);
 });
 
@@ -897,10 +1029,21 @@ rt('T29 a lock held by a live process is retried, then lock-busy 75 with the fil
     putLock(root, mkRec({ pid: s.pid, start_time: s.start_time }));
     const before = fs.readFileSync(lockFile(root));
     const p = fproc({ alive: (pid) => pid === s.pid });
-    await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: p, retries: 3, retryMs: 5 })), 'lock-busy', 75);
+    // Count the wx creates of run.lock (a pass-through spy): the first try plus three retries.
+    const isLockCreate = (args) => argHas('/run/run.lock')(args) && JSON.stringify(args.slice(1)).includes('wx');
+    const spy = failing('openSync', isLockCreate, []);
+    try {
+      await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: p, retries: 3, retryMs: 5 })), 'lock-busy', 75);
+    } finally {
+      spy.restore();
+    }
+    assert.equal(spy.state.matched, 4, 'one create and three retries');
     assert.deepEqual(fs.readFileSync(lockFile(root)), before);
     assert.ok(p.calls.list <= 1, `proc.list was called ${p.calls.list} times`);
-    assert.ok(p.calls.alive.length >= 3, `alive consulted ${p.calls.alive.length} times for 3 retries`);
+    // CONTRACT 4.4 keeps PowerShell out of the retry loop: the holder is judged (at least once) and
+    // found alive; the library may judge one holder once rather than per retry.
+    assert.ok(p.calls.alive.length >= 1 && p.calls.alive.length <= 4, `alive consulted ${p.calls.alive.length} times`);
+    assert.ok(p.calls.alive.every(([pid]) => pid === s.pid), 'only the holder is judged');
   } finally {
     await s.kill();
   }
@@ -1174,11 +1317,13 @@ test('T45 verifyLedger reports ok false with brokenAt for an edit, a deletion, a
   rehash(full, 2);
   assert.equal((await lib.verifyLedger(full)).ok, true, 'tamper-evident only against a noted head (R31)');
 });
-rt('T46 eight processes each append 50 lines through withRunLock: 400 lines, seq 1..400, no gap or duplicate', async (root) => {
+// spec/lib.md T46 names 8 processes of 50 lines; the machine limit (at most four Node processes: the
+// runner, this file and two workers) makes it 2 processes of 200 lines, the same 400 contended lines.
+rt('T46 two processes each append 200 lines through withRunLock: 400 lines, seq 1..400, no gap or duplicate', async (root) => {
   const go = P(root, 'go');
   const kids = [];
-  for (let i = 0; i < 8; i++) {
-    const c = spawn(process.execPath, [path.join(FIX, 'append-worker.mjs'), LIB_URL, root, String(i), '50', go], { stdio: ['ignore', 'pipe', 'pipe'] });
+  for (let i = 0; i < 2; i++) {
+    const c = spawn(process.execPath, [path.join(FIX, 'append-worker.mjs'), LIB_URL, root, String(i), '200', go], { stdio: ['ignore', 'pipe', 'pipe'] });
     const k = { out: '', err: '' };
     c.stdout.on('data', (x) => (k.out += x));
     c.stderr.on('data', (x) => (k.err += x));
@@ -1194,7 +1339,7 @@ rt('T46 eight processes each append 50 lines through withRunLock: 400 lines, seq
   assert.equal((await lib.verifyLedger(lines)).ok, true);
   const per = {};
   for (const l of lines) per[l.data.worker] = (per[l.data.worker] || 0) + 1;
-  assert.deepEqual(Object.values(per), Array(8).fill(50));
+  assert.deepEqual(Object.values(per), Array(2).fill(200));
   const seen = kids.flatMap((k) => JSON.parse(k.out.trim().split('\n').pop()).seqs);
   assert.deepEqual([...seen].sort((a, b) => a - b), lines.map((l) => l.seq));
 }, {}, { timeout: 280000 });

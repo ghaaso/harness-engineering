@@ -1,0 +1,65 @@
+{
+ "label": "build:U2b",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/tms.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/promote.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/certify.mjs"
+  ],
+  "deviations_from_the_spec": [
+   "Location: the brief puts the scripts at tcb/<name>.mjs, while CONTRACT §0 and §5 say tcb/scripts/<name>.mjs. The scripts import './lib.mjs', as seed.mjs, snap.mjs and protocol-freeze.mjs do, so the import works in either layout as long as lib sits beside them.",
+   "Paths: each script writes out its own run-root paths in one local pathsOf() table instead of using lib.paths(root). The contract does not name the keys paths() returns, so the scripts cannot be coded against it. They can switch once the key names are published.",
+   "All scripts: status lines (promote) and the certificate object (certify) carry schema_version 1, following CONTRACT §3 'Every object carries schema_version', although the §3.15 and §3.16 field lists leave it out.",
+   "All writing scripts: on a TcbError with exit 3, the script re-takes the lock (best effort) and appends the §1.4 tamper `incident` line through lib.recordIncident, only when the ce is current and verifyLedger passes. It then rethrows.",
+   "tms: the `check` line data carries an extra field labels_sha. Without it the script cannot tell whether the labels' sha differs from the last tms check line, which the spec requires.",
+   "tms: the check result is 'fail' while any judged target is bad OR any dismissal is currently reopened (not only newly reopened), so the result stays stable across reruns. This is what makes T10's unchanged rerun write no line.",
+   "tms: besides the required {code:'reopened', detail:[newly reopened keys]}, the check line can carry two more reasons: {code:'stale-or-pending', detail: bad targets} and {code:'dismissals-reopened', detail: all reopened keys}.",
+   "tms: labels.json `targets` lists every commit record. --target only limits which records count for exit 1 and for result.bad_targets.",
+   "tms: a --target not shaped `<task>.<step>` exits 66 (usage). A well-formed one that names no record exits 2 no-target, as the spec says.",
+   "tms: a node's `why` and `causes` (and the repair item's causes) come from the winning level only. Causes that belong to no card (pack-repaired, questions-changed, uncited, judgment-kind, flag-open on an uncited sentence) appear in repair.json as {card_id: null, code}.",
+   "tms: a 'standing' dismissal gets why ['bounded'] and matched = the bounding confirmed cards (the spec names no slug). With no sesoi entry for the sentence's measure (or no frozen protocol), the dismissal is 'untested' with why ['no-sesoi'], checked before the bound.",
+   "tms: a verdict's `why` is the union of the why slugs of its supporting sentences at the highest label. A duplicated approach_id inside one review keeps the highest label.",
+   "tms: the result adds `reopened_all` and `written`. result.reopened holds the newly reopened keys only, the ones behind exit 10.",
+   "tms: a commit-record output id with no stored object, or a cite, supersedes or read_set id that names a stored object of another kind, is also reported as `dangling` (exit 2).",
+   "tms and certify: any error thrown by lib.currentProtocol is mapped to exit 2 protocol-unreadable (tms only).",
+   "promote: the role check skips tool uses named StructuredOutput, because the checker returns its verdicts through that tool. Every other tool use must be a Read with an absolute path under <root>/queue/<b>/.",
+   "promote: a queue item's card is compared with the stored card after dropping schema_version from both. Otherwise a check-queue that copies card fields without schema_version would be read as a false tamper (exit 3).",
+   "promote: a checker confirmation line uses reason 'checker-confirmed' (the spec names no slug for it).",
+   "promote: a sentence item, or an outside_conditions/unclear card item, on a card with no status line writes no line; the card goes into `skipped`.",
+   "promote: the `unclear` result list and the exit 1 for missing, off-enum or conflicting verdicts count only real (non-seed) items. checker-out-of-role always exits 1.",
+   "promote: a complete but unparseable line in card_status.jsonl exits 2 status-unreadable (the spec is silent). A torn tail is ignored and left to appendJsonl.",
+   "promote: a batch.json item that is not an i_<16hex> id exits 2 batch-unreadable. A key entry missing for an item, or a key entry without card_id, exits 2 no-key.",
+   "promote revert: followed literally. Any card whose last line is confirmed with `classes` including the class reverts to witnessed. So `revert --class J3` also reverts a card whose last line is a confirmed sentence-check (classes J1-J4), even though the card's own confirmation (J1, J2, J4) did not rely on J3.",
+   "promote checker mode: the `already` check runs once before the transcript parse and again inside the lock.",
+   "certify: when no audit line exists, the stored certificate has session_label null, because the enum clean|tainted has no value for 'missing'.",
+   "certify: adds not_certified reason 'no-cited' (a review with fact sentences but no cited card) and not_run reason 'status-unreadable' (a bad complete line in card_status.jsonl). A not_run certificate lists only its not_run reasons.",
+   "certify: a cited card with no stored object also exits 2 dangling, as well as a plant card. A card can appear twice in failing: superseded or not-confirmed, plus r18-flag.",
+   "certify: the review output's sha256 in the commit record is re-checked against the stored review's canonical bytes; a mismatch exits 3 object-mismatch.",
+   "certify: plants_t counts as a gate only when thresholds.isGate('plants_t') is true and the value is a number (CONTRACT §3.20: value null or gate:false is a reading)."
+  ],
+  "lib_change_requests": [
+   "withRunLock(root, {script, ce, proc, now, retries}, fn) should accept `retries` and forward it to acquireLock. The scripts pass threshold lock_retries this way. If it is ignored, the exit-75 tests take about 30 s instead of 3 retries.",
+   "runMain: the contract does not say how `dry_run` and `mode` reach the §1.3 stdout line. The scripts return {exit, result, reasons, dry_run, mode} from fn. Please read dry_run and mode from that return value, or fall back to argv.",
+   "flagCleared(root, flag): the contract does not fix the flag object's shape. The scripts pass {id, obj_id, sid, code, node: '<id>#<sid>', seq, intake_seq, ledger_seq, task, epoch}, where seq, intake_seq and ledger_seq all equal the flagging intake line's seq. Please accept that shape, or publish the exact keys.",
+   "checkerVerdicts(parsed[], itemIds): the scripts pass the array of structured `data` values (each a {schema_version, verdicts:[...]} object or a bare verdict), taken from parseTranscript(...).structured[].data. Please accept that, or say whether it wants the whole parseTranscript result or the {toolUseId, data} wrappers. promote reads verdicts[item] either as a string or as an object with .verdict, and reads reasons[item] as the unclear slug.",
+   "paths(root): please publish the key names in the contract, so scripts can drop their local path tables.",
+   "Schemas the library builder writes. [labels]/[repair]: allow card_id null in repair causes. [ledger-line]: check data may carry labels_sha (tms). [card-status] and [certificate]: allow schema_version. [certificate]: session_label nullable (audit-missing). [card-status]: reason slugs include checker-confirmed, unqualified, unqualified-revert, sentence-check, sentence-unqualified, unclear, the rejecting verdict names, and the witness reasons."
+  ],
+  "not_testable_without_the_app": [
+   "promote: that a real checker helper's verdict appears in its own helper transcript as a structured result (StructuredOutput tool input or a structured_output attachment) in the [checker-result] shape (CONTRACT §7 item 7).",
+   "promote: that checker helper transcripts really lie under <transcripts_root>/<project>/<coordinator session>/subagents/, the only place promote accepts.",
+   "promote: that the checker could only Read files of its own batch. promote only detects a breach from the transcript; prevention is guard-hook's job (§7 item 1). Also that the harness names the result tool StructuredOutput, which the role check exempts.",
+   "certify: whether audit's 'clean' label reflects a real session's reads (§7 items 3 and 7). certify only copies the label from the last audit line.",
+   "tms: nothing beyond the above. It is pure computation over files."
+  ],
+  "open_points": [
+   "Nothing has been run against the real library: lib.mjs did not exist under tcb-build/tcb/ when I finished, so only `node --check` was done. If lib names a function differently than the contract, the call fails at run time with exit 70 (namespace import), not at load.",
+   "Each writing script calls lib.realProc({exe: thresholds proc_exe}), only for the lock's selfInfo and stale-lock check. That is one PowerShell call per run, before the lock is taken.",
+   "certify T7 hinges on the test's thresholds. The shipped plants_t is {value: null, gate: false}. A test that sets only value: 2 and leaves gate: false still gets a reading under CONTRACT §3.20, so no plants-short or plant-contra-missed. Tests must set gate: true as well.",
+   "tms: questions-changed is judged only when the field has a current frozen protocol. With no protocol-freeze line for the field, no STALE questions-changed is raised.",
+   "tms: a review's 'pack-repaired' uses its pack's successor; a pack's own conclusions are judged against the pack itself (a committed pack whose parent is this pack). The spec's 'the object's pack' is read that way.",
+   "The spec numbers promote behaviours T13-T16 out of order (T15 and T16 come before T13); everything in them is covered.",
+   "Design vs contract: R38 in the design says stale support reopens a dismissal. The spec and contract narrow that to a support card being rejected or superseded, and the code follows the spec."
+  ]
+ }
+}

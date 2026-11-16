@@ -1,0 +1,76 @@
+{
+ "label": "probe:processes",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/probes/process-facts.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/probes/inspect-sessions.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/probes/tie-sessions.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/probes/spawn-kill.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/probes/timing.mjs"
+  ],
+  "facts": [
+   {
+    "fact": "Session processes are claude.exe with ExecutablePath containing claude-code; 5 found",
+    "status": "observed",
+    "how": "Get-CimInstance Win32_Process via powershell, filtered in Node",
+    "detail": "Other claude.exe processes (desktop app and helpers, about 11) lack the claude-code path and have no --resume. Child processes vary (conhost always, bash.exe on the active one), so they identify nothing."
+   },
+   {
+    "fact": "Command-line flags present",
+    "status": "observed",
+    "how": "parsed command lines, printed flag names and value kinds only",
+    "detail": "--output-format, --verbose, --input-format, --effort (word), --model (short string), --permission-prompt-tool (word), --resume=<36-char id>, --allowedTools (long string), --disallowedTools, --setting-sources, --permission-mode (word), --allow-dangerously-skip-permissions, --include-partial-messages, --add-dir (path, 0-2 times), --await-initialize, --thinking-display (word), --replay-user-messages, --project-config-root (path, 1 of 5), --settings (2-char value). The resume flag uses the = form, so a parser must accept both = and space."
+   },
+   {
+    "fact": "A process is tied to its session id by the command line",
+    "status": "observed",
+    "how": "matched --resume id to files under C:/Users/User/.claude/projects/*/<id>.jsonl",
+    "detail": "5 of 5 ids matched an existing transcript file. Caveat: it names the transcript resumed from; a forked session with a new id was not observed."
+   },
+   {
+    "fact": "A process is tied to its start folder only indirectly",
+    "status": "observed",
+    "how": "transcript project-folder name of the resume id; checked add-dir values against it",
+    "detail": "4 sessions map to the EMS_workshop1 project folder, 1 to a claude-worktrees folder. cwd is not in the command line and not readable from Win32_Process or Get-Process. --add-dir paths are extra dirs, not the cwd (none matched the transcript folder)."
+   },
+   {
+    "fact": "Open transcript handle visible to a script",
+    "status": "could_not_check",
+    "how": "no handle-listing tool without Sysinternals; nothing installed",
+    "detail": "Node and stock PowerShell cannot list a process's open files."
+   },
+   {
+    "fact": "Process start time can be read reliably",
+    "status": "observed",
+    "how": "CIM CreationDate ToUniversalTime().ToString('o'); Get-Process StartTime",
+    "detail": "100 ns resolution ISO string, stable on re-read (unchanged for a live dummy after its sibling's tree kill)."
+   },
+   {
+    "fact": "Cost of a start-time query",
+    "status": "observed",
+    "how": "timed with performance.now around execFileSync, 3 repetitions",
+    "detail": "All 433 processes with command lines: 2.6 s. One pid via CIM: 2.2-2.4 s. One pid via Get-Process: 1.9-2.0 s. Three pids in one filter: 2.3 s. Cost is PowerShell startup, so batch pids in one call. wmic is absent. process.kill(pid,0) is instant but proves liveness only."
+   },
+   {
+    "fact": "taskkill /PID <pid> /T /F ends the whole tree and liveness/start time can be re-read",
+    "status": "observed",
+    "how": "spawned two dummy node processes, one with a child; killed A's tree, then B, only own pids",
+    "detail": "Exit 0 with both child and parent reported terminated; re-read shows only B alive with identical start; after killing B none alive; taskkill on a dead pid exits 128; process.kill(pid,0) gives ESRCH on dead pid."
+   },
+   {
+    "fact": "Pid reuse can be detected by pid plus start time",
+    "status": "documented",
+    "how": "logic plus the observed stable start strings; real reuse not forced",
+    "detail": "Record (pid, ISO start). Same process only if a read returns a row with equal start; different start means reused pid; no row means dead. Re-read and compare immediately before any kill; a ~2 s query leaves a small race window."
+   }
+  ],
+  "consequences_for_the_build": [
+   "Map a session process to its session id with the --resume flag (accept both --resume=<id> and --resume <id>) and to its folder through the project-folder name of that transcript; do not design on a readable cwd.",
+   "Identify a process as (pid, start time in ISO UTC with 100 ns digits); verify the start immediately before any kill and never kill on pid alone.",
+   "Select session processes by name claude.exe plus path containing claude-code; never by child set.",
+   "Batch all process reads into one PowerShell call (about 2 s, flat in pid count) and keep it off hot loops; use process.kill(pid,0) for cheap liveness pre-checks.",
+   "Only taskkill /T /F processes the script itself spawned; app sessions can only be stopped by a session, so a script must not kill them.",
+   "The tie via --resume holds only if sessions are not forked to new ids; a script should fall back to 'unknown' when no transcript file matches."
+  ]
+ }
+}

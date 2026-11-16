@@ -1,0 +1,62 @@
+{
+ "label": "spec:U2",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/commit.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/harvest.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/fsck.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/tms.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/promote.mjs.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/spec/certify.mjs.md"
+  ],
+  "decisions": [
+   "Pack freeze (commit record of a pack step) applies R24 as: any cited/packed card still pending -> exit 6 cards-pending; any rejected -> exit 1 untrusted-cards; unverifiable cards are accepted (tms labels their sentences JUDGMENT per R19). Reading R24 literally (witnessed/confirmed only) would make every pack unfreezable without F5, which contradicts R19's JUDGMENT label for unverifiable supports.",
+   "commit record first runs the intake pass; if that appends a new intake line it exits 6 intake-new, so fsck can check the new objects before the record (R23). It then requires a passing fsck line newer than the last intake line of the task+epoch (exit 6 fsck-stale).",
+   "commit intake accepts only rows active at step started|bound; outputs of a step are the objects named by this task+epoch's intake lines whose kind is listed for the step in the manifest's outputs; a pack step needs exactly one pack, a review step exactly one review whose pack is already an output of a commit record.",
+   "commit's R34 check: a session- or checkpoint-origin card's source.url must appear verbatim in a tool-use input, tool-result text or structured result of the transcripts of any attempt of the task; if no transcript is found those cards are left unstored and the exit is 2.",
+   "commit's R18 (e) rule: numbers in text (sign, decimals, thousands commas, %, not touching a letter or _) must equal a numeric value or baseline of a cited card rounded to the decimals printed; (d): applies_to values must lie in every cited card's conditions (strings by equality, arrays by membership); a non-empty card condition missing from applies_to is scope-dropped.",
+   "commit checks supersedes<->supersede_reason, fact cites >= 1, and pack index summaries <= index_words in code, because the closed validator subset has no conditional keywords and the word cap is a threshold.",
+   "commit record's git step: git add -A then a commit whose message carries the ledger head before the commit line; git failure records git: null, an incident line and reason git-failed without changing the exit.",
+   "harvest appends no ledger line (no kind exists; commit's intake line records the origin); it validates candidates exactly as found (nothing added or trimmed), writes <c_id>.card.json by exclusive create, and treats differing bytes under a content-hash name as tamper (3).",
+   "fsck: hash, chain, FK, status-writer, tcb and .claude breaches are failures (exit 3); stray temp files, torn commits (record present, row or line missing), unlogged objects, torn ledger tails and missing attempt folders are anomalies only. It scans without the lock, then under the lock re-checks whatever the ledger appended since, so a passing fsck line covers every intake/commit before it. No .git -> not_run, exit 2.",
+   "fsck also refuses CLAUDE.md / CLAUDE.local.md anywhere in an attempt folder and any nested .claude folder (auto-loaded files, R22/R28).",
+   "tms exit precedence: 10 (newly reopened dismissal, compared with the previous labels.json) wins over 1 (STALE/PENDING in a gate target); labels.json carries no timestamp so equal inputs give equal bytes, and its check line is appended only when labels or result change.",
+   "tms labels: witnessed (not yet confirmed) supports make a sentence PENDING; unverifiable or last-verdict-unclear supports make it JUDGMENT; rejected/superseded supports, a repaired pack (a committed successor pack) or a changed question list make it STALE. Card 'superseded' = a confirmed card supersedes it.",
+   "tms dismissal bar: standing only if a confirmed support card has the dismissed sentence's approach_id and measure, numeric value and baseline with |value - baseline| < sesoi[measure], and conditions covering the sentence's applies_to; reopened on a support falling or a confirmed card matching an outlist (approach_id, measure, effect).",
+   "promote: a transcript outside <transcripts_root>/*/<coord.session>/subagents/ exits 1 (transcript-outside), not 3, since a wrong path is not proven tampering and 3 stops all work. A checker transcript with any tool other than Read of queue/<batch>/ makes every verdict unclear (checker-out-of-role).",
+   "promote: a confirmed verdict on a card item becomes confirmed only for a currently witnessed card with J1, J2 and J4 all qualified (missing qualification.json = none qualified); number_mismatch/baseline_swapped/conditions_mismatch reject the card; outside_conditions on a card item counts as unclear; a witnessed result never overwrites a confirmed card, a rejected/unverifiable one does; one promote per batch (a repeat is exit 0 no-op).",
+   "certify follows design R44/R43 over layer L3: no SPRT, coverage recorded but not a condition; plants are a condition only when plants_t is a gate (non-null); a missing audit line gives a not_run certificate (stored, exit 2).",
+   "read_set for certify = every card of the pack plus every cited card, each with the seq of its last card_status line (0 if none), sorted by card_id; read_set_sha = sha256hex(canonicalize(read_set)); tms recomputes the same to void a certificate."
+  ],
+  "contract_requests": [
+   "Exit codes in §5 table: commit.mjs needs 6 (intake-new, fsck-stale, cards-pending) besides 0-3; harvest.mjs needs 3 (untrusted-path, harvested-differs) besides 0-2; certify.mjs needs 3 (object-mismatch, step-key-mismatch) besides 0-2; tms.mjs needs 2 for dangling/no-target (already listed).",
+   "Format of wt/<task>-e<e>/view/rejected.json (commit writes, the child's brief reads it): proposed {schema_version, task, epoch, rejected: [{file (posix path relative to the attempt folder), code}]}. Also list commit's reject codes (unparseable, schema-version, schema-invalid, unknown-kind, name-kind, wrong-field, question-not-owned, supersede-reason, supersedes-missing, url-not-in-transcript, not-sorted, fk-card, fk-parent, fk-pack, index-invalid, dup-sid, uncited-fact, cite-outside-pack, bad-sid, untrusted-path) and flag codes (scope-outside, scope-dropped, number-uncited) in §3 so U5c's brief and render can name them.",
+   "Decision 18 covers admission only, but R23/R28 require fsck before each commit record: state that commit record requires a passing fsck line newer than the last intake line of its task+epoch (and newer than any failing fsck line).",
+   "R40 record of fsck: say whether the fsck ledger line is fsck's check record or whether fsck also appends a check line (the spec appends only the fsck line).",
+   "witness ledger line data (§3.7) should carry first_seq and last_seq of the witness.jsonl lines it wrote (as promote's line does), so fsck can tie every witness record to its writer.",
+   "Clearing an R18 (d)/(e) flag: nothing in the contract clears an intake flag. Proposed: queue items built from a flagged sentence carry subject: {object: <p_|r_ id>, sid}; promote records the verdict in a card_status line with check {batch, item, verdict}; a flag is cleared when such a line exists for that subject with verdict confirmed. Until settled, tms keeps flagged sentences PENDING and certify fails them with r18-flag, so a flagged review can never be certified.",
+   "Format of store/qualification.json (seed score writes; promote, certify and render read): proposed {schema_version, classes: {J1..J4 and S1..S4: {qualified: bool, calls: int, detected: int, lower: number}}, escape: {n, escaped}?, at}.",
+   "Card status record field class?: J1..J4 cannot express that one confirmation relies on several classes (J1, J2, J4 for a card item; J1-J4 for a sentence item). Proposed: classes: J[] (and revert --class Jk reverts confirmations whose classes include Jk).",
+   "promote ledger line data: add mode: witness|checker|revert and class? (batch is null outside checker mode).",
+   "Seed verdicts: promote drops seed items without a record, so seed.mjs score must read the checker transcript itself; say so (seed score takes --batch --transcript), or give promote a place to record seed-item verdicts.",
+   "Reader result shape (harvest) and checker result shape (promote): the structured data a reader returns (a bare card, or {cards: card[]}; with schema_version or not) and a checker returns ({verdicts: verdict[]}?; schema_version?). Harvest validates candidates as-is against [card], so if readers omit schema_version every harvested card fails.",
+   "How a script finds a field's current frozen protocol: the data.name convention of protocol-freeze/protocol-amend lines (e.g. protocol-<field>), needed by tms (sesoi) and commit/tms (questions_sha).",
+   "Definition of pack.questions_sha (e.g. sha256hex(canonicalize(sorted question_ids of the frozen protocol))) so commit can check it and tms can label STALE on an amend.",
+   "Formats of views/labels.json and views/repair.json (tms writes; render, gate and replace read): proposed in spec/tms.mjs.md; please adopt or replace in §3.",
+   "§3.16: state the read_set_sha formula and status_seq meaning (seq of the card's last status line, 0 if none) so certify, tms and any later reader agree.",
+   "lib.PREFIX must map stpa, fmea and hazards to d; and state the staging file names for design-check outputs (commit classifies by kind and only enforces *.card.json, pack.json, review.json).",
+   "§3.11 commit record: add schema_version (every file carries it per §3).",
+   "Protect staging/harvested/ from session writes in audit's protected-write check (commit trusts that folder for origin harvested; a session forging a file there would turn copied_by_session into harvested)."
+  ],
+  "open_points": [
+   "Contract vs design: the design (R2, L1 E3) says commit.mjs accepts only the table's epoch; the contract fixes 65 plus a zombie-write line, which the spec follows. L1's per-script exit codes (10-13) and L2's (2 store failure, 3 fenced, 4 schema) are replaced by the contract table as decision 1 says.",
+   "Design R24 ('pack freeze reads only trusted items') conflicts with R19 (unverifiable supports labelled JUDGMENT) and with running without F5; the spec's reading (pending -> defer, rejected -> refuse, unverifiable allowed) needs the coordinator's confirmation.",
+   "Sentence-item checker verdicts (post-review) change no card status in promote; until the flag-clearing record is settled, flagged sentences stay PENDING and block certification.",
+   "Design R43/R44 vs layer L3 A4/A5: the SPRT lot decision and the coverage condition are left out of certify (design wins); coverage is recorded only.",
+   "Harvest reads Agent tool results from the parent's transcript, but lib's parser keeps only the first 2,000 characters of a tool result, so a long reader result is unparseable there and found only in the helper's transcript.",
+   "R15's 'copied_by_session' is counted from commit's intake origins (session) rather than tagged on the card, since the card schema forbids provenance fields (R27).",
+   "The watcher's --intake chain should call commit intake only for rows at step started|bound of the current epoch (other steps exit 65).",
+   "Commit's git commit stages everything not ignored under the root (run/, store/, plan/, views/); the owner's .gitignore decides what history holds."
+  ]
+ }
+}

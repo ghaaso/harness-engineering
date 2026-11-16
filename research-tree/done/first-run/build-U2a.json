@@ -1,0 +1,55 @@
+{
+ "label": "build:U2a",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/commit.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/harvest.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/tcb/fsck.mjs"
+  ],
+  "deviations_from_the_spec": [
+   "Location: the brief puts the scripts at tcb/<name>.mjs next to tcb/lib.mjs, but CONTRACT §5 says tcb/scripts/<name>.mjs. All three use `import * as lib from './lib.mjs'`, the same import the other flat scripts use, so they work in either layout as long as lib.mjs sits in the same folder.",
+   "All three scripts also accept `--free-mb <int>` and `--boot <string>`. CONTRACT §7 says tests pass these to every script. Without them parseArgs would exit 66.",
+   "commit intake: the spec checks `wrong-field` only for cards. I also reject a pack or review whose `field` differs from the row's field (the reject code is already in §3.22).",
+   "commit intake: the spec says a review's `pack` and `parent`, and a pack's `parent`, must name a *stored* object. I also accept the id of an object accepted in the same run. Without that, T1 (card, pack and review in one staging folder, all three stored) could not pass. The missing review parent uses the code `fk-parent`, since the spec names none.",
+   "commit intake: `scope-dropped` looks only at the condition keys an `applies_to` can hold (task, model_family, repo_size, language, metric). A card's `conditions.other` has no `applies_to` key, so counting it would flag every sentence that cites such a card.",
+   "commit intake: `number-uncited` compares absolute values after rounding to the printed decimals, so 'fell 5%' matches a value of -5. A hyphen glued to a letter (GPT-4) counts as touching a letter. A sentence with no cites flags every number in it.",
+   "commit intake: if the attempt has no transcripts at all, session and checkpoint cards are not run (`result.not_run`, code `no-transcript`, exit 2). A pack or review that depends only on such cards is also not run, rather than rejected `fk-card` / `fk-pack`. When there are both rejections and not-run cards, exit 1 wins over 2.",
+   "commit intake: the `flagged` list in the ledger line holds only the flags of the objects that line newly lists. Repeating a flag in a later line would make 'the flagging intake line' (§3.15, lib.flagCleared) ambiguous. The stdout `result.flagged` lists every flag.",
+   "commit intake: with no earlier intake line, the 'last line's rejected' is taken as []. So an empty staging folder appends no intake line.",
+   "commit record: the state check also allows a row whose state is `committed` (step started or bound). Otherwise the identical repeat (T14) would exit 65 after the first record set state committed. Intake still requires `active`.",
+   "commit record: when a pack card is both rejected and pending, `untrusted-cards` (exit 1) is checked before `cards-pending` (exit 6). A confirmed card that is superseded through a chain of the pack's cards counts as covered.",
+   "commit record: `step` must be one of pack, review, stpa, fmea, hazards, else exit 66. If the manifest has no `outputs` entry for the step, the §3.22 step-to-kinds table is used. A missing manifest exits 2 `no-manifest` (a slug the spec does not name). A READY.json that is a link or hard link exits 3 `untrusted-path`.",
+   "harvest: an Agent/Task tool result whose text is at least 2,000 characters long and does not parse is skipped, not counted `unparseable`. §4.8 cuts that text at 2,000 characters and says the full result comes from the helper's own structured output. A [reader-result] with `cards: []` is a valid candidate holding zero cards, not `unparseable`. A row missing from the table exits 1 `no-task`.",
+   "harvest: besides the spec's checks, I refuse (exit 3 `untrusted-path`) an attempt folder that is not under `<root>/wt`. I also check `staging/` for links before creating `harvested/`, so nothing is ever created through a junction.",
+   "fsck: the spec says fsck writes 'One fsck ledger line ... Nothing else', while CONTRACT §1.4 asks every writing script that exits 3 to first append an `incident` tamper line. I followed the spec, so fsck appends no incident line. commit and harvest do append one.",
+   "fsck: every git call adds the global options `--no-pager --no-optional-locks` in front of the four `-c` settings the contract lists. Without them `git diff` can rewrite `.git/index`, so it would no longer be read-only. I use `diff --name-only -z` instead of `diff --quiet` so the changed paths can be named, and `ls-files -z --others`. Each changed path is its own `tcb-differs` item.",
+   "fsck phase 2: if the ledger head moved, I re-run the objects, commits, ledger, foreign-key and unlogged checks over the whole store, not only over the lines after H1. This covers more and keeps the code simpler.",
+   "fsck ids (not fixed by the spec): ledger items use the seq from verifyLedger's `brokenAt`; foreign-key items use `<source>-><target>`; status items use `card_status:<seq>` or `witness:<seq>`; claude items use `<task>-e<e>/<relpath>`; commit items use `<task>.<step>`. In check 8 the manifest's agent types are allowed, not required: a missing agent file is not reported.",
+   "Reading `lock_retries` and `proc_exe` falls back to the contract's defaults (300, and realProc's own default exe) when the threshold is absent. Every other threshold name is read strictly (param-missing exits 2)."
+  ],
+  "lib_change_requests": [
+   "Export `TcbError` with the constructor `new TcbError(code, exit, detail)`. §4 does not list it among the exports, but every script needs it. Mine fall back to a plain Error carrying code, exit and detail, which only works if runMain recognises errors by their fields.",
+   "runMain should take `mode` and `dry_run` for the §1.3 stdout line from fn's returned object. The contract does not say how they reach it. These three scripts, like the peer scripts, return `{exit, result, reasons, mode, dry_run}` and also set `ctx.mode` and `ctx.dryRun`.",
+   "withRunLock(root, {script, ce, proc, now}, fn) should pass a `retries` option on to acquireLock. §4.4 says scripts pass threshold `lock_retries`, but the withRunLock signature has no field for it. My scripts pass `retries` in the same options object.",
+   "parseTranscript: give each `structured` entry and each `toolResults` entry a `line` (1-based line in the file). harvest's `invalid[].source` is `{file, line}` and has no other way to get the line. Without it, harvest reports `line: null`.",
+   "parseArgs: say whether `--root` must be absolute and whether the int flags `--ce`/`--epoch` must be at least 1. My scripts also check these themselves and exit 66.",
+   "paths(root): publish the key names (objects, commits, cardStatus, witness, frozen, ...) so scripts need not spell those paths. These scripts use `paths(root).tasks/ledger/coord/attempt` and build the rest from the §2 layout."
+  ],
+  "not_testable_without_the_app": [
+   "commit (R34, §7 item 7): that a real reader's or helper's URLs appear in the child's or helper's transcript in the §4.8 shape (tool_use input, tool_result text, structured output), so `url-not-in-transcript` neither rejects real cards nor passes made-up ones.",
+   "harvest (§7 item 7): that a real reader's schema-checked result appears as a `StructuredOutput` tool-use input or a `structured_output` attachment in its helper transcript, that helper transcripts lie below `<session>/subagents/` (including `workflows/<run>/`), and that a parent's Agent/Task tool result text is the helper's JSON alone, with no wrapper text appended by the harness.",
+   "harvest (§7 item 8): the harness's schema retry of a helper result. A failed first try may also leave a structured candidate in the transcript, which harvest would count as `invalid`.",
+   "fsck (§7 item 3, owned by selftest): whether a real session started in an attempt folder obeys the `.claude/settings.json` and agent files fsck guards, and whether any other settings or CLAUDE.md file outside the names fsck checks is loaded.",
+   "fsck tcb check on the owner's real repository: git honouring `-c core.hooksPath=NUL` and `-c core.fsmonitor=false` on this PC's git build. T17 tests this in a temp repo, but not against the owner's global git config."
+  ],
+  "open_points": [
+   "Nothing was run against the library: lib.mjs did not exist while I wrote these. Only `node --check` (syntax) passed for all three files, plus a standalone check of the number regex and the rounding. The first real test run will show any mismatch with the library's actual signatures (sync vs async; I await every library call that could be async).",
+   "tcb/thresholds.json as shipped lacks names these scripts read: `child_prefix_tokens` and `review_reserve_tokens` (commit record's R47 cap, exit 2 `param-missing` without them), plus `lock_retries` and `proc_exe` (I fall back to defaults). §3.20 lists all four, so the thresholds owner (U5c) should add them.",
+   "Layout is mixed: some scripts are flat in tcb/, while guard-hook.mjs and selftest.mjs are in tcb/scripts/. The contract, selftest and the README expect tcb/scripts/<name>.mjs. The assembler should move all scripts and lib.mjs into one folder. The relative './lib.mjs' import keeps working wherever they all land together.",
+   "Design gap in commit record step 7: the outputs are every object named by any intake line of the task+epoch. If a session revises its pack within one epoch, two pack ids end up in intake lines and record exits 1 `pack-count` for good; the only way out is a new epoch. Taking the outputs from the current `view/committed.json` set, or from the last intake's accepted set, would avoid that. This needs a contract ruling.",
+   "§1.4 vs spec/fsck.mjs.md: decide whether a failing fsck also appends the tamper `incident` line. The watcher's class 27 reads incident lines and failing verifyLedger, not `fsck` lines. As written, a failing fsck (other than a broken chain) does not wake the watcher through class 27.",
+   "The schema names used by checkFormat are `card`, `pack`, `review`, `stpa`, `fmea`, `hazards` and `commit-record`. The stpa, fmea and hazards schemas are U5a's (gate.mjs). If any is missing, commit intake throws, which runMain reports as 70 or the library's missing code; it is not turned into a reject.",
+   "commit intake treats any `s_<16 hex>` substring in any string value or key of any staged JSON as a seed id (exit 3). A free-text field that happens to hold such a token would stop all work. That matches the spec's 'any field', but a stricter rule (whole-string ids only) may be wanted."
+  ]
+ }
+}

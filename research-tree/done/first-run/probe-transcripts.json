@@ -1,0 +1,68 @@
+{
+ "label": "probe:transcripts",
+ "result": {
+  "files_written": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/probes/transcript-format.md",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tcb-build/probes/transcript-shape.mjs"
+  ],
+  "facts": [
+   {
+    "fact": "Per-call model, tokens and time live in `assistant` records: message.model, message.usage.{input_tokens,cache_read_input_tokens,cache_creation_input_tokens,output_tokens}, timestamp.",
+    "status": "observed",
+    "how": "Streamed the session file and sampled helper files; ran a scan over all 789 helper transcripts.",
+    "detail": "There is one assistant record per content block, so one API response appears several times with the same message.id and identical repeated usage. Sum once per message.id. Skip model '<synthetic>' (zero usage, rate-limit errors). api-request records (id equals assistant.requestRef) hold the request params. The session file also has cumulative cost-state.modelUsage per model."
+   },
+   {
+    "fact": "A tool call is a tool_use block in an assistant record, and its result is a tool_result block in the next user record.",
+    "status": "observed",
+    "how": "Read record shapes in the session file and in helpers.",
+    "detail": "The tool_use block has id, name and input. The tool_result block's tool_use_id equals that id, and the record's sourceToolAssistantUUID names the calling assistant record. Inputs: Read file_path; Bash command; WebFetch url and prompt; WebSearch query. toolUseResult (typed, with filePath, url and so on) exists in the session file but is almost always absent in helper files."
+   },
+   {
+    "fact": "A helper's final structured result is recorded parseably, in two places.",
+    "status": "observed",
+    "how": "Compared the journal result with the StructuredOutput input for one run; counted journal record types over all 57 runs.",
+    "detail": "The journal.jsonl 'result' record carries result as an object, plus toolsUsed, and the same object is the helper's StructuredOutput tool_use input and a structured_output attachment. A 'failed' record has only key and agentId. 765 helpers have a result, 7 failed, 17 have neither."
+   },
+   {
+    "fact": "The link from a helper to its starter is weak for workflow helpers.",
+    "status": "observed",
+    "how": "Read the meta, journal and Workflow tool result structures.",
+    "detail": "A workflow helper's meta.json has no parent or tool-use id. It links by directory wf_<runId>, by journal started.agentId, and by sessionId in every record (the owning session). The session's Workflow result gives runId, transcriptDir and scriptPath. Agent-tool helpers' meta has toolUseId (the parent's Agent call id). There is no helper-to-helper parent field; only spawnDepth."
+   },
+   {
+    "fact": "Web fetch and web search record the address and the query.",
+    "status": "observed",
+    "how": "Read tool_use inputs in the session file and in helpers.",
+    "detail": "WebFetch input has url and prompt, and WebSearch input has query and mode. The WebFetch result text is the tool's processed answer to the prompt, not the page bytes, so a stored source copy cannot come from a transcript."
+   },
+   {
+    "fact": "File reads can be audited against a declared list only for the tools that name a path.",
+    "status": "observed",
+    "how": "Counted tool names over all helpers (Bash 11,317, Read 2,229, Grep 851) and checked input keys.",
+    "detail": "Read, Write and Edit record file_path. Grep and Glob record path, which may be absent. Bash reads (cat, node, and so on) show only a free-text command, so they are not auditable by path."
+   },
+   {
+    "fact": "A session loads a lot automatically that never appears as a tool call, and the first call's input is much larger than the brief.",
+    "status": "observed",
+    "how": "Compared the brief length with the first call's usage, and listed attachment types.",
+    "detail": "attachment records carry instructions (about 31.7k chars), skill_listing (about 20.6k chars), environment, session_context and others. The system prompt and 50 tool definitions go in api-request-shape. A sample helper had a 5.8k-char brief and a first call of 65,604 input tokens. The session's first call was about 89k tokens against a 1.1k-char message."
+   },
+   {
+    "fact": "Whether CONTRACT.md or the spec files disagree with these findings.",
+    "status": "could_not_check",
+    "how": "The brief said not to read the design whole. I did not open CONTRACT.md or the specs, since the task was to probe transcripts only.",
+    "detail": "No disagreement was seen or reported."
+   }
+  ],
+  "consequences_for_the_build": [
+   "Token counting must dedupe assistant records by message.id and skip '<synthetic>' records; summing records overcounts several times.",
+   "Read helper results from journal.jsonl (one parseable line per helper), not from the transcripts.",
+   "A reads-versus-declared-list audit is exact for Read, Write, Edit, Grep and Glob, but Bash reads (the largest tool) can only be checked by scanning the command text. The design needs a stated rule for Bash, such as a ban or a path-token check.",
+   "Linking a workflow helper to its starter relies on directory name, journal agentId and the Workflow tool result's runId. No helper-to-helper parent exists, so the task table must record who launched whom itself.",
+   "The quoted-passage verifier must keep its own stored copy of each source. A transcript's WebFetch result is a processed summary, not the page.",
+   "The fixed per-session overhead (about 65k tokens for a helper, about 89k for the coordinator) is invisible as tool calls; a budget that counts only brief plus tool output will undercount badly.",
+   "Do not rely on toolUseResult in helper transcripts; parse tool_use.input and the tool_result content string."
+  ]
+ }
+}

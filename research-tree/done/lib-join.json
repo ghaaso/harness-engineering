@@ -1,0 +1,31 @@
+{
+  "tests": {
+    "command": "node --test tcb/test/lib.test.mjs (NODE_OPTIONS=--max-old-space-size=1024)",
+    "passed": 172,
+    "failed": 0,
+    "skipped": 2,
+    "output_tail": "tests 174, pass 172, fail 0, cancelled 0, skipped 2 (T82, T92: needs-app), todo 0; duration about 80-89 s; passed on two consecutive runs; no temp folder left under tcb-build/tmp"
+  },
+  "rounds": 2,
+  "fixes": [
+    {"file": "tcb/test/lib.test.mjs", "what": "Imported ../scripts/lib.mjs (twice, incl. LIB_URL handed to the fixture workers); changed to ../lib.mjs for the flat build layout.", "wrong_side": "layout"},
+    {"file": "tcb/test/lib.test.mjs", "what": "tcb/test/helpers.mjs (CONTRACT 4.11) does not exist and this brief may not create it. The test now imports helpers.mjs when it exists and otherwise uses an in-file stand-in written from CONTRACT 4.11/4.8 (makeRoot, runScript, fakeTranscript, spawnSleeper, fakeProc). T97 and T98 therefore currently test the stand-in, not helpers.mjs.", "wrong_side": "layout"},
+    {"file": "tcb/test/lib.test.mjs", "what": "T1-T3 passed '--root R'; CONTRACT 1.1 says --root is an absolute path and the library correctly refuses a relative one (usage 66). Test now uses an absolute root, and T2 gained the failure case that a relative --root is 66.", "wrong_side": "test"},
+    {"file": "tcb/test/lib.test.mjs", "what": "T29 asserted proc.alive is consulted once per retry (>= 3). Neither spec T29 nor CONTRACT 4.4 requires that, and 4.4 keeps PowerShell calls out of the retry loop; the library judges one holder once. The test now counts the wx creates of run.lock with a pass-through spy (exactly 4 = 1 + 3 retries), checks alive was consulted 1..4 times and only for the holder.", "wrong_side": "test"},
+    {"file": "tcb/test/lib.test.mjs", "what": "T46 spawned 8 append workers (spec/lib.md T46), which breaks the hard machine limit of four Node processes (runner + test file + workers). Now 2 workers x 200 lines: the same 400 contended lines, seq 1..400, verifies.", "wrong_side": "spec_unclear"},
+    {"file": "tcb/lib.mjs", "what": "validate uniqueItems reported the duplicate item's pointer (/1); the keyword's instance is the array (as for minItems/maxItems and JSON Schema's instance location). Path is now the array's, the message names the duplicate index.", "wrong_side": "library"},
+    {"file": "tcb/lib.mjs", "what": "variant (research/control) without F5 counted ANY stored card as covering a question; CONTRACT 4.10 says 'any such stored card', i.e. one whose last status is witnessed or confirmed (spec T96b). coverOver now applies the status filter to the extra cards too.", "wrong_side": "library"}
+  ],
+  "still_failing": [
+    "Nothing in lib.test.mjs fails. Two tests are skipped by design as needs-app: T82 (harness folder naming) and T92 (a real claude.exe command line).",
+    "tcb/test/helpers.mjs still does not exist. admit.test.mjs, replace.test.mjs and stop.test.mjs import it and will fail to load until it is written; T97/T98 must then be rerun against it (lib.test.mjs switches to it automatically when the file exists)."
+  ],
+  "lib_change_requests": [
+    "Write tcb/test/helpers.mjs (CONTRACT 4.11) under its own brief. The stand-in at the top of tcb/test/lib.test.mjs (function standinHelpers) can be lifted into it as is: makeRoot uses a 6-character prefix 'tcbrt-' under tcb-build/tmp, copies schemas/profiles/settings/agents/briefs and thresholds.json (transcripts_root -> <root>/transcripts, thresholds option = {name: value or full param}), writes coord.json {schema_version:1, ce, started_at, tcb_commit: 40 zeros} and tasks.json {schema_version:1, rev:0, tasks}.",
+    "admit.test.mjs, guard-hook.test.mjs, replace.test.mjs and stop.test.mjs import ../scripts/lib.mjs; under the flat layout they need ../lib.mjs (or a shim tcb/scripts/lib.mjs: export * from '../lib.mjs'). Note tcb/scripts/ currently holds guard-hook.mjs and selftest.mjs, which is itself off the flat layout.",
+    "spec/lib.md T46 should say 2 processes x 200 lines (the four-process machine limit), not 8 x 50.",
+    "spec/lib.md T2 should drop 'con-research' from its exit-66 cases (CONTRACT 1.5 accepts it; the test follows the contract).",
+    "CONTRACT 4.4 could say explicitly whether proc.alive is consulted once per holder (current library, fail-safe: a holder that dies during the wait yields lock-busy 75, retried by the caller) or once per retry.",
+    "CONTRACT 4.7 could state that an array keyword's error path is the array (uniqueItems)."
+  ]
+}
