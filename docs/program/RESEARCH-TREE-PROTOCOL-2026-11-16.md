@@ -143,3 +143,54 @@ fresh expert that reads it). That split is withdrawn. For each field **one child
    a fresh session reads the pack and does the review. That is the exception, and the ledger records it.
 
 Everything else stands: three levels, files as the only interface, the gates, the budgets, the ledger.
+
+## Amendment 2 (2026-11-16): the risks of this tree, and what handles each
+
+Written after the owner asked whether the tree's own problems had been identified. They had been only
+in part: the rules of section 7 came from judgment, not from a list of failure modes. This is the list.
+"had" means the rule was already above; "new" means this amendment adds it. It is the coordinator's
+analysis. It has not yet been attacked by a refuter, checked against published work on how multi-agent
+systems fail, or tried on a field; part D says how that happens before the tree is trusted.
+
+### A. Mistakes that spread
+
+| # | Risk | What handles it | |
+|---|---|---|---|
+| 1 | A wrong or invented source fact enters a child and travels into its review and the synthesis | Every fact enters as a source card with its number, conditions and a quote; a checker reopens each card a conclusion rests on; a review may cite cards only; the ledger counts failed citations | had |
+| 2 | Anchoring: a child that is told what we hope confirms it | Neutral briefs; our work as files without verdicts; "what would change my mind" in every review; a refuter on the strongest leads | had |
+| 3 | An ensemble of one model agrees for the same wrong reason, and a vote amplifies it | Facts are never voted on; a claim stands on a checked source; second experts research independently, so their agreement means something | had |
+| 4 | Loss at each hand-over (helper, child, coordinator, owner): conditions fall off a summary | Hand-overs are files with fields (number, baseline, conditions), never paraphrase; the synthesis is built from the review files by a script and cites cards directly | new |
+| 5 | Text on a web page steers a session | Helpers read the web; the child takes in cards and chosen primary papers; an instruction found in a source is data and is never followed | new |
+
+### B. Coordination
+
+| # | Risk | What handles it | |
+|---|---|---|---|
+| 6 | Two sessions write the same file or branch | One writer per folder; each child on its own branch; only the coordinator merges; schema check before anything is accepted | had |
+| 7 | Two fields read the same sources twice | Field boundaries fixed in the question lists; a shared register of claimed sources, one line per paper, checked by a helper before it reads | new |
+| 8 | Runaway fan-out | Three levels; helpers start nothing; at most six helpers per child at once; a total cap | had, cap new |
+| 9 | Waiting on a stalled child, a usage limit or a sleeping PC | Time boxes; a heartbeat line in the ledger; usage read before each wave; the coordinator keeps the PC awake; a late field is restarted or dropped | had, heartbeat new |
+| 10 | A crash or reboot loses a session's state | Whatever matters is in the session's folder (cards, pack, ledger); a session can be started again from its folder | new |
+| 11 | The coordinator's window grows: our measured main token sink | The coordinator reads status files and verdicts only, never packs or sources; at 200,000 tokens it writes its state and a fresh coordinator takes over | new |
+| 12 | Children's windows and fixed prefixes multiply the cost | Helpers return compact cards; the 300,000 ceiling of amendment 1; a lean folder with no unrelated skills, so the fixed prefix is small | had, lean folder new |
+| 13 | One weak expert pollutes the synthesis | The pack check, the knowledge check, a second expert in the deciding fields | had |
+| 14 | The cost is unknown until it is spent | A pilot field first: one field runs end to end, its tokens and time are measured, and the plan for the rest is set from that | new |
+
+### C. The shape of the tree (the owner's B+ tree idea, applied)
+
+- **Balanced.** Every expert sits at the same depth. A field never hangs under another field.
+- **Inner nodes hold keys, leaves hold data.** The coordinator keeps one line per field and pointers to
+  files. The knowledge lives in the leaves: the children and their folders.
+- **Split on overflow.** A field whose question list or pack outgrows its limit is split into two fields
+  with question ranges that do not overlap. A session whose window is full hands over to a fresh one
+  (amendment 1, and row 11). Nothing grows without bound.
+- **Order of work.** First the problem sheet and the measurement field, because the others are judged by
+  its criteria; then the pilot field; then the rest in waves of at most three.
+- **The tree is measured like anything else.** The ledger gives its seven measures. One field is also
+  done by a single session without the tree, on the same budget, so that we learn whether the tree
+  earns its cost.
+
+### D. Before the tree is trusted
+
+A refuter attacks this amendment, and one reader checks it against published work on how multi-agent
+systems fail. What they find changes this file before the pilot field starts.
