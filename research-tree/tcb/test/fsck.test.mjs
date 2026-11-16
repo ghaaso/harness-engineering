@@ -280,7 +280,7 @@ const helperTranscriptPath = (root, session, name) => path.join(root, 'transcrip
 
 // ---- running a script as a child process ----
 function run(script, argv, root) {
-  const r = spawnSync(process.execPath, [path.join(TCB, 'scripts', script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
+  const r = spawnSync(process.execPath, [path.join(TCB, script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
   const lines = (r.stdout ?? '').split('\n').filter((l) => l.trim());
   let json = null;
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
@@ -441,7 +441,7 @@ function addCut(root) {
 }
 function runAsync(argv, root) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [path.join(TCB, 'scripts', 'fsck.mjs'), ...argv], { cwd: root, windowsHide: true, shell: false });
+    const child = spawn(process.execPath, [path.join(TCB, 'fsck.mjs'), ...argv], { cwd: root, windowsHide: true, shell: false });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; });

@@ -3,7 +3,21 @@
 //
 //   node run-resumable.mjs [--workers 4] [--mem-mb 1500] [--big-mem-mb 8000] [--floor-mb 4000]
 //                          [--only ID,ID*] [--exclude ID,ID*] [--configs full|base] [--results DIR]
-//                          [--big-at rank|end|asap] [--rerun-bounded] [--poll-s 5] [--plan] [--force-lock]
+//                          [--big-at rank|end|asap] [--rerun-bounded] [--poll-s 5] [--plan] [--plan-parts] [--force-lock]
+//                          [--spawn-gap-ms 250] [--batch-max-est 81] [--batch-parts 100]
+//
+// Gentle starts:
+//   --spawn-gap-ms G  at least G ms between two process starts of this runner (default 250), so a pool
+//                     never starts its workers in a burst
+//   --batch-max-est E a normal part whose estimate (weight x cost factor) is at most E (default 81: at 2
+//                     fields every 2-fault part, 3-fault parts with at most one child fault, 4-fault parts
+//                     with none; 3,750 of the full matrix's 9,154 parts)
+//                     runs in a host process: one long-lived process per worker slot that runs such parts one
+//                     after another, each in a fresh worker thread (its own heap of --mem-mb, freed when the
+//                     part ends), instead of one process per part. 0 = every part in its own process.
+//   --batch-parts N   a host is ended and replaced after N parts (default 100)
+//   A host counts as one worker of --mem-mb for --workers and admission, busy or idle. Big parts never run
+//   in a host. --plan-parts prints the parts as JSON (config, part, estimate, in a host or not, state).
 //
 // Order: cheapest first. Configurations by their estimated cost (run-all.mjs's weight() summed over the
 // parts, times COST_FACTOR of configs-full.mjs), parts within a configuration smallest first. Big parts
@@ -23,7 +37,7 @@
 //   --big-mem-mb B    a part that ends bounded at M (BFS stopped by memory, analyses skipped for memory,
 //                     or the process died without a result) is queued again and run ALONE with B
 //   --floor-mb F      admission: a worker of size S starts only while
-//                       os.freemem() - (what running workers may still grow into) - S > F
+//                       os.freemem() - (what running workers may still grow into) - (S + 150 + S/10) > F
 //                     otherwise the runner waits --poll-s seconds and looks again
 //   A part bounded even at B is BOUNDED in the table and in the exit code; nothing is cut to make it fit.
 //   No wall-clock limit: check.mjs gets no --deadline.
@@ -62,17 +76,27 @@ const BIG_AT = opt('--big-at', 'rank');
 const CONFIG_SET = opt('--configs', 'full');
 const RESULTS = path.resolve(opt('--results', path.join(HERE, 'results')));
 const RERUN_BOUNDED = has('--rerun-bounded');
-const PLAN_ONLY = has('--plan');
+const PLAN_ONLY = has('--plan') || has('--plan-parts');
+const nonneg = (k, d) => { const v = Number(opt(k, d)); if (!Number.isFinite(v) || v < 0) die(`${k} needs a number of 0 or more`); return v; };
+const SPAWN_GAP_MS = nonneg('--spawn-gap-ms', 250);
+const BATCH_EST = nonneg('--batch-max-est', 81);
+const BATCH_PARTS = Math.max(1, Math.floor(num('--batch-parts', 100)));
 const RUNTIME_MB = 40; // as run-all.mjs: node's own code and baseline, outside the counted arrays
 // measured on this PC (26 parts): a child's working set ran 52-134 MB (median 78) above what check.mjs
 // reports (node itself, the watchdog thread, heap slack, arrays dropped but not yet collected), so
 // admission and the headroom of a running worker count its size + this
 const PROC_OVERHEAD_MB = 150;
+// The peak working set grows faster than that with the size: a grown typed array is copied while the old
+// one is still held until a collection. Measured peaks (process.resourceUsage().maxRSS) of bounded
+// A-FENCE-CE parts: 550 MB at --max-old-space-size 400, 1198 MB at 1000, 2254 MB at 2000, i.e. size + 150,
+// + 198, + 254. A worker of size S is therefore reserved S + 150 + 10 % of S (590, 1250, 2350 there;
+// 8950 for an 8000 MB big part, an extrapolation: nothing above 2000 MB was measured).
+const reserveOf = (size) => size + PROC_OVERHEAD_MB + Math.ceil(0.1 * size);
 if (!['rank', 'end', 'asap'].includes(BIG_AT)) die('--big-at is rank, end or asap');
 if (!['full', 'base'].includes(CONFIG_SET)) die('--configs is full or base');
 if (BIG < MEM) die('--big-mem-mb must be at least --mem-mb');
 const TOTAL_MB = os.totalmem() / 1048576;
-if (MEM + PROC_OVERHEAD_MB + FLOOR >= TOTAL_MB || BIG + PROC_OVERHEAD_MB + FLOOR >= TOTAL_MB) die(`--mem-mb ${MEM} / --big-mem-mb ${BIG} plus --floor-mb ${FLOOR} exceed this machine's ${Math.round(TOTAL_MB)} MB: such a worker could never be admitted`);
+if (reserveOf(MEM) + FLOOR >= TOTAL_MB || reserveOf(BIG) + FLOOR >= TOTAL_MB) die(`--mem-mb ${MEM} / --big-mem-mb ${BIG} plus --floor-mb ${FLOOR} exceed this machine's ${Math.round(TOTAL_MB)} MB: such a worker could never be admitted`);
 
 // ---------------------------------------------------------------- configurations and model
 const CHECK = path.join(HERE, 'check.mjs');
@@ -171,7 +195,11 @@ for (const p of parts) {
 // ---------------------------------------------------------------- aggregation, table, summary files
 const PROP_ORDER = ['NoStaleAccepted', 'AtMostOneCommit', 'Slots', 'RestartLimit', 'TwoCoordinatorsAct', 'SingleWatcher', 'FailedTaskStopped', 'OneSessionPerAttempt', 'ReadyNotDiscarded', 'NoFalseSuspicion', 'NoDeadlock', 'AlwaysCanResolve', 'NoBusyLoop', 'EventuallyResolves'];
 const T0 = Date.now();
-const running = new Map(); // child -> {p, size, big, rss, maxRss, started}
+// child process -> {kind: 'proc'|'host', ch, p (the part it runs now; null for an idle host), size, big, rss, maxRss,
+// started, startedAt, count (parts a host has run), ending}
+const running = new Map();
+const spawned = { processes_started: 0, part_processes: 0, host_processes: 0, parts_in_hosts: 0 };
+const batchable = (p, big) => !big && p.est <= BATCH_EST;
 function aggregate(c) {
   const a = { id: c.cfg.id, title: c.cfg.title, base: c.cfg.base || null, parts: c.parts.length, complete: 0, bounded: [], failed: [], pending: 0, running: [], states: 0, transitions: 0, cpu_seconds: 0, peak_mb: 0, max_rss_mb: 0, props: {} };
   for (const p of c.parts) {
@@ -223,11 +251,11 @@ function writeAtomic(file, text) {
 let interrupted = false;
 function summary(final = false) {
   const rows = cfgOrder.map(aggregate);
-  const tot = { parts: parts.length, complete: 0, bounded: 0, failed: 0, pending: 0, running: running.size, states: 0, transitions: 0, cpu_seconds: 0 };
+  const tot = { parts: parts.length, complete: 0, bounded: 0, failed: 0, pending: 0, running: [...running.values()].filter((r) => r.p).length, processes: running.size, states: 0, transitions: 0, cpu_seconds: 0 };
   for (const a of rows) { tot.complete += a.complete; tot.bounded += a.bounded.length; tot.failed += a.failed.length; tot.pending += a.pending; tot.states += a.states; tot.transitions += a.transitions; tot.cpu_seconds += a.cpu_seconds; }
   tot.cpu_seconds = Math.round(tot.cpu_seconds);
-  const runner = { pid: process.pid, started_at: new Date(T0).toISOString(), updated_at: new Date().toISOString(), final, interrupted, wall_seconds: Math.round((Date.now() - T0) / 1000), workers: WORKERS, mem_mb: MEM, big_mem_mb: BIG, floor_mb: FLOOR, big_at: BIG_AT, configs: CONFIG_SET, free_mb_now: Math.round(os.freemem() / 1048576), reused_complete: reusedComplete, reused_bounded: reusedBounded, stale_results_rerun: stale };
-  const running_parts = [...running.values()].map((r) => ({ config: r.p.cfg.id, part: r.p.part || 'whole', size_mb: r.size, big: r.big, rss_mb: r.rss, seconds: Math.round((Date.now() - r.started) / 1000) }));
+  const runner = { pid: process.pid, started_at: new Date(T0).toISOString(), updated_at: new Date().toISOString(), final, interrupted, wall_seconds: Math.round((Date.now() - T0) / 1000), workers: WORKERS, mem_mb: MEM, big_mem_mb: BIG, floor_mb: FLOOR, big_at: BIG_AT, configs: CONFIG_SET, free_mb_now: Math.round(os.freemem() / 1048576), reused_complete: reusedComplete, reused_bounded: reusedBounded, stale_results_rerun: stale, spawn_gap_ms: SPAWN_GAP_MS, batch_max_est: BATCH_EST, batch_parts: BATCH_PARTS, ...spawned };
+  const running_parts = [...running.values()].filter((r) => r.p).map((r) => ({ config: r.p.cfg.id, part: r.p.part || 'whole', size_mb: r.size, big: r.big, in_host: r.kind === 'host', rss_mb: r.rss, seconds: Math.round((Date.now() - r.started) / 1000) }));
   writeAtomic(path.join(RESULTS, 'SUMMARY.json'), JSON.stringify({ runner, totals: tot, running: running_parts, order: cfgOrder.map((c) => c.cfg.id), configs: rows }, null, 1));
   const md = [];
   md.push(`# Model run summary${final ? '' : ' (in progress)'}`, '');
@@ -249,6 +277,10 @@ const exitCode = (tot) => (interrupted ? 3 : tot.complete === tot.parts ? 0 : 1)
 
 // ---------------------------------------------------------------- plan only
 if (PLAN_ONLY) {
+  if (has('--plan-parts')) {
+    process.stdout.write(JSON.stringify(parts.map((p) => ({ config: p.cfg.id, part: p.part, est: p.est, in_host: batchable(p, p.state === 'big'), state: p.state, mem_mb: p.state === 'big' ? BIG : MEM }))) + '\n');
+    process.exit(0);
+  }
   const counts = { todo: 0, big: 0, done: 0 };
   for (const p of parts) counts[p.state]++;
   process.stdout.write(`plan: ${chosen.length} configurations, ${parts.length} parts (${counts.done} already final, ${counts.big} waiting for the big size, ${counts.todo} to run; ${stale} stale results to rerun)\n`);
@@ -289,15 +321,15 @@ function sampleRss() {
   }));
 }
 // what the running workers may still grow into: their size less what they hold now (all of it if unknown)
-const headroomOfRunning = () => [...running.values()].reduce((s, r) => s + Math.max(0, r.size + PROC_OVERHEAD_MB - (r.rss ?? 0)), 0);
+const headroomOfRunning = () => [...running.values()].reduce((s, r) => s + Math.max(0, reserveOf(r.size) - (r.rss ?? 0)), 0);
 let lastWaitLog = 0;
 function admit(size) {
   const free = os.freemem() / 1048576;
   const reserve = headroomOfRunning();
-  const ok = free - reserve - (size + PROC_OVERHEAD_MB) > FLOOR;
+  const ok = free - reserve - reserveOf(size) > FLOOR;
   if (!ok && Date.now() - lastWaitLog > 60000) {
     lastWaitLog = Date.now();
-    process.stderr.write(`run-resumable: waiting for memory: free ${Math.round(free)} MB, running workers may still take ${Math.round(reserve)} MB, next part needs ${size} MB, floor ${FLOOR} MB (${running.size} running)\n`);
+    process.stderr.write(`run-resumable: waiting for memory: free ${Math.round(free)} MB, running workers may still take ${Math.round(reserve)} MB, next part needs ${reserveOf(size)} MB (size ${size}), floor ${FLOOR} MB (${running.size} running)\n`);
   }
   return ok;
 }
@@ -324,17 +356,24 @@ function classify(r, code, sig, errTail, size) {
   return { status: 'complete', why: null };
 }
 
+const CHECK_URL = pathToFileURL(CHECK).href;
+const checkArgs = (p, size) => [p.cfg.id, '--mem-mb', String(size - RUNTIME_MB), ...(p.part ? ['--bud', p.part] : [])];
+const childEnv = () => ({ ...process.env, RUN_RESUMABLE_PARENT: String(process.pid) });
+let lastSpawn = 0;
+const gapLeft = () => Math.max(0, lastSpawn + SPAWN_GAP_MS - Date.now());
+
+// one part in its own check.mjs process (every big part, and normal parts above --batch-max-est)
 function startPart(p, big) {
   const size = big ? BIG : MEM;
   const args = [`--max-old-space-size=${size}`, '--import', WATCHDOG];
   if (CONFIG_SET === 'full') args.push('--import', FULL_URL);
-  args.push(CHECK, p.cfg.id, '--mem-mb', String(size - RUNTIME_MB));
-  if (p.part) args.push('--bud', p.part);
-  const startedAt = new Date().toISOString();
+  args.push(CHECK, ...checkArgs(p, size));
   let ch;
-  try { ch = spawn(process.execPath, args, { cwd: HERE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, RUN_RESUMABLE_PARENT: String(process.pid) } }); }
+  lastSpawn = Date.now();
+  try { ch = spawn(process.execPath, args, { cwd: HERE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv() }); }
   catch (e) { process.stderr.write(`run-resumable: could not start ${p.cfg.id} ${p.part}: ${e.code || e.message}\n`); return false; }
-  const info = { p, size, big, rss: null, maxRss: 0, started: Date.now() };
+  spawned.processes_started++; spawned.part_processes++;
+  const info = { kind: 'proc', ch, p, size, big, rss: null, maxRss: 0, started: Date.now(), startedAt: new Date().toISOString() };
   running.set(ch, info); p.state = 'running';
   try { os.setPriority(ch.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* not allowed: run at normal priority */ }
   let out = '', err = '';
@@ -344,7 +383,104 @@ function startPart(p, big) {
   ch.on('close', (code, sig) => {
     running.delete(ch);
     if (interrupted) return;
+    settle(info, p, out, err, code, sig);
+    schedule();
+  });
+  return true;
+}
+
+// A host: one process that runs small parts one after another, each in a fresh worker thread with its own
+// heap limit (resourceLimits = --mem-mb, as --max-old-space-size for a process) and check.mjs's own
+// --mem-mb budget. The thread sets process.argv as check.mjs expects, imports configs-full.mjs (full) and
+// check.mjs, and its stdout/stderr come back to the host, which sends them to the runner over IPC. A thread
+// that dies (heap limit, allocation failure, exit code) is reported like a process that died. The host
+// ends when the runner disconnects or dies (IPC 'disconnect', and the watchdog).
+const THREAD_CODE = [
+  "const { workerData } = require('node:worker_threads');",
+  'process.argv = [process.execPath, workerData.check, ...workerData.args];',
+  '(async () => { for (const u of workerData.imports) await import(u); })().catch((e) => { process.stderr.write(String((e && e.stack) || e) + "\\n"); process.exitCode = 70; });',
+].join('\n');
+const HOST_CODE = [
+  "const { Worker } = require('node:worker_threads');",
+  `const THREAD_CODE = ${JSON.stringify(THREAD_CODE)};`,
+  'let busy = false;',
+  "process.on('disconnect', () => process.exit(0));",
+  "process.on('message', (m) => {",
+  "  if (m && m.cmd === 'end' && !busy) process.exit(0);",
+  "  if (!m || m.cmd !== 'run' || busy) return;",
+  '  busy = true;',
+  "  let out = '', err = '', code = null, left = 3, sent = false;",
+  "  const send = () => { if (sent) return; sent = true; busy = false; try { process.send({ cmd: 'done', id: m.id, out, err, code }); } catch { process.exit(0); } };",
+  '  const step = () => { if (--left === 0) send(); };',
+  '  let w;',
+  "  try { w = new Worker(THREAD_CODE, { eval: true, workerData: m.data, execArgv: [], stdout: true, stderr: true, resourceLimits: { maxOldGenerationSizeMb: m.heap } }); }",
+  "  catch (e) { err = 'thread start failed: ' + ((e && e.message) || e); code = -1; send(); return; }",
+  "  w.stdout.on('data', (d) => { out += d; }); w.stdout.on('end', step);",
+  "  w.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-10000); }); w.stderr.on('end', step);",
+  "  w.on('error', (e) => { err += '\\nthread error: ' + ((e && (e.code ? e.code + ' ' : '') + (e.message || '')) || e); });",
+  "  w.on('exit', (c) => { code = c; step(); setTimeout(send, 5000).unref(); });",
+  '});',
+].join('\n');
+
+function startHost() {
+  let ch;
+  lastSpawn = Date.now();
+  try { ch = spawn(process.execPath, ['--max-old-space-size=256', '--import', WATCHDOG, '-e', HOST_CODE], { cwd: HERE, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true, env: childEnv() }); }
+  catch (e) { process.stderr.write(`run-resumable: could not start a host: ${e.code || e.message}\n`); return null; }
+  spawned.processes_started++; spawned.host_processes++;
+  const info = { kind: 'host', ch, p: null, size: MEM, big: false, rss: null, maxRss: 0, started: Date.now(), startedAt: null, count: 0, seq: 0, ending: false, err: '' };
+  running.set(ch, info);
+  try { os.setPriority(ch.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* not allowed: run at normal priority */ }
+  ch.stdout.on('data', () => {});
+  ch.stderr.on('data', (d) => { info.err += d; if (info.err.length > 20000) info.err = info.err.slice(-10000); });
+  ch.on('error', (e) => { info.err += `\nspawn error: ${e.code || e.message}`; });
+  ch.on('message', (m) => {
+    if (!m || m.cmd !== 'done' || !info.p || m.id !== info.seq) return;
+    const p = info.p; info.p = null; info.count++;
+    if (interrupted) return;
+    settle(info, p, String(m.out || ''), String(m.err || ''), m.code, null);
+    if (info.count >= BATCH_PARTS) endHost(info);
+    schedule();
+  });
+  // 'close' does not always follow 'exit' for a child with an IPC channel (seen on Node 24/Windows after a
+  // disconnect), so the host is gone at whichever comes first; after 'exit' its stderr gets 300 ms to drain
+  let gone = false;
+  const onGone = (code, sig) => {
+    if (gone) return; gone = true;
+    running.delete(ch);
+    if (interrupted) return;
+    if (info.p) { const p = info.p; info.p = null; settle(info, p, '', `${info.err}\nhost process ended during the part (exit ${code}${sig ? ' ' + sig : ''})`, code, sig); }
+    schedule();
+  };
+  ch.on('exit', (code, sig) => { info.exited = true; setTimeout(() => onGone(code, sig), 300); });
+  ch.on('close', onGone);
+  return info;
+}
+function dispatch(info, p) {
+  const data = { check: CHECK, args: checkArgs(p, MEM), imports: [...(CONFIG_SET === 'full' ? [FULL_URL] : []), CHECK_URL] };
+  let ok = false;
+  if (!info.exited && info.ch.connected) { try { ok = info.ch.send({ cmd: 'run', id: info.seq + 1, heap: MEM, data }) !== false || info.ch.connected; } catch { ok = false; } }
+  if (!ok) { endHost(info); return false; } // the host is gone or deaf: the part stays to do and waits for another
+  info.seq++; info.p = p; p.state = 'running';
+  info.started = Date.now(); info.startedAt = new Date().toISOString(); info.maxRss = 0;
+  spawned.parts_in_hosts++;
+  return true;
+}
+function endHost(info) {
+  if (info.kind !== 'host' || info.ending) return;
+  info.ending = true;
+  // the host ends itself on this message (an idle host has no part to lose); kill only when it cannot hear
+  try { if (info.ch.connected) info.ch.send({ cmd: 'end' }); else info.ch.kill(); } catch { try { info.ch.kill(); } catch { /* gone */ } }
+}
+
+// a finished part (process closed, or a host's thread ended): classify, write its result file atomically
+function settle(info, p, out, err, code, sig) {
+  const size = info.size, big = info.big;
+  {
     let r = null; try { r = JSON.parse(out.trim().split('\n').pop()); } catch { r = null; }
+    // a result that names another configuration or part is not this part's result
+    if (r && (r.id !== p.cfg.id || (r.part || null) !== p.part)) { err += `\nthe result names ${r.id} ${r.part}, not ${p.cfg.id} ${p.part}`; r = null; }
+    const startedAt = info.startedAt;
     const c = classify(r, code, sig, err, size);
     const rec = {
       schema: 1, config: p.cfg.id, part: p.part, title: p.cfg.title, base: p.cfg.base || null,
@@ -369,35 +505,55 @@ function startPart(p, big) {
       const { rows } = summary(false);
       if (agg.parts.every((q) => q.state === 'done')) { const a = rows.find((x) => x.id === p.cfg.id); process.stdout.write(`[${t} s] == ${a.id}: ${a.status}; ${a.states} states, ${a.cpu_seconds.toFixed(0)} cpu-s\n`); }
     } catch (e) { process.stderr.write(`run-resumable: could not write the summary: ${e.code || e.message}\n`); }
-    schedule();
-  });
-  return true;
+  }
 }
 
 // ---------------------------------------------------------------- the pool
-let timer = null, finished = false;
+// pollTimer: every --poll-s, sample the workers' memory and look again (admission waits on this);
+// gapTimer: when only --spawn-gap-ms holds a start back, look again as soon as the gap has passed
+let pollTimer = null, gapTimer = null, finished = false;
 function schedule() {
   if (finished || interrupted) return;
   const todo = parts.filter((p) => p.state === 'todo');
   const bigQ = parts.filter((p) => p.state === 'big');
-  const bigRunning = [...running.values()].some((r) => r.big);
-  if (!todo.length && !bigQ.length && !running.size) return finish();
+  const infos = [...running.values()];
+  const bigRunning = infos.some((r) => r.big);
+  if (!todo.length && !bigQ.length && !infos.some((r) => r.p)) { for (const r of infos) endHost(r); return finish(); }
   // rank (default): a big part runs before any normal part of a costlier configuration starts, so each
   // configuration is finished, big parts included, in the cheapest-first order
   const rankOf = (p) => byCfg.get(p.cfg.id).rank;
   const bigNow = bigQ.length && (BIG_AT === 'asap' || !todo.length || (BIG_AT === 'rank' && rankOf(todo[0]) > rankOf(bigQ[0])));
-  let started = 0;
+  let started = 0, gapBlocked = false;
+  const idleHost = () => [...running.values()].find((r) => r.kind === 'host' && !r.p && !r.ending && !r.exited);
   if (bigNow) {
-    if (!running.size && admit(BIG) && startPart(bigQ[0], true)) started++; // alone: nothing else runs beside it
+    for (const r of infos) if (r.kind === 'host' && !r.p) endHost(r); // alone: nothing else runs beside it, idle hosts included
+    if (!running.size) { if (gapLeft() > 0) gapBlocked = true; else if (admit(BIG) && startPart(bigQ[0], true)) started++; }
   } else if (!bigRunning) {
-    for (const p of todo) { if (running.size >= WORKERS || !admit(MEM)) break; if (!startPart(p, false)) break; started++; }
+    for (const p of todo) { // strictly in order: a part that cannot start holds back the parts behind it
+      if (batchable(p, false)) {
+        const h = idleHost(); // an admitted host is already counted as a worker of --mem-mb
+        if (h) { if (!dispatch(h, p)) break; started++; continue; }
+        if (running.size >= WORKERS) break;
+        if (gapLeft() > 0) { gapBlocked = true; break; }
+        if (!admit(MEM)) break;
+        const nh = startHost(); if (!nh || !dispatch(nh, p)) break;
+        started++; continue;
+      }
+      if (running.size >= WORKERS) break;
+      if (gapLeft() > 0) { gapBlocked = true; break; }
+      if (!admit(MEM) || !startPart(p, false)) break;
+      started++;
+    }
+    // a host left idle here has no part it may take now: end it so its slot and memory go to the next part
+    for (const r of [...running.values()]) if (r.kind === 'host' && !r.p) endHost(r);
   }
   if (started) { try { summary(false); } catch { /* written again after the next part */ } }
-  clearTimeout(timer);
-  timer = setTimeout(() => sampleRss().then(schedule), POLL_MS);
+  if (gapBlocked && !gapTimer) gapTimer = setTimeout(() => { gapTimer = null; schedule(); }, gapLeft() + 5);
+  if (!pollTimer) pollTimer = setTimeout(() => sampleRss().then(() => { pollTimer = null; schedule(); }), POLL_MS);
 }
 function finish() {
-  if (finished) return; finished = true; clearTimeout(timer);
+  if (finished) return; finished = true; clearTimeout(pollTimer); clearTimeout(gapTimer);
+  for (const r of running.values()) endHost(r);
   const { rows, tot } = summary(true);
   process.stdout.write(`\n${tableText(rows)}\n\nTotal: ${tot.states} states, ${tot.transitions} transitions in ${tot.parts} parts of ${rows.length} configurations: ${tot.complete} complete, ${tot.bounded} BOUNDED, ${tot.failed} failed runs; ${tot.cpu_seconds} cpu-s; wall ${((Date.now() - T0) / 1000).toFixed(0)} s (${reusedComplete} parts reused from earlier runs)\n`);
   for (const a of rows) { for (const b of a.bounded) process.stdout.write(`BOUNDED ${a.id} ${b.part} at ${b.mem_mb} MB: ${b.why}\n`); for (const b of a.failed) process.stdout.write(`FAILED RUN ${a.id} ${b.part} at ${b.mem_mb} MB: ${b.why}\n`); }
@@ -405,8 +561,8 @@ function finish() {
   process.exitCode = exitCode(tot);
 }
 function stopAll(sig) {
-  if (interrupted) return; interrupted = true; clearTimeout(timer);
-  process.stderr.write(`run-resumable: ${sig}: stopping ${running.size} running parts (they have no result file and run again next time)\n`);
+  if (interrupted) return; interrupted = true; clearTimeout(pollTimer); clearTimeout(gapTimer);
+  process.stderr.write(`run-resumable: ${sig}: stopping ${running.size} worker processes (their running parts have no result file and run again next time)\n`);
   for (const ch of running.keys()) { try { ch.kill('SIGKILL'); } catch { /* gone */ } }
   try { summary(false); } catch { /* ignore */ }
   try { fs.rmSync(LOCK, { force: true }); } catch { /* ignore */ }
@@ -418,7 +574,7 @@ process.on('exit', () => { for (const ch of running.keys()) { try { ch.kill('SIG
 {
   const counts = { todo: 0, big: 0, done: 0 };
   for (const p of parts) counts[p.state]++;
-  process.stderr.write(`run-resumable: ${chosen.length} configurations, ${parts.length} parts: ${counts.done} final from earlier runs (${reusedComplete} complete, ${reusedBounded} bounded at >= ${BIG} MB), ${counts.big} for ${BIG} MB alone, ${counts.todo} to run${stale ? `, ${stale} stale results rerun` : ''}; ${WORKERS} workers of ${MEM} MB, floor ${FLOOR} MB, free now ${Math.round(os.freemem() / 1048576)} MB of ${Math.round(TOTAL_MB)} MB; results in ${RESULTS}\n`);
+  process.stderr.write(`run-resumable: ${chosen.length} configurations, ${parts.length} parts: ${counts.done} final from earlier runs (${reusedComplete} complete, ${reusedBounded} bounded at >= ${BIG} MB), ${counts.big} for ${BIG} MB alone, ${counts.todo} to run${stale ? `, ${stale} stale results rerun` : ''}; ${WORKERS} workers of ${MEM} MB, floor ${FLOOR} MB, ${SPAWN_GAP_MS} ms between process starts, ${parts.filter((p) => p.state === 'todo' && batchable(p, false)).length} parts in hosts (estimate <= ${BATCH_EST}, ${BATCH_PARTS} per host), free now ${Math.round(os.freemem() / 1048576)} MB of ${Math.round(TOTAL_MB)} MB; results in ${RESULTS}\n`);
 }
 summary(false);
 schedule();

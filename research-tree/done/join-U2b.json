@@ -1,0 +1,26 @@
+{
+  "label": "join:U2b",
+  "result": {
+    "tests": {
+      "command": "node tools/lane.mjs --label join-U2b --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/<tms|promote|certify>.test.mjs (one lane call per file)",
+      "passed": 53,
+      "failed": 0,
+      "skipped": 2,
+      "output_tail": "tms.test.mjs: tests 16, pass 16, fail 0. promote.test.mjs: tests 22, pass 20, fail 0, skipped 2 (needs-app 7, needs-app 1). certify.test.mjs: tests 17, pass 17, fail 0. Fixture cases (17: tms 5, promote 6, certify 6) run one at a time by a one-off checker emulating selftest's case runner (data-only tcb/ copy, thresholds overrides, overlay, live script, expect exit/code/result/files): 17 of 17 pass. The checker and logs were removed afterwards; no tst-/fx- folder left under tmp."
+    },
+    "rounds": 2,
+    "fixes": [
+      {"file": "tcb/test/tms.test.mjs, tcb/test/promote.test.mjs, tcb/test/certify.test.mjs", "what": "run() spawned tcb/scripts/<name>.mjs; changed to tcb/<name>.mjs for the flat build layout.", "wrong_side": "layout"},
+      {"file": "tcb/test/tms.test.mjs", "what": "T15, tcb/test/promote.test.mjs T14, tcb/test/certify.test.mjs T14: the lock-busy case took the 'nothing written' snapshot before the test itself wrote run.lock (holdLock), so the test's own lock file read as a script write. The snapshot is now taken after holdLock; the script still must write nothing (exit 75 asserted unchanged).", "wrong_side": "test"},
+      {"file": "tcb/test/tms.test.mjs", "what": "T13b protocol-unreadable: the tamper was one appended space. CONTRACT 3.18 says the ledger names the sha256 of the frozen file's canonical bytes, and lib.currentProtocol accepts a raw-bytes or canonical match, so whitespace is not a change of the protocol. The test now changes the protocol's content (sesoi m1 -> 99, written canonically) and still requires exit 2 protocol-unreadable and no views. The spec's 'whose bytes do not hash' wording vs the contract's canonical sha is the unclear part.", "wrong_side": "spec_unclear"}
+    ],
+    "still_failing": [],
+    "lib_change_requests": [],
+    "notes": [
+      "No script code was changed: tms.mjs, promote.mjs and certify.mjs passed every test once the three test-side defects were fixed.",
+      "The build agent's earlier lib requests (withRunLock retries, runMain dry_run/mode, flagCleared shape, checkerVerdicts input, paths() keys) are not repeated: the behaviours that depend on them (lock-busy in about 4 s with lock_retries 3, dry_run true on stdout, flag clearing in tms T6 and certify T5, checker verdicts in promote T5-T8) all pass against the current lib.mjs. Schema allowances the build agent asked for (labels_sha in check data, card_id null in repair causes, schema_version on status lines and certificates, nullable session_label) were not independently checked against the schemas beyond these runs passing.",
+      "Fixtures were checked with a one-off emulation of selftest's case runner, not with selftest.mjs itself (another unit's script, whose static checks span all 24 scripts).",
+      "Two promote tests stay skipped by design (needs the app): a real checker's structured verdict in its helper transcript under the coordinator's subagents folder, and that the checker could only Read its batch."
+    ]
+  }
+}

@@ -193,7 +193,7 @@ function mkReview(o) {
 
 // ---- running a script as a child process ----
 function run(script, argv, root) {
-  const r = spawnSync(process.execPath, [path.join(TCB, 'scripts', script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
+  const r = spawnSync(process.execPath, [path.join(TCB, script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
   const lines = (r.stdout ?? '').split('\n').filter((l) => l.trim());
   let json = null;
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
@@ -564,8 +564,9 @@ test('T14 stale --epoch is 65; stale --ce is 64 and writes nothing; lock busy is
   }
   {
     const w = build({ params: { lock_retries: 3 } });
-    const before = snapshot(w.root);
+    // the test itself writes run.lock, so the snapshot is taken after the lock is held
     const lock = holdLock(w.root);
+    const before = snapshot(w.root);
     try {
       const r = certify(w.root);
       shape(r, 'certify', 75);

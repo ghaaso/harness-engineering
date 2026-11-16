@@ -279,7 +279,7 @@ const helperTranscriptPath = (root, session, name) => path.join(root, 'transcrip
 
 // ---- running a script as a child process ----
 function run(script, argv, root) {
-  const r = spawnSync(process.execPath, [path.join(TCB, 'scripts', script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
+  const r = spawnSync(process.execPath, [path.join(TCB, script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
   const lines = (r.stdout ?? '').split('\n').filter((l) => l.trim());
   let json = null;
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
@@ -724,11 +724,14 @@ test('T12 --dry-run: the result of T1 with dry_run true, no object, no ledger li
   const ctx = setup();
   const s = std(ctx, { review: true });
   const before = snapshot(ctx.root);
+  // the setup's protocol-freeze line already exists, so "no ledger line" means no line added
+  const ledgerBefore = readLedger(ctx.root).length;
   const j = doIntake(ctx, 0, ['--dry-run']);
   assert.equal(j.dry_run, true);
   assert.deepEqual(j.result.stored.map((x) => x.id).sort(), [s.A, s.P, s.R].sort());
   assert.deepEqual(snapshot(ctx.root), before, 'no file written at all');
-  assert.ok(!exists(ledgerPath(ctx.root)));
+  assert.equal(readLedger(ctx.root).length, ledgerBefore, 'no ledger line appended');
+  assert.equal(ledgerKind(ctx.root, 'intake').length, 0, 'no intake line');
   assert.ok(!exists(path.join(ctx.dir(), 'view', 'rejected.json')));
   assert.deepEqual(storedIds(ctx.root), []);
 });

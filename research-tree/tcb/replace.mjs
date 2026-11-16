@@ -968,7 +968,6 @@ async function modeBind(env, flags) {
       const row = (table.tasks ?? []).find((r) => r && r.task === T);
       if (!row) throw tcbError('no-task', 1, { task: T });
       if (row.epoch !== E) throw tcbError('stale-epoch', 65, { expected: E, actual: row.epoch });
-      const att = lib.attemptOf(row, E);
       if (row.state === 'active' && row.step === 'bound') {
         if (row.session === SID) return { exit: 0, result: { task: T, epoch: E, session: SID, repeat: true }, reasons: [] };
         throw tcbError('session-differs', 1, { bound: row.session ?? null, session: SID });
@@ -976,6 +975,9 @@ async function modeBind(env, flags) {
       if (row.state !== 'active' || (row.step !== 'admitted' && row.step !== 'started')) {
         throw tcbError('wrong-step', 65, { state: row.state, step: row.step });
       }
+      // The attempt is looked up only once the step says one must exist: a bind on a planned row
+      // (epoch 0, no attempts) is a wrong step (65), not a missing attempt (2).
+      const att = lib.attemptOf(row, E);
       const dir = attemptDir(root, T, E, att);
       if (cwd !== null && !samePath(cwd, dir)) throw tcbError('wrong-folder', 1, { cwd: posix(cwd), folder: posix(dir) });
       if (row.step === 'started') {

@@ -56,7 +56,7 @@ async function waitFor(fn, { timeout = 30000, step = 25 } = {}) {
 }
 const newSid = () => crypto.randomUUID();
 let _lib;
-const getLib = async () => (_lib ??= await import(pathToFileURL(path.join(TCB_SRC, 'scripts', 'lib.mjs')).href));
+const getLib = async () => (_lib ??= await import(pathToFileURL(path.join(TCB_SRC, 'lib.mjs')).href));
 
 // ---------------------------------------------------------------- process helpers
 function psStart(pid) {
@@ -87,7 +87,7 @@ function makeRoot({ thr = {}, ce = 1, rows = [], coord = {} } = {}) {
   fs.mkdirSync(TMP, { recursive: true });
   const root = fs.mkdtempSync(path.join(TMP, 'st-'));
   for (const d of DIRS) fs.mkdirSync(path.join(root, d), { recursive: true });
-  for (const d of ['scripts', 'schemas', 'profiles', 'settings', 'agents', 'briefs']) {
+  for (const d of ['schemas', 'profiles', 'settings', 'agents', 'briefs']) { // flat layout: no scripts copy
     const src = path.join(TCB_SRC, d);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', d), { recursive: true });
   }
@@ -223,7 +223,8 @@ function parseOut(r) {
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { /* not json */ } }
   return { exit: r.status, signal: r.signal ?? null, stdout: out, stderr: r.stderr ?? '', lines, json };
 }
-const scriptPath = (root, name) => path.join(root, 'tcb', 'scripts', name + '.mjs');
+// Flat build layout: the script is tcb-build/tcb/<name>.mjs, found relative to this test file.
+const scriptPath = (_root, name) => path.join(TCB_SRC, name + '.mjs');
 function run(root, args, { timeout = 120000 } = {}) {
   return parseOut(cp.spawnSync(process.execPath, [scriptPath(root, 'status'), ...args],
     { cwd: root, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 }));

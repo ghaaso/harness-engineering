@@ -279,7 +279,7 @@ const helperTranscriptPath = (root, session, name) => path.join(root, 'transcrip
 
 // ---- running a script as a child process ----
 function run(script, argv, root) {
-  const r = spawnSync(process.execPath, [path.join(TCB, 'scripts', script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
+  const r = spawnSync(process.execPath, [path.join(TCB, script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
   const lines = (r.stdout ?? '').split('\n').filter((l) => l.trim());
   let json = null;
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
@@ -595,11 +595,12 @@ test('T11 staging/harvested a junction out of the attempt, a junction inside it,
     fs.mkdirSync(outside, { recursive: true });
     return { ctx, outside };
   };
-  const refused = (ctx) => {
+  // `planted` = the card files the test itself put there (the hard link of case c); nothing beyond them may appear
+  const refused = (ctx, planted = []) => {
     const j = go(ctx, 3);
     assert.equal(j.code, 'tamper');
     assertFirstReason(j, 'untrusted-path');
-    assert.deepEqual(cardFiles(ctx), []);
+    assert.deepEqual(cardFiles(ctx), planted);
     const inc = ledgerKind(ctx.root, 'incident');
     assert.equal(inc.length, 1, 'the tamper incident line');
     assert.equal(inc[0].data.detail.tamper, true);
@@ -622,7 +623,8 @@ test('T11 staging/harvested a junction out of the attempt, a junction inside it,
   fs.mkdirSync(c.ctx.harvested(), { recursive: true });
   fs.writeFileSync(path.join(c.outside, 'x.json'), '{"synthetic":true}');
   fs.linkSync(path.join(c.outside, 'x.json'), path.join(c.ctx.harvested(), 'x.card.json'));
-  refused(c.ctx);
+  refused(c.ctx, ['x.card.json']);
+  assert.equal(fs.readFileSync(path.join(c.outside, 'x.json'), 'utf8'), '{"synthetic":true}', 'the hard-linked file is untouched');
 });
 
 test('T12 a file already at harvested/<c_id>.card.json with other bytes: exit 3 harvested-differs', () => {

@@ -1,4 +1,4 @@
-// Tests of tcb/scripts/guard-hook.mjs, written from spec/guard-hook.mjs.md and CONTRACT.md only.
+// Tests of tcb/guard-hook.mjs (flat build layout), written from spec/guard-hook.mjs.md and CONTRACT.md only.
 // One test per numbered behaviour (T1..T14); each test runs the hook as a child process against a
 // temporary run root built here, and judges exit code, stdout (always empty), stderr and the files.
 // The three needs-app behaviours are skipped tests.
@@ -145,7 +145,9 @@ function makeWorld({ thr = {}, tasks = true } = {}) {
     'wt', 'queue', 'sealed/seeds', 'plan/questions', 'plan/notes', 'views', 'completeness', 'transcripts', 'review-in']) {
     fs.mkdirSync(path.join(root, d), { recursive: true });
   }
-  for (const name of ['scripts', 'schemas', 'profiles', 'settings', 'agents', 'briefs']) {
+  // Data files only: the hook under test is the live tcb/guard-hook.mjs (flat layout), run with
+  // --root <this root>; no script is copied (no burst of script files per test).
+  for (const name of ['schemas', 'profiles', 'settings', 'agents', 'briefs']) {
     const src = path.join(TCB, name);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', name), { recursive: true });
   }
@@ -154,9 +156,6 @@ function makeWorld({ thr = {}, tasks = true } = {}) {
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(root, 'tcb', f));
   }
   ensureFile(path.join(root, 'tcb', 'thresholds.json'), JSON.stringify({ schema_version: 1, params: {} }));
-  ensureFile(path.join(root, 'tcb', 'scripts', 'status.mjs'), '// stub\n');
-  ensureFile(path.join(root, 'tcb', 'scripts', 'check-queue.mjs'), '// stub\n');
-  ensureFile(path.join(root, 'tcb', 'scripts', 'lib.mjs'), '// stub\n');
   ensureFile(path.join(root, 'tcb', 'README.md'), 'synthetic\n');
   setParam(root, 'transcripts_root', fwd(path.join(root, 'transcripts')));
   for (const [k, v] of Object.entries(thr)) setParam(root, k, v);
@@ -218,8 +217,10 @@ async function withWorld(opts, fn) {
 // ---------------------------------------------------------------------------------------------
 // running the hook
 // ---------------------------------------------------------------------------------------------
-function hookScript(w) {
-  return path.join(w.root, 'tcb', 'scripts', 'guard-hook.mjs');
+// The live hook, beside lib.mjs and its sibling scripts (flat layout). It reads its data through
+// --root, and finds the scripts the coordinator may name beside its own file (import.meta.url).
+function hookScript() {
+  return path.join(TCB, 'guard-hook.mjs');
 }
 
 function buildInvocation(w, c) {
@@ -282,7 +283,8 @@ function judge(c, r) {
   return want.includes(m[1]) ? null : `expected deny ${want.join('|')}, got ${m[1]}: ${r.stderr.trim().slice(0, 300)}`;
 }
 
-async function runCases(w, cases, limit = 8) {
+// At most two hook processes alive at once (no bursts of short-lived processes).
+async function runCases(w, cases, limit = 2) {
   const results = new Array(cases.length);
   let next = 0;
   const worker = async () => {
@@ -339,7 +341,7 @@ function casesT1(w) {
     { n: 'child Glob in the store', tool: 'Glob', input: { pattern: '*.json', path: R('store', 'objects') }, expect: 'read-outside-role' },
     { n: 'child reads a stored object', tool: 'Read', input: { file_path: R('store', 'objects', 'c_x.json') }, expect: 'read-outside-role' },
     { n: 'child reads a sealed seed', tool: 'Read', input: { file_path: R('sealed', 'seeds', 'b1-1.json') }, expect: 'read-outside-role' },
-    { n: 'child reads a tcb script', tool: 'Read', input: { file_path: R('tcb', 'scripts', 'lib.mjs') }, expect: 'read-outside-role' },
+    { n: 'child reads a tcb script', tool: 'Read', input: { file_path: R('tcb', 'lib.mjs') }, expect: 'read-outside-role' },
     { n: 'child reads the task table', tool: 'Read', input: { file_path: R('run', 'tasks.json') }, expect: 'read-outside-role' },
     { n: 'child reads a sibling attempt that shares the name prefix (e10 vs e1)', tool: 'Read', input: { file_path: R('wt', 'f1-research-e10', 'in', 'brief.md') }, expect: 'read-outside-role' },
     { n: 'child reads another task attempt', tool: 'Read', input: { file_path: R('wt', 'f1-review-e1', 'in', 'brief.md') }, expect: 'read-outside-role' },
@@ -357,13 +359,13 @@ function casesT1(w) {
     co('coordinator reads a question file', 'Read', { file_path: R('plan', 'questions', 'f1.json') }, 0),
     co('coordinator reads a brief of tcb', 'Read', { file_path: R('tcb', 'briefs', 'child.md') }, 0),
     co('coordinator reads tcb README', 'Read', { file_path: R('tcb', 'README.md') }, 0),
-    co('coordinator reads a tcb script', 'Read', { file_path: R('tcb', 'scripts', 'lib.mjs') }, 'read-outside-role'),
+    co('coordinator reads a tcb script', 'Read', { file_path: R('tcb', 'lib.mjs') }, 'read-outside-role'),
     co('coordinator reads the task table', 'Read', { file_path: R('run', 'tasks.json') }, 'read-outside-role'),
     co('coordinator reads the ledger', 'Read', { file_path: R('run', 'ledger.jsonl') }, 'read-outside-role'),
     co('coordinator reads an attempt folder', 'Read', { file_path: path.join(w.A('child'), 'staging', 'card1.card.json') }, 'read-outside-role'),
     co('coordinator reads a snapshot', 'Read', { file_path: R('.snapshots', 'raw', 'abc') }, 'read-outside-role'),
     co('coordinator Glob in views', 'Glob', { pattern: '*.md', path: R('views') }, 0),
-    co('coordinator Glob in tcb/scripts', 'Glob', { pattern: '*.mjs', path: R('tcb', 'scripts') }, 'read-outside-role'),
+    co('coordinator Glob in tcb', 'Glob', { pattern: '*.mjs', path: R('tcb') }, 'read-outside-role'),
     co('coordinator Grep in views with glob', 'Grep', { pattern: 'x', path: R('views'), glob: '*.md' }, 0),
     co('coordinator Grep without path, cwd = root', 'Grep', { pattern: 'x' }, 'read-outside-role'),
   ];
@@ -392,7 +394,7 @@ function casesT2(w) {
     { n: 'child writes claude.md.txt (not a CLAUDE file)', tool: 'Write', input: { file_path: path.join(a, 'staging', 'claude.md.txt'), content: 'x' }, expect: 0 },
     { n: 'child writes claudex.md (not a CLAUDE file)', tool: 'Write', input: { file_path: path.join(a, 'staging', 'claudex.md'), content: 'x' }, expect: 0 },
     { n: 'child writes outside the root', tool: 'Write', input: { file_path: fwd(path.dirname(w.root)) + '/elsewhere-gh.txt', content: 'x' }, expect: ['write-outside-role', 'write-protected'] },
-    { n: 'child writes into tcb', tool: 'Write', input: { file_path: R('tcb', 'scripts', 'x.mjs'), content: 'x' }, expect: 'write-protected' },
+    { n: 'child writes into tcb', tool: 'Write', input: { file_path: R('tcb', 'x.mjs'), content: 'x' }, expect: 'write-protected' },
     { n: 'child writes into run', tool: 'Write', input: { file_path: R('run', 'ledger.jsonl'), content: 'x' }, expect: 'write-protected' },
     co('coordinator writes .git/config', 'Write', { file_path: R('.git', 'config'), content: 'x' }, 'write-protected'),
     co('coordinator writes plan/notes', 'Write', { file_path: R('plan', 'notes', 'q1.txt'), content: 'x' }, 0),
@@ -441,28 +443,31 @@ function casesT4(w) {
 function casesT5(w) {
   const co = (n, tool, command, expect, extra = {}) => ({ n, role: 'coordinator', tool, input: { command }, expect, ...extra });
   const rootF = fwd(w.root);
-  const sm = 'node tcb/scripts/status.mjs';
+  const sm = 'node tcb/status.mjs';
   const list = [
     { n: 'child Bash', tool: 'Bash', input: { command: sm + ' --root C:/r --ce 1' }, expect: 'tool-denied' },
     { n: 'child PowerShell', tool: 'PowerShell', input: { command: 'Get-ChildItem' }, expect: 'tool-denied' },
     { n: 'fresh-reviewer Bash', role: 'fresh-reviewer', tool: 'Bash', input: { command: 'echo x' }, expect: 'tool-denied' },
     co('coordinator relative form, cwd = root', 'Bash', sm + ' --root C:/r --ce 1', 0),
     co('coordinator relative form with surrounding blanks', 'Bash', '  ' + sm + ' --ce 1  ', 0),
-    co('coordinator absolute quoted form', 'Bash', `node "${rootF}/tcb/scripts/status.mjs" --root C:/r --ce 1`, 0),
-    co('coordinator absolute quoted form, cwd = plan', 'Bash', `node "${rootF}/tcb/scripts/status.mjs" --root C:/r --ce 1`, 0, { cwd: w.P('plan') }),
-    co('coordinator absolute unquoted form', 'Bash', `node ${rootF}/tcb/scripts/status.mjs --ce 1`, 0),
-    co('coordinator hyphenated script name', 'Bash', 'node tcb/scripts/check-queue.mjs --root C:/r --ce 1 --mode intake', 0),
+    co('coordinator absolute quoted form', 'Bash', `node "${rootF}/tcb/status.mjs" --root C:/r --ce 1`, 0),
+    co('coordinator absolute quoted form, cwd = plan', 'Bash', `node "${rootF}/tcb/status.mjs" --root C:/r --ce 1`, 0, { cwd: w.P('plan') }),
+    co('coordinator absolute unquoted form', 'Bash', `node ${rootF}/tcb/status.mjs --ce 1`, 0),
+    co('coordinator hyphenated script name', 'Bash', 'node tcb/check-queue.mjs --root C:/r --ce 1 --mode intake', 0),
     co('coordinator quoted argument with space and backslash', 'Bash', sm + ' --root "C:\\my dir\\x" --ce 1', 0),
     co('coordinator key=value and colon arguments', 'Bash', sm + ' intent open --key a-b_c --subject=x:y', 0),
     co('coordinator PowerShell with the allowed form', 'PowerShell', sm + ' --ce 1', 0),
     co('relative form from another cwd', 'Bash', sm + ' --ce 1', 'bash-pattern', { cwd: w.P('plan') }),
-    co('absolute form of another root', 'Bash', 'node C:/other-root/tcb/scripts/status.mjs --ce 1', 'bash-pattern'),
+    co('absolute form of another root', 'Bash', 'node C:/other-root/tcb/status.mjs --ce 1', 'bash-pattern'),
     co('node -e', 'Bash', 'node -e 1', 'bash-pattern'),
-    co('semicolon chain', 'Bash', 'node tcb/scripts/x.mjs; del y', 'bash-pattern'),
-    co('parent segment in the path', 'Bash', 'node tcb/scripts/../../a.mjs', 'bash-pattern'),
-    co('lib.mjs', 'Bash', 'node tcb/scripts/lib.mjs', 'bash-pattern'),
-    co('script that does not exist', 'Bash', 'node tcb/scripts/nosuch.mjs', 'bash-pattern'),
-    co('upper-case script name', 'Bash', 'node tcb/scripts/Status.mjs', 'bash-pattern'),
+    co('semicolon chain', 'Bash', 'node tcb/x.mjs; del y', 'bash-pattern'),
+    co('parent segment in the path', 'Bash', 'node tcb/../../a.mjs', 'bash-pattern'),
+    co('lib.mjs', 'Bash', 'node tcb/lib.mjs', 'bash-pattern'),
+    co('script that does not exist', 'Bash', 'node tcb/nosuch.mjs', 'bash-pattern'),
+    co('upper-case script name', 'Bash', 'node tcb/Status.mjs', 'bash-pattern'),
+    // the contract's old layout tcb/scripts/<n>.mjs is not this build's grammar (flat layout)
+    co('old layout tcb/scripts/<n>.mjs', 'Bash', 'node tcb/scripts/status.mjs --ce 1', 'bash-pattern'),
+    co('old layout, absolute', 'Bash', `node "${rootF}/tcb/scripts/status.mjs" --ce 1`, 'bash-pattern'),
     co('command substitution', 'Bash', '$(x)', 'bash-pattern'),
     co('plain non-node command', 'Bash', 'del y', 'bash-pattern'),
     co('newline between two commands', 'Bash', sm + ' --ce 1\ndel y', 'bash-pattern'),
@@ -632,7 +637,7 @@ test('T4 Edit, MultiEdit and NotebookEdit: target fields are checked; MultiEdit 
   });
 });
 
-test('T5 Bash: tool-denied for a child; the coordinator only runs node tcb/scripts/<name>.mjs without shell metacharacters', async () => {
+test('T5 Bash: tool-denied for a child; the coordinator only runs node tcb/<name>.mjs without shell metacharacters', async () => {
   await withWorld({}, async (w) => {
     assert.deepEqual(await runCases(w, casesT5(w)), []);
   });
@@ -754,9 +759,10 @@ test('T11 fail-safe: every kind of bad invocation or bad input is exit 2', async
   await withWorld({}, async (w) => {
     const a = w.A('child');
     const okTool = { tool: 'Read', input: { file_path: path.join(a, 'in', 'brief.md') } };
-    // a copy of the hook below wt/
+    // a copy of the hook below wt/ (the hook and the library it imports: two files)
     const copy = w.P('wt', 'x');
-    fs.cpSync(w.P('tcb', 'scripts'), copy, { recursive: true });
+    fs.mkdirSync(copy, { recursive: true });
+    for (const f of ['guard-hook.mjs', 'lib.mjs']) fs.copyFileSync(path.join(TCB, f), path.join(copy, f));
     editProfile(w, 'control', (p) => { p.bogus_extra = true; });
     editProfile(w, 'stpa', (p) => { delete p.fetch; });
     fs.writeFileSync(w.P('tcb', 'profiles', 'canary.json'), '{ not json');
@@ -951,8 +957,8 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
     if (!Array.isArray(pre) || pre.length !== 1 || pre[0].matcher !== '*' || !Array.isArray(pre[0].hooks) || pre[0].hooks.length !== 1) { sproblems.push(`${role}: hooks.PreToolUse shape`); continue; }
     const h = pre[0].hooks[0];
     const want = role === 'coordinator'
-      ? '"C:/nodejs/node.exe" "C:/x/run1/tcb/scripts/guard-hook.mjs" --root "C:/x/run1" --role coordinator'
-      : `"C:/nodejs/node.exe" "C:/x/run1/tcb/scripts/guard-hook.mjs" --root "C:/x/run1" --role ${role} --task t1 --epoch 1`;
+      ? '"C:/nodejs/node.exe" "C:/x/run1/tcb/guard-hook.mjs" --root "C:/x/run1" --role coordinator'
+      : `"C:/nodejs/node.exe" "C:/x/run1/tcb/guard-hook.mjs" --root "C:/x/run1" --role ${role} --task t1 --epoch 1`;
     if (h.type !== 'command') sproblems.push(`${role}: hook type ${h.type}`);
     if (h.command !== want) sproblems.push(`${role}: hook command is\n  ${h.command}\nwant\n  ${want}`);
     if (h.timeout !== 30) sproblems.push(`${role}: hook timeout ${h.timeout}`);
@@ -969,7 +975,7 @@ test('T14 shipped profiles, settings and agent files agree with each other and w
       }
     }
     if (role === 'coordinator') {
-      if (!allow.includes('Bash(node tcb/scripts/*)')) sproblems.push('coordinator: allow lacks Bash(node tcb/scripts/*)');
+      if (!allow.includes('Bash(node tcb/*)')) sproblems.push('coordinator: allow lacks Bash(node tcb/*)');
     } else {
       if (p.tools_allow.includes('Read') && !allow.includes('Read(//C:/x/run1/wt/t1-e1/**)')) sproblems.push(`${role}: allow lacks Read(//{attempt}/**)`);
       if (p.tools_allow.includes('Edit') && !allow.includes('Edit(//C:/x/run1/wt/t1-e1/staging/**)')) sproblems.push(`${role}: allow lacks Edit(//{attempt}/staging/**)`);

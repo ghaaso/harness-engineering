@@ -193,7 +193,7 @@ function mkReview(o) {
 
 // ---- running a script as a child process ----
 function run(script, argv, root) {
-  const r = spawnSync(process.execPath, [path.join(TCB, 'scripts', script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
+  const r = spawnSync(process.execPath, [path.join(TCB, script + '.mjs'), ...argv], { cwd: root, encoding: 'utf8', windowsHide: true, shell: false, timeout: 180000, maxBuffer: 64 << 20 });
   const lines = (r.stdout ?? '').split('\n').filter((l) => l.trim());
   let json = null;
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { json = null; } }
@@ -621,7 +621,12 @@ test('T13b an unparseable complete status line is 2 status-unreadable; a frozen 
   }
   {
     const w = cleanWorld();
-    fs.appendFileSync(path.join(w.root, w.prot.rel), ' ');
+    // CONTRACT 3.18: the ledger names the sha256 of the frozen file's canonical bytes, so a change
+    // of whitespace alone is not a change of the protocol; change its content instead.
+    const protPath = path.join(w.root, w.prot.rel);
+    const tampered = JSON.parse(fs.readFileSync(protPath, 'utf8'));
+    tampered.sesoi = { m1: 99 };
+    fs.writeFileSync(protPath, canon(tampered));
     const j = shape(tms(w.root), 'tms', 2);
     assertReason(j, 'protocol-unreadable');
     noViews(w.root);
@@ -657,8 +662,9 @@ test('T15 stale --ce is 64 and writes nothing; lock busy is 75; --dry-run writes
   }
   {
     const { root } = cleanWorld({ params: { lock_retries: 3 } });
-    const before = snapshot(root);
+    // the test itself writes run.lock, so the snapshot is taken after the lock is held
     const lock = holdLock(root);
+    const before = snapshot(root);
     try {
       const r = tms(root);
       shape(r, 'tms', 75);

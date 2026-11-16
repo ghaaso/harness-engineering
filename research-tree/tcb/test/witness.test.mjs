@@ -16,7 +16,7 @@ const HERE = import.meta.dirname; // .../tcb-build/tcb/test
 const TCB = path.resolve(HERE, '..');
 const BUILD = path.resolve(TCB, '..');
 const TMP = path.join(BUILD, 'tmp');
-const SCRIPT = path.join(TCB, 'scripts', 'witness.mjs');
+const SCRIPT = path.join(TCB, 'witness.mjs'); // flat build layout
 const FIX = path.join(TCB, 'fixtures', 'witness');
 const NOW = '2026-11-16T10:00:00.000Z';
 const PS_EXE = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
@@ -278,7 +278,7 @@ const CASES = loadCases();
 
 // ---------------------------------------------------------------- tests
 
-describe('witness.mjs: the corpus of invented texts', { concurrency: 3 }, () => {
+describe('witness.mjs: the corpus of invented texts', { concurrency: 1 }, () => {
   let C = null;
   before(async () => {
     const root = mkRoot();
@@ -329,7 +329,7 @@ describe('witness.mjs: the corpus of invented texts', { concurrency: 3 }, () => 
   }
 });
 
-describe('witness.mjs: one card, ledger and record shape', { concurrency: 3 }, () => {
+describe('witness.mjs: one card, ledger and record shape', { concurrency: 1 }, () => {
   let S = null;
   before(async () => {
     const root = mkRoot();
@@ -389,7 +389,7 @@ describe('witness.mjs: one card, ledger and record shape', { concurrency: 3 }, (
   });
 });
 
-describe('witness.mjs: behaviours with their own runs', { concurrency: 3 }, () => {
+describe('witness.mjs: behaviours with their own runs', { concurrency: 1 }, () => {
   it('T8 no by-url file: unverifiable no-snapshot; meta reason pdf: pdf; meta reason empty-text: empty-text; exit 2, check not_run', async () => {
     await withRoot({}, async (root) => {
       const none = addCard(root, { url: 'http://fixtures.test/none', quote: QUOTE, value: 12.5, unit: '%' });
@@ -426,7 +426,9 @@ describe('witness.mjs: behaviours with their own runs', { concurrency: 3 }, () =
       fs.rmSync(path.join(root, '.snapshots', 'meta', a.rawSha + '.json'));
       const noTextU = 'http://fixtures.test/notext';
       const noText = addCard(root, { url: noTextU, quote: QUOTE, value: 12.5, unit: '%' });
-      const b = addTextSnapshot(root, noTextU, GOOD_TEXT);
+      // A text of its own: GOOD_TEXT's text file is shared by sha with the later-failed card below,
+      // whose snapshot would write the removed file back.
+      const b = addTextSnapshot(root, noTextU, GOOD_TEXT + ' Copy without its text file.');
       fs.rmSync(b.textFile);
       const laterU = 'http://fixtures.test/later-failed';
       const later = addCard(root, { url: laterU, quote: QUOTE, value: 12.5, unit: '%' });

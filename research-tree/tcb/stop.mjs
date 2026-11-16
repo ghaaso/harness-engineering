@@ -444,7 +444,7 @@ async function modeVerify(env, T, E) {
         newRow = out && out.row ? out.row : null;
         if (confirmed) {
           try {
-            fs.rmSync(sFile, { force: true });
+            lib.removeFile(sFile);
           } catch (e) {
             process.stderr.write(`[stop] sample not removed: ${e && e.message}\n`);
           }

@@ -699,12 +699,18 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
 - `acquireLock(root, name, {script, ce, proc, now, retries=300, retryMs=100}) → handle` (each wait
   `retryMs` ±50 % jitter, about 30 s in all); `name` is `run.lock` or `watcher.lock`. Creates the file
   with `wx` holding the §3.10 lock record. `selfInfo(proc)` is computed once per process, before the
-  first attempt, and cached (no PowerShell call inside the retry loop or while a lock is held).
-  Scripts pass `retries` = threshold `lock_retries` (300; tests of exit 75 set it to 3).
+  first attempt, and cached; the own start time comes from the process's own clock (the time now
+  minus `process.uptime()`, in the 7-digit `Z` form of §4.9), never from PowerShell, and `proc` is
+  not consulted. **No PowerShell call on the normal path**: taking a free lock, appending to the
+  ledger, validating and releasing call none; `proc` is used only to judge another process (the
+  holder of a lock that is already there). Scripts pass `retries` = threshold `lock_retries` (300;
+  tests of exit 75 set it to 3).
   - Busy: retry `retries` times `retryMs` apart, then `lock-busy` 75.
   - Stale: only when `proc.alive(pid, start_time)` is `false` (dead, or that pid now has another start
-    time). `null` (unknown) counts as alive. Break: rename to `<name>.<ownNonce>.stale`; re-read; if
-    pid, start_time and nonce equal the record judged stale, create the own lock (`wx`) and, once
+    time). `null` (unknown, or no `proc`, or `alive` throws) counts as alive. Start times are compared
+    with a tolerance of two seconds (`sameStartTime`, `START_TOLERANCE_MS` = 2000; §4.9), never by
+    string equality. Break: rename to `<name>.<ownNonce>.stale`; re-read; if
+    pid and nonce are equal and start_time matches (same rule) the record judged stale, create the own lock (`wx`) and, once
     held, append a `lock-break` ledger line (run.lock only); otherwise restore with
     `fs.linkSync(renamed, lock)` (fails rather than replace) and unlink the renamed file; if the link
     fails because a lock exists, keep the file as `<name>.<nonce>.orphan` and log an `incident`
@@ -814,21 +820,28 @@ Behaviours with failure cases are numbered T1... in `spec/lib.md`; the rule each
   "[Console]::OutputEncoding=[Text.Encoding]::UTF8; @(Get-CimInstance Win32_Process | Select-Object
   ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine,@{n='start_time';e={$_.CreationDate
   .ToUniversalTime().ToString('o')}}) | ConvertTo-Json -Compress -Depth 2"` → `[{pid, ppid, name, exe,
-  cmdline, start_time}]` (a single object is normalised to a one-element array; `start_time` is
-  compared as that exact string, 7 fractional digits and `Z`); failure → `proc-unavailable` 2.
-  `alive` → true, false, or null when PowerShell fails. `boot()` →
+  cmdline, start_time}]` (a single object is normalised to a one-element array; `start_time` has
+  the form `YYYY-MM-DDTHH:MM:SS.fffffffZ`); failure → `proc-unavailable` 2.
+  `alive` → true, false, or null when PowerShell fails; the recorded start time matches the reported
+  one when `sameStartTime` holds. `boot()` →
   `(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')`, or null
   on failure (taken in the same PowerShell call as a `list` when both are needed).
-- `selfInfo(proc) → {pid, start_time}` (cached per process); `descendants(list, pid) → pid[]`: a child
+- `sameStartTime(a, b) → boolean`: equal strings match; otherwise both must parse as ISO 8601 and lie
+  at most `START_TOLERANCE_MS` = 2000 ms apart (a process's own-clock start and the CreationDate
+  Windows reports differ by its start-up time); a missing or unparseable value never matches another.
+  Every comparison of a recorded start time with one read from PowerShell uses it: `alive`,
+  `killOwnTree` and the stale-lock break (§4.4).
+- `selfInfo(proc) → {pid, start_time}` (computed once per process from its own clock, §4.4; no
+  PowerShell call, `proc` unused); `descendants(list, pid) → pid[]`: a child
   counts only when `child.start_time >= parent.start_time` (Windows never clears a dead parent's
   pid, and pids are reused); `attemptProcesses(list, {folder, sessionId}) → {matched, method}`:
   processes whose command line names the folder (the folder followed by `\`, `/`, `"`, a space or the
   end, on normalised paths, so `wt/f1-e1` never matches `wt/f1-e10`) or the session id, plus their
   descendants. Report only: nothing acts on `matched` but counting.
 - `killOwnTree(proc, child)` (selftest only, for a child it spawned and recorded `{pid,
-  start_time}`): re-lists, checks the start time, kills its verified descendants leaf-first and then
-  the child, each by `taskkill /PID <n> /F` (absolute `C:/Windows/System32/taskkill.exe`) after
-  re-matching its start time (never `/T`).
+  start_time}`): re-lists, checks the start time (`sameStartTime`), kills its verified descendants
+  leaf-first and then the child, each by `taskkill /PID <n> /F` (absolute
+  `C:/Windows/System32/taskkill.exe`) after re-matching its start time through `alive` (never `/T`).
 
 ### 4.10 Shared numerics
 - `rng(seed: string) → {next(), int(n), shuffle(array)}`: `next()` = the first 4 bytes of

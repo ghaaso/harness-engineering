@@ -7,14 +7,31 @@
 //   node <root>/tcb/selftest.mjs canary --root <dir> --ce <n> --transcript <path> --expect <file>
 //        [--now <iso>] [--dry-run]
 //
-// Layout (this build): the 24 scripts and lib.mjs sit flat in tcb/ (`<root>/tcb/<name>.mjs`); the
-// live tree checked and copied is `<root>/tcb/`, and each case runs the copy in its own case root.
+// Layout (this build): the 24 scripts and lib.mjs sit flat in tcb/ (`<root>/tcb/<name>.mjs`).
+//
+// No bursts (redesign of 2026-11-17, after a run of the first design wrote 1,275 script files in one
+// second and the PC stalled):
+//   - no copy of the script folder at all: every case runs the script where it is,
+//     `<root>/tcb/<script>.mjs`, against its own small case root whose `tcb/` holds data files only
+//     (schemas, profiles, settings, agents, briefs, thresholds with the case's overrides, cost
+//     inputs, denylist, README);
+//   - a case root is prepared only when its case is about to run, and removed as soon as it is judged
+//     (unless --keep-failed keeps a failing one);
+//   - one case at a time by default (--jobs 1), never more than two (--jobs 2);
+//   - after every case, `treeSha(<root>/tcb/)` must still equal t0; a change stops the run
+//     (`not_run`, `tcb-changed`), and no later case starts;
+//   - every process a case starts is ended before the next case starts: the case child has exited
+//     and its pipes have closed (a pipe still open after the exit means a descendant is alive:
+//     the run stops, `case-left-process`); a timed-out child is ended through lib.killOwnTree and
+//     awaited (a child that outlives its kill stops the run, `case-not-ended`);
+//   - no case may start a watcher, an alarm or a detached intake: a `watch` case must carry `--once`
+//     and `--no-intake` (static check `watch-case-loops`); status and handover have one-shot modes
+//     only.
 //
 // Kills only its own timed-out case children, through lib.killOwnTree (CONTRACT §6).
 
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -31,10 +48,15 @@ const SCRIPTS = [
 ];
 // Where the scripts sit: flat in tcb/ (this build's layout), beside lib.mjs.
 const scriptFile = (tcbDir, name) => path.join(tcbDir, `${name}.mjs`);
-// What a case copy of tcb/ holds (never fixtures/ or test/): every tcb/*.mjs (the scripts and the
-// library), these folders and these files.
+// What a case root's tcb/ holds: data files only, never a script, never fixtures/ or test/. The
+// scripts themselves run from the live tcb/ (`scriptFile(<root>/tcb, name)`).
 const COPY_DIRS = ['schemas', 'profiles', 'settings', 'agents', 'briefs'];
-const COPY_FILES = ['thresholds.json', 'cost-inputs.json', 'denylist.txt'];
+const COPY_FILES = ['thresholds.json', 'cost-inputs.json', 'denylist.txt', 'README.md'];
+const DEFAULT_JOBS = 1;
+const MAX_JOBS = 2;
+// How long the pipes of a case child may stay open after its exit before the run counts a
+// descendant of that child as still alive.
+const CLOSE_GRACE_MS = 3000;
 
 const TASK_ROLES = ['child', 'child-reviewing', 'fresh-reviewer', 'control', 'stpa', 'fmea', 'mapper', 'canary'];
 const PROFILE_ROLES = [...TASK_ROLES, 'coordinator', 'reader', 'checker'];
@@ -45,7 +67,6 @@ const USER_DENY_DIRS = ['tcb', 'run', 'store', 'sealed', 'review-in', 'wt/*/.cla
 // Contract defaults, used only when thresholds.json lacks the name (param-missing).
 const DEFAULTS = {
   selftest_case_ms: 60000,
-  reserve_mb: 1024,
   lock_retries: 300,
   proc_exe: 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
 };
@@ -164,13 +185,16 @@ function exitSlugs() {
   return m;
 }
 
-async function pool(items, n, fn) {
-  const out = new Array(items.length);
+// At most n (1 or 2) items in flight. A worker takes its next item only after its previous one has
+// fully ended, and none takes another once stop() says so. Results of items never started are absent.
+async function pool(items, n, fn, stop) {
+  const out = [];
   let next = 0;
-  const workers = Array.from({ length: Math.max(1, Math.min(n, items.length)) }, async () => {
-    while (next < items.length) {
+  const width = Math.max(1, Math.min(n, MAX_JOBS, items.length));
+  const workers = Array.from({ length: width }, async () => {
+    while (next < items.length && !stop()) {
       const k = next++;
-      out[k] = await fn(items[k], k);
+      out.push(await fn(items[k], k));
     }
   });
   await Promise.all(workers);
@@ -265,13 +289,10 @@ function collectCases(root) {
   return cases;
 }
 
-function watchBounded(args, caseTimeoutMs) {
-  if (args.includes('--once') || args.includes('--intake')) return true;
-  if (args.includes('--alarm')) {
-    const i = args.indexOf('--sleep-ms');
-    if (i >= 0 && /^[0-9]+$/.test(args[i + 1] || '') && Number(args[i + 1]) < caseTimeoutMs) return true;
-  }
-  return false;
+// A watch case runs one tick and starts nothing: `--once` with `--no-intake` (without it, --once may
+// spawn the detached intake), never the default loop, `--alarm` (a real alarm) or `--intake`.
+function watchBounded(args) {
+  return args.includes('--once') && args.includes('--no-intake') && !args.includes('--alarm') && !args.includes('--intake');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -465,7 +486,7 @@ function roleFilesProblems(root) {
 // ---------------------------------------------------------------------------------------------
 // static checks
 
-function staticChecks(root, cases, only, caseTimeoutMs) {
+function staticChecks(root, cases, only) {
   const tcb = path.join(root, 'tcb');
   const scope = only.length ? SCRIPTS.filter((s) => only.includes(s)) : SCRIPTS;
   const checks = [];
@@ -527,7 +548,7 @@ function staticChecks(root, cases, only, caseTimeoutMs) {
 
   add(
     'watch-case-loops',
-    cases.filter((c) => c.script === 'watch' && scope.includes('watch') && c.spec && !c.problem && !watchBounded(c.spec.args, caseTimeoutMs)).map((c) => `watch/${c.case}`),
+    cases.filter((c) => c.script === 'watch' && scope.includes('watch') && c.spec && !c.problem && !watchBounded(c.spec.args)).map((c) => `watch/${c.case}`),
   );
   return checks;
 }
@@ -593,6 +614,7 @@ function ledgerVerifies(caseRoot) {
   }
 }
 
+// The case root's data: never a script (the scripts run from the live tcb/), never fixtures/ or test/.
 function prepareCase(c, liveRoot, caseRoot) {
   const liveTcb = path.join(liveRoot, 'tcb');
   const caseTcb = path.join(caseRoot, 'tcb');
@@ -601,7 +623,6 @@ function prepareCase(c, liveRoot, caseRoot) {
     const src = path.join(liveTcb, d);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(caseTcb, d), { recursive: true, verbatimSymlinks: true });
   }
-  for (const f of listFiles(liveTcb, '.mjs')) fs.copyFileSync(path.join(liveTcb, f), path.join(caseTcb, f));
   for (const f of COPY_FILES) {
     const src = path.join(liveTcb, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(caseTcb, f));
@@ -639,23 +660,16 @@ function waitExit(child) {
   });
 }
 
-function waitClose(child, ms) {
-  return new Promise((resolve) => {
-    let done = false;
-    const t = setTimeout(() => {
-      if (!done) {
-        done = true;
-        resolve(false);
-      }
-    }, ms);
-    child.once('close', () => {
-      if (!done) {
-        done = true;
-        clearTimeout(t);
-        resolve(true);
-      }
-    });
-  });
+// `closed` is the promise made at spawn time (a 'close' emitted in the same tick as 'exit' is never
+// missed); true when the child's pipes closed within ms.
+function waitClose(closed, ms) {
+  let t = null;
+  return Promise.race([
+    closed.then(() => true),
+    new Promise((resolve) => {
+      t = setTimeout(() => resolve(false), ms);
+    }),
+  ]).finally(() => clearTimeout(t));
 }
 
 // The child's {pid, start_time} is recorded here, at its deadline, from one process list taken while
@@ -690,7 +704,10 @@ async function killCase(child, proc) {
   if (child.exitCode === null && child.signalCode === null) child.kill();
 }
 
-async function runOneCase(c, ctx) {
+// One case, start to end: prepare its root, run the live script against it, end every process it
+// started, judge. `leftover` names a process of the case that could not be ended (the caller stops
+// the run on it).
+async function runCase(c, ctx) {
   const { liveRoot, stRoot, caseTimeoutMs, proc, slugOf } = ctx;
   const spec = c.spec;
   const entry = {
@@ -706,12 +723,14 @@ async function runOneCase(c, ctx) {
   const caseRoot = path.join(stRoot, String(c.n));
   let server = null;
   let spawnFailed = false;
+  let leftover = null;
   try {
     prepareCase(c, liveRoot, caseRoot);
     const before = ledgerVerifies(caseRoot);
     if (spec.serve) server = await startServer(spec.serve, c.dir);
     const args = spec.args.map((a) => a.split('{root}').join(caseRoot).split('{server}').join(server ? server.origin : ''));
-    const scriptPath = scriptFile(path.join(caseRoot, 'tcb'), c.script);
+    // The script runs where it is, in the live tcb/; only its data lives in the case root.
+    const scriptPath = scriptFile(path.join(liveRoot, 'tcb'), c.script);
     const stdinFile = spec.stdin ? path.join(c.dir, spec.stdin) : null;
     const child = spawn(process.execPath, [scriptPath, ...args], {
       cwd: caseRoot,
@@ -719,6 +738,7 @@ async function runOneCase(c, ctx) {
       windowsHide: true,
       stdio: [stdinFile ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     });
+    const closedP = new Promise((resolve) => child.once('close', () => resolve(true)));
     let spawnError = null;
     child.on('error', (e) => {
       spawnError = e;
@@ -742,22 +762,23 @@ async function runOneCase(c, ctx) {
       child.stdin.end(fs.readFileSync(stdinFile));
     }
     let timedOut = false;
+    let killing = null;
     let giveUp = null;
     let recheck = null;
-    // Another case's kill blocks the event loop for seconds (synchronous PowerShell calls), so a timer
-    // can fire before an exit that already happened has been delivered. Look again one poll phase
-    // later and treat the case as timed out only if its child is still running.
+    // A synchronous PowerShell call can block the event loop for seconds, so a timer can fire before
+    // an exit that already happened has been delivered. Look again one poll phase later and treat
+    // the case as timed out only if its child is still running.
     const timer = setTimeout(() => {
       recheck = setTimeout(() => {
         if (child.exitCode !== null || child.signalCode !== null) return;
         timedOut = true;
-        killCase(child, proc).catch(() => {});
+        killing = killCase(child, proc).catch(() => {});
       }, 50);
     }, caseTimeoutMs);
     const exited = await Promise.race([
       waitExit(child),
       new Promise((resolve) => child.once('error', () => resolve(null))),
-      // A child that outlives its kill is abandoned (never waited on forever).
+      // A child that outlives its kill is never waited on forever; the run stops instead.
       new Promise((resolve) => {
         giveUp = setTimeout(() => resolve('gave-up'), caseTimeoutMs + GIVE_UP_MS);
       }),
@@ -765,41 +786,63 @@ async function runOneCase(c, ctx) {
     clearTimeout(timer);
     clearTimeout(recheck);
     clearTimeout(giveUp);
+    // The kill (a re-list and taskkill calls) has finished before anything else happens.
+    if (killing) await killing;
     if (exited === 'gave-up') {
-      process.stderr.write(`selftest: case ${c.script}/${c.case} (pid ${child.pid}) did not end after its kill; abandoned\n`);
+      process.stderr.write(`selftest: case ${c.script}/${c.case} (pid ${child.pid}) did not end after its kill; the run stops\n`);
       child.stdout.destroy();
       child.stderr.destroy();
       child.unref();
       entry.why = 'timeout';
-      return { entry, spawnFailed, caseRoot };
+      leftover = { code: 'case-not-ended', detail: { case: `${c.script}/${c.case}`, pid: child.pid ?? null } };
+      return { entry, spawnFailed, leftover, caseRoot };
     }
     if (exited === null || (spawnError && child.pid === undefined)) {
       spawnFailed = true;
       entry.why = 'spawn';
-      return { entry, spawnFailed, caseRoot };
+      return { entry, spawnFailed, leftover, caseRoot };
     }
-    const closed = await waitClose(child, 3000);
+    // The child has exited; its pipes close once no descendant holds them. A pipe still open after
+    // the grace is a process of this case still alive: the run stops before another case starts.
+    const closed = await waitClose(closedP, CLOSE_GRACE_MS);
     if (!closed) {
       child.stdout.destroy();
       child.stderr.destroy();
+      process.stderr.write(`selftest: case ${c.script}/${c.case} exited but a process it started still holds its output; the run stops\n`);
+      leftover = { code: 'case-left-process', detail: { case: `${c.script}/${c.case}`, pid: child.pid ?? null } };
     }
     entry.exit = exited.code;
     if (timedOut) {
       entry.why = 'timeout';
-      return { entry, spawnFailed, caseRoot };
+      return { entry, spawnFailed, leftover, caseRoot };
+    }
+    if (!closed) {
+      entry.why = 'left-process';
+      return { entry, spawnFailed, leftover, caseRoot };
     }
     const stdout = Buffer.concat(out).toString('utf8');
     const stderr = Buffer.concat(err).toString('utf8');
     const why = judge(c.script, spec, { exit: exited.code, stdout, stderr, overflow }, caseRoot, before, slugOf);
     if (why) entry.why = why;
     else entry.pass = true;
-    return { entry, spawnFailed, caseRoot };
+    return { entry, spawnFailed, leftover, caseRoot };
   } catch (e) {
     entry.why = `harness: ${e && e.code ? e.code : e && e.message ? e.message : e}`;
-    return { entry, spawnFailed, caseRoot };
+    return { entry, spawnFailed, leftover, caseRoot };
   } finally {
     if (server) await server.close();
   }
+}
+
+// One case with its clean-up: the case root goes as soon as the case is judged (a failing one stays
+// under --keep-failed), so case roots never pile up on disk.
+async function runOneCase(c, ctx) {
+  const r = await runCase(c, ctx);
+  r.kept = null;
+  if (!r.entry.pass && ctx.keepFailed) {
+    if (fs.existsSync(r.caseRoot)) r.kept = lib.relPosix(ctx.root, r.caseRoot);
+  } else removeCaseRoot(r.caseRoot);
+  return r;
 }
 
 function judge(script, spec, res, caseRoot, ledgerBefore, slugOf) {
@@ -870,7 +913,7 @@ async function runMode(ctx, flags, root, ce) {
   const only = flagOf(flags, 'only') || [];
   for (const s of only) if (!SCRIPTS.includes(s)) return usage(`--only ${s}: not a script of CONTRACT §5`);
   const jobsFlag = flagOf(flags, 'jobs');
-  if (jobsFlag !== undefined && !(Number.isInteger(jobsFlag) && jobsFlag >= 1)) return usage('--jobs must be at least 1');
+  if (jobsFlag !== undefined && !(Number.isInteger(jobsFlag) && jobsFlag >= 1 && jobsFlag <= MAX_JOBS)) return usage(`--jobs must be 1 or ${MAX_JOBS}`);
   const ctFlag = flagOf(flags, 'case-timeout-ms');
   if (ctFlag !== undefined && !(Number.isInteger(ctFlag) && ctFlag >= 1)) return usage('--case-timeout-ms must be at least 1');
 
@@ -880,16 +923,10 @@ async function runMode(ctx, flags, root, ce) {
   const th = lib.thresholds(root);
   const caseTimeoutMs = ctFlag !== undefined ? ctFlag : thGet(th, 'selftest_case_ms');
   const facts = lib.edgeFacts(flags);
-  let jobs = jobsFlag;
-  if (jobs === undefined) {
-    const reserve = thGet(th, 'reserve_mb');
-    const free = Number(facts.freeMb);
-    const byMem = Number.isFinite(free) ? Math.floor((free - reserve) / 200) : 1;
-    jobs = Math.max(1, Math.min(8, os.availableParallelism() - 2, byMem));
-  }
+  const jobs = jobsFlag !== undefined ? jobsFlag : DEFAULT_JOBS;
 
   const all = collectCases(root);
-  const checks = staticChecks(root, all, only, caseTimeoutMs);
+  const checks = staticChecks(root, all, only);
   const staticOk = checks.every((c) => c.pass);
   const selected = all.filter((c) => (only.length ? only.includes(c.script) : true));
   const failedChecks = checks.filter((c) => !c.pass).map((c) => c.check);
@@ -915,7 +952,9 @@ async function runMode(ctx, flags, root, ce) {
   const proc = lib.realProc({ exe: procExe });
   const slugOf = exitSlugs();
   let caseResults = [];
-  let notRun = null;
+  // Causes of not_run, in the order found; tcb-changed is listed first when present.
+  const stops = [];
+  const hasStop = (code) => stops.some((s) => s.code === code);
   let stRoot = null;
   const kept = [];
 
@@ -924,16 +963,28 @@ async function runMode(ctx, flags, root, ce) {
     try {
       fs.mkdirSync(stRoot, { recursive: true });
     } catch (e) {
-      notRun = { code: 'tmp-unwritable', detail: `${e && e.code ? e.code : e}` };
+      stops.push({ code: 'tmp-unwritable', detail: `${e && e.code ? e.code : e}` });
     }
-    if (!notRun) {
+    if (stops.length === 0) {
       const runnable = selected.filter((c) => c.spec && !c.problem);
-      caseResults = await pool(runnable, jobs, (c) => runOneCase(c, { liveRoot: root, stRoot, caseTimeoutMs, proc, slugOf }));
-      if (caseResults.some((r) => r.spawnFailed)) notRun = { code: 'spawn-failed', detail: caseResults.filter((r) => r.spawnFailed).map((r) => `${r.entry.script}/${r.entry.case}`) };
-      for (const r of caseResults) {
-        if (r.entry.pass || !flagOf(flags, 'keep-failed')) removeCaseRoot(r.caseRoot);
-        else kept.push(lib.relPosix ? lib.relPosix(root, r.caseRoot) : r.caseRoot);
-      }
+      const caseCtx = { root, liveRoot: root, stRoot, caseTimeoutMs, proc, slugOf, keepFailed: !!flagOf(flags, 'keep-failed') };
+      // After every case: the live tree is unchanged, and nothing the case started is still alive.
+      // Either breach stops the run; no later case starts.
+      caseResults = await pool(
+        runnable,
+        jobs,
+        async (c) => {
+          const r = await runOneCase(c, caseCtx);
+          if (r.leftover) stops.push(r.leftover);
+          const t = lib.treeSha(tcbDir);
+          if (t !== t0 && !hasStop('tcb-changed')) stops.unshift({ code: 'tcb-changed', detail: { before: t0, after: t, case: `${c.script}/${c.case}` } });
+          return r;
+        },
+        () => stops.length > 0,
+      );
+      const spawnFailed = caseResults.filter((r) => r.spawnFailed);
+      if (spawnFailed.length) stops.push({ code: 'spawn-failed', detail: spawnFailed.map((r) => `${r.entry.script}/${r.entry.case}`) });
+      for (const r of caseResults) if (r.kept) kept.push(r.kept);
       try {
         if (fs.readdirSync(stRoot).length === 0) fs.rmdirSync(stRoot);
       } catch {
@@ -943,7 +994,8 @@ async function runMode(ctx, flags, root, ce) {
   }
 
   const t1 = lib.treeSha(tcbDir);
-  if (t1 !== t0) notRun = { code: 'tcb-changed', detail: { before: t0, after: t1 } };
+  if (t1 !== t0 && !hasStop('tcb-changed')) stops.unshift({ code: 'tcb-changed', detail: { before: t0, after: t1 } });
+  const notRun = stops.length > 0;
 
   const cases = caseResults
     .map((r) => r.entry)
@@ -956,7 +1008,7 @@ async function runMode(ctx, flags, root, ce) {
   if (notRun) {
     result = 'not_run';
     exit = 2;
-    reasons.push(notRun);
+    reasons.push(...stops);
   } else if (failed.length) {
     result = 'fail';
     exit = 1;
@@ -978,6 +1030,10 @@ async function runMode(ctx, flags, root, ce) {
     checks,
   };
   if (kept.length) out.kept = kept;
+  // Cases a stop kept from starting (the run is not_run then).
+  const ran = new Set(cases.map((c) => `${c.script}/${c.case}`));
+  const notStarted = selected.filter((c) => c.spec && !c.problem && !ran.has(`${c.script}/${c.case}`)).map((c) => `${c.script}/${c.case}`);
+  if (staticOk && notStarted.length) out.not_started = notStarted;
 
   if (only.length) {
     out.partial = true;

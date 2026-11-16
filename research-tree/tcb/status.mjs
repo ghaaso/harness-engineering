@@ -126,7 +126,7 @@ function lockOpts(th, ce, proc, now) {
 function aliveIn(procList, rec) {
   if (!rec || rec.pid === undefined || rec.pid === null) return false;
   if (!Array.isArray(procList)) return null;
-  return procList.some((p) => Number(p.pid) === Number(rec.pid) && p.start_time === rec.start_time);
+  return procList.some((p) => Number(p.pid) === Number(rec.pid) && lib.sameStartTime(p.start_time, rec.start_time));
 }
 
 function numOrNull(v) {
@@ -624,7 +624,7 @@ async function runEndturn(ctx, root, flags, dry) {
   const watcher = readState(fileOf(root, 'watcherJson'), 'watcher.json');
   const alarm = readState(fileOf(root, 'alarm'), 'alarm.json');
   const wlock = readLoose(fileOf(root, 'watcherLock'));
-  const wFiles = !!watcher && watcher.ce === ce && !!wlock && Number(wlock.pid) === Number(watcher.pid) && wlock.start_time === watcher.start_time;
+  const wFiles = !!watcher && watcher.ce === ce && !!wlock && Number(wlock.pid) === Number(watcher.pid) && lib.sameStartTime(wlock.start_time, watcher.start_time);
   const aFiles = !!alarm && alarm.ce === ce;
   const wAlive = wFiles ? aliveIn(procList, watcher) : false;
   const aAlive = aFiles ? aliveIn(procList, alarm) : false;

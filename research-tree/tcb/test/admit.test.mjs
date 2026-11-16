@@ -8,12 +8,127 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import * as lib from '../scripts/lib.mjs';
-import * as helpers from './helpers.mjs';
-import { decide } from '../scripts/admit.mjs';
+import * as lib from '../lib.mjs';
+import { spawn as _hSpawn, execFileSync as _hExec } from 'node:child_process';
+// CONTRACT 4.11 test helpers. tcb/test/helpers.mjs is used when it exists; until it is written, this
+// stand-in (the same one tcb/test/lib.test.mjs carries, made synchronous because 4.11 gives plain
+// return values and this file calls the helpers without await) takes its place.
+const HELPERS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'helpers.mjs');
+const helpers = fs.existsSync(HELPERS_FILE) ? await import(new URL('./helpers.mjs', import.meta.url).href) : standinHelpers();
+
+function standinHelpers() {
+  const HERE_H = path.dirname(fileURLToPath(import.meta.url));
+  const TCB = path.resolve(HERE_H, '..');
+  const TMPROOT = path.resolve(HERE_H, '..', '..', 'tmp');
+  const PS_EXE = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
+  const DIRS = [
+    'tcb', 'plan', 'plan/frozen', 'run', 'run/intents', 'run/audit', 'run/stop-sample', 'store', 'store/objects', 'store/commits',
+    'store/status', 'views', 'queue', 'review-in', 'completeness', 'sealed', 'sealed/seeds', 'sealed/plants', 'sealed/heldout',
+    'sealed/blind', '.snapshots', '.snapshots/raw', '.snapshots/text', '.snapshots/meta', '.snapshots/by-url', 'wt', 'transcripts',
+  ];
+  const BASE_TS = Date.parse('2026-11-17T10:00:00.000Z');
+  const tsOf = (i) => new Date(BASE_TS + i * 1000).toISOString();
+
+  function makeRoot({ thresholds: thr, tasks = [], ce = 1 } = {}) {
+    fs.mkdirSync(TMPROOT, { recursive: true });
+    const root = fs.mkdtempSync(path.join(TMPROOT, 'tcbrt-'));
+    for (const d of DIRS) fs.mkdirSync(path.join(root, ...d.split('/')), { recursive: true });
+    for (const d of ['schemas', 'profiles', 'settings', 'agents', 'briefs']) {
+      const src = path.join(TCB, d);
+      if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', d), { recursive: true });
+      else fs.mkdirSync(path.join(root, 'tcb', d), { recursive: true });
+    }
+    const doc = JSON.parse(fs.readFileSync(path.join(TCB, 'thresholds.json'), 'utf8'));
+    doc.params = doc.params || {};
+    const setParam = (name, v) => {
+      if (v && typeof v === 'object' && !Array.isArray(v) && 'value' in v) doc.params[name] = v;
+      else doc.params[name] = { ...(doc.params[name] || { unit: 'test', source: 'guess', gate: false }), value: v };
+    };
+    setParam('transcripts_root', path.join(root, 'transcripts'));
+    for (const [k, v] of Object.entries(thr || {})) setParam(k, v);
+    fs.writeFileSync(path.join(root, 'tcb', 'thresholds.json'), JSON.stringify(doc, null, 2));
+    fs.writeFileSync(path.join(root, 'run', 'coord.json'), JSON.stringify({ schema_version: 1, ce, started_at: '2026-11-17T09:00:00.000Z', tcb_commit: '0'.repeat(40) }));
+    fs.writeFileSync(path.join(root, 'run', 'tasks.json'), JSON.stringify({ schema_version: 1, rev: 0, tasks }));
+    return { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) };
+  }
+
+  function fakeTranscript(file, { sessionId, cwd, calls = [], structured } = {}) {
+    const recs = [];
+    let t = 0;
+    let n = 0;
+    const base = { sessionId, cwd };
+    recs.push({ ...base, type: 'user', timestamp: tsOf(t++), uuid: `u-${n++}`, message: { role: 'user', content: 'synthetic start' } });
+    calls.forEach((c, i) => {
+      const id = `msg_fake_${i}`;
+      const u = c.usage || {};
+      const usage = {
+        input_tokens: u.input_tokens ?? u.input ?? 0,
+        cache_read_input_tokens: u.cache_read_input_tokens ?? u.cache_read ?? 0,
+        cache_creation_input_tokens: u.cache_creation_input_tokens ?? u.cache_write ?? 0,
+        output_tokens: u.output_tokens ?? u.output ?? 0,
+      };
+      const blocks = [];
+      if (typeof c.text === 'string') blocks.push({ type: 'text', text: c.text });
+      (c.tools || []).forEach((tl, j) => blocks.push({ type: 'tool_use', id: `toolu_fake_${i}_${j}`, name: tl.name, input: tl.input ?? {} }));
+      if (!blocks.length) blocks.push({ type: 'text', text: '' });
+      const ts = tsOf(t++);
+      for (const b of blocks) recs.push({ ...base, type: 'assistant', timestamp: ts, uuid: `u-${n++}`, message: { id, model: 'claude-test', role: 'assistant', content: [b], usage } });
+      if (Array.isArray(c.results) && c.results.length) {
+        const content = c.results.map((r, j) => {
+          const o = typeof r === 'string' ? { text: r } : r || {};
+          return { type: 'tool_result', tool_use_id: o.toolUseId ?? `toolu_fake_${i}_${j}`, is_error: o.isError === true, content: o.text ?? '' };
+        });
+        recs.push({ ...base, type: 'user', timestamp: tsOf(t++), uuid: `u-${n++}`, message: { role: 'user', content } });
+      }
+    });
+    if (structured !== undefined) recs.push({ ...base, type: 'attachment', timestamp: tsOf(t++), uuid: `u-${n++}`, attachment: { type: 'structured_output', data: structured } });
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    return file;
+  }
+
+  // A `node -e` child this test owns; its start time is read once from PowerShell (the form proc.list() reports).
+  function spawnSleeper({ args = [] } = {}) {
+    const child = _hSpawn(process.execPath, ['-e', 'setInterval(()=>{},1000)', ...args], { stdio: 'ignore', windowsHide: true });
+    const exited = new Promise((res) => child.once('exit', res));
+    let start_time = null;
+    try {
+      const out = _hExec(PS_EXE, ['-NoProfile', '-NonInteractive', '-Command',
+        `[Console]::OutputEncoding=[Text.Encoding]::UTF8; $x=Get-CimInstance Win32_Process -Filter 'ProcessId=${child.pid}'; if($x -and $x.CreationDate){$x.CreationDate.ToUniversalTime().ToString('o')}`],
+      { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+      start_time = String(out).replace(/^\uFEFF/, '').trim() || null;
+    } catch {
+      start_time = null;
+    }
+    let killed = false;
+    return {
+      pid: child.pid,
+      start_time,
+      kill: () => {
+        if (!killed) {
+          killed = true;
+          try { child.kill(); } catch { /* gone */ }
+        }
+        return child.exitCode === null && child.signalCode === null ? exited : Promise.resolve();
+      },
+    };
+  }
+
+  function fakeProc(table = []) {
+    const rows = Array.isArray(table) ? table : [];
+    return {
+      list: () => rows.map((r) => ({ ...r })),
+      alive: (pid, st) => rows.some((r) => r.pid === pid && (st == null || r.start_time === st)),
+      boot: () => '2026-11-17T08:00:00.0000000Z',
+    };
+  }
+
+  return { makeRoot, fakeTranscript, spawnSleeper, fakeProc };
+}
+import { decide } from '../admit.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(HERE, '..', 'scripts', 'admit.mjs');
+const SCRIPT = path.join(HERE, '..', 'admit.mjs');
 
 // ---------------------------------------------------------------- support
 const NOW = '2026-11-17T10:00:00.000Z';

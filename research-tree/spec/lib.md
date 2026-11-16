@@ -84,10 +84,13 @@ that reason (CONTRACT §7).
 
 ## Locks (§4.4)
 - T28 `acquireLock(run.lock)` creates the file holding `{pid, start_time, nonce, script, ce,
-  acquired_at}`; `release` deletes it; a second `release` does nothing.
+  acquired_at}`; `start_time` is the own start time from the own clock (now minus
+  `process.uptime()`, 7-digit `Z` form; equal to `selfInfo(null).start_time`), not a value the
+  provider lists; `release` deletes it; a second `release` does nothing.
 - T29 With the lock held by a live process (a `spawnSleeper` child whose record the test writes),
   `acquireLock` with `retries: 3` retries three times and throws `lock-busy` 75; the lock file is
-  unchanged; `proc.list` is called once (selfInfo is cached), not per retry.
+  unchanged; `proc.list` is never called (the own start time needs no listing), and `alive` judges
+  only the holder.
 - T30 A lock whose holder is dead (fake proc: `alive` → false) is broken: the new lock holds the new
   nonce, no `.stale` file remains, and a `lock-break` ledger line with the stale record is appended.
 - T31 A lock whose pid is alive with a different start time (pid reuse; fake proc) is stale and is
@@ -101,6 +104,15 @@ that reason (CONTRACT §7).
   acquisition.
 - T35 `assertHeld` throws `lock-lost` 75 after another process's record replaced `run.lock`.
 - T36 `release` does not delete a lock file that holds another nonce.
+- T36c The normal path makes no process query: with a provider whose `list`, `alive` and `boot`
+  throw on every call, a free `run.lock` is taken, a ledger line appended and the lock released (also
+  through `withRunLock` with `ce`, and a `watcher.lock`); the provider is never called.
+- T36d The same with `realProc`: a spy on `child_process` sees no subprocess at all.
+- T36e A stale lock whose holder is gone is broken only after verification: `alive(pid, start_time)`
+  of the recorded holder is asked first and answers false, the rename comes after it; with no
+  provider, or an `alive` that throws, the same lock stays (busy, not broken).
+- T36f A lock whose holder is a real process the test spawned and ended is broken with `realProc`
+  (one real verification).
 - T37 `withRunLock` with `ce` = coord's ce runs `fn` and releases; with a different ce it throws
   `stale-ce` 64 without calling `fn` and still releases; `fn` throwing still releases.
 - T38 `checkCe`: missing `coord.json` throws `no-coordinator` 2; unparseable throws `table-corrupt`
@@ -229,7 +241,9 @@ All tests in this section set `{concurrency: false}` (§4.11).
 - T85 `realProc({exe: <proc_exe>}).list()` returns an array (also when one process would match)
   that includes the test process's own pid with a `start_time` of the exact form
   `YYYY-MM-DDTHH:MM:SS.fffffffZ` and its command line; `alive(pid, start_time)` is true for it and
-  false with a changed start time; `boot()` returns a string of the same form, equal on two calls.
+  false with a changed start time; the own-clock start (`selfInfo`) lies within two seconds of the
+  listed one and `alive` is true for it; the listed start shifted by one second is alive, shifted by
+  five seconds is not; `boot()` returns a string of the same form, equal on two calls.
 - T85b A command line holding non-ASCII characters (a sleeper with an `é` marker) comes back intact
   (the UTF-8 output encoding).
 - T86 For a `spawnSleeper` child, `alive` is true; after the test kills it (`sleeper.kill()`), false.
@@ -244,6 +258,11 @@ All tests in this section set `{concurrency: false}` (§4.11).
   does not match a command line naming `wt/f1-e10`.
 - T90b `descendants` ignores a "child" whose `start_time` is earlier than its parent's (a reused
   parent pid).
+- T90c `sameStartTime` (tolerance `START_TOLERANCE_MS` = 2000): start times one second apart match
+  (either direction), five seconds apart do not; exactly two seconds matches, 2.001 s does not; the
+  number of fractional digits and an offset do not matter; null never matches. `killOwnTree` with a
+  recorded start one second off the listed one kills grandchild then child; five seconds off kills
+  nothing (`start-mismatch`).
 - T92 **needs-app**: a real session's `claude.exe` command line names its folder or session id.
 
 ## Numerics and shared computations (§4.10)

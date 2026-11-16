@@ -1097,35 +1097,58 @@ export function removeTree(dir) {
 // 4.4 Locks
 // =============================================================================================
 
-const SELF_CACHE = new WeakMap();
-let SELF_NOPROC = null;
-let REAL_SELF_START = null;
-const REAL = Symbol('realProc');
+let SELF_INFO = null;
 
-/** {pid, start_time} of this process, computed once per proc provider and cached. */
-export function selfInfo(proc) {
-  if (!proc) {
-    if (!SELF_NOPROC) SELF_NOPROC = { pid: process.pid, start_time: null };
-    return SELF_NOPROC;
+/** Two seconds: how far a recorded start time may lie from one PowerShell reports (section 4.4). */
+export const START_TOLERANCE_MS = 2000;
+
+const START_RE = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$/;
+
+/** Milliseconds since the epoch (fractional) of an ISO 8601 start time, or null when unparseable. */
+function startMs(s) {
+  if (typeof s !== 'string') return null;
+  const m = START_RE.exec(s);
+  if (!m) return null;
+  const base = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  if (!Number.isFinite(base)) return null;
+  const frac = m[7] ? Number(`0.${m[7]}`) * 1000 : 0;
+  let off = 0;
+  if (m[8] !== 'Z') {
+    const sign = m[8][0] === '-' ? -1 : 1;
+    off = sign * (Number(m[8].slice(1, 3)) * 60 + Number(m[8].slice(4, 6))) * 60000;
   }
-  if (SELF_CACHE.has(proc)) return SELF_CACHE.get(proc);
-  let start = null;
-  if (proc[REAL] && REAL_SELF_START) {
-    start = REAL_SELF_START;
-  } else {
-    try {
-      const list = typeof proc.list === 'function' ? proc.list() : null;
-      if (Array.isArray(list)) {
-        const me = list.find((p) => p && p.pid === process.pid);
-        start = me && typeof me.start_time === 'string' ? me.start_time : null;
-      }
-    } catch {
-      start = null;
-    }
-  }
-  const info = { pid: process.pid, start_time: start };
-  SELF_CACHE.set(proc, info);
-  return info;
+  return base + frac - off;
+}
+
+/**
+ * Do two start times name the same process start? Equal strings do; otherwise both must parse as
+ * ISO 8601 and lie at most START_TOLERANCE_MS apart. A missing or unparseable value never matches a
+ * different one. Used wherever a recorded start time meets one read from PowerShell.
+ */
+export function sameStartTime(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a === b) return true;
+  const x = startMs(a);
+  const y = startMs(b);
+  if (x === null || y === null) return false;
+  return Math.abs(x - y) <= START_TOLERANCE_MS;
+}
+
+/** The own start time from the own clock: now minus process.uptime(), in the 7-digit `Z` form. */
+function ownStartTime() {
+  const t = Date.now() - process.uptime() * 1000;
+  const whole = Math.floor(t);
+  const ticks = Math.min(9999, Math.max(0, Math.floor((t - whole) * 10000)));
+  return new Date(whole).toISOString().replace(/Z$/, `${String(ticks).padStart(4, '0')}Z`);
+}
+
+/**
+ * {pid, start_time} of this process, computed once per process from its own clock and cached. The
+ * provider is not consulted (no PowerShell call); the parameter stays for the signature.
+ */
+export function selfInfo(proc) { // eslint-disable-line no-unused-vars
+  if (!SELF_INFO) SELF_INFO = Object.freeze({ pid: process.pid, start_time: ownStartTime() });
+  return SELF_INFO;
 }
 
 function readLockRecord(file) {
@@ -1180,7 +1203,11 @@ function makeHandle(root, name, file, record) {
 }
 
 function sameRecord(a, b) {
-  return !!a && !!b && a.pid === b.pid && (a.start_time ?? null) === (b.start_time ?? null) && a.nonce === b.nonce;
+  if (!a || !b || a.pid !== b.pid || a.nonce !== b.nonce) return false;
+  const sa = a.start_time ?? null;
+  const sb = b.start_time ?? null;
+  if (sa === sb) return true;
+  return sameStartTime(sa, sb);
 }
 
 function fallbackCtx(script) {
@@ -2645,13 +2672,12 @@ export function realProc({ timeoutMs = 30000, exe = PROC_EXE } = {}) {
         cmdline: p.CommandLine ?? null,
         start_time: typeof p.start_time === 'string' ? p.start_time : null,
       }));
-      const me = list.find((p) => p.pid === process.pid);
-      if (me && me.start_time) REAL_SELF_START = me.start_time;
       return list;
     },
     // Identity needs the start time, so the answer always comes from PowerShell: true, false, or
     // null when PowerShell fails (section 4.9, spec/lib.md T89). No process.kill(pid, 0) shortcut:
-    // it would answer `false` while PowerShell is unavailable.
+    // it would answer `false` while PowerShell is unavailable. The recorded start time matches the
+    // reported one within START_TOLERANCE_MS (a process records its own from its own clock, 4.4).
     alive(pid, startTime) {
       if (!Number.isInteger(pid) || pid <= 0) return false;
       let out;
@@ -2663,7 +2689,7 @@ export function realProc({ timeoutMs = 30000, exe = PROC_EXE } = {}) {
       if (out === 'NONE') return false;
       if (startTime === null || startTime === undefined) return true;
       if (out === 'NOSTART') return null;
-      return out === startTime;
+      return sameStartTime(out, startTime);
     },
     boot() {
       if (bootCache !== undefined) return bootCache;
@@ -2676,7 +2702,6 @@ export function realProc({ timeoutMs = 30000, exe = PROC_EXE } = {}) {
       return bootCache;
     },
   };
-  Object.defineProperty(proc, REAL, { value: true });
   return proc;
 }
 
@@ -2764,7 +2789,7 @@ export function killOwnTree(proc, child, opts = {}) {
   }
   const list = proc.list();
   const me = Array.isArray(list) ? list.find((p) => p && p.pid === child.pid) : null;
-  if (!me || typeof child.start_time !== 'string' || me.start_time !== child.start_time) {
+  if (!me || typeof child.start_time !== 'string' || !sameStartTime(me.start_time, child.start_time)) {
     res.reason = 'start-mismatch';
     res.skipped.push(child.pid);
     return res;

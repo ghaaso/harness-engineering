@@ -1,8 +1,10 @@
-// Tests of tcb/scripts/selftest.mjs, written from spec/selftest.mjs.md and CONTRACT.md only.
-// One test per numbered behaviour (T1..T19, T5b, T5c, T5d). Each test builds a temporary run root whose
-// tcb/scripts/ holds 24 stubs (one per script name) that exit with the code and print the JSON their
-// arguments ask for, writes fixture cases for them, runs the real selftest.mjs as a child process and
-// checks the exit code, the stdout line, run/selftest.json, the ledger and the folders.
+// Tests of tcb/selftest.mjs (flat build layout), written from spec/selftest.mjs.md and CONTRACT.md only.
+// One test per numbered behaviour (T1..T19, T5b..T5f). Each test builds a temporary run root whose
+// tcb/ holds 24 stubs, flat (`<root>/tcb/<name>.mjs`, one per script name), that exit with the code and
+// print the JSON their arguments ask for, writes fixture cases for them, runs the live selftest.mjs
+// (`--root <that root>`, so the stubs are the scripts it tests) as a child process and checks the exit
+// code, the stdout line, run/selftest.json, the ledger and the folders. One case runs at a time unless
+// a test asks for --jobs 2.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,7 +18,7 @@ const TCB = path.resolve(HERE, '..');
 const BUILD = path.resolve(TCB, '..');
 const TMP = path.join(BUILD, 'tmp');
 const FIX = path.join(TCB, 'fixtures', 'selftest');
-const SELFTEST = path.join(TCB, 'scripts', 'selftest.mjs');
+const SELFTEST = path.join(TCB, 'selftest.mjs');
 const NOW = '2026-11-17T10:00:00.000Z';
 
 const SCRIPTS = ['replace', 'admit', 'stop', 'watch', 'status', 'handover', 'commit', 'harvest', 'fsck', 'tms', 'promote', 'certify',
@@ -107,10 +109,43 @@ if (o.probe) {
   try { thr = JSON.parse(fs.readFileSync(path.join(cwd, 'tcb', 'thresholds.json'), 'utf8')); } catch (e) { thr = null; }
   const val = (n) => { const p = thr && thr.params && thr.params[n]; return p && typeof p === 'object' && 'value' in p ? p.value : p; };
   const has = (d) => fs.existsSync(path.join(cwd, 'tcb', d));
-  const info = { cwd, transcripts_root: val('transcripts_root'), stall_calls: val('stall_calls'), hang_ticks: val('hang_ticks'),
-    has_fixtures: has('fixtures'), has_test: has('test'), has_scripts: has('scripts'), has_thresholds: has('thresholds.json'),
+  const mjs = [];
+  const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch (e) { es = []; } for (const e of es) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.mjs')) mjs.push(p); } };
+  walk(path.join(cwd, 'tcb'));
+  const info = { cwd, argv1: process.argv[1], transcripts_root: val('transcripts_root'), stall_calls: val('stall_calls'), hang_ticks: val('hang_ticks'),
+    has_fixtures: has('fixtures'), has_test: has('test'), has_scripts: has('scripts'), mjs_files: mjs, has_thresholds: has('thresholds.json'),
     has_schemas: has('schemas'), has_profiles: has('profiles'), has_settings: has('settings'), has_agents: has('agents'), has_briefs: has('briefs') };
   if (out) put(out, JSON.stringify(info));
+}
+if (o['count-roots']) {
+  // the case roots alive now: every folder under <root>/tmp/st-*/ (cwd is <root>/tmp/st-<hex>/<n>)
+  const tmp = path.dirname(path.dirname(cwd));
+  let n = 0;
+  for (const st of fs.readdirSync(tmp)) {
+    if (!st.startsWith('st-')) continue;
+    for (const e of fs.readdirSync(path.join(tmp, st), { withFileTypes: true })) if (e.isDirectory()) n++;
+  }
+  fs.appendFileSync(o['count-roots'][0], n + '\n');
+}
+if (o['alive-check']) {
+  // whether the processes named in these pid files are alive when this case starts
+  const res = {};
+  for (const f of o['alive-check']) {
+    let pid = null;
+    try { pid = Number(fs.readFileSync(f, 'utf8')); } catch (e) { pid = null; }
+    let alive = null;
+    if (pid) { try { process.kill(pid, 0); alive = true; } catch (e) { alive = e.code === 'EPERM'; } }
+    res[f] = { pid, alive };
+  }
+  if (out) put(out, JSON.stringify(res));
+}
+if (o.holder) {
+  // a detached grandchild that inherits this stub's stdout and stderr, so the pipes stay open after the
+  // stub exits; it writes its pid, then "expired" after a few seconds, and ends by itself
+  const f = JSON.stringify(o.holder[0]);
+  const code = 'const fs=require("fs");fs.writeFileSync(' + f + ',String(process.pid));setTimeout(function(){fs.writeFileSync(' + f + ',"expired");},8000);';
+  const h = spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'inherit', 'inherit'], detached: true, windowsHide: true });
+  h.unref();
 }
 if (o.append) fs.appendFileSync(o.append[0], 'x');
 if (o['break-ledger']) {
@@ -177,7 +212,7 @@ function readLedger(R) {
   return { lines: recs, ok, torn: text.length > 0 && !text.endsWith('\n') };
 }
 
-function makeRoot({ fixtures = true, canary = false } = {}) {
+function makeRoot({ fixtures = true, canary = false, extra = [] } = {}) {
   fs.mkdirSync(TMP, { recursive: true });
   const root = fs.realpathSync(fs.mkdtempSync(path.join(TMP, 'sx-')));
   const R = {
@@ -188,7 +223,7 @@ function makeRoot({ fixtures = true, canary = false } = {}) {
       try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); } catch { /* best effort */ }
     },
   };
-  for (const d of ['run', 'store/objects', 'plan', 'views', 'completeness', 'sealed', 'queue', 'wt', 'transcripts', 'out', 'tcb/scripts']) fs.mkdirSync(path.join(root, d), { recursive: true });
+  for (const d of ['run', 'store/objects', 'plan', 'views', 'completeness', 'sealed', 'queue', 'wt', 'transcripts', 'out', 'tcb']) fs.mkdirSync(path.join(root, d), { recursive: true });
   for (const name of ['schemas', 'profiles', 'settings', 'agents', 'briefs']) {
     const src = path.join(TCB, name);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', name), { recursive: true });
@@ -199,10 +234,11 @@ function makeRoot({ fixtures = true, canary = false } = {}) {
   }
   if (!fs.existsSync(R.p('tcb', 'thresholds.json'))) fs.writeFileSync(R.p('tcb', 'thresholds.json'), JSON.stringify({ schema_version: 1, params: {} }));
   setParam(root, 'transcripts_root', fwd(path.join(root, 'transcripts')));
-  for (const s of SCRIPTS) fs.writeFileSync(R.p('tcb', 'scripts', s + '.mjs'), STUB.replace('__SCRIPT__', s));
+  // the 24 stubs, flat beside the data (the layout of this build: <root>/tcb/<name>.mjs)
+  for (const s of SCRIPTS) fs.writeFileSync(R.p('tcb', s + '.mjs'), STUB.replace('__SCRIPT__', s));
   fs.writeFileSync(R.p('run', 'coord.json'), JSON.stringify({ schema_version: 1, ce: 1, started_at: NOW, tcb_commit: '0'.repeat(40) }));
   fs.writeFileSync(R.p('run', 'tasks.json'), JSON.stringify({ schema_version: 1, rev: 0, tasks: [] }));
-  if (fixtures) defaultFixtures(R);
+  if (fixtures) defaultFixtures(R, extra);
   if (canary) {
     fs.mkdirSync(R.p('tcb', 'fixtures', 'selftest'), { recursive: true });
     fs.copyFileSync(path.join(FIX, 'canary-expect.json'), R.p('tcb', 'fixtures', 'selftest', 'canary-expect.json'));
@@ -226,7 +262,8 @@ const marker = (R, script, name) => fwd(path.join(R.out, `${script}.${name}.ran`
 
 function stubArgs(R, script, name, { exit = 0, code, result, reasons, extra = [], once = true } = {}) {
   const a = ['--root', '{root}'];
-  if (script === 'watch' && once) a.push('--once');
+  // a watch case is one tick that starts nothing: --once with --no-intake (spec, watch-case-loops)
+  if (script === 'watch' && once) a.push('--once', '--no-intake');
   a.push('--stub-exit', String(exit));
   if (code) a.push('--stub-code', code);
   if (result !== undefined) a.push('--stub-result64', b64(result));
@@ -250,20 +287,24 @@ function addCase(R, script, name, def, { rootFiles = {}, files = {} } = {}) {
   }
 }
 
-function defaultFixtures(R) {
+function defaultFixtures(R, extra = []) {
   for (const s of SCRIPTS) {
-    addCase(R, s, 'good-ok', { kind: 'good', args: stubArgs(R, s, 'good-ok'), expect: { exit: 0 } });
-    addCase(R, s, 'bad-fail', { kind: 'bad', fault_class: 'refusal', args: stubArgs(R, s, 'bad-fail', { exit: 1, reasons: [{ code: 'refused', detail: null }] }), expect: { exit: 1, code: 'refused' } });
+    addCase(R, s, 'good-ok', { kind: 'good', args: stubArgs(R, s, 'good-ok', { extra }), expect: { exit: 0 } });
+    addCase(R, s, 'bad-fail', { kind: 'bad', fault_class: 'refusal', args: stubArgs(R, s, 'bad-fail', { exit: 1, reasons: [{ code: 'refused', detail: null }], extra }), expect: { exit: 1, code: 'refused' } });
   }
 }
 
 // ---------------------------------------------------------------------------------------------
 // running selftest
 // ---------------------------------------------------------------------------------------------
-function runSt(R, mode, extra = [], { ce = '1', jobs = '4', timeoutMs = '20000', limitMs = 240000, defaults = true, script = SELFTEST } = {}) {
+// jobs null: the default (one case at a time), no --jobs flag on the command line
+function runSt(R, mode, extra = [], { ce = '1', jobs = null, timeoutMs = '20000', limitMs = 240000, defaults = true, script = SELFTEST } = {}) {
   const args = [script, mode, '--root', R.root, '--ce', ce];
   if (defaults) {
-    if (mode === 'run') args.push('--jobs', jobs, '--case-timeout-ms', timeoutMs);
+    if (mode === 'run') {
+      if (jobs !== null) args.push('--jobs', jobs);
+      args.push('--case-timeout-ms', timeoutMs);
+    }
     args.push('--now', NOW);
   }
   args.push(...extra);
@@ -392,7 +433,7 @@ test('T3 a script with only good cases is no-fixtures; a missing script file is 
     assert.ok(reasonCodes(r).includes('no-fixtures'), `reasons: ${JSON.stringify(r.json.reasons)}`);
   });
   await withRoot({}, async (R) => {
-    fs.rmSync(R.p('tcb', 'scripts', 'snap.mjs'));
+    fs.rmSync(R.p('tcb', 'snap.mjs'));
     const r = await runSt(R, 'run');
     assertLine(r, { exit: 1, mode: 'run' });
     assert.ok(reasonCodes(r).includes('missing-script'), `reasons: ${JSON.stringify(r.json.reasons)}`);
@@ -426,28 +467,36 @@ test('T4 a stub that prints two stdout lines, or a result missing an expected ke
   });
 });
 
-test('T5 a stub that sleeps past --case-timeout-ms and spawned a grandchild: why timeout, both ended, the run completes, a foreign process survives', async () => {
+test('T5 a stub that sleeps past --case-timeout-ms and spawned a grandchild: why timeout, both ended before the next case starts, the run completes, a foreign process survives', async () => {
   await withRoot({}, async (R) => {
     const gcFile = fwd(path.join(R.out, 'gc.pid'));
     const stubFile = fwd(path.join(R.out, 'stub.pid'));
-    addCase(R, 'stop', 'good-slow', { kind: 'good', args: stubArgs(R, 'stop', 'good-slow', { extra: ['--stub-sleep', '20000', '--stub-grandchild', gcFile, '--stub-pidfile', stubFile] }), expect: { exit: 0 } });
+    const afterOut = fwd(path.join(R.out, 'after.json'));
+    // The stub sleeps 45 s. Ended by selftest, the run is far shorter; waited out, selftest would give up
+    // at case timeout + 30 s (case-not-ended, exit 2). The grandchild expires by itself after 15 s.
+    addCase(R, 'stop', 'good-slow', { kind: 'good', args: stubArgs(R, 'stop', 'good-slow', { extra: ['--stub-sleep', '45000', '--stub-grandchild', gcFile, '--stub-pidfile', stubFile] }), expect: { exit: 0 } });
+    // the next case in sorted order looks whether both are alive when it starts
+    addCase(R, 'stop', 'good-slow-z-after', { kind: 'good', args: stubArgs(R, 'stop', 'good-slow-z-after', { extra: ['--stub-alive-check', stubFile, '--stub-alive-check', gcFile, '--stub-out', afterOut] }), expect: { exit: 0 } });
     // a process of the test's own, outside selftest, that must survive
-    const bystander = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 60000)'], { stdio: 'ignore', windowsHide: true });
+    const bystander = spawn(process.execPath, ['-e', 'setTimeout(function () {}, 120000)'], { stdio: 'ignore', windowsHide: true });
     try {
       assert.ok(bystander.pid);
       // 2000 ms instead of the spec's 300 so that a loaded PC does not time out the quick cases
       const r = await runSt(R, 'run', [], { timeoutMs: '2000' });
       assertLine(r, { exit: 1, mode: 'run' });
-      assert.ok(r.ms < 18000, `the run took ${r.ms} ms: the slow case was waited out, not ended`);
+      assert.ok(r.ms < 42000, `the run took ${r.ms} ms: the slow case was waited out, not ended`);
       const st = readSt(R);
       const c = caseOf(st, 'stop', 'good-slow');
       assert.equal(c.pass, false);
       assert.ok(String(c.why).includes('timeout'), `why: ${c.why}`);
       assert.deepEqual(st.failed, ['stop/good-slow']);
+      assert.equal(st.cases.length, 2 * SCRIPTS.length + 2, 'the run completes: every case ran');
       assert.equal(st.cases.filter((x) => x.pass).length, st.cases.length - 1, 'every other case completed and passed');
       assert.ok(fs.existsSync(stubFile) && fs.existsSync(gcFile), 'the stub must have started and spawned its grandchild before the timeout');
       const pids = [Number(fs.readFileSync(stubFile, 'utf8')), Number(fs.readFileSync(gcFile, 'utf8'))];
-      for (let i = 0; i < 50 && pids.some(alive); i++) await sleep(100);
+      // when the next case started, both were already ended
+      const after = readJson(afterOut);
+      assert.deepEqual([after[stubFile]?.alive, after[gcFile]?.alive], [false, false], `alive when the next case started: ${JSON.stringify(after)}`);
       assert.deepEqual(pids.map(alive), [false, false], 'the stub and its grandchild must both be ended');
       assert.equal(alive(bystander.pid), true, 'a process that selftest did not spawn must be left alone');
     } finally {
@@ -456,11 +505,14 @@ test('T5 a stub that sleeps past --case-timeout-ms and spawned a grandchild: why
   });
 });
 
-test('T5b a watch case with no --once, --alarm with a short --sleep-ms or --intake is watch-case-loops before any case runs', async () => {
+test('T5b a watch case without both --once and --no-intake, or with --alarm or --intake, is watch-case-loops before any case runs', async () => {
   const badVariants = [
     ['no loop-ending flag', []],
-    ['--alarm without --sleep-ms', ['--alarm', '--ce', '1']],
-    ['--alarm with a --sleep-ms beyond the case timeout', ['--alarm', '--ce', '1', '--sleep-ms', '999999999']],
+    ['--once alone (may spawn the detached intake)', ['--once']],
+    ['--no-intake alone (the default loop)', ['--no-intake']],
+    ['--once --no-intake with --alarm', ['--once', '--no-intake', '--alarm', '--ce', '1', '--sleep-ms', '50']],
+    ['--once --no-intake with --intake', ['--once', '--no-intake', '--intake', '--ce', '1']],
+    ['--alarm alone', ['--alarm', '--ce', '1']],
   ];
   for (const [label, flags] of badVariants) {
     await withRoot({}, async (R) => {
@@ -469,18 +521,20 @@ test('T5b a watch case with no --once, --alarm with a short --sleep-ms or --inta
       assertLine(r, { exit: 1, mode: 'run' });
       assert.ok(reasonCodes(r).includes('watch-case-loops'), `${label}: reasons ${JSON.stringify(r.json.reasons)}`);
       assert.deepEqual(ran(R), [], `${label}: no case may run`);
+      assert.ok(!fs.existsSync(R.p('tmp')) || fs.readdirSync(R.p('tmp')).length === 0, `${label}: no tmp/ case root`);
     });
   }
+  // the bounded form passes the static check (every default watch case carries --once --no-intake)
   await withRoot({}, async (R) => {
-    addCase(R, 'watch', 'good-alarm', { kind: 'good', args: stubArgs(R, 'watch', 'good-alarm', { once: false, extra: ['--alarm', '--ce', '1', '--sleep-ms', '50'] }), expect: { exit: 0 } });
-    addCase(R, 'watch', 'good-intake', { kind: 'good', args: stubArgs(R, 'watch', 'good-intake', { once: false, extra: ['--intake', '--ce', '1'] }), expect: { exit: 0 } });
-    const r = await runSt(R, 'run');
+    addCase(R, 'watch', 'good-bounded', { kind: 'good', args: stubArgs(R, 'watch', 'good-bounded', { extra: ['--ce', '1'] }), expect: { exit: 0 } });
+    const r = await runSt(R, 'run', ['--only', 'watch']);
     assertLine(r, { exit: 0, mode: 'run' });
     assert.ok(!reasonCodes(r).includes('watch-case-loops'));
+    assert.deepEqual(ran(R), ['watch.bad-fail.ran', 'watch.good-bounded.ran', 'watch.good-ok.ran']);
   });
 });
 
-test('T5c the stub reads its transcripts_root: under the case root of the form <root>/tmp/st-<8 hex>/<n>/; the case copy has no tcb/fixtures', async () => {
+test('T5c the stub reads its transcripts_root: under the case root of the form <root>/tmp/st-<8 hex>/<n>/; the case root\'s tcb/ has no fixtures/, test/ or .mjs; the stub runs as <root>/tcb/<name>.mjs', async () => {
   await withRoot({}, async (R) => {
     const out = fwd(path.join(R.out, 'probe.json'));
     addCase(R, 'render', 'good-probe', { kind: 'good', args: stubArgs(R, 'render', 'good-probe', { extra: ['--stub-probe', '1', '--stub-out', out] }), expect: { exit: 0 } });

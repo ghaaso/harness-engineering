@@ -7,6 +7,7 @@
 // before the run lock (CONTRACT section 2.1).
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as lib from './lib.mjs';
 
 const SCRIPT = 'handover';
@@ -123,11 +124,11 @@ function lockOpts(th, ce, proc, now) {
   return o;
 }
 
-// proc.alive semantics over one list taken before the lock: same pid and the exact start_time string.
+// proc.alive semantics over one list taken before the lock: same pid and a start time within lib.sameStartTime.
 function aliveIn(procList, rec) {
   if (!rec || rec.pid === undefined || rec.pid === null) return false;
   if (!Array.isArray(procList)) return null;
-  return procList.some((p) => Number(p.pid) === Number(rec.pid) && p.start_time === rec.start_time);
+  return procList.some((p) => Number(p.pid) === Number(rec.pid) && lib.sameStartTime(p.start_time, rec.start_time));
 }
 
 // ---------------------------------------------------------------- init
@@ -339,8 +340,11 @@ async function doRaise(ctx, root, flags, dry) {
   return { exit: 0, result };
 }
 
+// The successor runs the sibling status.mjs, found beside this file (import.meta.url); in the
+// contract layout that is <root>/tcb/scripts/status.mjs, as the spec's brief reads.
 function briefLine(root, ce, tcbCommit) {
-  return `Coordinator ce ${ce} for run ${root}, tcb ${tcbCommit}: run node ${root}/tcb/scripts/status.mjs --root ${root} --ce ${ce} and act on run/status.json.`;
+  const status = path.join(path.dirname(fileURLToPath(import.meta.url)), 'status.mjs').replace(/\\/g, '/');
+  return `Coordinator ce ${ce} for run ${root}, tcb ${tcbCommit}: run node ${status} --root ${root} --ce ${ce} and act on run/status.json.`;
 }
 
 // A refusal (exit 6) of raise: one `incident` line under the lock, unless dry-run.

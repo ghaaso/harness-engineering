@@ -1,0 +1,27 @@
+{
+  "label": "join:U1b",
+  "tests": {
+    "command": "node tools/lane.mjs --label join-U1b --timeout-s 300|540 -- node --test --test-reporter=spec tcb/test/<handover|status|watch>.test.mjs (one file per lane call)",
+    "passed": 95,
+    "failed": 0,
+    "skipped": 10,
+    "output_tail": "handover.test.mjs: tests 22, pass 18, fail 0, skipped 4 (NA1-NA4 needs-app), about 38 s (run again after the brief change: same). status.test.mjs: tests 29, pass 27, fail 0, skipped 2 (NA1, NA2 needs-app), about 110 s. watch.test.mjs: tests 54, pass 50, fail 0, skipped 4 (NA1-NA4 needs-app), about 44 s. No wk-/ho-/st- temp root or stub folder left under tcb-build/tmp. Logs: tcb-build/tmp/u1b-handover.out, u1b-status.out, u1b-watch.out."
+  },
+  "rounds": 1,
+  "fixes": [
+    {"file": "tcb/test/watch.test.mjs", "what": "Flat layout: makeRoot no longer copies tcb/scripts into each root (it did not exist, and a copy per test case breaks the no-bursts rule); the script runs as tcb-build/tcb/watch.mjs, found relative to the test file. The intake tests (T18, T19, T21, X6) use ONE shared stub folder per file run (tmp/wk-stubs-*: a copy of watch.mjs and lib.mjs plus the seven step stubs), removed in an after() hook; installStubs now marks the root to run that copy and writes only the root's stub-config.json.", "wrong_side": "layout"},
+    {"file": "tcb/test/status.test.mjs", "what": "Flat layout: lib imported from tcb/lib.mjs (was tcb/scripts/lib.mjs); the script runs as tcb-build/tcb/status.mjs; no scripts copy per root.", "wrong_side": "layout"},
+    {"file": "tcb/test/handover.test.mjs", "what": "Flat layout: lib imported from tcb/lib.mjs; the script runs as tcb-build/tcb/handover.mjs (T3's root-without-tcb case still passes, since the script never came from the root); no scripts copy per root.", "wrong_side": "layout"},
+    {"file": "tcb/watch.mjs", "what": "The intake spawn and the intake's step scripts were found through <root>/tcb/scripts/...; both now come from the script's own folder (import.meta.url), as the flat-layout rule requires. In the contract layout this is the same path.", "wrong_side": "layout"},
+    {"file": "tcb/handover.mjs", "what": "raise's one-line brief named <root>/tcb/scripts/status.mjs literally; it now names the sibling status.mjs beside handover.mjs (forward slashes), which equals the spec's text in the contract layout and is a real path in the flat one.", "wrong_side": "layout"},
+    {"file": "tcb/status.mjs, tcb/handover.mjs", "what": "Liveness from the process list compared start_time strings exactly. lib (lib-harden) now writes a process's own start time from its own clock and defines sameStartTime/START_TOLERANCE_MS for every comparison (CONTRACT 4.4, 4.9), so a real watcher's or alarm's record would never match its PowerShell CreationDate exactly. aliveIn (both scripts) and endturn's watcher.lock-vs-watcher.json check now use lib.sameStartTime. No test failed on this (the tests' sleeper records use the PowerShell time), it was a latent defect against the current library.", "wrong_side": "script"}
+  ],
+  "still_failing": [],
+  "lib_change_requests": [],
+  "notes": [
+    "No test was weakened; no assertion was changed. All edits to the tests are path/layout only.",
+    "Most of build-U1b's lib_change_requests were met by the finished library (the scripts ran green against it unchanged apart from the fixes above); none is needed for these three scripts now.",
+    "Open points carried from the first run, untouched here and not failures: status does not synthesise a not_run entry for the canary (decision 18 needs a subject rule); status raises watcher-dead only when watcher.json exists; the watcher records intake start_time null when the child is gone before the process list is read; the needs-app items (background exits reaching the coordinator, suspend, real transcripts and windows, real claude.exe command lines) remain skipped tests.",
+    "watch.mjs's alarm 'superseded' check still compares its own record's start_time exactly; both sides come from the same process's selfInfo, so that is correct."
+  ]
+}

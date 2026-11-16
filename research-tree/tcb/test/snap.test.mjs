@@ -16,7 +16,7 @@ const HERE = import.meta.dirname; // .../tcb-build/tcb/test
 const TCB = path.resolve(HERE, '..');
 const BUILD = path.resolve(TCB, '..');
 const TMP = path.join(BUILD, 'tmp');
-const SCRIPT = path.join(TCB, 'scripts', 'snap.mjs');
+const SCRIPT = path.join(TCB, 'snap.mjs'); // flat build layout
 const FIX = path.join(TCB, 'fixtures', 'snap');
 const NOW = '2026-11-16T10:00:00.000Z';
 const PS_EXE = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
@@ -243,7 +243,7 @@ const fixture = (name) => fs.readFileSync(path.join(FIX, name));
 
 // ---------------------------------------------------------------- tests
 
-describe('snap.mjs', { concurrency: 3 }, () => {
+describe('snap.mjs', { concurrency: 1 }, () => {
   it('T1 f5_given false: exit 2 f5-not-given, no request, .snapshots empty, urls listed', async () => {
     await scenario({ thr: { f5_given: false } }, async ({ srv, root, base }) => {
       const url = base + '/p';
@@ -641,7 +641,23 @@ describe('snap.mjs', { concurrency: 3 }, () => {
     });
   });
 
-  it('T14 allowed addresses 93.184.216.34 and [2606:2800:220:1::] pass the filter', { skip: 'needs a public address: reaching it uses the network, and the spec exports no filter function to call' }, () => {});
+  // The spec asks for this half "with no network": it calls the exported filter (addressAllowed,
+  // named in the builder's notes) directly; importing snap.mjs runs nothing.
+  it('T14 allowed addresses 93.184.216.34 and [2606:2800:220:1::] pass the filter (direct call, no network)', async () => {
+    const mod = await import(pathToFileURL(SCRIPT).href);
+    assert.equal(typeof mod.addressAllowed, 'function', 'snap.mjs exports addressAllowed');
+    for (const a of ['93.184.216.34', '[2606:2800:220:1::]', '2606:2800:220:1::']) {
+      assert.equal(mod.addressAllowed(a, { allowLoopback: false }), true, a + ' is allowed');
+    }
+    for (const a of ['10.1.2.3', '100.64.0.1', '198.18.0.1', '0.0.0.0', '255.255.255.255', '[::ffff:10.0.0.1]',
+      '[64:ff9b::a00:1]', '[2002:a00:1::]', '[fd00::1]', '[fe80::1]', '127.0.0.1', '[::1]', '[::ffff:127.0.0.1]']) {
+      assert.equal(mod.addressAllowed(a, { allowLoopback: false }), false, a + ' is refused');
+    }
+    for (const a of ['127.0.0.1', '[::1]', '[::ffff:127.0.0.1]']) {
+      assert.equal(mod.addressAllowed(a, { allowLoopback: true }), true, a + ' is allowed only with allow_loopback');
+    }
+    assert.equal(mod.addressAllowed('10.1.2.3', { allowLoopback: true }), false, 'allow_loopback opens loopback only');
+  });
 
   it('T14b every request has its own http.Agent (not the global agent, keepAlive false) whose lookup answers only the checked address', async () => {
     await scenario({

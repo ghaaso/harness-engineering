@@ -1,9 +1,9 @@
 // Tests of tcb/scripts/watch.mjs, written from spec/watch.mjs.md and CONTRACT.md only.
 // Each test builds its own run root under tcb-build/tmp, runs the script as a child process
-// (process.execPath + the root's own copy of the script) and checks the exit code, the stdout
+// (process.execPath + tcb-build/tcb/watch.mjs, or the shared stub folder's copy for intake tests) and checks the exit code, the stdout
 // line (CONTRACT 1.3) and the files. Everything the tests need is in this file; the synthetic data
 // lives in tcb/fixtures/watch/.
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -90,7 +90,9 @@ function makeRoot({ thr = {}, ce = 1, rows = [], coord = {}, noTasks = false } =
   fs.mkdirSync(TMP, { recursive: true });
   const root = fs.mkdtempSync(path.join(TMP, 'wk-'));
   for (const d of DIRS) fs.mkdirSync(path.join(root, d), { recursive: true });
-  for (const d of ['scripts', 'schemas', 'profiles', 'settings', 'agents', 'briefs']) {
+  // Flat build layout: the scripts are not copied into the root; they run from tcb-build/tcb/
+  // (found relative to this test file) and read the root's tcb/ data through --root.
+  for (const d of ['schemas', 'profiles', 'settings', 'agents', 'briefs']) {
     const src = path.join(TCB_SRC, d);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', d), { recursive: true });
   }
@@ -262,7 +264,11 @@ function parseOut(r) {
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { /* not json */ } }
   return { exit: r.status, signal: r.signal ?? null, stdout: out, stderr: r.stderr ?? '', lines, json };
 }
-const scriptPath = (root, name) => path.join(root, 'tcb', 'scripts', name + '.mjs');
+// Flat build layout: a script is tcb-build/tcb/<name>.mjs, found relative to this test file. A root
+// whose intake steps are stubbed runs the one shared stub folder's copy of watch.mjs instead, so that
+// the watcher's sibling scripts (found relative to its own file) are the stubs.
+const STUBBED = new Set();
+const scriptPath = (root, name) => (STUBBED.has(root) ? path.join(stubDir(), name + '.mjs') : path.join(TCB_SRC, name + '.mjs'));
 function run(root, name, args, { timeout = 120000 } = {}) {
   return parseOut(cp.spawnSync(process.execPath, [scriptPath(root, name), ...args],
     { cwd: root, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 256 * 1024 * 1024 }));
@@ -315,8 +321,24 @@ const code = (cfg.exit && cfg.exit[name]) ?? 0;
 process.stdout.write(JSON.stringify({ ok: code === 0, script: name, mode: null, exit: code, code: 'stub', dry_run: false, result: {}, reasons: [], ledger_seq: [] }) + '\\n');
 process.exit(code);
 `;
+// One shared stub folder for the whole run of this file: a copy of watch.mjs and lib.mjs with the
+// seven step scripts as stubs beside them. Each stub reads its config from the root it is given.
+let STUB_DIR = null;
+function stubDir() {
+  if (STUB_DIR) return STUB_DIR;
+  fs.mkdirSync(TMP, { recursive: true });
+  const d = fs.mkdtempSync(path.join(TMP, 'wk-stubs-'));
+  for (const f of ['watch.mjs', 'lib.mjs']) fs.copyFileSync(path.join(TCB_SRC, f), path.join(d, f));
+  for (const n of ['harvest', 'commit', 'snap', 'witness', 'promote', 'tms', 'status']) w(path.join(d, n + '.mjs'), STUB);
+  STUB_DIR = d;
+  return d;
+}
+after(() => {
+  if (STUB_DIR) { try { fs.rmSync(STUB_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* best effort */ } }
+});
 function installStubs(ctx, config = {}) {
-  for (const n of ['harvest', 'commit', 'snap', 'witness', 'promote', 'tms', 'status']) w(path.join(ctx.root, 'tcb', 'scripts', n + '.mjs'), STUB);
+  stubDir();
+  STUBBED.add(ctx.root);
   w(path.join(ctx.root, 'tmp', 'stub-config.json'), config);
 }
 function stubLog(root) {

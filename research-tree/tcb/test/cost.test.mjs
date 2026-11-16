@@ -89,6 +89,7 @@ const att = (task, e, o = {}) => ({ epoch: e, folder: `wt/${task}-e${e}`, stop: 
 function makeRoot({ ce = 1, session, params = {}, rows = [] } = {}) {
   const root = scratch('cst-');
   for (const d of ['tcb', 'plan', 'plan/frozen', 'run', 'store/objects', 'store/commits', 'store/status', 'wt', 'transcripts']) fs.mkdirSync(path.join(root, d), { recursive: true });
+  fs.cpSync(path.join(TCB, 'schemas'), path.join(root, 'tcb', 'schemas'), { recursive: true }); // flat layout: the run root's own copy of the schemas
   putJ(path.join(root, 'tcb', 'thresholds.json'), thresholdsFile(root, params));
   const coord = { schema_version: 1, ce, started_at: NOW, tcb_commit: 'a'.repeat(40) };
   if (session) coord.session = session;
@@ -336,7 +337,7 @@ test('T5 compute: bad inputs are exit 2 input-invalid naming the path; nothing i
   assert.ok(reasonCodes(gone).includes('input-invalid'));
   assert.deepEqual(fs.readdirSync(dir).sort(), [...before, 'in.json'].sort(), 'compute writes no file');
   // flags of other modes are a usage error
-  shape(runCost(['compute', '--ce', '1']), { exit: 66, mode: null });
+  shape(runCost(['compute', '--ce', '1']), { exit: 66, mode: 'compute' }); // the mode is known, so it is reported
   shape(runCost(['compute', '--bogus']), { exit: 66, mode: null });
 });
 
@@ -774,18 +775,21 @@ test('T17 every outcome prints one JSON line with script cost and the mode', () 
   assert.equal(runCost(['predict', '--root', dir, '--nope']).exit, 66);
 });
 
-test('T18 from-transcripts: the run lock is not held while a 50 MB transcript is parsed', async () => {
+// The parser reads about 50 MB in 200 ms here, so the transcript is 120 MB to keep the parse window wide; the child needs about 100 ms to start, so a lock got before CHILD_BOOT_MS proves nothing.
+const PARSE_BYTES = 120 * 1024 * 1024;
+const CHILD_BOOT_MS = 150;
+test('T18 from-transcripts: the run lock is not held while a 120 MB transcript is parsed', async () => {
   const lib = await import('../lib.mjs');
   const COORD = sid(81);
   const root = makeRoot({ session: COORD });
-  // a 50 MB transcript of about 100,000 synthetic calls, written in blocks
+  // a 120 MB transcript of about 200,000 synthetic calls, written in blocks
   const file = sessionFile(root, COORD);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const fd = fs.openSync(file, 'w');
   const pad = 'x'.repeat(300);
   let written = 0;
   let i = 0;
-  while (written < 50 * 1024 * 1024) {
+  while (written < PARSE_BYTES) {
     let block = '';
     for (let j = 0; j < 2000; j++, i++) {
       block += JSON.stringify({ type: 'assistant', uuid: `u${i}`, sessionId: COORD, cwd: root, timestamp: new Date(T0 + i).toISOString(), message: { id: `msg_big_${i}`, type: 'message', role: 'assistant', model: 'claude-test', content: [{ type: 'text', text: pad }], usage: { input_tokens: 10, cache_read_input_tokens: 1000 + i, cache_creation_input_tokens: 0, output_tokens: 5 } } }) + '\n';
@@ -803,10 +807,12 @@ test('T18 from-transcripts: the run lock is not held while a 50 MB transcript is
   let exited = false;
   done.then(() => { exited = true; });
   const t0 = Date.now();
+  let childMs = null;
+  done.then(() => { childMs = Date.now() - t0; });
   let acquiredDuringParse = false;
   while (!exited) {
-    await new Promise((r) => setTimeout(r, 40));
-    if (exited || Date.now() - t0 < 300) continue;
+    await new Promise((r) => setTimeout(r, 15));
+    if (exited || Date.now() - t0 < CHILD_BOOT_MS) continue;
     try {
       await lib.withRunLock(root, { script: 'test', ce: 1, proc, now: NOW, retries: 3 }, async () => {
         if (!exited && !fs.existsSync(unitFile(root))) acquiredDuringParse = true;
@@ -815,7 +821,7 @@ test('T18 from-transcripts: the run lock is not held while a 50 MB transcript is
     if (acquiredDuringParse) break;
   }
   const code = await done;
-  assert.ok(acquiredDuringParse, 'a concurrent writer must get run.lock while the child is still parsing');
+  assert.ok(acquiredDuringParse, `a concurrent writer must get run.lock while the child is still parsing (child ran ${childMs} ms, exit ${await done}, out ${out.slice(0, 400)})`);
   assert.equal(code, 0, out.slice(0, 300));
   assert.ok(fs.existsSync(unitFile(root)));
 });

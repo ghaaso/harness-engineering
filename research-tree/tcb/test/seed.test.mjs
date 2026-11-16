@@ -378,7 +378,7 @@ test('T7 with withSentence every class returns a sentence with cites [] and the 
     assert.equal(o.sentence.kind, 'fact');
     assert.equal(o.sentence.sid, 's1');
     assert.ok(o.sentence.text.split(/\s+/).length <= 80);
-    assert.deepEqual(Object.keys(o).sort(), ['card', 'class', 'from_card', 'ok', 'operator', 'sentence', 'seed_id', 'window'], cls);
+    assert.deepEqual(Object.keys(o).sort(), ['card', 'class', 'from_card', 'ok', 'operator', 'seed_id', 'sentence', 'window'], cls);
     if (!needsSentence(cls)) {
       const bare = mk(cls, 'x', { withSentence: false });
       assert.equal(bare.ok, true);

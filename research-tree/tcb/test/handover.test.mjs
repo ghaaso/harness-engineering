@@ -48,7 +48,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const newSid = () => crypto.randomUUID();
 const readIf = (p) => (fs.existsSync(p) ? fs.readFileSync(p) : null);
 let _lib;
-const getLib = async () => (_lib ??= await import(pathToFileURL(path.join(TCB_SRC, 'scripts', 'lib.mjs')).href));
+const getLib = async () => (_lib ??= await import(pathToFileURL(path.join(TCB_SRC, 'lib.mjs')).href));
 
 // ---------------------------------------------------------------- process helpers
 function psStart(pid) {
@@ -77,7 +77,7 @@ function makeRoot({ thr = {}, ce = 1, rows = [], coord = {}, bare = false } = {}
   fs.mkdirSync(TMP, { recursive: true });
   const root = fs.mkdtempSync(path.join(TMP, 'ho-'));
   if (!bare) for (const d of DIRS) fs.mkdirSync(path.join(root, d), { recursive: true });
-  for (const d of ['scripts', 'schemas', 'profiles', 'settings', 'agents', 'briefs']) {
+  for (const d of ['schemas', 'profiles', 'settings', 'agents', 'briefs']) { // flat layout: no scripts copy
     const src = path.join(TCB_SRC, d);
     if (fs.existsSync(src)) fs.cpSync(src, path.join(root, 'tcb', d), { recursive: true });
   }
@@ -191,7 +191,9 @@ function parseOut(r) {
   if (lines.length === 1) { try { json = JSON.parse(lines[0]); } catch { /* not json */ } }
   return { exit: r.status, signal: r.signal ?? null, stdout: out, stderr: r.stderr ?? '', lines, json };
 }
-const scriptPath = (root) => path.join(root, 'tcb', 'scripts', 'handover.mjs');
+// Flat build layout: the script is tcb-build/tcb/handover.mjs, found relative to this test file; the
+// root's tcb/ holds only data (thresholds, schemas, ...). `root` is kept for the call sites.
+const scriptPath = (_root) => path.join(TCB_SRC, 'handover.mjs');
 function runFrom(scriptRoot, args, { timeout = 120000 } = {}) {
   return parseOut(cp.spawnSync(process.execPath, [scriptPath(scriptRoot), ...args],
     { cwd: scriptRoot, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 }));

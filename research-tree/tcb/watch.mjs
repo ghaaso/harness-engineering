@@ -582,10 +582,8 @@ async function evaluate(env, state, facts, counted) {
 }
 
 async function spawnIntake(root, ce, proc) {
-  // In a run this file is <root>/tcb/scripts/watch.mjs; where that path is absent (a test running
-  // the build tree's copy) the running file is spawned instead.
-  const inRoot = path.join(root, 'tcb', 'scripts', 'watch.mjs');
-  const script = exists(inRoot) ? inRoot : fileURLToPath(import.meta.url);
+  // The intake is this very file: found from import.meta.url, never through a fixed tcb/scripts path.
+  const script = fileURLToPath(import.meta.url);
   const child = spawn(process.execPath, [script, '--intake', '--root', root, '--ce', String(ce)], {
     detached: true, stdio: 'ignore', windowsHide: true, cwd: root, shell: false,
   });
@@ -706,7 +704,8 @@ async function runIntake(ctx, root, flags) {
   const done = [];
   for (const [script, a] of steps) {
     const args = [...a, '--root', root, '--ce', String(ce)];
-    const r = spawnSync(process.execPath, [path.join(root, 'tcb', 'scripts', script), ...args], {
+    // Sibling scripts are found beside this file (import.meta.url), not under a fixed tcb/scripts path.
+    const r = spawnSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), script), ...args], {
       cwd: root, shell: false, windowsHide: true, stdio: 'ignore',
     });
     const exit = typeof r.status === 'number' ? r.status : 70;

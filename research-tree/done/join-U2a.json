@@ -1,0 +1,24 @@
+{
+  "label": "join:U2a",
+  "tests": {
+    "command": "node tools/lane.mjs --label join-U2a --timeout-s 300 -- node --test --test-concurrency=1 tcb/test/<commit|harvest|fsck>.test.mjs (one file per lane call)",
+    "passed": 63,
+    "failed": 0,
+    "skipped": 3,
+    "output_tail": "commit: tests 30, pass 29, fail 0, skipped 1 (N1 needs-app), 18.3 s. harvest: tests 18, pass 16, fail 0, skipped 2 (N1, N2 needs-app), 9.8 s. fsck: tests 18, pass 18, fail 0, skipped 0, 36.2 s (T17 reports the git config hazard is live without hardening, and fsck never triggers it). No tcbcm-/tcbhv-/tcbfs- root left under tcb-build/tmp."
+  },
+  "rounds": 2,
+  "fixes": [
+    {"file": "tcb/test/commit.test.mjs, tcb/test/harvest.test.mjs, tcb/test/fsck.test.mjs", "what": "The run helper (and fsck T13's spawn) started tcb/scripts/<name>.mjs; changed to tcb/<name>.mjs for the flat layout, still relative to the test file.", "wrong_side": "layout"},
+    {"file": "tcb/test/harvest.test.mjs", "what": "T11 case (c) asserted harvested/ holds no card file, but the test itself plants the hard link harvested/x.card.json. The check now says nothing beyond the planted file appears, and adds that the hard-linked target is unchanged. Not weaker: exit 3, untrusted-path, the incident line and the empty outside folder are still asserted.", "wrong_side": "test"},
+    {"file": "tcb/test/commit.test.mjs", "what": "T12 (--dry-run) asserted run/ledger.jsonl does not exist, but the setup's protocol-freeze line already creates it. Now asserts the ledger line count is unchanged and there is no intake line, on top of the unchanged whole-root snapshot.", "wrong_side": "test"}
+  ],
+  "still_failing": [
+    "Nothing fails in the three files. Skipped by design as needs-app: commit N1, harvest N1 and N2 (CONTRACT 7 items 7 and 8).",
+    "fsck T13 passes but is not deterministic proof of the phase-2 re-check: the test cannot force its intake line into the window between phase 1 and phase 2 (the spec names no seam), so the asserted outcome would also hold if only phase 1 saw the line. Open point carried from the test writer.",
+    "Spec/contract questions the builder raised remain for a ruling (not test failures): commit record step 7 takes outputs from every intake line of the epoch, so a pack revised within one epoch exits 1 pack-count for good; whether a failing fsck should also append the section 1.4 tamper incident line (it does not, per its spec); commit record on a row already committed (the builder allows it, matching T14 and CONTRACT 3.6, but spec step 2 should say so); the protocol-freeze line's path is root-relative in these tests and scripts, but CONTRACT 3.18 does not say so."
+  ],
+  "lib_change_requests": [
+    "None open for this group. The builder's earlier requests are already met in the current lib.mjs: TcbError is exported (line 116), acquireLock/withRunLock take `retries` through the opts object, and parseTranscript tags structured and toolResults entries with a hidden `line`. tcb/thresholds.json now holds child_prefix_tokens, review_reserve_tokens, lock_retries and proc_exe."
+  ]
+}

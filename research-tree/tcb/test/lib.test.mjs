@@ -152,7 +152,9 @@ const NOW = '2026-11-17T10:00:00.000Z';
 const Z64 = '0'.repeat(64);
 const SID = '11111111-1111-4111-8111-111111111111';
 const SELF_START = '2026-11-17T09:00:00.0000000Z';
-const ISO7 = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$/;
+// This process's own start time as the library records it (own clock, computed once, no provider).
+const OWN_START = () => lib.selfInfo(null).start_time;
+const ISO7 =/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$/;
 
 const sha = (x) => crypto.createHash('sha256').update(x).digest('hex');
 const P = (root, ...s) => path.join(root, ...s);
@@ -1011,7 +1013,10 @@ rt('T28 acquireLock creates the lock file holding the lock record, release delet
   const h = await lib.acquireLock(root, 'run.lock', lo());
   const r = rdj(lockFile(root));
   assert.equal(r.pid, process.pid);
-  assert.equal(r.start_time, SELF_START);
+  // The own start time comes from the own clock (now minus process.uptime()), never from the provider.
+  assert.equal(r.start_time, OWN_START());
+  assert.match(r.start_time, ISO7);
+  assert.ok(Math.abs(Date.parse(r.start_time.replace(/(\.\d{3})\d+Z$/, '$1Z')) - (Date.now() - process.uptime() * 1000)) < 1000, 'within a second of now minus uptime');
   assert.match(r.nonce, /^[0-9a-f]{32}$/);
   assert.equal(r.script, 'test');
   assert.equal(r.ce, 1);
@@ -1039,7 +1044,7 @@ rt('T29 a lock held by a live process is retried, then lock-busy 75 with the fil
     }
     assert.equal(spy.state.matched, 4, 'one create and three retries');
     assert.deepEqual(fs.readFileSync(lockFile(root)), before);
-    assert.ok(p.calls.list <= 1, `proc.list was called ${p.calls.list} times`);
+    assert.equal(p.calls.list, 0, `proc.list was called ${p.calls.list} times (the own start time needs no listing)`);
     // CONTRACT 4.4 keeps PowerShell out of the retry loop: the holder is judged (at least once) and
     // found alive; the library may judge one holder once rather than per retry.
     assert.ok(p.calls.alive.length >= 1 && p.calls.alive.length <= 4, `alive consulted ${p.calls.alive.length} times`);
@@ -1075,12 +1080,12 @@ rt('T30 a lock whose holder is dead is broken, no .stale file is left and a lock
 });
 rt('T31 a lock whose pid is alive with another start time is stale and is broken', async (root) => {
   const stale = putLock(root, mkRec({ pid: process.pid, start_time: '2000-01-01T00:00:00.0000000Z' }));
-  const p = fproc({ alive: (pid, st) => pid === process.pid && st === SELF_START });
+  const p = fproc({ alive: (pid, st) => pid === process.pid && lib.sameStartTime(st, OWN_START()) });
   const h = await lib.acquireLock(root, 'run.lock', lo({ proc: p }));
   try {
     const now = rdj(lockFile(root));
     assert.notEqual(now.nonce, stale.nonce);
-    assert.equal(now.start_time, SELF_START);
+    assert.equal(now.start_time, OWN_START());
     assert.deepEqual(staleLeftovers(root), []);
     assert.equal((await ledger(root)).filter((l) => l.kind === 'lock-break').length, 1);
   } finally {
@@ -1173,6 +1178,107 @@ rt('T36 release does not delete a lock file holding another nonce', async (root)
   assert.ok(fs.existsSync(lockFile(root)));
   assert.deepEqual(fs.readFileSync(lockFile(root)), before);
 });
+
+// The normal path of a script start makes no process query (CONTRACT 4.4): a reader that throws on
+// every call must never be reached while a free lock is taken, written under and released.
+const throwingProc = () => {
+  const calls = { n: 0 };
+  const boom = (what) => () => {
+    calls.n++;
+    throw new Error(`process reader called: ${what}`);
+  };
+  return { calls, list: boom('list'), alive: boom('alive'), boot: boom('boot') };
+};
+rt('T36c a free lock is taken, written under and released with a process reader that throws on every call', async (root) => {
+  const p = throwingProc();
+  const h = await lib.acquireLock(root, 'run.lock', lo({ proc: p }));
+  await ap(root, h);
+  await h.release();
+  await lib.withRunLock(root, { script: 'test', ce: 1, proc: p, now: NOW, retries: 2, retryMs: 1 }, async (h2) => {
+    await ap(root, h2);
+  });
+  const w = await lib.acquireLock(root, 'watcher.lock', lo({ proc: p }));
+  await w.release();
+  assert.equal(p.calls.n, 0, 'the process reader was never called');
+  assert.equal(fs.existsSync(lockFile(root)), false);
+  assert.equal(fs.existsSync(lockFile(root, 'watcher.lock')), false);
+  assert.deepEqual((await ledger(root)).map((l) => l.seq), [1, 2]);
+  assert.equal(lib.selfInfo(p).start_time, OWN_START(), 'selfInfo ignores the provider');
+});
+rt('T36d with the real provider, a free lock taken, written under and released starts no subprocess', async (root) => {
+  const seen = [];
+  const restores = [];
+  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']) {
+    restores.push(patch(cp, name, (orig) => function (...a) {
+      seen.push(name);
+      return orig.apply(this, a);
+    }));
+  }
+  try {
+    const proc = lib.realProc({ exe: lib.PROC_EXE });
+    await lib.withRunLock(root, { script: 'test', ce: 1, proc, now: NOW, retries: 2, retryMs: 1 }, async (h) => {
+      await ap(root, h);
+    });
+  } finally {
+    restores.reverse().forEach((r) => r());
+  }
+  assert.deepEqual(seen, [], 'no PowerShell (or any other subprocess) on the normal path');
+  assert.equal(fs.existsSync(lockFile(root)), false);
+});
+rt('T36e a stale lock whose holder is gone is broken only after the provider judged it dead; unjudged or unknown it stays', async (root) => {
+  const stale = putLock(root, mkRec());
+  const events = [];
+  const p = {
+    list() { throw new Error('no listing on this path'); },
+    boot() { throw new Error('no boot on this path'); },
+    alive(pid, st) {
+      events.push(['alive', pid, st]);
+      return false; // gone
+    },
+  };
+  const restore = patch(fs, 'renameSync', (orig) => function (...a) {
+    if (isLockSrc(a[0])) events.push(['rename']);
+    return orig.apply(this, a);
+  });
+  let h;
+  try {
+    h = await lib.acquireLock(root, 'run.lock', lo({ proc: p }));
+  } finally {
+    restore();
+  }
+  try {
+    assert.deepEqual(events[0], ['alive', stale.pid, stale.start_time], 'the holder is judged first, by its recorded pid and start time');
+    const at = events.findIndex((e) => e[0] === 'rename');
+    assert.ok(at > 0, `the break (rename) comes after the judgement: ${JSON.stringify(events)}`);
+    assert.notEqual(rdj(lockFile(root)).nonce, stale.nonce);
+    assert.equal((await ledger(root)).filter((l) => l.kind === 'lock-break').length, 1);
+  } finally {
+    await h.release();
+  }
+  // The same dead holder with nothing to judge it, or a judgement that fails, is never broken.
+  putLock(root, stale);
+  await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: null })), 'lock-busy', 75);
+  await throwsTcb(() => lib.acquireLock(root, 'run.lock', lo({ proc: { alive: () => { throw new Error('PowerShell failed'); } } })), 'lock-busy', 75);
+  assert.equal(rdj(lockFile(root)).nonce, stale.nonce);
+  assert.deepEqual(staleLeftovers(root), []);
+});
+rt('T36f a stale lock of a real process that has ended is broken after one real verification', async (root) => {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore', windowsHide: true });
+  const exited = new Promise((res) => child.once('exit', res));
+  const pid = child.pid;
+  child.kill();
+  await exited;
+  const stale = putLock(root, mkRec({ pid, start_time: OWN_START() }));
+  const h = await lib.acquireLock(root, 'run.lock', lo({ proc: lib.realProc({ exe: lib.PROC_EXE }) }));
+  try {
+    assert.notEqual(rdj(lockFile(root)).nonce, stale.nonce);
+    const lb = (await ledger(root)).filter((l) => l.kind === 'lock-break');
+    assert.equal(lb.length, 1);
+    assert.equal((lb[0].data.stale || lb[0].data).pid, pid);
+  } finally {
+    await h.release();
+  }
+}, {}, { concurrency: false, timeout: 120000 });
 rt('T37 withRunLock runs fn under the lock for the current ce, refuses another ce without calling fn, and always releases', async (root) => {
   let called = 0;
   await lib.withRunLock(root, { script: 'test', ce: 2, proc: fproc(), now: NOW }, async (h) => {
@@ -2090,6 +2196,13 @@ test('T85 realProc lists the test process with an exact-form start time and its 
   assert.equal(typeof me.ppid, 'number');
   assert.equal(await proc.alive(process.pid, me.start_time), true);
   assert.equal(await proc.alive(process.pid, '2000-01-01T00:00:00.0000000Z'), false);
+  // The own start time from the own clock lies within the two-second tolerance of what Windows
+  // reports, and alive compares with that tolerance: one second off matches, five seconds do not.
+  assert.ok(lib.sameStartTime(me.start_time, OWN_START()), `own clock ${OWN_START()} vs PowerShell ${me.start_time}`);
+  assert.equal(await proc.alive(process.pid, OWN_START()), true);
+  const shift = (s, sec) => new Date(Date.parse(s.slice(0, 23) + 'Z') + sec * 1000).toISOString().slice(0, 23) + s.slice(23);
+  assert.equal(await proc.alive(process.pid, shift(me.start_time, 1)), true, 'one second apart matches');
+  assert.equal(await proc.alive(process.pid, shift(me.start_time, -5)), false, 'five seconds apart does not');
   const b1 = await proc.boot();
   const b2 = await proc.boot();
   assert.match(b1, ISO7);
@@ -2218,6 +2331,44 @@ test('T90b descendants ignores a child that started before its parent (a reused 
   const list = [pr(500, 1, 'parent', t7(5)), pr(501, 500, 'older child', t7(4)), pr(502, 500, 'child', t7(6)), pr(503, 502, 'grandchild', t7(7))];
   const d = (await lib.descendants(list, 500)).filter((p) => p !== 500).sort((a, b) => a - b);
   assert.deepEqual(d, [502, 503]);
+});
+test('T90c start times one second apart match and five seconds apart do not (sameStartTime, killOwnTree)', async () => {
+  const base = '2026-11-17T10:00:00.0000000Z';
+  const plus = (s) => new Date(Date.parse('2026-11-17T10:00:00.000Z') + s * 1000).toISOString().replace(/Z$/, '0000Z');
+  assert.equal(lib.START_TOLERANCE_MS, 2000);
+  assert.equal(lib.sameStartTime(base, base), true);
+  assert.equal(lib.sameStartTime(base, plus(1)), true);
+  assert.equal(lib.sameStartTime(plus(1), base), true);
+  assert.equal(lib.sameStartTime(base, plus(-1)), true);
+  assert.equal(lib.sameStartTime(base, plus(5)), false);
+  assert.equal(lib.sameStartTime(base, plus(-5)), false);
+  assert.equal(lib.sameStartTime(base, '2026-11-17T10:00:02.0000000Z'), true, 'exactly two seconds still matches');
+  assert.equal(lib.sameStartTime(base, '2026-11-17T10:00:02.0010000Z'), false);
+  assert.equal(lib.sameStartTime(base, '2026-11-17T10:00:01.123Z'), true, 'precision of the fraction does not matter');
+  assert.equal(lib.sameStartTime(base, '2026-11-17T15:00:01.0000000+05:00'), true, 'an offset is honoured');
+  assert.equal(lib.sameStartTime(base, null), false);
+  assert.equal(lib.sameStartTime(null, null), false);
+  assert.equal(lib.sameStartTime('garbage', 'garbage'), true, 'equal strings match');
+  assert.equal(lib.sameStartTime('garbage', base), false);
+  // killOwnTree: a recorded start one second off the listed one is the same child; five seconds off is not.
+  const list = [pr(700, 1, 'child', plus(1)), pr(701, 700, 'grandchild', plus(2))];
+  const fake = {
+    list: () => list.map((x) => ({ ...x })),
+    alive: (pid, st) => {
+      const p = list.find((x) => x.pid === pid);
+      return !!p && lib.sameStartTime(p.start_time, st);
+    },
+    boot: () => null,
+  };
+  const killed = [];
+  const exec = (file, args) => {
+    killed.push(Number(args[1]));
+  };
+  const far = await lib.killOwnTree(fake, { pid: 700, start_time: plus(6) }, { exec });
+  assert.equal(far.reason, 'start-mismatch');
+  assert.deepEqual(killed, []);
+  await lib.killOwnTree(fake, { pid: 700, start_time: base }, { exec });
+  assert.deepEqual(killed, [701, 700], 'grandchild first, then the child');
 });
 test('T92 a real session claude.exe command line names its folder or session id', { skip: 'needs the app: only a real session shows its command line' }, () => {});
 
