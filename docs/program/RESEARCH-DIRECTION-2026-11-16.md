@@ -109,3 +109,5 @@ try to refute; the coordinator only coordinates.
   and after it; the whole programme may use at most **10 % of the week** unless the owner sets another
   figure; at the cap it stops and reports. It never waits silently on a limit.
 - The ship plan is not touched and not delayed by this track.
+
+> **Note, later on 2026-11-16.** Section 7 describes a knowledge check and a child that reviews in the session in which it researched. The tree protocol's amendment 3 (the result of attacking its own risk list) deletes the self-written knowledge check in favour of checks from outside, and leaves where the review runs to the owner (its part F). Where this file and the protocol differ, the protocol is the current statement.

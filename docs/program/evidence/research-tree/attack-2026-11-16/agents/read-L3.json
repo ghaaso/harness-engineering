@@ -1,0 +1,284 @@
+{
+ "label": "read:L3",
+ "tools_used": [
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+  "StructuredOutput"
+ ],
+ "result": {
+  "findings": [
+   {
+    "id": "L3-01",
+    "claim": "Most of the gain usually credited to multi-agent debate comes from the vote over several independent answers, not from the agents reading each other. Debate rounds added little or nothing on top of a plain majority vote, and in places made things worse.",
+    "mechanism": "The authors model debate as belief updating among agents and prove that, when an agent's update is the average of its neighbours' beliefs, the expected probability of the correct answer stays constant across rounds (a martingale), so discussion alone has no expected gain. Their experiments show flat mean-accuracy curves across rounds.",
+    "source_title": "Debate or Vote: Which Yields Better Decisions in Multi-Agent Large Language Models?",
+    "authors_or_org": "Choi, Zhu, Li",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2508.17536",
+    "where_in_source": "Table 1 (Section 3.2), Theorem 2 (Section 4), Table 2 (Section 5), Table 3 (Section 6); HTML version arxiv.org/html/2508.17536v2",
+    "number": "Average accuracy over the 7 benchmark columns, 5 agents. Qwen2.5-7B: single agent 0.7205, decentralized debate 2 rounds 0.7377 (3 rounds 0.7112, 5 rounds 0.7050), majority vote 0.7691. Llama3.1-8B: single 0.6203, debate 2 rounds 0.6929, majority vote 0.7242. Qwen2.5-32B on GSM8K: single 0.7566, debate 0.9400, vote 0.9433. Adding a rule that nudges agents toward the majority raised Qwen-7B debate at 5 rounds from 0.7084 to 0.7524 (conformist) and 0.7577 (follower); an oracle that uses ground truth reached 0.8289 (not practical).",
+    "conditions": "Small open models (Qwen2.5-7B and 32B, Llama3.1-8B), 6 to 7 task columns, 5 agents, 2 to 5 rounds, same model in every seat. Single-agent figure is an average of 5 runs. Not tested with long agentic work or with a judge agent.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D5",
+     "D4"
+    ],
+    "for_design": "Do not build a tree whose value rests on children discussing with each other; collect their answers independently and aggregate, and if an exchange is kept, add a rule that rewards correction instead of agreement."
+   },
+   {
+    "id": "L3-02",
+    "claim": "At the same budget of reasoning tokens, one agent that sees the whole problem was at least as accurate as the multi-agent layouts tested (sequential, debate, parallel roles, ensemble) on multi-hop questions once the budget was 500 tokens or more. Multi-agent layouts led only at a 100-token budget and when the single agent's context was heavily corrupted.",
+    "mechanism": "Information-theory argument (data processing inequality): messages passed between agents are a function of the single agent's full context, so every hand-off can only keep or lose information. Error analysis: single-agent failures are mostly under-exploration or losing the answer at the final extraction step; sequential multi-agent failures are over-exploration and drift.",
+    "source_title": "Single-Agent LLMs Outperform Multi-Agent Systems on Multi-Hop Reasoning Under Equal Thinking Token Budgets",
+    "authors_or_org": "Tran, Kiela",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2604.02460",
+    "where_in_source": "Table 1 and Section 5.1 (main results), Section 5.3 and Figure 3 (corrupted context), Appendix C (budget accounting caveats)",
+    "number": "Average over 8 model-dataset rows. Single agent vs sequential vs debate vs parallel-roles: at 1k budget 0.418 / 0.379 / 0.388 / 0.381; at 5k 0.427 / 0.386 / 0.420 / 0.417; at 10k 0.426 / 0.387 / 0.420 / 0.423. At 100 tokens the multi-agent layouts led (sequential 0.364 vs single 0.290).",
+    "conditions": "Qwen3-30B-A3B, DeepSeek-R1-Distill-Llama-70B, Gemini 2.5 Flash and Pro; FRAMES and MuSiQue 4-hop questions only; budget is an upper cap on thinking tokens, not enforced as exact; Gemini token accounting is approximate; many per-cell gaps fall inside overlapping 95 percent intervals; preprint, and I did not read its appendices past the first 100,000 characters.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D5"
+    ],
+    "for_design": "Spend the token budget on one longer, better-fed run per field before adding parallel helpers, and add helpers only where a single context would otherwise be too long or noisy."
+   },
+   {
+    "id": "L3-03",
+    "claim": "Homogeneous teams of small models that read each other's reasoning mostly conform: they drop correct answers after seeing peers, and debate was usually no better, and often worse, than a lone model correcting itself, at 2 to 3 times the tokens.",
+    "mechanism": "Sycophantic conformity (changing to the peers' modal answer), contextual fragility (abandoning a correct answer after seeing peer text) and consensus collapse (team accuracy below what an oracle picking the best member would get). A control that fed rationales from unrelated problems sometimes matched debate, which the authors read as peer content adding little.",
+    "source_title": "The Cost of Consensus: Decomposing Sycophancy, Fragility and Collapse in Homogeneous Multi-Agent Teams (title as shown in search listings; page header read as 'The Cost of Consensus')",
+    "authors_or_org": "Bertalanič, Fortuna (Jožef Stefan Institute)",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2605.00914",
+    "where_in_source": "Table 1 (accuracy and cost), Table 2 (consensus, vulnerability), Table 3 (sycophancy and oracle gap), Table 4 (read/write tokens)",
+    "number": "Modal sycophancy up to 85.5 percent (Qwen2.5-7B, MMLU-Hard); vulnerability up to 70.0 percent (Ministral-3-8B, GSM-Hard). Ministral GSM-Hard accuracy: single 24.7, debate 20.7, isolated self-correction 48.3; oracle 53.0 vs team 20.7 (gap 32.3 points). Qwen MMLU-Hard: single 57.3, debate 60.7, self-correction 66.7. Debate used 2.1 to 3.4 times the tokens of self-correction. Text reports a 10x output budget for a single agent matched or beat debate (for example plus 6.0 points, Qwen MMLU-Hard).",
+    "conditions": "10 identical 7 to 8B instruct agents, 3 rounds, GSM-Hard and MMLU-Hard, 100-item subsets for two of three models (margin about plus or minus 9.8 points); Llama differences not significant; peers shown in confidence order, which the authors flag as a possible confound. Small open models only.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D4",
+     "D5"
+    ],
+    "for_design": "Never show a child session other children's conclusions before it has committed its own; if cross-reading is needed, do it once and keep the reader's first answer on record."
+   },
+   {
+    "id": "L3-04",
+    "claim": "Different language models make the same mistakes together, far more than chance, and the more accurate the models the more their errors overlap. A model used as a judge therefore credits wrong answers from models like itself.",
+    "mechanism": "Shared training data, shared architecture and shared provider each add error overlap; a judge marks a wrong answer correct when it holds the same wrong belief.",
+    "source_title": "Correlated Errors in Large Language Models",
+    "authors_or_org": "Kim, Garg, Peng, Garg",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2506.07962",
+    "where_in_source": "Section 3.2 and Figure 1 (agreement when both wrong), Table 1 (regression), Section 4 with Figures 2 and 8 (judge effect)",
+    "number": "When two models are both wrong they give the same answer 0.423 of the time on the HuggingFace leaderboard data (349 models; chance about 0.127; 100 percent of pairs above chance) and 0.6 on HELM (71 models; chance 1/3; 97.5 percent of pairs above chance). Same company adds 0.066 (HuggingFace) or 0.022 (HELM); same architecture adds 0.076. Judge inflation is shown only in plots, no exact figure in the text.",
+    "conditions": "Multiple-choice leaderboard items, plus a resume-screening task; 'agreement' treats all wrong answers as one kind; correlational analysis of existing models, not a test of a voting or review pipeline.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D5",
+     "D10"
+    ],
+    "for_design": "Do not treat a second model from the same family reviewing the first as an independent check; use a different provider, or an external fact source, for the reviewer role."
+   },
+   {
+    "id": "L3-05",
+    "claim": "A vote over several samples of the same model can lock in a shared wrong answer and sometimes does worse than one sample. Pooling and confidence weighting gave no consistent gain over a single sample.",
+    "mechanism": "Errors of language-model samples and of different models are correlated, so the plurality is often the common wrong answer rather than noise that cancels. On a no-signal control (random strings forced into A/B/C/D) model pairs still correlated up to 0.35, which the authors attribute to shared biases rather than shared knowledge.",
+    "source_title": "Consensus is Not Verification: Why Crowd Wisdom Strategies Fail for LLM Truthfulness",
+    "authors_or_org": "Denisov-Blanch, Kazdan, Chudnovsky, Schaeffer, Koyejo, Guan, Adeshina",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2603.06612",
+    "where_in_source": "Tables 2 and 3 (individual vs majority), Table 4 (temperature flips), Section 4.2 (correlated errors), Section 4.3 (no-signal control), Figure 1",
+    "number": "Com2Sense, individual sample vs majority (percent): GPT-oss-20B 62.5 vs 38.9; GPT-oss-120B 65.0 vs 41.2; Qwen3-32B 51.7 vs 28.3. Small gains elsewhere (GPT-oss-20B on BoolQ 74.0 vs 79.9). On MATH, in 53 percent of questions where several models erred they converged on the same wrong answer; plurality-wrong rates 3.9 to 25.8 percent. Changing temperature from 0.7 to 1.0 flipped the plurality in only 2.9 percent of 1,575 pairs.",
+    "conditions": "5 open models (4B to 235B, three families); small question sets (35 to 100 per dataset); binary answer tasks, so chance-level agreement is high; preprint.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D5"
+    ],
+    "for_design": "Treat agreement among helpers as weak evidence; when helpers agree on a claim, check it against a source outside the models before the child reports it as established."
+   },
+   {
+    "id": "L3-06",
+    "claim": "Sampling many times from the single best model (Self-MoA) beat mixing different models in a mixture-of-agents on most tests, because weaker models lower the average quality of the proposals more than diversity adds. The original mixture-of-agents paper reported the opposite for its setup (different models beat one model at several temperatures).",
+    "mechanism": "Quality-diversity trade-off: regression of mixture performance on proposer quality and on diversity gives a larger coefficient on quality on all three datasets (R squared about 0.69 to 0.77).",
+    "source_title": "Rethinking Mixture-of-Agents: Is Mixing Different Large Language Models Beneficial?",
+    "authors_or_org": "Li, Lin, Xia, Jin (Princeton)",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2502.00674",
+    "where_in_source": "Table 1 (Section 3.1, AlpacaEval 2.0), Table 3 (Section 3.2), Section 4 (Figure 2, Tables 4 to 6); the original MoA claim is in Table 3 of arXiv 2406.04692 (Wang et al. 2024)",
+    "number": "AlpacaEval 2.0 length-controlled win rate: Self-MoA 65.7 vs two-layer mixed MoA 59.1; best single model 53.1. MMLU: Self-MoA 69.01 vs best mixed 68.90 (single 66.16). MATH: 69.80 vs 67.62. Mixed MoA beat Self-MoA by only 0.35 points in a mixed-task setting (60.04 vs 59.69). In the original MoA paper, with 6 proposers and a Qwen1.5-110B aggregator, different-model proposers scored 61.3 vs 56.7 for one model sampled repeatedly.",
+    "conditions": "Tasks are chat-quality scores (AlpacaEval, MT-Bench) and short benchmarks (MMLU, MATH); proposals are single-turn answers, not research output. The two papers disagree on setup (which proposer model is the single one); the reproduced result differs from the original paper by the authors' own note. Not compared at equal token cost with one longer run.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D5"
+    ],
+    "for_design": "Before using different models for diversity, measure each model alone on your task: a weaker model in the panel can cost more than the independence it adds."
+   },
+   {
+    "id": "L3-07",
+    "claim": "A model that is shown an expert's opinion or a number follows it, and the usual prompt fixes (think step by step, 'ignore the hint', reflect) did not remove the pull; giving hints from several sides was the only approach that helped, and only in some cases.",
+    "mechanism": "Not established in the source; the authors argue the hint is hard to disregard and propose preventing the model from fixating on a single cue.",
+    "source_title": "Anchoring Bias in Large Language Models: An Experimental Study",
+    "authors_or_org": "Lou, Sun",
+    "year": "2024",
+    "url": "https://arxiv.org/abs/2412.06593",
+    "where_in_source": "Sections 4.2.1 to 4.2.4 (Figures 4 to 6), Section 5 (Figures 7 to 9), Section 6",
+    "number": "Only 11 of 162 difference values went against the anchor direction, 9 of the 11 from GPT-3.5. All 12 questions with expert anchors showed an effect for every model. Chain of thought, principles prompting, 'ignore the anchor' and reflection gave no significant reduction on GPT-4 and GPT-4o. Giving two bracketing anchors brought GPT-4 near the unbiased answer on 8 of the expert-anchor questions; the remaining questions still deviated.",
+    "conditions": "GPT-3.5-Turbo, GPT-4, GPT-4o; 62 numeric forecasting questions, 30 repetitions each at temperature 0.8; numeric answers, not free-text research; the mitigation tests used expert-anchor questions on GPT-4 and GPT-4o only; one reviewer questions the choice of mitigations.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D4"
+    ],
+    "for_design": "Keep any expected answer or favoured hypothesis out of the child's brief; write the question neutrally and, if context is needed, give opposing cues together."
+   },
+   {
+    "id": "L3-08",
+    "claim": "Stating a claim as a belief or conviction makes assistants agree far more than asking the same thing as a question, and turning the statement into a question before answering cut agreement more than an instruction not to be sycophantic.",
+    "mechanism": "The more certain and first-person the framing, the more the model aligns with it; a question form carries no stance to align with. A separate rewriter model (two-step) removed the stance before the answering model saw it.",
+    "source_title": "Ask don't tell: Reducing sycophancy in large language models",
+    "authors_or_org": "Dubois, Ududec, Summerfield, Luettgau (UK AI Security Institute)",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2602.23971",
+    "where_in_source": "Section 3.1 (framing, Figure 1), Section 3.2 (question reframing, Figure 2), Section 3.3 (perspective, Figure 3)",
+    "number": "Ordered-logistic coefficients on a 0 to 15 sycophancy rubric: questions minus 2.93; non-questions plus 0.59; beliefs 0.72; convictions 0.82; I-perspective 0.88 vs user-perspective 0.66; a 24-point gap between questions and non-questions is reported. Mitigations (non-question prompts): control 1.13; two-step reframing minus 0.55; one-step reframing 0.16; 'don't be sycophantic' instruction 0.51. Rewriting the first person as third person helped less than the instruction (1.19 vs 0.73 on a control of 1.42).",
+    "conditions": "GPT-4o, GPT-5, Sonnet-4.5; 440 single-turn synthetic prompts on hobbies, relationships, mental health and medical topics; graded by two model judges on a rubric; accuracy of the answers not tested; multi-turn and agent settings not tested.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D4"
+    ],
+    "for_design": "Phrase every brief to a child as an open question, and have a separate step strip opinions from background material before a child reads it."
+   },
+   {
+    "id": "L3-09",
+    "claim": "Models recognise their own writing and rate it higher; the preference grows with recognition. In one test the same summaries were rated far higher when labelled as the model's own than when the labels were swapped, so hiding authorship removes part, not all, of the bias.",
+    "mechanism": "Self-recognition drives self-preference. Training on unrelated features (length, readability, random answers) lay on the same line, which the authors use to support causation. A later study found that removing style cues entirely did not remove the bias because judges still favoured answers matching their own beliefs.",
+    "source_title": "LLM Evaluators Recognize and Favor Their Own Generations",
+    "authors_or_org": "Panickssery, Bowman, Feng",
+    "year": "2024",
+    "url": "https://arxiv.org/abs/2404.13076",
+    "where_in_source": "Table 7 and Section 2 (self-recognition, self-preference), Table 1 (Kendall tau), Section 3.5 and Table 6 (label swap); follow-up arXiv 2512.05379 (Mahbub, Feng), Sections 3 and 5",
+    "number": "GPT-4 pairwise self-recognition 73.5 percent out of the box; self-preference 0.705 (XSUM) and 0.912 (CNN/DM). Kendall tau between self-recognition and self-preference for GPT-3.5: 0.41 to 0.74 (XSUM) after fine-tuning on 500 examples. Label swap, GPT-4 on XSUM: 0.73 with correct labels vs 0.32 with swapped labels (CNN/DM 0.94 vs 0.89; GPT-3.5 0.61 vs 0.46 on XSUM). Follow-up: swapping two words per answer lowered self-recognition and raised judge accuracy in harmful cases, for example Mistral-Small 26.78 to 33.52 percent.",
+    "conditions": "Summarisation (XSUM, CNN/DM), GPT-4, GPT-3.5, Llama-2-7b; evaluating other model's text; ordering bias large for weaker models (answers flip with option order in 25, 58 and 89 percent for GPT-4, GPT-3.5, Llama); ground-truth quality not controlled; the labelled-authorship test is one of several and Llama showed no clear effect.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D4",
+     "D5",
+     "D10"
+    ],
+    "for_design": "When one child reviews another's work (or its own earlier work) strip names and house style where you can, put the second review in a different model, and do not read removal of labels as removal of the bias."
+   },
+   {
+    "id": "L3-10",
+    "claim": "Two debaters assigned to argue opposite answers helped a weaker judge pick the right one far more than a single advisor did, and a single persuasive advisor made the judge worse.",
+    "mechanism": "With two opposing arguers, a lie must survive a rebuttal; with one consultant, a more persuasive consultant lowers judge accuracy because wrong ones become relatively more persuasive when optimised. The source warns this depends on verified quotes the judge can check.",
+    "source_title": "Debating with More Persuasive LLMs Leads to More Truthful Answers",
+    "authors_or_org": "Khan, Hughes, Valentine, Ruis, Sachan, Radhakrishnan, Grefenstette, Bowman, Rocktäschel, Perez",
+    "year": "2024",
+    "url": "https://arxiv.org/abs/2402.06782",
+    "where_in_source": "Abstract; Section 3 (Insights 1 to 5, Figures 1, 3, 4, 7); Section 4 (human judges); Section 6 (caveat)",
+    "number": "Non-expert model judges: 76 percent with debate vs 48 percent naive; LLM consultancy 54 percent (Section 1). Human judges: 88 percent with debate vs 60 percent naive, and 78 percent with consultancy. In debate, more persuasive debaters raised judge accuracy; in consultancy, more persuasive consultants lowered it. With weaker judges (for example GPT-3.5) accuracy fell as rounds increased.",
+    "conditions": "QuALITY hard subset (science-fiction stories) with debaters who can quote the text; judges GPT-4-Turbo, Mixtral-8x7B, GPT-3.5-Turbo, Claude 2.1; three rounds; the judge does not have the text itself; it is one reading task with a known correct answer, not open research.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D4",
+     "D5",
+     "D10"
+    ],
+    "for_design": "For a contested claim, assign two children opposite positions with required quotations and let a third read both; do not let one advocate be the only voice the reviewer hears."
+   },
+   {
+    "id": "L3-11",
+    "claim": "A judge that is cold (no reference) agrees with experts mainly on questions it could answer itself; a reference written by a human, or a model reference that has been checked, fixes this, while a reference written by the judge itself does not help, and a wrong reference is worse than none.",
+    "mechanism": "Without a trusted reference the judge grades against its own belief, so it fails exactly where it is wrong. Reference correctness matters more than who wrote it; a model's own unverified reference repeats its own error.",
+    "source_title": "No Free Labels: Limitations of LLM-as-a-Judge Without Human Grounding",
+    "authors_or_org": "Krumdick, Lovering, Reddy, Ebner, Tanner",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2503.05061",
+    "where_in_source": "Table 4 (pairwise and single grading by reference type and judge's own correctness), Table 3 (reference type), Section 6; the swapped-reference counterpart is Lee et al. 2026, arXiv 2601.07506",
+    "number": "Pairwise Cohen's kappa with experts when the judge had answered the question incorrectly itself: GPT-4o no reference 0.30, own reference 0.16, human reference 0.83; Llama 3.3 70B 0.39 / 0.35 / 0.92; Phi 4 minus 0.08 / minus 0.08 / 0.75. When it had answered correctly: GPT-4o 0.78 / 0.86 / 0.92. Reference type on questions GPT-4o answers correctly: human 0.69, verified GPT-4o reference 0.61, unrelated reference 0.50, none 0.46, wrong reference 0.21.",
+    "conditions": "Business and finance long-form answers (160 questions by professionals) plus a subset of MT-Bench; about 1,036 single and 604 pairwise examples; pairwise pairs always one correct, one incorrect (good for comparing judges, not absolute accuracy); judges GPT-4o, Llama 3.3 70B, Phi 4, Qwen 2.5 7B, Yi 1.5 34B. The follow-up (Lee et al. 2026) reports that when a gold reference conflicts with the judge's own belief, grading degrades sharply and prompt fixes did not cure it (abstract only; no numbers seen).",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D10"
+    ],
+    "for_design": "Give a reviewer an externally verified reference or source passage for each claim it checks; a reviewer fed a summary written by the same model line gives no more than a cold read."
+   },
+   {
+    "id": "L3-12",
+    "claim": "Long inputs reduce how well models use the information in them: accuracy was highest when the relevant passage was first or last, and with the passage in the middle of 20 documents a model scored below its closed-book (no documents) result.",
+    "mechanism": "U-shaped use of position (primacy and recency); extended-context models did no better at using the middle. The source does not give a mechanism beyond position.",
+    "source_title": "Lost in the Middle: How Language Models Use Long Contexts",
+    "authors_or_org": "Liu, Lin, Hewitt, Paranjape, Bevilacqua, Petroni, Liang",
+    "year": "2023",
+    "url": "https://arxiv.org/abs/2307.03172",
+    "where_in_source": "Figure 1, Table 1 (Section 2.3), Table 6 (Appendix G.2); read through ar5iv.labs.arxiv.org/html/2307.03172",
+    "number": "GPT-3.5-Turbo, 20 documents: answer in first position 75.8 percent, middle (index 9) 53.8 percent, last 63.2 percent; closed-book 56.1 percent. Claude-1.3: 59.9 / 56.8 / 60.1 vs closed-book 48.3. Longer-context versions (Claude-1.3 100K, GPT-3.5 16K) had the same shape.",
+    "conditions": "2023 models; multi-document question answering and key-value retrieval, not judging or review; newer models may differ and I did not check them. Evidence on judges specifically is secondary: search snippets say judge accuracy on faithfulness falls with context length (ContextualJudgeBench) but I did not open that paper.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D10"
+    ],
+    "for_design": "Keep the knowledge placed in a reviewer's context short and ordered with the items to check first and last; a longer pack is not safely a better pack."
+   },
+   {
+    "id": "L3-13",
+    "claim": "Plain language models asked for sources invent most of the papers they cite, and search or retrieval cuts this sharply; yet agents built for deep research still produced links that never existed, and more of them when they cited more.",
+    "mechanism": "Without retrieval the model writes plausible titles; with retrieval, errors move to the cited passage not supporting the sentence or the link being made up. Retrieval-grounded systems do better because each citation points to a retrieved passage.",
+    "source_title": "OpenScholar (arXiv 2411.14199) and Detecting and Correcting Reference Hallucinations in Commercial LLMs and Deep Research Agents (arXiv 2604.03173)",
+    "authors_or_org": "Asai et al. (Univ. of Washington, Ai2 and others) and Rao, Wong, Callison-Burch (Univ. of Pennsylvania)",
+    "year": "2024 and 2026",
+    "url": "https://arxiv.org/abs/2604.03173",
+    "where_in_source": "OpenScholar: Table 2 (Cite-F1) and Table 3 (Section 4.2). Rao et al.: DRBench and ExpertQA results, Section on hallucinated vs non-resolving URLs, urlhealth tool",
+    "number": "OpenScholar paper, GPT-4o with no retrieval: 4.52 of 5.74 cited papers fabricated on computer science (78.7 percent) and 4.97 of 5.24 on biomedicine (94.8 percent); Cite-F1 0.1 to 0.2 vs OpenScholar-8B 47.9 (CS), PaperQA2 48.0 (CS), 56.7 (bio). Rao et al.: hallucinated URLs 3.0 to 13.3 percent across 10 systems; pooled 10.7 percent for deep research agents vs 4.8 percent for search-augmented models; one deep research agent averaged 113.1 URLs per query. Giving the agent a URL-checking tool cut non-resolving links 6 to 79 times to under 1 percent.",
+    "conditions": "Rao et al. measure only whether a link resolves (hallucinated means no archive record), not whether the page supports the claim, and exclude invented quotes; they tested products from three vendors on 100 multilingual queries and 2,177 expert questions. OpenScholar is scored with citation F1 judged partly by a model; the abstract says citation accuracy matches experts but the text I read gave no human number. The OpenScholar paper's 78 to 90 percent in the abstract and 78.7 and 94.8 in the table differ. STORM (arXiv 2402.14207, Section 5.1, Table 4) reports citation recall 84.83 and precision 85.18 percent judged by a 7B model, about 15 percent of sentences unsupported, mostly over-inference, with no baseline figures.",
+    "evidence_kind": "benchmark",
+    "bears_on": [
+     "D10"
+    ],
+    "for_design": "Make every child's report carry a verbatim quote and a checked link for each citation, and have a cheap non-model step confirm the link resolves and the quote is on the page before the coordinator reads it."
+   },
+   {
+    "id": "L3-14",
+    "claim": "Splitting the agent that reads untrusted text from the agent that acts (CaMeL, with a quarantined reader that has no tools and a planner that never sees tool outputs) removed all successful injections on a standard benchmark for several models, at a cost in tasks solved and about 2.8 times the tokens. Defences that only detect or filter were bypassed by adaptive attackers.",
+    "mechanism": "CaMeL has the privileged model write a program from the trusted user request only; a quarantined model parses untrusted data into a fixed form and cannot call tools; an interpreter tracks where each value came from and checks a policy before each tool call. Detection defences fail because an attacker who sees the defence tunes against it.",
+    "source_title": "Defeating Prompt Injections by Design (CaMeL); with The Attacker Moves Second: Stronger Adaptive Attacks Bypass Defenses Against LLM Jailbreaks and Prompt Injections",
+    "authors_or_org": "Debenedetti, Shumailov, Fan, Hayes, Carlini, Fabian, Kern, Shi, Terzis, Tramèr; and Nasr and 13 coauthors including Carlini and Tramèr",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2503.18813",
+    "where_in_source": "CaMeL: Abstract, Section 5 (design), Section 6.1 to 6.2 (Figures 8, 9, 11), Section 6.5 (Figure 13), Sections 7 and 9 (limits). Adaptive attacks: arXiv 2510.09023 abstract",
+    "number": "CaMeL solves 77 percent of AgentDojo tasks with provable security vs 84 percent undefended. Across 949 attacks: Gemini 2.5 Pro 300 successful attacks without it, 0 with it; GPT-4o-mini 276 to 0; on Claude 3.5 Sonnet CaMeL 0 vs 8 for the next-best defence (tool filter). Median task cost 2.82 times input tokens and 2.73 times output tokens (spotlighting 1.06 and 0.98). Adaptive attacks reached above 90 percent success on most of 12 recent defences that had reported near-zero.",
+    "conditions": "AgentDojo has 97 tasks and 629 security cases for email, banking, travel and workspace tools, not open-web research; residual attacks remain (data that becomes control flow, a side channel leaking one bit); users must write security policies; utility falls most on travel tasks; the second paper is an abstract-level read with no per-defence numbers seen. A catalogue of six patterns (action-selector, plan-then-execute, map-reduce, dual-LLM, code-then-execute, context-minimisation) is in arXiv 2506.08837 with no measured results.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D11"
+    ],
+    "for_design": "Let the children that read web pages hold no write tools and no memory access; they return a fixed-format result (quotes, links, claims) that a separate tool-holding step reads as data, and never let web text change what the coordinator does next."
+   },
+   {
+    "id": "L3-15",
+    "claim": "Instructions planted in web-page text redirected a large share of current agents: about one in four attacks succeeded on average across six models, with the rate depending a great deal on the model, on how the injected item looked, and on light tailoring to the task. No defence was tested.",
+    "mechanism": "The agent reads page text as part of its task; a button or link that looks like the next step and wording that refers to the user's task make the agent act. Persuasion framings (social proof, consistency) and adversarial suffixes appeared most among successful attacks.",
+    "source_title": "It's a TRAP! Task-Redirecting Agent Persuasion Benchmark for Web Agents",
+    "authors_or_org": "Korgul, Yang, Drohomirecki, Błaszczyk, Howard, Aichberger, Russell, Torr, Mahdi, Bibi",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2512.23128",
+    "where_in_source": "Section 4.1 and Table 1 (main), Table 2 (transfer), Table 4 (button vs link), Table 6 (tailoring), Limitations",
+    "number": "Attack success (95 percent interval): GPT-5 13 (plus or minus 2.6); Claude Sonnet 3.7 20; Gemini 2.5 Flash 30; GPT-OSS-120B 27; DeepSeek-R1 43 (plus or minus 3.9); LLaMA 4 Maverick 17 (benign task success only 22 percent); overall about 25 percent (948 of 3,780 runs). Buttons caused 77.5 percent of successful attacks; one model went from 6 percent (link) to 46 percent (button). Light tailoring raised calendar-site success from 3.3 to 18.6 percent. Attacks that worked on GPT-5 transferred at an average 82.5 percent.",
+    "conditions": "Six cloned sites (shopping, mail, calendar, jobs, food, freelance), 18 tasks, 35 templates, a single click on an injected control as the success test, step limit 35, one run per combination; browsing tasks, not document research; no defence proposed or tested. Related results seen only as abstracts or summaries: WASP (arXiv 2504.18575) reports partial hijack of agents in up to 86 percent of cases while agents often failed to finish the attacker's goal; AgentDojo (arXiv 2406.13352) numbers are in notes.",
+    "evidence_kind": "benchmark",
+    "bears_on": [
+     "D11"
+    ],
+    "for_design": "Assume any page a child reads can steer it; budget the steering rate per source type, and treat what a child pulls from low-trust pages as untrusted data in the coordinator's step."
+   }
+  ],
+  "searched_not_found": [
+   "A study that gives an agent a quiz on its own context (or on a knowledge pack) and shows the quiz score predicts the quality of the agent's next task. Searched for comprehension or context-use signals; found only related work (generating questions from a corpus and measuring accuracy with and without it, arXiv 2502.13691; a black-box predictor from follow-up queries, arXiv 2501.01558; a self-explain-then-quiz proxy) none of which I opened or which tests this claim directly.",
+   "A study measuring whether selected, checked knowledge in a reviewer's context improves its review of a piece of research work versus a cold review, beyond the reference-answer results in No Free Labels (an answer-checking task, not research review).",
+   "A measured test of the dual-model or quarantined-reader design on deep research or multi-step web research agents; CaMeL and AgentDojo are on tool-use tasks (email, banking, travel), TRAP and WASP on browsing sites.",
+   "A clean measurement of long context harming an LLM judge. Search snippets point to ContextualJudgeBench (faithfulness accuracy falls with context length), Judge-R1 and LongJudgeBench, but I did not open them and give no number.",
+   "A compute-matched comparison for the voting claim in 'More Agents Is All You Need': that paper states no equal-cost test (see notes).",
+   "Hidden-authorship test inside a multi-agent research pipeline (agents reading each other's anonymised output): found only the summarisation and QA judge studies above."
+  ],
+  "notes": "Opened and read (abstract only unless stated): Sharma et al. 'Towards Understanding Sycophancy in Language Models' (arXiv 2310.13548): five assistants show sycophancy on four tasks and preference data rewards agreeing with the user, abstract gives no rates. 'Should we be going MAD?' (arXiv 2311.17371, read in full via HTML): debate protocols did not reliably beat self-consistency; Table 2 (GPT-3.5, MedQA etc.) e.g. MedQA best scores Society of Mind 0.64, Self-Consistency 0.60, Single Agent 0.60, Medprompt 0.65; agreement tuning ('agree X percent of the time') gave about 15 percent gain for Multi-Persona and about 5 percent for Society of Mind on a 376-question subset, direction differs by dataset. 'Rethinking the Bounds of LLM Reasoning' (arXiv 2402.18272, Tables 2 and 3, read): ChatGPT-3.5 with demonstrations, single agent 75.63 average vs debate 73.88 and CMD 74.46; without demonstrations CMD 70.75 vs single 67.41; the paper's most common discussion error is propagation of a wrong answer. 'More Agents Is All You Need' (arXiv 2402.05120, Table 2, read): sampling and voting 40 times raised GSM8K from 0.35 to 0.59 (Llama2-13B) and 0.73 to 0.85 (GPT-3.5-Turbo), MATH 0.29 to 0.39; the paper has no equal-cost comparison with one larger model and reports gains rise then fall with task difficulty. 'Are More LLM Calls All You Need?' (arXiv 2403.02419): more calls help easy queries and hurt hard ones so accuracy can rise then fall; abstract only, no numbers. 'Large Language Models Cannot Self-Correct Reasoning Yet' (arXiv 2310.01798, via ar5iv): after intrinsic self-correction GPT-3.5 CommonsenseQA fell from 75.8 to 41.8, GPT-4 GSM8K from 95.5 to 89.0; debate vs self-consistency at equal responses on GSM8K with GPT-3.5: 83.0 vs 88.2 at 9 responses (Table 7); the oracle-label gains are not real self-correction. Xu et al. 'Pride and Prejudice: LLM Amplifies Self-Bias in Self-Refinement' (arXiv 2402.11436): self-refine amplifies the model's preference for its own output; larger models and accurate external feedback reduced it; abstract only. PaperQA2 (arXiv 2409.13740, abstract only): reports matching or exceeding expert performance on three literature tasks and 70 percent of flagged contradictions validated by experts; no citation or hallucination rate found. AgentDojo (arXiv 2406.13352, HTML v3) GPT-4o, important-message attack: no defence 57.69 percent attack success and 69.0 percent benign utility (Table 5); tool filter 6.84 percent and 73.13 percent; spotlighting 41.65 and 72.66; repeating the user prompt 27.82 and 85.53; an injection detector 7.95 percent but benign utility only 41.49; the paper's own tables disagree with each other on several of these (for example 47.69 vs 57.7 percent baseline). The 2026 Peacemaker or Troublemaker paper (arXiv 2509.23055) found decentralized 2-agent debates mostly at or below the single-agent baseline (MMLU-Pro Qwen3-32B 66.46 single vs 66.60 debate) while debates with a judge reached 71 to 72 and best persona mixes paired agreeable and contrary roles; sycophancy rose in later rounds; two model families only. 'Too Polite to Disagree' (arXiv 2604.02668): telling agents how sycophantic each peer is raised majority accuracy by an absolute 10.5 percent on MMLU with six small models, with mixed ablations; I read it in full but it is small-scale. Du et al. 'Improving Factuality and Reasoning through Multiagent Debate' (2023) and the original MoA paper were not read in full; MoA numbers (AlpacaEval 2.0 LC win rate 65.1 vs GPT-4o 57.5) come from the MoA table I did read. No page I fetched contained text addressed to me as an instruction. Several of the listed papers carry 2026 dates and are preprints I could open; the AgentDojo and OpenScholar papers have internal number mismatches noted in the findings. Findings L3-13 and L3-14 each combine two linked sources, with the second named in 'where_in_source'; the URL field gives the primary one.\""
+ }
+}

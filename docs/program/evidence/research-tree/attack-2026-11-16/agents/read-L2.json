@@ -1,0 +1,309 @@
+{
+ "label": "read:L2",
+ "tools_used": [
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+  "StructuredOutput"
+ ],
+ "result": {
+  "findings": [
+   {
+    "id": "L2-01",
+    "claim": "Anthropic reports that a lead agent with parallel subagents beat a single agent by a wide margin on its internal research eval, but at a much higher token bill. Token spend itself explained most of the quality difference.",
+    "mechanism": "More tokens means more searching and reasoning. The multi-agent system mostly buys extra token capacity spread over separate context windows.",
+    "source_title": "How we built our multi-agent research system",
+    "authors_or_org": "Anthropic engineering",
+    "year": "2025",
+    "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "where_in_source": "Section 'Benefits of a multi-agent system'",
+    "number": "Lead Opus 4 with Sonnet 4 subagents beat single-agent Opus 4 by 90.2% on the internal research eval. Agents use about 4x the tokens of chat and multi-agent about 15x. On BrowseComp, token usage alone explained 80% of the variance (about 95% with tool calls and model choice). Upgrading the model from Sonnet 3.7 to Sonnet 4 gave more than doubling the Sonnet 3.7 token budget.",
+    "conditions": "Internal eval of roughly 20 initial queries (breadth-first research), LLM-judged. The single-agent baseline was not given a matched token budget in the post. The 80% figure is from BrowseComp.",
+    "evidence_kind": "vendor_engineering_report",
+    "bears_on": [
+     "D6",
+     "D12"
+    ],
+    "for_design": "Treat the tree's token cost as roughly an order of magnitude above a chat turn and only spend it where the value of the answer pays for it; do not credit the tree structure for gains that extra tokens or a better model would also give."
+   },
+   {
+    "id": "L2-02",
+    "claim": "Anthropic says multi-agent only pays on heavily parallel, breadth-first work that exceeds one context window, and fits poorly where agents share context or depend on each other (most coding). Early versions over-spawned, so effort rules were written into the lead's prompt.",
+    "mechanism": "The lead cannot judge effort from the query alone, so it over-spends on simple questions. Parallel subagents cannot see each other's work, so dependent work conflicts.",
+    "source_title": "How we built our multi-agent research system",
+    "authors_or_org": "Anthropic engineering",
+    "year": "2025",
+    "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "where_in_source": "Sections 'Benefits of a multi-agent system', 'Prompt engineering and evaluations for research agents', 'Architecture overview', Appendix on context handoffs",
+    "number": "Effort rules: simple fact-finding 1 agent with 3-10 tool calls; direct comparisons 2-4 subagents with 10-15 calls each; complex research more than 10 subagents. The lead runs 3-5 subagents in parallel and each uses 3+ tools in parallel, cutting research time by up to 90%. Early failure: spawning 50 subagents for simple queries. The lead saves its plan to memory because context past 200,000 tokens is truncated, and fresh subagents with clean context are spawned at handoff.",
+    "conditions": "Research tasks, one vendor's system. Execution is synchronous: the lead waits for each batch, which the post calls a bottleneck and names asynchrony as future work. No numeric ablation of the width rules.",
+    "evidence_kind": "vendor_engineering_report",
+    "bears_on": [
+     "D6",
+     "D7",
+     "D8"
+    ],
+    "for_design": "Write explicit effort and width limits (how many helpers, how many tool calls per question type) into the coordinator's instructions, keep the plan in an external file so a context restart cannot lose it, and keep parallel width to a handful per batch."
+   },
+   {
+    "id": "L2-03",
+    "claim": "In a controlled study at matched reasoning-token budgets, every multi-agent architecture cost far more turns than a single agent, and the cost per successful result rose steeply. Errors were amplified most where agents worked independently with no central check, and least with a central coordinator.",
+    "mechanism": "Coordination consumes turns and tokens that the single agent spends on the task. Independent agents pass on and compound each other's errors unless something verifies them.",
+    "source_title": "Towards a Science of Scaling Agent Systems",
+    "authors_or_org": "Yubin Kim et al. (20 authors; Google-affiliated and academic)",
+    "year": "2025 (v3 revised 2026)",
+    "url": "https://arxiv.org/abs/2512.08296",
+    "where_in_source": "Table 5 and Section 4.3 (HTML version, https://arxiv.org/html/2512.08296)",
+    "number": "Turns vs single agent (7.2): independent 11.4 (+58%), decentralized 26.1 (+263%), centralized 27.7 (+285%), hybrid 44.3 (+515%). Success per 1K tokens: single 67.7, independent 42.4, decentralized 23.9, centralized 21.5, hybrid 13.6. Error amplification: independent 17.2, decentralized 7.8, hybrid 5.1, centralized 4.4 (single = 1.0). Turn counts grow roughly as agents^1.7 in the paper's fit (this exponent came from a search summary of an earlier version, not seen by me in the source).",
+    "conditions": "Five architectures (single, independent, centralized, decentralized, hybrid), 1 to 4 agents, six agentic benchmarks, three LLM families, total reasoning tokens matched (mean 4,800 per trial). The v1 abstract reported 180 configurations; the revised v3 abstract reports 260.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D6",
+     "D8",
+     "D12"
+    ],
+    "for_design": "Keep a central verifier or coordinator over the children instead of letting them cross-talk, and keep the team small, because overhead grows faster than agent count while success per token falls."
+   },
+   {
+    "id": "L2-04",
+    "claim": "Whether a team helps depends on the task: it gave large gains on decomposable work, large losses on strictly sequential work, and little once the single agent was already good.",
+    "mechanism": "Parallel decomposition pays when subtasks are independent. Sequential reasoning loses fidelity at every hand-off, and a strong single agent leaves little headroom to buy back.",
+    "source_title": "Towards a Science of Scaling Agent Systems",
+    "authors_or_org": "Yubin Kim et al.",
+    "year": "2025 (v3 revised 2026)",
+    "url": "https://arxiv.org/abs/2512.08296",
+    "where_in_source": "Section 4.2 and Figure 2 caption; Section 1 and Table 4 (baseline paradox); Section 4.3 (tool-coordination term)",
+    "number": "Finance-Agent (parallelizable), single agent 0.349: centralized +80.8%, decentralized +74.5%, hybrid +73.1%. PlanCraft (sequential), single agent 0.568: centralized -50.3%, decentralized -41.5%, hybrid -39.1%, independent -70.0%. Gains fade once the single-agent score exceeds about 45% (interaction coefficient -0.236, p = 0.004). A tool-count by coordination-cost term is negative (-0.096, p = 0.002).",
+    "conditions": "Same setup as L2-03. The predictive model's cross-validated R2 is only 0.373 to 0.413, and the 45% threshold is a fitted boundary, not a law.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D6",
+     "D8",
+     "D12"
+    ],
+    "for_design": "Send a research field to a child session only when its sub-questions are independent and the single-agent baseline for that field is weak; keep sequential, tool-heavy chains inside one agent."
+   },
+   {
+    "id": "L2-05",
+    "claim": "Across code, math, finance and other tasks, multi-agent systems cost several times the tokens of a single agent for small accuracy gains that shrink as the base model improves. Routing each request to a single agent first and escalating to the team only when needed kept most of the gain at lower cost.",
+    "mechanism": "With a stronger base model the single agent already solves most cases (about 80% of examples were ties). Extra inter-agent messages add cost, and the paper notes they sometimes hurt ('overthinking').",
+    "source_title": "Single-agent or Multi-agent Systems? Why Not Both?",
+    "authors_or_org": "Mingyan Gao et al., University of Illinois Urbana-Champaign",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2505.18286",
+    "where_in_source": "Table 2 and Table 3 (Section 3.2), Table 4 and Section 4.2 (cascade), Figure 2 (ties)",
+    "number": "Gemini-2.0-Flash single to multi accuracy: HumanEval 90.2 to 93.2, MBPP 79.6 to 80.8, GSM8K 93.8 to 94.6; against +10.7, +16.0, +9 points with the older ChatGPT base. Multi/single token ratios: prefill 1.2x to 220x, decode 2.1x to 21.6x depending on dataset (AIME 220x prefill, GSM8K 35x). Cascade on GSM8K: 94.8% at 1,056 tokens versus multi-agent 93.6% at 8,837. Cascade on AIME: 38.3% at 64,879 tokens versus 81,159.",
+    "conditions": "15 datasets, 9 frameworks, mostly Gemini-2.0-Flash with some other models. The cascade accuracy is an upper bound that assumes a perfect cheap verifier (App. B.4). Cost is a token proxy; no dollar cost. The abstract's 'up to 20%' and the body's 'up to 88%' refer to different cases.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D6",
+     "D12"
+    ],
+    "for_design": "Make the child session start as a single agent and escalate to helpers only when the field proves broad, and re-check the case for the tree each time the underlying model gets stronger."
+   },
+   {
+    "id": "L2-06",
+    "claim": "When the reasoning-token budget is held equal, one agent matched or beat every multi-agent layout tested on multi-hop question answering.",
+    "mechanism": "Splitting the budget across agents means each has less thinking room and information is lost in the messages between them (the authors argue this with the data-processing inequality). Multi-agent only caught up when the single agent's use of its context was artificially degraded.",
+    "source_title": "Single-Agent LLMs Outperform Multi-Agent Systems on Multi-Hop Reasoning Under Equal Thinking Token Budgets",
+    "authors_or_org": "Dat Tran, Douwe Kiela (Stanford)",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2604.02460",
+    "where_in_source": "Table 1 and Section 5.1; Figure 3 and Section 5.3 (degradation); Section 4.2 (budget artifact)",
+    "number": "At 1,000 thinking tokens, averaged over four models and two benchmarks: single 0.418; sequential multi-agent 0.379, debate 0.388, parallel-roles 0.381, subtask-parallel 0.369, ensemble 0.333.",
+    "conditions": "FRAMES and MuSiQue 4-hop, Qwen3-30B-A3B, DeepSeek-R1-Distill-70B, Gemini-2.5-Flash and Pro, budgets 100 to 10,000 thinking tokens, five architectures, LLM judge. Only thinking tokens are matched. The authors report that Gemini budget accounting is an artifact that can flatter multi-agent. Single preprint, reasoning questions, not tool-using agents.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D12",
+     "D6"
+    ],
+    "for_design": "Do not assume the tree beats one long run at the same budget for reasoning-style questions; compare against a single session given the tree's whole token budget before keeping a layer."
+   },
+   {
+    "id": "L2-07",
+    "claim": "A coordinator that keeps a task ledger (facts, guesses, plan) and a per-step progress ledger with a stall counter performed much better than a coordinator without ledgers. Removing any single worker also cost 21% to 39%.",
+    "mechanism": "The progress ledger asks five questions each step (done? looping? progress? who next? what instruction?). A stall counter above a threshold sends the coordinator back to rewrite the facts and plan, and the workers' contexts are reset after each plan update.",
+    "source_title": "Magentic-One: A Generalist Multi-Agent System for Solving Complex Tasks",
+    "authors_or_org": "Microsoft Research (Adam Fourney et al.)",
+    "year": "2024",
+    "url": "https://arxiv.org/abs/2411.04468",
+    "where_in_source": "Section 4.1 and Figure 2 (design); Section 5.3 and Figure 3 (ablation); Section 5.4 (errors)",
+    "number": "Replacing the ledger coordinator with a plain group-chat coordinator lowered GAIA validation performance by 31%. Removing a worker lowered it by 21% (Coder, Terminal) to 39% (File Surfer). Stall threshold was 2. The most frequent errors were repeating unproductive actions and declaring completion without enough verification.",
+    "conditions": "GAIA validation subset, GPT-4o. Main test-set scores were statistically competitive with the best systems at the time on GAIA and AssistantBench but below the best on WebArena (32.8% vs 57.1%). The ablation compares a ledger coordinator with a group-chat one, so it bundles ledgers with other coordination differences.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D8"
+    ],
+    "for_design": "Give the coordinating session an explicit written ledger (facts, plan, per-field status) and a rule that N rounds without progress forces a replan; the evidence is the one measured design for stall detection and it is cheap to copy."
+   },
+   {
+    "id": "L2-08",
+    "claim": "Cursor found that hundreds of agents with equal status coordinating through a shared locked file performed far below their number. A planner, worker and judge hierarchy with fresh restarts each cycle fixed most of it.",
+    "mechanism": "Locks were held too long or never released, so agents waited on each other. Without an owner of the overall goal, agents drifted to small safe changes. An integrator role for merging became a new bottleneck.",
+    "source_title": "Scaling long-running autonomous coding",
+    "authors_or_org": "Cursor",
+    "year": "2026",
+    "url": "https://cursor.com/blog/scaling-agents",
+    "where_in_source": "Sections 'Learning to coordinate' and 'Planners and workers'",
+    "number": "Locking: twenty agents ran at the throughput of two or three. Planners may spawn sub-planners; workers do not talk to each other; a judge decides whether to continue and the next cycle starts fresh. The integrator was removed. No throughput numbers for the final design.",
+    "conditions": "Long-running autonomous coding, with outcomes (a browser from scratch in about a week, over 1 million lines) reported without a controlled comparison. Self-reported; the authors say it is 'nowhere near optimal' and that periodic fresh starts are still needed against drift. Model choice mattered (they preferred GPT-5.2 for planning and long runs).",
+    "evidence_kind": "vendor_engineering_report",
+    "bears_on": [
+     "D8",
+     "D7"
+    ],
+    "for_design": "Use a tree, not peers: children own a field and do not coordinate laterally, the coordinator only plans and judges, and each cycle restarts from the written plan instead of from a long-running context. Avoid a central merge step that every result must pass through."
+   },
+   {
+    "id": "L2-09",
+    "claim": "On a benchmark of paired coding tasks, two agents working on the same codebase succeeded about 30% less often than one agent doing both tasks, even with messaging between them.",
+    "mechanism": "The authors name three causes: unclear or badly timed messages, broken commitments, and wrong guesses about the partner's plan.",
+    "source_title": "CooperBench: Why Coding Agents Cannot be Your Teammates Yet",
+    "authors_or_org": "Stanford and SAP Labs researchers",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2601.13295",
+    "where_in_source": "Abstract (headline number); the per-model rates and the 2-to-4-agent decline come from secondary pages and I did not see them in the paper",
+    "number": "About 30% lower average success for two cooperating agents than for one agent doing both tasks; over 600 tasks in 12 libraries and 4 languages.",
+    "conditions": "Concurrent edits to shared code, which is harsher than research fields that write separate notes. The abstract gives no per-model breakdown.",
+    "evidence_kind": "benchmark",
+    "bears_on": [
+     "D8",
+     "D12"
+    ],
+    "for_design": "Give each child a disjoint output (its own section or file) and let only one session merge; do not have children edit shared artifacts concurrently."
+   },
+   {
+    "id": "L2-10",
+    "claim": "Cognition revised its 2025 position: multi-agent setups now work in a narrow form, where extra agents add judgment but writes stay single-threaded. Managers that delegate to child agents failed in specific ways.",
+    "mechanism": "A reviewer with no shared context avoids the writer's accumulated context rot and finds more. Managers over-prescribed without codebase knowledge, assumed children shared their state, and children did not report back by default.",
+    "source_title": "Multi-Agents: What's Actually Working (follow-up to 'Don't Build Multi-Agents', 2025)",
+    "authors_or_org": "Walden Yan, Cognition",
+    "year": "2026",
+    "url": "https://cognition.com/blog/multi-agents-working",
+    "where_in_source": "Sections on the code-review loop, 'Smart Friend', and 'Looking Ahead: Higher-Level Delegation'",
+    "number": "Devin Review finds on average 2 bugs per PR, about 58% severe (Cognition's own product data). No cost or latency numbers for the other patterns. The original essay gives principles only (share full traces; actions carry implicit decisions) and no numbers.",
+    "conditions": "Opinion and product experience, not a controlled test. It also notes a limit: a small primary model could not tell when to escalate.",
+    "evidence_kind": "practitioner_argument",
+    "bears_on": [
+     "D8",
+     "D7",
+     "D12"
+    ],
+    "for_design": "Brief each child with the full goal and decisions so far, require every child to return a written report as a mandatory step, and use fresh-context reviewers for checking rather than for writing."
+   },
+   {
+    "id": "L2-11",
+    "claim": "Models use information at the start and end of a long input better than information in the middle, and the middle can be worse than giving no document at all.",
+    "mechanism": "Position bias in how attention and training data treat long inputs; the authors infer that models do not reliably use all of a long context.",
+    "source_title": "Lost in the Middle: How Language Models Use Long Contexts",
+    "authors_or_org": "Nelson F. Liu et al.",
+    "year": "2023",
+    "url": "https://arxiv.org/abs/2307.03172",
+    "where_in_source": "Section 2.3, Figure 5, Table 1; Appendix G.2 Table 6",
+    "number": "20-document QA: GPT-3.5-Turbo 75.8% with the answer first versus 53.8% with it in the middle (gap 22.0 points), below its 56.1% closed-book score. Claude-1.3 gap only 4.2 points (60.1 vs 55.9). LongChat-13B gap 16.1 points.",
+    "conditions": "2023-era models (GPT-3.5, Claude-1.3, MPT-30B, LongChat), multi-document QA and key-value retrieval. Current models are likely less affected, though later work (L2-12) still finds degradation with length.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D7"
+    ],
+    "for_design": "Place the plan, rules and the question at the start or end of the coordinator's context and do not rely on facts buried in the middle of a long history; reload them from the ledger file each cycle."
+   },
+   {
+    "id": "L2-12",
+    "claim": "Across 18 recent models, accuracy fell as input got longer even on simple tasks, and distractors, lower relevance and a smaller amount of focused input mattered a great deal.",
+    "mechanism": "The effect depends on how information is presented, not only on whether it is present; ambiguity and distractors make long inputs worse, and some models abstain or hallucinate.",
+    "source_title": "Context Rot: How Increasing Input Tokens Impacts LLM Performance",
+    "authors_or_org": "Chroma",
+    "year": "2025",
+    "url": "https://www.trychroma.com/research/context-rot",
+    "where_in_source": "Sections on needle-in-a-haystack extensions, LongMemEval and repeated words",
+    "number": "LongMemEval: 306 prompts, about 113k tokens in full form versus about 300 tokens in focused form; every model family scored higher on the focused form. Even one added distractor lowered scores, and four lowered them more. No single headline percentage is given in the text I read.",
+    "conditions": "18 models including GPT-4.1, Claude 4, Gemini 2.5, Qwen3; synthetic and chat-memory tasks; a vendor technical report, not peer reviewed. Shuffled haystacks scored better than coherent ones.",
+    "evidence_kind": "benchmark",
+    "bears_on": [
+     "D7"
+    ],
+    "for_design": "Keep the coordinator's context small and focused (distilled child reports, not transcripts), because a long mixed history lowers its accuracy even when the needed fact is present."
+   },
+   {
+    "id": "L2-13",
+    "claim": "For a long-running coding agent, simply hiding old tool observations halved cost and matched LLM summarization in solve rate; summarization made runs longer. A hybrid of the two cost a bit less than either.",
+    "mechanism": "Summaries smooth over the failure signals that tell the agent to stop, so trajectories run about 13% to 15% longer, and the summary calls themselves cost 3% to 7% of the total.",
+    "source_title": "The Complexity Trap: Simple Observation Masking Is as Efficient as LLM Summarization for Agent Context Management",
+    "authors_or_org": "JetBrains Research",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2508.21433",
+    "where_in_source": "Table 1, Table 2, Section 4.4, Section 5.3",
+    "number": "Qwen3-Coder 480B: raw 53.4% at $1.29 per instance; masking 54.8% at $0.61; summary 53.8% at $0.64. Across the five model settings masking cost 10% to 57% less than raw. Summary raised mean length by about 15% (Gemini 2.5 Flash, 52 vs 44 turns with masking). Hybrid: 7% cheaper than masking and 11% cheaper than summary. Results flipped for Gemini 2.5 Flash with thinking (summary 31.4% vs raw 40.4%).",
+    "conditions": "SWE-agent on SWE-bench Verified (500 instances), up to 250 turns, five model settings; window sizes tuned for this scaffold (a window of 10 did poorly in OpenHands until retuned to 58). Not a research-orchestration task.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D7",
+     "D6"
+    ],
+    "for_design": "Prefer clearing old tool output and re-reading from the plan file over repeated model-written summaries of the coordinator's own history, and test any compaction rule on a few runs before trusting it."
+   },
+   {
+    "id": "L2-14",
+    "claim": "An independent test of what summaries throw away found that user-given side constraints rarely survive compaction, and an agent then did a forbidden action in 30 of 100 sessions where it did none before compaction. Storing the constraints separately from the summary kept over 90%.",
+    "mechanism": "A compactor writes a summary of the task and drops constraints that are not part of the task content; the constraints are not re-read after the restart.",
+    "source_title": "Lost in Compaction: Evaluating Side-Constraint Loss under Context Compaction",
+    "authors_or_org": "Yichi Zhang, Yuchen Yang",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2608.11242",
+    "where_in_source": "Abstract (full paper not read)",
+    "number": "Compactors kept only 17% of injected side constraints on average; an email-deletion agent acted without approval in 30 of 100 post-compaction sessions versus none before; a separate constraint store reached over 90% retention without changing the compactor.",
+    "conditions": "Three scenarios (multi-turn chat, tool use, long-horizon research). Models and compactors are not named in the abstract, which is all I read. Preprint, one study.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D7"
+    ],
+    "for_design": "Keep rules, scope limits and prohibitions in a file the coordinator re-reads after every restart or hand-over, rather than inside a summary that a model rewrites."
+   },
+   {
+    "id": "L2-15",
+    "claim": "A vendor benchmark of three production compaction methods scored them 3.35 to 3.70 out of 5, and every one was worst at remembering which files had been touched.",
+    "mechanism": "General summaries compress away exact artifact names and states; the authors suggest a separate artifact index. Their best method kept an incremental structured summary (intent, file changes, decisions, next steps) and merged only the newly truncated span.",
+    "source_title": "Evaluating Context Compression for AI Agents",
+    "authors_or_org": "Factory (vendor)",
+    "year": "2025",
+    "url": "https://factory.com/news/evaluating-compression",
+    "where_in_source": "Per-dimension results table and compression-ratio section",
+    "number": "Overall (0-5, GPT-5.2 judge): Factory 3.70, Anthropic 3.44, OpenAI 3.35. Artifact trail scored 2.19 to 2.45 for all methods. Compression ratios 98.6% to 99.3%.",
+    "conditions": "36,611 messages from production coding sessions, four probe types per compression point, run by the vendor who sells the winning method, with an LLM judge. Treat as indicative only.",
+    "evidence_kind": "vendor_engineering_report",
+    "bears_on": [
+     "D7"
+    ],
+    "for_design": "Do not rely on prose summaries to carry the list of what each child has produced; keep that list as a table in the ledger and check it against the files."
+   },
+   {
+    "id": "L2-16",
+    "claim": "Compressing an agent's context can leave task completion unchanged while sharply increasing how much the agent must re-fetch, so completion rates alone hide the cost of hand-over.",
+    "mechanism": "When execution-relevant state is dropped, the agent re-acquires it with extra retrieval calls.",
+    "source_title": "What Does Context Compression Cost an Agent? Interaction Costs Unrevealed by Task-Completion Metrics",
+    "authors_or_org": "Shuyu Liu",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2608.16370",
+    "where_in_source": "Abstract (full paper not read)",
+    "number": "For GPT-5.5, completion went from 80% to 85% (p = 1.0) while retrieval calls rose from 21.0 to 63.9 (p = .002). Retrieval rose in all six model-by-regime comparisons. Replacing retained state with irrelevant content raised retrieval by 57%.",
+    "conditions": "A deterministic planning environment with a 24-turn limit, three models, two task regimes. In ALFWorld, no retrieval surge appeared, so the effect depends on the environment. Preprint.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D7",
+     "D6"
+    ],
+    "for_design": "Measure hand-over cost in tool calls and tokens after the restart, not only whether the child finishes; a cheap-looking summary can hide a large re-reading bill."
+   }
+  ],
+  "searched_not_found": [
+   "No published study found that isolates hierarchy depth (orchestrator of orchestrators, more than two levels). Context-Folding is described as strictly two-level, and Cursor's planner-spawns-sub-planner design has no depth ablation.",
+   "No controlled study found that compares one long-context orchestrator against split fresh-context orchestrators on tokens and quality for research tasks; the closest evidence is vendor reports and the compaction papers above.",
+   "No equal-token-budget single-versus-team comparison on tool-using research agents found; the equal-budget papers (L2-03, L2-06) use matched reasoning tokens on reasoning or mixed benchmarks.",
+   "No measured study found of stall-detection thresholds beyond Magentic-One's threshold of 2 (no sweep reported) and Cursor's judge-and-restart cycle (no numbers).",
+   "The Context-Folding paper (https://arxiv.org/abs/2510.11967) reports an active context about 10 times smaller than ReAct baselines at matched or better performance, but I could not read per-benchmark numbers, so it is not a finding. The Anthropic context-management post (https://claude.com/blog/context-management) reports 39% (memory plus context editing) and 29% (context editing) gains and 84% fewer tokens on a 100-turn web search eval with Claude Sonnet 4.5; it is an internal vendor eval and I left it out of the list.",
+   "The 'Lost in Compaction' memory paper on a Hugging Face forum (recall 0 to 7% in the compacted zone) is a single unreviewed forum post that I did not open; not used."
+  ],
+  "notes": "Leads verified: all the starting points exist and say roughly what their titles suggest. Details: (1) Anthropic's multi-agent post is real; its 90.2% is on an internal eval, and I saw the 15x, 4x and 80% variance figures in the text. (2) Cognition's 'Don't Build Multi-Agents' lives at cognition.com (the cognition.ai address redirects) and has no benchmark numbers; it argues two principles and says Claude Code subagents as of June 2025 only answered well-defined questions. It also proposes a fine-tuned small model to compress history, called hard to get right. (3) 'Towards a Science of Scaling Agent Systems' is arXiv 2512.08296; versions differ (180 configurations in an early version per a search summary, 260 in the current abstract), and the numbers above come from the current HTML version, whose last 90,000 characters I did not read. (4) Magentic-One: the HTML version gave the ablation and stall threshold; the abstract page has no numbers. (5) 'Context Rot' is at trychroma.com/research/context-rot (the research.trychroma.com address redirects). (6) The 'Single-agent or Multi-agent Systems? Why Not Both?' paper is arXiv 2505.18286; its text ranges for token ratios do not match its own Table 3 (for example Hover prefill 1.20), and the abstract's cost claim differs from the body's. (7) Anthropic's 'Effective context engineering' post gives no measured results; it says sub-agents return summaries of often 1,000 to 2,000 tokens after using tens of thousands of tokens. I saw that statement but no test of it. Secondary-source claims not confirmed in the primary source: CooperBench's per-model rates and the 2-to-4-agent decline; the 'beyond 3-4 agents' saturation wording for the scaling paper; the 'orchestrator capacity matters more than sub-agent capacity' result (arXiv 2601.11327, abstract read only, no numbers). Web pages contained no instructions aimed at me. Several 2026 arXiv items are very recent preprints from abstract pages only; weigh them accordingly.\""
+ }
+}

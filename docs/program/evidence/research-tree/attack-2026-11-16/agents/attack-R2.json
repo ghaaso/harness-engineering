@@ -1,0 +1,167 @@
+{
+ "label": "attack:R2",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "findings": [
+   {
+    "id": "R2-01",
+    "title": "The 10 % cap cannot be judged, and nothing in the protocol is a token budget",
+    "target": "Section 9 budget; rule 7.4; row 14; direction 7 token budget",
+    "kind": "arithmetic_does_not_hold",
+    "argument": "The only numeric limit on a child is the 300,000 ceiling (L142), and that is a window size, not a spend. Spend is calls × window (TOKEN-BOTTLENECK L18), and a child that hands over (L142-143) can go on making calls with no limit. Rule 7.4 promises 'a token ceiling per pack and per expert' (L96) but gives no figure. The budget split in L121-122 ('half for the packs, a quarter for the experts') stopped meaning anything once amendment 1 (L128-129) put the pack and the expert in one session: the ledger cannot tell the two halves apart. Estimated from the protocol's own numbers and the measured rates: a child starts at about 79k (SPLIT-RULE L138) and gains 2.8k a call (SPLIT-RULE L609), so it reaches 300k after about 79 calls, which sum to about 15M context tokens before the review. Review calls run at about 300k each (10 to 20 calls [G] = 3 to 6M). A reader costs 0.4 to 0.8M (SPLIT-RULE L1322), or 1.4 to 1.9M at the measured agent average of about 12 calls at 113-156k (TOKEN-BOTTLENECK L22-23, L44). With 6 to 12 readers, a checker and a probe grader, one field is about 22 to 48M context tokens. Ten field-children (seven fields plus three independent second experts, L140) come to about 220 to 480M. On top of that come the refuter, the fallbacks and several coordinator generations. Nearly all of it is cache reads (TOKEN-BOTTLENECK L10). No file states the week's allowance in tokens. How cache reads count against the limit is unknown (TOKEN-BOTTLENECK L64). The only scale on record is about 3.4M new subagent tokens in one five-hour window (SPLIT-RULE L1321). So '10 % of the week' cannot be compared with any estimate. It can only be read off the plan's meter afterwards, and the meter is read per wave (L97; direction L108), so a whole wave of three fields can overshoot before anyone looks.",
+    "protocol_lines": "L96-98, L121-122, L142-143, L177; direction L107-110",
+    "severity": "high",
+    "smallest_fix": "Delete the half/quarter split in section 9. State the cap in the unit the meter shows (% of week). Read the meter after every field, not every wave, and set each later field's stop to (cap minus spent) divided by the fields left. Drop 'token ceiling per pack and per expert' from 7.4 until the pilot gives a number."
+   },
+   {
+    "id": "R2-02",
+    "title": "The 300k ceiling is exceeded by the protocol's own inputs, so the 'exception' becomes the rule and brings back the withdrawn split",
+    "target": "Amendment 1 step 5; row 12; section 4 step 4; section 6 refuter",
+    "kind": "arithmetic_does_not_hold",
+    "argument": "Add up what the child holds before its review. A fixed start of about 79k (SPLIT-RULE L138). The cards and passages its helpers return, which the pack is assembled from. Five to eight primary sources read in the original (L50, L133). The pack itself, 60k to 90k (L49), carried in the window a second time as tool input when the child writes it inline: written file contents are a measured part of the window (TOKEN-BOTTLENECK L35, L43, lever 4 at L53). Start plus pack-as-output plus its source cards is already about 220-250k before any primary source is read. So the ceiling (L142) is reached in the normal case, and amendment 1's fallback, 'a fresh session reads the pack and does the review' (L142-143), is exactly the builder/expert split that L128-129 withdrew. The review then has no ceiling. If the child is Opus, the owner's setting compacts it near 367k (SPLIT-RULE L120), which leaves about 67k for the probe answers, the state-of-field page, our work files and the review. A compaction there wipes out 'the field still in its context' (L138-139). The refuter has the same problem: 'the packs in hand' (L82) for three leads is 180-270k plus a 79k start, so its first call is at 260-350k. Row 12 cites the ceiling as a cost control, yet the measured sink sits above 200k (TOKEN-BOTTLENECK L26, lever 1 at L50). The ceiling is above that line, and the requirement (a full window at review time) makes every review call pay full price. The quality data do not argue for a lower ceiling: the fullest window makes the fewest mistakes (AFTER-COMPACTION L33-35). The protocol simply never names the cost that follows from holding the field in context.",
+    "protocol_lines": "L49, L82, L132-134, L138-139, L142-143, L176",
+    "severity": "high",
+    "smallest_fix": "Write the pack and the cards through a script, not as inline tool content, so they are not carried twice. Make the ceiling apply to the review's start: window plus the listed review inputs must fit under the child model's compaction trigger, and if they do not, the fresh-session path is the planned route, not an exception. Have the refuter read the three leads' claims tables and cited cards, not whole packs. Reword row 12 to say the ceiling bounds the price of a call, not the spend."
+   },
+   {
+    "id": "R2-03",
+    "title": "'The coordinator reads status files only' contradicts its own duties, so the 200k hand-over is either never used or overrun",
+    "target": "Section 2 level 0; row 11; section 3; gate A; section 6",
+    "kind": "rules_contradict",
+    "argument": "L19 and row 11 (L174) say the coordinator never reads packs or sources. But the coordinator writes the problem sheet from our measurements (L30-31): those files are about 304 KB of text (wc -c of TOKEN-BOTTLENECK, SPLIT-RULE, SUMMARY-CHECK, AFTER-COMPACTION and HARNESS-BOTTLENECKS), very roughly 75k tokens at 4 bytes a token [S]. On a 79k start (SPLIT-RULE L138) that takes it to about 155k before it has started one child. At gate A it judges whether 'the pack covers the field's questions' (L52-53), which means reading the packs. It sets claims in conflict as open and orders adjudication (L84-85). The direction file has it ground the direction in earlier work and build the page (direction L102-103). If it does all that, 200k comes within a few dozen calls, at 2.8k a call (SPLIT-RULE L609), and it hands over repeatedly. A fresh session is no better than a compacted one: 1.13 mistakes per 100 calls and no fade (AFTER-COMPACTION L30-31), mostly lost knowledge of the PC (L24-27). Its own state file is a summary at risk of the measured lag: 74 of 117 summaries call done work pending (SUMMARY-CHECK L41-44). If instead it really reads only status files, it rarely reaches 200k and row 11's hand-over does nothing. Its remaining cost is polling: time boxes, heartbeats and 'no silent waiting' (L103, L172) make it re-read its window just to look, and read-only calls are 52-64 % of calls (TOKEN-BOTTLENECK L28).",
+    "protocol_lines": "L19, L23, L30-31, L52-53, L79, L84-85, L103, L172, L174",
+    "severity": "high",
+    "smallest_fix": "Take lane 1 out of the coordinator: the problem sheet becomes a leaf with its own one-shot session. Make gate A a script (schema, size, and every question id in the list covered by at least one confirmed card's question-id field), plus the checker's confirmation rate. Leave the synthesis to the script that row 4 already names. Replace polling with the harness's exit notifications. The coordinator then really reads only status files, and the 200k hand-over can stay as a backstop."
+   },
+   {
+    "id": "R2-04",
+    "title": "Amendment 1 turns second experts into full research runs, which breaks the reason for having them and adds about 43 % to field cost",
+    "target": "Section 6 first bullet vs amendment 1 step 4; row 3",
+    "kind": "rules_contradict",
+    "argument": "Section 6 justifies a second expert because 'two instances with the same knowledge' disagreeing shows a weak claim (L77-80). That works because both read one frozen pack, which is cheap: a start of about 79k plus a 60-90k pack plus the review calls, a few million tokens. Amendment 1 step 4 (L140-141) makes the second expert a second child doing its own research. Disagreement can then come from different packs, so the comparison in L79-80 no longer isolates anything. Each second expert now costs a whole field (about 22-48M by R2-01's estimate), so three of them raise field-children from seven to ten. Row 3 (L161) relies on the independent version. Row 7's register of claimed sources (L170), checked before each read, would then stop the second child reading the same papers, which undercuts the independence row 3 needs. The protocol states all three rules and does not reconcile them.",
+    "protocol_lines": "L77-80, L140-141, L161, L170",
+    "severity": "high",
+    "smallest_fix": "Choose one. The cheaper choice, and the one consistent with L79: second experts read the first child's frozen pack, and row 3 is reworded to say their agreement tests reading, not research. Keep one independent research run only in the pilot field, and let it double as the single-session control (see R2-06)."
+   },
+   {
+    "id": "R2-05",
+    "title": "Under amendment 1 the child writes its own exam, so the knowledge check measures nothing",
+    "target": "Section 4 step 4 (probe.json); section 5 step 2; amendment 1 steps 2-3; row 13",
+    "kind": "does_not_deliver_the_owners_requirement",
+    "argument": "probe.json, with its twelve questions and answer keys, is written by whoever builds the pack (L50-51). Under amendment 1 that is the child (L134-136), and the same child then answers the probe (L137). An exam the candidate wrote, on cards it wrote moments earlier and still holds in context, is passed by construction. It cannot show 'the knowledge to be called a proper expert', which is the owner's requirement, and it adds a grader window for each field. The real check of what the child knows is already the card checker (L44-46). Row 13 (L176) counts the knowledge check as a defence against a weak expert. In the four fields without a second expert, this self-written probe and the pack check are the only defences.",
+    "protocol_lines": "L50-51, L60-62, L134-137, L176",
+    "severity": "medium",
+    "smallest_fix": "Delete the probe for the single-session child. Keep it only on the fresh-session fallback path, where it does test whether the pack was read, and have the checker write it from confirmed cards, not the pack's author. Row 13 then rests on the card check and on 'every factual sentence cites a card' (L70)."
+   },
+   {
+    "id": "R2-06",
+    "title": "The single-session control is neither fair nor able to decide anything",
+    "target": "Part C 'The tree is measured'",
+    "kind": "does_not_deliver_the_owners_requirement",
+    "argument": "L189-191 runs one field once with a single session 'on the same budget', to 'learn whether the tree earns its cost'. The tree's budget for a field is unknown until the pilot runs (row 14, L177). 'Same sources' is not required: the single session searches for itself. 'Same checks' is not required either: nothing says the checker, gate A or the card-only rule apply to it. No score is fixed beforehand, so 'earns its cost' has no measure. One field done once has no variance estimate, which contradicts the owner's lesson that one null is not a verdict (direction L3-6). It is one more full field run (about 22-48M by R2-01's estimate) that can only produce an anecdote.",
+    "protocol_lines": "L189-191, L177",
+    "severity": "medium",
+    "smallest_fix": "Merge it with the independent second run of the pilot field (R2-04). Before it runs, fix what it is scored on from the ledger and checker outputs that already exist: context tokens, cards dropped by the checker, the share of review sentences that cite a confirmed card. Apply the same checker and gate to both runs. Record the result as a pilot reading, not a verdict on the tree."
+   },
+   {
+    "id": "R2-07",
+    "title": "The B+ tree analogy is decoration, and 'split on overflow' contradicts the fixed tree",
+    "target": "Part C, property by property",
+    "kind": "analogy_changes_no_decision",
+    "argument": "'Balanced' (L181) follows from 'three levels, never more' (L15) and changes nothing. 'Inner nodes hold keys' (L182-183) repeats row 11 (L174), and R2-03 shows the coordinator cannot keep to it. 'Split on overflow' (L184-186) is the only property that changes a decision, and it contradicts 'the tree, the roles, the files and the order are fixed before anything runs' (L12-13) and 'Fixed tree' (L90). A split also doubles a field's fixed costs: a second child start, helpers and a checker. The record does not show splitting paying: in the replay the split rule matches an earlier compaction window at 1.05-1.06 times, and 'the record does not settle it' (SPLIT-RULE L745-760); leaves come due again within about one prompt's work (L782-791). The session hand-over in the same bullet is a roll-over, not a split. 'Order of work' (L187-188) is a real decision, but it has nothing to do with B+ trees. 'The tree is measured' is R2-06.",
+    "protocol_lines": "L12-13, L15, L90, L179-191",
+    "severity": "medium",
+    "smallest_fix": "Delete the B+ heading and the 'Balanced' and 'Inner nodes hold keys' bullets. Replace 'split on overflow' with: a pack over its limit is cut back to its question list, and a new field needs the owner's word as an amendment (rule 7.8). Keep 'order of work' as a plain rule."
+   },
+   {
+    "id": "R2-08",
+    "title": "The pilot is supposed to come first, but part C runs the measurement field before it, unbudgeted",
+    "target": "Row 14 vs part C 'Order of work'",
+    "kind": "rules_contradict",
+    "argument": "Row 14 says 'a pilot field first' so that cost is known before the rest (L177). Part C runs the problem sheet and the measurement field first, and only then the pilot (L187-188). So a whole field, with its 22-48M estimate (R2-01), runs before any measured per-field cost exists, and that field's methodologist then also reviews every test design (L81) at a full window.",
+    "protocol_lines": "L81, L177, L187-188",
+    "severity": "medium",
+    "smallest_fix": "Make the measurement field the pilot. That is one sentence changed and no new step."
+   },
+   {
+    "id": "R2-09",
+    "title": "The 'lean folder' in row 12 targets the wrong part of the measured prefix, and helpers pay it many times over",
+    "target": "Row 12; section 4 step 2; rule 7.4",
+    "kind": "rule_is_a_wish_not_a_mechanism",
+    "argument": "The measured agent prefix is about 60k, 'roughly 50k of it tool and connector schemas', and it is 56 % of every agent's tokens (TOKEN-BOTTLENECK L44); a reader's first call is 66k (SPLIT-RULE L1317). Skills and CLAUDE.md are a small part of that. Connector and tool schemas come from the user's configuration, not from the folder, so a lean folder leaves most of the prefix in place. Readers run 'each on its own sub-question' with up to six at once per child (L39, L171), across ten field-children, so the prefix is multiplied by the helper count and dominates helper cost. 'Fan-out multiplied the prefix, not the work' (TOKEN-BOTTLENECK L44). Nobody is named to check the prefix, and nothing stops a run when it is large.",
+    "protocol_lines": "L39-43, L171, L175",
+    "severity": "medium",
+    "smallest_fix": "Replace 'a lean folder' with a measured check: before the pilot, start one reader, read its first-call context from the transcript, and require it under a stated figure. Reach that figure with deferred tool schemas and no connectors in helper sessions (TOKEN-BOTTLENECK lever 2, L51). Give each reader several sub-questions in one window instead of one each, so fewer prefixes are paid."
+   },
+   {
+    "id": "R2-10",
+    "title": "The ledger every cost rule depends on is a shared file the models cannot fill honestly",
+    "target": "Rule 7.6; section 8; rows 9 and 14; part C 'measured'",
+    "kind": "rule_is_a_wish_not_a_mechanism",
+    "argument": "Every session and agent writes its tokens to one research/LEDGER.jsonl (L100-101, L111). That contradicts 'nobody writes outside its own folder' (L90) and row 6's 'one writer per folder' (L169). A model cannot see its own token count: the measured figures came from transcripts after the fact (TOKEN-BOTTLENECK L5). So the ledger's token field is a guess or blank, and the cap (L97), the pilot (L177) and 'the tree is measured' (L189) all read from it. A heartbeat line written by a child (L172) is itself a call at a full window, up to about 300k each (R2-02).",
+    "protocol_lines": "L90, L97, L100-101, L111, L169, L172, L177, L189",
+    "severity": "medium",
+    "smallest_fix": "Remove tokens and heartbeats from what models write. Each session keeps a ledger file in its own folder with start, end, outputs and failures. A script computes tokens per session from the transcripts with the existing token-spend method and merges the per-folder ledgers. Liveness comes from the transcript's last write time."
+   },
+   {
+    "id": "R2-11",
+    "title": "Row 7's shared register of claimed sources breaks read-only shared inputs and costs more calls than it saves",
+    "target": "Row 7",
+    "kind": "rules_contradict",
+    "argument": "A register that helpers from up to three children (up to 18 helpers, L171) check and append to before every read (L170) is a shared writable file. That conflicts with 'shared inputs are read-only' (L90) and row 6 (L169), and it blocks the independent second research row 3 relies on (R2-04). Its saving is small: fetched content is 26 % of tokens, and a session-local read cache 'saves almost nothing' (TOKEN-BOTTLENECK L46, L58). More than half of a reading is the agent's fixed start (SPLIT-RULE L1323). Every check of the register is an extra call that re-reads the helper's window (TOKEN-BOTTLENECK L28, L52).",
+    "protocol_lines": "L90, L161, L169-170, L171",
+    "severity": "medium",
+    "smallest_fix": "Delete the register. Keep the field boundaries in the question lists (the first half of row 7), accept the overlap, and remove duplicate cards at synthesis by citation id in the script row 4 already names."
+   },
+   {
+    "id": "R2-12",
+    "title": "Anchoring is built into the question lists, and nobody checks that a brief is neutral",
+    "target": "Row 2; section 4 step 1",
+    "kind": "rule_is_a_wish_not_a_mechanism",
+    "argument": "Row 2 relies on 'neutral briefs' (L160), but no step says who checks a brief or what stops one that is not neutral. The child writes its questions 'from the direction file' (L36), and that file states what we hope: the card 'may be under-used', 'the architecture's assumptions may be wrong', and assumptions 'the research must challenge' (direction L5-7, L22-35). So the hope goes into the pack before the review stage's no-opinion rule (L64-65) applies. The refuter only sees the three strongest leads (L82), so a field whose lead was shaped by its framing and did not rank in the top three is never attacked.",
+    "protocol_lines": "L36-38, L64-65, L82, L160",
+    "severity": "medium",
+    "smallest_fix": "Give each child only its lane row from the direction table (direction L52-61) and section 3's definition of a lead, not section 2's list of assumptions. Our assumptions reach the expert only at review time, as our files (L63-65). No new step is needed."
+   }
+  ],
+  "rows_that_hold": [
+   {
+    "row": "Row 1 (wrong source fact)",
+    "why": "It is a real mechanism: a named role (the Opus checker) acts on a named input (every card a conclusion rests on, plus a sample) before gate A, with a stop (a card that fails is dropped, L44-46) and a threshold (95 %, L53). The citation rule (L70) and the count of failed citations in the ledger make the failure visible."
+   },
+   {
+    "row": "Row 4 (loss at hand-overs)",
+    "why": "Files with fixed fields, and a synthesis built by a script that cites cards directly, deal with the measured failure: summaries that lag behind their kept tail (SUMMARY-CHECK L41-44). A script cannot paraphrase. This is the cheapest way to handle it, and it also removes work from the coordinator."
+   },
+   {
+    "row": "Row 6 (two writers)",
+    "why": "One writer per folder, a branch per child and only the coordinator merging is enforceable and checked by a schema script. It is broken only by the shared ledger and the shared register (R2-10, R2-11), not by its own wording."
+   },
+   {
+    "row": "Row 8 (runaway fan-out)",
+    "why": "Three levels, helpers that start nothing, six helpers per child and three sessions at once are numbers that bound concurrency and depth. That is a mechanism, not a wish."
+   },
+   {
+    "row": "Row 11 as a figure (hand-over at 200k)",
+    "why": "200k matches the measured lever 1 (cap the orchestrator at 150-200k, TOKEN-BOTTLENECK L50) and the share of re-reads past 200k (L26). It becomes coherent once the coordinator's reading duties are moved out (R2-03)."
+   },
+   {
+    "row": "Row 14 (pilot field first)",
+    "why": "It is the only rule that turns the unknown cost into a measured one before the programme commits, and it is the right answer to R2-01. It needs to be the first field run and needs a ledger that can count tokens (R2-08, R2-10)."
+   },
+   {
+    "row": "Part C 'Order of work' and rule 7.3 (a failing field never holds up the others)",
+    "why": "Both change real decisions about sequence and isolation, and a failure in one place stays there."
+   },
+   {
+    "row": "Section 5 step 3 (our work as files, without the coordinator's opinion or other reviews)",
+    "why": "It is a concrete rule about what goes into the expert's window at review time, which is the owner's 'expert first, then review' requirement turned into a mechanism. It works once the framing earlier in the pipeline is also cleaned (R2-12)."
+   }
+  ],
+  "overall": "I found 12 problems. The protocol mostly delivers the owner's requirement in shape, and row 1 (the card checker), the file and script hand-overs and the pilot rule are sound. On cost and dynamics it is not ready to run.\n\n**What it would cost.** The protocol sets no token budget. The 300k ceiling is a window size, and its own pack size, start and sources reach that size before the review. That makes amendment 1's 'exception' the normal path, which brings back the builder/expert split it had withdrawn, and puts the review near the Opus compaction point (about 367k under the owner's setting). Estimated from the protocol's own numbers and the measured rates:\n- A child starts at about 79k and gains 2.8k a call, so it reaches 300k after about 79 calls, about 15M context tokens before its review.\n- The review runs at about 300k a call: 3 to 6M.\n- 6 to 12 readers cost 0.4 to 1.9M each, plus a checker and a grader.\n- One field: about 22 to 48M context tokens. Ten field-children (seven fields plus three independent second experts): about 220 to 480M. Then the refuter, the fallbacks and several coordinator windows on top. Nearly all of it is cache reads.\n\n**The largest sink** is the child windows' calls at high fill: the late pack-writing calls and the whole review. Next are the helpers' fixed prefixes, about 60k each, mostly tool and connector schemas that a lean folder does not remove, paid by every helper in ten field-children.\n\n**The 10 % cap cannot be judged from what is written.** No file gives the week's allowance in tokens, how cache reads count against the limit is unknown, and the meter is read only once per wave of three fields.\n\n**The 200k coordinator hand-over** fits the measured lever 1. It does not fit 'reads status files only': the same protocol has the coordinator write the problem sheet (about 300 KB of measurement docs), judge pack coverage at gate A and handle conflicting claims.\n\n**Part C.** 'Balanced' and 'inner nodes hold keys' restate other rules. 'Split on overflow' contradicts the fixed tree, and the replay does not show splitting paying. 'Order of work' is real but not a B+ property, and it contradicts 'pilot first'. The tree analogy changes no decision.\n\n**The single-session control** is unfair: the budget is unknown, the sources and checks are not held equal, and no score is fixed. With n = 1 it cannot be a verdict, by the owner's own lesson.\n\n**The cheapest design that meets the same requirement.** One child per field researches with a few multi-question Sonnet readers that have no connectors. It writes its cards and pack by script, not inline. One Opus checker confirms the cards. The review is done in a few batched calls at full window, with its inputs sized to fit under the compaction trigger, and with no self-written probe. Second experts read the frozen pack. The only independent rerun is the pilot field's (the measurement field), and it doubles as the control, with its score fixed beforehand. The problem sheet is its own leaf session. Gate A and the synthesis are scripts. Token counts come from transcripts, not from what models write. The source register and the B+ bullets are deleted."
+ }
+}

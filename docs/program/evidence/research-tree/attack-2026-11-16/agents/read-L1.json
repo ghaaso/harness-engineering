@@ -1,0 +1,273 @@
+{
+ "label": "read:L1",
+ "tools_used": [
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+  "StructuredOutput"
+ ],
+ "result": {
+  "findings": [
+   {
+    "id": "L1-01",
+    "claim": "In an annotated corpus of 1,642 traces from open-source multi-agent systems, failures spread over 14 modes in three groups. The most common single modes were step repetition (15.7%), reasoning-action mismatch (13.2%), unaware of termination conditions (12.4%) and disobeying the task specification (11.8%). Task-verification failures (premature termination 6.2%, no or incomplete verification 8.2%, incorrect verification 9.1%) together are about a fifth of all failure labels. Inter-agent misalignment modes are individually small except reasoning-action mismatch.",
+    "mechanism": "The authors trace failures to system design (roles, termination, loop control), to agents not aligning with each other (not asking for clarification 6.8%, derailment 7.4%), and to weak or missing checking at the end. They do not give a single causal mechanism.",
+    "source_title": "Why Do Multi-Agent LLM Systems Fail? (MAST taxonomy and MAST-Data)",
+    "authors_or_org": "Cemri, Pan, Yang, Agrawal, Chopra, Tiwari, Keutzer, Parameswaran, Klein, Ramchandran, Zaharia, Gonzalez, Stoica",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2503.13657",
+    "where_in_source": "Section 4 and Figure 1 (percentages); Table 1, Section 3.4 and Figure 4 (systems, traces); Section 3.2-3.3 and Table 2 (annotation agreement); Section 4 (FC1/FC3) and Section 5.3, Table 5 in Appendix H.2 (interventions).",
+    "number": "1,642 traces. Per-mode percent of failure labels: step repetition 15.7, reasoning-action mismatch 13.2, unaware of termination 12.4, disobey task spec 11.8, incorrect verification 9.1, no/incomplete verification 8.2, task derailment 7.4, fail to ask clarification 6.8, premature termination 6.2, loss of conversation history 2.8, conversation reset 2.2, ignored other agent's input 1.9, disobey role spec 1.5, information withholding 0.85. Category sums (44.2 / 32.35 / 23.5%) are my own arithmetic over the mode figures; the paper does not state them. Reported failure rates across the open-source systems: 41% to 86.7%. Human annotator agreement kappa 0.88; the o1 few-shot judge used for scale-up had kappa 0.77 against humans (accuracy 0.94). Two interventions on ChatDev with the same model: a workflow change giving the CEO the final say, +9.4% task success; a high-level task-objective verification step, +15.6% on ProgramDev; the paper says completion stays low after both.",
+    "conditions": "Systems: ChatDev, MetaGPT, HyperAgent, AppWorld, AG2 MathChat, Magentic-One, OpenManus (text says 7, one figure caption says 6). Models mostly GPT-4o, plus Claude 3.7 Sonnet, GPT-4, Qwen2.5-Coder-32B, CodeLlama-7b. Tasks: ProgramDev coding, SWE-Bench Lite, GSM-Plus, GAIA and others. 30 human-annotated traces per system (210) plus about 1,400 labelled by an LLM judge. Counts reflect these frameworks and models, not frameworks built differently. Interventions were run on one system (ChatDev).",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D1",
+     "D9"
+    ],
+    "for_design": "Budget for the dull failures first (loops, repeated steps, not knowing when to stop, disobeying the written task) with hard caps and explicit termination rules in each child session, and do not assume a final check will be sound: wrong or missing verification was nearly a quarter of labelled failures."
+   },
+   {
+    "id": "L1-02",
+    "claim": "Automated attribution of a failure to the responsible agent and step is poor: the best method names the right agent about half the time and the right step about one time in seven; some methods are below random. Accuracy falls as the log gets longer, to near zero at the longest logs.",
+    "mechanism": "The authors link it to LLMs retrieving poorly from long logs; incremental reading helps step-level precision but loses overall context.",
+    "source_title": "Which Agent Causes Task Failures and When? On Automated Failure Attribution of LLM Multi-Agent Systems",
+    "authors_or_org": "Zhang, Yin, Zhang, Liu, Han, Zhang, Li, Wang, Wang, Chen, Wu",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2505.00212",
+    "where_in_source": "Table 1 and Section 4.3 (methods; ground-truth effect); Section 4.4 and Figure 4 (log length); Section 3 and Appendix C.1 (dataset).",
+    "number": "Best agent-level accuracy 54.33% (All-at-Once, GPT-4o, algorithm-generated systems, ground truth given) and 55.17% on hand-crafted systems; best step-level accuracy 25.51% (Step-by-Step, algorithm-generated) but only 5-9% on hand-crafted systems. Random baseline: agent-level 29.10 / 12.00, step-level 19.06 / 4.16. Without ground truth, Step-by-Step agent-level was 26.02 (below random on algorithm-generated systems). The abstract states 53.5% agent-level and 14.2% step-level as best overall and says o1 and R1 are not yet practical for this.",
+    "conditions": "Who&When dataset: 184 failure tasks from 127 systems (98 algorithm-generated with CaptainAgent on GAIA/AssistantBench, 86 hand-crafted Magentic-One; the counts as I read them do not add up to 184, so check Appendix C.1). Methods compared: All-at-Once, Step-by-Step, Binary Search, with GPT-4o as the main model. Annotation by three experts.",
+    "evidence_kind": "benchmark",
+    "bears_on": [
+     "D1",
+     "D2",
+     "D9"
+    ],
+    "for_design": "Do not rely on a late LLM reader of a long trace to find which child or helper went wrong; keep a per-step record of what each agent claimed and checked so an error can be located by structure, not by reading a transcript."
+   },
+   {
+    "id": "L1-03",
+    "claim": "Whether more agents help depends on the task and on topology. Across 260 configurations, multi-agent setups gave +80.8% over a single agent on a decomposable finance task and -70.0% on sequential planning, with a mean change of about zero. Setups with no central check amplified errors much more than a centralized one. Once a single agent is already above about 45% accuracy, adding agents tended to give negative returns.",
+    "mechanism": "The authors say a central coordinator acts as a validation bottleneck catching errors before aggregation, while coordination overhead consumes the budget on tool-heavy and sequential tasks.",
+    "source_title": "Towards a Science of Scaling Agent Systems",
+    "authors_or_org": "Kim, Gu, Park, Park, Schmidgall, Heydari, Yan, Zhang, Zhuang, Liu, Malhotra, Liang, Park, Yang, Xu, Du, Patel, Althoff, McDuff, Liu",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2512.08296",
+    "where_in_source": "Table 5 and Section 4.3 (error amplification); Section 4.2 and Figure 2 (deltas); Section 1 and Table 4 (45% ceiling and its coefficient); Section 4.3 (caveat on amplification effect).",
+    "number": "Trace-level error amplification relative to a single agent (1.0): independent 17.2, decentralized 7.8, hybrid 5.1, centralized 4.4 (Table 5). Task-level amplification roughly 1.1-1.3. Delta vs single agent: Finance Agent centralized +80.8% (0.631 vs 0.349); BrowseComp-Plus independent -35%; PlanCraft independent -70.0%, centralized -50.3%; SWE-bench Verified centralized -3.1%, independent -14.9%. Mean change -0.3% (95% CI -58.7 to +77.2). Capability ceiling beta -0.236, p=0.004, at roughly 0.45 single-agent accuracy. Caveat in the paper: after controlling for other terms, the main effect of error amplification on performance is not significant (beta 0.014, p=0.658), and efficiency and overhead explain performance better.",
+    "conditions": "Six agentic benchmarks, five architectures (one single agent, four multi-agent), three model families (OpenAI, Google, Anthropic), 260 configurations; Claude Sonnet 3.7 left out of two benchmarks. The error-amplification values in Table 5 are applied uniformly across benchmarks and models. Predictive model R-squared 0.373 cross-validated. I read only the first 100,000 characters of the paper's text.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D1",
+     "D2",
+     "D9"
+    ],
+    "for_design": "Put a coordinating session in charge of aggregation, never let children feed each other unchecked, and decide per research field whether it is decomposable at all: sequential, tool-heavy fields may do worse as a tree than as one agent."
+   },
+   {
+    "id": "L1-04",
+    "claim": "Faulty agents (those that produce wrong content) hurt a multi-agent system by an amount that depends on its structure: a linear chain lost the most, a hierarchy the least. Adding a reviewing agent or letting agents challenge each other recovers most of the lost performance in the cases tested.",
+    "mechanism": "In a linear chain each stage consumes the previous stage's output with no second path; in a hierarchy the top agent can overrule. Inspector and Challenger add an independent look at each message.",
+    "source_title": "On the Resilience of LLM-Based Multi-Agent Collaboration with Faulty Agents",
+    "authors_or_org": "Huang et al. (CUHK and collaborators), ICML 2025",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2408.00989",
+    "where_in_source": "Table 4 (drop by structure); Table 3 and Section 5 (Challenger and Inspector); Appendix D (limitations, not read by me); error-rate experiments.",
+    "number": "Average performance drop with faulty agents: linear -23.72, flat -10.54, hierarchical -5.51 points (the Conclusion gives hierarchical drops of 12.1% and 9.2%, which do not match; an earlier version's abstract gave 9.2, 26.0, 31.2). Example, Self-collab (linear) on code generation, baseline without errors 76.2: AutoTransform 43.3 with no defense, 70.7 with Challenger, 74.4 with Inspector, 75.0 with both; AutoInject 40.9, 72.0, 67.7, 73.8. Camel (flat): baseline 62.2, 32.5 without defense, 48.7 with both. Headline: Inspector plus Challenger recovers up to 96.4% of the lost performance (one system, one error method).",
+    "conditions": "Six systems (MetaGPT, Self-collab linear; Camel, SPP flat; MAD, AgentVerse hierarchical); four tasks (HumanEval 164 problems, 50 CIAR questions, 100 CommonMT sentences, 80 FairEval comparisons); GPT-3.5 and GPT-4o at temperature 0; errors injected with default 20% of a message wrong in every message. Errors are synthetic, not natural model errors. The paper does not state which error types the Inspector missed in the main text. Recovery is much smaller on the flat Camel system (to 48.7 from a baseline of 62.2).",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D2",
+     "D9",
+     "D1"
+    ],
+    "for_design": "Do not build the tree as a chain where each field's output is the next one's input; keep the coordinator able to overrule children and give it an independent inspector step on messages going up, but do not expect full recovery."
+   },
+   {
+    "id": "L1-05",
+    "claim": "In a sequential four-agent pipeline with injected numeric errors, checking only at the end barely helped, while a check at every handoff cut the share of errors surviving to the final answer by about three quarters. Detection also falls the later an error is caught because it turns into derived numbers and then prose.",
+    "mechanism": "The authors model an injected fact as moving from raw fact to derived computation to narrative to invisible, with the chance of catching it dropping at each transition, so late checks face an error that no longer looks like one.",
+    "source_title": "The Hallucination Snowball: Modeling Error Propagation as State Transitions in Multi-Agent LLM Pipelines",
+    "authors_or_org": "Prabhjot Singh, Bhushan Pawar",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2608.14588",
+    "where_in_source": "Section 3.4 and Table 3 (gates vs end check); Table 4 (per-gate detection); Table 2 (models); Section 5 (limitations).",
+    "number": "Survival of injected errors to the final output: no check 60.7%, end-of-pipeline check 58.4%, a gate at each stage boundary 16.2% (42.2 percentage points lower than end check; McNemar chi-square 122.24). First gate alone detects 75.4%. Per-boundary escape probabilities 24.6%, 48.3%, 89.3% (abstract). GPT-4o detection fell from 72.0% at stage 1 to 50.9% at stage 4; the strongest model tested (Qwen3.5-397B) was 87.0% at stage 1. Cost: an internal-consistency quality score fell from 4.44 to 3.93; only 54.0% of errors were fully corrected, against 76.9% flagged.",
+    "conditions": "346 injected errors over 140 FinanceBench questions; linear Researcher-Analyst-Writer-Reviewer pipeline in LangGraph built on gpt-4o-mini (gate experiment on a gemini-2.5-flash pipeline); errors are regex-injected numbers, 15-40% shifts. Limits stated by the authors: financial domain only, one linear topology, no sub-5% errors, structured handoffs not tested. Single preprint. The arXiv number implies August 2026 but the stamp says 22 June 2026; check the record.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D2",
+     "D9"
+    ],
+    "for_design": "Check claims at each boundary where a helper's result enters a child's notes and where a child's result enters the coordinator, not only at the end, and make the first check the strictest because errors are cheapest to catch before they are rewritten."
+   },
+   {
+    "id": "L1-06",
+    "claim": "Counter-evidence: in sequential three-agent chains of refining answers to open knowledge questions, the measured hallucination score fell from the first agent to the last, so the chain damped errors on average rather than amplifying them, at a small cost in factual accuracy.",
+    "mechanism": "Each later agent re-reads and rewrites the previous answer, and that act of review removes some unsupported claims while also dropping some correct ones.",
+    "source_title": "Hallucination Cascade: Analyzing Error Propagation in Multi-Agent LLM Systems",
+    "authors_or_org": "Saeid Jamshidi, Arghavan Moradi Dakhel, Kawser Wazed Nafi, Foutse Khomh",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2606.07937",
+    "where_in_source": "Abstract (I read only the abstract page).",
+    "number": "Normalized hallucination score 0.422 at the first agent to 0.272 at the last (amplification factor 0.644); factual accuracy 0.789 to 0.769; about 0.072 less hallucination per agent-to-agent step.",
+    "conditions": "500 cascade experiments in 10 knowledge domains, 1,250 evaluated responses, three-agent sequential chains, LLaMA-3-70B-Instruct, GPT-5.3 and others; naturally arising inconsistencies, not injected errors; no defenses or other topologies reported. Preprint read from its abstract only; a related single-author paper (2606.07941) reports amplification of 1.34 on a six-agent graph without a defense, so the sign of the effect depends on the setup.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D2"
+    ],
+    "for_design": "Treat error spread as something to measure in your own tree, not assume: natural errors in short refining chains may fade, while a confident, specific, injected or copied claim (see the gate results) may not."
+   },
+   {
+    "id": "L1-07",
+    "claim": "When facts are split between agents, groups of language models pool them badly, and a structured exchange protocol repairs most of it. Failure is mainly in surfacing and integrating what only one agent knows, not in reasoning once everything is shared.",
+    "mechanism": "Agents discuss what they already share and do not volunteer unshared facts; forcing disclosure or a fixed exchange-then-decide procedure fixes the surfacing step.",
+    "source_title": "Systematic Failures in Collective Reasoning under Distributed Information in Multi-Agent LLMs (HiddenBench)",
+    "authors_or_org": "Yuxuan Li, Aoi Naito, Hirokazu Shirado (Carnegie Mellon University)",
+    "year": "2025 (v4 revised 2026)",
+    "url": "https://arxiv.org/abs/2505.11556",
+    "where_in_source": "Abstract; Section 5 (15 models); Table 6 (bottleneck: Reveal-All vs Secretary); Table 7 (structured protocol); Table 3 (prompting); Table 4 (group size).",
+    "number": "Multi-agent LLMs 30.1% accuracy with distributed information versus 80.7% for single agents holding everything. GPT-4.1 on 18 tasks: baseline 0.037, forced full disclosure (Reveal-All) 0.926, a passive summarizing 'Secretary' agent 0.241 (Gemini-2.5-Flash 0.713), structured Exchange-then-Decide 0.800. Best prompt only (ask agents to share everything) 0.467. Gain from discussion shrank from +0.348 at 3 agents to +0.006 at 7.",
+    "conditions": "HiddenBench, 65 tasks, 15 frontier models from four vendors, 10 sessions per model per task; ablations mostly GPT-4.1 and Gemini-2.5-Flash on 18 tasks with 4 agents; a human comparison of 96 people. Tasks are puzzle-like hidden-profile problems, not research. I read the first 100,000 characters.",
+    "evidence_kind": "benchmark",
+    "bears_on": [
+     "D3",
+     "D1"
+    ],
+    "for_design": "Do not hand over a free-text summary and hope the next agent asks; define a fixed record of what each child found (including facts only it holds) and make the coordinator read it all, since a summarizing middle agent recovered far less than full disclosure."
+   },
+   {
+    "id": "L1-08",
+    "claim": "When a handoff summary is shortened, the conditions and rules attached to facts are dropped far more than the facts themselves, and a downstream agent then acts as if the rule did not exist. A rule stated explicitly survives much better than a vague hedge.",
+    "mechanism": "A compressing summary keeps task-relevant facts and treats scope limits, permissions and caveats as expendable; the two kinds of survival are nearly uncorrelated.",
+    "source_title": "Facts Without Rules: Boundary Metadata Collapse in Multi-Agent LLM Handoffs",
+    "authors_or_org": "Yian Wang, Agam Goyal, Eshwar Chandrasekharan, Hari Sundaram (University of Illinois Urbana-Champaign)",
+    "year": "2026",
+    "url": "https://arxiv.org/abs/2608.29028",
+    "where_in_source": "Section 5.1, Tables 2-3 (survival under 25-word compression); Section 5.2, Table 4 (leakage); Section 5.3 and Table 5 (typed allowlist); Limitations (internal inconsistency).",
+    "number": "Under a 25-word summary, boundary-marker survival fell from 0.954 to 0.690 (GPT-5-mini), 0.880 to 0.580 (DeepSeek-R1-32B), 0.915 to 0.557 (Qwen3-32B), while operational-fact survival stayed at 0.97-1.00. Markers fully absent in 25%, 32% and 39% of summaries; facts never absent. When the marker was dropped, downstream leakage was 48/48 and 37/48; with an explicit marker kept, 2/48 and 1/48. A typed, gold-derived allowlist reduced leakage to 0/48; a corrupted allowlist brought leakage back to near the no-marker level. I could not find a clean verbatim-store versus summary comparison in the part I read; under partial memory recall markers still lost 0.381 (GPT-5-mini) over three hops, while full replay showed a modest decline within noise.",
+    "conditions": "36 hand-written synthetic scenarios in seven domains, four handoff surfaces, five conditions; GPT-5-mini, DeepSeek-R1-32B, Qwen3-32B replication; scoring by an LLM judge with kappa 0.74 against humans on 100 items. English only, simulated audiences, no production traces. The abstract's uncompressed baseline (about 0.80) does not match Table 2 (0.954 for GPT-5-mini), which I could not reconcile. I read the first 100,000 of about 140,000 characters.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D3",
+     "D2"
+    ],
+    "for_design": "A handoff record needs fixed fields for constraints, scope limits, open doubts and what was not checked, copied through rather than summarized away, because compression silently removes exactly these."
+   },
+   {
+    "id": "L1-09",
+    "claim": "A vendor evaluation of three production context-compression methods found that every method kept the discussion thread and instructions well but lost the trail of artifacts (files touched, tests run, endpoints); this was the weakest dimension for all three.",
+    "mechanism": "Compression discards identifiers such as file paths and error codes as low-value detail; the article says the lost detail forces re-fetching, which can cost more than the compression saves.",
+    "source_title": "Evaluating Context Compression for AI Agents",
+    "authors_or_org": "Factory (Factory AI), engineering article",
+    "year": "2025",
+    "url": "https://factory.com/news/evaluating-compression",
+    "where_in_source": "Results section (score table); 'A concrete example' section; 'What we learned' section; Methodology details.",
+    "number": "Overall score out of 5: Factory 3.70, Anthropic 3.44, OpenAI 3.35. Artifact trail: 2.45, 2.33, 2.19; accuracy 4.04, 3.74, 3.43; instruction following 4.99, 4.95, 4.92. Tokens removed: 98.6%, 98.7%, 99.3%. Based on 36,611 messages from production sessions, four probe questions per compression point per method.",
+    "conditions": "Evaluation run by the company that sells one of the methods (Factory), scored by a GPT-5.2 judge using a rubric, blind to method; no third-party review; probes were generated by the same team. Compressions of coding-agent sessions, not research.",
+    "evidence_kind": "vendor_engineering_report",
+    "bears_on": [
+     "D3"
+    ],
+    "for_design": "When a child hands a long session to the coordinator, send the list of concrete items it relied on (sources, files, commands run, numbers) as a structured record next to any prose summary, and test the handover with probe questions against the original."
+   },
+   {
+    "id": "L1-10",
+    "claim": "MetaGPT's argument is that agents should exchange structured documents (requirements, designs, interface specs) through a shared pool rather than chat, to avoid distortion, 'like a telephone game'. Its results are better than ChatDev's on a coding benchmark, with much lower human revision cost, but the experiments do not isolate documents-versus-chat from the other design differences.",
+    "mechanism": "Role-specific structured outputs reduce ambiguity and idle chatter; a publish-subscribe pool lets each agent read only what its role needs and start only when its inputs exist.",
+    "source_title": "MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework",
+    "authors_or_org": "Hong et al.",
+    "year": "2023",
+    "url": "https://arxiv.org/abs/2308.00352",
+    "where_in_source": "Section 3.2 (structured communication interfaces; publish-subscribe); Table 1 (SoftwareDev comparison); Table 3 (role ablation); Section 4.4.",
+    "number": "SoftwareDev vs ChatDev: executability 3.75 vs 2.25 (scale of 4); human revision cost 0.83 vs 2.5 (MetaGPT without feedback 2.25); token usage 31,255 vs 19,292 (MetaGPT uses more); productivity 124.3 vs 248.9 (lower). Role ablation: executability 1.0 with one agent, 4.0 with four roles; revisions 10 down to 2.5. HumanEval 85.9% and MBPP 87.7% Pass@1. Executable feedback adds 4.2 and 5.4 points.",
+    "conditions": "Software tasks only; the gain from executable feedback on executability is small (3.67 to 3.75); the ablation adds roles, not documents-for-chat alone, so the number does not isolate the format. I could not read the last 11,000 characters.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D3",
+     "D1"
+    ],
+    "for_design": "Make the unit of handover a named document with a fixed set of sections that the next reader consumes, but do not credit the format alone for MetaGPT's gains, and expect more tokens in exchange."
+   },
+   {
+    "id": "L1-11",
+    "claim": "Anthropic's engineering report on its own multi-agent research product says the lead agent plus parallel subagents beat a single agent on its internal research tests, at about fifteen times the tokens of a chat, and that routing everything through the lead agent loses information; its fix is for subagents to write outputs to external storage and pass back only references.",
+    "mechanism": "Vague task descriptions from the lead caused duplicate work and gaps; condensed returns through the lead's conversation acted as a game of telephone; token spend explained most outcome variance.",
+    "source_title": "How we built our multi-agent research system",
+    "authors_or_org": "Anthropic engineering",
+    "year": "2025",
+    "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "where_in_source": "Section 01 (token usage and performance); Section 03 (failure modes, effort rules, evaluation); Appendix (artifact outputs, telephone game, end-state evaluation).",
+    "number": "Lead Claude Opus 4 with Claude Sonnet 4 subagents beat single-agent Claude Opus 4 by 90.2% on the internal research eval; about 4x the tokens of chat for an agent and about 15x for multi-agent; token use alone explained 80% of BrowseComp variance (95% with tool calls and model choice). Parallelization cut research time by up to 90%. Development evaluation began with about 20 queries; a single-call LLM judge scoring a 0-1 rubric was the most consistent. No number is given for how much information the artifact approach saved.",
+    "conditions": "Internal eval, no public data, methods or sample size; written by the product team; the telephone-game claim is stated as a rationale for the artifact design, not measured.",
+    "evidence_kind": "vendor_engineering_report",
+    "bears_on": [
+     "D3",
+     "D1"
+    ],
+    "for_design": "Have each child write its findings to files and hand the coordinator pointers plus a short summary; give each helper an explicit task, scope and boundary to prevent duplicates; and budget tokens for a tree at an order of magnitude above single-session use."
+   },
+   {
+    "id": "L1-12",
+    "claim": "A model asked to review and fix its own reasoning without any outside signal does not improve and often gets worse; the gains reported elsewhere come from using the correct answer as the signal. At equal numbers of generated responses, plain majority voting beat multi-agent debate.",
+    "mechanism": "The model is no better at recognizing its own errors than at avoiding them; a prompt asking for a review can push it off an answer that was right.",
+    "source_title": "Large Language Models Cannot Self-Correct Reasoning Yet",
+    "authors_or_org": "Huang, Chen, Mishra, Zheng, Yu, Song, Zhou (Google DeepMind and collaborators), ICLR 2024",
+    "year": "2023",
+    "url": "https://arxiv.org/abs/2310.01798",
+    "where_in_source": "Tables 2-3 (Section 3); Section 3.3 and Figure 1 (why answers flip); Section 4 and Table 7 (debate vs self-consistency). A survey by Kamoi et al. (arXiv 2406.01297, TACL) reaches the same conclusion across prior work.",
+    "number": "GPT-4: GSM8K 95.5 (one call) to 91.5 after round 1 and 89.0 after round 2 of intrinsic self-correction; CommonSenseQA 82.0 to 79.5 and 80.0; HotpotQA 49.0 to 49.0 then 43.0. GPT-3.5 CommonSenseQA 75.8 to 38.1. With oracle labels GPT-4 GSM8K rises to 97.5. GSM8K debate: round 1 (6 responses) 83.2, round 2 (9 responses) 83.0, against self-consistency 85.3 at 6 and 88.2 at 9.",
+    "conditions": "GPT-3.5 and GPT-4 (Tables 4-6 add GPT-4-Turbo and Llama-2) on GSM8K, CommonSenseQA, HotpotQA (small sample); a prompted review with no external feedback; one prompt format. The paper's result is for reasoning; Kamoi et al. say self-correction works with reliable external feedback or with training for it.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D9"
+    ],
+    "for_design": "A helper that merely re-reads a child's own conclusions using the same model and prompt style should not count as verification; make checks use something outside the draft (sources, tool output, run results, a different model)."
+   },
+   {
+    "id": "L1-13",
+    "claim": "For and against: a trained critic model found more bugs in model-written code than paid human reviewers, and its critiques were preferred by humans in most cases, but it also invents bugs, and a human-plus-critic team caught about as many as the critic alone while inventing fewer.",
+    "mechanism": "The critic was trained with human feedback on bug-inserted code to write review comments; hallucinated bugs are plausible-sounding findings with no real defect.",
+    "source_title": "LLM Critics Help Catch LLM Bugs",
+    "authors_or_org": "McAleese, Pokorny, Ceron Uribe, Nitishinskaya, Trebacz, Leike (OpenAI)",
+    "year": "2024",
+    "url": "https://arxiv.org/abs/2407.00215",
+    "where_in_source": "Abstract (I read only the abstract page; the figures and tables were not read).",
+    "number": "Critiques preferred over human critiques in 63% of cases on code with naturally occurring model errors; no catch-rate or hallucination-rate numbers on the page I read.",
+    "conditions": "Trained critic (not a prompted same-model agent), code review, humans paid for review as the comparison; some of the evaluation used inserted bugs; critics also flagged hundreds of errors in data rated flawless, mostly outside code.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D9"
+    ],
+    "for_design": "A dedicated critic can add real detection over a human skim, but every flagged item needs a second check against the source before it changes a conclusion, since critics also produce false findings."
+   },
+   {
+    "id": "L1-14",
+    "claim": "Models that are wrong tend to be wrong in the same way, more so for models from the same provider or with the same architecture and for more accurate models, so a judge from the same family accepts the shared wrong answers; the judge inflates the apparent accuracy of less accurate models.",
+    "mechanism": "Shared training data, architectures and scaling lead to correlated mistakes, so a checker's errors fall on the same items as the checked model's errors.",
+    "source_title": "Correlated Errors in Large Language Models",
+    "authors_or_org": "Elliot Kim, Avi Garg, Kenny Peng, Nikhil Garg",
+    "year": "2025",
+    "url": "https://arxiv.org/abs/2506.07962",
+    "where_in_source": "Section 3.2, Figure 1 and Table 1 (agreement and provider/architecture effects); Section 4, Figures 2 and 8 (judge inflation). Related: Goel et al., 'Great Models Think Alike and this Undermines AI Oversight' (arXiv 2502.04313), Sec. 3.2 and Table 2.",
+    "number": "When two models are both wrong they give the same wrong answer 42.3% of the time on the Open LLM Leaderboard data (random about 0.12) and 60% on HELM (random 1/3); 100% and 97.5% of pairs exceed chance. Same company adds +0.066 (leaderboard), +0.022 (HELM), +0.021 (resumes, not significant); same architecture +0.076 (leaderboard). Judge inflation is shown in figures only, with no single number. Goel et al. report judge score correlated with the judge's error-similarity to the model with average Pearson r 0.84, and 0.35 to 0.65 after controlling for accuracy.",
+    "conditions": "349 models and 12,032 questions (Open LLM Leaderboard), 71 models and 14,042 questions (HELM), 20 models and 1,800 resume-job pairs; multiple-choice style data, so agreement on wrong answers is easier to measure than with free-form output. These measure blind-spot overlap between models in general, not a checker agent inside a workflow. A RAG study (found in search, not opened) reports no clear self-leniency in grounded factual error detection.",
+    "evidence_kind": "paper_with_experiments",
+    "bears_on": [
+     "D9",
+     "D2"
+    ],
+    "for_design": "Run the checker from a different model family (or against external evidence), because a checker of the same model shares the draft's wrong answers; separate families reduce but do not remove the overlap."
+   }
+  ],
+  "notes": "Verification status. I opened every source listed through the fetch tool, but the fetch tool answers through a small summarizing model, so the numbers are as returned for those pages, not read from the PDFs myself (the PDF fetches returned unreadable compressed text). Where the tool could only reach the abstract (CriticGPT paper, 2606.07937, Huang self-correction abstract), I say so in the finding. Several pages were cut at 100,000 characters (MAST, scaling paper, HiddenBench, Facts Without Rules, MetaGPT) and I did not read the remainder.\n\nLeads from the brief: all four named leads exist and say roughly what the titles suggest: MAST (2503.13657), Who&When (2505.00212), Towards a Science of Scaling Agent Systems (2512.08296), MetaGPT (2308.00352). Scaling paper: the abstract only says qualitatively that no central verification propagates errors more; the numbers (17.2 / 7.8 / 5.1 / 4.4) are in the body, but the paper itself notes the amplification term loses significance after controls, so do not over-read it. The 'documents instead of chat' argument in MetaGPT is stated in the text but the paper has no ablation that swaps only the format.\n\nOdd dates. Several 2026 preprints have arXiv numbers that do not match their stamped dates (2608.14588 stamped 22 June 2026; the single-author 2606.07941/2606.07937 pair is from one author). They are single, recent, unreviewed preprints; treat them as lower confidence than MAST, the resilience paper and the correlated-errors paper.\n\nMentioned but not given a finding: (a) Collective Hallucination in Multi-Agent LLMs (arXiv 2606.07941, single author): six agents, 1,317 TruthfulQA/TriviaQA queries, amplification 1.34 undefended vs 1.08 with its defense, hallucination rate 0.118 to 0.072; the model names are not on the abstract page. (b) GUARDIAN (arXiv 2505.19234): attacked accuracy rises with its defense, e.g. MATH with GPT-4o 45.2 to 72.1 (agent-targeted), but clean accuracy is not given on the page I read. (c) Tyen et al., 'LLMs cannot find reasoning errors, but can correct them' (arXiv 2311.08516): best mistake-finding exact-match accuracy was 52.87 (GPT-4, step-level prompting) on BIG-Bench Mistake, GPT-3.5-Turbo 14.78; backtracking with the true error location fixed many wrong traces (e.g. +43.92 on tracking shuffled objects) at some cost to correct ones (about -6 to -11); this is strong evidence that detection, not repair, is the weak step. (d) 'Stop Overvaluing Multi-Agent Debate' (arXiv 2502.08788, position paper): across 5 debate methods, 9 benchmarks and 4 models, debate often failed to beat single-agent chain-of-thought and self-consistency, and mixing different models helped consistently; I saw no effect sizes. (e) Cognition's 'Don't Build Multi-Agents' (2025): opinion with a hypothetical example and no measurements; argues that subagents lacking shared full traces make conflicting implicit decisions and favours one linear agent. (f) Panickssery et al. (arXiv 2404.13076): GPT-4 and Llama 2 recognize their own output and prefer it, with self-preference linearly tied to self-recognition after fine-tuning; no numbers on the abstract page. (g) Routed Graph Handoff (arXiv 2608.25277): I saw only secondary coverage (natural-language coordination 40-60% of token budget; routed format matched or beat language-only over 1,050 trajectories), not the paper.\n\nEvidence leaning. For the tree design, the best-supported points are: errors are often caught late or not at all (L1-01, L1-05, L1-12); the chain topology is the least resilient and a coordinator with an inspector the most (L1-03, L1-04); summaries drop constraints and identifiers (L1-08, L1-09); a checker of the same family shares blind spots (L1-14). The weakest-supported points are the claim that files or structured records beat chat (L1-10, L1-11: design rationale and vendor report, no isolating experiment) and the size of any error spread in natural settings (L1-06 vs L1-05 disagree on direction).",
+  "searched_not_found": [
+   "A controlled, published experiment that holds the task fixed and compares a free-text summary handoff with a file or structured-record handoff on final-answer accuracy: not found. Closest are HiddenBench (structured exchange protocol), Facts Without Rules (summary vs typed fields) and the vendor artifact claim; the Routed Graph Handoff paper claims one but I saw only secondary coverage.",
+   "A direct measurement of how many errors a same-model checker agent misses when the errors come from the same model's own output inside a multi-agent workflow: not found. Evidence is indirect (correlated errors between models, self-preference, self-correction failure).",
+   "Per-system or per-task breakdown of MAST failure categories in the part of the paper I could read: not found in the text I received.",
+   "Replication by an independent group of the 'boundary gate beats end check' result (Hallucination Snowball): not found; it is one preprint on one linear financial pipeline.",
+   "Measurements of failures specific to a tree with one coordinator, per-field child sessions and short-lived helpers under each child: not found; all evidence is on chains, flat groups, debates or a single lead with parallel subagents.",
+   "False-positive rates of verifier agents inside multi-agent research systems: only scattered numbers in single preprints returned by search (a security sentinel study, a code-review study); not opened or verified, so not reported as findings."
+  ]
+ }
+}
