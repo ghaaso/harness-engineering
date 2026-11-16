@@ -120,3 +120,26 @@ research/schemas/                     one schema per kind of file, and the check
 
 The whole programme may use at most 10 % of the week's allowance unless the owner sets another figure:
 about half for the packs, a quarter for the experts, a quarter for checks and the synthesis.
+
+## Amendment 1 (2026-11-16, on the owner's word)
+
+The owner's idea, as he gave it: fresh child sessions are sent out to research; each fills its own
+context window with high-quality knowledge and nothing unnecessary; only then does it review our work.
+Sections 2, 4 and 5 above split that into two sessions per field (a builder that writes the pack and a
+fresh expert that reads it). That split is withdrawn. For each field **one child session does both**:
+
+1. **It researches the field itself.** Its helpers (readers) search and screen, so that search results
+   and weak sources never enter the child's own context; they return source cards and the passages
+   that matter. The child reads the best primary sources in the original, itself.
+2. **It writes down what it learned** as it goes: the cards, `pack.md` and `must-read.md` are its own
+   record. A checker confirms the cards against their sources, and the coordinator checks the pack at
+   gate A, as before.
+3. **It is checked, then it reviews.** It passes the knowledge check (section 5, step 2) and reviews
+   our work in the fixed form (section 5, steps 3 and 4), in the same session, with the field still in
+   its context.
+4. **A second expert**, where section 6 asks for one, is a second child that does its own research
+   from the same question list, so the two are independent; their packs and reviews are compared.
+5. **A ceiling.** If a child's window passes 300,000 tokens before its review, it freezes its pack and
+   a fresh session reads the pack and does the review. That is the exception, and the ledger records it.
+
+Everything else stands: three levels, files as the only interface, the gates, the budgets, the ledger.

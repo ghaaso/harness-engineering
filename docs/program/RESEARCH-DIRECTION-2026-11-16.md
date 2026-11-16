@@ -94,8 +94,9 @@ try to refute; the coordinator only coordinates.
   every step there re-reads about 800,000 tokens.
 - **Experts first, reviews second** (the owner's instruction of 2026-11-16). No session is asked for
   its opinion of our work until its context has been filled, precisely, with the field's knowledge.
-  For each field a knowledge pack is built and checked from primary sources; a fresh session reads
-  the pack and nothing else, passes a short knowledge check, and only then reviews our work and our
+  Each child session researches its field itself and fills its own context with checked,
+  high-quality knowledge: its helpers screen the sources so that noise stays out, and it writes what
+  it learned as a pack. It passes a short knowledge check, and only then reviews our work and our
   approaches in a fixed form. The tree, the ensembles, the gates and the rules that keep this from
   turning into chaos are in `RESEARCH-TREE-PROTOCOL-2026-11-16.md`, beside this file.
 - The coordinator first grounds the direction (the owner's words, the earlier work), then runs the
