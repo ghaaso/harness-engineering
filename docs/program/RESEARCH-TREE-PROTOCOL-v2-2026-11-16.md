@@ -869,3 +869,7 @@ refuters and revised on a mapper's ruling (27 edits). The record of all of it is
 6. **Size.** Twenty-five small scripts stand between this draft and the first field. That is the price
    of fixing the problems with mechanisms that have runners. If it is too much, the honest alternative
    is a pilot on stages 0 and 1 only, with every card labelled unverified.
+7. **Four rules name their runner only through another rule.** R17: the pack is frozen by commit.mjs
+   (R14). R40: each checking script writes the value, and admit.mjs and gate.mjs count them. R43:
+   check-queue.mjs, promote.mjs and certify.mjs. R49: replace.mjs, later. This is the coordinator's reading;
+   the build must confirm it, and a rule that turns out to have no runner is deleted.
