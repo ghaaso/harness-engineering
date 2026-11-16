@@ -1,0 +1,663 @@
+{
+ "label": "map:D7",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "nearest_whole_design": {
+   "name": "A hermetic, content-addressed build system whose rules are LLM sessions, with an LCF-style small trusted checker that alone may mark a target or card as confirmed, and a justification-based truth maintenance system over the claims the build produces",
+   "source": "Build model: Mokhov, Mitchell, Peyton Jones 2018, 'Build Systems a la Carte' (ICFP, PACMPL 2); Feldman 1979, 'Make - A Program for Maintaining Computer Programs' (Software: Practice and Experience 9(4)); dynamic dependencies: Mitchell 2012, 'Shake Before Building: Replacing Make with Haskell' (ICFP). Kernel: Gordon, Milner, Wadsworth 1979, 'Edinburgh LCF: A Mechanised Logic of Computation' (LNCS 78). Retraction: Doyle 1979, 'A Truth Maintenance System' (Artificial Intelligence 12(3)).",
+   "why_it_fits": "The programme is a static dependency graph of derived artefacts: approved question list -> reader cards -> frozen pack (hash) -> review -> synthesis -> owner's table. It already has a scheduler (coordinator plus watcher), a cache (frozen packs), a restart path (P10), single producers per folder (P6) and a status file (P11). What it lacks is exactly what that design adds: every target records the hashes of its declared inputs, so staleness and restart are computed rather than remembered; only a small trusted checker (a script, not a session) can turn an output into a 'confirmed' fact, which is the LCF discipline that P1, P13, P20 and P21 ask for; and a TMS knows which claims fall when a card falls, which the after-the-review check of P1/P17 currently cannot say.",
+   "borrow_whole": "(1) The store/info split: content lives in folders; the coordinator's state is a trace table (target, input hashes, output hash, status) that a script recomputes from the store, never a summary a session writes. (2) One rule per target, declared inputs per rule, outputs written atomically (temp file then rename, plus a completion record). (3) Staleness by content hash, not by time or by memory: a target is stale when any recorded input hash differs from the current one. (4) Restart = run the scheduler again; done targets are not redone. (5) A kernel: the status 'confirmed' on a card and 'accepted' on a file can be written only by the check script; the schema rejects that value from any session. (6) A JTMS over claims with card ids as premises, so retraction propagates.",
+   "where_it_does_not_fit": "(a) Rules are non-deterministic and expensive: no 'rebuild to verify', no early cutoff by output equality; a step is run once and its output frozen by hash (what cloud build caches do with non-deterministic actions). (b) Reads cannot be sandboxed fully (auto-loaded instructions, memory, training): hermeticity is audited from transcripts after the fact instead of enforced. (c) The kernel can decide only the syntactic part of a check (quote present in the page's bytes, number present in the quote, condition fields copied unchanged); whether the conditions are right and whether an inference follows remains an LLM judgment and must be labelled so. (d) Dependencies are dynamic: which sources a reader uses is discovered while it runs, so they are recorded as discovered (Shake-style), not declared in advance. (e) The cross-field synthesis is blackboard-like (opportunistic matching of claims about the same approach), not a fixed rule. (f) It says nothing about how deep or wide the tree should be; that is not a build-system question and B+ tree balance is not this field's."
+  },
+  "mappings": [
+   {
+    "id": "D7-01",
+    "problems": [
+     "P1",
+     "P21",
+     "P20",
+     "P13"
+    ],
+    "classical_problem": "Result checking: trusting the output of an unreliable producer by checking a certificate rather than the producer (certifying algorithms; the LCF small-kernel / de Bruijn criterion; proof-carrying code)",
+    "solutions": [
+     {
+      "name": "Program result checking",
+      "source": "Blum, Kannan 1995, 'Designing Programs That Check Their Work', Journal of the ACM 42(1) (STOC 1989 version)",
+      "guarantees": "If the checker accepts, the output is correct for the checked property, whatever bugs the producer has",
+      "assumptions": "The property is decidable by a checker much simpler than the producer; the checker itself is correct"
+     },
+     {
+      "name": "Certifying algorithms (output plus witness, checked by a simple witness checker)",
+      "source": "McConnell, Mehlhorn, Naeher, Schweitzer 2011, 'Certifying algorithms', Computer Science Review 5(2)",
+      "guarantees": "Each accepted output carries a witness whose check is simple enough to trust; errors are caught per instance",
+      "assumptions": "A witness exists for the property; the witness refers to a fixed object; the checker is small"
+     },
+     {
+      "name": "LCF kernel: only the kernel can create a theorem",
+      "source": "Gordon, Milner, Wadsworth 1979, 'Edinburgh LCF: A Mechanised Logic of Computation', LNCS 78",
+      "guarantees": "No untrusted code can mint a 'theorem'; the trusted base is the kernel alone",
+      "assumptions": "All theorems pass through the kernel's API; nothing else can write the type"
+     },
+     {
+      "name": "Proof-carrying code",
+      "source": "Necula 1997, 'Proof-Carrying Code', POPL 1997",
+      "guarantees": "The consumer accepts untrusted output only after checking a proof it carries",
+      "assumptions": "The safety policy is formal and the proof checker is small and correct"
+     }
+    ],
+    "assumptions_that_fail_here": "A card's semantic content (what was measured, the conditions, the evidence strength) is not decidable by a script; only its surface is. The 'object' the witness refers to can change (pages change) and is seen by sessions only through a small model's summary (P21). The quote is capped at 15 words, so the witness is small. PDFs need text extraction, which plain Node lacks without an npm package. What the field does when the property is only partly decidable: split it into the checked part and named residual assumptions ('admitted' steps), keep the residue visible, and never let it be reported as checked.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A card carries a witness {url, retrieved_at, sha256 of the raw bytes the script fetched, quote, character offset of the quote in the extracted text, number_in_quote}. The value 'witnessed' can be written only by the check script; the schema rejects it from any session (LCF discipline). Three outcomes: witnessed (quote found and the card's number occurs in it), quote-only (quote found, number not in it: the number is unwitnessed), unwitnessed (quote not found or page not fetchable). The LLM checker then judges only what the script cannot (conditions, the citing sentence), and its result is stored as 'judged', never as 'witnessed'.",
+     "runner": "The check script (Node), run by the child after each batch of reader cards and again by the coordinator's gate script on the whole pack before freeze and on every card cited in a review after the review",
+     "when": "After readers return; at gate A (pack freeze); after each review",
+     "input": "cards.jsonl of the field; the script's own fetched page bytes, stored by hash in the field's folder (the snapshot is the object the witness refers to)",
+     "on_failure": "An unwitnessed or quote-only card cannot support a pack conclusion or a review verdict as a fact: the TMS of D7-02 labels its dependents OUT, and the gate refuses the freeze until they are re-supported or marked judgment. A fetch failure is recorded as such, not as a mismatch."
+    },
+    "formula_or_algorithm": "Sampled checks of uncited cards: if a fraction e of cards are bad and k are sampled uniformly, P(no bad card found) = (1-e)^k; to detect a bad rate of e with confidence 1-d, k >= ln(d)/ln(1-e) (e.g. e=0.05, d=0.05 gives k >= 59). Witness check: normalise whitespace and Unicode in both page text and quote, exact substring search, then a regex for the card's number (with unit and sign variants) within the quote.",
+    "to_measure": [
+     "share of cards witnessed / quote-only / unwitnessed per field",
+     "fetch failures by kind (paywall, PDF, timeout)",
+     "share of review facts whose support is judged-only",
+     "LLM checker's disagreement rate with the script on the decidable part (the checker's own error rate)"
+    ],
+    "effect_on_measures": "Hallucinations down (invented quotes and numbers caught mechanically); quality up; tokens down (the decidable part costs no model tokens); token cost down; time up slightly for fetching; throughput unchanged",
+    "build_cost": "One Node script of a few hundred lines plus a schema change; PDF text needs an npm package such as pdfjs-dist (check that the 'plain Node' limit allows npm packages); a page snapshot store per field",
+    "confidence": "high"
+   },
+   {
+    "id": "D7-02",
+    "problems": [
+     "P1",
+     "P17",
+     "P4",
+     "P16"
+    ],
+    "classical_problem": "Belief revision with dependency-directed retraction: when a premise is withdrawn, every conclusion resting on it must be withdrawn too (truth maintenance)",
+    "solutions": [
+     {
+      "name": "Justification-based TMS (JTMS)",
+      "source": "Doyle 1979, 'A Truth Maintenance System', Artificial Intelligence 12(3)",
+      "guarantees": "Labels are consistent with the recorded justifications and well-founded (no node supports itself through a cycle); retracting a premise relabels exactly its dependents",
+      "assumptions": "Every inference is recorded as an explicit justification; nodes are discrete"
+     },
+     {
+      "name": "Assumption-based TMS (ATMS)",
+      "source": "de Kleer 1986, 'An Assumption-Based TMS', Artificial Intelligence 28(2)",
+      "guarantees": "Each node carries the minimal sets of assumptions (environments) under which it holds; one can ask what a conclusion rests on without re-deriving it",
+      "assumptions": "Assumptions are enumerated; justifications are complete"
+     },
+     {
+      "name": "AGM belief revision (minimal change)",
+      "source": "Alchourron, Gardenfors, Makinson 1985, 'On the Logic of Theory Change: Partial Meet Contraction and Revision Functions', Journal of Symbolic Logic 50(2)",
+      "guarantees": "Postulates for rational contraction and revision with minimal loss",
+      "assumptions": "A logically closed belief set; an entrenchment ordering"
+     }
+    ],
+    "assumptions_that_fail_here": "Sessions do not record their inferences; a sentence may rest on training knowledge or on reading that never became a card, so justifications are incomplete. Nodes are prose, so the same claim in two fields is not recognised as the same node. AGM's closure assumption fails outright. What the field does: any node without a recorded justification is entered as an assumption (an ATMS assumption node) labelled 'judgment', so incompleteness is visible rather than hidden.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "claims-table.json: every factual sentence of a pack's conclusions, a review and the synthesis is a node {id, text, supports: [card ids or claim ids], conditions_used, kind: fact or judgment}. Card nodes are premises whose IN/OUT comes from the check script (D7-01). Assumption tags on cards (vendor's own, single study, preprint, summary-only fetch) propagate as environments. A node is IN only if some support set is all IN. A node whose every environment contains 'vendor' or 'single study' is labelled judgment automatically (amendment 3 row 13's last clause, computed instead of asserted). A node supported only by our own earlier result files, or through a cycle, is labelled self-supported (not well-founded).",
+     "runner": "tms.js (Node), called by the coordinator's gate script",
+     "when": "After every check run, after any card's status changes, and before any pack, review or synthesis is frozen",
+     "input": "All fields' cards.jsonl statuses and claims-table.json files",
+     "on_failure": "No freeze while a node in the target is OUT or self-supported; the script writes the list of OUT nodes with the cards that caused them into the field's repair file, which is the one repair request of section 5 step 5"
+    },
+    "formula_or_algorithm": "Label propagation over the support graph: start from premises (card statuses), compute IN as the least fixed point of 'some support set all IN' (well-founded, so cycles do not support themselves); ATMS environments are unions of the supports' assumption sets, kept minimal under set inclusion. Blast radius of a retraction = size of the set of nodes that change from IN to OUT.",
+    "to_measure": [
+     "blast radius per retracted card",
+     "share of review and synthesis nodes labelled judgment or self-supported",
+     "number of nodes whose only environment contains a vendor or single-study assumption"
+    ],
+    "effect_on_measures": "Quality up and hallucinations down in the synthesis (a fallen card can no longer leave its conclusions standing); token count unchanged (a script); time down for repairs (the script says exactly what to redo)",
+    "build_cost": "A schema for claims-table.json and a ~200-line Node script; the real cost is that reviews must cite at sentence level, which the fixed review form already asks",
+    "confidence": "high"
+   },
+   {
+    "id": "D7-03",
+    "problems": [
+     "P15"
+    ],
+    "classical_problem": "Non-monotonic conclusions that must be revisited when new evidence arrives: a conclusion justified by the absence of something (an OUT-list)",
+    "solutions": [
+     {
+      "name": "Support-list justifications with an OUT-list in a JTMS",
+      "source": "Doyle 1979, 'A Truth Maintenance System', Artificial Intelligence 12(3)",
+      "guarantees": "A conclusion held because something is not believed is withdrawn automatically when that thing becomes believed",
+      "assumptions": "The OUT-list names nodes that can be matched when they appear"
+     },
+     {
+      "name": "Default logic",
+      "source": "Reiter 1980, 'A Logic for Default Reasoning', Artificial Intelligence 13",
+      "guarantees": "A formal account of conclusions drawn in the absence of contrary information, defeated when it arrives",
+      "assumptions": "Formal propositions"
+     }
+    ],
+    "assumptions_that_fail_here": "Whether a new card is the evidence that would defeat a dismissal is a semantic match; prose cannot be matched exactly. Adapted: the OUT-list is written in the fixed vocabulary the programme already has (approach id, measure, direction), so the match is a key comparison and the semantic remainder goes to the refuter.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Every dismissal ('wrong form', 'wrong problem', a dropped field) is a claims-table node with supports (the cards it rests on) and an out-list: the approach id and measure, and the direction of a result that would defeat it. When any field later confirms a card tagged with that approach id and measure in that direction, or a support card falls, the dismissal goes OUT and is listed as reopened.",
+     "runner": "tms.js (D7-02); the coordinator briefs the refuter with the reopened list",
+     "when": "On every card status change in any field, including later waves",
+     "input": "Dismissal nodes and all fields' witnessed cards with approach-id and measure tags",
+     "on_failure": "A reopened dismissal cannot appear in the owner's table as dismissed; it appears as reopened with the defeating card ids until the refuter rules"
+    },
+    "formula_or_algorithm": "Dismissal D is IN iff all its in-supports are IN and no node in its out-list is IN; out-list entries are (approach_id, measure, direction) keys matched against card tags",
+    "to_measure": [
+     "number of dismissals reopened per wave",
+     "share of reopened dismissals the refuter overturns"
+    ],
+    "effect_on_measures": "Quality up (false negatives get a second look exactly when new evidence appears, not once at an arbitrary time); refuter tokens down (it attacks reopened dismissals and a sample, not all)",
+    "build_cost": "Small once D7-02 exists: an out-list field and a tag vocabulary for cards",
+    "confidence": "medium"
+   },
+   {
+    "id": "D7-04",
+    "problems": [
+     "P2",
+     "P13",
+     "F1",
+     "P10"
+    ],
+    "classical_problem": "Hermeticity: a build step's result must depend only on its declared inputs (undeclared dependencies)",
+    "solutions": [
+     {
+      "name": "Declared dependencies and rebuild correctness",
+      "source": "Mokhov, Mitchell, Peyton Jones 2018, 'Build Systems a la Carte', ICFP (PACMPL 2)",
+      "guarantees": "A correct build system brings every target up to date with respect to its declared inputs; minimality of rebuilds",
+      "assumptions": "Tasks are deterministic or their outputs are recorded; all inputs are declared"
+     },
+     {
+      "name": "Purely functional deployment (inputs hashed into the output's identity)",
+      "source": "Dolstra, de Jonge, Visser 2004, 'Nix: A Safe and Policy-Free System for Software Deployment', LISA 2004",
+      "guarantees": "An output is identified by the hash of all its inputs; undeclared inputs are excluded by construction",
+      "assumptions": "A sandbox that blocks undeclared reads"
+     },
+     {
+      "name": "Dynamic dependencies recorded as discovered",
+      "source": "Mitchell 2012, 'Shake Before Building: Replacing Make with Haskell', ICFP 2012",
+      "guarantees": "Dependencies found during a task are recorded and used for later invalidation",
+      "assumptions": "All reads go through the build system's API"
+     }
+    ],
+    "assumptions_that_fail_here": "Sessions cannot be sandboxed: a session auto-loads project instructions, auto-memory and skills that are undeclared inputs, and these files contain hopes and earlier verdicts (a direct anchoring channel the neutral question list does not touch). Outputs are not reproducible. What the field does when reads cannot be blocked: trace them and refuse an output whose trace shows an undeclared read (tracing build systems); when tasks are non-deterministic: record the output once and never treat a rerun as verification.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Each step has a manifest {step id, model, allowed tools, inputs: [path, sha256]}. The session starts in a worktree that contains only the manifest's inputs: no project instruction file, no memory folder, no other field's folder, no skills it does not need. After the step, its transcript's tool calls (file reads, searches, fetches) are compared with the manifest; an undeclared read taints the output. F1 follows: a review is a step whose declared inputs are the frozen pack hash, the must-read sections and the fixed list of our files; a review in the researching window has undeclared inputs (everything read but not carded), so it cannot be invalidated when a card falls (D7-02) and cannot be certified (P13). The researcher's extra knowledge counts only if it is written into the pack.",
+     "runner": "The coordinator's start script builds the worktree from the manifest; the gate script audits the transcript",
+     "when": "At every session start, and at acceptance of every output",
+     "input": "Manifest, the session's transcript file, the worktree listing",
+     "on_failure": "A tainted output is not accepted at the gate; the step is rerun from a clean worktree once, then the field is marked failed with the undeclared paths named"
+    },
+    "formula_or_algorithm": "undeclared(step) = {paths read in transcript} minus {manifest inputs} minus {allowed tool-generated paths}; accept iff empty. Fixed prefix saved = tokens of auto-loaded files removed by the lean worktree (measured from the first call's context size with and without them).",
+    "to_measure": [
+     "undeclared reads per session",
+     "first-call context size in a lean worktree versus the repository root",
+     "share of outputs tainted"
+    ],
+    "effect_on_measures": "Quality up and hallucinations down (anchoring through auto-loaded files closed; reviews traceable to their inputs); token count and cost down (smaller fixed prefix on every call of every child and helper); time neutral",
+    "build_cost": "Manifest schema, worktree-builder script, transcript-audit script (transcripts are already parsed for the token count of P14)",
+    "confidence": "high"
+   },
+   {
+    "id": "D7-05",
+    "problems": [
+     "P10",
+     "P11",
+     "P7",
+     "P12",
+     "P14"
+    ],
+    "classical_problem": "Incremental recomputation with traces: knowing which targets are done, stale or missing, restarting without redoing work, and sharing results through a cache without locks",
+    "solutions": [
+     {
+      "name": "Make: timestamp-based out-of-date targets and restart",
+      "source": "Feldman 1979, 'Make - A Program for Maintaining Computer Programs', Software: Practice and Experience 9(4)",
+      "guarantees": "Rerunning the build redoes only out-of-date targets",
+      "assumptions": "Timestamps are reliable; outputs are complete when present"
+     },
+     {
+      "name": "Verifying and constructive traces; shared (cloud) caches keyed by input hash",
+      "source": "Mokhov, Mitchell, Peyton Jones 2018, 'Build Systems a la Carte', ICFP",
+      "guarantees": "Content hashes give correct staleness; a cache keyed by the task's input hash lets any worker reuse a result without coordination",
+      "assumptions": "Writes to the cache are write-once per key; tasks are deterministic or the first stored result is taken as the value"
+     },
+     {
+      "name": "Memo functions",
+      "source": "Michie 1968, ''Memo' Functions and Machine Learning', Nature 218",
+      "guarantees": "A computed value is reused instead of recomputed",
+      "assumptions": "Same input, same useful output"
+     }
+    ],
+    "assumptions_that_fail_here": "Partial outputs after a crash or sleep look complete if presence alone means done (Make's known failure, handled there by deleting a target on error). Non-determinism means a duplicate reading gives a different card, not the same one. A session's summary of its own state is not a trace.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "(a) Every output is written to a temp name and renamed, with a completion record {output sha256, input hashes}; a file without a completion record is not done. (b) status.js recomputes, from the folders alone, a table of targets: done, stale (a recorded input hash differs from the current one, e.g. a pack re-frozen after its one repair leaves the review built on the old hash stale), or missing. This table is the coordinator's state and its hand-over (P11): a fresh coordinator runs status.js; nobody writes a summary. (c) P10's restart path is the scheduler run again: the first not-done target in dependency order. (d) P7: before briefing readers, the child runs a lookup over other fields' frozen cards keyed by normalised DOI or URL (read-only, no claim, no race); a hit becomes a declared input; duplicates remain only between fields running at the same time and are counted as free second readings for P3.",
+     "runner": "status.js and lookup.js (Node); status.js is called by the watcher on every poll and by the coordinator at each turn and at hand-over",
+     "when": "Every watcher poll; at each coordinator turn; before reader briefs",
+     "input": "Field folders, completion records, frozen card files",
+     "on_failure": "A stale target blocks the targets that depend on it (no synthesis over a stale review); an incomplete target is redone from its inputs"
+    },
+    "formula_or_algorithm": "stale(t) iff exists input i of t with recorded_hash(t,i) != current_hash(i), or any input is stale. Cost of a change = sum of measured step costs over the transitive dependents of the changed node (step costs from the pilot's transcripts), which is the number the admission rule of P14 needs for a repair, not only for a fresh field.",
+    "to_measure": [
+     "tokens per step type from transcripts (reader, check, pack, review)",
+     "number of stale targets after a repair",
+     "cache hit rate across fields",
+     "incomplete files found after a crash or sleep"
+    ],
+    "effect_on_measures": "Token count and cost down (no redone work, no coordinator-written summaries, reused cards); time down on restart; quality up (no review silently built on an outdated pack)",
+    "build_cost": "Two small Node scripts and a completion-record convention",
+    "confidence": "high"
+   },
+   {
+    "id": "D7-06",
+    "problems": [
+     "P6",
+     "P8",
+     "P9",
+     "P10",
+     "P11",
+     "S"
+    ],
+    "classical_problem": "Specifying a concurrent protocol and checking its safety and liveness properties over all interleavings, including faults",
+    "solutions": [
+     {
+      "name": "Safety and liveness properties",
+      "source": "Lamport 1977, 'Proving the Correctness of Multiprocess Programs', IEEE Transactions on Software Engineering SE-3(2)",
+      "guarantees": "A vocabulary: nothing bad happens (safety), something good eventually happens (liveness)",
+      "assumptions": "The system is a state machine"
+     },
+     {
+      "name": "Every property is a safety property intersected with a liveness property",
+      "source": "Alpern, Schneider 1985, 'Defining Liveness', Information Processing Letters 21(4)",
+      "guarantees": "Any requirement on behaviours decomposes into a safety part and a liveness part",
+      "assumptions": "Properties are sets of infinite behaviours"
+     },
+     {
+      "name": "TLA and explicit-state model checking",
+      "source": "Lamport 1994, 'The Temporal Logic of Actions', ACM TOPLAS 16(3); Holzmann 1997, 'The Model Checker SPIN', IEEE Transactions on Software Engineering 23(5)",
+      "guarantees": "Exhaustive check of a finite model; a violated property comes back as a concrete counterexample trace",
+      "assumptions": "A finite abstraction; liveness needs fairness assumptions (an enabled action is eventually taken)"
+     }
+    ],
+    "assumptions_that_fail_here": "Fairness fails: a sleeping PC, an exhausted allowance or a stalled session never takes its enabled action, so no liveness property holds. Sessions are not finite programs. What the field does: abstract each session to a nondeterministic choice among its fault outcomes (progress, stall, loop, crash, false claim), and replace liveness with bounded liveness (done within a time box or an alarm fires), which is a safety property and checkable without fairness. TLC needs Java, which is not installed, so the checker is a breadth-first search written in Node; the state space of this protocol is small.",
+    "fit": "direct",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "A model of the coordination protocol: coordinator (active or handing over), watcher(s), up to N children in states planned/running/stalled/stopped/frozen/reviewed/dropped, helpers, the three-session limit, the one repair, hand-over at the token threshold, stop-before-replace, and fault actions (crash, sleep, allowance exhausted, loop). Invariants: at most three sessions; one writer per folder and branch; a replacement never starts before the stalled session is stopped; exactly one active coordinator; every watcher's exit wakes the active coordinator; no freeze with an OUT node. Bounded liveness: every admitted field reaches frozen-or-dropped within K steps or an alarm state. A likely counterexample to check first: the coordinator hands over at 200,000 tokens while a watcher it started is still running; the watcher's exit wakes the old session, not the new one.",
+     "runner": "Written once before wave 1 (by the coordinator or a helper; the owner approves the property list); rerun by the coordinator before any amendment of the protocol is adopted",
+     "when": "Before the pilot; at every protocol amendment",
+     "input": "protocol-model.js and its property list",
+     "on_failure": "An amendment whose model has a counterexample is not adopted; the counterexample trace is attached to the amendment"
+    },
+    "formula_or_algorithm": "Breadth-first search over reachable states from the initial state, checking each invariant per state and each bounded-liveness property as 'no path of length > K avoids the goal or alarm states'; report the shortest violating trace",
+    "to_measure": [
+     "number of reachable states (feasibility)",
+     "counterexamples found per amendment"
+    ],
+    "effect_on_measures": "Time and tokens saved by catching coordination bugs (lost wake-ups, double writers, two coordinators) before they cost a wave; quality of the protocol up",
+    "build_cost": "300 to 500 lines of Node; a day of an agent's work; small state space",
+    "confidence": "high"
+   },
+   {
+    "id": "D7-07",
+    "problems": [
+     "P19",
+     "P9"
+    ],
+    "classical_problem": "Proving progress (termination) with a variant function: a quantity bounded below that strictly decreases on each step",
+    "solutions": [
+     {
+      "name": "Well-founded ranking / variant functions",
+      "source": "Floyd 1967, 'Assigning Meanings to Programs', Proceedings of Symposia in Applied Mathematics 19 (AMS)",
+      "guarantees": "If a measure into a well-founded set strictly decreases on every step, the process terminates",
+      "assumptions": "The measure is bounded below and each step decreases it"
+     }
+    ],
+    "assumptions_that_fail_here": "A session is not a program whose steps can be proved to decrease anything; the measure can only be observed. Adapted: observe the variant at each time box and treat a non-decrease as the stall signal.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Replace 'new confirmed cards or files' (unbounded: a looping child can write files forever and pad cards) with a variant bounded by the plan: V = (approved question ids not yet covered by a witnessed card) + (cited cards not yet checked) + (empty slots in the fixed review form), ordered lexicographically by stage. Progress means V strictly decreased within the time box.",
+     "runner": "The watcher script (Node), from the files and status.js of D7-05",
+     "when": "Each watcher poll; the decision at each time-box boundary",
+     "input": "Approved question list, cards.jsonl with check statuses, review.json",
+     "on_failure": "V did not decrease within the time box: the watcher exits with 'no progress' (waking the coordinator), which stops the session before any replacement starts; V reaching 0 means done"
+    },
+    "formula_or_algorithm": "V(t) = sum over stages s of w_s * remaining_s(t) with w chosen so a later stage never outweighs an earlier one (lexicographic); stall iff V(t + T) >= V(t). Also a hard bound: total steps or tokens per field, so the process terminates even if V plateaus at a non-zero value",
+    "to_measure": [
+     "V over time per field in the pilot",
+     "time-box length T needed so that healthy children are not flagged (from the pilot's V curves)"
+    ],
+    "effect_on_measures": "Tokens and time down (loops caught by measure, not by liveness); throughput up; hard to game by padding because extra cards on covered questions do not decrease V",
+    "build_cost": "A few dozen lines in the watcher once question ids and card statuses exist",
+    "confidence": "high"
+   },
+   {
+    "id": "D7-08",
+    "problems": [
+     "P4",
+     "P17"
+    ],
+    "classical_problem": "Checking each translation instead of verifying the translator (translation validation)",
+    "solutions": [
+     {
+      "name": "Translation validation",
+      "source": "Pnueli, Siegel, Singerman 1998, 'Translation Validation', TACAS 1998, LNCS 1384",
+      "guarantees": "Each output is shown to correspond to its input, without proving the translator correct",
+      "assumptions": "A decidable correspondence relation between input and output"
+     },
+     {
+      "name": "Translation validation for an optimising compiler",
+      "source": "Necula 2000, 'Translation Validation for an Optimizing Compiler', PLDI 2000",
+      "guarantees": "Per-run checking of a real compiler's output",
+      "assumptions": "As above"
+     }
+    ],
+    "assumptions_that_fail_here": "Full semantic equivalence of prose is undecidable; only structural correspondence can be checked: copied fields, numbers, ids. The remainder is judgment.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "At each hand-over (reader card -> child's cards.jsonl -> pack -> review -> synthesis), every claim that uses a card must carry the card's conditions object either byte-identical or a declared narrowing (a subset of enumerated values), and every number in the claim's text must match the card's number or baseline (extracted by regex). A claim whose conditions are wider than the card's is the P17 failure in decidable form.",
+     "runner": "handover-check.js (Node), called by the gate script",
+     "when": "At acceptance of every file at every level",
+     "input": "The output file and the card files it cites",
+     "on_failure": "The file is returned to its writer once with the mismatches; on a second failure the claim is relabelled judgment in the claims table (D7-02)"
+    },
+    "formula_or_algorithm": "accept(claim) iff conditions(claim) is a subset of or equal to conditions(card) field by field, and numbers(claim text) is a subset of {card.number, card.baseline, declared derived values}",
+    "to_measure": [
+     "mismatches per hand-over level (where conditions fall off)",
+     "share of claims relabelled judgment"
+    ],
+    "effect_on_measures": "Quality up and hallucinations down (distorted numbers and widened conditions caught); no model tokens",
+    "build_cost": "One Node script; depends on conditions being an enumerated object, which the card schema must fix",
+    "confidence": "medium"
+   },
+   {
+    "id": "D7-09",
+    "problems": [
+     "P3",
+     "P20",
+     "F2"
+    ],
+    "classical_problem": "Correlated failures in redundant versions (N-version programming) and the formal-methods answer: diversity in kind, a checker different from and simpler than the producer",
+    "solutions": [
+     {
+      "name": "The experimental test of the independence assumption in multiversion programming",
+      "source": "Knight, Leveson 1986, 'An Experimental Evaluation of the Assumption of Independence in Multiversion Programming', IEEE Transactions on Software Engineering SE-12(1)",
+      "guarantees": "Shows that independently written versions fail together far more than independence predicts, so agreement does not confirm",
+      "assumptions": "Versions built from one specification by similar people"
+     },
+     {
+      "name": "Result checking and certifying algorithms (see D7-01)",
+      "source": "Blum, Kannan 1995, JACM 42(1); McConnell, Mehlhorn, Naeher, Schweitzer 2011, Computer Science Review 5(2)",
+      "guarantees": "Confidence comes from a check different in kind, not from a second producer",
+      "assumptions": "A simple checker exists for the property"
+     }
+    ],
+    "assumptions_that_fail_here": "A second model is not always allowed (F3), and a different model still shares training data, so even cross-model checking is not independent. The field's answer is to move as much of each check as possible into a script (D7-01, D7-08), where no blind spot is shared, and to treat the rest as judgment.",
+    "fit": "adapted",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "'An agreement never raises a claim' is the standard reading of Knight and Leveson and stays. For F2 the hermetic choice (D7-04) is a second reviewer of the same frozen pack: with identical declared inputs, a disagreement isolates the inference, and the claims table can name the exact node where two reviews differ. A second research run differs in both inputs and inference, so its disagreements cannot be located; its evidence-coverage role is better met by the contrary-evidence reader. For P20, each check is split: the script's decidable part first, the model only on the remainder, recorded as judged.",
+     "runner": "Coordinator chooses fields for second reviews after first reviews; a diff script over two claims tables keyed by approach id and measure",
+     "when": "After first reviews are frozen",
+     "input": "Two review claims tables built from the same pack hash",
+     "on_failure": "Disagreeing nodes are marked weak (current rule) and listed for the one adjudication"
+    },
+    "formula_or_algorithm": "diff(review A, review B) over keys (approach_id, measure): verdicts differ, or support sets are disjoint, or one cites a card the other does not",
+    "to_measure": [
+     "disagreement rate between same-pack reviewers (inference variance)",
+     "share of each check's items settled by script versus by model"
+    ],
+    "effect_on_measures": "Token cost down versus a second research run (a review costs a fraction of a field); quality signal sharper (disagreements located)",
+    "build_cost": "Small once claims tables exist",
+    "confidence": "medium"
+   },
+   {
+    "id": "D7-10",
+    "problems": [
+     "P13"
+    ],
+    "classical_problem": "Verifying a powerful untrusted prover with a weak verifier by randomised challenges (interactive proofs)",
+    "solutions": [
+     {
+      "name": "Interactive proof systems",
+      "source": "Goldwasser, Micali, Rackoff 1985, 'The Knowledge Complexity of Interactive Proof-Systems', STOC 1985 (SIAM Journal on Computing 18(1), 1989)",
+      "guarantees": "A weak verifier is convinced only of true statements except with small probability, by challenges the prover cannot predict",
+      "assumptions": "The verifier's checks of each answer are sound; challenges are random and chosen after the prover commits"
+     },
+     {
+      "name": "Arthur-Merlin games",
+      "source": "Babai 1985, 'Trading Group Theory for Randomness', STOC 1985",
+      "guarantees": "Public-coin version of the same idea",
+      "assumptions": "As above"
+     }
+    ],
+    "assumptions_that_fail_here": "The verifier's check of a semantic step is itself a model judgment, so soundness is not formal. Analogy for the protocol, direct for the arithmetic of spot checks.",
+    "fit": "analogy_only",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "The current rule (certify outputs from outside, not the expert's self-test) is this field's position: verify proofs, not provers. Add one element: after the review is frozen (commitment), the gate script picks k verdicts at random and the expert, in the same session or a fresh one from the same inputs, must expand each into explicit steps (card, condition, inference); each step is checked by D7-01/D7-08 and the checker. The expert cannot know in advance which verdicts are challenged.",
+     "runner": "The gate script picks the challenges; the checker grades the expansions",
+     "when": "After the review is frozen, before it enters the synthesis",
+     "input": "The frozen review, its claims table, a random seed recorded in the ledger",
+     "on_failure": "A failed expansion marks that verdict judgment and raises the field's challenge count for the remaining verdicts"
+    },
+    "formula_or_algorithm": "If a fraction e of verdicts would fail expansion, P(all k pass) = (1-e)^k; k >= ln(d)/ln(1-e) for confidence 1-d",
+    "to_measure": [
+     "failure rate of challenged verdicts",
+     "tokens per expansion"
+    ],
+    "effect_on_measures": "Quality up at a bounded token cost; hallucinations in verdicts down",
+    "build_cost": "Small: a random pick and a brief",
+    "confidence": "medium"
+   },
+   {
+    "id": "D7-11",
+    "problems": [
+     "P6",
+     "P11",
+     "S"
+    ],
+    "classical_problem": "Several independent knowledge sources cooperating through a shared, structured store under a separate control component (blackboard architecture)",
+    "solutions": [
+     {
+      "name": "Hearsay-II blackboard",
+      "source": "Erman, Hayes-Roth, Lesser, Reddy 1980, 'The Hearsay-II Speech-Understanding System: Integrating Knowledge to Resolve Uncertainty', ACM Computing Surveys 12(2)",
+      "guarantees": "An architecture, not a theorem: knowledge sources never call each other; hypotheses at levels of abstraction carry credibility ratings and support links",
+      "assumptions": "Cheap knowledge-source activations; a shared store with fine-grained concurrent access; trusted knowledge sources"
+     },
+     {
+      "name": "Blackboard control architecture (control decisions on their own blackboard)",
+      "source": "Hayes-Roth 1985, 'A Blackboard Architecture for Control', Artificial Intelligence 26(3)",
+      "guarantees": "Scheduling state is explicit and separate from domain content",
+      "assumptions": "As above"
+     },
+     {
+      "name": "Survey",
+      "source": "Nii 1986, 'Blackboard Systems' (two parts), AI Magazine 7(2) and 7(3)",
+      "guarantees": "The standard description of the pattern",
+      "assumptions": "As above"
+     }
+    ],
+    "assumptions_that_fail_here": "Activations here cost 100,000 tokens or more and knowledge sources are unreliable, so opportunistic, data-driven control is too expensive and too trusting; the store is single-writer folders, not a concurrent blackboard.",
+    "fit": "adapted",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "Keep what the protocol already has, which is the blackboard's core: experts never see each other, files are the only interface, and the coordinator's status file is a control blackboard separate from content (Hayes-Roth). Borrow the hypothesis structure for the synthesis only: claims at levels (card, mechanism, review claim, synthesis claim) with support links and an evidence label (D7-02), and condition-triggered cross-field actions: two IN claims on the same approach id and measure with opposite directions trigger the one adjudication. Do not borrow opportunistic scheduling: the schedule stays the static dependency order of D7-05.",
+     "runner": "The synthesis script detects trigger conditions; the coordinator orders the adjudication",
+     "when": "When the synthesis is built",
+     "input": "All fields' claims tables",
+     "on_failure": "Conflicting claims stay open with both supports, as the current rule says"
+    },
+    "formula_or_algorithm": "conflict(c1, c2) iff key(c1) = key(c2) = (approach_id, measure) and direction(c1) != direction(c2) and both IN",
+    "to_measure": [
+     "conflicts detected per synthesis",
+     "share resolved by the adjudication"
+    ],
+    "effect_on_measures": "Quality up in the synthesis; small cost",
+    "build_cost": "Part of the synthesis script",
+    "confidence": "medium"
+   },
+   {
+    "id": "D7-12",
+    "problems": [
+     "P8",
+     "P12",
+     "P14",
+     "S"
+    ],
+    "classical_problem": "Task allocation among agents by announcement, bids and award (the contract net)",
+    "solutions": [
+     {
+      "name": "Contract Net Protocol",
+      "source": "Smith 1980, 'The Contract Net Protocol: High-Level Communication and Control in a Distributed Problem Solver', IEEE Transactions on Computers C-29(12)",
+      "guarantees": "Dynamic decomposition and allocation by mutual selection; announcements and awards carry expiration times",
+      "assumptions": "Contractors can judge their own capability and cost and decline honestly; contractors differ"
+     },
+     {
+      "name": "Negotiation as a metaphor for distributed problem solving",
+      "source": "Davis, Smith 1983, Artificial Intelligence 20(1)",
+      "guarantees": "The rationale for the protocol",
+      "assumptions": "As above"
+     }
+    ],
+    "assumptions_that_fail_here": "Every contractor is the same model; a session cannot estimate its own cost (P14) and tends to accept whatever the announcement implies (P2). Bidding therefore carries no information here.",
+    "fit": "analogy_only",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "Borrow only the manager's side, which the protocol already has: the coordinator decomposes and awards at announcement time from measured costs (the admission rule), and every award carries an expiration (the time box). Decomposition happens before work, never after it, which is why the withdrawn 'split on overflow' rule was wrong in this field's terms too. No bids and no self-estimates.",
+     "runner": "Coordinator's admission script",
+     "when": "Before each wave",
+     "input": "Pilot-measured per-step costs (D7-05), remaining allowance read by the coordinator, the owner's margin",
+     "on_failure": "A field whose estimated cost does not fit is not announced in this wave"
+    },
+    "formula_or_algorithm": "admit field f iff sum of estimated costs of admitted fields + est(f) * (1 + margin) <= remaining allowance, with est(f) = number of approved question ids of f times the pilot's measured cost per question id plus fixed per-field costs",
+    "to_measure": [
+     "cost per question id in the pilot",
+     "estimate error per field after each wave"
+    ],
+    "effect_on_measures": "Token cost bounded; throughput set by measured cost rather than guesses",
+    "build_cost": "Small",
+    "confidence": "medium"
+   },
+   {
+    "id": "D7-13",
+    "problems": [
+     "C"
+    ],
+    "classical_problem": "Completeness of a list of failure modes relative to a model: enumerating what each fault can do to each action",
+    "solutions": [
+     {
+      "name": "Decomposition of requirements into safety and liveness",
+      "source": "Alpern, Schneider 1985, 'Defining Liveness', Information Processing Letters 21(4)",
+      "guarantees": "Every behavioural requirement is a safety part plus a liveness part, so a property list can be checked for both halves",
+      "assumptions": "Properties over behaviours of a state machine"
+     },
+     {
+      "name": "Model checking with fault actions (D7-06)",
+      "source": "Holzmann 1997, 'The Model Checker SPIN', IEEE Transactions on Software Engineering 23(5)",
+      "guarantees": "All reachable violations of the stated properties under the modelled faults are found",
+      "assumptions": "A finite model; the fault model and the property list are themselves complete"
+     }
+    ],
+    "assumptions_that_fail_here": "No method proves a hazard list complete in absolute terms; completeness is always relative to the model, the fault list and the property list. That is the answer this field gives, and the honest one.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "A matrix: rows are the protocol's actions (brief, read, card, check, freeze, review, hand-over, synthesis, watcher exit, restart, hand-over of the coordinator), columns are the listed faults (stall, loop, crash, reboot, sleep, allowance exhausted, false statement, injected instruction, agreement with the brief, correlated error, non-reproducibility) plus the Limits (three sessions, Node only, no meter for scripts, summarised pages). Each cell must name a problem id or 'not applicable' with a reason. Separately each problem is classified safety, liveness or cost; a property with no problem against it is a gap. Counterexamples from D7-06 that map to no problem id are new problems.",
+     "runner": "A Node script checks the matrix for empty cells; the coordinator fills it; a refuter attacks the 'not applicable' cells",
+     "when": "Before the pilot and after each amendment",
+     "input": "matrix.json, the problem list, D7-06's counterexamples",
+     "on_failure": "An empty cell or an unmapped counterexample blocks the amendment until it is filled"
+    },
+    "formula_or_algorithm": "Cells = |actions| x |faults| (about 11 x 15 = 165); completeness relative to the model = filled cells / cells; residual risk lives in the rows and columns not in the model, which only review can find",
+    "to_measure": [
+     "empty and 'not applicable' cells",
+     "new problems found per pass"
+    ],
+    "effect_on_measures": "Quality of the risk list up at a small token cost",
+    "build_cost": "Small",
+    "confidence": "medium"
+   }
+  ],
+  "missing_risks": [
+   {
+    "title": "A partial output after a crash, reboot or sleep is read as finished",
+    "classical_name": "Interrupted target / torn write (Make's stale partial target, handled there by deleting targets on error)",
+    "why_it_applies": "Sessions and scripts write files over many tool calls; P10's restart path reads whatever is in the folder, and the watcher counts new files as progress",
+    "mechanism": "Write to a temp name and rename; a file counts as done only with a completion record holding its hash and its input hashes (D7-05)"
+   },
+   {
+    "title": "Outputs built on an old version of their inputs stay in use",
+    "classical_name": "Stale targets / missing invalidation",
+    "why_it_applies": "The one repair re-freezes a pack; cards fall at the post-review check; nothing marks the review, the synthesis or the owner's table built on the earlier hash as stale",
+    "mechanism": "Recorded input hashes per output and a status script that computes staleness (D7-05), plus TMS retraction for claims (D7-02)"
+   },
+   {
+    "title": "Undeclared inputs reach a session through files it loads automatically",
+    "classical_name": "Hermeticity violation (undeclared dependency)",
+    "why_it_applies": "A session started in this repository auto-loads project instructions and an auto-memory that state hopes, earlier verdicts and the owner's judgments; this is an anchoring channel (P2) and an uncertifiable input (P13) that neutral question lists do not touch",
+    "mechanism": "Lean worktree built from a manifest, and a transcript audit of reads (D7-04)"
+   },
+   {
+    "title": "A conclusion supports itself through our own earlier files",
+    "classical_name": "Circular (non-well-founded) justification",
+    "why_it_applies": "Reviews may cite 'a card or one of our files'; our files contain our earlier conclusions, so a verdict can rest on the belief it is meant to test",
+    "mechanism": "Well-founded labelling in the TMS: support that ends only in our own result files is labelled self-supported and cannot be a fact (D7-02)"
+   },
+   {
+    "title": "After a coordinator hand-over the watcher wakes the wrong session",
+    "classical_name": "Lost wake-up / split brain in the control protocol",
+    "why_it_applies": "A script's exit wakes the session that started it; when the coordinator hands over at 200,000 tokens mid-wave, the running watcher still belongs to the old session, so its exit can wake a session that should be gone while the new one waits",
+    "mechanism": "Model the hand-over in the protocol model (D7-06); the hand-over rule then stops and restarts the watcher under the new coordinator, or the watcher reads the active coordinator's id from a file"
+   },
+   {
+    "title": "The witness refers to a page that has changed",
+    "classical_name": "Time-of-check to time-of-use; a certificate not bound to a fixed object",
+    "why_it_applies": "The quote check of P21 fetches the page later than the reader saw it; pages are edited, versioned (preprint v1 and v2) or taken down, so a true card fails or a false one passes",
+    "mechanism": "The script stores the fetched bytes and their hash as the witness object; a later check runs on the stored snapshot, and a refetch that differs is recorded as 'source changed', not as a mismatch (D7-01)"
+   },
+   {
+    "title": "The progress measure is gamed",
+    "classical_name": "A non-well-founded progress measure (no variant)",
+    "why_it_applies": "'New confirmed cards or files' grows without bound; a looping or padding child shows progress forever",
+    "mechanism": "A variant bounded by the approved question ids and the review form, which must strictly decrease per time box (D7-07)"
+   }
+  ],
+  "do_not": [
+   "Do not treat agreement between instances of one model as confirmation, nor build confidence by adding more producers; add checks that differ in kind (Knight and Leveson 1986). The current rule already says this; keep it.",
+   "Do not let any session write the status 'confirmed' or 'accepted'; only the check script may (the LCF discipline). A session's own report that it checked is not a check.",
+   "Do not let the checker be as complex as the producer; keep the trusted part a small script and label everything a model judges as judged.",
+   "Do not rerun a non-deterministic step to verify it, and do not expect a rerun to reproduce it; freeze each output once by hash.",
+   "Do not use file times, file presence or a session's memory as freshness; use content hashes and completion records.",
+   "Do not let a session write the summary of its own state for a hand-over; derive the state from the store with a script.",
+   "Do not delete a retracted card or a dismissed lead; keep it with its OUT label and reason, so later evidence can bring it back (TMS keeps nodes and relabels them).",
+   "Do not re-partition a unit of work after it has been built; decide granularity before work (this is why the withdrawn split-on-overflow rule was wrong).",
+   "Do not use a shared writable register with check-then-claim; share through write-once outputs keyed by content (the withdrawn register was correctly withdrawn).",
+   "Do not use contract-net bidding or any self-estimate of cost or competence by a session.",
+   "Do not adopt opportunistic blackboard scheduling here; activations are too expensive and the sources too unreliable for data-driven control.",
+   "Do not claim the problem list is complete; claim completeness only relative to a stated model, fault list and property list."
+  ],
+  "not_my_field": [
+   "P5 (text in a web page steering a session): prompt injection and least privilege are security; this field only adds that untrusted output be accepted through a checker (D7-01).",
+   "P7's race-free claiming and P9's detection of a sleeping PC or exhausted allowance: failure detectors and leases are distributed systems.",
+   "P16 (selection bias and coverage of the search): information retrieval and systematic-review methodology; this field contributes only the ATMS labelling of vendor and single-study support (D7-02).",
+   "P18 (whether the tree beats one session): experimental design and statistics.",
+   "P2's cognitive side (why a model agrees with its brief): this field covers only the undeclared-input channel (D7-04).",
+   "P12 and P14's cost models beyond the dependency arithmetic of D7-05 and D7-12: performance modelling.",
+   "C beyond relative completeness: system-safety hazard analysis (for example Leveson 2011, 'Engineering a Safer World', MIT Press) belongs to safety engineering.",
+   "S's question of depth and fan-out (and whether B+ tree balance helps): not decided by build systems, blackboards or model checking; the model checker can only test a chosen shape."
+  ]
+ }
+}

@@ -1,0 +1,635 @@
+{
+ "label": "map:D2",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "nearest_whole_design": {
+   "name": "An append-only, multi-version database with a staging area: per-writer write-ahead logs, atomic commit of each unit, immutable copy-on-write versions read as snapshots, declared integrity constraints checked at commit, and derived data kept as materialized views with lineage",
+   "source": "Mohan, Haderle, Lindsay, Pirahesh, Schwarz 1992, ARIES (ACM TODS 17(1)); Bernstein and Goodman 1983, Multiversion Concurrency Control: Theory and Algorithms (ACM TODS 8(4)); Codd 1970, A Relational Model of Data for Large Shared Data Banks (CACM 13(6)); Gupta and Mumick 1995, Maintenance of Materialized Views: Problems, Techniques, and Applications (IEEE Data Engineering Bulletin 18(2)); Gray and Reuter 1993, Transaction Processing: Concepts and Techniques",
+   "why_it_fits": "Map the parts onto the tree. Source cards are base rows. The checker's verdicts are the commit or abort of each row. A frozen pack is a committed, immutable version. Reviews and the synthesis are derived views over cards, and their citations are foreign keys. The ledgers and journals are logs, and the status file is a view computed from them. A crash or a sleep is a crash. Two children are concurrent writers. Git already gives the storage layer: content-addressed objects, immutable snapshots, and atomic reference updates.",
+   "borrow_whole": "Six parts carry over whole. (1) The commit protocol: stage, then validate with schema and constraints, then publish atomically (temp file, rename, then a journal line). An output with no journal line does not exist. (2) Value logging: log the produced card or section itself, never the brief that produced it. (3) Immutable versions: a pack repair is a new version with a new hash, and every review, certificate and status line names the hash it read. (4) Foreign keys with a declared delete action: a dropped card cascades to stale on every sentence, claim and certificate that depends on it. (5) Normalised storage: each fact is stored once in its card, and every other place it appears is rendered from the card by a script. (6) Readers of published results see committed data only.",
+   "where_it_does_not_fit": "Five places. (1) A database assumes its transactions are deterministic and correct apart from crashes (fail-stop). Here a writer can commit a confident falsehood. Constraints check structure and references, never truth, so the checker stays outside the database model. (2) Redo cannot work by re-execution, because the same brief gives different text. (3) The read set of a session's window is not tracked and cannot be rolled back. (4) The cost model is the window being re-read on every call, not I/O. (5) At seven leaves the B+ tree's height and concurrency machinery buys nothing. What carries over from it is node capacity, fill factor, partitioning by key range, never dropping a key, and copy-on-write versions."
+  },
+  "mappings": [
+   {
+    "id": "D2-01",
+    "problems": [
+     "S"
+    ],
+    "classical_problem": "Building a balanced index over a key set known in advance: bulk loading at a chosen fill factor, with node capacity and partitioning by key range",
+    "solutions": [
+     {
+      "name": "B-tree, B+ tree (data in the leaves, separator keys in the inner nodes)",
+      "source": "Bayer and McCreight 1972, Organization and Maintenance of Large Ordered Indexes, Acta Informatica 1(3); Comer 1979, The Ubiquitous B-Tree, ACM Computing Surveys 11(2)",
+      "guarantees": "All leaves sit at the same depth. Every node except the root is at least half full. Height is O(log_b N). No key is ever lost.",
+      "assumptions": "Node capacity is fixed. Keys are totally ordered and independent of each other. The cost of a key is uniform and known when it is inserted. A split copies one node, which is cheap."
+     },
+     {
+      "name": "Bulk loading at a fill factor",
+      "source": "Practitioner standard (for example, PostgreSQL CREATE INDEX with fillfactor; the B-tree leaf default is 90). I am not sure of a single original paper",
+      "guarantees": "Sort the keys, fill the leaves bottom-up to f times capacity, then build the parents from the leaves. The load needs no splits, and a slack of (1 - f) is left for later inserts.",
+      "assumptions": "The whole key set and the size of each key are known before the load."
+     },
+     {
+      "name": "Expected occupancy under random growth",
+      "source": "Yao 1978, On Random 2-3 Trees, Acta Informatica 9",
+      "guarantees": "A tree grown by random inserts settles at about ln 2, roughly 69 %, occupancy.",
+      "assumptions": "Random insertion order and uniform keys."
+     }
+    ],
+    "assumptions_that_fail_here": "Four fail. (1) The cost of a key is neither uniform nor known in advance: one question can cost ten times another, and that is known only after it is spent. (2) Keys are not independent: questions that share a mechanism share their reading, so cutting a range loses shared context, which a B+ separator never does. (3) A full window cannot be split in O(node); splitting it means redoing the research. (4) The tree has seven leaves and one inner node, so the height and log properties add nothing. What survives is capacity, fill factor and partitioning by key range. The field's answer when key sizes are unknown is to sample statistics first, which here is the pilot, then load with slack.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Fields are bulk-loaded from the approved question ids. The ids are ordered by mechanism tag, so that each range is one coherent expertise. Consecutive ranges are assigned to fields until each field's estimated load reaches f times C. A field whose estimate exceeds f times C is split by question range at plan time, and the split goes to the owner as an amendment before any research starts. The current design has no packing step: fields come from the lanes, and their size is checked only after the work is spent.",
+     "runner": "A Node planning script that the coordinator runs. The output table goes to the owner.",
+     "when": "Plan step H.2, once the question lists are approved; run again after the pilot replaces the prior estimates with measured costs.",
+     "input": "The approved question ids with their mechanism tags; t_q, the pilot's measured tokens to bring each question to 'covered by at least one confirmed card' (helpers included), as a mean and a spread; C, the usable research tokens per child; f, the fill factor.",
+     "on_failure": "A question with no estimate is not packed. It is listed instead, and no wave may start while its plan has unpacked ids."
+    },
+    "formula_or_algorithm": "est(field) = sum of t_q over the questions in the field. Greedy packing in mechanism order while est(field) <= f*C. Number of fields >= ceil(sum over all q of t_q / (f*C)). Start f at about 0.7 to 0.8: near Yao's 0.69 for random growth, leaving room for the one repair, the contrary-evidence reader and the re-checks. Retune f to the slack actually used.",
+    "to_measure": [
+     "t_q per question id in the pilot, mean and spread",
+     "C, the usable research tokens per child before the review",
+     "share of the slack used by repair, the contrary-evidence reader and re-checks",
+     "coupling: share of cards that serve more than one question in a field"
+    ],
+    "effect_on_measures": "Token count and cost: research is not paid for and then cut. Time: splits are decided before any spend. Quality: no expertise is cut in two after the fact. Throughput: fields are sized to fit a wave.",
+    "build_cost": "Small: one Node script of about 100 lines, plus tagging each card with its question ids so that the pilot can attribute ledger tokens to questions.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-02",
+    "problems": [
+     "S",
+     "P4"
+    ],
+    "classical_problem": "A node that overflows: split at insert time, redistribution to a sibling, out-of-line (overflow) storage, sibling links under concurrent access, copy-on-write versions",
+    "solutions": [
+     {
+      "name": "Split at insert time by key",
+      "source": "Bayer and McCreight 1972, Organization and Maintenance of Large Ordered Indexes, Acta Informatica 1(3)",
+      "guarantees": "The insert that does not fit splits the full node at its median key and pushes a separator into the parent. Each half holds a contiguous key range. No key or data is dropped, and the cost is O(node).",
+      "assumptions": "Splitting is cheap and preserves meaning, because keys are independent."
+     },
+     {
+      "name": "Redistribution before splitting (B*-tree)",
+      "source": "Knuth 1973, The Art of Computer Programming, Vol. 3: Sorting and Searching",
+      "guarantees": "Keys move to a sibling that has room. Nodes split two-into-three only when both are full, which keeps nodes at least two-thirds full.",
+      "assumptions": "A sibling with room exists, and moving a key is cheap."
+     },
+     {
+      "name": "Out-of-line storage for large values (overflow pages, TOAST)",
+      "source": "Practitioner standard (for example, PostgreSQL TOAST)",
+      "guarantees": "The node keeps a small pointer and the bulk lives elsewhere, so the node stays bounded and nothing is truncated.",
+      "assumptions": "Reading through the pointer on demand is possible."
+     },
+     {
+      "name": "Sibling links with a high key (B-link tree)",
+      "source": "Lehman and Yao 1981, Efficient Locking for Concurrent Operations on B-Trees, ACM TODS 6(4)",
+      "guarantees": "A reader that arrives after a split follows the right-link to the moved keys without locking the parent.",
+      "assumptions": "Many concurrent operations, so that locking the parent is costly."
+     },
+     {
+      "name": "Copy-on-write (shadowing)",
+      "source": "Lorie 1977, Physical Integrity in a Large Segmented Database, ACM TODS 2(1); Rodeh 2008, B-trees, Shadowing, and Clones, ACM Transactions on Storage",
+      "guarantees": "An update writes new nodes and a new root, and old versions stay readable and consistent.",
+      "assumptions": "Storage for old versions is available."
+     }
+    ],
+    "assumptions_that_fail_here": "In a B+ tree the split is triggered by the one insert that does not fit, and it costs one node copy. Here the 'data' is research already paid for, held in a window that cannot be divided. That is why the withdrawn rule failed: it split after the fact, when the full node had been built at full cost, and it split the content (the pack) instead of the key range (the question ids). The idea of splitting was sound. Its timing and its key were wrong. Sibling links pay off only under many concurrent operations. With seven fields and three sessions they are analogy only: a one-line forward pointer in a field's status, when a range moves, is all that is worth borrowing.",
+    "fit": "adapted",
+    "current_rule_is": "contrary_to_standard",
+    "mechanism": {
+     "rule": "Judgement of the present rule: 'cut the pack to its limit and list the rest as not covered' agrees with the standard in that the uncovered keys stay visible. It runs against the standard in that confirmed, paid-for data is dropped from the reviewer's view, which a B+ tree never does. Replace it by separating two overflows. (a) Research overflow, when the questions do not fit the child's budget. Before each question group the child runs a capacity check. If the group would not fit, the child stops inserting and writes an overflow record {question ids, tokens used, reason}. The coordinator then moves that range to a field in the same wave that has slack (redistribution), or schedules it as an overflow field at the next wave's admission. (b) Pack overflow, when the pack exceeds what a reviewer may read. The pack becomes a two-level index: for each mechanism, a bounded summary plus card ids. All confirmed cards stay in cards.jsonl and are read by id on demand. Nothing confirmed is cut. (c) Every pack revision is written as a new file named by its hash, and old versions are never edited (copy-on-write).",
+     "runner": "The child runs the capacity-check script before each question group. The watcher exits on an overflow record. The coordinator decides redistribution or deferral. The pack schema check enforces the per-mechanism bound.",
+     "when": "Before each question group; at pack freeze; at each repair.",
+     "input": "Tokens used so far, from the transcript counter; t_q estimates for the next range; the remaining question ids; the pack file and its hash.",
+     "on_failure": "If no estimate exists or the check errors, treat it as an overflow: stop inserting and wake the coordinator. An overflow range that is neither scheduled nor dropped by name by the owner blocks the synthesis gate. It then appears in the synthesis as 'not covered', with its reason."
+    },
+    "formula_or_algorithm": "Insert allowed iff U + sum over the next range of t_q <= (1 - r)*C, where U is tokens used and r is the reserve for the review. r is non-zero only if F1 keeps the review in the same window; it is that review's measured token need. Redistribution target: the sibling in the wave with the most slack (f*C - est); split or defer only when no sibling has slack >= est(range). Pack: summary bound per mechanism = B/m for a total bound B and m mechanisms; card bodies are out of line.",
+    "to_measure": [
+     "how often research overflow fires, and at what share of the questions",
+     "tokens of a same-window review (to set r)",
+     "pack tokens per card and per mechanism summary",
+     "how often reviewers fetch out-of-line cards by id"
+    ],
+    "effect_on_measures": "Quality: nothing confirmed is dropped. Hallucinations: a reviewer can open any card by id instead of relying on a truncated pack. Token count: no research is repeated after an after-the-fact split. Time: overflow is caught at the insert, not after the field.",
+    "build_cost": "Small to medium: a check script, an overflow-record schema, a pack format with per-mechanism bounds, and hash-named versions.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-03",
+    "problems": [
+     "P10",
+     "P9"
+    ],
+    "classical_problem": "Crash recovery: write-ahead logging, an atomic commit point per unit of work, torn writes, restart from a checkpoint plus the log tail",
+    "solutions": [
+     {
+      "name": "ARIES (write-ahead logging; restart in three passes: analysis, redo, undo)",
+      "source": "Mohan, Haderle, Lindsay, Pirahesh, Schwarz 1992, ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging, ACM TODS 17(1)",
+      "guarantees": "A unit is durable exactly when its commit record is on stable storage. Restart redoes history from the last checkpoint and undoes losers. Checkpoints bound the restart work.",
+      "assumptions": "Fail-stop processes; stable storage; redo is deterministic, because applying a log record reproduces the change."
+     },
+     {
+      "name": "Transaction processing: atomicity and durability through logging",
+      "source": "Gray and Reuter 1993, Transaction Processing: Concepts and Techniques",
+      "guarantees": "All-or-nothing units with durable commit.",
+      "assumptions": "As above."
+     }
+    ],
+    "assumptions_that_fail_here": "Redo by re-running a brief is not deterministic: a rerun gives different cards. The field's answer is value logging, which records the after-image (the card or section itself) and never the intent. Sessions are also not fail-stop: a session can commit a confident wrong card before it dies. Logging makes that card durable, not true; truth stays with the checker. A sleep or a reboot is a crash. A rename within one NTFS volume serves as the atomic publish step.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Every durable output is committed through one script: validate the schema, write a temp file, rename it into place, then append a journal line {seq, kind, path, sha256, question ids} to the session's own journal. An output with no journal line does not exist. At each pack freeze the folder is committed to the child's branch; that commit is the checkpoint. Restart is a recovery script. It reads the journal, verifies the hashes, and copies a torn last line to .corrupt and drops it. It then computes done (the committed items) and todo (the approved ids minus done), and briefs the fresh session from the latest frozen pack, the committed items after it, and the todo list. The present 'one path' rule is checkpoint-only. It does not define a commit point per unit, does not replay the log tail after the freeze, and does not guard against a half-written file.",
+     "runner": "The child calls the commit script for each card or section. The coordinator or the watcher runs the recovery script before any replacement session starts.",
+     "when": "On every output; on every restart.",
+     "input": "The session folder, its journal, and the approved question list.",
+     "on_failure": "On a hash mismatch or an unparseable journal, the script exits non-zero, nothing restarts, and the coordinator wakes. No replacement starts until the old session is confirmed stopped, because two writers on one journal is the failure WAL forbids."
+    },
+    "formula_or_algorithm": "Work lost on a crash is at most one uncommitted unit (one card or one section), plus whatever the window read but never committed. Restart cost = the fresh session's fixed prefix + the checkpoint (pack) + the log tail after it.",
+    "to_measure": [
+     "torn or uncommitted outputs found at restart",
+     "tokens spent again after a restart",
+     "restart wall time",
+     "journal size per field"
+    ],
+    "effect_on_measures": "Token count and time: a restart redoes only uncommitted units. Quality: a half-written file is never read as complete.",
+    "build_cost": "Small: commit and recovery scripts in Node, about 150 lines together.",
+    "confidence": "high"
+   },
+   {
+    "id": "D2-04",
+    "problems": [
+     "P11"
+    ],
+    "classical_problem": "The cost of replaying a log that keeps growing: checkpointing and log truncation, the optimum checkpoint interval, and a checkpoint taken from the system rather than written by hand",
+    "solutions": [
+     {
+      "name": "Checkpoints bound redo to the log after the checkpoint",
+      "source": "Mohan et al. 1992, ARIES, ACM TODS 17(1)",
+      "guarantees": "Restart work is bounded by the log since the last checkpoint.",
+      "assumptions": "The checkpoint is captured from the system's state, so it is complete by construction."
+     },
+     {
+      "name": "Optimum checkpoint interval",
+      "source": "Young 1974, A First Order Approximation to the Optimum Checkpoint Interval, Communications of the ACM 17(9)",
+      "guarantees": "An interval of about sqrt(2 * checkpoint cost * mean time to failure) minimises the expected overhead.",
+      "assumptions": "A fixed checkpoint cost and a known failure rate."
+     }
+    ],
+    "assumptions_that_fail_here": "Young trades checkpoint cost against work lost to failures. Here the trade is the cost of a hand-over against the cost of re-reading a growing window on every call. The square-root shape is the same, but the quantities differ, so the formula below is derived here, not borrowed. A database checkpoint is complete by construction. A hand-over note that the coordinator writes is a lossy self-summary. The field's fix is to make the status a view computed from the logs.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A script regenerates the status file at every coordinator turn from the merged ledgers, journals and gate results; the coordinator never writes it by hand. The coordinator hands over at a threshold W* computed from measured growth and hand-over cost, not at a fixed 200,000. The successor reads only the protocol and the status file.",
+     "runner": "The watcher computes the coordinator's current input tokens from its transcript and exits with 'handover' at W*. The coordinator then starts its successor.",
+     "when": "At every watcher exit and every coordinator turn.",
+     "input": "The coordinator's transcript: tokens per call, giving P and g. H: the successor's first-turn tokens to reach a working state, re-orientation included. The size of the status file.",
+     "on_failure": "If the status regeneration fails, there is no hand-over and no new wave, and the coordinator wakes with the error. If the successor reads beyond the status file to orient itself, the checkpoint is lossy; the ledger records this, and the missing field is added to the status script."
+    },
+    "formula_or_algorithm": "Input on call i = P + g*i, where P is the fixed prefix including the status file and g the tokens added per turn. One epoch of k turns costs k*P + g*k^2/2 + H. Per turn: H/k + P + g*k/2, minimised at k* = sqrt(2H/g). Threshold W* = P + g*k*. Count tokens and cost separately: cached reads cost less but count the same in the owner's token measure. If k* comes out small, the coordinator should be close to stateless per turn, which is what 'reads status files only' intends.",
+    "to_measure": [
+     "g: tokens added per coordinator turn",
+     "P: fixed prefix with the status file",
+     "H: the successor's start-up tokens",
+     "how often a successor reads past the status file"
+    ],
+    "effect_on_measures": "Token count and cost on the largest measured sink. Quality: a hand-over loses nothing that is in the logs.",
+    "build_cost": "Small: a status-regeneration script, plus the transcript token counter already proposed for P14.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-05",
+    "problems": [
+     "P6"
+    ],
+    "classical_problem": "Write-write conflicts and lost updates, avoided by partitioned (shared-nothing) ownership, with per-writer logs merged in a defined order",
+    "solutions": [
+     {
+      "name": "Shared-nothing partitioning",
+      "source": "Stonebraker 1986, The Case for Shared Nothing, IEEE Database Engineering Bulletin 9(1)",
+      "guarantees": "Each partition has exactly one writer, so no write-write conflict and no locks are needed.",
+      "assumptions": "Partitions are disjoint and the partitioning is enforced; any cross-partition merge has a defined order."
+     }
+    ],
+    "assumptions_that_fail_here": "Nothing enforces the partition except discipline: a session with write tools can write anywhere. Ledger lines merged by wall-clock time are misordered across a sleep or a reboot, or when two sessions' clocks disagree.",
+    "fit": "direct",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "One writer per folder, a worktree per child, and only the coordinator merges. This is shared-nothing partitioning, and it stands. Add enforcement: the merge script refuses any child branch whose diff touches paths outside that child's folder. Each ledger line carries (session id, per-session seq), and the merge orders by those; wall-clock time is kept for information only.",
+     "runner": "The coordinator's merge script.",
+     "when": "At every merge of a child branch, and at every ledger merge.",
+     "input": "The child's branch diff, its folder path, and its ledger file.",
+     "on_failure": "The merge is refused, the offending paths are listed, and the coordinator wakes."
+    },
+    "formula_or_algorithm": "Accept iff every path in the diff starts with the child's folder. Merged ledger = the union sorted by (session id, seq), with no clock comparison across sessions.",
+    "to_measure": [
+     "refused merges (attempted writes outside the folder)",
+     "ledger lines with gaps in seq (lost lines)"
+    ],
+    "effect_on_measures": "Quality: no lost updates. Hallucinations: none introduced by merging.",
+    "build_cost": "Tiny: about 30 lines added to the merge script.",
+    "confidence": "high"
+   },
+   {
+    "id": "D2-06",
+    "problems": [
+     "P7"
+    ],
+    "classical_problem": "Duplicate work under concurrency: insert-if-absent on a unique key, and the choice between pessimistic claims and optimistic validation at commit",
+    "solutions": [
+     {
+      "name": "Optimistic concurrency control (a read phase, then validation, then the write)",
+      "source": "Kung and Robinson 1981, On Optimistic Methods for Concurrency Control, ACM TODS 6(2)",
+      "guarantees": "No locks while working; conflicts are detected at validation and resolved there.",
+      "assumptions": "Conflicts are rare enough that resolving them costs less than locking."
+     },
+     {
+      "name": "Unique key with an atomic insert-if-absent (exclusive create)",
+      "source": "Practitioner standard: a unique constraint in SQL; O_CREAT|O_EXCL in POSIX, the 'wx' flag in Node",
+      "guarantees": "Exactly one creator succeeds, with no check-then-act race.",
+      "assumptions": "One local file system that supports exclusive create, as NTFS does."
+     }
+    ],
+    "assumptions_that_fail_here": "The withdrawal gave 'check-then-claim races' as its reason. That is not a reason: an atomic exclusive create removes the race. The real costs of a register here are different. Readers hold no write tools (P5), so they cannot claim anything. Readers discover sources while they search, so a pessimistic claim needs an extra round: search, then claim, then read. And a claim must not block a neighbouring field that needs the same paper; the field's answer is read-through, reusing the stored row instead of blocking.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "'Accepted and counted' is optimistic concurrency control whose validation step takes no action. Give the validation an action without a shared writable file. Cards are keyed by a canonical source key: a normalised DOI, an arXiv id, or a normalised URL. At each merge, the coordinator's merge script, as the only writer, folds the new cards into a merged card store. A second card on an existing key is kept as a second reading of that source, and its number, baseline and conditions are compared with the first. A disagreement flags both cards for the checker, so duplicates become free re-reads (correlated, since it is the same model). From the second wave on, the merged store is read-only input: before sending a reader to a source, the child looks up its key and reuses the card if one exists. Within a wave, overlap is accepted (optimistic); across waves, it is removed by lookup. Switch to pessimistic claims only if the measured overlap makes them pay.",
+     "runner": "The coordinator's merge script (dedupe and compare); the child's lookup script before it dispatches a reader.",
+     "when": "At each merge; before each reader dispatch from wave 2 on.",
+     "input": "The new cards.jsonl files and the merged card store.",
+     "on_failure": "An unparseable or unkeyable card (no canonical key) is refused at merge and returned to its child. Disagreeing duplicates go to the checker queue."
+    },
+    "formula_or_algorithm": "Choose pessimistic claims within a wave iff overlap_rate * t_read > t_claim_round, where overlap_rate is the within-wave duplicate share per source, t_read the tokens of a reader on one source, and t_claim_round the extra tokens and time of a search-then-claim round per source.",
+    "to_measure": [
+     "within-wave and cross-wave duplicate rate",
+     "t_read per source",
+     "disagreement rate among duplicate cards (a direct reading on P1 and P20)"
+    ],
+    "effect_on_measures": "Token count: cross-wave re-reading removed. Quality and hallucinations: duplicates become cross-checks.",
+    "build_cost": "Small: source-key normalisation, plus a dedupe-and-compare step in the merge script.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-07",
+    "problems": [
+     "P1",
+     "P17",
+     "P13"
+    ],
+    "classical_problem": "Referential integrity between reviews and the cards they cite; lineage (why-provenance); invalidating derived data when a base row changes",
+    "solutions": [
+     {
+      "name": "Keys and foreign keys, with a declared action on delete",
+      "source": "Codd 1970, A Relational Model of Data for Large Shared Data Banks, Communications of the ACM 13(6); the SQL standard's referential actions",
+      "guarantees": "No dangling reference; deleting a base row restricts, cascades or sets null, as declared.",
+      "assumptions": "The system checks the constraints on every write."
+     },
+     {
+      "name": "Why- and where-provenance",
+      "source": "Buneman, Khanna, Tan 2001, Why and Where: A Characterization of Data Provenance, ICDT",
+      "guarantees": "Every derived item names the base items it came from.",
+      "assumptions": "The derivation is a known query."
+     },
+     {
+      "name": "Maintenance of materialized views",
+      "source": "Gupta and Mumick 1995, Maintenance of Materialized Views: Problems, Techniques, and Applications, IEEE Data Engineering Bulletin 18(2)",
+      "guarantees": "A derived view is refreshed or invalidated when its base changes.",
+      "assumptions": "The derivation is a known query, so its dependencies can be computed."
+     }
+    ],
+    "assumptions_that_fail_here": "A model writing a sentence from cards is not a query. Its lineage is only what it declares, the citation, and that can be incomplete: a sentence may rest on an uncited card or on the model's own memory. Integrity constraints catch dangling, stale and out-of-scope references. They cannot catch a false sentence that cites a valid card for something the card does not say, so the semantic check of P17 stays with the checker.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Store the data as JSONL relations: cards; card_status (append-only); sentences {id, review, approach_id, measure, kind fact|judgment, declared scope: task, model, repository size, and so on, from fixed vocabularies}; cites {sentence_id, card_id, pack_hash}; claims (synthesis); derives {claim_id, sentence_id}. The check script enforces five constraints. Every fact sentence has at least one cite. Every cite resolves to a card in the named pack version. The cited card's status is confirmed. The sentence's declared scope lies within the card's conditions, field by field (a CHECK). When a card's status turns to dropped or corrected, every dependent sentence, claim and certificate is marked stale (cascade to stale, never delete). A certificate (P13) is the constraint set evaluated over one named snapshot hash, and it is void once that snapshot changes. The present rule checks once, after the review, and says nothing about what a later failure does to the review, the synthesis or the certificate.",
+     "runner": "The schema and check script.",
+     "when": "On every commit of a review or synthesis, on every change to a card's status, and at every gate.",
+     "input": "cards, card_status, sentences, cites, claims, derives, and the pack hash.",
+     "on_failure": "The gate refuses any artifact with a dangling or stale dependency or a failed scope CHECK. The stale list goes to the owning child for repair, and the coordinator wakes."
+    },
+    "formula_or_algorithm": "stale(X) = the transitive closure of the dependents of the changed cards over the edges cites and derives. Scope check: for each field k of the declared scope, sentence.scope[k] must be among card.conditions[k], or the sentence is flagged.",
+    "to_measure": [
+     "dangling and stale references per gate",
+     "fact sentences that fail the scope CHECK",
+     "share of sentences the checker finds resting on uncited material (incomplete lineage)"
+    ],
+    "effect_on_measures": "Hallucinations: a dropped card cannot survive silently in the synthesis or a certificate. Quality: overreach in declared scope is caught by script before any checker tokens are spent.",
+    "build_cost": "Medium: schemas, fixed vocabularies for the scope fields, and the closure and check script.",
+    "confidence": "high"
+   },
+   {
+    "id": "D2-08",
+    "problems": [
+     "P4"
+    ],
+    "classical_problem": "Update anomalies from redundant copies: normalisation (each fact stored once), with derived copies generated by the system rather than maintained by hand",
+    "solutions": [
+     {
+      "name": "Normal forms (store each fact once; join to present it)",
+      "source": "Codd 1970, A Relational Model of Data for Large Shared Data Banks, CACM 13(6); Codd 1972, Further Normalization of the Data Base Relational Model, in R. Rustin (ed.), Data Base Systems, Prentice-Hall",
+      "guarantees": "No inconsistent copies of a fact.",
+      "assumptions": "Any copy of a fact is produced by the system from its base row."
+     }
+    ],
+    "assumptions_that_fail_here": "Here the copies are typed by models. Every retyped number, baseline or condition is a chance to drop or distort it, and that is exactly the hand-over loss. Denormalising by hand is the failure the field warns against.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "'A card's conditions are copied field by field' is standard only if a script does the copying, in which case the copy is a materialized view. If a model retypes the fields, the rule runs against the standard. Models write references only: a card id, the sentence, and its declared scope. Numbers, baselines and conditions are never retyped. review.md, the synthesis page and the owner's page are rendered by a script that joins sentences to cards. Any number in model-written prose must equal a number in one of its cited cards, or the script flags it.",
+     "runner": "The render script.",
+     "when": "At every gate, and whenever a page for the owner is produced.",
+     "input": "review.json, the sentences, and the cards.",
+     "on_failure": "Rendering refuses on a dangling reference. A flagged number sends its sentence to the checker queue."
+    },
+    "formula_or_algorithm": "Rendered(sentence) = sentence JOIN cites JOIN cards on card_id; projection of the condition fields. Number check: extract numbers from the prose; each must match one of the cited cards' numbers, with a tolerance only for stated rounding.",
+    "to_measure": [
+     "numbers in prose that match no cited card",
+     "card fields lost between the card and the owner's page (zero by construction once rendered)"
+    ],
+    "effect_on_measures": "Quality: condition loss at hand-over is removed for every structured field. Hallucinations: distorted numbers are caught by script.",
+    "build_cost": "Small.",
+    "confidence": "high"
+   },
+   {
+    "id": "D2-09",
+    "problems": [
+     "P21",
+     "P1"
+    ],
+    "classical_problem": "Non-repeatable reads of a source that changes or is read unfaithfully; read consistency from snapshots of stored versions",
+    "solutions": [
+     {
+      "name": "Isolation phenomena: non-repeatable read and phantom",
+      "source": "Berenson, Bernstein, Gray, Melton, O'Neil, O'Neil 1995, A Critique of ANSI SQL Isolation Levels, SIGMOD",
+      "guarantees": "Names the anomaly in which a second read of the same item returns a different value.",
+      "assumptions": "Not applicable: it is a definition."
+     },
+     {
+      "name": "Multiversion concurrency control (snapshot reads)",
+      "source": "Bernstein and Goodman 1983, Multiversion Concurrency Control: Theory and Algorithms, ACM TODS 8(4)",
+      "guarantees": "A reader sees one consistent version, and later readers can be given the same version.",
+      "assumptions": "The store keeps versions."
+     }
+    ],
+    "assumptions_that_fail_here": "The web keeps no versions for us: pages change, vanish, block bots or serve different content to different requests. And the fetch tool returns a small model's summary instead of the page, an unfaithful read. The field's answer is to own the versioning: take a snapshot at read time and have every later check read that snapshot.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "When a card is committed, a Node script fetches the page bytes itself, extracts the text, and stores it under its content hash in a local cache outside git, because the copies are of others' works. It records the snapshot hash in the card and searches for the card's quote (with whitespace and case normalised) in that text. Checkers and the post-review check read the snapshot, never a fresh fetch through the summarising tool. A card with no snapshot, or whose quote is not found, has status 'unverified' and cannot be cited in a conclusion. The proposed F5 script is the right core; this adds storing the snapshot and pinning it to the card, so that the check reads the same version the reader saw.",
+     "runner": "The commit script (D2-03) calls the snapshot script.",
+     "when": "At card commit; at check time, against the stored snapshot.",
+     "input": "The card's URL and quote.",
+     "on_failure": "A fetch failure, paywall, bot block or PDF that cannot be extracted makes the card 'unverified', listed for the owner. A card is never 'confirmed' without a snapshot."
+    },
+    "formula_or_algorithm": "card.snapshot = sha256(extracted text). quote_found = normalise(quote) is a substring of normalise(text). Drift test on a sample: re-fetch at check time; if the hash differs from the snapshot, record it as drift.",
+    "to_measure": [
+     "share of cards with a stored snapshot",
+     "share whose quote is found",
+     "drift rate between read time and check time",
+     "share of sources needing PDF extraction"
+    ],
+    "effect_on_measures": "Hallucinations: invented or distorted quotes are caught by a script, not by another summary. Quality: checks are repeatable.",
+    "build_cost": "Medium: HTML-to-text in plain Node is small; PDF text needs a parser library, so check whether an npm package fits 'plain Node.js only' (F5).",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-10",
+    "problems": [
+     "F1",
+     "P1"
+    ],
+    "classical_problem": "Dirty reads and cascading aborts: whether readers may use uncommitted data (schedules that are recoverable, avoid cascading aborts, or are strict)",
+    "solutions": [
+     {
+      "name": "Schedules that avoid cascading aborts (read only committed data), and strict schedules",
+      "source": "Bernstein, Hadzilacos, Goodman 1987, Concurrency Control and Recovery in Database Systems, Addison-Wesley",
+      "guarantees": "No reader ever has to be undone when a writer aborts.",
+      "assumptions": "Reads are explicit and tracked."
+     },
+     {
+      "name": "The dirty-read phenomenon",
+      "source": "Berenson et al. 1995, A Critique of ANSI SQL Isolation Levels, SIGMOD",
+      "guarantees": "A definition.",
+      "assumptions": "Not applicable."
+     }
+    ],
+    "assumptions_that_fail_here": "A session's window is a read set nobody tracks, and a read cannot be undone from it. Everything the researcher read can shape its review without a citation: cards later dropped, pages, the helpers' summaries. A same-window review (F1, option a) therefore reads uncommitted data by construction. A fresh reviewer working from the frozen, checked pack (option b) reads committed data only. The field's default for anything published to others is committed reads. That settles isolation, not quality: the researcher may know more. So the pilot comparison stays. Under option a, the reviewer's extra knowledge must be written down as cards, and so committed and checked, before it may be cited.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A review may cite only cards whose status is confirmed in the pack version it names. Cards behind the pack's conclusions are checked at freeze, when those conclusions exist (a strict schedule for the pack). Cards cited only by the review are checked after it (optimistic), and a failure cascades to stale through D2-07. Amendment 3 moved every check after the review; that is the optimistic choice, and it is sound only if the cascade exists. Which order is cheaper is chosen by the formula, using the pilot's measured values.",
+     "runner": "The check script at freeze and after the review; the coordinator chooses the order per wave from the pilot's numbers.",
+     "when": "At pack freeze; after each review; when planning each wave.",
+     "input": "Pack cards, cited cards, check results, and the measured p, c and R.",
+     "on_failure": "Through the stale cascade (D2-07). The review is not accepted until no stale sentence remains."
+    },
+    "formula_or_algorithm": "Check every pack card before the review iff (N_p - N_c)*c < p*N_c*R. Here N_p = cards in the pack, N_c = cards cited, c = checker tokens per card, p = per-card failure rate (drops and corrections separately), R = tokens to repair a citing sentence or re-review. Amendment 3's own check corrected 14 of 45 findings (p of about 0.31 for corrections, 0 drops), so cascades should be expected as routine.",
+    "to_measure": [
+     "p for drops and for corrections",
+     "c and R",
+     "N_p / N_c",
+     "under option a, the share of review sentences resting on uncited material"
+    ],
+    "effect_on_measures": "Hallucinations: no published sentence rests on dropped data. Tokens: the check order is chosen by measured cost.",
+    "build_cost": "Small, on top of D2-07.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-11",
+    "problems": [
+     "C"
+    ],
+    "classical_problem": "Completeness of a list of failure modes, judged against a named catalogue of anomalies (relative completeness)",
+    "solutions": [
+     {
+      "name": "The catalogue of isolation anomalies: dirty write, dirty read, non-repeatable read, phantom, lost update, read skew, write skew",
+      "source": "Berenson, Bernstein, Gray, Melton, O'Neil, O'Neil 1995, A Critique of ANSI SQL Isolation Levels, SIGMOD",
+      "guarantees": "Every shared datum is examined against every named anomaly. Completeness is relative to the catalogue, not absolute.",
+      "assumptions": "The faults are concurrency and crash faults."
+     },
+     {
+      "name": "The failure catalogue of transaction processing (crash, torn write, media failure)",
+      "source": "Gray and Reuter 1993, Transaction Processing: Concepts and Techniques",
+      "guarantees": "The same, for crash and storage faults.",
+      "assumptions": "As above."
+     }
+    ],
+    "assumptions_that_fail_here": "Faults specific to language models (confident falsehood, injection, correlated agreement) are not in these catalogues; they are Byzantine. The catalogue gives completeness for the storage and concurrency layer only, and the other fields' catalogues must cover the rest.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Keep a matrix of data against anomalies. Rows: every shared datum (question lists, cards, card_status, packs, reviews, synthesis, ledgers, journals, status file, branches). Columns: the seven anomalies, plus crash or torn write, stale derived data, and mutable identity. Each cell names a rule id or says 'accepted: reason'. Walking it now finds four risks the list lacks: write skew on cross-field coverage, non-repeatable reads of sources, a phantom in certification, and stale derived data (see missing_risks).",
+     "runner": "An agent fills the matrix at each protocol amendment; a Node script refuses the amendment while any cell is empty.",
+     "when": "At each amendment of the protocol.",
+     "input": "The protocol's list of data and its rules.",
+     "on_failure": "The amendment is not accepted until every cell is filled."
+    },
+    "formula_or_algorithm": "Completeness relative to the catalogue = filled cells / (rows * columns), required to be 1.",
+    "to_measure": [
+     "empty cells per amendment",
+     "incidents later traced to a cell marked 'accepted'"
+    ],
+    "effect_on_measures": "Quality: finds risks by method rather than by memory.",
+    "build_cost": "Small.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-12",
+    "problems": [
+     "P12",
+     "P14"
+    ],
+    "classical_problem": "Cost estimation and admission control from statistics, with re-planning when observed cost departs from the estimate",
+    "solutions": [
+     {
+      "name": "Cost-based plan selection from statistics",
+      "source": "Selinger, Astrahan, Chamberlin, Lorie, Price 1979, Access Path Selection in a Relational Database Management System, SIGMOD",
+      "guarantees": "The plan is chosen by estimated cost from stored statistics.",
+      "assumptions": "The statistics represent the data, and each operator's cost is stable."
+     },
+     {
+      "name": "Re-optimisation in mid-query",
+      "source": "Kabra and DeWitt 1998, Efficient Mid-Query Re-Optimization of Sub-Optimal Query Execution Plans, SIGMOD",
+      "guarantees": "When the observed cost or size departs from the estimate past a threshold, the remainder is re-planned.",
+      "assumptions": "Progress is observed at checkpoints."
+     }
+    ],
+    "assumptions_that_fail_here": "One pilot is a sample of one field. Costs vary between fields. Spend is visible only in transcripts, because no script can read the plan's meter. The field's answer is to estimate per unit, not per whole, and to check during the run.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Estimate a field's cost per question id (t_q from the pilot, D2-01) times its questions, not as one figure per field. A wave starts iff its estimate with margin fits within the remaining cap. During the wave, the watcher compares actual spend against estimated spend for the questions covered so far, and exits for re-planning when the ratio passes a threshold. The present rule has an admission check, but its estimate is per field from one pilot, and it reacts in the run only to overspend against the allowance, not to departure from the estimate.",
+     "runner": "The coordinator's admission script before each wave; the watcher during it.",
+     "when": "Before each wave; at each progress checkpoint, per question group.",
+     "input": "t_q and its spread from the pilot; the questions per field; tokens counted from transcripts; the remaining cap, which a session reads from the meter and writes into the input file.",
+     "on_failure": "The wave is not started, or the watcher exits and the coordinator re-plans (defer, redistribute, or ask the owner)."
+    },
+    "formula_or_algorithm": "Admit iff sum over the wave's fields of (sum of t_q) * (1 + m) <= remaining cap; m is set by the owner (F4) and informed by the pilot's per-question coefficient of variation. In the run: exit when actual / (sum of t_q over the covered questions) > theta, with theta about 1.5 as a start, to be tuned.",
+    "to_measure": [
+     "t_q and its spread",
+     "estimate error per field and per wave",
+     "how often the in-run exit fires"
+    ],
+    "effect_on_measures": "Token cost bounded per wave; less time lost to runaway fields.",
+    "build_cost": "Small; shares the estimates of D2-01.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D2-13",
+    "problems": [
+     "P5"
+    ],
+    "classical_problem": "Injection, where data becomes code (SQL injection), and its standard fix of parameterised queries",
+    "solutions": [
+     {
+      "name": "Parameterised (prepared) statements, never escaping or filtering",
+      "source": "Practitioner standard (OWASP guidance); I am not sure of an original paper",
+      "guarantees": "Data cannot become code, because code and data reach the parser on separate channels.",
+      "assumptions": "The interpreter has a structural separation between code and data."
+     }
+    ],
+    "assumptions_that_fail_here": "A language model has one channel. No parameterisation exists, so only filtering is left, which is the approach that failed for SQL. The lesson from my field is negative: do not trust a filter. Shrink the free text that reaches a session holding tools.",
+    "fit": "analogy_only",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Treat every free-text field of a card as tainted. The card schema keeps free text to the 15-word quote and short, enumerated fields; everything else is numbers, enums and ids. The child sees cards through the render step (D2-08) as structured data. The remaining exposure is the child reading originals of must-read sources, and that must be stated as accepted, not called solved.",
+     "runner": "The schema check in the commit script.",
+     "when": "At card commit.",
+     "input": "The card.",
+     "on_failure": "The card is rejected and returned for re-extraction."
+    },
+    "formula_or_algorithm": "Tainted surface = the total free-text characters per card that reach a tool-holding session; minimise it.",
+    "to_measure": [
+     "free-text characters per card",
+     "cards rejected for schema violations"
+    ],
+    "effect_on_measures": "Hallucinations and quality: less surface for steering.",
+    "build_cost": "Tiny.",
+    "confidence": "low"
+   }
+  ],
+  "missing_risks": [
+   {
+    "title": "A source changes, or is read differently, between the reader and the checker",
+    "classical_name": "Non-repeatable read",
+    "why_it_applies": "Web pages change, vanish, block bots or serve different content to different requests. The fetch tool returns a different model summary on each call. A check can therefore confirm against a different version from the one the reader saw, or drop a card that was correct.",
+    "mechanism": "Snapshot the page at card commit under its content hash, and make every later check read that snapshot (D2-09)."
+   },
+   {
+    "title": "Each field leaves out a shared question, assuming the neighbouring field covers it",
+    "classical_name": "Write skew on a constraint that spans several items",
+    "why_it_applies": "Coverage is checked per field. Two children running concurrently can each judge a boundary topic to be out of scope or covered by the other field. Each field then passes its own gate, while the constraint 'every approved question id is covered somewhere' fails across the fields.",
+    "mechanism": "A script at the synthesis gate checks coverage over the union of all fields' confirmed cards against all approved question ids. A boundary question is assigned to exactly one field at plan time (D2-01)."
+   },
+   {
+    "title": "A dropped or corrected card survives in reviews, the synthesis and certificates",
+    "classical_name": "Stale derived data, a cascading abort that is never handled",
+    "why_it_applies": "The checks run after the review, and the synthesis is built from the reviews. Nothing in the protocol propagates a later change of a card's status to the things built on it.",
+    "mechanism": "Foreign keys with a cascade to 'stale', and a gate that refuses any artifact with stale dependencies (D2-07)."
+   },
+   {
+    "title": "A half-written card line or pack is read as complete after a crash, a sleep or a reboot",
+    "classical_name": "Torn write; a missing commit point",
+    "why_it_applies": "Sessions are cut off mid-write. JSONL appends and large file writes are not atomic.",
+    "mechanism": "Write a temp file, rename it, then append a journal line with its hash. Recovery drops a torn tail into .corrupt (D2-03)."
+   },
+   {
+    "title": "A certificate or coverage figure stays in force after the set it was computed over has changed",
+    "classical_name": "Phantom (a predicate read over a set that later grows or changes)",
+    "why_it_applies": "An expert is certified over its cards and pack. A repair, new cards or a corrected card change that set, but the certificate is not re-evaluated.",
+    "mechanism": "Each certificate names the snapshot hash it was computed over, and it is void once that hash is no longer current (D2-07)."
+   },
+   {
+    "title": "A citation silently points at different content after a card or approach id is reused or a card is edited in place",
+    "classical_name": "Mutable identity, or key reuse, across versions",
+    "why_it_applies": "Packs are repaired and cards are corrected. If an id survives an edit, every old citation now asserts the new content.",
+    "mechanism": "Ids are immutable. A corrected card gets a new id that points to the one it replaces, and citations carry the pack hash (copy-on-write, D2-02)."
+   },
+   {
+    "title": "Merged ledgers are misordered across a sleep, a reboot or two clocks",
+    "classical_name": "Ordering by physical clock in a log merge",
+    "why_it_applies": "Each session keeps its own ledger, and a script merges them. Wall-clock times jump at sleep and resume.",
+    "mechanism": "Order by (session id, per-session sequence number); wall time is for information only (D2-05)."
+   },
+   {
+    "title": "The old coordinator resumes after a hand-over and writes alongside its successor",
+    "classical_name": "Lost update from two writers (in distributed systems, a stale leader without fencing)",
+    "why_it_applies": "A coordinator acts only during its turns. A stale coordinator whose turn resumes, for example when a watcher wakes it, can merge or regenerate the status file while its successor is doing the same.",
+    "mechanism": "The status file carries a coordinator epoch number. Every write script refuses an epoch lower than the current one. The hand-over increments the epoch before the successor starts."
+   }
+  ],
+  "do_not": [
+   "Never discard confirmed data to make a node fit. A B+ tree never drops a key. Keep the keys and a pointer to where the rest lives (out-of-line storage), and keep every confirmed card readable by id.",
+   "Do not split a node after it has been filled at full cost, and do not split the content. Split the key range (question ids), at plan time or before the insert that would overflow.",
+   "Do not import B+ tree height or concurrency machinery (latch coupling, B-link trees) into a tree of seven leaves and three sessions. Only capacity, fill factor, key-range partitioning, never dropping a key, and copy-on-write carry over.",
+   "Do not plan recovery by re-running a brief and expecting the same result. Log values (the card or section itself), not intents.",
+   "Do not edit a frozen pack, a card or an approach id in place. Write a new version with a new hash or id, and pin every citation and certificate to the hash it read.",
+   "Do not let models retype fields a script can join (numbers, baselines, conditions). Hand-maintained copies are the update anomaly that normalisation exists to prevent.",
+   "Do not use check-then-act on a shared file. Use an atomic exclusive create or rename, or one writer.",
+   "Do not publish a derived result (review, synthesis, certificate) that read unchecked data unless a cascade exists that invalidates it when the data fails.",
+   "Do not merge logs by wall-clock time across sessions.",
+   "Do not let a hand-over note written by the coordinator stand in for a checkpoint. Derive the status from the logs by script.",
+   "Do not rely on filtering or escaping as the defence against injected text. It failed for SQL. Shrink the free-text surface instead.",
+   "Do not take passing integrity constraints as evidence of truth. They check references and scope, not whether a card is right."
+  ],
+  "not_my_field": [
+   "P2 anchoring and the neutrality of question lists (experimental method and cognitive bias)",
+   "P3 and P20: correlated errors of instances of one model, and diversity among checkers (fault tolerance: N-version programming and design diversity)",
+   "P5 at its core: prompt injection and tool permissions (security); D2-13 is analogy only",
+   "P8 fan-out and memory thrashing on the PC (operating systems: working sets and the multiprogramming level). The cap of three sessions is that field's standard answer, not mine",
+   "P9 and P19: detecting stalls, loops and liveness, and keeping the PC awake (distributed systems: failure detectors, leases)",
+   "P15 and P16: false negatives, selection bias in search, and coverage of the literature (statistics, information retrieval, systematic-review methods)",
+   "P18: whether the tree beats one session at the same budget (experiment design)",
+   "F2 beyond one point: a second reader of the same frozen snapshot can find the reader's errors but not the snapshot's; only a separate derivation from the sources can find errors in the pack. Weighing that against cost is for fault tolerance and methodology",
+   "The B+ tree idea as a model of orchestration in general (lane 7, the orchestration field)"
+  ]
+ }
+}

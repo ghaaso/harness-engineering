@@ -1,0 +1,135 @@
+{
+ "label": "attack:A1",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "findings": [
+   {
+    "id": "A1-01",
+    "title": "The restart path reads the fenced attempt's uncommitted output, so the fence and the 'one commit per task' claim both fail",
+    "target": "R8 checkpoint; the MapReduce claim in the layer 1 'where assumptions fail' paragraph; R2",
+    "kind": "guarantee_overstated",
+    "argument": "MapReduce's atomic commit (D1 whole, D1-03) and fencing (D1-01) both assume that the acceptor is the only way an attempt's output reaches a consumer. R8 breaks this. Its checkpoint is 'last commit record plus the dead attempt's schema-valid objects', read after the fence, so the restart path is a second consumer that reads uncommitted output. The model check found exactly this: NoStaleAccepted FAILS with every mechanism present (flaw F1). A planned hand-over alone carries cards written after the fence into e2's commit, with no fault needed. So line 128's 'one commit per task holds because consumers read only commit records' is false as written: R8 is a consumer that does not. The model review adds that AtMostOneCommit was vacuous in record mode, and that once a stall can recover (it can: a slow model call is not a crash), a READY attempt is fenced and replaced. The classical assumption that suspicion is final (crash-stop) does not hold for sessions.",
+    "lines": "95-98, 74-77, 127-128",
+    "severity": "high",
+    "smallest_fix": "[pilot; runner replace.mjs] When R2's fence raises the epoch, record the dead attempt's journal high-water mark in the task row (Kafka leader-epoch truncation, the model review's FIX_RESTORE_CUT). R8's checkpoint then reads only objects at or below that mark, and only after stop.mjs confirms the stop. Change line 128 to: 'consumers read commit records, and the restart path reads only the fenced prefix'. Add one rule to replace.mjs: for a failure reason it re-checks under the lock for a READY of the current epoch and refuses with its own exit code, so the commit wins (model review A4 plus its extra flaw)."
+   },
+   {
+    "id": "A1-02",
+    "title": "The trusted base, the hooks and the ledger chain are all within the subjects' reach",
+    "target": "Layer 3: R29 trusted base, R30 hooks, R32 ledger; the Clark-Wilson, Anderson, Tripwire and Schneier-Kelsey borrowings",
+    "kind": "classical_assumption_does_not_hold",
+    "argument": "Every borrowed integrity result here assumes a principal that the subjects cannot reach. Clark-Wilson needs certified TPs and IVPs that agents cannot change (D5 source check point 5). Anderson's reference monitor must be tamper-proof (D5-08). Tripwire keeps its baseline on read-only media. Schneier-Kelsey's forward integrity rests on a secret, evolving MAC key (D5 source check point 3). On this PC every session and every script runs as one Windows user. The coordinator holds Write. tcb.lock.json, the file tcb-verify checks against, sits inside the tcb/ folder it protects, so the baseline is self-referential. R32's chain is a plain sha256 chain with no key, so any writer can recompute it. Its 'head in each git commit and the status file' anchors it only to files the same user can rewrite. Settings and hooks are files a session could edit (harness fact 4). R29 detects tampering only at its next run, which leaves a window to edit, act and restore. So 'outside the sessions' write reach' (frame) and 'forward integrity' (line 236) are not given. The design leaves out the one classical remedy, a separate principal (line 507).",
+    "lines": "191-192, 212-216, 217-221, 234-236, 244-247, 507, 566-567, 581",
+    "severity": "high",
+    "smallest_fix": "[pilot; runner: the harness's own permission check] Put deny rules for Write and Edit on tcb/**, every wt/*/.claude/**, run/** and the user-level settings file itself in the USER-level settings, which no attempt folder holds. Give Bash to nobody except the coordinator, and to it only for `node tcb/scripts/*`. R42's hook canary then also tests these denies. If they fail, the owner sets an NTFS ACL (tcb/ owned by Administrators, read and execute for the user), which an unelevated session cannot undo. Move the reference hash of tcb.lock.json out of tcb/ into the owner's go message for each wave. Reword R32: 'tamper-evident against writers who do not recompute the chain; a deliberate rewrite is caught only against a head the owner noted'. Drop 'forward integrity'."
+   },
+   {
+    "id": "A1-03",
+    "title": "Level-triggered wakes and pause detection assume a timer that outlives the watcher; here the watcher is the only one",
+    "target": "Layer 1: R4 watcher, R6 pause, R7 wakes; R58's property; P9 and N3 in section 9",
+    "kind": "guarantee_overstated",
+    "argument": "Mesa semantics (D3-07) make a notify a hint because the waiter re-checks on a timed wait or the scheduler re-runs it. The watchdog (D4-06) must keep running independently of what it watches. Under harness fact 2, a session wakes on only three things: an owner message, a child's turn-end note, or the exit of a background command it started. The watcher is the only timer, and it dies by its own urgent exit. The model check: a lost wake after that exit is permanent (F2: NoDeadlock and AlwaysCanResolve fail in 5 steps). R6 pause detection lives only in one live watcher's consecutive ticks, so the next watcher suspects healthy attempts (F3: NoFalseSuspicion fails). 'Fresh' in R7 is undefined, so a second watcher appends to the ledger (F4: SingleWatcher fails). Nothing persists the 'last seq it saw' in R7. The model's own fix, an out-of-session Task Scheduler entry, has no runner under fact 2 (the model review calls FIX_REWAKE an oracle). R58's property 'every wake reaching the active coordinator' therefore cannot hold, and P9's fix is overstated.",
+    "lines": "81-94, 400-404, 433, 451",
+    "severity": "high",
+    "smallest_fix": "[pilot; runners watch.mjs and status.mjs --endturn] (1) The stall clock is the accumulated watched, non-paused time since the last progress, persisted per task in watcher.json. A new watcher continues it and never derives it from the wall clock (FIX_CLOCK). (2) The watcher holds run/watcher.lock (wx, pid plus process start time). endturn starts no watcher while that pid lives (FIX_ONE_WATCHER). (3) endturn starts TWO background commands: the watcher and a plain deadline timer that only exits at T_watch. Both are wake sources under fact 2, so one lost wake is survived. (4) Write acked_seq into coord.json at each endturn. (5) Restate the bound in R7, N3 and R58: 'a wake arrives within T_watch while either process lives; after both are lost, only the owner wakes the tree'."
+   },
+   {
+    "id": "A1-04",
+    "title": "A stop is assumed to take effect: a failed attempt keeps running, admission ignores zombies, and nobody can stop the coordinator",
+    "target": "R9 escalation, R11 slot count, R13 quiescence, R51 '1.5·W*', G8",
+    "kind": "classical_assumption_does_not_hold",
+    "argument": "An OTP supervisor's kill cannot be trapped, and a batch system's hard limit is enforced by the kernel. Both assume fail-stop termination. Here only a session can stop a session (fact 1), and R10 itself allows stop-unconfirmed. The model check: escalation exits before the fence and the stop, so the failed attempt keeps its process and spend (F5). R9's 'slot freed' is therefore false. Admission counts table rows, not live processes, so a zombie plus its replacement exceed the cap (F6: Slots fails at N=2, and at N=3 with 4 events in the model review). Quiescence for a hand-over is read from the table (A3). For the coordinator, R51's 'stops at 1.5·W*' has no runner: its watcher can wake it but not stop it, and only the owner can. G8's 'None known' remains is therefore wrong: the hand-over is still self-supervision.",
+    "lines": "99-105, 108-110, 115-118, 354-358, 472",
+    "severity": "high",
+    "smallest_fix": "[pilot; runners replace.mjs, admit.mjs, audit.mjs] On the exit-1 path, replace.mjs writes the intent, fences, runs stop.mjs and only then marks the task failed (FIX_STOP_ON_FAIL). admit.mjs counts live child processes, stop-unconfirmed ones included (FIX_COUNT_LIVE). A refused admission leaves the row 'admitted', with no re-fence and no new count. Quiescence means no live child process of any epoch. R51 for the coordinator: the watcher wakes it at W*_coord, and audit.mjs flags every coordinator turn above 1.5·W*_coord to the owner. Rewrite G8's remaining risk as 'obedience; only the owner can stop the coordinator'."
+   },
+   {
+    "id": "A1-05",
+    "title": "Crash-only recovery assumes an idempotent redo and locks that die with their holder; neither holds",
+    "target": "R3 intents ('redo is safe under R2'); R1 lock",
+    "kind": "guarantee_overstated",
+    "argument": "Intent-and-reconcile (D1-07, Helland) is safe only when each effect is idempotent. A replace's fence is not: it raises the epoch and increments restarts. If the coordinator crashes after the fence and before the start, a redo from step 1 raises the epoch again and counts a second restart. Under R9's R=1, a coordinator crash alone parks a healthy task (model review, extra flaw E5 x E8). Reconcile runs only at coordinator start, so a torn commit inside a live coordinator waits for the level-triggered re-check. R1 takes an exclusive-create lock but says nothing about a holder that crashes. Crash-only (Candea and Fox) and D3-10 require a lease for such holders. Without a break, every script exits 75 forever. With the earlier spec's stale-lock break, the break is check-then-act: two breakers create two writers of tasks.json, which defeats the fence (D3-10, model review extra flaw E1). PID reuse on Windows makes 'process is dead' unreliable.",
+    "lines": "71-73, 78-80",
+    "severity": "medium",
+    "smallest_fix": "[pilot; runner lib.mjs] Store the target epoch in each intent. Make the fence conditional under the lock: 'epoch := e+1 and restarts += 1 only if epoch == e'. Resume replace from its last completed step instead of redoing it from step 1. Run status.mjs --reconcile at the start of every coordinator turn, not only at its start. The lock file holds pid, process start time and a nonce. A stale lock is broken only by renaming it to a unique name, then checking that the renamed file holds the same pid, start time and nonce that were judged stale; on a mismatch it is restored. Do the --ce check inside the same critical section."
+   },
+   {
+    "id": "A1-06",
+    "title": "Read audit and 'clean' labels assume every input is a recorded read; auto-loaded files and the child's note are not",
+    "target": "Layout (wt/ under the repo), R23 read audit, R28 computed labels, the frame's 'trusted-only readers' (coordinator)",
+    "kind": "classical_assumption_does_not_hold",
+    "argument": "Tracing build systems (D7-04, Shake) can refuse undeclared reads only because the tracer sees every read. Biba's low-water mark (D5-06, Flume) can label a subject clean only if every read passes the monitor. Here the sensor is the transcript's tool calls. Several inputs never appear there. Attempt folders sit under research/2026-11-harness-leads/ inside the harness-engineering repository, so each session loads the CLAUDE.md files of its ancestor folders and of the user level, may load an auto-memory, and lists the repository's skills. These are the 'hopes and earlier verdicts' channel that D7-04 names, and they are the owner's 'raw, biased opinion' problem. R23's 'above the lean baseline' cannot see a file that is also in the baseline. Separately, under fact 1 the coordinator receives each child's 400-character note into its window automatically. Under low-water marking it is low from the first note, yet line 33 lists it as a trusted-only reader. R28's 'clean' label and line 33 claim more than the sensor can show.",
+    "lines": "32-33, 49-58, 174-176, 211-212, 232-233",
+    "severity": "high",
+    "smallest_fix": "[pilot; runners make-profile.mjs and audit.mjs] Build attempt folders outside every repository and outside any folder with a CLAUDE.md above it (for example a top-level research-runs folder). Take the lean baseline from a control session started in an empty folder outside every repository. Declare the user-level files that still load as a named, labelled input of every session, instead of calling the session clean. Remove the coordinator from line 33's trusted-reader list and label it low. This is harmless under Clark-Wilson, because every TP it invokes validates its own arguments, so state that as the reason."
+   },
+   {
+    "id": "A1-07",
+    "title": "The 'blind' analyses are given a design that lists every known risk, so the two-method capture is contaminated",
+    "target": "R55 two blind analyses (and R57 that rests on them)",
+    "kind": "contradiction",
+    "argument": "Capture-recapture between two methods (D4-05, Chapman) needs independent captures. The completeness analysis already rejected its own estimate B because 'I read the experts' lists before my STPA pass'. R55 then gives both blind analysts 'this design', which contains section 9 (P1-P21, N1-N16 and G1-G12 by name and classical name), a 'where the classical assumptions fail' paragraph in every layer, and section 13. That is the risk list R55 says to withhold. The overlap m is inflated by construction, so the residual is biased low, which is the direction in which R57 lets the work skip the extra lens. The pilot's 'first clean two-method capture' would repeat estimate B's flaw.",
+    "lines": "386-391, 396-399, 420-478, 123-128, 183-187, 244-248",
+    "severity": "medium",
+    "smallest_fix": "[pilot; runner: a script, extract-spec.mjs or a step of plan-tree] Give the two analysts a script cut of the design: the layout, the role table, the scripts lists and the rule texts with every P, N, G, D and K id, section 9, each 'where assumptions fail' paragraph and section 13 removed. Run them in the hermetic folders of A1-06. audit.mjs refuses an analysis whose transcript read the full design."
+   },
+   {
+    "id": "A1-08",
+    "title": "Spend admission is called escrow, but nothing debits the reservation, so B is not a bound",
+    "target": "R11 admission and R12 spend limits; F4",
+    "kind": "guarantee_overstated",
+    "argument": "O'Neil's escrow guarantees that the total is never overdrawn because each transaction's consumption is debited atomically against its own reservation and cannot exceed it. Here consumption is seen a poll later from transcripts. A stop needs a woken coordinator, and wake latency is unbounded after a lost wake (A1-03). Zombie spend is charged to Z, not to B. The model review found that escrow leaks: it is released only at a commit or a cut, while R8's admit step reserves again on every replacement. So 'B − Σ open escrows − r ≥ e_task' admits work but does not cap spend. With this the name adds nothing beyond 'reserve an estimate before admitting', and the rlimit analogy (D3-05) is itself corrected by the source check: rlimit has no overrun bound.",
+    "lines": "108-114, 431, 554",
+    "severity": "medium",
+    "smallest_fix": "[pilot; runner spend.mjs] Charge B with measured spend from every transcript, zombie and post-limit spend included. Hold one open reservation per task, released or converted to actual spend at every terminal or replaced state. Size r as the measured peak rate × (Δ + the largest measured wake latency). Halt admission whenever no wake source of A1-03 is alive, because the latency is then unbounded. Call it an admission reservation, and state that the cap is a target that the owner enforces past r."
+   },
+   {
+    "id": "A1-09",
+    "title": "Coverage 'upper bound' and the residual stop signal use estimators whose bias direction is unknown",
+    "target": "R36 coverage, R57 residual",
+    "kind": "guarantee_overstated",
+    "argument": "Chapman's estimate is an upper bound on coverage only if captures are positively dependent: same model, same engine (D6-04). R36 deliberately picks 'two route groups of different mechanism' (a seed list against keyword search, for example). Routes that reach different strata are negatively dependent, so N̂ runs high and coverage runs low. Unequal catchability pulls the other way. The completeness analysis says exactly this for its own estimate: 'its direction is unknown'. The source check adds that Chapman is near-unbiased only when n1 + n2 is at least about N. So taking the smaller of two figures labelled 'upper bound' gives no bound. R57 then gates on Chapman and Chao2, which section 8 itself calls invalid, and a low estimate, the direction of the known same-model bias, skips the extra lens.",
+    "lines": "264-268, 396-399, 409-412, 416-418",
+    "severity": "medium",
+    "smallest_fix": "[pilot; runner recapture.mjs] R36: report held-out seed recall with its Clopper-Pearson interval as the coverage figure. Label it an upper bound for a stated reason: seeds are easier to find than the average source. Keep Chapman only as a diagnostic of route dependence. R57: remove the threshold. Always run the two blind analyses plus one extra lens, and report the estimates as readings that never pass or skip anything. This removes a decision rule instead of adding one."
+   },
+   {
+    "id": "A1-10",
+    "title": "The SPRT runs over a fully inspected lot, and both it and Clopper-Pearson assume independent trials and a perfect inspector",
+    "target": "R43 calibration, R44 review acceptance, R45",
+    "kind": "too_much_machinery",
+    "argument": "Wald's SPRT and Dodge-Romig sampling exist to decide from a sample. R44 checks every cited card, so the defect count is known exactly, and stopping 'after 18 clean passes' makes the verdict depend on order. A late failure among the remaining checked cards is ignored. D4-09 and D6-03 require the inspector's measured detection rate d. R44's p0 and p1 are the true defect rates, while the observed rate is about d·p, so the stated α and β do not hold. R43's '14 seeds per J class' and its Clopper-Pearson bound assume 14 independent Bernoulli trials. Seeds judged in one checker batch share that session's window, and a model can spot their style (D4-01, D8-04). That is pseudoreplication (D6 missing risks), so the effective n is smaller and the bound too tight.",
+    "lines": "304-316, 317-319",
+    "severity": "medium",
+    "smallest_fix": "[pilot; runners certify.mjs and seed.mjs] Drop the SPRT. Accept a review on the full count against a fixed acceptance number c, set by the owner and corrected by the lower bound of d. Keep the zero-acceptance sampling only for uncited cards, where it is real sampling. In calibration, seed.mjs places each seed in its own checker call at a random position, and the Clopper-Pearson bound counts calls, not seeds."
+   },
+   {
+    "id": "A1-11",
+    "title": "Famous names used as decoration: the B+ tree in layer 6 and the LCF kernel in layer 3",
+    "target": "Layer 6 (R47-R50) and the cost output; R27 and line 192 (LCF)",
+    "kind": "analogy_is_decoration",
+    "argument": "A B+ tree's guarantees are balanced height, a minimum node occupancy kept by merges, and logarithmic search by separator keys. The design drops height, latches and underflow merges (line 505). Nothing ever searches by key, and the cost script reports a root fan-out of 246 with 'no inner level is ever needed'. What runs is packing whole groups in key order until 0.75 of a capacity: bin packing with range partitioning, which D2-01 itself says is all that survives. R49(d)'s 'overflow leaf of the same field' is the overflow chaining of ISAM, the very thing B-trees replaced, unless it registers a separator, in which case it is simply a split. The rules read the same without the name. LCF's guarantee comes from a theorem type that the language lets only kernel rules build. Here 'confirmed' is a file that any writer of store/status/ can produce (see A1-02), and promote.mjs writes it from a model's verdict, which the design itself says cannot be certified (line 244). That is R14 plus a measured checker, not LCF. The owner asked for real reuse, and decoration hides which guarantees are actually borrowed.",
+    "lines": "23, 26, 191-192, 205-209, 333-350, 372-377, 505",
+    "severity": "medium",
+    "smallest_fix": "[pilot; text only] Name layer 6 for what runs: 'range partitioning with capacity bounds, packed in key order at plan time'. Keep the B+ tree only as the source of the two rules that are really borrowed: split the key range, never the content, and never drop a key (D2 do_not). Make R49(d) a split that writes a separator into tree-plan.json. In layer 3, replace 'LCF kernel' with 'single writer of status (R14) behind the harness deny of A1-02'. Keep 'witnessed' as the only script-certified grade."
+   }
+  ],
+  "holds": [
+   "Fencing by equality with the task table (R2), as the D1 source check corrects Chubby, is the right primitive. The --ce fence held in the model check: TwoCoordinatorsAct HOLDS, and the ablation A-FENCE-CE shows it is load-bearing.",
+   "Recovery from logged values, never from replay (R8, R22: 'a model step is never rerun to verify it'), correctly applies D2-03, D3-09 and D7-04 to non-deterministic sessions.",
+   "Suspicion by progress rather than liveness (R5) holds in the model: LoopEventuallySuspected HOLDS, and the A-PROGRESS ablation breaks it.",
+   "Comparison only to detect, never to vote (R38), and no same-model voting or Delphi (line 502), correctly follow Knight and Leveson and Ladha for correlated judges (D1-04, D4-02, D6-01).",
+   "Three-valued checks with not-run counted as fail (R41), and 'unverifiable, never passed' in the witness (R26), are the fail-safe defaults D4 asks for.",
+   "Binding the witness to a stored snapshot hash (R26) is a real end-to-end check (D8-02, D2-09, D5-04) and avoids checking over the fetch tool's lossy channel. The design also says plainly that it needs F5.",
+   "Labels computed by script and status fields refused in session files (R20, R28) follow Clark-Wilson's rule that a producer never certifies itself, within the limits of A1-02.",
+   "Left out on purpose and correctly so: consensus, two-phase commit and distributed locks (D1 do_not); backup tasks; filters as an injection defence (D2-13, D5 do_not); B+ height and latches; bidding (D7-12).",
+   "The design itself says that the square-root law with state growth is derived here, not borrowed, and the cost output supports a separate split rule (thrashing, R50) instead of endless hand-overs.",
+   "Section 8 refuses to call the problem list complete, and section 13 states that no borrowed guarantee was measured on sessions like these."
+  ],
+  "overall": "The layered borrowing is mostly the right set of designs, and each layer's 'where the assumptions fail' paragraph is mostly honest. Where it is not, the document claims guarantees that the classical results give only under conditions this harness lacks. Execution is the worst layer. Version 2 ignores the six flaws the model check already found. The restart path reads the fenced attempt's uncommitted output (NoStaleAccepted fails with every mechanism present). A lost wake is permanent, because under harness fact 2 the watcher is the only timer and the model's Task Scheduler fix has no runner. Pause detection works only inside one watcher. Escalation never stops the failed attempt. Admission and quiescence count table rows, not processes. The 'redo is safe' claim fails because the fence is not idempotent. Integrity rests on a trusted base, hooks and an unkeyed hash chain that all sit within reach of the same Windows user. The Clark-Wilson, reference-monitor, Tripwire and Schneier-Kelsey results assume a principal the subjects cannot reach, and the cheapest real one available is the harness's user-level deny rules. 'Clean' labels assume a read sensor that sees every input. Auto-loaded CLAUDE.md files from the enclosing repository and the child's note into the coordinator never appear as reads, which reopens the owner's anchoring problem. The 'blind' analyses are given the full risk list. Coverage is labelled an upper bound by estimators whose bias direction the completeness analysis itself calls unknown. The SPRT runs over a fully inspected lot. Escrow does not bound spend. The B+ tree and LCF names are mostly decoration: what runs is bin packing in key order and a single-writer status file. Every fix proposed here is a change to an existing script or a removal. None adds a new layer."
+ }
+}

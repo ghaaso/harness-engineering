@@ -34,7 +34,9 @@ say what was not tested, and do not rule a family of methods out after one exper
   `evidence/harness-bottlenecks/graph2/embeddings/COORDINATOR-REPORT.md` (the embeddings test and its
   limits), `GRAPH-V2-DESIGN-2026-11.md`, `HARNESS-V2-DESIGN-2026-11.md`.
 - `docs/program/RESEARCH-DIRECTION-2026-11-16.md` and `RESEARCH-TREE-PROTOCOL-2026-11-16.md`: the
-  research programme (experts first, reviews second). Its working files go under `research/`.
+  research programme (experts first, reviews second). The current design of its session tree is
+  `docs/program/RESEARCH-TREE-PROTOCOL-v2-2026-11-16.md`; version 1 is the record of how the problems
+  were found. Under version 2 a run lives in its own folder outside every repository.
 - `docs/program/lab/` and `case-studies/`: the scripts and testbed code that were measured. They carry
   the paths of the projects they came from; treat them as evidence, not as tools ready to run.
 - `.claude/skills/README.md`: how a skill package and its agent definition are laid out.

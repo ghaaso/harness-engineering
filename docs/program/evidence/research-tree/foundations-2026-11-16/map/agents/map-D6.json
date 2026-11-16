@@ -1,0 +1,701 @@
+{
+ "label": "map:D6",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "nearest_whole_design": {
+   "name": "A systematic review with GRADE certainty ratings, run in its rapid-review form, with the synthesis across fields done as an overview of reviews",
+   "source": "Cochrane Handbook for Systematic Reviews of Interventions (Higgins and Thomas, eds.); PRISMA-P (Moher et al. 2015, 'Preferred reporting items for systematic review and meta-analysis protocols (PRISMA-P) 2015 statement', Systematic Reviews); PRISMA 2020 (Page et al. 2021, 'The PRISMA 2020 statement: an updated guideline for reporting systematic reviews', BMJ); PRISMA-S (Rethlefsen et al. 2021, 'PRISMA-S: an extension to the PRISMA Statement for Reporting Literature Searches in Systematic Reviews', Systematic Reviews); GRADE (Guyatt et al. 2008, 'GRADE: an emerging consensus on rating quality of evidence and strength of recommendations', BMJ); GRADE Evidence to Decision frameworks (Alonso-Coello et al. 2016, BMJ). Rapid-review guidance: Cochrane Rapid Reviews Methods Group (Garritty et al. 2021, J Clin Epidemiol); the authors and title of this one should be checked.",
+   "why_it_fits": "One field = one review, and its stages already match: a question list approved before anything runs = the registered protocol; readers = searchers and screeners; source cards = data-extraction forms; the checker = second extractor; the evidence-strength label = risk of bias plus certainty; the pack = the evidence tables; the review of our approaches = an evidence-to-decision step; the synthesis = an overview of reviews. The design was built for the same faults: a reviewer who confirms what it hoped for, a search that decides the answer, errors in extracted numbers, studies wrongly excluded, and conclusions stated more strongly than the evidence supports.",
+   "borrow_whole": "(1) The protocol, written and frozen before the search: questions, criteria for including and excluding a source, the sources and search routes, the extraction form, how certainty is rated, and the planned synthesis. Any deviation is reported, never made silently. (2) A documented search: each reader logs its query strings, the engine, the date, and the number of hits and of sources screened, so another run can repeat it. (3) A flow record per field: identified, screened, excluded with a reason drawn from the fixed list, carded, confirmed, cited. A script produces it from the ledger. (4) Extraction on a fixed form tried out on the pilot, with a second extractor and an arbiter for every number that a conclusion rests on. This already exists as cards plus checker plus one adjudication. (5) Certainty rated per conclusion, not per card: start from the study type, then downgrade for risk of bias, inconsistency, indirectness, imprecision and publication bias. (6) A summary-of-findings table per field. These tables are the synthesis's only input.",
+   "where_it_does_not_fit": "GRADE and the risk-of-bias tools were built for clinical trials. Engineering preprints and vendors' reports have no validated risk-of-bias tool, so the domains have to be adapted and that adaptation stated as judgment. Effects are rarely on comparable scales, so meta-analysis, funnel plots and trim-and-fill mostly cannot be used, and synthesis stays narrative. 'Two independent reviewers' assumes the reviewers are independent; two instances of the same model are not, so dual extraction only partly measures checker error (see D6-02). In the review of 'our approaches', this field is not judging the literature but applying it to our own decision. That is the evidence-to-decision step, and our work is not a source and is never graded as one. A full systematic review screens exhaustively; the budget here forces the rapid-review compromises, and these must be named as such."
+  },
+  "mappings": [
+   {
+    "id": "D6-01",
+    "problems": [
+     "P3",
+     "F2"
+    ],
+    "classical_problem": "Combining fallible judges whose errors are correlated: the jury theorem when votes are not independent; ensemble diversity",
+    "solutions": [
+     {
+      "name": "Condorcet jury theorem",
+      "source": "Condorcet 1785, 'Essai sur l'application de l'analyse a la probabilite des decisions rendues a la pluralite des voix'",
+      "guarantees": "The accuracy of a majority goes to 1 as the number of judges grows",
+      "assumptions": "Judges are independent given the truth, and each is right with probability above 0.5"
+     },
+     {
+      "name": "Jury theorem with correlated votes",
+      "source": "Ladha 1992, 'The Condorcet Jury Theorem, Free Speech, and Correlated Votes', American Journal of Political Science",
+      "guarantees": "A majority still helps if the correlation is low enough; the gain shrinks as the correlation rises",
+      "assumptions": "The correlation between judges is bounded and known or can be estimated"
+     },
+     {
+      "name": "Ambiguity decomposition",
+      "source": "Krogh and Vedelsby 1995, 'Neural Network Ensembles, Cross Validation, and Active Learning', NIPS 7",
+      "guarantees": "The ensemble's error equals the members' mean error minus their diversity (ambiguity), so with no diversity there is no gain",
+      "assumptions": "Squared loss with averaged outputs; it extends to classification only qualitatively"
+     },
+     {
+      "name": "Diversity measures",
+      "source": "Kuncheva and Whitaker 2003, 'Measures of diversity in classifier ensembles and their relationship with the ensemble accuracy', Machine Learning",
+      "guarantees": "Error correlation and other pairwise diversity measures can be computed on items with known answers",
+      "assumptions": "Labelled items exist"
+     },
+     {
+      "name": "Query by committee: disagreement marks the informative cases",
+      "source": "Seung, Opper and Sompolinsky 1992, 'Query by committee', COLT",
+      "guarantees": "Cases where committee members disagree carry the most information and are the ones worth labelling",
+      "assumptions": "The members are drawn from a set of hypotheses consistent with the data seen so far"
+     },
+     {
+      "name": "Design effect and effective sample size",
+      "source": "Kish 1965, 'Survey Sampling'",
+      "guarantees": "n correlated readings are worth n_eff independent ones",
+      "assumptions": "An equal correlation between readings is a fair approximation"
+     }
+    ],
+    "assumptions_that_fail_here": "Independence fails badly: instances of the same model, given the same pack or the same search tool, make the same mistakes ('Faults'), so rho is high and n_eff is close to 1. The field's response: (a) measure rho rather than assume it; (b) get diversity from a different model, different inputs or different search routes, not from more copies; (c) use disagreement for triage, never agreement for confirmation. The current rule is a qualitative form of (c) but does neither (a) nor (b).",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Agreement never raises a claim, and disagreement sends the claim to the adjudication check (query by committee). In addition, the correlation of errors between the two experts (and between reader and checker) is measured on claims that have a reference verdict. If n_eff for two instances stays below 1.3, the owner is told that a second same-model run buys little independence, and its budget goes to a different model or to the contrary-evidence reader.",
+     "runner": "A Node script (agreement.js) over the two review.json files and the checker's verdicts",
+     "when": "After the second reviews in a field are in, and once on the pilot",
+     "input": "review.json from each expert, keyed by approach id and measure; CHECK.json verdicts (confirmed or failed) for each cited claim",
+     "on_failure": "If rho cannot be estimated (fewer than 20 claims with a verdict in both reviews), the script writes 'not estimable' and the F2 decision stays on argument alone; this is recorded in the ledger. If n_eff < 1.3, the second-expert slots in later waves are refused by the admission rule, and only the owner can reopen them."
+    },
+    "formula_or_algorithm": "n_eff = n / (1 + (n-1) * rho), where rho is the mean pairwise phi coefficient of the error indicators (1 = the claim failed its check) over claims checked in both reviews. Krogh-Vedelsby: E_ensemble = mean(E_i) - mean ambiguity. Disagreement rate d = the share of approach-by-measure cells in which the verdicts differ.",
+    "to_measure": [
+     "For each claim, whether it failed its check, in each expert's review",
+     "For the same claims, the verdict pairs across the two experts",
+     "The share of approach-by-measure cells with differing verdicts",
+     "The same correlation between the reader's card and the checker's verdict (needs the reference subsample of D6-02)"
+    ],
+    "effect_on_measures": "Quality and hallucinations: stops agreement from being counted as evidence. Token count and cost: one figure shows whether a second same-model run is worth its price; if it is not, a whole field run is saved per decision.",
+    "build_cost": "One script of about 100 lines; no new sessions",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-02",
+    "problems": [
+     "P1",
+     "P17",
+     "P20",
+     "P21"
+    ],
+    "classical_problem": "Estimating the error rates of an imperfect test with no perfect reference: latent-class models of raters, conditional dependence, and verification bias",
+    "solutions": [
+     {
+      "name": "Latent-class (EM) estimation of observer error rates",
+      "source": "Dawid and Skene 1979, 'Maximum Likelihood Estimation of Observer Error-Rates Using the EM Algorithm', Applied Statistics",
+      "guarantees": "Recovers each rater's error rates and the true labels without a reference standard",
+      "assumptions": "Raters are independent given the true class; enough items; at least three raters, or the conditions of Hui-Walter"
+     },
+     {
+      "name": "Two tests, two populations",
+      "source": "Hui and Walter 1980, 'Estimating the error rates of diagnostic tests', Biometrics",
+      "guarantees": "Identifies the sensitivity and specificity of two tests without a reference standard",
+      "assumptions": "Conditional independence; prevalence differs between populations while test accuracy does not"
+     },
+     {
+      "name": "The effect of conditional dependence",
+      "source": "Vacek 1985, 'The effect of conditional dependence on the evaluation of diagnostic tests', Biometrics",
+      "guarantees": "Shows that dependent tests make both tests look more accurate than they are",
+      "assumptions": "none (this is a negative result)"
+     },
+     {
+      "name": "Correcting a rate measured by an imperfect test",
+      "source": "Rogan and Gladen 1978, 'Estimating prevalence from the results of a screening test', American Journal of Epidemiology",
+      "guarantees": "An unbiased true rate from the observed rate, given the test's Se and Sp",
+      "assumptions": "Se and Sp are known (estimated on a reference subsample) and Se + Sp > 1"
+     },
+     {
+      "name": "Verification bias",
+      "source": "Begg and Greenes 1983, 'Assessment of diagnostic tests when disease verification is subject to selection bias', Biometrics",
+      "guarantees": "A correction when only some cases are verified",
+      "assumptions": "Whether a case is verified depends only on things that are recorded"
+     },
+     {
+      "name": "Agreement statistics and their paradox",
+      "source": "Cohen 1960, 'A coefficient of agreement for nominal scales', Educational and Psychological Measurement; Feinstein and Cicchetti 1990, 'High agreement but low kappa: I. The problems of two paradoxes', Journal of Clinical Epidemiology",
+      "guarantees": "Agreement corrected for chance; the paradox paper shows that kappa misleads when base rates are skewed",
+      "assumptions": "Raters classify the same items independently"
+     }
+    ],
+    "assumptions_that_fail_here": "Conditional independence fails: the checker and the checked come from the same model, and both reach the page through the same small-model summary (P21). That is one instrument read twice, so the latent-class models are biased in the direction Vacek describes: the checker looks better than it is. The field's response is a reference standard on a random subsample: an instrument that does not share the error. Here that means the quote script on the page's own text (P21) for 'the quote exists', plus a reading of the original by a different model or by the owner for 'the number and conditions match'. The rest of the checker's verdicts are then corrected with that subsample's Se and Sp. Checking only cited cards is partial verification (Begg-Greenes): the expert chose which cards to cite, so the failure rate of cited cards is not the pack's failure rate.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "In each wave, a random sample of the checker's verdicts (stratified: confirmed and failed) is re-judged against the reference standard. From that sample the checker's sensitivity and specificity are estimated, and the reported failure rates are corrected (Rogan-Gladen). Uncited cards are checked on a random sample so that the pack-wide failure rate is estimated, not just the rate among the cited cards.",
+     "runner": "A Node script draws the sample (seeded and logged in the ledger) and runs the quote check on the fetched raw text; a reference reader (another model where F3 allows, otherwise the owner on a short list) judges number and conditions; a second script computes Se, Sp and the corrected rates",
+     "when": "After each field's post-review check, before the field's summary-of-findings table goes to the synthesis",
+     "input": "CHECK.json (the checker's verdicts), cards.jsonl, the raw page text the script fetched, and the reference verdicts",
+     "on_failure": "If Se + Sp <= 1.2 on the subsample (the checker is barely better than chance), the field's checker verdicts are not accepted: the field is sent back for a re-check with a different model or brief, and the synthesis does not take it. If the quote script cannot fetch a page, that card is marked 'unverifiable' and treated as failed for any conclusion that rests on it."
+    },
+    "formula_or_algorithm": "Se = P(checker says failed | reference says failed); Sp = P(checker says confirmed | reference says confirmed), both from the subsample. Corrected failure rate pi = (p_obs + Sp - 1) / (Se + Sp - 1), clipped to [0, 1]. Subsample size: about 30 failed and 30 confirmed verdicts per wave keeps the 95% CI of Se and Sp near +/-0.15. Report kappa only beside the observed agreement and the base rate.",
+    "to_measure": [
+     "For each card in the subsample: the checker's verdict, the quote script's result, and the reference verdict on number and conditions",
+     "Observed failure rates among cited cards and among the random sample of uncited cards",
+     "How many cards are unverifiable (page not fetchable)"
+    ],
+    "effect_on_measures": "Hallucinations: the reported rate becomes an estimate with a known bias, not the checker's own claim. Quality: a checker no better than chance is caught. Tokens: about 60 reference checks per wave.",
+    "build_cost": "Two small scripts; one reference-reader job per wave; it depends on the P21 fetch script",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-03",
+    "problems": [
+     "P1",
+     "P17"
+    ],
+    "classical_problem": "Lot acceptance with a sequential sampling plan: deciding whether a batch (a review's citations, a pack) is good enough, rather than only recording its defect rate",
+    "solutions": [
+     {
+      "name": "Acceptance sampling and rectifying inspection",
+      "source": "Dodge and Romig 1929, 'A method of sampling inspection', Bell System Technical Journal",
+      "guarantees": "Bounded producer's and consumer's risk for accepting a lot at a given defect rate; with rectifying inspection, a bounded average outgoing quality",
+      "assumptions": "Items are sampled at random from the lot; inspection is perfect"
+     },
+     {
+      "name": "Sequential probability ratio test",
+      "source": "Wald 1945, 'Sequential tests of statistical hypotheses', Annals of Mathematical Statistics",
+      "guarantees": "Decides between p0 and p1 with error rates alpha and beta using on average the fewest items",
+      "assumptions": "Items are independent; p0 and p1 are fixed beforehand"
+     },
+     {
+      "name": "Exact binomial bound; rule of three for zero failures",
+      "source": "Clopper and Pearson 1934, 'The use of confidence or fiducial limits illustrated in the case of the binomial', Biometrika; Hanley and Lippman-Hand 1983, 'If nothing goes wrong, is everything all right? Interpreting zero numerators', JAMA",
+      "guarantees": "An upper bound on a failure rate from a sample; 0 failures out of n gives about 3/n at 95%",
+      "assumptions": "Binomial sampling"
+     }
+    ],
+    "assumptions_that_fail_here": "Inspection is not perfect; correct the rate with D6-02. Items are not independent: the cards of one reader share its errors, so sample across readers (stratify). The amendment turned the 95% gate into 'a ledger measure, not a gate'. Practitioners in my field would call a measured rate with no decision rule unfinished. Removing a sample-based gate before the review was right (no conclusions existed yet). But cited cards are inspected in full, which rectifies them, while the lot as a whole (the review) still has no acceptance rule. A review whose cited cards fail at a high rate is probably wrong in its uncited judgment too, and patching its sentences one by one does not fix that.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Cited cards: 100% inspection, as now (rectifying). Then a lot decision on the review: an SPRT over the citation checks, with p0 = 5% and p1 = 20% (the owner sets them before the pilot). If it crosses the reject boundary, the review is rejected as a whole and is rewritten from the corrected pack in a fresh session, not patched. The pack's background failure rate is reported as an estimate with its Clopper-Pearson upper bound, never as a bare percentage.",
+     "runner": "A Node script (lot.js) that processes the checker's verdicts in the order they are written",
+     "when": "While the post-review check runs. The script can stop the check early once the reject boundary is crossed, which saves the remaining checks.",
+     "input": "The stream of citation-check verdicts (each corrected for checker error per D6-02 once that is known); p0, p1, alpha and beta from the protocol",
+     "on_failure": "Reject: the review is not passed to the synthesis; the field is marked 'review rejected' in the status file, and the watcher wakes the coordinator. If the script reaches the end of the check without a decision, the review is accepted with a 'borderline' flag shown in the summary-of-findings table."
+    },
+    "formula_or_algorithm": "Per item x (1 = failed): LLR += x*ln(p1/p0) + (1-x)*ln((1-p1)/(1-p0)). Reject the lot when LLR >= ln((1-beta)/alpha); accept when LLR <= ln(beta/(1-alpha)). With p0 = 0.05, p1 = 0.20 and alpha = beta = 0.05: each failure adds about 1.386, each pass subtracts about 0.172; reject at 2.94, accept at -2.94. Upper bound on a rate: Beta(0.975; x+1, n-x) in the Clopper-Pearson form; 3/n when x = 0.",
+    "to_measure": [
+     "Each cited claim's check result, in order",
+     "p0 and p1, set by the owner before the pilot",
+     "The size and failures of the random sample of uncited cards"
+    ],
+    "effect_on_measures": "Hallucinations: a bad review is stopped as a whole rather than patched. Tokens and time: on a bad lot the check stops early.",
+    "build_cost": "One script of about 60 lines",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-04",
+    "problems": [
+     "P16",
+     "P7",
+     "C"
+    ],
+    "classical_problem": "Estimating the size of a population no one has fully seen, here the relevant sources or the true failure modes, from overlapping independent captures (capture-recapture)",
+    "solutions": [
+     {
+      "name": "Lincoln-Petersen estimator",
+      "source": "Petersen 1896; Lincoln 1930, 'Calculating waterfowl abundance on the basis of banding returns', USDA Circular",
+      "guarantees": "N is estimated from two captures and their overlap",
+      "assumptions": "A closed population; the two captures are independent; every item is equally catchable"
+     },
+     {
+      "name": "Chapman's bias-corrected estimator",
+      "source": "Chapman 1951, 'Some properties of the hypergeometric distribution with applications to zoological sample censuses', University of California Publications in Statistics",
+      "guarantees": "Nearly unbiased for small overlaps; defined even when there is no overlap",
+      "assumptions": "As for Lincoln-Petersen"
+     },
+     {
+      "name": "Log-linear models for three or more captures",
+      "source": "Fienberg 1972, 'The multiple recapture census for closed populations and incomplete 2^k contingency tables', Biometrika",
+      "guarantees": "With three or more sources, dependence between pairs of sources can be modelled and corrected",
+      "assumptions": "No interaction of the highest order"
+     },
+     {
+      "name": "Capture-recapture for the completeness of literature searches",
+      "source": "Spoor et al. 1996, 'Use of the capture-recapture technique to evaluate the completeness of systematic literature searches', BMJ",
+      "guarantees": "An estimate of how many relevant studies a search missed",
+      "assumptions": "As above; search routes treated as captures"
+     }
+    ],
+    "assumptions_that_fail_here": "Independence fails when two same-model readers use the same engine and query style: their captures overlap more than chance would give, so N is underestimated and coverage overstated. The field's remedies: make the captures differ in mechanism (a seed list, keyword search, backward and forward citation chasing, and the contrary-evidence reader), and use three or more routes so that a log-linear model can absorb pairwise dependence. Equal catchability fails (popular papers are easier to find); that is the P16 bias itself, and stratifying by kind of source (paper, code, vendor's report) reduces it. The same estimator answers C: count the risks found by independent refuters and readers. The 2026-11-16 attack already has three refuters and three readers who did not see each other's work. Because overlap between fields (P7) is recapture data, withdrawing the shared register was also right on these grounds: a register would have removed the overlap the estimate needs.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Every card records the search route that found it (seed, keyword with engine and query, backward citation, forward citation, contrary-evidence reader), with a canonical source id (DOI or arXiv id, else the normalised title). After each wave, a script estimates the number of relevant sources per question id and reports coverage = observed / N_hat with a CI. For C, risks found by the independent refuters are mapped to canonical risk ids (a judgment, recorded) and the same estimate gives the expected number of unfound risks.",
+     "runner": "A Node script (coverage.js); the canonical-id mapping for risks is done by one mapper agent with a fixed brief, and its mapping is saved",
+     "when": "After each wave, for sources; once now on the attack's records and again after the pilot, for C",
+     "input": "cards.jsonl with route and canonical id fields, from all fields; for C, the refuter and reader findings in attack-2026-11-16/agents/*.json with their mapping to risk ids",
+     "on_failure": "If coverage for a question id is below 0.6, or N_hat is undefined because there is no overlap, the question is marked 'coverage unknown or low' in the summary-of-findings table, and its certainty is downgraded (imprecision and publication bias, D6-08). If the estimate for C says more than 3 risks remain unfound, the risk list is not called complete, and one more independent refuter with a different brief is run."
+    },
+    "formula_or_algorithm": "Chapman: N_hat = (n1+1)(n2+1)/(m+1) - 1; Var = (n1+1)(n2+1)(n1-m)(n2-m) / ((m+1)^2 (m+2)). n1 and n2 are the distinct relevant sources found by route-group 1 and route-group 2, and m is found by both. With three or more routes, fit log-linear models to the 2^k capture histories (by IRLS in a short Node routine) and choose by AIC. Coverage = distinct observed / N_hat.",
+    "to_measure": [
+     "The route tag and canonical id of every card",
+     "Relevance per question id (the card is cited, or confirmed as relevant)",
+     "For C: each refuter's and reader's findings mapped to canonical risk ids"
+    ],
+    "effect_on_measures": "Quality: the unknown coverage of P16 becomes a number with an interval. Throughput: searching stops where coverage is enough (D6-12). Cost: a few fields on each card, and one script.",
+    "build_cost": "Two schema fields on a card; a script of about 150 lines; one mapping job for C",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-05",
+    "problems": [
+     "P18",
+     "F1"
+    ],
+    "classical_problem": "A comparative experiment with high noise between runs and a tight budget: pre-registration, blinding, a pre-specified primary outcome, a paired design, power, and equivalence",
+    "solutions": [
+     {
+      "name": "Two one-sided tests (equivalence)",
+      "source": "Schuirmann 1987, 'A comparison of the two one-sided tests procedure and the power approach for assessing the equivalence of average bioavailability', Journal of Pharmacokinetics and Biopharmaceutics",
+      "guarantees": "Shows that a difference is smaller than a margin Delta fixed beforehand, at level alpha",
+      "assumptions": "Replicate observations; Delta fixed before seeing the data"
+     },
+     {
+      "name": "McNemar's test for paired binary outcomes",
+      "source": "McNemar 1947, 'Note on the sampling error of the difference between correlated proportions or percentages', Psychometrika",
+      "guarantees": "A valid test of the difference between two arms measured on the same units",
+      "assumptions": "Independent units (pairs)"
+     },
+     {
+      "name": "Pseudoreplication",
+      "source": "Hurlbert 1984, 'Pseudoreplication and the design of ecological field experiments', Ecological Monographs",
+      "guarantees": "Shows that subsamples within one experimental unit are not replicates of the treatment",
+      "assumptions": "none (a diagnosis)"
+     },
+     {
+      "name": "Researcher degrees of freedom",
+      "source": "Simmons, Nelson and Simonsohn 2011, 'False-positive psychology: Undisclosed flexibility in data collection and analysis allows presenting anything as significant', Psychological Science",
+      "guarantees": "Shows that analysis choices left open after seeing data inflate false positives",
+      "assumptions": "none"
+     }
+    ],
+    "assumptions_that_fail_here": "Replication fails: one tree run and one single-session run are one unit per arm, and outputs are not reproducible, so a difference between arms cannot be told apart from run-to-run noise. The current rule correctly calls it 'one reading'. The field's response when replication is too costly: (1) fix the primary outcome, the analysis, the margin and the decision rule before the run; (2) blind the scorer to the arm; (3) pair at a finer unit (the question id) to gain resolution, while saying that questions within one run are clustered, so a question-level test overstates precision; (4) say in advance which result would count as decisive (a difference larger than the run-to-run spread, estimated from cheap replicates); (5) treat the reading as an estimate with its noise stated, not a verdict. For F1, the two reviews come from the same frozen pack, so they are paired by design; the same blinding and pre-specification apply.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Before the pilot, the owner approves a one-page analysis plan: the primary outcome, the secondary outcomes (the seven measures), Delta, the decision rule, and the labelling 'descriptive, n = 1 per arm'. Outputs of both arms (and both F1 reviews) are anonymised by a script (ids stripped and formatting normalised) and scored by a scorer that is not told the arm, in a random order. If the budget allows, the cheaper arm (the single session) runs twice, to give one estimate of run-to-run spread.",
+     "runner": "The coordinator writes the plan and the owner approves it; a Node script anonymises and randomises; a scorer agent (a different model where F3 allows) scores against the fixed rubric; a script computes the outcomes",
+     "when": "The plan is written before the pilot starts; scoring runs after both arms finish",
+     "input": "Both arms' review.json, cards and CHECK.json; the frozen rubric; the approved question ids",
+     "on_failure": "If the plan is not frozen (its hash is not recorded in the ledger) before the first arm starts, the comparison is reported as exploratory only. If the scorer identifies the arm (it is asked to guess, and right more than 80% of the time), blinding is recorded as failed and the scores are flagged. If the arm difference is smaller than the observed run-to-run spread, the reading is reported as 'no difference shown', never as 'equal' or 'tree loses'."
+    },
+    "formula_or_algorithm": "Primary outcome, proposed: per approved question id, Y = 1 if it is answered by at least one confirmed card used within its conditions; secondaries: hallucination rate (failed citations / all citations), tokens from transcripts, wall time. Paired question-level comparison: McNemar chi^2 = (b-c)^2/(b+c), exact binomial if b+c < 25, labelled as conditional on the run. Equivalence: claim equal only if the 90% CI of the difference lies within (-Delta, +Delta). Cost-effectiveness: the extra confirmed answers per extra million tokens. Runs needed per arm to read a field-level difference: n = 2*(z_{alpha/2}+z_beta)^2*sigma^2/Delta^2, where sigma is the run-to-run SD.",
+    "to_measure": [
+     "Y per question id in each arm",
+     "Citation failures per arm",
+     "Tokens per arm from transcripts; wall time",
+     "Run-to-run spread from a repeated run of the cheaper arm",
+     "How often the scorer guesses the arm correctly"
+    ],
+    "effect_on_measures": "Quality of the decision that the tree is worth building: guards against a false win or a false loss from one noisy pair. It costs one scorer pass and possibly one extra single-session run.",
+    "build_cost": "A one-page plan; an anonymiser script; a scorer job; a scoring script",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-06",
+    "problems": [
+     "P15"
+    ],
+    "classical_problem": "Absence of evidence taken for evidence of absence: a false negative from an underpowered or untested null, handled by equivalence testing and a power statement",
+    "solutions": [
+     {
+      "name": "Absence of evidence is not evidence of absence",
+      "source": "Altman and Bland 1995, 'Absence of evidence is not evidence of absence', BMJ",
+      "guarantees": "States the inference error and the remedy: report the confidence interval, not 'no effect'",
+      "assumptions": "none"
+     },
+     {
+      "name": "Equivalence tests with a smallest effect of interest",
+      "source": "Lakens 2017, 'Equivalence Tests: A Practical Primer for t Tests, Correlations, and Meta-Analyses', Social Psychological and Personality Science",
+      "guarantees": "An effect can be declared negligible only if it is bounded below the smallest effect of interest",
+      "assumptions": "The smallest effect of interest is set beforehand; the data are informative enough"
+     }
+    ],
+    "assumptions_that_fail_here": "Here most leads have no effect size at all, only a mechanism argument or one study in other conditions. The field's response is categorical: a lead without an informative test cannot be 'dismissed'; it is 'untested' or 'inconclusive'. 'Wrong form' and 'wrong problem' are claims of absence, so each needs either an equivalence-style bound from a source within conditions or the label 'untested'. The current rule (one refuter attacks every dismissal) is a useful adversarial check, but it does not set the evidential bar a dismissal must clear. A refuter can fail to break a weak dismissal.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A verdict of 'wrong form' or 'wrong problem' must cite a card that bounds the lead's effect below the smallest effect of interest, under conditions that cover ours; that bound is stated per measure before the reviews. Otherwise the verdict becomes 'untested' automatically. The refuter then attacks only the dismissals that pass this bar.",
+     "runner": "A Node script over review.json (the verdict field, the cited cards, the conditions fields); the refuter session for those that pass",
+     "when": "After each review's post-review check, before the synthesis",
+     "input": "review.json; cards.jsonl with conditions and effect fields; the smallest effect of interest per measure, set by the owner with the question lists",
+     "on_failure": "A dismissal with no bounding card is rewritten by the script as 'untested' in the claims table, and the reviewer's original wording is kept as judgment. A dismissal the refuter breaks returns to 'open'."
+    },
+    "formula_or_algorithm": "Dismiss only if the upper bound of the effect CI (or the reported effect plus its stated uncertainty) is < SESOI on the relevant measure, from a card whose conditions cover ours. Otherwise the verdict is 'untested'.",
+    "to_measure": [
+     "The smallest effect of interest per measure (the owner's number)",
+     "Per dismissal: the cited card, its effect and uncertainty, its conditions"
+    ],
+    "effect_on_measures": "Quality: removes the false-negative mistake that started this programme. Tokens: the refuter attacks fewer, sharper targets.",
+    "build_cost": "One field in the review schema; one script rule; the owner sets the smallest effects of interest",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-07",
+    "problems": [
+     "P2",
+     "P4",
+     "P15",
+     "P16"
+    ],
+    "classical_problem": "Systematic-review conduct: a registered protocol, a documented and repeatable search, screening against fixed criteria with excluded records logged, and data extraction by two people on a form tried first",
+    "solutions": [
+     {
+      "name": "Protocol registered before the search",
+      "source": "Moher et al. 2015, 'Preferred reporting items for systematic review and meta-analysis protocols (PRISMA-P) 2015 statement', Systematic Reviews",
+      "guarantees": "Choices fixed before the data are seen; deviations are visible",
+      "assumptions": "The protocol is frozen and reported against"
+     },
+     {
+      "name": "Reporting the search",
+      "source": "Rethlefsen et al. 2021, 'PRISMA-S: an extension to the PRISMA Statement for Reporting Literature Searches in Systematic Reviews', Systematic Reviews",
+      "guarantees": "A search another person can repeat and audit",
+      "assumptions": "Search strings, sources and dates are logged"
+     },
+     {
+      "name": "Flow of records with reasons for exclusion",
+      "source": "Page et al. 2021, 'The PRISMA 2020 statement: an updated guideline for reporting systematic reviews', BMJ",
+      "guarantees": "Every exclusion can be traced to a criterion",
+      "assumptions": "Criteria are fixed in the protocol"
+     },
+     {
+      "name": "Double data extraction",
+      "source": "Buscemi et al. 2006, 'Single data extraction generated more errors than double data extraction in systematic reviews', Journal of Clinical Epidemiology",
+      "guarantees": "Fewer extraction errors than a single extractor",
+      "assumptions": "The extractors are independent humans"
+     }
+    ],
+    "assumptions_that_fail_here": "Independence of the second extractor fails for same-model checkers (see D6-02). The search routes are not exhaustive bibliographic databases: they are a web search returned through a summariser, so the search can be repeated only roughly. The field's response is to log it anyway and say what cannot be repeated. P2's current rule (neutral question lists approved before anything runs) is the standard protocol registration. P4's rule (a typed card copied field by field) is the standard extraction form. Both should be named as such and kept. What is missing: a documented search log, screening criteria with a reason code on each exclusion, a flow count, and the protocol's analysis and certainty plan.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Each field's protocol (the approved question list plus inclusion and exclusion criteria, routes, the extraction form and the certainty method) is frozen and hashed before any reader starts. Each reader writes a search-log line per query: the query, engine, date, hits, screened, and excluded with a reason code. A script builds a flow table per field. A sample of excluded records (at least 20%, random) is screened again by a second screener with a different brief.",
+     "runner": "The coordinator writes and freezes the protocol after the owner approves it; readers write the search log; a Node script builds the flow table and draws the exclusion sample; a screener agent re-screens",
+     "when": "The protocol before the field starts; the flow and re-screen after the readers finish, before the pack freezes",
+     "input": "protocol.json, the readers' search-log.jsonl, cards.jsonl",
+     "on_failure": "If a card cites a source whose screening is missing from the log, the schema check rejects it. If the re-screen finds an inclusion rate among excluded records above 10% (upper bound of its exact CI), screening is redone for that field's excluded set before the pack freezes."
+    },
+    "formula_or_algorithm": "Flow counts: identified, deduplicated, screened, excluded (by reason code), carded, confirmed, cited. Re-screen: wrongly excluded share = x/n with a Clopper-Pearson upper bound.",
+    "to_measure": [
+     "Search log lines per query",
+     "Exclusion reason codes",
+     "Re-screen results on the exclusion sample"
+    ],
+    "effect_on_measures": "Quality and hallucinations: makes the coverage of each field auditable and catches wrongly excluded sources (part of P15). Tokens: one re-screen job per field.",
+    "build_cost": "One schema for the search log, one flow script, one re-screen job per field",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-08",
+    "problems": [
+     "P16",
+     "P17",
+     "P13"
+    ],
+    "classical_problem": "Rating the certainty of a body of evidence for a conclusion, not of single sources: risk of bias, inconsistency, indirectness, imprecision and publication or sponsorship bias",
+    "solutions": [
+     {
+      "name": "GRADE",
+      "source": "Guyatt et al. 2008, 'GRADE: an emerging consensus on rating quality of evidence and strength of recommendations', BMJ",
+      "guarantees": "A transparent, repeatable rating of certainty per outcome, with the reason for each downgrade stated",
+      "assumptions": "A body of studies per outcome; a rater trained in the domains"
+     },
+     {
+      "name": "Sponsorship bias",
+      "source": "Lundh et al. 2017, 'Industry sponsorship and research outcome', Cochrane Database of Systematic Reviews",
+      "guarantees": "Shows that sponsored studies report more favourable results and conclusions",
+      "assumptions": "Studies of drugs and devices; applying it to software vendors is an analogy"
+     },
+     {
+      "name": "Small-study and publication bias",
+      "source": "Egger et al. 1997, 'Bias in meta-analysis detected by a simple, graphical test', BMJ",
+      "guarantees": "Detects asymmetry among studies of an effect",
+      "assumptions": "About ten or more studies on a common effect scale; this rarely holds here"
+     }
+    ],
+    "assumptions_that_fail_here": "Formal risk-of-bias tools and funnel tests assume trials with a common effect measure; here there are benchmarks, preprints and vendors' reports on different scales. The field's response: rate the domains qualitatively and state the adaptation, and downgrade for publication bias by judgment when the evidence is mostly from parties with an interest. Indirectness is the dominant domain: amendment 3's own limit 3 says no source measured a tree of this shape. The current four labels (replicated, independent, single study, vendor's own) are a per-card version of one or two GRADE domains. It is weaker because certainty belongs to the conclusion: two strong cards that disagree, or one strong card from another setting, give low certainty. P17 (a card used outside its conditions) is GRADE's indirectness.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Each conclusion in a pack and each verdict in a review carries a certainty (high, moderate, low, very low): it starts from the best card type and is downgraded once per domain that applies (risk of bias, inconsistency, indirectness to our setting, imprecision, and publication or sponsorship bias), with a one-line reason per downgrade. Only the summary-of-findings table, with these ratings, enters the synthesis.",
+     "runner": "The field's child session writes the ratings; the post-review checker verifies the indirectness and inconsistency downgrades against the card conditions; a script rejects a rating with no reasons or with 'high' resting on a vendor or single-study card",
+     "when": "When the review is written; checked in the post-review check",
+     "input": "review.json with certainty fields; cards.jsonl with evidence and conditions fields",
+     "on_failure": "The schema check rejects the review; a rating the checker overturns is replaced by the checker's, and the change is counted in the ledger."
+    },
+    "formula_or_algorithm": "Certainty = start level minus the number of domains downgraded (floor 'very low'). Start at 'high' only for replicated or independent controlled comparisons in our conditions, at 'low' for a single study or a vendor's own report.",
+    "to_measure": [
+     "Per conclusion: the cited cards, their evidence type, and whether their conditions match ours",
+     "Agreement or disagreement among cited cards",
+     "How many ratings checkers overturn"
+    ],
+    "effect_on_measures": "Quality: the synthesis weighs conclusions, not counts of cards. Hallucinations: fewer conclusions stated more strongly than the evidence.",
+    "build_cost": "Fields in the review schema; a brief section for the child; a script rule",
+    "confidence": "high"
+   },
+   {
+    "id": "D6-09",
+    "problems": [
+     "P13"
+    ],
+    "classical_problem": "Scoring an expert's performance on seed questions whose answers the analyst knows and the expert does not (structured expert judgment)",
+    "solutions": [
+     {
+      "name": "Cooke's classical model",
+      "source": "Cooke 1991, 'Experts in Uncertainty: Opinion and Subjective Probability in Science', Oxford University Press",
+      "guarantees": "Experts are scored on calibration and informativeness against true values of seed questions; weights are derived from the scores, not from self-assessment",
+      "assumptions": "The seed questions come from the expert's field, are resolved, and their answers are unknown to the expert when answering"
+     }
+    ],
+    "assumptions_that_fail_here": "The withdrawn self-written probe broke the core assumption (the expert set its own keys). The current external certification checks process (coverage, input list, citations) but not knowledge. The model's training data may contain seed answers, so seeds should come from recent sources outside the child's input list. Calibration needs numeric answers with quantiles; the field allows a categorical version for non-numeric seeds. Ten seeds give a very noisy calibration score, so it serves as a floor that flags a weak expert, not as a fine ranking.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "For each field a seed setter, separate from the child (for example the contrary-evidence reader), writes 8 to 10 seed questions with resolved answers from confirmed cards outside the child's input list. The answers sit in a folder outside the child's worktree. The child answers each numeric seed with 5%, 50% and 95% values (categorical seeds with a probability) before it writes its review. A script scores calibration.",
+     "runner": "The seed-setter agent writes; the child answers; a Node script scores",
+     "when": "After the child's research is done and before its review",
+     "input": "seeds.json (questions only, given to the child); seed-keys.json (outside the worktree); the child's answers",
+     "on_failure": "Calibration score below 0.05: the expert is marked 'not certified', and its review enters the synthesis only as judgment (certainty capped at 'low'). The owner may order a repair once."
+    },
+    "formula_or_algorithm": "For N seeds, s = the empirical share of true values falling in the interquantile bins (below 5%, 5-50%, 50-95%, above 95%); p = (0.05, 0.45, 0.45, 0.05); I(s,p) = sum s_i ln(s_i/p_i); calibration C = 1 - F_chi2_3(2*N*I(s,p)).",
+    "to_measure": [
+     "The expert's quantile answers per seed",
+     "The true value per seed",
+     "Whether a seed's answer appears among the child's own cards (a leak check)"
+    ],
+    "effect_on_measures": "Quality: a performance check of the expert in place of a process-only check. Tokens: small, one short answer set per field.",
+    "build_cost": "One seed-setter job per field; one scoring script of about 80 lines",
+    "confidence": "medium"
+   },
+   {
+    "id": "D6-10",
+    "problems": [
+     "F2"
+    ],
+    "classical_problem": "Which source of variance to replicate: decomposing measurement error into facets and choosing the design that most improves dependability (generalizability theory)",
+    "solutions": [
+     {
+      "name": "Generalizability theory: G-study and D-study",
+      "source": "Cronbach, Gleser, Nanda and Rajaratnam 1972, 'The Dependability of Behavioral Measurements: Theory of Generalizability for Scores and Profiles'",
+      "guarantees": "Estimates the variance due to each facet (here, the research run that made the pack, and the reviewer of a pack) and predicts how dependable a score would be with a different number of replicates per facet",
+      "assumptions": "Random sampling of facet levels; enough levels to estimate components"
+     }
+    ],
+    "assumptions_that_fail_here": "A 2 x 2 crossed design (two packs, each reviewed twice) gives estimates with very wide intervals, so the result is indicative only. The field's standard response is to say so and treat the estimate as provisional. Even so, it replaces argument with a number on exactly the F2 question: if the variance between packs is larger than the variance between reviewers of one pack, a second independent research run buys more than a second reviewer, and the other way round.",
+    "fit": "direct",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "In the pilot, where the budget allows, a partly crossed design: pack A reviewed by two reviewers, plus one review of a second pack B made by an independent research run. Variance components are estimated on the verdict scores per approach and measure.",
+     "runner": "The coordinator schedules the runs; a Node script estimates the variance components from the review scores",
+     "when": "During the pilot, after both F1 reviews",
+     "input": "review.json files with approach-by-measure verdict scores",
+     "on_failure": "If the budget does not allow a second pack, F2 is decided on argument and labelled as such in the protocol. If the components cannot be estimated, the script reports 'not estimable' and F2 stays open."
+    },
+    "formula_or_algorithm": "Score X_{p,r,i} for pack p, reviewer r, item i. Variance components sigma^2_pack, sigma^2_reviewer:pack and sigma^2_item come from the ANOVA expected mean squares. D-study: error variance of a mean over n_p packs and n_r reviewers per pack = sigma^2_pack/n_p + sigma^2_reviewer:pack/(n_p*n_r). Add a replicate to the facet whose term is largest per token spent.",
+    "to_measure": [
+     "Verdict score per approach and measure in each review",
+     "Tokens per pack run and per review run"
+    ],
+    "effect_on_measures": "Token cost: the second-opinion budget goes where it reduces error most. Quality: F2 is decided from data, not argument.",
+    "build_cost": "One extra review plus, optionally, one extra pack run in the pilot; a script of about 80 lines",
+    "confidence": "medium"
+   },
+   {
+    "id": "D6-11",
+    "problems": [
+     "P19",
+     "P9"
+    ],
+    "classical_problem": "Detecting a drop in a process's rate quickly, with a known false-alarm rate (statistical process control; the cumulative sum chart)",
+    "solutions": [
+     {
+      "name": "CUSUM",
+      "source": "Page 1954, 'Continuous inspection schemes', Biometrika",
+      "guarantees": "Detects a shift from rate lambda0 to lambda1 with a known average run length between false alarms and a short detection delay",
+      "assumptions": "The in-control rate is known and observations are independent between intervals"
+     }
+    ],
+    "assumptions_that_fail_here": "The in-control rate of new confirmed cards is not known before the pilot, and it is not stationary: it falls as a search saturates. The field's response is to estimate it from the pilot (a Phase I chart) and to use the expected decline curve as the target. The confirmation of cards lags their creation, so the counted rate should be new cards and files, with confirmation counted separately. The current rule (progress, not liveness) is the right measurement; what is missing is a statistical threshold with a known false-alarm rate in place of a fixed time box.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "The watcher counts new cards and files per interval for each child and runs a Poisson CUSUM against the rate from the pilot. A signal means 'not progressing'. The time box stays as a hard backstop.",
+     "runner": "The watcher script (Node), already planned",
+     "when": "Every interval (for example every 10 minutes) while a child runs",
+     "input": "Per-interval counts of new lines in cards.jsonl and new files in the child's folder; lambda0 and lambda1 from the pilot",
+     "on_failure": "Signal: the watcher exits with reason 'no progress', which wakes the coordinator; the stall-and-replace rule of P9 applies. Before the pilot gives lambda0, only the time box is used."
+    },
+    "formula_or_algorithm": "For counts x_t per interval: S_t = max(0, S_{t-1} + k - x_t), with k = (lambda0 - lambda1) / ln(lambda0/lambda1). Signal when S_t > h, with h chosen for an average run length of about 50 intervals in control (from tables, or by simulation in a Node script).",
+    "to_measure": [
+     "New cards and files per interval during the pilot",
+     "The time from a real stall to the signal, in the pilot"
+    ],
+    "effect_on_measures": "Time taken and token cost: stalls are caught earlier, with a known false-alarm rate, and a looping child stops burning tokens.",
+    "build_cost": "About 40 lines in the watcher; lambda0 from the pilot",
+    "confidence": "medium"
+   },
+   {
+    "id": "D6-12",
+    "problems": [
+     "S",
+     "P12"
+    ],
+    "classical_problem": "When to stop searching: stopping on saturation (diminishing yield) or estimated recall, not on window size or a fixed budget",
+    "solutions": [
+     {
+      "name": "Knee method and target-recall stopping in technology-assisted review",
+      "source": "Cormack and Grossman 2016, 'Engineering Quality and Reliability in Technology-Assisted Review', SIGIR",
+      "guarantees": "Stopping rules that reach a target recall with high probability",
+      "assumptions": "Documents are examined in ranked order and the relevance of each examined document is known"
+     },
+     {
+      "name": "Capture-recapture stop",
+      "source": "see D6-04 (Chapman 1951; Spoor et al. 1996)",
+      "guarantees": "Stop when the estimated coverage passes a target",
+      "assumptions": "As in D6-04"
+     }
+    ],
+    "assumptions_that_fail_here": "The readers' search is not one ranked list, and relevance is judged by a same-model reader. The field's response: use the yield curve per question id (new confirmed relevant cards per reader call) and the coverage estimate from D6-04 together; both are approximate. This is the stopping half of S only: the tree's shape is not my field. It gives a rule for when a node is 'full' that fires on saturation. That is the opposite of the withdrawn split rule, which fired on overflow after the budget had been spent.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "For each question id, searching stops when the last k reader calls (k from the pilot, for example 3) found no new relevant source and the estimated coverage passes 0.8, or when the field's budget is met, whichever comes first. A question stopped by budget is marked 'not saturated'.",
+     "runner": "A Node script that the child runs before it starts a new reader on a question (the child's admission check)",
+     "when": "Before each new reader call",
+     "input": "cards.jsonl with question id, route and canonical id; the yield per call from the ledger",
+     "on_failure": "If the script says stop, the child does not start the reader; if the child starts it anyway, the ledger records an override and the coordinator sees it in the status file."
+    },
+    "formula_or_algorithm": "Stop question q when (new relevant sources in the last k calls == 0) AND (coverage_hat_q >= 0.8), or when budget_q is spent. The yield curve is cumulative relevant sources against calls; the knee is where the slope falls below a fixed share (say 1/6) of the early slope.",
+    "to_measure": [
+     "New relevant sources per reader call per question id",
+     "The coverage estimate per question id (D6-04)"
+    ],
+    "effect_on_measures": "Throughput, tokens and time: readers stop when they stop finding things. Quality: questions with low coverage are labelled, not hidden.",
+    "build_cost": "A script of about 60 lines; depends on D6-04's fields",
+    "confidence": "medium"
+   },
+   {
+    "id": "D6-13",
+    "problems": [
+     "P14",
+     "P12"
+    ],
+    "classical_problem": "Planning from a pilot: estimating cost and its variance from one internal pilot, then admitting further work on an upper prediction bound",
+    "solutions": [
+     {
+      "name": "Internal pilot studies and re-estimation",
+      "source": "Wittes and Brittain 1990, 'The role of internal pilot studies in increasing the efficiency of clinical trials', Statistics in Medicine",
+      "guarantees": "Nuisance parameters (here the cost per unit and its variance) are estimated early and the plan is updated without biasing what follows",
+      "assumptions": "The pilot is representative of later units"
+     }
+    ],
+    "assumptions_that_fail_here": "One pilot field is one unit, so it gives no variance across fields. The pilot was chosen deliberately (the measurement field), not at random, so it may not be representative; that is a selection problem. The field's response: estimate the variance at a finer unit inside the pilot (per reader call, per card, per check), build the field cost as a sum of these, and widen the bound for the unknown difference between fields; then update after each wave with the new fields' costs. The current admission rule ('if the remaining cap covers the fields at the pilot's measured cost, with a margin') uses a point estimate plus an arbitrary margin, which is weaker than a prediction bound.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A wave is admitted only if the remaining budget is at least the sum, over its fields, of the predicted cost plus z standard deviations. The prediction is built from unit costs in the pilot and is re-estimated after each wave.",
+     "runner": "A Node script (admit.js) over the transcript-based token counts; the coordinator reads the usage meter and enters the remaining budget",
+     "when": "Before each wave",
+     "input": "Unit costs from transcripts (per reader call, per card, per check, per review), the planned units per field, the remaining budget read by a session",
+     "on_failure": "Not admitted: the wave is shrunk (fewer fields) until it fits, and the dropped fields are listed for the owner. If the actual cost of a wave falls outside the bound, z is raised for the next wave and the owner is told."
+    },
+    "formula_or_algorithm": "Predicted field cost C = sum_u n_u * c_u, where u ranges over unit types; Var(C) = sum_u n_u * s_u^2 + (between-field inflation)*C^2 (inflation 0.25 until there are two or more fields measured). Admit if B_remaining >= sum_fields (C + z*sqrt(Var)), with z = 1.64 by default (the owner may set another).",
+    "to_measure": [
+     "Tokens per unit type from transcripts",
+     "The planned count of each unit type per field",
+     "Actual against predicted cost after each wave"
+    ],
+    "effect_on_measures": "Token count and cost: a known chance of overrunning the allowance. Time: avoids waves cut off half way.",
+    "build_cost": "A script of about 80 lines; it depends on the transcript token counter that is already planned",
+    "confidence": "medium"
+   }
+  ],
+  "missing_risks": [
+   {
+    "title": "Pseudoreplication: correlated readings counted as independent",
+    "classical_name": "Pseudoreplication (Hurlbert 1984)",
+    "why_it_applies": "'Confirmed' in amendment 3 means two agents got the same numbers through the same small-model summary; P3's two experts are the same model; P18's questions within one run share that run's quality. Each looks like n readings and is closer to one.",
+    "mechanism": "A shared instrument or a shared generator makes the readings agree regardless of the truth, so the apparent precision and confirmation are inflated. Remedy: name the unit that was replicated in every count, and report n_eff (D6-01) or the reference-subsample estimate (D6-02)."
+   },
+   {
+    "title": "Partial verification: the failure rate among cited cards is not the pack's",
+    "classical_name": "Verification bias (Begg and Greenes 1983)",
+    "why_it_applies": "Only cited cards are fully checked, and the expert chose them. The rate they show is conditional on that choice and can differ in either direction from the rate in what the expert read.",
+    "mechanism": "Selection into verification depends on the expert's judgment, which correlates with card quality. Remedy: a random sample of uncited cards is checked too, and both rates are reported (D6-02)."
+   },
+   {
+    "title": "Winner's curse in choosing which leads to test",
+    "classical_name": "Winner's curse / regression to the mean (Ioannidis 2008, 'Why most discovered true associations are inflated', Epidemiology)",
+    "why_it_applies": "The owner chooses the first tests from a table of leads that look strongest. Those were selected on noisy estimates, so their expected effects are biased upward, and the first test will most likely disappoint.",
+    "mechanism": "Selecting the maximum of noisy estimates selects the noise as well. Remedy: shrink the expected effects before ranking, or state the expected effect conservatively in the test design, and judge a promoted lead on a new test, never on the evidence that promoted it."
+   },
+   {
+    "title": "Analysis choices made after seeing results",
+    "classical_name": "Researcher degrees of freedom / the garden of forking paths (Simmons, Nelson and Simonsohn 2011; Gelman and Loken)",
+    "why_it_applies": "The coordinator already ruled differently from the mapper after seeing the attack's results, and the pilot's score, margin and decision rule are not yet frozen. Each choice is defensible and their sum can make any result look like support.",
+    "mechanism": "Choices that depend on the data inflate false positives. Remedy: freeze and hash the analysis plan before the run (D6-05); report every deviation."
+   },
+   {
+    "title": "The expert optimises to the certification checks",
+    "classical_name": "Campbell's law (Campbell 1979, 'Assessing the impact of planned social change')",
+    "why_it_applies": "Certification counts question coverage and confirmed citations. A session briefed with these criteria can cover every question id thinly and cite safe, uninformative cards.",
+    "mechanism": "A measure used for control is corrupted by the behaviour it controls. Remedy: hide part of the check (the seed questions of D6-09) and score depth with the blind rubric of D6-05, not only coverage."
+   },
+   {
+    "title": "A deliberately chosen pilot taken as representative",
+    "classical_name": "Selection bias of a non-random pilot / external validity",
+    "why_it_applies": "The measurement field was picked as pilot for its role, not at random. Its cost and the tree-against-single-session reading may not carry over to the graph or encoder fields.",
+    "mechanism": "Unit-level heterogeneity between fields that the pilot cannot show. Remedy: inflate the variance across fields (D6-13), update after each wave, and label the pilot's reading as conditional on its field."
+   },
+   {
+    "title": "Optional stopping in the pilot comparison",
+    "classical_name": "Optional stopping / repeated looks without correction",
+    "why_it_applies": "Results arrive in a stream, and the coordinator sees them as they come. Stopping or extending the comparison when it looks good inflates the error rate.",
+    "mechanism": "Each unplanned look is another chance of a false positive. Remedy: one pre-specified look, or a sequential plan with fixed boundaries (as in D6-03's SPRT)."
+   },
+   {
+    "title": "Kappa misread under skewed base rates",
+    "classical_name": "The kappa paradoxes (Feinstein and Cicchetti 1990)",
+    "why_it_applies": "Most cards are confirmed (31 of 45 as written in the attack), so the agreement between checker and reference will be high regardless of skill, and kappa can be low or unstable regardless of skill.",
+    "mechanism": "Chance agreement is high when one category dominates. Remedy: report sensitivity and specificity from a stratified reference sample (D6-02), not raw agreement or kappa alone."
+   }
+  ],
+  "do_not": [
+   "Do not take a majority or the agreement of instances of the same model as evidence. The jury theorem needs independence, and same-model errors are correlated (Ladha 1992).",
+   "Do not run Delphi rounds or debates among same-model experts to reach consensus. Convergence there comes from conformity and from the same priors, not from the truth.",
+   "Do not count two readings through the same instrument (the fetch tool's summary, the same pack, the same model) as two confirmations. That is pseudoreplication.",
+   "Do not fix the score, the margin, the analysis or the decision rule after seeing the pilot's outputs, and do not extend or stop the comparison according to how it looks.",
+   "Do not call one reading per arm a verdict, and do not read 'no difference shown' as 'equal'. Equivalence needs a margin fixed beforehand and a CI inside it.",
+   "Do not dismiss a lead on the absence of evidence. Without an informative test the verdict is 'untested'.",
+   "Do not report a failure rate without its denominator and an upper confidence bound. Zero failures in 20 checks is up to about 15% at 95%.",
+   "Do not average or vote-count results from sources with incompatible conditions or measures into one number (Hedges and Olkin 1985, 'Statistical Methods for Meta-Analysis', on vote counting).",
+   "Do not let the checked session write the checker's brief, the seed questions or the answer keys.",
+   "Do not use kappa alone when one category dominates.",
+   "Do not estimate a lead's effect from the same evidence that selected it as the strongest.",
+   "Do not treat the contrary-evidence reader's failure to find contrary evidence as proof that none exists while coverage is unknown."
+  ],
+  "not_my_field": [
+   "P5: Prompt injection and the tools a reader holds are security and isolation questions, not statistical ones.",
+   "P6: Two writers on one file or branch is concurrency control (distributed systems).",
+   "P8: Bounding fan-out and admission by memory is resource management (operating systems and queueing). I cover only the cost-prediction half, in D6-13.",
+   "P10: Crash recovery from frozen state is checkpointing and recovery (distributed systems).",
+   "P11: The coordinator's window and its hand-over are context management and checkpointing.",
+   "P21: How the quote script fetches raw pages is engineering. I use its output as the reference standard in D6-02.",
+   "S: The tree's shape (levels, children per node, B+ tree properties) is orchestration (lane 7). I give only a stopping rule for search saturation, in D6-12.",
+   "P9: Waking the coordinator and keeping the PC awake are process-supervision mechanics. I give only the statistical stall detector, in D6-11.",
+   "P12: How prefix and window sizes multiply cost is a systems question. My part is the prediction bound, in D6-13."
+  ]
+ }
+}

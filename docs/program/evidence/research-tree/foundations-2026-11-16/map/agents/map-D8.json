@@ -1,0 +1,519 @@
+{
+ "label": "map:D8",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "nearest_whole_design": {
+   "name": "Pipes and filters over an immutable, content-addressed artifact store, with end-to-end integrity checks at the consumer (the dataflow or build-pipeline style)",
+   "source": "Shaw, M. and Garlan, D. (1996), Software Architecture: Perspectives on an Emerging Discipline, Prentice Hall (pipes and filters); Saltzer, J. H., Reed, D. P. and Clark, D. D. (1984), End-to-End Arguments in System Design, ACM Transactions on Computer Systems 2(4); Parnas, D. L. (1972), On the Criteria To Be Used in Decomposing Systems into Modules, CACM 15(12); content addressing as in Merkle, R. C., A Digital Signature Based on a Conventional Encryption Function, CRYPTO 87",
+   "why_it_fits": "The tree is already a pipeline: reader (filter) -> card (typed pipe) -> pack (frozen, hashed artifact) -> review (filter) -> synthesis (filter). Filters share no state and talk only through files, which is the protocol's 'files are the only interface'. Inner nodes hold pointers, not contents (information hiding). The integrity check that counts runs once, at the end, against the original bytes (end-to-end), not at each hop.",
+   "borrow_whole": "(1) Every intermediate is an immutable file recorded by its hash; nothing is regenerated, only re-read. (2) Every downstream record points straight to leaf records (card id, page hash plus quote offset), never to a summary of them, so pipeline depth does not compound loss. (3) A recognizer (schema validator script) sits at every pipe and rejects, never repairs, malformed input before any consumer that holds tools reads it. (4) The one integrity check that counts runs at the consumer end against the source bytes, by a script; checks at intermediate hops are only for early rejection. (5) Each filter's interface is versioned (a schema_version field) and fixed before the filter runs.",
+   "where_it_does_not_fit": "Classic filters are deterministic and correct. Here they are non-deterministic and can lie with confidence, so (a) a lost artifact cannot be rebuilt make-style, it must be stored; (b) a filter's output must be checked for content, not only form, which classic pipelines never need (hence the seeded-error and end-to-end checks below). The pipes carry natural-language meaning that no type system captures, so the schema guarantees only what it has a field for; loss outside the fields is silent. Classic pipelines also assume the source is reachable; here pages change, sit behind paywalls or arrive only as a small model's summary, and the design must say what an unreachable end means (unverified, never confirmed)."
+  },
+  "mappings": [
+   {
+    "id": "D8-01",
+    "problems": [
+     "P4",
+     "P11",
+     "S"
+    ],
+    "classical_problem": "Loss along a cascade of channels: the data processing inequality; lossy compression with an unspecified fidelity criterion (rate-distortion)",
+    "solutions": [
+     {
+      "name": "Data processing inequality",
+      "source": "Shannon, C. E. (1948), A Mathematical Theory of Communication, Bell System Technical Journal; textbook statement in Cover, T. M. and Thomas, J. A. (1991), Elements of Information Theory, Wiley",
+      "guarantees": "For a chain X -> Y -> Z, I(X;Z) <= I(X;Y): no processing downstream can restore information about the source that a hop dropped. Loss compounds with depth; retention end to end is at most the product of per-hop retentions.",
+      "assumptions": "A Markov chain: each stage sees only the previous stage's output. Holds exactly when a stage has no side channel back to the source."
+     },
+     {
+      "name": "Rate-distortion: fix the distortion measure before compressing",
+      "source": "Shannon, C. E. (1959), Coding Theorems for a Discrete Source with a Fidelity Criterion, IRE National Convention Record",
+      "guarantees": "R(D) = min over p(yhat|y) with E[d(y,yhat)] <= D of I(Y;Yhat): the least rate that keeps expected distortion under D. Meaningful only once the distortion measure d is defined.",
+      "assumptions": "A stated distortion measure and a known source distribution; neither exists for prose, so it is used as a design rule: name what must survive, then measure its loss."
+     }
+    ],
+    "assumptions_that_fail_here": "Stages are not pure channels: a session can add invented content (noise that looks like signal), so loss is not only erasure. The distortion measure is not formal. The fix the field uses when you cannot code well is to break the chain: give each consumer a side channel to the source (a pointer), so the chain has depth one from every leaf.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Depth one from the leaves: every claim row in a review and in the synthesis carries card ids, and the card's typed condition fields are copied by a script, never retyped by a session. The coordinator's hand-over points at the watcher's status file (written by a script), never at a self-written summary. A defined distortion measure: a card is distorted when its source states a condition or caveat that changes the scope of the number and the card lacks it.",
+     "runner": "The synthesis script, when it builds claims-table.json; the checker agent, for the distortion sample.",
+     "when": "After each review is in and before the synthesis is accepted; the distortion sample during the post-review check.",
+     "input": "review.json (approach id, measure, verdict, card ids), cards.jsonl, the checker's per-card verdicts.",
+     "on_failure": "A claim row whose card ids do not resolve, or whose copied conditions differ from the card's, is rejected back to its field as unbound and does not enter the synthesis. A field whose measured distortion D exceeds the owner's target fails its gate for the review."
+    },
+    "formula_or_algorithm": "Retention end to end <= product over hops h of (1 - l_h). Measure per field: D = (checked cards with a scope-changing omitted condition) / (checked cards); binding loss b = (claim rows whose conditions differ from the cited card) / (claim rows). Target: b = 0 by construction (script copy), D below an owner threshold.",
+    "to_measure": [
+     "D per field from the checker's sample",
+     "b per review (script)",
+     "number of hops between any synthesis sentence and its source (should be 2: card, page)"
+    ],
+    "effect_on_measures": "Quality up and hallucinations down (caveats survive); token count down for the coordinator (pointers, not contents); a little time added for the script.",
+    "build_cost": "Small: a field-copy step in the synthesis script and one extra verdict field for the checker.",
+    "confidence": "high"
+   },
+   {
+    "id": "D8-02",
+    "problems": [
+     "P1",
+     "P21",
+     "P17"
+    ],
+    "classical_problem": "End-to-end integrity: checks at intermediate hops cannot assure correctness; only the endpoint, checking against the original, can. Plus error detection by redundancy (a check value bound to the data).",
+    "solutions": [
+     {
+      "name": "The end-to-end argument",
+      "source": "Saltzer, J. H., Reed, D. P. and Clark, D. D. (1984), End-to-End Arguments in System Design, ACM Transactions on Computer Systems 2(4)",
+      "guarantees": "A function such as integrity can be completely and correctly implemented only with knowledge at the endpoints; hop-by-hop checks are performance aids, not guarantees.",
+      "assumptions": "The endpoint can reach the true original and compare against it."
+     },
+     {
+      "name": "Content addressing (hash of the bytes as the identity of the evidence)",
+      "source": "Merkle, R. C., A Digital Signature Based on a Conventional Encryption Function, CRYPTO 87",
+      "guarantees": "Any later change to the stored evidence is detected; two parties referring to the same hash refer to the same bytes.",
+      "assumptions": "A collision-resistant hash and the bytes captured at check time."
+     }
+    ],
+    "assumptions_that_fail_here": "The endpoint check as currently run goes through the fetch tool, which returns a small model's summary: the check runs over the same lossy channel it is checking, which the end-to-end argument says buys nothing. Pages change, sit behind paywalls, or are PDFs a plain Node script may not parse. The field's answer when the end cannot be reached: the item is unverified, and no intermediate confirmation upgrades it.",
+    "fit": "direct",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "The post-review check (P1) is the standard end-to-end check only once P21 is built: a Node script fetches the address itself (plain HTTP, HTML to text; PDF only if it can parse it), stores the bytes in the field folder under their sha256, normalises whitespace, case and Unicode, and looks for the card's quote. Redundancy that binds number to source: the card's number must also occur within a fixed window (for example 600 characters) of the quote's offset. The card records page_sha256 and quote_offset. Until the script exists, a card confirmed through the fetch tool is labelled confirmed-by-summary, not confirmed.",
+     "runner": "The check script (Node), started by the child or by the coordinator's wave script; the checker agent only for the judgment part (does the citing sentence stay within the conditions).",
+     "when": "After the review, on every card cited in the pack's conclusions and the review.",
+     "input": "cards.jsonl (address, quote, number), review.json card ids.",
+     "on_failure": "Status not-found or unfetchable: the card becomes unverified; every sentence citing it is re-labelled judgment and cannot carry a verdict. If the unverified share of cited cards exceeds the owner's threshold, the field's review fails its gate and is repaired once or dropped with a note."
+    },
+    "formula_or_algorithm": "Per card: found = exists offset o with normalise(page)[o..o+len(q)] == normalise(q) (or edit distance <= 2 words); bound = number appears in normalise(page)[o-w, o+len(q)+w]. Field rates: f_found, f_bound, f_unfetchable.",
+    "to_measure": [
+     "f_found, f_bound, f_unfetchable per field",
+     "share of cited cards confirmed only by summary",
+     "time and tokens of the script (tokens near zero)"
+    ],
+    "effect_on_measures": "Hallucinations down sharply (invented quotes and numbers fail mechanically); token cost down (a script replaces part of an Opus checker's reading); quality up.",
+    "build_cost": "Small to medium: one Node script; PDF text extraction is the hard part and may be left as unfetchable at first.",
+    "confidence": "high"
+   },
+   {
+    "id": "D8-03",
+    "problems": [
+     "P3",
+     "P20",
+     "F2"
+    ],
+    "classical_problem": "N-version programming and coincident (common-mode) failure: independently produced versions from one specification fail together",
+    "solutions": [
+     {
+      "name": "N-version programming",
+      "source": "Avizienis, A. (1985), The N-Version Approach to Fault-Tolerant Software, IEEE Transactions on Software Engineering SE-11(12)",
+      "guarantees": "With independent failures, P(all versions fail on x) = product of p_i, so a comparator or vote catches most single faults.",
+      "assumptions": "Failures independent across versions."
+     },
+     {
+      "name": "Experimental refutation of independence",
+      "source": "Knight, J. C. and Leveson, N. G. (1986), An Experimental Evaluation of the Assumption of Independence in Multiversion Programming, IEEE Transactions on Software Engineering SE-12(1)",
+      "guarantees": "None; it shows that versions written separately from one specification fail together far more often than independence predicts.",
+      "assumptions": "Human teams, same specification."
+     },
+     {
+      "name": "Coincident-failure models and forced diversity",
+      "source": "Eckhardt, D. E. and Lee, L. D. (1985), A Theoretical Basis for the Analysis of Multiversion Software Subject to Coincident Errors, IEEE TSE SE-11(12); Littlewood, B. and Miller, D. R. (1989), Conceptual Modeling of Coincident Failures in Multiversion Software, IEEE TSE 15(12)",
+      "guarantees": "Eckhardt-Lee: even independently made versions coincide, because inputs vary in difficulty: P(both fail) = E[theta(x)^2] >= (E[theta(x)])^2. Littlewood-Miller: forcing different methods can make P(both fail) lower than under independence.",
+      "assumptions": "A difficulty function over inputs; real diversity of method."
+     }
+    ],
+    "assumptions_that_fail_here": "Same model, same brief, same search tool: the strongest form of common mode. The field's response is forced diversity (different method, different input, different model) and measuring the coincidence rate instead of assuming it.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Keep the current rule (agreement never raises a claim; disagreement marks it weak): it is the comparator use of N versions, the standard. Add what the field adds: (1) diversity is bought by method, not repetition: count a second opinion as independent only if it differs in model (F3) or in method (script quote check, contrary-evidence reader with its own query brief). (2) For F2 the field favours the second reviewer of the frozen pack plus diversity in model, over a second same-model research run: the run repeats the common-mode path (same model, same search tool) at the cost of a whole field. (3) Measure coincidence on seeded errors (D8-04) in the pilot.",
+     "runner": "The coordinator's pilot scoring script, over the seeded-error results of two checkers or two reviewers.",
+     "when": "In the pilot, before F2 is settled for later waves.",
+     "input": "Per seeded error: detected by A, detected by B.",
+     "on_failure": "If the diversity factor shows the second same-model opinion catches almost nothing the first missed, the second same-model opinion is not bought in later waves; a different-model or script check takes its place, or none."
+    },
+    "formula_or_algorithm": "p_A, p_B = miss rates on seeded errors; p_AB = joint miss rate. Diversity factor k = p_AB / (p_A * p_B): k = 1 independent, k -> 1/max(p) fully common-mode. Added detection by the second opinion = p_A - p_AB.",
+    "to_measure": [
+     "p_A, p_B, p_AB on 20 to 40 seeded errors",
+     "k for same-model pairs and for different-model or script pairs"
+    ],
+    "effect_on_measures": "Token cost and count down if a second research run is dropped; hallucinations down where a diverse check replaces a correlated one; throughput up.",
+    "build_cost": "Small, given the seeded set of D8-04.",
+    "confidence": "high"
+   },
+   {
+    "id": "D8-04",
+    "problems": [
+     "P1",
+     "P13",
+     "P17",
+     "P20"
+    ],
+    "classical_problem": "Measuring the detection power of a checker: fault seeding and mutation analysis",
+    "solutions": [
+     {
+      "name": "Mutation analysis (seeded faults to measure a test's adequacy)",
+      "source": "DeMillo, R. A., Lipton, R. J. and Sayward, F. G. (1978), Hints on Test Data Selection: Help for the Practicing Programmer, IEEE Computer 11(4)",
+      "guarantees": "The share of planted faults a check finds estimates its power to find real faults of the same kinds.",
+      "assumptions": "Planted faults resemble real ones (the coupling effect); the checker cannot tell planted from real."
+     }
+    ],
+    "assumptions_that_fail_here": "A model may spot artificial-looking mutants; real faults of language models (plausible invented numbers, a dropped condition) must be mimicked. Seeded faults must never leak into files a review or synthesis reads.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Before the post-review check, a script copies the set of cited cards and citing sentences and plants m faults of four kinds: number changed, baseline swapped, condition dropped, sentence that claims beyond the card's conditions. The checker runs on the mixed set without knowing which are planted. For P13, the same idea certifies a reviewer: a separate calibration file of our work with known planted wrong assumptions, kept apart from the real review.",
+     "runner": "The check script (plants, scores); the checker agent (checks blind).",
+     "when": "With every post-review check; the calibration item once per expert, before its review is accepted.",
+     "input": "cards.jsonl, review.json, the mutation list kept outside the field folder.",
+     "on_failure": "If detection q falls below the owner's threshold (for example 0.8), the field's confirmed labels are not accepted; the check is rerun with a different model or the field is marked unverified. Planted items are stripped by id before any file leaves the check."
+    },
+    "formula_or_algorithm": "q = seeded faults detected / m. Estimated real faults left undetected ~ r * (1 - q) / q, with r = real faults found (seeding estimator; assumes equal detectability).",
+    "to_measure": [
+     "q per checker and per fault kind",
+     "r per field",
+     "false alarms on unmutated items"
+    ],
+    "effect_on_measures": "Turns 'checked' into a measured hallucination rate; costs some tokens (m extra items, about 10 to 20 per field).",
+    "build_cost": "Small: a mutation script and an id list kept out of the field folder.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D8-05",
+    "problems": [
+     "P5",
+     "P4"
+    ],
+    "classical_problem": "Input handling at a trust boundary: language-theoretic security (full recognition before processing), the critique of the robustness principle, and contracts at module interfaces",
+    "solutions": [
+     {
+      "name": "Language-theoretic security (LangSec)",
+      "source": "Sassaman, L., Patterson, M. L., Bratus, S. and Shubina, A. (2011), The Halting Problems of Network Stack Insecurity, ;login: 36(6)",
+      "guarantees": "If input is fully recognised against a grammar of the least power needed before any processing, the processor never acts on unrecognised input.",
+      "assumptions": "The input language is small and decidable; the recogniser runs before the consumer."
+     },
+     {
+      "name": "Be strict in what you accept",
+      "source": "Thomson, M. and Schinazi, D. (2023), RFC 9413, Maintaining Robust Protocols",
+      "guarantees": "Rejecting malformed input instead of repairing it keeps errors visible and stops implementations from depending on tolerated deviations.",
+      "assumptions": "Senders can be told to fix their output."
+     },
+     {
+      "name": "Design by Contract",
+      "source": "Meyer, B. (1992), Applying 'Design by Contract', IEEE Computer 25(10)",
+      "guarantees": "Pre- and postconditions stated at the interface say who is at fault when a hand-over is wrong.",
+      "assumptions": "Checkable conditions."
+     }
+    ],
+    "assumptions_that_fail_here": "Free-text fields (conditions, limits, quote) are an unrestricted language inside a typed record: the schema recognises the envelope, not the content. And a helper's result returns into the child's window before any script sees it, so the recogniser runs after the consumer with tools has read the text, the reverse of LangSec's order.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Put the recogniser before the reader of the text: the child starts its readers through a workflow script; the script receives each reader's return, validates it against the card schema (closed set of keys, enumerated evidence label, numeric fields as numbers, quote of at most 15 words, each free-text field length-capped, no URL outside the address field), writes valid cards to cards.jsonl and rejected returns to a quarantine file the child does not open. The child reads only cards.jsonl. Reject, never repair. Every schema carries schema_version.",
+     "runner": "The child's reader workflow script (Node).",
+     "when": "On every helper return, before the child reads anything.",
+     "input": "Raw helper returns.",
+     "on_failure": "Rejected return goes to quarantine and is counted in the ledger; the sub-question is re-issued once to a fresh reader; a second rejection marks the sub-question not covered."
+    },
+    "formula_or_algorithm": "Accept iff validate(card, schema_v) passes; rejection rate = rejected / returned per field.",
+    "to_measure": [
+     "rejection rate per field",
+     "characters of free text per card",
+     "count of quarantined returns that contained imperative text aimed at a reader (spot check)"
+    ],
+    "effect_on_measures": "Hallucinations and injection risk down; the child's window holds only validated cards, so token count down; throughput slightly down on re-issues.",
+    "build_cost": "Medium: a hand-written validator in plain Node and the reader script.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D8-06",
+    "problems": [
+     "P17"
+    ],
+    "classical_problem": "Precondition checking at a call site: using a component outside its contract (Design by Contract; type checking of a scope)",
+    "solutions": [
+     {
+      "name": "Design by Contract (precondition at the call site)",
+      "source": "Meyer, B. (1992), Applying 'Design by Contract', IEEE Computer 25(10)",
+      "guarantees": "A call whose arguments violate the callee's precondition is detected at the call, and the fault is the caller's.",
+      "assumptions": "The precondition is expressed in checkable terms."
+     }
+    ],
+    "assumptions_that_fail_here": "A card's conditions are mostly prose, so only part of 'used within its conditions' can be checked mechanically; the rest stays a judgment. The field's response is to make as much of the precondition typed as possible and leave the checker only the residue.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Treat a citation as a call: the card's typed conditions are its precondition (task kind, model family, repository size range, language, baseline kind, from enumerations); each approach id in the coordinator's approach list declares its scope in the same terms. A script flags every citing sentence whose approach scope lies outside the cited card's conditions; the checker judges only the flagged sentences and the prose residue.",
+     "runner": "The check script (flags), then the checker agent (rules on flags).",
+     "when": "In the post-review check.",
+     "input": "cards.jsonl typed conditions, the approach list with scopes, review.json citations.",
+     "on_failure": "A sentence whose scope mismatch is upheld is re-labelled judgment and cannot carry a verdict; the out-of-conditions rate goes to the ledger."
+    },
+    "formula_or_algorithm": "flag(sentence, card) = exists key k with scope[k] not within conditions[k]; mis-scope rate = upheld flags / citations.",
+    "to_measure": [
+     "mis-scope rate per field",
+     "share of conditions expressible as typed keys"
+    ],
+    "effect_on_measures": "Quality up; checker tokens down (it reads flags, not every sentence).",
+    "build_cost": "Small once the card schema has typed condition keys.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D8-07",
+    "problems": [
+     "F1",
+     "P10"
+    ],
+    "classical_problem": "Stage separation in a pipeline: a stateless filter over a persistent typed pipe versus fused stages with hidden state",
+    "solutions": [
+     {
+      "name": "Pipes and filters",
+      "source": "Shaw, M. and Garlan, D. (1996), Software Architecture: Perspectives on an Emerging Discipline, Prentice Hall",
+      "guarantees": "Filters that share no state can be replaced, rerun or restarted from the last persisted pipe; the pipe is the whole interface, so it can be inspected and checked.",
+      "assumptions": "Everything a filter needs is in the pipe."
+     }
+    ],
+    "assumptions_that_fail_here": "The research session's window holds more than its pack (it read originals): fusing research and review uses that extra information but it is hidden state, unchecked and lost on any crash. By the data processing inequality the fused review can know more; the field's answer is not to fuse but to raise the pipe's rate until it carries what the review needs, with a feedback channel for what is missing.",
+    "fit": "direct",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Default the field's way: the review is a fresh filter over the frozen pack, must-read sections and our files, with one repair request back to research (a feedback channel, as in automatic repeat request). The pilot measures the hidden state instead of guessing: in the same-window review (written there for comparison), count factual sentences that cite nothing in the frozen pack. That count is exactly the information the pack failed to carry and that no check covered.",
+     "runner": "The pilot's scoring script over both reviews.",
+     "when": "In the pilot field, before F1 is set for the waves.",
+     "input": "Both review.json files, the frozen pack's card ids.",
+     "on_failure": "If the uncarried share is large, the pack's rate is too low: the fix is a pack rule (the researcher must add a card for anything a conclusion uses before freezing), not fusing the stages. If it is small, the fresh review is adopted."
+    },
+    "formula_or_algorithm": "u = factual sentences in the same-window review citing no card in the frozen pack / factual sentences.",
+    "to_measure": [
+     "u in the pilot",
+     "the pre-set score of both reviews",
+     "tokens of each review session"
+    ],
+    "effect_on_measures": "Fresh review: smaller window per call so lower token cost, restartable from the pack (P10), everything it uses checked; risk of lost caveats, measured by u.",
+    "build_cost": "Small: one extra review in the pilot, already planned.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D8-08",
+    "problems": [
+     "P11",
+     "P7",
+     "S"
+    ],
+    "classical_problem": "Module decomposition by information hiding; cohesion and coupling; a shared dependency factored into one owned module",
+    "solutions": [
+     {
+      "name": "Information hiding",
+      "source": "Parnas, D. L. (1972), On the Criteria To Be Used in Decomposing Systems into Modules, Communications of the ACM 15(12)",
+      "guarantees": "Each module hides a design decision behind an interface; other modules depend only on the interface, so the inside can change or grow without affecting them.",
+      "assumptions": "The interface is stated and stable."
+     },
+     {
+      "name": "Cohesion and coupling",
+      "source": "Stevens, W. P., Myers, G. J. and Constantine, L. L. (1974), Structured Design, IBM Systems Journal 13(2)",
+      "guarantees": "Modules with high internal cohesion and low coupling minimise cross-module change and traffic.",
+      "assumptions": "Coupling can be observed."
+     }
+    ],
+    "assumptions_that_fail_here": "Field boundaries are drawn before anyone knows which sources are shared, so coupling is unknown until the pilot. A shared writable register breaks single ownership; the field's answer to a shared dependency is one owner and read-only users, not a shared write.",
+    "fit": "adapted",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "P11: the coordinator reading status files and verdicts only is information hiding and is the standard; keep it. P7: between waves the merge script builds a read-only source index (canonical id such as DOI or arXiv id -> card ids, page hash) from all finished fields; the next wave's readers get it as input and reuse a card instead of re-reading (re-checking its conditions only for their question). No writes during a wave, so no race; overlap within a wave stays accepted and counted. S: decide a split before research, never after, from measured coupling: after the pilot, cluster question ids by shared sources; a field is split only along a cut of low coupling.",
+     "runner": "The wave merge script (index); the coordinator, reading its coupling table, for any split amendment.",
+     "when": "Between waves.",
+     "input": "All finished fields' cards.jsonl.",
+     "on_failure": "If the index is missing or stale, readers proceed without it (overlap only costs tokens, never correctness)."
+    },
+    "formula_or_algorithm": "Overlap rate = cards whose canonical id appears in more than one field / all cards. Coupling between question groups A and B = |sources(A) intersect sources(B)| / |sources(A) union sources(B)|.",
+    "to_measure": [
+     "overlap rate per wave",
+     "coupling between fields and between question clusters"
+    ],
+    "effect_on_measures": "Token count and cost down by the overlap rate; coordinator window bounded.",
+    "build_cost": "Small: a merge step on canonical ids.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D8-09",
+    "problems": [
+     "S",
+     "C"
+    ],
+    "classical_problem": "Conway's law: a system's structure copies the communication structure of the organisation that builds it; what falls between groups is nobody's",
+    "solutions": [
+     {
+      "name": "Conway's law",
+      "source": "Conway, M. E. (1968), How Do Committees Invent?, Datamation 14(4)",
+      "guarantees": "A prediction, not a guarantee: the design's interfaces mirror the organisation's lines of communication.",
+      "assumptions": "Groups that do not talk produce parts that do not integrate."
+     }
+    ],
+    "assumptions_that_fail_here": "The tree forbids level-1 sessions from talking to each other, so the synthesis will have seven boxes and no edges: an interaction between two fields (for example caching with orchestration, small local models with graphs) is studied by no one. The field's response is to give the interfaces an owner.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "The coordinator's approved question list includes cross-field question ids (pairs of fields), each assigned to exactly one owning field and listed as input to the other. A coverage script counts cross-field ids answered by confirmed cards like any other id.",
+     "runner": "The coordinator writes the ids (owner approves); the coverage script checks them.",
+     "when": "Question lists before the pilot; coverage after each wave.",
+     "input": "The question lists, cards.jsonl question ids.",
+     "on_failure": "An uncovered cross-field id is listed as not covered in the synthesis, never silently absent."
+    },
+    "formula_or_algorithm": "Cross-field coverage = cross-field ids with at least one confirmed card / cross-field ids.",
+    "to_measure": [
+     "cross-field coverage",
+     "synthesis claims that cite cards from two fields"
+    ],
+    "effect_on_measures": "Quality up (the leads most likely to matter often sit between fields); small token cost.",
+    "build_cost": "Small.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D8-10",
+    "problems": [
+     "P16"
+    ],
+    "classical_problem": "Evaluating retrieval when the set of relevant items is unknown: pooling, relative recall with known items, citation snowballing",
+    "solutions": [
+     {
+      "name": "Pooling for test collections",
+      "source": "Spärck Jones, K. and van Rijsbergen, C. J. (1975), Report on the Need for and Provision of an 'Ideal' Information Retrieval Test Collection, British Library R&D report",
+      "guarantees": "Relevance judged over the union of several diverse systems' results approximates the full relevant set, so recall can be estimated.",
+      "assumptions": "The pooled systems are diverse."
+     },
+     {
+      "name": "Pool bias measured",
+      "source": "Zobel, J. (1998), How Reliable Are the Results of Large-Scale Information Retrieval Experiments?, SIGIR 1998",
+      "guarantees": "Shows pools miss relevant items and favour the contributing systems; gives a way to estimate how many remain.",
+      "assumptions": "Judged pools."
+     },
+     {
+      "name": "Snowballing",
+      "source": "Wohlin, C. (2014), Guidelines for Snowballing in Systematic Literature Studies and a Replication in Software Engineering, EASE 2014",
+      "guarantees": "Backward and forward citation chasing from a start set finds work that keyword search ranks low.",
+      "assumptions": "A good start set; citations reachable."
+     }
+    ],
+    "assumptions_that_fail_here": "All readers share one search tool and one model, so the pool is not diverse and its bias goes unmeasured. Seeds handed to readers cannot measure coverage: an item given in the brief is found by construction.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Split each field's seed list at random by script: half goes in the readers' brief, half is held out. Coverage is estimated as relative recall on the held-out half. Diversify the pool: one reader per field searches by snowballing from the seed half rather than by keyword. The contrary-evidence reader stays.",
+     "runner": "The coverage script (split before the wave, score after Stage A).",
+     "when": "Split before readers start; score at the pack's gate.",
+     "input": "The seed list; cards.jsonl canonical ids.",
+     "on_failure": "Relative recall below the owner's threshold: the pack states its estimated coverage on its first page and the field gets one repair reader with a different strategy; it is not certified as complete."
+    },
+    "formula_or_algorithm": "Relative recall r = |found intersect heldout| / |heldout|. Two readers with different strategies: Lincoln-Petersen N_hat = n1 * n2 / m (m = items both found); coverage = |union| / N_hat. Correlated readers make N_hat too low, so read it as an upper bound on coverage.",
+    "to_measure": [
+     "r per field and per strategy",
+     "share of cards by evidence label (vendor's own, single study, ...)",
+     "N_hat per field"
+    ],
+    "effect_on_measures": "Quality up (known coverage); hides nothing about the search; small token cost for one snowball reader.",
+    "build_cost": "Small.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D8-11",
+    "problems": [
+     "C"
+    ],
+    "classical_problem": "Estimating the number of faults not yet found from overlapping independent inspections (capture-recapture)",
+    "solutions": [
+     {
+      "name": "Capture-recapture for inspections",
+      "source": "Eick, S. G., Loader, C. R., Long, M. D., Votta, L. G. and Vander Wiel, S. (1992), Estimating Software Fault Content Before Coding, ICSE 1992",
+      "guarantees": "From how much independent inspectors' finding lists overlap, an estimate of the total number of faults and so of those still unfound.",
+      "assumptions": "Inspectors independent; each fault equally likely to be caught."
+     },
+     {
+      "name": "Estimator for unequal catchability",
+      "source": "Chao, A. (1987), Estimating the Population Size for Capture-Recapture Data with Unequal Catchability, Biometrics 43(4)",
+      "guarantees": "A lower-bound estimate of the total when items differ in how easy they are to find.",
+      "assumptions": "Counts of items found once and twice."
+     }
+    ],
+    "assumptions_that_fail_here": "Same-model lenses are positively correlated, which biases the estimate low; lenses from different fields are heterogeneous, which the Chao estimator tolerates. Treat the result as a lower bound on what is missing.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Use the expert lenses already being run (this task: each field lists risks the list lacks). A mapping step puts every finding onto a problem id, existing or new; a script counts, per id, how many lenses found it, and applies Chao's estimator.",
+     "runner": "The coordinator's mapping agent (assigns ids), then a scoring script.",
+     "when": "After each round of lens reviews of the problem list.",
+     "input": "Each lens's list of problem ids.",
+     "on_failure": "If the estimated unseen count exceeds a small threshold (for example 2), one more lens from a field not yet asked is run before the list is called complete."
+    },
+    "formula_or_algorithm": "Chao: N_hat = S_obs + f1^2 / (2 * f2), with f1 = problems found by exactly one lens, f2 = by exactly two. Estimated unseen = N_hat - S_obs.",
+    "to_measure": [
+     "f1, f2, S_obs after the lens round"
+    ],
+    "effect_on_measures": "Gives C a number instead of a feeling; costs nothing beyond the lenses already run.",
+    "build_cost": "Small.",
+    "confidence": "medium"
+   }
+  ],
+  "missing_risks": [
+   {
+    "title": "The seams between fields are nobody's job",
+    "classical_name": "Conway's law (Conway 1968)",
+    "why_it_applies": "Level-1 sessions never talk to each other and the synthesis is built per field, so interactions between fields are studied by no one and the synthesis has seven boxes and no edges.",
+    "mechanism": "Cross-field question ids with one owner each, counted by the coverage script (D8-09)."
+   },
+   {
+    "title": "The schema guarantees what it carries, and so hides what it dropped",
+    "classical_name": "Lowest-common-denominator data format in pipes and filters (Shaw and Garlan 1996); silent loss outside the fidelity criterion",
+    "why_it_applies": "Typed hand-overs make loss invisible: a caveat with no field is dropped without trace, and a 'notes' field becomes an untyped side door.",
+    "mechanism": "A counted overflow field on cards and reviews; the checker's distortion sample (D8-01) reports caveats lost for want of a field; the schema gains a field when one kind of loss repeats."
+   },
+   {
+    "title": "The same original counted twice through secondary sources",
+    "classical_name": "Correlated redundancy taken for independent redundancy (common-mode, as in Knight and Leveson 1986)",
+    "why_it_applies": "A blog, a vendor report and a survey that all restate one preprint become three cards; a claim then looks replicated when it rests on one study.",
+    "mechanism": "Each card records the canonical id of the primary source it rests on; the evidence label is computed over distinct primaries by script, not by the reader."
+   },
+   {
+    "title": "Interface drift between the pilot and the waves",
+    "classical_name": "Schema versioning and evolution (interface stability, Parnas 1972)",
+    "why_it_applies": "Schemas will change after the pilot; old cards and reviews are then misread silently by the new scripts.",
+    "mechanism": "schema_version on every file; scripts refuse an unknown version; a migration script converts old files rather than sessions re-reading them."
+   },
+   {
+    "title": "A check over the same lossy channel certifies nothing",
+    "classical_name": "Violation of the end-to-end argument (Saltzer, Reed and Clark 1984)",
+    "why_it_applies": "Confirmations made through the fetch tool's summary look like source checks; the risk is not only P21 but every earlier 'confirmed' label, including those in the attack record.",
+    "mechanism": "Label such confirmations confirmed-by-summary and never let them carry a verdict until the script check (D8-02) has run."
+   },
+   {
+    "title": "Checks that test form, not content, will be gamed",
+    "classical_name": "Test adequacy without fault detection (the reason for mutation analysis, DeMillo, Lipton and Sayward 1978)",
+    "why_it_applies": "'Every factual sentence cites a card' can be met by citing loosely related cards; a schema-valid card can be empty of substance.",
+    "mechanism": "Seeded faults measure each check's detection power (D8-04)."
+   }
+  ],
+  "do_not": [
+   "Do not chain summaries: no stage may summarise a summary; every record points to the leaf (card, page bytes).",
+   "Do not take agreement between instances of one model as independent confirmation, and do not vote on facts.",
+   "Do not verify through the channel you are verifying (the fetch tool's summary is not the source).",
+   "Do not repair malformed hand-overs; reject them (be strict in what you accept at a trust boundary).",
+   "Do not let a session that holds tools read untrusted text before a script has recognised it against the schema.",
+   "Do not hand all seed papers to the readers if you want to know the search's coverage; hold half out.",
+   "Do not add an untyped free-text 'notes' field to a typed interface; it becomes the channel everything leaks through.",
+   "Do not decompose after the fact: decide boundaries before work, from measured coupling, never by cutting a finished expertise.",
+   "Do not share one writable file between writers to save duplicate work; one owner, read-only users, merged between waves.",
+   "Do not count a check as a guarantee until its detection rate on seeded faults is known."
+  ],
+  "not_my_field": [
+   "P2 anchoring: cognitive bias and blinded experimental design (methodology field); my field only adds that it can be measured by perturbing the brief.",
+   "P6, P9, P10, P19: single writer, failure detection, checkpoint and restart, progress versus liveness are distributed systems and operating systems.",
+   "P8, P12, P14: admission control, fan-out caps and budgeting are queueing and resource management.",
+   "P18: the single-session control is experimental design (methodology field).",
+   "P5 in part: least privilege and the confused deputy (Hardy 1988) belong to security; I covered only the input-recognition side.",
+   "The nearest whole design for collecting and grading evidence is systematic-review methodology (Cochrane, PRISMA), which belongs to evidence synthesis, not to my field."
+  ]
+ }
+}

@@ -1,0 +1,386 @@
+{
+ "label": "design:L1",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "spec_markdown": "# Layer 1: Execution (version 2)\n\n**Borrowed whole.** This layer has two parts. The first is a MapReduce-style master: a task table, numbered attempts, an atomic commit of each attempt's output, and re-execution from a checkpoint (D1 whole design, D1-03). The second is an OTP-style supervisor that limits restarts and escalates when the limit is reached (D1-09, D3-08, D4-07). The layer is crash-only (D1-12) and adds a batch system's admission and quotas (D1-08, D3-03, D3-05). The coordinator is both master and supervisor. A session exists only during its turns, so a watcher script serves as the coordinator's event loop (D3 whole design, point c). All execution state is kept in files under `run/`. Scripts write those files. Sessions do not.\n\n**Where the classical assumptions fail.**\n- Workers are not fail-stop. A confident wrong answer looks like success, so the Integrity layer has to catch it.\n- A restart costs a field's tokens, not milliseconds. So restarts start from a checkpoint and are capped at one.\n- Faults that come from a brief or a pack recur on restart (Bohrbugs, D4-07).\n- A rerun is not deterministic. So recovery reads committed outputs and never replays (D2-03, D3-09).\n- Only a session can stop a session. So the spend limits are counted from outside the session, but the stop waits for the coordinator to wake.\n\n## Rules\n\n**E1. One task table.** `run/tasks.json` holds one row per task. A task is one stage of a field: research, review, the fresh review, or the control.\n- Who writes it: only the exec scripts. Each holds `run/tasks.lock` (an exclusive create with `wx`) while it writes, writes to a temp file, renames it into place and increments `rev`. The watcher and the sessions only read it.\n- Basis: D1 whole design (the master's table), D2-05 (one writer), D3-10 (an atomic create, not check-then-act).\n- On failure: if the lock is held, the script exits 75 and writes nothing. A lock whose process is dead and that is older than 2 minutes is broken by a rename, and the break is logged. If the table cannot be parsed, every exec script refuses to run, status reports `table-corrupt`, and the owner is told. `tasks.json.prev` is kept for that case.\n\n**E2. Attempts and epochs.** Every start of a task, the first included, does three things:\n- it raises the task's epoch to *e*;\n- it creates the worktree `wt/<task>-e<e>` on the branch `child/<task>-e<e>`;\n- it passes *e* in the brief.\n\nThe attempt writes only under `fields/<f>/<stage>/attempt-<e>/`. A hook enforces that limit, and the hook belongs to the Integrity layer. Basis: D1-01.\n\n**E3. Fencing at the acceptor.** `commit.mjs` accepts an attempt only when all four hold:\n1. the branch's epoch equals the epoch for that task in the table;\n2. the task's state is running or ready;\n3. the diff touches only the attempt folder (D2-05, D5-08);\n4. the schema check passes.\n\nThe test is equality against the table. This is how Chubby checks a sequencer against the lock service instead of trusting order, which is D1-01 as corrected by the source check. A branch with an older epoch is refused and logged as a `zombie-write`, with the tokens it spent. The same fence applies to the coordinator: every exec script takes `--ce` and refuses to act (exit 64) when that value differs from `run/coord.json` (D1-01, D1-10).\n\n**E4. Atomic commit.** Inside an attempt, every durable write goes through `put.mjs`:\n- it validates the content and writes a temp file, then renames it into place;\n- a JSONL line is appended only after it validates;\n- a torn last line is moved to `.corrupt`.\n\nBasis: D2-03, D3-09, D4-07. The attempt becomes visible only through `commit.mjs`. It merges the branch, computes a manifest of {path, sha256} for every file in the attempt folder, and then creates `fields/<f>/<stage>/COMMIT` with `wx`. The first commit wins (MapReduce in D1-03; D1-07):\n- a repeat with the same epoch and the same manifest is a success that changes nothing;\n- a repeat with a different manifest is refused.\n\nConsumers read only the attempts named in a COMMIT file, and they check the manifest hashes first. These consumers are the synthesis, the start of a review and the restart path. MapReduce guarantees only one execution per task, so this per-task rule is what keeps two attempts from mixing (source-check correction to D1 whole). On failure: a merge without a COMMIT stays invisible, and running `commit.mjs` again completes it.\n\n**E5. Intents.** Five effects each get an intent record: starting a session, replacing one, committing, freezing a pack, and writing to the owner.\n- Before the effect, the script creates `run/intents/<task>-e<e>-<step>.json` with `wx`.\n- After the effect, it writes the matching `.done` file.\n- At every coordinator start, the coordinator runs `intent.mjs reconcile` against the session list before it does anything else.\n- On failure: an open intent whose effect is observed is marked done. One whose effect is not observed may be redone, and that is safe only because of E3. Basis: D1-07.\n\n**E6. The watcher.** `watch.mjs` is one background Node process per coordinator epoch, and the coordinator starts it directly. Every Δ = 60 s it does five things:\n1. it runs `status.mjs`;\n2. it evaluates every condition below;\n3. it appends events to `run/events.jsonl`, of which it is the only writer;\n4. it writes `run/watcher.json` with {pid, ce, last_tick};\n5. it records ledger lines through the ledger script that the Assurance layer owns.\n\nThe conditions:\n- **Progress** (D7-07, D1-02; the logical check of D4-06). Each task has a variant V, computed from files. In research, V is the number of approved question ids that no committed card covers. Once the Integrity layer's quote script exists, only a card with a witnessed quote counts; before that, a schema-valid card counts. In review, V is the number of empty slots in the fixed review form plus the cited cards not yet checked. A progress event is either a drop in V or a new distinct source id on a question that is still uncovered. Rewrites, and cards on questions already covered, are not progress.\n- **Stall** (D3-06): no progress event for T_box. Until the pilot, T_box is the owner's box for each stage. After the pilot it is twice the 95th percentile of the measured intervals between progress events.\n- **Loop** (D3-06): the same tool-call signature (the tool name plus a hash of its arguments) three times in a row in the transcript.\n- **Alive** (D4-06): a transcript that has not grown for T_box with no READY file counts as a stall.\n- **Spend** (D3-05): tokens counted from the attempt's transcript and from its helpers' transcripts, compared with the soft and hard limits of E11.\n- **Memory** (D3-03): `os.freemem()` below the reserve.\n- **Pause** (D1-02, D3-06): if the wall-clock gap since the last tick exceeds 2Δ + 30 s, the PC was paused. Every deadline moves forward by the gap, the pause is logged, and nobody is suspected. The watcher does not exit.\n- **Common cause** (D1-09): two or more failure events within W_cc.\n- **Its own deadline:** the watcher exits with code 30 after T_watch, so a hung or forgotten watcher still wakes the coordinator. It exits with code 31 when `coord.json` shows a newer coordinator epoch than its own.\n\n**When it exits.** Urgent events exit at once: stall, loop, overspend, memory, common cause, and an unconfirmed stop. Non-urgent events (ready, a repair request, the soft limit) wait up to δ so that others can be gathered into the same wake (D3-07). The exit code names the most urgent class present.\n\n**E7. Wakes are level-triggered (D3-07, Mesa semantics).**\n- **A wake is only a hint.** It may come from the watcher's exit, a child's turn-end note or the owner. The coordinator first runs `status.mjs`. It then acts on `status.json` and on the events after the last sequence number it saw. It never acts on the text of a note (D5-09).\n- **Nothing is missed at a restart.** A new watcher's first act is to evaluate every condition, so an event that happened during the coordinator's turn is not lost.\n- **Every turn ends with a check.** The coordinator's last act in each turn is `endturn.mjs`. If no watcher of the current coordinator epoch is alive with a fresh tick, the script exits with code 1, and the coordinator starts one as a background command.\n- **How long a lost wake can last.** At most T_watch, or until the next child note.\n- **What remains.** A turn that ends without `endturn.mjs` leaves only the children's notes and the owner to wake the coordinator. The age of the watcher's tick shows the gap at the next wake.\n\n**E8. One restart path (D1-12, D3-13, D2-03, D4-07).** `replace.mjs` handles every case:\n- stall, loop and crash;\n- parking a session when memory runs short;\n- a planned hand-over at W*, which the Shape layer computes;\n- the fresh reviewer that F1 asks for;\n- the very first start, from an empty checkpoint.\n\nIt runs nine steps:\n1. Write the intent.\n2. Fence: raise the task's epoch in the table before anything else.\n3. Stop the old session (E10).\n4. Restore-check: the checkpoint is the last COMMIT plus the cards journaled by the dead attempt that pass the schema, deduplicated by source id.\n5. Compute todo: the approved ids minus the ids already covered.\n6. Admit the new attempt (E11).\n7. Build the brief: the epoch, a pointer to the checkpoint, and todo.\n8. The coordinator starts the session.\n9. `--bind` records the new session id.\n\nThis path must run at least once in the pilot as a real path, and the fresh review of F1 is that run.\n\n**E9. Restart limits and escalation (D1-09, D3-08, D4-07).** Each task may be replaced after a failure at most R = 1 time. A second failure, or the same class of failure twice, marks the task `failed`, and it goes to the owner with its events. Nothing retries it.\n- Planned replacements do not count toward R: a hand-over, the fresh review, or parking for memory.\n- Hand-overs per task are capped at H_max. Past that cap the task goes back to the Shape layer for a split decision (D3, thrashing).\n- A common cause stops admission. Nothing restarts, and the owner is told.\n- Only the owner chooses a changed input for any further attempt (D3-08).\n\n**E10. Stopping a session, and its orphans.** `stop.mjs` works in a fixed order:\n1. **Fence first**, so the stop itself need not be trusted (D1-01).\n2. The coordinator stops the session.\n3. **Verify for 2Δ:** the session's state reads stopped, and neither its transcript nor its helpers' transcripts grow.\n4. Kill with `taskkill /T /F` any process whose command line names the attempt's worktree (D3, orphan risk).\n\nIf anything still grows, the stop is recorded as `stop-unconfirmed`, and the tokens spent after the fence count as zombie spend. Fencing makes the zombie's output harmless, so the replacement may start, but only if memory admits it. Past Z zombie tokens, the case goes to the owner.\n\n**E11. Admission and escrow (D1-08, D3-03, D3-04, D3-05).** `admit.mjs` starts a task only when four conditions hold:\n1. every task it depends on is committed;\n2. fewer than N_max = 3 children are running (a ceiling, not a target);\n3. free memory minus the reserve is at least the peak memory of one session, as measured;\n4. B − Σ(open escrows) − r ≥ e_task.\n\nThe escrow is reserved at start and released at commit or at a cut. B is the remaining cap in tokens: (cap % − meter %) × tokens per percent. `meter.mjs` takes the meter reading from the coordinator's transcript.\n- **No waves.** Tasks are admitted one by one, so a slot never stays idle while work and budget remain. The Shape layer orders the admissible tasks (D3-14).\n- **Soft limit:** at 0.8·e an event fires, and the coordinator tells the child to freeze: write down its cards and its pack.\n- **Hard limit:** e − (Δ + wake latency) × the peak spend rate. It fires an urgent exit, and the coordinator fences and stops the child. The task becomes `cut`: its files are kept, its uncovered questions stay in the table, and nothing is topped up without the owner.\n- **The meter does not match the transcripts:** if the two differ by more than 20 %, admission halts and the coordinator is woken.\n- **No hold-and-wait (Coffman):** a child that waits for a repair commits its work and ends, which frees its slot.\n\n**E12. The coordinator's snapshot and hand-over (D1-10, D7-05, D7-06).**\n- **The snapshot.** The coordinator's state is `status.json`, which a script generates. Nobody writes a summary.\n- **The hand-over.** At W*_coord, which the Shape layer computes, the coordinator stops admitting. It waits for a quiet moment with no child running, so that no child's turn-end note can reach the old session. It then runs `handover.mjs`, which raises `ce` and stops its watcher, and asks the owner to start a fresh coordinator with a one-line brief that points to `status.json`.\n- **A stale coordinator.** One that wakes later is refused by every exec script.\n\n## File formats\n\n- **`run/tasks.json`:** `{rev, ce, tasks:[{task, field, stage, deps[], state, epoch, session, worktree, branch, started_at, escrow, soft, hard, spent, restarts, handovers, fails:[{epoch, class, at}], commit:{epoch, manifest_sha256, git_sha}|null, inputs_ref, updated_at}]}`.\n  - `state` is one of: planned, admitted, running, ready, stopping, parked, committed, cut, failed, dropped.\n- **`run/events.jsonl`:** `{seq, ce, at_wall, kind, task, epoch, urgent, detail}`. Its only writer is the watcher.\n- **`run/watcher.json`:** `{pid, ce, started, last_tick, ticks, pauses:[{at, gap_s}], deadline}`.\n- **`run/status.json`:** a derived view, rebuilt from files.\n  - `{generated_at, rev, ce, slots:{running, max, free_mem, reserve}, budget:{B, open_escrow, r}, tasks:[{task, state, epoch, V, last_progress, spent, soft, hard}], open_intents[], last_event_seq, watcher_tick_age_s, anomalies[]}`.\n- **`fields/<f>/<stage>/COMMIT`:** `{task, epoch, manifest_sha256, git_sha, committed_at}`. It is created once, with `wx`.\n- **`attempt-<e>/MANIFEST.json`:** `[{path, sha256}]`. **`attempt-<e>/READY`** and **`REPAIR.json`:** typed requests, `{question_ids[], missing:enum}`.\n- **`run/intents/<key>.json` and `.done`;** **`run/coord.json`:** `{ce, session, started_at}`; **`run/meter.jsonl`:** `{at, pct, source:\"transcript\"|\"typed\", tokens_since_last}`.\n",
+  "scripts": [
+   {
+    "name": "put.mjs",
+    "purpose": "The child's only write path. It writes a file atomically (temp file then rename), or appends a validated JSONL line, and moves a torn last line to .corrupt.",
+    "inputs": "--root <attempt dir> --path <relative> (--replace | --append-jsonl) --schema <kind>; content on stdin. Run from the coordinator's pinned checkout, never from the child's worktree.",
+    "outputs": "The file or line written; one JSON line on stdout {ok, path, sha256}",
+    "exit_codes": "0 written; 2 schema failure; 3 path outside the attempt folder; 4 I/O error",
+    "stage": "pilot"
+   },
+   {
+    "name": "admit.mjs",
+    "purpose": "Decides which tasks may start now: dependencies committed, a free slot, the memory check and the escrow check. It reserves the escrow in the task table.",
+    "inputs": "--ce <n> [--dry-run]; reads run/tasks.json, run/meter.jsonl, the estimates from the Shape layer, os.freemem()",
+    "outputs": "JSON {admitted:[task], refused:[{task, reason}]}; the reservation written to tasks.json",
+    "exit_codes": "0 admitted at least one; 1 none admissible (reasons in the output); 26 meter and transcript disagree by more than 20 %; 64 stale coordinator epoch; 70 table corrupt; 75 table lock busy",
+    "stage": "pilot"
+   },
+   {
+    "name": "replace.mjs",
+    "purpose": "The one start and restart path: intent, fence (raise the epoch), restore-check, todo list, admission, worktree and brief. With --bind it records the new session id.",
+    "inputs": "--ce <n> --task <id> --reason <first|stall|loop|crash|memory|handover|fresh-review>; or --ce <n> --task <id> --bind <session_id>",
+    "outputs": "JSON {task, epoch, worktree, branch, brief_path}; the brief file; the updated task row",
+    "exit_codes": "0 ready for the coordinator to start the session; 1 restart limit reached, escalate to the owner; 2 not admitted; 3 restore-check failed (no valid checkpoint); 64 stale coordinator epoch; 75 table lock busy",
+    "stage": "pilot"
+   },
+   {
+    "name": "stop.mjs",
+    "purpose": "Fences first, then, after the coordinator's stop call, checks that the session and its helpers have stopped and kills orphan processes that name the attempt's worktree.",
+    "inputs": "--ce <n> --task <id> --phase <fence|verify>",
+    "outputs": "JSON {fenced_epoch, stopped:boolean, growing_transcripts[], killed_pids[], zombie_tokens}",
+    "exit_codes": "0 stop confirmed; 5 stop unconfirmed (zombie spend counted); 64 stale coordinator epoch",
+    "stage": "pilot"
+   },
+   {
+    "name": "commit.mjs",
+    "purpose": "The acceptor. It checks the epoch fence, the path allowlist and the schema, merges the branch, writes the manifest and creates COMMIT with wx. It is idempotent.",
+    "inputs": "--ce <n> --task <id> --epoch <e>; the child's branch; the schema checker from the Integrity layer",
+    "outputs": "fields/<f>/<stage>/COMMIT, attempt-<e>/MANIFEST.json, the escrow released in tasks.json",
+    "exit_codes": "0 committed, or already committed identically; 10 stale epoch (zombie write logged); 11 a path outside the attempt folder; 12 schema failure; 13 COMMIT exists with a different manifest; 64 stale coordinator epoch",
+    "stage": "pilot"
+   },
+   {
+    "name": "watch.mjs",
+    "purpose": "The watchdog and event loop. Each tick it runs status, checks progress (the variant V), stall, loop, alive, spend, memory, pause and common cause, appends events, and exits to wake the coordinator.",
+    "inputs": "--ce <n> --dt 60 --deadline-min <T_watch> --coalesce-s <delta>; reads run/, the field folders and the transcripts",
+    "outputs": "run/events.jsonl (append), run/watcher.json (each tick), run/status.json (through status.mjs)",
+    "exit_codes": "10 ready; 11 repair request; 12 soft limit; 20 stall; 21 loop; 22 overspend at the hard limit; 23 memory; 24 common cause; 25 stop unconfirmed / zombie spend over Z; 26 meter disagreement; 30 the watcher's own deadline; 31 stale coordinator epoch; 40 internal error (treated as 'restart the watcher', never as a field failure)",
+    "stage": "pilot"
+   },
+   {
+    "name": "status.mjs",
+    "purpose": "Builds the derived snapshot status.json from the table, the intents, the events, the COMMIT files, the variant V per task and the transcript spend. It is the coordinator's only state and its hand-over.",
+    "inputs": "--out run/status.json",
+    "outputs": "run/status.json (temp file then rename)",
+    "exit_codes": "0 written; 70 an input is corrupt (the coordinator does not act from memory; it reports)",
+    "stage": "pilot"
+   },
+   {
+    "name": "spend.mjs",
+    "purpose": "Counts tokens from the transcript JSONL files per session, including its helpers' transcripts, by token class. It is used by status, admission and the limits.",
+    "inputs": "--session <id> | --task <id>; the transcript folder",
+    "outputs": "JSON {input, cache_read, cache_write, output, total, helpers:[{id,total}], peak_per_min}",
+    "exit_codes": "0 counted; 6 a helper transcript could not be linked to its parent (count marked partial)",
+    "stage": "pilot"
+   },
+   {
+    "name": "intent.mjs",
+    "purpose": "Intent records for effects that must happen once: create with wx, mark done, reconcile open intents against the session list at the coordinator's start.",
+    "inputs": "create|done --key <task-e<e>-step>; reconcile --sessions <file written by the coordinator from its session-list read>",
+    "outputs": "run/intents/<key>.json and .done; for reconcile, JSON {closed[], to_redo[]}",
+    "exit_codes": "0 ok; 17 the intent already exists (the caller must reconcile, not redo); 64 stale coordinator epoch",
+    "stage": "pilot"
+   },
+   {
+    "name": "endturn.mjs",
+    "purpose": "The coordinator's last act in every turn: checks that a watcher of the current coordinator epoch is alive with a fresh tick.",
+    "inputs": "--ce <n>; run/watcher.json; the process list",
+    "outputs": "JSON {watcher_alive, pid, tick_age_s}",
+    "exit_codes": "0 a live watcher; 1 none: the coordinator must start watch.mjs as a background command now; 64 stale coordinator epoch",
+    "stage": "pilot"
+   },
+   {
+    "name": "meter.mjs",
+    "purpose": "Records the plan's usage meter. It prefers the value taken from the coordinator's own transcript (the tool result), not a typed number, and compares it with the transcript token counts.",
+    "inputs": "record --ce <n> [--from-transcript <path> | --pct <n>]",
+    "outputs": "run/meter.jsonl line {at, pct, source, tokens_since_last}; the tokens-per-percent estimate",
+    "exit_codes": "0 recorded; 26 meter and transcript counts disagree by more than 20 %; 64 stale coordinator epoch",
+    "stage": "pilot"
+   },
+   {
+    "name": "handover.mjs",
+    "purpose": "The coordinator's hand-over at a point where no child is running: raises ce in coord.json and leaves the old watcher to exit with code 31.",
+    "inputs": "--ce <n>",
+    "outputs": "run/coord.json with ce+1; a one-line brief for the fresh coordinator pointing at run/status.json",
+    "exit_codes": "0 handed over; 1 not quiescent (a child is running); 64 stale coordinator epoch",
+    "stage": "pilot"
+   },
+   {
+    "name": "salvage.mjs",
+    "purpose": "Pulls helper results (cards) out of a dead attempt's transcript into the restore input. The salvaged cards are untrusted until they pass the schema and the checks.",
+    "inputs": "--task <id> --epoch <e>; the dead session's transcript",
+    "outputs": "attempt-<e+1>/salvaged.jsonl; JSON {found, valid, dropped}",
+    "exit_codes": "0 salvaged; 7 transcript unreadable (restart from committed cards only, lost helper count logged)",
+    "stage": "later"
+   }
+  ],
+  "files": [
+   {
+    "path_pattern": "research/2026-11-harness-leads/run/tasks.json (+ tasks.json.prev, tasks.lock)",
+    "writer": "The exec scripts only (admit, replace, stop, commit), under the wx lock",
+    "format": "JSON: {rev, ce, tasks:[row]}, row columns as in the spec"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/run/events.jsonl",
+    "writer": "watch.mjs only",
+    "format": "JSONL {seq, ce, at_wall, kind, task, epoch, urgent, detail}"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/run/watcher.json",
+    "writer": "watch.mjs (temp file then rename, each tick)",
+    "format": "JSON {pid, ce, started, last_tick, ticks, pauses[], deadline}"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/run/status.json",
+    "writer": "status.mjs (called by the watcher and the coordinator; a pure function of files, so either writer gives the same view)",
+    "format": "JSON snapshot as in the spec"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/run/coord.json",
+    "writer": "handover.mjs (and the first coordinator start)",
+    "format": "JSON {ce, session, started_at}"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/run/intents/<task>-e<e>-<step>.json and .done",
+    "writer": "intent.mjs (exclusive create)",
+    "format": "JSON {key, effect, created_at, ce}; .done {done_at, observed}"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/run/meter.jsonl",
+    "writer": "meter.mjs",
+    "format": "JSONL {at, pct, source, tokens_since_last}"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/fields/<f>/<stage>/attempt-<e>/ (in worktree wt/<task>-e<e>, branch child/<task>-e<e>)",
+    "writer": "The attempt's session, only through put.mjs; confined by a hook (Integrity layer)",
+    "format": "The Storage layer's card and pack files, plus READY, REPAIR.json {question_ids[], missing}, and MANIFEST.json written by commit.mjs"
+   },
+   {
+    "path_pattern": "research/2026-11-harness-leads/fields/<f>/<stage>/COMMIT",
+    "writer": "commit.mjs (exclusive create, once)",
+    "format": "JSON {task, epoch, manifest_sha256, git_sha, committed_at}"
+   },
+   {
+    "path_pattern": "research/tools/exec/*.mjs",
+    "writer": "The coordinator, at a pinned commit (outside every child's write reach; Integrity layer D5-08)",
+    "format": "Plain Node 24 modules, no packages"
+   }
+  ],
+  "parameters": [
+   {
+    "name": "T_box per stage (stall time box)",
+    "how_measured": "The intervals between progress events (drops in V, or new source ids on uncovered questions) in the pilot's transcripts and files; set T_box to twice the 95th percentile (D3-06)",
+    "value_until_measured": "The owner sets one box per stage before the pilot; no measured value exists"
+   },
+   {
+    "name": "Watcher tick Δ and coalescing delay δ",
+    "how_measured": "The distribution of poll gaps (sets the pause slack); coordinator wakes per task and events per wake; keep the extra delay below T_box/10 (D3-07)",
+    "value_until_measured": "Δ = 60 s (D1-02); δ = 2 min (a guess)"
+   },
+   {
+    "name": "T_watch (the watcher's own deadline)",
+    "how_measured": "The longest quiet stretch in the pilot when no event was due; the wake cost of the coordinator's window at each forced wake",
+    "value_until_measured": "Equal to the shortest T_box (a guess)"
+   },
+   {
+    "name": "Loop length k",
+    "how_measured": "False loop flags against true loops in the pilot transcripts",
+    "value_until_measured": "3 identical tool-call signatures in a row (D3-06)"
+   },
+   {
+    "name": "Peak spend rate and wake latency",
+    "how_measured": "Tokens per minute per session from the transcripts; the time from a watcher exit to the coordinator's first script call. Together they set the hard limit e − (Δ + latency) × rate (D3-05)",
+    "value_until_measured": "The hard limit is 0.9 of the escrow until measured (a guess); the soft limit is 0.8 (D3-05)"
+   },
+   {
+    "name": "Peak memory per session and the reserve",
+    "how_measured": "A free-memory trace and per-process memory (tasklist) during the pilot, helper bursts included (D3-03)",
+    "value_until_measured": "The reserve is the owner's figure; at most 2 children until the peak is measured (amendment 3, row 8)"
+   },
+   {
+    "name": "Tokens per percent of the weekly meter",
+    "how_measured": "Transcript token totals against the meter readings taken by the coordinator at each wake (D1-08)",
+    "value_until_measured": "Unknown; admission uses the owner's pilot allowance A_pilot in tokens"
+   },
+   {
+    "name": "Cost per question ĉ and margin m",
+    "how_measured": "The pilot's transcript tokens per approved question; m = the largest overrun seen, floored at the owner's margin (D3-04, D1-08); the estimate itself comes from the Shape layer",
+    "value_until_measured": "Pilot escrow = the owner's A_pilot"
+   },
+   {
+    "name": "W_cc (common-cause window)",
+    "how_measured": "The times of failures and pauses in the pilot and wave 1; the share of failures that were common cause (D1-09)",
+    "value_until_measured": "30 min (D1-09's example)"
+   },
+   {
+    "name": "H_max (hand-overs per task) and Z (zombie tokens before escalation)",
+    "how_measured": "Hand-overs per task and the reload overhead (D3, thrashing); tokens spent after a fence by sessions whose stop did not take effect",
+    "value_until_measured": "H_max = 2 and Z = 10 % of the task's escrow (both guesses)"
+   },
+   {
+    "name": "Whether pause detection works and whether a background script keeps the PC awake",
+    "how_measured": "Induce one sleep in the pilot (D4-06); check the logged gap, that nobody was suspected, and whether the PC slept while only the watcher ran",
+    "value_until_measured": "Not established (amendment 3, G)"
+   },
+   {
+    "name": "Stop effectiveness and orphan helpers",
+    "how_measured": "Transcripts of a stopped session and of its helpers that still grow after the stop; processes left behind",
+    "value_until_measured": "Not established"
+   },
+   {
+    "name": "Helper-transcript linkage and turn-end visibility",
+    "how_measured": "Whether spend.mjs can tie each helper transcript to its parent session, and whether a turn end is visible in the transcript",
+    "value_until_measured": "Not established; until it is, spend is marked partial"
+   },
+   {
+    "name": "Helper results lost per crash",
+    "how_measured": "Helper results in a dead attempt's transcript minus the cards journaled by put.mjs (decides whether salvage.mjs is built, D1-03)",
+    "value_until_measured": "Not established"
+   }
+  ],
+  "pilot_minimum": [
+   "run/tasks.json with the E1 lock and single-writer rule, and the exec scripts admit.mjs, replace.mjs, stop.mjs, commit.mjs, status.mjs, spend.mjs, intent.mjs, endturn.mjs and meter.mjs",
+   "Epochs per task and per coordinator, fenced at the acceptor: commit.mjs refuses a stale epoch and every exec script refuses a stale --ce",
+   "put.mjs as the child's only write path, and COMMIT by exclusive create with a manifest; consumers read only committed attempts",
+   "watch.mjs with: progress by the variant V, the owner's hard time box, the loop check, the alive check, soft and hard spend limits from transcripts, the memory check, pause detection, the common-cause halt, its own deadline, level-triggered events and coalescing",
+   "The coordinator's wake routine: status.mjs first, act on status.json only, endturn.mjs last",
+   "One restart path (replace.mjs) with R = 1 and escalation to the owner, used for the first start and exercised once as a real replacement (the F1 fresh review)",
+   "Admission per task against the owner's pilot allowance and the memory reserve, at most 2 children until peak memory is measured",
+   "Inducing one sleep and one kill of a child in the pilot, so that pause detection, fencing and the restart path are seen to work"
+  ],
+  "left_out": [
+   {
+    "what": "Backup (speculative) tasks for stragglers",
+    "why": "They double token cost (D1 whole design, where_it_does_not_fit c)"
+   },
+   {
+    "what": "Consensus, distributed locks and two-phase commit across sessions",
+    "why": "One coordinator, epochs and idempotent effects suffice on one PC; a blocking protocol would stall on a sleeping session (D1 do_not)"
+   },
+   {
+    "what": "Adaptive suspicion (phi accrual D1-02, Poisson CUSUM D6-11)",
+    "why": "They need a measured, stationary progress rate; the pilot gives one sample and the rate falls as a search saturates. A percentile box from the pilot is enough until more fields have run. Later."
+   },
+   {
+    "what": "Salvage of helper results from a dead transcript (D1-03)",
+    "why": "It depends on the transcript format, and put.mjs already makes each card durable when written. It is built only if the pilot shows real loss. Later."
+   },
+   {
+    "what": "An exit on sleep (D4-06)",
+    "why": "Every process resumes on wake (fact 8), so an exit would only cost a coordinator wake; the pause is logged and deadlines shift instead (D1-02, D3-06)"
+   },
+   {
+    "what": "A second automatic restart with a changed input (D3-08)",
+    "why": "A restart costs a field's tokens, and choosing the changed input is a judgment; R = 1 (D1-09, D4-07), then the owner decides"
+   },
+   {
+    "what": "Waves as a scheduling barrier",
+    "why": "A barrier idles slots behind the slowest field (D1-08); admission is per task, and a wave remains only as the owner's checkpoint after the pilot"
+   },
+   {
+    "what": "A variance-based escrow (D6-13) and the concurrency fit (D3-11)",
+    "why": "They need two or more measured fields, and the estimate belongs to the Shape layer; this layer only reserves and enforces"
+   },
+   {
+    "what": "A source claims register or card cache (D1-11, D3-10)",
+    "why": "It belongs to the Storage layer, and it is optional until overlap is measured"
+   },
+   {
+    "what": "Model checking of this protocol (D7-06)",
+    "why": "It belongs to the Completeness layer; this layer supplies the states and invariants"
+   },
+   {
+    "what": "Keeping the PC awake from a script, and a logon task after a reboot",
+    "why": "Both change the PC's behaviour and need the owner's word. Correctness does not depend on either: a sleep only costs time, and a reboot is recovered by the next coordinator through status and intent reconciliation."
+   }
+  ],
+  "problems_covered": [
+   {
+    "problem": "P9 Waiting on a stalled child, a usage limit or a sleeping PC",
+    "classical_name": "Failure detection by a progress-kicked watchdog; lost wake-up (Mesa semantics); process pause",
+    "by": "E6 (watcher: variant progress, stall, loop, alive, pause detection, its own deadline), E7 (level-triggered wakes, endturn check), E10, E11",
+    "residual": "A turn that ends without endturn.mjs relies on child notes or the owner; whether a background script keeps the PC awake is not established; a stop waits for a coordinator wake"
+   },
+   {
+    "problem": "P10 A crash or reboot loses a session's state",
+    "classical_name": "Crash-only design; checkpoint and restart with an atomic commit; restart intensity",
+    "by": "E4 (put.mjs, COMMIT), E8 (one restart path, also the first start and the fresh review), E9 (R = 1, escalation), E5 (intents reconciled at restart)",
+    "residual": "Knowledge in a window that was never written down is lost by definition; helper results in flight are lost until salvage is built; nothing resumes after a reboot until the owner starts a coordinator"
+   },
+   {
+    "problem": "P6 Two sessions write the same file or branch",
+    "classical_name": "Split brain / zombie writes; fencing tokens; one writer per partition",
+    "by": "E2 (a worktree and branch per attempt), E3 (an epoch check at the acceptor, a path allowlist, a coordinator epoch on every script), E1 (the table has one writer under a lock)",
+    "residual": "It depends on the Integrity layer's hook confining writes to the attempt folder; a zombie still spends tokens until its stop takes effect (counted, escalated past Z)"
+   },
+   {
+    "problem": "P8 Runaway fan-out",
+    "classical_name": "Admission control and load control of the degree of multiprogramming",
+    "by": "E11 (a slot ceiling, the memory check against the measured peak, the escrow check)",
+    "residual": "Helpers per child are bounded only by escrow and the child's brief, not by a counter"
+   },
+   {
+    "problem": "P12 Children's windows multiply the cost (spend is not bounded by a window ceiling)",
+    "classical_name": "Soft and hard resource quotas enforced from outside the job; escrow",
+    "by": "E11 (escrow reserved per task; soft limit means freeze, hard limit means fence and stop; spend counted from transcripts)",
+    "residual": "Overshoot up to (Δ + wake latency) × spend rate, because only a session can stop a session; cost per call is the Shape layer's (W*)"
+   },
+   {
+    "problem": "P14 The cost is unknown until it is spent",
+    "classical_name": "Admission under uncertain job sizes with escrow, re-estimated as jobs finish",
+    "by": "E11 (admit only if the remaining cap covers the escrow; tokens counted by script; meter cross-check)",
+    "residual": "The estimate and its margin come from the Shape layer and rest on one pilot; the meter itself is readable only by a session"
+   },
+   {
+    "problem": "P19 A child busy but not progressing",
+    "classical_name": "Logical (program-flow) supervision; a variant function for progress; gray failure",
+    "by": "E6 (progress = a drop in the plan-bounded variant V, or a new source id on an uncovered question; the loop check over tool-call signatures)",
+    "residual": "A child can still read irrelevant new sources on an uncovered question until T_box or its escrow stops it; the quality of a card is the Integrity layer's"
+   },
+   {
+    "problem": "P11 The coordinator's window (hand-over part only)",
+    "classical_name": "Snapshot of a leader's state from persistent data; leader fencing by epoch",
+    "by": "E12 (status.json generated by script as the only state; hand-over at a quiet point; coordinator epoch on every script), E7",
+    "residual": "The hand-over threshold W* is the Shape layer's; the fresh coordinator needs the owner to start it (see for_the_owner)"
+   },
+   {
+    "problem": "F1 Where the review runs (dependability part only)",
+    "classical_name": "Crash-only software: the recovery path is the normal path",
+    "by": "E8 (the fresh review from the frozen pack runs through replace.mjs, so the crash path is exercised in the pilot)",
+    "residual": "Which review is better is the Evidence and Assurance layers' comparison"
+   },
+   {
+    "problem": "Deadlock on session slots (a missing risk named in D3)",
+    "classical_name": "Hold and wait over a counted resource (Coffman)",
+    "by": "E11 (a child that waits for a repair commits and ends, freeing its slot)",
+    "residual": "None known; the model check of the Completeness layer should confirm it"
+   }
+  ],
+  "contradicts_the_frame": [
+   "Limits are 'enforced from outside the session' only in part. A script counts the spend from outside, but only a session can stop a session (fact 1), so the hard stop waits for a coordinator wake. The hard limit sits below the allowance by (Δ + wake latency) × the peak spend rate (D3-05). The source check also says POSIX rlimit neither bounds overrun nor signals at every soft limit, so 'soft and hard limits' is borrowed as an idea, not as a guarantee.",
+   "'Fencing by epoch' is checked as equality against the task table, not as 'reject any older number'. The source check corrects D1-01: Chubby validates a sequencer against the lock service.",
+   "MapReduce's guarantee is per reduce task, not job-wide (D1 source check). One committed attempt per task holds only because every consumer reads COMMIT, not because of the borrowed design.",
+   "Crash-only does not cover the coordinator's own hand-over. A child's turn-end note goes to the session that started it, so a hand-over while children run would route their wakes to the stale coordinator. Hand-over happens only at a quiet point with no child running, and needs the owner to start the fresh coordinator (or a harness ability to stop another session, not established).",
+   "The mappings disagree on the restart limit: D3-08 allows 2 restarts with a changed input, D1-09 and D4-07 allow 1. I follow R = 1; a changed input is the owner's decision.",
+   "The mappings disagree on sleep: D4-06 exits with 'slept', D1-02 and D3-06 shift deadlines and do not exit. I follow D1-02 and D3-06, because every process resumes on wake and an exit only costs a coordinator wake.",
+   "The frame's 'admission by reserved budget' sits beside amendment 3's waves. D1-08 replaces the wave barrier with per-task admission when a slot frees. I follow the mapping; a wave remains only as the owner's checkpoint."
+  ],
+  "conflicts_with_other_layers": [
+   "Storage (2): the attempt folder and COMMIT must agree with Storage's immutable cards, pack hash and per-session journal (D2-03). Proposed split: put.mjs gives durability within an attempt (the checkpoint used by restart); COMMIT gives visibility to consumers. Restart's todo list needs Storage's declared inputs and the coverage of question ids (D7-04, D7-05). status.mjs should be one script shared with Storage's derived views.",
+   "Integrity (3): fencing assumes a hook confines each session's writes to its attempt folder and that the exec scripts run from the pinned checkout (D5-08). If the hook fails, a zombie could write into a newer worktree. The progress variant V counts a card only once Integrity's quote script has witnessed it (F5); until then the weaker schema-valid count is used. The coordinator acting only on typed status is D5-09, shared. commit.mjs calls Integrity's schema check.",
+   "Assurance (5): the gate-relevant ledger lines must be written by scripts in a hash chain (D5-11, run by Assurance). The watcher's events.jsonl is their source. Seeded faults must include execution faults (a killed child, an induced sleep, a stale-epoch write, a looping child) so that the watcher gets a detection rate. A watcher whose tick is stale counts as 'did not run', never as a pass.",
+   "Evidence (4): V needs Evidence's definition of when a question is 'covered' or closed by saturation (D6-12). A question stopped by budget must count as closed-uncovered, not as progress.",
+   "Shape and cost (6): this layer enforces but does not estimate. It needs from Shape the escrow estimate and margin (D3-04, D2-12, D6-13), the hand-over threshold W* for children and the coordinator (D3-01), the order of admission (D3-14) and the concurrency ceiling (D3-11). Collision: the frame says overflow never drops data, but a task cut at its hard limit leaves questions uncovered. Here they stay in the table as uncovered and can be admitted again on the owner's top-up.",
+   "Completeness (7): the protocol model (D7-06) must include these states, the fence, the quiet-point hand-over and the fault actions (crash, sleep, lost wake, unconfirmed stop) before the pilot. Its first counterexample to check is a watcher waking a stale coordinator."
+  ],
+  "for_the_owner": [
+   "The restart limit R: 1 automatic replacement per task after a failure (recommended), then you decide whether to change the input and try again.",
+   "The coordinator's hand-over: you start the fresh coordinator from a one-line brief, at a point when no child is running. The alternative needs a harness ability to stop a session it did not start, which is not established.",
+   "Keeping the PC awake: accept that a sleep only costs time (correctness does not depend on it), or allow the watcher to hold a power request while it runs (untested).",
+   "The memory reserve that admission keeps free, and whether up to 3 children may run once the pilot has measured peak memory.",
+   "The pilot's token allowance A_pilot, the overall cap and the admission margin (F4). No top-up of a task cut at its hard limit without your word.",
+   "Whether a child gets exactly one shell permission (node put.mjs, run from the pinned checkout) so that its writes are atomic and journaled. Without it, the acceptor's checks still catch torn files, but cards are less durable.",
+   "An optional logon task that tells you after a reboot that the programme has stopped."
+  ],
+  "computed": "Spec for the Execution layer. It borrows a MapReduce master and an OTP supervisor (crash-only) and adds batch admission. Twelve rules: E1 to E12. 13 scripts, 12 of them needed for the pilot. Built from D1, D3 and the named D2, D4 and D7 mappings and their source checks."
+ }
+}

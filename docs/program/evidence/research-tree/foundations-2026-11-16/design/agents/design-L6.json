@@ -1,0 +1,285 @@
+{
+ "label": "design:L6",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "spec_markdown": "# Layer 7: Completeness (version 2)\n\nNo method proves a list of failure modes complete. Completeness is always relative to a model, a fault list and a property list (D7-13, D4-05). So this layer claims four things and no more: (1) a stated model of the control structure; (2) two analyses of that model, done blind of each other; (3) an estimate of what remains, used only as a stop signal; (4) feedback from operation that reopens the list. The design is borrowed whole: STPA (Leveson 2011) checked against one FMEA matrix (MIL-STD-1629A rows, with the failure modes of Cristian and Avizienis et al. as columns), capture-recapture between the two (Eick et al. 1992; Chao 1987), a protocol model checked by breadth-first search (Holzmann's method, D7-06), and FRACAS (D4-05e).\n\n## 1. Control structure (amendment 3 plus the frame)\n\n| Controller | Control actions | Feedback it gets |\n|---|---|---|\n| Owner | O1 approve the go and the question lists; O2 set the cap and margin; O3 answer an escalation, restart after a reboot; O4 allow the snapshot fetcher | the coordinator's chat prose; status and synthesis built by scripts |\n| Coordinator | C1 start a child (brief, worktree, epoch); C2 message it; C3 stop it; C4 admit a field; C5 start a watcher; C6 accept and merge; C7 start a checker, refuter or mapper; C8 hand over; C9 amend the protocol; C10 hold its turn open to keep the PC awake | **the harness pushes a 400-character free-text note into its turn**; watcher exits and status.json; script exit codes; the usage meter (only a session can read it, in whole percent); children's window sizes |\n| Child | H1 start readers; H2 commit cards; H3 freeze the pack; H4 write the review; H5 ask for a repair or end its turn | reader results (schema-checked); messages; its own files |\n| Reader / checker | return a card / return a verdict | search snippets and fetch summaries / a snapshot window chosen by a script |\n| Watcher | W1 exit, which wakes its starter; W2 write status | files, transcripts, clock, free memory |\n| Scripts (admission, acceptor, quote check, labels, synthesis, token count) | admit or refuse; accept or refuse; label; mark stale; build; count | their declared inputs |\n| Harness | X1 refuse a tool call (hooks, permissions); X2 retry a helper whose result does not fit its schema | settings files |\n\nDisturbances, which are not controllers: sleep and reboot, other tenants of the allowance and the memory, and pages that change.\n\n## 2. Unsafe control actions found (N = not given, U = given when unsafe, T = wrong time or order, D = applied too long or stopped too soon)\n\nCovered (the covering mapping is in brackets): C1/U the old attempt is still alive (D1-01 fencing); C1/U a duplicate start after a crash (D1-07); C1/U an auto-loaded input such as an instruction file or memory (D7-04); C3/N a stalled child is not stopped (P9); C3/U a stop on false suspicion after sleep (D1-02, D3-06); C3/D a stop leaves helpers running (D3 orphans; not verified); C4/N a field is never admitted (D3-14); C4/T a barrier waits for a straggler (D1-08); C5/N a turn ends with no live watcher, or C5/U the watcher wakes the old coordinator (D3-07, D7-06); C6/U a merge touches checks or settings (D5-08); C6/U a merge built on stale inputs (D2-07, D7-05); C7/N the post-review check does not run (D4 fail-safe); C9/U a schema changes under running work (D8 schema_version); H1/U a reader's brief carries project data (D5 confinement); H2/U one primary source is counted twice (D8); H3/T a pack is frozen too early or never (P13, D7-07); H4/U a review rests on our own files (D7-02); H5/D a child holds its slot while it waits (D3 hold and wait); checker/U it is steered by the page (D5-10); W2/U progress is measured by a signal that can be gamed (D1-02, D7-07); acceptor/U a bug in the script, or a crash read as a pass (D4 mutation test, fail-safe); synthesis/T it reads an uncommitted attempt (D1-03).\n\n**Not covered by the frame, P1 to P21 or any missing_risks (gaps):**\n\n- G1 O3/T: an escalation or a reboot waits for an absent owner while slots, escrow and the keep-awake are still held. This is hold and wait on an unbounded server.\n- G2 O4/U: the snapshot fetcher is itself a web reader with no limits on scheme, size, time or private addresses.\n- G3 quote check/U: the fail-safe check cannot read PDFs, cookie walls or paywalls. \"Not-run\" can flood, so few cards ever become trusted. Fail-safe defaults cost availability.\n- G4 C4/U: the cap is a percent of a week that the owner's other sessions share, read only by a session in whole percent, while spend is counted in tokens by a script that may miss helper transcripts. Memory is shared too. This is the noisy-neighbour problem plus a mismatch of units.\n- G5 C7/N: the checks run last, so they are the first thing cut when the budget runs short.\n- G6 C10/D: each poll that keeps the turn open is a model call at the coordinator's full window.\n- G7 reader/U: a reader sees only the fetch tool's summary, so the \"quote\" it returns can be a paraphrase. An honest card then fails the snapshot check.\n- G8 C8/T: the coordinator enforces its own hand-over threshold.\n- G9 X2/U: required schema fields plus automatic retries push a helper to invent a missing number.\n- G10 X1/N: nobody has shown that hooks fire for helpers.\n- G11 assurance/U: a seeded mutant can enter the real store.\n- G12 the estimate rests on one mapper's choices of what counts as the same risk.\n\n## 3. Rules\n\n**R1 Blind STPA (pilot).** Runner: a fresh leaf session started by the coordinator from a fixed brief file. It gets the protocol and the list of components. It does not get P1 to P21, any missing_risks or this analysis. It writes control-structure.json and uca.jsonl. Basis: D4-05(a). It runs before the pilot, after the pilot, and on the changed part at each amendment. On failure: check-matrix exits 1 and nothing is admitted. My own pass above read the experts' lists first, so it cannot count as an independent capture.\n\n**R2 One FMEA matrix, blind to R1 (pilot).** Runner: a second fresh leaf session. Rows are the components (D1-13's list plus hooks, the snapshot store and the transcripts), the shared data items (D2-11) and the four trust-boundary flows (D5-13). Component columns: crash, crash with amnesia, omission, timing, wrong value, common cause, fabrication, injected text, agreeing with the brief. Data columns: the Berenson anomalies plus torn write, stale derived data and mutable identity. Flow columns: STRIDE. Each cell holds a hazard id, or \"n/a\" with a reason. A refuter helper attacks a sample of the n/a cells. Basis: D1-13, D2-11, D5-13, D7-13, D4-05(b).\n\n**R3 Map and gate (pilot).** A mapper helper with a fixed brief and a schema maps every UCA, cell and lens finding to an id in hazards.jsonl and records borderline merges. check-matrix.js passes only when every action has four type entries, every cell is filled, every problem id P1 to P21 appears in some row (a P-id with no row is a gap in the model), and every hazard of high severity is covered or accepted on the owner's word. gate.js binds the result to the protocol's sha256. The admission script (layer 1) refuses every wave unless gate.json says pass for the current protocol hash. A missing gate.json counts as not-run, never as a pass. Basis: D2-11 (an amendment is refused while a cell is empty), D4-05(c).\n\n**R4 The residual is a stop signal (pilot).** estimate.js computes Chapman between the R1 and R2 lists and Chao2 over the lenses, with intervals and a sensitivity range over the borderline merges. If the residual is above the owner's threshold, or cannot be computed (no overlap), the list is \"not complete\". The coordinator then starts one more blind lens from a field not yet asked, from another provider if F3 allows. The result is never called \"complete\", only \"no sign of incompleteness above the threshold\". Basis: D6-04, D8-11. The source check warns that Chapman is biased when n1 + n2 is less than N.\n\n**R5 Protocol model (pilot, execution layer only).** protocol-model.js does a breadth-first search over: coordinator epochs, the owner of each watcher, at most three sessions, child states, and the fault actions crash, sleep, allowance out, loop and owner absent. Invariants: at most three sessions; one accepted coordinator epoch; no replacement writes beside a live predecessor; every watcher exit reaches the active coordinator, or that coordinator reads status on its next wake; no admission without a passing gate. Bounded liveness: every admitted field ends frozen, dropped or parked for the owner within K steps, else an alarm state. Runner: a helper writes it before the pilot, the owner approves the property list, gate.js runs it. A counterexample means the amendment is not adopted and the trace becomes a hazard. Basis: D7-06 through D7-13, and Alpern and Schneider.\n\n**R6 Seams (pilot).** Cross-field question ids, each owned by one field, are written by the coordinator and approved by the owner. The coverage script counts them over the union of all fields, and an uncovered id is listed as not covered. Basis: D8-09, D2-01.\n\n**R7 Incidents and FRACAS (format pilot, fracas.js later).** Every refusal, timeout, restart or not-run that a script produces is appended as a typed line to that script's own incidents file. fracas.js runs after the pilot and after each wave. Unmapped incidents go to the mapper. The escape rate is incidents with no hazard divided by all incidents. A high-severity incident with no hazard stops admission until R1 to R4 are redone. Basis: D4-05(e).\n\n**R8 Fault injection in the pilot.** The coordinator kills one child, lets the PC sleep once, forces one hand-over and runs one hook canary (a helper tries a forbidden write; canary-check.js reads the refusal from the transcript). Each outcome is recorded as an incident. Basis: the D4 risk \"untested failover paths\". This is shared with layer 5.\n\n**R9 Gaps G1 to G12** go into hazards.jsonl with status \"gap\". Each gets a rule in its owning layer, or the owner's acceptance, before the pilot (see conflicts).\n\n## 4. Standing procedure\n\n| Trigger | Who | What |\n|---|---|---|\n| A protocol amendment | the coordinator starts R1 and R2 on the changed part, then the mapper, then gate.js and R5 | admission stays blocked until pass |\n| A lens returns (refuter or expert) | mapper, then estimate.js | R4 |\n| End of the pilot or of a wave | fracas.js | R7 |\n| End of the pilot | full R1 to R4 with the pilot's log | before wave 1 |\n\nThe coordinator never fills the tables, because it is the party under analysis (D4-05; this departs from D7-13).\n\n## 5. File formats (schema_version on every file; ids are immutable)\n\n- control-structure.json: `{protocol_sha256, controllers:[{id, actions:[{id, target}], feedback:[{id, from, typed}]}]}`\n- uca.jsonl: `{uca_id, action_id, type:N|U|T|D, context, case}`\n- fmea.json: `{rows:[{row_id, kind}], cells:[{row_id, col, hazard_ids|null, na_reason|null}]}`\n- lenses/<id>.json: `{lens_id, method, blind_to[], model, findings:[{finding_id, title, classical_name}]}`\n- canon-map.json: `{brief_sha, entries:[{source_id, hazard_id, borderline, alt_hazard_id}]}`\n- hazards.jsonl: `{hazard_id, supersedes, classical_name, statement, severity (judged), covered_by[], status:covered|partial|gap|accepted, owner_quote}`\n- incidents/<writer>.jsonl: `{writer, seq, epoch, wall_time (information only), kind, field_id, hazard_id, outcome}`\n- estimate.json, gate.json: input hashes, figures, `result: pass|fail|not_run`, reasons.",
+  "computed": "ESTIMATE OF FAILURE MODES NOT YET FOUND (population: failure modes of the tree that are NOT among P1-P21).\n\nCanonical mapping (my judgment, one mapper; recorded so it can be redone). The 63 missing_risks items of D1-D8 were mapped to 47 distinct risk ids K1..K49 (K15 phantom merged into K14 stale derived data; K20 orphan processes merged into K8 orphan helpers). Two items were counted for two ids: D1 \"wake-up goes to nobody\" names both the lost wake-up (K6) and nothing resuming after a reboot (K7); D8 \"checks that test form are gamed\" names both unmeasured detection power (K23) and gaming (K41). Per-lens distinct ids: D1 11, D2 7, D3 9, D4 7, D5 8, D6 8, D7 7, D8 7 = 64 incidences.\nFrequencies across the 8 lenses: found by 3 lenses: K5 torn write, K6 lost wake-up, K12 source changes between read and check (Q3 = 3); by 2 lenses: K1 fencing, K2 pause after sleep, K4 restart storm, K7 no resume after reboot, K8 orphans, K9 progress gamed, K13 cross-field seams, K14 stale derived data, K23 unmeasured detectors, K25 correlated layers/pseudoreplication, K41 gaming checks (Q2 = 11); by 1 lens: Q1 = 33. Check: 3*3 + 11*2 + 33 = 64. S_obs = 47.\n\nEstimate A (Chao, incidence form, m = 8 lenses).\nChao1-style: f0 = Q1^2/(2 Q2) = 1089/22 = 49.5, N = 96.5. Var = Q2[(1/2)r^2 + r^3 + (1/4)r^4], r = 3: 11 * (4.5 + 27 + 20.25) = 569.25. Log-normal 95 % CI for N: 67 to 168.\nChao2 with (m-1)/m = 7/8: f0 = 0.875 * 49.5 = 43.3, N = 90.3; Var = 441.2; 95 % CI for N: 65 to 154 (unseen about 18 to 107).\nBias-corrected Chao2: f0 = (7/8) * 33*32 / (2*12) = 38.5, N = 85.5.\nSensitivity to the mapping: splitting every borderline merge gives S = 49, Q1 = 38, Q2 = 8, unseen 79.0; merging further (common-mode with correlated layers, self-attested ledger with self-assigned labels, progress gaming with check gaming) gives S = 44, Q1 = 31, Q2 = 8, unseen 52.6. So A says roughly 40 to 80 unseen, and the mapping choice alone moves it by a factor of two.\n\nEstimate B (Chapman, two methods, D4-05): my STPA pass (section 2 of the spec) against the union of the experts' lists. n1 = 35 distinct non-P risks in my pass (26 that match expert ids + 9 new: G1, G2, G3, G4, G6, G7, G9, G11, G12; G5, G8 and G10 judged partial extensions of existing ids), n2 = 47, m = 26. N = (36*48)/27 - 1 = 63.0. Observed union = 35 + 47 - 26 = 56. Residual = 7. Var = 36*48*9*21 / (27^2 * 28) = 16.0, SD 4.0, so the residual is about 0 to 15. Sensitivity: m = 30 gives a residual of 2.7; m = 22 gives 14.1.\n\nEstimate C (Chapman, refuters against experts): the refuters' findings that name a risk not adopted as a P-id: R2-10 (self-reported ledger, matches K36), R3-07 (our files anchor the reviewer, partly K46), R3-02 (a dropped card stays in the reviewer's window, partly K14), R3-06 (no adjudicator for judgment disagreements, new): n1 = 4, n2 = 47, m = 1 to 3. N = 119, 79, 59; residual 69, 30, 11. Unusable: see the assumptions.\n\nAssumptions and how badly each is broken here:\n1. Closed population. Broken for C: the refuters attacked amendment 2, the experts amendment 3, and the design changed in between. Broadly kept for A and B (amendment 3 plus the frame).\n2. Independent captures. Badly broken. All lenses are one model family, which pushes the estimate low (D4-05, D8-11). For B it is broken outright: I read the experts' lists before my STPA pass, so m is inflated and B is biased low. Treat B as a lower bound at best.\n3. Equal catchability. Broken in two directions. Popular, well-named risks are easier to find, which pushes the estimate low (Chao gives a lower bound under heterogeneity). The expert lenses are also stratified by field, and each could see almost only its own domain's risks. That inflates Q1 and pushes A high when the coverage within each field is good. A is therefore not even a reliable lower bound: its direction is unknown.\n4. Censoring. The experts were asked to list only what P1-P21 lacks, so they could not recapture P1-P21 or one another's earlier findings. C is invalid for this reason.\n5. Sample size. The source check notes that Chapman is near-unbiased only when n1 + n2 is at least about N. That holds for B (82 against 63) and fails for C.\n6. Identity of items. Every count depends on one mapper's merges (sensitivity above).\n\nReading: three estimators, three violated assumption sets, residuals from about 3 to 80. The only robust statement is that each estimate, even B's contaminated lower bound of 7, exceeds the stop thresholds the experts proposed (2 in D8-11, 3 in D6-04). So the list is not complete, and R1 (a blind STPA by a fresh leaf) plus R2 (a blind FMEA) must run before the pilot. Their overlap is the first clean two-method capture this programme will have. No figure here should be quoted as \"the number of unfound failure modes\".",
+  "scripts": [
+   {
+    "name": "check-matrix.js",
+    "purpose": "Validate the STPA and FMEA records: every control action has four type entries, every matrix cell is filled or n/a with a reason, every P1-P21 id appears in some row, every high-severity hazard is covered or accepted",
+    "inputs": "completeness/control-structure.json, uca.jsonl, fmea.json, canon-map.json, hazards.jsonl, the protocol file",
+    "outputs": "stdout list of gaps; completeness/check-matrix.json",
+    "exit_codes": "0 pass; 1 gaps found (listed); 2 not-run (an input is missing, unparseable or of an unknown schema_version)",
+    "stage": "pilot"
+   },
+   {
+    "name": "estimate.js",
+    "purpose": "Capture-recapture estimate of hazards not yet found: Chapman between the two blind methods, Chao2 over the lenses, log-normal intervals, a sensitivity range over borderline merges; shares its estimator code with layer 4's source-coverage script",
+    "inputs": "uca.jsonl, fmea.json, lenses/*.json, canon-map.json, threshold from params.json (set by the owner)",
+    "outputs": "completeness/estimate.json",
+    "exit_codes": "0 residual at or below the threshold; 1 above the threshold; 2 undefined (no overlap, Q2 = 0) or an input is missing",
+    "stage": "pilot"
+   },
+   {
+    "name": "protocol-model.js",
+    "purpose": "Breadth-first model check of the execution-layer protocol with fault actions (crash, sleep, allowance out, loop, owner absent); invariants and bounded liveness; prints the shortest violating trace",
+    "inputs": "completeness/model/properties.json (approved by the owner), the bound K",
+    "outputs": "completeness/model/result.json with the states explored and any traces",
+    "exit_codes": "0 no violation within the bound; 1 counterexample found; 2 the model failed to run or the state cap was hit",
+    "stage": "pilot"
+   },
+   {
+    "name": "gate.js",
+    "purpose": "Combine check-matrix, estimate and the model result into one gate record bound to the protocol's sha256; layer 1's admission script reads it",
+    "inputs": "the protocol file, check-matrix.json, estimate.json, model/result.json",
+    "outputs": "completeness/gate.json {protocol_sha256, input hashes, result, reasons}",
+    "exit_codes": "0 pass; 1 fail; 2 not-run (any input missing or stale against the protocol hash)",
+    "stage": "pilot"
+   },
+   {
+    "name": "canary-check.js",
+    "purpose": "Prove that the hook and permission refusal fires for a helper: reads the canary helper's transcript and confirms that its forbidden write was refused",
+    "inputs": "the canary helper's JSONL transcript path, the forbidden path",
+    "outputs": "an incident line in incidents/canary.jsonl",
+    "exit_codes": "0 refused as required; 1 the write went through; 2 the transcript was not found or could not be read",
+    "stage": "pilot"
+   },
+   {
+    "name": "fracas.js",
+    "purpose": "Classify every incident to a hazard id; compute the escape rate; stop admission on a high-severity incident that has no hazard",
+    "inputs": "incidents/*.jsonl, hazards.jsonl, canon-map.json",
+    "outputs": "completeness/fracas.json (the escape rate and the unmapped incidents); a gate-blocking flag",
+    "exit_codes": "0 all mapped; 1 unmapped incidents (mapper needed); 3 an unmapped high-severity incident, so admission is blocked",
+    "stage": "later"
+   }
+  ],
+  "files": [
+   {
+    "path_pattern": "research/completeness/control-structure.json",
+    "writer": "the blind STPA leaf session (R1)",
+    "format": "JSON: schema_version, protocol_sha256, controllers[{id, actions[{id, target}], feedback[{id, from, typed}]}]"
+   },
+   {
+    "path_pattern": "research/completeness/uca.jsonl",
+    "writer": "the blind STPA leaf session (R1)",
+    "format": "JSONL: schema_version, uca_id, action_id, type N|U|T|D, context, case"
+   },
+   {
+    "path_pattern": "research/completeness/fmea.json",
+    "writer": "the blind FMEA leaf session (R2)",
+    "format": "JSON: schema_version, rows[{row_id, kind: component|data|boundary}], cells[{row_id, col, hazard_ids|null, na_reason|null}]"
+   },
+   {
+    "path_pattern": "research/completeness/lenses/<lens_id>.json",
+    "writer": "each lens helper or session (refuter, expert, extra lens)",
+    "format": "JSON: lens_id, method, blind_to[], model, findings[{finding_id, title, classical_name}]"
+   },
+   {
+    "path_pattern": "research/completeness/canon-map.json",
+    "writer": "the mapper helper (fixed brief, schema-validated)",
+    "format": "JSON: brief_sha, entries[{source_id, hazard_id, borderline, alt_hazard_id}]"
+   },
+   {
+    "path_pattern": "research/completeness/hazards.jsonl",
+    "writer": "the mapper helper appends; status and covered_by are recomputed by check-matrix.js; owner acceptance is recorded by the coordinator quoting the owner's message",
+    "format": "JSONL, append-only, immutable hazard_id with supersedes: classical_name, statement, severity (judged), covered_by[], status covered|partial|gap|accepted, owner_quote"
+   },
+   {
+    "path_pattern": "research/completeness/incidents/<writer>.jsonl",
+    "writer": "each script on its own file (watcher, admission, acceptor, quote check, canary-check)",
+    "format": "JSONL: writer, seq, epoch, wall_time (information only), kind, field_id, hazard_id|null, outcome"
+   },
+   {
+    "path_pattern": "research/completeness/estimate.json",
+    "writer": "estimate.js",
+    "format": "JSON: input hashes, chapman{n1,n2,m,N,var}, chao2{S_obs,lenses,Q1,Q2,N,ci}, sensitivity[], threshold, result"
+   },
+   {
+    "path_pattern": "research/completeness/model/properties.json and model/result.json",
+    "writer": "properties: a helper, approved by the owner; result: protocol-model.js",
+    "format": "JSON: invariants[], bounded_liveness{K}, fault_actions[]; result{states, violations[{property, trace[]}]}"
+   },
+   {
+    "path_pattern": "research/completeness/gate.json",
+    "writer": "gate.js",
+    "format": "JSON: protocol_sha256, matrix_sha, hazards_sha, estimate_sha, model_sha, result pass|fail|not_run, reasons[]"
+   },
+   {
+    "path_pattern": "research/completeness/fracas.json",
+    "writer": "fracas.js",
+    "format": "JSON: incidents_total, unmapped[], escape_rate, blocking"
+   }
+  ],
+  "parameters": [
+   {
+    "name": "n1, n2, m (blind STPA against blind FMEA)",
+    "how_measured": "estimate.js over the R1 and R2 outputs after mapping",
+    "value_until_measured": "unknown; my contaminated pass gave n1 35, n2 47, m 26 and must not be reused"
+   },
+   {
+    "name": "Q1, Q2 across lenses",
+    "how_measured": "estimate.js over lenses/*.json and canon-map.json",
+    "value_until_measured": "Q1 33, Q2 11, Q3 3 over the 8 expert lenses (stratified, same model)"
+   },
+   {
+    "name": "Residual threshold for 'no sign of incompleteness'",
+    "how_measured": "set by the owner before the pilot, not measured",
+    "value_until_measured": "none; the experts proposed 2 (D8-11) or 3 (D6-04)"
+   },
+   {
+    "name": "Tokens for one full R1+R2+mapper+refuter pass and for a diff pass at an amendment",
+    "how_measured": "token counter over those sessions' transcripts",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "n/a cells overturned by the refuter",
+    "how_measured": "the refuter's return over the sampled n/a cells",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Escape rate (pilot incidents that map to no hazard)",
+    "how_measured": "fracas.js after the pilot",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Fault-injection outcomes (killed child, one sleep, forced hand-over, hook canary)",
+    "how_measured": "incident lines with outcome recovered or not",
+    "value_until_measured": "not established"
+   },
+   {
+    "name": "Share of cited cards whose source the snapshot script can read (G3)",
+    "how_measured": "the quote check's not-run lines by cause (PDF, paywall, cookie wall, timeout)",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Honest-card quote-match failure rate (G7)",
+    "how_measured": "cards the checker judges correct that fail the verbatim match against the snapshot",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Tokens per keep-awake poll by the coordinator (G6)",
+    "how_measured": "usage of the poll calls in the coordinator's transcript",
+    "value_until_measured": "unknown; scales with the coordinator's window"
+   },
+   {
+    "name": "Tokens per meter percent, and counter completeness (G4)",
+    "how_measured": "the meter read before and after the pilot, when the owner runs nothing else, against the transcript token count including helper transcripts",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Schema retries per helper (G9, X2)",
+    "how_measured": "retry events in the helper transcripts",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Whether stopping a child ends its helpers and background scripts",
+    "how_measured": "process and transcript activity after a stop during fault injection",
+    "value_until_measured": "not established"
+   }
+  ],
+  "pilot_minimum": [
+   "R1: a blind STPA by a fresh leaf session (control-structure.json, uca.jsonl), which has not seen P1-P21, the missing_risks or this analysis",
+   "R2: a blind FMEA matrix by a second fresh leaf session",
+   "R3: the mapper with a fixed brief, plus check-matrix.js and gate.js, and layer 1's admission refusing a wave without a passing gate.json for the current protocol hash",
+   "R4: estimate.js with the owner's residual threshold; if the residual is above it, one more blind lens runs before the pilot",
+   "R5: protocol-model.js limited to the execution layer (sessions at most three, coordinator epochs, watcher ownership, stop-before-replace, sleep, crash, owner absent)",
+   "The incident line format written by every script (fracas.js itself can wait until after the pilot)",
+   "R8: fault injection during the pilot (kill one child, one sleep, one forced hand-over, the hook canary with canary-check.js)",
+   "R9: G1-G12 in hazards.jsonl, each given a rule in its owning layer or accepted by the owner, high-severity ones before the pilot"
+  ],
+  "left_out": [
+   {
+    "what": "Fault tree analysis for named top events (Vesely et al., in D4-05)",
+    "why": "STPA plus FMEA already produce the list. Cut sets pay off once a top event such as 'a false claim reaches the owner' recurs in the incidents; then it is worth drawing"
+   },
+   {
+    "what": "Log-linear multi-source models (Fienberg, D6-04)",
+    "why": "They need at least three captures that are truly independent and overlap. Today's lenses are stratified and same-model, so the fit would add precision to a biased number. Chao2 serves as the stop signal"
+   },
+   {
+    "what": "Four separate matrices (D1-13 components, D2-11 data anomalies, D5-13 STRIDE, D7-13 actions by faults)",
+    "why": "Merged into one FMEA with three row kinds, so one session fills one artifact and one script checks it. The actions-by-faults view is what STPA already gives"
+   },
+   {
+    "what": "FMEA criticality numbers (RPN)",
+    "why": "Products of judged scores give false precision; severity stays at three judged levels"
+   },
+   {
+    "what": "A protocol model of the storage, integrity and evidence layers",
+    "why": "The known counterexamples are in the coordination protocol; the other layers are guarded by their own scripts. Extend the model when an incident points there"
+   },
+   {
+    "what": "A second, independent canonical mapping of risks",
+    "why": "Costly. A sensitivity range over the borderline merges is reported instead; add a second mapper if the estimate's decision flips within that range"
+   },
+   {
+    "what": "A safety, liveness or cost class on every problem (D7-13)",
+    "why": "Cheap but not needed to run the pilot; bounded liveness in R5 already covers the liveness half where it matters"
+   },
+   {
+    "what": "My own STPA pass as a capture",
+    "why": "It was done after reading the experts' lists, so it is not independent. It is kept as a seed of hazards only"
+   }
+  ],
+  "problems_covered": [
+   {
+    "problem": "C (completeness of the problem list)",
+    "classical_name": "Completeness of a hazard analysis relative to a model; estimating unseen failure modes (STPA, FMEA, capture-recapture, FRACAS)",
+    "by": "R1-R4 and R7, with the standing procedure",
+    "residual": "Completeness is relative to the control-structure model and the guide words; estimators are biased by same-model lenses; the population changes at each amendment"
+   },
+   {
+    "problem": "S (shape): seams between fields",
+    "classical_name": "Conway's law; write skew on a constraint spanning several items",
+    "by": "R6 (cross-field question ids, each with one owner, counted over the union)",
+    "residual": "Interactions not named as cross-field ids at plan time are still nobody's"
+   },
+   {
+    "problem": "P9 / P19 coordination liveness (lost wake-up, watcher waking the old coordinator)",
+    "classical_name": "Lost wake-up; split brain in a control protocol",
+    "by": "R5 (the model finds the trace before the pilot) and R8 (forced hand-over)",
+    "residual": "The model abstracts the sessions; the harness's real wake semantics are checked only by the fault injection"
+   },
+   {
+    "problem": "P10 recovery paths that never run",
+    "classical_name": "Untested failover paths (latent faults)",
+    "by": "R8",
+    "residual": "One injection of each kind is one reading, not a rate"
+   },
+   {
+    "problem": "P7 and P16 (shared with layer 4)",
+    "classical_name": "Capture-recapture coverage of a search",
+    "by": "estimate.js's estimator code, reused by layer 4",
+    "residual": "Same independence problems as for hazards"
+   }
+  ],
+  "contradicts_the_frame": [
+   "Layer 3 says the coordinator reads only typed status produced by scripts. The harness itself pushes the first 400 characters of every child's turn-end report into the coordinator's turn (fact 1), so free text, possibly tainted by the web, reaches the most privileged window and cannot be kept out (D5-09 assumes it can). What can be done: children end with a fixed typed line; the coordinator acts only on status files; a transcript script counts notes that deviate. The channel is bounded and measured, not closed",
+   "Layer 1 says admission has 'limits enforced from outside the session'. The weekly meter can be read only by a session, in whole percent, and the owner's other sessions spend the same allowance and memory. The budget half of admission depends on the coordinator reading and recording the meter, and the cap and the token count are in different units until the pilot calibrates them (G4)",
+   "Layer 7 promises 'an estimate of the failure modes not yet found'. The mappings themselves (D4-05, D7-13, D8-11) and this analysis show that no estimator here is valid: three estimates range from about 3 to 80 remaining. The estimate is kept only as a stop signal (above the threshold, more blind lenses), never as a figure of completeness",
+   "The frame does not say who does the hazard analysis. Following D4-05 against D7-13: the coordinator is the party under analysis, so leaf sessions do STPA and FMEA, blind of each other and of the existing lists. Without blinding, the overlap the estimate needs is contaminated, as my own pass here was"
+  ],
+  "conflicts_with_other_layers": [
+   "Execution (1): the admission script must read gate.json and refuse on mismatch, absence or not-run; the watcher, admission, acceptor and restart logic must write typed incident lines; G1 needs an escalation that parks (commit, end the turn, free the slot, release unspent escrow) rather than waiting while holding resources; G8 needs the watcher to compute the coordinator's window from its transcript and exit with HANDOVER_DUE; G5 needs the escrow per field to include the post-review checks and its share of the synthesis",
+   "Storage (2): hazards.jsonl follows the append-only, immutable-id rule (supersedes, never edit); gate.json must go stale when the protocol hash changes; G7 asks that the snapshot store be the only way any session reads a source's own text, with the reader's quote treated as a locator and the witness sentence extracted by script",
+   "Integrity (3): the completeness folder, the briefs of the STPA, FMEA and mapper sessions, and properties.json sit outside the sessions' write reach except for each file's named writer; G2 needs limits on the snapshot fetcher (http and https only, a size cap, a timeout, no cookies, no private addresses); G9 needs every required card field to accept an explicit 'not stated'; the 400-character note channel contradicts this layer's rule",
+   "Evidence (4): one capture-recapture estimator module serves both source coverage (D6-04) and hazards; the cross-field question ids of R6 are written with the question lists",
+   "Assurance (5): fault injection and the hook canary (R8) are shared; G11 needs seeded mutants to use a reserved id namespace that the acceptor refuses outside the seed folder; G3 needs an action line on the quote check's not-run share, because a fail-safe check that rarely runs starves the tree of trusted cards",
+   "Shape and cost (6): the tokens of this layer's passes come out of the programme budget; G6 (polls that keep the turn open cost a full-window call each) affects the hand-over interval and the cost law; G4's calibration of tokens per meter percent feeds the admission budget"
+  ],
+  "for_the_owner": [
+   "The residual threshold for R4 (the experts proposed 2 or 3), and whether an estimate above it blocks the pilot or only adds a lens",
+   "Whether an extra lens may be a model from another provider (F3): this is the cheapest way to make captures less correlated",
+   "Accepting or ruling on the liveness gaps: after a reboot nothing resumes until you start a session; escalations park and wait for you (G1)",
+   "Keep-awake: accept the token cost of the coordinator holding its turn open, or allow a script to ask Windows to stay awake for its own process through PowerShell (a request by the process, not a change of settings), on your word (G6)",
+   "The scope of the snapshot fetcher of F5 (G2), and what happens to PDF sources: count them as not-run, or allow a PDF text tool to be installed (G3)",
+   "A quiet period during the pilot with no other sessions, so tokens per meter percent can be calibrated (G4)",
+   "The property list of the protocol model (R5), and every hazard you accept as a risk instead of fixing (recorded with your message quoted)"
+  ]
+ }
+}

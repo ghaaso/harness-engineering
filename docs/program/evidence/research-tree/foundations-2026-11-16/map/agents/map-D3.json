@@ -1,0 +1,619 @@
+{
+ "label": "map:D3",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "nearest_whole_design": {
+   "name": "A supervision tree (Erlang/OTP) running crash-only workers, with a batch system's admission, quotas and accounting added",
+   "source": "Joe Armstrong, 2003, 'Making reliable distributed systems in the presence of software errors' (PhD thesis, Royal Institute of Technology, Stockholm). George Candea and Armando Fox, 2003, 'Crash-only software' (HotOS IX). Batch admission and accounting: Michael Litzkow, Miron Livny and Matt Mutka, 1988, 'Condor - a hunter of idle workstations' (ICDCS).",
+   "why_it_fits": "The tree is already a supervision tree. Each level supervises the one below and does no work of its own (the coordinator reads status only). Workers keep their durable state outside the process: cards and packs on disk. A failed worker is replaced, not repaired in place (P10's single restart path). Crash-only says the only way to stop is to crash and the only way to start is recovery, so the recovery path is the path that runs every day and stays tested. That is the 'one restart path' rule, and it is an argument for F1's fresh reviewer (D3-13). The batch-system part gives what OTP lacks here: jobs declare their resources (RAM, a token allowance, a wall-time box), are admitted only when those resources fit, are killed at a hard limit, and are charged to an account.",
+   "borrow_whole": "(1) One supervisor per level, with a restart strategy per child: one_for_one, so one field's failure never restarts its siblings. (2) Restart intensity: at most MaxR restarts within MaxT, after which the supervisor gives up on that child and escalates to its parent. Here: a field gets at most R restarts per wave, then it is dropped with a note to the owner (D3-08). (3) Workers hold no state that cannot be rebuilt from durable files; a restart reads only committed files (D3-09). (4) Supervisors never do workers' work. (5) From batch systems: resource requests per job, admission against measured free resources, soft and hard quotas with a kill at the hard one, and a per-job accounting log, which is the ledger.",
+   "where_it_does_not_fit": "(a) OTP assumes crash-stop faults that a restart cures, because they are transient. A session that is confidently false has not crashed, so no supervisor sees it. A fault that comes from the brief recurs on restart, so a restart must change its input or count toward giving up. (b) Erlang processes are cheap and their restarts nearly free. Here a restart can cost a whole field's tokens, so MaxR must be small, about 1 or 2. (c) An OTP supervisor is always running. The coordinator exists only during its turns, so a watcher script has to stand in as its event loop (D3-06, D3-07), and every wake costs one read of the coordinator's whole window. (d) Outputs are not deterministic, so a restarted worker does not reproduce what it lost, and anything built on a regenerated file must be checked again. (e) Mailboxes are in memory. Here they are files, which need atomic commits (D3-09)."
+  },
+  "mappings": [
+   {
+    "id": "D3-01",
+    "problems": [
+     "P11",
+     "P12",
+     "S"
+    ],
+    "classical_problem": "Choosing the checkpoint/restart interval when holding state has a cost that grows over time: the square-root law of the economic order quantity and of the optimum checkpoint interval",
+    "solutions": [
+     {
+      "name": "Economic order quantity (square-root law)",
+      "source": "F. W. Harris, 1913, 'How many parts to make at once', Factory, The Magazine of Management",
+      "guarantees": "Minimises the average cost per unit when each restart has a fixed cost and holding cost grows linearly",
+      "assumptions": "Fixed set-up cost, holding cost that grows at a constant rate, steady demand"
+     },
+     {
+      "name": "Optimum checkpoint interval",
+      "source": "John W. Young, 1974, 'A first order approximation to the optimum checkpoint interval', Communications of the ACM",
+      "guarantees": "Minimises expected lost plus checkpoint time: T_opt = sqrt(2*C*M)",
+      "assumptions": "Constant checkpoint cost C, Poisson failures with mean time between failures M, C much smaller than M"
+     }
+    ],
+    "assumptions_that_fail_here": "A hand-over loses information (P4), which the formula does not price. The growth rate g is not constant, since a session that reads a paper adds tokens in bursts. The reloaded state B grows with each hand-over, because the pack grows. With prompt caching, a re-read token costs less than a new one, so the optimum for token count differs from the optimum for token cost. The field's answer to a lossy restart is to put a separate bound on how many hand-overs a single task may take (see the thrashing risk) and not to fold the loss into the cost.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Hand over at a computed window size W*, not at a round 200,000. If W* comes out close to B, the task does not fit one session: split the work (D3-12) rather than hand over again.",
+     "runner": "The watcher script computes W* per session from its transcript; the coordinator acts on it",
+     "when": "Every watcher poll. W* itself is recomputed after the pilot and after each wave.",
+     "input": "From the transcripts: the window at each call, the tokens added per call (g), the first-call context of a fresh session started from the state file (B), the tokens spent writing and reloading the state (H), and the cache-read and new-input prices",
+     "on_failure": "When the window passes W*, the watcher exits and the coordinator orders the hand-over. When the window passes 1.5*W*, or W* < 2*B, the coordinator stops the session and splits its remaining work."
+    },
+    "formula_or_algorithm": "Window at call i: W_i = B + g*i. Cost of a run of k calls: k*B + g*k^2/2. Average per call: B + H/k + g*k/2. This is smallest at k* = sqrt(2H/g), so hand over when W reaches W* = B + sqrt(2*H*g). Cost version: replace g with p_cache*g and give H in cost units. The two optima differ, and the owner says which measure governs. Overall, a session's input tokens grow with the square of its length, so ceilings alone do not bound spend (P12).",
+    "to_measure": [
+     "g: tokens added per call, per role (coordinator, child, helper)",
+     "B: first-call context of a fresh session after hand-over",
+     "H: tokens to write the state plus tokens to reload it",
+     "the cache-hit share and the prices per token class",
+     "hand-overs per task"
+    ],
+    "effect_on_measures": "Token count and token cost fall, by roughly the ratio of the average window before and after. The coordinator was measured at 333-396k tokens per call, so the gain there is likely large. Time changes little. Quality risks a loss at each hand-over, which is why the number of hand-overs must be bounded.",
+    "build_cost": "Small. About 40 lines added to the watcher's existing transcript counting.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D3-02",
+    "problems": [
+     "P11",
+     "P12",
+     "S"
+    ],
+    "classical_problem": "Working set and resident-set management. The context window is a memory with no page replacement: everything loaded stays resident and is re-read on every call until the process ends.",
+    "solutions": [
+     {
+      "name": "Working set model",
+      "source": "Peter J. Denning, 1968, 'The working set model for program behavior', Communications of the ACM",
+      "guarantees": "A process whose working set is resident runs without excess faults, and memory is not wasted on pages it no longer uses",
+      "assumptions": "Locality of reference; the OS can evict pages one at a time and fetch them back on demand"
+     }
+    ],
+    "assumptions_that_fail_here": "A window offers no per-page eviction. The only ways to evict are to end the session or to compact it, which is lossy, so the resident set is everything loaded so far. When paging is impossible, the field's answer is to keep large objects out of resident memory in the first place: hold a reference and fetch on demand. Here a helper does the fetch: its own window absorbs the large read and only a compact result comes back.",
+    "fit": "adapted",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "A node's window may hold only its working set: status lines and pointers for the coordinator, cards and chosen originals for a child. Anything read once (a large file, search results, a whole paper for one number) is read by a helper, which returns the extract. A node's planned intake must fit W* from D3-01, not the 1,000,000-token physical limit.",
+     "runner": "The coordinator, in each child's brief. The watcher checks it.",
+     "when": "At brief time, and at each poll",
+     "input": "The transcript's tool-result sizes per call",
+     "on_failure": "When a single tool result in the coordinator's window exceeds a size set from the pilot, the watcher flags it in the status file and the coordinator's next hand-over pointer excludes it."
+    },
+    "formula_or_algorithm": "Residency efficiency = (tokens of the window that later output quotes or cites) / (window tokens). A cheap proxy is the share of tool-result tokens that come from files the session later cites. Each loaded token costs about (calls remaining) * p_cache, so load a T-token item through a helper whenever T * calls_remaining * p_cache > the helper's own cost.",
+    "to_measure": [
+     "tool-result tokens per call and their source",
+     "the number of calls remaining after each large load",
+     "a helper's fixed cost (its prefix plus its result)"
+    ],
+    "effect_on_measures": "Token count and cost fall. The quality effect is neutral to positive, since a focused window scored higher in L2-11 and L2-12.",
+    "build_cost": "Brief wording plus a check in the watcher. Small.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D3-03",
+    "problems": [
+     "P8",
+     "S"
+    ],
+    "classical_problem": "Thrashing, and load control of the degree of multiprogramming",
+    "solutions": [
+     {
+      "name": "Load control by working set (admit a process only if its working set fits; deactivate one when memory runs short)",
+      "source": "Peter J. Denning, 1968, 'Thrashing: its causes and prevention', AFIPS Fall Joint Computer Conference",
+      "guarantees": "No collapse of throughput from over-commitment",
+      "assumptions": "The resident size of each process is known or measured, and the controller can deactivate a process"
+     }
+    ],
+    "assumptions_that_fail_here": "The PC's memory is also taken by things outside the tree: WSL, Docker and emulators. The owner's own records show 46 hard resets attributed to over-commit. A fixed count of three sessions is a static multiprogramming level, and it is wrong whenever other load changes.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Admit a new session only if os.freemem() - reserve >= the peak resident size of a session as measured in the pilot. If free memory falls below the reserve during a wave, stop the newest session; it restarts from its checkpoint.",
+     "runner": "A launcher check in the watcher script (Node: os.freemem; per-process size via the built-in tasklist command)",
+     "when": "Before each session start, and at every watcher poll",
+     "input": "Free memory, the reserve (set by the owner), and the measured peak size per session",
+     "on_failure": "The session is not started and the wave waits. When memory is low mid-wave, the watcher exits with 'memory' and the coordinator stops the newest session."
+    },
+    "formula_or_algorithm": "admit iff free - reserve >= max_RSS_session. Keep the cap of three as an upper bound only.",
+    "to_measure": [
+     "peak resident memory per session and per helper burst",
+     "free-memory trace during the pilot"
+    ],
+    "effect_on_measures": "Avoids freezes, which cost the time and state of every running session. That helps throughput, time and token cost (no lost windows).",
+    "build_cost": "Small",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-04",
+    "problems": [
+     "P14",
+     "P12",
+     "P8"
+    ],
+    "classical_problem": "Admission control under uncertain job sizes: predicting the next burst from past ones",
+    "solutions": [
+     {
+      "name": "Exponential averaging of measured job lengths (the standard estimator for shortest-job-first scheduling)",
+      "source": "Abraham Silberschatz, Peter B. Galvin, Greg Gagne, 2018, 'Operating System Concepts' (10th ed.), CPU scheduling chapter",
+      "guarantees": "An estimate that tracks recent behaviour and costs nothing to update",
+      "assumptions": "Jobs of one class have similar lengths, and the next resembles the recent ones"
+     }
+    ],
+    "assumptions_that_fail_here": "The pilot is a single sample, and it comes from the measurement field, which may differ from the others. Only a session can read the usage meter, so admission needs a session's turn. The field's standard response to a high-variance estimate is to admit on a pessimistic estimate (the largest overrun observed) and to enforce a per-job quota at run time (D3-05), so a bad estimate cannot overspend.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A wave starts only if sum over its fields of est_f * (1 + m) <= R. The estimate is updated after every field that ends, and the margin m is the largest overrun seen so far, never less than the owner's floor.",
+     "runner": "The coordinator (it alone can read the meter), using a script that computes est_f and m from the merged ledger",
+     "when": "Before each wave",
+     "input": "The remaining allowance R (meter read by the coordinator), the transcript token counts of finished fields, and the owner's floor for m",
+     "on_failure": "Do not start the wave. Run a smaller wave in the order of D3-14, or stop and report."
+    },
+    "formula_or_algorithm": "est_{n+1} = a*t_n + (1-a)*est_n, with a = 0.5 to start. m = max over finished fields of (t_f / est_f_at_admission - 1), floored at the owner's margin. Keep a separate estimate per field class if classes differ.",
+    "to_measure": [
+     "tokens per field from transcripts",
+     "the estimate at admission against the actual"
+    ],
+    "effect_on_measures": "Spend stays under the cap, which protects token cost and the week. Waves may get smaller, which costs some time.",
+    "build_cost": "Small. A script over the ledger.",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-05",
+    "problems": [
+     "P12",
+     "P14",
+     "P9"
+    ],
+    "classical_problem": "Resource quotas with soft and hard limits (rlimit) enforced from outside the process",
+    "solutions": [
+     {
+      "name": "Soft and hard resource limits (getrlimit/setrlimit: a signal at the soft limit, termination at the hard one)",
+      "source": "IEEE Std 1003.1 (POSIX), getrlimit/setrlimit",
+      "guarantees": "No job exceeds its allowance by more than one enforcement interval, and the job gets warning at the soft limit so it can save its state",
+      "assumptions": "The enforcer counts usage without depending on the job's own report and can terminate the job"
+     }
+    ],
+    "assumptions_that_fail_here": "The kernel enforces at once. Here the count comes from the transcript a poll later, and only the coordinator can stop a session, so a stop waits for its wake. The overshoot is therefore poll interval plus wake latency, times the spend rate, and the hard limit must sit that much below the true allowance.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Each child has an allowance A_f. At the soft limit 0.8*A_f, the child is told to freeze: write its cards and pack, which is write-back (D3-13). At the hard limit A_f - overshoot, it is stopped.",
+     "runner": "The watcher counts from the transcripts; the coordinator stops the session",
+     "when": "Every poll",
+     "input": "Per-session transcript token totals, A_f, and the spend rate",
+     "on_failure": "Watcher exit 'overspend'. The coordinator stops the session and marks the field 'cut at quota', with its frozen files kept."
+    },
+    "formula_or_algorithm": "hard = A_f - (poll_interval + wake_latency) * peak_spend_rate. soft = 0.8 * A_f.",
+    "to_measure": [
+     "peak tokens per minute per session",
+     "coordinator wake latency (watcher exit to the coordinator's first action)"
+    ],
+    "effect_on_measures": "Bounds token count and cost per field. A field cut at its quota keeps whatever quality it reached, labelled as such.",
+    "build_cost": "Small. It extends the watcher's overspend exit, which is already in P9.",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-06",
+    "problems": [
+     "P9",
+     "P19"
+    ],
+    "classical_problem": "The watchdog timer, and telling livelock from progress",
+    "solutions": [
+     {
+      "name": "A progress-kicked watchdog: the dog is kicked from the point where work completes, never from a separate liveness timer",
+      "source": "Standard embedded and OS practice; I know of no single original paper",
+      "guarantees": "A process that is alive but not progressing is detected within the time box",
+      "assumptions": "Progress can be observed from outside; wall time is continuous"
+     }
+    ],
+    "assumptions_that_fail_here": "Sleep and hibernation stop the watcher too, so on resume the wall clock jumps and every time box expires at once (a false stall, then a mass kill). A session can produce files without progress, for example by rewriting the same file. The field's answer to the clock jump is to detect suspend as a gap between polls and to shift every deadline by that gap.",
+    "fit": "direct",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "Progress means a new confirmed card id, or a new output file whose content hash has not been seen. A rewrite to an old hash does not count. A loop is k identical tool-call signatures in a row in the transcript. Suspend is a gap between polls greater than the interval plus slack; it extends all deadlines by the gap and is logged.",
+     "runner": "The watcher script",
+     "when": "Every poll, at an interval of about one minute",
+     "input": "cards.jsonl ids, file hashes per session folder, the last k tool-call signatures from the transcript, and Date.now()",
+     "on_failure": "Exit 'no progress' or 'loop', which wakes the coordinator. It stops the session before a replacement starts, as in P9's current rule. Suspend does not cause an exit, only a log line."
+    },
+    "formula_or_algorithm": "Time box T = the 95th percentile of intervals between progress events in the pilot, times 2. Loop: signature(call_i) = hash(tool name + arguments), repeated k=3 times.",
+    "to_measure": [
+     "intervals between progress events in the pilot",
+     "the poll gap distribution, to set the slack"
+    ],
+    "effect_on_measures": "Less time and fewer tokens spent on stalled or looping sessions. Prevents the false kills that a sleep would cause.",
+    "build_cost": "Small",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-07",
+    "problems": [
+     "P9",
+     "P11"
+    ],
+    "classical_problem": "Lost wakeup, and level-triggered versus edge-triggered notification (a notify is a hint); interrupt coalescing",
+    "solutions": [
+     {
+      "name": "Mesa monitor semantics: a notify is only a hint, so the woken party re-checks the condition in a loop",
+      "source": "Butler W. Lampson and David D. Redell, 1980, 'Experience with processes and monitors in Mesa', Communications of the ACM",
+      "guarantees": "No event is lost between the check and the sleep; spurious or merged wakeups are harmless",
+      "assumptions": "The condition can be re-evaluated from shared state"
+     }
+    ],
+    "assumptions_that_fail_here": "The watcher exits on the first event. Events that happen while the coordinator is mid-turn, or between the exit and the next watcher's start, have nobody watching for them. Each wake also costs at least one read of the coordinator's whole window, so wakes are expensive interrupts and should be coalesced.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "The watcher appends every event to the status file before it exits. The coordinator, on every wake, reads the whole status file and not just the exit reason. Before ending its turn, the coordinator starts a new watcher, whose first act is to evaluate every condition. For non-urgent events (done, repair request), the watcher waits up to delta after the first one, to gather others, before it exits. Urgent events (overspend, memory, stall) exit at once.",
+     "runner": "The watcher script and the coordinator",
+     "when": "At every watcher start and exit, and on every coordinator wake",
+     "input": "The status file, which is append-only and written by the watcher alone",
+     "on_failure": "If the coordinator ends a turn with no watcher running, nobody notices. To prevent that, every turn ends with a check that a watcher process is alive, and its pid is written to the status file."
+    },
+    "formula_or_algorithm": "Cost of waking = wakes * W_coord * p_cache. Choose delta so that the expected extra delay is below the time box divided by 10.",
+    "to_measure": [
+     "coordinator wakes per wave",
+     "events per wake",
+     "W_coord at each wake"
+    ],
+    "effect_on_measures": "No silent stalls, which affects time and throughput. Fewer coordinator wakes saves tokens.",
+    "build_cost": "Small",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-08",
+    "problems": [
+     "P9",
+     "P10",
+     "P19"
+    ],
+    "classical_problem": "Restart storms, and restart intensity in supervision",
+    "solutions": [
+     {
+      "name": "Supervisor restart intensity (MaxR restarts within MaxT, then give up and escalate)",
+      "source": "Joe Armstrong, 2003, 'Making reliable distributed systems in the presence of software errors' (PhD thesis, Royal Institute of Technology, Stockholm)",
+      "guarantees": "A fault that restart does not cure stops consuming resources and reaches a higher level",
+      "assumptions": "Most faults are transient, and restarting from a known state cures them"
+     }
+    ],
+    "assumptions_that_fail_here": "A fault that comes from the brief or the pack is systematic, and because sessions of one model fail alike (P3), a replacement repeats it. A restart is also expensive.",
+    "fit": "direct",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "A field may restart at most twice per wave. The second restart must change its input: a narrower question range, a repaired pack, or another model where the owner allows one. A third failure drops the field with a note to the owner.",
+     "runner": "The coordinator, from a restart counter that the watcher keeps in the status file",
+     "when": "At each restart decision",
+     "input": "The restart count per field and the reason for each failure",
+     "on_failure": "The field is dropped and listed as 'not covered', and the refuter of P15 sees that drop."
+    },
+    "formula_or_algorithm": "MaxR = 2 per field per wave. Escalate on MaxR + 1.",
+    "to_measure": [
+     "restarts per field and their causes",
+     "whether the replacement failed the same way"
+    ],
+    "effect_on_measures": "Bounds the tokens and time lost to repeated failure.",
+    "build_cost": "Trivial",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-09",
+    "problems": [
+     "P10",
+     "P6"
+    ],
+    "classical_problem": "Checkpoint/restart with atomic commit: recovering from durable state in a system that is not deterministic",
+    "solutions": [
+     {
+      "name": "A commit record written last (write-ahead and atomic replace)",
+      "source": "Jim Gray and Andreas Reuter, 1993, 'Transaction Processing: Concepts and Techniques'",
+      "guarantees": "After a crash the state is either old or new, never half-written",
+      "assumptions": "Atomic rename or atomic append; the reader trusts only committed state"
+     },
+     {
+      "name": "Optimum checkpoint interval",
+      "source": "John W. Young, 1974, 'A first order approximation to the optimum checkpoint interval', Communications of the ACM",
+      "guarantees": "Minimises expected lost work plus checkpoint cost",
+      "assumptions": "Poisson failures"
+     }
+    ],
+    "assumptions_that_fail_here": "Log-replay recovery assumes the process is piecewise deterministic. Sessions are not, so re-running a lost step gives different text. The field's answer is to recover only from committed outputs, never by replay, and to treat a regenerated file as new data that must be checked again.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Every file a session produces is written to name.tmp and then renamed into place (same volume). A per-folder manifest of (path, sha256) is updated last, and it is the commit record. The restart path reads only what the manifest lists. A card is committed as soon as it is made, so a crash loses at most the in-window understanding not yet written down.",
+     "runner": "A tiny Node write helper used by the child, and the restart script",
+     "when": "At every file write, and at every restart",
+     "input": "The session folder and its manifest",
+     "on_failure": "An unlisted or mismatched file is ignored on restart and logged. Anything downstream of a regenerated file is marked for a new check."
+    },
+    "formula_or_algorithm": "Expected loss per crash = lambda * (unwritten in-window work). lambda is measurable from the Windows event log (unexpected-shutdown events): the owner's record is 46 hard resets in about 60 days, so M is about 1.3 days, and Young gives T_opt = sqrt(2*C*M). With C at one card's write, write each card immediately.",
+    "to_measure": [
+     "crashes and resets per day",
+     "tokens of work done since the last committed file, at each crash"
+    ],
+    "effect_on_measures": "Less rework after a crash, which affects tokens and time, and no corrupt pack enters a review.",
+    "build_cost": "Small",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-10",
+    "problems": [
+     "P7",
+     "P6"
+    ],
+    "classical_problem": "TOCTOU (a race between time of check and time of use) on a shared claim, and its standard fix by atomic test-and-set; leases for holders that crash",
+    "solutions": [
+     {
+      "name": "Atomic exclusive create as the lock primitive (O_CREAT|O_EXCL; in Node fs.openSync(path,'wx'); on NTFS CREATE_NEW)",
+      "source": "Matt Bishop and Michael Dilger, 1996, 'Checking for race conditions in file accesses', Computing Systems",
+      "guarantees": "Exactly one claimant succeeds; no check-then-act window",
+      "assumptions": "One local file system that honours exclusive create"
+     },
+     {
+      "name": "Leases",
+      "source": "Cary G. Gray and David R. Cheriton, 1989, 'Leases: an efficient fault-tolerant mechanism for distributed file cache consistency', SOSP",
+      "guarantees": "A crashed holder's claim expires",
+      "assumptions": "Bounded clock drift (here, one PC)"
+     }
+    ],
+    "assumptions_that_fail_here": "None of the primitive's assumptions fails. One PC and one NTFS volume meet them. The register was withdrawn because of a race that the standard primitive removes. Its other objection, that a claim blocks a neighbouring field, is a policy choice: make the claim a shared-cache entry, not an exclusive lock on reading. Readers have no write tools, so the child makes the claim.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "One file per source, at claims/<sha256 of the normalised DOI or URL>, created with 'wx' and holding the field, session and start time. It lives outside every worktree. If the file already exists, the child waits for the claimant's card and reads it (read-only) instead of sending a reader. If it needs a different aspect of the source, it reads the source anyway and logs a duplicate. A claim older than the lease with no card is stale: it is taken over by atomic rename.",
+     "runner": "A claim script that the child runs before giving a source to a reader",
+     "when": "Before each read",
+     "input": "The normalised source id and the claims folder",
+     "on_failure": "Contention or a script error means read anyway and log it. A claim never blocks work."
+    },
+    "formula_or_algorithm": "Lease = the 95th percentile of read-to-card time in the pilot, times 2.",
+    "to_measure": [
+     "duplicate reads per wave with the claims folder and without it",
+     "reads that waited on a claim"
+    ],
+    "effect_on_measures": "Fewer tokens spent reading a source twice. Cards become consistent across fields.",
+    "build_cost": "Small. About 30 lines.",
+    "confidence": "high"
+   },
+   {
+    "id": "D3-11",
+    "problems": [
+     "P18",
+     "S",
+     "P8"
+    ],
+    "classical_problem": "Speed-up laws: a serial fraction, plus coherence costs that grow with the number of workers",
+    "solutions": [
+     {
+      "name": "Amdahl's law",
+      "source": "Gene M. Amdahl, 1967, 'Validity of the single processor approach to achieving large scale computing capabilities', AFIPS Spring Joint Computer Conference",
+      "guarantees": "An upper bound on speed-up: S(N) <= 1/(s + (1-s)/N)",
+      "assumptions": "Fixed work and a fixed serial fraction s"
+     },
+     {
+      "name": "Universal Scalability Law",
+      "source": "Neil J. Gunther, 2007, 'Guerrilla Capacity Planning', Springer",
+      "guarantees": "A two-parameter fit that predicts the peak concurrency N*",
+      "assumptions": "Contention (alpha) and coherence (beta) are stable"
+     }
+    ],
+    "assumptions_that_fail_here": "These laws are about time, not tokens: parallel children never lower total token count, they add the coordinator's overhead. The serial part here includes the owner's approvals and the coordinator's gates. With N at most 3 the fit has three points, so it gives a reading, not a law.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Report the tree's result as two numbers: wall-time speed-up against the single-session control, and the work ratio (tree tokens divided by single-session tokens). Fit s from the ledger before raising concurrency.",
+     "runner": "A ledger script after the pilot and after each wave",
+     "when": "After each wave",
+     "input": "Ledger intervals: the time when at least one child runs, the time when only the coordinator or the owner is active, and tokens per role",
+     "on_failure": "If the measured S(3) is below S(2) plus a noise allowance, run waves of 2."
+    },
+    "formula_or_algorithm": "s = (wall time with no child running) / total wall time. S(N) <= 1/(s + (1-s)/N). USL: X(N) = X1*N/(1 + alpha*(N-1) + beta*N*(N-1)), with N* = sqrt((1-alpha)/beta).",
+    "to_measure": [
+     "wall time per state (owner, coordinator, children)",
+     "throughput (confirmed cards per hour) at N = 1, 2, 3"
+    ],
+    "effect_on_measures": "Governs time taken and throughput, and stops more concurrency from being added when it does not pay.",
+    "build_cost": "Small",
+    "confidence": "medium"
+   },
+   {
+    "id": "D3-12",
+    "problems": [
+     "S",
+     "P18",
+     "P12"
+    ],
+    "classical_problem": "Choosing the fan-out under a cost that grows with the square of resident size: superlinear gains from splitting a job into pieces that each fit the economic memory size",
+    "solutions": [
+     {
+      "name": "The cost model of D3-01 applied to partitioning (the same reason cache-sized blocking beats one large working set)",
+      "source": "Derived here from the cost structure; the square-root law is Harris 1913 and Young 1974. No single source for the partitioning step.",
+      "guarantees": "A predicted optimal number of children and a falsifiable prediction for P18",
+      "assumptions": "Work divides into parts with little cross-talk, and each part's growth rate is g"
+     }
+    ],
+    "assumptions_that_fail_here": "Fields are not equal parts. Splitting cuts knowledge apart (the withdrawn split rule), which this model does not price. The coordinator's cost grows with k.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Before the pilot, predict the single-session control's tokens and the tree's tokens from measured g, n and H. The P18 comparison then tests a stated prediction. Fields are not split mid-research. A planned field whose predicted window exceeds W* gets a second session that runs after it, from its frozen pack (a hand-over), and is not cut in two.",
+     "runner": "The coordinator, from a planning script",
+     "when": "Before the pilot, and again before each wave",
+     "input": "g, B and H from D3-01; the predicted calls n per field; the coordinator's per-note size s",
+     "on_failure": "If the prediction is off by more than a factor of 2, the cost model is wrong. Re-measure g and stop trusting the fan-out choice."
+    },
+    "formula_or_algorithm": "Single session: T1 = n*B + g*n^2/2. Tree with k equal leaves: Tk = n*B + g*n^2/(2k) + k*H + Coord(k), where Coord(k) is about m*B_c + g_c*m^2/2 and g_c is roughly proportional to k*s. The tree wins on tokens when g*n^2*(1 - 1/k)/2 > k*H + Coord(k). Ignoring Coord, k_opt = n*sqrt(g/(2H)).",
+    "to_measure": [
+     "g, n, H per field",
+     "notes per child and the coordinator's growth per note"
+    ],
+    "effect_on_measures": "Predicts token count and cost, and gives P18 a prediction fixed in advance.",
+    "build_cost": "Small",
+    "confidence": "medium"
+   },
+   {
+    "id": "D3-13",
+    "problems": [
+     "F1",
+     "P4",
+     "P10"
+    ],
+    "classical_problem": "Write-back caching (dirty data is lost at eviction unless flushed), plus crash-only design (exercise the recovery path)",
+    "solutions": [
+     {
+      "name": "Flush dirty lines before eviction (write-back with a flush)",
+      "source": "Alan Jay Smith, 1982, 'Cache memories', ACM Computing Surveys",
+      "guarantees": "Nothing modified is lost at eviction",
+      "assumptions": "Dirty state can be identified and written"
+     },
+     {
+      "name": "Crash-only software",
+      "source": "George Candea and Armando Fox, 2003, 'Crash-only software', HotOS IX",
+      "guarantees": "Recovery code is the normal start path, so it is always exercised",
+      "assumptions": "State lives in durable stores"
+     }
+    ],
+    "assumptions_that_fail_here": "The researcher's dirty state includes impressions it cannot state as cards, and those cannot be flushed. But the review may cite only cards (P1, P17), so that unflushed state is uncitable by rule. It can enter a same-window review only as uncited bias. The cost side is direct: each review call in the researcher's window re-reads W_research instead of B_pack.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Before any review, the child flushes: everything it intends to rely on becomes a confirmed card or a pack line. The review then runs in a fresh session from the frozen pack, which is the same path a crash or a full window takes. F1's pilot comparison remains the test of what is lost.",
+     "runner": "The child (flush), the watcher (it checks the freeze hash), and the coordinator (starts the reviewer)",
+     "when": "At the end of research",
+     "input": "The frozen pack and its hash",
+     "on_failure": "With no frozen pack hash there is no review. If the fresh review scores below the same-window review on the pre-fixed score by more than the owner's tolerance, use same-window reviews."
+    },
+    "formula_or_algorithm": "Extra cost of a same-window review = n_r * (W_research - B_pack) * p_cache, where n_r is the number of review calls.",
+    "to_measure": [
+     "n_r",
+     "W_research at the start of the review",
+     "B_pack",
+     "the score difference in the pilot"
+    ],
+    "effect_on_measures": "A fresh review costs fewer tokens and puts nothing unchecked in its window, which helps against hallucination. The quality risk is measured in the pilot.",
+    "build_cost": "None beyond F1's pilot",
+    "confidence": "medium"
+   },
+   {
+    "id": "D3-14",
+    "problems": [
+     "S"
+    ],
+    "classical_problem": "Single-machine scheduling to minimise weighted completion time, under a budget that may be cut",
+    "solutions": [
+     {
+      "name": "Smith's rule (weighted shortest processing time: order by w/p, highest first)",
+      "source": "W. E. Smith, 1956, 'Various optimizers for single-stage production', Naval Research Logistics Quarterly",
+      "guarantees": "Minimises the sum of weighted completion times on one machine. Done before a cut, the value-per-cost order completes the most value per token if the budget ends early (a greedy heuristic, not exact).",
+      "assumptions": "Known weights and processing times; no precedence constraints"
+     }
+    ],
+    "assumptions_that_fail_here": "There are precedence constraints: the measurement field defines the scoring, and the pilot provides the cost estimates. Costs are estimates (D3-04).",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Respect the precedence constraints first (pilot, then the rest). Within a wave, start fields in descending order of owner weight divided by estimated cost.",
+     "runner": "The coordinator",
+     "when": "At wave planning",
+     "input": "The owner's weight per field and est_f",
+     "on_failure": "If the owner gives no weights, all are equal and the cheapest goes first. Aging: a field passed over twice gets its weight doubled, so it does not starve."
+    },
+    "formula_or_algorithm": "priority_f = w_f / est_f. Aging: w_f *= 2 after each wave in which f was admissible but not run.",
+    "to_measure": [
+     "the owner's weights",
+     "est_f"
+    ],
+    "effect_on_measures": "The most value is done before any budget cut, which helps throughput and efficiency.",
+    "build_cost": "Trivial",
+    "confidence": "medium"
+   }
+  ],
+  "missing_risks": [
+   {
+    "title": "Deadlock on the session slots",
+    "classical_name": "Deadlock: hold and wait over a counted resource (Coffman, Elphick, Shoshani, 1971, 'System deadlocks', ACM Computing Surveys)",
+    "why_it_applies": "At most three sessions can run. If children that wait for a repair keep their slots while the coordinator needs a slot to start a repair or replacement session, nothing can proceed.",
+    "mechanism": "Break hold and wait: a child that asks for a repair commits its files and ends, which frees its slot, and restarts from its checkpoint later. Alternatively, always keep one slot reserved for the coordinator's repairs. The watcher counts sessions that are waiting and holding a slot."
+   },
+   {
+    "title": "Lost wakeups between the watcher's exit and its restart",
+    "classical_name": "Lost-wakeup problem (Mesa semantics, Lampson and Redell 1980)",
+    "why_it_applies": "The watcher exits on the first event. Anything that happens during the coordinator's turn, or after a turn that ended without starting a new watcher, is never noticed.",
+    "mechanism": "D3-07: a level-triggered status file, a watcher whose first act is to check every condition, and a check at the end of every turn that a watcher is alive."
+   },
+   {
+    "title": "Hand-over thrashing",
+    "classical_name": "Thrashing (Denning 1968): fault-service time dominates useful work",
+    "why_it_applies": "When the state to reload (B) grows toward W*, each fresh session spends most of its window reloading and soon has to hand over again. Throughput collapses while every session looks busy.",
+    "mechanism": "The watcher computes overhead = (reload + hand-over tokens) / total tokens per task. When the useful tokens between hand-overs fall below the reload cost B, stop handing over and split the work (D3-01, D3-12)."
+   },
+   {
+    "title": "Sleep or resume triggers false timeouts, then a burst of simultaneous restarts",
+    "classical_name": "Clock discontinuity on suspend; thundering herd",
+    "why_it_applies": "A sleeping PC stops the watcher. On resume, wall-clock time boxes have all expired, so every session can be killed and restarted at once, which strains memory and the API's rate limits.",
+    "mechanism": "D3-06: detect suspend from the gap between polls and shift deadlines. Stagger restarts, one at a time, each admitted by D3-03."
+   },
+   {
+    "title": "Orphaned process trees and leaked resources after a stop",
+    "classical_name": "Orphan processes and resource leaks on termination",
+    "why_it_applies": "The owner's own records show a stopped task leaving its looping script and containers running, and a Docker volume leaked on every run. A stopped session's helpers or scripts can keep consuming memory and tokens.",
+    "mechanism": "Stop the whole process tree (Windows taskkill /T, or a job object), then verify by the session's process list and the container and volume counts before admitting a replacement. The watcher logs any leftovers."
+   },
+   {
+    "title": "The coordinator is a single serial server, and queueing at it grows sharply",
+    "classical_name": "Queueing at a bottleneck server (utilisation near 1; Little's law)",
+    "why_it_applies": "Every gate, note and repair goes through one coordinator whose turns are slow because its window is large. As its busy fraction rho rises, children wait roughly in proportion to rho/(1-rho).",
+    "mechanism": "Measure rho from the ledger (the coordinator's busy time over wall time). Keep rho low with gate scripts in place of reading (P11), coalesced wakes (D3-07), and smaller waves when rho exceeds 0.7."
+   },
+   {
+    "title": "A large field starves under admission",
+    "classical_name": "Starvation (fixed by aging)",
+    "why_it_applies": "An admission rule based on cost keeps deferring the most expensive field whenever the remaining budget is short.",
+    "mechanism": "Aging in D3-14, plus an explicit 'never admitted' line that the owner sees."
+   },
+   {
+    "title": "A crash loop burns the allowance",
+    "classical_name": "Restart storm (supervisor restart intensity)",
+    "why_it_applies": "A systematic fault recurs in every replacement, and nothing currently limits the number of restarts.",
+    "mechanism": "D3-08: MaxR = 2 per field per wave, the second restart must change its input, then escalate to the owner."
+   },
+   {
+    "title": "After a reboot nothing resumes and nobody notices",
+    "classical_name": "No init or supervisor on boot",
+    "why_it_applies": "A reboot kills both the coordinator and the watcher. No exit event fires to wake anyone, so the programme stops silently until the owner looks.",
+    "mechanism": "Recovery only through the owner's next session: its first act reads the status file, and the restart path rebuilds from it. Optionally, a logon-triggered Windows scheduled task tells the owner (the owner's decision). Whether any watcher can keep the PC awake remains not established."
+   }
+  ],
+  "do_not": [
+   "Do not set the hand-over point as a round number (200,000 or 300,000). Compute W* from measured g, B and H, and compute it separately for token count and for token cost.",
+   "Do not treat a window ceiling as a spend bound. Spend grows with the square of a session's length, so enforce per-session quotas with a soft and a hard limit.",
+   "Do not use liveness (a heartbeat, an open process) as progress. Kick the watchdog only on new confirmed output.",
+   "Do not measure time boxes in wall time without detecting suspend.",
+   "Do not recover by replaying a step and expecting the same output. Sessions are not deterministic, so recover only from committed files and check anything regenerated again.",
+   "Do not implement any claim or lock as check-then-write on a shared file. Use atomic exclusive create or rename, with a lease.",
+   "Do not fix the number of concurrent sessions while other load on the PC varies. Admit against measured free memory.",
+   "Do not add concurrency past the measured knee. Parallel children never lower token count; they lower time only up to the serial fraction.",
+   "Do not restart without a limit, and do not restart with an unchanged input after a repeated failure.",
+   "Do not let a child hold a session slot while it waits on the coordinator.",
+   "Do not stop a session without stopping its process tree and checking for leaked processes, containers and volumes.",
+   "Do not wake the coordinator on every small event. Each wake re-reads its whole window, so coalesce the events that are not urgent.",
+   "Do not write a file in place where a crash can leave half of it. Write to a temporary name, rename, then update the manifest last."
+  ],
+  "not_my_field": [
+   "P1, P17, P20, P21: verifying facts against sources and quote matching (information retrieval, provenance, testing)",
+   "P2, P13, P15, P16: anchoring, expert certification, false negatives and search bias (experimental methodology, statistics)",
+   "P3 and F2's independence question: correlated errors among copies of one model. The nearest classic is software fault tolerance, where Knight and Leveson (1986, 'An experimental evaluation of the assumption of independence in multiversion programming', IEEE Transactions on Software Engineering) showed that independently written versions fail together. That field, not mine, should rule on it. My field only prices F2: a second reviewer of the frozen pack costs about n_r * B_pack, while a second research run costs a whole field.",
+   "P4: typed schemas and the loss of meaning at a hand-over (data modelling and information theory). My field covers only the flush before eviction (D3-13).",
+   "P5: prompt injection and least privilege (security). The tool removal is standard least privilege, but judging its sufficiency is not my field.",
+   "C: proving the list complete is not something my field does. My contribution is the operating-systems failure catalogue in missing_risks.",
+   "The merging of ledgers from several sessions, and ordering events across sessions (distributed systems)"
+  ]
+ }
+}

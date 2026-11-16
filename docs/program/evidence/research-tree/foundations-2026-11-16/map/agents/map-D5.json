@@ -1,0 +1,653 @@
+{
+ "label": "map:D5",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "nearest_whole_design": {
+   "name": "The Clark-Wilson commercial integrity model, enforced by a small reference monitor, with Biba-style integrity labels propagated through the work (process-granularity information-flow control in the style of Flume)",
+   "source": "D. D. Clark and D. R. Wilson, 1987, 'A Comparison of Commercial and Military Computer Security Policies', IEEE Symposium on Security and Privacy; K. J. Biba, 1977, 'Integrity Considerations for Secure Computer Systems', MITRE MTR-3153; J. P. Anderson, 1972, 'Computer Security Technology Planning Study', ESD-TR-73-51 (the reference monitor); M. Krohn et al., 2007, 'Information Flow Control for Standard OS Abstractions', SOSP (Flume)",
+   "why_it_fits": "Clark-Wilson was designed for this exact situation: data of uncertain integrity (web pages, reader output) must be turned into data the organisation relies on (confirmed cards, frozen packs, reviews, synthesis) by agents who are not trusted to be right, and the defence is structural, not trust in the people. Its parts map one to one. UDIs (unconstrained data items) are pages, reader cards before checking, and child notes. CDIs (constrained data items) are confirmed cards, frozen packs, certified reviews and the synthesis. IVPs (integrity verification procedures) are the schema check, the quote script and the hash check. TPs (transformation procedures) are pack freezing, review writing and the synthesis script. Certified triples (subject, TP, CDI) say who may change what: a child writes only its folder, and only the coordinator's merge moves files into the shared tree. Separation of duty means the producer never certifies its own output. The log rule (C4) is the ledger. Rule C5 says a UDI becomes a CDI only through a TP that validates it, and that is the missing gate in P1, P5, P13 and P17. Biba and Flume add what Clark-Wilson leaves implicit: a session is a process whose integrity is the lowest level of what it read. That settles where taint travels (F1, upward notes, the coordinator).",
+   "borrow_whole": "(1) An integrity status field on every file, which only an IVP script may write and which lives in a folder the producer cannot write. Values: UDI, CDI-confirmed, CDI-judgment. The author never sets it. (2) The enforcement rules. A session's tool and write permissions are its certified triples: readers return values only; a child writes only its own folder; checkers return an enum verdict; only the merge script, run by the coordinator, writes shared paths. (3) Rule C5 as a gate. Nothing downstream (pack freeze, synthesis, the owner's table) may read an item whose status is UDI. (4) Separation of duty. The producer of an item never briefs, runs or chooses its verifier. (5) An append-only log written by the harness or a script, never by the subject (C4). (6) IVPs run on a schedule and at every restart, not only once (the Clark-Wilson IVP certifies that a CDI is still valid).",
+   "where_it_does_not_fit": "Clark-Wilson assumes that TPs and IVPs can be certified correct by a security officer (rules C1 and C2). An LLM checker or reviewer is non-deterministic, shares failure modes with the producer, and can be steered by the text it checks, so it cannot be certified. Only the deterministic scripts (schema, quote-in-snapshot, hash, merge path allowlist, label propagation) qualify as certified IVPs and TPs. LLM judgments must be labelled CDI-judgment (a lower integrity class) and have their error rate measured, not certified. Biba and IFC assume the label of an output is bounded by the labels of its explicit inputs. In an LLM all reasoning is implicit flow: a review sentence can be shaped by uncited material in the window. So sentence-level labels are only an upper bound on trust; the sound label is the session's low-water mark (everything it read). Subjects are not authenticated: a session's identity is its folder, branch and permission set, so enforcement must come from the harness's permission configuration and the merge script, never from the session's own good conduct."
+  },
+  "mappings": [
+   {
+    "id": "D5-01",
+    "problems": [
+     "P1",
+     "P17",
+     "P4"
+    ],
+    "classical_problem": "Using unvalidated input to build trusted data: a Clark-Wilson C5 violation. The current rule checks after the review, which is an audit, not a gate.",
+    "solutions": [
+     {
+      "name": "Clark-Wilson CDI/UDI with rule C5 (a UDI is turned into a CDI only by a certified TP) and IVPs",
+      "source": "Clark and Wilson, 1987, 'A Comparison of Commercial and Military Computer Security Policies', IEEE S&P",
+      "guarantees": "A CDI is valid on entry and stays valid under certified TPs; nothing trusted is built from unvalidated input",
+      "assumptions": "IVPs and TPs are certified correct; subjects can run only the TPs they are permitted; everything is logged"
+     }
+    ],
+    "assumptions_that_fail_here": "LLM checkers cannot be certified. Only scripts can. The review is written before its cited cards are confirmed, so the trusted object (the review) temporarily depends on UDIs. Clark-Wilson tolerates this only if the derived object itself stays UDI until every input is validated.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Every card, pack, review and synthesis row carries a status (UDI / CDI-confirmed / CDI-judgment) held in a status file that only the check script writes. A review is UDI until every card it cites is CDI-confirmed and every citing sentence has passed the within-conditions check. The synthesis script and pack freeze read only CDI items and refuse UDI. Conditions are not summarised: the synthesis script copies the card's condition fields by reference (card id plus field), so they cannot fall off.",
+     "runner": "A Node script (check-status.mjs) run by the watcher after each card batch and after each review; the synthesis script enforces the read rule",
+     "when": "After the reader returns (card enters as UDI), after the checker's verdict (promotion), before pack freeze, before synthesis",
+     "input": "cards.jsonl, checker verdict files, quote-script results, review.json citations",
+     "on_failure": "The item stays UDI. Pack freeze and synthesis exit non-zero listing the UDI ids, so the field cannot advance a gate. The count goes to the ledger."
+    },
+    "formula_or_algorithm": "status(card) = CDI-confirmed iff schema_ok AND quote_found_in_snapshot AND checker_verdict = confirmed AND hash(card) = hash at verdict. status(review sentence) = min over cited cards. status(review) = UDI if any factual sentence has status UDI.",
+    "to_measure": [
+     "share of cited cards that are UDI at review time",
+     "promotion failure rate by reason (schema, quote, checker, hash changed)",
+     "number of downstream reads refused"
+    ],
+    "effect_on_measures": "Hallucinations down (no unconfirmed fact reaches the synthesis); quality up; small token cost (scripts); some time added waiting on promotions",
+    "build_cost": "Low: one status file per field, about 150 lines of Node, plus a read guard in the synthesis script",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-02",
+    "problems": [
+     "P5"
+    ],
+    "classical_problem": "The confused deputy (indirect prompt injection is its LLM instance): a principal holding authority acts on instructions from a party who lacks that authority. Least privilege and privilege separation are the standard remedies.",
+    "solutions": [
+     {
+      "name": "Confused deputy; capabilities instead of ambient authority",
+      "source": "N. Hardy, 1988, 'The Confused Deputy (or why capabilities might have been invented)', ACM SIGOPS Operating Systems Review",
+      "guarantees": "A deputy that holds only the authority designated for the request cannot be tricked into using other authority",
+      "assumptions": "Authority is explicit and passed with the request; the deputy holds no ambient rights"
+     },
+     {
+      "name": "Least privilege, fail-safe defaults, complete mediation",
+      "source": "J. H. Saltzer and M. D. Schroeder, 1975, 'The Protection of Information in Computer Systems', Proceedings of the IEEE",
+      "guarantees": "Damage from a subverted component is bounded by its privileges",
+      "assumptions": "Privileges are enforced by a mechanism the component cannot change"
+     },
+     {
+      "name": "Privilege separation: the part that parses untrusted input holds no privilege and talks to the privileged part through a narrow typed interface",
+      "source": "N. Provos, M. Friedl and P. Honeyman, 2003, 'Preventing Privilege Escalation', USENIX Security",
+      "guarantees": "Compromise of the input-handling part does not yield the privileged part's rights",
+      "assumptions": "The interface is narrow and the privileged part validates every message"
+     },
+     {
+      "name": "Indirect prompt injection as the LLM threat; capability and data-flow separation as defence (CaMeL)",
+      "source": "K. Greshake et al., 2023, 'Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection', AISec; E. Debenedetti et al., 2025, 'Defeating Prompt Injections by Design' (arXiv; the checker should verify the author list)",
+      "guarantees": "CaMeL: values derived from untrusted data cannot change control flow or reach a tool argument without a policy check",
+      "assumptions": "A privileged planner never sees untrusted text; a separate quarantined model reads it and returns values only"
+     }
+    ],
+    "assumptions_that_fail_here": "In an LLM, data and instructions share one channel, so a string field in a valid card can still carry instructions. The schema check is a type check, not a taint barrier. The child is the deputy: it holds write tools, git and helper spawning, and it also reads originals of must-read sources directly and the free-text fields of cards. The current rule de-privileges the reader, which was already the least dangerous party, and leaves the deputy exposed. Permissions written in the child's own worktree (.claude/settings.json) are modifiable by the child. The field's answer when the separation cannot be made perfect is to bound authority so that a steered deputy can do little damage, and to keep untrusted text away from the planner.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "(1) Readers: no Read, Write, Bash or git tools; web only; their brief holds no project data. (2) Card free text is narrowed. Numbers, enums, ids and URLs are typed. 'What was measured' and 'conditions' are each capped (about 40 words). The quote is at most 15 words and must be found by the quote script in the snapshot (D5-04). (3) The child never reads raw web text itself. Reading an original is done by a no-tool helper that returns typed extracts, the dual-model pattern. If the owner wants the child to read originals, the child's label drops (D5-06) and its review is UDI until fully checked. (4) The child's authority is minimal and set outside its reach. Its write is allowed only under fields/<n>-<name>/ in its worktree. No shell, no MCP connectors, no network except via helpers, no git push; the merge script commits. Deny rules live in user- or managed-level settings, not in the worktree. (5) Before each wave, a script diffs the child's effective permission set against the profile.",
+     "runner": "The coordinator sets the permission profile at session start; a Node script (perm-audit.mjs) reads each transcript after the turn and lists any tool call outside the profile",
+     "when": "Before each child starts (profile check) and after each turn (audit)",
+     "input": "The permission profile file (in the coordinator's checkout, hashed), session transcripts",
+     "on_failure": "Any out-of-profile call or write outside the folder: the child's branch is quarantined (not merged), its outputs are marked UDI, the watcher exits and wakes the coordinator, and the owner is told"
+    },
+    "formula_or_algorithm": "Permitted(session, tool, path) is a fixed table; audit = set(tool calls in transcript) minus Permitted, which must be empty.",
+    "to_measure": [
+     "out-of-profile tool calls per session (target 0)",
+     "share of card text in free-text fields (tokens)",
+     "canary injection test: a planted page in the pilot (see D5-14); was any instruction followed"
+    ],
+    "effect_on_measures": "Hallucinations and injected steering down; quality up; slight token cost from extra no-tool reading helpers; no effect on throughput",
+    "build_cost": "Low to medium: a permission profile per role, an audit script, a reading-helper role",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-03",
+    "problems": [
+     "P1",
+     "P4",
+     "P17",
+     "P13",
+     "F1"
+    ],
+    "classical_problem": "Information-flow control and taint tracking: the trust label of derived data must be computed from its inputs, and labels must survive every hand-over",
+    "solutions": [
+     {
+      "name": "Lattice model of information flow",
+      "source": "D. E. Denning, 1976, 'A Lattice Model of Secure Information Flow', Communications of the ACM",
+      "guarantees": "The label of any output is at most the join (for integrity, the meet) of the labels of the inputs it depends on, including implicit flows",
+      "assumptions": "All flows, explicit and implicit, are visible to the mechanism"
+     },
+     {
+      "name": "Decentralized label model with explicit endorsement and declassification",
+      "source": "A. C. Myers and B. Liskov, 1997, 'A Decentralized Model for Information Flow Control', SOSP",
+      "guarantees": "Labels can be raised (endorsed) only by an authorised, explicit act",
+      "assumptions": "Endorsement points are few and audited"
+     },
+     {
+      "name": "Process-granularity IFC: a process's label is the combination of everything it has read",
+      "source": "M. Krohn et al., 2007, 'Information Flow Control for Standard OS Abstractions', SOSP (Flume)",
+      "guarantees": "Taint cannot be laundered through a process, whatever it does internally",
+      "assumptions": "The OS mediates every read and write"
+     }
+    ],
+    "assumptions_that_fail_here": "An LLM's output depends on its whole window. Every sentence is an implicit flow from everything it read, so sentence-level labels from citations understate the taint. The field's answer, when internal flows cannot be tracked, is coarse-grained labelling at the process boundary (Flume): the session is labelled by what it read, from the harness transcript.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A label lattice: replicated > independent > single study > vendor's own > unconfirmed > judgment. Each claim in a review or the synthesis gets label = min(cited card labels). A session gets label_session = min(labels of all items it read), taken from the transcript. A verdict (judgment) carries min(label of its supporting claims, label_session). The checker's confirmation is the only endorsement point. The synthesis script prints each claim with its label and the card's condition fields, so caveats travel mechanically.",
+     "runner": "The synthesis script and a label script over transcripts and review.json",
+     "when": "After each review is certified; again when the synthesis is built",
+     "input": "review.json citations, card labels, transcript read lists",
+     "on_failure": "A claim whose label is below the threshold the owner sets cannot appear as a finding; it is listed as judgment or open"
+    },
+    "formula_or_algorithm": "label(claim) = min_{c in cites(claim)} label(c); label(session) = min_{x in reads(session)} label(x); label(verdict) = min(label of its claims, label(session)).",
+    "to_measure": [
+     "distribution of claim labels per review",
+     "share of review sentences with no citation (pure judgment)",
+     "label(session) per child"
+    ],
+    "effect_on_measures": "Quality and hallucinations: caveats cannot fall off silently; near-zero token cost (scripts)",
+    "build_cost": "Low: label field in the card schema, one script",
+    "confidence": "medium"
+   },
+   {
+    "id": "D5-04",
+    "problems": [
+     "P21",
+     "P1"
+    ],
+    "classical_problem": "The verification depends on a component outside the trusted computing base, which sits in the attacker's channel: the summarising small model. Remedies: reference monitor and TCB minimisation, plus TOCTOU binding of check to use.",
+    "solutions": [
+     {
+      "name": "Reference monitor: always invoked, tamper-proof, small enough to be verified",
+      "source": "J. P. Anderson, 1972, 'Computer Security Technology Planning Study', ESD-TR-73-51",
+      "guarantees": "Every access is mediated by a verifiable mechanism",
+      "assumptions": "The mechanism is small, deterministic and outside the subject's control"
+     },
+     {
+      "name": "Economy of mechanism and complete mediation",
+      "source": "Saltzer and Schroeder, 1975, 'The Protection of Information in Computer Systems', Proc. IEEE",
+      "guarantees": "A small, simple checker can be audited",
+      "assumptions": "Same as above"
+     },
+     {
+      "name": "Time-of-check-to-time-of-use races",
+      "source": "M. Bishop and M. Dilger, 1996, 'Checking for Race Conditions in File Accesses', Computing Systems",
+      "guarantees": "Binding the check to the exact object used closes the race",
+      "assumptions": "The object can be named by an immutable identifier (here, a content hash)"
+     }
+    ],
+    "assumptions_that_fail_here": "Pages change between fetches, sit behind paywalls, are PDFs, or render with scripts, so a plain-Node fetch may not see the text. A page is attacker-controlled: it can contain any string, so 'quote found' proves only that the string is on the page, not that it supports the claim. The field's answer is to bind the check to an immutable snapshot (hash) and to treat 'not machine-checkable' as its own lower label, never as passed.",
+    "fit": "direct",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "The quote script fetches the address itself, with no rendering and no script execution. It stores the bytes as a content-addressed snapshot (sha256), extracts text, normalises whitespace, case, Unicode quotes and hyphens, and searches for the quote. On a hit it records (card hash, snapshot hash, offset) and a window of about 200 words around it. The checker is then given that window from the snapshot, not a live fetch. A card edited after the check, or a re-fetch whose hash differs, voids the confirmation. A PDF or a blocked page is labelled 'not machine-checkable' (one rank below confirmed); it is never passed.",
+     "runner": "quote-check.mjs, run by the watcher on each new card batch",
+     "when": "When a card arrives (UDI), and again at pack freeze for every cited card",
+     "input": "Card URL and quote; snapshot store in a script-only folder",
+     "on_failure": "Quote not found: the card stays UDI and cannot be cited. Unfetchable: labelled 'not machine-checkable'. The ledger counts both."
+    },
+    "formula_or_algorithm": "confirmed_quote = normalise(quote) is a substring of normalise(text(snapshot)), with confirmation bound to (sha256(card), sha256(snapshot)).",
+    "to_measure": [
+     "fetchable share of sources",
+     "quote-found rate",
+     "rate of quote not found on cards the small-model path had confirmed (measures P21 directly)"
+    ],
+    "effect_on_measures": "Hallucinations down (invented quotes are caught deterministically); token count down (the checker reads a window instead of a page summary); small time cost",
+    "build_cost": "Medium: plain-Node fetch plus HTML-to-text; PDFs need a parser (an npm package or 'not checkable'); snapshot storage (keep it local and private)",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-05",
+    "problems": [
+     "P20",
+     "P3",
+     "F2"
+    ],
+    "classical_problem": "Separation of duty whose two parties are not independent (correlated failure, the equivalent of collusion), and design diversity",
+    "solutions": [
+     {
+      "name": "Separation of duty (Clark-Wilson); separation of privilege",
+      "source": "Clark and Wilson, 1987, IEEE S&P; Saltzer and Schroeder, 1975, Proc. IEEE",
+      "guarantees": "An error or fraud needs two independent parties to fail together",
+      "assumptions": "The parties are independent and do not collude"
+     },
+     {
+      "name": "N-version programming",
+      "source": "A. Avizienis, 1985, 'The N-Version Approach to Fault-Tolerant Software', IEEE Transactions on Software Engineering",
+      "guarantees": "Majority over versions masks independent faults",
+      "assumptions": "Version failures are independent"
+     },
+     {
+      "name": "Measured refutation of the independence assumption",
+      "source": "J. C. Knight and N. G. Leveson, 1986, 'An Experimental Evaluation of the Assumption of Independence in Multiversion Programming', IEEE Transactions on Software Engineering",
+      "guarantees": "Shows that independently built versions still fail together on the same inputs, so agreement is weaker evidence than independence assumes",
+      "assumptions": "Empirical result"
+     }
+    ],
+    "assumptions_that_fail_here": "Instances of one model are the worst case of Knight and Leveson: same training, so correlated blind spots. Separation of duty between two instances is separation of process, not of judgment. The field's answer: make the check deterministic where possible (scripts), force diversity where not (a different model family, different inputs, a human sample), and never treat agreement as independent confirmation.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Order of preference for each check. (1) A deterministic script (quote, number-in-window regex, schema). (2) A different model family, if F3 allows. (3) A same-model checker that sees only the snapshot window and the citing sentence, never the producer's reasoning or brief, with a verdict from a fixed enum. (4) An owner spot-check of a random sample of confirmed items. Agreement between same-model instances adds nothing (current P3 rule kept). F2: a second reviewer of the same frozen pack shares the pack's errors, and a second research run shares the model's; neither is independent. Security prefers whichever adds a different model or different inputs; with one model, the contrary-evidence reader (different input) is the diverse part.",
+     "runner": "The check script decides the tier per item; the coordinator draws the owner sample with a seeded random script",
+     "when": "At promotion (D5-01)",
+     "input": "Item, snapshot window, tier table",
+     "on_failure": "A judgment check from tier 3 only gives the label CDI-judgment, never CDI-confirmed"
+    },
+    "formula_or_algorithm": "Estimate checker miss rate m from seeded faults (D5-14). With correlated same-model checks, P(both miss) is about m, not m squared; budget as if one check.",
+    "to_measure": [
+     "checker miss rate on seeded faults, per tier",
+     "rate at which the owner sample disagrees with the checker"
+    ],
+    "effect_on_measures": "Hallucinations down; avoids paying tokens for second opinions that add no independence (token cost down)",
+    "build_cost": "Low, except tier 2 (needs a second model and the owner's F3)",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-06",
+    "problems": [
+     "F1"
+    ],
+    "classical_problem": "Biba strict integrity ('no read down'), or the low-water-mark policy: a subject that has read low-integrity data may not produce high-integrity data",
+    "solutions": [
+     {
+      "name": "Biba strict integrity and the low-water-mark policy",
+      "source": "K. J. Biba, 1977, 'Integrity Considerations for Secure Computer Systems', MITRE MTR-3153",
+      "guarantees": "High-integrity objects are never contaminated by low-integrity information flowing through a subject",
+      "assumptions": "A subject's outputs depend only on what it has read; labels are assigned by a trusted mechanism"
+     }
+    ],
+    "assumptions_that_fail_here": "The researcher's extra knowledge, what it read but did not write down, is by definition unlabelled and unchecked, and the integrity model has no way to credit it. Under Biba, unverifiable input is low integrity. The researcher's window holds dropped cards, raw originals and possibly injected text. A fresh session that reads only the frozen pack, which is all CDIs, plus the must-read sections from snapshots, keeps its label at CDI level. Whether the lost unwritten knowledge costs quality is outside this field: the pilot measures it.",
+    "fit": "adapted",
+    "current_rule_is": "contrary_to_standard",
+    "mechanism": {
+     "rule": "From an integrity standpoint the review is written by a fresh session whose only reads are the frozen pack (hash verified), snapshot windows of must-read sections, and our files. Its label_session is then CDI. The researcher may hand over a typed gaps file: questions and card requests only, no claims. Those go back through readers and the checker before the reviewer may see them. If the owner keeps the same-session review (amendment 1), its verdicts are labelled at the researcher's low-water mark and every factual sentence must pass D5-01 before use. Same-session verdicts then count as judgment in the synthesis.",
+     "runner": "The coordinator starts the reviewer with a read allowlist; the label script checks the transcript's reads against it",
+     "when": "At stage B",
+     "input": "The pack hash from the ledger; the transcript",
+     "on_failure": "A read outside the allowlist drops the review's label to UDI, and it is re-run or fully checked"
+    },
+    "formula_or_algorithm": "label(review) = min over reads(reviewer); fresh reviewer = CDI if reads is a subset of {pack, snapshots, our files}",
+    "to_measure": [
+     "reads outside the allowlist",
+     "in the pilot (both reviews): share of each review's factual sentences that fail the D5-01 check, and number of judgment sentences"
+    ],
+    "effect_on_measures": "Hallucinations down and auditability up for the fresh reviewer; token cost from a second window (pilot measures it); quality effect unknown",
+    "build_cost": "Low",
+    "confidence": "medium"
+   },
+   {
+    "id": "D5-07",
+    "problems": [
+     "P13"
+    ],
+    "classical_problem": "Assurance by evaluating evidence, not trusting self-assessment. Integrity attaches to outputs (Clark-Wilson certifies data and procedures, not a subject's competence); a trusted audit trail records what the subject actually did.",
+    "solutions": [
+     {
+      "name": "Output certification via IVPs; logging by the system (rule C4)",
+      "source": "Clark and Wilson, 1987, IEEE S&P",
+      "guarantees": "Trust rests on verified outputs and a log the subject cannot forge",
+      "assumptions": "The log is written by the mechanism, not by the subject"
+     }
+    ],
+    "assumptions_that_fail_here": "Whether 'the session knows its field' is a property of its window, which cannot be audited. Only its outputs and its read trace can be. Coverage of question ids is checkable; depth of understanding is not, so the field says not to claim it.",
+    "fit": "adapted",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "Keep the current rule, which is Clark-Wilson's stance, with two tightenings. (1) 'What it read' is taken from the harness transcript (tool calls and returned card ids), never from the session's own ledger lines. (2) The certificate is a script output listing: approved question ids covered by at least one CDI-confirmed card; reads matched against the input list; every cited card CDI and within conditions (from D5-01); verdicts resting only on vendor or single-study cards labelled judgment. No line of the certificate is written by the session.",
+     "runner": "certify.mjs, run by the coordinator's watcher at gate B",
+     "when": "Before the review enters the synthesis",
+     "input": "Transcript, question-id list (owner-approved, hashed), status files",
+     "on_failure": "An uncovered question id is marked 'not covered' in the synthesis. Reads off-list or any UDI citation mean the review is not admitted."
+    },
+    "formula_or_algorithm": "coverage = |{q : there is a CDI-confirmed card answering q}| / |Q|",
+    "to_measure": [
+     "coverage per field",
+     "off-list reads",
+     "UDI citations at gate"
+    ],
+    "effect_on_measures": "Quality and hallucinations; script cost only",
+    "build_cost": "Low",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-08",
+    "problems": [
+     "P6",
+     "P5",
+     "P13"
+    ],
+    "classical_problem": "Tamper-proofness of the TCB: the subject must not be able to modify its own checker, policy or audit tools",
+    "solutions": [
+     {
+      "name": "Reference monitor tamper-proofness",
+      "source": "J. P. Anderson, 1972, ESD-TR-73-51",
+      "guarantees": "Policy and checks hold even against a subverted subject",
+      "assumptions": "The monitor and policy are outside the subject's write reach"
+     },
+     {
+      "name": "File integrity checking by hash baseline",
+      "source": "G. H. Kim and E. H. Spafford, 1994, 'The Design and Implementation of Tripwire: A File System Integrity Checker', ACM CCS",
+      "guarantees": "Unauthorised change to a baselined file is detected",
+      "assumptions": "The baseline database is stored out of reach"
+     }
+    ],
+    "assumptions_that_fail_here": "A git worktree holds the whole repository, so a child with write tools can edit its copy of the schemas, check scripts, checker brief, question list or .claude/settings.json. If any check runs from the child's worktree, the checked party controls the check.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Schemas, scripts, checker briefs, question lists and permission profiles live in the coordinator's checkout at a pinned commit, and their hashes are recorded in the ledger. Every check runs from there, never from a child's worktree. The merge script is the only TP that moves a child's work into the shared tree. It rejects any branch whose diff touches a path outside fields/<n>-<name>/ (a path allowlist, which also enforces P6's one writer per folder) and verifies the TCB hashes before running.",
+     "runner": "merge.mjs, run by the coordinator",
+     "when": "At every merge and before every check run",
+     "input": "git diff --name-only of the branch; the TCB hash list",
+     "on_failure": "Merge refused; the branch is quarantined; the watcher exits with the reason"
+    },
+    "formula_or_algorithm": "accept iff changed_paths are within the child's allowed prefix AND sha256(TCB files) = baseline",
+    "to_measure": [
+     "refused merges and the paths they touched"
+    ],
+    "effect_on_measures": "Quality and hallucinations: closes the hole in which a session weakens its own check; no token cost",
+    "build_cost": "Low",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-09",
+    "problems": [
+     "P9",
+     "P11",
+     "P5"
+    ],
+    "classical_problem": "Transitive confused deputy and taint laundering upward: the most privileged subject (the coordinator: starts sessions, merges, writes the protocol) reads low-integrity text relayed by less privileged ones. This violates Biba no-read-down at the top.",
+    "solutions": [
+     {
+      "name": "Biba no-read-down applied to the most privileged subject; privilege separation of the privileged part",
+      "source": "Biba, 1977, MTR-3153; Provos, Friedl and Honeyman, 2003, USENIX Security",
+      "guarantees": "The privileged subject's decisions are not steerable by low-integrity input",
+      "assumptions": "The privileged part receives only typed, validated messages"
+     }
+    ],
+    "assumptions_that_fail_here": "A child's end-of-turn note is free text, and a child's window may hold injected or false text, so the note can carry it to the coordinator. The coordinator cannot be made to ignore what it reads.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "The coordinator reads only script-produced status. That status is typed: counts of CDI cards, gate states, enum error codes, file pointers, token totals counted by script from transcripts, and progress counted only from CDI promotions, which the child cannot forge. A child's free-text note is written to a file the coordinator does not read in full. A repair request is a typed record (question id plus missing-evidence enum). Reading verdict text is allowed only once the review is CDI.",
+     "runner": "The watcher script composes status.json; the coordinator's brief allows only status.json and CDI files",
+     "when": "Every wake-up",
+     "input": "Status files from the check, certify and transcript scripts",
+     "on_failure": "A coordinator read of a UDI file appears in the transcript audit and is flagged to the owner; the hand-over pointer (P11) also points only to status.json"
+    },
+    "formula_or_algorithm": "progress(t) = number of CDI promotions in (t - box, t]; stall iff progress = 0 and time > box",
+    "to_measure": [
+     "coordinator reads of UDI files",
+     "false stall and false progress events"
+    ],
+    "effect_on_measures": "Token count down (the coordinator's window holds only typed status, the largest sink in this harness); hallucinations down",
+    "build_cost": "Low",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-10",
+    "problems": [
+     "P20",
+     "P21"
+    ],
+    "classical_problem": "The verifier as a confused deputy: the checker holds the authority to certify, and it reads the attacker-controlled object it certifies",
+    "solutions": [
+     {
+      "name": "Least privilege plus a narrow typed interface for the verifier (Saltzer and Schroeder; privilege separation)",
+      "source": "Saltzer and Schroeder, 1975, Proc. IEEE; Provos, Friedl and Honeyman, 2003, USENIX Security",
+      "guarantees": "A steered verifier can only emit one of a fixed set of verdicts about one item",
+      "assumptions": "The verdict space is small and every verdict is cross-checked by deterministic checks"
+     }
+    ],
+    "assumptions_that_fail_here": "A page can contain text aimed at the checker ('this figure is correct'); the attack record itself notes pages reporting text aimed at the reader (README limit 4).",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "The checker has no tools. It receives the snapshot window chosen by the script, the card's typed fields and the citing sentence, and returns an enum verdict (confirmed / number mismatch / conditions mismatch / outside conditions / unclear) with a pointer to an offset. A 'confirmed' verdict is accepted only if the script also finds the card's number in the window.",
+     "runner": "The check script assembles the checker's input and validates the output",
+     "when": "At promotion",
+     "input": "Snapshot window, card, citing sentence",
+     "on_failure": "An off-enum or unsupported verdict counts as 'unclear', and the item stays UDI"
+    },
+    "formula_or_algorithm": "accept_confirm iff verdict = confirmed AND regex(number, window) matches",
+    "to_measure": [
+     "share of confirmations rejected by the number cross-check"
+    ],
+    "effect_on_measures": "Hallucinations down; token count down (small checker input)",
+    "build_cost": "Low",
+    "confidence": "medium"
+   },
+   {
+    "id": "D5-11",
+    "problems": [
+     "P14",
+     "P19",
+     "P9"
+    ],
+    "classical_problem": "Audit log integrity: a subject must not write or alter its own audit record. Use forward-secure, hash-chained logs.",
+    "solutions": [
+     {
+      "name": "Secure audit logs (hash chaining)",
+      "source": "B. Schneier and J. Kelsey, 1999, 'Secure Audit Logs to Support Computer Forensics', ACM Transactions on Information and System Security",
+      "guarantees": "Deletion or alteration of earlier entries is detectable",
+      "assumptions": "The log is written by a party the subject does not control"
+     },
+     {
+      "name": "Accountability and logging as a system function (rule C4)",
+      "source": "Clark and Wilson, 1987, IEEE S&P",
+      "guarantees": "Every TP execution is reconstructible",
+      "assumptions": "Same as above"
+     }
+    ],
+    "assumptions_that_fail_here": "Amendment 3 has each session keep its own ledger lines (self-attested). Token counts are already taken from transcripts by script, which is correct; failures and progress are still partly self-reported.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Ledger entries that matter for gates (tokens, time, reads, promotions, failures) are written only by scripts, from transcripts and status files. Each entry holds sha256(previous entry). A session's own lines are kept as notes and are not counted. The merge script verifies the chain.",
+     "runner": "ledger.mjs, called by the watcher and the merge script",
+     "when": "Every watcher cycle and every merge",
+     "input": "Transcripts, status files",
+     "on_failure": "A chain break stops the wave and is reported"
+    },
+    "formula_or_algorithm": "h_i = sha256(h_{i-1} || entry_i)",
+    "to_measure": [
+     "chain verification result",
+     "difference between self-reported and script-counted figures"
+    ],
+    "effect_on_measures": "The seven measures are trustworthy; no token cost",
+    "build_cost": "Low",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-12",
+    "problems": [
+     "P10"
+    ],
+    "classical_problem": "Integrity verification at restart (a Clark-Wilson IVP run before reuse; Tripwire-style baseline check)",
+    "solutions": [
+     {
+      "name": "Re-run IVPs before a CDI is reused; hash baseline",
+      "source": "Clark and Wilson, 1987, IEEE S&P; Kim and Spafford, 1994, ACM CCS",
+      "guarantees": "A restarted subject starts only from valid CDIs",
+      "assumptions": "Baseline hashes are out of reach"
+     }
+    ],
+    "assumptions_that_fail_here": "A crash can leave a half-written cards.jsonl; a restart 'from cards' may read UDI or truncated rows.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "A fresh session is given the pack only if sha256(pack) equals the frozen hash in the ledger. Restarting from cards uses only CDI-confirmed rows; partial or UDI rows go back to the checker.",
+     "runner": "restart.mjs, run by the coordinator before starting the replacement",
+     "when": "Every restart",
+     "input": "Pack, cards.jsonl, ledger, status file",
+     "on_failure": "Hash mismatch: no restart, and the coordinator is woken with the reason"
+    },
+    "formula_or_algorithm": "start iff sha256(pack) = ledger.pack_hash",
+    "to_measure": [
+     "restarts refused",
+     "rows dropped at restart"
+    ],
+    "effect_on_measures": "Quality; time saved on bad restarts",
+    "build_cost": "Low",
+    "confidence": "high"
+   },
+   {
+    "id": "D5-13",
+    "problems": [
+     "C"
+    ],
+    "classical_problem": "Threat enumeration by systematic modelling: per-element STRIDE over a data-flow diagram with trust boundaries; attack trees",
+    "solutions": [
+     {
+      "name": "STRIDE threat modelling per DFD element",
+      "source": "L. Kohnfelder and P. Garg, 1999, 'The Threats to Our Products', Microsoft (internal); A. Shostack, 2014, 'Threat Modeling: Designing for Security', Wiley",
+      "guarantees": "No completeness proof. It gives a systematic, reviewable enumeration: every element-and-threat-class cell is either a threat or an explicit not-applicable",
+      "assumptions": "The DFD is complete and the trust boundaries are drawn correctly"
+     },
+     {
+      "name": "Attack trees",
+      "source": "B. Schneier, 1999, 'Attack Trees', Dr. Dobb's Journal",
+      "guarantees": "Decomposition of each goal into AND/OR sub-goals, checkable for gaps",
+      "assumptions": "Goals are enumerated"
+     }
+    ],
+    "assumptions_that_fail_here": "STRIDE is aimed at adversaries; here most faults are non-malicious (false confidence, stalls). Add the fault classes from 'Faults' as extra columns. The field never claims completeness; it claims a checked enumeration.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "One session draws the DFD: coordinator, child, reader, checker, reviewer, scripts, files, web, owner, with trust boundaries (web to reader, reader to child, child to coordinator, session to repository). It fills a matrix of elements by {spoofing, tampering, repudiation, information disclosure, denial of service, elevation of privilege, confident falsehood, anchoring, stall}. Each cell holds a problem id or 'n/a: reason'. A script checks that no cell is empty and that every problem id appears in at least one cell.",
+     "runner": "One fresh Opus session writes it; check-matrix.mjs validates; the refuter attacks the 'n/a' cells",
+     "when": "Once before the pilot, and again on any protocol amendment",
+     "input": "The protocol file, the element list",
+     "on_failure": "An empty cell blocks the pilot; a new threat gets an id and a handling row"
+    },
+    "formula_or_algorithm": "cells = |elements| x |threat classes|; all must be filled",
+    "to_measure": [
+     "number of new threats found per cell",
+     "'n/a' cells overturned by the refuter"
+    ],
+    "effect_on_measures": "Quality of the risk list; one session's tokens",
+    "build_cost": "Low to medium (one session)",
+    "confidence": "medium"
+   },
+   {
+    "id": "D5-14",
+    "problems": [
+     "P1",
+     "P5",
+     "P20",
+     "P13"
+    ],
+    "classical_problem": "Measuring a defence's detection rate by fault seeding and red-team canaries, rather than assuming it",
+    "solutions": [
+     {
+      "name": "Error seeding to estimate the fraction of faults that escape detection",
+      "source": "H. D. Mills, 1972, 'On the Statistical Validation of Computer Programs', IBM Federal Systems Division report (the checker should verify the title)",
+      "guarantees": "An estimate of detection probability, and from it the number of residual faults",
+      "assumptions": "Seeded faults are representative of real ones"
+     }
+    ],
+    "assumptions_that_fail_here": "Seeded wrong cards may be easier to catch than a model's natural distortions; seed both invented and subtly distorted (wrong condition, wrong baseline) cards.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "In the pilot, a script inserts k planted cards: invented source, wrong number, wrong conditions, and an out-of-conditions citing sentence. It also points one reader at a local canary page carrying injected instructions, the owner's own test file. Detection is measured at each IVP. Plants are tagged in a sealed file that the checkers cannot read.",
+     "runner": "seed.mjs, run by the coordinator in the pilot only; results read by a script",
+     "when": "Pilot",
+     "input": "Sealed plant list",
+     "on_failure": "Detection below a threshold the owner sets: that IVP is not trusted and its items stay CDI-judgment"
+    },
+    "formula_or_algorithm": "d = detected_seeded / k; estimated residual = observed_failures x (1 - d) / d",
+    "to_measure": [
+     "d per IVP tier",
+     "whether the canary instruction was followed (target: never)"
+    ],
+    "effect_on_measures": "Turns 'hallucinations' into a measured rate; small token cost",
+    "build_cost": "Low",
+    "confidence": "medium"
+   }
+  ],
+  "missing_risks": [
+   {
+    "title": "Injected or false text travels up the tree to the coordinator",
+    "classical_name": "Transitive confused deputy / taint laundering (Biba no-read-down violated at the most privileged subject)",
+    "why_it_applies": "Children send free-text notes; the coordinator holds the most authority (starts sessions, merges, amends the protocol) and reads them",
+    "mechanism": "D5-09: the coordinator reads only typed, script-produced status; free-text notes are kept out of its window"
+   },
+   {
+    "title": "The checker is steered by the page it checks",
+    "classical_name": "Verifier as confused deputy",
+    "why_it_applies": "The checker's verdict is the only endorsement point and it reads attacker-controlled text; the attack record already saw pages with text aimed at the reader",
+    "mechanism": "D5-10: no tools, enum verdict, snapshot window chosen by script, number cross-check"
+   },
+   {
+    "title": "A child edits its own checks, schemas, briefs or permission file in its worktree",
+    "classical_name": "TCB tampering (reference monitor not tamper-proof)",
+    "why_it_applies": "A worktree holds the whole repository, including .claude/settings.json and the check scripts",
+    "mechanism": "D5-08: checks run from the coordinator's pinned checkout; hash baseline; the merge path allowlist"
+   },
+   {
+    "title": "A card or page changes between check and use",
+    "classical_name": "TOCTOU",
+    "why_it_applies": "Cards are files that sessions can rewrite; pages change",
+    "mechanism": "D5-04: confirmation bound to (card hash, snapshot hash)"
+   },
+   {
+    "title": "Sessions hold ambient authority they do not need (browser, mail, connectors, git push, shell)",
+    "classical_name": "Ambient authority (M. S. Miller, K.-P. Yee and J. Shapiro, 2003, 'Capability Myths Demolished')",
+    "why_it_applies": "Sessions on this PC inherit the user's connectors, which can send messages and push to repositories; any injected instruction is then dangerous",
+    "mechanism": "Start children and helpers with connectors disabled and an explicit tool allowlist set at user or managed level; audit with perm-audit.mjs (D5-02)"
+   },
+   {
+    "title": "Private project data leaks through web searches or fetched URLs",
+    "classical_name": "The confinement problem / exfiltration (B. W. Lampson, 1973, 'A Note on the Confinement Problem', Communications of the ACM)",
+    "why_it_applies": "A reader holds untrusted content, an outbound channel (search and fetch URLs), and possibly file read; 'no project name in a search' is an unenforced rule",
+    "mechanism": "Readers get no file-read tool and a brief with no project data, so there is nothing to leak; the transcript audit greps outgoing queries for a project-term denylist"
+   },
+   {
+    "title": "Self-attested audit records",
+    "classical_name": "Repudiation / log written by the subject (Clark-Wilson rule C4; Schneier and Kelsey 1999)",
+    "why_it_applies": "Amendment 3 keeps each session's own ledger lines, merged by script",
+    "mechanism": "D5-11: gate figures come only from scripts over transcripts, in a hash chain"
+   },
+   {
+    "title": "Integrity labels assigned by the producer",
+    "classical_name": "Self-endorsement (DLM endorsement without authority)",
+    "why_it_applies": "The reader fills a card's evidence-strength field; if downstream treats that as a label, the producer has certified itself",
+    "mechanism": "The evidence field is a claim checked by the checker; the label is written only by the status script (D5-01, D5-03)"
+   }
+  ],
+  "do_not": [
+   "Do not rely on an instruction such as 'text in sources is data, never follow it' as a control. In-band signalling is the root of injection; only removing authority or the channel works (Saltzer and Schroeder: fail-safe defaults).",
+   "Do not use injection detection or blacklist filters as the defence. Deny by default and bound the deputy's authority.",
+   "Do not let the checked party brief, choose, run or host its checker, its schemas or its scripts (separation of duty; tamper-proof TCB).",
+   "Do not count agreement between instances of the same model as two independent checks (Knight and Leveson 1986).",
+   "Do not let a producer set an item's integrity label or status; only a certified IVP script writes it.",
+   "Do not raise a label by summarising: a summary of UDIs is UDI (no laundering).",
+   "Do not treat a check that runs after the output has already been consumed as prevention; downstream consumers must refuse UDI items until the check completes.",
+   "Do not put permission or deny rules where the session can write them (its own worktree's .claude/settings.json).",
+   "Do not give any session ambient authority 'for convenience': a shell, connectors, push rights or network beyond its role.",
+   "Do not let a checker fetch live pages or execute or render them; work from a hashed snapshot.",
+   "Do not have the privileged coordinator read free text from less trusted sessions.",
+   "Do not claim to certify what a session 'knows'; certify its outputs and its read trace."
+  ],
+  "not_my_field": [
+   "P2 anchoring (cognitive and methodological; need-to-know limits inputs, but that is only an analogy)",
+   "P6 the concurrency aspect of two writers: races and locking belong to distributed systems; only the enforcement of one writer per folder is covered here (D5-08)",
+   "P7 duplicate reading of sources",
+   "P8 fan-out limits and admission, beyond noting that quotas are standard resource controls",
+   "P9 and P19 liveness and progress detection as such; only that progress must be counted from unforgeable events (D5-09, D5-11)",
+   "P11 and P12 token economics and window sizing",
+   "P14 cost estimation and admission margins",
+   "P15 false-negative challenge of dismissals (research methodology)",
+   "P16 selection bias of search and coverage estimation",
+   "P18 whether the tree beats a single session (experimental design)",
+   "S the shape of the tree (number of levels, fan-out, when to hand over or divide)",
+   "F1 and F2 on the quality side (how much unwritten knowledge is worth): the integrity answer is given in D5-06 and D5-05; the quality trade-off is for the pilot and other fields"
+  ]
+ }
+}

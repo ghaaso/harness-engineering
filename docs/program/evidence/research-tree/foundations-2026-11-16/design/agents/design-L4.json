@@ -1,0 +1,388 @@
+{
+ "label": "design:L4",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "spec_markdown": "# Layer 4: Evidence method (version 2)\n\n**Borrowed whole:** a systematic review in its rapid form with GRADE certainty, the cross-field synthesis as an overview of reviews (D6 whole design: PRISMA-P, PRISMA-S, PRISMA 2020, GRADE, Garritty et al. 2021 interim rapid-review guidance). Mapping: approved question list = registered protocol; readers = searchers and screeners; cards = extraction forms; checker = second extractor; pack = evidence tables; review of our work = evidence-to-decision step; synthesis = overview of reviews. Our own work is never graded as a source.\n\nEach rule gives its runner, its basis and what happens on failure. Labels: [pilot] or [later].\n\n## Rules\n\n**E1. Protocol frozen before the search [pilot].** Basis: D6-07, D6 whole, D6 missing risk \"forking paths\". Each field gets a `protocol.json`. It holds the approved question ids, the inclusion and exclusion criteria with fixed reason codes, the routes, the card schema version, the certainty method (E6), the smallest effect of interest per measure (E8), the stopping parameters (E5), and the out-list vocabulary (approach ids, measure ids, directions). The coordinator writes it and the owner approves it. Then `protocol-freeze.js` writes the sha256 to the ledger and commits the file outside the child's write reach. Runner: the Execution layer's admission check refuses to start any reader for a field whose protocol hash is not in the ledger. A change goes through `protocol-freeze.js --amend` with a reason. Each output records the hash it was made under, and the flow table lists every deviation. PRISMA-P is a reporting checklist, not a registry. Here the hash in the ledger plus the commit does the registry's job.\n\n**E2. Search documented from transcripts, not from self-report [pilot].** Basis: D6-07 (PRISMA-S). Readers hold no write tools (amendment 3 row 5). `search-log.js` reads each reader's transcript and extracts every search query, the tool used, the time, the number of results and every fetched URL. Screening comes from the reader's schema-imposed result: canonical id, included or excluded, reason code. The script reconciles the two. It rejects a card whose source was never screened, or a screened item whose URL never appears in the transcript. It writes `flow.json`: identified, deduplicated, screened, excluded by reason, carded, witnessed, confirmed, cited. *Fails here:* web search through a summariser cannot be repeated exactly. It is logged anyway and marked \"not repeatable\".\n\n**E3. Exclusions re-screened on a sample [pilot].** Basis: D6-07; Clopper-Pearson (D6-03). `rescreen-sample.js` draws a seeded random 20 % of exclusions (proposed). A screener helper with a different fixed brief judges them again. If the exact upper 95 % bound on the wrongly-excluded share exceeds 10 % (proposed), screening is redone for that field before the pack freezes.\n\n**E4. Coverage by capture-recapture, read as an upper bound [pilot].** Basis: D6-04, D8-10, D8 missing risk \"same original counted twice\". Every card records its route (keyword, backward citation, forward citation, contrary, seed) and two ids: a canonical id (DOI, arXiv id, else a normalised title) and the id of the primary source it rests on. Captures count primary ids. A source is relevant to question q only if it yields a card tagged q whose quote witness passed (Integrity layer). Before the readers start, `coverage.js split` divides the seed list at random. Half goes into the briefs. Half is held out, outside the worktree. After Stage A, `coverage.js score` reports per question:\n- Chapman: N̂ = (n1+1)(n2+1)/(m+1) − 1, where n1 is found by the keyword routes, n2 by the citation-chasing reader (briefed from the seed half only, by a fixed template) and m by both. Coverage = observed / N̂.\n- Relative recall on the held-out half: r = |found ∩ heldout| / |heldout|.\n- Reported coverage = min of the two, labelled \"upper bound\".\n\n*What must be independent:* given relevance, being caught by one route group must not change the chance of being caught by the other. The population must be closed during the wave, and items within a stratum must be equally catchable. *Fails here:* same model, same engine, and popular papers are easier to find. That positive dependence makes N̂ too low, so coverage is overstated. Hence \"upper bound\", different mechanisms per route, and strata by source kind. Chapman is near-unbiased only when n1+n2 is at least about N (source correction). On failure: if coverage is below 0.6 (proposed) or not estimable (no overlap), the question is marked \"coverage low or unknown\" and E6 downgrades it. Overlap between fields (P7) is counted by the same script as recapture data.\n\n**E5. Stop on saturation [later; data in pilot].** Basis: D6-12. Stop question q when the last k reader calls brought no new relevant primary and coverage ≥ 0.8, or when q's budget is spent. A question stopped by budget is marked \"not saturated\". In the pilot `coverage.js` only records the yield curve per call, and the stop is budget plus the child's choice, recorded. Later `stop-check.js` runs as a hook before each helper start and refuses the start. Hooks are believed, not yet verified. The knee rule carries no probabilistic guarantee (source correction).\n\n**E6. Certainty per conclusion: the script sets a ceiling, the model may only lower it [pilot].** Basis: D6-08 (GRADE), D4-10, D5-03, D7-02. `certainty.js` computes for each conclusion and verdict:\n- the start level, from the cited cards' **distinct primaries**: high only for replicated or independent controlled comparisons; low for a single study or a vendor's own report;\n- the mechanical downgrades: inconsistency (cited cards with opposite directions on the same approach and measure); indirectness (a mismatch between the sentence's `applies_to` and the card's typed conditions, or a dropped condition); imprecision (one primary, no stated uncertainty, or E4 coverage low or unknown); sponsorship (more than half the primaries are vendors' own).\n\nThat gives a ceiling. The child adds the judgment domains: risk of bias, adapted from trials and stated as an adaptation, and free-text indirectness. Each downgrade needs a one-line reason. Final = min(model, ceiling). The script rejects a rating above the ceiling or a downgrade with no reason, and the review goes back. The post-review checker verifies the judgment downgrades, and each overturn is counted. A conclusion resting only on vendor or single-study primaries is labelled \"judgment\". Only the per-field summary-of-findings table (`sof.json`) enters the synthesis. GRADE's upgrade domains are not used.\n\n**E7. Agreement never raises a claim [pilot].** Basis: D6-01, D4-02, D7-09, D8-03, D1-04 (Knight and Leveson; Ladha). The synthesis script ignores agreement counts. A disagreement between two opinions on a key (approach × measure) marks it weak and sends it to the one source-tied adjudication. `second-opinion.js` reports the disagreement rate. It also reports ρ, the mean phi of error indicators over claims checked in both opinions, and n_eff = n/(1+(n−1)ρ). With fewer than 20 shared checked claims it writes \"not estimable\". If n_eff < 1.3 (proposed), the admission rule refuses further same-model second-opinion slots until the owner reopens them.\n\n**E8. A dismissal is an open hazard with an evidential bar [pilot].** Basis: D6-06 (Altman and Bland; Lakens), D4-12 (MIL-STD-882E), D7-03 (JTMS out-list). A dismissal is a verdict of \"wrong form\", \"wrong problem\", \"not worth testing\" or a dropped field. Each one is an entry in `dismissals.jsonl` with its supports (card ids) and an out-list of keys (approach_id, measure, direction). `dismissals.js` runs after each post-review check and on every card status change in any field. It enforces:\n- a dismissal stands only if a confirmed card bounds the effect below the owner's smallest effect of interest, under conditions that cover ours; otherwise the script rewrites it to \"untested\" and keeps the wording as judgment;\n- a confirmed card matching an out-list key, or a support card going stale, reopens the entry;\n- the refuter attacks every standing entry, with 2 or 3 seeded false dismissals mixed in. If it misses a seed, its \"upheld\" verdicts are labelled unqualified.\n\nAn entry closes only with a bound, a refuter pass and a seed pass. The owner's table never shows a reopened entry as dismissed. Exit code 10 (reopened) reaches the coordinator through the watcher.\n\n**E9. A promoted lead is judged on a new test [pilot, a rule in the evidence-to-decision brief and the test-design template].** Basis: D6 missing risk \"winner's curse\". The expected effect is stated conservatively. The evidence that selected a lead never counts as its confirmation.\n\n**E10. Pilot analysis plan frozen [pilot].** Basis: D6-05, D6 missing risks \"optional stopping\" and \"forking paths\". `analysis-plan.json` fixes the units, the primary and secondary outcomes, Δ, the decision rules, one single look, the arm budgets and the label \"descriptive, n = 1 per arm\". The owner approves it and it is hashed like E1 before the first arm starts. If it was not frozen, `compare.js` labels every result \"exploratory\".\n\n**E11. P18: the tree against one session [pilot].** Basis: D6-05, D3-12.\n- Arms: the tree (child T, pack A, fresh review R1) and a single session S1 with the same token cap, schemas, checks and question ids. S2 is a repeat of S1, if the owner allows, to estimate run-to-run spread.\n- Unit: the arm run. Question ids are clustered sub-units.\n- Primary score Y_q: 1 if question q is answered in the claims table by a confirmed card used within its conditions.\n- Secondary scores: citation failure rate, tokens and wall time from transcripts, a blinded rubric score, and confirmed answers gained per extra million tokens. The Shape layer's token predictions are stated beforehand and tested.\n- `compare.js anon` strips ids, normalises format and randomises order. A blinded scorer (a different model if F3 allows) also guesses the arm. If it guesses right above 80 %, blinding is recorded as failed.\n- McNemar on discordant questions, labelled conditional on the run.\n- *One reading can show:* a difference larger than |S1 − S2|, a gross failure of one arm, real costs, and estimates of σ for later. *It cannot show:* equality (that needs replicates and a CI inside ±Δ), a difference smaller than the spread, or that the result holds for other fields (the pilot field was chosen, not drawn). A small difference is reported as \"no difference shown\".\n\n**E12. F1: two ways to review, paired [pilot].** Basis: D6-05, D4-08, D8-07, D1-12, D7-04, D5-06.\n- Arms: R_same, written in T's window, and R1, a fresh session from pack A. Both read the same pack hash and the same copy of our files, into which the Assurance layer planted k wrong assumptions. R2, a second fresh review, gives the review step's run-to-run spread.\n- Unit: the review. Cells (approach × measure) and plants are paired sub-units.\n- Primary score: plants found with the correct reason, out of k.\n- Secondary scores: end-to-end citation failures; use outside conditions; share of judgment labels; tokens; u = factual sentences in R_same that cite no card in pack A, as a share of its factual sentences, with a checker sample of those sentences against sources (D8-07).\n- Findings that match plant ids are stripped before synthesis. The fresh path runs regardless (D1-12).\n- The plan names a default for \"no difference shown\". The coordinator proposes fresh, because it is certifiable and hermetic (D7-04, D5-06).\n- *One reading can show:* whether R_same's extra sentences carry correct knowledge that the pack lost, and a gap in plants found larger than |R1 − R2|. *It cannot show* equivalence or a small difference.\n\n**E13. F2 measured, not argued [pilot where the budget allows].** Basis: D6-10 (generalizability theory), D4-02, D8-03. Reviewer facet: R1 against R2 on pack A. Pack facet: packs from independent research runs (S1 against S2; a second tree pack B only if the owner pays a field run). `second-opinion.js` estimates σ²_pack and σ²_reviewer:pack per token. On seeded faults it computes each candidate opinion's miss rates and the beta factor p_AB / min(p_A, p_B). A 2 × 2 design gives wide intervals, so the result is indicative.\n\n## F2 for the owner: what the classical results say\n\nThe jury theorem needs independent judges. Under correlation a majority helps only while the average correlation stays bounded relative to competence (Ladha). Independently built versions failed together far more often than independence predicts, much of it from a shared misreading of the specification (Knight and Leveson). Shared difficulty alone raises coincident failure (Eckhardt and Lee). An ensemble gains only through diversity (Krogh and Vedelsby), and measured diversity did not reliably predict accuracy (Kuncheva and Whitaker). The standard response has four parts:\n1. compare to detect, never to vote;\n2. send each disagreement to the acceptance test;\n3. force diversity along the axis of the error (model, method or inputs);\n4. measure the coupling.\n\nThe options:\n- **A second research run** (amendment 1): diverse in inputs, catches faults in the pack, costs a whole field, and its disagreements cannot be located.\n- **A second reviewer of the same frozen pack** (amendment 3; favoured by D7-09 and D8-03): cheap, and its disagreements can be located, but it is blind to faults in the pack.\n- **A contrary-evidence reader**: input diversity at the cost of a reader.\n- **A different model** (F3), for any of these.\n\nThe deciding fact is where the residual faults sit (D4-02). That is what E13 replicates: the research run that made the pack, against the reviewer of a pack.\n\n## File formats (JSONL or JSON; every file carries `schema_version`)\n\n- `protocol.json`: {field, question_ids[], criteria{include[], exclude[{code, text}]}, routes[], card_schema, certainty_method, sesoi{measure: value}, stop{k, coverage_target}, outlist_vocab{approaches[], measures[], directions[]}}\n- `search-log.jsonl`: {reader, transcript, t, tool, query, n_results, urls[]}\n- `screening.jsonl`: {reader, canonical_id, primary_id, url, decision, reason_code, q[]}\n- `flow.json`: counts per stage and reason; deviations[]\n- Card fields added: route, canonical_id, primary_id, q[], conditions{typed}, evidence_type, effect{value, uncertainty, direction, measure, approach_id}\n- `coverage.json`: per q {n1, n2, m, N_hat, var, rel_recall, coverage_ub, status}\n- `sof.json`: per conclusion {key, primaries[], start, downgrades[{domain, by: script|model, reason}], ceiling, final, label}\n- `dismissals.jsonl` (append-only events): {id, verdict, supports[], outlist[], bound_card, status: untested|standing|closed|reopened, by_card}\n- `analysis-plan.json`, `blind-key.json` (outside the scorer's reach), `scores.json` (scorer, schema-imposed), `comparison.json`, `second-opinion.json`",
+  "scripts": [
+   {
+    "name": "protocol-freeze.js",
+    "purpose": "Validate a field's protocol (or the pilot analysis plan) against its schema, check that the owner's approval record is present, write the frozen copy and its sha256 to the ledger; with --amend, record a deviation with its reason and the new hash (E1, E10)",
+    "inputs": "protocol.json or analysis-plan.json; approval record; ledger path; optional --amend <reason>",
+    "outputs": "<file>.frozen.json; ledger line {file, sha256, time, amend_of?}",
+    "exit_codes": "0 frozen; 2 schema invalid; 3 no owner approval; 4 already frozen with a different hash and no --amend",
+    "stage": "pilot"
+   },
+   {
+    "name": "search-log.js",
+    "purpose": "Build the documented search from reader transcripts (queries, tool, time, number of results, fetched URLs), reconcile it with the readers' schema-imposed screening results and with the cards, and write the flow table (E2)",
+    "inputs": "reader transcript JSONL paths; the readers' screening results; cards.jsonl; protocol.frozen.json",
+    "outputs": "search-log.jsonl; screening.jsonl; flow.json; reject list of cards with no screening record or no transcript trace",
+    "exit_codes": "0 reconciled; 1 one or more cards rejected (listed); 2 a transcript is unreadable or of an unknown format",
+    "stage": "pilot"
+   },
+   {
+    "name": "rescreen-sample.js",
+    "purpose": "Draw a seeded random sample of exclusions for re-screening; after the re-screen, compute the wrongly-excluded share and its Clopper-Pearson upper bound (E3)",
+    "inputs": "screening.jsonl; seed; sample share (protocol); re-screen verdicts",
+    "outputs": "rescreen-sample.json (draw, logged seed); rescreen.json {x, n, upper95, decision}",
+    "exit_codes": "0 pass; 1 upper bound over the threshold: redo screening before the pack freezes; 2 schema",
+    "stage": "pilot"
+   },
+   {
+    "name": "coverage.js",
+    "purpose": "split: divide the seed list at random into a brief half and a held-out half. score: per question, Chapman capture-recapture over route groups counted on primary ids, relative recall on the held-out half, coverage reported as min and labelled an upper bound; the yield curve per reader call; cross-field overlap counts (E4, E5 data, P7). A risk mode serves the Completeness layer's estimate of unfound risks",
+    "inputs": "split: seeds.json, random seed. score: cards.jsonl (route, canonical_id, primary_id, q, witness status) from all fields; seeds-heldout.json",
+    "outputs": "seeds-brief.json, seeds-heldout.json (outside the worktree); coverage.json; yield.json; overlap.json",
+    "exit_codes": "0 written; 3 a question not estimable (still written, marked); 2 schema",
+    "stage": "pilot"
+   },
+   {
+    "name": "stop-check.js",
+    "purpose": "Saturation stop per question: refuse a new reader for a question with no new relevant primary in the last k calls and coverage at or above the target, or with its budget spent (E5)",
+    "inputs": "question id from the helper brief; yield.json; coverage.json; budget per question",
+    "outputs": "decision line in the ledger (go, stop-saturated, stop-budget); refusal message to the hook",
+    "exit_codes": "0 go; 1 stop (the hook refuses the helper start); 2 input missing (go, logged as unchecked)",
+    "stage": "later"
+   },
+   {
+    "name": "certainty.js",
+    "purpose": "Per conclusion and verdict: start level from distinct primaries, mechanical downgrades (inconsistency, typed-condition indirectness, imprecision including E4 coverage, sponsorship), the ceiling; validate the model's judgment downgrades and reasons; write the summary-of-findings table (E6)",
+    "inputs": "review.json and pack conclusions (claims table); cards.jsonl; coverage.json",
+    "outputs": "sof.json; rejection list",
+    "exit_codes": "0 accepted; 1 a rating above the ceiling or a downgrade without a reason: review returned; 2 schema",
+    "stage": "pilot"
+   },
+   {
+    "name": "dismissals.js",
+    "purpose": "Build and maintain the dismissal hazard log: apply the bound below the smallest effect of interest (else rewrite to untested), match out-list keys against newly confirmed cards in every field, reopen on a matching card or a stale support, record the refuter's verdicts and its seed detection (E8)",
+    "inputs": "review.json files; cards.jsonl with status changes; protocol sesoi; refuter results; seeded-dismissal ids (outside reach)",
+    "outputs": "dismissals.jsonl (append-only events); reopened.json",
+    "exit_codes": "0 no change; 10 entries reopened (status for the watcher); 2 schema",
+    "stage": "pilot"
+   },
+   {
+    "name": "compare.js",
+    "purpose": "anon: strip ids, normalise format, randomise order of the arms' outputs for the blinded scorer, key kept apart. score: compute the pre-registered outcomes of P18 and F1 (Y per question, McNemar conditional on the run, plants found, citation failures, use outside conditions, u, judgment share, tokens from transcripts, the scorer's arm-guess rate, the run-to-run spreads) with the labels the plan fixes (E10 to E12)",
+    "inputs": "analysis-plan.frozen.json and its ledger hash; each arm's claims tables, cards, CHECK results, transcripts; plant ledger; scores.json",
+    "outputs": "blind/ folder and blind-key.json; comparison.json",
+    "exit_codes": "0 written; 4 the analysis plan hash is missing or does not match: written but labelled exploratory; 2 schema",
+    "stage": "pilot"
+   },
+   {
+    "name": "second-opinion.js",
+    "purpose": "Disagreement rate, error correlation and n_eff between two opinions; beta factor and added detection from seeded miss indicators; variance components for the pack and reviewer facets (E7, E13)",
+    "inputs": "two or more claims tables keyed by approach and measure with their pack hashes; CHECK verdicts; seeded-fault miss indicators per opinion; tokens per run",
+    "outputs": "second-opinion.json {d, rho, n_eff, beta, added_detection, var_pack, var_reviewer, per_token}",
+    "exit_codes": "0 written; 3 not estimable (fewer than 20 shared checked claims or too few levels), written as such; 2 schema",
+    "stage": "pilot"
+   }
+  ],
+  "files": [
+   {
+    "path_pattern": "fields/<field>/protocol.json and protocol.frozen.json",
+    "writer": "the coordinator (draft); protocol-freeze.js (frozen copy); outside the child's write reach",
+    "format": "JSON, schema_version; sha256 in the ledger"
+   },
+   {
+    "path_pattern": "fields/<field>/protocol-amendments.jsonl",
+    "writer": "protocol-freeze.js --amend",
+    "format": "JSONL {time, reason, old_hash, new_hash}"
+   },
+   {
+    "path_pattern": "fields/<field>/seeds-brief.json; control/<field>/seeds-heldout.json",
+    "writer": "coverage.js split",
+    "format": "JSON lists of canonical ids; the held-out half sits outside the child's worktree"
+   },
+   {
+    "path_pattern": "fields/<field>/search-log.jsonl, screening.jsonl, flow.json",
+    "writer": "search-log.js (from transcripts and readers' schema-imposed results)",
+    "format": "JSONL and JSON as in the spec"
+   },
+   {
+    "path_pattern": "fields/<field>/rescreen-sample.json, rescreen.json",
+    "writer": "rescreen-sample.js; re-screen verdicts from the screener helper's schema-imposed result",
+    "format": "JSON"
+   },
+   {
+    "path_pattern": "fields/<field>/cards.jsonl (fields added by this layer)",
+    "writer": "the child (via the Storage layer's append); fields route, canonical_id, primary_id, q[], conditions{typed}, evidence_type, effect{}",
+    "format": "JSONL, schema_version"
+   },
+   {
+    "path_pattern": "wave-<n>/coverage.json, yield.json, overlap.json",
+    "writer": "coverage.js",
+    "format": "JSON per question id"
+   },
+   {
+    "path_pattern": "fields/<field>/sof.json",
+    "writer": "certainty.js",
+    "format": "JSON summary-of-findings table; the synthesis's only input from a field"
+   },
+   {
+    "path_pattern": "dismissals.jsonl, reopened.json (programme-wide)",
+    "writer": "dismissals.js",
+    "format": "append-only JSONL events"
+   },
+   {
+    "path_pattern": "pilot/analysis-plan.json and .frozen.json",
+    "writer": "the coordinator; owner approves; protocol-freeze.js freezes",
+    "format": "JSON {units, primary, secondary, delta, decision_rules, looks: 1, arm_budget, labels}"
+   },
+   {
+    "path_pattern": "pilot/blind/*, control/pilot/blind-key.json",
+    "writer": "compare.js anon",
+    "format": "anonymised JSON; key outside the scorer's reach"
+   },
+   {
+    "path_pattern": "pilot/scores.json",
+    "writer": "the blinded scorer helper (schema-imposed result, written by the coordinator or a script)",
+    "format": "JSON per item {score, rubric fields, arm_guess}"
+   },
+   {
+    "path_pattern": "pilot/comparison.json, pilot/second-opinion.json",
+    "writer": "compare.js; second-opinion.js",
+    "format": "JSON with every count's replicated unit named"
+   }
+  ],
+  "parameters": [
+   {
+    "name": "Route-group overlap against chance (dependence between captures)",
+    "how_measured": "coverage.js: m against n1*n2/N_hat, and relative recall per route on the held-out seeds",
+    "value_until_measured": "assume positive dependence; coverage read as an upper bound"
+   },
+   {
+    "name": "k and the coverage target for the saturation stop",
+    "how_measured": "yield.json: new relevant primaries per reader call per question in the pilot; where the curve flattens",
+    "value_until_measured": "k = 3 and coverage 0.8 as proposed by D6-12; not enforced in the pilot"
+   },
+   {
+    "name": "Coverage floor for the 'low or unknown' downgrade",
+    "how_measured": "distribution of coverage_ub across the pilot's questions against the checker's view of what was missed",
+    "value_until_measured": "0.6 (D6-04 proposal)"
+   },
+   {
+    "name": "Wrongly-excluded share in screening",
+    "how_measured": "rescreen.json: x of n with the Clopper-Pearson upper bound",
+    "value_until_measured": "unknown; redo threshold 10 % on the upper bound (D6-07 proposal)"
+   },
+   {
+    "name": "Share of card conditions that fit the typed fields",
+    "how_measured": "certainty.js: share of conditions in typed fields against free text; checker agreement with the script's indirectness flags",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Rate at which the checker overturns model certainty ratings",
+    "how_measured": "post-review check results joined to sof.json",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "u, the share of the same-window review's factual sentences that cite nothing in the frozen pack, and the correctness of a sample of them",
+    "how_measured": "compare.js over R_same's claims table; checker sample against sources",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Plants found per review form (F1 primary)",
+    "how_measured": "compare.js against the plant ledger",
+    "value_until_measured": "unknown; k set by the owner"
+   },
+   {
+    "name": "Run-to-run spread of the review step and of a whole research run",
+    "how_measured": "R1 against R2 (review); S1 against S2 (whole run), on the pre-registered outcomes",
+    "value_until_measured": "unknown; without it every arm difference is 'no difference shown'"
+   },
+   {
+    "name": "Error correlation rho, n_eff, beta factor and added detection per second-opinion form",
+    "how_measured": "second-opinion.js on shared checked claims and on seeded faults",
+    "value_until_measured": "assume rho high; n_eff threshold 1.3 and beta threshold 0.7 proposed by D6-01 and D4-02"
+   },
+   {
+    "name": "Variance components: pack facet against reviewer facet, per token",
+    "how_measured": "second-opinion.js over R1, R2, S1, S2 (and pack B if paid)",
+    "value_until_measured": "not estimable; F2 decided on argument and labelled so"
+   },
+   {
+    "name": "Scorer's arm-guess rate",
+    "how_measured": "compare.js from scores.json against blind-key.json",
+    "value_until_measured": "blinding assumed to fail; flagged above 80 %"
+   },
+   {
+    "name": "Tokens per reader call, re-screen, review, scorer pass and second opinion",
+    "how_measured": "transcripts, by script",
+    "value_until_measured": "unknown"
+   },
+   {
+    "name": "Dismissals per field, share with a bounding card, reopened per wave, refuter seed detection",
+    "how_measured": "dismissals.js",
+    "value_until_measured": "unknown"
+   }
+  ],
+  "pilot_minimum": [
+   "protocol.json schema and protocol-freeze.js; the field's protocol approved by the owner and hashed in the ledger before the first reader starts, with the admission check refusing readers otherwise",
+   "The analysis plan for P18 and F1 (analysis-plan.json) approved and frozen before the first arm starts",
+   "Card fields route, canonical_id, primary_id, q[], typed conditions, evidence_type and effect (agreed with the Storage layer)",
+   "search-log.js producing the transcript-derived search log, screening reconciliation and flow table",
+   "coverage.js split before Stage A and score after it (Chapman plus held-out recall, upper-bound label, yield curve recorded); no enforced stop",
+   "rescreen-sample.js and one re-screen helper with a fixed brief",
+   "certainty.js and sof.json as the only input to the synthesis",
+   "dismissals.js with the bound rule, out-list reopening and 2 to 3 seeded false dismissals for the refuter",
+   "compare.js (anon and score) with a blinded scorer, and second-opinion.js",
+   "The pilot runs: tree child T with pack A, R_same, fresh reviews R1 and R2, single session S1 (S2 if the owner allows)"
+  ],
+  "left_out": [
+   {
+    "what": "Meta-analysis, funnel plots, Egger's test, trim-and-fill",
+    "why": "No common effect scale and far fewer than about ten studies per effect; the synthesis stays narrative with GRADE ratings (D6 whole)"
+   },
+   {
+    "what": "GRADE's upgrade domains (large effect, dose-response)",
+    "why": "Built for observational clinical evidence; here they would be a self-assigned route to a higher label, which the ceiling rule forbids"
+   },
+   {
+    "what": "Log-linear models over three or more captures (Fienberg)",
+    "why": "Need enough overlap among three routes; the pilot uses Chapman plus held-out recall and measures whether three routes give usable overlap"
+   },
+   {
+    "what": "Enforced saturation stop in the pilot",
+    "why": "k and the target are not yet measured; enforcing guesses could cut a search short. The pilot records the yield curve and stops on budget"
+   },
+   {
+    "what": "Dual independent screening of every record",
+    "why": "Rapid-review compromise; a 20 % re-screen with an error bound measures what single screening costs in quality"
+   },
+   {
+    "what": "Delphi rounds or debate between same-model experts",
+    "why": "Convergence there comes from conformity and shared priors (D6 do_not)"
+   },
+   {
+    "what": "An equivalence verdict in the pilot",
+    "why": "n = 1 per arm; Δ is fixed beforehand, but 'equal' needs replicates and a CI inside it"
+   },
+   {
+    "what": "A second tree research run (pack B) by default",
+    "why": "Costs a whole field; S1 against S2 gives a pack-facet estimate at the cheaper arm's price. The owner may pay for pack B"
+   },
+   {
+    "what": "Seed-question calibration of experts (D6-09), checker Se/Sp correction (D6-02), the SPRT lot decision (D6-03), the CUSUM stall detector (D6-11), prediction-bound admission (D6-13)",
+    "why": "They belong to the Assurance, Execution and Shape-and-cost layers; this layer consumes their outputs"
+   },
+   {
+    "what": "Formal shrinkage of lead effects for the winner's curse",
+    "why": "Most leads have no effect size to shrink; replaced by E9's rule that a promoted lead is judged only on a new test"
+   },
+   {
+    "what": "Kappa as an agreement measure",
+    "why": "Misleading when one category dominates (Feinstein and Cicchetti); disagreement rate, rho and seeded miss rates are reported instead"
+   }
+  ],
+  "problems_covered": [
+   {
+    "problem": "P2 anchoring and drift in what the review sets out to do",
+    "classical_name": "Protocol registration before the search (PRISMA-P; registries); researcher degrees of freedom",
+    "by": "E1, E10",
+    "residual": "A hash stops later drift, not bias in the wording of the approved questions; that stays with the owner's approval"
+   },
+   {
+    "problem": "P4 loss at a hand-over",
+    "classical_name": "Data extraction on a fixed, tried form; summary-of-findings tables as the only input to the synthesis",
+    "by": "E2, E6 (sof.json), the typed card fields",
+    "residual": "A caveat with no field is still dropped silently unless the Storage layer's counted overflow field catches it"
+   },
+   {
+    "problem": "P3 an ensemble agrees wrongly",
+    "classical_name": "Correlated jury (Ladha); coincident failure in N-version programming (Knight and Leveson)",
+    "by": "E7, E13",
+    "residual": "rho and beta are estimated on few items with wide intervals"
+   },
+   {
+    "problem": "P7 sources read twice across fields",
+    "classical_name": "Recapture data in capture-recapture",
+    "by": "E4 (overlap counted by coverage.js)",
+    "residual": "Overlap is accepted and counted, not prevented"
+   },
+   {
+    "problem": "P13 a weak expert",
+    "classical_name": "Certainty graded on the evidence, not on self-assessment (GRADE); coverage estimated",
+    "by": "E4 and E6 feed the external certification",
+    "residual": "Knowledge itself (seed questions, D6-09) is not tested by this layer"
+   },
+   {
+    "problem": "P15 a lead wrongly dismissed is never challenged",
+    "classical_name": "Absence of evidence is not evidence of absence (Altman and Bland), equivalence against a smallest effect of interest (Lakens); hazard log to closure (MIL-STD-882E); out-list justifications (Doyle's JTMS)",
+    "by": "E8, E3",
+    "residual": "Contradicting evidence outside the fixed vocabulary is matched only by the refuter, whose miss rate rests on 2 or 3 seeds"
+   },
+   {
+    "problem": "P16 the search decides what the expert knows",
+    "classical_name": "Documented search (PRISMA-S); capture-recapture coverage (Chapman; Spoor et al.); pooling and relative recall (Sparck Jones and van Rijsbergen; Zobel); sponsorship and publication bias (GRADE)",
+    "by": "E2, E4, E6",
+    "residual": "Same model and engine make captures dependent, so coverage is only an upper bound; popular papers stay easier to find"
+   },
+   {
+    "problem": "P17 a correct card used outside its conditions",
+    "classical_name": "GRADE indirectness; precondition checking (Ariane 501 lesson, Kelly's context nodes)",
+    "by": "E6 (the typed applies_to check sets the ceiling)",
+    "residual": "Conditions in free text are judged by a model"
+   },
+   {
+    "problem": "P18 the tree may not beat one session",
+    "classical_name": "Pre-registered paired comparison with blinding; pseudoreplication (Hurlbert); equivalence (Schuirmann)",
+    "by": "E10, E11",
+    "residual": "One reading per arm on a chosen field; it shows only large differences and generalises to no other field"
+   },
+   {
+    "problem": "F1 where the review runs",
+    "classical_name": "Paired comparison on the same frozen pack, with planted defects as known answers; hermetic build steps",
+    "by": "E10, E12",
+    "residual": "Equivalence cannot be shown; the default for 'no difference shown' is the owner's"
+   },
+   {
+    "problem": "F2 the second expert",
+    "classical_name": "Generalizability theory (G-study, D-study); beta-factor common-cause model; forced diversity",
+    "by": "E13 and the owner's statement",
+    "residual": "A 2 x 2 design is indicative only; the pack facet is estimated in the single-session condition unless pack B is paid for"
+   },
+   {
+    "problem": "P12 and S, when a node is full (stopping half only)",
+    "classical_name": "Stopping on saturation or estimated recall (Cormack and Grossman)",
+    "by": "E5",
+    "residual": "Later; the knee method carries no guarantee"
+   },
+   {
+    "problem": "C completeness of the risk list (shared estimator)",
+    "classical_name": "Capture-recapture over independent lenses (Chao; D6-04, D8-11)",
+    "by": "coverage.js risk mode, run with the Completeness layer",
+    "residual": "The lenses are same-model, so the count of unfound risks is a lower bound"
+   }
+  ],
+  "contradicts_the_frame": [
+   "Frame layer 3 says labels are computed by script and never self-assigned. GRADE certainty cannot be fully computed: risk of bias and free-text indirectness are judgments (D6-08). The mappings' answer, followed here (E6), is that the script computes a ceiling from distinct primaries and the typed conditions, and the model may only lower it, with reasons checked by the checker.",
+   "Frame layer 4 says coverage is estimated by capture-recapture. The mappings (D6-04, D8-10; Spoor et al.'s own caveat) say that with same-model, same-engine readers the estimate is biased toward overstating coverage. It is reported as an upper bound, beside relative recall on held-out seeds, and only route groups with different mechanisms count as captures.",
+   "Frame layer 4 treats a dismissal as an open hazard that new evidence reopens. The mappings (D6-06) add a bar first: a dismissal without a confirmed card that bounds the effect below the smallest effect of interest is not a dismissal at all, and the script rewrites it to 'untested'. Reopening (D7-03, D4-12) then applies only to dismissals that met the bar.",
+   "The frame says second opinions are designed from what is known about correlated judges. The mappings disagree with one another (D7-09 and D8-03 favour a second reviewer of the same pack; D4-02 says the choice depends on where the residual faults sit; D1-04 accepts only diversity in inputs or kind; D6-10 says measure it). Known results fix what not to do (vote, count agreement). The choice itself needs the pilot's measurement (E13).",
+   "The frame presents F1 as a symmetric choice the pilot settles. The F1 mappings (D1-12, D3-13, D4-08, D5-06, D7-04, D8-07) say the fresh-from-pack path must run in every case, and that a same-window review has undeclared inputs, so it cannot be certified or invalidated when a card falls. What the comparison can really show is whether the researcher's extra knowledge is correct and worth carding (u and its sampled correctness), not which form is equal or better in general.",
+   "The frame says 'the protocol fixed and hashed'. PRISMA-P is a reporting checklist, not a registry (source correction). Registration here is the owner's approval plus the hash in the ledger and the git commit, which the admission check enforces."
+  ],
+  "conflicts_with_other_layers": [
+   "Storage: this layer needs card fields (route, canonical_id, primary_id, question ids, typed conditions with a controlled vocabulary, evidence_type, effect with direction and uncertainty), a claims table keyed by approach and measure, and the staleness propagation that dismissals.js uses to reopen an entry when a support card falls.",
+   "Integrity: 'relevant' and 'confirmed' rest on the quote witness of the trusted checker (and on F5 for the page-fetch script). The frozen protocol, the analysis plan, the held-out seeds, the smallest effects of interest, the plant ledger, the seeded dismissals and the blind key must sit outside every session's write reach. Readers hold no write tools, so the search log has to come from transcripts.",
+   "Assurance: the F1 primary score and the refuter's qualification depend on planted faults (plants in our files, seeded false dismissals), and F2 depends on seeded miss rates per opinion. This layer consumes those seeds and the checker's Se and Sp; it does not make them. A confirmation made through the fetch summary must be labelled as such before E6 counts it.",
+   "Execution: the admission check must refuse readers before the protocol hash exists. The later stop-check.js runs as a hook before each helper start, and hooks are not yet verified on this app. The pilot adds sessions (R_same, R1, R2, S1, S2, a scorer, a re-screen helper and a refuter) that must fit the limit of three at once and the watcher.",
+   "Shape and cost: the extra pilot runs compete with the admission budget. P18 should test the Shape layer's stated token predictions (D3-12). The saturation stop (E5) is a node-capacity rule and must agree with the window budget. Value-over-cost ordering of work must use E9's conservative effect estimates, not the evidence that selected a lead.",
+   "Completeness: coverage.js's capture-recapture is the same estimator the Completeness layer needs for unfound risks (D6-04, D8-11). One owner should hold it, or the two layers will report different numbers."
+  ],
+  "for_the_owner": [
+   "F1: after the pilot reading, where the review runs; and before it, the default for 'no difference shown' (the coordinator proposes fresh-from-pack). Also whether the pilot pays for R_same at all (recommended: yes, since the pilot decides F1).",
+   "F2: which second-opinion form to buy (a second research run, a second reviewer of the same pack, a contrary-evidence reader, a different model), after E13's reading; the thresholds that stop buying a same-model second opinion (n_eff 1.3 and beta 0.7 proposed); whether the pilot pays a whole field run for a second tree pack B.",
+   "F3: whether a different model may serve as the blinded scorer and as a second opinion.",
+   "The smallest effect of interest per measure, set with the question lists, which decides when a dismissal can stand.",
+   "Approval of each field's protocol, and of the pilot analysis plan: the primary outcomes, Δ, the decision rules, the arm budget and the number of planted defects k.",
+   "Whether the single-session control runs twice (S2): without it no run-to-run spread is known, and every difference reads 'no difference shown'.",
+   "The coverage floor and target (0.6 and 0.8 proposed) and the re-screen share and threshold (20 % and 10 % proposed)."
+  ],
+  "computed": "Read amendment 3 of RESEARCH-TREE-PROTOCOL-2026-11-16.md. Read all thirteen D6 mappings (D6-01 to D6-13) with D6's whole design, its missing_risks, do_not and not_my_field. Read the assigned D4-02, D4-10, D4-12, D7-03, D7-09, D8-03, D8-10 and D1-04, plus the F1-related and adjacent mappings D1-03, D1-12, D2-10, D3-12, D3-13, D4-01, D4-08, D5-03, D5-06, D7-02, D7-04, D8-04, D8-07 and D8-11. Read D8's missing_risks. Read the source checks: sources-D6 in full (corrections applied: PRISMA-P is not a registry; the Chapman bias condition; the knee method has no guarantee; Ladha's condition; Kuncheva and Whitaker found no reliable link; Garritty 2021 is the interim guidance) and the relevant entries of sources-D1, D4, D7 and D8 (D7-03's Doyle and Reiter could not be checked). No files were written. All thresholds given are the mappings' proposals; none is a measured number."
+ }
+}

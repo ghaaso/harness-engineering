@@ -1,0 +1,110 @@
+{
+ "label": "model:fidelity",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "reproduces": true,
+  "rerun_output": "Ran `node check.mjs` in the model folder on Node v24.22.1, exactly as the README says. Exit code 0, wall time 41.0 s (38.1 s reported). The output is saved at C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/model-review/rerun.txt.\n\nAll 13 configurations match the report exactly on state counts, transition counts and verdicts:\n- SPEC: 381,916 states / 1,177,394 transitions\n- FIXED: 108,550 / 320,098\n- FIXED-N2: 103,984 / 298,215\n- FIXED-K3: 767,700 / 2,429,081\n- A-FENCE-EPOCH: 169,927 / 535,397\n- A-FENCE-CE: 108,730 / 320,996\n- A-COMMIT: 108,550 / 320,098\n- A-COMMIT-SPEC: 381,916 / 1,177,394\n- A-PROGRESS: 102,288 / 303,106\n- A-PAUSE: 192,140 / 577,384\n- A-LEVEL: 230,889 / 649,941\n- C-LIMIT: 133,540 / 365,227\n- A-LIMIT: 162,750 / 440,682\n- Total: 2,952,880 states.\n\nVerdicts:\n- SPEC fails NoStaleAccepted (9 steps), NoFalseSuspicion (6), SingleWatcher (6), FailedTaskStopped (8), SlotsAtSpecInterimCap2 (5), NoDeadlock (5) and AlwaysCanResolve (5).\n- FIXED, FIXED-N2, FIXED-K3 and C-LIMIT hold everything.\n- Each ablation fails exactly the property reported.\n\nI spot-checked the SPEC, A-COMMIT-SPEC and A-FENCE-CE traces line by line, and they are identical to the report. `node check.mjs SPEC-R1` gives 377,220 states / 1,167,730 transitions with the reported verdicts.\n\nI also removed each FIX_* from FIXED one at a time. Every fix is load-bearing on its own:\n- no FIX_RESTORE_CUT: NoStaleAccepted fails (9 steps);\n- no FIX_REWAKE: NoDeadlock and AlwaysCanResolve fail (5);\n- no FIX_CLOCK: NoFalseSuspicion fails (6);\n- no FIX_ONE_WATCHER: SingleWatcher fails (6);\n- no FIX_STOP_ON_FAIL: FailedTaskStopped fails (8);\n- no FIX_COUNT_LIVE at N=2: Slots fails (5).",
+  "rules_missing_from_the_model": [
+   "E1 is not modelled at all: tasks.lock taken with wx, exit 75 when busy, breaking a stale lock (dead process, older than 2 min) by rename, writing temp-then-rename, the rev increment, table-corrupt / tasks.json.prev, and exit 70. Every exec script is an atomic step, so lock races and the lock-break race cannot appear.",
+   "E3 checks 3 (the diff touches only the attempt folder) and 4 (the schema) are absent. Commit acceptance is the epoch and state checks only.",
+   "E4: no manifest, no sha256 and no consumer-side hash check. The 'same epoch, same manifest succeeds; different manifest is refused (exit 13)' rule is reduced to an epoch comparison. put.mjs atomic writes and the .corrupt handling of a torn line are assumed.",
+   "E5 intents are absent: no intent files, no reconcile at coordinator start, no exit 17, and no redo of an open intent. The coordinator itself never crashes, so the 'redo is safe only because of E3' claim is never exercised.",
+   "E6: spend (soft and hard limit), memory, common cause, meter disagreement (26), coalescing delay delta, watcher internal error (40), T_box versus T_watch timing, and V as a count are all missing. Every event is urgent and exits at once.",
+   "E9: H_max is fixed at 1 and the 'back to the Shape layer for a split' path is missing. Common cause stops nothing, and the owner-only changed input is not modelled.",
+   "E10: the 2-delta verify and the taskkill /T orphan kill are not modelled. A zombie ends only when the owner acts on the Z escalation.",
+   "E11: dependencies, the memory check, escrow, B, r, the meter, the soft limit, the hard limit and 'cut', and the no-hold-and-wait rule are all missing. Admission is the slot count only.",
+   "E12: the coordinator snapshot and the owner's one-line brief are abstracted away. Quiescence is read from the table.",
+   "salvage.mjs (a later-stage script), the fresh-review reason, review stages and task dependencies are missing.",
+   "The owner never wakes the coordinator spontaneously. The boot wake of the first and of a fresh coordinator can never be lost. Coordinator turns are atomic except in the fence-to-stop window."
+  ],
+  "vacuous_or_weak_properties": [
+   {
+    "property": "AtMostOneCommit (with COMMIT_RECORD on, i.e. SPEC, FIXED, FIXED-N2, FIXED-K3, SPEC-R1)",
+    "why": "It is vacuous by construction. The property counts `t.cm >= 0 ? 1 : 0`, which is a scalar and cannot exceed 1. In COMMIT_RECORD mode it can never fail, whatever happens to the commit record. The A-COMMIT ablations only show a failure because COMMIT_RECORD=false also changes the property's definition to popcount(merged epochs), so they test a different property.",
+    "test_done": "In m_nowx.mjs I broke the mechanisms that protect the property: COMMIT is no longer wx (a second commit overwrites it), the exit-13 check is removed, and the commit.mjs state check is removed. I added a counter of COMMIT creations. With FENCE_EPOCH off (SPEC and FIXED), the trace creates COMMIT twice for f0 in 9 steps ('COMMIT created' for f0e2 and then for f0e1). The counter property CommitCreatedTwice FAILS, while the original AtMostOneCommit still reports HOLDS (1,108,289 and 188,066 states)."
+   },
+   {
+    "property": "Slots (N_max=3, 2-event budget)",
+    "why": "It cannot fail at the stated configuration. With 2 fields and at most 1 zombie, there are never more than 3 live processes, so admission control has no effect on the property. The colleague concedes the N=3 failure only by argument.",
+    "test_done": "In m_noadmit.mjs I deleted the admission check entirely. Slots still HOLDS in SPEC (381,916 states) and FIXED (108,550). With a 4-event budget {k:4, c:1, z:2, h:1}, SPEC at N=3 FAILS Slots in 9 steps (two planned hand-overs, each with a stop-unconfirmed zombie, so 4 live processes against N_max=3), and FIXED holds there (543,712 states). The property can fail, but only outside the budget the report claims for it."
+   },
+   {
+    "property": "RestartLimit (SPEC, FIXED, FIXED-N2, FIXED-K3 with R=2)",
+    "why": "It is vacuous in the headline runs: with at most 2 child faults (3 in K3, where the same-class rule binds first), restarts can never exceed 2 even with no limit at all. Only C-LIMIT, with 3 child faults, and R=1 make it falsifiable.",
+    "test_done": "With RESTART_LIMIT=false, SPEC (386,589 states) and FIXED (110,506) still HOLD RestartLimit. With R=1 and RESTART_LIMIT=false, it FAILS in 8 steps. So SPEC-R1 and C-LIMIT/A-LIMIT are the only runs where the property means anything."
+   },
+   {
+    "property": "FailedTaskStopped",
+    "why": "It is weak. The property only asks that no live session have the table's epoch. Raising the epoch (the fence) satisfies it on its own, so it never checks the 'stopped' half of the OTP-shutdown fix (FIX_STOP_ON_FAIL).",
+    "test_done": "In m_failnostop.mjs the escalation path fences but skips stop.mjs altogether, so the failed attempt's process stays alive. FIXED still HOLDS FailedTaskStopped (109,691 states). Removing FIX_STOP_ON_FAIL entirely (no fence) does make it fail (8 steps)."
+   },
+   {
+    "property": "NoFalseSuspicion in FIXED",
+    "why": "It holds in FIXED by construction. FIX_CLOCK simply deletes the `pu` branch that produces the false stall, and real stall detection in the model does not depend on any clock. So the cost the colleague names for the fix (a stall that is never detected when T_watch <= T_box) is not representable. Without the fix the property is falsifiable (A-PAUSE fails in 4 steps, F-noClock in 6).",
+    "test_done": "Read tick() lines 106-111. Removing FIX_CLOCK from FIXED makes it fail in 6 steps. Nothing in the model can refute the fix itself."
+   },
+   {
+    "property": "AlwaysCanResolve (AG EF)",
+    "why": "It is a possibility check, not inevitability under fairness. A fair livelock in which a field never resolves would not be caught, except for the looping case, which has its own SCC check. It does turn out robust in one respect.",
+    "test_done": "I recomputed backward reachability using non-fault edges only (NOFAULTEF=1). FIXED, FIXED-N2 and C-LIMIT still HOLD, so resolution never depends on injecting a fault."
+   },
+   {
+    "property": "NoStaleAccepted, TwoCoordinatorsAct, SingleWatcher, NoDeadlock, LoopEventuallySuspected",
+    "why": "These are not vacuous. Each fails when its mechanism is broken.",
+    "test_done": "Confirmed by the colleague's ablations and by my reruns: A-FENCE-EPOCH and F-noCut both fail NoStaleAccepted; A-FENCE-CE fails TwoCoordinatorsAct; F-noOneW fails SingleWatcher; F-noRewake fails NoDeadlock; A-PROGRESS fails LoopEventuallySuspected."
+   }
+  ],
+  "model_errors": [
+   "The fault budget is overspent, so the stated bounds are wrong. Planned hand-overs check B.h and B.k when the plan is built, not when it runs. One plan can therefore contain replace(f0,handover) > replace(f1,handover) with h=1, and a zombie earlier in the same plan can drive k below zero. The probe budgetprobe.mjs finds B.h<0 in 35,778 SPEC states (11,435 FIXED, 87,247 FIXED-K3) and B.k<0 in 74,053 SPEC states (19,906 FIXED, 114,731 FIXED-K3). The runs explore up to 3 unusual events and 2 planned hand-overs, not the stated 'at most 2 events, 1 planned hand-over'. This over-approximates, so it is sound for finding bugs, but the 'within these bounds' text is inaccurate.",
+   "Child stalls, loops and crashes are permanent: a stalled child never resumes. That is a convenient fault model for a design whose stall detection is a timeout. I added a free 'resume after a transient stall' action (m_resume.mjs). (a) FIXED minus COMMIT_RECORD then FAILS AtMostOneCommit in 13 steps: stall, suspected, resume, READY, a torn commit merges e1, replace, then e2 merges as well. This refutes the report's claim that the commit record 'breaks nothing on its own' from FIXED. (b) In FIXED, a finished READY attempt is fenced and replaced (counted as a restart) in 7 steps. With READY given priority (ASYNC_PRIORITY=false) it still happens in 11 steps, through plan staleness: READY lands during the coordinator's turn. FIXED itself still holds its 11 properties with resume (174,069 states; K3 1,608,339).",
+   "The A-COMMIT and A-COMMIT-SPEC ablations change the property along with the mechanism: with COMMIT_RECORD=false, AtMostOneCommit counts merges, otherwise it counts the scalar cm. In record mode the property is unfalsifiable (see vacuous_or_weak_properties).",
+   "FailedTaskStopped encodes 'fenced', not 'stopped'. The FIX_STOP_ON_FAIL result therefore verifies the fence only.",
+   "The headline Slots HOLDS at N_max=3 is meaningless for the budget, since admission can be deleted without effect. The N=2 proxy argument is correct, but the real N=3 failure needed my 4-event run.",
+   "The FIX_* switches are oracles, not designs. FIX_CLOCK removes the false-suspicion branch. FIX_REWAKE fires exactly when the coordinator is idle with no pending wake and no watcher, which a real Task Scheduler entry cannot observe. FIX_RESTORE_CUT sets ct=0. FIXED holding is therefore evidence about where the spec breaks, not that these fixes are correct. The colleague says so, but the report's summary ('every property holds') reads stronger than that.",
+   "The run labelled 'SPEC' uses R=2, not the spec's R=1. SPEC-R1 exists but sits outside the default run list.",
+   "Coordinator turns are atomic outside the fence-to-stop window, and the boot wake can never be lost. Plan-versus-state staleness during a multi-minute turn (stop's 2-delta verify alone takes about 2 minutes) is therefore mostly hidden. My transient-stall run shows it matters."
+  ],
+  "extra_flaws_in_the_spec": [
+   {
+    "title": "E1 stale-lock break is check-then-act",
+    "detail": "'A lock whose process is dead and that is older than 2 minutes is broken by a rename.' Two scripts can both judge the same lock stale. Script A renames it and creates its own lock with wx. Script B then renames A's fresh lock away and creates its own. Two writers of tasks.json then exist, so an epoch raise or an escrow update can be lost, which silently defeats the E3 fence. This is the race D3-10 forbids. On Windows, PID reuse also makes 'process is dead' unreliable. Concurrent breakers come from background exec scripts, or from a stale coordinator next to a fresh one. The model makes every exec script atomic and cannot see this.",
+    "fix": "Break a stale lock only by renaming it to a unique name and then checking that the renamed file holds the same pid and nonce that were judged stale; abort and restore it otherwise. Or use an OS file handle opened with exclusive share mode, which Windows releases when the process dies, so no stale-break is needed. Do the --ce check and handover.mjs's ce raise under the same lock."
+   },
+   {
+    "title": "E5 x E8: redoing an open replace intent re-fences and re-counts",
+    "detail": "If the coordinator crashes after replace.mjs step 2 (epoch raised, restarts incremented) and before step 9, reconcile sees an open intent whose effect (a session) is not observed, and 'may redo' it. A redo from step 1 raises the epoch again and, for a failure reason, increments restarts again. Under R=1 or the same-class rule, a coordinator crash alone can mark a healthy task failed. The intent key <task>-e<e>-<step> does not say whether e is the old or the target epoch. intent.mjs exit 17 says 'reconcile, not redo', but reconcile only runs at coordinator start.",
+    "fix": "Store the target epoch in the intent. Make the fence a conditional raise ('set epoch=e+1, restarts+=1 only if epoch==e', atomic under the lock). Make replace resumable from the last completed step instead of redone from step 1. Run reconcile at the start of every turn."
+   },
+   {
+    "title": "E11 escrow leaks and the cap is not a bound",
+    "detail": "Escrow is released only 'at commit or at a cut'. A failed (E9), dropped, parked or replaced task keeps its escrow, and step 6 of a replace admits again, which reserves another. B minus the open escrows then shrinks permanently and admission starves. The cap is also not enforced: the hard limit depends on 'wake latency', which is unbounded when a wake is lost (the model's F2). Zombie spend after a fence is charged only against Z, not against B.",
+    "fix": "Release or convert escrow to actual spend at every terminal or replaced state, with one open escrow per task at a time. Charge zombie and post-hard-limit spend to B. Bound wake latency with the external re-wake before relying on the hard-limit formula."
+   },
+   {
+    "title": "The coordinator's acknowledged event sequence is not persisted",
+    "detail": "E7 says the coordinator acts on 'the events after the last sequence number it saw'. No file holds that number: coord.json is {ce, session, started_at}, and status.json's last_event_seq is the latest event written, not the latest acknowledged. After a hand-over or context compaction, events that cannot be re-derived from level state are either acted on twice or missed. Examples are zombie-write, stop-unconfirmed, meter disagreement, and a pause that was logged.",
+    "fix": "Add acked_seq to coord.json, written by an exec script under --ce at the end of each turn. The F2 re-wake condition (seq greater than acked) then has something to read."
+   },
+   {
+    "title": "Single-writer claims conflict with other writers",
+    "detail": "events.jsonl is 'only written by the watcher', yet commit.mjs logs zombie-write, E1 logs the lock break, and stop.mjs records stop-unconfirmed, all with no destination stated. status.json is rebuilt by status.mjs from both the watcher (every tick) and the coordinator (every wake), so two processes can write the same temp file and rename concurrently.",
+    "fix": "Name a separate append log for script-side events, or route them through the watcher. Use per-process unique temp names (pid plus nonce) for every temp-then-rename write."
+   },
+   {
+    "title": "A READY that lands during a coordinator turn is discarded as a failure",
+    "detail": "The coordinator plans from status.json read at the start of a turn that lasts minutes. A child that recovers from a slow patch and writes READY before replace.mjs fences it gets replaced and charged a restart, even if the spec added a 'READY outranks suspicion' rule. My transient-stall run reaches this in FIXED in 7 steps, and in 11 steps with that priority rule. The spec also gives no priority at all between READY and a stall event (the colleague's A4).",
+    "fix": "replace.mjs, for failure reasons, re-checks under the table lock for a READY of the current epoch and refuses with a distinct exit code, so commit wins. Combine this with the A4 rule."
+   },
+   {
+    "title": "The coordinator fence is incomplete and not atomic with the write",
+    "detail": "intent.mjs lists exit 64 but takes no --ce. status.mjs and spend.mjs take none either. salvage.mjs writes attempt-<e+1>/salvaged.jsonl with neither a --ce nor an epoch fence, so a stale or delayed salvage can write into a newer attempt's folder after that attempt has started. Every script checks --ce against coord.json, which is not under tasks.lock, so the check and the write form a TOCTOU window against handover.mjs.",
+    "fix": "Give every writing script --ce, salvage --epoch with an equality check against the table, and do the ce comparison inside the tasks.lock critical section."
+   }
+  ],
+  "verdict": "The rerun reproduces the report exactly: every count and verdict matches, and the traces I checked are identical. The search is exhaustive within its reach. The canonical keys are full JSON strings, so there are no hash collisions. The state cap throws rather than truncating silently. Session pruning in canon() is sound. Every FIX_* is load-bearing on its own.\n\nThe SPEC failures stand as real flaws of the specification: restore-check carries post-fence cards, a lost wake after the watcher's own exit is permanent, pause detection works only inside one watcher, endturn can start a second watcher, escalation leaves the attempt running, and admission does not count zombies.\n\nThe property evidence is weaker than reported:\n- **AtMostOneCommit** is unfalsifiable in COMMIT-record mode. Two COMMIT creations still report HOLDS.\n- **Slots at N_max=3** survives deleting admission entirely. It fails at N=3 only with 4 events.\n- **RestartLimit** survives deleting the limit in SPEC and FIXED. It is meaningful only in C-LIMIT and at R=1.\n- **FailedTaskStopped** is satisfied by the fence alone, so it never checks that the attempt is stopped.\n- **NoFalseSuspicion** holds in FIXED by construction of FIX_CLOCK.\n\nThe fault model is also convenient. Stalls never recover. Once a recovering stall is allowed, removing the commit record from FIXED produces two merged attempts in 13 steps, which refutes 'the commit record breaks nothing on its own'. A finished READY attempt can also be replaced in FIXED in 7 steps.\n\nThe budget bound is overspent (B.h<0 and B.k<0 reachable), so the stated 'at most 2 events, 1 planned hand-over' is inaccurate, though the over-approximation is conservative. Large parts of the specification are not modelled at all: E1 locks, E5 intents and coordinator crash, spend, escrow and memory, and common cause. Several spec flaws live exactly there: the lock-break race, the non-idempotent redo of a replace, the escrow leak, and the unpersisted acknowledged event sequence.\n\nAccept the six SPEC flaws and the shape of their fixes. Do not accept FIXED's 'all hold' as evidence that the fixed design is safe until the four weak properties are strengthened (count COMMIT creations, count live processes as stopped, run R=1 and the 4-event budget), stalls are made recoverable, and E1 and E5 are modelled.\n\nAll review files are in C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/model-review/: rerun.txt, rcheck.mjs, m_nowx.mjs, m_noadmit.mjs, m_failnostop.mjs, m_resume.mjs, m_resume_ready.mjs, budgetprobe.mjs and resume.txt."
+ }
+}

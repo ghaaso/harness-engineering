@@ -1,0 +1,299 @@
+{
+ "label": "design:L5",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "StructuredOutput"
+ ],
+ "result": {
+  "spec_markdown": "# Layer 6: Shape and cost (version 2)\n\nTwo borrowed designs, each used only where its assumptions hold. **A B+ tree bulk-loaded at a fill factor** (D2-01, D2-02) governs what must sit in one window together: a field's key range and its pack at review time. **The square-root checkpoint law** (Harris 1913, Young 1974; derived here: D3-01, D2-04) governs what does not: research windows and the coordinator, where every call re-reads the window, so small windows are cheap (SPLIT-RULE-2026-11.md:387-390). Around them sit load control (D3-03), value-over-cost order (D3-14) and a budget from an internal pilot (D6-13, D1-08).\n\n**Tags.** M means measured on the record. E means computed from measured numbers. G means a guess the pilot replaces. Inputs and their sources are in `inputs.json`.\n\n## Terms\n\n- **Key:** an approved question id. **Leaf:** one field. **Root:** the coordinator.\n- **t_q:** the research tokens a key costs, helpers included. **κ_q:** the pack tokens a key leaves behind.\n- **P:** the fixed prefix of a session. **g:** the tokens a call adds to the window. **S:** the state a successor reloads. **σ:** how much S grows per epoch. **H0:** the fixed tokens of one hand-over.\n\n## Rules\n\n**R1. Key space** (pilot). A key is written `<field>-<group>-<nn>`. Keys sort by field, then mechanism group, then number. Every key has exactly one owning field. A cross-field key sorts under its owner and is listed as a read-only input of the other field (D8-09, Conway). *Runner:* `plan-tree.js`. *On failure:* a key with no owner, two owners or no group stops the plan with exit 3.\n\n**R2. Bulk load at plan time** (pilot, with priors). The coordinator runs `plan-tree.js` once the question lists are approved. It packs in key order, and a mechanism group is never cut. A leaf is full when either **Σt_q ≥ f·A_leaf** (spend) or **Σκ_q ≥ f·C_node** (pack). The tree has two capacities, not one:\n- **C_node = W_quality − P − R_rev** (180k under the stated guesses). It is the window budget of the reviewer that must hold the pack.\n- **A_leaf = min(the leaf's share of the cap, spend at n_max)**, where n_max comes from R6.\n\nThe start is **f = 0.75**. The slack 1 − f pays for the one repair, the contrary-evidence reader, re-checks and redistribution, and f is retuned to the slack the pilot actually used (D2-01). f is a chosen slack, not a theorem: ln 2 holds only for high-order B-trees under random growth (sources-D2, Yao correction).\n\nLeaves start as the lanes, because keys are not independent and expertise does not divide freely (D2-01). The script checks each lane and gives the lower bound on the number of leaves, max(⌈Σt/fA⌉, ⌈Σκ/fC⌉). The separator keys are the first group id of each leaf, and the plan is frozen with its hash.\n- A lane over capacity is split before any spend, at a group boundary. After the pilot, the cut follows the boundary with the least source sharing (D8-08). The split goes to the owner as an amendment (exit 4).\n- A lane under half of f is reported and is not merged, since a merge makes a new field.\n\n*On failure:* a key with no estimate is not packed, and no wave starts while one exists (exit 3). Before the pilot, all estimates are priors, so only the pilot field runs.\n\n**R3. Fan-out is computed** (pilot). There are three computed numbers.\n1. **Leaves L** come from R2.\n2. **Root capacity** = ⌊(W*_coord − P − S)/row⌋, about 246 rows. The tree therefore stays at height 2: a root and its leaves. Helpers are tool calls, not nodes. The B+ height and log properties add nothing here (D2-01).\n3. **Epochs per leaf** = n_f/k* (D3-12). These are successive windows of one leaf, never extra fields.\n\n*Runner:* `cost.js` and `plan-tree.js`.\n\n**R4. Overflow, in the tree's standard order** (pilot). This replaces \"cut the pack to its limit and list the rest as not covered\".\n- **(a) Check before insert.** Before each group, the child runs `capacity-check.js`. The watcher runs the same check at every poll, so a child that skips it is still caught. The group is allowed only if U + Σ_group t_q·(1+m) ≤ (1−r)·A_leaf and the projected pack is ≤ f·C_node. Here U is spend so far, counted from transcripts, and r is the reserve for a same-window review: zero unless F1 keeps the review in the researching session (D2-02).\n- **(b) Out-of-line storage first** (TOAST, for the pack axis). `pack.md` becomes a two-level index: per mechanism, a summary of at most B/m tokens plus card ids. Card bodies stay in `cards.jsonl` and are read by id when needed. **Nothing confirmed is cut.**\n- **(c) Redistribution** (B*-tree, for the spend axis). A cross-field key in the remaining range moves to its co-owner if that leaf has slack ≥ est. A plain key never moves, because another field's expertise cannot take it over.\n- **(d) Split by key range.** The remaining whole groups become an overflow leaf of the same field. Its separator is the first moved group id. It gets one task-table row, and the old leaf's status gets a one-line forward pointer (the B-link idea, D2-02). It is admitted at the next slot and starts from the first leaf's frozen pack index. The research already paid for is kept.\n  - **What a proper split costs:** one session start P, plus the index re-read on each of its calls (n_moved × S_index), plus the moved range's own research. Its smaller window saves about g·n_done per call against continuing.\n  - **What the alternatives cost:** the withdrawn rule redid research already spent. A cut costs no tokens but drops confirmed cards from the reviewer's view.\n- **(e)** Only the owner drops a range, by name, and it then appears as \"not covered\" with its reason. A key stopped by budget is marked \"not saturated\" (D6-12).\n\n*On failure:* a missing estimate or an error in the script counts as an overflow. Insertion stops and the coordinator wakes (exit 10 or 2).\n\n**R5. A roll-over is not a split** (pilot). When a window reaches W* (R6) and the range still fits, a successor of the same leaf continues from committed files with the same key range (copy-on-write, D2-02). *Runner:* the watcher exits \"handover\" and the coordinator starts the successor.\n- If the reload would reach the useful growth of an epoch (S ≥ g·k*), the remaining range splits by R4(d) instead of rolling over again. This is the classical answer to thrashing (Denning; D3 missing risks).\n- A leaf predicted to run past **n_max = k*·(g·k* − S0)/σ** calls is split at plan time.\n\n**R6. The hand-over interval** (pilot).\n\n*Derivation.* Within an epoch, call i reads P + S + g·i tokens. After k work calls, the session makes h_c hand-over calls at the full window. The successor then makes o orientation calls and q_f failed calls at P + S, and w tokens are written once.\n- Tokens per work call: c(k) = (P+S) + g(k−1)/2 + h_c·g + H0/k, with H0 = (h_c+o+q_f)(P+S) + w.\n- Setting dc/dk = 0 gives **k* = √(2H0/g)**, so **W* = P + S + √(2H0·g)**.\n- If S grows by σ per epoch, every extra epoch makes the rest of the work re-read σ more, and **k* = √((2H0 + σ·n_rem)/g)**. Re-applied each epoch, this came within 1–3 % of the best interval found by simulation. The law without σ handed over too often: 16 calls against 35.\n- For token cost, re-reads weigh 0.05 and a reloaded state is written to the cache at 1.25 (ratios from `pricing.json`, no currency). The cost optimum hands over later: W* of 145k against 115k at g = 2.8k.\n\n*Measured inputs:*\n- P = 79k for a session (SPLIT-RULE-2026-11.md:138-139, M) and about 60k for an agent (TOKEN-BOTTLENECK-2026-11.md:44, M).\n- g = 2.8k per call (SPLIT-RULE-2026-11.md:609, M).\n- o ≈ 2.6 calls (AFTER-COMPACTION-2026-11.md:772-779, E; transferred from compaction to a fresh successor).\n- q_f ≈ 0.5 calls (AFTER-COMPACTION-2026-11.md:39, E).\n\n*Guesses:* h_c, w, S, σ, and g for a research child (SPLIT-RULE-2026-11.md:472-475 are guesses too).\n\n*Coordinator:* W* ≈ 133k (E). That is below the 200k line, against 333–396k per call on record (TOKEN-BOTTLENECK-2026-11.md:22). The coordinator becomes **stateless per wave**: its successor reads the protocol and a status file written by script (D2-04, D1-10).\n\n**Handing over stops paying** in three cases:\n- n < n_min, which is 16–29 calls under these inputs;\n- S ≥ g·k* (split instead);\n- W* ≥ W_quality, the owner's 300k ceiling, which then governs.\n\n*Runner:* the watcher computes the window from the transcript at each poll. `cost.js` recomputes W* after the pilot and after each wave. *On failure:* a window past 1.5·W*, or W* < 2·(P+S), stops the session and splits its remaining range (D3-01).\n\n**R7. Working set** (pilot). Anything read once (search results, a whole paper for one number) is read by a helper, which returns the extract (D3-02). *Runner:* the brief, plus a watcher flag on any tool result over a size set by the pilot.\n\n**R8. Concurrency by load control** (pilot).\n- A session starts only if freemem − reserve ≥ the peak memory of one session and fewer than 3 are running. If memory falls below the reserve, the newest session stops (D3-03).\n- Fields are admitted per free slot, not in waves with a barrier (D1-08).\n- After the pilot, the serial fraction s is read from the ledger. If S(3) − S(2) is within noise, the limit is 2 (D3-11; this is a reading of Amdahl's law, not a fit). Parallel children never lower token count.\n\n*Runner:* the launcher check in the watcher (layer 1).\n\n**R9. Order of work** (later). Precedence comes first: the problem sheet, then the pilot (the measurement field) with its single-session control. After that comes Smith's rule, **w_f/est_f** highest first, with w_f doubled for each wave a field was admissible but not run (D3-14). Inside a leaf, groups run in the same w/t order, so a budget cut drops the least value per token. *Runner:* `admit.js`. *On failure:* with no weights, all are equal and the cheapest goes first.\n\n**R10. Budget from the internal pilot.**\n- **Pilot:** `unit-costs.js` reads the pilot's transcripts and splits them into costs per unit: session start, reader call, card, check, review, hand-over, and t_q per key (attributed through the group-start lines of R4a) (D6-13).\n- **Later:** the estimate is C_f = Σ n_u·c_u, and Var = Σ n_u·s_u² + 0.25·C_f² until two fields are measured. The escrow is e_f = C_f·(1 + max(m_owner, z·√0.25, worst overrun so far)), which is **1.82× the estimate** at z = 1.64.\n- A field is admitted only if remaining − open escrows − reserve ≥ e_f (D1-08, D7-12).\n- During the run, the watcher exits for re-planning when actual / (estimate over the keys covered) > 1.5 (D2-12). Estimates are updated by exponential averaging after each field (D3-04).\n- Only a session can read the meter. The coordinator enters it, and if the transcript count and the meter disagree by more than 20 %, admission stops (D1-08).\n\n**R11. A stated prediction for P18** (pilot). Before the pilot, `cost.js` predicts the single-session control's tokens against the tree's (D3-12). The tree is reported as two numbers: speed-up in time, and work ratio in tokens (D3-11). If the prediction is off by more than 2×, the cost model is wrong and no fan-out choice rests on it.\n\n## File formats\n\n- `tree-plan.json`, frozen with its sha256:\n  `{hash, f, C_node, A_leaf, leaves:[{leaf, field, groups:[id], separator, est_t, est_k, status}], unpacked:[id], amendments:[...]}`.\n- `overflow/<leaf>-<group>.json`:\n  `{leaf, group, keys:[id], U, est, axis:\"spend\"|\"pack\", reason, action:null|\"toast\"|\"redistribute:<leaf>\"|\"split:<newleaf>\"|\"dropped-by-owner\"}`.\n- `unit-costs.json`:\n  `{roles:{coord|child|helper:{P,g,S,sigma,hc,o,qf}}, units:{name:{mean,sd,n}}, t_q:{id:{t,k}}, s, rss_mb, tokens_per_meter_point}`.\n- `admission-<n>.json`:\n  `{remaining, open_escrows:{f:e}, admitted:[f], refused:[{f,reason}], order:[{f,priority}]}`.\n\nAll four are written only by scripts.",
+  "scripts": [
+   {
+    "name": "cost.js",
+    "purpose": "Computes the shape and cost quantities from named inputs: hand-over interval k* and threshold W* (count and weighted cost, with and without state growth), break-even length, reload-thrash bound n_max, F1 token price, token fan-out, illustrative bulk load, memory-based concurrency with Amdahl readings, admission factor, Smith order. Exists and was run.",
+    "inputs": "One JSON file (default inputs.json beside it); every input has a value, a tag (M, E, G or I) and a source",
+    "outputs": "Plain text on stdout (saved as computed.txt)",
+    "exit_codes": "0 ok; 2 unreadable or invalid input",
+    "stage": "pilot"
+   },
+   {
+    "name": "plan-tree.js",
+    "purpose": "Bulk-loads the approved question ids into leaves (R1, R2): checks key format and single ownership, packs mechanism groups in key order on two axes at fill factor f, writes separator keys, the lower bound on leaves, underflow and over-capacity lanes, and freezes the plan with its hash",
+    "inputs": "questions.json (id, field, group, owner, input_to), estimates.json (t_q, kappa_q; priors before the pilot, measured after), f, C_node, A_leaf from cost.js",
+    "outputs": "tree-plan.json with sha256; plan-report.txt for the owner",
+    "exit_codes": "0 plan written; 2 bad input; 3 a key without estimate, owner or group (no wave may start); 4 a lane over capacity needs an amendment",
+    "stage": "pilot"
+   },
+   {
+    "name": "capacity-check.js",
+    "purpose": "Check-before-insert (R4a): logs a group-start line that attributes later tokens to a question group, and allows the group or writes an overflow record. Run by the child before each group and by the watcher at each poll",
+    "inputs": "leaf id, group id, the session's and its helpers' transcript paths (spend U), tree-plan.json, escrow, r",
+    "outputs": "one ledger line {leaf, group, t, U}; on overflow, overflow/<leaf>-<group>.json",
+    "exit_codes": "0 allow; 10 overflow recorded (stop inserting, wake coordinator); 2 error, treated as overflow",
+    "stage": "pilot"
+   },
+   {
+    "name": "unit-costs.js",
+    "purpose": "Turns the pilot's transcripts and ledger into unit costs, per-key t_q and kappa_q, and the per-role P, g, S, sigma, h_c, o, q_f; also the serial fraction and peak memory",
+    "inputs": "all transcripts of the pilot (coordinator, child, helpers), merged ledger with group-start lines, pack and cards files, memory trace",
+    "outputs": "unit-costs.json, and a generated inputs file for cost.js",
+    "exit_codes": "0 ok; 7 more than 10 % of tokens could not be attributed to a unit or key (estimates not trusted); 2 bad input",
+    "stage": "pilot"
+   },
+   {
+    "name": "admit.js",
+    "purpose": "Admission per free slot from the prediction bound (R10), Smith order with aging (R9), escrow bookkeeping, meter reconciliation",
+    "inputs": "task table, unit-costs.json, tree-plan.json, remaining cap entered by the coordinator from the meter, owner's m_owner, z, reserve and weights",
+    "outputs": "admission-<n>.json",
+    "exit_codes": "0 at least one field admitted; 5 nothing admissible (report, do not start); 6 transcript count and meter disagree by more than 20 % (stop admitting); 2 bad input",
+    "stage": "later"
+   },
+   {
+    "name": "coupling.js",
+    "purpose": "Source sharing between question groups and between fields (D8-08), to choose a plan-time split cut of low coupling",
+    "inputs": "all finished fields' cards.jsonl with canonical source ids and question ids",
+    "outputs": "coupling.json (Jaccard per pair of groups), overlap rate",
+    "exit_codes": "0 ok; 2 bad input",
+    "stage": "later"
+   }
+  ],
+  "files": [
+   {
+    "path_pattern": "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/cost/cost.js",
+    "writer": "this layer's designer (exists)",
+    "format": "Node 24 script, no packages"
+   },
+   {
+    "path_pattern": "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/cost/inputs.json",
+    "writer": "this layer's designer now; unit-costs.js after the pilot",
+    "format": "JSON: {name: {v, tag M|E|G|I, src}}"
+   },
+   {
+    "path_pattern": "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/cost/computed.txt",
+    "writer": "cost.js",
+    "format": "plain text"
+   },
+   {
+    "path_pattern": "research/plan/tree-plan.json",
+    "writer": "plan-tree.js only; read-only to every session",
+    "format": "JSON {hash, f, C_node, A_leaf, leaves[{leaf, field, groups[], separator, est_t, est_k, status}], unpacked[], amendments[]}, frozen with sha256"
+   },
+   {
+    "path_pattern": "research/plan/overflow/<leaf>-<group>.json",
+    "writer": "capacity-check.js; the action field is set by the coordinator's script",
+    "format": "JSON {leaf, group, keys[], U, est, axis, reason, action}"
+   },
+   {
+    "path_pattern": "research/plan/unit-costs.json",
+    "writer": "unit-costs.js",
+    "format": "JSON {roles{P,g,S,sigma,hc,o,qf}, units{mean,sd,n}, t_q{id:{t,k}}, s, rss_mb, tokens_per_meter_point}"
+   },
+   {
+    "path_pattern": "research/plan/admission-<n>.json",
+    "writer": "admit.js",
+    "format": "JSON {remaining, open_escrows, admitted[], refused[{f,reason}], order[{f,priority}]}"
+   },
+   {
+    "path_pattern": "research/plan/coupling.json",
+    "writer": "coupling.js (later)",
+    "format": "JSON {pairs[{a,b,jaccard}], overlap_rate}"
+   }
+  ],
+  "parameters": [
+   {
+    "name": "P (fixed prefix per role: coordinator, child, helper, in the lean folder)",
+    "how_measured": "First-call context from each fresh session's transcript (unit-costs.js)",
+    "value_until_measured": "79k for a session (SPLIT-RULE-2026-11.md:138-139, M); 60k for a child or agent (TOKEN-BOTTLENECK-2026-11.md:44, M today, lean folder not yet measured)"
+   },
+   {
+    "name": "g (tokens added per call, per role)",
+    "how_measured": "Slope of context against call number in transcripts",
+    "value_until_measured": "2.8k (SPLIT-RULE-2026-11.md:609, M for session windows); research child swept 2.8k, 5k, 10k (G)"
+   },
+   {
+    "name": "S0 and sigma (state a successor reloads, and its growth per epoch)",
+    "how_measured": "Successor's first-call context minus P; across successive epochs",
+    "value_until_measured": "Coordinator 5k and 0 (G, status written by script); child 10k and 8k (G)"
+   },
+   {
+    "name": "h_c, o, q_f, w (hand-over calls, orientation calls, extra failed calls, tokens written)",
+    "how_measured": "Calls between the hand-over trigger and the successor's first state-changing call; failed calls in the successor's first 30 calls against its last 30",
+    "value_until_measured": "h_c 2 (G); o 2.6 (E, AFTER-COMPACTION-2026-11.md:772-779); q_f 0.5 (E, AFTER-COMPACTION-2026-11.md:39); w 4k (G), 0 if the status is script-written"
+   },
+   {
+    "name": "t_q and kappa_q per question id (mean and spread)",
+    "how_measured": "Tokens between group-start ledger lines plus helper transcripts tagged with the ids; pack tokens per id",
+    "value_until_measured": "None: no wave beyond the pilot may start (R2 exit 3)"
+   },
+   {
+    "name": "n per field (work calls) and n_rev (review calls)",
+    "how_measured": "Call counts in the pilot transcripts",
+    "value_until_measured": "237 (E: 22,962 calls over 97 session windows, SPLIT-RULE-2026-11.md:605-606) and 40 (G)"
+   },
+   {
+    "name": "R_rev and pack size",
+    "how_measured": "Reviewer's window at its start and end; pack file tokens",
+    "value_until_measured": "60k (G); pack 75k (G, RESEARCH-TREE-PROTOCOL-2026-11-16.md:49)"
+   },
+   {
+    "name": "slack used (repair, contrary-evidence reader, re-checks, redistribution)",
+    "how_measured": "Ledger tokens by purpose against f*A_leaf",
+    "value_until_measured": "f = 0.75 (G, D2-01)"
+   },
+   {
+    "name": "unit costs c_u and s_u (session start, reader call, card, check, review, hand-over)",
+    "how_measured": "unit-costs.js over the pilot",
+    "value_until_measured": "None; the pilot runs on the owner's fixed allowance"
+   },
+   {
+    "name": "tokens per meter point",
+    "how_measured": "The coordinator reads the meter before and after the pilot; transcript tokens over the change (whole percent, so coarse)",
+    "value_until_measured": "Unknown; how cache reads count against limits is unknown (TOKEN-BOTTLENECK-2026-11.md:64)"
+   },
+   {
+    "name": "peak memory per session and free-memory trace",
+    "how_measured": "tasklist per process and os.freemem in the watcher during the pilot",
+    "value_until_measured": "1,200 MB per session, 1,024 MB reserve (G)"
+   },
+   {
+    "name": "serial fraction s",
+    "how_measured": "Ledger time with no child running over total time",
+    "value_until_measured": "Not set; cap 3, memory decides"
+   },
+   {
+    "name": "estimate error per field",
+    "how_measured": "Actual against escrowed estimate after each field",
+    "value_until_measured": "Between-field inflation 0.25 (G, D6-13)"
+   }
+  ],
+  "pilot_minimum": [
+   "cost.js with inputs tagged M/E/G and run before the pilot, so that W* for the coordinator and the child and the P18 prediction (R11) are fixed in advance",
+   "plan-tree.js run on priors: key format, single ownership including cross-field keys, mechanism groups, the pilot field as one frozen leaf",
+   "capacity-check.js with group-start ledger lines (token attribution per question group) and the overflow record; script error counts as overflow; the watcher runs the same check",
+   "The overflow order R4 in force for the pilot: two-level pack index instead of a cut; split into an overflow leaf only by the coordinator's script; drop only by the owner",
+   "The watcher's hand-over exit at the computed W* (R6) and its stop at 1.5*W*",
+   "The memory admission check before each session start (R8)",
+   "unit-costs.js, run at the end of the pilot, to produce t_q, unit costs and the per-role P, g, S, H0 that wave 1 needs"
+  ],
+  "left_out": [
+   {
+    "what": "B-tree height and logarithmic search properties",
+    "why": "The tree has one inner node and seven to ten leaves; they add nothing (D2-01). Root capacity is computed only to show no inner level is needed"
+   },
+   {
+    "what": "B-link concurrency (right-links with lock-free readers)",
+    "why": "Pays only under many concurrent operations; with at most three sessions it is analogy only. One forward-pointer line in the old leaf's status is kept (D2-02)"
+   },
+   {
+    "what": "Automatic merge of underflow leaves",
+    "why": "A merge makes a new field and needs an amendment; a small field costs one extra session start, which the owner can weigh"
+   },
+   {
+    "what": "Contract-net bidding and session self-estimates",
+    "why": "Sessions cannot estimate their own cost and all contractors are one model (D7-12); only the manager's side is used"
+   },
+   {
+    "what": "A Universal Scalability Law fit",
+    "why": "Three points at most (N = 1, 2, 3); Amdahl's law is read, not fitted (D3-11)"
+   },
+   {
+    "what": "Pricing the quality loss of a hand-over inside the cost law",
+    "why": "It has no token price; the classical answer is a separate bound on hand-overs per task (D3-01), here n_max and the split of R5. The measured mistake rise is folded in only as q_f extra calls"
+   },
+   {
+    "what": "Currency",
+    "why": "The owner's rule: tokens only. Weighted tokens use published price ratios (pricing.json) as weights, no money"
+   },
+   {
+    "what": "Prompt-cache lapses (5-minute against 1-hour), and rate limits per five hours",
+    "why": "Not modelled; how cache reads count against limits is unknown (TOKEN-BOTTLENECK-2026-11.md:64)"
+   },
+   {
+    "what": "Saturation stopping and capture-recapture coverage",
+    "why": "They belong to the evidence layer (D6-12, D6-04); this layer consumes them only as the 'not saturated' label and as t_q"
+   },
+   {
+    "what": "Moving plain questions to another field's leaf",
+    "why": "Keys are not independent: expertise does not transfer with a key, so redistribution is allowed only for cross-field keys"
+   }
+  ],
+  "problems_covered": [
+   {
+    "problem": "S: the shape of the tree, and overflow handled by cutting the pack",
+    "classical_name": "B+ tree bulk loading at a fill factor; overflow by check-before-insert, out-of-line storage, redistribution and split by key (Bayer-McCreight, Knuth B*, TOAST, Lehman-Yao)",
+    "by": "R1, R2, R3, R4, R5",
+    "residual": "Key costs are known only after the pilot, so the pilot runs on priors. Keys are not independent, so a split loses shared reading. The two-axis packing has no classical guarantee"
+   },
+   {
+    "problem": "P12: children's cost; a window ceiling does not bound spend",
+    "classical_name": "Checkpoint interval and economic order quantity (square-root law); working-set residency; quotas",
+    "by": "R6 (computed W*, n_max), R7, R10 escrow",
+    "residual": "g, n and S for a research child are unmeasured; the quality loss per hand-over is bounded, not priced"
+   },
+   {
+    "problem": "P11: the coordinator's window",
+    "classical_name": "Checkpointing with log truncation; the optimum checkpoint interval (Young 1974, ARIES)",
+    "by": "R6: W* about 133k (E) and stateless per wave from a status file written by script",
+    "residual": "The coordinator's g under the new design is unmeasured; the status script is another layer's"
+   },
+   {
+    "problem": "P14: cost unknown until spent",
+    "classical_name": "Internal pilot with re-estimation; cost-based admission from statistics; mid-run re-optimisation",
+    "by": "R10, unit-costs.js, admit.js",
+    "residual": "One pilot is chosen, not random; between-field variance is a guess until two fields are measured; the meter has whole-percent resolution"
+   },
+   {
+    "problem": "P8: fan-out and the concurrency cap",
+    "classical_name": "Load control against thrashing; Amdahl's law; escrow admission per slot",
+    "by": "R3, R8, R10",
+    "residual": "Peak memory per session unmeasured; orphaned processes are layer 1's"
+   },
+   {
+    "problem": "P18: does the tree beat one session",
+    "classical_name": "Speed-up laws plus the square-root cost model as a stated prediction",
+    "by": "R11",
+    "residual": "One reading at n = 1 per arm; quality is scored elsewhere"
+   },
+   {
+    "problem": "C (part): questions that fall between fields",
+    "classical_name": "Conway's law: give the interfaces an owner",
+    "by": "R1 cross-field keys with one owner and a read-only input",
+    "residual": "Only cross-field questions that someone wrote down are covered"
+   },
+   {
+    "problem": "P4 (part): loss at a hand-over",
+    "classical_name": "Data processing inequality: fewer hops, checkpoints taken from the system",
+    "by": "R5 and R6 bound the number of hand-overs; the successor reads files, not a self-summary",
+    "residual": "Unwritten understanding is still lost at every roll-over; fidelity is measured by other layers"
+   }
+  ],
+  "contradicts_the_frame": [
+   "'Node capacity is the window budget' is one capacity where the tree needs two. The window budget bounds what must sit together (the pack in the reviewer's window, C_node). Spend is a second axis (A_leaf). For the research windows and the coordinator, the square-root law wants windows small, which is the opposite of a B+ tree's preference for full nodes (SPLIT-RULE-2026-11.md:387-390). So the B+ tree governs only what must co-reside.",
+   "'Fan-out is computed, not guessed' holds only partly. Keys are not independent, so the leaves stay the expertise lanes. The computation gives a lower bound, a check on each lane and a plan-time split; it does not produce the fields (D2-01). The B+ height and log properties add nothing with one inner node.",
+   "The frame's overflow by 'the tree's real operations' cannot use plain redistribution. Moving a question to a sibling of another expertise does not move its expertise, so redistribution is limited to cross-field keys. The working operations are out-of-line storage of the pack and a split into an overflow leaf of the same field.",
+   "Young's law does not carry over as is (D2-04, D3-01). The trade here is hand-over cost against re-reading, and the law is derived for that. When reloaded state grows per epoch, the law gains a term: k* = sqrt((2*H0 + sigma*n_rem)/g). Without it the interval came out at about half the best one found by simulation (16 calls against 35).",
+   "For the coordinator, the computed W* (about 133k, E) is well under the 200k line. That points to a coordinator that is stateless per wave (D2-04), not a long-lived one that hands over at a threshold."
+  ],
+  "conflicts_with_other_layers": [
+   "Execution (1): the watcher must compute the window and spend from transcripts at each poll. It must also exit on 'handover' at W*, on 'overflow' from capacity-check, and on actual/estimate > 1.5; enforce escrow; and run the memory admission check. Restarts by the supervision tree (MaxR) are hand-overs in this model: they add H0 and count toward n_max.",
+   "Storage (2): this layer needs cards tagged with question ids and a pack that can be a two-level index (per-mechanism summary at most B/m plus card ids), versioned by hash. An overflow leaf reads the first leaf's frozen index. A read-only source index between waves (D8-08) lowers t_q.",
+   "Integrity (3): tree-plan.json, the cost inputs, capacity-check.js and admit.js must be outside the sessions' write reach. Token counts must come from transcripts by script. A child runs capacity-check on its own spend, so the watcher must repeat the check, or the rule is a wish.",
+   "Evidence (4): the saturation stop (D6-12) decides t_q and the 'not saturated' label. A budget stop and a saturation stop must stay distinguishable in the records.",
+   "Assurance (5): seeded faults and re-checks spend tokens that must come from the slack 1 - f, or the escrows will overrun. Estimate error per field is one of that layer's measured checks.",
+   "Completeness (7): the coordination model checked over all interleavings must include roll-over, overflow, split into an overflow leaf, and admission refusal as actions.",
+   "Owner's F1: if the review stays in the researching session, r > 0, and no hand-over may happen during research. That collides with R6. The computed token price is 2.4 to 4.4 times on stand-in inputs."
+  ],
+  "for_the_owner": [
+   "Which measure sets the hand-over threshold: token count (W* about 115-155k for a child, 133k for the coordinator, on the stated inputs) or weighted token cost (later: 145-212k and 157k).",
+   "F1, now with a token price. On stand-in inputs, keeping the review in the researching session costs 2.4 to 4.4 times the tokens of research with hand-overs plus a fresh reviewer. That window would pass the 300k ceiling after about 82 calls at g = 2.8k. These figures rest on n and g, which the pilot measures.",
+   "Whether the computed W* replaces the fixed 200k coordinator line, and whether the 300k child line becomes a quality cap only. The earlier split-rule floor (a line at least 3 times a session's start, about 237k; SPLIT-RULE-2026-11.md:140-143) is a guess that conflicts with the computed values.",
+   "The fill factor f (0.75 proposed), the margin floor m_owner, z (1.64 proposed), the memory reserve, and the cap F4.",
+   "A weight per field for the value-over-cost order (R9).",
+   "Approval of every plan-time split, every underflow merge, and every range dropped by name (R2, R4e).",
+   "Whether the lean folder's prefix should carry the PC and tool facts whose loss drives the post-hand-over mistakes (AFTER-COMPACTION-2026-11.md:26-31). That lowers o and q_f, and with them H0."
+  ],
+  "computed": "== cost.js output, inputs: inputs.json ==\n\n[1] Coordinator (count): H0=432.4k k*=17.6 calls  W*=133.2k  tokens per work call at k*=137.4k  at the 200k line (k=41)=156.6k  recorded main-session average=333.0k-396.0k\n    with a script-written status (w=0): k*=17.5 W*=133.0k\n    coordinator (weighted cost): k*=26.1 W*=157.1k  (cost optimum hands over later than the count optimum)\n    root fan-out capacity (rows of ~200 tokens that fit between P+S and W*): 246  -> no inner level is ever needed for 7-10 fields\n\n[2] Research child, n=237 work calls, state grows 8.0k per epoch, quality cap 300.0k\n  g=2.8k: k*=16.1 W*=115.0k | cost k*=26.8 W*=145.1k | one session: 94.89M (window reaches 730.8k, OVER the quality cap) | hand-over at k*: 44.98M, 14 hand-overs, reload >= useful growth from epoch 5 (split, do not hand over) | best constant k by simulation: count k=35 37.17M, cost k=48 | adaptive k (law re-applied each epoch): 37.56M, 8 hand-overs, max window 190.4k, reload >= growth from epoch 8 | law with state growth k*=30.6 | leaf capacity before reload thrash n_max=k*(g*k*-S0)/sigma=289 calls | ratio one/hand-over (count)=2.11 (weighted)=1.22 | break-even: hand-over pays from n=29 calls\n  g=5.0k: k*=12.0 W*=130.1k | cost k*=20.1 W*=170.3k | one session: 156.42M (window reaches 1250.0k, OVER the quality cap) | hand-over at k*: 57.41M, 19 hand-overs, reload >= useful growth from epoch 7 (split, do not hand over) | best constant k by simulation: count k=27 45.46M, cost k=40 | adaptive k (law re-applied each epoch): 46.42M, 11 hand-overs, max window 240.0k, reload >= growth from epoch 11 | law with state growth k*=22.9 | leaf capacity before reload thrash n_max=k*(g*k*-S0)/sigma=298 calls | ratio one/hand-over (count)=2.72 (weighted)=1.35 | break-even: hand-over pays from n=22 calls\n  g=10.0k: k*=8.5 W*=155.0k | cost k*=14.2 W*=211.9k | one session: 296.25M (window reaches 2430.0k, OVER the quality cap) | hand-over at k*: 84.35M, 29 hand-overs, reload >= useful growth from epoch 9 (split, do not hand over) | best constant k by simulation: count k=20 60.03M, cost k=30 | adaptive k (law re-applied each epoch): 61.34M, 15 hand-overs, max window 312.0k | law with state growth k*=16.2 | leaf capacity before reload thrash n_max=k*(g*k*-S0)/sigma=307 calls | ratio one/hand-over (count)=3.51 (weighted)=1.43 | break-even: hand-over pays from n=16 calls\n\n[3] F1 token price (count), n=237 research + 40 review calls\n  g=2.8k: same session 126.42M (window 842.8k)  vs  hand-over research 44.98M + fresh reviewer 7.58M (window 244.2k) = 52.57M  ratio 2.40\n  g=5.0k: same session 210.52M (window 1450.0k)  vs  hand-over research 57.41M + fresh reviewer 7.58M (window 244.2k) = 65.00M  ratio 3.24\n  g=10.0k: same session 401.65M (window 2830.0k)  vs  hand-over research 84.35M + fresh reviewer 7.58M (window 244.2k) = 91.93M  ratio 4.37\n  reviewer node capacity for the pack: W_quality - P - R_rev = 180.0k\n\n[4] Token fan-out (D3-12), g=2.8k: k_opt = n/k* = 14.8 windows of ~16 calls for n=237. These are window epochs, sequential or parallel; they are not fields.\n\n[5] Bulk load (illustrative key set), f=0.75: spend 1.33 pack 1.03 of one leaf; lower bound 2 leaves; packed into 2\n  leaf 1: F7-A,F7-B  spend 0.65  pack 0.51\n  leaf 2: F7-C,F7-D  spend 0.68  pack 0.52  separator key: F7-C\n\n[6] Load control: N_mem=2  N=min(cap 3, N_mem)=2\n  s=0.2: S(1..3)=1.00 1.67 2.14  gain of the third slot 0.48 (time only; tokens never fall with N)\n  s=0.4: S(1..3)=1.00 1.43 1.67  gain of the third slot 0.24 (time only; tokens never fall with N)\n  s=0.6: S(1..3)=1.00 1.25 1.36  gain of the third slot 0.11 (time only; tokens never fall with N)\n\n[7] Admission: escrow per field = estimate x 1.82 until two fields are measured; with 6 pilot-units left, at most 3 pilot-sized fields can be reserved at once; in-run re-plan when actual/estimate > 1.5\n\n[8] Order after the pilot (w/est, highest first): F2(3.00) > F7(2.50) > F6(2.22) > F4(2.14) > F5(1.67) > F3(1.25)\n\n(Inputs tagged in inputs.json. Measured: P = 79k session and 60k agent, g = 2.8k, the 200k and 300k lines, the recorded 333-396k per call, the price ratios. Computed from measured figures: o = 2.6, q_f = 0.5, n = 237. Everything else is a guess or illustrative, including g for a research child, S0, sigma, h_c, w, the pack, n_rev, R_rev, memory, s, weights and the key set. Sections 5, 6 and 8 only exercise the algorithms.)"
+ }
+}

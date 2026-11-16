@@ -1,0 +1,146 @@
+{
+ "label": "attack:A2",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "Grep",
+  "StructuredOutput"
+ ],
+ "result": {
+  "findings": [
+   {
+    "id": "A2-01",
+    "title": "The design still has every flaw its own model check found; by its own rule R58 it is blocked",
+    "target": "R2, R6, R7, R8, R9, R11, R58 (layer 1 as a whole)",
+    "kind": "contradiction",
+    "argument": "The execution model (model/model.mjs) checked this layer and found six flaws that need no exotic fault. None of the fixes made it into v2. (1) R8 builds the checkpoint from 'the dead attempt's schema-valid objects'. That includes cards written after the fence, and a planned hand-over alone is enough to trigger it (F1, NoStaleAccepted fails). It also contradicts R2, which logs those same objects as zombie writes. (2) R7's endturn starts a watcher when no 'fresh' one is seen, so right after a resume there are two watchers (F4). (3) R6 detects a pause only between two ticks of one live watcher (F3: false stalls, and a restart charged to a healthy field). (4) R9 parks a failed task without saying it is fenced and stopped first (F5). (5) R11 counts 'sessions run' from the table, not live processes, so zombies are not counted (F6, fails at N_max=2, which is the doc's own interim cap). (6) No rule says READY outranks a stall of the same epoch (A4). R58 then says 'a counterexample blocks the change'. But it lists weaker faults and properties than the model already run: no lost wake, no stop-unconfirmed, no torn write, no stale-output property. The model review adds that four properties were vacuous or weak (AtMostOneCommit, Slots at 3, RestartLimit at R=2, FailedTaskStopped), that stalls never recover in the model, and that E1 locks and E5 intents were never modelled.",
+    "lines": "89-91, 92-94, 95-98, 99-102, 106-110, 400-404",
+    "severity": "high",
+    "smallest_fix": "Fold the model's fixes into the rules' text: R2 records the journal's high-water mark at the fence, and R8 restores only up to it (Kafka-style leader-epoch truncation, D1-01). R7 uses a watcher.lock holding pid and ce, and endturn kills that pid before starting another (singleton daemon, D3-07). R6 keeps an accumulated, persisted stall clock (D3-06). R9 fences and stops before it parks (OTP shutdown, D1-09). R11 counts live processes. Add 'READY of the current epoch voids suspicion'. Make R58 the existing model.mjs with the review's stronger properties (count COMMIT creations, count live processes, R=1, the 4-event budget, recoverable stalls), and add E1 and E5. Record the current verdict, 'blocked', until FIXED passes those."
+   },
+   {
+    "id": "A2-02",
+    "title": "Coordinator hand-over needs the owner every few wakes and waits for a quiet point that never comes",
+    "target": "R13, R51 (coordinator), §12 hand-over",
+    "kind": "does_not_deliver_the_owners_requirement",
+    "argument": "The cost output gives the coordinator k*=17.6 calls at W*=133k. One wake costs several calls (status.mjs, act, endturn). So the coordinator reaches W* after a handful of wakes. A child attempt, meanwhile, runs about 237 calls with 8 to 15 roll-overs per field. Each roll-over is a replace that the coordinator drives, so the coordinator's call count depends on the children's. cost.js prices the two independently. R13 then waits 'until no child runs'. While it waits, every child note is another wake, so the window keeps growing past W*. R51's 'stops at 1.5·W*' has no runner: per fact 1, only the starter can stop a session, and the coordinator's starter is the owner. Each hand-over also needs the owner to start the successor (fact 11: he is not always there). As written, the programme stalls at the first coordinator hand-over that happens while he is away, and that will happen within the first field.",
+    "lines": "115-118, 351-358, 556-558",
+    "severity": "high",
+    "smallest_fix": "Make the coordinator hand-over crash-only (D1-12): handover.mjs fences every running attempt as a planned replacement, kills its own watcher's pid and raises ce. The successor re-admits from commits (R8). Drop the quiescence wait. Until the pilot measures calls per wake, set the coordinator's W* at the weighted optimum or at the 200k line. Mark 1.5·W* as an owner step. Add 'owner interventions per hour' as a pilot measure, and price the coordinator's calls as driven by the children's roll-overs."
+   },
+   {
+    "id": "A2-03",
+    "title": "Admission gate cannot pass: a bootstrap loop and a completeness test that never stops",
+    "target": "R11, R42, R55, R56, R57",
+    "kind": "no_runner_or_cannot_run_here",
+    "argument": "R11 admits a task only if the gate passes. The gate (R56) needs the two blind analyses (R55), R57, R58 and selftest with a hook canary (R42). All of these are sessions or helpers. If they go through admit, nothing can ever start. If they bypass it, they run outside slots, escrow, fencing and spend counting, which are exactly the owner's token measures. R57 adds 'one more blind lens' whenever the residual is above the threshold or not computable, and sets no cap. §8 says every estimator exceeds the experts' stop of 2 or 3 and none is valid, so the gate passes only if the owner sets a threshold above all of them. The gate binds to the tcb.lock.json hash, and R55 reruns 'on each amendment', so a one-line script fix during the pilot may reopen the whole loop. R55's blindness has no runner either: the analysts get 'this design', and this design names P-ids in every rule and lists every risk in §9.",
+    "lines": "43, 106-110, 300-303, 386-399, 409-412",
+    "severity": "high",
+    "smallest_fix": "Add a 'control' task class (the term is already defined on line 43): admit.mjs --control applies slots, escrow and fencing and does not require the gate. Take R57 out of the gate: it becomes telemetry with a fixed lens count (two blind plus at most one more). Bind the gate to the hazard list and the hash of the execution scripts. A script fix reruns selftest, not R55. A redact.mjs strips §8-§9 and the P/N/G ids to make the blind input. Report the overlap as a lower bound, as the completeness analysis's assumption 2 already says."
+   },
+   {
+    "id": "A2-04",
+    "title": "Lost wake-up: the proposed re-wake cannot wake a session on this harness, and the acknowledged seq is not stored",
+    "target": "R4, R7, R13; the model's FIX_REWAKE",
+    "kind": "no_runner_or_cannot_run_here",
+    "argument": "Per fact 2, a turn starts only on an owner message, a child's note, or the exit of a background command the session itself started. The model's fix for F2 (a Task Scheduler entry) cannot start a coordinator turn. Its oracle also observes 'coordinator idle', which no script can see. R7's endturn check runs inside a turn, so it cannot repair a wake that produced no turn. After the watcher's urgent exit, if that wake is lost, nothing else is pending: a stalled child sends no note, and the programme deadlocks (NoDeadlock fails in 5 steps). R7 also acts on 'events after the last seq it saw', but R13 makes the status file the coordinator's only state, and no file holds the acknowledged seq. After a hand-over, one-shot events (zombie write, stop-unconfirmed, pause) are acted on twice or missed.",
+    "lines": "81-84, 92-94, 115-118",
+    "severity": "high",
+    "smallest_fix": "Get the redundancy from wake sources the coordinator itself starts. endturn.mjs makes sure two background commands are pending: the watcher and a plain alarm.mjs (ce-stamped, with a later deadline). Every wake does a level-triggered re-check (Mesa, D3-07). endturn writes acked_seq into coord.json under --ce. Losing both wakes leaves only the owner, so say so. Add to §13 'a background exit starts a turn even when it fires during a turn or during sleep', and inject a lost wake in the pilot."
+   },
+   {
+    "id": "A2-05",
+    "title": "Scripts are said to start, message and stop sessions; replace is really a saga, and redoing it re-charges a restart",
+    "target": "R3, R8, R10, R11, R12, R51",
+    "kind": "no_runner_or_cannot_run_here",
+    "argument": "admit.mjs 'starts a task' (R11). replace.mjs runs 'stop, admit, brief' (R8). spend.mjs tells the child to commit and stops it (R12). The watcher 'stops at 1.5·W*' (R51). Per facts 1-3, only a session starts, messages or stops a session; a script can only decide and record. Each of these is therefore script, then a coordinator turn, then a session tool, then a script, with wake latency in between. R3's 'redo is safe under R2' is false for replace: a redo from step 1 raises the epoch again and counts a second restart (model review, E5 x E8). Under R=1, a coordinator crash in mid-replace therefore parks a healthy task. Reconcile runs only at coordinator start.",
+    "lines": "78-80, 95-98, 103-114, 351-358",
+    "severity": "high",
+    "smallest_fix": "Write replace as a resumable state machine in the task row: fenced, stop-requested, stopped, admitted, started(session id), bound. Each step is a separate script call that carries the target epoch and runs only if the row is at the expected step (a conditional raise under the lock). The coordinator only does the session-tool step the row names. Reconcile at the start of every turn. Reword R11, R12 and R51 as 'decides; the coordinator acts'. Basis: D1-07 (intents) and D1-12 (crash-only), plus idempotent steps keyed by epoch."
+   },
+   {
+    "id": "A2-06",
+    "title": "A reboot is charged as a task failure, so one reset uses every running task's only restart",
+    "target": "R9, R3, N7",
+    "kind": "classical_assumption_does_not_hold",
+    "argument": "OTP restart intensity assumes failures that are independent and specific to the task. A reboot kills every running child at once. Reconcile then replaces them through the failure path, and nothing tells a host reboot apart from a task crash. With R=1, one reboot uses up the restart of every running task. The next one parks them all for the owner, and W_cc halts admission. This PC has a recorded history of hard resets, so this is the expected case, not a corner case. The common-cause rule halts admission but still charges each task.",
+    "lines": "78-80, 99-102, 455",
+    "severity": "high",
+    "smallest_fix": "replace.mjs classes a restart as 'host', with no charge to R, when the OS boot time (script-readable from os.uptime) is later than the attempt's start, or when ce changed. Only a crash within one boot counts. That is the beta-factor split between common cause and independent failure that R9 already cites (D4-07)."
+   },
+   {
+    "id": "A2-07",
+    "title": "The watchdog does the work it is supposed to guard, so a slow tick looks like sleep",
+    "target": "R4, R6, R7",
+    "kind": "classical_assumption_does_not_hold",
+    "argument": "R4 runs harvest, commit, snap (web fetches), witness, tms and status inside every tick. A slow fetch or a large commit lengthens the tick. R6 then reads any gap above 2Δ+30 s as the PC sleeping and moves every deadline, which hides a real stall. R7's 'fresh tick' test makes endturn start a second watcher (F4). The classical watchdog (IEC 61508-7, cited in §14) is independent of the work it supervises. A wall-clock gap cannot tell 'I was slow' from 'the PC slept'. The model's abstract time cannot show this.",
+    "lines": "81-84, 89-94",
+    "severity": "medium",
+    "smallest_fix": "The watcher only reads, decides and exits. Intake runs as its own background process (pipeline.mjs, one at a time under a lock, started by the coordinator), and its exit is just another wake. Pause is judged only from the gap between the watcher's cheap ticks, and the stall clock is accumulated and persisted (the F3 fix). Basis D3-06."
+   },
+   {
+    "id": "A2-08",
+    "title": "The 'single writer' files are written by concurrent processes, so the hash chain forks in normal running",
+    "target": "R1, R14, R32, R15 (git), status file",
+    "kind": "contradiction",
+    "argument": "'Only lib.mjs appends to the ledger', but lib.mjs is imported by every script, and the watcher's pipeline runs at the same time as the scripts the coordinator calls. R1's lock covers only tasks.json. Two appends can read the same h_{i-1}, the chain forks, and R32 then stops all work. commit.mjs's git commits from two processes collide on git's index lock. The watcher and the coordinator both rebuild status.json. R1's stale-lock break is check-then-act (model review E1), and Node's fs gives no exclusive share-mode handle to fall back on.",
+    "lines": "71-73, 137-145, 235-237",
+    "severity": "medium",
+    "smallest_fix": "One lock in lib.mjs covers tasks.json, the ledger append (with the tail read inside the lock), status writes and the git commit. Temp files get unique names (pid plus nonce). A stale lock is broken by renaming it to a unique name and then checking that it still holds the pid and nonce judged stale (D3-10, D2-05)."
+   },
+   {
+    "id": "A2-09",
+    "title": "The spend check rests on a number only a session can read, and 'limits from outside' is enforced from inside",
+    "target": "R12, R32",
+    "kind": "guarantee_overstated",
+    "argument": "Per fact 6, a script cannot read the meter, so the '20 % gap halts admission' check rests on a figure the coordinator types. That contradicts R32 ('gate figures come only from script lines'). Whole-percent resolution makes a 20 % comparison meaningless on any span under 5 percent of the week, and the meter also moves with the owner's other sessions. The spend is measured from outside, but stopping is done by the coordinator (fact 1). The hard-limit formula's 'wake latency' has no bound once a wake can be lost (A2-04), so the overshoot is not bounded either.",
+    "lines": "111-114, 235-237",
+    "severity": "medium",
+    "smallest_fix": "Remove the meter from automatic halts. The coordinator logs meter readings as lines marked self-reported, compared only at the end of the pilot. Rename R12 to 'spend measured by script, stopped by the coordinator', and report overshoot per incident instead of claiming a bound (D3-05 as its source check corrects it)."
+   },
+   {
+    "id": "A2-10",
+    "title": "The trust root sits inside the reach it guards (Tripwire without read-only media)",
+    "target": "R29, R30",
+    "kind": "classical_assumption_does_not_hold",
+    "argument": "Tripwire's guarantee depends on a baseline kept on read-only media. Here tcb/ and tcb.lock.json are both on the same disk. tcb-verify runs inside the watcher, which the coordinator starts. 'Changed only by an owner-approved commit' has no runner that checks the approval. Fact 4 says hook and settings files are editable unless they are checked from outside, and nothing in the design is outside. User-level settings, which also apply to every session, are not checked at all.",
+    "lines": "213-221",
+    "severity": "medium",
+    "smallest_fix": "The owner holds the approved tcb commit hash himself and gives it in his go message; the coordinator's brief echoes it, and every tcb-verify compares against it. Make the decisive control audit.mjs scanning the harness-written transcripts for any write call touching tcb/, .claude/ or sealed/ (exit 3). Label the result tamper-evident, not tamper-proof (D5-08)."
+   },
+   {
+    "id": "A2-11",
+    "title": "The schema and the hook's budget check have no runner: they rest on the child's obedience and on hook inputs nobody has checked",
+    "target": "R33, R49(a), R30",
+    "kind": "no_runner_or_cannot_run_here",
+    "argument": "Per fact 3, the schema is imposed by the session that starts the helper, which here is the child. guard-hook refuses 'wrong helper types' but not a missing or altered schema, so R33's 'harness-imposed' schema is really obedience. R49(a) asks a pre-call hook to sum U + Σ_group t_q from transcripts and to know the reader's group from the Agent call. That needs the hook to receive the session id or transcript path and the call's parameters, which §13 does not list as believed or verified. Without it, the check silently falls back to the child following its brief.",
+    "lines": "238-240, 343-350, 217-221",
+    "severity": "medium",
+    "smallest_fix": "guard-hook refuses an Agent call whose schema parameter does not hash to tcb's card schema. The R42 canary tests whether the hook sees that parameter. Move R49(a) into the watcher (detect, then stop) until the canary shows the hook receives the inputs it needs. Add both items to §13 (D8-05, D5-02)."
+   },
+   {
+    "id": "A2-12",
+    "title": "The 'believed, not verified' list leaves out things R10 and R12 rest on, with no fallback",
+    "target": "§13, R10",
+    "kind": "missing",
+    "argument": "§13 lists hooks, transcript linkage, 'a stop ends helpers' and keep-awake. It leaves out: that each child session is a distinct OS process a script can find and kill by folder name (R10's orphan kill, the zombie path and R12's hard stop all assume it); that a background exit is delivered as a wake during a turn, during sleep, or after ce changed (A2-04); and which settings files apply to a session started in wt/<task>-e<e>/. 'A stop ends helpers' has no fallback in R10 beyond telling the owner.",
+    "lines": "103-105, 581-583",
+    "severity": "medium",
+    "smallest_fix": "Add these items to §13. Give each a probe in the pilot's fault list on line 310-311, which already kills a child, sleeps and forces a hand-over, and a stated fallback: the owner ends the process, and the tokens are counted as zombie spend."
+   }
+  ],
+  "holds": [
+   "Fencing by equality with the table plus a --ce check on every exec script (R2) is load-bearing and model-verified: TwoCoordinatorsAct holds only because of --ce, and removing the attempt-epoch check breaks NoStaleAccepted in 7 steps (D1-01 as its source check corrects it).",
+   "Suspicion by progress, not liveness (R5), is right: LoopEventuallySuspected holds and fails when it is replaced by transcript growth (A-PROGRESS). V is computed from files, so a script can run it.",
+   "Level-triggered wakes (R7) are necessary, not ornamental: the A-LEVEL ablation shows that acting only on what a wake carries leaves a field stuck forever (D3-07).",
+   "Readers restricted by their agent file to web tools only, with no disk access, and a harness-validated result schema (R30 role table, R33) use the strongest enforcement point this harness has: the harness itself, not a hook and not obedience (facts 3).",
+   "Counting spend, auditing reads and logging searches from JSONL transcripts (R12 measurement, R23, R35) are genuinely runnable by a plain Node script, independent of the hooks (fact 5), and they back the unverified preventive layer.",
+   "R26's dependence on F5 is stated honestly with a silent default (every card unverifiable, the pilot only measures), and R5 falls back to committed cards, so nothing pretends to witness without a fetch the owner has not allowed.",
+   "R16's harvest has a counted fallback (copied_by_session) for the believed transcript linkage, rather than assuming it.",
+   "Leaving out consensus, two-phase commit and distributed locks (§10) fits one PC with one coordinator and sleeping sessions; blocking protocols would stall on a session that is not in a turn.",
+   "N_max = 2 until memory is measured, never above 3, matches the harness cap of three children (fact 1).",
+   "Pause handling by moving deadlines rather than exiting (R6) correctly uses fact 8 (processes resume on wake); its flaw is only where the gap is measured (A2-01, A2-07)."
+  ],
+  "overall": "The seven borrowed designs are the right ones. Most of the runnable control (fencing, progress variant, transcript-based measurement, harness-restricted readers) passes the runner test. But version 2 cannot run as written, for four reasons. First, it carries every flaw its own model check found, so by R58 it is blocked (A2-01). Second, the coordinator's hand-over needs the owner every few wakes and waits for a quiet point that cannot come (A2-02). Third, the admission gate depends on sessions that need admission and on a completeness test with no stop (A2-03). Fourth, the model's fix for lost wakes has no runner on this harness, because only exits of a coordinator's own background commands can wake it (A2-04). Several rules give scripts powers only a session has: starting, messaging and stopping sessions. Replace is really a multi-actor saga whose redo charges a second restart (A2-05). A reboot, frequent on this PC, uses up every running task's single restart (A2-06). The smallest fixes are mostly removals or merges: fold the model's six fixes into R2 to R11, make the coordinator hand-over crash-only, add a control task class and take R57 out of the gate, use a second self-started alarm with a persisted acked_seq, make replace a resumable row state machine, add a 'host' restart class, run intake outside the watchdog, use one lock for all shared writes, drop the meter from automatic halts, and anchor tcb in the owner's own go message."
+ }
+}

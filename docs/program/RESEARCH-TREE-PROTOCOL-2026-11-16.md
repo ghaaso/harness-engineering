@@ -330,3 +330,14 @@ The pilot measures what it can of these.
 4. The pilot: the measurement field, with both reviews of F1 and the single-session control.
 5. The owner sees the pilot's reading and sets the margin.
 6. The other fields, in waves.
+
+## Amendment 4 (2026-11-16): the rules above are replaced by version 2
+
+The owner ruled that these problems are instances of problems that established branches of computer
+science have already solved, and that the fixes should be those branches' standard solutions (he is
+himself reusing distributed systems and B+ trees). Eight field experts mapped the 21 problems to 103
+classical solutions; six designers wrote version 2 from them; its coordination rules were
+model-checked; four refuters attacked it; it was revised. The current design is
+`RESEARCH-TREE-PROTOCOL-v2-2026-11-16.md`, and its record is `evidence/research-tree/foundations-2026-11-16/`.
+This file stays as the record of how the problems were found. Amendment 1 stays in force until the
+owner rules, as version 2 says in its section 12.

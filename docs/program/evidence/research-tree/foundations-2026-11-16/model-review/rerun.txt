@@ -1,0 +1,279 @@
+
+=== SPEC: spec as written (R=2, N_max=3, one coordinator hand-over): 381916 states, 1177394 transitions, 5296 ms
+  FAILS  NoStaleAccepted  (shortest trace 9 steps)
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. child f0e1 journals a card (progress)
+         3. watcher(ce0) exits 30 at its own deadline, which wakes coord0
+         4. coord0 wakes, runs status, plan: replace(f0,handover) > replace(f1,first) > endturn | coord0 replace.mjs f0 (planned hand-over at W*): intent, FENCE epoch -> e2 (not counted toward R)
+         5. child f0e1 writes READY, turn-end note to coord0 AFTER its fence
+         6. coord0 replace f0: restore-check (checkpoint includes cards written AFTER the fence), admit, start session f0e2, bind | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         7. child f0e2 journals a card (progress)
+         8. child f0e2 writes READY, turn-end note to coord0
+         9. coord0 wakes, runs status, plan: commit(f0e2) > commit(f0e1) > endturn | coord0 commit.mjs f0e2: checks pass, merge branch | coord0 commit.mjs f0e2: COMMIT created (wx) | coord0 commit.mjs f0e1: exit 10 stale epoch (table e2), zombie-write logged | coord0 endturn.mjs: live watcher present
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  FAILS  NoFalseSuspicion  (shortest trace 6 steps)
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT system pauses (a watcher is alive)
+         3. system resumes from the pause (all processes together; timers fire)
+         4. watcher(ce0) exits 30 at its own deadline BEFORE recording the pause gap, which wakes coord0
+         5. coord0 wakes, runs status, plan: replace(f1,first) > endturn | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         6. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+  FAILS  SingleWatcher  (shortest trace 6 steps)
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT system pauses (a watcher is alive)
+         3. system resumes from the pause (all processes together; timers fire)
+         4. child f0e1 journals a card (progress)
+         5. child f0e1 writes READY, turn-end note to coord0
+         6. coord0 wakes, runs status, plan: commit(f0e1) > replace(f1,first) > endturn | coord0 commit.mjs f0e1: checks pass, merge branch | coord0 commit.mjs f0e1: COMMIT created (wx) | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: watcher tick is stale -> starts ANOTHER watch.mjs (the first is still alive)
+  FAILS  FailedTaskStopped  (shortest trace 8 steps)
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 stalls
+         3. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+         4. coord0 wakes, runs status, plan: replace(f0,stall) > replace(f1,first) > endturn | coord0 replace.mjs f0 (stall): intent, FENCE epoch -> e2, restarts=1
+         5. coord0 replace f0: stop f0e1 confirmed; restore-check, admit, start session f0e2, bind | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         6. FAULT child f0e2 stalls
+         7. watcher(ce0) tick: events [stall f0e2] -> exits 20, which wakes coord0
+         8. coord0 wakes, runs status, plan: replace(f0,stall) > endturn | coord0 replace.mjs f0 (stall): exit 1 restart limit (restarts=1, same class=true) -> task FAILED, escalated; the attempt is not stopped | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+  FAILS  SlotsAtSpecInterimCap2  (shortest trace 5 steps)
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. child f0e1 journals a card (progress)
+         3. watcher(ce0) exits 30 at its own deadline, which wakes coord0
+         4. coord0 wakes, runs status, plan: replace(f0,handover) > replace(f1,first) > endturn | coord0 replace.mjs f0 (planned hand-over at W*): intent, FENCE epoch -> e2 (not counted toward R)
+         5. coord0 replace f0: FAULT stop of f0e1 unconfirmed (zombie keeps running); restore-check, admit, start session f0e2, bind | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+  FAILS  NoDeadlock  (shortest trace 5 steps)
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 stalls
+         3. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+         4. FAULT wake to coord0 is lost
+         5. (no non-fault action enabled; a field is unresolved)
+  FAILS  AlwaysCanResolve  (shortest trace 5 steps)
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 stalls
+         3. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+         4. FAULT wake to coord0 is lost
+         5. (from here field f0 can never reach committed or failed)
+  HOLDS  LoopEventuallySuspected
+
+=== FIXED: spec + the smallest fixes (R=2, N_max=3): 108550 states, 320098 transitions, 1417 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== FIXED-N2: spec + fixes, N_max=2 (the spec interim cap): 103984 states, 298215 transitions, 1325 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== FIXED-K3: spec + fixes, deeper: 3 faults (up to 3 child faults, 2 zombies): 767700 states, 2429081 transitions, 11170 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== A-FENCE-EPOCH: ablation from FIXED: fencing by attempt epoch: 169927 states, 535397 transitions, 2221 ms
+  FAILS  NoStaleAccepted  (shortest trace 7 steps) NEW vs FIXED
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. child f0e1 journals a card (progress)
+         3. watcher(ce0) exits 30 at its own deadline, which wakes coord0
+         4. coord0 wakes, runs status, plan: replace(f0,handover) > replace(f1,first) > endturn | coord0 replace.mjs f0 (planned hand-over at W*): intent, FENCE epoch -> e2 (not counted toward R)
+         5. child f0e1 writes READY, turn-end note to coord0 AFTER its fence
+         6. coord0 replace f0: restore-check, admit, start session f0e2, bind | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         7. coord0 wakes, runs status, plan: commit(f0e1) > endturn | coord0 commit.mjs f0e1: checks pass, merge branch | coord0 commit.mjs f0e1: COMMIT created (wx) | coord0 endturn.mjs: live watcher present
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== A-FENCE-CE: ablation from FIXED: fencing by coordinator epoch (--ce): 108730 states, 320996 transitions, 1379 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  FAILS  TwoCoordinatorsAct  (shortest trace 12 steps) NEW vs FIXED
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 stalls
+         3. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+         4. coord0 wakes, runs status, plan: stop-admitting(W*_coord) > replace(f0,stall) > endturn | coord0 reaches W*_coord: stops admitting | coord0 replace.mjs f0 (stall): intent, FENCE epoch -> e2, restarts=1
+         5. coord0 replace f0: FAULT stop of f0e1 unconfirmed (zombie keeps running); restore-check, admit, start session f0e2, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         6. child f0e2 journals a card (progress)
+         7. child f0e2 writes READY, turn-end note to coord0
+         8. coord0 wakes, runs status, plan: commit(f0e2) > endturn | coord0 commit.mjs f0e2: checks pass, merge branch | coord0 commit.mjs f0e2: COMMIT created (wx) | coord0 endturn.mjs: live watcher present
+         9. zombie f0e1 passes Z: watcher exits 25, owner ends it
+        10. coord0 wakes, runs status, plan: handover | coord0 handover.mjs: coord.json ce -> 1; its watcher is left running
+        11. watcher(ce0) tick: coord.json shows ce=1 -> exits 31, which wakes coord0
+        12. coord0 wakes, runs status, plan: replace(f1,first) > endturn | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== A-COMMIT: ablation from FIXED: the commit record: 108550 states, 320098 transitions, 1497 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== A-COMMIT-SPEC: ablation from SPEC: the commit record: 381916 states, 1177394 transitions, 5740 ms
+  FAILS  NoStaleAccepted  (shortest trace 9 steps) as in SPEC
+  FAILS  AtMostOneCommit  (shortest trace 15 steps) NEW vs SPEC
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT system pauses (a watcher is alive)
+         3. system resumes from the pause (all processes together; timers fire)
+         4. child f0e1 journals a card (progress)
+         5. watcher(ce0) exits 30 at its own deadline BEFORE recording the pause gap, which wakes coord0
+         6. coord0 wakes, runs status, plan: replace(f1,first) > endturn | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         7. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+         8. child f0e1 writes READY, turn-end note to coord0
+         9. coord0 wakes, runs status, plan: commit(f0e1) > endturn | coord0 commit.mjs f0e1: merge, then FAULT torn write (crash before the table update) | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+        10. watcher(ce0) tick: events [ready f0e1] -> exits 10, which wakes coord0
+        11. coord0 wakes, runs status, plan: replace(f0,stall) > endturn | coord0 replace.mjs f0 (stall): intent, FENCE epoch -> e2, restarts=1
+        12. coord0 replace f0: restore-check, admit, start session f0e2, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+        13. child f0e2 journals a card (progress)
+        14. child f0e2 writes READY, turn-end note to coord0
+        15. coord0 wakes, runs status, plan: commit(f0e2) > commit(f0e1) > endturn | coord0 commit.mjs f0e2: checks pass, merge branch (the merge is the commit) | coord0 commit.mjs f0e2: table marked committed | coord0 commit.mjs f0e1: exit 10 stale epoch (table e2), zombie-write logged | coord0 endturn.mjs: live watcher present
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  FAILS  NoFalseSuspicion  (shortest trace 6 steps) as in SPEC
+  FAILS  SingleWatcher  (shortest trace 6 steps) as in SPEC
+  FAILS  FailedTaskStopped  (shortest trace 8 steps) as in SPEC
+  FAILS  NoDeadlock  (shortest trace 5 steps) as in SPEC
+  FAILS  AlwaysCanResolve  (shortest trace 5 steps) as in SPEC
+  HOLDS  LoopEventuallySuspected
+
+=== A-PROGRESS: ablation from FIXED: suspicion by progress -> by liveness: 102288 states, 303106 transitions, 1316 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  FAILS  AlwaysCanResolve  (shortest trace 3 steps) NEW vs FIXED
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 loops (varied calls, no progress)
+         3. (from here field f0 can never reach committed or failed)
+  FAILS  LoopEventuallySuspected  (shortest trace 5 steps) NEW vs FIXED
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 loops (varied calls, no progress)
+         3. watcher(ce0) tick: no event
+         4. -- cycle repeated forever --
+         5. (tick) back to the start of the cycle
+
+=== A-PAUSE: ablation from FIXED: pause detection: 192140 states, 577384 transitions, 2718 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  FAILS  NoFalseSuspicion  (shortest trace 4 steps) NEW vs FIXED
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT system pauses (a watcher is alive)
+         3. system resumes from the pause (all processes together; timers fire)
+         4. watcher(ce0) tick after a pause gap (no pause detection): events [stall f0e1] -> exits 20, which wakes coord0
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== A-LEVEL: ablation from FIXED: level-triggered re-check after a wake: 230889 states, 649941 transitions, 2922 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  FAILS  AlwaysCanResolve  (shortest trace 5 steps) NEW vs FIXED
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 stalls
+         3. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+         4. FAULT wake to coord0 is lost
+         5. (from here field f0 can never reach committed or failed)
+  HOLDS  LoopEventuallySuspected
+
+=== C-LIMIT: control: FIXED, child faults only, budget 3: 133540 states, 365227 transitions, 1723 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  HOLDS  RestartLimit
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+=== A-LIMIT: ablation from C-LIMIT: the restart limit: 162750 states, 440682 transitions, 2291 ms
+  HOLDS  NoStaleAccepted
+  HOLDS  AtMostOneCommit
+  HOLDS  Slots
+  FAILS  RestartLimit  (shortest trace 12 steps) NEW vs C-LIMIT
+         1. coord0 wakes, runs status, plan: replace(f0,first) > endturn | coord0 replace.mjs f0 (first): intent, epoch -> e1 | coord0 replace f0: restore-check, admit, start session f0e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         2. FAULT child f0e1 stalls
+         3. watcher(ce0) tick: events [stall f0e1] -> exits 20, which wakes coord0
+         4. coord0 wakes, runs status, plan: replace(f0,stall) > replace(f1,first) > endturn | coord0 replace.mjs f0 (stall): intent, FENCE epoch -> e2, restarts=1
+         5. coord0 replace f0: stop f0e1 confirmed; restore-check, admit, start session f0e2, bind | coord0 replace.mjs f1 (first): intent, epoch -> e1 | coord0 replace f1: restore-check, admit, start session f1e1, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+         6. FAULT child f0e2 stalls
+         7. watcher(ce0) tick: events [stall f0e2] -> exits 20, which wakes coord0
+         8. coord0 wakes, runs status, plan: replace(f0,stall) > endturn | coord0 replace.mjs f0 (stall): intent, FENCE epoch -> e3, restarts=2
+         9. coord0 replace f0: stop f0e2 confirmed; restore-check, admit, start session f0e3, bind | coord0 endturn.mjs: no live watcher -> starts watch.mjs
+        10. FAULT child f0e3 stalls
+        11. watcher(ce0) tick: events [stall f0e3] -> exits 20, which wakes coord0
+        12. coord0 wakes, runs status, plan: replace(f0,stall) > endturn | coord0 replace.mjs f0 (stall): intent, FENCE epoch -> e4, restarts=3
+  HOLDS  TwoCoordinatorsAct
+  HOLDS  NoFalseSuspicion
+  HOLDS  SingleWatcher
+  HOLDS  FailedTaskStopped
+  HOLDS  NoDeadlock
+  HOLDS  AlwaysCanResolve
+  HOLDS  LoopEventuallySuspected
+
+Total states over all runs: 2952880; wall time 41019 ms

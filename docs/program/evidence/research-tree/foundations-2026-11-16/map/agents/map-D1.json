@@ -1,0 +1,624 @@
+{
+ "label": "map:D1",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "nearest_whole_design": {
+   "name": "A master-worker batch job with re-execution and atomic output commit (MapReduce's master), run under a supervision tree with restart limits (Erlang/OTP)",
+   "source": "Dean, J. and Ghemawat, S. (2004), 'MapReduce: Simplified Data Processing on Large Clusters', OSDI 2004 (master, task table, re-execution, atomic rename commit, semantics with non-deterministic operators). Armstrong, J. (2003), 'Making reliable distributed systems in the presence of software errors', PhD thesis, KTH (supervisors, restart strategies, restart intensity, escalation).",
+   "why_it_fits": "The tree already has the same shape. One master (the coordinator) holds only a task table and pointers. Independent tasks (fields) run on workers (child sessions) that do not talk to each other. Outputs are files. A failed task is re-executed elsewhere. A final reduce (the synthesis) consumes exactly one committed output per task. MapReduce already handles the hardest property this tree has, which is non-determinism: its paper states that with non-deterministic operators each reduce output matches some single execution of each map task. The synthesis needs exactly that guarantee: each field's pack and review come from one committed attempt, never a mix of two. OTP adds what MapReduce leaves implicit. A supervisor restarts a failed child, and after R restarts in T it gives up and escalates to its own parent (here the owner) instead of retrying forever.",
+   "borrow_whole": "(1) A task table owned by the coordinator, kept as a file: one row per field with state (idle, in-progress, committed, failed), attempt number (epoch), session id, start time, spend and commit hash. (2) Re-execution on failure under a new attempt number, from the last checkpoint. (3) Atomic commit of an attempt's output: the attempt writes to fields/<f>/attempt-<e>/, and the commit is one atomic rename or a single-line COMMIT file naming the attempt and the hash. First commit wins. Later completions from stale attempts are ignored by the acceptor script. (4) The reduce (synthesis script) reads only committed attempts. (5) OTP restart intensity: at most R restarts per field and K across the tree in a period T, then escalate. (6) Master recovery from the task-table file (a fresh coordinator).",
+   "where_it_does_not_fit": "(a) MapReduce assumes fail-stop workers. Here a worker can return a confident wrong answer that looks exactly like a right one (a Byzantine, arbitrary fault). MapReduce has no answer for that, so an end-to-end verification layer must be added (D1-05, D1-06). (b) Re-execution is cheap in MapReduce and expensive here (a whole field's tokens), so re-execute from a checkpoint (cards), never from scratch, and cap restarts. (c) Do not borrow backup tasks for stragglers: they double token cost. (d) The concurrency is three, not thousands, and there are no worker heartbeats, so failure detection must be built (D1-02). (e) Task inputs overlap (shared sources), which MapReduce's input splits avoid by construction (D1-11). (f) The master pays a growing window cost, which a MapReduce master does not (D1-10)."
+  },
+  "mappings": [
+   {
+    "id": "D1-01",
+    "problems": [
+     "P9",
+     "P10",
+     "P6",
+     "P11"
+    ],
+    "classical_problem": "Zombie processes and split brain after a failover: a process suspected dead resumes (after a pause, sleep or slow turn) and keeps writing after its replacement started. Solved by fencing.",
+    "solutions": [
+     {
+      "name": "Leases (time-bounded ownership)",
+      "source": "Gray, C. and Cheriton, D. (1989), 'Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache Consistency', SOSP 1989",
+      "guarantees": "At most one holder at a time, provided clocks run at bounded relative rates",
+      "assumptions": "Bounded clock drift; the holder stops acting when its lease expires"
+     },
+     {
+      "name": "Fencing by sequence number (sequencers)",
+      "source": "Burrows, M. (2006), 'The Chubby lock service for loosely-coupled distributed systems', OSDI 2006",
+      "guarantees": "The resource rejects any request carrying an older sequence number, so a zombie's writes have no effect even if the zombie does not know it is a zombie",
+      "assumptions": "The resource (here the acceptor script) checks the number on every write; numbers only grow"
+     }
+    ],
+    "assumptions_that_fail_here": "A session cannot be relied on to stop itself when its lease runs out: it has no clock between turns, sleep freezes it, and it can ignore an instruction. 'Stop before replacing' (STONITH in cluster practice) assumes the stop is confirmed, but a stop can fail silently, a sleeping PC resumes everything, and orphan helpers of a dead child keep running. When the holder cannot be trusted to stop, the field moves the check to the resource: fencing at the acceptor, not obedience at the writer.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Each field and the coordinator carry an epoch number. Bumping the epoch fences the old incarnation. Only outputs stamped with the current epoch are accepted or merged.",
+     "runner": "The watcher script bumps the epoch, and the coordinator starts the replacement. The acceptor and merge script (Node) enforces the epoch on every file it accepts.",
+     "when": "Before any replacement session starts (after a stall, crash, sleep or hand-over), and on every accept or merge",
+     "input": "fields/<f>/EPOCH (a single integer, written by temp file plus fs.renameSync); every output file's header field 'epoch'; branch name child/<f>-e<epoch>",
+     "on_failure": "An output with epoch < EPOCH is rejected and logged to the ledger as a zombie write. A branch whose name has a stale epoch is never merged. If the EPOCH file cannot be written, no replacement starts and the watcher exits with 'fence-failed', which wakes the coordinator."
+    },
+    "formula_or_algorithm": "replace(f): e := read EPOCH(f); write EPOCH(f) := e+1 atomically; mark the task-table row (f, e) as fenced; best-effort stop of the old session; start the new session with brief epoch=e+1 on branch child/f-e(e+1). accept(file): if file.epoch != read EPOCH(f), reject. The coordinator's own hand-over uses the same scheme on COORDINATOR_EPOCH: a woken coordinator whose epoch is stale ends its turn without acting.",
+    "to_measure": [
+     "number of rejected stale-epoch writes per wave (zombie rate)",
+     "number of best-effort stops that did not take effect (session still running after stop)",
+     "tokens spent by fenced sessions after their fencing (wasted work)"
+    ],
+    "effect_on_measures": "Quality: no double or mixed output reaches the synthesis. Hallucinations: none directly. Tokens and cost: exposes zombie spend. A best-effort stop still bounds that spend; fencing only makes it harmless. Build cost is small.",
+    "build_cost": "Small: about 40 lines of Node in the acceptor and merge script, plus one field in each schema and one line in each brief.",
+    "confidence": "high"
+   },
+   {
+    "id": "D1-02",
+    "problems": [
+     "P9",
+     "P19"
+    ],
+    "classical_problem": "Failure detection in an asynchronous system: a slow process cannot be told apart from a dead one. Detectors are unreliable by nature and are tuned between detection time and the false-suspicion rate.",
+    "solutions": [
+     {
+      "name": "Unreliable failure detectors (completeness and accuracy classes)",
+      "source": "Chandra, T.D. and Toueg, S. (1996), 'Unreliable failure detectors for reliable distributed systems', JACM 43(2)",
+      "guarantees": "Defines what a detector can promise: eventual completeness and eventual or weak accuracy. A wrong suspicion is normal and must be safe, which here means fencing (D1-01)",
+      "assumptions": "Eventual partial synchrony: after some point, delays are bounded"
+     },
+     {
+      "name": "Phi accrual failure detector",
+      "source": "Hayashibara, N., Defago, X., Yared, R. and Katayama, T. (2004), 'The phi accrual failure detector', SRDS 2004",
+      "guarantees": "A suspicion level adapted to the observed inter-arrival distribution instead of a fixed timeout; a chosen threshold gives a known false-suspicion probability under that distribution",
+      "assumptions": "Inter-arrival times of the monitored signal are stationary and measurable"
+     }
+    ],
+    "assumptions_that_fail_here": "(1) The monitored signal is a liveness heartbeat in the classical case. Here liveness is worthless: a looping session is alive. The signal must be progress, and the current rule already says so. (2) 'New confirmed cards' cannot be the progress signal during research, because under P1 confirmation runs after the review. Use new distinct cards and increased question coverage instead. (3) Stationarity fails: a child reads for a long time, then writes in bursts. (4) PC sleep freezes the watcher too, and on wake every timer fires at once (a process pause). The field's answer to (3) is a hard upper bound beside the adaptive one. Its answer to (4) is to detect the pause and suspend suspicion.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Suspect a child when no progress event has arrived for longer than the measured distribution allows (phi above a threshold) or past a hard ceiling. Never suspect across a detected system pause.",
+     "runner": "The watcher script (Node), one per wave",
+     "when": "A tick every Δ = 60 s",
+     "input": "Progress events: the count of distinct source ids in fields/<f>/cards.jsonl, question ids covered, and new files committed on the child's branch, each with a timestamp. Also the wall clock between ticks.",
+     "on_failure": "Pause detected: reset every child's last-progress time to now, log 'pause' to the ledger, keep going. Child suspected: exit with code 'stall:<f>', which wakes the coordinator. The coordinator then uses the D1-01 replacement path, never a direct restart. If the watcher itself crashes, its exit still wakes the coordinator, and the coordinator treats a watcher crash as 'restart the watcher', not as a field failure."
+    },
+    "formula_or_algorithm": "Pause detection: if (now - lastTick) > 2Δ + 30 s, then the system was paused, so do not suspect anyone. Progress events are distinct new source ids, new question ids covered, and new committed files whose hash differs from all earlier ones. The same card rewritten does not count. With μ = the mean interval between progress events measured on the pilot, under an exponential model φ(t) = t / (μ · ln 10), where t = time since the last progress event. Suspect when φ > Φ (Φ = 3 means about a 0.1 % chance that a healthy child is this quiet) or when t > T_max (a hard cap, for example 3μ, or the time box). A loop check also runs: if the last k = 5 events add no new source id or question id, suspect a loop even when files keep appearing.",
+    "to_measure": [
+     "timestamps of every progress event per child in the pilot (gives μ and the distribution)",
+     "false suspicions: suspected children that would have produced within 2T_max",
+     "detection delay of true stalls",
+     "number of pause events and their length (sleep)"
+    ],
+    "effect_on_measures": "Time taken: stalls are found in about μ·Φ·ln10 instead of a guessed box. Tokens: a looping child is cut early. Quality: fewer false restarts, each of which costs a whole re-read. The pause check prevents mass restarts after sleep.",
+    "build_cost": "Small to medium: the watcher must exist anyway. This adds about 60 lines plus a pilot measurement of μ.",
+    "confidence": "high"
+   },
+   {
+    "id": "D1-03",
+    "problems": [
+     "P10",
+     "P4",
+     "F1"
+    ],
+    "classical_problem": "Crash-recovery with checkpoints and logs (rollback recovery), plus orphans: work done for a dead parent and lost with it.",
+    "solutions": [
+     {
+      "name": "Checkpointing and message logging (rollback-recovery)",
+      "source": "Elnozahy, E.N., Alvisi, L., Wang, Y.-M. and Johnson, D.B. (2002), 'A survey of rollback-recovery protocols in message-passing systems', ACM Computing Surveys 34(3)",
+      "guarantees": "A recovered process reaches a consistent state with no orphans, if every message it received after its checkpoint is logged on stable storage before it acts on it (pessimistic logging)",
+      "assumptions": "Deterministic replay of logged messages (piecewise determinism)"
+     },
+     {
+      "name": "Atomic commit of a task's output by rename",
+      "source": "Dean, J. and Ghemawat, S. (2004), 'MapReduce: Simplified Data Processing on Large Clusters', OSDI 2004",
+      "guarantees": "Output is all or nothing. Duplicate executions produce one visible output",
+      "assumptions": "Atomic rename on the file system"
+     }
+    ],
+    "assumptions_that_fail_here": "Piecewise determinism fails: replaying a session's inputs does not give the same session. So the field's answer for non-deterministic processes applies: log the outputs (the effects), not the inputs, and restart from the last logged output rather than replaying. Helpers return their results only into the child's window (readers hold no write tools, by P5), so a child crash loses every in-flight card: the orphan problem. There is a log the session cannot forget to write: the harness's own transcript on disk, which records every helper result. That makes it a write-ahead log kept by the infrastructure, not by the session.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "(a) Every file is written by temp file plus rename. A JSONL line is accepted only if it parses, and a truncated last line is dropped. (b) Each attempt writes under attempt-<epoch>/, and a COMMIT file makes it visible. (c) On restart, a salvage script pulls helper results (cards) out of the dead session's transcript into the new attempt's input before the fresh session starts. (d) Restart reads only committed or salvaged material.",
+     "runner": "Writes: the child session, through a small Node helper write-atomic.js that it calls. Salvage: a Node script that the coordinator runs before every replacement. Acceptance: the acceptor script.",
+     "when": "Every write; every replacement",
+     "input": "The dead session's transcript JSONL (tool results of helper calls); fields/<f>/attempt-<e>/",
+     "on_failure": "A card salvaged from the transcript fails the schema: drop it and log it. The transcript is unreadable: restart from the last committed cards only, and log the lost helper count. A partial attempt folder without COMMIT is never read by the synthesis."
+    },
+    "formula_or_algorithm": "Restart point = last COMMIT ∪ schema-valid cards salvaged from the transcript and deduplicated by source id. Lost work = helper results in the transcript − salvaged cards.",
+    "to_measure": [
+     "helper results lost per crash before and after salvage",
+     "fraction of restarts that reach the same question coverage",
+     "tokens of re-reading after a restart"
+    ],
+    "effect_on_measures": "Tokens and cost: a crash no longer re-buys every in-flight reader. Time: shorter recovery. Quality: no torn or mixed files reach the synthesis.",
+    "build_cost": "Medium: the salvage script depends on the transcript format (about 100 lines). Atomic write and COMMIT are small.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D1-04",
+    "problems": [
+     "P3",
+     "F2",
+     "P20"
+    ],
+    "classical_problem": "Common-mode or correlated failure in redundant software: N-version programming and the failure of its independence assumption.",
+    "solutions": [
+     {
+      "name": "N-version programming (design diversity with voting)",
+      "source": "Avizienis, A. (1985), 'The N-Version Approach to Fault-Tolerant Software', IEEE Transactions on Software Engineering SE-11(12)",
+      "guarantees": "Voting masks faults in a minority of versions",
+      "assumptions": "Versions fail independently"
+     },
+     {
+      "name": "The experimental test of that assumption",
+      "source": "Knight, J.C. and Leveson, N.G. (1986), 'An experimental evaluation of the assumption of independence in multiversion programming', IEEE Transactions on Software Engineering SE-12(1)",
+      "guarantees": "A negative result: independently written versions failed together on the same inputs far more often than independence predicts, so voting overstates reliability",
+      "assumptions": "Independently developed versions of one specification"
+     },
+     {
+      "name": "Data diversity (re-expressed inputs to one program)",
+      "source": "Ammann, P.E. and Knight, J.C. (1988), 'Data diversity: an approach to software fault tolerance', IEEE Transactions on Computers 37(4)",
+      "guarantees": "Diversity obtained by varying inputs rather than versions; it helps when failures depend on the input region",
+      "assumptions": "Re-expressed inputs keep the correct answer the same"
+     }
+    ],
+    "assumptions_that_fail_here": "Independence fails even more than in Knight and Leveson: two instances of one model share weights, training data and blind spots. What the field does when design diversity cannot be had is two things. Do not count agreement as masking. Get diversity from inputs (data diversity) or from a verifier of a different kind (D1-05).",
+    "fit": "direct",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "Agreement never raises a claim (as now). A second opinion is worth its cost only if it differs in inputs (a different source set: the contrary-evidence reader of P16) or in kind (a different model, or a deterministic check). A second same-model run on the same inputs is not bought.",
+     "runner": "The coordinator, when it chooses the F2 form; the synthesis script, which ignores agreement counts",
+     "when": "After the first reviews are in, per field chosen for a second opinion",
+     "input": "The frozen pack; a disjoint seed list for the contrary reader",
+     "on_failure": "If no diverse input or model is available, the claim stays at single-reading strength and is marked so. It is never upgraded."
+    },
+    "formula_or_algorithm": "Under correlation ρ between two readers' errors with error rate p, P(both wrong) ≈ p² + ρ·p(1−p). At ρ near 1 a second reader adds nothing. Estimate ρ on the pilot as the co-error rate on cards that the checker found wrong.",
+    "to_measure": [
+     "the pilot's co-error rate: of the cards or claims found wrong, how many the second reader also got wrong",
+     "the disagreement rate between first and second opinion",
+     "the share of the second opinion's claims that come from sources outside the first pack (diversity actually obtained)"
+    ],
+    "effect_on_measures": "Tokens and cost: avoids a whole second research run that buys little independence (it backs the F2 recommendation of a second reviewer plus a contrary reader). Hallucinations: honest strength labels.",
+    "build_cost": "Nil for the rule; small for the co-error measurement in the pilot.",
+    "confidence": "high"
+   },
+   {
+    "id": "D1-05",
+    "problems": [
+     "P1",
+     "P21",
+     "P17",
+     "P20",
+     "P13"
+    ],
+    "classical_problem": "Byzantine faults (a component answers wrongly, possibly convincingly). Two families of solutions: replication with voting (which needs independence, see D1-04), or authenticated, verifiable messages that any receiver checks for itself.",
+    "solutions": [
+     {
+      "name": "Byzantine Generals: oral messages (3f+1) versus signed messages (any number of traitors)",
+      "source": "Lamport, L., Shostak, R. and Pease, M. (1982), 'The Byzantine Generals Problem', ACM TOPLAS 4(3)",
+      "guarantees": "With unforgeable signed messages, agreement is possible for any number of faulty generals; with oral messages, only when fewer than a third are faulty",
+      "assumptions": "Signatures cannot be forged and any receiver can verify them"
+     },
+     {
+      "name": "Practical Byzantine Fault Tolerance (replicated state machine)",
+      "source": "Castro, M. and Liskov, B. (1999), 'Practical Byzantine Fault Tolerance', OSDI 1999",
+      "guarantees": "Safety with up to f faulty of 3f+1 replicas",
+      "assumptions": "Independent failures; bounded number of faulty replicas"
+     }
+    ],
+    "assumptions_that_fail_here": "PBFT's replica independence fails (D1-04), so the replicated route is closed. The signed-message route maps: a claim that carries a verifiable link to its evidence (source snapshot hash, exact quote, number) can be checked by a deterministic verifier that is not a model, so it is immune to shared blind spots. The step that is not deterministic, 'the citing sentence stays within the card's conditions' (P17), is a judgment. For that step the field has no masking answer without independence: label it as judgment and keep its error rate in the ledger.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Every card carries the snapshot hash of the page text it quotes. A claim is 'verified' only if a script finds the exact quote (after whitespace and Unicode normalisation) in that snapshot and the number in or next to the quote. A model checker judges only conditions and citing-sentence scope, and its verdict is labelled as a judgment.",
+     "runner": "A Node script, quote-check.js. It fetches the page once with Node's built-in fetch, stores the bytes under sources/<sha256>, and runs the match. The checker agent handles judgment only.",
+     "when": "At card acceptance (fetch and hash) and again at the post-review check",
+     "input": "cards.jsonl (url, quote, number, snapshot hash); sources/<sha256>",
+     "on_failure": "Quote not found, or page not fetchable: the card is 'unverified' and may not support a conclusion; the citing sentence is struck or marked as judgment; the ledger counts it. PDF or JavaScript-rendered pages that plain Node cannot turn into text are marked 'unverifiable by script', never silently passed."
+    },
+    "formula_or_algorithm": "verified(card) := sha256(snapshot) = card.snapshot_hash ∧ normalise(card.quote) ⊂ normalise(text(snapshot)) ∧ card.number appears within w = 300 characters of the quote.",
+    "to_measure": [
+     "share of cards whose quote the script finds",
+     "share of pages the script cannot turn into text (PDF, JavaScript)",
+     "checker judgment-error rate on a sample regraded by the owner or a different model"
+    ],
+    "effect_on_measures": "Hallucinations: invented or distorted quotes and numbers are caught without a model in the loop. Quality: claims have a reproducible basis. Tokens: a script check costs no tokens.",
+    "build_cost": "Small to medium. HTML-to-text in plain Node is crude without a library; PDFs are the gap.",
+    "confidence": "high"
+   },
+   {
+    "id": "D1-06",
+    "problems": [
+     "P1",
+     "P4",
+     "P17"
+    ],
+    "classical_problem": "Where to put the correctness check in a multi-hop path: the end-to-end argument.",
+    "solutions": [
+     {
+      "name": "End-to-end arguments",
+      "source": "Saltzer, J.H., Reed, D.P. and Clark, D.D. (1984), 'End-to-end arguments in system design', ACM TOCS 2(4)",
+      "guarantees": "A function that can be done correctly only with the endpoints' knowledge must be checked at the endpoints. Checks at intermediate hops are performance aids, not guarantees.",
+      "assumptions": "The endpoint can perform the check"
+     }
+    ],
+    "assumptions_that_fail_here": "Few. The endpoint here is the owner's page and the synthesis, not the review. The current check sits one hop early: the synthesis and the owner page are further hops where a condition can fall off or a number be retyped.",
+    "fit": "direct",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "The final artifact (the synthesis and the owner's page) is itself checked: every factual sentence resolves through card ids to a verified card (D1-05), and every number in the sentence equals the card's number with the same unit and conditions tag. Hop-by-hop checks stay as early warnings.",
+     "runner": "A Node script, e2e-check.js, run by the coordinator",
+     "when": "Before anything goes to the owner; it is the last gate",
+     "input": "synthesis/claims-table.json, the owner page source, cards.jsonl, the quote-check results",
+     "on_failure": "Any sentence that fails is struck or marked 'unchecked judgment'. If more than x % fail, the synthesis is not released and the coordinator is woken."
+    },
+    "formula_or_algorithm": "For each sentence s with numbers N(s) and cited cards C(s): pass iff C(s) is not empty, every c in C(s) is verified, and every n in N(s) matches some c.number (equal after unit normalisation).",
+    "to_measure": [
+     "failure rate at the endpoint against failure rate at the review (loss added by the synthesis hop)"
+    ],
+    "effect_on_measures": "Hallucinations and quality at the point the owner sees. Low token cost.",
+    "build_cost": "Small once D1-05 exists.",
+    "confidence": "high"
+   },
+   {
+    "id": "D1-07",
+    "problems": [
+     "P9",
+     "P10",
+     "P6",
+     "P8"
+    ],
+    "classical_problem": "Effects that must happen exactly once (starting a costly child, merging, freezing a pack, ledger entries, a message to the owner) under retries and restarts: at-least-once delivery plus idempotent effects, through intent records.",
+    "solutions": [
+     {
+      "name": "Idempotence keys",
+      "source": "Helland, P. (2012), 'Idempotence Is Not a Medical Condition', ACM Queue 10(4) (also CACM 55(5))",
+      "guarantees": "Retrying a request with the same key has the effect of one request",
+      "assumptions": "Keys are stable across retries; the receiver keeps the keys it has seen"
+     },
+     {
+      "name": "Entities and activities without distributed transactions",
+      "source": "Helland, P. (2007), 'Life beyond Distributed Transactions: an Apostate's Opinion', CIDR 2007",
+      "guarantees": "Scalable correctness without 2PC by idempotent messages and remembered partner state",
+      "assumptions": "Messages may be retried; the receiver deduplicates"
+     }
+    ],
+    "assumptions_that_fail_here": "The coordinator may die between deciding and recording a session start (it cannot do both atomically), and the session list is the only ground truth about whether a start happened. The field's answer: write the intent before the effect, then reconcile the intent against the observed world after a restart.",
+    "fit": "direct",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Every costly or external effect has a key (field, epoch, step). An intent record is created exclusively before the effect. After any restart, intents are reconciled against reality before anything is redone.",
+     "runner": "The coordinator, through a Node script intent.js (fs.openSync(path,'wx') is an atomic exclusive create); the ledger merge script deduplicates by (session_id, seq)",
+     "when": "Before starting a child, merging a branch, freezing a pack or writing to the owner; at every coordinator start",
+     "input": "intents/<field>-e<epoch>-<step>.json; the session list (only a session can read it, so the coordinator reconciles)",
+     "on_failure": "The create fails because the file exists: the effect may have happened, so the coordinator checks reality (a session with that name, a merged commit, a hash file) and does not repeat it blindly. A merge is naturally idempotent (git merge of an already-merged commit is a no-op). Ledger lines with a repeated key are dropped."
+    },
+    "formula_or_algorithm": "do(effect, key): if create_exclusive(intent(key)) fails, then reconcile(key) and return. Otherwise perform(effect); write done(key). On restart, for every intent without done: if observed(effect) then write done, else perform again (safe only because of the epoch fence, D1-01).",
+    "to_measure": [
+     "duplicate child starts avoided",
+     "intents left open after crashes"
+    ],
+    "effect_on_measures": "Token cost: no second costly child for one field. Quality: no double merges or double ledger lines.",
+    "build_cost": "Small: about 50 lines.",
+    "confidence": "high"
+   },
+   {
+    "id": "D1-08",
+    "problems": [
+     "P8",
+     "P12",
+     "P14"
+    ],
+    "classical_problem": "Admission control with budget reservation (escrow), bounded concurrency, and back-pressure; a barrier compared with work-conserving scheduling.",
+    "solutions": [
+     {
+      "name": "Escrow transactional method",
+      "source": "O'Neil, P.E. (1986), 'The escrow transactional method', ACM TODS 11(4)",
+      "guarantees": "Concurrent consumers can draw on one shared quantity without ever overdrawing it, by reserving amounts in advance",
+      "assumptions": "Each consumer's draw is known when it reserves, or bounded"
+     },
+     {
+      "name": "Little's law for sizing concurrency and time",
+      "source": "Little, J.D.C. (1961), 'A Proof for the Queuing Formula: L = λW', Operations Research 9(3)",
+      "guarantees": "Mean number in system = arrival rate × mean time in system, for any stable system",
+      "assumptions": "A stationary, stable system (long run)"
+     }
+    ],
+    "assumptions_that_fail_here": "A child's draw is not known in advance (P14), and the only meter a script can read is token counts from transcripts, not the plan's meter. The field's answer is to reserve an estimate with a margin, enforce it at the consumer (the watcher exits on overspend), and reconcile against the true meter at the coordinator's turns. A sample of one pilot gives no variance, so the margin is a guess until more fields have run; update it after each field (an estimate that improves as it runs). Waves of three are a barrier: a wave waits for its slowest field, and slots stay idle.",
+    "fit": "adapted",
+    "current_rule_is": "weaker_than_standard",
+    "mechanism": {
+     "rule": "Each field is admitted individually, when a slot is free, if the unreserved budget covers its escrow. The escrow is reserved at start and released at commit. The watcher stops a field at its escrow. The coordinator reads the true meter at each wake and corrects the remaining budget.",
+     "runner": "Admission and escrow: the coordinator, using admit.js over the task table. Enforcement: the watcher, using spend from transcripts. True meter: the coordinator (get_usage).",
+     "when": "At every slot release; every watcher tick; every coordinator wake",
+     "input": "Remaining cap B (from the meter, converted to tokens), pilot cost ĉ, each field's question count q_f, the margin m, the reserve r for checks and synthesis",
+     "on_failure": "Not admitted: the field stays idle and is reported, never started 'to see'. Over escrow: the watcher exits 'overspend:<f>', and the coordinator freezes the field (pack cut to its limit, rest 'not covered'), no top-up without the owner. Meter and transcript count disagree by more than 20 %: stop admitting and wake the coordinator."
+    },
+    "formula_or_algorithm": "Escrow e_f = (1+m) · ĉ · q_f / q_pilot. Admit f iff B − Σ(open escrows) − r ≥ e_f and running < N (N = 2 or 3 by free memory). After each committed field, update ĉ to the mean cost per question so far and m to max(m_owner, 2·s/ĉ), where s is the observed standard deviation (needs at least 3 fields; before that, the owner's m). Expected wall time ≈ (F/N)·W̄, by Little's law with a work-conserving queue, against Σ over waves of max W_f with barriers.",
+    "to_measure": [
+     "cost per field and per question (transcript tokens)",
+     "the ratio of the transcript count to the meter",
+     "per-field wall time W_f and its spread (straggler cost of waves)"
+    ],
+    "effect_on_measures": "Token count and cost are bounded per field, not per window. Time is shorter without barriers. Throughput: slots never idle while work and budget remain.",
+    "build_cost": "Small to medium; it shares the watcher and task table.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D1-09",
+    "problems": [
+     "P9",
+     "P10",
+     "P19",
+     "S"
+    ],
+    "classical_problem": "Supervision with restart limits and escalation (restart intensity); distinguishing a local fault from a common cause.",
+    "solutions": [
+     {
+      "name": "Supervision trees, restart strategies and restart intensity",
+      "source": "Armstrong, J. (2003), 'Making reliable distributed systems in the presence of software errors', PhD thesis, Royal Institute of Technology (KTH), Stockholm",
+      "guarantees": "Faults are contained to a subtree. A child that keeps failing is not restarted forever: past R restarts in T seconds the supervisor itself fails and escalates to its parent",
+      "assumptions": "Restart from a known-good initial state clears transient faults"
+     }
+    ],
+    "assumptions_that_fail_here": "A restart costs a large token amount, not milliseconds, so R must be small. Many faults here are not transient: a bad brief or a bad pack fails the same way again. Common-cause faults (allowance exhausted, reboot, sleep, the fetch tool down) hit every child at once, and restarting each one separately is exactly what OTP's one_for_all and escalation exist to prevent.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Per field: at most R_f = 1 automatic replacement (from checkpoint, D1-03), then the field is failed and escalated to the owner with its ledger. Tree-wide: if two or more children fail within the same window W (for example 30 min), treat it as a common cause. Stop all admission, restart nothing, wake the coordinator with 'common-cause'.",
+     "runner": "The watcher (counts failures and time) and the coordinator (decides)",
+     "when": "On every failure exit",
+     "input": "The task table's failure history",
+     "on_failure": "Escalation goes to the owner: the coordinator writes a status line and stops the wave. It never retries past the limit."
+    },
+    "formula_or_algorithm": "failures_f ≥ R_f + 1 ⇒ fail field f. |{f : failed in [t−W, t]}| ≥ 2 ⇒ common cause ⇒ halt admission.",
+    "to_measure": [
+     "restarts per field and whether the restart succeeded",
+     "the share of failures that were common cause (sleep, allowance, reboot)"
+    ],
+    "effect_on_measures": "Tokens and cost: no retry storms. Time: faster escalation of persistent faults.",
+    "build_cost": "Small.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D1-10",
+    "problems": [
+     "P11",
+     "S"
+    ],
+    "classical_problem": "Bounding the state of a long-running leader: snapshots plus log truncation, and a leader whose decisions are a function of persistent state (state machine approach).",
+    "solutions": [
+     {
+      "name": "Snapshotting and log compaction",
+      "source": "Ongaro, D. and Ousterhout, J. (2014), 'In Search of an Understandable Consensus Algorithm', USENIX ATC 2014",
+      "guarantees": "A replacement or lagging node restarts from a snapshot plus the log tail, so the log does not grow without bound",
+      "assumptions": "The snapshot is a faithful image of the applied state"
+     },
+     {
+      "name": "State machine approach",
+      "source": "Schneider, F.B. (1990), 'Implementing fault-tolerant services using the state machine approach: a tutorial', ACM Computing Surveys 22(4)",
+      "guarantees": "Any replica that applies the same commands from the same state reaches the same state",
+      "assumptions": "Deterministic state machine"
+     }
+    ],
+    "assumptions_that_fail_here": "The coordinator is not deterministic. So split it: a deterministic part (a script that computes state and the next legal actions from the task table and files) and a judgment part (the session). Only the deterministic part's output is the snapshot. The coordinator's own summary is not, because a self-written summary is not a faithful image (the current rule already points at the status file; keep it).",
+    "fit": "adapted",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "status.json is generated by a script from the task table, intents and files. It is the snapshot. A coordinator decision is a log entry (decisions.jsonl) with an id. The hand-over at 200,000 tokens bumps COORDINATOR_EPOCH (D1-01) and restarts the watchers under the new coordinator, so the wake-up goes to the live one.",
+     "runner": "status.js (Node), run by the watcher on each tick and by the coordinator on wake; the handing-over coordinator for the epoch bump",
+     "when": "Each tick; at hand-over",
+     "input": "The task table, intents/, ledger, fields/*/COMMIT",
+     "on_failure": "status.js fails: the coordinator does not act on memory; it stops and reports. A stale coordinator woken after hand-over sees the epoch mismatch and ends its turn."
+    },
+    "formula_or_algorithm": "next_actions = f(status) is deterministic: admit (D1-08), replace (D1-01, D1-09), accept (D1-05), release. The session's window holds only status.json, the last N decisions and verdict files.",
+    "to_measure": [
+     "coordinator tokens per call over time",
+     "hand-overs per programme",
+     "decisions the new coordinator had to re-derive"
+    ],
+    "effect_on_measures": "Token count: the measured largest sink stays bounded. Quality: the hand-over loses nothing that lives only in a summary.",
+    "build_cost": "Small to medium.",
+    "confidence": "medium"
+   },
+   {
+    "id": "D1-11",
+    "problems": [
+     "P7",
+     "P6"
+    ],
+    "classical_problem": "Duplicate work across workers. Two standard answers: avoid coordination and accept duplicates (safe when work is idempotent), or claim work atomically. The withdrawn register failed because it used check-then-act, the classic race, not because claiming is wrong.",
+    "solutions": [
+     {
+      "name": "Coordination avoidance (invariant confluence)",
+      "source": "Bailis, P., Fekete, A., Franklin, M.J., Ghodsi, A., Hellerstein, J.M. and Stoica, I. (2014), 'Coordination Avoidance in Database Systems', PVLDB 8(3)",
+      "guarantees": "Operations whose invariants hold under merge need no coordination",
+      "assumptions": "The invariant is preserved by merging independent states"
+     },
+     {
+      "name": "Conflict-free replicated data types (grow-only set)",
+      "source": "Shapiro, M., Preguica, N., Baquero, C. and Zawirski, M. (2011), 'Conflict-free Replicated Data Types', SSS 2011",
+      "guarantees": "Replicas that each write their own state converge under union",
+      "assumptions": "Merge is commutative, associative and idempotent"
+     }
+    ],
+    "assumptions_that_fail_here": "A card is shaped partly by its field's question, so a 'claimed' paper must not be withheld from a neighbour. Deduplicate the reading (cache), not the use.",
+    "fit": "direct",
+    "current_rule_is": "the_standard_solution",
+    "mechanism": {
+     "rule": "Keep the current rule: no coordination, overlap counted. Optional upgrade if the pilot shows overlap is costly: a content-addressed card cache, sources/<sha256(canonical url or DOI)>/card.json. The first writer wins by exclusive create, and a later field reads and reuses that card (adding its own field tag in its own folder) instead of re-reading.",
+     "runner": "The child (it has write tools; readers do not) calls cache.js before dispatching a reader; the overlap counter script runs after each wave",
+     "when": "Before dispatching a reader on a source; after each wave",
+     "input": "The canonical source id",
+     "on_failure": "Exclusive create fails: read the existing card. If it is unparseable, read the source anyway (at-least-once). Never block on another field."
+    },
+    "formula_or_algorithm": "Build the cache only if overlap_rate × mean reader cost × remaining fields exceeds the build cost. overlap_rate = |sources read by ≥2 fields| / |sources read|.",
+    "to_measure": [
+     "overlap rate after the pilot and wave 1",
+     "mean reader tokens per source"
+    ],
+    "effect_on_measures": "Tokens: saves re-reads only if overlap is real. Quality is unchanged, because the card's conditions are the source's.",
+    "build_cost": "Small, and optional.",
+    "confidence": "high"
+   },
+   {
+    "id": "D1-12",
+    "problems": [
+     "F1",
+     "P10"
+    ],
+    "classical_problem": "A recovery path that is rarely exercised is broken when it is needed. Crash-only design makes recovery the normal path.",
+    "solutions": [
+     {
+      "name": "Crash-only software",
+      "source": "Candea, G. and Fox, A. (2003), 'Crash-Only Software', HotOS IX",
+      "guarantees": "If the only way to stop is to crash and the only way to start is to recover, the recovery path is tested continuously",
+      "assumptions": "Recovery is cheap enough to use routinely"
+     }
+    ],
+    "assumptions_that_fail_here": "Recovery here is not cheap: a fresh reviewer re-reads the pack. The field argues only about dependability, not about review quality, which is outside this field.",
+    "fit": "adapted",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "Whatever F1 decides on quality, the fresh-from-frozen-pack path must run at least once in the pilot as a real path, so that the crash and full-window path is known to work.",
+     "runner": "The coordinator, in the pilot",
+     "when": "Pilot field, after its pack freezes",
+     "input": "The frozen pack",
+     "on_failure": "If the fresh path fails, recovery is not available, and the tree may not start further fields until it is fixed."
+    },
+    "formula_or_algorithm": "None.",
+    "to_measure": [
+     "whether the fresh path completes; its token cost against the same-window review"
+    ],
+    "effect_on_measures": "Dependability of recovery. It makes the F1 comparison happen anyway.",
+    "build_cost": "Already planned in the pilot (both reviews).",
+    "confidence": "medium"
+   },
+   {
+    "id": "D1-13",
+    "problems": [
+     "C"
+    ],
+    "classical_problem": "Completeness of a failure analysis: enumerate a fault model (failure classes) against every component, rather than collecting risks from memory.",
+    "solutions": [
+     {
+      "name": "Failure semantics taxonomy (crash, omission, timing, response or arbitrary failures)",
+      "source": "Cristian, F. (1991), 'Understanding fault-tolerant distributed systems', Communications of the ACM 34(2)",
+      "guarantees": "A systematic list: every component's failure semantics is stated, and every higher-level design states which ones it tolerates",
+      "assumptions": "The component list is complete"
+     }
+    ],
+    "assumptions_that_fail_here": "The component list itself is the weak point. Include non-obvious components: the fetch tool, the usage meter, the PC power state, the owner (a slow or absent approver), the transcript files, git, and the scripts themselves.",
+    "fit": "direct",
+    "current_rule_is": "no_current_rule",
+    "mechanism": {
+     "rule": "A table of components × {crash, crash-recovery with amnesia, omission (lost output or message), timing (too slow or too fast), wrong answer (Byzantine), common-cause}. Every cell names the problem id that covers it, or 'gap'. The list counts as complete for the fault model when no cell says 'gap'.",
+     "runner": "The coordinator writes it once; a refuter attacks the cells marked covered",
+     "when": "Before the owner's go",
+     "input": "Components: coordinator, child, reader, checker, watcher, acceptor and merge scripts, quote-check script, fetch tool, usage meter, file system and git, transcript, PC power, owner",
+     "on_failure": "A gap cell becomes a new problem id or an accepted risk with the owner's word"
+    },
+    "formula_or_algorithm": "13 components × 6 classes = 78 cells.",
+    "to_measure": [
+     "number of gap cells found"
+    ],
+    "effect_on_measures": "Quality of the design; it is cheap.",
+    "build_cost": "Small: one session table.",
+    "confidence": "high"
+   }
+  ],
+  "missing_risks": [
+   {
+    "title": "A zombie writes after its replacement started",
+    "classical_name": "Split brain / zombie process (needs fencing)",
+    "why_it_applies": "A child that looked stalled, a session frozen by sleep, or a coordinator that handed over can wake and keep writing. 'Stop before replacing' assumes the stop took effect.",
+    "mechanism": "Epoch numbers checked by the acceptor and merge script (D1-01)."
+   },
+   {
+    "title": "Every timer fires after the PC wakes from sleep",
+    "classical_name": "Process pause / clock jump causing mass false suspicion",
+    "why_it_applies": "The watcher and all sessions freeze together. On wake, every time box has expired, and the watcher would declare every child stalled and trigger restarts.",
+    "mechanism": "Detect a tick gap greater than 2Δ + 30 s, reset suspicion and log a pause (D1-02)."
+   },
+   {
+    "title": "One cause fails every session at once",
+    "classical_name": "Common-mode (correlated) failure",
+    "why_it_applies": "The weekly allowance, a reboot, sleep, or the fetch tool hits all children together. Treating each failure separately multiplies restarts.",
+    "mechanism": "Two or more failures within a window ⇒ halt admission and escalate (D1-09)."
+   },
+   {
+    "title": "Restarts use up the budget that would have let work finish",
+    "classical_name": "Retry storm / metastable failure (Bronson, N., Aghayev, A., Charapko, A. and Zhu, T. (2021), 'Metastable Failures in Distributed Systems', HotOS 2021)",
+    "why_it_applies": "Under budget pressure a restarted child re-reads, overspends and is restarted again. The trigger is gone, but the loop sustains itself.",
+    "mechanism": "Restart intensity limits, restart from checkpoint, and escrow (D1-03, D1-08, D1-09)."
+   },
+   {
+    "title": "Half-written files, or outputs of two attempts mixed",
+    "classical_name": "Torn writes; non-atomic commit",
+    "why_it_applies": "A crash in the middle of a write leaves a truncated JSONL that may still parse. A restarted attempt writes into the same folder as the dead one.",
+    "mechanism": "Write by temp file plus rename, attempt folders, and a COMMIT file that the synthesis reads exclusively (D1-03)."
+   },
+   {
+    "title": "The wake-up goes to nobody",
+    "classical_name": "Lost wake-up / unsupervised supervisor (who watches the watcher)",
+    "why_it_applies": "The watcher's exit wakes the session that started it. After a coordinator hand-over or a reboot that session is gone, and a hung watcher (not exited) never wakes anyone.",
+    "mechanism": "Watchers restart under every new coordinator epoch. The watcher carries its own hard deadline (process.exit after T_max) and writes a tick line to status.json; the coordinator checks the tick age on every wake. After a reboot nothing runs until the owner, or a logon task he approves, starts a fresh coordinator."
+   },
+   {
+    "title": "Helpers keep running for a dead child, and their results are lost",
+    "classical_name": "Orphan computations",
+    "why_it_applies": "Readers return only into the child's window. If the child dies, their spend is wasted and their cards vanish.",
+    "mechanism": "Salvage from the transcript (D1-03); orphans are counted in the ledger."
+   },
+   {
+    "title": "Files keep appearing but nothing is learned",
+    "classical_name": "Gray failure (Huang, P. et al. (2017), 'Gray Failure: The Achilles' Heel of Cloud-Scale Systems', HotOS 2017): healthy to the monitor's own check, failing for its users",
+    "why_it_applies": "A progress signal defined as new files or cards can be satisfied by a loop that rewrites similar cards. Also, 'confirmed cards' do not exist during research, because confirmation is post-review.",
+    "mechanism": "Progress = new distinct source ids and new question ids covered; a loop test over the last k events (D1-02)."
+   },
+   {
+    "title": "A wave waits for its slowest field",
+    "classical_name": "Straggler at a barrier (bulk-synchronous waves against work-conserving scheduling)",
+    "why_it_applies": "Waves of three leave slots idle while one field runs long.",
+    "mechanism": "Admit per field as slots free, subject to escrow (D1-08)."
+   },
+   {
+    "title": "A costly effect happens twice",
+    "classical_name": "Duplicate side effects under retry (lack of idempotence)",
+    "why_it_applies": "A coordinator that crashes after starting a child and before recording it starts a second one.",
+    "mechanism": "Intent records by exclusive create, reconciled after restart (D1-07)."
+   }
+  ],
+  "do_not": [
+   "Do not treat agreement among instances of the same model as a Byzantine quorum or as N-version masking: the independence assumption is false (Knight and Leveson 1986).",
+   "Do not use liveness (alive, answering, writing files) as evidence of progress, and do not count rewrites as progress.",
+   "Do not start a replacement on a timeout without fencing the old incarnation at the acceptor; a 'stop' that cannot be confirmed is not a fence.",
+   "Do not check-then-act on a shared file. Use one writer, an atomic exclusive create (fs.openSync with 'wx') or an atomic rename.",
+   "Do not build consensus, distributed locks or two-phase commit across sessions. One coordinator, epochs and idempotent effects are enough on one PC, and a blocking coordinator protocol would stall on a sleeping session.",
+   "Do not retry without a limit, and do not restart all failed children separately after a common-cause failure; cap restarts and escalate.",
+   "Do not let wall-clock timeouts run across sleep or a pause without detecting the pause.",
+   "Do not let the synthesis read uncommitted or mixed attempts.",
+   "Do not borrow speculative backup tasks for stragglers: they double the token cost.",
+   "Do not let a component's self-report be the measure of its own health or spend; measure it from outside (transcripts, files).",
+   "Do not treat a fixed time box chosen by guess as a failure detector; measure the progress interval in the pilot."
+  ],
+  "not_my_field": [
+   "P2 anchoring and the neutrality of briefs (cognitive bias, experimental design)",
+   "P5 prompt injection from web text; least privilege is a security principle (Saltzer, J.H. and Schroeder, M.D. (1975), 'The Protection of Information in Computer Systems', Proceedings of the IEEE) and belongs to the security field",
+   "P12 why fixed prefixes and windows cost what they do (model economics, caching); only the admission and escrow part is mine (D1-08)",
+   "P13 whether a session 'knows' its field (assessment and psychometrics); my part is only that verification must be external and deterministic where possible (D1-05)",
+   "P15 refuting dismissals (research method)",
+   "P16 search and selection bias, coverage estimation (information retrieval, meta-analysis)",
+   "P18 whether the tree beats one session, and how to score it (experimental design and statistics)",
+   "F1 on review quality (focused versus long context); my field speaks only to the recovery path (D1-12)",
+   "S on fan-out and node size as a B+ tree question (data structures). My field adds only failure containment by hierarchy, bounded depth, and a supervisor per subtree (D1-09)."
+  ]
+ }
+}

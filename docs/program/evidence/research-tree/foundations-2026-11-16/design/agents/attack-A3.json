@@ -1,0 +1,135 @@
+{
+ "label": "attack:A3",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "overall": "Version 2 is right to borrow whole designs. Under the cost lens, though, it is a programme that guards itself with more machinery than the seven-field research it protects. §10 (lines 482-488) lists 34 scripts; line 587 says \"about 35\". Of the 59 rules, 56 are tagged pilot. The experts' own build_cost notes for the pilot mechanisms add up to roughly 2,900 lines, and about 15 more scripts carry no estimate. The model check reviewed only layer 1 (13 rules, 8 scripts). It found 6 flaws with every mechanism present and 7 more in parts it did not model. Almost every one comes from a mechanism added to coordinate the other mechanisms: the watcher that exits to wake (F2, F3, F4), restore-check (F1), stored escrow (leak), intents (redo re-fences), the lock break (race), and several writers per log. So added machinery adds failure modes, and the same will hold for the other ~25 scripts.\n\nThe design never names the main token cost of its own checks: coordinator wakes. By cost.js each wake is a full coordinator call, 137.4k tokens at k*. That is about 0.26 % of a 52.57M-token field per wake (stand-in inputs), so 100 wakes per field come to about a quarter of a field. Time-based deadlines, coordinator-started checker batches and frequent coordinator hand-overs all multiply wakes.\n\nThe protection per token is highest where a script checks and no model runs: the witness, the commit with epoch equality, foreign keys, the transcript parser. It is lowest in the statistical and B+ tree machinery run on priors in a one-field pilot, and in the completeness gate that every script fix re-triggers.\n\n**Smallest set that keeps the high-rated problems guarded.** By my rating these are P1, P2, P5, P6, P9, P10, P12, P13, P14, P15, P18 and P21. About 16 scripts, built in this order:\n1. Hook, profiles and canary (R30, R42 canary), because everything rests on the unverified hook.\n2. Schemas, lib and commit (R14, R15, R19, R2 equality), plus one transcript parser for spend, harvest, audit and the search log (R12 hard limit, R16, R23, R35).\n3. snap and witness (R26, on F5).\n4. A timer-only watcher, a level-triggered status.mjs with progress counted per model call, and replace/admit with the model-check fixes F1, F5 and F6, a compare-and-set epoch and computed reservations. Re-run R58 with strengthened properties.\n5. check-queue and promote, J-class calibration seeds, and certify with R44 merged into it, the R37 ceiling and the R39 bar.\n6. One blind STPA and FMEA pass (R55), information only.\n7. The pilot with R40, R54 and compare.\n\n**Later, built from what the pilot measures:** bulk load and overflow (R48, R49a/c/d), the two-level pack, Chapman per question, reuse by key (R22), intents if loss is seen, coordinator hand-over at k*, uncited-lot sampling, S2 and R2.\n\n**Never:** a gate that is bound to tcb.lock or uses an estimator the doc calls invalid; a stored escrow ledger; a stale-lock break; time-based pause detection.\n\nAll token figures come from cost.js on stand-in inputs (g for a research child is a guess), so they fix the order of magnitude, not a prediction.",
+  "holds": [
+   "The witness by script (R26, lines 199-204; D7-01, D8-02, D5-04) protects the most per token in the whole design. Each check costs no model tokens, and it guards P1 and P21 at their root: an end-to-end check against stored source bytes. It needs F5 and nothing else.",
+   "Fencing by attempt epoch at commit plus an exclusive-create commit record (R2, R15, lines 74-77 and 140-145; D1-01, D2-03) is cheap. D1-01 estimates about 40 lines. It is proven load-bearing: removing it breaks NoStaleAccepted in 7 steps with no fault at all (ablation A-FENCE-EPOCH). Keep it, with F1's restore cut at the fence mark.",
+   "Suspicion by progress, not liveness (R5, lines 85-88; D3-06, D7-07), and the level-triggered re-check (R7; D3-07) are each shown load-bearing by ablation (A-PROGRESS, A-LEVEL). Both are a few dozen lines.",
+   "Child hand-over by the square-root law and the fresh review (R50, R51, F1) are the largest token savings in the design by cost.js. One research session costs 94.89M with its window at 730.8k, over the quality cap. Hand-over costs 44.98M at k*, or 37.56M when k* is re-applied each epoch. Research plus a fresh review costs 52.57M against 126.42M in one session (ratio 2.40 to 4.37 across g). The fresh path must also exist for crashes (crash-only, D1-12).",
+   "Three scripts read the same transcripts for different jobs: spend (R12), harvest (R16), and audit with the search log (R23, R35). One parser serves P12, P14, P4, P2, P5 and P16 at once, and the transcripts must be parsed for token counts anyway (D7-04 build note).",
+   "The left-out list (lines 500-507) is right on cost, and every item matches an expert do_not: no backup tasks (they double the tokens, D1), no consensus or two-phase commit (D1, D7), no same-model voting (D4, D6), no B+ height, latches or B-link (D2), and no filtering of injected text (D5, D8).",
+   "Nil-cost rules that guard high problems: R38 (agreement never raises a claim), R41 (not-run counts as fail), R31 (the coordinator treats a note only as a wake), R33 (one harness-imposed reader schema). Each is a schema, a rule or a few lines.",
+   "Load control at N = 2 (R11; cost.js [6]): tokens never fall as N grows, and the third slot gains only time. The default of two is cheap and right.",
+   "Calibrating checker detection rates once and pooling them (R43; D4-01, D8-04) is a fixed, one-time cost. It is 112 checker items (14 seeded and 14 clean for each of the four J classes), and without it a checker that finds nothing cannot be told apart from one that sees nothing.",
+   "R58's protocol model already exists. It found six real flaws before any script was written, so it is the cheapest completeness tool the design has. Keep it as a design-time check of layer 1, with the reviewer's strengthened properties."
+  ],
+  "findings": [
+   {
+    "id": "A3-01",
+    "title": "The completeness gate cannot pass, and every script fix voids it",
+    "target": "R55, R56, R57, R29, §8 (the estimate)",
+    "kind": "contradiction",
+    "argument": "Five rules together make the gate either unpassable or very expensive:\n- R56 makes admission depend on gate.mjs, and the gate binds to the tcb.lock.json hash (lines 392-395).\n- R57 makes the residual estimate part of the gate. Above the owner's threshold, or when it cannot be computed, \"one more blind lens runs\" (396-399).\n- §8 already says every estimate (7 to 80 unseen) exceeds the experts' proposed stop of 2 or 3, and that \"no estimator is valid here\" (409-412). So the stop test either never passes or adds blind lenses without end.\n- R55 re-runs both blind analyses \"on each amendment\" (391). R29 makes every tcb change an owner-approved commit (213-216).\n- The pilot will need script fixes among about 35 new scripts. Each fix changes tcb.lock, voids the gate, and calls for two fresh blind sessions, a refuter over the n/a cells and a mapper. Each of those sessions pays at least the measured 79k session prefix or 60k agent prefix, plus reading this 611-line design.\nThe cost of a one-line fix is then several sessions and an owner approval. The fault it guards against, a changed hazard picture, mostly does not follow from a script fix. Under assumption 4 of the completeness analysis, the estimator is invalid in exactly this repeated use (the population changes with each amendment).",
+    "lines": "213-216, 386-399, 409-412, 562-565",
+    "severity": "high",
+    "smallest_fix": "Remove R57 from the gate. Report the residual on the owner page as information. Bind the gate to the design version, not to tcb.lock.json. Run R55 once before the pilot and once after it, and again only on an amendment the owner calls a design change. A tcb change re-runs selftest and the hook canary (R42) only. Give every threshold in §12 a default taken from its source (d0 0.8; the SPRT's p0 0.05, p1 0.20, α = β = 0.05), so that the owner's silence does not stop all admission."
+   },
+   {
+    "id": "A3-02",
+    "title": "Time-based stall detection breeds the watcher's flaws; count progress per model call instead",
+    "target": "R4, R5, R6, R7 (watcher, pause detection, endturn)",
+    "kind": "too_much_machinery",
+    "argument": "R5 measures a stall in wall time (T_box), and R6 then patches sleep with tick-gap detection. The model check shows this patch is where faults gather:\n- F3: pause detection works only inside one live watcher, so a healthy attempt is suspected. With R = 1, that one false stall spends the task's only restart and can escalate a healthy field.\n- F4: endturn's \"fresh tick\" test starts a second watcher after a resume.\n- F2: a lost wake after the watcher's urgent exit is permanent.\nThe T_watch deadline exit also wakes the coordinator when nothing has changed. That is polling at full-window price: 137.4k tokens per call at k* by cost.js, which is the very cost G6 says the watcher exists to avoid.\nThe classical watchdog (D3-06) is kicked by progress, and D7-07's variant must fall per step. For a session the natural step is a model call. A sleeping PC makes no calls, so a stall counted in calls is pause-proof by construction. The wall-clock assumption of the classical watchdog (work advances with time) fails here, and the design patches the symptom instead of changing the unit.",
+    "lines": "81-94, 457, 471",
+    "severity": "high",
+    "smallest_fix": "Define a stall as c consecutive model calls across the attempt's transcripts with no fall in V. Keep the loop signature as it is. A hang (no call in any transcript of the attempt across two watcher periods) goes to the owner and is never auto-restarted. Delete R6 and the pause bookkeeping. The watcher becomes a timer that only reads files and exits on an event that needs a decision, with a long deadline. All state is derived by status.mjs from files, so a second watcher writes nothing and is harmless. That removes the single-writer need behind F4. Keep the F2 re-wake as later and measure lost wakes in the pilot."
+   },
+   {
+    "id": "A3-03",
+    "title": "Several processes write tasks.json and the ledger, so the lock and its stale-break race exist only to serve that",
+    "target": "R1, R14, R32 (task table lock, one writer per file, the ledger)",
+    "kind": "contradiction",
+    "argument": "R14 promises one writer per file but names a library, not a process: \"only lib.mjs appends to the ledger\" (139). lib.mjs runs inside the watcher's intake pipeline (commit, tms) and inside every coordinator-run script (admit, replace, stop). The same holds for tasks.json under R1. So R1 needs a lock, exit 75, a stale-lock break and tasks.json.prev.\nThe reviewer's extra flaw shows the stale-lock break is check-then-act. Two writers then exist, and an epoch raise can be lost, which silently defeats the R2 fence. The model treats every exec script as atomic, so it cannot see this. D1's do_not and D3-10 forbid check-then-act on a shared file. The design keeps one only because it has several writers.\nThe D2 whole design the doc borrows is per-writer write-ahead logs. D2-05 rates single writer as the standard solution, tiny at about 30 lines.",
+    "lines": "45-47, 71-73, 137-139, 236-237",
+    "severity": "high",
+    "smallest_fix": "Make writers whole processes:\n- Only coordinator-run exec scripts write tasks.json. They run one at a time in the coordinator's turn.\n- The watcher and its intake write store objects and their own hash-chained log.\n- Each writer process keeps its own chained log (coordinator log, intake log), and views merge them by script. Task state such as committed is derived from commit records, not written by intake.\nThen delete the lock, the stale break, exit 75 and tasks.json.prev. Keep exclusive create for objects and commit records."
+   },
+   {
+    "id": "A3-04",
+    "title": "Stored coordination state (intent files, escrow) is the source of three found flaws; compute it from the table instead",
+    "target": "R3 (intents), R11 and R12 (escrow admission)",
+    "kind": "too_much_machinery",
+    "argument": "Three of the found flaws trace to stored coordination state:\n- Intents (R3) are an edge-triggered record of what was about to happen. The reviewer found that redoing an open replace intent re-fences and re-counts, so a coordinator crash alone can mark a healthy task failed under R = 1.\n- Escrow (R11, R12) is stored and released only at commit or cut. The reviewer found that it leaks on failed, parked and replaced tasks until admission starves. That is a fault that stops all work.\n- The acknowledged event sequence is not persisted.\nAll three are the cost of keeping state that can be derived. Level-triggered design (D3-07, D1-08) derives instead. A conditional epoch raise (set e+1 only if epoch == e) makes replace idempotent: the source list's Helland 2012 says it, and D3-09 is the standard. That makes intents redundant for replace and commit, because the commit record is already first-wins by exclusive create. For admission, the reservation is a function of table state: Σ spent + Σ per-task hard limits of running tasks. It cannot leak because it is never stored.",
+    "lines": "78-80, 106-114, 433",
+    "severity": "high",
+    "smallest_fix": "Replace R3 with a compare-and-set epoch raise. Make replace resumable by checking state at each step, not by redoing from an intent. Keep intent files only for sending a message to the owner. Compute the R11 reservation at each admission from the table and the transcripts, and delete the escrow ledger. Admission counts live child processes, zombies included (the F6 fix)."
+   },
+   {
+    "id": "A3-05",
+    "title": "Coordinator wakes are the machinery's main token term, and nobody counts or bounds them",
+    "target": "R4, R7, R27, R13; §11 parameters",
+    "kind": "missing",
+    "argument": "Every wake is one full coordinator call: 137.4k tokens per work call at k* by cost.js, and the recorded main-session average is 333k-396k. Wakes come from the following:\n- Every urgent watcher exit and every T_watch deadline.\n- Every checker batch, because R27 says the coordinator, never the child, starts the checker.\n- Every child hand-over through replace.mjs, about 14 per field at k* for g = 2.8k.\n- Refuter, mapper and fresh-review starts.\nOne wake equals about 0.26 % of a 52.57M field, so 100 wakes per field cost about a quarter of a field. Starting one checker batch on a wake of its own costs at least 2.3 times the checker's own 60k fixed prefix (137.4k against 60k). In that case the check's launch costs more than the check. The separation of duty that R27 protects stays required (D5 do_not: the checked party must not brief, choose, run or host its checker), so the fix is batching, not moving the start. §11 lists no figure for coordinator tokens per field, and no action line uses one.",
+    "lines": "81-84, 92-94, 205-209, 115-118, 511-524",
+    "severity": "high",
+    "smallest_fix": "Add one measured figure, coordinator calls and tokens per field, with an action line (R46). Never wake for a checker batch alone: check-queue fills the queue, and the coordinator starts the batch on the next wake that has another cause (a child turn end, a commit, a hand-over). Deadline exits that find no change end the watcher's period without a coordinator call where the harness allows it, or else use a long deadline (see A3-02)."
+   },
+   {
+    "id": "A3-06",
+    "title": "The coordinator hands over too often for the owner's time, for about 12 % per call",
+    "target": "R13 and R51 applied to the coordinator",
+    "kind": "guarantee_overstated",
+    "argument": "cost.js gives the coordinator k* = 17.6 calls at W* = 133.2k, with 137.4k per work call. At the 200k line (k = 41) a call costs 156.6k. So handing over at k* saves about 12 % per coordinator call, but needs about 2.3 times as many hand-overs (41 / 17.6). Each one waits for quiescence, which means no child running, so admission stalls. Each one also needs the owner to start a successor (R13, §12), so the owner becomes a recurring step on the critical path.\nThe weighted-cost optimum is already later: k* = 26.1 at W* = 157.1k. Square-root laws (Young 1974, D3-01) have a flat minimum, so a looser interval loses little. The law prices tokens only, and the owner's actions are not in H0.",
+    "lines": "115-118, 354-359, 557-558",
+    "severity": "medium",
+    "smallest_fix": "For the coordinator only, hand over at the first quiet point in a band from the weighted W* (157.1k) up to the 200k line. Count owner-started hand-overs as a measured figure. Children keep R51."
+   },
+   {
+    "id": "A3-07",
+    "title": "B+ tree bulk load and overflow handling run in a one-field pilot on guessed key sizes",
+    "target": "R48, R49(a)(c)(d), R18 two-level pack, plan-tree.mjs",
+    "kind": "too_much_machinery",
+    "argument": "The pilot is one field. In cost.js the root fan-out capacity is 246 rows, so no inner level is ever needed for 7 to 10 fields. Section [5] only exercises the bulk-load algorithm on an illustrative key set. t_q and κ_q, the sizes bulk loading packs by, are unmeasured; R48 says \"on priors\".\nR49(a) then makes the hook gate every reader start on Σ t_q(1+m) using those guesses. A gate on guessed inputs either never fires or refuses work on a guess, and it costs a hook check and a watcher repeat each time.\nClassical bulk loading (Bayer and McCreight) packs sorted entries of known size. The sizes here become known only from the pilot (R53, unit-costs). D2's do_not keeps only capacity, fill factor, key ranges, never dropping a key, and copy-on-write. All of these can wait for measured sizes, except never dropping a key and the capacity of the pack at freeze.",
+    "lines": "339-350, 18, 369",
+    "severity": "medium",
+    "smallest_fix": "Pilot: keep R47 key ids (V, coverage and citations need them) and one capacity check at pack freeze against C_node = W_quality − P − R_rev (180.0k in cost.js), with no confirmed card dropped. Move R48, R49(a)(c)(d), the two-level pack and plan-tree to later. Bulk-load the remaining six fields from the pilot's measured t_q and κ_q. The B+ tree stays in the design; it is loaded when its keys have sizes."
+   },
+   {
+    "id": "A3-08",
+    "title": "Chapman coverage per question pays a second route for a figure the doc calls biased",
+    "target": "R36 coverage, recapture.mjs (field mode)",
+    "kind": "classical_assumption_does_not_hold",
+    "argument": "R36 takes Chapman's N̂ per question over two route groups of different mechanism. Every question therefore needs captures from two routes, which roughly doubles the reader searches spent only to estimate coverage. The result is labelled an upper bound.\nThe doc itself says captures by one model and engine are dependent and favour popular papers, so N̂ runs low (lines 289-291). The source check says Chapman is near-unbiased only when n1 + n2 is at least about N, which per-question captures of a few cards will not meet. P16 lists \"coverage overstated\" as remaining anyway (line 439).\nThe held-out seed recall in the same rule (D8-10) answers the stop question on its own, and needs only a seed split.",
+    "lines": "264-267, 289-291, 439",
+    "severity": "medium",
+    "smallest_fix": "Pilot: coverage is held-out seed recall per field. Cards record route, canonical id and primary id, which are free schema fields. Compute Chapman pooled per field, and only from routes that happened anyway. Move per-question Chapman to later, and to never if the pilot shows route overlap far above chance."
+   },
+   {
+    "id": "A3-09",
+    "title": "The pilot's two comparisons cost about one more field, and the one-session arm cannot fit one window",
+    "target": "§11 comparisons 1 and 2, R40, R54, F4",
+    "kind": "missing",
+    "argument": "By cost.js at g = 2.8k, a field in the tree costs 44.98M (research) + 7.58M (fresh review) = 52.57M. On top of that, the comparison arms cost:\n- S1, \"one session with the same cap\": up to another 52.57M.\n- R2: 7.58M.\n- R_same: its own extra calls.\n- S2, if allowed: another full field.\nSo the pilot field costs about two fields, and about three with S2. That is the largest single check cost in the programme, yet neither R54's prediction nor F4's allowance states it.\nThe same script says one session at n = 237 reaches a 730.8k window, over the 300k quality cap. So S1 either crosses the quality cap, is compacted, or stops early at the cap. The doc does not say which, and each choice changes what P18's comparison measures.",
+    "lines": "526-539, 365-367, 553, 568-569",
+    "severity": "medium",
+    "smallest_fix": "State the pilot's predicted total, all arms included, in R54 and in the F4 allowance. Say how S1 behaves at the quality cap: it hands over by R51 with no fan-out, or it stops at the cap, and that is recorded. Keep S2 off, as the default already is. Run R2 only if R1 and R_same differ by less than the smallest difference of interest fixed in R40."
+   },
+   {
+    "id": "A3-10",
+    "title": "Three overlapping statistical schemes judge the same items",
+    "target": "R44, R45, R43",
+    "kind": "too_much_machinery",
+    "argument": "R44 checks every cited card and then also runs an SPRT on the review. It also runs a zero-acceptance lot per reader on uncited cards. R45 certifies by requiring confirmed cited cards, the SPRT accepting, and t of 3 plants found. R43 already qualifies each checker class by Clopper-Pearson on 112 calibration items.\nCertification therefore restates R44, and the lot scheme samples cards that R25 keeps out of every trusted consumer. Each scheme needs its own script logic, fixtures and owner-set thresholds (§12 lists all of them), and the owner's silence on any one blocks admission.\nD4-09 is about rectifying inspection where a lot feeds a consumer. Uncited cards feed none.",
+    "lines": "304-319, 195-198, 562-565",
+    "severity": "medium",
+    "smallest_fix": "Fold R44's review SPRT into certify.mjs (R45), so there is one script and one threshold set. Move the uncited-card lot sampling to later. Before that, measure in the pilot how often an uncited card shapes a cited sentence; that is the D4 do_not risk. Keep R43's pooled calibration as is."
+   },
+   {
+    "id": "A3-11",
+    "title": "Reuse by manifest key saves no model tokens and duplicates the commit checkpoint",
+    "target": "R22 declared inputs and reuse",
+    "kind": "too_much_machinery",
+    "argument": "R22 builds a Shake-style keyed reuse with STALE-only repair. But the doc says model steps are never rerun to verify, and that early cutoff applies to script steps only (lines 172, 186). Script steps cost no model tokens. So keyed reuse saves seconds, not tokens.\nThe reuse that does save model tokens is resuming a task from its last commit record, and R8 already does that (checkpoint = last commit record). What R22 adds that is needed is the manifest of declared inputs, which R23's read audit and P2 depend on (D7-04).",
+    "lines": "170-173, 186, 95-98",
+    "severity": "medium",
+    "smallest_fix": "Keep the manifest (brief, schema, tier, tools, input hashes) as the read-audit reference for R23 and R28. Drop keyed reuse and STALE-only repair from the pilot; recovery is R8 from commit records. Revisit after the pilot only if reruns of script steps are a measured cost."
+   }
+  ]
+ }
+}

@@ -1,0 +1,1185 @@
+{
+ "doc": "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/doc/RESEARCH-TREE-PROTOCOL-v2.md",
+ "layers": [
+  {
+   "layer": "L1 Execution",
+   "scripts": [
+    "put.mjs (pilot)",
+    "admit.mjs (pilot)",
+    "replace.mjs (pilot)",
+    "stop.mjs (pilot)",
+    "commit.mjs (pilot)",
+    "watch.mjs (pilot)",
+    "status.mjs (pilot)",
+    "spend.mjs (pilot)",
+    "intent.mjs (pilot)",
+    "endturn.mjs (pilot)",
+    "meter.mjs (pilot)",
+    "handover.mjs (pilot)",
+    "salvage.mjs (later)"
+   ],
+   "pilot_minimum": [
+    "run/tasks.json with the E1 lock and single-writer rule, and the exec scripts admit.mjs, replace.mjs, stop.mjs, commit.mjs, status.mjs, spend.mjs, intent.mjs, endturn.mjs and meter.mjs",
+    "Epochs per task and per coordinator, fenced at the acceptor: commit.mjs refuses a stale epoch and every exec script refuses a stale --ce",
+    "put.mjs as the child's only write path, and COMMIT by exclusive create with a manifest; consumers read only committed attempts",
+    "watch.mjs with: progress by the variant V, the owner's hard time box, the loop check, the alive check, soft and hard spend limits from transcripts, the memory check, pause detection, the common-cause halt, its own deadline, level-triggered events and coalescing",
+    "The coordinator's wake routine: status.mjs first, act on status.json only, endturn.mjs last",
+    "One restart path (replace.mjs) with R = 1 and escalation to the owner, used for the first start and exercised once as a real replacement (the F1 fresh review)",
+    "Admission per task against the owner's pilot allowance and the memory reserve, at most 2 children until peak memory is measured",
+    "Inducing one sleep and one kill of a child in the pilot, so that pause detection, fencing and the restart path are seen to work"
+   ],
+   "contradicts_the_frame": [
+    "Limits are 'enforced from outside the session' only in part. A script counts the spend from outside, but only a session can stop a session (fact 1), so the hard stop waits for a coordinator wake. The hard limit sits below the allowance by (Δ + wake latency) × the peak spend rate (D3-05). The source check also says POSIX rlimit neither bounds overrun nor signals at every soft limit, so 'soft and hard limits' is borrowed as an idea, not as a guarantee.",
+    "'Fencing by epoch' is checked as equality against the task table, not as 'reject any older number'. The source check corrects D1-01: Chubby validates a sequencer against the lock service.",
+    "MapReduce's guarantee is per reduce task, not job-wide (D1 source check). One committed attempt per task holds only because every consumer reads COMMIT, not because of the borrowed design.",
+    "Crash-only does not cover the coordinator's own hand-over. A child's turn-end note goes to the session that started it, so a hand-over while children run would route their wakes to the stale coordinator. Hand-over happens only at a quiet point with no child running, and needs the owner to start the fresh coordinator (or a harness ability to stop another session, not established).",
+    "The mappings disagree on the restart limit: D3-08 allows 2 restarts with a changed input, D1-09 and D4-07 allow 1. I follow R = 1; a changed input is the owner's decision.",
+    "The mappings disagree on sleep: D4-06 exits with 'slept', D1-02 and D3-06 shift deadlines and do not exit. I follow D1-02 and D3-06, because every process resumes on wake and an exit only costs a coordinator wake.",
+    "The frame's 'admission by reserved budget' sits beside amendment 3's waves. D1-08 replaces the wave barrier with per-task admission when a slot frees. I follow the mapping; a wave remains only as the owner's checkpoint."
+   ],
+   "for_the_owner": [
+    "The restart limit R: 1 automatic replacement per task after a failure (recommended), then you decide whether to change the input and try again.",
+    "The coordinator's hand-over: you start the fresh coordinator from a one-line brief, at a point when no child is running. The alternative needs a harness ability to stop a session it did not start, which is not established.",
+    "Keeping the PC awake: accept that a sleep only costs time (correctness does not depend on it), or allow the watcher to hold a power request while it runs (untested).",
+    "The memory reserve that admission keeps free, and whether up to 3 children may run once the pilot has measured peak memory.",
+    "The pilot's token allowance A_pilot, the overall cap and the admission margin (F4). No top-up of a task cut at its hard limit without your word.",
+    "Whether a child gets exactly one shell permission (node put.mjs, run from the pinned checkout) so that its writes are atomic and journaled. Without it, the acceptor's checks still catch torn files, but cards are less durable.",
+    "An optional logon task that tells you after a reboot that the programme has stopped."
+   ],
+   "left_out": [
+    "Backup (speculative) tasks for stragglers",
+    "Consensus, distributed locks and two-phase commit across sessions",
+    "Adaptive suspicion (phi accrual D1-02, Poisson CUSUM D6-11)",
+    "Salvage of helper results from a dead transcript (D1-03)",
+    "An exit on sleep (D4-06)",
+    "A second automatic restart with a changed input (D3-08)",
+    "Waves as a scheduling barrier",
+    "A variance-based escrow (D6-13) and the concurrency fit (D3-11)",
+    "A source claims register or card cache (D1-11, D3-10)",
+    "Model checking of this protocol (D7-06)",
+    "Keeping the PC awake from a script, and a logon task after a reboot"
+   ]
+  },
+  {
+   "layer": "L2 Storage",
+   "scripts": [
+    "canon.mjs (pilot)",
+    "harvest.mjs (pilot)",
+    "commit.mjs (pilot)",
+    "snap.mjs (pilot)",
+    "tms.mjs (pilot)",
+    "render.mjs (pilot)",
+    "status.mjs (pilot)",
+    "audit.mjs (pilot)",
+    "fsck.mjs (pilot)",
+    "merge.mjs (pilot)",
+    "index.mjs (later)",
+    "migrate.mjs (later)"
+   ],
+   "pilot_minimum": [
+    "canon.mjs and the card, pack, review, manifest, journal and status schemas, with controlled vocabularies for conditions and applies_to",
+    "Staging plus commit.mjs (temp file, rename, exclusive create, journal line) as the only writer of objects/, journal and refs",
+    "harvest.mjs, or its counted fallback, so no session retypes card fields",
+    "Immutable content-hash ids; corrections as new cards with supersedes; nothing deleted",
+    "Pack manifest with hash, parent link and refs/pack",
+    "Constraints S7 (a)-(e) at commit",
+    "card_status and witness relations, with the check script as their only writer",
+    "tms.mjs with the stale cascade to sentences, verdicts and certificates, and the gate refusing STALE or PENDING",
+    "render.mjs for pack.md, review.md and the owner's page",
+    "Step manifests, completion records, status.mjs (trace table and reuse decision) and audit.mjs",
+    "fsck.mjs at restart and merge; merge.mjs path allowlist; epoch fencing",
+    "snap.mjs if the owner grants F5; otherwise the confirmed_by_summary label, counted as judgment"
+   ],
+   "contradicts_the_frame": [
+    "The frame says the synthesis is a derived view rebuilt by script. The mappings (D7-11, D6-08) support that only for the synthesis table (approach by measure, labels, conditions by join). A cross-field judgment, such as an adjudication or a claim about a seam between fields, is written by a model. It is therefore stored as a sentence-bearing object under the same constraints and labels, not as a view",
+    "The frame says steps declare their inputs so that reads can be audited and results reused. D7-04 says a reader's inputs cannot be declared in advance (they are discovered while it searches), and files a session loads automatically never appear as tool calls. Reader inputs are therefore recorded as discovered, auto-loaded reads are only flagged through the prefix size, and reuse never means a rerun gives the same result",
+    "The frame puts card status inside the immutable store. The mappings (D2-07, D7-01) keep status as a separate append-only relation that only the checker writes. Status is deliberately not part of a card's or a pack's hash, so truth can change without changing identity",
+    "The frame's citation is (card id, pack hash). That is kept, but a citation is also never re-pointed when a card is corrected: the citing sentence goes stale and is repaired (D7-02), because the sentence may not hold for the corrected numbers"
+   ],
+   "for_the_owner": [
+    "F5: may a Node script fetch source pages itself? Without it, no card can be better than confirmed-by-summary, which counts as judgment",
+    "May copies of other people's pages be kept as local snapshots outside git, and for how long after the programme? Nothing is deleted while it runs",
+    "May a PDF text extractor (an npm package) be installed? Until it is, PDF sources stay UNVERIFIED",
+    "F1 in storage terms: a review written in the researching window has inputs nobody declared. It can be neither certified nor invalidated precisely, so this layer labels it JUDGMENT. The pilot measures u to show what the frozen pack failed to carry. The ruling is yours",
+    "The threshold for the share of cited cards that may stay UNVERIFIED before a field's review fails its gate (D8-02)"
+   ],
+   "left_out": [
+    "Cross-field source index and card cache (S17), and a pessimistic claims register",
+    "ATMS minimal environments and AGM revision",
+    "Out-list matching for reopened dismissals (D7-03)",
+    "Schema migration (migrate.mjs)",
+    "PDF text extraction",
+    "A database engine (for example the built-in node:sqlite)",
+    "Rerun to verify, and early cutoff by output equality for model steps",
+    "A sandbox that blocks undeclared reads",
+    "Garbage collection of objects and snapshots",
+    "B+ tree height, latch coupling and B-link machinery"
+   ]
+  },
+  {
+   "layer": "L3 Integrity and assurance",
+   "scripts": [
+    "tcb-verify.mjs (pilot)",
+    "make-profile.mjs (pilot)",
+    "guard-hook.mjs (pilot)",
+    "perm-audit.mjs (pilot)",
+    "snapshot.mjs (pilot)",
+    "witness.mjs (pilot)",
+    "context-check.mjs (pilot)",
+    "check-queue.mjs (pilot)",
+    "promote.mjs (pilot)",
+    "seed.mjs (pilot)",
+    "certify.mjs (pilot)",
+    "merge.mjs (pilot)",
+    "ledger.mjs (pilot)",
+    "selftest.mjs (pilot)",
+    "correct-rates.mjs (later)",
+    "beta.mjs (later)",
+    "challenge.mjs (later)",
+    "cooke.mjs (later)"
+   ],
+   "pilot_minimum": [
+    "The trusted base in tcb/ at a pinned commit with tcb.lock.json, and tcb-verify.mjs run before every check and every merge (I5)",
+    "Role profiles, make-profile.mjs and guard-hook.mjs; selftest.mjs's hook test passed, or the owner's explicit choice to run on the detective layer only",
+    "perm-audit.mjs after every turn, covering the TURN-END rule for notes and coordinator reads",
+    "Reader and checker agent files: readers web-only with a capped card schema; the checker with Read limited to its batch and an enum result",
+    "snapshot.mjs and witness.mjs at intake, at freeze and after the review, with three-valued results (needs F5)",
+    "promote.mjs as the sole writer of status, and every downstream consumer refusing UDI",
+    "context-check.mjs on every cited sentence of the review and the synthesis",
+    "merge.mjs with the path allowlist and the ledger head in the commit; ledger.mjs hash chain",
+    "selftest.mjs fixtures for every script, passing",
+    "seed.mjs calibration: 14 seeds for each of J1-J4 plus as many clean items, S1-S4 fixtures plus 5 live seeds each, then 10 % proof seeds per batch",
+    "check-queue.mjs zero-acceptance sample of uncited cards per reader at gate A",
+    "certify.mjs with session labels, coverage, SPRT and 3 plants per expert",
+    "The owner's thresholds (d0, p1 and beta, p0 and p1 of the SPRT, plants t of k) and an action line for every measure, set before the pilot"
+   ],
+   "contradicts_the_frame": [
+    "The frame has one trusted class reached through 'a certified procedure'. The mappings split it. A script can certify only that the quote and the number exist in the snapshot (witnessed). Whether the number means what the card says, and whether a sentence stays within the card's conditions, is a model judgment. Clark-Wilson's C1 and C2 cannot certify that judgment, only measure it (D5 whole design, D7-01, D1-05). So there are two trust grades, witnessed and confirmed (measured and qualified), and unverifiable is a third state that never passes.",
+    "'Consumers read only trusted items' cannot hold for the child. It must read reader returns and, under amendment 1, originals. Following Biba's low-water mark (D5-06, D5-03), the rule becomes: sessions are labelled by what they read, and the trusted-only readers are pack freeze, the fresh reviewer, the synthesis and the coordinator. Even the coordinator cannot be trusted-only, because the harness delivers 400 characters of each child's turn end.",
+    "'Seeded faults in every wave give each check a detection rate': with 2 to 4 plants per expert no rate can be estimated (D4-11), and showing d >= 0.8 needs at least 14 seeds per fault class with zero misses (D4-01). The rates are calibrated once in the pilot and pooled across waves. Per-wave seeds are proof tests that detect a regression.",
+    "'The checker, schemas and briefs are outside the sessions' write reach' cannot rest on permissions and hooks alone on this harness. They sit in editable folder files and are unverified. The mappings require a detective layer that does not depend on them: a hash baseline, a merge path allowlist and a transcript audit (D5-08, D5-02).",
+    "'Least privilege for anything that reads the web' aims at the least dangerous party. D5-02 says the reader was already the safest. The deputy to bound is the child, which holds write, helper spawning and originals, and the most privileged reader of relayed text is the coordinator (D5-09). Least privilege covers every role.",
+    "Not in the frame but against amendment 3: the witness must also run at intake, not only after the review (D4-04, D2-10). Otherwise an unchecked card shapes judgment no later check sees, and the watcher's progress measure cannot move during research (D4-06)."
+   ],
+   "for_the_owner": [
+    "F1: the field's integrity answer is a fresh reviewer that reads only a manifest of trusted inputs, because only that review can be labelled clean. A same-session review counts its uncited sentences as judgment. Integrity cannot say which writes better, so the recommendation is to write both in the pilot and to run the fresh path once per wave whatever you rule. Amendment 1 is your word, and the choice is yours.",
+    "F2: integrity's answer is that neither a second reviewer of the same pack nor a second same-model research run is independent. Diversity has to come from a different input (the contrary-evidence reader) or a different model (F3), and its beta should be measured before it is paid for.",
+    "F3: whether a different model may serve as the checker or as the reference standard. Without it, judgment checks have no diversity.",
+    "F5: the Node fetch script. The whole witness rests on it. Without it, no card can be witnessed and every fact is judgment.",
+    "Keeping fetched page copies locally, privately and outside git, as the stored objects the witness refers to.",
+    "Thresholds before the pilot: d0 per fault class (for example 0.8, which means 14 seeds per class); p1 and beta for the uncited-card sample; p0 and p1 of the review SPRT; plants t of 3; and an action line for every ledger measure.",
+    "Where the deny rules live: in each worktree's settings written from the trusted base and protected by the hook (proposed), or at user level, which also affects your other sessions.",
+    "If the hook test fails: run on the detective layer only, or run sessions under a separate Windows account (a system change).",
+    "Whether to allow a PDF parser package. Until then PDFs are unverifiable.",
+    "Whether you will spot-check a small random sample of confirmed items each wave as a reference standard (later)."
+   ],
+   "left_out": [
+    "Information-flow labels per sentence",
+    "Forward-secure per-entry keys (full Schneier-Kelsey)",
+    "Injection detection or blacklist filters",
+    "Voting across same-model instances, and N-version redundancy",
+    "PDF text extraction and rendering of script-built pages",
+    "Running sessions under a separate Windows account",
+    "Se/Sp correction against a reference standard (D6-02)",
+    "Cooke seed questions (D6-09) and random challenges (D7-10) for experts",
+    "Beta measurement between second-opinion variants (D4-02)",
+    "A web canary page for readers (part of D5-14)",
+    "Seeded false dismissals for the refuter (D4-12)",
+    "STRIDE and STPA threat enumeration (D5-13, D4-05)",
+    "Certifying what an expert 'knows'"
+   ]
+  },
+  {
+   "layer": "L4 Evidence method",
+   "scripts": [
+    "protocol-freeze.js (pilot)",
+    "search-log.js (pilot)",
+    "rescreen-sample.js (pilot)",
+    "coverage.js (pilot)",
+    "stop-check.js (later)",
+    "certainty.js (pilot)",
+    "dismissals.js (pilot)",
+    "compare.js (pilot)",
+    "second-opinion.js (pilot)"
+   ],
+   "pilot_minimum": [
+    "protocol.json schema and protocol-freeze.js; the field's protocol approved by the owner and hashed in the ledger before the first reader starts, with the admission check refusing readers otherwise",
+    "The analysis plan for P18 and F1 (analysis-plan.json) approved and frozen before the first arm starts",
+    "Card fields route, canonical_id, primary_id, q[], typed conditions, evidence_type and effect (agreed with the Storage layer)",
+    "search-log.js producing the transcript-derived search log, screening reconciliation and flow table",
+    "coverage.js split before Stage A and score after it (Chapman plus held-out recall, upper-bound label, yield curve recorded); no enforced stop",
+    "rescreen-sample.js and one re-screen helper with a fixed brief",
+    "certainty.js and sof.json as the only input to the synthesis",
+    "dismissals.js with the bound rule, out-list reopening and 2 to 3 seeded false dismissals for the refuter",
+    "compare.js (anon and score) with a blinded scorer, and second-opinion.js",
+    "The pilot runs: tree child T with pack A, R_same, fresh reviews R1 and R2, single session S1 (S2 if the owner allows)"
+   ],
+   "contradicts_the_frame": [
+    "Frame layer 3 says labels are computed by script and never self-assigned. GRADE certainty cannot be fully computed: risk of bias and free-text indirectness are judgments (D6-08). The mappings' answer, followed here (E6), is that the script computes a ceiling from distinct primaries and the typed conditions, and the model may only lower it, with reasons checked by the checker.",
+    "Frame layer 4 says coverage is estimated by capture-recapture. The mappings (D6-04, D8-10; Spoor et al.'s own caveat) say that with same-model, same-engine readers the estimate is biased toward overstating coverage. It is reported as an upper bound, beside relative recall on held-out seeds, and only route groups with different mechanisms count as captures.",
+    "Frame layer 4 treats a dismissal as an open hazard that new evidence reopens. The mappings (D6-06) add a bar first: a dismissal without a confirmed card that bounds the effect below the smallest effect of interest is not a dismissal at all, and the script rewrites it to 'untested'. Reopening (D7-03, D4-12) then applies only to dismissals that met the bar.",
+    "The frame says second opinions are designed from what is known about correlated judges. The mappings disagree with one another (D7-09 and D8-03 favour a second reviewer of the same pack; D4-02 says the choice depends on where the residual faults sit; D1-04 accepts only diversity in inputs or kind; D6-10 says measure it). Known results fix what not to do (vote, count agreement). The choice itself needs the pilot's measurement (E13).",
+    "The frame presents F1 as a symmetric choice the pilot settles. The F1 mappings (D1-12, D3-13, D4-08, D5-06, D7-04, D8-07) say the fresh-from-pack path must run in every case, and that a same-window review has undeclared inputs, so it cannot be certified or invalidated when a card falls. What the comparison can really show is whether the researcher's extra knowledge is correct and worth carding (u and its sampled correctness), not which form is equal or better in general.",
+    "The frame says 'the protocol fixed and hashed'. PRISMA-P is a reporting checklist, not a registry (source correction). Registration here is the owner's approval plus the hash in the ledger and the git commit, which the admission check enforces."
+   ],
+   "for_the_owner": [
+    "F1: after the pilot reading, where the review runs; and before it, the default for 'no difference shown' (the coordinator proposes fresh-from-pack). Also whether the pilot pays for R_same at all (recommended: yes, since the pilot decides F1).",
+    "F2: which second-opinion form to buy (a second research run, a second reviewer of the same pack, a contrary-evidence reader, a different model), after E13's reading; the thresholds that stop buying a same-model second opinion (n_eff 1.3 and beta 0.7 proposed); whether the pilot pays a whole field run for a second tree pack B.",
+    "F3: whether a different model may serve as the blinded scorer and as a second opinion.",
+    "The smallest effect of interest per measure, set with the question lists, which decides when a dismissal can stand.",
+    "Approval of each field's protocol, and of the pilot analysis plan: the primary outcomes, Δ, the decision rules, the arm budget and the number of planted defects k.",
+    "Whether the single-session control runs twice (S2): without it no run-to-run spread is known, and every difference reads 'no difference shown'.",
+    "The coverage floor and target (0.6 and 0.8 proposed) and the re-screen share and threshold (20 % and 10 % proposed)."
+   ],
+   "left_out": [
+    "Meta-analysis, funnel plots, Egger's test, trim-and-fill",
+    "GRADE's upgrade domains (large effect, dose-response)",
+    "Log-linear models over three or more captures (Fienberg)",
+    "Enforced saturation stop in the pilot",
+    "Dual independent screening of every record",
+    "Delphi rounds or debate between same-model experts",
+    "An equivalence verdict in the pilot",
+    "A second tree research run (pack B) by default",
+    "Seed-question calibration of experts (D6-09), checker Se/Sp correction (D6-02), the SPRT lot decision (D6-03), the CUSUM stall detector (D6-11), prediction-bound admission (D6-13)",
+    "Formal shrinkage of lead effects for the winner's curse",
+    "Kappa as an agreement measure"
+   ]
+  },
+  {
+   "layer": "L5 Shape and cost",
+   "scripts": [
+    "cost.js (pilot)",
+    "plan-tree.js (pilot)",
+    "capacity-check.js (pilot)",
+    "unit-costs.js (pilot)",
+    "admit.js (later)",
+    "coupling.js (later)"
+   ],
+   "pilot_minimum": [
+    "cost.js with inputs tagged M/E/G and run before the pilot, so that W* for the coordinator and the child and the P18 prediction (R11) are fixed in advance",
+    "plan-tree.js run on priors: key format, single ownership including cross-field keys, mechanism groups, the pilot field as one frozen leaf",
+    "capacity-check.js with group-start ledger lines (token attribution per question group) and the overflow record; script error counts as overflow; the watcher runs the same check",
+    "The overflow order R4 in force for the pilot: two-level pack index instead of a cut; split into an overflow leaf only by the coordinator's script; drop only by the owner",
+    "The watcher's hand-over exit at the computed W* (R6) and its stop at 1.5*W*",
+    "The memory admission check before each session start (R8)",
+    "unit-costs.js, run at the end of the pilot, to produce t_q, unit costs and the per-role P, g, S, H0 that wave 1 needs"
+   ],
+   "contradicts_the_frame": [
+    "'Node capacity is the window budget' is one capacity where the tree needs two. The window budget bounds what must sit together (the pack in the reviewer's window, C_node). Spend is a second axis (A_leaf). For the research windows and the coordinator, the square-root law wants windows small, which is the opposite of a B+ tree's preference for full nodes (SPLIT-RULE-2026-11.md:387-390). So the B+ tree governs only what must co-reside.",
+    "'Fan-out is computed, not guessed' holds only partly. Keys are not independent, so the leaves stay the expertise lanes. The computation gives a lower bound, a check on each lane and a plan-time split; it does not produce the fields (D2-01). The B+ height and log properties add nothing with one inner node.",
+    "The frame's overflow by 'the tree's real operations' cannot use plain redistribution. Moving a question to a sibling of another expertise does not move its expertise, so redistribution is limited to cross-field keys. The working operations are out-of-line storage of the pack and a split into an overflow leaf of the same field.",
+    "Young's law does not carry over as is (D2-04, D3-01). The trade here is hand-over cost against re-reading, and the law is derived for that. When reloaded state grows per epoch, the law gains a term: k* = sqrt((2*H0 + sigma*n_rem)/g). Without it the interval came out at about half the best one found by simulation (16 calls against 35).",
+    "For the coordinator, the computed W* (about 133k, E) is well under the 200k line. That points to a coordinator that is stateless per wave (D2-04), not a long-lived one that hands over at a threshold."
+   ],
+   "for_the_owner": [
+    "Which measure sets the hand-over threshold: token count (W* about 115-155k for a child, 133k for the coordinator, on the stated inputs) or weighted token cost (later: 145-212k and 157k).",
+    "F1, now with a token price. On stand-in inputs, keeping the review in the researching session costs 2.4 to 4.4 times the tokens of research with hand-overs plus a fresh reviewer. That window would pass the 300k ceiling after about 82 calls at g = 2.8k. These figures rest on n and g, which the pilot measures.",
+    "Whether the computed W* replaces the fixed 200k coordinator line, and whether the 300k child line becomes a quality cap only. The earlier split-rule floor (a line at least 3 times a session's start, about 237k; SPLIT-RULE-2026-11.md:140-143) is a guess that conflicts with the computed values.",
+    "The fill factor f (0.75 proposed), the margin floor m_owner, z (1.64 proposed), the memory reserve, and the cap F4.",
+    "A weight per field for the value-over-cost order (R9).",
+    "Approval of every plan-time split, every underflow merge, and every range dropped by name (R2, R4e).",
+    "Whether the lean folder's prefix should carry the PC and tool facts whose loss drives the post-hand-over mistakes (AFTER-COMPACTION-2026-11.md:26-31). That lowers o and q_f, and with them H0."
+   ],
+   "left_out": [
+    "B-tree height and logarithmic search properties",
+    "B-link concurrency (right-links with lock-free readers)",
+    "Automatic merge of underflow leaves",
+    "Contract-net bidding and session self-estimates",
+    "A Universal Scalability Law fit",
+    "Pricing the quality loss of a hand-over inside the cost law",
+    "Currency",
+    "Prompt-cache lapses (5-minute against 1-hour), and rate limits per five hours",
+    "Saturation stopping and capture-recapture coverage",
+    "Moving plain questions to another field's leaf"
+   ]
+  },
+  {
+   "layer": "L6 Completeness",
+   "scripts": [
+    "check-matrix.js (pilot)",
+    "estimate.js (pilot)",
+    "protocol-model.js (pilot)",
+    "gate.js (pilot)",
+    "canary-check.js (pilot)",
+    "fracas.js (later)"
+   ],
+   "pilot_minimum": [
+    "R1: a blind STPA by a fresh leaf session (control-structure.json, uca.jsonl), which has not seen P1-P21, the missing_risks or this analysis",
+    "R2: a blind FMEA matrix by a second fresh leaf session",
+    "R3: the mapper with a fixed brief, plus check-matrix.js and gate.js, and layer 1's admission refusing a wave without a passing gate.json for the current protocol hash",
+    "R4: estimate.js with the owner's residual threshold; if the residual is above it, one more blind lens runs before the pilot",
+    "R5: protocol-model.js limited to the execution layer (sessions at most three, coordinator epochs, watcher ownership, stop-before-replace, sleep, crash, owner absent)",
+    "The incident line format written by every script (fracas.js itself can wait until after the pilot)",
+    "R8: fault injection during the pilot (kill one child, one sleep, one forced hand-over, the hook canary with canary-check.js)",
+    "R9: G1-G12 in hazards.jsonl, each given a rule in its owning layer or accepted by the owner, high-severity ones before the pilot"
+   ],
+   "contradicts_the_frame": [
+    "Layer 3 says the coordinator reads only typed status produced by scripts. The harness itself pushes the first 400 characters of every child's turn-end report into the coordinator's turn (fact 1), so free text, possibly tainted by the web, reaches the most privileged window and cannot be kept out (D5-09 assumes it can). What can be done: children end with a fixed typed line; the coordinator acts only on status files; a transcript script counts notes that deviate. The channel is bounded and measured, not closed",
+    "Layer 1 says admission has 'limits enforced from outside the session'. The weekly meter can be read only by a session, in whole percent, and the owner's other sessions spend the same allowance and memory. The budget half of admission depends on the coordinator reading and recording the meter, and the cap and the token count are in different units until the pilot calibrates them (G4)",
+    "Layer 7 promises 'an estimate of the failure modes not yet found'. The mappings themselves (D4-05, D7-13, D8-11) and this analysis show that no estimator here is valid: three estimates range from about 3 to 80 remaining. The estimate is kept only as a stop signal (above the threshold, more blind lenses), never as a figure of completeness",
+    "The frame does not say who does the hazard analysis. Following D4-05 against D7-13: the coordinator is the party under analysis, so leaf sessions do STPA and FMEA, blind of each other and of the existing lists. Without blinding, the overlap the estimate needs is contaminated, as my own pass here was"
+   ],
+   "for_the_owner": [
+    "The residual threshold for R4 (the experts proposed 2 or 3), and whether an estimate above it blocks the pilot or only adds a lens",
+    "Whether an extra lens may be a model from another provider (F3): this is the cheapest way to make captures less correlated",
+    "Accepting or ruling on the liveness gaps: after a reboot nothing resumes until you start a session; escalations park and wait for you (G1)",
+    "Keep-awake: accept the token cost of the coordinator holding its turn open, or allow a script to ask Windows to stay awake for its own process through PowerShell (a request by the process, not a change of settings), on your word (G6)",
+    "The scope of the snapshot fetcher of F5 (G2), and what happens to PDF sources: count them as not-run, or allow a PDF text tool to be installed (G3)",
+    "A quiet period during the pilot with no other sessions, so tokens per meter percent can be calibrated (G4)",
+    "The property list of the protocol model (R5), and every hazard you accept as a risk instead of fixing (recorded with your message quoted)"
+   ],
+   "left_out": [
+    "Fault tree analysis for named top events (Vesely et al., in D4-05)",
+    "Log-linear multi-source models (Fienberg, D6-04)",
+    "Four separate matrices (D1-13 components, D2-11 data anomalies, D5-13 STRIDE, D7-13 actions by faults)",
+    "FMEA criticality numbers (RPN)",
+    "A protocol model of the storage, integrity and evidence layers",
+    "A second, independent canonical mapping of risks",
+    "A safety, liveness or cost class on every problem (D7-13)",
+    "My own STPA pass as a capture"
+   ]
+  }
+ ],
+ "cost_computed": "== cost.js output, inputs: inputs.json ==\n\n[1] Coordinator (count): H0=432.4k k*=17.6 calls  W*=133.2k  tokens per work call at k*=137.4k  at the 200k line (k=41)=156.6k  recorded main-session average=333.0k-396.0k\n    with a script-written status (w=0): k*=17.5 W*=133.0k\n    coordinator (weighted cost): k*=26.1 W*=157.1k  (cost optimum hands over later than the count optimum)\n    root fan-out capacity (rows of ~200 tokens that fit between P+S and W*): 246  -> no inner level is ever needed for 7-10 fields\n\n[2] Research child, n=237 work calls, state grows 8.0k per epoch, quality cap 300.0k\n  g=2.8k: k*=16.1 W*=115.0k | cost k*=26.8 W*=145.1k | one session: 94.89M (window reaches 730.8k, OVER the quality cap) | hand-over at k*: 44.98M, 14 hand-overs, reload >= useful growth from epoch 5 (split, do not hand over) | best constant k by simulation: count k=35 37.17M, cost k=48 | adaptive k (law re-applied each epoch): 37.56M, 8 hand-overs, max window 190.4k, reload >= growth from epoch 8 | law with state growth k*=30.6 | leaf capacity before reload thrash n_max=k*(g*k*-S0)/sigma=289 calls | ratio one/hand-over (count)=2.11 (weighted)=1.22 | break-even: hand-over pays from n=29 calls\n  g=5.0k: k*=12.0 W*=130.1k | cost k*=20.1 W*=170.3k | one session: 156.42M (window reaches 1250.0k, OVER the quality cap) | hand-over at k*: 57.41M, 19 hand-overs, reload >= useful growth from epoch 7 (split, do not hand over) | best constant k by simulation: count k=27 45.46M, cost k=40 | adaptive k (law re-applied each epoch): 46.42M, 11 hand-overs, max window 240.0k, reload >= growth from epoch 11 | law with state growth k*=22.9 | leaf capacity before reload thrash n_max=k*(g*k*-S0)/sigma=298 calls | ratio one/hand-over (count)=2.72 (weighted)=1.35 | break-even: hand-over pays from n=22 calls\n  g=10.0k: k*=8.5 W*=155.0k | cost k*=14.2 W*=211.9k | one session: 296.25M (window reaches 2430.0k, OVER the quality cap) | hand-over at k*: 84.35M, 29 hand-overs, reload >= useful growth from epoch 9 (split, do not hand over) | best constant k by simulation: count k=20 60.03M, cost k=30 | adaptive k (law re-applied each epoch): 61.34M, 15 hand-overs, max window 312.0k | law with state growth k*=16.2 | leaf capacity before reload thrash n_max=k*(g*k*-S0)/sigma=307 calls | ratio one/hand-over (count)=3.51 (weighted)=1.43 | break-even: hand-over pays from n=16 calls\n\n[3] F1 token price (count), n=237 research + 40 review calls\n  g=2.8k: same session 126.42M (window 842.8k)  vs  hand-over research 44.98M + fresh reviewer 7.58M (window 244.2k) = 52.57M  ratio 2.40\n  g=5.0k: same session 210.52M (window 1450.0k)  vs  hand-over research 57.41M + fresh reviewer 7.58M (window 244.2k) = 65.00M  ratio 3.24\n  g=10.0k: same session 401.65M (window 2830.0k)  vs  hand-over research 84.35M + fresh reviewer 7.58M (window 244.2k) = 91.93M  ratio 4.37\n  reviewer node capacity for the pack: W_quality - P - R_rev = 180.0k\n\n[4] Token fan-out (D3-12), g=2.8k: k_opt = n/k* = 14.8 windows of ~16 calls for n=237. These are window epochs, sequential or parallel; they are not fields.\n\n[5] Bulk load (illustrative key set), f=0.75: spend 1.33 pack 1.03 of one leaf; lower bound 2 leaves; packed into 2\n  leaf 1: F7-A,F7-B  spend 0.65  pack 0.51\n  leaf 2: F7-C,F7-D  spend 0.68  pack 0.52  separator key: F7-C\n\n[6] Load control: N_mem=2  N=min(cap 3, N_mem)=2\n  s=0.2: S(1..3)=1.00 1.67 2.14  gain of the third slot 0.48 (time only; tokens never fall with N)\n  s=0.4: S(1..3)=1.00 1.43 1.67  gain of the third slot 0.24 (time only; tokens never fall with N)\n  s=0.6: S(1..3)=1.00 1.25 1.36  gain of the third slot 0.11 (time only; tokens never fall with N)\n\n[7] Admission: escrow per field = estimate x 1.82 until two fields are measured; with 6 pilot-units left, at most 3 pilot-sized fields can be reserved at once; in-run re-plan when actual/estimate > 1.5\n\n[8] Order after the pilot (w/est, highest first): F2(3.00) > F7(2.50) > F6(2.22) > F4(2.14) > F5(1.67) > F3(1.25)\n\n(Inputs tagged in inputs.json. Measured: P = 79k session and 60k agent, g = 2.8k, the 200k and 300k lines, the recorded 333-396k per call, the price ratios. Computed from measured figures: o = 2.6, q_f = 0.5, n = 237. Everything else is a guess or illustrative, including g for a research child, S0, sigma, h_c, w, the pack, n_rev, R_rev, memory, s, weights and the key set. Sections 5, 6 and 8 only exercise the algorithms.)",
+ "completeness_computed": "ESTIMATE OF FAILURE MODES NOT YET FOUND (population: failure modes of the tree that are NOT among P1-P21).\n\nCanonical mapping (my judgment, one mapper; recorded so it can be redone). The 63 missing_risks items of D1-D8 were mapped to 47 distinct risk ids K1..K49 (K15 phantom merged into K14 stale derived data; K20 orphan processes merged into K8 orphan helpers). Two items were counted for two ids: D1 \"wake-up goes to nobody\" names both the lost wake-up (K6) and nothing resuming after a reboot (K7); D8 \"checks that test form are gamed\" names both unmeasured detection power (K23) and gaming (K41). Per-lens distinct ids: D1 11, D2 7, D3 9, D4 7, D5 8, D6 8, D7 7, D8 7 = 64 incidences.\nFrequencies across the 8 lenses: found by 3 lenses: K5 torn write, K6 lost wake-up, K12 source changes between read and check (Q3 = 3); by 2 lenses: K1 fencing, K2 pause after sleep, K4 restart storm, K7 no resume after reboot, K8 orphans, K9 progress gamed, K13 cross-field seams, K14 stale derived data, K23 unmeasured detectors, K25 correlated layers/pseudoreplication, K41 gaming checks (Q2 = 11); by 1 lens: Q1 = 33. Check: 3*3 + 11*2 + 33 = 64. S_obs = 47.\n\nEstimate A (Chao, incidence form, m = 8 lenses).\nChao1-style: f0 = Q1^2/(2 Q2) = 1089/22 = 49.5, N = 96.5. Var = Q2[(1/2)r^2 + r^3 + (1/4)r^4], r = 3: 11 * (4.5 + 27 + 20.25) = 569.25. Log-normal 95 % CI for N: 67 to 168.\nChao2 with (m-1)/m = 7/8: f0 = 0.875 * 49.5 = 43.3, N = 90.3; Var = 441.2; 95 % CI for N: 65 to 154 (unseen about 18 to 107).\nBias-corrected Chao2: f0 = (7/8) * 33*32 / (2*12) = 38.5, N = 85.5.\nSensitivity to the mapping: splitting every borderline merge gives S = 49, Q1 = 38, Q2 = 8, unseen 79.0; merging further (common-mode with correlated layers, self-attested ledger with self-assigned labels, progress gaming with check gaming) gives S = 44, Q1 = 31, Q2 = 8, unseen 52.6. So A says roughly 40 to 80 unseen, and the mapping choice alone moves it by a factor of two.\n\nEstimate B (Chapman, two methods, D4-05): my STPA pass (section 2 of the spec) against the union of the experts' lists. n1 = 35 distinct non-P risks in my pass (26 that match expert ids + 9 new: G1, G2, G3, G4, G6, G7, G9, G11, G12; G5, G8 and G10 judged partial extensions of existing ids), n2 = 47, m = 26. N = (36*48)/27 - 1 = 63.0. Observed union = 35 + 47 - 26 = 56. Residual = 7. Var = 36*48*9*21 / (27^2 * 28) = 16.0, SD 4.0, so the residual is about 0 to 15. Sensitivity: m = 30 gives a residual of 2.7; m = 22 gives 14.1.\n\nEstimate C (Chapman, refuters against experts): the refuters' findings that name a risk not adopted as a P-id: R2-10 (self-reported ledger, matches K36), R3-07 (our files anchor the reviewer, partly K46), R3-02 (a dropped card stays in the reviewer's window, partly K14), R3-06 (no adjudicator for judgment disagreements, new): n1 = 4, n2 = 47, m = 1 to 3. N = 119, 79, 59; residual 69, 30, 11. Unusable: see the assumptions.\n\nAssumptions and how badly each is broken here:\n1. Closed population. Broken for C: the refuters attacked amendment 2, the experts amendment 3, and the design changed in between. Broadly kept for A and B (amendment 3 plus the frame).\n2. Independent captures. Badly broken. All lenses are one model family, which pushes the estimate low (D4-05, D8-11). For B it is broken outright: I read the experts' lists before my STPA pass, so m is inflated and B is biased low. Treat B as a lower bound at best.\n3. Equal catchability. Broken in two directions. Popular, well-named risks are easier to find, which pushes the estimate low (Chao gives a lower bound under heterogeneity). The expert lenses are also stratified by field, and each could see almost only its own domain's risks. That inflates Q1 and pushes A high when the coverage within each field is good. A is therefore not even a reliable lower bound: its direction is unknown.\n4. Censoring. The experts were asked to list only what P1-P21 lacks, so they could not recapture P1-P21 or one another's earlier findings. C is invalid for this reason.\n5. Sample size. The source check notes that Chapman is near-unbiased only when n1 + n2 is at least about N. That holds for B (82 against 63) and fails for C.\n6. Identity of items. Every count depends on one mapper's merges (sensitivity above).\n\nReading: three estimators, three violated assumption sets, residuals from about 3 to 80. The only robust statement is that each estimate, even B's contaminated lower bound of 7, exceeds the stop thresholds the experts proposed (2 in D8-11, 3 in D6-04). So the list is not complete, and R1 (a blind STPA by a fresh leaf) plus R2 (a blind FMEA) must run before the pilot. Their overlap is the first clean two-method capture this programme will have. No figure here should be quoted as \"the number of unfound failure modes\".",
+ "model": {
+  "files": [
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/model/model.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/model/check.mjs",
+   "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/model/README.md"
+  ],
+  "how_to_run": "cd C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/model && node check.mjs   (runs all 13 configurations in about 38 s and explores 2,952,880 states in total. `node check.mjs <ID>` runs a single configuration; the IDs are SPEC, FIXED, FIXED-N2, FIXED-K3, A-FENCE-EPOCH, A-FENCE-CE, A-COMMIT, A-COMMIT-SPEC, A-PROGRESS, A-PAUSE, A-LEVEL, C-LIMIT, A-LIMIT, and SPEC-R1, which uses the spec's own R=1 and gives the same verdicts as SPEC across 377,220 states.) Plain Node 24, no packages.",
+  "properties": [
+   {
+    "name": "NoStaleAccepted",
+    "kind": "safety",
+    "holds": false,
+    "states": 381916
+   },
+   {
+    "name": "AtMostOneCommit (synthesis reads only committed)",
+    "kind": "safety",
+    "holds": true,
+    "states": 381916
+   },
+   {
+    "name": "Slots",
+    "kind": "safety",
+    "holds": true,
+    "states": 381916
+   },
+   {
+    "name": "RestartLimit",
+    "kind": "safety",
+    "holds": true,
+    "states": 381916
+   },
+   {
+    "name": "TwoCoordinatorsAct",
+    "kind": "safety",
+    "holds": true,
+    "states": 381916
+   },
+   {
+    "name": "NoFalseSuspicion (extra)",
+    "kind": "safety",
+    "holds": false,
+    "states": 381916
+   },
+   {
+    "name": "SingleWatcher (extra; events.jsonl single writer)",
+    "kind": "safety",
+    "holds": false,
+    "states": 381916
+   },
+   {
+    "name": "FailedTaskStopped (extra)",
+    "kind": "safety",
+    "holds": false,
+    "states": 381916
+   },
+   {
+    "name": "NoDeadlock",
+    "kind": "liveness_or_deadlock",
+    "holds": false,
+    "states": 381916
+   },
+   {
+    "name": "AlwaysCanResolve (AG EF committed-or-escalated, per field)",
+    "kind": "liveness_or_deadlock",
+    "holds": false,
+    "states": 381916
+   },
+   {
+    "name": "LoopEventuallySuspected",
+    "kind": "liveness_or_deadlock",
+    "holds": true,
+    "states": 381916
+   }
+  ],
+  "ablations": [
+   {
+    "removed": "Fencing by attempt epoch (commit.mjs check 1), from FIXED",
+    "breaks": "NoStaleAccepted. No fault is needed: a planned hand-over is enough."
+   },
+   {
+    "removed": "Fencing by coordinator epoch (--ce on every exec script), from FIXED",
+    "breaks": "TwoCoordinatorsAct"
+   },
+   {
+    "removed": "The commit record (COMMIT file with wx; consumers read only COMMIT-named attempts)",
+    "breaks": "From FIXED: nothing breaks within the model. From SPEC (false suspicion present): AtMostOneCommit."
+   },
+   {
+    "removed": "Suspicion by progress (variant V), replaced with suspicion by liveness (transcript growth), from FIXED",
+    "breaks": "LoopEventuallySuspected and AlwaysCanResolve"
+   },
+   {
+    "removed": "Pause detection (gap > 2Δ+30 s moves deadlines), from FIXED",
+    "breaks": "NoFalseSuspicion (extra safety). It does not change the five requested safety properties within the budget."
+   },
+   {
+    "removed": "Level-triggered re-check after a wake (coordinator acts only on what the wake carries; the watcher emits each event once), from FIXED",
+    "breaks": "AlwaysCanResolve. Here the FIXED out-of-session re-wake no longer helps, because the re-woken coordinator only reads the wake's payload."
+   },
+   {
+    "removed": "The restart limit (R and the same-class rule), from C-LIMIT (FIXED, child faults only, budget 3)",
+    "breaks": "RestartLimit"
+   }
+  ],
+  "flaws": [
+   {
+    "title": "F1. The restore-check carries post-fence output into the next attempt (fails NoStaleAccepted with every mechanism present)",
+    "fix": "Fencing, extended to the log (Kafka-style leader-epoch truncation): at step 2, record in the task row the attempt's journal high-water mark (line count or last seq). Restore-check reads only lines at or below that mark, and only after the stop is confirmed or the mark is applied. Also fix E4 so it says the restart path reads the COMMIT plus the fenced prefix of the dead attempt's journal. Verified: FIX_RESTORE_CUT makes NoStaleAccepted hold (FIXED, FIXED-K3)."
+   },
+   {
+    "title": "F2. A lost wake after the watcher's own urgent exit is permanent (fails NoDeadlock and AlwaysCanResolve)",
+    "fix": "Lost-wakeup problem: add an out-of-session supervisor (a Windows Task Scheduler entry every T_watch) that wakes the coordinator whenever no watcher of the current ce is alive and the coordinator is idle. Equivalently, it fires while events.jsonl has seq greater than the coordinator's acked seq. This works only together with the level-triggered re-check (see A-LEVEL). Verified: FIX_REWAKE."
+   },
+   {
+    "title": "F3. Pause detection only works inside one live watcher (fails NoFalseSuspicion; with no commit record it also produces a double commit)",
+    "fix": "Process-pause-safe timeouts: the stall clock is the accumulated watched, non-paused time since the last progress event. Persist it in watcher.json or status per task. A new watcher continues it and never derives it from wall clock. Use a monotonic sleep-excluding clock where available. Verified: FIX_CLOCK (NoFalseSuspicion holds in FIXED and FIXED-K3)."
+   },
+   {
+    "title": "F4. endturn starts a second watcher of the same ce (fails SingleWatcher; breaks E6 'only writer' of events.jsonl)",
+    "fix": "Singleton daemon: the watcher holds run/watcher.lock (created with wx, containing its pid and ce) for its lifetime. endturn kills that pid (taskkill) before starting a replacement, and never starts one while the lock's pid is alive. Verified: FIX_ONE_WATCHER."
+   },
+   {
+    "title": "F5. Escalation leaves the failed attempt running (fails FailedTaskStopped)",
+    "fix": "OTP supervisor shutdown before escalation: the exit-1 path still writes the intent, raises the epoch (fence) and runs stop.mjs (E10, including verify and orphan kill), and only then marks the task failed. Verified: FIX_STOP_ON_FAIL."
+   },
+   {
+    "title": "F6. Admission does not count stop-unconfirmed zombies (fails Slots at the spec's interim N_max=2)",
+    "fix": "Count terminating processes, as Kubernetes counts Terminating pods toward quota: admit.mjs counts live child processes, stop-unconfirmed ones included. A refused admission leaves the task in 'admitted', and the next level-triggered turn retries admit without re-fencing or re-counting. The zombie is cleared by the Z path to the owner. Verified: FIX_COUNT_LIVE (FIXED-N2 holds)."
+   },
+   {
+    "title": "A1. R conflicts with this task's configuration, and the class rule makes R=2 vacuous",
+    "fix": "Either give crash its own class (process exit observed by stop or status) or state that R counts failures of any class and drop the same-class rule."
+   },
+   {
+    "title": "A2. handover.mjs: stop the watcher, or leave it to exit 31?",
+    "fix": "Make handover.mjs kill the watcher's pid, and state that a coordinator receiving exit 31 ends its turn without running any exec script."
+   },
+   {
+    "title": "A3. Quiescence for a hand-over ignores zombies; 'stops admitting' is undefined for failure restarts",
+    "fix": "Define quiescence as no live child process of any epoch, and state whether failure restarts continue while draining."
+   },
+   {
+    "title": "A4. No priority between READY and a stall event for the same epoch",
+    "fix": "Rule: a READY of the current epoch outranks any suspicion of that epoch (commit first; suspicion is void)."
+   },
+   {
+    "title": "A5. Ready events for stale attempt folders, and the epoch commit.mjs is called with",
+    "fix": "The coordinator always passes the table's epoch; the watcher reports stale READY files only as zombie-write telemetry."
+   },
+   {
+    "title": "A6. Order of the ce check inside a watcher tick",
+    "fix": "State that the ce check is the first act of every tick and is repeated just before the append."
+   },
+   {
+    "title": "A7. Admission refusal or restore failure after the fence leaves the task stranded",
+    "fix": "Leave the row in 'admitted' with the raised epoch; admission retries are level-triggered and never re-fence or count toward R."
+   },
+   {
+    "title": "A8. Other places the spec is silent (not modelled)",
+    "fix": "Cap parking per task like H_max. Have intent reconcile also run at the start of every turn. Have the watcher allocate seq under the watcher lock."
+   }
+  ],
+  "limits": "How far the result reaches:\n- Bounded: two fields with one task each and no review stages or dependencies.\n- At most 2 unusual events per run (faults plus the planned hand-over), with at most 2 child faults, 1 zombie, 1 pause, 1 lost wake, 1 torn write and 1 planned task hand-over. FIXED-K3 allows 3 events (3 child faults, 2 zombies).\n- Within these bounds every interleaving is explored. A flaw that needs more events would not be found. Example: Slots at N_max=3 needs two zombies plus two replacements, so its failure at N=3 is argued from the N=2 trace, not shown.\n\nTime and fairness:\n- Time is abstract. A watcher tick waits for every healthy current child to progress (a T_box timeliness assumption).\n- Faulty children are suspected at the next tick, so the model cannot show slow detection, T_watch versus T_box effects, coalescing delay δ, or the hard spend limit.\n- The loop-liveness check assumes weak fairness on watcher ticks (cycles with no tick are not counted).\n\nCoordinator model:\n- Coordinator turns are atomic, except between a replace's fence and its stop. Interleavings inside commit.mjs (between the merge and the COMMIT) and between plan ops are folded into one step; the torn write is modelled as a crash inside it.\n- Coordinator crashes and intent reconciliation are not modelled separately; the level-triggered re-check covers their retry role.\n\nNot modelled at all: spend, escrow, the meter, memory, soft and hard limits, cut, common cause, memory parking, H_max beyond one, salvage, put.mjs temp-file tearing (the child's own atomic writes are assumed), git and manifest hashing, and the Integrity layer's hook.\n\nReadings and fixes:\n- The owner acts only through the Z escalation (ending a zombie) and by starting the fresh coordinator; the owner never pokes the coordinator spontaneously.\n- The 'fixed' model applies my smallest fixes as abstract switches (for example FIX_CLOCK simply stops raw wall-clock suspicion). Each fix still needs its own design check in the real scripts; F3's caveat about T_watch at or below T_box is one example.\n- Shortest traces are BFS-shortest in model steps, so a trace may use a fault only because it saves a step."
+ },
+ "fidelity": {
+  "reproduces": true,
+  "missing": [
+   "E1 is not modelled at all: tasks.lock taken with wx, exit 75 when busy, breaking a stale lock (dead process, older than 2 min) by rename, writing temp-then-rename, the rev increment, table-corrupt / tasks.json.prev, and exit 70. Every exec script is an atomic step, so lock races and the lock-break race cannot appear.",
+   "E3 checks 3 (the diff touches only the attempt folder) and 4 (the schema) are absent. Commit acceptance is the epoch and state checks only.",
+   "E4: no manifest, no sha256 and no consumer-side hash check. The 'same epoch, same manifest succeeds; different manifest is refused (exit 13)' rule is reduced to an epoch comparison. put.mjs atomic writes and the .corrupt handling of a torn line are assumed.",
+   "E5 intents are absent: no intent files, no reconcile at coordinator start, no exit 17, and no redo of an open intent. The coordinator itself never crashes, so the 'redo is safe only because of E3' claim is never exercised.",
+   "E6: spend (soft and hard limit), memory, common cause, meter disagreement (26), coalescing delay delta, watcher internal error (40), T_box versus T_watch timing, and V as a count are all missing. Every event is urgent and exits at once.",
+   "E9: H_max is fixed at 1 and the 'back to the Shape layer for a split' path is missing. Common cause stops nothing, and the owner-only changed input is not modelled.",
+   "E10: the 2-delta verify and the taskkill /T orphan kill are not modelled. A zombie ends only when the owner acts on the Z escalation.",
+   "E11: dependencies, the memory check, escrow, B, r, the meter, the soft limit, the hard limit and 'cut', and the no-hold-and-wait rule are all missing. Admission is the slot count only.",
+   "E12: the coordinator snapshot and the owner's one-line brief are abstracted away. Quiescence is read from the table.",
+   "salvage.mjs (a later-stage script), the fresh-review reason, review stages and task dependencies are missing.",
+   "The owner never wakes the coordinator spontaneously. The boot wake of the first and of a fresh coordinator can never be lost. Coordinator turns are atomic except in the fence-to-stop window."
+  ],
+  "vacuous": [
+   "AtMostOneCommit (with COMMIT_RECORD on, i.e. SPEC, FIXED, FIXED-N2, FIXED-K3, SPEC-R1): It is vacuous by construction. The property counts `t.cm >= 0 ? 1 : 0`, which is a scalar and cannot exceed 1. In COMMIT_RECORD mode it can never fail, whatever happens to the commit record. The A-COMMIT ablations only show a failure because COMMIT_RECORD=false also changes the property's definition to popcount(merged epochs), so they test a different property.",
+   "Slots (N_max=3, 2-event budget): It cannot fail at the stated configuration. With 2 fields and at most 1 zombie, there are never more than 3 live processes, so admission control has no effect on the property. The colleague concedes the N=3 failure only by argument.",
+   "RestartLimit (SPEC, FIXED, FIXED-N2, FIXED-K3 with R=2): It is vacuous in the headline runs: with at most 2 child faults (3 in K3, where the same-class rule binds first), restarts can never exceed 2 even with no limit at all. Only C-LIMIT, with 3 child faults, and R=1 make it falsifiable.",
+   "FailedTaskStopped: It is weak. The property only asks that no live session have the table's epoch. Raising the epoch (the fence) satisfies it on its own, so it never checks the 'stopped' half of the OTP-shutdown fix (FIX_STOP_ON_FAIL).",
+   "NoFalseSuspicion in FIXED: It holds in FIXED by construction. FIX_CLOCK simply deletes the `pu` branch that produces the false stall, and real stall detection in the model does not depend on any clock. So the cost the colleague names for the fix (a stall that is never detected when T_watch <= T_box) is not representable. Without the fix the property is falsifiable (A-PAUSE fails in 4 steps, F-noClock in 6).",
+   "AlwaysCanResolve (AG EF): It is a possibility check, not inevitability under fairness. A fair livelock in which a field never resolves would not be caught, except for the looping case, which has its own SCC check. It does turn out robust in one respect.",
+   "NoStaleAccepted, TwoCoordinatorsAct, SingleWatcher, NoDeadlock, LoopEventuallySuspected: These are not vacuous. Each fails when its mechanism is broken."
+  ],
+  "model_errors": [
+   "The fault budget is overspent, so the stated bounds are wrong. Planned hand-overs check B.h and B.k when the plan is built, not when it runs. One plan can therefore contain replace(f0,handover) > replace(f1,handover) with h=1, and a zombie earlier in the same plan can drive k below zero. The probe budgetprobe.mjs finds B.h<0 in 35,778 SPEC states (11,435 FIXED, 87,247 FIXED-K3) and B.k<0 in 74,053 SPEC states (19,906 FIXED, 114,731 FIXED-K3). The runs explore up to 3 unusual events and 2 planned hand-overs, not the stated 'at most 2 events, 1 planned hand-over'. This over-approximates, so it is sound for finding bugs, but the 'within these bounds' text is inaccurate.",
+   "Child stalls, loops and crashes are permanent: a stalled child never resumes. That is a convenient fault model for a design whose stall detection is a timeout. I added a free 'resume after a transient stall' action (m_resume.mjs). (a) FIXED minus COMMIT_RECORD then FAILS AtMostOneCommit in 13 steps: stall, suspected, resume, READY, a torn commit merges e1, replace, then e2 merges as well. This refutes the report's claim that the commit record 'breaks nothing on its own' from FIXED. (b) In FIXED, a finished READY attempt is fenced and replaced (counted as a restart) in 7 steps. With READY given priority (ASYNC_PRIORITY=false) it still happens in 11 steps, through plan staleness: READY lands during the coordinator's turn. FIXED itself still holds its 11 properties with resume (174,069 states; K3 1,608,339).",
+   "The A-COMMIT and A-COMMIT-SPEC ablations change the property along with the mechanism: with COMMIT_RECORD=false, AtMostOneCommit counts merges, otherwise it counts the scalar cm. In record mode the property is unfalsifiable (see vacuous_or_weak_properties).",
+   "FailedTaskStopped encodes 'fenced', not 'stopped'. The FIX_STOP_ON_FAIL result therefore verifies the fence only.",
+   "The headline Slots HOLDS at N_max=3 is meaningless for the budget, since admission can be deleted without effect. The N=2 proxy argument is correct, but the real N=3 failure needed my 4-event run.",
+   "The FIX_* switches are oracles, not designs. FIX_CLOCK removes the false-suspicion branch. FIX_REWAKE fires exactly when the coordinator is idle with no pending wake and no watcher, which a real Task Scheduler entry cannot observe. FIX_RESTORE_CUT sets ct=0. FIXED holding is therefore evidence about where the spec breaks, not that these fixes are correct. The colleague says so, but the report's summary ('every property holds') reads stronger than that.",
+   "The run labelled 'SPEC' uses R=2, not the spec's R=1. SPEC-R1 exists but sits outside the default run list.",
+   "Coordinator turns are atomic outside the fence-to-stop window, and the boot wake can never be lost. Plan-versus-state staleness during a multi-minute turn (stop's 2-delta verify alone takes about 2 minutes) is therefore mostly hidden. My transient-stall run shows it matters."
+  ],
+  "extra_flaws": [
+   "E1 stale-lock break is check-then-act",
+   "E5 x E8: redoing an open replace intent re-fences and re-counts",
+   "E11 escrow leaks and the cap is not a bound",
+   "The coordinator's acknowledged event sequence is not persisted",
+   "Single-writer claims conflict with other writers",
+   "A READY that lands during a coordinator turn is discarded as a failure",
+   "The coordinator fence is incomplete and not atomic with the write"
+  ],
+  "verdict": "The rerun reproduces the report exactly: every count and verdict matches, and the traces I checked are identical. The search is exhaustive within its reach. The canonical keys are full JSON strings, so there are no hash collisions. The state cap throws rather than truncating silently. Session pruning in canon() is sound. Every FIX_* is load-bearing on its own.\n\nThe SPEC failures stand as real flaws of the specification: restore-check carries post-fence cards, a lost wake after the watcher's own exit is permanent, pause detection works only inside one watcher, endturn can start a second watcher, escalation leaves the attempt running, and admission does not count zombies.\n\nThe property evidence is weaker than reported:\n- **AtMostOneCommit** is unfalsifiable in COMMIT-record mode. Two COMMIT creations still report HOLDS.\n- **Slots at N_max=3** survives deleting admission entirely. It fails at N=3 only with 4 events.\n- **RestartLimit** survives deleting the limit in SPEC and FIXED. It is meaningful only in C-LIMIT and at R=1.\n- **FailedTaskStopped** is satisfied by the fence alone, so it never checks that the attempt is stopped.\n- **NoFalseSuspicion** holds in FIXED by construction of FIX_CLOCK.\n\nThe fault model is also convenient. Stalls never recover. Once a recovering stall is allowed, removing the commit record from FIXED produces two merged attempts in 13 steps, which refutes 'the commit record breaks nothing on its own'. A finished READY attempt can also be replaced in FIXED in 7 steps.\n\nThe budget bound is overspent (B.h<0 and B.k<0 reachable), so the stated 'at most 2 events, 1 planned hand-over' is inaccurate, though the over-approximation is conservative. Large parts of the specification are not modelled at all: E1 locks, E5 intents and coordinator crash, spend, escrow and memory, and common cause. Several spec flaws live exactly there: the lock-break race, the non-idempotent redo of a replace, the escrow leak, and the unpersisted acknowledged event sequence.\n\nAccept the six SPEC flaws and the shape of their fixes. Do not accept FIXED's 'all hold' as evidence that the fixed design is safe until the four weak properties are strengthened (count COMMIT creations, count live processes as stopped, run R=1 and the 4-event budget), stalls are made recoverable, and E1 and E5 are modelled.\n\nAll review files are in C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/model-review/: rerun.txt, rcheck.mjs, m_nowx.mjs, m_noadmit.mjs, m_failnostop.mjs, m_resume.mjs, m_resume_ready.mjs, budgetprobe.mjs and resume.txt."
+ },
+ "integrated": {
+  "lines": 612,
+  "conflicts_resolved": [
+   {
+    "between": "Execution (attempt folder + COMMIT file + MANIFEST), Storage (staging + objects + journal line as completion record), Integrity (merge.mjs into the shared tree)",
+    "resolution": "One commit record: a ledger line {task, epoch, step key, output hashes} written by commit.mjs, first wins, identical repeat is a no-op. No COMMIT file, no per-field journal, no merge.mjs: commit.mjs reads the current-epoch attempt folder's staging/ directly and writes the content-addressed store; git only records history with the ledger head."
+   },
+   {
+    "between": "Execution (put.mjs as the child's write path, needing one shell permission) and Integrity/Storage (child has no Bash)",
+    "resolution": "Child has no shell. It writes drafts to staging/ with Write; commit.mjs validates, rejects torn or invalid files with a reason code, and harvest.mjs takes reader results from transcripts. put.mjs dropped."
+   },
+   {
+    "between": "Execution events.jsonl, Integrity ledger.jsonl, Storage journal.jsonl, Shape group-start ledger lines, Completeness incidents/<writer>.jsonl",
+    "resolution": "One hash-chained ledger run/ledger.jsonl, appended only through lib.mjs under a lock; events, commit records, incidents, meter readings and refusals are typed lines in it."
+   },
+   {
+    "between": "Storage control/epoch and Execution run/coord.json plus per-task epochs",
+    "resolution": "Kept run/coord.json (ce) and the task table's epoch; control/epoch dropped."
+   },
+   {
+    "between": "Storage status.mjs and Execution status.mjs; Execution endturn.mjs, meter.mjs, intent.mjs",
+    "resolution": "One status.mjs with --reconcile and --endturn; meter recording folded into spend.mjs; intents into lib.mjs."
+   },
+   {
+    "between": "Integrity perm-audit.mjs and Storage audit.mjs; Evidence search-log.js",
+    "resolution": "One audit.mjs after every turn: read audit/taint, privilege and URL audit, TURN-END note check, and the search log."
+   },
+   {
+    "between": "Storage tms.mjs labels and Integrity certify/low-water labels and their status lattices",
+    "resolution": "One label script tms.mjs over one graph: card statuses pending, witnessed, confirmed, unverifiable, rejected, superseded; node labels STALE > PENDING > JUDGMENT > IN; promote.mjs is the only status writer."
+   },
+   {
+    "between": "Storage snap.mjs and Integrity snapshot.mjs; snapshots in the field folder (D1-05, D8-02) vs outside git (D2-09)",
+    "resolution": "One snap.mjs; snapshots in .snapshots/ outside git and outside every attempt folder."
+   },
+   {
+    "between": "Shape capacity-check.js run by the child (who has no shell) and the watcher",
+    "resolution": "The capacity check runs in guard-hook.mjs before each reader start (true check-before-insert by the harness) and is repeated by the watcher each tick; no separate script."
+   },
+   {
+    "between": "Evidence coverage.js and Completeness estimate.js",
+    "resolution": "One recapture.mjs with a source mode and a hazard mode."
+   },
+   {
+    "between": "Completeness canary-check.js and Integrity selftest hook test",
+    "resolution": "The hook canary is part of selftest.mjs."
+   },
+   {
+    "between": "Mappings on restart limit (D3-08: two; D1-09, D4-07: one)",
+    "resolution": "R = 1, then the owner chooses a changed input."
+   },
+   {
+    "between": "Mappings on sleep (D4-06 exits; D1-02, D3-06 shift deadlines)",
+    "resolution": "Shift deadlines and log the pause; every process resumes on wake."
+   },
+   {
+    "between": "Frame's waves and per-task admission (D1-08)",
+    "resolution": "Per-task admission when a slot frees; a wave survives only as the owner's checkpoint."
+   },
+   {
+    "between": "Frame layer 3 (one trusted class, consumers read only trusted) and the mappings",
+    "resolution": "Two grades (witnessed by script, confirmed = measured judgment), unverifiable never passes; sessions labelled by what they read; trusted-only readers are pack freeze, fresh reviewer, synthesis, coordinator."
+   },
+   {
+    "between": "Frame layer 6 (node capacity is the window budget; fan-out computed) and the B+/square-root mappings",
+    "resolution": "Two capacities (pack C_node, spend A_leaf); B+ governs only what must share a window; windows follow the square-root law; leaves stay expertise lanes and the computed bound is a check."
+   },
+   {
+    "between": "Frame layer 2 (synthesis is a derived view) and D7-11/D6-08",
+    "resolution": "The synthesis table is a view; a cross-field adjudication is a model-written object under the citation constraints."
+   },
+   {
+    "between": "Storage (dismissal out-list matching later) and Evidence (dismissals.js pilot)",
+    "resolution": "dismissals.mjs is pilot, as P15 is the programme's founding mistake; matching runs over whatever cards exist."
+   },
+   {
+    "between": "Integrity (separation of duty: coordinator starts checkers) and Execution (coordinator turns)",
+    "resolution": "The coordinator starts checker helpers; the watcher exits non-urgently on a ready batch and promote.mjs reads verdicts from the checker's transcript."
+   },
+   {
+    "between": "Evidence pilot list (rescreen, second-opinion) and the small-pilot rule",
+    "resolution": "The exclusion re-screen and second-opinion.mjs moved to later; F2 is decided after the pilot's reviews."
+   },
+   {
+    "between": "Script file extensions (.mjs in L1-L3, .js in L4-L6)",
+    "resolution": "All .mjs; the existing cost.js prototype is renamed cost.mjs."
+   }
+  ],
+  "for_the_owner": [
+   "The go: nothing starts without it",
+   "F1 where the review runs: both forms in the pilot; default for 'no difference shown' is fresh",
+   "F2 the second expert: none until the pilot's reviews, then a second reviewer of the same pack plus the contrary-evidence reader",
+   "F3 a second provider's model for checks, scoring and extra completeness lenses",
+   "F4 the cap, the pilot allowance in tokens and the admission margin: without them nothing is admitted",
+   "F5 the Node fetch script, keeping local page snapshots outside git, and whether a PDF text package may be installed: without F5 every card is unverifiable and no certificate passes",
+   "Restart limit R = 1 (D3-08 would allow two)",
+   "Starting the fresh coordinator yourself at a quiet point after each hand-over",
+   "Keeping the PC awake: accept that sleep costs only time, or allow a power request",
+   "Memory reserve and N_max (two children until peak memory is measured)",
+   "All thresholds before the pilot: d0 per fault class, p1 and beta, SPRT p0/p1/alpha/beta, plants t of 3, coverage floor, completeness residual threshold, smallest effect of interest per measure, an action line per measure",
+   "Approvals: question lists, approach ids, field protocols, the analysis plan, the protocol model's property list, plan-time splits and dropped ranges",
+   "If the hook test fails: detective layer only or a separate Windows account; where deny rules live",
+   "Whether the single-session control runs twice (S2)",
+   "Whether the hand-over line is set by token count or weighted token cost"
+  ],
+  "doubts": [
+   "Length: 612 lines in all, 72 of them table rows (540 other lines), against 'about 520'. The section-9 table alone has 58 rows, because every problem has to have its own row.",
+   "Merging the logs into one ledger and letting commit.mjs read attempt folders directly, with no git merge, are my own simplifications. No layer designer proposed exactly this. Lock contention on the single ledger, including refusal lines from the hook, is assumed to be harmless and has not been measured.",
+   "The capacity check runs inside guard-hook.mjs, which assumes that each reader brief names its question ids in a form the hook can parse, and that hooks fire for Agent calls. Neither is verified.",
+   "Pilot calibration of the checker (14 seeds per J class plus as many clean items, so 112 checker items at d0 = 0.8) is a real token cost inside the pilot. Its size depends on the owner's d0.",
+   "The pilot list still has about 34 scripts. Each one guards a problem I judged high, but no per-problem severity rating was given, so the high/low cut is my judgment.",
+   "Figures quoted from cost.mjs (2.4 to 4.4 times the tokens for the F1 price; the plain law handing over about twice too often) and the completeness estimates (roughly 40 to 80, about 7) are computed from mostly guessed or contaminated inputs. They are labelled that way, but they are still numbers in the document.",
+   "The count of source checks (about 226 entries, about 26 looked up by web search) comes from the lengths of the check arrays and the 'overall' texts, which differ slightly per field (for example, D4's text says 37 citations but its array has 32 entries).",
+   "I read amendment 3, the result.json index, a compact index of all 103 mappings, every field's missing-risk titles and every source check's 'overall' text. I did not read each mapping's full text. Specific mechanisms come from the six layer specs as given."
+  ]
+ },
+ "attack": [
+  {
+   "id": "A1-01",
+   "title": "The restart path reads the fenced attempt's uncommitted output, so the fence and the 'one commit per task' claim both fail",
+   "kind": "guarantee_overstated",
+   "severity": "high"
+  },
+  {
+   "id": "A1-02",
+   "title": "The trusted base, the hooks and the ledger chain are all within the subjects' reach",
+   "kind": "classical_assumption_does_not_hold",
+   "severity": "high"
+  },
+  {
+   "id": "A1-03",
+   "title": "Level-triggered wakes and pause detection assume a timer that outlives the watcher; here the watcher is the only one",
+   "kind": "guarantee_overstated",
+   "severity": "high"
+  },
+  {
+   "id": "A1-04",
+   "title": "A stop is assumed to take effect: a failed attempt keeps running, admission ignores zombies, and nobody can stop the coordinator",
+   "kind": "classical_assumption_does_not_hold",
+   "severity": "high"
+  },
+  {
+   "id": "A1-05",
+   "title": "Crash-only recovery assumes an idempotent redo and locks that die with their holder; neither holds",
+   "kind": "guarantee_overstated",
+   "severity": "medium"
+  },
+  {
+   "id": "A1-06",
+   "title": "Read audit and 'clean' labels assume every input is a recorded read; auto-loaded files and the child's note are not",
+   "kind": "classical_assumption_does_not_hold",
+   "severity": "high"
+  },
+  {
+   "id": "A1-07",
+   "title": "The 'blind' analyses are given a design that lists every known risk, so the two-method capture is contaminated",
+   "kind": "contradiction",
+   "severity": "medium"
+  },
+  {
+   "id": "A1-08",
+   "title": "Spend admission is called escrow, but nothing debits the reservation, so B is not a bound",
+   "kind": "guarantee_overstated",
+   "severity": "medium"
+  },
+  {
+   "id": "A1-09",
+   "title": "Coverage 'upper bound' and the residual stop signal use estimators whose bias direction is unknown",
+   "kind": "guarantee_overstated",
+   "severity": "medium"
+  },
+  {
+   "id": "A1-10",
+   "title": "The SPRT runs over a fully inspected lot, and both it and Clopper-Pearson assume independent trials and a perfect inspector",
+   "kind": "too_much_machinery",
+   "severity": "medium"
+  },
+  {
+   "id": "A1-11",
+   "title": "Famous names used as decoration: the B+ tree in layer 6 and the LCF kernel in layer 3",
+   "kind": "analogy_is_decoration",
+   "severity": "medium"
+  },
+  {
+   "id": "A2-01",
+   "title": "The design still has every flaw its own model check found; by its own rule R58 it is blocked",
+   "kind": "contradiction",
+   "severity": "high"
+  },
+  {
+   "id": "A2-02",
+   "title": "Coordinator hand-over needs the owner every few wakes and waits for a quiet point that never comes",
+   "kind": "does_not_deliver_the_owners_requirement",
+   "severity": "high"
+  },
+  {
+   "id": "A2-03",
+   "title": "Admission gate cannot pass: a bootstrap loop and a completeness test that never stops",
+   "kind": "no_runner_or_cannot_run_here",
+   "severity": "high"
+  },
+  {
+   "id": "A2-04",
+   "title": "Lost wake-up: the proposed re-wake cannot wake a session on this harness, and the acknowledged seq is not stored",
+   "kind": "no_runner_or_cannot_run_here",
+   "severity": "high"
+  },
+  {
+   "id": "A2-05",
+   "title": "Scripts are said to start, message and stop sessions; replace is really a saga, and redoing it re-charges a restart",
+   "kind": "no_runner_or_cannot_run_here",
+   "severity": "high"
+  },
+  {
+   "id": "A2-06",
+   "title": "A reboot is charged as a task failure, so one reset uses every running task's only restart",
+   "kind": "classical_assumption_does_not_hold",
+   "severity": "high"
+  },
+  {
+   "id": "A2-07",
+   "title": "The watchdog does the work it is supposed to guard, so a slow tick looks like sleep",
+   "kind": "classical_assumption_does_not_hold",
+   "severity": "medium"
+  },
+  {
+   "id": "A2-08",
+   "title": "The 'single writer' files are written by concurrent processes, so the hash chain forks in normal running",
+   "kind": "contradiction",
+   "severity": "medium"
+  },
+  {
+   "id": "A2-09",
+   "title": "The spend check rests on a number only a session can read, and 'limits from outside' is enforced from inside",
+   "kind": "guarantee_overstated",
+   "severity": "medium"
+  },
+  {
+   "id": "A2-10",
+   "title": "The trust root sits inside the reach it guards (Tripwire without read-only media)",
+   "kind": "classical_assumption_does_not_hold",
+   "severity": "medium"
+  },
+  {
+   "id": "A2-11",
+   "title": "The schema and the hook's budget check have no runner: they rest on the child's obedience and on hook inputs nobody has checked",
+   "kind": "no_runner_or_cannot_run_here",
+   "severity": "medium"
+  },
+  {
+   "id": "A2-12",
+   "title": "The 'believed, not verified' list leaves out things R10 and R12 rest on, with no fallback",
+   "kind": "missing",
+   "severity": "medium"
+  },
+  {
+   "id": "A3-01",
+   "title": "The completeness gate cannot pass, and every script fix voids it",
+   "kind": "contradiction",
+   "severity": "high"
+  },
+  {
+   "id": "A3-02",
+   "title": "Time-based stall detection breeds the watcher's flaws; count progress per model call instead",
+   "kind": "too_much_machinery",
+   "severity": "high"
+  },
+  {
+   "id": "A3-03",
+   "title": "Several processes write tasks.json and the ledger, so the lock and its stale-break race exist only to serve that",
+   "kind": "contradiction",
+   "severity": "high"
+  },
+  {
+   "id": "A3-04",
+   "title": "Stored coordination state (intent files, escrow) is the source of three found flaws; compute it from the table instead",
+   "kind": "too_much_machinery",
+   "severity": "high"
+  },
+  {
+   "id": "A3-05",
+   "title": "Coordinator wakes are the machinery's main token term, and nobody counts or bounds them",
+   "kind": "missing",
+   "severity": "high"
+  },
+  {
+   "id": "A3-06",
+   "title": "The coordinator hands over too often for the owner's time, for about 12 % per call",
+   "kind": "guarantee_overstated",
+   "severity": "medium"
+  },
+  {
+   "id": "A3-07",
+   "title": "B+ tree bulk load and overflow handling run in a one-field pilot on guessed key sizes",
+   "kind": "too_much_machinery",
+   "severity": "medium"
+  },
+  {
+   "id": "A3-08",
+   "title": "Chapman coverage per question pays a second route for a figure the doc calls biased",
+   "kind": "classical_assumption_does_not_hold",
+   "severity": "medium"
+  },
+  {
+   "id": "A3-09",
+   "title": "The pilot's two comparisons cost about one more field, and the one-session arm cannot fit one window",
+   "kind": "missing",
+   "severity": "medium"
+  },
+  {
+   "id": "A3-10",
+   "title": "Three overlapping statistical schemes judge the same items",
+   "kind": "too_much_machinery",
+   "severity": "medium"
+  },
+  {
+   "id": "A3-11",
+   "title": "Reuse by manifest key saves no model tokens and duplicates the commit checkpoint",
+   "kind": "too_much_machinery",
+   "severity": "medium"
+  },
+  {
+   "id": "A4-01",
+   "title": "F1 is presented as the owner's call but the design decides it, and silence reverses amendment 1",
+   "kind": "does_not_deliver_the_owners_requirement",
+   "severity": "high"
+  },
+  {
+   "id": "A4-02",
+   "title": "F2: the mapper's second expert becomes the silent default, and the owner's form is never measured",
+   "kind": "does_not_deliver_the_owners_requirement",
+   "severity": "high"
+  },
+  {
+   "id": "A4-03",
+   "title": "The seven measures appear nowhere, so the owner has no path to see them for the tree",
+   "kind": "missing",
+   "severity": "high"
+  },
+  {
+   "id": "A4-04",
+   "title": "R8's checkpoint lets a fenced attempt's uncommitted output spread into the next attempt",
+   "kind": "contradiction",
+   "severity": "high"
+  },
+  {
+   "id": "A4-05",
+   "title": "Overflow is still 'cut and list the rest' on the path that actually fires: the spend limit",
+   "kind": "does_not_deliver_the_owners_requirement",
+   "severity": "high"
+  },
+  {
+   "id": "A4-06",
+   "title": "The square-root law, which counts tokens only, replaces the owner's 300k ceiling for the research child without asking",
+   "kind": "does_not_deliver_the_owners_requirement",
+   "severity": "high"
+  },
+  {
+   "id": "A4-07",
+   "title": "Five more model-check flaws are absent, and section 9 claims residuals the model already refuted",
+   "kind": "contradiction",
+   "severity": "high"
+  },
+  {
+   "id": "A4-08",
+   "title": "'Experts first' has no gate between research and review; expertise is certified only after the review is spent",
+   "kind": "does_not_deliver_the_owners_requirement",
+   "severity": "medium"
+  },
+  {
+   "id": "A4-09",
+   "title": "The fresh reviewer's input set, which defines what the expert knows, has no named writer",
+   "kind": "missing",
+   "severity": "medium"
+  },
+  {
+   "id": "A4-10",
+   "title": "The coordinator's square-root hand-over needs the owner every ~18 coordinator calls; time and owner presence are not priced",
+   "kind": "does_not_deliver_the_owners_requirement",
+   "severity": "medium"
+  },
+  {
+   "id": "A4-11",
+   "title": "The B+ bulk load can never place a key: field-prefixed ids and fixed lanes reduce it to a check on priors",
+   "kind": "analogy_is_decoration",
+   "severity": "medium"
+  },
+  {
+   "id": "A4-12",
+   "title": "The owner's pilot sits behind about 35 scripts and some 15 thresholds whose silent default is 'nothing runs'",
+   "kind": "too_much_machinery",
+   "severity": "medium"
+  }
+ ],
+ "ruling": {
+  "edits": 27,
+  "edit_list": [
+   "Header 'Status' (lines 3-5) and §1 'Where the experts' mappings overrule' (lines 29-41): Line 3: replace 'It replaces the rules of version 1 and its three amendments' with 'It replaces the rules of version 1 and of amendments 2 and 3. Amendment 1 stays in force on the owner's word for F1 (where the review runs), F2 (the form of a second expert) and the research child's 300k ceiling until he rules (§12).' Bullet at lines 32-33: delete 'and the coordinator' from the trusted-only readers and add: 'The coordinator is labelled low: the harness puts each child's 400-character note into its window. That is harmless because the coordinator certifies nothing. Every procedure it invokes checks its own inputs (Clark-Wilson).' Bullet at lines 36-38: replace it with 'The B+ tree governs what must share one window: the pack at review. The square-root law (R51) governs the coordinator and the fresh-review path. How long the research child's window runs is the owner's decision (§12).' Bullet at lines 39-41: replace 'coverage is an upper bound (D6-04)' with 'coverage is held-out seed recall (D8-10)', and replace 'the completeness estimate is a stop signal' with 'the completeness estimate is a reading, never a stop or a gate'.",
+   "§1 table, rows 1, 3 and 6; §4 'Borrowed whole' (lines 191-192): Row 1: replace 'escrow admission' with 'admission by a computed reservation'. Row 3: delete '(LCF kernel)' and 'Gordon, Milner and Wadsworth 1979'. §4 lines 191-192: replace 'the checker is an LCF-style kernel that alone promotes an item (D7-01)' with 'promote.mjs is the only writer of store/status/ (R14), behind the harness deny rules of R30. Only witnessed is certified by a script (result checking, D7-01). Confirmed is a judgment whose detection rate is measured (R43).' Row 6: keep the name 'B+ tree bulk-loaded at a fill factor' and add one sentence to §7's 'where assumptions fail': 'At seven leaves the borrowed parts are node capacity, fill factor, splitting the key range with a separator written to the parent, and never dropping a key. Height, search, latches and merges add nothing.'",
+   "Layout (lines 49-61) and R23 (lines 174-176): Move the run root out of every repository and out of every folder that has a CLAUDE.md or a .claude/ above it, for example C:/research-runs/2026-11-harness-leads/, kept in its own git repository with no CLAUDE.md. The design documents stay in harness-engineering. Change run/ to: tasks.json, ledger.jsonl, status.json, coord.json (ce, session, acked_seq, alarm pid), watcher.json (per-task call and tick counters), watcher.lock, run.lock, intents/ (messages to the owner only). R23: take the lean baseline from a control session started in an empty folder outside every repository. Every manifest names the user-level files that still load (the user CLAUDE.md, the user settings), by hash, as a declared input. Change 'clean' (R28) to 'reads only manifest inputs, the named user-level files included'.",
+   "R1 and lib.mjs (lines 71-73): Replace R1's text with: 'One lock, run/run.lock, covers every shared write: tasks.json, a ledger append (the tail is read inside the lock), status.json and the git commit. It is created with wx and holds {pid, process start time, nonce}. A busy lock gets a short bounded retry, then exit 75. A stale lock is broken only by renaming it to a unique name and checking that the renamed file still holds the pid, start time and nonce judged stale; on a mismatch it is renamed back. Every --ce and epoch check happens inside the lock. Temp files are named <file>.<pid>.<nonce>.tmp, then renamed. Unparseable table: as now.' Basis: D3-10, D2-05, model extra flaw E1.",
+   "R2 (lines 74-77): Add: 'The fence is a compare-and-set under the run lock: replace.mjs passes the target epoch, and the epoch becomes e+1 (restarts +1 for a failure reason) only if it is still e. At the fence the task row records the attempt's staging cut: per staging file, its byte length and the sha256 of that prefix (log truncation at the leader epoch, as in Kafka; an extension of D1-01). The coordinator always passes the table's epoch to commit.mjs. A READY in a stale attempt folder is logged only as zombie-write telemetry. Every script that writes takes --ce.' Basis: D1-01, D3-09.",
+   "R3 (lines 78-80): Replace R3 with: 'R3. Start and replace are a step machine in the task row (pilot): fenced, stop-requested, stopped, admitted, started(session id), bound. Each script call names the target epoch and the step it expects, and acts only if the row is there. The coordinator performs only the session-tool step that the row names. status.mjs --reconcile runs at the start of every coordinator turn: a transcript on disk for the attempt folder means the start happened, so it is recorded. Commit records and pack freezes are idempotent by exclusive create. Only a message to the owner keeps an intent file. A refused admission leaves the row at its step, with no new fence and no new count.' Basis: D1-07, D1-12, D3-09.",
+   "R4 (lines 81-84): Replace with: 'R4. The watcher (pilot). watch.mjs reads, decides and exits. It holds run/watcher.lock (wx; pid, process start time, ce) for its whole life. The ce check is the first act of every tick and is repeated inside the lock before each append. Intake (harvest, commit, snap, witness, tms, status) runs as a separate process that the watcher spawns and does not wait for, one at a time under the run lock. Its results are read at the next tick. Spend is computed in the tick by lib's single transcript parser. The watcher exits at once on an urgent event (stall, hang, loop, hard limit, memory, failed stop) and within δ on others. It also exits on a newer ce. A checker batch is an event only when it is full or when it is the only thing blocking a task. There is no deadline exit.' Basis: D3-06, D3-07, IEC 61508-7 (a watchdog is independent of what it watches).",
+   "R5 and R6 (lines 85-91): R5: replace 'Stall: no fall in V and no new primary on an uncovered id for T_box' with 'Stall: c consecutive model calls across the attempt's transcripts with no fall in V. Hang: h watcher ticks with no new call in any transcript of the attempt. Both counters are kept per task in run/watcher.json and continued by any later watcher. A tick counts at most once per Δ. No clock reads elapsed wall time. A READY of the current epoch voids any suspicion of that epoch.' c and h are guesses until the pilot measures them (§11 replaces T_box with c and h). Delete R6 and its §9 row N2 rule (replaced by R5's counters).",
+   "R7 (lines 92-94): Replace the endturn clause with: 'status.mjs --endturn makes sure two wake sources that the coordinator itself started are pending: the watcher, and an alarm (watch.mjs --alarm, a long sleep and then an exit). Each endturn kills and re-arms the alarm, so it fires only after a long silence. Its pid and ce go in coord.json. Endturn writes acked_seq into coord.json under the run lock, and exits 1 unless both sources run. A coordinator woken with a stale ce ends its turn without running any script that writes. The bound is restated in R7, §9 N3 and R58: a wake arrives while either source lives; if both wakes are lost, only the owner wakes the tree.' The pilot injects one lost wake (R43's fault list).",
+   "R8 (lines 95-98) and layer 1 'where assumptions fail' (lines 123-128): R8: replace 'checkpoint = last commit record plus the dead attempt's schema-valid objects' with 'checkpoint = the commit records plus the dead attempt's staging prefixes at or below the cut recorded at the fence (R2). Those objects enter the new attempt's in/ as untrusted staging and pass commit.mjs again. For a failure reason, replace.mjs first re-checks under the run lock for a READY of the current epoch, and if it finds one it refuses with its own exit code, so the commit wins.' Line 128: replace with 'one commit per task holds because consumers read commit records and the restart path reads only the prefix cut at the fence.' Add to the paragraph: 'Suspicion is not final: a slow call recovers, so READY outranks suspicion. A stop may not take effect, so slots count live processes. A host reset is a common cause, not a task failure. A session cannot be woken by a timer it did not start.'",
+   "R9 (lines 99-102): Replace with: 'A failed task is replaced at most once (R = 1, any class). A restart is class host, with no charge to R and no count toward W_cc, when the OS boot time (from os.uptime) is later than the attempt's start. On the limit path, replace.mjs fences, runs stop.mjs and only then marks the task failed for the owner. Its slot is freed when the stop is confirmed; until then it counts as live (R11). Memory parking counts toward H_max.' Basis: D1-09, D4-07 (beta factor: a common cause is split from independent failures).",
+   "R11 (lines 106-110): Replace the admission conditions with: 'Fewer than N_max live child processes, stop-unconfirmed ones included (2 until memory is measured, never above 3). A reservation computed at each admission and never stored: Σ measured spend of every attempt (zombie and post-limit spend included) + Σ (e_task − spent) over admitted and running tasks; admit if B − reservation − r ≥ e_new. The gate is bound to the hash of the design cut (R56). Design-check tasks (blind analyses, mapper, canary helpers) take slots, reservation and fencing, but not the gate. Before a review task, gate A: every approved id is covered by a witnessed or confirmed card or listed as not covered, and the share of unverifiable cards is under its line.' Rename escrow to 'admission reservation' throughout. State that B is a target the owner enforces beyond r, not a bound.",
+   "R12 (lines 111-114) and R10 (lines 103-105): Retitle R12 'Spend measured by script, stopped by the coordinator'. The watcher's tick decides, exits urgent, and the coordinator stops the child. Delete the 20 % meter halt. The coordinator logs meter readings as lines marked self-reported, compared only at the end of the pilot. Report the overshoot per incident, with no bound claimed. The cut writes an overflow record {ids, tokens, reason} to the ledger, and those ids stay visible as not covered in every view. R10: if a stop does not end the helpers, the owner ends the process, and its tokens are charged to B as zombie spend.",
+   "R13, R51 for the coordinator, and §12 'Coordinator hand-over' (lines 115-118, 354-358, 557-558): R13: define the drain. From W*_coord the coordinator blocks every start (first starts, planned replacements and failure restarts). A child that reaches its limit commits and ends with no successor. Quiescence means no live child process of any epoch. The coordinator then asks the owner, and handover.mjs kills the watcher and the alarm and raises ce. At the 300k quality line with no answer from the owner, it ends its turns until he comes. R51: delete 'stops at 1.5·W*' for the coordinator; audit.mjs flags every coordinator turn above 1.5·W*_coord to the owner. §9 G8 remains: 'obedience; only the owner can stop the coordinator'. §12 'Coordinator hand-over': list the options. (a) The drain above: the silent default, as now. (b) Crash-only: fence every running child as a planned replacement (a supervisor restart restarts its subtree, D1-09, D1-12). It saves idle time, but each child pays a hand-over re-read and, under amendment 1, loses the field it holds. (c) The hand-over point: by token count W* = 133.2k (default), weighted W* = 157.1k, or a band up to the 200k line. By cost.js that is about 12 % more per call against about 2.3 times as many hand-overs (stand-in inputs). Add owner interventions per hour and the owner's start latency to §11.",
+   "§4 R29, R30, R32 and the role table: R29: tcb.lock.json is no longer the reference. The owner's go message names the approved tcb commit hash, the coordinator's brief echoes it, every tcb-verify compares against it, and the owner page shows it so he can compare. Label it tamper-evident, not tamper-proof. R30: add permission deny rules in the user-level settings for Write and Edit on the run root's tcb/**, run/**, store/**, sealed/**, review-in/** and wt/*/.claude/**. They name only research paths, so the owner's other work is untouched. Per-folder settings keep Bash refused except the coordinator's `node tcb/scripts/*`. The R42 canary also tests these denies. audit.mjs exits 3 on any write call that touches tcb/, .claude/, sealed/ or review-in/. R32: delete 'as a chain gives forward integrity only'. Write instead: 'tamper-evident against writers who do not recompute the chain; a deliberate rewrite is caught only against a head the owner noted'. R14 and the role table: replace.mjs alone builds review-in/<task>/, from the frozen pack hash, the must-read snapshots and the field's fixed file list in protocol.json.",
+   "R33 (lines 238-240) and R49(a): R33: replace 'One harness-imposed card schema' with 'The harness validates a reader's result against the schema the child passes. harvest.mjs re-validates every result against tcb's card schema, so an altered schema costs only retries, and cards made that way count as copied_by_session.' Move R49(a), the budget check in the hook, to later. In the pilot the watcher logs the predicted against the realised t_q per group. Add to §13 that it is unknown whether a pre-call hook sees an Agent call's schema and the session's transcript path.",
+   "R22 (lines 170-173): Keep the manifest (brief, schema, tier, tools, input hashes, the named user-level files) as the reference for R23 and R28. Delete 'status.mjs reuses a result with that key and no STALE node, repairs only STALE nodes' and move keyed reuse to later. Recovery is R8, from commit records.",
+   "R36, R57 and §8 'What the estimate says today': R36: the coverage figure is held-out seed recall per field, with its Clopper-Pearson interval. Label it an upper bound for a stated reason (seeds are probably easier to find than the average relevant source), as an assumption. Chapman is computed pooled per field, only from routes that happened anyway, and only as a diagnostic of route dependence. Per-question two-route capture moves to later. R57: delete the threshold and the extra-lens rule. Chapman and Chao2 are readings that never pass, stop or add anything. The pilot's incident list (R59) is the next capture source, not another blind lens. §8 last sentence: replace 'so R55 runs before the pilot' with 'so the estimate is reported, not used as a stop'.",
+   "§6 R43, R44, R45, R46: R44: delete the SPRT and the uncited-card lot (lot moves to later). Every cited card is checked, and certification requires each to be confirmed and to pass R19. The escape rate measured on seeds is reported beside the review. R43: one checker call carries at most one seed of each class, at a random position among real items, and the Clopper-Pearson bound counts calls, not seeds (14 calls at d0 = 0.8). R45: split into gate A (in admit.mjs, before the review: R11) and the certificate after the review (reads match the manifest, cited cards confirmed, plants found). R46 and §12 thresholds: silence on a threshold means the default stated in its mapping, logged as such (d0 = 0.8, β = 0.05). Where no mapping gives a default (plants t, coverage floor, action lines), the item is a reading in the pilot, not a gate.",
+   "§8 R55, R56, R58: R55: 'gate.mjs --cut' writes the design cut: the layout, the role table, the script lists and the rule texts, with §8, §9, §13, every 'where the classical assumptions fail' paragraph and every P, N, G, D and K id removed. The blind analysts get only the cut and run in hermetic folders (layout edit). audit.mjs refuses an analysis whose transcript read the full design. They run before the pilot, after it, and whenever the cut's hash changes. R56: the gate binds to the hash of the cut plus hazards.jsonl, not to tcb.lock.json. A tcb change reruns selftest and the canary only. Remove R57 from the gate. R58: the protocol model is the existing tree-v2/model/model.mjs, extended. It models the adopted designs, not oracles: the alarm, the call and tick counters, the watcher lock, the compare-and-set step machine with a coordinator crash, the lock break and live-process counting. Its properties are strengthened: COMMIT creations are counted; Slots and FailedTaskStopped count live processes; R = 1; a 4-event budget, with the budget checked when a plan runs, not when it is built; recoverable stalls; READY landing during a turn. Record the current verdict: blocked, until the extended model holds.",
+   "R21, R46 and §11 (the seven measures): Add to R21: render.mjs computes the owner's seven measures per task, field and arm from the transcripts and the ledger. Throughput: approved ids covered by a witnessed or confirmed card, per hour. Efficiency: confirmed answers per million tokens. Token count: all transcripts, helpers included. Token cost: the count weighted by the provider's relative prices per tier and cache class, with no currency. Time taken: from ledger timestamps, with sleep gaps shown apart. Quality: Comparison 1's primary plus the blinded rubric. Hallucinations: witness rejections, checker rejections, citation failures and the seeded escape rate. They go on the owner page. R46's action lines and Comparison 1's secondaries are stated in these seven. Add coordinator calls and tokens per field, and owner interventions per hour, as §11 parameters.",
+   "§11 Comparisons 1 and 2, R54, §12 F4: Comparison 1: S1 runs with no fan-out until the 300k quality line, then stops. It is not compacted or handed over, and its uncovered ids are counted. R54 and F4 state the pilot's predicted total over every arm (T, R_same, R1, R2, S1, and S2 if allowed), using cost.js figures marked stand-in. Comparison 2: the pilot child runs in amendment 1's form (one session up to the ceiling), so that R_same really holds the field. Delete 'judgment share' as a secondary. Add D8-07's count of factual sentences in R_same that cite nothing in the frozen pack. Keep R2 unconditionally, as part of the frozen plan. State that the D6-10 crossed design (a review of pack B from an independent research run) is an F2 option, off unless the owner allows its cost of about one more research run.",
+   "§12 F1, F2, a new item 'Research child's window', and the hook item: F1: the silent default is amendment 1: the child that researched reviews in the same session, and a fresh session reviews past the 300k ceiling. The fresh-from-pack path also runs at least once per wave (D4-08, D1-12). The pilot writes both reviews (Comparison 2) and he rules after it. Delete 'no difference shown defaults to fresh'. Add a 'child (reviewing)' row to the role table, marked 'under F1 option a'. F2: silent default is no second expert until he rules. If he wants one, the options are amendment 1's form (a second child researching independently) or the mapper's form (a second reviewer of the same pack plus the contrary-evidence reader), and the D6-10 crossed design can measure the difference at the cost of one research run. New item 'Research child's window': (a) amendment 1: one session up to the 300k ceiling, then freeze; the ids left over go to an overflow record and later to a split (silent default, his word). (b) Roll-overs at W* (R50, R51) and a fresh review: by cost.js about 2.4 to 4.4 times fewer tokens than one unbounded session (stand-in inputs), with a quality loss no formula prices. The hand-over measure gains 'quality' as a third option. Hook item: state the reach of each option. Per-folder rules sit inside a folder the coordinator's Write can reach. User-level research-path denies (R30) apply in the pilot either way. The Windows-account fallback stays his.",
+   "§7 R48, R49, R50: R48: in the pilot the leaves are the lanes, with one capacity check at pack freeze (C_node = W_quality − P − R_rev; no confirmed card is cut). plan-tree.mjs runs after the pilot on the t_q measured by unit-costs, before wave 1. A lane over f·C splits by group range then, before any spend. An id with no estimate is listed and blocks admission (D2-01 on_failure). R49: (a) and (c) move to later. (d) becomes a split: the overflow record becomes a new leaf whose separator is written into tree-plan.json, and the field's review reads both leaves through R18's two-level index (later). gate.mjs refuses the synthesis while any range is neither committed, scheduled, nor dropped on the owner's quoted word (later, before the first synthesis). R50 applies only under option (b) of the research child's window.",
+   "§9 table rows: P8 remains: 'helpers bounded by the reservation only'. P9 rules: R4, R5, R7, R10; remains: 'both wake sources lost: only the owner wakes the tree; PC awake unproven'. P10 remains: add 'host resets are not charged'. P11 remains: 'owner starts the successor; the drain idles slots'. P12 remains: 'overshoot reported per incident; no bound after a lost wake'. N2: rule R5 (counters in calls and ticks). N3: rules R7 (watcher + alarm), R13, R58; remains: 'both wakes lost'. N5 remains: 'a torn step is retried by reconcile at each turn'. N9 remains: 'the model check found no slot deadlock within its bounds; the lost-wake deadlock is fixed in R7'. N16 remains: 'tamper-evident against the owner's noted head only'. G8 remains: 'obedience; only the owner can stop the coordinator'. P13: replace 'SPRT' with 'gate A, certificate'.",
+   "§13 'Believed, not verified': Add: each child session is a separate OS process that a script can find and kill by its folder; a process's start time can be read (through PowerShell) to guard against PID reuse; a background command's exit starts a turn even when it fires during a turn, during sleep, or after ce changed; user-level permission denies bind every session and cannot be bypassed through `node`; which settings files apply to a session started in an attempt folder; whether a pre-call hook sees an Agent call's schema and transcript path. Each gets a probe in the pilot's fault list (R43) and a stated fallback: the owner ends the process, and the tokens are counted as zombie spend.",
+   "§10 'What must exist before the pilot field runs' and §2-§8 'Scripts' lines: Replace the script list with the pilot set in pilot_set_final. Merges: alarm becomes a mode of watch; spend becomes a function in watch over lib's single transcript parser; make-profile becomes a step of replace; tcb-verify becomes part of fsck; recapture becomes a coverage view in render; the dismissal bar becomes a label in tms; redact becomes a mode of gate (--cut); unit-costs becomes a mode of cost. certainty, plan-tree and the R39 seeded refuter move to later. Files: add user-level deny rules (the owner applies them), the tcb commit hash in the owner's go, the thresholds file with each default marked by its mapping, and the extended model's passing run. Remove the refuter brief from the pilot. In §13 'Size', replace 'about 35' with the new count."
+  ],
+  "rejected": [
+   {
+    "id": "A3-03",
+    "why": "It removes the lock on the premise that coordinator scripts run one at a time. A session can issue parallel tool calls in one turn, and the watcher's intake runs at the same moment, so mutual exclusion is still needed. A lock with a verified break (A1-05, D3-10) is smaller than per-writer chained logs plus a merge view. Its point that redo must be idempotent is kept through the compare-and-set step machine."
+   },
+   {
+    "id": "A4-07 (FIX_REWAKE piece)",
+    "why": "A Task Scheduler entry cannot start a coordinator turn under harness fact 2, and its trigger, 'coordinator idle', is invisible to a script. The model review calls it an oracle. F2 is fixed instead with a second wake source that the coordinator itself starts (R7 edit)."
+   },
+   {
+    "id": "A2-02 (crash-only coordinator hand-over as the default)",
+    "why": "§12 lists the coordinator hand-over as the owner's decision, so it is offered as option (b) with its price, not imposed. The claim that the quiet point never comes holds only while the drain lets replacements continue. The edit makes the drain block every start, so it ends within one child epoch. Crash-only would also destroy the field a child holds under amendment 1's default."
+   },
+   {
+    "id": "A3-09 (run R2 only if R1 and R_same differ little)",
+    "why": "An arm conditioned on the results already seen is the optional stopping that R40 exists to prevent (D6 missing risks). A large difference needs the reviewer spread |R1 − R2| as much as a small one. R2 stays in the frozen plan."
+   },
+   {
+    "id": "A1-11 (rename layer 6 away from the B+ tree)",
+    "why": "Once R49(d) writes a separator into the parent, the split, the never-drop rule and node capacity are real B+ operations, and the owner frames his design that way. The edit instead says once which parts are borrowed and which add nothing at seven leaves. The LCF part of A1-11 is accepted."
+   },
+   {
+    "id": "A4-01 (C_node presupposes the fresh path)",
+    "why": "C_node bounds the pack for the crash and full-window path, which must exist whatever F1 decides (D1-12, D4-08). The formula therefore does not decide F1. The rest of A4-01 is accepted."
+   },
+   {
+    "id": "A1-08 (halt admission whenever no wake source is alive)",
+    "why": "Admission happens only in a coordinator turn, and endturn already refuses to end without both wake sources. The extra rule would have no case of its own. The rest of A1-08 is accepted."
+   },
+   {
+    "id": "A3-02 (a hang goes to the owner and is never restarted automatically)",
+    "why": "The owner is often away (fact 11). Hangs are a common case (a stuck fetch, a stuck helper), and host-wide causes are already split off by the host class and W_cc. A hang is treated as a stall under R9. The rest of A3-02 is accepted."
+   },
+   {
+    "id": "A1-02 (NTFS ACL fallback)",
+    "why": "Setting ACLs changes security settings, which only the owner may do. §12 already keeps the separate Windows account as his fallback. The user-level deny rules and the anchor in the go message are accepted."
+   },
+   {
+    "id": "A2-07 (intake as a background process that the coordinator starts and whose exit wakes it)",
+    "why": "Every exit would be a full coordinator call (A3-05). The watcher instead spawns intake without waiting for it, which keeps the watchdog independent of the work at no extra wake cost."
+   },
+   {
+    "id": "A2-11 (the hook refuses an Agent call whose schema does not hash to tcb's)",
+    "why": "It rests on a hook input nobody has verified. harvest.mjs re-validating against tcb's schema closes the same gap with a script. The hook check waits for the canary."
+   },
+   {
+    "id": "A1-10 (one checker call per seed)",
+    "why": "It would raise calibration from 14 to 112 checker calls, each paying about a 60k prefix. One seed per class per call gives the same independence across calls for each class's bound."
+   },
+   {
+    "id": "A2-03 (call the new class 'control')",
+    "why": "Line 43 already uses 'control' for the comparison's single-session arm. Reusing it breaks the document's one-name rule, so the class is named 'design-check task'. The substance is accepted."
+   },
+   {
+    "id": "A4-05 (a split leaf with a separator in the pilot)",
+    "why": "tree-plan.json is not built until after the pilot (R48 edit). In the pilot the cut writes an overflow record and its ids stay visible, which D2-02 accepts. The split and the synthesis gate come before the first synthesis."
+   },
+   {
+    "id": "A4-03 (R19's measure field as an enum of the seven; a 'measures moved' column in §9)",
+    "why": "R19's measure belongs to the research subject's claims, and narrowing it to seven values is not shown to fit. The §9 column is document work that waits for the pilot's readings. The script that computes the seven is accepted."
+   }
+  ],
+  "pilot_set_final": [
+   "Scripts (Node 24, in tcb/, each with fixtures), 25 in all:",
+   "lib.mjs: the run lock with a verified stale break, unique temp names, ledger append with the tail read in the lock, the compare-and-set fence, the single transcript parser.",
+   "admit.mjs: counts live processes, computes the reservation, gate A before reviews, admits design-check tasks.",
+   "replace.mjs: the step machine in the task row, the staging cut at the fence, restore of the cut prefix, a READY re-check under the lock, the host class, fence and stop before 'failed'; it builds attempt folders and their settings (absorbs make-profile) and builds review-in/.",
+   "stop.mjs.",
+   "watch.mjs: reads, decides and exits; watcher.lock; call and tick counters; spawns intake without waiting; computes spend; --alarm mode.",
+   "status.mjs: --reconcile every turn; --endturn checks that the watcher and the alarm run and writes acked_seq.",
+   "handover.mjs: kills the watcher and the alarm, raises ce.",
+   "harvest.mjs: re-validates against tcb's card schema.",
+   "commit.mjs.",
+   "tms.mjs: labels, including the dismissal bar of R39.",
+   "render.mjs: views, the coverage view (held-out seed recall), the seven measures.",
+   "audit.mjs: reads, writes into protected paths (exit 3), search log, notes, coordinator turns above 1.5·W*.",
+   "fsck.mjs: absorbs tcb-verify against the commit the owner named.",
+   "guard-hook.mjs.",
+   "snap.mjs and witness.mjs: need F5; without it every card is unverifiable and the pilot only measures.",
+   "check-queue.mjs and promote.mjs.",
+   "protocol-freeze.mjs, with the held-out seed split.",
+   "compare.mjs.",
+   "selftest.mjs: includes the canary for hooks and user-level denies.",
+   "seed.mjs: one seed per class per checker call.",
+   "certify.mjs.",
+   "cost.mjs (the existing cost.js) with a --from-transcripts mode for unit costs at the pilot's end.",
+   "gate.mjs: --cut for the design cut.",
+   "protocol-model.mjs (the existing model.mjs), extended per the R58 edit and passing.",
+   "Files: schemas for card, pack, review, manifest, ledger line, task row with its step, protocol.",
+   "Files: briefs for child, reader, checker, fresh reviewer, scorer, STPA, FMEA and mapper.",
+   "Files: agent files (reader: web tools only; checker: Read only).",
+   "Files: per-folder role settings and the denylist; the user-level deny rules for the research paths, applied by the owner.",
+   "Files: the tcb commit hash in the owner's go message.",
+   "Files: the pilot's approved question list, approach ids and frozen protocol; the frozen analysis plan with the predicted total over every arm.",
+   "Files: cost inputs tagged measured, computed or guessed; the thresholds file with each default marked by its mapping, and unset items marked as readings.",
+   "Files: the run root outside every repository; the lean baseline from a control session in an empty folder.",
+   "Before the go: both blind analyses run on the design cut, hazards mapped, a passing gate."
+  ],
+  "moved_to_later": [
+   "certainty.mjs (R37): needed before the first synthesis, not for one field.",
+   "plan-tree.mjs (R48 bulk load): runs on measured t_q before wave 1.",
+   "R49(a) budget check in the hook; R49(c) redistribution; R49(d) split with a separator in tree-plan.json; the synthesis gate on unresolved ranges.",
+   "R50 roll-over and split, and R51 for the research child: only under option (b) of the research child's window.",
+   "R22 keyed reuse and STALE-only repair.",
+   "R44 lot sampling of uncited cards.",
+   "R39's seeded refuter.",
+   "Per-question two-route Chapman (R36).",
+   "A third blind lens: the pilot's incident list is the next capture source.",
+   "R52 Smith's order; R53 budget from unit costs (measured in the pilot, applied after).",
+   "The hook's schema check (after the canary shows its inputs).",
+   "A 'measures moved' column in §9.",
+   "The D6-10 crossed design (pack B): an F2 option at the cost of one research run.",
+   "S2: owner's option, default off.",
+   "Already later and unchanged: salvage (it must take --epoch when built), migrate, fracas, index, coupling, stop-check, exclusion re-screen, second-opinion, correct-rates, challenge, cooke, PDF extraction.",
+   "Deleted, not deferred: the SPRT; R6 pause detection; the watcher's T_watch deadline exit; the stored escrow; intent files for anything but owner messages; R57 as a gate; the meter's 20 % halt; the 'LCF kernel' and 'forward integrity' claims."
+  ],
+  "for_the_judge": [
+   "F1 and the research child's window. A4-01 and A4-06 want amendment 1 as the silent default, because it is his recorded word. A3 calls child hand-over at W* plus a fresh review the design's largest token saving: 2.4 to 4.4 times by cost.js on stand-in inputs. I set amendment 1 as the default and show the price. I am unsure whether amendment 1's 300k ceiling was meant to bound the research itself or only to say where the review runs.",
+   "Coordinator hand-over. A2-02 wants crash-only (fence every child), A4-10 wants hand-over at the owner's next message, and A3-06 wants a later band. I kept the drain as the default (it is a §12 owner item) and made it terminate by blocking every start. I am unsure whether the idle slots cost more time than crash-only's re-reads.",
+   "The user-level deny rules (A1-02) are added in normal running, while §12's 'if the hook test fails' item keeps per-folder rules as its silent default. Whether adding them counts as deciding a §12 item is your call.",
+   "Keeping the lock (A1-05, A2-08) against removing it (A3-03). My premise is that a session may run tool calls in parallel and that the watcher's intake overlaps the coordinator's scripts. If the coordinator's scripts are provably serial and intake writes no shared file, A3-03's smaller design wins.",
+   "Calibration seeds. One seed per class per checker call is my compromise between A1-10 (one call per seed) and the batched original. Seeds of different classes in one call may still be correlated, and I cannot say whether that matters for each class's bound.",
+   "Hangs. A3-02 sends them to the owner; I treat them as stalls under R9 with the host class. This depends on how often hangs are host-wide, which is unknown.",
+   "The silent default on thresholds: the mapping's default where one exists, otherwise a reading in the pilot. A4-12 and A3-01 support it; §12 had 'nothing admitted'. Whether this needs the owner's word is your call."
+  ],
+  "not_established": [
+   "Whether a background command's exit starts the coordinator's turn when it fires during a turn, during sleep, or after ce changed. The alarm design and the lost-wake bound rest on it.",
+   "Whether user-level permission denies bind every session started in another folder, and whether `node` run through Bash can get around them.",
+   "Whether child sessions are separate OS processes that a script can find by folder, and whether a process's start time can be read reliably to guard against PID reuse.",
+   "Whether hooks fire for helpers, and whether a pre-call hook sees an Agent call's schema and transcript path.",
+   "Whether a background script, or intake spawned without waiting, keeps the PC awake; and how Node's interval timers behave after sleep on Windows (the counters assume at most one count per Δ).",
+   "Whether the extended model holds once the adopted fixes are modelled as designs rather than oracles. It has not run, so version 2 is blocked by its own R58.",
+   "The pilot's total token cost with every arm. Only cost.js figures on stand-in inputs exist.",
+   "Coordinator calls per wake and wakes per field; the owner's start latency; owner interventions per hour.",
+   "Whether amendment 1's single research session to 300k or W* roll-overs give better reviews. No source compares them for this job, and the pilot gives n = 1 per arm.",
+   "Whether held-out seed recall overstates coverage. Its direction rests on the assumption that seeds are easier to find than the average relevant source.",
+   "Whether the coordinator could start its own successor without the old session's wakes costing full-window calls."
+  ],
+  "verdict": "Version 2 borrows the right whole designs, and its load-bearing parts survive the attack: fencing by equality plus --ce, suspicion by progress, level-triggered wakes, the exclusive-create commit record, the script witness and the restricted readers. But it cannot run as written. Its own R58 blocks it, because the model check found six flaws with every mechanism present and none was folded in. Execution gave scripts powers only a session has, kept stored state that leaks (the escrow, intents redone from the start, an unpersisted acknowledged seq), and measured time in wall-clock units that sleep corrupts. Integrity rested on anchors within the subjects' reach. It also resolved three things the owner holds (F1, F2, the child's 300k ceiling) by default, and named none of his seven measures.\n\nThe edits fix every model flaw by borrowing the standard solution, not by inventing one:\n- the restore is cut at a mark recorded at the fence (Kafka-style log truncation);\n- a second wake source that the coordinator itself starts, and a persisted acknowledged seq;\n- counters in model calls and watcher ticks instead of wall time;\n- a singleton watcher lock;\n- OTP fence-and-stop before escalation;\n- live-process admission, with the reservation computed, never stored;\n- a compare-and-set step machine instead of intents;\n- a host-reset class.\n\nThey also anchor the trusted base outside the sessions' reach: user-level denies and the owner's hash. They make the folders hermetic and the 'blind' analyses actually blind, and turn the completeness estimator from a gate into a reading. They restore amendment 1 as the silent default with its price shown, and add one script output for the seven measures.\n\nDeletions outnumber additions: the SPRT, pause detection, the deadline exits, the stored escrow and most intents go, and plan-tree and the overflow machinery move to after the pilot. The pilot set falls from about 35 scripts to 25. The first field must not start until the extended model holds under strengthened properties and the owner has applied the deny rules and given F4 and F5."
+ },
+ "revised": {
+  "path": "C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2/doc/RESEARCH-TREE-PROTOCOL-v2.md",
+  "lines": 841,
+  "change_log": [
+   "Status: version 2 now replaces version 1 and amendments 2 and 3 only. Amendment 1 stays in force on the owner's word for F1, F2 and the research child's 300k ceiling until he rules (§12).",
+   "§1 bullets: the coordinator is labelled low (a 400-character note, harmless because it certifies nothing, Clark-Wilson). The B+ tree governs only the pack at review. The square-root law governs the coordinator and the fresh-review path, and the research child's window is the owner's call. Coverage is held-out seed recall (D8-10), and the completeness estimate is a reading, never a stop or a gate.",
+   "§1 table: row 1 now says 'admission by a computed reservation'. Row 3 drops 'LCF kernel' and Gordon/Milner/Wadsworth. Row 6 keeps the B+ tree name, and §7 gets the sentence on what is borrowed at seven leaves (it replaces the old 'Height and B-link buy nothing' sentence, so it is said once).",
+   "§4 Borrowed whole: the LCF claim is replaced by: promote.mjs is the only writer of store/status/ (R13), behind the R29 deny rules; only witnessed is certified by a script; confirmed is measured (R42).",
+   "Layout: the run root moved out of every repository and every CLAUDE.md/.claude ancestor (example C:/research-runs/2026-11-harness-leads/, its own git repo). run/ now lists coord.json, watcher.json, watcher.lock, run.lock and intents/ (owner messages only). tcb.lock.json is removed from tcb/.",
+   "R22 (old R23): the lean baseline comes from a control session in an empty folder outside every repository, and manifests name the user-level files by hash. R27 (old R28): 'clean' means reading only manifest inputs, the named user-level files included.",
+   "R1: one run lock, run/run.lock, for every shared write. It is created with wx and holds pid, start time and nonce. A busy lock gets a bounded retry, then exit 75. A stale lock is broken by rename and verified. Every ce and epoch check happens inside the lock, and temp files get unique names. The 'unparseable table' text is kept.",
+   "R2: the fence is a compare-and-set under the lock, and the staging cut is recorded at the fence (Kafka-style). The coordinator always passes the table's epoch. A stale READY is logged only as telemetry. Every script that writes takes --ce.",
+   "R3: now the step machine in the task row (fenced, stop-requested, stopped, admitted, started, bound). Reconcile runs every coordinator turn. Commit records and pack freezes are idempotent by exclusive create, and only owner messages keep an intent file.",
+   "R4: the watcher reads, decides and exits. It holds watcher.lock, checks ce first and again inside the lock, and spawns intake without waiting. Spend is computed by lib's parser. It exits at once on urgent events and within δ on others. A checker batch counts as an event only when full or blocking. There is no deadline exit.",
+   "R5: stall is now c calls with no fall in V, and hang is h ticks with no new call. The counters persist in run/watcher.json, a tick counts at most once per Δ, no wall clock is read, and a READY of the current epoch voids suspicion. Old R6 (pause detection) is deleted, and the N2 row now cites R5 (counters in calls and ticks).",
+   "R6 (old R7): endturn keeps two self-started wake sources (the watcher and the watch.mjs --alarm alarm) and writes acked_seq to coord.json under the lock. A coordinator with a stale ce writes nothing. The bound is restated in R6, the N3 row and R57, and the pilot injects one lost wake.",
+   "R7 (old R8): the checkpoint is the commit records plus staging prefixes up to the fence cut. Those objects enter in/ as untrusted and pass commit again. On a failure reason, replace first re-checks for a READY of the current epoch and refuses if it finds one. Hang is added to the causes. The layer 1 'assumptions fail' paragraph gets the new line-128 text and four more sentences.",
+   "R8 (old R9): R = 1 for any class. A reboot counts as class host (no charge to R or W_cc). On the limit path the order is fence, stop, then failed. The slot is freed only when the stop is confirmed. Memory parking counts toward H_max.",
+   "R9 (old R10): if a stop does not end the helpers, the owner ends the process, and its tokens are charged to B as zombie spend.",
+   "R10 (old R11): counts live processes, stop-unconfirmed ones included. The reservation is computed and never stored, and B is a target, not a bound. The gate is bound to the design-cut hash. Design-check tasks take slots, reservation and fencing but skip the gate. Gate A runs before reviews. 'Escrow' is renamed 'admission reservation' everywhere (§1, §2, R52, P8, P12, P14, G5, F4).",
+   "R11 (old R12): retitled 'Spend measured by script, stopped by the coordinator'. The 20 % meter halt is deleted, meter readings are logged as self-reported, overshoot is reported per incident with no bound, and a cut writes an overflow record whose ids stay visible.",
+   "R12 (old R13): the drain blocks every start, quiescence means no live child process of any epoch, and handover.mjs kills the watcher and the alarm and raises ce. The coordinator ends its turns at the 300k line if the owner does not answer. R50 (old R51) drops the 1.5·W* stop, and audit flags coordinator turns above 1.5·W*_coord. G8 'remains' now reads 'Obedience; only the owner can stop the coordinator'. §12 Coordinator hand-over lists options (a) drain (silent default), (b) crash-only and (c) the hand-over point, with the stated cost.js figures.",
+   "R28 (old R29): the reference is the commit hash in the owner's go, echoed and shown on the owner page, and the base is tamper-evident, not tamper-proof. fsck does the tcb check. R29 (old R30): user-level deny rules on the research paths, the canary also tests the denies, and audit exits 3 on writes to protected paths. replace writes folder settings. R31 (old R32): the tamper-evident wording replaces 'forward integrity'. R13 (old R14) and the role table: replace alone builds review-in/.",
+   "R32 (old R33): the harness validates against the child's schema, and harvest re-validates against tcb's card schema (altered schema leads to copied_by_session). R48(a) (old R49(a)) moves to later, and in the pilot the watcher logs predicted against realised t_q. §13 gets the hook-inputs unknown.",
+   "R21 (old R22): retitled 'Declared inputs'. The manifest includes the named user-level files and is the reference for R22 and R27. Keyed reuse and STALE-only repair move to later, and recovery is R7. The layer 2 'assumptions fail' paragraph is adjusted.",
+   "R35 (old R36): coverage is held-out seed recall with a Clopper-Pearson interval, labelled an upper bound by stated assumption. Chapman is pooled per field and only a diagnostic, and per-question two-route capture is later. R56 (old R57): the threshold and extra-lens rule are gone, and Chapman and Chao2 are readings. §8 now ends 'so the estimate is reported, not used as a stop', and §8 Borrowed whole calls the estimate a reading.",
+   "R42 (old R43): one seed per class per checker call, and the Clopper-Pearson bound counts calls (14 at d0 = 0.8). The fault list adds a lost wake and the §13 probes. R43 (old R44): the SPRT and the uncited lot are deleted (the lot moves to later), every cited card is checked, and the escape rate is reported. R44 (old R45): split into gate A (admit, R10) and the certificate. R45 (old R46) and §12 Thresholds: silence means the mapped default (d0 = 0.8, β = 0.05), and an item with no default is a reading.",
+   "R54 (old R55): gate.mjs --cut writes the design cut, and the blind analysts get only the cut in hermetic folders. Audit refuses an analysis that read the full design. They rerun when the cut hash changes. R55 (old R56): the gate binds to the hash of the cut plus hazards.jsonl, a tcb change reruns selftest and the canary only, and old R57 is no longer part of the gate. R57 (old R58): the model is the existing model.mjs, extended with the adopted designs and the strengthened properties. Its current verdict is recorded: blocked until the extended model holds.",
+   "R20 (old R21): render computes the seven measures (throughput, efficiency, token count, token cost with no currency, time taken, quality, hallucinations) for the owner page. Action lines and Comparison 1's secondaries are stated in them. §11 adds coordinator calls and tokens per field, owner interventions per hour and the owner's start latency.",
+   "§11: in Comparison 1, S1 runs with no fan-out to the 300k line, then stops (no compaction or hand-over), and its uncovered ids are counted. R53 (old R54) and F4 state the predicted total over every arm, marked stand-in. In Comparison 2 the child runs in amendment 1's form, judgment share is deleted, D8-07's uncited-sentence count is added, R2 is kept unconditionally and D6-10 is noted as an F2 option. In parameters, T_box becomes c and h; T_watch, pause detection, uncited-sample failures and certainty overturns are removed.",
+   "§12: F1 has options (a) amendment 1 (silent default) and (b) fresh, with the fresh path running at least once per wave; the pilot writes both reviews and the owner rules after. F2's silent default is no second expert, with the options listed. A new item covers the research child's window: (a) amendment 1 (default), (b) roll-overs. The hand-over measure gains 'quality'. The hook item states each option's reach.",
+   "R46-R48 (old R47-R49): in the pilot the leaves are the lanes, with one capacity check at pack freeze, and plan-tree runs after the pilot on measured t_q. R48 is pilot only for (b) and (e). (d) becomes a later split with a separator in tree-plan.json, and the synthesis gate on unresolved ranges is later. R49 (old R50) applies only under option (b) of the research child's window.",
+   "§9 rows updated as the edit lists (P8, P9, P10, P11, P12, P13, N2, N3, N5, N7, N9, N16, G8). For consistency, P15 (refuter later), P16 (held-out seed recall), P19 (c calls), S (lanes in the pilot), G4 and G5 are also updated, and every Rules cell is renumbered.",
+   "§10: replaced by the final pilot set (25 scripts plus lib.mjs, the merges, the files), the moved-to-later list, the deleted-not-deferred list, and 'Left out on purpose'. That last list no longer repeats the B+ parts and points to §7 instead. The Scripts lines in §2-§8 are updated to the merged set, and §13 Size now reads '25 small scripts and the shared library lib.mjs'.",
+   "§13: adds the six unverified harness facts (OS processes, process start time via PowerShell, background-exit wakes, binding user-level denies, which settings apply, hook inputs), each with a probe in R42 and the fallback.",
+   "Rules renumbered after deleting old R6: every rule from old R7 on moved down by one (R7 became R6 ... R59 became R58), and all references in the rules, the §9 table and the pilot and later lists were fixed by script (224 references). 'Reading it' now says R1 to R58. Arm names R1 and R2 and R_same are unaffected.",
+   "Final-pass fixes: the rule that had lost its runner is now covered: R46 key-space check, by protocol-freeze (plan-tree repeats it later). R21 gets [replace, audit]. Sources with no remaining user were removed: Gordon/Milner/Wadsworth from row 3 and §14; Wald and 'sequential tests' from row 5 and §14, since the SPRT is deleted. tcb.lock.json references are gone from R10, R41 and R55. The coordinator's Agent list drops the refuter. In R54, the refuter's sampling of 'n/a' cells is marked later. In R11, 'Cutting a task writes' avoids a third meaning of 'the cut'. R12 names coord.json as state."
+  ],
+  "not_applied": [
+   {
+    "edit": "Final pilot set header '25 in all'",
+    "why": "The list names 26 .mjs files including lib.mjs. I kept 25 by counting lib.mjs separately as 'the shared library', in both §10 and §13 Size. Change it if 26 was meant."
+   },
+   {
+    "edit": "R9 (now R8) 'Replace with' text",
+    "why": "Taken literally, the replacement drops the definitions of W_cc and H_max, which the new text itself uses ('no count toward W_cc', 'counts toward H_max'). I kept 'Planned replacements do not count toward R; hand-overs stop at H_max; two failures within W_cc halt admission' and dropped only the split (R49 is later), 'slot freed' (replaced by the stop-confirmed rule) and 'unspent escrow released' (no stored escrow)."
+   },
+   {
+    "edit": "§10 'Remove the refuter brief from the pilot'",
+    "why": "R54 (old R55) still had a refuter sample the FMEA 'n/a' cells. With no refuter brief in the pilot I marked that sampling 'Later' rather than leave a rule with no runner. It is not in the edit's moved-to-later list."
+   },
+   {
+    "edit": "R47 (now R46) runner",
+    "why": "Its runner was plan-tree, which moved to later. To keep a pilot runner I named protocol-freeze, which already freezes the question ids. This choice is not in the edits."
+   },
+   {
+    "edit": "§9 P13 'replace SPRT with gate A, certificate'",
+    "why": "A literal replacement would repeat 'certificate' beside 'Script certificate'. The cell now reads 'Script certificate, plants, gate A, read-set hash'."
+   },
+   {
+    "edit": "Renumbering versus external references",
+    "why": "Old R6 was deleted, so rules from R7 on were renumbered as the task asks. Rule numbers in the edits JSON, earlier reviews, the model README and other documents now point one higher than this file. No note about this was added to the document, because the edits do not ask for one."
+   }
+  ]
+ }
+}

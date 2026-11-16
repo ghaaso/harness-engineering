@@ -1,0 +1,358 @@
+export const meta = {
+  name: 'tree-v2-design-and-attack',
+  description: 'Turn the 103 classical mappings into version 2 of the research tree protocol: six layer designers, a model check of the coordination rules, an integrator, five attackers, a mapper and a reviser',
+  phases: [
+    { title: 'Design', detail: 'six designers, one per borrowed design; the cost designer computes from measured figures', model: 'opus' },
+    { title: 'Model', detail: 'the coordination rules checked over all interleavings with fault actions; then a fidelity review', model: 'opus' },
+    { title: 'Integrate', detail: 'one document: version 2 of the protocol', model: 'opus' },
+    { title: 'Attack', detail: 'four refuters: classical assumptions, runnability, simplicity and cost, the owner\'s requirement', model: 'opus' },
+    { title: 'Settle', detail: 'a mapper rules on the findings; a reviser applies the accepted edits', model: 'opus' },
+  ],
+}
+
+const P = 'C:/Users/User/Documents/projects/harness-engineering/docs/program'
+const PROTOCOL = P + '/RESEARCH-TREE-PROTOCOL-2026-11-16.md'
+const ATTACK = P + '/evidence/research-tree/attack-2026-11-16'
+const MAPDIR = P + '/evidence/research-tree/foundations-2026-11-16/map'
+const OUT = 'C:/Users/User/AppData/Local/Temp/claude/192654871f6b1294/e24f17dc-4aea-4914-a9d1-280a723d620e/scratchpad/tree-v2'
+const DOC = OUT + '/doc/RESEARCH-TREE-PROTOCOL-v2.md'
+
+const CONTEXT = [
+  'CONTEXT',
+  'A research programme will be run by a tree of language-model sessions on one PC: one coordinator session, one child session per research field (seven fields), short-lived helpers below each child (readers that search the web and return "source cards", checkers). Children fill their own context with checked knowledge of their field, write it down as a pack, and only then is our earlier work reviewed against it (the owner\'s requirement: "experts first, reviews second", so that a review is not a raw, biased opinion). The owner judges everything by seven measures: throughput, efficiency, token count, token cost, time taken, quality, hallucinations.',
+  'The design file is ' + PROTOCOL + ' (amendment 3 at its end is the current state: 21 problems and a rule for each). The owner has now ruled: do not fix these problems with rules made up for the occasion. Each is an instance of a problem that an established, well-documented branch of computer science has already solved, so borrow that branch\'s standard solution and apply it properly. He himself reuses distributed systems and B+ trees in this design.',
+  'Eight field experts then mapped the problems to classical solutions: 103 mappings, each with the classical problem, the standard solutions and their sources, the assumptions that fail for language-model sessions, and a mechanism for this tree. A second agent checked the cited sources. Their returns are in ' + MAPDIR + '/agents/ as map-D1.json to map-D8.json (inside "result": nearest_whole_design, mappings[], missing_risks[], do_not[]) and sources-D1.json to sources-D8.json (what the source check said; read "overall" and any correction for a source you rely on). ' + MAPDIR + '/result.json is a shorter index of all of it. The problems are P1 to P21, the open decisions F1 and F2, the shape S, and completeness C, as listed in amendment 3 and used as ids in the mappings.',
+  '',
+  'THE COORDINATOR\'S FRAME FOR VERSION 2: the tree is seven borrowed designs, one per layer.',
+  '1 Execution: a master-worker batch job (a task table, attempts, atomic commit of an attempt\'s output, re-execution) under a supervision tree (restart limits, escalation), crash-only, with fencing by epoch, a watchdog kicked by progress with pause detection, level-triggered wake-ups, and admission by reserved budget with limits enforced from outside the session.',
+  '2 Storage: an append-only, content-addressed, multi-version store: immutable cards with stable ids, packs as frozen snapshots, citations as foreign keys (card id and pack hash), every fact stored once with the synthesis a derived view rebuilt by script, staleness that propagates from a retracted card to everything resting on it, and steps that declare their inputs (so a result is reused when its inputs have not changed, and reads can be audited).',
+  '3 Integrity: the Clark-Wilson model with a small trusted checker: an unverified item becomes a trusted item only through a certified procedure; the trusted checker is a script that verifies a witness (the quote and the number found in a stored snapshot of the source\'s own text); consumers read only trusted items; labels are computed by script, never self-assigned; the checker, schemas and briefs are outside the sessions\' write reach; least privilege for anything that reads the web; the coordinator reads only typed status produced by scripts.',
+  '4 Evidence: a systematic review in its rapid form with graded certainty: the protocol fixed and hashed before the search, a documented search, coverage estimated (capture-recapture), certainty graded per conclusion over distinct primary sources, a dismissal treated as an open hazard that new evidence reopens, and second opinions designed from what is known about correlated judges.',
+  '5 Assurance: the checks are measured, not assumed: seeded faults in every wave give each check a detection rate and the chain an escape rate; sampling plans with stated error bounds; a check that did not run is never a pass.',
+  '6 Shape and cost: a B+ tree bulk-loaded at a fill factor (keys are the approved question ids; separator keys are the field boundaries fixed at plan time; node capacity is the window budget; fan-out is computed, not guessed; overflow is handled by the tree\'s real operations, never by dropping data), with the hand-over interval from a square-root cost law, load control for concurrency, an order of work by value over cost, and a budget from an internal pilot.',
+  '7 Completeness: a method, not a list: hazard analysis over the control structure, a fault taxonomy per component, a model of the coordination protocol checked over all interleavings with fault actions, and an estimate of the failure modes not yet found.',
+  'The frame is the coordinator\'s reading of the experts\' work. Where the mappings contradict it, say so and follow the mappings.',
+  '',
+  'FACTS ABOUT THE HARNESS (what can actually be made to run)',
+  '1. Sessions. A session is started with a brief, in a folder, optionally in its own git worktree and branch. The session that started it receives a note (the first 400 characters of the child\'s latest report) when the child ends a turn. It can send the child a message, read its state, read how full its context window is, and stop it. At most three child sessions at once on this PC (memory).',
+  '2. A session is active only during a turn. A turn starts on a message from the owner, on a note from a child session\'s turn end, or on the exit of a background command the session started. A background command (for example a Node script) keeps running after the turn ends.',
+  '3. Helpers are started by a session with a brief. The model tier can be chosen. A JSON schema can be imposed on a helper\'s result: the harness validates it and a non-conforming result is retried. A helper\'s tools are those of its agent definition file in the folder (.claude/agents/<name>.md), which can restrict them (for example web search and web fetch only: no file read, no write, no shell).',
+  '4. Enforcement points that the harness itself runs: tool permission rules (allow and deny lists in a settings file), and hooks (a script the harness runs before or after a tool call; a hook that runs before a call can refuse it, for example a write outside a given folder). Both are configured in files in the folder, so a session could edit them unless they are checked from outside. That hooks behave exactly so on this app is believed, not yet verified here.',
+  '5. Transcripts. Every session and helper writes a JSONL transcript on disk holding each tool call and the token usage of each model call. A script can read them: count tokens, list what was read or fetched.',
+  '6. The plan\'s usage meter (percent of the week, whole percent) can be read only by a session, not by a script. A session can also read its own window size.',
+  '7. Web. The fetch tool returns a short summary of a page written by a small model; search returns result snippets. A Node script can fetch a page\'s own text itself (Node 24 has fetch built in); that needs the owner\'s word.',
+  '8. Sleep. The PC goes to sleep after 15 idle minutes unless a session is in a turn or holds a keep-awake request, which lapses about five minutes after the session goes idle. Whether a background script alone keeps the PC awake is not verified. On wake every process resumes where it was.',
+  '9. Runtime. Node.js 24 only (no Python), git, Windows 11 on NTFS (rename within a volume is atomic; exclusive create is the "wx" flag). Scripts are plain Node with no packages to install.',
+  '10. Models: one provider\'s models at three tiers. No second provider is assumed; the owner may allow one.',
+  '11. The owner is one person, reachable by chat, not continuously present. Nothing is installed, downloaded or trained without his word.',
+  '',
+  'STANDARDS FOR YOUR OUTPUT',
+  '- Borrow whole designs before patches. Name the classical basis of every rule by mapping id (for example D1-01).',
+  '- Every rule passes the runner test: who runs it, when, on what input, and what stops the work when it fails. Prefer enforcement by a script or by the harness (a hook, a tool allowlist, a schema) to obedience by a session. A rule with no runner is a wish.',
+  '- Keep it small enough to run. Mark each element "pilot" (needed before the first field runs) or "later" (can wait for what the pilot measures), and say what is deliberately left out and why. A design that nobody can run is a failure.',
+  '- Say where an assumption of the classical solution fails for language-model sessions, and what is done about it.',
+  '- Plain words and short sentences. Tokens, never money. Do not invent measured numbers.',
+  '- This task is not about the product whose folder you start in: do not read or change its files. No web. Do not create, edit or delete any file except where your brief names a folder for you.',
+].join('\n')
+
+const LAYER = {
+  type: 'object',
+  properties: {
+    spec_markdown: { type: 'string' },
+    scripts: { type: 'array', items: { type: 'object', properties: {
+      name: { type: 'string' }, purpose: { type: 'string' }, inputs: { type: 'string' }, outputs: { type: 'string' }, exit_codes: { type: 'string' }, stage: { type: 'string', enum: ['pilot', 'later'] },
+    }, required: ['name', 'purpose', 'inputs', 'outputs', 'exit_codes', 'stage'] } },
+    files: { type: 'array', items: { type: 'object', properties: { path_pattern: { type: 'string' }, writer: { type: 'string' }, format: { type: 'string' } }, required: ['path_pattern', 'writer', 'format'] } },
+    parameters: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, how_measured: { type: 'string' }, value_until_measured: { type: 'string' } }, required: ['name', 'how_measured', 'value_until_measured'] } },
+    pilot_minimum: { type: 'array', items: { type: 'string' } },
+    left_out: { type: 'array', items: { type: 'object', properties: { what: { type: 'string' }, why: { type: 'string' } }, required: ['what', 'why'] } },
+    problems_covered: { type: 'array', items: { type: 'object', properties: { problem: { type: 'string' }, classical_name: { type: 'string' }, by: { type: 'string' }, residual: { type: 'string' } }, required: ['problem', 'classical_name', 'by', 'residual'] } },
+    contradicts_the_frame: { type: 'array', items: { type: 'string' } },
+    conflicts_with_other_layers: { type: 'array', items: { type: 'string' } },
+    for_the_owner: { type: 'array', items: { type: 'string' } },
+    computed: { type: 'string' },
+  },
+  required: ['spec_markdown', 'scripts', 'files', 'parameters', 'pilot_minimum', 'left_out', 'problems_covered', 'contradicts_the_frame', 'conflicts_with_other_layers', 'for_the_owner'],
+}
+
+const LAYERS = [
+  { key: 'L1', title: 'Execution',
+    mappings: 'D1-01, D1-02, D1-03, D1-07, D1-08, D1-09, D1-12, D2-03, D3-05, D3-06, D3-07, D3-08, D3-09, D3-10, D4-06, D4-07, D7-07, the whole designs of D1 and D3, and the missing_risks of D1 and D3',
+    ask: 'Specify: the task table (the file, its columns, who writes it); attempts and epochs; how an attempt\'s output is committed atomically and how the output of a stale attempt is refused (fencing at the acceptor, not obedience at the writer); the watcher (what counts as progress in each phase, the suspicion rule, pause detection, its own deadline, how it wakes the coordinator, and how a lost wake-up is made harmless); the restart path (one path, used also when nothing failed), its limits and the escalation to the owner; admission (reserved budget, soft and hard limits and who enforces them); and the stop of a session and of its orphans. Give each script its interface.' },
+  { key: 'L2', title: 'Storage',
+    mappings: 'D2-05, D2-06, D2-07, D2-08, D2-09, D2-10, D1-10, D1-11, D7-02, D7-03, D7-04, D7-05, D8-02, D8-07, D8-08, the whole designs of D2, D7 and D8, and the missing_risks of D2 and D7',
+    ask: 'Specify: the store (folders, file formats, what is immutable, how an id is formed, how a correction supersedes a card); snapshots (the pack hash, what a citation carries); the constraints checked at commit (foreign keys, and the action when a card is retracted); the derived views (synthesis, status) and how staleness propagates to sentences, verdicts and certificates; the declared inputs of a step, how the reuse of an unchanged result is decided, and how reads are audited against the declaration; snapshots of sources. Say what replaces the present rule "a card\'s conditions are copied field by field".' },
+  { key: 'L3', title: 'Integrity and assurance',
+    mappings: 'D5-01 to D5-14, D7-01, D7-08, D7-10, D1-05, D1-06, D4-01, D4-03, D4-04, D4-09, D4-11, D8-04, D8-05, D8-06, D6-02, D6-03, D6-09, the whole designs of D5 and D4, and the missing_risks of D4 and D5',
+    ask: 'Specify: which items are untrusted and which trusted, and the one procedure that promotes an item (the witness check: what the script verifies, on what stored object, and what is left to a model\'s judgment and through what narrow interface); who may read what, and what that says about F1 (state it as the field\'s answer, for the owner to decide); how labels are computed; what makes up the trusted base (scripts, schemas, briefs, settings), how it is kept out of the sessions\' write reach, and how that is checked; the privileges of each role as a table (tools, readable paths, writable paths); the audit record. Then assurance: the seeded-fault procedure (fault classes, how many, how they are hidden, what is computed from them), the sampling plan with its error bound (the formula and worked sizes), the three-valued result of a check, and how an "expert" is certified.' },
+  { key: 'L4', title: 'Evidence method',
+    mappings: 'D6-01, D6-04, D6-05, D6-06, D6-07, D6-08, D6-10, D6-12, D4-02, D4-10, D4-12, D7-03, D7-09, D8-03, D8-10, D1-04, the whole design of D6, and the missing_risks of D6 and D8',
+    ask: 'Specify: the review protocol that is fixed and hashed before any search (what it contains); how a search is documented; how coverage is estimated and when a search stops (the formula, and what has to be independent for it to hold); how certainty is graded per conclusion, and which part a script does and which a model; what a dismissal is and how it is reopened; what the classical results on correlated judges say about second opinions (F2), stated for the owner to decide, and which source of variation the pilot should replicate to find out; and the design of the two comparisons the pilot makes (the tree against one session, P18; and the two ways to review, F1): the unit, the score fixed beforehand, and what one reading can and cannot show.' },
+  { key: 'L5', title: 'Shape and cost',
+    mappings: 'D2-01, D2-02, D2-04, D2-12, D3-01, D3-02, D3-03, D3-04, D3-11, D3-12, D3-14, D1-08, D6-12, D6-13, D7-12, D8-01, D8-08, D8-09',
+    ask: 'Specify the shape as a real B+ tree would be built: the key space; how fields are cut at plan time (bulk loading, separator keys, who owns a boundary question); node capacity and fill factor in tokens; fan-out as a computed quantity; and what happens on overflow, using the tree\'s real operations in their standard order (say exactly what replaces the present rule "cut the pack to its limit and list the rest as not covered", and what a split costs when it is done properly). Then the cost side: a model of the tokens a session uses when every call re-reads the window; the hand-over interval that minimises it (derive the square-root law for this cost function, and say when handing over stops paying); the level of concurrency; the order of work; the budget from an internal pilot. Use the measured figures in ' + P + '/TOKEN-BOTTLENECK-2026-11.md, ' + P + '/SPLIT-RULE-2026-11.md, ' + P + '/AFTER-COMPACTION-2026-11.md and ' + P + '/SUMMARY-CHECK-2026-11.md: cite file and line, and say which inputs are measured and which are assumptions for the pilot to measure. Write a small Node script that computes the quantities from named inputs, run it, and put its real output in "computed". You may create files only under ' + OUT + '/cost/.' },
+  { key: 'L6', title: 'Completeness',
+    mappings: 'D4-05, D1-13, D5-13, D2-11, D7-13, D8-09, D8-11, D6-04, and every field\'s missing_risks',
+    ask: 'Do the analysis; do not only describe it. (1) Write the control structure as a list: the controllers (owner, coordinator, child, helper, each script), the control actions each can issue, and the feedback each receives. (2) For every control action apply the four ways it can be unsafe (not given; given when it should not be; too early, too late or out of order; stopped too soon or applied too long) and write down the unsafe cases that are credible here. (3) Check each against the frame, the 21 problems and the experts\' missing_risks, and list those that nothing covers. (4) From the overlap between the independent lists that exist (the three refuters\' findings in ' + ATTACK + '/agents/attack-R1.json, attack-R2.json and attack-R3.json, and the eight experts\' missing_risks), estimate how many failure modes remain unfound: give the estimator, its assumptions, and how far they are violated here. (5) State the standing procedure that keeps the list complete from now on: who runs what, and when. Put the analysis in spec_markdown and the estimate with its arithmetic in "computed".' },
+]
+
+function layerPrompt(l) {
+  return [
+    'You design one layer of version 2: ' + l.title + '.',
+    'Your sources among the experts\' mappings: ' + l.mappings + '. Read them in full in the files named below, and anything else there that bears on your layer.',
+    '',
+    CONTEXT,
+    '',
+    'YOUR LAYER: ' + l.title,
+    l.ask,
+    '',
+    'Return: spec_markdown (the layer\'s specification as markdown: numbered rules, each with its runner, its classical basis by mapping id, and what happens on failure; then the file formats; 900 to 1,800 words); scripts (each with its interface); files; parameters the pilot must measure; pilot_minimum (the smallest set of this layer that must exist before the first field runs); left_out (what you deliberately leave out and why); problems_covered (for each problem this layer fixes: its classical name, by which rule, and what remains); contradicts_the_frame; conflicts_with_other_layers (where your layer needs something from, or collides with, another layer); for_the_owner (decisions that are his).',
+  ].join('\n')
+}
+
+const MODEL = {
+  type: 'object',
+  properties: {
+    files_written: { type: 'array', items: { type: 'string' } },
+    how_to_run: { type: 'string' },
+    model_summary: { type: 'string' },
+    properties_checked: { type: 'array', items: { type: 'object', properties: {
+      name: { type: 'string' }, statement: { type: 'string' }, kind: { type: 'string', enum: ['safety', 'liveness_or_deadlock'] }, holds: { type: 'boolean' }, states_explored: { type: 'integer' }, note: { type: 'string' },
+    }, required: ['name', 'statement', 'kind', 'holds', 'states_explored', 'note'] } },
+    ablations: { type: 'array', items: { type: 'object', properties: {
+      removed: { type: 'string' }, property_that_breaks: { type: 'string' }, shortest_trace: { type: 'string' },
+    }, required: ['removed', 'property_that_breaks', 'shortest_trace'] } },
+    flaws_in_the_spec: { type: 'array', items: { type: 'object', properties: {
+      title: { type: 'string' }, detail: { type: 'string' }, trace: { type: 'string' }, fix: { type: 'string' },
+    }, required: ['title', 'detail', 'trace', 'fix'] } },
+    real_output: { type: 'string' },
+    limits: { type: 'string' },
+  },
+  required: ['files_written', 'how_to_run', 'model_summary', 'properties_checked', 'ablations', 'flaws_in_the_spec', 'real_output', 'limits'],
+}
+
+function modelPrompt(spec) {
+  return [
+    'Below is the specification of the execution layer of a tree of language-model sessions (its coordination rules: task table, attempts and epochs, atomic commit, fencing at the acceptor, a watcher that suspects on missing progress, pause detection, level-triggered wake-ups, one restart path with a restart limit and escalation, admission into a fixed number of slots, a coordinator that can hand over to a fresh coordinator). Build an explicit-state model of this protocol in plain Node.js (no packages) and check it over ALL interleavings for a small configuration (two fields, a restart limit of two, three session slots, one coordinator hand-over allowed).',
+    'Model the faults as actions that can happen at any time: a child stalls; a child loops (it keeps writing but makes no progress); a child crashes; the system pauses and wakes (every process freezes and resumes together, and timers then fire); a session keeps running and writing after it was replaced (a zombie); a wake-up is lost or arrives late; the coordinator hands over while a watcher is running; a write is torn (a crash between a temporary file and its rename, or between an output and its commit record).',
+    'Properties. Safety: no output of a stale attempt is ever accepted; at most one attempt of a field is ever committed for a phase and the synthesis reads only committed output; never more sessions than slots; the number of restarts of a field never exceeds the limit; two coordinators never both act. Liveness and deadlock: there is no reachable state in which nothing can happen and a field is neither committed nor escalated to the owner; a field that loops forever is eventually suspected; from every reachable state each field can still reach committed or escalated.',
+    'Then remove one mechanism at a time (fencing by epoch; the commit record; suspicion by progress, replaced with suspicion by liveness; pause detection; the level-triggered re-check after a wake-up; the restart limit) and report which property breaks, with the shortest trace.',
+    'The purpose is to find flaws in the specification, not to confirm it. Report every place where the specification is ambiguous or silent (say which reading you modelled), and every property that fails with all mechanisms present, with its trace and the smallest fix.',
+    'Rules. Write files only under ' + OUT + '/model/ (the model, the checker, a README of ten lines). Run it with node and paste the real output into "real_output". Keep the state space small enough to finish in under two minutes; say how many states were explored. No web. Do not touch any other file. This task is not about the product whose folder you start in.',
+    '',
+    'THE SPECIFICATION (JSON: spec_markdown, scripts, files, parameters):',
+    JSON.stringify({ spec_markdown: spec.spec_markdown, scripts: spec.scripts, files: spec.files, parameters: spec.parameters }),
+  ].join('\n')
+}
+
+const FIDELITY = {
+  type: 'object',
+  properties: {
+    reproduces: { type: 'boolean' },
+    rerun_output: { type: 'string' },
+    rules_missing_from_the_model: { type: 'array', items: { type: 'string' } },
+    vacuous_or_weak_properties: { type: 'array', items: { type: 'object', properties: { property: { type: 'string' }, why: { type: 'string' }, test_done: { type: 'string' } }, required: ['property', 'why', 'test_done'] } },
+    model_errors: { type: 'array', items: { type: 'string' } },
+    extra_flaws_in_the_spec: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, fix: { type: 'string' } }, required: ['title', 'detail', 'fix'] } },
+    verdict: { type: 'string' },
+  },
+  required: ['reproduces', 'rerun_output', 'rules_missing_from_the_model', 'vacuous_or_weak_properties', 'model_errors', 'extra_flaws_in_the_spec', 'verdict'],
+}
+
+function fidelityPrompt(spec, m) {
+  return [
+    'A colleague built an explicit-state model of a coordination protocol and reported results. Check the model, refuting by default. (1) Rerun it exactly as its README says and compare with the reported output. (2) Fidelity: does each rule of the specification appear in the model, and does the model allow each fault at any time, or only at convenient moments? (3) Are the properties real? For each safety property, copy the model into ' + OUT + '/model-review/ and break the mechanism that should protect it; the checker must then report a violation. A property that cannot be made to fail is vacuous. (4) Is the search exhaustive for the stated configuration (no silent state cap, no hash collision treated as visited, no pruning that hides traces)? (5) Any flaw in the specification that the model missed.',
+    'Rules. You may read ' + OUT + '/model/ and write only under ' + OUT + '/model-review/. No web. Do not touch any other file. This task is not about the product whose folder you start in.',
+    '',
+    'THE SPECIFICATION (JSON):',
+    JSON.stringify({ spec_markdown: spec.spec_markdown, scripts: spec.scripts }),
+    '',
+    'THE COLLEAGUE\'S REPORT (JSON):',
+    JSON.stringify(m),
+  ].join('\n')
+}
+
+const INTEGRATED = {
+  type: 'object',
+  properties: {
+    path: { type: 'string' },
+    lines: { type: 'integer' },
+    sections: { type: 'array', items: { type: 'string' } },
+    conflicts_resolved: { type: 'array', items: { type: 'object', properties: { between: { type: 'string' }, resolution: { type: 'string' } }, required: ['between', 'resolution'] } },
+    pilot_scripts: { type: 'array', items: { type: 'string' } },
+    left_out: { type: 'array', items: { type: 'string' } },
+    for_the_owner: { type: 'array', items: { type: 'string' } },
+    doubts: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['path', 'lines', 'sections', 'conflicts_resolved', 'pilot_scripts', 'left_out', 'for_the_owner', 'doubts'],
+}
+
+function integratePrompt(layers) {
+  return [
+    'Six designers each specified one layer of version 2 of a research tree protocol. Write the one document that replaces the patched version 1: ' + DOC + ' (create the folder; write only there).',
+    '',
+    CONTEXT,
+    '',
+    'THE DOCUMENT',
+    'Title: "Research tree protocol, version 2: built from solved designs (draft for the owner, 2026-11-16)". Status line: a draft; nothing starts before the owner\'s go; it replaces the rules of version 1 and its three amendments, which stay as the record of how the problems were found.',
+    'Sections, in this order:',
+    '1. The idea in the owner\'s words, and the design in one table: the seven layers; for each the borrowed design, its classical source (authors and year), and the problems it fixes (ids).',
+    '2 to 8. One section per layer (execution; storage; integrity; evidence; assurance; shape and cost; completeness). In each: what is borrowed whole and from where; the rules, numbered across the whole document (R1, R2, ...), each one or two sentences, each with its runner in brackets and its basis by mapping id; the files and scripts of the layer; where a classical assumption fails for language-model sessions and what is done about it. Integrity and assurance came from one designer: split them into their two sections.',
+    '9. Every problem and its fix: one table row per problem (P1 to P21, then the problems added by the experts and by the completeness analysis): the classical name of the problem, the standard solution, the rule numbers, and what remains.',
+    '10. What must exist before the pilot field runs (scripts and files, each one line), and what waits for what the pilot measures.',
+    '11. What the pilot measures (parameters), and the two comparisons it makes.',
+    '12. The owner\'s decisions, each with what the classical fields say and the choice that follows if he says nothing.',
+    '13. What is not established, and the limits of this design (include: the classical sources were checked mostly from memory of standard records, few by lookup; no source measured a tree of language-model sessions like this one).',
+    '14. Sources: the classical works relied on, by layer.',
+    'How to write it. Resolve conflicts between layers and say how in your return. One name for one thing throughout (one task table, one status file, one commit record). Do not keep a rule that has no runner. Where two layers propose two mechanisms for the same job, keep the simpler. Keep the pilot set small: a script belongs to the pilot only if a problem rated high would otherwise be unguarded when the first field runs. Plain words, short sentences, no filler, tokens never money, at most about 520 lines of at most 105 characters (tables may run longer). Do not invent measured numbers: a formula with named inputs is right; a made-up figure is wrong.',
+    '',
+    'THE SIX LAYERS (JSON):',
+    JSON.stringify(layers),
+  ].join('\n')
+}
+
+const FINDINGS = {
+  type: 'object',
+  properties: {
+    findings: { type: 'array', items: { type: 'object', properties: {
+      id: { type: 'string' }, title: { type: 'string' }, target: { type: 'string' },
+      kind: { type: 'string', enum: ['classical_assumption_does_not_hold', 'guarantee_overstated', 'no_runner_or_cannot_run_here', 'too_much_machinery', 'missing', 'contradiction', 'does_not_deliver_the_owners_requirement', 'analogy_is_decoration', 'other'] },
+      argument: { type: 'string' }, lines: { type: 'string' }, severity: { type: 'string', enum: ['high', 'medium', 'low'] }, smallest_fix: { type: 'string' },
+    }, required: ['id', 'title', 'target', 'kind', 'argument', 'lines', 'severity', 'smallest_fix'] } },
+    holds: { type: 'array', items: { type: 'string' } },
+    overall: { type: 'string' },
+  },
+  required: ['findings', 'holds', 'overall'],
+}
+
+const ATTACKERS = [
+  { key: 'A1', lens: 'Classical assumptions. For each borrowed design in the document, name the assumptions under which the classical result holds (deterministic re-execution, fail-stop components, independent errors, a trusted computing base that the subjects cannot reach, a known key distribution, stationary behaviour, honest sensors) and say whether each holds for language-model sessions on this harness. Find every place where the document claims a guarantee that the classical result does not give under these faults, and every place where a famous name is used as decoration: the rule would read the same without it. Check the mapping files for what the experts themselves said fails.' },
+  { key: 'A2', lens: 'Can it run here? Take the FACTS ABOUT THE HARNESS as the only things that exist. For each rule, find the runner and ask whether that runner can do it: is the script given what it needs (what can a script not read?), does the harness really offer the enforcement point, who starts the script and what happens between a coordinator\'s turns, what happens after a reboot, and which steps silently need the owner. Find bootstrap problems (a check that needs the thing it checks), ordering problems between scripts, and anything "believed, not verified" that the design leans on without a fallback. Use the model-check result given below.' },
+  { key: 'A3', lens: 'Simplicity and cost. This protocol guards a literature research programme of seven fields. Estimate the machinery\'s own weight: how many scripts, how many lines, how many tokens and hours the checks themselves use per field, against what they protect. Which mechanisms buy most of the protection for least effort? Which belong to "later" or to "never" for a programme of this size? Propose the smallest set that keeps the problems rated high guarded, and an order to build it in. Also say where the design would cost more tokens than the fault it prevents. Use the cost computation given below; do not invent figures.' },
+  { key: 'A4', lens: 'The owner\'s requirement. He asked for (a) experts first, reviews second: a context filled precisely with checked knowledge, then a review that is not a raw, biased opinion; (b) a tree built from solved designs, his own B+ tree and distributed-systems ideas among them, used properly and not as decoration; (c) everything judged by the seven measures; (d) a structure so careful that a mistake cannot spread. Check the document against each. Where does it drop, weaken or merely name one of his ideas? (Version 1 withdrew his "split on overflow"; does version 2 treat overflow as a real B+ tree would?) Where does it decide something that amendment 1 of version 1 records as his own word (who reviews, how a second expert works) without leaving it to him? Is there a path from this document to the owner being able to see the seven measures for the tree?' },
+]
+
+function attackPrompt(a, extra) {
+  return [
+    'You are attacking a design, not improving its prose. Read all of ' + DOC + ' (version 2 of a research tree protocol). Refute by default. Your lens:',
+    a.lens,
+    '',
+    CONTEXT,
+    '',
+    'Rules for findings. Cite the document by line number. Give the smallest change that fixes each problem; prefer removing or merging to adding. Also list what holds, so that the result is not one-sided. Leave out what you would rate low. At most 12 findings, the most damaging first. Ids ' + a.key + '-01, ' + a.key + '-02, and so on.',
+    '',
+    'RESULTS YOU MAY USE',
+    extra,
+  ].join('\n')
+}
+
+const RULING = {
+  type: 'object',
+  properties: {
+    edits: { type: 'array', items: { type: 'object', properties: {
+      rests_on: { type: 'array', items: { type: 'string' } }, section: { type: 'string' }, edit: { type: 'string' }, why: { type: 'string' },
+    }, required: ['rests_on', 'section', 'edit', 'why'] } },
+    rejected: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, why: { type: 'string' } }, required: ['id', 'why'] } },
+    pilot_set_final: { type: 'array', items: { type: 'string' } },
+    moved_to_later: { type: 'array', items: { type: 'string' } },
+    for_the_judge: { type: 'array', items: { type: 'string' } },
+    not_established: { type: 'array', items: { type: 'string' } },
+    verdict: { type: 'string' },
+  },
+  required: ['edits', 'rejected', 'pilot_set_final', 'moved_to_later', 'for_the_judge', 'not_established', 'verdict'],
+}
+
+const REVISED = {
+  type: 'object',
+  properties: {
+    path: { type: 'string' }, lines: { type: 'integer' },
+    change_log: { type: 'array', items: { type: 'string' } },
+    not_applied: { type: 'array', items: { type: 'object', properties: { edit: { type: 'string' }, why: { type: 'string' } }, required: ['edit', 'why'] } },
+  },
+  required: ['path', 'lines', 'change_log', 'not_applied'],
+}
+
+// Stage 1: the six layers in parallel. The execution layer goes straight on to its model check and the fidelity review.
+const layerP = LAYERS.map(l => agent(layerPrompt(l), { label: 'design:' + l.key, phase: 'Design', schema: LAYER, model: 'opus', effort: 'high' }))
+const modelP = layerP[0].then(spec => {
+  if (!spec) return null
+  return agent(modelPrompt(spec), { label: 'model:check', phase: 'Model', schema: MODEL, model: 'opus', effort: 'high' })
+    .then(m => {
+      if (!m) return { model: null, fidelity: null }
+      return agent(fidelityPrompt(spec, m), { label: 'model:fidelity', phase: 'Model', schema: FIDELITY, model: 'opus', effort: 'high' })
+        .then(f => ({ model: m, fidelity: f }))
+    })
+})
+
+const layersRaw = await Promise.all(layerP)
+const layers = {}
+LAYERS.forEach((l, i) => { if (layersRaw[i]) layers[l.key + ' ' + l.title] = layersRaw[i]; else log('layer ' + l.key + ' returned nothing: version 2 lacks ' + l.title) })
+log('layers returned: ' + Object.keys(layers).length + ' of ' + LAYERS.length)
+
+// Stage 2: one document. Runs while the model check is still going.
+const integrated = await agent(integratePrompt(layers), { label: 'integrate', phase: 'Integrate', schema: INTEGRATED, model: 'opus', effort: 'high' })
+const mc = await modelP
+const modelBrief = JSON.stringify(mc && mc.model ? {
+  properties_checked: mc.model.properties_checked, ablations: mc.model.ablations, flaws_in_the_spec: mc.model.flaws_in_the_spec, limits: mc.model.limits,
+  fidelity: mc.fidelity ? { reproduces: mc.fidelity.reproduces, rules_missing_from_the_model: mc.fidelity.rules_missing_from_the_model, vacuous_or_weak_properties: mc.fidelity.vacuous_or_weak_properties, model_errors: mc.fidelity.model_errors, extra_flaws_in_the_spec: mc.fidelity.extra_flaws_in_the_spec, verdict: mc.fidelity.verdict } : 'the fidelity review returned nothing',
+} : 'the model check returned nothing')
+const costLayer = layersRaw[4]
+const costBrief = costLayer ? String(costLayer.computed || 'the cost designer returned no computation') : 'the cost layer returned nothing'
+const complLayer = layersRaw[5]
+const extra = [
+  'The model check of the execution layer (properties, ablations, flaws found, and the fidelity review of the model):', modelBrief, '',
+  'The cost designer\'s computation (real output of its script):', costBrief, '',
+  'The completeness analysis (what nothing covers, and the estimate of unfound failure modes):', complLayer ? String(complLayer.computed || '') + '\n' + JSON.stringify(complLayer.problems_covered) : 'the completeness layer returned nothing',
+].join('\n')
+
+// Stage 3: four attackers on the integrated document.
+const attacks = (await parallel(ATTACKERS.map(a => () =>
+  agent(attackPrompt(a, extra), { label: 'attack:' + a.key, phase: 'Attack', schema: FINDINGS, model: 'opus', effort: 'high' })
+    .then(r => (r ? { key: a.key, findings: r.findings, holds: r.holds, overall: r.overall } : null))
+))).filter(Boolean)
+log('attackers returned: ' + attacks.length + ' of ' + ATTACKERS.length)
+const allFindings = attacks.flatMap(a => a.findings.map(f => Object.assign({ lens: a.key }, f)))
+
+// Stage 4: rule on the findings, then apply the accepted edits.
+const ruling = await agent([
+  'Four refuters attacked version 2 of a research tree protocol (' + DOC + '), each with a different lens; a model check of its execution layer and a fidelity review of that model also reported flaws. Rule on all of it. Read the document yourself.',
+  '1. Check each finding\'s line citation and argument. Reject a finding that misreads the document, or that asks for more machinery than its risk is worth, with the reason. Be as hard on the refuters as they were on the design.',
+  '2. Every flaw that the model check found with all mechanisms present must be either fixed by an edit or rejected with a reason: none may be dropped silently.',
+  '3. Turn what you accept into edits: each names the section and says exactly what to change, add or delete. Merge findings that ask for the same edit. Prefer deleting or moving to "later" over adding.',
+  '4. Settle the pilot set: the scripts and files that must exist before the first field runs, kept as small as the problems rated high allow; and what moves to "later".',
+  '5. Never decide what the document records as the owner\'s decision; an edit may only make the options and the default clearer.',
+  '6. "for_the_judge": where the refuters disagree with each other or with the designers and you are unsure. "not_established": what nothing settles.',
+  'No web. Do not create, edit or delete any file. This task is not about the product whose folder you start in.',
+  '',
+  CONTEXT,
+  '',
+  'THE FINDINGS (JSON):', JSON.stringify(allFindings), '',
+  'WHAT THE REFUTERS SAY HOLDS:', JSON.stringify(attacks.map(a => ({ lens: a.key, holds: a.holds, overall: a.overall }))), '',
+  'THE MODEL CHECK AND ITS FIDELITY REVIEW:', modelBrief,
+].join('\n'), { label: 'settle:rule', phase: 'Settle', schema: RULING, model: 'opus', effort: 'high' })
+
+let revised = null
+if (ruling && ruling.edits && ruling.edits.length) {
+  revised = await agent([
+    'Apply the edits below to ' + DOC + ' and save it in place. Apply every edit exactly; if one cannot be applied as written, apply its intent and list it under not_applied with the reason. Renumber rules only if an edit deletes or adds one, and then fix every reference to a renumbered rule (the table of problems, the pilot list). Replace the pilot section with the final pilot set and what moved to later. Keep the document\'s voice: plain words, short sentences, tokens never money, no invented figures. Do not add anything the edits do not ask for. Afterwards read the whole document once more for a rule that now has no runner, a reference to something deleted, or two names for one thing, and fix those. Write only this file. This task is not about the product whose folder you start in.',
+    '',
+    'EDITS (JSON):', JSON.stringify(ruling.edits), '',
+    'FINAL PILOT SET:', JSON.stringify(ruling.pilot_set_final), '',
+    'MOVED TO LATER:', JSON.stringify(ruling.moved_to_later),
+  ].join('\n'), { label: 'settle:revise', phase: 'Settle', schema: REVISED, model: 'opus', effort: 'high' })
+} else {
+  log('no edits were ruled: the document stands as integrated')
+}
+
+return {
+  doc: DOC,
+  layers: Object.keys(layers).map(k => ({ layer: k, scripts: layers[k].scripts.map(s => s.name + ' (' + s.stage + ')'), pilot_minimum: layers[k].pilot_minimum, contradicts_the_frame: layers[k].contradicts_the_frame, for_the_owner: layers[k].for_the_owner, left_out: layers[k].left_out.map(x => x.what) })),
+  cost_computed: costBrief,
+  completeness_computed: complLayer ? String(complLayer.computed || '') : '',
+  model: mc && mc.model ? { files: mc.model.files_written, how_to_run: mc.model.how_to_run, properties: mc.model.properties_checked.map(p => ({ name: p.name, kind: p.kind, holds: p.holds, states: p.states_explored })), ablations: mc.model.ablations.map(a => ({ removed: a.removed, breaks: a.property_that_breaks })), flaws: mc.model.flaws_in_the_spec.map(f => ({ title: f.title, fix: f.fix })), limits: mc.model.limits } : null,
+  fidelity: mc && mc.fidelity ? { reproduces: mc.fidelity.reproduces, missing: mc.fidelity.rules_missing_from_the_model, vacuous: mc.fidelity.vacuous_or_weak_properties.map(v => v.property + ': ' + v.why), model_errors: mc.fidelity.model_errors, extra_flaws: mc.fidelity.extra_flaws_in_the_spec.map(f => f.title), verdict: mc.fidelity.verdict } : null,
+  integrated: integrated ? { lines: integrated.lines, conflicts_resolved: integrated.conflicts_resolved, for_the_owner: integrated.for_the_owner, doubts: integrated.doubts } : null,
+  attack: allFindings.map(f => ({ id: f.id, title: f.title, kind: f.kind, severity: f.severity })),
+  ruling: ruling ? { edits: ruling.edits.length, edit_list: ruling.edits.map(e => e.section + ': ' + e.edit), rejected: ruling.rejected, pilot_set_final: ruling.pilot_set_final, moved_to_later: ruling.moved_to_later, for_the_judge: ruling.for_the_judge, not_established: ruling.not_established, verdict: ruling.verdict } : null,
+  revised: revised,
+}

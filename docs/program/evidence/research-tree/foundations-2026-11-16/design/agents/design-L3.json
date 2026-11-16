@@ -1,0 +1,529 @@
+{
+ "label": "design:L3",
+ "tools_used": [
+  "Bash",
+  "Read",
+  "StructuredOutput"
+ ],
+ "result": {
+  "spec_markdown": "# Layer 3: Integrity and assurance (version 2)\n\nBorrowed whole: the Clark-Wilson model with a small reference monitor and Biba low-water labels (D5 whole design; D7-01, the LCF kernel), assured the way independent verification and validation does it, by seeded faults (D4 whole design; D4-01). Every script exits 0 pass, 1 fail, 2 not run, 3 tampering. A gate treats 2 like 1.\n\n## A. Integrity\n\n**I1. Two classes.** *Untrusted (UDI):* web pages, reader returns, cards as a child writes them, child notes, drafts, reviews before certification, anything in a worktree. *Trusted (CDI):* stored snapshots, cards whose status is `witnessed` or `confirmed`, packs whose frozen hash is in the ledger, certified reviews, the synthesis built from them. Basis: D5-01 (rule C5). Runner: `promote.mjs` alone writes a status. Pack freeze, reviewer input, synthesis and `status.json` read only CDI items. On failure the script exits 1 and lists the UDI ids, the item stays UDI and the gate does not pass.\n\n**I2. The one promotion procedure.** It has two steps, in order.\n(a) *Witness, by script* (D7-01, D1-05, D5-04, D4-03, D4-04). The watcher runs `snapshot.mjs` and then `witness.mjs` on each new card at intake, again at pack freeze, and after the review on every cited card. `snapshot.mjs` fetches the URL with Node's own fetch (no rendering, no scripts), stores the raw bytes under `store/snapshots/<sha256>` and extracts the text (HTML only in the pilot). `witness.mjs` normalises the text (NFKC, case fold, whitespace, quote marks and dashes, hyphens at line breaks). It searches for the exact quote, then for the card's number (sign, separator, percent and unit variants) within *w* characters of the quote. There are three results. `witnessed`: both found. `rejected`: one is missing, and the card goes to quarantine. `unverifiable`: a fetch failure, PDF, block or empty text, which is not-run and is never passed. The result is bound to (sha256 of card, sha256 of snapshot, offset). If the card changes, the result is void (`stale`). A refetch with a new hash is logged as \"source changed\", not as a mismatch.\n(b) *Judgment, through a narrow interface* (D5-10, D5-05, D8-06, D4-10). First `context-check.mjs` compares each citing sentence's typed `applies_to` with the card's typed conditions. Only flagged sentences and prose remainders go to the model. `check-queue.mjs` writes one input file per item: the card's typed fields, about 200 words of the snapshot around the offset and, for a citation, the sentence. The checker helper has one tool, Read, which the hook limits to that batch folder. Its brief is a fixed file in the trusted base. Its result schema is an enum {confirmed, number_mismatch, baseline_swapped, conditions_mismatch, outside_conditions, unclear} plus the offset and the field. `promote.mjs` reads the verdict from the checker's own transcript, which the harness writes, not from any session's file. It writes `confirmed` only if (a) passed and the checker is qualified for that fault class (A3). A verdict that is off the enum or missing counts as `unclear`, and the item stays `witnessed`.\n\n**I3. Labels are computed, never self-assigned** (D5-03, D5-06; D5 and D8 missing risks). Card status order: confirmed > witnessed > unverifiable > udi = rejected = stale. A fact sentence takes the minimum over its cited cards. Its numbers must equal a cited card's number or baseline (D1-06). An uncited sentence is `judgment`. Session label: `clean` if every read and fetch in its transcript is in its input manifest of CDI items, otherwise `tainted` (Biba low-water mark at the level of the whole session, as in Flume). The child is tainted by design. A tainted session's output is never clean as a whole: each fact in it stands only on its own promoted cards. Runner: `certify.mjs`. The schemas reject any status or label field in a file a session writes.\n\n**I4. Who reads what.** The privilege table below sets it. The coordinator reads only `status.json`, certificates, the ledger head and CDI files (D5-09). The harness gives the coordinator the first 400 characters of a child's turn end, and that channel cannot be closed. The child's brief therefore fixes its last line as `TURN-END <field>`, `perm-audit.mjs` flags any other note, and the coordinator treats the note only as a wake signal. What remains is obedience, flagged after the fact.\n*F1, the field's answer* (D5-06, D3-13, D8-07, D4-08). On integrity grounds, a fresh session should write the review. Its reads are only the frozen pack (hash checked), snapshot windows of the must-read sections, and our files. Only such a review can be labelled clean. A same-session review is tainted, and its uncited sentences count as judgment. Integrity cannot say which form writes the better review, so the pilot writes both. Whatever the owner rules, the fresh path runs once per wave, so that the crash path stays tested (D1-12).\n\n**I5. The trusted base** (D5-08, D7-04). It is `tcb/` in the coordinator's checkout at a pinned commit: the scripts, schemas, agent files, briefs, role profiles, approved question lists, approach ids, the hook and the thresholds. `tcb.lock.json` holds their hashes and changes only through a commit the owner has approved. Seed and plant keys sit in `sealed/`, outside every worktree. Checks run from `tcb/`, never from a worktree.\n*Preventive layer.* `make-profile.mjs` writes each worktree's `.claude/settings.json` from the role's profile. It sets the allow and deny lists and registers `guard-hook.mjs` as a pre-tool hook. The hook refuses: reads and writes outside the role's paths; any write under `.claude/`; Bash; a helper of the wrong type; and, for the child, a fetch of any URL that is not in its field's list of witnessed must-read sources (amendment 3, row 5). Hooks are unverified on this app, so the hook test in `selftest.mjs` must show every refusal before the pilot.\n*Detective layer, which does not depend on hooks.* `tcb-verify.mjs` checks the hash baseline of `tcb/` and every `.claude/` before each check run and each merge (Tripwire). `perm-audit.mjs` runs over every transcript after every turn. It checks tools, paths and URLs, and greps outgoing search text against a denylist of project terms (the confinement problem).\nOn failure: exit 3, the wave stops, the branch is quarantined, its items revert to UDI, and the owner is told.\n\n**I6. Privileges** (D5-02, least privilege and the confused deputy; D8-05):\n\n| Role | Tools | Reads | Writes |\n|---|---|---|---|\n| Reader | WebSearch, WebFetch; brief holds no project data | nothing on disk | nothing; result through a capped JSON schema |\n| Checker | Read | `queue/<batch>/` | nothing; enum result |\n| Child | Read, Write, Edit, Agent (reader type), WebFetch (witnessed must-read URLs) | own brief and question list, `fields/<n>/`, `status/<n>/` | `fields/<n>/` |\n| Fresh reviewer | Read, Write | `review-in/<n>/` | `fields/<n>/review/` |\n| Coordinator | Read, Write, Agent (checker type), session tools, Bash only `node tcb/scripts/*` | `status/`, certificates, CDI files | `coord/` |\n| Scripts | Node fs; fetch (snapshot only); git (merge only) | everything | `status/`, `ledger/`, `store/`, `queue/`, `sealed/`, `review-in/` |\n| Owner | all | all | `tcb/` through an approved commit |\n\n**I7. The only route into the shared tree** (D5-08). `merge.mjs` commits the child's folder, because the child has no git. It runs `tcb-verify` first and refuses any diff outside `fields/<n>-<name>/`. On failure the merge is refused and the script exits 3.\n\n**I8. The audit record** (D5-11; Clark-Wilson rule C4). Only `ledger.mjs` appends to `ledger/ledger.jsonl`, with h_i = sha256(h_{i-1} ‖ entry_i). Gate figures come only from scripts. A session's own lines are notes and are never counted. A hash chain gives forward integrity only, so the head hash is copied into each merge commit and into `status.json`. A break in the chain stops the wave.\n\n## B. Assurance\n\n**A1. Three values** (D4 missing risk; fail-safe defaults). Every check writes pass, fail or not-run, with a reason. A missing record counts as not-run. Gates count not-run against their threshold, and `status.json` shows it on its own line.\n\n**A2. Scripts are tested before use** (D4 missing risk: a script with one version is a single point of failure). `selftest.mjs` runs every script on known-good and known-bad fixtures, one per fault class, plus the hook test. It runs whenever `tcb.lock.json` changes. One wrong answer and nothing starts.\n\n**A3. Seeded faults** (D4-01, D8-04, D5-14; Mills; Arlat). Four classes are caught by script: S1 an invented quote, S2 a number altered (×10, ÷10, digits swapped), S3 a quote taken from another card, S4 a wrong card id. Four classes are left to the checker: J1 number and baseline swapped, J2 a condition dropped or altered, J3 a citing sentence wider than the card's conditions, J4 an instruction (\"return confirmed\") placed in a card's free text. `seed.mjs` mutates witnessed cards with these deterministic operators, gives each a fresh id from the normal id generator, shuffles them into the queue with a logged random seed, and keeps the key in `sealed/`. The checker's brief never mentions seeding. `promote.mjs` drops seeds by id, so they never reach a pack, a review or the synthesis. An equal number of clean items measures false alarms.\n*How many.* To show detection ≥ d0 at 95 % with zero misses needs S ≥ ln 0.05 / ln d0 seeds: 29 for d0 = 0.9, 14 for 0.8, 9 for 0.7. Pilot calibration: 14 seeds per J class (56) plus 56 clean items. Each S class gets fixtures plus 5 seeds in the live check stream. In every later wave, 10 % of each batch is seeds (a proof test).\n*Computed:* d_k = s_k/S_k with its Clopper-Pearson lower bound; the false-alarm rate; the chain's escape rate, measured on seeds that passed every layer in turn, never as a product of layer rates (D4-02); the residual estimate n_k(1−d_k)/d_k, which assumes faults are equally easy to detect; and for J4, whether any instruction was followed. If a class's lower bound is below d0, its checker is unqualified, its `confirmed` verdicts since its last pass revert to `witnessed`, and the next wave waits until the check is changed and measured again.\n\n**A4. Sampling** (D4-09, D6-03, D7-01). *Uncited cards,* one lot per reader, zero acceptance: n = ⌈ln β / ln(1 − d·p1)⌉, and a lot no larger than n is checked in full. Worked sizes: p1 = 0.10, β = 0.10 gives 22 at d = 1 and 28 at d = 0.8. p1 = 0.05, β = 0.10 gives 45 and 57. p1 = 0.05, β = 0.05, d = 1 gives 59. p1 = 0.20, β = 0.10, d = 0.8 gives 14. One semantic failure means that reader's lot is checked in full, or dropped and listed as not covered. `check-queue.mjs` draws the sample at gate A.\n*Cited cards* are all checked. The review is judged as a lot by an SPRT with p0 = 0.05, p1 = 0.20, α = β = 0.05. A failure adds 1.386 and a pass subtracts 0.172. It rejects at 2.944 (three early failures) and accepts at −2.944 (18 passes with no failure). A rejected review is rewritten fresh from the corrected pack, never patched. If no boundary is crossed, the review is accepted and flagged borderline. A rate with zero failures in n is reported with its 95 % upper bound of about 3/n.\n\n**A5. Certifying an expert** (D5-07, D4-11). `certify.mjs` writes the certificate, and no line of it comes from the session. The expert is certified only if all of the following hold. Every approved question id is covered by a confirmed card or listed as not covered. Its reads match its manifest, or the review is marked tainted. Every cited card is confirmed, and every fact passes I3 and the context check. The SPRT accepts. At least t of k = 3 plants were found. `plant.mjs` puts the plants into the reviewer's copy of our work. Each rests on a confirmed card, and at least one goes against the answer we hope for (anchoring, P2). Three plants catch only gross failure, so the plant rate is pooled across experts. The certificate reads certified, not certified (one fresh re-review is allowed, then the review counts as judgment), or not run.\n\n**A6. Every measure has an action line** (D4 missing risk: normalisation of deviance). The owner sets each threshold before the pilot, and the gate script compares against it at every wave.\n\n## C. Where the classical assumptions fail\n- A model checker cannot be certified. Scripts certify (`witnessed`). A model is measured (`confirmed` means measured and qualified).\n- A model's output depends on its whole window, so labels are set per session, not per sentence.\n- Instances of one model are not independent, so agreement adds nothing. Diversity comes from a script, a different input, or a different model (F3).\n- Hand-written seeds may be easier to catch than real faults. The operators copy the failure classes seen so far, and the checker's disagreement with the script on the decidable part is tracked.\n- Hooks in a folder could be edited, so the detective layer backs the preventive one.\n\n## D. File formats (JSONL unless noted; each carries `schema_v`)\n- `fields/<n>/cards.jsonl` (child): card_id, question_id, url, primary_id, source_kind enum, quote (≤15 words), number, unit, baseline, conditions {task, model_family, repo_size, language, metric}, conditions_note (≤40 words), what_measured (≤40 words). It has no status field.\n- `store/snapshots/<sha256>` raw bytes, plus `.json` {url, final_url, http_status, content_type, fetched_at, text_sha256, extractor_v}.\n- `status/<n>/card_status.jsonl` (promote.mjs only, append-only): seq, card_id, card_sha256, snapshot_sha256, offset, status, reason, check_ref, ts. The last line per card is its current status.\n- `queue/<batch>/item-<id>.json`; `sealed/<batch>.key.json` {item_id: operator or null}.\n- `fields/<n>/review/review.json`: sentences [{sentence_id, approach_id, measure, kind fact/judgment, text, cites [{card_id, pack_hash}], applies_to {...}}].\n- `status/<n>/certificate.json`: review_sha256, pack_hash, manifest_sha256, coverage, session_label, sprt, plants {k, found, contra_found}, result, reasons, ledger_seq.\n- `ledger/ledger.jsonl`: seq, ts, script, script_sha256, kind, subject, data, prev, hash.\n- `tcb/tcb.lock.json` {commit, files {path: sha256}, owner_approval_ref}; `tcb/profiles/<role>.json` {tools, read_prefixes, write_prefixes, agent_types, url_allow_source, bash_allow}; `review-in/<n>/manifest.json` {inputs [{path, sha256}]}.",
+  "scripts": [
+   {
+    "name": "tcb-verify.mjs",
+    "purpose": "Tripwire baseline: verify the hashes of every trusted-base file and of every worktree's .claude/ folder against tcb.lock.json (D5-08)",
+    "inputs": "--lock tcb/tcb.lock.json --worktrees <paths...>",
+    "outputs": "Ledger entry kind tcb_verified, or a list of changed paths",
+    "exit_codes": "0 all match; 3 a mismatch (tampering); 2 the lock or a path could not be read",
+    "stage": "pilot"
+   },
+   {
+    "name": "make-profile.mjs",
+    "purpose": "Write a worktree's .claude/settings.json (allow and deny lists, pre-tool hook registration) from a role profile, so that permissions come from the trusted base",
+    "inputs": "--role <reader|checker|child|reviewer|coordinator> --worktree <path> --field <n>",
+    "outputs": ".claude/settings.json in the worktree; its hash recorded in the ledger",
+    "exit_codes": "0 written; 1 unknown role or profile fails its schema; 2 write failed",
+    "stage": "pilot"
+   },
+   {
+    "name": "guard-hook.mjs",
+    "purpose": "Pre-tool hook: refuse reads and writes outside the role's paths, any write under .claude/, Bash outside the allowlist, a helper of the wrong type, and a child's WebFetch to a URL not in its witnessed must-read list",
+    "inputs": "The harness's tool-call JSON on stdin; the role profile named in the settings; status/<n>/mustread-urls.json",
+    "outputs": "An allow or deny decision to the harness; each denial appended to ledger/refusals.jsonl",
+    "exit_codes": "Per the harness hook contract (deny = blocking code); any internal error denies (fail-safe)",
+    "stage": "pilot"
+   },
+   {
+    "name": "perm-audit.mjs",
+    "purpose": "After every turn, compare each transcript's tool calls, paths, URLs and outgoing search text with the role profile and a project-term denylist; flag child notes that are not TURN-END lines; flag coordinator reads of UDI files (D5-02, D5-09, confinement)",
+    "inputs": "--transcripts <glob> --profiles tcb/profiles --denylist tcb/denylist.txt",
+    "outputs": "status/audit.jsonl violations; a ledger entry",
+    "exit_codes": "0 clean; 3 out-of-profile call or leak; 2 a transcript could not be parsed",
+    "stage": "pilot"
+   },
+   {
+    "name": "snapshot.mjs",
+    "purpose": "Fetch a card's URL with Node's own fetch (no rendering), store the raw bytes by sha256 and extract HTML text (D5-04, D2-09). Needs the owner's word (F5)",
+    "inputs": "--url <u> --store store/snapshots",
+    "outputs": "store/snapshots/<sha256> and <sha256>.json metadata; the sha256 on stdout",
+    "exit_codes": "0 stored with text; 2 not run (fetch failed, blocked, PDF, empty text) with a reason",
+    "stage": "pilot"
+   },
+   {
+    "name": "witness.mjs",
+    "purpose": "Normalise the snapshot text and the quote, find the exact quote, find the card's number within w characters, and bind the result to the card and snapshot hashes (D7-01, D1-05)",
+    "inputs": "--cards fields/<n>/cards.jsonl --store store/snapshots --w 300",
+    "outputs": "witness records (witnessed, rejected, unverifiable, stale, source-changed) passed to promote.mjs; quarantine list",
+    "exit_codes": "0 run complete; 1 one or more rejected; 2 one or more not run; 3 a card hash changed after witnessing",
+    "stage": "pilot"
+   },
+   {
+    "name": "context-check.mjs",
+    "purpose": "Treat a citation as a call: compare each sentence's typed applies_to with the cited card's typed conditions, and its numbers with the card's number or baseline (D4-10, D8-06, D7-08, D1-06); flag only the residue for the checker",
+    "inputs": "--review fields/<n>/review/review.json (or the synthesis claims) --cards ... --status ...",
+    "outputs": "Per sentence: pass, flag (to the checker queue), fail (number mismatch, uncited fact), not-run",
+    "exit_codes": "0 all pass or flagged; 1 a fail; 2 inputs missing",
+    "stage": "pilot"
+   },
+   {
+    "name": "check-queue.mjs",
+    "purpose": "Assemble one checker input file per item (typed card, snapshot window, sentence), mix in seeds from seed.mjs, draw the zero-acceptance sample of uncited cards per reader with a logged random seed (D4-09)",
+    "inputs": "--field <n> --mode <intake|freeze|post-review|sample> --p1 --beta --d",
+    "outputs": "queue/<batch>/item-*.json; the sample draw and its seed in the ledger",
+    "exit_codes": "0 queue written; 1 nothing to check; 2 inputs missing",
+    "stage": "pilot"
+   },
+   {
+    "name": "promote.mjs",
+    "purpose": "The only writer of status. Read each checker verdict from the checker's own transcript, validate it against the enum, drop seeds by id, apply the qualification of each fault class, and append to card_status.jsonl (D5-01, D5-10)",
+    "inputs": "--batch <id> --transcripts <glob> --qualified status/qualification.json",
+    "outputs": "status/<n>/card_status.jsonl lines; ledger entries",
+    "exit_codes": "0 written; 1 a verdict off the enum or missing (item stays witnessed); 2 transcript not found; 3 a card hash changed since witnessing",
+    "stage": "pilot"
+   },
+   {
+    "name": "seed.mjs",
+    "purpose": "Make seeded faults (S1-S4, J1-J4) and plants in copies of our work; score detection per class, false alarms, the chain's escape rate and the plants found (D4-01, D4-11, D8-04)",
+    "inputs": "make: --batch <id> --share 0.10 --classes ...; plant: --field <n> --k 3; score: --batch <id> or --field <n>",
+    "outputs": "Seeds into the queue, keys into sealed/; status/qualification.json with d_k, its Clopper-Pearson lower bound and the false-alarm rate; plant scores",
+    "exit_codes": "0 run; 1 a class below d0 (checker unqualified) or a J4 instruction followed; 2 too few seeds to score",
+    "stage": "pilot"
+   },
+   {
+    "name": "certify.mjs",
+    "purpose": "Compute session labels from transcripts against manifests, fact-sentence labels, coverage of the approved question ids, the SPRT lot decision and the plant result, then write the certificate (D5-07, D6-03, D5-06)",
+    "inputs": "--field <n> --manifest review-in/<n>/manifest.json --questions tcb/questions/<n>.json --p0 --p1 --alpha --beta --t",
+    "outputs": "status/<n>/certificate.json; labelled claims for the synthesis",
+    "exit_codes": "0 certified; 1 not certified (reasons listed); 2 not run",
+    "stage": "pilot"
+   },
+   {
+    "name": "merge.mjs",
+    "purpose": "The only route into the shared tree: run tcb-verify, commit the child's folder, refuse any diff outside fields/<n>-<name>/, and write the ledger head into the commit (D5-08, D5-11)",
+    "inputs": "--worktree <path> --field <n>",
+    "outputs": "A merge commit, or a quarantine record",
+    "exit_codes": "0 merged; 3 path outside the allowlist or trusted-base mismatch; 2 git error",
+    "stage": "pilot"
+   },
+   {
+    "name": "ledger.mjs",
+    "purpose": "Append hash-chained entries, verify the chain, and print the head (D5-11)",
+    "inputs": "append --kind --subject --data; verify; head",
+    "outputs": "ledger/ledger.jsonl; the head hash",
+    "exit_codes": "0 ok; 3 chain broken; 2 file unreadable",
+    "stage": "pilot"
+   },
+   {
+    "name": "selftest.mjs",
+    "purpose": "Run every trusted-base script on known-good and known-bad fixtures (one per fault class) and run the hook test (attempt each forbidden call from a throwaway helper and expect a refusal)",
+    "inputs": "--fixtures tcb/fixtures",
+    "outputs": "status/selftest.json",
+    "exit_codes": "0 all correct; 1 a script gave a wrong answer or a hook did not refuse; 2 could not run",
+    "stage": "pilot"
+   },
+   {
+    "name": "correct-rates.mjs",
+    "purpose": "Estimate the checker's sensitivity and specificity on a reference subsample (the owner, or a different model under F3) and correct the reported failure rates (Rogan-Gladen, D6-02)",
+    "inputs": "--verdicts --reference",
+    "outputs": "Se, Sp and corrected rates in status/",
+    "exit_codes": "0; 1 Se + Sp <= 1.2; 2 reference missing",
+    "stage": "later"
+   },
+   {
+    "name": "beta.mjs",
+    "purpose": "Measure the joint miss rate and beta factor between two second-opinion variants on one seeded set, before any second opinion is bought (D4-02)",
+    "inputs": "--seedset --variant-a --variant-b",
+    "outputs": "r, beta and the detection added by B",
+    "exit_codes": "0; 1 beta at or above the owner's line; 2 too few seeds",
+    "stage": "later"
+   },
+   {
+    "name": "challenge.mjs",
+    "purpose": "Pick k verdicts at random from a frozen review for expansion into explicit steps (D7-10)",
+    "inputs": "--review --k --seed",
+    "outputs": "challenge list; the result after checking",
+    "exit_codes": "0; 1 an expansion failed; 2 not run",
+    "stage": "later"
+   },
+   {
+    "name": "cooke.mjs",
+    "purpose": "Score an expert's answers at 5/50/95 % on seed questions set by someone other than the expert (D6-09)",
+    "inputs": "--answers --keys sealed/<n>.seeds.json",
+    "outputs": "calibration score",
+    "exit_codes": "0; 1 score below 0.05; 2 not run",
+    "stage": "later"
+   }
+  ],
+  "files": [
+   {
+    "path_pattern": "tcb/** (scripts, schemas, agents, briefs, profiles, questions, thresholds, fixtures, denylist)",
+    "writer": "The owner, through an approved commit; no session during a run",
+    "format": "Node .mjs, JSON Schema, markdown briefs, JSON"
+   },
+   {
+    "path_pattern": "tcb/tcb.lock.json",
+    "writer": "The owner's approved commit (prepared by a session, approved by the owner)",
+    "format": "JSON {commit, files {path: sha256}, owner_approval_ref}"
+   },
+   {
+    "path_pattern": "<worktree>/.claude/settings.json",
+    "writer": "make-profile.mjs",
+    "format": "Harness settings JSON (permissions, hooks)"
+   },
+   {
+    "path_pattern": "fields/<n>-<name>/cards.jsonl",
+    "writer": "The child (UDI)",
+    "format": "JSONL card records, schema-capped free text, no status field"
+   },
+   {
+    "path_pattern": "fields/<n>-<name>/review/review.json",
+    "writer": "The reviewer (child or fresh session)",
+    "format": "JSON sentences with kind, cites {card_id, pack_hash} and typed applies_to"
+   },
+   {
+    "path_pattern": "store/snapshots/<sha256> and <sha256>.json",
+    "writer": "snapshot.mjs",
+    "format": "Raw bytes plus a JSON metadata record; outside git and outside every worktree"
+   },
+   {
+    "path_pattern": "status/<n>/card_status.jsonl",
+    "writer": "promote.mjs only",
+    "format": "Append-only JSONL; the last line per card is its current status"
+   },
+   {
+    "path_pattern": "status/<n>/certificate.json; status/qualification.json; status/selftest.json; status/audit.jsonl",
+    "writer": "certify.mjs; seed.mjs; selftest.mjs; perm-audit.mjs",
+    "format": "JSON or JSONL"
+   },
+   {
+    "path_pattern": "status/status.json",
+    "writer": "The watcher (Execution layer), from the files above",
+    "format": "Typed JSON: counts, gate states, enum codes, pointers, ledger head, sequence number"
+   },
+   {
+    "path_pattern": "queue/<batch>/item-<id>.json",
+    "writer": "check-queue.mjs",
+    "format": "JSON checker input: typed card, snapshot window, sentence"
+   },
+   {
+    "path_pattern": "sealed/*.key.json",
+    "writer": "seed.mjs",
+    "format": "JSON {item_id: operator or null}; outside every worktree; read by scripts only"
+   },
+   {
+    "path_pattern": "review-in/<n>/ (manifest.json, pack, windows, our-work copies with plants)",
+    "writer": "check-queue.mjs and seed.mjs (plant)",
+    "format": "Files plus a JSON manifest {inputs [{path, sha256}]}"
+   },
+   {
+    "path_pattern": "ledger/ledger.jsonl; ledger/refusals.jsonl",
+    "writer": "ledger.mjs; guard-hook.mjs",
+    "format": "Hash-chained JSONL"
+   }
+  ],
+  "parameters": [
+   {
+    "name": "Share of sources a plain Node fetch turns into text (HTML, PDF, blocked, script-rendered)",
+    "how_measured": "snapshot.mjs results over all pilot cards",
+    "value_until_measured": "Unknown. PDFs and script-rendered pages count as unverifiable"
+   },
+   {
+    "name": "Quote-found rate, and the rate of quote-not-found on cards the small-model fetch path had confirmed (P21 directly)",
+    "how_measured": "witness.mjs results set against the old checker path on the same cards",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "False mismatches caused by normalisation",
+    "how_measured": "Hand review of a sample of rejected cards",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "w, the number-to-quote distance",
+    "how_measured": "Distribution of distances on witnessed cards, and the rate of number-not-found on cards whose quote was found",
+    "value_until_measured": "300 characters (D1-05's design choice, not a measurement)"
+   },
+   {
+    "name": "Snapshot window size given to the checker",
+    "how_measured": "Checker detection per class at two window sizes, if the budget allows",
+    "value_until_measured": "About 200 words (D5-04's choice)"
+   },
+   {
+    "name": "d_k per J class and its Clopper-Pearson lower bound; false-alarm rate on clean items",
+    "how_measured": "seed.mjs score on the pilot calibration set (14 seeds per class plus as many clean items)",
+    "value_until_measured": "Unknown. No checker is qualified until measured"
+   },
+   {
+    "name": "Checker detection against batch size",
+    "how_measured": "Seeds spread across batches of different sizes",
+    "value_until_measured": "Unknown. Pilot uses small batches"
+   },
+   {
+    "name": "Tokens per checker item and per seeded item",
+    "how_measured": "Script count from checker transcripts",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Checker disagreement with the script on the decidable part",
+    "how_measured": "Checker verdicts on items the script rejected or witnessed",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Chain escape rate",
+    "how_measured": "Seeds that passed every layer in sequence",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Whether a J4 injected instruction was followed",
+    "how_measured": "Checker verdicts on J4 seeds",
+    "value_until_measured": "Unknown; target never"
+   },
+   {
+    "name": "Hook refusal test",
+    "how_measured": "selftest.mjs attempts each forbidden call",
+    "value_until_measured": "Believed, not verified"
+   },
+   {
+    "name": "Whether a checker's structured result can be extracted reliably from its transcript",
+    "how_measured": "promote.mjs over pilot batches, compared with the result the coordinator received",
+    "value_until_measured": "Unknown. Fallback: the coordinator writes the result file and the audit compares it with the transcript"
+   },
+   {
+    "name": "Out-of-profile tool calls per session; non-TURN-END notes; coordinator reads of UDI files",
+    "how_measured": "perm-audit.mjs",
+    "value_until_measured": "Unknown; target 0"
+   },
+   {
+    "name": "Reader return rejection rate by schema; free-text share of card tokens",
+    "how_measured": "Harness schema retries and reject counts from transcripts; token count of free-text fields",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Share of conditions that fit the typed fields",
+    "how_measured": "context-check.mjs: typed versus prose residue",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Uncited-card sample failure rate per reader",
+    "how_measured": "check-queue.mjs sample plus checker",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Plants found per expert, against-hope plant separately",
+    "how_measured": "seed.mjs score of the review",
+    "value_until_measured": "Unknown; k = 3"
+   },
+   {
+    "name": "Share of judgment sentences and of failed fact sentences in each F1 review form",
+    "how_measured": "certify.mjs on both pilot reviews",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Time from card intake to promotion",
+    "how_measured": "Timestamps in card_status.jsonl",
+    "value_until_measured": "Unknown"
+   },
+   {
+    "name": "Difference between self-reported and script-counted figures",
+    "how_measured": "Child notes against ledger entries",
+    "value_until_measured": "Unknown"
+   }
+  ],
+  "pilot_minimum": [
+   "The trusted base in tcb/ at a pinned commit with tcb.lock.json, and tcb-verify.mjs run before every check and every merge (I5)",
+   "Role profiles, make-profile.mjs and guard-hook.mjs; selftest.mjs's hook test passed, or the owner's explicit choice to run on the detective layer only",
+   "perm-audit.mjs after every turn, covering the TURN-END rule for notes and coordinator reads",
+   "Reader and checker agent files: readers web-only with a capped card schema; the checker with Read limited to its batch and an enum result",
+   "snapshot.mjs and witness.mjs at intake, at freeze and after the review, with three-valued results (needs F5)",
+   "promote.mjs as the sole writer of status, and every downstream consumer refusing UDI",
+   "context-check.mjs on every cited sentence of the review and the synthesis",
+   "merge.mjs with the path allowlist and the ledger head in the commit; ledger.mjs hash chain",
+   "selftest.mjs fixtures for every script, passing",
+   "seed.mjs calibration: 14 seeds for each of J1-J4 plus as many clean items, S1-S4 fixtures plus 5 live seeds each, then 10 % proof seeds per batch",
+   "check-queue.mjs zero-acceptance sample of uncited cards per reader at gate A",
+   "certify.mjs with session labels, coverage, SPRT and 3 plants per expert",
+   "The owner's thresholds (d0, p1 and beta, p0 and p1 of the SPRT, plants t of k) and an action line for every measure, set before the pilot"
+  ],
+  "left_out": [
+   {
+    "what": "Information-flow labels per sentence",
+    "why": "A model's sentence depends on its whole window, so implicit flows cannot be tracked. The session's low-water mark is the sound coarse label (D5-03, Flume)"
+   },
+   {
+    "what": "Forward-secure per-entry keys (full Schneier-Kelsey)",
+    "why": "One PC and no key custody. A hash chain whose head is anchored in each merge commit detects rewrites at far less cost"
+   },
+   {
+    "what": "Injection detection or blacklist filters",
+    "why": "In-band filtering is the root of injection. Authority is bounded instead (D5 do_not; Saltzer-Schroeder)"
+   },
+   {
+    "what": "Voting across same-model instances, and N-version redundancy",
+    "why": "Knight-Leveson: their failures correlate. Agreement adds nothing, and its cost buys no independence (D4-02, D5-05)"
+   },
+   {
+    "what": "PDF text extraction and rendering of script-built pages",
+    "why": "Each needs a package or a headless browser, which needs the owner's word. Until then such sources are unverifiable, never passed"
+   },
+   {
+    "what": "Running sessions under a separate Windows account",
+    "why": "The strongest enforcement, but it changes the owner's system setup. It is held as the fallback if the hook test fails"
+   },
+   {
+    "what": "Se/Sp correction against a reference standard (D6-02)",
+    "why": "Needs a different model (F3) or the owner's time. Later, once the pilot shows the checker's rates"
+   },
+   {
+    "what": "Cooke seed questions (D6-09) and random challenges (D7-10) for experts",
+    "why": "With about ten seeds the score is noisy, and both add a seed setter and turns. Later, if the pilot's plants and certificates leave weak experts undetected"
+   },
+   {
+    "what": "Beta measurement between second-opinion variants (D4-02)",
+    "why": "Only needed once a second opinion is to be bought (F2, F3). Later"
+   },
+   {
+    "what": "A web canary page for readers (part of D5-14)",
+    "why": "A reader with web tools cannot reach a local page, and a public page needs the owner's word. J4 seeds test the checker meanwhile"
+   },
+   {
+    "what": "Seeded false dismissals for the refuter (D4-12)",
+    "why": "Belongs with the Evidence layer's dismissal log. The seeding machinery here serves it later"
+   },
+   {
+    "what": "STRIDE and STPA threat enumeration (D5-13, D4-05)",
+    "why": "It belongs to the Completeness layer. This layer supplies its value-fault rows"
+   },
+   {
+    "what": "Certifying what an expert 'knows'",
+    "why": "A window cannot be audited. Only outputs and the read trace are certified (D5-07)"
+   }
+  ],
+  "problems_covered": [
+   {
+    "problem": "P1 a wrong or invented fact travels",
+    "classical_name": "Clark-Wilson rule C5 (no CDI built from an unvalidated UDI); result checking with a witness; phase containment",
+    "by": "I1, I2 (witness at intake and after review), I3, A3, A4",
+    "residual": "Semantic correctness of conditions is model judgment, measured but not certified; unverifiable sources can carry judgment only"
+   },
+   {
+    "problem": "P4 loss at a hand-over",
+    "classical_name": "End-to-end argument; translation validation",
+    "by": "I2(b) context-check on every cited sentence of the review and the synthesis; I3 number equality",
+    "residual": "Prose conditions outside the typed fields are checked only by the model"
+   },
+   {
+    "problem": "P5 web text steers a session",
+    "classical_name": "Confused deputy; least privilege; LangSec recognition before processing",
+    "by": "I6 privileges, capped reader schema enforced by the harness, I5 hook and audit, J4 seeds",
+    "residual": "Capped free text and child-read originals still reach the child, so the child is labelled tainted. The 400-character note to the coordinator cannot be closed"
+   },
+   {
+    "problem": "P6 two writers (enforcement part only)",
+    "classical_name": "Certified triples; path allowlist",
+    "by": "I5 hook, I7 merge allowlist",
+    "residual": "Concurrency itself belongs to the Execution and Storage layers"
+   },
+   {
+    "problem": "P9 and P19 progress that can be faked",
+    "classical_name": "Progress counted from unforgeable events",
+    "by": "I1 and I2: progress is witnessed cards covering new question ids, written only by scripts",
+    "residual": "Liveness and timing belong to the Execution layer"
+   },
+   {
+    "problem": "P11 the coordinator's window and its steering",
+    "classical_name": "Biba no-read-down at the most privileged subject",
+    "by": "I4: typed status only; perm-audit flags UDI reads",
+    "residual": "The harness note channel; obedience flagged after the fact"
+   },
+   {
+    "problem": "P13 a weak expert",
+    "classical_name": "Output certification by IVPs; known-answer tests with a key held apart (IV&V)",
+    "by": "A5 certificate written by script, plants, SPRT",
+    "residual": "Three plants catch gross failure only; depth of knowledge is not certified"
+   },
+   {
+    "problem": "P14 self-reported figures",
+    "classical_name": "Audit log written by the system (C4)",
+    "by": "I8 ledger written by scripts only",
+    "residual": "The usage meter is readable only by a session"
+   },
+   {
+    "problem": "P17 a card used outside its conditions",
+    "classical_name": "Design by contract (precondition check); Ariane 501 reuse",
+    "by": "I2(b) context-check plus the checker on flags; J3 seeds",
+    "residual": "The prose part of conditions"
+   },
+   {
+    "problem": "P20 checker and checked share blind spots",
+    "classical_name": "Separation of duty with correlated parties; common-mode failure",
+    "by": "I2: the script decides what it can, and the checker sees only a window and returns an enum; A3 measures the checker; agreement never counts",
+    "residual": "No diversity in judgment without F3"
+   },
+   {
+    "problem": "P21 the check sees a small model's summary",
+    "classical_name": "Reference monitor outside the attacker's channel; TOCTOU binding",
+    "by": "I2(a) snapshot and witness bound to hashes",
+    "residual": "Needs F5. PDFs and script-rendered pages are unverifiable"
+   },
+   {
+    "problem": "P3 an ensemble agrees wrongly",
+    "classical_name": "Duplex comparison with an acceptance test",
+    "by": "I3: agreement adds nothing; the escape rate is measured, not multiplied (A3)",
+    "residual": "Beta between variants is measured later"
+   },
+   {
+    "problem": "P2 anchoring (measurement only)",
+    "classical_name": "Seeded defects contrary to the expected answer",
+    "by": "A5 against-hope plant",
+    "residual": "Prevention belongs to the brief and question-list design"
+   },
+   {
+    "problem": "P10 restart from a bad state (integrity part)",
+    "classical_name": "IVP re-run before reuse",
+    "by": "Restart reads only promoted cards and hash-checked packs (I1, D5-12)",
+    "residual": "Atomic writes and the restart limit belong to the Execution layer"
+   },
+   {
+    "problem": "F1 where the review runs",
+    "classical_name": "Biba strict integrity; recovery-block alternate that must be exercised",
+    "by": "I4 field answer; the fresh path once per wave",
+    "residual": "The quality trade-off; the pilot decides"
+   },
+   {
+    "problem": "F2 the second expert (integrity side)",
+    "classical_name": "Design diversity; Knight-Leveson",
+    "by": "I3 and A3: neither form is independent; diversity by input or model, measured before it is bought",
+    "residual": "The owner's call"
+   }
+  ],
+  "contradicts_the_frame": [
+   "The frame has one trusted class reached through 'a certified procedure'. The mappings split it. A script can certify only that the quote and the number exist in the snapshot (witnessed). Whether the number means what the card says, and whether a sentence stays within the card's conditions, is a model judgment. Clark-Wilson's C1 and C2 cannot certify that judgment, only measure it (D5 whole design, D7-01, D1-05). So there are two trust grades, witnessed and confirmed (measured and qualified), and unverifiable is a third state that never passes.",
+   "'Consumers read only trusted items' cannot hold for the child. It must read reader returns and, under amendment 1, originals. Following Biba's low-water mark (D5-06, D5-03), the rule becomes: sessions are labelled by what they read, and the trusted-only readers are pack freeze, the fresh reviewer, the synthesis and the coordinator. Even the coordinator cannot be trusted-only, because the harness delivers 400 characters of each child's turn end.",
+   "'Seeded faults in every wave give each check a detection rate': with 2 to 4 plants per expert no rate can be estimated (D4-11), and showing d >= 0.8 needs at least 14 seeds per fault class with zero misses (D4-01). The rates are calibrated once in the pilot and pooled across waves. Per-wave seeds are proof tests that detect a regression.",
+   "'The checker, schemas and briefs are outside the sessions' write reach' cannot rest on permissions and hooks alone on this harness. They sit in editable folder files and are unverified. The mappings require a detective layer that does not depend on them: a hash baseline, a merge path allowlist and a transcript audit (D5-08, D5-02).",
+   "'Least privilege for anything that reads the web' aims at the least dangerous party. D5-02 says the reader was already the safest. The deputy to bound is the child, which holds write, helper spawning and originals, and the most privileged reader of relayed text is the coordinator (D5-09). Least privilege covers every role.",
+   "Not in the frame but against amendment 3: the witness must also run at intake, not only after the review (D4-04, D2-10). Otherwise an unchecked card shapes judgment no later check sees, and the watcher's progress measure cannot move during research (D4-06)."
+  ],
+  "conflicts_with_other_layers": [
+   "Execution: the watcher must run snapshot, witness, check-queue, promote, tcb-verify, perm-audit and merge on each cycle and exit to wake the coordinator when a check batch is ready. Progress must count witnessed cards covering new question ids, which only an intake witness makes possible.",
+   "Execution: separation of duty means the producer never runs its verifier, so the coordinator, not the child, starts the checker helpers. That costs coordinator turns (typed verdicts only). The alternative, a checking session, would take one of the three session slots.",
+   "Execution: the child has no Bash and no git. If the atomic attempt commit expects the child to commit (D1-03), merge.mjs must do it; a COMMIT marker file in the child's folder is compatible.",
+   "Execution: harness fault injection (kill a child, sleep, forced hand-over) is the crash-fault half of assurance. This layer covers value faults only.",
+   "Storage: status must be a separate append-only relation that only promote.mjs writes, not a field of the card. Snapshots must live outside git and outside every worktree (D2-09), whereas D1-05 and D8-02 put them in the field folder. Stale and rejected statuses must trigger Storage's retraction propagation (D2-07, D7-02). The read manifest here and Storage's declared step inputs (D7-04) should be one format.",
+   "Evidence: GRADE certainty (D6-08) consumes these statuses. The evidence-strength label over distinct primaries (D8 missing risk) is computed there, not here. Reference-standard correction (D6-02) and seeded dismissals for the refuter (D4-12) are shared and come later.",
+   "Shape and cost: assurance spends tokens. The pilot calibration is 112 checker items, plus 10 % proof seeds per batch, the uncited-card samples, plants, and a second review window if F1 goes fresh. Admission budgets must include them.",
+   "Completeness: the STRIDE and STPA analyses (D5-13, D4-05) live there. The fault classes S1-S4 and J1-J4 are its value-fault rows, and the hook test result is one of its control assumptions."
+  ],
+  "for_the_owner": [
+   "F1: the field's integrity answer is a fresh reviewer that reads only a manifest of trusted inputs, because only that review can be labelled clean. A same-session review counts its uncited sentences as judgment. Integrity cannot say which writes better, so the recommendation is to write both in the pilot and to run the fresh path once per wave whatever you rule. Amendment 1 is your word, and the choice is yours.",
+   "F2: integrity's answer is that neither a second reviewer of the same pack nor a second same-model research run is independent. Diversity has to come from a different input (the contrary-evidence reader) or a different model (F3), and its beta should be measured before it is paid for.",
+   "F3: whether a different model may serve as the checker or as the reference standard. Without it, judgment checks have no diversity.",
+   "F5: the Node fetch script. The whole witness rests on it. Without it, no card can be witnessed and every fact is judgment.",
+   "Keeping fetched page copies locally, privately and outside git, as the stored objects the witness refers to.",
+   "Thresholds before the pilot: d0 per fault class (for example 0.8, which means 14 seeds per class); p1 and beta for the uncited-card sample; p0 and p1 of the review SPRT; plants t of 3; and an action line for every ledger measure.",
+   "Where the deny rules live: in each worktree's settings written from the trusted base and protected by the hook (proposed), or at user level, which also affects your other sessions.",
+   "If the hook test fails: run on the detective layer only, or run sessions under a separate Windows account (a system change).",
+   "Whether to allow a PDF parser package. Until then PDFs are unverifiable.",
+   "Whether you will spot-check a small random sample of confirmed items each wave as a reference standard (later)."
+  ],
+  "computed": "Worked numbers: seeds for zero-miss proof S >= ln0.05/ln d0 = 29 (0.9), 14 (0.8), 9 (0.7); zero-acceptance sample n = ceil(ln beta / ln(1 - d*p1)) = 22 (p1 .10, beta .10, d 1), 28 (d .8), 45 and 57 (p1 .05), 59 (p1 .05, beta .05, d 1), 14 (p1 .20, beta .10, d .8); SPRT p0 .05 p1 .20 alpha=beta=.05: +1.386 per failure, -0.172 per pass, bounds +/-2.944 (reject after 3 early failures, accept after 18 clean passes); rule of three 3/n."
+ }
+}
